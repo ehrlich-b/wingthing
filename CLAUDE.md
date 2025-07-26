@@ -72,13 +72,8 @@ Wingthing is a Go-based terminal application that serves as a competitor to Clau
 - Configuration and history management
 - Unit tests for core components
 
-### 🚧 TODO (Stub Implementations)
-- Real LLM integration (currently uses dummy events)
-- CLAUDE.md format parsing/generation
-- MCP (Model Context Protocol) support
-- Advanced tool implementations
-- Slash command auto-completion in UI
-- Resume functionality for loading last session
+### 🚧 TODO
+See [TODO.md](./TODO.md) for comprehensive development plan broken into phases.
 
 ## File Structure
 ```
