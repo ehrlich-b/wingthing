@@ -1,10 +1,16 @@
 package ui
 
 import (
+	"context"
+	"time"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/behrlich/wingthing/internal/agent"
+	"github.com/behrlich/wingthing/internal/interfaces"
+	"github.com/behrlich/wingthing/internal/llm"
+	"github.com/behrlich/wingthing/internal/tools"
 )
 
 type sessionState int
@@ -25,17 +31,43 @@ type Model struct {
 	theme      Theme
 	
 	// Agent communication
-	events chan agent.Event
+	events      chan agent.Event
+	orchestrator *agent.Orchestrator
 }
 
 func NewModel() Model {
+	events := make(chan agent.Event, 100)
+	
+	// Create filesystem
+	fs := interfaces.NewOSFileSystem()
+	
+	// Create tool runner with registered tools
+	toolRunner := tools.NewMultiRunner()
+	toolRunner.RegisterRunner("bash", tools.NewBashRunner())
+	toolRunner.RegisterRunner("edit", tools.NewEditRunner())
+	
+	// Create other components
+	memoryManager := agent.NewMemory(fs)
+	permissionChecker := agent.NewPermissionEngine(fs)
+	llmProvider := llm.NewDummyProvider(500 * time.Millisecond)
+	
+	// Create orchestrator
+	orchestrator := agent.NewOrchestrator(
+		toolRunner,
+		events,
+		memoryManager,
+		permissionChecker,
+		llmProvider,
+	)
+	
 	return Model{
-		state:      sessionReady,
-		transcript: NewTranscriptModel(),
-		input:      NewInputModel(),
-		modal:      NewModalModel(),
-		theme:      DefaultTheme(),
-		events:     make(chan agent.Event, 100),
+		state:        sessionReady,
+		transcript:   NewTranscriptModel(),
+		input:        NewInputModel(),
+		modal:        NewModalModel(),
+		theme:        DefaultTheme(),
+		events:       events,
+		orchestrator: orchestrator,
 	}
 }
 
@@ -44,7 +76,14 @@ func (m Model) Init() tea.Cmd {
 		m.input.Init(),
 		m.transcript.Init(),
 		m.modal.Init(),
+		m.listenForEvents(),
 	)
+}
+
+func (m Model) listenForEvents() tea.Cmd {
+	return func() tea.Msg {
+		return <-m.events
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -81,9 +120,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Add to transcript
 				m.transcript.AddUserMessage(userMsg)
 				
-				// TODO: Send to agent orchestrator
+				// Send to agent orchestrator
 				m.state = sessionThinking
 				m.transcript.AddThinkingMessage()
+				
+				go func() {
+					ctx := context.Background()
+					m.orchestrator.ProcessPrompt(ctx, userMsg)
+				}()
 			}
 		default:
 			var cmd tea.Cmd
@@ -109,6 +153,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modal.ShowPermissionRequest(msg.Content)
 			m.state = sessionWaitingPermission
 		}
+		// Continue listening for more events
+		cmds = append(cmds, m.listenForEvents())
 	}
 
 	// Update child models

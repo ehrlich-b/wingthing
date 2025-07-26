@@ -1,12 +1,23 @@
 # Wingthing Development TODO
 
-## Phase 1: Core Agent-UI Integration
+## Phase 1: Core Agent-UI Integration ✅
 **Goal: Make enter key work - basic conversation flow**
 
-- [ ] Wire agent orchestrator to UI model in `internal/ui/model.go:84`
-- [ ] Implement dummy LLM responses in orchestrator to test event flow
-- [ ] Test basic user input → thinking → agent response cycle
-- [ ] Verify transcript updates correctly with agent events
+- [x] Wire agent orchestrator to UI model in `internal/ui/model.go:84`
+- [x] Implement dummy LLM responses in orchestrator to test event flow
+- [x] Test basic user input → thinking → agent response cycle
+- [x] Verify transcript updates correctly with agent events
+
+## Phase 1.5: Better Fake LLM ⏳
+**Goal: Enhanced dummy responses for better testing, tiny bit more input polish before moving on**
+
+- [ ] Default response: "Hi, I'm your fake AI assistant! Here's some of the things I can do:" + multi-line lorem ipsum
+- [ ] Add short thinking delay before all responses
+- [ ] Special case: prompt "tool" triggers bash tool call
+- [ ] Special case: prompt "diff" shows large multiline diff viewer
+- [ ] Shift+Enter to add a newline in input box
+- [ ] Add "thinking..." state in UI while waiting for response
+- [ ] Implement basic error handling for agent events
 
 ## Phase 2: Tool Execution Pipeline
 **Goal: Enable bash commands and file operations**
