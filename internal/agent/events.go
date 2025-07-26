@@ -1,5 +1,7 @@
 package agent
 
+import "github.com/behrlich/wingthing/internal/interfaces"
+
 type EventType string
 
 const (
@@ -11,11 +13,8 @@ const (
 	EventTypeError            EventType = "error"
 )
 
-type Event struct {
-	Type    EventType `json:"type"`
-	Content string    `json:"content"`
-	Data    any       `json:"data,omitempty"`
-}
+// Use Event type from interfaces package
+type Event = interfaces.Event
 
 type PermissionRequest struct {
 	Tool        string            `json:"tool"`

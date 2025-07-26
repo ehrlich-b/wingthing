@@ -82,15 +82,22 @@ wingthing/
 ├── internal/
 │   ├── ui/                            # Bubble Tea components
 │   │   ├── model.go input.go transcript.go modal.go theme.go
+│   │   └── transcript_test.go         # UI tests with golden files
 │   ├── agent/                         # Agent orchestration
 │   │   ├── orchestrator.go events.go permissions.go memory.go commands.go
+│   │   ├── permissions_test.go commands_test.go  # Agent tests
 │   ├── tools/                         # Tool execution
 │   │   ├── runner.go bash.go edit.go
 │   ├── config/                        # Configuration management
 │   │   ├── config.go paths.go
-│   └── history/                       # Session persistence
-│       └── store.go
-├── test/                              # Unit tests and golden files
+│   │   └── mocked_config_test.go      # Config tests with mocks
+│   ├── history/                       # Session persistence
+│   │   └── store.go
+│   ├── interfaces/                    # Dependency injection interfaces
+│   │   ├── config.go filesystem.go history.go permissions.go
+│   └── mocks/                         # Generated mockery mocks
+│       └── interfaces/
+├── Makefile                           # Build automation
 └── go.mod                             # Dependencies
 ```
 
@@ -101,10 +108,35 @@ wingthing/
 - `github.com/spf13/cobra` - CLI framework
 - `gopkg.in/yaml.v3` - YAML parsing
 
+## Development Commands
+**IMPORTANT: Always use Makefile targets - never run go commands directly**
+
+- `make build` - Build the binary (never use `go build`)
+- `make test` - Run all tests (never use `go test`)
+- `make mocks` - Generate mockery mocks for testing
+- `make fmt` - Format code
+- `make vet` - Vet code
+- `make lint` - Run linter (requires golangci-lint)
+- `make clean` - Remove build artifacts
+- `make help` - Show all available targets
+
+## Code Style Standards
+**File Formatting Requirements:**
+- No trailing whitespace in any file
+- All files must end with a single newline character
+- Use tabs for indentation in Go files (gofmt standard)
+- Use 2 spaces for YAML/JSON indentation
+- Line endings must be LF (Unix style), not CRLF
+
+**Code Organization:**
+- Tests are co-located with source files (not in separate test/ directory)
+- Use dependency injection with interface abstractions
+- Follow Go naming conventions and package organization
+- Error handling follows Go conventions with wrapped errors
+
 ## Development Notes
-- All packages compile successfully with `go build ./...`
-- Tests pass with `go test ./test/...`
+- Dependency injection architecture with interface abstractions
+- Comprehensive unit testing with mockery-generated mocks
 - Permission hashing uses SHA256 of JSON-marshaled parameters
 - Event system uses channels for async communication
 - UI uses alt screen mode with mouse support
-- Error handling follows Go conventions with wrapped errors

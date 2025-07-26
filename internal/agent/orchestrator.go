@@ -5,29 +5,35 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/behrlich/wingthing/internal/interfaces"
 	"github.com/behrlich/wingthing/internal/tools"
 )
 
 type Orchestrator struct {
-	toolRunner tools.Runner
-	events     chan<- Event
-	memory     *Memory
-	permissions *PermissionEngine
+	toolRunner  tools.Runner
+	events      chan<- Event
+	memory      interfaces.MemoryManager
+	permissions interfaces.PermissionChecker
 }
 
-func NewOrchestrator(toolRunner tools.Runner, events chan<- Event) *Orchestrator {
+func NewOrchestrator(
+	toolRunner tools.Runner,
+	events chan<- Event,
+	memory interfaces.MemoryManager,
+	permissions interfaces.PermissionChecker,
+) *Orchestrator {
 	return &Orchestrator{
 		toolRunner:  toolRunner,
 		events:      events,
-		memory:      NewMemory(),
-		permissions: NewPermissionEngine(),
+		memory:      memory,
+		permissions: permissions,
 	}
 }
 
 func (o *Orchestrator) ProcessPrompt(ctx context.Context, prompt string) error {
 	// Emit planning event
 	o.events <- Event{
-		Type:    EventTypePlan,
+		Type:    string(EventTypePlan),
 		Content: fmt.Sprintf("Planning response to: %s", prompt),
 	}
 
@@ -39,14 +45,14 @@ func (o *Orchestrator) ProcessPrompt(ctx context.Context, prompt string) error {
 		// Check permissions
 		allowed, err := o.permissions.CheckPermission("bash", "ls", map[string]any{"command": "ls -la"})
 		if err != nil {
-			o.events <- Event{Type: EventTypeError, Content: err.Error()}
+			o.events <- Event{Type: string(EventTypeError), Content: err.Error()}
 			return err
 		}
 
 		if !allowed {
 			// Request permission
 			o.events <- Event{
-				Type:    EventTypePermissionRequest,
+				Type:    string(EventTypePermissionRequest),
 				Content: "The agent wants to run 'ls -la' to list files in the current directory.",
 				Data: PermissionRequest{
 					Tool:        "bash",
@@ -59,25 +65,25 @@ func (o *Orchestrator) ProcessPrompt(ctx context.Context, prompt string) error {
 
 		// Execute tool
 		o.events <- Event{
-			Type:    EventTypeRunTool,
+			Type:    string(EventTypeRunTool),
 			Content: "Running: ls -la",
 		}
 
 		result, err := o.toolRunner.Run(ctx, "bash", map[string]any{"command": "ls -la"})
 		if err != nil {
-			o.events <- Event{Type: EventTypeError, Content: err.Error()}
+			o.events <- Event{Type: string(EventTypeError), Content: err.Error()}
 			return err
 		}
 
 		o.events <- Event{
-			Type:    EventTypeObservation,
+			Type:    string(EventTypeObservation),
 			Content: fmt.Sprintf("Command output: %s", result.Output),
 		}
 	}
 
 	// Emit final response
 	o.events <- Event{
-		Type:    EventTypeFinal,
+		Type:    string(EventTypeFinal),
 		Content: "I've processed your request. This is a stub implementation.",
 	}
 

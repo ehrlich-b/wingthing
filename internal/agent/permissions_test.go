@@ -1,13 +1,14 @@
-package test
+package agent
 
 import (
 	"testing"
 
-	"github.com/behrlich/wingthing/internal/agent"
+	"github.com/behrlich/wingthing/internal/interfaces"
 )
 
 func TestPermissionDecisionLogic(t *testing.T) {
-	engine := agent.NewPermissionEngine()
+	fs := interfaces.NewOSFileSystem()
+	engine := NewPermissionEngine(fs)
 
 	tool := "bash"
 	action := "ls"
@@ -23,7 +24,7 @@ func TestPermissionDecisionLogic(t *testing.T) {
 	}
 
 	// Test AllowOnce - should return true and remove rule
-	engine.GrantPermission(tool, action, params, agent.AllowOnce)
+	engine.GrantPermission(tool, action, params, AllowOnce)
 	allowed, err = engine.CheckPermission(tool, action, params)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -42,7 +43,7 @@ func TestPermissionDecisionLogic(t *testing.T) {
 	}
 
 	// Test AlwaysAllow - should return true and keep rule
-	engine.GrantPermission(tool, action, params, agent.AlwaysAllow)
+	engine.GrantPermission(tool, action, params, AlwaysAllow)
 	allowed, err = engine.CheckPermission(tool, action, params)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -61,7 +62,7 @@ func TestPermissionDecisionLogic(t *testing.T) {
 	}
 
 	// Test AlwaysDeny
-	engine.DenyPermission(tool, action, params, agent.AlwaysDeny)
+	engine.DenyPermission(tool, action, params, AlwaysDeny)
 	allowed, err = engine.CheckPermission(tool, action, params)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -72,7 +73,8 @@ func TestPermissionDecisionLogic(t *testing.T) {
 }
 
 func TestPermissionParameterHashing(t *testing.T) {
-	engine := agent.NewPermissionEngine()
+	fs := interfaces.NewOSFileSystem()
+	engine := NewPermissionEngine(fs)
 
 	tool := "bash"
 	action := "ls"
@@ -81,7 +83,7 @@ func TestPermissionParameterHashing(t *testing.T) {
 	params3 := map[string]any{"command": "ls -l"}  // Different command
 
 	// Grant permission for params1
-	engine.GrantPermission(tool, action, params1, agent.AlwaysAllow)
+	engine.GrantPermission(tool, action, params1, AlwaysAllow)
 
 	// Check params2 (should match)
 	allowed, err := engine.CheckPermission(tool, action, params2)

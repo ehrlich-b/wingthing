@@ -4,17 +4,19 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
+
+	"github.com/behrlich/wingthing/internal/interfaces"
 )
 
-type PermissionDecision string
+// Use types from interfaces package
+type PermissionDecision = interfaces.PermissionDecision
 
 const (
-	AllowOnce    PermissionDecision = "allow_once"
-	AlwaysAllow  PermissionDecision = "always_allow"
-	Deny         PermissionDecision = "deny"
-	AlwaysDeny   PermissionDecision = "always_deny"
+	AllowOnce    = interfaces.AllowOnce
+	AlwaysAllow  = interfaces.AlwaysAllow
+	Deny         = interfaces.Deny
+	AlwaysDeny   = interfaces.AlwaysDeny
 )
 
 type PermissionRule struct {
@@ -27,11 +29,13 @@ type PermissionRule struct {
 
 type PermissionEngine struct {
 	rules map[string]PermissionRule
+	fs    interfaces.FileSystem
 }
 
-func NewPermissionEngine() *PermissionEngine {
+func NewPermissionEngine(fs interfaces.FileSystem) *PermissionEngine {
 	return &PermissionEngine{
 		rules: make(map[string]PermissionRule),
+		fs:    fs,
 	}
 }
 
@@ -86,9 +90,9 @@ func (pe *PermissionEngine) DenyPermission(tool, action string, params map[strin
 }
 
 func (pe *PermissionEngine) LoadFromFile(filePath string) error {
-	data, err := os.ReadFile(filePath)
+	data, err := pe.fs.ReadFile(filePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if pe.fs.IsNotExist(err) {
 			return nil // No permissions file yet
 		}
 		return err
@@ -106,7 +110,7 @@ func (pe *PermissionEngine) LoadFromFile(filePath string) error {
 func (pe *PermissionEngine) SaveToFile(filePath string) error {
 	// Ensure directory exists
 	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := pe.fs.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 	
@@ -115,7 +119,7 @@ func (pe *PermissionEngine) SaveToFile(filePath string) error {
 		return err
 	}
 	
-	return os.WriteFile(filePath, data, 0644)
+	return pe.fs.WriteFile(filePath, data, 0644)
 }
 
 func (pe *PermissionEngine) makeKey(tool, action string, params map[string]any) string {

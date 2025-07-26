@@ -69,6 +69,17 @@ dev: clean
 install:
 	go install $(MAIN_PATH)
 
+# Generate mocks using mockery
+.PHONY: mocks
+mocks:
+	@echo "Generating mocks..."
+	go run github.com/vektra/mockery/v2@latest --all --keeptree --dir=./internal --output=./internal/mocks
+
+# Clean generated mocks
+.PHONY: clean-mocks
+clean-mocks:
+	@rm -rf ./internal/mocks
+
 # Help target
 .PHONY: help
 help:
@@ -83,4 +94,6 @@ help:
 	@echo "  build-all  - Build for multiple platforms"
 	@echo "  dev        - Development build (no optimizations)"
 	@echo "  install    - Install binary to GOPATH/bin"
+	@echo "  mocks      - Generate mocks using mockery"
+	@echo "  clean-mocks - Remove generated mocks"
 	@echo "  help       - Show this help message"

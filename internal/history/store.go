@@ -2,39 +2,31 @@ package history
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/behrlich/wingthing/internal/agent"
+	"github.com/behrlich/wingthing/internal/interfaces"
 )
 
-type Session struct {
-	ID        string        `json:"id"`
-	Timestamp time.Time     `json:"timestamp"`
-	Messages  []Message     `json:"messages"`
-	Events    []agent.Event `json:"events"`
-}
-
-type Message struct {
-	Role      string    `json:"role"`
-	Content   string    `json:"content"`
-	Timestamp time.Time `json:"timestamp"`
-}
+// Use types from interfaces package
+type Session = interfaces.Session
+type Message = interfaces.Message
 
 type Store struct {
 	historyDir string
+	fs         interfaces.FileSystem
 }
 
-func NewStore(historyDir string) *Store {
+func NewStore(historyDir string, fs interfaces.FileSystem) *Store {
 	return &Store{
 		historyDir: historyDir,
+		fs:         fs,
 	}
 }
 
 func (s *Store) SaveSession(session *Session) error {
 	// Ensure history directory exists
-	if err := os.MkdirAll(s.historyDir, 0755); err != nil {
+	if err := s.fs.MkdirAll(s.historyDir, 0755); err != nil {
 		return err
 	}
 	
@@ -46,14 +38,14 @@ func (s *Store) SaveSession(session *Session) error {
 		return err
 	}
 	
-	return os.WriteFile(filePath, data, 0644)
+	return s.fs.WriteFile(filePath, data, 0644)
 }
 
 func (s *Store) LoadSession(sessionID string) (*Session, error) {
 	filename := sessionID + ".json"
 	filePath := filepath.Join(s.historyDir, filename)
 	
-	data, err := os.ReadFile(filePath)
+	data, err := s.fs.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -67,9 +59,9 @@ func (s *Store) LoadSession(sessionID string) (*Session, error) {
 }
 
 func (s *Store) LoadLastSession() (*Session, error) {
-	entries, err := os.ReadDir(s.historyDir)
+	entries, err := s.fs.ReadDir(s.historyDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if s.fs.IsNotExist(err) {
 			return nil, nil // No history directory
 		}
 		return nil, err
@@ -103,9 +95,9 @@ func (s *Store) LoadLastSession() (*Session, error) {
 }
 
 func (s *Store) ListSessions() ([]Session, error) {
-	entries, err := os.ReadDir(s.historyDir)
+	entries, err := s.fs.ReadDir(s.historyDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if s.fs.IsNotExist(err) {
 			return []Session{}, nil // No history directory
 		}
 		return nil, err
@@ -133,5 +125,5 @@ func (s *Store) ListSessions() ([]Session, error) {
 func (s *Store) DeleteSession(sessionID string) error {
 	filename := sessionID + ".json"
 	filePath := filepath.Join(s.historyDir, filename)
-	return os.Remove(filePath)
+	return s.fs.Remove(filePath)
 }

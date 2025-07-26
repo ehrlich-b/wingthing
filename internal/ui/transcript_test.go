@@ -1,10 +1,8 @@
-package test
+package ui
 
 import (
 	"os"
 	"testing"
-
-	"github.com/behrlich/wingthing/internal/ui"
 )
 
 func TestTranscriptRendering(t *testing.T) {
@@ -15,7 +13,7 @@ func TestTranscriptRendering(t *testing.T) {
 	}
 
 	// Create transcript model
-	transcript := ui.NewTranscriptModel()
+	transcript := NewTranscriptModel()
 	transcript.SetSize(80, 20)
 
 	// Add test messages

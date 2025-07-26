@@ -96,16 +96,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agent.Event:
 		// Handle agent events
 		switch msg.Type {
-		case agent.EventTypePlan:
+		case string(agent.EventTypePlan):
 			m.transcript.AddAgentMessage("Plan", msg.Content)
-		case agent.EventTypeRunTool:
+		case string(agent.EventTypeRunTool):
 			m.transcript.AddAgentMessage("Running", msg.Content)
-		case agent.EventTypeObservation:
+		case string(agent.EventTypeObservation):
 			m.transcript.AddAgentMessage("Observation", msg.Content)
-		case agent.EventTypeFinal:
+		case string(agent.EventTypeFinal):
 			m.transcript.AddAgentMessage("Result", msg.Content)
 			m.state = sessionReady
-		case agent.EventTypePermissionRequest:
+		case string(agent.EventTypePermissionRequest):
 			m.modal.ShowPermissionRequest(msg.Content)
 			m.state = sessionWaitingPermission
 		}

@@ -2,39 +2,24 @@ package config
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
+
+	"github.com/behrlich/wingthing/internal/interfaces"
 )
 
-type Config struct {
-	// UI Settings
-	Theme       string `json:"theme,omitempty"`
-	AutoScroll  bool   `json:"auto_scroll,omitempty"`
-	
-	// Agent Settings
-	MaxTurns    int    `json:"max_turns,omitempty"`
-	Timeout     int    `json:"timeout,omitempty"`
-	
-	// Tool Settings
-	BashTimeout int    `json:"bash_timeout,omitempty"`
-	
-	// LLM Settings (for future use)
-	Model       string `json:"model,omitempty"`
-	APIKey      string `json:"api_key,omitempty"`
-	BaseURL     string `json:"base_url,omitempty"`
-}
-
 type Manager struct {
-	userConfig    *Config
-	projectConfig *Config
-	merged        *Config
+	userConfig    *interfaces.Config
+	projectConfig *interfaces.Config
+	merged        *interfaces.Config
+	fs            interfaces.FileSystem
 }
 
-func NewManager() *Manager {
+func NewManager(fs interfaces.FileSystem) *Manager {
 	return &Manager{
-		userConfig:    &Config{},
-		projectConfig: &Config{},
-		merged:        &Config{},
+		userConfig:    &interfaces.Config{},
+		projectConfig: &interfaces.Config{},
+		merged:        &interfaces.Config{},
+		fs:            fs,
 	}
 }
 
@@ -57,10 +42,10 @@ func (m *Manager) Load(userConfigDir, projectDir string) error {
 	return nil
 }
 
-func (m *Manager) loadConfig(path string, config *Config) error {
-	data, err := os.ReadFile(path)
+func (m *Manager) loadConfig(path string, config *interfaces.Config) error {
+	data, err := m.fs.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if m.fs.IsNotExist(err) {
 			return nil // Config file doesn't exist, use defaults
 		}
 		return err
@@ -70,7 +55,7 @@ func (m *Manager) loadConfig(path string, config *Config) error {
 }
 
 func (m *Manager) mergeConfigs() {
-	m.merged = &Config{
+	m.merged = &interfaces.Config{
 		Theme:       m.getStringValue(m.userConfig.Theme, m.projectConfig.Theme, "default"),
 		AutoScroll:  m.getBoolValue(m.userConfig.AutoScroll, m.projectConfig.AutoScroll, true),
 		MaxTurns:    m.getIntValue(m.userConfig.MaxTurns, m.projectConfig.MaxTurns, 10),
@@ -112,7 +97,7 @@ func (m *Manager) getIntValue(user, project, defaultValue int) int {
 	return defaultValue
 }
 
-func (m *Manager) Get() *Config {
+func (m *Manager) Get() *interfaces.Config {
 	return m.merged
 }
 
@@ -120,7 +105,7 @@ func (m *Manager) SaveUserConfig(userConfigDir string) error {
 	configPath := filepath.Join(userConfigDir, "settings.json")
 	
 	// Ensure directory exists
-	if err := os.MkdirAll(userConfigDir, 0755); err != nil {
+	if err := m.fs.MkdirAll(userConfigDir, 0755); err != nil {
 		return err
 	}
 	
@@ -129,7 +114,7 @@ func (m *Manager) SaveUserConfig(userConfigDir string) error {
 		return err
 	}
 	
-	return os.WriteFile(configPath, data, 0644)
+	return m.fs.WriteFile(configPath, data, 0644)
 }
 
 func (m *Manager) SaveProjectConfig(projectDir string) error {
@@ -137,7 +122,7 @@ func (m *Manager) SaveProjectConfig(projectDir string) error {
 	configPath := filepath.Join(wingthingDir, "settings.json")
 	
 	// Ensure directory exists
-	if err := os.MkdirAll(wingthingDir, 0755); err != nil {
+	if err := m.fs.MkdirAll(wingthingDir, 0755); err != nil {
 		return err
 	}
 	
@@ -146,5 +131,5 @@ func (m *Manager) SaveProjectConfig(projectDir string) error {
 		return err
 	}
 	
-	return os.WriteFile(configPath, data, 0644)
+	return m.fs.WriteFile(configPath, data, 0644)
 }

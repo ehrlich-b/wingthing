@@ -1,11 +1,9 @@
-package test
+package agent
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/behrlich/wingthing/internal/agent"
 )
 
 func TestSlashCommandTemplateExpansion(t *testing.T) {
@@ -31,7 +29,7 @@ Environment variable PATH is {{.PATH}}.`
 	}
 
 	// Load commands
-	loader := agent.NewCommandLoader()
+	loader := NewCommandLoader()
 	if err := loader.LoadCommands(tempDir, ""); err != nil {
 		t.Fatalf("Failed to load commands: %v", err)
 	}
@@ -73,7 +71,7 @@ Environment variable PATH is {{.PATH}}.`
 }
 
 func TestSlashCommandNotFound(t *testing.T) {
-	loader := agent.NewCommandLoader()
+	loader := NewCommandLoader()
 
 	_, exists := loader.GetCommand("nonexistent")
 	if exists {

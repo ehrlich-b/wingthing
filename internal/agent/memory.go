@@ -1,27 +1,30 @@
 package agent
 
 import (
-	"os"
 	"path/filepath"
+
+	"github.com/behrlich/wingthing/internal/interfaces"
 )
 
 type Memory struct {
 	UserMemory    map[string]string `json:"user_memory"`
 	ProjectMemory map[string]string `json:"project_memory"`
+	fs            interfaces.FileSystem
 }
 
-func NewMemory() *Memory {
+func NewMemory(fs interfaces.FileSystem) *Memory {
 	return &Memory{
 		UserMemory:    make(map[string]string),
 		ProjectMemory: make(map[string]string),
+		fs:            fs,
 	}
 }
 
 func (m *Memory) LoadUserMemory(configDir string) error {
 	memoryPath := filepath.Join(configDir, "CLAUDE.md")
-	content, err := os.ReadFile(memoryPath)
+	content, err := m.fs.ReadFile(memoryPath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if m.fs.IsNotExist(err) {
 			return nil // No memory file yet
 		}
 		return err
@@ -34,9 +37,9 @@ func (m *Memory) LoadUserMemory(configDir string) error {
 
 func (m *Memory) LoadProjectMemory(projectDir string) error {
 	memoryPath := filepath.Join(projectDir, ".wingthing", "CLAUDE.md")
-	content, err := os.ReadFile(memoryPath)
+	content, err := m.fs.ReadFile(memoryPath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if m.fs.IsNotExist(err) {
 			return nil // No memory file yet
 		}
 		return err
@@ -51,13 +54,13 @@ func (m *Memory) SaveUserMemory(configDir string) error {
 	memoryPath := filepath.Join(configDir, "CLAUDE.md")
 	
 	// Ensure directory exists
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := m.fs.MkdirAll(configDir, 0755); err != nil {
 		return err
 	}
 	
 	// TODO: Format as CLAUDE.md
 	content := m.UserMemory["content"]
-	return os.WriteFile(memoryPath, []byte(content), 0644)
+	return m.fs.WriteFile(memoryPath, []byte(content), 0644)
 }
 
 func (m *Memory) SaveProjectMemory(projectDir string) error {
@@ -65,13 +68,13 @@ func (m *Memory) SaveProjectMemory(projectDir string) error {
 	memoryPath := filepath.Join(wingthingDir, "CLAUDE.md")
 	
 	// Ensure directory exists
-	if err := os.MkdirAll(wingthingDir, 0755); err != nil {
+	if err := m.fs.MkdirAll(wingthingDir, 0755); err != nil {
 		return err
 	}
 	
 	// TODO: Format as CLAUDE.md
 	content := m.ProjectMemory["content"]
-	return os.WriteFile(memoryPath, []byte(content), 0644)
+	return m.fs.WriteFile(memoryPath, []byte(content), 0644)
 }
 
 func (m *Memory) UpdateUserMemory(key, value string) {
