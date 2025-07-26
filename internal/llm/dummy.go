@@ -44,7 +44,7 @@ func (d *DummyProvider) Chat(ctx context.Context, messages []interfaces.Message)
 					ID:   "call_1",
 					Type: "function",
 					Function: interfaces.FunctionCall{
-						Name: "bash",
+						Name: "cli",
 						Arguments: map[string]any{
 							"command": "ls -la",
 						},

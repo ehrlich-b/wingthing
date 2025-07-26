@@ -58,8 +58,8 @@ func TestDummyProvider_Chat_ListFiles(t *testing.T) {
 	}
 	
 	toolCall := resp.ToolCalls[0]
-	if toolCall.Function.Name != "bash" {
-		t.Fatalf("Expected bash tool call, got %s", toolCall.Function.Name)
+	if toolCall.Function.Name != "cli" {
+		t.Fatalf("Expected cli tool call, got %s", toolCall.Function.Name)
 	}
 	
 	command, ok := toolCall.Function.Arguments["command"]

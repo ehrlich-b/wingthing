@@ -46,15 +46,15 @@ func TestOrchestrator_Integration_SimpleConversation(t *testing.T) {
 	
 	// Create tool runner
 	toolRunner := tools.NewMultiRunner()
-	toolRunner.RegisterRunner("bash", tools.NewBashRunner())
+	toolRunner.RegisterRunner("cli", tools.NewCLIRunner())
 	
 	// Create components
 	memoryManager := NewMemory(fs)
 	permissionChecker := NewPermissionEngine(fs)
 	llmProvider := llm.NewDummyProvider(10 * time.Millisecond)
 	
-	// Pre-grant permission for bash command
-	permissionChecker.GrantPermission("bash", "execute", map[string]any{"command": "ls -la"}, AlwaysAllow)
+	// Pre-grant permission for CLI command
+	permissionChecker.GrantPermission("cli", "execute", map[string]any{"command": "ls -la"}, AlwaysAllow)
 	
 	// Create orchestrator
 	orchestrator := NewOrchestrator(
@@ -130,7 +130,7 @@ func TestOrchestrator_Integration_PermissionRequest(t *testing.T) {
 	
 	// Create tool runner
 	toolRunner := tools.NewMultiRunner()
-	toolRunner.RegisterRunner("bash", tools.NewBashRunner())
+	toolRunner.RegisterRunner("cli", tools.NewCLIRunner())
 	
 	// Create components
 	memoryManager := NewMemory(fs)

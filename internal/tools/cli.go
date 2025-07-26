@@ -7,22 +7,22 @@ import (
 	"time"
 )
 
-type BashRunner struct {
+type CLIRunner struct {
 	timeout time.Duration
 }
 
-func NewBashRunner() *BashRunner {
-	return &BashRunner{
+func NewCLIRunner() *CLIRunner {
+	return &CLIRunner{
 		timeout: 30 * time.Second, // Default timeout
 	}
 }
 
-func (br *BashRunner) SetTimeout(timeout time.Duration) {
-	br.timeout = timeout
+func (cr *CLIRunner) SetTimeout(timeout time.Duration) {
+	cr.timeout = timeout
 }
 
-func (br *BashRunner) Run(ctx context.Context, tool string, params map[string]any) (*Result, error) {
-	if tool != "bash" {
+func (cr *CLIRunner) Run(ctx context.Context, tool string, params map[string]any) (*Result, error) {
+	if tool != "cli" {
 		return &Result{Error: "unsupported tool: " + tool}, nil
 	}
 	
@@ -32,7 +32,7 @@ func (br *BashRunner) Run(ctx context.Context, tool string, params map[string]an
 	}
 	
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(ctx, br.timeout)
+	ctx, cancel := context.WithTimeout(ctx, cr.timeout)
 	defer cancel()
 	
 	// Execute command
@@ -50,6 +50,6 @@ func (br *BashRunner) Run(ctx context.Context, tool string, params map[string]an
 	return result, nil
 }
 
-func (br *BashRunner) SupportedTools() []string {
-	return []string{"bash"}
+func (cr *CLIRunner) SupportedTools() []string {
+	return []string{"cli"}
 }

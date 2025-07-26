@@ -125,10 +125,10 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 			// Request permission
 			o.events <- Event{
 				Type:    string(EventTypePermissionRequest),
-				Content: fmt.Sprintf("The agent wants to use the '%s' tool.", toolName),
+				Content: fmt.Sprintf("The agent wants to run a CLI command using the '%s' tool.", toolName),
 				Data: PermissionRequest{
 					Tool:        toolName,
-					Description: fmt.Sprintf("Execute %s tool", toolName),
+					Description: fmt.Sprintf("Allow wingthing to run this CLI command"),
 					Parameters:  params,
 				},
 			}

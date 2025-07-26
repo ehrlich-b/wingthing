@@ -43,7 +43,7 @@ func NewModel() Model {
 	
 	// Create tool runner with registered tools
 	toolRunner := tools.NewMultiRunner()
-	toolRunner.RegisterRunner("bash", tools.NewBashRunner())
+	toolRunner.RegisterRunner("cli", tools.NewCLIRunner())
 	toolRunner.RegisterRunner("edit", tools.NewEditRunner())
 	
 	// Create other components
