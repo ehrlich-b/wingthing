@@ -16,6 +16,9 @@ type Orchestrator struct {
 	permissions interfaces.PermissionChecker
 	llmProvider interfaces.LLMProvider
 	messages    []interfaces.Message
+	
+	// Track pending tool execution for permission retry
+	pendingToolCall *interfaces.ToolCall
 }
 
 func NewOrchestrator(
@@ -122,6 +125,9 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 		}
 
 		if !allowed {
+			// Save pending tool call for retry after permission
+			o.pendingToolCall = &toolCall
+			
 			// Request permission
 			o.events <- Event{
 				Type:    string(EventTypePermissionRequest),
@@ -165,4 +171,78 @@ func (o *Orchestrator) GrantPermission(tool, action string, params map[string]an
 
 func (o *Orchestrator) DenyPermission(tool, action string, params map[string]any, decision PermissionDecision) {
 	o.permissions.DenyPermission(tool, action, params, decision)
+	
+	// Clear pending tool call since permission was denied
+	if decision == Deny || decision == AlwaysDeny {
+		o.pendingToolCall = nil
+		o.events <- Event{
+			Type:    string(EventTypeFinal),
+			Content: "Permission denied. Tool execution cancelled.",
+		}
+	}
+}
+
+// RetryPendingTool attempts to execute the pending tool call after permission is granted
+func (o *Orchestrator) RetryPendingTool(ctx context.Context) error {
+	if o.pendingToolCall == nil {
+		return fmt.Errorf("no pending tool call to retry")
+	}
+	
+	toolCall := *o.pendingToolCall
+	o.pendingToolCall = nil // Clear the pending call
+	
+	// Execute the tool directly (permission should now be granted)
+	toolName := toolCall.Function.Name
+	params := toolCall.Function.Arguments
+	
+	// Execute tool
+	o.events <- Event{
+		Type:    string(EventTypeRunTool),
+		Content: fmt.Sprintf("Running: %s", toolName),
+	}
+
+	result, err := o.toolRunner.Run(ctx, toolName, params)
+	if err != nil {
+		o.events <- Event{Type: string(EventTypeError), Content: err.Error()}
+		return err
+	}
+
+	// Check for tool execution error
+	if result.Error != "" {
+		o.events <- Event{Type: string(EventTypeError), Content: result.Error}
+		return fmt.Errorf("tool execution failed: %s", result.Error)
+	}
+
+	// Send observation
+	o.events <- Event{
+		Type:    string(EventTypeObservation),
+		Content: result.Output,
+	}
+
+	// Add tool results to conversation
+	o.messages = append(o.messages, interfaces.Message{
+		Role:    "user",
+		Content: fmt.Sprintf("Tool %s executed successfully. Output: %s", toolName, result.Output),
+	})
+
+	// Get LLM response to tool results
+	response, err := o.llmProvider.Chat(ctx, o.messages)
+	if err != nil {
+		o.events <- Event{Type: string(EventTypeError), Content: err.Error()}
+		return err
+	}
+
+	// Add LLM response to conversation
+	o.messages = append(o.messages, interfaces.Message{
+		Role:    "assistant",
+		Content: response.Content,
+	})
+
+	// Send final result
+	o.events <- Event{
+		Type:    string(EventTypeFinal),
+		Content: response.Content,
+	}
+
+	return nil
 }

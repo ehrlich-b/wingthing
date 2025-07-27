@@ -15,7 +15,7 @@ Wingthing is a Go-based terminal application that serves as a competitor to Clau
 **UI Layer (`internal/ui/`)**
 - `model.go`: Main Bubble Tea model with session state management
 - `input.go`: Multiline textarea input component
-- `transcript.go`: Scrollable conversation viewport with message types
+- `renderer.go`: ANSI-styled message rendering with tea.Println output
 - `modal.go`: Permission requests and slash command selection
 - `theme.go`: Lip Gloss styling configuration
 
@@ -28,7 +28,7 @@ Wingthing is a Go-based terminal application that serves as a competitor to Clau
 
 **Tools System (`internal/tools/`)**
 - `runner.go`: Pluggable tool runner interface
-- `bash.go`: Bash command execution with timeout
+- `cli.go`: CLI command execution with timeout
 - `edit.go`: File operations (read, write, edit with find/replace)
 
 **Configuration (`internal/config/`)**
@@ -64,11 +64,11 @@ Wingthing is a Go-based terminal application that serves as a competitor to Clau
 
 ### ✅ Implemented
 - Complete project scaffolding with Go 1.24
-- Bubble Tea UI with transcript, input, and modals
-- Event-driven agent architecture
-- Permission system with persistence
+- Bubble Tea UI with multiline input, modals, and tea.Println output
+- Event-driven agent architecture with real-time communication
+- Permission system with persistence and modal prompts
 - Slash command loader with templating
-- Tool runner interface with bash and file tools
+- Tool runner interface with CLI and file edit tools
 - Configuration and history management
 - Unit tests for core components
 
@@ -81,13 +81,13 @@ wingthing/
 ├── cmd/wingthing/main.go              # CLI entry point
 ├── internal/
 │   ├── ui/                            # Bubble Tea components
-│   │   ├── model.go input.go transcript.go modal.go theme.go
+│   │   ├── model.go input.go renderer.go modal.go theme.go
 │   │   └── transcript_test.go         # UI tests with golden files
 │   ├── agent/                         # Agent orchestration
 │   │   ├── orchestrator.go events.go permissions.go memory.go commands.go
 │   │   ├── permissions_test.go commands_test.go  # Agent tests
 │   ├── tools/                         # Tool execution
-│   │   ├── runner.go bash.go edit.go
+│   │   ├── runner.go cli.go edit.go
 │   ├── config/                        # Configuration management
 │   │   ├── config.go paths.go
 │   │   └── mocked_config_test.go      # Config tests with mocks

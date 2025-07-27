@@ -115,3 +115,20 @@ func (r *Renderer) CodeBlock(language, content string) string {
 	
 	return header + codeStyle.Render(content) + "\n\n"
 }
+
+// PermissionRequest renders an inline permission request
+func (r *Renderer) PermissionRequest(toolName, command string) string {
+	msg := r.theme.AgentMessage.Render("Assistant: I need permission to run: ") + 
+		  r.theme.UserMessageContent.Render(command)
+	
+	options := r.theme.SystemMessage.Render("[A]llow once | [Y]es always | [N]o | [D]eny always")
+	
+	return msg + "\n" + options + "\n"
+}
+
+// PermissionResponse renders the user's permission choice
+func (r *Renderer) PermissionResponse(choice, description string) string {
+	response := r.theme.UserMessage.Render("You: ") + 
+			   r.theme.UserMessageContent.Render(choice + " - " + description)
+	return response + "\n\n"
+}

@@ -62,7 +62,6 @@ func runInteractive(ctx context.Context) error {
 	p := tea.NewProgram(
 		model,
 		tea.WithInput(os.Stdin),
-		tea.WithMouseCellMotion(), // Enable enhanced input mode
 	)
 
 	_, err := p.Run()
