@@ -47,13 +47,19 @@
 - [x] Add fuzzy matching for command suggestions
 - [x] Test completion UI with keyboard navigation
 
-## Phase 4: Memory & Session Management
+## Phase 4: Memory & Session Management ✅
 **Goal: Persistent context and sessions**
 
-- [ ] Implement CLAUDE.md parsing for memory context
-- [ ] Add session save/load to history store
-- [ ] Implement `--resume` flag functionality
-- [ ] Test session persistence across app restarts
+- [x] Implement CLAUDE.md parsing for memory context
+- [x] Add session save/load to history store
+- [x] Implement `--resume` flag functionality to resume last session
+- [x] Implement `/save` command with optional filename parameter, saving as versioned JSON
+- [x] Implement `/resume` command to load from most recent save file or specified file
+- [x] Test session persistence across app restarts
+- [x] Implement `/compact` command for conversation compression (basic version)
+- [x] Fixed: Resume logic to prevent resuming current session
+- [x] Fixed: Input border disappearing when no completion matches found
+- [x] Decision: `/save` takes optional filename and creates versioned JSON files
 
 ## Phase 5: Headless Mode
 **Goal: Scriptable JSON interface**
@@ -70,6 +76,7 @@
 - [ ] Add comprehensive error handling and validation
 - [ ] Test with real AI responses and tool usage
 - [ ] Optimize token usage and response streaming
+- [ ] Implement AI-powered `/compact` command that intelligently summarizes conversation history
 
 ## Phase 6.5: Extended Tool Suite
 **Goal: More useful tools**
@@ -89,9 +96,20 @@
 - [ ] Security review and hardening
 - [ ] Expand test coverage to 80%+
 
+## Phase 8: User Management & Authentication
+**Goal: Multi-user support (design unclear)**
+
+- [ ] Design user authentication system - unclear if this should be:
+  - Simple API key/provider management (local config)
+  - Full wingthing.ai service integration with accounts
+  - Something else entirely
+- [ ] Implement `/login` command (functionality TBD)
+- [ ] Add user session management
+- [ ] Research: Should wingthing be purely local or cloud-connected?
+
 ---
 
 ## Current Focus
-**Phase 1.5 Complete! Ready for Phase 2** - implement tool execution pipeline with permissions.
+**Phase 4 Complete! Ready for Phase 5** - implement headless mode with JSON output, or Phase 6 for real LLM integration.
 
 Each phase should be completable in 1-2 focused sessions. Don't try to implement everything at once.

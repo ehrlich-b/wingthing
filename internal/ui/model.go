@@ -2,6 +2,9 @@ package ui
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/behrlich/wingthing/internal/agent"
 	"github.com/behrlich/wingthing/internal/config"
+	"github.com/behrlich/wingthing/internal/history"
 	"github.com/behrlich/wingthing/internal/interfaces"
 	"github.com/behrlich/wingthing/internal/llm"
 	"github.com/behrlich/wingthing/internal/tools"
@@ -52,9 +56,19 @@ type Model struct {
 	currentPermissionRequest *agent.PermissionRequest
 	selectedPermissionOption int
 	
+	// Session management
+	currentSession *interfaces.Session
+	historyStore   interfaces.HistoryStore
 	
 	// Debug logging
 	logger *slog.Logger
+}
+
+// generateSessionID creates a unique session ID
+func generateSessionID() string {
+	bytes := make([]byte, 8)
+	rand.Read(bytes)
+	return fmt.Sprintf("session_%s_%d", hex.EncodeToString(bytes), time.Now().Unix())
 }
 
 func NewModel() Model {
@@ -116,28 +130,85 @@ func NewModel() Model {
 		logger.Warn("Failed to load commands", "error", err)
 	}
 	
+	// Load memory from CLAUDE.md files
+	if userConfigDir != "" {
+		if err := memoryManager.LoadUserMemory(userConfigDir); err != nil {
+			logger.Warn("Failed to load user memory", "error", err)
+		}
+	}
+	if projectDir != "" {
+		if err := memoryManager.LoadProjectMemory(projectDir); err != nil {
+			logger.Warn("Failed to load project memory", "error", err)
+		}
+	}
+	
+	// Create history store
+	historyDir := ""
+	if userConfigDir != "" {
+		historyDir = userConfigDir + "/history"
+	}
+	historyStore := history.NewStore(historyDir, fs)
+	
+	// Create new session
+	currentSession := &interfaces.Session{
+		ID:        generateSessionID(),
+		Timestamp: time.Now(),
+		Messages:  []interfaces.Message{},
+		Events:    []interfaces.Event{},
+	}
+	
 	theme := DefaultTheme()
 	return Model{
-		state:        sessionReady,
-		input:        NewInputModel(),
-		modal:        NewModalModel(),
-		theme:        theme,
-		renderer:     NewRenderer(theme),
-		events:       events,
-		orchestrator: orchestrator,
+		state:         sessionReady,
+		input:         NewInputModel(),
+		modal:         NewModalModel(),
+		theme:         theme,
+		renderer:      NewRenderer(theme),
+		events:        events,
+		orchestrator:  orchestrator,
 		commandLoader: commandLoader,
-		logger:       logger,
+		currentSession: currentSession,
+		historyStore:   historyStore,
+		logger:        logger,
 	}
 }
 
+// WithResumeFlag configures the model to resume the last session on startup
+func (m Model) WithResumeFlag() Model {
+	// Try to load the last session
+	lastSession, err := m.historyStore.LoadLastSession()
+	if err != nil {
+		m.logger.Warn("Failed to load last session for --resume flag", "error", err)
+		return m
+	}
+	if lastSession != nil {
+		m.currentSession = lastSession
+		m.logger.Info("Loaded last session for --resume flag", "session_id", lastSession.ID)
+	}
+	return m
+}
+
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	var initCmds []tea.Cmd
+	
+	initCmds = append(initCmds,
 		m.input.Init(),
 		m.modal.Init(),
 		m.listenForEvents(),
-		printToScrollback(m.renderer.Welcome()),
 		tea.EnableBracketedPaste,
 	)
+	
+	// Check if we should show resume message for resumed session
+	if len(m.currentSession.Messages) > 0 {
+		// This is a resumed session, just show confirmation without replaying
+		resumeMsg := fmt.Sprintf("Session resumed (ID: %s) - %d messages loaded", m.currentSession.ID, len(m.currentSession.Messages))
+		initCmds = append(initCmds, printToScrollback(m.renderer.AgentFinal(resumeMsg)))
+	} else {
+		// New session, show welcome message
+		initCmds = append(initCmds, printToScrollback(m.renderer.Welcome()))
+	}
+	
+	return tea.Batch(initCmds...)
 }
 
 func (m Model) listenForEvents() tea.Cmd {
@@ -338,6 +409,16 @@ func (m Model) handleSlashCommand(input string, cmds []tea.Cmd) (tea.Model, tea.
 		return m.handleHelpCommand(cmds)
 	case "clear":
 		return m.handleClearCommand(cmds)
+	case "quit", "exit":
+		return m.handleQuitCommand(cmds)
+	case "compact":
+		return m.handleCompactCommand(cmds)
+	case "save":
+		return m.handleSaveCommand(args, cmds)
+	case "resume":
+		return m.handleResumeCommand(args, cmds)
+	case "login":
+		return m.handlePlaceholderCommand("login", cmds)
 	default:
 		// Try to find custom command
 		return m.handleCustomCommand(command, args, cmds)
@@ -347,8 +428,13 @@ func (m Model) handleSlashCommand(input string, cmds []tea.Cmd) (tea.Model, tea.
 // handleHelpCommand shows available commands
 func (m Model) handleHelpCommand(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	helpText := `Available slash commands:
-  /help     - Show this help message
-  /clear    - Clear the conversation history
+  /help           - Show this help message
+  /clear          - Clear the conversation history
+  /quit           - Exit the program
+  /save [file]    - Save conversation to versioned JSON file (optional filename)
+  /resume [file]  - Resume from most recent save file, or specify filename
+  /compact        - Compact conversation (keep first user + last assistant message)
+  /login          - Login to service (not implemented yet)
   
 Custom commands will be available when command files are loaded.`
 	
@@ -365,6 +451,271 @@ func (m Model) handleClearCommand(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	
 	// Show a confirmation message
 	output := m.renderer.AgentFinal("Conversation cleared.")
+	cmds = append(cmds, printToScrollback(output))
+	
+	return m, tea.Batch(cmds...)
+}
+
+// handleQuitCommand exits the program
+func (m Model) handleQuitCommand(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Show a goodbye message
+	output := m.renderer.AgentFinal("Goodbye!")
+	cmds = append(cmds, printToScrollback(output))
+	
+	// Exit the program
+	cmds = append(cmds, tea.Quit)
+	
+	return m, tea.Batch(cmds...)
+}
+
+// handleCompactCommand compacts the conversation by keeping only essential messages
+func (m Model) handleCompactCommand(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if len(m.currentSession.Messages) <= 2 {
+		output := m.renderer.AgentFinal("Conversation is already compact (2 or fewer messages).")
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	// Keep first user message and last assistant message
+	var compactedMessages []interfaces.Message
+	
+	// Find first user message
+	for _, msg := range m.currentSession.Messages {
+		if msg.Role == "user" {
+			compactedMessages = append(compactedMessages, msg)
+			break
+		}
+	}
+	
+	// Find last assistant message
+	for i := len(m.currentSession.Messages) - 1; i >= 0; i-- {
+		msg := m.currentSession.Messages[i]
+		if msg.Role == "assistant" {
+			compactedMessages = append(compactedMessages, msg)
+			break
+		}
+	}
+	
+	// Update session with compacted messages
+	originalCount := len(m.currentSession.Messages)
+	m.currentSession.Messages = compactedMessages
+	
+	// Clear screen and replay compacted conversation
+	cmds = append(cmds, tea.ClearScreen)
+	
+	// Replay compacted messages
+	for _, message := range compactedMessages {
+		var output string
+		switch message.Role {
+		case "user":
+			output = m.renderer.User(message.Content)
+		case "assistant":
+			output = m.renderer.AgentFinal(message.Content)
+		default:
+			continue
+		}
+		cmds = append(cmds, printToScrollback(output))
+	}
+	
+	successMsg := fmt.Sprintf("Conversation compacted: %d messages → %d messages", originalCount, len(compactedMessages))
+	output := m.renderer.AgentFinal(successMsg)
+	cmds = append(cmds, printToScrollback(output))
+	
+	return m, tea.Batch(cmds...)
+}
+
+// handleSaveCommand saves the current conversation to a JSON file
+func (m Model) handleSaveCommand(args []string, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Get filename (optional parameter)
+	filename := "save.json"
+	if len(args) > 0 {
+		filename = args[0]
+		if !strings.HasSuffix(filename, ".json") {
+			filename += ".json"
+		}
+	}
+	
+	// Add version to filename
+	timestamp := time.Now().Format("20060102_150405")
+	if filename == "save.json" {
+		filename = fmt.Sprintf("save_%s.json", timestamp)
+	} else {
+		// Insert timestamp before .json extension
+		base := filename[:len(filename)-5]
+		filename = fmt.Sprintf("%s_%s.json", base, timestamp)
+	}
+	
+	// Create save directory in user config
+	userConfigDir, err := config.GetUserConfigDir()
+	if err != nil {
+		errorMsg := fmt.Sprintf("Error getting config directory: %v", err)
+		output := m.renderer.AgentError(errorMsg)
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	saveDir := userConfigDir + "/saves"
+	savePath := saveDir + "/" + filename
+	
+	// Create save directory if it doesn't exist
+	if err := os.MkdirAll(saveDir, 0755); err != nil {
+		errorMsg := fmt.Sprintf("Error creating save directory: %v", err)
+		output := m.renderer.AgentError(errorMsg)
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	// Save the current session
+	if err := m.historyStore.SaveSession(m.currentSession); err != nil {
+		errorMsg := fmt.Sprintf("Error saving session to history: %v", err)
+		output := m.renderer.AgentError(errorMsg)
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	// Also save to the specified file
+	sessionData, err := json.MarshalIndent(m.currentSession, "", "  ")
+	if err != nil {
+		errorMsg := fmt.Sprintf("Error marshaling session data: %v", err)
+		output := m.renderer.AgentError(errorMsg)
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	if err := os.WriteFile(savePath, sessionData, 0644); err != nil {
+		errorMsg := fmt.Sprintf("Error writing save file: %v", err)
+		output := m.renderer.AgentError(errorMsg)
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	successMsg := fmt.Sprintf("Conversation saved to %s", savePath)
+	output := m.renderer.AgentFinal(successMsg)
+	cmds = append(cmds, printToScrollback(output))
+	
+	return m, tea.Batch(cmds...)
+}
+
+// handleResumeCommand loads a conversation from a saved JSON file
+func (m Model) handleResumeCommand(args []string, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	var filePath string
+	
+	if len(args) > 0 {
+		// Load from specified file
+		filename := args[0]
+		if !strings.HasSuffix(filename, ".json") {
+			filename += ".json"
+		}
+		
+		// Try relative path first, then saves directory
+		if _, err := os.Stat(filename); err == nil {
+			filePath = filename
+		} else {
+			userConfigDir, err := config.GetUserConfigDir()
+			if err != nil {
+				errorMsg := fmt.Sprintf("Error getting config directory: %v", err)
+				output := m.renderer.AgentError(errorMsg)
+				cmds = append(cmds, printToScrollback(output))
+				return m, tea.Batch(cmds...)
+			}
+			filePath = userConfigDir + "/saves/" + filename
+		}
+	} else {
+		// Load most recently modified save file
+		userConfigDir, err := config.GetUserConfigDir()
+		if err != nil {
+			errorMsg := fmt.Sprintf("Error getting config directory: %v", err)
+			output := m.renderer.AgentError(errorMsg)
+			cmds = append(cmds, printToScrollback(output))
+			return m, tea.Batch(cmds...)
+		}
+		
+		saveDir := userConfigDir + "/saves"
+		entries, err := os.ReadDir(saveDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				output := m.renderer.AgentFinal("No saved conversations found to resume.")
+				cmds = append(cmds, printToScrollback(output))
+				return m, tea.Batch(cmds...)
+			}
+			errorMsg := fmt.Sprintf("Error reading saves directory: %v", err)
+			output := m.renderer.AgentError(errorMsg)
+			cmds = append(cmds, printToScrollback(output))
+			return m, tea.Batch(cmds...)
+		}
+		
+		var mostRecentFile string
+		var mostRecentTime time.Time
+		
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			
+			if info.ModTime().After(mostRecentTime) {
+				mostRecentTime = info.ModTime()
+				mostRecentFile = entry.Name()
+			}
+		}
+		
+		if mostRecentFile == "" {
+			output := m.renderer.AgentFinal("No saved conversations found to resume.")
+			cmds = append(cmds, printToScrollback(output))
+			return m, tea.Batch(cmds...)
+		}
+		
+		filePath = saveDir + "/" + mostRecentFile
+	}
+	
+	// Load session from file
+	sessionData, err := os.ReadFile(filePath)
+	if err != nil {
+		errorMsg := fmt.Sprintf("Error reading save file: %v", err)
+		output := m.renderer.AgentError(errorMsg)
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	var session interfaces.Session
+	if err := json.Unmarshal(sessionData, &session); err != nil {
+		errorMsg := fmt.Sprintf("Error parsing save file: %v", err)
+		output := m.renderer.AgentError(errorMsg)
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	// Check if trying to resume the current session
+	if session.ID == m.currentSession.ID {
+		output := m.renderer.AgentFinal("Cannot resume the session you're already in.")
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	m.currentSession = &session
+	
+	// Replay the conversation
+	return m.replaySession(cmds)
+}
+
+// replaySession loads a session without replaying all messages to terminal
+func (m Model) replaySession(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Just show a confirmation message, don't replay the entire conversation
+	successMsg := fmt.Sprintf("Resumed conversation (Session ID: %s) - %d messages loaded", m.currentSession.ID, len(m.currentSession.Messages))
+	output := m.renderer.AgentFinal(successMsg)
+	cmds = append(cmds, printToScrollback(output))
+	
+	return m, tea.Batch(cmds...)
+}
+
+// handlePlaceholderCommand shows a "not implemented" message for placeholder commands
+func (m Model) handlePlaceholderCommand(command string, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	message := fmt.Sprintf("/%s not implemented yet!", command)
+	output := m.renderer.AgentFinal(message)
 	cmds = append(cmds, printToScrollback(output))
 	
 	return m, tea.Batch(cmds...)
@@ -408,7 +759,9 @@ func (m Model) handleCustomCommand(command string, args []string, cmds []tea.Cmd
 }
 
 // updateCompletions updates command completion suggestions based on current input
-func (m *Model) updateCompletions() {
+// Returns true if completions visibility state changed
+func (m *Model) updateCompletions() bool {
+	wasShowing := m.showingCompletions
 	inputValue := m.input.Value()
 	
 	// Only show completions for slash commands
@@ -416,14 +769,14 @@ func (m *Model) updateCompletions() {
 		m.showingCompletions = false
 		m.completionOptions = nil
 		m.selectedCompletionIndex = 0
-		return
+		return wasShowing != m.showingCompletions
 	}
 	
 	// Extract the command part (without leading /)
 	commandPart := strings.TrimPrefix(inputValue, "/")
 	
 	// Get all available commands
-	allCommands := []string{"help", "clear"} // Built-in commands
+	allCommands := []string{"help", "clear", "quit", "exit", "compact", "save", "resume", "login"} // Built-in commands
 	allCommands = append(allCommands, m.commandLoader.ListCommands()...) // Custom commands
 	
 	// Filter commands that match the current input (fuzzy matching)
@@ -447,6 +800,9 @@ func (m *Model) updateCompletions() {
 		m.completionOptions = nil
 		m.selectedCompletionIndex = 0
 	}
+	
+	// Return true if visibility state changed
+	return wasShowing != m.showingCompletions
 }
 
 // selectCompletion applies the selected completion to the input
@@ -608,7 +964,10 @@ func (m Model) handleCompletionKeys(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, 
 	case "tab":
 		// Tab selects the completion
 		m.selectCompletion()
-		m.updateCompletions() // Update completions after selection
+		if m.updateCompletions() {
+			// Force a re-render if completions visibility changed
+			return m, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
+		}
 		return m, nil
 	case "enter":
 		// Enter completes to selected command AND executes it
@@ -628,7 +987,8 @@ func (m Model) handleCompletionKeys(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, 
 		m.showingCompletions = false
 		m.completionOptions = nil
 		m.selectedCompletionIndex = 0
-		return m, nil
+		// Force a re-render to fix any display artifacts from hiding completions
+		return m, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} }
 	default:
 		// Forward other keys to input and update completions
 		var cmd tea.Cmd
@@ -637,7 +997,10 @@ func (m Model) handleCompletionKeys(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, 
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		m.updateCompletions()
+		if m.updateCompletions() {
+			// Force a re-render if completions visibility changed
+			cmds = append(cmds, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} })
+		}
 		return m, tea.Batch(cmds...)
 	}
 }
@@ -660,7 +1023,10 @@ func (m Model) handleGeneralKeys(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea
 				cmds = append(cmds, cmd)
 			}
 			// Update completions after input changes
-			m.updateCompletions()
+			if m.updateCompletions() {
+				// Force a re-render if completions visibility changed
+				cmds = append(cmds, func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} })
+			}
 		}
 	}
 	return m, tea.Batch(cmds...)
@@ -683,6 +1049,14 @@ func (m Model) handleEnterKey(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		userMsg := inputValue
 		(&m.input).Reset()
 		m.logger.Debug("Reset input field")
+		
+		// Record user message in session
+		userMessage := interfaces.Message{
+			Role:      "user",
+			Content:   userMsg,
+			Timestamp: time.Now(),
+		}
+		m.currentSession.Messages = append(m.currentSession.Messages, userMessage)
 		
 		// Print user message to scrollback
 		userOutput := m.renderer.User(userMsg)
@@ -714,6 +1088,14 @@ func (m Model) handleEnterKey(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 
 // handleAgentEvent handles events from the agent orchestrator
 func (m Model) handleAgentEvent(msg agent.Event, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Record event in session
+	eventRecord := interfaces.Event{
+		Type:    msg.Type,
+		Content: msg.Content,
+		Data:    msg.Data,
+	}
+	m.currentSession.Events = append(m.currentSession.Events, eventRecord)
+	
 	// Handle agent events
 	m.logger.Debug("Agent event received", "type", msg.Type, "content", msg.Content)
 	switch msg.Type {
@@ -727,6 +1109,14 @@ func (m Model) handleAgentEvent(msg agent.Event, cmds []tea.Cmd) (tea.Model, tea
 		cmds = append(cmds, printToScrollback(m.renderer.AgentObservation(msg.Content)))
 		m.logger.Debug("Printed observation message to scrollback")
 	case string(agent.EventTypeFinal):
+		// Record assistant message in session
+		assistantMessage := interfaces.Message{
+			Role:      "assistant",
+			Content:   msg.Content,
+			Timestamp: time.Now(),
+		}
+		m.currentSession.Messages = append(m.currentSession.Messages, assistantMessage)
+		
 		cmds = append(cmds, printToScrollback(m.renderer.AgentFinal(msg.Content)))
 		m.state = sessionReady
 		m.input.SetThinking(false)

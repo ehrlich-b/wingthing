@@ -59,6 +59,11 @@ func runHeadless(ctx context.Context, prompt string) error {
 func runInteractive(ctx context.Context) error {
 	model := ui.NewModel()
 	
+	// Handle --resume flag
+	if resume {
+		model = model.WithResumeFlag()
+	}
+	
 	p := tea.NewProgram(
 		model,
 		tea.WithInput(os.Stdin),
