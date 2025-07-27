@@ -57,10 +57,10 @@ func (m *Manager) loadConfig(path string, config *interfaces.Config) error {
 func (m *Manager) mergeConfigs() {
 	m.merged = &interfaces.Config{
 		Theme:       m.getStringValue(m.userConfig.Theme, m.projectConfig.Theme, "default"),
-		AutoScroll:  m.getBoolValue(m.userConfig.AutoScroll, m.projectConfig.AutoScroll, true),
-		MaxTurns:    m.getIntValue(m.userConfig.MaxTurns, m.projectConfig.MaxTurns, 10),
-		Timeout:     m.getIntValue(m.userConfig.Timeout, m.projectConfig.Timeout, 300),
-		BashTimeout: m.getIntValue(m.userConfig.BashTimeout, m.projectConfig.BashTimeout, 30),
+		AutoScroll:  m.getBoolPtrValue(m.userConfig.AutoScroll, m.projectConfig.AutoScroll, true),
+		MaxTurns:    m.getIntPtrValue(m.userConfig.MaxTurns, m.projectConfig.MaxTurns, 10),
+		Timeout:     m.getIntPtrValue(m.userConfig.Timeout, m.projectConfig.Timeout, 300),
+		BashTimeout: m.getIntPtrValue(m.userConfig.BashTimeout, m.projectConfig.BashTimeout, 30),
 		Model:       m.getStringValue(m.userConfig.Model, m.projectConfig.Model, ""),
 		APIKey:      m.getStringValue(m.userConfig.APIKey, m.projectConfig.APIKey, ""),
 		BaseURL:     m.getStringValue(m.userConfig.BaseURL, m.projectConfig.BaseURL, ""),
@@ -77,24 +77,24 @@ func (m *Manager) getStringValue(user, project, defaultValue string) string {
 	return defaultValue
 }
 
-func (m *Manager) getBoolValue(user, project, defaultValue bool) bool {
-	if project {
+func (m *Manager) getBoolPtrValue(user, project *bool, defaultValue bool) *bool {
+	if project != nil {
 		return project
 	}
-	if user {
+	if user != nil {
 		return user
 	}
-	return defaultValue
+	return &defaultValue
 }
 
-func (m *Manager) getIntValue(user, project, defaultValue int) int {
-	if project != 0 {
+func (m *Manager) getIntPtrValue(user, project *int, defaultValue int) *int {
+	if project != nil {
 		return project
 	}
-	if user != 0 {
+	if user != nil {
 		return user
 	}
-	return defaultValue
+	return &defaultValue
 }
 
 func (m *Manager) Get() *interfaces.Config {

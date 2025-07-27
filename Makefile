@@ -28,6 +28,26 @@ clean:
 test:
 	go test ./...
 
+# Run tests with race detection
+.PHONY: race
+race:
+	go test -race ./...
+
+# Run tests with verbose output
+.PHONY: test-v
+test-v:
+	go test -v ./...
+
+# Run tests with coverage
+.PHONY: test-cover
+test-cover:
+	go test -cover ./...
+
+# Run tests with race detection and verbose output
+.PHONY: race-v
+race-v:
+	go test -race -v ./...
+
 # Format code
 .PHONY: fmt
 fmt:
@@ -84,16 +104,20 @@ clean-mocks:
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  build      - Build the binary to ./dist/wingthing"
-	@echo "  clean      - Remove build artifacts"
-	@echo "  test       - Run tests"
-	@echo "  fmt        - Format code"
-	@echo "  vet        - Vet code"
-	@echo "  lint       - Run linter (requires golangci-lint)"
-	@echo "  deps       - Download and tidy dependencies"
-	@echo "  build-all  - Build for multiple platforms"
-	@echo "  dev        - Development build (no optimizations)"
-	@echo "  install    - Install binary to GOPATH/bin"
-	@echo "  mocks      - Generate mocks using mockery"
+	@echo "  build       - Build the binary to ./dist/wingthing"
+	@echo "  clean       - Remove build artifacts"
+	@echo "  test        - Run tests"
+	@echo "  race        - Run tests with race detection"
+	@echo "  test-v      - Run tests with verbose output"
+	@echo "  test-cover  - Run tests with coverage"
+	@echo "  race-v      - Run tests with race detection and verbose output"
+	@echo "  fmt         - Format code"
+	@echo "  vet         - Vet code"
+	@echo "  lint        - Run linter (requires golangci-lint)"
+	@echo "  deps        - Download and tidy dependencies"
+	@echo "  build-all   - Build for multiple platforms"
+	@echo "  dev         - Development build (no optimizations)"
+	@echo "  install     - Install binary to GOPATH/bin"
+	@echo "  mocks       - Generate mocks using mockery"
 	@echo "  clean-mocks - Remove generated mocks"
-	@echo "  help       - Show this help message"
+	@echo "  help        - Show this help message"

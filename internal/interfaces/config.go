@@ -4,14 +4,14 @@ package interfaces
 type Config struct {
 	// UI Settings
 	Theme       string `json:"theme,omitempty"`
-	AutoScroll  bool   `json:"auto_scroll,omitempty"`
+	AutoScroll  *bool  `json:"auto_scroll,omitempty"`
 	
 	// Agent Settings
-	MaxTurns    int    `json:"max_turns,omitempty"`
-	Timeout     int    `json:"timeout,omitempty"`
+	MaxTurns    *int   `json:"max_turns,omitempty"`
+	Timeout     *int   `json:"timeout,omitempty"`
 	
 	// Tool Settings
-	BashTimeout int    `json:"bash_timeout,omitempty"`
+	BashTimeout *int   `json:"bash_timeout,omitempty"`
 	
 	// LLM Settings (for future use)
 	Model       string `json:"model,omitempty"`

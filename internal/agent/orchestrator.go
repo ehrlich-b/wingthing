@@ -9,6 +9,13 @@ import (
 	"github.com/behrlich/wingthing/internal/tools"
 )
 
+// ToolBatchResult represents the result of executing a batch of tool calls
+type ToolBatchResult struct {
+	Results           []string              // successful tool outputs
+	PermissionRequest *PermissionRequest    // nil if no permission needed
+	Error             error                 // any error that occurred
+}
+
 type Orchestrator struct {
 	toolRunner  tools.Runner
 	events      chan<- Event
@@ -72,17 +79,20 @@ func (o *Orchestrator) runConversationLoop(ctx context.Context) error {
 
 		// If LLM wants to use tools, handle them
 		if len(response.ToolCalls) > 0 {
-			toolResults, err := o.handleToolCalls(ctx, response.ToolCalls)
-			if err != nil {
-				return err
+			batchResult := o.handleToolCalls(ctx, response.ToolCalls)
+			
+			// Check for errors
+			if batchResult.Error != nil {
+				return batchResult.Error
 			}
 
 			// If we got permission requests, stop here and wait for user input
-			if strings.Contains(toolResults, "PERMISSION_REQUESTED") {
+			if batchResult.PermissionRequest != nil {
 				return nil
 			}
 
 			// Add tool results to conversation
+			toolResults := strings.Join(batchResult.Results, "\n")
 			o.messages = append(o.messages, interfaces.Message{
 				Role:    "user",
 				Content: toolResults,
@@ -110,7 +120,7 @@ func (o *Orchestrator) runConversationLoop(ctx context.Context) error {
 	}
 }
 
-func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfaces.ToolCall) (string, error) {
+func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfaces.ToolCall) *ToolBatchResult {
 	var results []string
 
 	for _, toolCall := range toolCalls {
@@ -126,7 +136,7 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 			allowed, err = o.permissions.CheckPermission(toolName, "execute", params)
 			if err != nil {
 				o.events <- Event{Type: string(EventTypeError), Content: err.Error()}
-				return "", err
+				return &ToolBatchResult{Error: err}
 			}
 		} else {
 			allowed = true // Read-only operations are always allowed
@@ -136,17 +146,21 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 			// Save pending tool call for retry after permission
 			o.pendingToolCall = &toolCall
 			
-			// Request permission
+			// Create permission request
+			permReq := &PermissionRequest{
+				Tool:        toolName,
+				Description: fmt.Sprintf("Allow wingthing to run this CLI command"),
+				Parameters:  params,
+			}
+			
+			// Emit permission request event
 			o.events <- Event{
 				Type:    string(EventTypePermissionRequest),
 				Content: fmt.Sprintf("The agent wants to run a CLI command using the '%s' tool.", toolName),
-				Data: PermissionRequest{
-					Tool:        toolName,
-					Description: fmt.Sprintf("Allow wingthing to run this CLI command"),
-					Parameters:  params,
-				},
+				Data:    *permReq,
 			}
-			return "PERMISSION_REQUESTED", nil
+			
+			return &ToolBatchResult{PermissionRequest: permReq}
 		}
 
 		// Execute tool
@@ -170,7 +184,7 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 		results = append(results, fmt.Sprintf("Tool %s output: %s", toolName, result.Output))
 	}
 
-	return strings.Join(results, "\n"), nil
+	return &ToolBatchResult{Results: results}
 }
 
 func (o *Orchestrator) GrantPermission(tool, action string, params map[string]any, decision PermissionDecision) {

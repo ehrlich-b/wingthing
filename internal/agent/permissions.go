@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"sync"
 
 	"github.com/behrlich/wingthing/internal/interfaces"
 )
@@ -28,6 +31,7 @@ type PermissionRule struct {
 }
 
 type PermissionEngine struct {
+	mu    sync.RWMutex
 	rules map[string]PermissionRule
 	fs    interfaces.FileSystem
 }
@@ -41,6 +45,9 @@ func NewPermissionEngine(fs interfaces.FileSystem) *PermissionEngine {
 
 func (pe *PermissionEngine) CheckPermission(tool, action string, params map[string]any) (bool, error) {
 	key := pe.makeKey(tool, action, params)
+	
+	pe.mu.Lock()
+	defer pe.mu.Unlock()
 	
 	rule, exists := pe.rules[key]
 	if !exists {
@@ -74,6 +81,9 @@ func (pe *PermissionEngine) GrantPermission(tool, action string, params map[stri
 		Decision:   decision,
 		Parameters: params,
 	}
+	
+	pe.mu.Lock()
+	defer pe.mu.Unlock()
 	pe.rules[key] = rule
 }
 
@@ -86,6 +96,9 @@ func (pe *PermissionEngine) DenyPermission(tool, action string, params map[strin
 		Decision:   decision,
 		Parameters: params,
 	}
+	
+	pe.mu.Lock()
+	defer pe.mu.Unlock()
 	pe.rules[key] = rule
 }
 
@@ -103,6 +116,8 @@ func (pe *PermissionEngine) LoadFromFile(filePath string) error {
 		return err
 	}
 	
+	pe.mu.Lock()
+	defer pe.mu.Unlock()
 	pe.rules = rules
 	return nil
 }
@@ -114,7 +129,10 @@ func (pe *PermissionEngine) SaveToFile(filePath string) error {
 		return err
 	}
 	
+	pe.mu.RLock()
 	data, err := json.MarshalIndent(pe.rules, "", "  ")
+	pe.mu.RUnlock()
+	
 	if err != nil {
 		return err
 	}
@@ -127,8 +145,51 @@ func (pe *PermissionEngine) makeKey(tool, action string, params map[string]any) 
 }
 
 func (pe *PermissionEngine) hashParams(params map[string]any) string {
-	// Create a deterministic hash of the parameters
-	data, _ := json.Marshal(params)
+	// Create a deterministic hash of the parameters by canonicalizing them
+	canonical := pe.canonicalizeParams(params)
+	data, _ := json.Marshal(canonical)
 	hash := sha256.Sum256(data)
 	return fmt.Sprintf("%x", hash)[:16] // Use first 16 chars
+}
+
+// canonicalizeParams recursively sorts map keys to ensure deterministic JSON marshaling
+func (pe *PermissionEngine) canonicalizeParams(params any) any {
+	val := reflect.ValueOf(params)
+	
+	switch val.Kind() {
+	case reflect.Map:
+		if val.Type().Key().Kind() != reflect.String {
+			// Non-string keys, return as-is
+			return params
+		}
+		
+		// Create a new map with sorted keys
+		result := make(map[string]any)
+		keys := val.MapKeys()
+		
+		// Sort keys by string value
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].String() < keys[j].String()
+		})
+		
+		// Add sorted key-value pairs
+		for _, key := range keys {
+			value := val.MapIndex(key)
+			result[key.String()] = pe.canonicalizeParams(value.Interface())
+		}
+		
+		return result
+		
+	case reflect.Slice, reflect.Array:
+		// Canonicalize each element in the slice/array
+		result := make([]any, val.Len())
+		for i := 0; i < val.Len(); i++ {
+			result[i] = pe.canonicalizeParams(val.Index(i).Interface())
+		}
+		return result
+		
+	default:
+		// Primitive types, return as-is
+		return params
+	}
 }

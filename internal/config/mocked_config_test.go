@@ -33,8 +33,12 @@ func TestConfigManagerWithMocks(t *testing.T) {
 	if cfg.Theme != "dark" {
 		t.Errorf("Expected theme 'dark', got '%s'", cfg.Theme)
 	}
-	if cfg.MaxTurns != 10 {
-		t.Errorf("Expected max_turns 10, got %d", cfg.MaxTurns)
+	if cfg.MaxTurns == nil || *cfg.MaxTurns != 10 {
+		if cfg.MaxTurns == nil {
+			t.Errorf("Expected max_turns 10, got nil")
+		} else {
+			t.Errorf("Expected max_turns 10, got %d", *cfg.MaxTurns)
+		}
 	}
 	
 	// Verify all expectations were met

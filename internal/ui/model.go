@@ -151,208 +151,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.logger.Debug("Window size changed", "width", msg.Width, "height", msg.Height)
-		
-		// Update layout - don't set transcript size here, do it in View()
-		m.input.SetWidth(msg.Width)
-		m.logger.Debug("Window resized", "width", msg.Width, "height", msg.Height)
+		return m.handleWindowSize(msg), nil
 		
 	case tea.KeyMsg:
-		// Handle paste events (v1 style - uses msg.Paste flag)
-		if msg.Paste {
-			m.logger.Debug("Paste event detected", "content", string(msg.Runes))
-			
-			// Add pasted content to input (preserving newlines)
-			currentValue := m.input.Value()
-			m.input.textarea.SetValue(currentValue + string(msg.Runes))
-			
-			// Fix height using the new approach
-			m.input.FixDynamicHeight()
-			return m, nil
-		}
+		return m.handleKeyEvent(msg, cmds)
 		
-		if m.modal.IsOpen() {
-			var cmd tea.Cmd
-			m.modal, cmd = m.modal.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			return m, tea.Batch(cmds...)
-		}
-
-		// DEBUG: Log all key events with details
-		m.logger.Debug("Key event received", "key", msg.String(), "type", msg.Type, "runes", string(msg.Runes))
-
-		// Handle permission responses
-		if m.state == sessionWaitingPermission {
-			switch msg.String() {
-			case "ctrl+c":
-				m.logger.Debug("Ctrl+C pressed, quitting")
-				return m, tea.Quit
-			case "up", "k":
-				if m.selectedPermissionOption > 0 {
-					m.selectedPermissionOption--
-				}
-				return m, nil
-			case "down", "j":
-				if m.selectedPermissionOption < 1 { // 2 options: 0-1
-					m.selectedPermissionOption++
-				}
-				return m, nil
-			case "enter":
-				options := []struct{choice, decision string}{
-					{"Allow Once", "allow_once"},
-					{"No", "deny"},
-				}
-				selected := options[m.selectedPermissionOption]
-				return m.handlePermissionResponse(selected.choice, selected.decision, cmds)
-			case "a", "A":
-				return m.handlePermissionResponse("Allow Once", "allow_once", cmds)
-			case "n", "N":
-				return m.handlePermissionResponse("No", "deny", cmds)
-			default:
-				// Ignore other keys during permission wait
-				return m, nil
-			}
-		}
-
-		// Handle completion navigation if completions are showing
-		if m.showingCompletions {
-			switch msg.String() {
-			case "ctrl+c":
-				m.logger.Debug("Ctrl+C pressed, quitting")
-				return m, tea.Quit
-			case "up":
-				if m.selectedCompletionIndex > 0 {
-					m.selectedCompletionIndex--
-				}
-				return m, nil
-			case "down":
-				if m.selectedCompletionIndex < len(m.completionOptions)-1 {
-					m.selectedCompletionIndex++
-				}
-				return m, nil
-			case "tab", "enter":
-				// Tab or enter selects the completion
-				m.selectCompletion()
-				m.updateCompletions() // Update completions after selection
-				return m, nil
-			case "esc":
-				// Escape hides completions
-				m.showingCompletions = false
-				m.completionOptions = nil
-				m.selectedCompletionIndex = 0
-				return m, nil
-			}
-		}
-
-		switch msg.String() {
-		case "ctrl+c":
-			m.logger.Debug("Ctrl+C pressed, quitting")
-			return m, tea.Quit
-		case "enter":
-			// Ignore enter if thinking
-			if m.state == sessionThinking {
-				m.logger.Debug("Enter pressed but thinking, ignoring")
-				return m, nil
-			}
-			
-			inputValue := m.input.Value()
-			
-			m.logger.Debug("Enter pressed", "input_value", inputValue, "input_length", len(inputValue))
-			if inputValue != "" {
-				m.logger.Debug("Processing user input", "message", inputValue)
-				// Handle user input
-				userMsg := inputValue
-				(&m.input).Reset()
-				m.logger.Debug("Reset input field")
-				
-				// Print user message to scrollback
-				userOutput := m.renderer.User(userMsg)
-				m.logger.Debug("About to print user message", "content", userOutput)
-				cmds = append(cmds, printToScrollback(userOutput))
-				m.logger.Debug("Added user message print command to batch")
-				
-				// Check if this is a slash command
-				if strings.HasPrefix(userMsg, "/") {
-					m.logger.Debug("Detected slash command")
-					return m.handleSlashCommand(userMsg, cmds)
-				}
-				
-				// Send to agent orchestrator
-				m.state = sessionThinking
-				m.input.SetThinking(true)
-				m.logger.Debug("Set state to thinking")
-				
-				go func() {
-					ctx := context.Background()
-					m.logger.Debug("Starting orchestrator processing")
-					m.orchestrator.ProcessPrompt(ctx, userMsg)
-				}()
-			} else {
-				m.logger.Debug("Enter pressed but input is empty")
-			}
-			return m, tea.Batch(cmds...)
-		default:
-			// Only update input if not thinking
-			if m.state != sessionThinking {
-				var cmd tea.Cmd
-				inputPtr, cmd := m.input.Update(msg)
-				m.input = *inputPtr
-				if cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				// Update completions after input changes
-				m.updateCompletions()
-			}
-		}
-
 	case agent.Event:
-		// Handle agent events
-		m.logger.Debug("Agent event received", "type", msg.Type, "content", msg.Content)
-		switch msg.Type {
-		case string(agent.EventTypePlan):
-			// Skip plan messages - they're internal orchestration
-			m.logger.Debug("Skipping plan message (internal only)")
-		case string(agent.EventTypeRunTool):
-			cmds = append(cmds, printToScrollback(m.renderer.AgentRun(msg.Content)))
-			m.logger.Debug("Printed tool message to scrollback")
-		case string(agent.EventTypeObservation):
-			cmds = append(cmds, printToScrollback(m.renderer.AgentObservation(msg.Content)))
-			m.logger.Debug("Printed observation message to scrollback")
-		case string(agent.EventTypeFinal):
-			cmds = append(cmds, printToScrollback(m.renderer.AgentFinal(msg.Content)))
-			m.state = sessionReady
-			m.input.SetThinking(false)
-			m.logger.Debug("Printed final message to scrollback, set state to ready")
-		case string(agent.EventTypePermissionRequest):
-			// Parse the permission request data
-			if permReq, ok := msg.Data.(agent.PermissionRequest); ok {
-				m.currentPermissionRequest = &permReq
-				m.selectedPermissionOption = 0 // Reset to first option
-				
-				m.state = sessionWaitingPermission
-				m.input.SetThinking(false) // Allow input for permission response
-				m.logger.Debug("Showing permission request", "tool", permReq.Tool)
-			} else {
-				m.logger.Error("Failed to parse permission request data")
-				cmds = append(cmds, printToScrollback(m.renderer.AgentError("Failed to parse permission request")))
-				m.state = sessionReady
-				m.input.SetThinking(false)
-			}
-		case string(agent.EventTypeError):
-			cmds = append(cmds, printToScrollback(m.renderer.AgentError(msg.Content)))
-			m.state = sessionReady
-			m.input.SetThinking(false)
-			m.logger.Debug("Printed error message to scrollback, set state to ready")
-		}
-		// Continue listening for more events
-		cmds = append(cmds, m.listenForEvents())
+		return m.handleAgentEvent(msg, cmds)
 	}
-
-	// No transcript to update since we print directly to scrollback
 
 	return m, tea.Batch(cmds...)
 }
@@ -653,6 +459,9 @@ func (m *Model) selectCompletion() {
 	m.input.textarea.SetValue("/" + selectedCommand + " ")
 	m.input.textarea.CursorEnd()
 	
+	// Fix height after setting value
+	m.input.FixDynamicHeight()
+	
 	// Hide completions after selection
 	m.showingCompletions = false
 	m.completionOptions = nil
@@ -692,4 +501,259 @@ func fuzzyMatch(command, pattern string) bool {
 	}
 	
 	return true
+}
+
+// handleWindowSize handles window resize events
+func (m Model) handleWindowSize(msg tea.WindowSizeMsg) Model {
+	m.width = msg.Width
+	m.height = msg.Height
+	m.logger.Debug("Window size changed", "width", msg.Width, "height", msg.Height)
+	
+	// Update layout - don't set transcript size here, do it in View()
+	m.input.SetWidth(msg.Width)
+	m.logger.Debug("Window resized", "width", msg.Width, "height", msg.Height)
+	
+	return m
+}
+
+// handleKeyEvent handles all keyboard events
+func (m Model) handleKeyEvent(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Handle paste events (v1 style - uses msg.Paste flag)
+	if msg.Paste {
+		m.logger.Debug("Paste event detected", "content", string(msg.Runes))
+		
+		// Add pasted content to input (preserving newlines)
+		currentValue := m.input.Value()
+		m.input.textarea.SetValue(currentValue + string(msg.Runes))
+		
+		// Fix height using the new approach
+		m.input.FixDynamicHeight()
+		return m, nil
+	}
+	
+	if m.modal.IsOpen() {
+		var cmd tea.Cmd
+		m.modal, cmd = m.modal.Update(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
+	}
+
+	// DEBUG: Log all key events with details
+	m.logger.Debug("Key event received", "key", msg.String(), "type", msg.Type, "runes", string(msg.Runes))
+
+	// Handle permission responses
+	if m.state == sessionWaitingPermission {
+		return m.handlePermissionKeys(msg, cmds)
+	}
+
+	// Handle completion navigation if completions are showing
+	if m.showingCompletions {
+		return m.handleCompletionKeys(msg, cmds)
+	}
+
+	return m.handleGeneralKeys(msg, cmds)
+}
+
+// handlePermissionKeys handles key events during permission requests
+func (m Model) handlePermissionKeys(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		m.logger.Debug("Ctrl+C pressed, quitting")
+		return m, tea.Quit
+	case "up", "k":
+		if m.selectedPermissionOption > 0 {
+			m.selectedPermissionOption--
+		}
+		return m, nil
+	case "down", "j":
+		if m.selectedPermissionOption < 1 { // 2 options: 0-1
+			m.selectedPermissionOption++
+		}
+		return m, nil
+	case "enter":
+		options := []struct{choice, decision string}{
+			{"Allow Once", "allow_once"},
+			{"No", "deny"},
+		}
+		selected := options[m.selectedPermissionOption]
+		return m.handlePermissionResponse(selected.choice, selected.decision, cmds)
+	case "a", "A":
+		return m.handlePermissionResponse("Allow Once", "allow_once", cmds)
+	case "n", "N":
+		return m.handlePermissionResponse("No", "deny", cmds)
+	default:
+		// Ignore other keys during permission wait
+		return m, nil
+	}
+}
+
+// handleCompletionKeys handles key events during command completion
+func (m Model) handleCompletionKeys(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		m.logger.Debug("Ctrl+C pressed, quitting")
+		return m, tea.Quit
+	case "up":
+		if m.selectedCompletionIndex > 0 {
+			m.selectedCompletionIndex--
+		}
+		return m, nil
+	case "down":
+		if m.selectedCompletionIndex < len(m.completionOptions)-1 {
+			m.selectedCompletionIndex++
+		}
+		return m, nil
+	case "tab":
+		// Tab selects the completion
+		m.selectCompletion()
+		m.updateCompletions() // Update completions after selection
+		return m, nil
+	case "enter":
+		// Enter completes to selected command AND executes it
+		if m.showingCompletions && len(m.completionOptions) > 0 {
+			// Complete to the selected command first
+			m.selectCompletion()
+			m.updateCompletions()
+		}
+		
+		// Hide completions and execute the (now completed) command
+		m.showingCompletions = false
+		m.completionOptions = nil
+		m.selectedCompletionIndex = 0
+		return m.handleEnterKey(cmds)
+	case "esc":
+		// Escape hides completions
+		m.showingCompletions = false
+		m.completionOptions = nil
+		m.selectedCompletionIndex = 0
+		return m, nil
+	default:
+		// Forward other keys to input and update completions
+		var cmd tea.Cmd
+		inputPtr, cmd := m.input.Update(msg)
+		m.input = *inputPtr
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.updateCompletions()
+		return m, tea.Batch(cmds...)
+	}
+}
+
+// handleGeneralKeys handles general key events (main input mode)
+func (m Model) handleGeneralKeys(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		m.logger.Debug("Ctrl+C pressed, quitting")
+		return m, tea.Quit
+	case "enter":
+		return m.handleEnterKey(cmds)
+	default:
+		// Only update input if not thinking
+		if m.state != sessionThinking {
+			var cmd tea.Cmd
+			inputPtr, cmd := m.input.Update(msg)
+			m.input = *inputPtr
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Update completions after input changes
+			m.updateCompletions()
+		}
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// handleEnterKey handles enter key press for message submission
+func (m Model) handleEnterKey(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Ignore enter if thinking
+	if m.state == sessionThinking {
+		m.logger.Debug("Enter pressed but thinking, ignoring")
+		return m, nil
+	}
+	
+	inputValue := m.input.Value()
+	
+	m.logger.Debug("Enter pressed", "input_value", inputValue, "input_length", len(inputValue))
+	if inputValue != "" {
+		m.logger.Debug("Processing user input", "message", inputValue)
+		// Handle user input
+		userMsg := inputValue
+		(&m.input).Reset()
+		m.logger.Debug("Reset input field")
+		
+		// Print user message to scrollback
+		userOutput := m.renderer.User(userMsg)
+		m.logger.Debug("About to print user message", "content", userOutput)
+		cmds = append(cmds, printToScrollback(userOutput))
+		m.logger.Debug("Added user message print command to batch")
+		
+		// Check if this is a slash command
+		if strings.HasPrefix(userMsg, "/") {
+			m.logger.Debug("Detected slash command")
+			return m.handleSlashCommand(userMsg, cmds)
+		}
+		
+		// Send to agent orchestrator
+		m.state = sessionThinking
+		m.input.SetThinking(true)
+		m.logger.Debug("Set state to thinking")
+		
+		go func() {
+			ctx := context.Background()
+			m.logger.Debug("Starting orchestrator processing")
+			m.orchestrator.ProcessPrompt(ctx, userMsg)
+		}()
+	} else {
+		m.logger.Debug("Enter pressed but input is empty")
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// handleAgentEvent handles events from the agent orchestrator
+func (m Model) handleAgentEvent(msg agent.Event, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Handle agent events
+	m.logger.Debug("Agent event received", "type", msg.Type, "content", msg.Content)
+	switch msg.Type {
+	case string(agent.EventTypePlan):
+		// Skip plan messages - they're internal orchestration
+		m.logger.Debug("Skipping plan message (internal only)")
+	case string(agent.EventTypeRunTool):
+		cmds = append(cmds, printToScrollback(m.renderer.AgentRun(msg.Content)))
+		m.logger.Debug("Printed tool message to scrollback")
+	case string(agent.EventTypeObservation):
+		cmds = append(cmds, printToScrollback(m.renderer.AgentObservation(msg.Content)))
+		m.logger.Debug("Printed observation message to scrollback")
+	case string(agent.EventTypeFinal):
+		cmds = append(cmds, printToScrollback(m.renderer.AgentFinal(msg.Content)))
+		m.state = sessionReady
+		m.input.SetThinking(false)
+		m.logger.Debug("Printed final message to scrollback, set state to ready")
+	case string(agent.EventTypePermissionRequest):
+		// Parse the permission request data
+		if permReq, ok := msg.Data.(agent.PermissionRequest); ok {
+			m.currentPermissionRequest = &permReq
+			m.selectedPermissionOption = 0 // Reset to first option
+			
+			m.state = sessionWaitingPermission
+			m.input.SetThinking(false) // Allow input for permission response
+			m.logger.Debug("Showing permission request", "tool", permReq.Tool)
+		} else {
+			m.logger.Error("Failed to parse permission request data")
+			cmds = append(cmds, printToScrollback(m.renderer.AgentError("Failed to parse permission request")))
+			m.state = sessionReady
+			m.input.SetThinking(false)
+		}
+	case string(agent.EventTypeError):
+		cmds = append(cmds, printToScrollback(m.renderer.AgentError(msg.Content)))
+		m.state = sessionReady
+		m.input.SetThinking(false)
+		m.logger.Debug("Printed error message to scrollback, set state to ready")
+	}
+	// Continue listening for more events
+	cmds = append(cmds, m.listenForEvents())
+	
+	return m, tea.Batch(cmds...)
 }

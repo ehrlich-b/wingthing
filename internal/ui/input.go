@@ -264,6 +264,8 @@ func (m InputModel) Value() string {
 func (m *InputModel) Reset() {
 	m.textarea.Reset()
 	m.textarea.SetHeight(1) // Reset to single line
+	// Ensure the display is properly refreshed
+	m.FixDynamicHeight()
 }
 
 func (m *InputModel) SetThinking(thinking bool) {
