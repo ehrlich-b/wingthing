@@ -62,12 +62,14 @@
 - [x] Decision: `/save` takes optional filename and creates versioned JSON files
 
 ## Phase 5: Headless Mode
-**Goal: Scriptable JSON interface**
+**Goal: One-shot task execution without REPL**
 
-- [ ] Complete headless mode with `--json` flag
-- [ ] Implement one-shot prompt processing
-- [ ] Add structured JSON output format
-- [ ] Test CLI scripting integration
+- [ ] Implement headless mode that executes one complete task loop and exits
+- [ ] Normal terminal output by default (same as interactive mode)
+- [ ] Add `--json` flag for structured JSON output format (for scripting)
+- [ ] Process single prompt through full agent loop (thinking → tools → response)
+- [ ] Exit when control would normally return to user (no REPL)
+- [ ] Test both human-readable and JSON output modes
 
 ## Phase 6: Real LLM Integration  
 **Goal: Replace dummy with actual AI**
