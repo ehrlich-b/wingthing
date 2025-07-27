@@ -18,6 +18,7 @@ import (
 	"github.com/behrlich/wingthing/internal/tools"
 )
 
+
 type sessionState int
 
 const (
@@ -50,6 +51,7 @@ type Model struct {
 	// Permission handling
 	currentPermissionRequest *agent.PermissionRequest
 	selectedPermissionOption int
+	
 	
 	// Debug logging
 	logger *slog.Logger
@@ -134,6 +136,7 @@ func (m Model) Init() tea.Cmd {
 		m.modal.Init(),
 		m.listenForEvents(),
 		printToScrollback(m.renderer.Welcome()),
+		tea.EnableBracketedPaste,
 	)
 }
 
@@ -157,6 +160,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logger.Debug("Window resized", "width", msg.Width, "height", msg.Height)
 		
 	case tea.KeyMsg:
+		// Handle paste events (v1 style - uses msg.Paste flag)
+		if msg.Paste {
+			m.logger.Debug("Paste event detected", "content", string(msg.Runes))
+			
+			// Add pasted content to input (preserving newlines)
+			currentValue := m.input.Value()
+			m.input.textarea.SetValue(currentValue + string(msg.Runes))
+			
+			// Recalculate height
+			m.input.setHeightForValue(m.input.Value())
+			return m, nil
+		}
+		
 		if m.modal.IsOpen() {
 			var cmd tea.Cmd
 			m.modal, cmd = m.modal.Update(msg)
@@ -239,10 +255,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			// Ignore enter if thinking
 			if m.state == sessionThinking {
+				m.logger.Debug("Enter pressed but thinking, ignoring")
 				return m, nil
 			}
 			
 			inputValue := m.input.Value()
+			
 			m.logger.Debug("Enter pressed", "input_value", inputValue, "input_length", len(inputValue))
 			if inputValue != "" {
 				m.logger.Debug("Processing user input", "message", inputValue)

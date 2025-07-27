@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+
 type InputModel struct {
 	textarea textarea.Model
 	logger   *slog.Logger
@@ -36,6 +37,9 @@ func NewInputModel() InputModel {
 	// Disable built-in newline handling so we can control it
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 	
+	// Remove ALL enter key bindings from the textarea
+	ta.KeyMap.InsertNewline.SetKeys() // Remove all keys for newline insertion
+	
 	logger.Info("InputModel created", "initial_width", ta.Width())
 	
 	return InputModel{
@@ -57,7 +61,6 @@ func (m *InputModel) Update(msg tea.Msg) (*InputModel, tea.Cmd) {
 		case "ctrl+j", "ctrl+enter":
 			// Handle ctrl+j (which is ctrl+enter in most terminals) to insert newline
 			// Pre-calculate if we need to expand height BEFORE inserting the newline
-			// Calculate current lines including the new one we're about to add
 			expectedLines := m.textarea.LineCount() + 1
 			
 			// If we need to expand, do it BEFORE inserting the newline
@@ -75,116 +78,117 @@ func (m *InputModel) Update(msg tea.Msg) (*InputModel, tea.Cmd) {
 		case "enter":
 			// Block plain enter - let parent handle it for sending
 			return m, nil
-		case "backspace", "delete":
-			// Height will be adjusted after the update
-		}
-		
-		// For character input, check for newlines that aren't from Ctrl+Enter
-		if len(msg.Runes) > 0 {
-			// Check if this contains newlines (likely from paste)
-			for i, r := range msg.Runes {
-				if r == '\n' || r == '\r' {
-					// This is a newline NOT from Ctrl+Enter (which we handle above)
-					// Replace with space to prevent accidental send
-					msg.Runes[i] = ' '
-					m.logger.Info("Replaced newline with space in character input")
+		default:
+			// For regular typing, check if we need to pre-expand for wrapping
+			if msg.Type == tea.KeyRunes {
+				// Simple approach: calculate what the content will be after this keystroke
+				currentValue := m.textarea.Value()
+				newValue := currentValue + string(msg.Runes)
+				
+				// Calculate expected lines after this keystroke
+				width := m.textarea.Width()
+				if width <= 0 {
+					width = 80
+				}
+				
+				expectedLines := 1
+				currentLineLength := 0
+				for _, r := range newValue {
+					if r == '\n' {
+						expectedLines++
+						currentLineLength = 0
+					} else {
+						currentLineLength++
+						if currentLineLength >= width {
+							expectedLines++
+							currentLineLength = 0
+						}
+					}
+				}
+				
+				// Pre-expand if we need more lines (and we're not already at max)
+				currentHeight := m.textarea.Height()
+				if expectedLines > currentHeight && expectedLines <= m.textarea.MaxHeight {
+					m.textarea.SetHeight(expectedLines)
+					m.logger.Info("Pre-expanded height for wrapping", 
+						"old_height", currentHeight,
+						"new_height", expectedLines,
+						"expected_lines", expectedLines)
 				}
 			}
 			
-			// Debug log text length vs width
-			m.logger.Info("Character input", 
-				"current_len", len(m.textarea.Value()),
-				"textarea_width", m.textarea.Width(),
-				"runes", string(msg.Runes))
+			// Let textarea handle the message normally
+			m.textarea, cmd = m.textarea.Update(msg)
 		}
+	default:
+		// For non-key messages, just pass through to textarea
+		m.textarea, cmd = m.textarea.Update(msg)
 	}
 	
-	// Let textarea handle all other keys
-	m.textarea, cmd = m.textarea.Update(msg)
-	
-	// After update, check if we need to adjust height for wrapped text
-	currentValue := m.textarea.Value()
-	if currentValue != "" {
-		// Use LineCount after the value has been updated
-		lines := m.textarea.LineCount()
-		
-		// Also manually calculate expected lines based on wrapping
-		textWidth := m.textarea.Width()
-		if textWidth <= 0 {
-			textWidth = 80 // fallback
-		}
-		
-		// Simple wrap calculation - count how many lines we need
-		manualLines := 1
-		currentLineLength := 0
-		for _, r := range currentValue {
-			if r == '\n' {
-				manualLines++
-				currentLineLength = 0
-			} else {
-				currentLineLength++
-				if currentLineLength >= textWidth {
-					manualLines++
-					currentLineLength = 0
-				}
-			}
-		}
-		
-		// Use the larger of the two calculations
-		if manualLines > lines {
-			lines = manualLines
-		}
-		
-		// Always log the current state for debugging
-		m.logger.Info("Current textarea state", 
-			"value_length", len(currentValue),
-			"line_count", lines,
-			"manual_lines", manualLines,
-			"current_height", m.textarea.Height(),
-			"width", m.textarea.Width())
-		
-		// Always set height to match line count (force update)
-		currentHeight := m.textarea.Height()
-		targetHeight := lines
-		if targetHeight > m.textarea.MaxHeight {
-			targetHeight = m.textarea.MaxHeight
-		}
-		if targetHeight < 1 {
-			targetHeight = 1
-		}
-		
-		// Always set the height, even if it seems unchanged
-		// This ensures the textarea properly renders all lines
-		m.textarea.SetHeight(targetHeight)
-		
-		// If height changed, we need to handle viewport
-		if targetHeight != currentHeight {
-			m.logger.Info("Height adjustment made", 
-				"old_height", currentHeight,
-				"new_height", targetHeight)
-			
-			// When height increases and we're not at max height yet,
-			// log for debugging (viewport should already be correct from pre-expansion)
-			if targetHeight > currentHeight && targetHeight < m.textarea.MaxHeight {
-				m.logger.Info("Height increased (should have been pre-expanded for newlines)")
-			}
-			
-			// Log cursor position
-			lineInfo := m.textarea.LineInfo()
-			m.logger.Info("Cursor position after height change",
-				"cursor_line", lineInfo.RowOffset,
-				"cursor_col", lineInfo.ColumnOffset,
-				"height", targetHeight)
-		}
-	} else {
-		// Empty textarea, reset to single line
-		if m.textarea.Height() != 1 {
-			m.textarea.SetHeight(1)
-			m.logger.Info("Reset height to 1 for empty textarea")
-		}
-	}
+	// Skip post-update height adjustment since we pre-expand
+	// m.updateHeightIfNeeded() 
 	
 	return m, cmd
+}
+
+// updateHeightIfNeeded adjusts textarea height based on content
+func (m *InputModel) updateHeightIfNeeded() {
+	currentValue := m.textarea.Value()
+	if currentValue == "" {
+		if m.textarea.Height() != 1 {
+			m.textarea.SetHeight(1)
+		}
+		return
+	}
+	
+	// Use LineCount after the value has been updated
+	lines := m.textarea.LineCount()
+	
+	// Also manually calculate wrapped lines since LineCount() might lag
+	width := m.textarea.Width()
+	if width <= 0 {
+		width = 80 // fallback
+	}
+	
+	// Calculate lines needed including word wrapping
+	wrappedLines := 1
+	currentLineLength := 0
+	for _, r := range currentValue {
+		if r == '\n' {
+			wrappedLines++
+			currentLineLength = 0
+		} else {
+			currentLineLength++
+			if currentLineLength >= width {
+				wrappedLines++
+				currentLineLength = 0
+			}
+		}
+	}
+	
+	// Use the larger of the two calculations
+	if wrappedLines > lines {
+		lines = wrappedLines
+	}
+	
+	// Set height to match content, respecting max height
+	targetHeight := lines
+	if targetHeight > m.textarea.MaxHeight {
+		targetHeight = m.textarea.MaxHeight
+	}
+	if targetHeight < 1 {
+		targetHeight = 1
+	}
+	
+	currentHeight := m.textarea.Height()
+	if targetHeight != currentHeight {
+		m.textarea.SetHeight(targetHeight)
+		m.logger.Info("Height adjustment made", 
+			"old_height", currentHeight,
+			"new_height", targetHeight,
+			"line_count", lines,
+			"wrapped_lines", wrappedLines)
+	}
 }
 
 // setHeightForValue adjusts height based on the provided value, accounting for word wrapping
@@ -294,3 +298,4 @@ func (m *InputModel) Focus() tea.Cmd {
 func (m *InputModel) Blur() {
 	m.textarea.Blur()
 }
+
