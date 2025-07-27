@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/behrlich/wingthing/internal/agent"
+	"github.com/behrlich/wingthing/internal/config"
 	"github.com/behrlich/wingthing/internal/interfaces"
 	"github.com/behrlich/wingthing/internal/llm"
 	"github.com/behrlich/wingthing/internal/tools"
@@ -37,6 +38,14 @@ type Model struct {
 	// Agent communication
 	events      chan agent.Event
 	orchestrator *agent.Orchestrator
+	
+	// Slash commands
+	commandLoader *agent.CommandLoader
+	
+	// Command completion
+	showingCompletions      bool
+	completionOptions       []string
+	selectedCompletionIndex int
 	
 	// Permission handling
 	currentPermissionRequest *agent.PermissionRequest
@@ -84,6 +93,27 @@ func NewModel() Model {
 		llmProvider,
 	)
 	
+	// Create command loader and load commands
+	commandLoader := agent.NewCommandLoader()
+	
+	// Get config directories
+	userConfigDir, err := config.GetUserConfigDir()
+	if err != nil {
+		logger.Warn("Failed to get user config directory", "error", err)
+		userConfigDir = ""
+	}
+	
+	projectDir, err := config.GetProjectDir()
+	if err != nil {
+		logger.Warn("Failed to get project directory", "error", err)
+		projectDir = ""
+	}
+	
+	// Load commands from both directories
+	if err := commandLoader.LoadCommands(userConfigDir, projectDir); err != nil {
+		logger.Warn("Failed to load commands", "error", err)
+	}
+	
 	theme := DefaultTheme()
 	return Model{
 		state:        sessionReady,
@@ -93,6 +123,7 @@ func NewModel() Model {
 		renderer:     NewRenderer(theme),
 		events:       events,
 		orchestrator: orchestrator,
+		commandLoader: commandLoader,
 		logger:       logger,
 	}
 }
@@ -171,6 +202,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Handle completion navigation if completions are showing
+		if m.showingCompletions {
+			switch msg.String() {
+			case "ctrl+c":
+				m.logger.Debug("Ctrl+C pressed, quitting")
+				return m, tea.Quit
+			case "up":
+				if m.selectedCompletionIndex > 0 {
+					m.selectedCompletionIndex--
+				}
+				return m, nil
+			case "down":
+				if m.selectedCompletionIndex < len(m.completionOptions)-1 {
+					m.selectedCompletionIndex++
+				}
+				return m, nil
+			case "tab", "enter":
+				// Tab or enter selects the completion
+				m.selectCompletion()
+				m.updateCompletions() // Update completions after selection
+				return m, nil
+			case "esc":
+				// Escape hides completions
+				m.showingCompletions = false
+				m.completionOptions = nil
+				m.selectedCompletionIndex = 0
+				return m, nil
+			}
+		}
+
 		switch msg.String() {
 		case "ctrl+c":
 			m.logger.Debug("Ctrl+C pressed, quitting")
@@ -196,6 +257,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, printToScrollback(userOutput))
 				m.logger.Debug("Added user message print command to batch")
 				
+				// Check if this is a slash command
+				if strings.HasPrefix(userMsg, "/") {
+					m.logger.Debug("Detected slash command")
+					return m.handleSlashCommand(userMsg, cmds)
+				}
+				
 				// Send to agent orchestrator
 				m.state = sessionThinking
 				m.input.SetThinking(true)
@@ -218,6 +285,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
+				// Update completions after input changes
+				m.updateCompletions()
 			}
 		}
 
@@ -330,6 +399,53 @@ func (m Model) View() string {
 	// Add the input field
 	output.WriteString(m.input.View())
 	
+	// Add completion dropdown if showing
+	if m.showingCompletions && len(m.completionOptions) > 0 {
+		output.WriteString("\n")
+		
+		// Style for completion dropdown
+		borderStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("8")). // Gray
+			Bold(false)
+		
+		selectedStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("0")).  // Black text
+			Background(lipgloss.Color("12")). // Blue background
+			Bold(true)
+		
+		normalStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")). // White text
+			Bold(false)
+		
+		// Show completion header
+		output.WriteString(borderStyle.Render("Commands:"))
+		output.WriteString("\n")
+		
+		// Show up to 5 completion options
+		maxOptions := 5
+		if len(m.completionOptions) < maxOptions {
+			maxOptions = len(m.completionOptions)
+		}
+		
+		for i := 0; i < maxOptions; i++ {
+			command := m.completionOptions[i]
+			if i == m.selectedCompletionIndex {
+				output.WriteString(selectedStyle.Render(fmt.Sprintf("> /%s", command)))
+			} else {
+				output.WriteString(normalStyle.Render(fmt.Sprintf("  /%s", command)))
+			}
+			output.WriteString("\n")
+		}
+		
+		// Show navigation hint
+		if len(m.completionOptions) > 0 {
+			hintStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("8")). // Gray
+				Italic(true)
+			output.WriteString(hintStyle.Render("↑/↓ to navigate, Tab/Enter to select, Esc to cancel"))
+		}
+	}
+	
 	return output.String()
 }
 
@@ -376,4 +492,185 @@ func (m Model) handlePermissionResponse(choice, decision string, cmds []tea.Cmd)
 	m.logger.Debug("Permission response handled, returning to thinking state")
 	
 	return m, tea.Batch(cmds...)
+}
+
+// handleSlashCommand processes slash commands
+func (m Model) handleSlashCommand(input string, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Parse command and arguments
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return m, tea.Batch(cmds...)
+	}
+	
+	command := strings.TrimPrefix(parts[0], "/")
+	args := parts[1:]
+	
+	m.logger.Debug("Processing slash command", "command", command, "args", args)
+	
+	// Handle built-in commands
+	switch command {
+	case "help":
+		return m.handleHelpCommand(cmds)
+	case "clear":
+		return m.handleClearCommand(cmds)
+	default:
+		// Try to find custom command
+		return m.handleCustomCommand(command, args, cmds)
+	}
+}
+
+// handleHelpCommand shows available commands
+func (m Model) handleHelpCommand(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	helpText := `Available slash commands:
+  /help     - Show this help message
+  /clear    - Clear the conversation history
+  
+Custom commands will be available when command files are loaded.`
+	
+	output := m.renderer.AgentFinal(helpText)
+	cmds = append(cmds, printToScrollback(output))
+	
+	return m, tea.Batch(cmds...)
+}
+
+// handleClearCommand clears the conversation
+func (m Model) handleClearCommand(cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Send tea.ClearScreen command to clear the terminal
+	cmds = append(cmds, tea.ClearScreen)
+	
+	// Show a confirmation message
+	output := m.renderer.AgentFinal("Conversation cleared.")
+	cmds = append(cmds, printToScrollback(output))
+	
+	return m, tea.Batch(cmds...)
+}
+
+// handleCustomCommand executes custom commands loaded from files
+func (m Model) handleCustomCommand(command string, args []string, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	slashCmd, exists := m.commandLoader.GetCommand(command)
+	if !exists {
+		errorMsg := fmt.Sprintf("Unknown command: /%s\nType /help for available commands.", command)
+		output := m.renderer.AgentFinal(errorMsg)
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	m.logger.Debug("Executing custom command", "name", slashCmd.Name, "description", slashCmd.Description)
+	
+	// Prepare environment for template execution
+	env := make(map[string]string)
+	for _, envVar := range os.Environ() {
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) == 2 {
+			env[parts[0]] = parts[1]
+		}
+	}
+	
+	// Execute the command template
+	result, err := m.commandLoader.ExecuteCommand(command, args, env)
+	if err != nil {
+		errorMsg := fmt.Sprintf("Error executing command /%s: %v", command, err)
+		output := m.renderer.AgentFinal(errorMsg)
+		cmds = append(cmds, printToScrollback(output))
+		return m, tea.Batch(cmds...)
+	}
+	
+	// Show the command result
+	output := m.renderer.AgentFinal(result)
+	cmds = append(cmds, printToScrollback(output))
+	
+	return m, tea.Batch(cmds...)
+}
+
+// updateCompletions updates command completion suggestions based on current input
+func (m *Model) updateCompletions() {
+	inputValue := m.input.Value()
+	
+	// Only show completions for slash commands
+	if !strings.HasPrefix(inputValue, "/") {
+		m.showingCompletions = false
+		m.completionOptions = nil
+		m.selectedCompletionIndex = 0
+		return
+	}
+	
+	// Extract the command part (without leading /)
+	commandPart := strings.TrimPrefix(inputValue, "/")
+	
+	// Get all available commands
+	allCommands := []string{"help", "clear"} // Built-in commands
+	allCommands = append(allCommands, m.commandLoader.ListCommands()...) // Custom commands
+	
+	// Filter commands that match the current input (fuzzy matching)
+	var matches []string
+	for _, cmd := range allCommands {
+		if fuzzyMatch(cmd, commandPart) {
+			matches = append(matches, cmd)
+		}
+	}
+	
+	// Update completion state
+	if len(matches) > 0 && commandPart != "" {
+		m.showingCompletions = true
+		m.completionOptions = matches
+		// Keep selected index in bounds
+		if m.selectedCompletionIndex >= len(matches) {
+			m.selectedCompletionIndex = 0
+		}
+	} else {
+		m.showingCompletions = false
+		m.completionOptions = nil
+		m.selectedCompletionIndex = 0
+	}
+}
+
+// selectCompletion applies the selected completion to the input
+func (m *Model) selectCompletion() {
+	if !m.showingCompletions || len(m.completionOptions) == 0 {
+		return
+	}
+	
+	selectedCommand := m.completionOptions[m.selectedCompletionIndex]
+	m.input.textarea.SetValue("/" + selectedCommand + " ")
+	m.input.textarea.CursorEnd()
+	
+	// Hide completions after selection
+	m.showingCompletions = false
+	m.completionOptions = nil
+	m.selectedCompletionIndex = 0
+}
+
+// fuzzyMatch implements simple fuzzy matching for command completion
+func fuzzyMatch(command, pattern string) bool {
+	if pattern == "" {
+		return true
+	}
+	
+	// Convert to lowercase for case-insensitive matching
+	command = strings.ToLower(command)
+	pattern = strings.ToLower(pattern)
+	
+	// First try exact prefix match (highest priority)
+	if strings.HasPrefix(command, pattern) {
+		return true
+	}
+	
+	// Then try fuzzy matching - all pattern characters must appear in order
+	cmdIndex := 0
+	for _, patternChar := range pattern {
+		found := false
+		for cmdIndex < len(command) {
+			if rune(command[cmdIndex]) == patternChar {
+				found = true
+				cmdIndex++
+				break
+			}
+			cmdIndex++
+		}
+		if !found {
+			return false
+		}
+	}
+	
+	return true
 }

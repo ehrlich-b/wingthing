@@ -32,20 +32,20 @@
 - [x] Implement permission policy (read-only vs write operations)
 - [x] Add replace_all parameter to edit tool for flexible editing
 
-## Phase 3: Basic Slash Commands
+## Phase 3: Basic Slash Commands ✅
 **Goal: Enable slash command functionality**
 
-- [ ] Add slash command detection in input component
-- [ ] Load and template slash commands from filesystem
-- [ ] Test `/help`, `/clear`, and custom commands
-- [ ] Implement basic command execution flow
+- [x] Add slash command detection in input component
+- [x] Load and template slash commands from filesystem
+- [x] Test `/help`, `/clear`, and custom commands
+- [x] Implement basic command execution flow
 
-## Phase 3.5: Command Auto-completion
+## Phase 3.5: Command Auto-completion ✅
 **Goal: Enhanced input experience**
 
-- [ ] Implement command auto-completion dropdown
-- [ ] Add fuzzy matching for command suggestions
-- [ ] Test completion UI with keyboard navigation
+- [x] Implement command auto-completion dropdown
+- [x] Add fuzzy matching for command suggestions
+- [x] Test completion UI with keyboard navigation
 
 ## Phase 4: Memory & Session Management
 **Goal: Persistent context and sessions**
