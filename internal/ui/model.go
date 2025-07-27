@@ -281,7 +281,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Only update input if not thinking
 			if m.state != sessionThinking {
 				var cmd tea.Cmd
-				m.input, cmd = m.input.Update(msg)
+				inputPtr, cmd := m.input.Update(msg)
+				m.input = *inputPtr
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
