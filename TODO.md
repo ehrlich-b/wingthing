@@ -82,12 +82,13 @@
 - [ ] Implement AI-powered `/compact` command that intelligently summarizes conversation history
 
 ## Phase 6.5: Extended Tool Suite
-**Goal: More useful tools**
+**Goal: More useful tools (native Go implementations for cross-platform consistency)**
 
-- [ ] Add git tool implementations (status, diff, commit)
-- [ ] Add grep tool for searching file contents  
-- [ ] Add find tool for file discovery
-- [ ] Add more file operations (copy, move, delete)
+- [ ] Add native grep tool for searching file contents (using Go regexp package)
+- [ ] Add native find tool for file discovery (using Go filepath.Walk)
+- [ ] Add native file operations: copy, move, delete (using Go os/io packages)
+- [ ] Organize tools into focused modules: files.go, search.go
+- [ ] Keep CLI tool for user shell commands, native tools for structured operations
 
 ## Phase 7: Polish & Documentation
 **Goal: Production ready**

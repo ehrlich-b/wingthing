@@ -51,7 +51,7 @@ func TestOrchestrator_Integration_SimpleConversation(t *testing.T) {
 	// Create components
 	memoryManager := NewMemory(fs)
 	permissionChecker := NewPermissionEngine(fs)
-	llmProvider := llm.NewDummyProvider(10 * time.Millisecond)
+	llmProvider := llm.NewTestProvider()
 	
 	// Pre-grant permission for CLI command
 	permissionChecker.GrantPermission("cli", "execute", map[string]any{"command": "ls -la"}, AlwaysAllow)
@@ -135,7 +135,7 @@ func TestOrchestrator_Integration_PermissionRequest(t *testing.T) {
 	// Create components
 	memoryManager := NewMemory(fs)
 	permissionChecker := NewPermissionEngine(fs)
-	llmProvider := llm.NewDummyProvider(10 * time.Millisecond)
+	llmProvider := llm.NewTestProvider()
 	
 	// Don't pre-grant permissions - should trigger permission request
 	

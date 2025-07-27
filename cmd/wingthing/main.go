@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -72,24 +71,39 @@ func runHeadless(ctx context.Context, prompt string) error {
 	toolRunner.RegisterRunner("write_file", editRunner)
 	toolRunner.RegisterRunner("edit_file", editRunner)
 	
-	// Create other components
-	memoryManager := agent.NewMemory(fs)
-	permissionChecker := agent.NewPermissionEngine(fs)
-	llmProvider := llm.NewDummyProvider(500 * time.Millisecond)
-	
-	// Load memory from CLAUDE.md files
+	// Load configuration
+	configManager := config.NewManager(fs)
 	userConfigDir, err := config.GetUserConfigDir()
-	if err == nil {
-		if err := memoryManager.LoadUserMemory(userConfigDir); err != nil {
-			// Silently ignore memory loading errors in headless mode
-		}
+	if err != nil {
+		return fmt.Errorf("failed to get user config dir: %w", err)
 	}
 	
 	projectDir, err := config.GetProjectDir()
-	if err == nil {
-		if err := memoryManager.LoadProjectMemory(projectDir); err != nil {
-			// Silently ignore memory loading errors in headless mode
-		}
+	if err != nil {
+		return fmt.Errorf("failed to get project dir: %w", err)
+	}
+	
+	if err := configManager.Load(userConfigDir, projectDir); err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	
+	cfg := configManager.Get()
+	
+	// Create other components
+	memoryManager := agent.NewMemory(fs)
+	permissionChecker := agent.NewPermissionEngine(fs)
+	
+	// Create LLM provider - use dummy if no API key configured
+	useDummy := cfg.APIKey == ""
+	llmProvider := llm.NewProvider(cfg, useDummy)
+	
+	// Load memory from CLAUDE.md files
+	if err := memoryManager.LoadUserMemory(userConfigDir); err != nil {
+		// Silently ignore memory loading errors in headless mode
+	}
+	
+	if err := memoryManager.LoadProjectMemory(projectDir); err != nil {
+		// Silently ignore memory loading errors in headless mode
 	}
 	
 	// Create events channel for capturing orchestrator output

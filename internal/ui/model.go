@@ -95,23 +95,6 @@ func NewModel() Model {
 	toolRunner.RegisterRunner("write_file", editRunner)
 	toolRunner.RegisterRunner("edit_file", editRunner)
 	
-	// Create other components
-	memoryManager := agent.NewMemory(fs)
-	permissionChecker := agent.NewPermissionEngine(fs)
-	llmProvider := llm.NewDummyProvider(500 * time.Millisecond)
-	
-	// Create orchestrator
-	orchestrator := agent.NewOrchestrator(
-		toolRunner,
-		events,
-		memoryManager,
-		permissionChecker,
-		llmProvider,
-	)
-	
-	// Create command loader and load commands
-	commandLoader := agent.NewCommandLoader()
-	
 	// Get config directories
 	userConfigDir, err := config.GetUserConfigDir()
 	if err != nil {
@@ -124,6 +107,33 @@ func NewModel() Model {
 		logger.Warn("Failed to get project directory", "error", err)
 		projectDir = ""
 	}
+	
+	// Load configuration
+	configManager := config.NewManager(fs)
+	if err := configManager.Load(userConfigDir, projectDir); err != nil {
+		logger.Warn("Failed to load config", "error", err)
+	}
+	cfg := configManager.Get()
+	
+	// Create other components
+	memoryManager := agent.NewMemory(fs)
+	permissionChecker := agent.NewPermissionEngine(fs)
+	
+	// Create LLM provider - use dummy if no API key configured
+	useDummy := cfg.APIKey == ""
+	llmProvider := llm.NewProvider(cfg, useDummy)
+	
+	// Create orchestrator
+	orchestrator := agent.NewOrchestrator(
+		toolRunner,
+		events,
+		memoryManager,
+		permissionChecker,
+		llmProvider,
+	)
+	
+	// Create command loader and load commands
+	commandLoader := agent.NewCommandLoader()
 	
 	// Load commands from both directories
 	if err := commandLoader.LoadCommands(userConfigDir, projectDir); err != nil {
