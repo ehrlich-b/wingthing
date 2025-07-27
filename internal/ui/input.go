@@ -58,77 +58,88 @@ func (m *InputModel) Update(msg tea.Msg) (*InputModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+j", "ctrl+enter":
-			// Handle ctrl+j (which is ctrl+enter in most terminals) to insert newline
-			// Pre-calculate if we need to expand height BEFORE inserting the newline
-			expectedLines := m.textarea.LineCount() + 1
-			
-			// If we need to expand, do it BEFORE inserting the newline
-			if expectedLines > m.textarea.Height() && expectedLines <= m.textarea.MaxHeight {
-				m.textarea.SetHeight(expectedLines)
-				m.logger.Info("Pre-expanded height before newline insertion", 
-					"new_height", expectedLines)
-			}
-			
-			// Now insert the newline
-			m.textarea, cmd = m.textarea.Update(tea.KeyMsg{
-				Type:  tea.KeyRunes,
-				Runes: []rune{'\n'},
-			})
 		case "enter":
 			// Block plain enter - let parent handle it for sending
 			return m, nil
+		case "ctrl+j", "ctrl+enter":
+			// Real newline: just stuff it through as a rune
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\n'}}
+			fallthrough
 		default:
-			// For regular typing, check if we need to pre-expand for wrapping
-			if msg.Type == tea.KeyRunes {
-				// Simple approach: calculate what the content will be after this keystroke
-				currentValue := m.textarea.Value()
-				newValue := currentValue + string(msg.Runes)
-				
-				// Calculate expected lines after this keystroke
-				width := m.textarea.Width()
-				if width <= 0 {
-					width = 80
-				}
-				
-				expectedLines := 1
-				currentLineLength := 0
-				for _, r := range newValue {
-					if r == '\n' {
-						expectedLines++
-						currentLineLength = 0
-					} else {
-						currentLineLength++
-						if currentLineLength >= width {
-							expectedLines++
-							currentLineLength = 0
-						}
-					}
-				}
-				
-				// Pre-expand if we need more lines (and we're not already at max)
-				currentHeight := m.textarea.Height()
-				if expectedLines > currentHeight && expectedLines <= m.textarea.MaxHeight {
-					m.textarea.SetHeight(expectedLines)
-					m.logger.Info("Pre-expanded height for wrapping", 
-						"old_height", currentHeight,
-						"new_height", expectedLines,
-						"expected_lines", expectedLines)
-				}
-			}
-			
-			// Let textarea handle the message normally
+			// 1) Let textarea update first
 			m.textarea, cmd = m.textarea.Update(msg)
+			
+			// 2) Re-size AFTER update using what it actually renders
+			m.FixDynamicHeight()
 		}
 	default:
-		// For non-key messages, just pass through to textarea
 		m.textarea, cmd = m.textarea.Update(msg)
+		m.FixDynamicHeight()
 	}
 	
-	// Skip post-update height adjustment since we pre-expand
-	// m.updateHeightIfNeeded() 
-	
 	return m, cmd
+}
+
+// FixDynamicHeight sets textarea height to the amount it *renders*.
+// It also nudges the internal viewport so the first line doesn't get hidden.
+func (m *InputModel) FixDynamicHeight() {
+	currentValue := m.textarea.Value()
+	if currentValue == "" {
+		if m.textarea.Height() != 1 {
+			m.textarea.SetHeight(1)
+		}
+		return
+	}
+	
+	// Calculate wrapped lines manually since View() gives us styled output
+	width := m.textarea.Width()
+	if width <= 0 {
+		width = 80
+	}
+	
+	lines := 1
+	currentLineLength := 0
+	for _, r := range currentValue {
+		if r == '\n' {
+			lines++
+			currentLineLength = 0
+		} else {
+			currentLineLength++
+			if currentLineLength >= width {
+				lines++
+				currentLineLength = 0
+			}
+		}
+	}
+	
+	if lines > m.textarea.MaxHeight {
+		lines = m.textarea.MaxHeight
+	}
+	
+	m.logger.Info("FixDynamicHeight debug", 
+		"value_length", len(currentValue),
+		"calculated_lines", lines,
+		"current_height", m.textarea.Height(),
+		"width", width)
+	
+	if lines != m.textarea.Height() {
+		oldHeight := m.textarea.Height()
+		m.textarea.SetHeight(lines)
+		// nudge viewport to recompute & reset offsets
+		m.textarea.SetValue(currentValue)
+		m.textarea.CursorEnd() // keep cursor visible
+		
+		m.logger.Info("Fixed dynamic height", 
+			"old_height", oldHeight,
+			"new_height", lines)
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // updateHeightIfNeeded adjusts textarea height based on content

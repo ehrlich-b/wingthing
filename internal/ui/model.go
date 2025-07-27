@@ -168,8 +168,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			currentValue := m.input.Value()
 			m.input.textarea.SetValue(currentValue + string(msg.Runes))
 			
-			// Recalculate height
-			m.input.setHeightForValue(m.input.Value())
+			// Fix height using the new approach
+			m.input.FixDynamicHeight()
 			return m, nil
 		}
 		
