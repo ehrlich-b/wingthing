@@ -19,8 +19,9 @@ func NewRenderer(theme Theme) *Renderer {
 
 // printToScrollback prints to scrollback using tea.Println for proper handling
 func printToScrollback(s string) tea.Cmd {
-	// Strip the trailing newlines since tea.Println adds its own
-	content := strings.TrimRight(s, "\n")
+	// Strip only one trailing newline since tea.Println adds its own
+	// Keep internal spacing but remove the final newline
+	content := strings.TrimSuffix(s, "\n")
 	return tea.Println(content)
 }
 

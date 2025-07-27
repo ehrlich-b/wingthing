@@ -63,7 +63,12 @@ func NewModel() Model {
 	// Create tool runner with registered tools
 	toolRunner := tools.NewMultiRunner()
 	toolRunner.RegisterRunner("cli", tools.NewCLIRunner())
-	toolRunner.RegisterRunner("edit", tools.NewEditRunner())
+	
+	// Register file operations from EditRunner
+	editRunner := tools.NewEditRunner()
+	toolRunner.RegisterRunner("read_file", editRunner)
+	toolRunner.RegisterRunner("write_file", editRunner)
+	toolRunner.RegisterRunner("edit_file", editRunner)
 	
 	// Create other components
 	memoryManager := agent.NewMemory(fs)
@@ -204,7 +209,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.logger.Debug("Enter pressed but input is empty")
 			}
-			return m, nil
+			return m, tea.Batch(cmds...)
 		default:
 			// Only update input if not thinking
 			if m.state != sessionThinking {

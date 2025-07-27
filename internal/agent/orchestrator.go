@@ -117,11 +117,19 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 		toolName := toolCall.Function.Name
 		params := toolCall.Function.Arguments
 
-		// Check permissions for tool usage
-		allowed, err := o.permissions.CheckPermission(toolName, "execute", params)
-		if err != nil {
-			o.events <- Event{Type: string(EventTypeError), Content: err.Error()}
-			return "", err
+		// Check permissions for tool usage (only for tools that modify system state)
+		needsPermission := o.toolNeedsPermission(toolName)
+		var allowed bool
+		var err error
+		
+		if needsPermission {
+			allowed, err = o.permissions.CheckPermission(toolName, "execute", params)
+			if err != nil {
+				o.events <- Event{Type: string(EventTypeError), Content: err.Error()}
+				return "", err
+			}
+		} else {
+			allowed = true // Read-only operations are always allowed
 		}
 
 		if !allowed {
@@ -245,4 +253,18 @@ func (o *Orchestrator) RetryPendingTool(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// toolNeedsPermission determines if a tool requires user permission
+func (o *Orchestrator) toolNeedsPermission(toolName string) bool {
+	switch toolName {
+	case "read_file":
+		return false // Read-only operations don't need permission
+	case "write_file", "edit_file":
+		return true // File modifications need permission
+	case "cli":
+		return true // CLI commands need permission
+	default:
+		return true // Unknown tools need permission by default
+	}
 }

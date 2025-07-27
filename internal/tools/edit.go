@@ -85,6 +85,14 @@ func (er *EditRunner) editFile(params map[string]any) (*Result, error) {
 		return &Result{Error: "missing or invalid 'new_text' parameter"}, nil
 	}
 	
+	// Check for optional replace_all parameter (defaults to true for backward compatibility)
+	replaceAll := true
+	if replaceAllParam, exists := params["replace_all"]; exists {
+		if replaceAllBool, ok := replaceAllParam.(bool); ok {
+			replaceAll = replaceAllBool
+		}
+	}
+	
 	// Read current content
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -98,13 +106,21 @@ func (er *EditRunner) editFile(params map[string]any) (*Result, error) {
 		return &Result{Error: "old_text not found in file"}, nil
 	}
 	
-	// Replace text
-	newContent := strings.Replace(contentStr, oldText, newText, -1)
+	// Replace text based on replace_all flag
+	var newContent string
+	var replaceCount int
+	if replaceAll {
+		newContent = strings.Replace(contentStr, oldText, newText, -1)
+		replaceCount = strings.Count(contentStr, oldText)
+	} else {
+		newContent = strings.Replace(contentStr, oldText, newText, 1)
+		replaceCount = 1
+	}
 	
 	// Write back to file
 	if err := os.WriteFile(filePath, []byte(newContent), 0644); err != nil {
 		return &Result{Error: fmt.Sprintf("failed to write file: %v", err)}, nil
 	}
 	
-	return &Result{Output: fmt.Sprintf("Successfully replaced text in %s", filePath)}, nil
+	return &Result{Output: fmt.Sprintf("Successfully replaced %d occurrence(s) of text in %s", replaceCount, filePath)}, nil
 }

@@ -110,9 +110,82 @@ func (d *DummyProvider) Chat(ctx context.Context, messages []interfaces.Message)
 					ID:   "call_2",
 					Type: "function",
 					Function: interfaces.FunctionCall{
-						Name: "read",
+						Name: "read_file",
 						Arguments: map[string]any{
-							"path": "README.md",
+							"file_path": "README.md",
+						},
+					},
+				},
+			},
+			Finished: false,
+		}, nil
+	}
+
+	if strings.Contains(lastUserMessage, "write") && strings.Contains(lastUserMessage, "file") {
+		return &interfaces.LLMResponse{
+			Content: "I'll create a test file for you.",
+			ToolCalls: []interfaces.ToolCall{
+				{
+					ID:   "call_3",
+					Type: "function",
+					Function: interfaces.FunctionCall{
+						Name: "write_file",
+						Arguments: map[string]any{
+							"file_path": "test.txt",
+							"content":   "Hello from Wingthing!\nThis is a test file created by the AI.",
+						},
+					},
+				},
+			},
+			Finished: false,
+		}, nil
+	}
+
+	if strings.Contains(lastUserMessage, "edit") && strings.Contains(lastUserMessage, "file") {
+		return &interfaces.LLMResponse{
+			Content: "I'll edit the test file for you.",
+			ToolCalls: []interfaces.ToolCall{
+				{
+					ID:   "call_4",
+					Type: "function",
+					Function: interfaces.FunctionCall{
+						Name: "edit_file",
+						Arguments: map[string]any{
+							"file_path": "test.txt",
+							"old_text":  "Hello from Wingthing!",
+							"new_text":  "Hello from Wingthing (edited)!",
+						},
+					},
+				},
+			},
+			Finished: false,
+		}, nil
+	}
+
+	// Special case: prompt "file" demonstrates read then edit workflow
+	if strings.TrimSpace(lastUserMessage) == "file" {
+		return &interfaces.LLMResponse{
+			Content: "I'll first read a file, then edit it to demonstrate the permission system.",
+			ToolCalls: []interfaces.ToolCall{
+				{
+					ID:   "call_read_demo",
+					Type: "function",
+					Function: interfaces.FunctionCall{
+						Name: "read_file",
+						Arguments: map[string]any{
+							"file_path": "README.md",
+						},
+					},
+				},
+				{
+					ID:   "call_edit_demo", 
+					Type: "function",
+					Function: interfaces.FunctionCall{
+						Name: "edit_file",
+						Arguments: map[string]any{
+							"file_path": "README.md",
+							"old_text":  "# wingthing",
+							"new_text":  "# wingthing (Demo Edit)",
 						},
 					},
 				},
@@ -126,6 +199,11 @@ func (d *DummyProvider) Chat(ctx context.Context, messages []interfaces.Message)
 			Content: `I'm a dummy LLM provider for testing Wingthing. I can help with:
 - Listing files (try "list files" or "ls")
 - Reading files (try "read file")
+- Writing files (try "write file")
+- Editing files (try "edit file")
+- File demo with permissions (try "file")
+- Running bash commands (try "tool")
+- Showing diffs (try "diff")
 - General conversation
 
 This is a mock implementation to test the agent system.`,
@@ -156,7 +234,10 @@ This is a mock implementation to test the agent system.`,
 	defaultResponse := `Hi, I'm your fake AI assistant! Here's some of the things I can do:
 
 • List files and directories (try typing "list files" or "ls")
-• Read and edit files (try "read file")
+• Read files (try "read file")
+• Write files (try "write file")
+• Edit files (try "edit file")
+• File demo with permissions (type "file" for read+edit demo)
 • Execute bash commands (type "tool" for a demo)
 • Show diffs and code changes (type "diff" for a sample)
 • Help with various tasks (type "help" for more info)

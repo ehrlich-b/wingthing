@@ -19,16 +19,18 @@
 - [x] Add "thinking..." state in UI while waiting for response
 - [x] Implement basic error handling for agent events
 
-## Phase 2: Tool Execution Pipeline
+## Phase 2: Tool Execution Pipeline ✅
 **Goal: Enable CLI commands and file operations**
 
-- [ ] Complete CLI tool runner with permission requests  
-- [ ] Connect tool execution to permission modal flow
-- [ ] Test permission approval/denial in UI
-- [ ] Implement file read tool (view file contents)
-- [ ] Implement file write tool (create/overwrite files)
-- [ ] Implement file edit tool (find/replace operations)
-- [ ] Add tool result display formatting in renderer
+- [x] Complete CLI tool runner with permission requests  
+- [x] Connect tool execution to permission modal flow
+- [x] Test permission approval/denial in UI
+- [x] Implement file read tool (view file contents)
+- [x] Implement file write tool (create/overwrite files)
+- [x] Implement file edit tool (find/replace operations)
+- [x] Add tool result display formatting in renderer
+- [x] Implement permission policy (read-only vs write operations)
+- [x] Add replace_all parameter to edit tool for flexible editing
 
 ## Phase 3: Basic Slash Commands
 **Goal: Enable slash command functionality**
