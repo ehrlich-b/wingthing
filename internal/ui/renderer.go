@@ -31,25 +31,66 @@ func (r *Renderer) User(content string) string {
 	return prefix + " " + message + "\n\n"
 }
 
-// AgentRun renders an agent tool execution message
+// AgentRun renders an agent tool execution message with distinct styling
 func (r *Renderer) AgentRun(content string) string {
-	header := "Assistant (Running):"
-	styled := r.theme.AgentMessage.Render(header + " " + content)
-	return styled + "\n\n"
+	// Create a distinct card for tool execution
+	headerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("12")). // Bright blue
+		Bold(true)
+	
+	cardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("12")).
+		Padding(0, 1).
+		MarginBottom(1)
+	
+	header := headerStyle.Render("🔧 Assistant running tool")
+	body := r.theme.AgentMessage.Render(content)
+	card := cardStyle.Render(header + "\n" + body)
+	
+	return card + "\n"
 }
 
-// AgentObservation renders an agent observation message
+// AgentObservation renders an agent observation message with distinct styling  
 func (r *Renderer) AgentObservation(content string) string {
-	header := "Assistant (Observation):"
-	styled := r.theme.AgentMessage.Render(header + " " + content)
-	return styled + "\n\n"
+	// Create a distinct card for tool output
+	headerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("10")). // Bright green
+		Bold(true)
+	
+	cardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("10")).
+		Padding(0, 1).
+		MarginBottom(1)
+	
+	header := headerStyle.Render("📤 Tool output")
+	body := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")). // Light gray for tool output
+		Render(content)
+	card := cardStyle.Render(header + "\n" + body)
+	
+	return card + "\n"
 }
 
-// AgentFinal renders an agent final response message
+// AgentFinal renders an agent final response message with distinct styling
 func (r *Renderer) AgentFinal(content string) string {
-	header := "Assistant (Result):"
-	styled := r.theme.AgentMessage.Render(header + " " + content)
-	return styled + "\n\n"
+	// Create a distinct card for assistant response
+	headerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("13")). // Bright magenta
+		Bold(true)
+	
+	cardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("13")).
+		Padding(0, 1).
+		MarginBottom(1)
+	
+	header := headerStyle.Render("🤖 Assistant")
+	body := r.theme.AgentMessage.Render(content)
+	card := cardStyle.Render(header + "\n" + body)
+	
+	return card + "\n"
 }
 
 // AgentError renders an agent error message
@@ -121,7 +162,7 @@ func (r *Renderer) PermissionRequest(toolName, command string) string {
 	msg := r.theme.AgentMessage.Render("Assistant: I need permission to run: ") + 
 		  r.theme.UserMessageContent.Render(command)
 	
-	options := r.theme.SystemMessage.Render("[A]llow once | [Y]es always | [N]o | [D]eny always")
+	options := r.theme.SystemMessage.Render("[A]llow once | [N]o")
 	
 	return msg + "\n" + options + "\n"
 }

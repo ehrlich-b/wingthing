@@ -145,27 +145,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "down", "j":
-				if m.selectedPermissionOption < 3 { // 4 options: 0-3
+				if m.selectedPermissionOption < 1 { // 2 options: 0-1
 					m.selectedPermissionOption++
 				}
 				return m, nil
 			case "enter":
 				options := []struct{choice, decision string}{
 					{"Allow Once", "allow_once"},
-					{"Yes Always", "always_allow"}, 
 					{"No", "deny"},
-					{"Deny Always", "always_deny"},
 				}
 				selected := options[m.selectedPermissionOption]
 				return m.handlePermissionResponse(selected.choice, selected.decision, cmds)
 			case "a", "A":
 				return m.handlePermissionResponse("Allow Once", "allow_once", cmds)
-			case "y", "Y":
-				return m.handlePermissionResponse("Yes Always", "always_allow", cmds)
 			case "n", "N":
 				return m.handlePermissionResponse("No", "deny", cmds)
-			case "d", "D":
-				return m.handlePermissionResponse("Deny Always", "always_deny", cmds)
 			default:
 				// Ignore other keys during permission wait
 				return m, nil
@@ -309,8 +303,8 @@ func (m Model) View() string {
 		output.WriteString("\n\n")
 		
 		// Show options with selection
-		options := []string{"Allow Once", "Yes Always", "No", "Deny Always"}
-		keys := []string{"A", "Y", "N", "D"}
+		options := []string{"Allow Once", "No"}
+		keys := []string{"A", "N"}
 		
 		for i, option := range options {
 			if i == m.selectedPermissionOption {
@@ -361,22 +355,9 @@ func (m Model) handlePermissionResponse(choice, decision string, cmds []tea.Cmd)
 				m.logger.Error("Failed to retry pending tool", "error", err)
 			}
 		}()
-	case "always_allow":
-		m.orchestrator.GrantPermission(tool, action, params, agent.AlwaysAllow)
-		m.logger.Debug("Granted permission (always allow)", "tool", tool)
-		// Retry the pending tool execution
-		go func() {
-			ctx := context.Background()
-			if err := m.orchestrator.RetryPendingTool(ctx); err != nil {
-				m.logger.Error("Failed to retry pending tool", "error", err)
-			}
-		}()
 	case "deny":
 		m.orchestrator.DenyPermission(tool, action, params, agent.Deny)
 		m.logger.Debug("Denied permission (deny once)", "tool", tool)
-	case "always_deny":
-		m.orchestrator.DenyPermission(tool, action, params, agent.AlwaysDeny)
-		m.logger.Debug("Denied permission (always deny)", "tool", tool)
 	default:
 		m.logger.Error("Unknown permission decision", "decision", decision)
 	}
