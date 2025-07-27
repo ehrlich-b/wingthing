@@ -6,9 +6,11 @@ import (
 
 type Theme struct {
 	// Message styles
-	UserMessage    lipgloss.Style
-	AgentMessage   lipgloss.Style
-	SystemMessage  lipgloss.Style
+	UserMessage        lipgloss.Style
+	UserMessageContent lipgloss.Style
+	AgentMessage       lipgloss.Style
+	SystemMessage      lipgloss.Style
+	ErrorMessage       lipgloss.Style
 	
 	// Input styles
 	InputBorder    lipgloss.Style
@@ -29,6 +31,10 @@ func DefaultTheme() Theme {
 			Bold(true).
 			MarginLeft(2),
 			
+		UserMessageContent: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252")).  // Light gray
+			MarginLeft(2),
+			
 		AgentMessage: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("76")).  // Green
 			MarginLeft(2),
@@ -36,6 +42,11 @@ func DefaultTheme() Theme {
 		SystemMessage: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")). // Gray
 			Italic(true).
+			MarginLeft(2),
+			
+		ErrorMessage: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")). // Red
+			Bold(true).
 			MarginLeft(2),
 			
 		InputBorder: lipgloss.NewStyle().

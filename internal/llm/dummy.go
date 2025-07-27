@@ -35,6 +35,53 @@ func (d *DummyProvider) Chat(ctx context.Context, messages []interfaces.Message)
 		}
 	}
 
+	// Special case: prompt "tool" triggers bash tool call
+	if strings.TrimSpace(lastUserMessage) == "tool" {
+		return &interfaces.LLMResponse{
+			Content: "I'll run a sample bash command for you.",
+			ToolCalls: []interfaces.ToolCall{
+				{
+					ID:   "call_tool",
+					Type: "function",
+					Function: interfaces.FunctionCall{
+						Name: "cli",
+						Arguments: map[string]any{
+							"command": "echo 'Hello from bash tool!'",
+						},
+					},
+				},
+			},
+			Finished: false,
+		}, nil
+	}
+
+	// Special case: prompt "diff" shows large multiline diff viewer
+	if strings.TrimSpace(lastUserMessage) == "diff" {
+		diffOutput := `--- a/src/main.go
++++ b/src/main.go
+@@ -1,10 +1,15 @@
+ package main
+ 
+ import (
+ 	"fmt"
++	"log"
++	"os"
+ )
+ 
+ func main() {
+-	fmt.Println("Hello World")
++	if len(os.Args) < 2 {
++		log.Fatal("Usage: program <name>")
++	}
++	name := os.Args[1]
++	fmt.Printf("Hello %s!\n", name)
+ }`
+		return &interfaces.LLMResponse{
+			Content: fmt.Sprintf("Here's a sample diff showing code changes:\n\n```diff\n%s\n```", diffOutput),
+			Finished: true,
+		}, nil
+	}
+
 	// Check for tool call requests
 	if strings.Contains(lastUserMessage, "list files") || strings.Contains(lastUserMessage, "ls") {
 		return &interfaces.LLMResponse{
@@ -105,10 +152,29 @@ This is a mock implementation to test the agent system.`,
 		}
 	}
 
-	// Default response
+	// Default response with multi-line lorem ipsum
+	defaultResponse := `Hi, I'm your fake AI assistant! Here's some of the things I can do:
+
+• List files and directories (try typing "list files" or "ls")
+• Read and edit files (try "read file")
+• Execute bash commands (type "tool" for a demo)
+• Show diffs and code changes (type "diff" for a sample)
+• Help with various tasks (type "help" for more info)
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor 
+incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis 
+nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+
+Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu 
+fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in 
+culpa qui officia deserunt mollit anim id est laborum.
+
+Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium 
+doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore 
+veritatis et quasi architecto beatae vitae dicta sunt explicabo.`
+
 	return &interfaces.LLMResponse{
-		Content: fmt.Sprintf("I understand you said: \"%s\". This is a dummy response from the mock LLM provider. Try asking me to 'list files' or 'read file' to see tool usage in action!", 
-			lastUserMessage),
+		Content:  defaultResponse,
 		Finished: true,
 	}, nil
 }
