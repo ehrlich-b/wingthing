@@ -26,6 +26,10 @@ type Orchestrator struct {
 	
 	// Track pending tool execution for permission retry
 	pendingToolCall *interfaces.ToolCall
+	
+	// Headless mode configuration
+	headlessMode bool
+	autoAccept   bool
 }
 
 func NewOrchestrator(
@@ -36,13 +40,21 @@ func NewOrchestrator(
 	llmProvider interfaces.LLMProvider,
 ) *Orchestrator {
 	return &Orchestrator{
-		toolRunner:  toolRunner,
-		events:      events,
-		memory:      memory,
-		permissions: permissions,
-		llmProvider: llmProvider,
-		messages:    make([]interfaces.Message, 0),
+		toolRunner:   toolRunner,
+		events:       events,
+		memory:       memory,
+		permissions:  permissions,
+		llmProvider:  llmProvider,
+		messages:     make([]interfaces.Message, 0),
+		headlessMode: false,
+		autoAccept:   false,
 	}
+}
+
+// SetHeadlessMode configures the orchestrator for headless operation
+func (o *Orchestrator) SetHeadlessMode(autoAccept bool) {
+	o.headlessMode = true
+	o.autoAccept = autoAccept
 }
 
 func (o *Orchestrator) ProcessPrompt(ctx context.Context, prompt string) error {
@@ -143,24 +155,52 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 		}
 
 		if !allowed {
-			// Save pending tool call for retry after permission
-			o.pendingToolCall = &toolCall
-			
-			// Create permission request
-			permReq := &PermissionRequest{
-				Tool:        toolName,
-				Description: fmt.Sprintf("Allow wingthing to run this CLI command"),
-				Parameters:  params,
+			// Handle permission request based on mode
+			if o.headlessMode {
+				// Create permission request for event emission
+				permReq := &PermissionRequest{
+					Tool:        toolName,
+					Description: fmt.Sprintf("Allow wingthing to run this CLI command"),
+					Parameters:  params,
+				}
+				
+				// Emit permission request event
+				o.events <- Event{
+					Type:    string(EventTypePermissionRequest),
+					Content: fmt.Sprintf("The agent wants to run a CLI command using the '%s' tool.", toolName),
+					Data:    *permReq,
+				}
+				
+				if o.autoAccept {
+					// Auto-grant permission and continue execution
+					o.permissions.GrantPermission(toolName, "execute", params, AllowOnce)
+					allowed = true // Continue with tool execution
+				} else {
+					// Auto-deny permission and skip this tool
+					o.permissions.DenyPermission(toolName, "execute", params, Deny)
+					results = append(results, fmt.Sprintf("Tool %s denied: permission auto-denied in headless mode", toolName))
+					continue
+				}
+			} else {
+				// Interactive mode - save pending tool call for retry after permission
+				o.pendingToolCall = &toolCall
+				
+				// Create permission request
+				permReq := &PermissionRequest{
+					Tool:        toolName,
+					Description: fmt.Sprintf("Allow wingthing to run this CLI command"),
+					Parameters:  params,
+				}
+				
+				// Emit permission request event
+				o.events <- Event{
+					Type:    string(EventTypePermissionRequest),
+					Content: fmt.Sprintf("The agent wants to run a CLI command using the '%s' tool.", toolName),
+					Data:    *permReq,
+				}
+				
+				return &ToolBatchResult{PermissionRequest: permReq}
 			}
-			
-			// Emit permission request event
-			o.events <- Event{
-				Type:    string(EventTypePermissionRequest),
-				Content: fmt.Sprintf("The agent wants to run a CLI command using the '%s' tool.", toolName),
-				Data:    *permReq,
-			}
-			
-			return &ToolBatchResult{PermissionRequest: permReq}
 		}
 
 		// Execute tool

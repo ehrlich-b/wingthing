@@ -61,15 +61,16 @@
 - [x] Fixed: Input border disappearing when no completion matches found
 - [x] Decision: `/save` takes optional filename and creates versioned JSON files
 
-## Phase 5: Headless Mode
+## Phase 5: Headless Mode ✅
 **Goal: One-shot task execution without REPL**
 
-- [ ] Implement headless mode that executes one complete task loop and exits
-- [ ] Normal terminal output by default (same as interactive mode)
-- [ ] Add `--json` flag for structured JSON output format (for scripting)
-- [ ] Process single prompt through full agent loop (thinking → tools → response)
-- [ ] Exit when control would normally return to user (no REPL)
-- [ ] Test both human-readable and JSON output modes
+- [x] Implement headless mode that executes one complete task loop and exits
+- [x] Normal terminal output by default (same as interactive mode)
+- [x] Add `--json` flag for structured JSON output format (for scripting)
+- [x] Process single prompt through full agent loop (thinking → tools → response)
+- [x] Exit when control would normally return to user (no REPL)
+- [x] Test both human-readable and JSON output modes
+- [x] Add `-y/--yes` flag for auto-accepting tool permissions (apt-style automation)
 
 ## Phase 6: Real LLM Integration  
 **Goal: Replace dummy with actual AI**
@@ -112,6 +113,6 @@
 ---
 
 ## Current Focus
-**Phase 4 Complete! Ready for Phase 5** - implement headless mode with JSON output, or Phase 6 for real LLM integration.
+**Phase 5 Complete! Ready for Phase 6** - implement real LLM integration, or Phase 6.5 for extended tool suite.
 
 Each phase should be completable in 1-2 focused sessions. Don't try to implement everything at once.
