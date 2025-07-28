@@ -470,19 +470,30 @@ func appendToToolBlock(liveBlocks map[string]*LiveBlock, content string) {
 }
 
 func finalizeThinkingBlocks(m *Model) tea.Cmd {
-	// Find and finalize thinking blocks only
+	// Find all thinking blocks and finalize them
+	var cmds []tea.Cmd
 	for id, lb := range m.liveBlocks {
 		if lb.Kind == LiveThinking {
-			return func() tea.Msg {
+			// Capture the id and lb in closure variables
+			blockID := id
+			blockLines := lb.Lines
+			cmd := func() tea.Msg {
 				return finalizeLiveMsg{
-					ID:         id,
-					FinalLines: lb.Lines,
+					ID:         blockID,
+					FinalLines: blockLines,
 					Suffix:     "",
 				}
 			}
+			cmds = append(cmds, cmd)
 		}
 	}
-	return nil
+	
+	if len(cmds) == 0 {
+		return nil
+	}
+	
+	// Return a batch command to finalize all thinking blocks
+	return tea.Batch(cmds...)
 }
 
 func finalizeToolBlocks(m *Model, suffix string) tea.Cmd {
