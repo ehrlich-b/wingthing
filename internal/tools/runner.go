@@ -33,7 +33,7 @@ func (mr *MultiRunner) Run(ctx context.Context, tool string, params map[string]a
 	if !exists {
 		return &Result{Error: "unsupported tool: " + tool}, nil
 	}
-	
+
 	return runner.Run(ctx, tool, params)
 }
 

@@ -16,18 +16,18 @@ import (
 type PermissionDecision = interfaces.PermissionDecision
 
 const (
-	AllowOnce    = interfaces.AllowOnce
-	AlwaysAllow  = interfaces.AlwaysAllow
-	Deny         = interfaces.Deny
-	AlwaysDeny   = interfaces.AlwaysDeny
+	AllowOnce   = interfaces.AllowOnce
+	AlwaysAllow = interfaces.AlwaysAllow
+	Deny        = interfaces.Deny
+	AlwaysDeny  = interfaces.AlwaysDeny
 )
 
 type PermissionRule struct {
-	Tool        string                 `json:"tool"`
-	Action      string                 `json:"action"`
-	ParamsHash  string                 `json:"params_hash"`
-	Decision    PermissionDecision     `json:"decision"`
-	Parameters  map[string]any         `json:"parameters"`
+	Tool       string             `json:"tool"`
+	Action     string             `json:"action"`
+	ParamsHash string             `json:"params_hash"`
+	Decision   PermissionDecision `json:"decision"`
+	Parameters map[string]any     `json:"parameters"`
 }
 
 type PermissionEngine struct {
@@ -45,15 +45,15 @@ func NewPermissionEngine(fs interfaces.FileSystem) *PermissionEngine {
 
 func (pe *PermissionEngine) CheckPermission(tool, action string, params map[string]any) (bool, error) {
 	key := pe.makeKey(tool, action, params)
-	
+
 	pe.mu.Lock()
 	defer pe.mu.Unlock()
-	
+
 	rule, exists := pe.rules[key]
 	if !exists {
 		return false, nil // No rule found, need to ask user
 	}
-	
+
 	switch rule.Decision {
 	case AllowOnce:
 		// Remove the rule after use
@@ -81,7 +81,7 @@ func (pe *PermissionEngine) GrantPermission(tool, action string, params map[stri
 		Decision:   decision,
 		Parameters: params,
 	}
-	
+
 	pe.mu.Lock()
 	defer pe.mu.Unlock()
 	pe.rules[key] = rule
@@ -96,7 +96,7 @@ func (pe *PermissionEngine) DenyPermission(tool, action string, params map[strin
 		Decision:   decision,
 		Parameters: params,
 	}
-	
+
 	pe.mu.Lock()
 	defer pe.mu.Unlock()
 	pe.rules[key] = rule
@@ -110,12 +110,12 @@ func (pe *PermissionEngine) LoadFromFile(filePath string) error {
 		}
 		return err
 	}
-	
+
 	var rules map[string]PermissionRule
 	if err := json.Unmarshal(data, &rules); err != nil {
 		return err
 	}
-	
+
 	pe.mu.Lock()
 	defer pe.mu.Unlock()
 	pe.rules = rules
@@ -128,15 +128,15 @@ func (pe *PermissionEngine) SaveToFile(filePath string) error {
 	if err := pe.fs.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	
+
 	pe.mu.RLock()
 	data, err := json.MarshalIndent(pe.rules, "", "  ")
 	pe.mu.RUnlock()
-	
+
 	if err != nil {
 		return err
 	}
-	
+
 	return pe.fs.WriteFile(filePath, data, 0644)
 }
 
@@ -155,31 +155,31 @@ func (pe *PermissionEngine) hashParams(params map[string]any) string {
 // canonicalizeParams recursively sorts map keys to ensure deterministic JSON marshaling
 func (pe *PermissionEngine) canonicalizeParams(params any) any {
 	val := reflect.ValueOf(params)
-	
+
 	switch val.Kind() {
 	case reflect.Map:
 		if val.Type().Key().Kind() != reflect.String {
 			// Non-string keys, return as-is
 			return params
 		}
-		
+
 		// Create a new map with sorted keys
 		result := make(map[string]any)
 		keys := val.MapKeys()
-		
+
 		// Sort keys by string value
 		sort.Slice(keys, func(i, j int) bool {
 			return keys[i].String() < keys[j].String()
 		})
-		
+
 		// Add sorted key-value pairs
 		for _, key := range keys {
 			value := val.MapIndex(key)
 			result[key.String()] = pe.canonicalizeParams(value.Interface())
 		}
-		
+
 		return result
-		
+
 	case reflect.Slice, reflect.Array:
 		// Canonicalize each element in the slice/array
 		result := make([]any, val.Len())
@@ -187,7 +187,7 @@ func (pe *PermissionEngine) canonicalizeParams(params any) any {
 			result[i] = pe.canonicalizeParams(val.Index(i).Interface())
 		}
 		return result
-		
+
 	default:
 		// Primitive types, return as-is
 		return params

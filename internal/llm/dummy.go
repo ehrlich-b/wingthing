@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -11,13 +13,22 @@ import (
 
 // DummyProvider is a mock LLM provider for testing
 type DummyProvider struct {
-	delay time.Duration
+	delay  time.Duration
+	logger *slog.Logger
 }
 
 // NewDummyProvider creates a new dummy LLM provider
 func NewDummyProvider(delay time.Duration) *DummyProvider {
+	// Set up debug logging
+	debugFile, err := os.OpenFile("/tmp/wingthing-debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		panic(err)
+	}
+	logger := slog.New(slog.NewTextHandler(debugFile, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	
 	return &DummyProvider{
-		delay: delay,
+		delay:  delay,
+		logger: logger,
 	}
 }
 
@@ -77,7 +88,7 @@ func (d *DummyProvider) Chat(ctx context.Context, messages []interfaces.Message)
 +	fmt.Printf("Hello %s!\n", name)
  }`
 		return &interfaces.LLMResponse{
-			Content: fmt.Sprintf("Here's a sample diff showing code changes:\n\n```diff\n%s\n```", diffOutput),
+			Content:  fmt.Sprintf("Here's a sample diff showing code changes:\n\n```diff\n%s\n```", diffOutput),
 			Finished: true,
 		}, nil
 	}
@@ -178,7 +189,7 @@ func (d *DummyProvider) Chat(ctx context.Context, messages []interfaces.Message)
 					},
 				},
 				{
-					ID:   "call_edit_demo", 
+					ID:   "call_edit_demo",
 					Type: "function",
 					Function: interfaces.FunctionCall{
 						Name: "edit_file",
@@ -213,17 +224,19 @@ This is a mock implementation to test the agent system.`,
 
 	if strings.Contains(lastUserMessage, "hello") || strings.Contains(lastUserMessage, "hi") {
 		return &interfaces.LLMResponse{
-			Content: "Hello! I'm a dummy AI assistant built into Wingthing. How can I help you today?",
+			Content:  "Hello! I'm a dummy AI assistant built into Wingthing. How can I help you today?",
 			Finished: true,
 		}, nil
 	}
 
 	// Handle tool results (when the user message contains tool output)
 	if len(messages) >= 2 {
-		prevMsg := messages[len(messages)-2]
-		if prevMsg.Role == "assistant" && len(lastUserMessage) > 50 {
+		d.logger.Debug("LLM processing message", "lastUserMessage", lastUserMessage)
+		// Check if this looks like a tool result - note: message is lowercased above
+		if strings.Contains(lastUserMessage, "tool cli executed successfully") {
+			d.logger.Debug("LLM detected tool result, returning Finished=true")
 			return &interfaces.LLMResponse{
-				Content: fmt.Sprintf("I can see the command executed successfully. The output shows: %s", 
+				Content: fmt.Sprintf("I can see the command executed successfully. The output shows: %s",
 					summarizeOutput(lastUserMessage)),
 				Finished: true,
 			}, nil
@@ -266,7 +279,7 @@ func summarizeOutput(output string) string {
 	if len(lines) <= 3 {
 		return output
 	}
-	
+
 	// Return first few lines with indication of more content
 	summary := strings.Join(lines[:3], "\n")
 	return fmt.Sprintf("%s\n... and %d more lines", summary, len(lines)-3)

@@ -11,9 +11,9 @@ import (
 
 // ToolBatchResult represents the result of executing a batch of tool calls
 type ToolBatchResult struct {
-	Results           []string              // successful tool outputs
-	PermissionRequest *PermissionRequest    // nil if no permission needed
-	Error             error                 // any error that occurred
+	Results           []string           // successful tool outputs
+	PermissionRequest *PermissionRequest // nil if no permission needed
+	Error             error              // any error that occurred
 }
 
 type Orchestrator struct {
@@ -23,10 +23,10 @@ type Orchestrator struct {
 	permissions interfaces.PermissionChecker
 	llmProvider interfaces.LLMProvider
 	messages    []interfaces.Message
-	
+
 	// Track pending tool execution for permission retry
 	pendingToolCall *interfaces.ToolCall
-	
+
 	// Headless mode configuration
 	headlessMode bool
 	autoAccept   bool
@@ -92,7 +92,7 @@ func (o *Orchestrator) runConversationLoop(ctx context.Context) error {
 		// If LLM wants to use tools, handle them
 		if len(response.ToolCalls) > 0 {
 			batchResult := o.handleToolCalls(ctx, response.ToolCalls)
-			
+
 			// Check for errors
 			if batchResult.Error != nil {
 				return batchResult.Error
@@ -143,7 +143,7 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 		needsPermission := o.toolNeedsPermission(toolName)
 		var allowed bool
 		var err error
-		
+
 		if needsPermission {
 			allowed, err = o.permissions.CheckPermission(toolName, "execute", params)
 			if err != nil {
@@ -163,14 +163,14 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 					Description: fmt.Sprintf("Allow wingthing to run this CLI command"),
 					Parameters:  params,
 				}
-				
+
 				// Emit permission request event
 				o.events <- Event{
 					Type:    string(EventTypePermissionRequest),
 					Content: fmt.Sprintf("The agent wants to run a CLI command using the '%s' tool.", toolName),
 					Data:    *permReq,
 				}
-				
+
 				if o.autoAccept {
 					// Auto-grant permission and continue execution
 					o.permissions.GrantPermission(toolName, "execute", params, AllowOnce)
@@ -184,21 +184,21 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 			} else {
 				// Interactive mode - save pending tool call for retry after permission
 				o.pendingToolCall = &toolCall
-				
+
 				// Create permission request
 				permReq := &PermissionRequest{
 					Tool:        toolName,
 					Description: fmt.Sprintf("Allow wingthing to run this CLI command"),
 					Parameters:  params,
 				}
-				
+
 				// Emit permission request event
 				o.events <- Event{
 					Type:    string(EventTypePermissionRequest),
 					Content: fmt.Sprintf("The agent wants to run a CLI command using the '%s' tool.", toolName),
 					Data:    *permReq,
 				}
-				
+
 				return &ToolBatchResult{PermissionRequest: permReq}
 			}
 		}
@@ -233,7 +233,7 @@ func (o *Orchestrator) GrantPermission(tool, action string, params map[string]an
 
 func (o *Orchestrator) DenyPermission(tool, action string, params map[string]any, decision PermissionDecision) {
 	o.permissions.DenyPermission(tool, action, params, decision)
-	
+
 	// Clear pending tool call since permission was denied
 	if decision == Deny || decision == AlwaysDeny {
 		o.pendingToolCall = nil
@@ -249,14 +249,14 @@ func (o *Orchestrator) RetryPendingTool(ctx context.Context) error {
 	if o.pendingToolCall == nil {
 		return fmt.Errorf("no pending tool call to retry")
 	}
-	
+
 	toolCall := *o.pendingToolCall
 	o.pendingToolCall = nil // Clear the pending call
-	
+
 	// Execute the tool directly (permission should now be granted)
 	toolName := toolCall.Function.Name
 	params := toolCall.Function.Arguments
-	
+
 	// Execute tool
 	o.events <- Event{
 		Type:    string(EventTypeRunTool),

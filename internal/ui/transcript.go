@@ -23,7 +23,7 @@ type TranscriptModel struct {
 func NewTranscriptModel() TranscriptModel {
 	vp := viewport.New(0, 0)
 	// Don't set initial content - let updateContent handle it
-	
+
 	return TranscriptModel{
 		viewport: vp,
 		messages: []Message{},
@@ -45,7 +45,7 @@ func (m TranscriptModel) View() string {
 	if len(m.messages) == 0 {
 		return m.theme.SystemMessage.Render("Welcome to Wingthing! Type a message to get started.")
 	}
-	
+
 	var lines []string
 	for _, msg := range m.messages {
 		var renderedMsg string
@@ -66,7 +66,7 @@ func (m TranscriptModel) View() string {
 				renderedMsg = m.theme.SystemMessage.Render(msg.Content)
 			}
 		}
-		
+
 		// Handle word wrapping for long content
 		if len(msg.Content) > 80 {
 			wrappedLines := strings.Split(renderedMsg, "\n")
@@ -83,9 +83,9 @@ func (m TranscriptModel) View() string {
 		}
 		lines = append(lines, "") // Add spacing between messages
 	}
-	
+
 	content := strings.Join(lines, "\n")
-	
+
 	// Simple height-based scrolling - show last N lines that fit
 	if m.viewport.Height > 0 {
 		contentLines := strings.Split(content, "\n")
@@ -95,7 +95,7 @@ func (m TranscriptModel) View() string {
 			content = strings.Join(visibleLines, "\n")
 		}
 	}
-	
+
 	return content
 }
 
@@ -133,7 +133,7 @@ func (m *TranscriptModel) AddThinkingMessage() {
 
 func (m *TranscriptModel) updateContent() {
 	var lines []string
-	
+
 	for _, msg := range m.messages {
 		switch msg.Role {
 		case "user":
@@ -154,10 +154,10 @@ func (m *TranscriptModel) updateContent() {
 		}
 		lines = append(lines, "") // Add spacing
 	}
-	
+
 	content := strings.Join(lines, "\n")
 	m.viewport.SetContent(content)
-	
+
 	// Only call GotoBottom if viewport is properly sized
 	if m.viewport.Height > 0 && m.viewport.Width > 0 {
 		m.viewport.GotoBottom()

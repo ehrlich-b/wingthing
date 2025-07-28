@@ -25,28 +25,31 @@ func (cr *CLIRunner) Run(ctx context.Context, tool string, params map[string]any
 	if tool != "cli" {
 		return &Result{Error: "unsupported tool: " + tool}, nil
 	}
-	
+
 	command, ok := params["command"].(string)
 	if !ok {
 		return &Result{Error: "missing or invalid 'command' parameter"}, nil
 	}
-	
+
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(ctx, cr.timeout)
 	defer cancel()
-	
+
+	// Add delay for testing animations (1 second)
+	time.Sleep(1 * time.Second)
+
 	// Execute command
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
 	output, err := cmd.CombinedOutput()
-	
+
 	result := &Result{
 		Output: strings.TrimSpace(string(output)),
 	}
-	
+
 	if err != nil {
 		result.Error = err.Error()
 	}
-	
+
 	return result, nil
 }
 

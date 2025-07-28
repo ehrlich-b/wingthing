@@ -29,16 +29,16 @@ func (m *Manager) Load(userConfigDir, projectDir string) error {
 	if err := m.loadConfig(userConfigPath, m.userConfig); err != nil {
 		return err
 	}
-	
+
 	// Load project config
 	projectConfigPath := filepath.Join(projectDir, ".wingthing", "settings.json")
 	if err := m.loadConfig(projectConfigPath, m.projectConfig); err != nil {
 		return err
 	}
-	
+
 	// Merge configs (project overrides user)
 	m.mergeConfigs()
-	
+
 	return nil
 }
 
@@ -50,7 +50,7 @@ func (m *Manager) loadConfig(path string, config *interfaces.Config) error {
 		}
 		return err
 	}
-	
+
 	return json.Unmarshal(data, config)
 }
 
@@ -103,33 +103,33 @@ func (m *Manager) Get() *interfaces.Config {
 
 func (m *Manager) SaveUserConfig(userConfigDir string) error {
 	configPath := filepath.Join(userConfigDir, "settings.json")
-	
+
 	// Ensure directory exists
 	if err := m.fs.MkdirAll(userConfigDir, 0755); err != nil {
 		return err
 	}
-	
+
 	data, err := json.MarshalIndent(m.userConfig, "", "  ")
 	if err != nil {
 		return err
 	}
-	
+
 	return m.fs.WriteFile(configPath, data, 0644)
 }
 
 func (m *Manager) SaveProjectConfig(projectDir string) error {
 	wingthingDir := filepath.Join(projectDir, ".wingthing")
 	configPath := filepath.Join(wingthingDir, "settings.json")
-	
+
 	// Ensure directory exists
 	if err := m.fs.MkdirAll(wingthingDir, 0755); err != nil {
 		return err
 	}
-	
+
 	data, err := json.MarshalIndent(m.projectConfig, "", "  ")
 	if err != nil {
 		return err
 	}
-	
+
 	return m.fs.WriteFile(configPath, data, 0644)
 }

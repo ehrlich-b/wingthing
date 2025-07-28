@@ -24,33 +24,33 @@ type ClientConfig struct {
 type Provider interface {
 	// Chat sends a conversation to the provider and returns the response
 	Chat(ctx context.Context, req *ChatRequest) (*ChatResponse, error)
-	
+
 	// SupportsModel returns true if this provider supports the given model
 	SupportsModel(model string) bool
 }
 
 // ChatRequest represents a request to an LLM provider
 type ChatRequest struct {
-	Model       string                  `json:"model"`
-	Messages    []interfaces.Message    `json:"messages"`
-	Tools       []Tool                  `json:"tools,omitempty"`
-	MaxTokens   *int                    `json:"max_tokens,omitempty"`
-	Temperature *float32                `json:"temperature,omitempty"`
-	TopP        *float32                `json:"top_p,omitempty"`
-	Stop        []string                `json:"stop,omitempty"`
+	Model       string               `json:"model"`
+	Messages    []interfaces.Message `json:"messages"`
+	Tools       []Tool               `json:"tools,omitempty"`
+	MaxTokens   *int                 `json:"max_tokens,omitempty"`
+	Temperature *float32             `json:"temperature,omitempty"`
+	TopP        *float32             `json:"top_p,omitempty"`
+	Stop        []string             `json:"stop,omitempty"`
 }
 
 // ChatResponse represents a response from an LLM provider
 type ChatResponse struct {
-	Content      string                 `json:"content"`
-	ToolCalls    []interfaces.ToolCall  `json:"tool_calls,omitempty"`
-	Finished     bool                   `json:"finished"`
-	Usage        *TokenUsage            `json:"usage,omitempty"`
+	Content   string                `json:"content"`
+	ToolCalls []interfaces.ToolCall `json:"tool_calls,omitempty"`
+	Finished  bool                  `json:"finished"`
+	Usage     *TokenUsage           `json:"usage,omitempty"`
 }
 
 // Tool represents a tool that can be called by the LLM
 type Tool struct {
-	Type     string         `json:"type"`     // "function"
+	Type     string         `json:"type"` // "function"
 	Function FunctionSchema `json:"function"`
 }
 
@@ -74,11 +74,11 @@ func NewClient(config *ClientConfig) *Client {
 		providers: make(map[string]Provider),
 		config:    config,
 	}
-	
+
 	// Register providers
 	client.providers["openai"] = NewOpenAIProvider(config.APIKey, config.BaseURL)
 	client.providers["anthropic"] = NewAnthropicProvider(config.APIKey)
-	
+
 	return client
 }
 
@@ -89,7 +89,7 @@ func (c *Client) Chat(ctx context.Context, messages []interfaces.Message) (*inte
 	if model == "" {
 		model = "gpt-4o-mini" // Reasonable default
 	}
-	
+
 	// Find provider for this model
 	var provider Provider
 	var providerName string
@@ -100,24 +100,24 @@ func (c *Client) Chat(ctx context.Context, messages []interfaces.Message) (*inte
 			break
 		}
 	}
-	
+
 	if provider == nil {
 		return nil, fmt.Errorf("no provider found for model: %s", model)
 	}
-	
+
 	// Create request with tools
 	req := &ChatRequest{
 		Model:    model,
 		Messages: messages,
 		Tools:    c.getAvailableTools(),
 	}
-	
+
 	// Call provider
 	resp, err := provider.Chat(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("provider %s failed: %w", providerName, err)
 	}
-	
+
 	// Convert to interface format
 	return &interfaces.LLMResponse{
 		Content:   resp.Content,

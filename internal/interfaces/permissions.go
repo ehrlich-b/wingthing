@@ -4,10 +4,10 @@ package interfaces
 type PermissionDecision string
 
 const (
-	AllowOnce    PermissionDecision = "allow_once"
-	AlwaysAllow  PermissionDecision = "always_allow"
-	Deny         PermissionDecision = "deny"
-	AlwaysDeny   PermissionDecision = "always_deny"
+	AllowOnce   PermissionDecision = "allow_once"
+	AlwaysAllow PermissionDecision = "always_allow"
+	Deny        PermissionDecision = "deny"
+	AlwaysDeny  PermissionDecision = "always_deny"
 )
 
 // PermissionChecker handles permission checking and management

@@ -10,7 +10,7 @@ func GetUserConfigDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	return filepath.Join(homeDir, ".wingthing"), nil
 }
 
@@ -19,7 +19,7 @@ func GetProjectDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Walk up directory tree to find .git or .wingthing directory
 	dir := wd
 	for {
@@ -28,13 +28,13 @@ func GetProjectDir() (string, error) {
 		if _, err := os.Stat(wingthingDir); err == nil {
 			return dir, nil
 		}
-		
+
 		// Check for .git directory (project root)
 		gitDir := filepath.Join(dir, ".git")
 		if _, err := os.Stat(gitDir); err == nil {
 			return dir, nil
 		}
-		
+
 		// Move to parent directory
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -50,12 +50,12 @@ func EnsureConfigDirs(userConfigDir, projectDir string) error {
 	if err := os.MkdirAll(userConfigDir, 0755); err != nil {
 		return err
 	}
-	
+
 	// Ensure project .wingthing directory exists
 	projectConfigDir := filepath.Join(projectDir, ".wingthing")
 	if err := os.MkdirAll(projectConfigDir, 0755); err != nil {
 		return err
 	}
-	
+
 	return nil
 }

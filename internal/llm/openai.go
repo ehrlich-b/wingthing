@@ -25,7 +25,7 @@ func NewOpenAIProvider(apiKey, baseURL string) *OpenAIProvider {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
-	
+
 	return &OpenAIProvider{
 		apiKey:  apiKey,
 		baseURL: baseURL,
@@ -38,54 +38,54 @@ func NewOpenAIProvider(apiKey, baseURL string) *OpenAIProvider {
 // SupportsModel returns true if this provider supports the given model
 func (p *OpenAIProvider) SupportsModel(model string) bool {
 	// OpenAI model patterns
-	return strings.HasPrefix(model, "gpt-") || 
-		   strings.HasPrefix(model, "o1-") ||
-		   model == "text-davinci-003" ||
-		   model == "text-davinci-002"
+	return strings.HasPrefix(model, "gpt-") ||
+		strings.HasPrefix(model, "o1-") ||
+		model == "text-davinci-003" ||
+		model == "text-davinci-002"
 }
 
 // Chat sends a conversation to OpenAI and returns the response
 func (p *OpenAIProvider) Chat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	// Convert to OpenAI format
 	openaiReq := p.convertRequest(req)
-	
+
 	// Make HTTP request
 	respBody, err := p.makeRequest(ctx, openaiReq)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Parse response
 	var openaiResp openaiChatResponse
 	if err := json.Unmarshal(respBody, &openaiResp); err != nil {
 		return nil, fmt.Errorf("failed to parse OpenAI response: %w", err)
 	}
-	
+
 	// Convert to our format
 	return p.convertResponse(&openaiResp), nil
 }
 
 // OpenAI API types
 type openaiChatRequest struct {
-	Model       string             `json:"model"`
-	Messages    []openaiMessage    `json:"messages"`
-	Tools       []openaiTool       `json:"tools,omitempty"`
-	MaxTokens   *int               `json:"max_tokens,omitempty"`
-	Temperature *float32           `json:"temperature,omitempty"`
-	TopP        *float32           `json:"top_p,omitempty"`
-	Stop        []string           `json:"stop,omitempty"`
+	Model       string          `json:"model"`
+	Messages    []openaiMessage `json:"messages"`
+	Tools       []openaiTool    `json:"tools,omitempty"`
+	MaxTokens   *int            `json:"max_tokens,omitempty"`
+	Temperature *float32        `json:"temperature,omitempty"`
+	TopP        *float32        `json:"top_p,omitempty"`
+	Stop        []string        `json:"stop,omitempty"`
 }
 
 type openaiMessage struct {
-	Role      string                `json:"role"`
-	Content   string                `json:"content"`
-	ToolCalls []openaiToolCall      `json:"tool_calls,omitempty"`
-	ToolCallID string               `json:"tool_call_id,omitempty"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content"`
+	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type openaiTool struct {
-	Type     string              `json:"type"`
-	Function openaiToolFunction  `json:"function"`
+	Type     string             `json:"type"`
+	Function openaiToolFunction `json:"function"`
 }
 
 type openaiToolFunction struct {
@@ -95,9 +95,9 @@ type openaiToolFunction struct {
 }
 
 type openaiToolCall struct {
-	ID       string              `json:"id"`
-	Type     string              `json:"type"`
-	Function openaiToolCallFunc  `json:"function"`
+	ID       string             `json:"id"`
+	Type     string             `json:"type"`
+	Function openaiToolCallFunc `json:"function"`
 }
 
 type openaiToolCallFunc struct {
@@ -106,12 +106,12 @@ type openaiToolCallFunc struct {
 }
 
 type openaiChatResponse struct {
-	ID      string           `json:"id"`
-	Object  string           `json:"object"`
-	Created int64            `json:"created"`
-	Model   string           `json:"model"`
-	Choices []openaiChoice   `json:"choices"`
-	Usage   openaiUsage      `json:"usage"`
+	ID      string         `json:"id"`
+	Object  string         `json:"object"`
+	Created int64          `json:"created"`
+	Model   string         `json:"model"`
+	Choices []openaiChoice `json:"choices"`
+	Usage   openaiUsage    `json:"usage"`
 }
 
 type openaiChoice struct {
@@ -135,7 +135,7 @@ func (p *OpenAIProvider) convertRequest(req *ChatRequest) *openaiChatRequest {
 		TopP:        req.TopP,
 		Stop:        req.Stop,
 	}
-	
+
 	// Convert messages
 	for _, msg := range req.Messages {
 		openaiReq.Messages = append(openaiReq.Messages, openaiMessage{
@@ -143,7 +143,7 @@ func (p *OpenAIProvider) convertRequest(req *ChatRequest) *openaiChatRequest {
 			Content: msg.Content,
 		})
 	}
-	
+
 	// Convert tools
 	for _, tool := range req.Tools {
 		openaiReq.Tools = append(openaiReq.Tools, openaiTool{
@@ -155,7 +155,7 @@ func (p *OpenAIProvider) convertRequest(req *ChatRequest) *openaiChatRequest {
 			},
 		})
 	}
-	
+
 	return openaiReq
 }
 
@@ -167,7 +167,7 @@ func (p *OpenAIProvider) convertResponse(resp *openaiChatResponse) *ChatResponse
 			Finished: true,
 		}
 	}
-	
+
 	choice := resp.Choices[0]
 	result := &ChatResponse{
 		Content:  choice.Message.Content,
@@ -178,7 +178,7 @@ func (p *OpenAIProvider) convertResponse(resp *openaiChatResponse) *ChatResponse
 			TotalTokens:      resp.Usage.TotalTokens,
 		},
 	}
-	
+
 	// Convert tool calls
 	for _, toolCall := range choice.Message.ToolCalls {
 		// Parse arguments JSON
@@ -189,7 +189,7 @@ func (p *OpenAIProvider) convertResponse(resp *openaiChatResponse) *ChatResponse
 				"raw_arguments": toolCall.Function.Arguments,
 			}
 		}
-		
+
 		result.ToolCalls = append(result.ToolCalls, interfaces.ToolCall{
 			ID:   toolCall.ID,
 			Type: toolCall.Type,
@@ -199,12 +199,12 @@ func (p *OpenAIProvider) convertResponse(resp *openaiChatResponse) *ChatResponse
 			},
 		})
 	}
-	
+
 	// If we have tool calls, we're not finished yet
 	if len(result.ToolCalls) > 0 {
 		result.Finished = false
 	}
-	
+
 	return result
 }
 
@@ -214,29 +214,29 @@ func (p *OpenAIProvider) makeRequest(ctx context.Context, req *openaiChatRequest
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
-	
+
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	
+
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, string(respBody))
 	}
-	
+
 	return respBody, nil
 }

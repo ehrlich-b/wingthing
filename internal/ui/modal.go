@@ -126,7 +126,7 @@ func (m *ModalModel) ShowSlashCommands(commands []string) {
 func (m ModalModel) renderPermissionModal() string {
 	title := m.theme.ModalTitle.Render("Permission Required")
 	content := m.theme.ModalContent.Render(m.content)
-	
+
 	var options []string
 	for i, option := range m.options {
 		if i == m.selected {
@@ -135,9 +135,9 @@ func (m ModalModel) renderPermissionModal() string {
 			options = append(options, m.theme.ModalOption.Render("  "+option))
 		}
 	}
-	
+
 	help := m.theme.ModalHelp.Render("Use ↑/↓ to navigate, Enter to select, Esc to cancel")
-	
+
 	modal := lipgloss.JoinVertical(
 		lipgloss.Left,
 		title,
@@ -148,13 +148,13 @@ func (m ModalModel) renderPermissionModal() string {
 		"",
 		help,
 	)
-	
+
 	return m.theme.ModalBorder.Render(modal)
 }
 
 func (m ModalModel) renderSlashCommandsModal() string {
 	title := m.theme.ModalTitle.Render("Slash Commands")
-	
+
 	var options []string
 	for i, option := range m.options {
 		if i == m.selected {
@@ -163,9 +163,9 @@ func (m ModalModel) renderSlashCommandsModal() string {
 			options = append(options, m.theme.ModalOption.Render("  "+option))
 		}
 	}
-	
+
 	help := m.theme.ModalHelp.Render("Use ↑/↓ to navigate, Enter to select, Esc to cancel")
-	
+
 	modal := lipgloss.JoinVertical(
 		lipgloss.Left,
 		title,
@@ -174,6 +174,6 @@ func (m ModalModel) renderSlashCommandsModal() string {
 		"",
 		help,
 	)
-	
+
 	return m.theme.ModalBorder.Render(modal)
 }

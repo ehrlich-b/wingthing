@@ -18,11 +18,11 @@ import (
 )
 
 var (
-	prompt    string
-	jsonMode  bool
-	maxTurns  int
-	resume    bool
-	autoYes   bool
+	prompt   string
+	jsonMode bool
+	maxTurns int
+	resume   bool
+	autoYes  bool
 )
 
 func main() {
@@ -60,55 +60,55 @@ func run(cmd *cobra.Command, args []string) error {
 func runHeadless(ctx context.Context, prompt string) error {
 	// Create filesystem
 	fs := interfaces.NewOSFileSystem()
-	
+
 	// Create tool runner with registered tools
 	toolRunner := tools.NewMultiRunner()
 	toolRunner.RegisterRunner("cli", tools.NewCLIRunner())
-	
+
 	// Register file operations from EditRunner
 	editRunner := tools.NewEditRunner()
 	toolRunner.RegisterRunner("read_file", editRunner)
 	toolRunner.RegisterRunner("write_file", editRunner)
 	toolRunner.RegisterRunner("edit_file", editRunner)
-	
+
 	// Load configuration
 	configManager := config.NewManager(fs)
 	userConfigDir, err := config.GetUserConfigDir()
 	if err != nil {
 		return fmt.Errorf("failed to get user config dir: %w", err)
 	}
-	
+
 	projectDir, err := config.GetProjectDir()
 	if err != nil {
 		return fmt.Errorf("failed to get project dir: %w", err)
 	}
-	
+
 	if err := configManager.Load(userConfigDir, projectDir); err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
-	
+
 	cfg := configManager.Get()
-	
+
 	// Create other components
 	memoryManager := agent.NewMemory(fs)
 	permissionChecker := agent.NewPermissionEngine(fs)
-	
+
 	// Create LLM provider - use dummy if no API key configured
 	useDummy := cfg.APIKey == ""
 	llmProvider := llm.NewProvider(cfg, useDummy)
-	
+
 	// Load memory from CLAUDE.md files
 	if err := memoryManager.LoadUserMemory(userConfigDir); err != nil {
 		// Silently ignore memory loading errors in headless mode
 	}
-	
+
 	if err := memoryManager.LoadProjectMemory(projectDir); err != nil {
 		// Silently ignore memory loading errors in headless mode
 	}
-	
+
 	// Create events channel for capturing orchestrator output
 	events := make(chan agent.Event, 100)
-	
+
 	// Create orchestrator
 	orchestrator := agent.NewOrchestrator(
 		toolRunner,
@@ -117,23 +117,23 @@ func runHeadless(ctx context.Context, prompt string) error {
 		permissionChecker,
 		llmProvider,
 	)
-	
+
 	// Configure orchestrator for headless mode
 	orchestrator.SetHeadlessMode(autoYes)
-	
+
 	// Create renderer for formatting output (only used for terminal mode)
 	var renderer *ui.Renderer
 	if !jsonMode {
 		theme := ui.DefaultTheme()
 		renderer = ui.NewRenderer(theme)
 	}
-	
+
 	// Start processing in a goroutine
 	done := make(chan error, 1)
 	go func() {
 		done <- orchestrator.ProcessPrompt(ctx, prompt)
 	}()
-	
+
 	// Listen for events and handle the conversation loop
 	for {
 		select {
@@ -141,15 +141,15 @@ func runHeadless(ctx context.Context, prompt string) error {
 			if err := handleHeadlessEvent(event, renderer); err != nil {
 				return err
 			}
-			
+
 			// Check if this is a final event (conversation complete)
 			if event.Type == string(agent.EventTypeFinal) {
 				return nil
 			}
-			
+
 			// Permission requests are now handled internally by the orchestrator in headless mode
 			// No special handling needed here
-			
+
 		case err := <-done:
 			if err != nil {
 				if jsonMode {
@@ -160,7 +160,7 @@ func runHeadless(ctx context.Context, prompt string) error {
 				return err
 			}
 			return nil
-			
+
 		case <-ctx.Done():
 			if jsonMode {
 				fmt.Printf(`{"type":"error","content":"Context cancelled"}%s`, "\n")
@@ -174,12 +174,12 @@ func runHeadless(ctx context.Context, prompt string) error {
 
 func runInteractive(ctx context.Context) error {
 	model := ui.NewModel()
-	
+
 	// Handle --resume flag
 	if resume {
 		model = model.WithResumeFlag()
 	}
-	
+
 	p := tea.NewProgram(
 		model,
 		tea.WithInput(os.Stdin),
@@ -197,17 +197,17 @@ func handleHeadlessEvent(event agent.Event, renderer *ui.Renderer) error {
 			"type":    event.Type,
 			"content": event.Content,
 		}
-		
+
 		// Add data field if present
 		if event.Data != nil {
 			eventJSON["data"] = event.Data
 		}
-		
+
 		jsonBytes, err := json.Marshal(eventJSON)
 		if err != nil {
 			return fmt.Errorf("failed to marshal event to JSON: %w", err)
 		}
-		
+
 		fmt.Println(string(jsonBytes))
 	} else {
 		// Terminal output mode - format like interactive mode
@@ -235,6 +235,6 @@ func handleHeadlessEvent(event agent.Event, renderer *ui.Renderer) error {
 			fmt.Print(renderer.AgentError(event.Content))
 		}
 	}
-	
+
 	return nil
 }

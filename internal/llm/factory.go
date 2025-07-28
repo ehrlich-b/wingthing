@@ -11,14 +11,14 @@ func NewProvider(config *interfaces.Config, useDummy bool) interfaces.LLMProvide
 	if useDummy {
 		return NewDummyProvider(500 * time.Millisecond)
 	}
-	
+
 	// Create real LLM client
 	clientConfig := &ClientConfig{
 		DefaultModel: config.Model,
 		APIKey:       config.APIKey,
 		BaseURL:      config.BaseURL,
 	}
-	
+
 	return NewClient(clientConfig)
 }
 
