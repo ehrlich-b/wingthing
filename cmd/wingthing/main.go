@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -89,9 +91,12 @@ func runHeadless(ctx context.Context, prompt string) error {
 
 	cfg := configManager.Get()
 
+	// Create logger that discards output for headless mode
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+
 	// Create other components
 	memoryManager := agent.NewMemory(fs)
-	permissionChecker := agent.NewPermissionEngine(fs)
+	permissionChecker := agent.NewPermissionEngine(fs, logger)
 
 	// Create LLM provider - use dummy if no API key configured
 	useDummy := cfg.APIKey == ""
@@ -116,6 +121,7 @@ func runHeadless(ctx context.Context, prompt string) error {
 		memoryManager,
 		permissionChecker,
 		llmProvider,
+		logger,
 	)
 
 	// Configure orchestrator for headless mode

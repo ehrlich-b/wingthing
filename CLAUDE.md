@@ -38,6 +38,13 @@ Wingthing is a Go-based terminal application that serves as a competitor to Clau
 **History (`internal/history/`)**
 - `store.go`: Session persistence as JSON files
 
+**Logging System**
+- Uses Go's structured logging (`log/slog`) with centralized logger injection
+- Debug logs written to `/tmp/wingthing-debug.log` in interactive mode
+- Headless mode uses discard logger to suppress output
+- All components receive logger via dependency injection (no standalone logging setup)
+- Use `logger.Debug()`, `logger.Info()`, `logger.Error()` for consistent structured logging
+
 ## Key Features
 
 ### Permission System

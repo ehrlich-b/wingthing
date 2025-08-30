@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -31,15 +32,17 @@ type PermissionRule struct {
 }
 
 type PermissionEngine struct {
-	mu    sync.RWMutex
-	rules map[string]PermissionRule
-	fs    interfaces.FileSystem
+	mu     sync.RWMutex
+	rules  map[string]PermissionRule
+	fs     interfaces.FileSystem
+	logger *slog.Logger
 }
 
-func NewPermissionEngine(fs interfaces.FileSystem) *PermissionEngine {
+func NewPermissionEngine(fs interfaces.FileSystem, logger *slog.Logger) *PermissionEngine {
 	return &PermissionEngine{
-		rules: make(map[string]PermissionRule),
-		fs:    fs,
+		rules:  make(map[string]PermissionRule),
+		fs:     fs,
+		logger: logger,
 	}
 }
 
@@ -51,13 +54,24 @@ func (pe *PermissionEngine) CheckPermission(tool, action string, params map[stri
 
 	rule, exists := pe.rules[key]
 	if !exists {
+		pe.logger.Debug("No permission rule found", "key", key, "tool", tool, "action", action)
 		return false, nil // No rule found, need to ask user
 	}
+
+	pe.logger.Debug("Found permission rule", "key", key, "decision", rule.Decision)
 
 	switch rule.Decision {
 	case AllowOnce:
 		// Remove the rule after use
+		pe.logger.Debug("About to delete AllowOnce rule", "key", key, "rulesBefore", len(pe.rules))
 		delete(pe.rules, key)
+		pe.logger.Debug("AllowOnce rule used and deleted", "key", key, "rulesAfter", len(pe.rules))
+		// Verify deletion
+		if _, stillExists := pe.rules[key]; stillExists {
+			pe.logger.Error("Rule still exists after deletion!", "key", key)
+		} else {
+			pe.logger.Debug("Verified rule is deleted", "key", key)
+		}
 		return true, nil
 	case AlwaysAllow:
 		return true, nil
@@ -85,6 +99,7 @@ func (pe *PermissionEngine) GrantPermission(tool, action string, params map[stri
 	pe.mu.Lock()
 	defer pe.mu.Unlock()
 	pe.rules[key] = rule
+	pe.logger.Debug("Granted permission", "key", key, "decision", decision)
 }
 
 func (pe *PermissionEngine) DenyPermission(tool, action string, params map[string]any, decision PermissionDecision) {

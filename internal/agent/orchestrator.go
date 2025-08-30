@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/behrlich/wingthing/internal/interfaces"
@@ -23,6 +24,7 @@ type Orchestrator struct {
 	permissions interfaces.PermissionChecker
 	llmProvider interfaces.LLMProvider
 	messages    []interfaces.Message
+	logger      *slog.Logger
 
 	// Track pending tool execution for permission retry
 	pendingToolCall *interfaces.ToolCall
@@ -38,6 +40,7 @@ func NewOrchestrator(
 	memory interfaces.MemoryManager,
 	permissions interfaces.PermissionChecker,
 	llmProvider interfaces.LLMProvider,
+	logger *slog.Logger,
 ) *Orchestrator {
 	return &Orchestrator{
 		toolRunner:   toolRunner,
@@ -46,6 +49,7 @@ func NewOrchestrator(
 		permissions:  permissions,
 		llmProvider:  llmProvider,
 		messages:     make([]interfaces.Message, 0),
+		logger:       logger,
 		headlessMode: false,
 		autoAccept:   false,
 	}
@@ -141,17 +145,22 @@ func (o *Orchestrator) handleToolCalls(ctx context.Context, toolCalls []interfac
 
 		// Check permissions for tool usage (only for tools that modify system state)
 		needsPermission := o.toolNeedsPermission(toolName)
+		o.logger.Debug("Checking if tool needs permission", "tool", toolName, "needsPermission", needsPermission)
+		
 		var allowed bool
 		var err error
 
 		if needsPermission {
+			o.logger.Debug("Tool needs permission, checking...", "tool", toolName, "action", "execute")
 			allowed, err = o.permissions.CheckPermission(toolName, "execute", params)
+			o.logger.Debug("Permission check result", "tool", toolName, "allowed", allowed, "error", err)
 			if err != nil {
 				o.events <- Event{Type: string(EventTypeError), Content: err.Error()}
 				return &ToolBatchResult{Error: err}
 			}
 		} else {
 			allowed = true // Read-only operations are always allowed
+			o.logger.Debug("Tool doesn't need permission, auto-allowing", "tool", toolName)
 		}
 
 		if !allowed {

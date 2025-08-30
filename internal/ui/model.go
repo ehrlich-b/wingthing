@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -134,7 +135,7 @@ func NewModel() Model {
 
 	// Create other components
 	memoryManager := agent.NewMemory(fs)
-	permissionChecker := agent.NewPermissionEngine(fs)
+	permissionChecker := agent.NewPermissionEngine(fs, logger)
 
 	// Create LLM provider - use dummy if no API key configured
 	useDummy := cfg.APIKey == ""
@@ -147,6 +148,7 @@ func NewModel() Model {
 		memoryManager,
 		permissionChecker,
 		llmProvider,
+		logger,
 	)
 
 	// Create command loader and load commands
@@ -268,7 +270,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		// advance all spinners
 		if len(m.liveBlocks) > 0 {
-			slog.Debug("Tick updating live blocks", "count", len(m.liveBlocks))
+			m.logger.Debug("Tick updating live blocks", "count", len(m.liveBlocks))
 		}
 		for id, lb := range m.liveBlocks {
 			var cmd tea.Cmd
@@ -281,10 +283,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tickLoop(m.tickEvery))
 		return m, tea.Batch(cmds...)
 
+	case spinner.TickMsg:
+		// Handle spinner-specific tick messages
+		m.logger.Debug("Spinner tick received")
+		for id, lb := range m.liveBlocks {
+			var cmd tea.Cmd
+			lb.Spinner, cmd = lb.Spinner.Update(msg)
+			m.liveBlocks[id] = lb
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		return m, tea.Batch(cmds...)
+
+	default:
+		// Forward any other messages to all spinners
+		for id, lb := range m.liveBlocks {
+			var cmd tea.Cmd
+			lb.Spinner, cmd = lb.Spinner.Update(msg)
+			m.liveBlocks[id] = lb
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
 	case startLiveMsg:
 		// Initialize the spinner and start the block
 		block := msg.Block
 		m.liveBlocks[block.ID] = block
+		// Start the spinner animation
+		cmds = append(cmds, block.Spinner.Tick)
 		return m, tea.Batch(cmds...)
 
 	case finalizeLiveMsg:
@@ -470,30 +498,22 @@ func appendToToolBlock(liveBlocks map[string]*LiveBlock, content string) {
 }
 
 func finalizeThinkingBlocks(m *Model) tea.Cmd {
-	// Find all thinking blocks and finalize them
-	var cmds []tea.Cmd
+	// Find all thinking blocks and finalize them immediately
+	var toFinalize []string
+	
 	for id, lb := range m.liveBlocks {
 		if lb.Kind == LiveThinking {
-			// Capture the id and lb in closure variables
-			blockID := id
-			blockLines := lb.Lines
-			cmd := func() tea.Msg {
-				return finalizeLiveMsg{
-					ID:         blockID,
-					FinalLines: blockLines,
-					Suffix:     "",
-				}
-			}
-			cmds = append(cmds, cmd)
+			toFinalize = append(toFinalize, id)
+			// Thinking blocks don't get added to scrollback, they just disappear
 		}
 	}
 	
-	if len(cmds) == 0 {
-		return nil
+	// Remove thinking blocks immediately to prevent race condition
+	for _, id := range toFinalize {
+		delete(m.liveBlocks, id)
 	}
 	
-	// Return a batch command to finalize all thinking blocks
-	return tea.Batch(cmds...)
+	return nil
 }
 
 func finalizeToolBlocks(m *Model, suffix string) tea.Cmd {
@@ -564,7 +584,7 @@ func (m Model) handlePermissionResponse(choice, decision string, cmds []tea.Cmd)
 	switch decision {
 	case "allow_once":
 		m.orchestrator.GrantPermission(tool, action, params, agent.AllowOnce)
-		m.logger.Debug("Granted permission (allow once)", "tool", tool)
+		m.logger.Debug("Granted permission (allow once)", "tool", tool, "action", action, "params", params)
 		// Retry the pending tool execution
 		go func() {
 			ctx := context.Background()
@@ -1312,9 +1332,7 @@ func (m Model) handleAgentEvent(msg agent.Event, cmds []tea.Cmd) (tea.Model, tea
 		m.logger.Debug("Started thinking live block")
 	case string(agent.EventTypeRunTool):
 		// Finalize any existing thinking block (not tool blocks) and start a tool block
-		if cmd := finalizeThinkingBlocks(&m); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		finalizeThinkingBlocks(&m) // No command returned, happens immediately
 		lb := NewToolBlock(msg.Content)
 		cmds = append(cmds, startLive(lb))
 		m.logger.Debug("Started tool live block", "title", msg.Content)
@@ -1332,9 +1350,7 @@ func (m Model) handleAgentEvent(msg agent.Event, cmds []tea.Cmd) (tea.Model, tea
 		m.currentSession.Messages = append(m.currentSession.Messages, assistantMessage)
 
 		// Finalize any remaining live blocks and add final message to scrollback
-		if cmd := finalizeThinkingBlocks(&m); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		finalizeThinkingBlocks(&m) // No command returned, happens immediately
 		if cmd := finalizeToolBlocks(&m, "✔ Done"); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -1344,9 +1360,7 @@ func (m Model) handleAgentEvent(msg agent.Event, cmds []tea.Cmd) (tea.Model, tea
 		m.logger.Debug("Finalized live blocks and added final message to scrollback, set state to ready")
 	case string(agent.EventTypePermissionRequest):
 		// Finalize any thinking blocks since we're waiting for user input
-		if cmd := finalizeThinkingBlocks(&m); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		finalizeThinkingBlocks(&m) // No command returned, happens immediately
 		// Parse the permission request data
 		if permReq, ok := msg.Data.(agent.PermissionRequest); ok {
 			m.currentPermissionRequest = &permReq
