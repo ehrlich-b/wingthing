@@ -6,167 +6,221 @@ Build a single-user BYOK proof of concept to validate: **Does Dreams → Morning
 
 **Out of scope:** Multi-user, billing, auth, social features, web UI
 
-## Week 1: Core Infrastructure
+---
 
-### Project Setup
-- [ ] Initialize Go module (`go mod init github.com/ehrlich-b/wingthing`)
-- [ ] Set up project structure (cmd/, internal/)
-- [ ] Create Makefile for build/test/run commands
-- [ ] Add .gitignore (config.yaml, *.db, binaries)
-- [ ] Create config.example.yaml with docs
+## Week 1: Core Infrastructure ✅ COMPLETE
 
-### Database Layer (SQLite)
-- [ ] Design schema: users, messages, memories, dreams
-- [ ] Set up SQLite with migrations
-- [ ] Implement basic CRUD for messages
-- [ ] Implement memory storage (facts, relationships, boundaries)
+### Project Setup ✅
+- [x] Initialize Go module
+- [x] Set up project structure (cmd/, internal/)
+- [x] Create Makefile for build/test/run commands
+- [x] Add .gitignore (config.yaml, *.db, binaries)
+- [x] Create config.example.yaml with docs
 
-### LLM Integration
-- [ ] Create LLM provider interface
-- [ ] Implement Anthropic client (Claude)
-- [ ] Implement OpenAI client (GPT-4)
-- [ ] Add conversation context building
-- [ ] Add basic error handling and retries
+### Database Layer (SQLite) ✅
+- [x] Design schema: users, messages, memories, dreams
+- [x] Set up SQLite with migrations
+- [x] Implement basic CRUD for messages
+- [x] Implement memory storage (facts, relationships, boundaries)
 
-### Configuration
-- [ ] Load config from config.yaml
-- [ ] Support env vars for secrets (ANTHROPIC_API_KEY, etc.)
-- [ ] Validate required fields on startup
-- [ ] Document all config options
+### LLM Integration ✅
+- [x] Create LLM provider interface
+- [x] Implement OpenAI client (GPT-4)
+- [x] Add conversation context building (last 10 messages)
+- [x] Add basic error handling and retries
+- [ ] Implement Anthropic client (Claude) - deferred
 
-## Week 2: Discord Bot
+### Configuration ✅
+- [x] Load config from config.yaml
+- [x] Support env vars for secrets
+- [x] Validate required fields on startup
+- [x] Document all config options
 
-### Basic Bot Setup
-- [ ] Discord bot registration and permissions
-- [ ] Implement bot startup and connection
-- [ ] Handle DM messages from your user ID (hardcoded)
-- [ ] Store messages in SQLite with timestamp
-- [ ] Basic message reply (echo bot test)
+### Discord Bot ✅
+- [x] Discord bot registration and permissions
+- [x] Implement bot startup and connection
+- [x] Handle DM messages from hardcoded user ID
+- [x] Store messages in SQLite with timestamp
+- [x] Build conversation context from message history
+- [x] Send context to LLM and get response
+- [x] Handle message threading/continuity
+- [x] Error handling and user-friendly error messages
 
-### Conversation Handling
-- [ ] Build conversation context from message history
-- [ ] Send context to LLM and get response
-- [ ] Handle message threading/continuity
-- [ ] Add typing indicator while processing
-- [ ] Error handling and user-friendly error messages
+### Commands ✅
+- [x] `/start` - Introduction message
+- [x] `/help` - Show available commands
+- [x] `/stats` - Show message count, last Dream run
+- [x] `/dream` - Manually trigger Dreams job (placeholder)
+- [ ] `/forget` - Clear conversation context - TODO
 
-### Commands
-- [ ] `/start` - Introduction message
-- [ ] `/help` - Show available commands
-- [ ] `/stats` - Show message count, last Dream run
-- [ ] `/dream` - Manually trigger Dreams job
-- [ ] `/forget` - Clear conversation context (fresh start)
-
-## Week 3: Dreams Pipeline
-
-### Dreams Job
-- [ ] CLI command: `wingthing dream`
-- [ ] Load last 24 hours of messages from DB
-- [ ] Build Dreams synthesis prompt
-- [ ] Call LLM with full day context
-- [ ] Parse LLM output into structured Morning Card
-
-### Morning Card Structure
-```yaml
-yesterday_summary: ["bullet 1", "bullet 2", "bullet 3"]
-open_loops: ["loop 1", "loop 2"]
-support_plan:
-  - action: "text_check_in"
-    target: "person"
-    draft: "message text"
-  - action: "prep"
-    draft: "todo item"
-  - action: "boundary"
-    draft: "suggestion"
-```
-
-### Morning Card Delivery
-- [ ] Store generated Morning Card in DB
-- [ ] Format Morning Card for Discord (nice embed)
-- [ ] Schedule delivery for configured time (e.g., 7am)
-- [ ] Add simple action buttons (👍 acknowledge, 📝 edit)
-- [ ] Track if Morning Card was read/acknowledged
-
-### Memory Building
-- [ ] Extract key facts from Dreams synthesis
-- [ ] Store in memory table (type: fact/relationship/boundary/pattern)
-- [ ] Include memories in next Dreams context
-- [ ] Simple memory query for context building
-
-## Week 4: Polish & Testing
-
-### Prompt Engineering
-- [ ] Tune Dreams synthesis prompt for good output
-- [ ] Tune conversation prompt for support tone
-- [ ] Add system prompts for boundaries ("not therapy")
-- [ ] Test with real conversations from week 3
-
-### Cron Integration
-- [ ] Document cron setup for Dreams job
-- [ ] Add logging for cron runs
-- [ ] Handle errors gracefully (alert on Discord?)
-- [ ] Test scheduling at 2am
-
-### User Experience
-- [ ] Write good onboarding message
-- [ ] Add personality/tone to bot responses
-- [ ] Handle edge cases (no messages in 24h, bot offline, etc.)
-- [ ] Add emoji reactions for quick interactions
-
-### Documentation
-- [ ] Write setup instructions (Discord bot creation, config, cron)
-- [ ] Document config.yaml options
-- [ ] Add troubleshooting guide
-- [ ] Write "how to use" guide for yourself
-
-## Configuration File Structure
-
-```yaml
-# config.yaml
-discord:
-  token: "your-bot-token"
-  user_id: "your-discord-user-id"  # Single user for v0.1
-
-llm:
-  provider: "anthropic"  # or "openai"
-  api_key: "your-api-key"
-  model: "claude-3-5-sonnet-20241022"
-
-dreams:
-  schedule_time: "07:00"  # When to deliver Morning Card
-  timezone: "America/New_York"
-
-database:
-  path: "./wingthing.db"
-
-logging:
-  level: "info"
-  file: "./wingthing.log"
-```
-
-## Success Criteria (End of Week 4)
-
-- [ ] Bot responds to Discord DMs with helpful, supportive messages
-- [ ] Dreams runs successfully every night (via cron)
-- [ ] Morning Card is delivered and actually useful
-- [ ] Memories accumulate and provide better context over time
-- [ ] **YOU actually use it for 2 weeks straight**
-
-## If v0.1 Works → v0.2 Scope
-
-- Multi-user support (still BYOK, but multiple people)
-- Web dashboard for memory editing
-- Better memory management UI
-- Voice note support (Discord voice messages)
-- Calendar integration (read-only for context)
-
-## If v0.1 Doesn't Work
-
-- Pivot to different features
-- Or kill the project (better to know early!)
+**Status:** Basic bot is working! Can chat, remembers context, saves to DB.
 
 ---
 
-**Current Focus:** Week 1 - Core Infrastructure
+## Week 2-3: Dreams Pipeline (IN PROGRESS)
 
-**Next Milestone:** Working bot that can chat, then Dreams pipeline
+### Insights from EhrlichGPT Analysis
+
+**EhrlichGPT's brilliant pre-RAG context compression:**
+
+1. **Progressive Memory Tiers:**
+   - Short-term: Last 15 messages → summarized into bullets (rolling window)
+   - Active memory: 400 token budget with 100 token low watermark
+   - Long-term: Summarized from active memory, stored with embeddings
+   - Retrieval: FAISS index for semantic search
+
+2. **Intelligent Summarization:**
+   - Summarize every 15 messages into concise bullets
+   - When active memory > 400 tokens → compress to long-term, keep last 100 tokens
+   - Different triggers: @mentioned = aggressive (300 tokens), passive = lazy (500 tokens)
+   - Each summary preserves sender + key info, drops noise (reactions, exclamations)
+
+3. **Selective Memory Retrieval:**
+   - Before generating response, LLM "memory retriever" decides what to fetch
+   - Can request: summarized memory, long-term memory (by query), web search
+   - Token-aware: long-term retrieval capped at 500 tokens
+   - Time-aware: memories tagged with "3 days ago", "2 weeks ago"
+
+4. **Token Budgeting:**
+   - Everything tracked in tokens
+   - Memories have token counts
+   - Retrieval has token budgets
+   - GPT-4 requests force aggressive compression
+
+**What WingThing MUST steal:**
+- Progressive summarization (don't dump raw messages to Dreams)
+- Token budgets for synthesis runs
+- Memory retrieval agent (decide what's relevant before Dreams)
+- Time-aware memory display
+
+### Dreams Implementation Plan (Revised)
+
+**Phase 1: Basic Dreams (This Week)**
+- [ ] Implement progressive message summarization
+  - [ ] Every N messages → summarize to bullets
+  - [ ] Track token counts for summaries
+  - [ ] Store summaries in active_memory table
+- [ ] Build Dreams synthesis with token budget
+  - [ ] Use summarized messages, not raw messages
+  - [ ] Set token budget for synthesis (e.g., 2000 tokens input max)
+  - [ ] Generate Morning Card from synthesis
+- [ ] Morning Card delivery
+  - [ ] Format as Discord embed
+  - [ ] Send via DM
+  - [ ] Store in dreams table
+
+**Phase 2: Memory Retrieval (Next Week)**
+- [ ] Implement memory retrieval agent
+  - [ ] LLM decides what memories to include in Dreams
+  - [ ] Can request: recent summaries, long-term patterns, specific facts
+- [ ] Add embedding-based long-term memory
+  - [ ] Store summaries with embeddings
+  - [ ] Semantic search for relevant memories
+  - [ ] Token-capped retrieval (e.g., 500 tokens max)
+- [ ] Time-aware memory display
+  - [ ] Tag memories with timestamps
+  - [ ] Display as "3 days ago" in Dreams context
+
+**Phase 3: Polish**
+- [ ] Tune Dreams prompts
+- [ ] Add Morning Card action buttons
+- [ ] Track acknowledgment
+- [ ] Test with real usage
+
+### Implementation Tasks (This Week)
+
+**Progressive Summarization:**
+```go
+// internal/memory/summarizer.go
+- SummarizeMessages(messages []Message, windowSize int) (string, error)
+- GetActiveSummary() (string, int) // returns summary + token count
+- CompressToLongTerm() error
+```
+
+**Dreams Synthesis:**
+```go
+// internal/dreams/synthesis.go
+- FetchRelevantContext(cfg, store) (Context, error)
+  - Get summarized messages (not raw)
+  - Query long-term memories (future)
+  - Build token-budgeted context
+- GenerateMorningCard(context) (Dream, error)
+- DeliverMorningCard(dream, discordBot) error
+```
+
+**Database Updates:**
+```sql
+-- Add active_memory table
+CREATE TABLE active_memory (
+  id INTEGER PRIMARY KEY,
+  summary TEXT,
+  token_count INTEGER,
+  created_at DATETIME
+);
+
+-- Add long_term_memory table (future)
+CREATE TABLE long_term_memory (
+  id INTEGER PRIMARY KEY,
+  memory_text TEXT,
+  embedding BLOB,
+  unix_timestamp INTEGER
+);
+```
+
+---
+
+## Week 4: Testing & Polish
+
+### Manual Testing
+- [ ] Use bot every day for a week
+- [ ] Manually trigger Dreams each night
+- [ ] Evaluate Morning Card quality
+- [ ] Iterate on prompts
+
+### Cron Integration
+- [ ] Document cron setup
+- [ ] Test scheduling
+- [ ] Error handling and logging
+
+### Documentation
+- [ ] Update SETUP.md with Dreams usage
+- [ ] Document memory system architecture
+- [ ] Add troubleshooting for Dreams
+
+---
+
+## Success Criteria (End of Week 4)
+
+- [ ] Bot responds conversationally with context
+- [ ] Dreams runs successfully (manually or cron)
+- [ ] Morning Cards are actually useful and actionable
+- [ ] Memory system prevents token bloat
+- [ ] **YOU use it every day for 2 weeks**
+
+---
+
+## Lessons from EhrlichGPT
+
+**What worked:**
+- Progressive summarization kept costs down
+- Memory retrieval agent prevented context dump
+- Token budgeting everywhere
+- Time-aware memories helped LLM understand context
+
+**What to improve:**
+- Summarization was slow (took 5-10 seconds)
+  - Solution: Run Dreams async at night, no realtime pressure
+- FAISS embeddings were complex
+  - Solution: Start simple, add later if needed
+- Web search was brittle
+  - Solution: Skip for v0.1, focus on memory
+
+**Core insight:** Don't give the LLM everything. Use an LLM to decide what to retrieve, then use another LLM to synthesize.
+
+This is RAG before RAG had a name!
+
+---
+
+**Current Focus:** Implementing progressive summarization and Dreams synthesis
+
+**Next Milestone:** First working Dreams → Morning Card loop
