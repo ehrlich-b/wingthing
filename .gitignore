@@ -1,0 +1,34 @@
+# Binaries
+wingthing
+*.exe
+*.dll
+*.so
+*.dylib
+dist/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Config with secrets
+config.yaml
+
+# Logs
+*.log
+
+# Go
+vendor/
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

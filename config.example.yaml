@@ -1,0 +1,40 @@
+# WingThing Configuration
+# Copy this file to config.yaml and fill in your values
+
+discord:
+  # Your Discord bot token (from Discord Developer Portal)
+  token: "YOUR_DISCORD_BOT_TOKEN"
+
+  # Your Discord user ID (right-click yourself in Discord, Copy ID)
+  # Enable Developer Mode in Discord settings to see this option
+  user_id: "YOUR_DISCORD_USER_ID"
+
+llm:
+  # LLM provider: "anthropic" or "openai"
+  provider: "anthropic"
+
+  # Your API key
+  api_key: "YOUR_API_KEY"
+
+  # Model to use
+  # Anthropic: "claude-3-5-sonnet-20241022", "claude-3-opus-20240229"
+  # OpenAI: "gpt-4-turbo-preview", "gpt-4"
+  model: "claude-3-5-sonnet-20241022"
+
+dreams:
+  # Time to deliver Morning Card (24-hour format)
+  schedule_time: "07:00"
+
+  # Your timezone (IANA timezone database format)
+  timezone: "America/New_York"
+
+database:
+  # Path to SQLite database file
+  path: "./wingthing.db"
+
+logging:
+  # Log level: "debug", "info", "warn", "error"
+  level: "info"
+
+  # Log file path
+  file: "./wingthing.log"
