@@ -68,8 +68,8 @@ func RunSynthesis(cfg *config.Config, store *memory.Store) error {
 	// Build context from messages
 	conversationContext := buildConversationContext(messages)
 
-	// Initialize LLM
-	provider, err := llm.NewProvider(cfg.LLM.Provider, cfg.LLM.APIKey, cfg.LLM.Model)
+	// Initialize LLM with gpt-5-mini for Dreams synthesis (cheaper)
+	provider, err := llm.NewProvider(cfg.LLM.Provider, cfg.LLM.APIKey, "gpt-5-mini")
 	if err != nil {
 		return fmt.Errorf("failed to create LLM provider: %w", err)
 	}
