@@ -8,6 +8,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/dreams"
 	"github.com/ehrlich-b/wingthing/internal/llm"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 )
@@ -156,7 +157,8 @@ func (b *Bot) handleCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
 		b.sendDM(stats)
 
 	case "/dream":
-		b.sendDM("🌙 Running Dreams synthesis... (not yet implemented)")
+		b.sendDM("🌙 Running Dreams synthesis...")
+		go b.runDreamsAsync()
 
 	default:
 		b.sendDM("Unknown command. Try `/help` to see available commands.")
@@ -315,4 +317,41 @@ func (b *Bot) SendMorningCard(dream *memory.Dream) error {
 	}
 
 	return nil
+}
+
+// runDreamsAsync runs Dreams synthesis and delivers the Morning Card
+func (b *Bot) runDreamsAsync() {
+	// Run synthesis
+	if err := dreams.RunSynthesis(b.cfg, b.store); err != nil {
+		log.Printf("Dreams synthesis failed: %v", err)
+		b.sendDM("❌ Dreams synthesis failed. Check logs for details.")
+		return
+	}
+
+	// Get the latest Dream
+	dream, err := b.store.GetLatestDream()
+	if err != nil {
+		log.Printf("Failed to get latest dream: %v", err)
+		b.sendDM("❌ Failed to retrieve Morning Card.")
+		return
+	}
+
+	if dream == nil {
+		b.sendDM("❌ No Morning Card generated.")
+		return
+	}
+
+	// Send Morning Card
+	if err := b.SendMorningCard(dream); err != nil {
+		log.Printf("Failed to send Morning Card: %v", err)
+		b.sendDM("❌ Failed to deliver Morning Card.")
+		return
+	}
+
+	// Mark as delivered
+	if err := b.store.MarkDreamDelivered(dream.ID); err != nil {
+		log.Printf("Warning: failed to mark dream as delivered: %v", err)
+	}
+
+	log.Printf("Morning Card delivered successfully for %s", dream.Date)
 }
