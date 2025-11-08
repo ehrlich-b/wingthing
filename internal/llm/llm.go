@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"fmt"
 )
 
 // Provider defines the interface for LLM providers
@@ -21,9 +22,15 @@ type Message struct {
 
 // NewProvider creates a new LLM provider based on config
 func NewProvider(providerType, apiKey, model string) (Provider, error) {
-	// TODO: Implement provider factories
-	// For now, return a stub
-	return &stubProvider{}, nil
+	switch providerType {
+	case "openai":
+		return NewOpenAIProvider(apiKey, model), nil
+	case "anthropic":
+		// TODO: Implement Anthropic provider
+		return nil, fmt.Errorf("anthropic provider not yet implemented")
+	default:
+		return nil, fmt.Errorf("unknown provider: %s", providerType)
+	}
 }
 
 // stubProvider is a placeholder implementation

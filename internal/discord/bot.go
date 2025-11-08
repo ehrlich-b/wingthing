@@ -1,20 +1,23 @@
 package discord
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/llm"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 )
 
 // Bot represents the Discord bot
 type Bot struct {
-	session *discordgo.Session
-	cfg     *config.Config
-	store   *memory.Store
+	session  *discordgo.Session
+	cfg      *config.Config
+	store    *memory.Store
+	llm      llm.Provider
 }
 
 // NewBot creates a new Discord bot
@@ -24,10 +27,17 @@ func NewBot(cfg *config.Config, store *memory.Store) (*Bot, error) {
 		return nil, fmt.Errorf("failed to create Discord session: %w", err)
 	}
 
+	// Initialize LLM provider
+	provider, err := llm.NewProvider(cfg.LLM.Provider, cfg.LLM.APIKey, cfg.LLM.Model)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create LLM provider: %w", err)
+	}
+
 	bot := &Bot{
 		session: session,
 		cfg:     cfg,
 		store:   store,
+		llm:     provider,
 	}
 
 	// Register message handler
@@ -86,14 +96,16 @@ func (b *Bot) messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	// Handle commands
-	if m.Content[0] == '/' {
+	if len(m.Content) > 0 && m.Content[0] == '/' {
 		b.handleCommand(s, m)
 		return
 	}
 
-	// TODO: Generate response using LLM
-	// For now, send a placeholder response
-	b.sendDM("I hear you. (This is a placeholder - LLM integration coming soon!)")
+	// Generate response using LLM
+	if err := b.respondWithLLM(m.Content); err != nil {
+		log.Printf("Failed to generate LLM response: %v", err)
+		b.sendDM("Sorry, I had trouble processing that. Please try again.")
+	}
 }
 
 // handleCommand processes slash commands
@@ -149,6 +161,72 @@ func (b *Bot) handleCommand(s *discordgo.Session, m *discordgo.MessageCreate) {
 	default:
 		b.sendDM("Unknown command. Try `/help` to see available commands.")
 	}
+}
+
+// respondWithLLM generates a response using the LLM and sends it
+func (b *Bot) respondWithLLM(userMessage string) error {
+	// Get recent conversation history for context
+	messages, err := b.store.GetRecentMessages(24)
+	if err != nil {
+		return fmt.Errorf("failed to get message history: %w", err)
+	}
+
+	// Build conversation context
+	llmMessages := []llm.Message{
+		{
+			Role: "system",
+			Content: `You are WingThing, a supportive AI companion. Your role is to:
+- Listen empathetically and validate feelings
+- Provide emotional support (NOT therapy or clinical advice)
+- Help people maintain connections with others
+- Be warm, genuine, and non-judgmental
+- Keep responses concise and conversational
+- Remember context from the conversation
+
+You are NOT a therapist. You are a supportive friend who helps people feel heard and helps them maintain their human relationships.`,
+		},
+	}
+
+	// Add recent message history (last 10 messages for context)
+	startIdx := 0
+	if len(messages) > 10 {
+		startIdx = len(messages) - 10
+	}
+	for _, msg := range messages[startIdx:] {
+		role := "assistant"
+		if msg.UserID == b.cfg.Discord.UserID {
+			role = "user"
+		}
+		llmMessages = append(llmMessages, llm.Message{
+			Role:    role,
+			Content: msg.Content,
+		})
+	}
+
+	// Call LLM
+	ctx := context.Background()
+	response, err := b.llm.Chat(ctx, llmMessages)
+	if err != nil {
+		return fmt.Errorf("LLM chat failed: %w", err)
+	}
+
+	// Send response
+	if err := b.sendDM(response); err != nil {
+		return fmt.Errorf("failed to send response: %w", err)
+	}
+
+	// Save bot's response to database
+	botMsg := &memory.Message{
+		DiscordID: fmt.Sprintf("bot-%d", time.Now().Unix()),
+		UserID:    "bot",
+		Content:   response,
+		Timestamp: time.Now(),
+	}
+	if err := b.store.SaveMessage(botMsg); err != nil {
+		log.Printf("Warning: failed to save bot message: %v", err)
+	}
+
+	return nil
 }
 
 // sendDM sends a DM to the configured user
