@@ -35,7 +35,11 @@ database:
 
 logging:
   # Log level: "debug", "info", "warn", "error"
-  level: "info"
+  # debug: Logs all messages, API requests/responses, timing info
+  # info: Logs major events (bot startup, Dreams synthesis, etc)
+  # warn: Logs warnings only
+  # error: Logs errors only
+  level: "debug"
 
-  # Log file path
+  # Log file path (also outputs to console)
   file: "./wingthing.log"

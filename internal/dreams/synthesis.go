@@ -9,6 +9,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/llm"
+	"github.com/ehrlich-b/wingthing/internal/logger"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 )
 
@@ -55,6 +56,8 @@ Generate the Morning Card (JSON only, no explanation):
 
 // RunSynthesis performs the nightly Dreams synthesis
 func RunSynthesis(cfg *config.Config, store *memory.Store) error {
+	logger.Info("Starting Dreams synthesis")
+
 	// Get messages from last 24 hours
 	messages, err := store.GetRecentMessages(24)
 	if err != nil {
@@ -62,11 +65,15 @@ func RunSynthesis(cfg *config.Config, store *memory.Store) error {
 	}
 
 	if len(messages) == 0 {
+		logger.Warn("No messages in the last 24 hours, skipping Dreams synthesis")
 		return fmt.Errorf("no messages in the last 24 hours")
 	}
 
+	logger.Debug("Retrieved messages for Dreams synthesis", "count", len(messages))
+
 	// Build context from messages
 	conversationContext := buildConversationContext(messages)
+	logger.Debug("Built conversation context", "length", len(conversationContext))
 
 	// Initialize LLM with gpt-5-mini for Dreams synthesis (cheaper)
 	provider, err := llm.NewProvider(cfg.LLM.Provider, cfg.LLM.APIKey, "gpt-5-mini")
@@ -78,6 +85,8 @@ func RunSynthesis(cfg *config.Config, store *memory.Store) error {
 	prompt := fmt.Sprintf(dreamsPrompt, conversationContext)
 	ctx := context.Background()
 
+	logger.Info("Calling LLM for Dreams synthesis", "model", "gpt-5-mini")
+
 	response, err := provider.Chat(ctx, []llm.Message{
 		{Role: "user", Content: prompt},
 	})
@@ -88,17 +97,25 @@ func RunSynthesis(cfg *config.Config, store *memory.Store) error {
 	// Parse response into Dream structure
 	dream, err := parseMorningCard(response)
 	if err != nil {
+		logger.Error("Failed to parse Morning Card", "error", err, "response", response)
 		return fmt.Errorf("failed to parse Morning Card: %w", err)
 	}
 
 	// Set date
 	dream.Date = time.Now().Format("2006-01-02")
 
+	logger.Debug("Parsed Morning Card",
+		"date", dream.Date,
+		"summary_items", len(dream.YesterdaySummary),
+		"open_loops", len(dream.OpenLoops),
+		"support_actions", len(dream.SupportPlan))
+
 	// Save Dream to database
 	if err := store.SaveDream(dream); err != nil {
 		return fmt.Errorf("failed to save dream: %w", err)
 	}
 
+	logger.Info("Dreams synthesis complete", "date", dream.Date)
 	fmt.Printf("Dreams synthesis complete! Generated Morning Card for %s\n", dream.Date)
 	return nil
 }

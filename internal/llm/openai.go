@@ -3,7 +3,9 @@ package llm
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/logger"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -32,19 +34,48 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message) (string, 
 		}
 	}
 
+	logger.Debug("OpenAI API request",
+		"model", p.model,
+		"num_messages", len(messages))
+
+	start := time.Now()
+
 	resp, err := p.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:    p.model,
 		Messages: chatMessages,
 	})
+
+	duration := time.Since(start)
+
 	if err != nil {
+		logger.Error("OpenAI API call failed",
+			"error", err,
+			"duration", duration,
+			"model", p.model)
 		return "", fmt.Errorf("OpenAI API call failed: %w", err)
 	}
 
 	if len(resp.Choices) == 0 {
+		logger.Error("No response from OpenAI",
+			"duration", duration,
+			"model", p.model)
 		return "", fmt.Errorf("no response from OpenAI")
 	}
 
-	return resp.Choices[0].Message.Content, nil
+	response := resp.Choices[0].Message.Content
+
+	logger.Debug("OpenAI API response",
+		"model", p.model,
+		"duration", duration,
+		"prompt_tokens", resp.Usage.PromptTokens,
+		"completion_tokens", resp.Usage.CompletionTokens,
+		"total_tokens", resp.Usage.TotalTokens,
+		"response_length", len(response))
+
+	logger.Debug("OpenAI response content",
+		"content", response)
+
+	return response, nil
 }
 
 // Name returns the provider name

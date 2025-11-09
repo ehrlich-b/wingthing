@@ -10,6 +10,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/dreams"
 	"github.com/ehrlich-b/wingthing/internal/llm"
+	"github.com/ehrlich-b/wingthing/internal/logger"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 )
 
@@ -53,7 +54,7 @@ func (b *Bot) Start() error {
 		return fmt.Errorf("failed to open Discord session: %w", err)
 	}
 
-	log.Println("Discord bot connected successfully")
+	logger.Info("Discord bot connected successfully")
 
 	// Send startup message
 	b.sendDM("👋 WingThing is online! Send me a message anytime.")
@@ -75,14 +76,21 @@ func (b *Bot) messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	// Only respond to the configured user in DMs
 	if m.Author.ID != b.cfg.Discord.UserID {
+		logger.Debug("Ignoring message from non-configured user", "user_id", m.Author.ID)
 		return
 	}
 
 	// Only handle DMs
 	channel, err := s.Channel(m.ChannelID)
 	if err != nil || channel.Type != discordgo.ChannelTypeDM {
+		logger.Debug("Ignoring non-DM message")
 		return
 	}
+
+	logger.Debug("Received user message",
+		"content", m.Content,
+		"user", m.Author.Username,
+		"timestamp", m.Timestamp)
 
 	// Save message to database
 	msg := &memory.Message{
@@ -92,19 +100,21 @@ func (b *Bot) messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		Timestamp: time.Now(),
 	}
 	if err := b.store.SaveMessage(msg); err != nil {
-		log.Printf("Failed to save message: %v", err)
+		logger.Error("Failed to save message", "error", err)
 		return
 	}
 
 	// Handle commands
 	if len(m.Content) > 0 && m.Content[0] == '/' {
+		logger.Debug("Handling command", "command", m.Content)
 		b.handleCommand(s, m)
 		return
 	}
 
 	// Generate response using LLM
+	logger.Debug("Generating LLM response")
 	if err := b.respondWithLLM(m.Content); err != nil {
-		log.Printf("Failed to generate LLM response: %v", err)
+		logger.Error("Failed to generate LLM response", "error", err)
 		b.sendDM("Sorry, I had trouble processing that. Please try again.")
 	}
 }
@@ -205,12 +215,26 @@ You are NOT a therapist. You are a supportive friend who helps people feel heard
 		})
 	}
 
+	// Get DM channel for typing indicator
+	channel, err := b.session.UserChannelCreate(b.cfg.Discord.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to create DM channel: %w", err)
+	}
+
+	// Start typing indicator
+	typingCtx, cancelTyping := context.WithCancel(context.Background())
+	defer cancelTyping()
+	go b.showTypingIndicator(typingCtx, channel.ID)
+
 	// Call LLM
 	ctx := context.Background()
 	response, err := b.llm.Chat(ctx, llmMessages)
 	if err != nil {
 		return fmt.Errorf("LLM chat failed: %w", err)
 	}
+
+	// Stop typing indicator
+	cancelTyping()
 
 	// Send response
 	if err := b.sendDM(response); err != nil {
@@ -229,6 +253,31 @@ You are NOT a therapist. You are a supportive friend who helps people feel heard
 	}
 
 	return nil
+}
+
+// showTypingIndicator shows typing indicator until context is cancelled
+func (b *Bot) showTypingIndicator(ctx context.Context, channelID string) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	// Send initial typing indicator
+	if err := b.session.ChannelTyping(channelID); err != nil {
+		log.Printf("Failed to show typing indicator: %v", err)
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Refresh typing indicator every 5 seconds
+			if err := b.session.ChannelTyping(channelID); err != nil {
+				log.Printf("Failed to refresh typing indicator: %v", err)
+				return
+			}
+		}
+	}
 }
 
 // sendDM sends a DM to the configured user
