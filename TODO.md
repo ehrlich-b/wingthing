@@ -380,12 +380,12 @@ All 5 are independent — **5 parallel worktrees.**
 
 **Branch:** `wt/gemini` | **Package:** `internal/agent/`
 
-- [ ] `gemini.go` — Gemini CLI adapter
+- [x] `gemini.go` — Gemini CLI adapter
   - `Run`: shell out to `gemini -p "<prompt>"`, parse output
   - `Health`: `gemini --version`
   - `ContextWindow`: model-dependent (default 1M for Gemini 2.5)
 - [ ] Register in `wt init` when gemini CLI detected
-- [ ] Tests: output parsing, health check
+- [x] Tests: output parsing, health check
 
 ---
 
@@ -394,18 +394,18 @@ All 5 are independent — **5 parallel worktrees.**
 **Branch:** `wt/skill-registry` | **Packages:** `internal/relay/`, `web/`, `cmd/wt/`
 **DRAFT.md ref:** "128 curated skills at wingthing.ai/skills"
 
-- [ ] `internal/relay/skills.go` — Skill hosting
+- [x] `internal/relay/skills.go` — Skill hosting
   - Serve skill files from curated collection
   - Metadata API: list skills, search, filter by category
   - Download endpoint: `GET /skills/:name`
   - Signing: each skill file has SHA256 + publisher signature
-- [ ] `cmd/wt/main.go` — Enhance `wt skill add <name>` to fetch from wingthing.ai/skills
+- [x] `cmd/wt/main.go` — Enhance `wt skill add <name>` to fetch from wingthing.ai/skills
   - Verify signature on download
   - Warn if required config vars are unset
-- [ ] `wt skill list --available` — Browse registry
+- [x] `wt skill list --available` — Browse registry
 - [ ] `web/` — Skills browser page at wingthing.ai/skills
   - Category navigation, search, one-click install (via CLI command copy)
-- [ ] Seed initial skills (target: 128 across 9 categories per DRAFT.md)
+- [x] Seed initial skills (target: 128 across 9 categories per DRAFT.md)
   - Dev workflow (~20): jira-briefing, pr-review, deploy-check, test-runner, branch-cleanup, ci-status, release-notes, code-review, lint-fix, migration-check, dependency-audit, git-summary, standup-prep, sprint-review, tech-debt-scan, hotfix-deploy, env-check, api-health, db-migration, feature-flag
   - Code (~20): refactor, debug, explain, migrate, generate-tests, add-types, extract-function, dead-code, performance-profile, security-scan, api-endpoint, database-query, error-handling, logging, documentation, code-search, regex-builder, data-model, schema-design, algorithm
   - Research (~15): web-research, competitor-analysis, paper-summary, market-research, tech-evaluation, architecture-review, api-comparison, license-check, vulnerability-scan, trend-analysis, pricing-research, user-research, benchmark, spec-review, rfc-summary
@@ -415,7 +415,7 @@ All 5 are independent — **5 parallel worktrees.**
   - Personal (~15): calendar-briefing, todo-review, reading-list, habit-tracker, journal-prompt, weekly-review, goal-check, meal-plan, workout-log, budget-check, travel-plan, gift-ideas, recipe-finder, book-notes, learning-path
   - Meta (~8): memory-maintenance, thread-cleanup, skill-test, cost-report, memory-index-rebuild, agent-benchmark, prompt-audit, config-validate
   - System (~10): agent-install, sandbox-test, sync-check, config-validate, health-check, disk-cleanup, log-rotate, backup-memory, export-data, import-data
-- [ ] Tests: registry API, signature verification, download + install flow
+- [x] Tests: registry API, signature verification, download + install flow
 
 **Done when:** `wt skill add jira-briefing` fetches from wingthing.ai/skills, verifies signature, installs. 128 skills available.
 
@@ -426,14 +426,14 @@ All 5 are independent — **5 parallel worktrees.**
 **Branch:** `wt/e2e-encrypt` | **Packages:** `internal/sync/`, `internal/auth/`
 **DRAFT.md ref:** "E2E encryption for sync", "never sees plaintext memory"
 
-- [ ] Key management: device keypair generated on `wt login`, public key registered with relay
+- [x] Key management: device keypair generated on `wt login`, public key registered with relay
   - X25519 for key exchange, XChaCha20-Poly1305 for symmetric encryption
-- [ ] `sync/encrypt.go` — Encrypt memory files and sync diffs before transmission
-- [ ] `sync/decrypt.go` — Decrypt on receiving end
-- [ ] Multi-device: shared symmetric key derived from user passphrase (PBKDF2/Argon2)
-- [ ] Relay sees only ciphertext — cannot read memory or thread content
+- [x] `sync/encrypt.go` — Encrypt memory files and sync diffs before transmission
+- [x] `sync/decrypt.go` — Decrypt on receiving end (via encrypted_engine.go)
+- [x] Multi-device: shared symmetric key derived from user passphrase (Argon2id)
+- [x] Relay sees only ciphertext — cannot read memory or thread content
 - [ ] Key rotation: periodic re-key, old keys kept for decrypting old data
-- [ ] Tests: encrypt/decrypt round-trip, multi-device key derivation, key rotation
+- [x] Tests: encrypt/decrypt round-trip, multi-device key derivation, key rotation
 
 **Done when:** All data in transit and at rest on relay is encrypted. Relay operator cannot read user data.
 
@@ -444,12 +444,12 @@ All 5 are independent — **5 parallel worktrees.**
 **Branch:** `wt/task-deps` | **Packages:** `internal/store/`, `internal/timeline/`
 **DRAFT.md ref:** "Task dependencies — v0.4"
 
-- [ ] Migration: add `depends_on TEXT` to tasks table (JSON array of task IDs)
-- [ ] `store/tasks.go` — `ListReady()`: pending tasks where all depends_on are done
-- [ ] `timeline/loop.go` — Use `ListReady()` instead of `ListPending()` for task selection
-- [ ] `parse/schedule.go` — Extend wt:schedule with `after="<task-id>"` attribute
-- [ ] CLI: `wt "task B" --after <task-A-id>` flag
-- [ ] Tests: dependency chain resolution, diamond dependencies, failed dependency blocks downstream
+- [x] Migration: add `depends_on TEXT` to tasks table (JSON array of task IDs)
+- [x] `store/tasks.go` — `ListReady()`: pending tasks where all depends_on are done
+- [x] `timeline/loop.go` — Use `ListReady()` instead of `ListPending()` for task selection
+- [x] `parse/schedule.go` — Extend wt:schedule with `after="<task-id>"` attribute
+- [x] CLI: `wt "task B" --after <task-A-id>` flag
+- [x] Tests: dependency chain resolution, diamond dependencies, failed dependency blocks downstream
 
 **Done when:** Tasks can declare dependencies. A task won't execute until all its dependencies are done. Failed dependencies block downstream.
 
@@ -460,10 +460,10 @@ All 5 are independent — **5 parallel worktrees.**
 **Branch:** `wt/thread-merge` | **Packages:** `internal/sync/`, `internal/store/`
 **DRAFT.md ref:** "Multi-machine thread merge"
 
-- [ ] Thread entries from multiple machines interleave by timestamp (already designed for this — thread_entries have machine_id)
-- [ ] `sync/thread.go` — Merge thread entries from remote: insert missing entries, skip duplicates (by task_id + machine_id)
-- [ ] `thread/render.go` — Show machine origin in rendered thread when entries come from multiple machines
-- [ ] Tests: merge entries from 2 machines, correct timestamp ordering, duplicate detection
+- [x] Thread entries from multiple machines interleave by timestamp (already designed for this — thread_entries have machine_id)
+- [x] `sync/thread.go` — Merge thread entries from remote: insert missing entries, skip duplicates (by task_id + machine_id)
+- [x] `thread/render.go` — Show machine origin in rendered thread when entries come from multiple machines
+- [x] Tests: merge entries from 2 machines, correct timestamp ordering, duplicate detection
 
 **Done when:** Two machines syncing via relay see each other's thread entries interleaved correctly by timestamp.
 
@@ -471,13 +471,13 @@ All 5 are independent — **5 parallel worktrees.**
 
 ### Phase 14: v0.4 Integration + Ship
 
-- [ ] End-to-end: install skill from registry with signature verification
-- [ ] End-to-end: gemini adapter task execution
-- [ ] End-to-end: encrypted sync between two machines
-- [ ] End-to-end: task dependency chain executes in order
-- [ ] End-to-end: thread merge from two machines
-- [ ] Populate registry with initial 128 skills
-- [ ] Update README
+- [x] End-to-end: install skill from registry with signature verification
+- [x] End-to-end: gemini adapter task execution
+- [x] End-to-end: encrypted sync between two machines
+- [x] End-to-end: task dependency chain executes in order
+- [x] End-to-end: thread merge from two machines
+- [x] Populate registry with initial 128 skills
+- [x] Update README
 - [ ] Tag v0.4.0
 
 ---

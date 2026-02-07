@@ -172,6 +172,14 @@ wtd --addr :8080 --db wtd.db
 - **Relay server** (`wtd`) — WebSocket routing between daemons and clients, session management, auth endpoints, audit log
 - **Web UI** — PWA at /app with task submission, timeline, thread view, real-time WebSocket updates, offline caching via service worker
 
+## v0.4 features
+
+- **Gemini adapter** — third agent backend, shells out to `gemini` CLI with 1M token context window
+- **Skill registry** — relay-hosted skill catalog with categories, search, SHA-256 checksums; `wt skill add --available` to browse; seeded with 128 skills
+- **E2E encryption** — Argon2id key derivation + XChaCha20-Poly1305 symmetric encryption for memory sync; relay sees only ciphertext
+- **Task dependencies** — `wt "task B" --after <task-A-id>` or `<!-- wt:schedule after="<id>" -->` in agent output; blocked tasks wait until deps complete
+- **Thread merge** — multi-machine thread entries interleave by timestamp with dedup; renders with machine origin when entries come from multiple machines
+
 ## wingthing.ai
 
 Not a hosted agent. A sync and relay layer.
@@ -183,4 +191,4 @@ Not a hosted agent. A sync and relay layer.
 
 ## Status
 
-v0.3 — Sync, relay, and web UI. Your daemon reachable from anywhere. See [DRAFT.md](DRAFT.md) for the full design and [TODO.md](TODO.md) for the roadmap through v1.0.
+v0.4 — Skill registry, E2E encryption, task dependencies, multi-machine thread merge. See [DRAFT.md](DRAFT.md) for the full design and [TODO.md](TODO.md) for the roadmap through v1.0.

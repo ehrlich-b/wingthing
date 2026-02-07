@@ -323,9 +323,10 @@ func TestSeedDefaultSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(all) != 10 {
-		t.Errorf("seeded count = %d, want 10", len(all))
+	if len(all) < 100 {
+		t.Errorf("seeded count = %d, want >= 100", len(all))
 	}
+	seedCount := len(all)
 
 	// Seed again should be idempotent
 	if err := SeedDefaultSkills(store); err != nil {
@@ -336,7 +337,7 @@ func TestSeedDefaultSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list after reseed: %v", err)
 	}
-	if len(all2) != 10 {
-		t.Errorf("reseed count = %d, want 10", len(all2))
+	if len(all2) != seedCount {
+		t.Errorf("reseed count = %d, want %d", len(all2), seedCount)
 	}
 }

@@ -2,7 +2,10 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +17,10 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
+	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	syncpkg "github.com/ehrlich-b/wingthing/internal/sync"
+	"github.com/ehrlich-b/wingthing/internal/thread"
 	"github.com/ehrlich-b/wingthing/internal/timeline"
 	"github.com/ehrlich-b/wingthing/internal/transport"
 )
@@ -587,5 +593,428 @@ func TestUnknownAgentFails(t *testing.T) {
 	}
 	if failed.Error == nil || !strings.Contains(*failed.Error, "not found") {
 		t.Errorf("expected 'not found' error, got %v", failed.Error)
+	}
+}
+
+// ===== v0.4 integration tests =====
+
+// Test 8: task dependency chain — B depends on A, B only executes after A completes.
+func TestTaskDependencyChain(t *testing.T) {
+	h := newHarness(t)
+
+	var calls []string
+	var mu sync.Mutex
+	h.mock.output = func(prompt string) string {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.Contains(prompt, "task A") {
+			calls = append(calls, "A")
+			return "A done"
+		}
+		calls = append(calls, "B")
+		return "B done"
+	}
+
+	// Create task A directly in the store (ready to run immediately).
+	taskA := &store.Task{
+		ID:     "dep-a",
+		Type:   "prompt",
+		What:   "task A",
+		RunAt:  time.Now().Add(-time.Second),
+		Agent:  "mock",
+		Status: "pending",
+	}
+	if err := h.store.CreateTask(taskA); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create task B that depends on A.
+	depsJSON, _ := json.Marshal([]string{"dep-a"})
+	deps := string(depsJSON)
+	taskB := &store.Task{
+		ID:        "dep-b",
+		Type:      "prompt",
+		What:      "task B",
+		RunAt:     time.Now().Add(-time.Second),
+		Agent:     "mock",
+		Status:    "pending",
+		DependsOn: &deps,
+	}
+	if err := h.store.CreateTask(taskB); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for A to complete.
+	completedA := h.waitForTask("dep-a", 5*time.Second)
+	if completedA.Status != "done" {
+		t.Fatalf("task A: expected done, got %s", completedA.Status)
+	}
+
+	// Now B should become ready and complete.
+	completedB := h.waitForTask("dep-b", 5*time.Second)
+	if completedB.Status != "done" {
+		var errMsg string
+		if completedB.Error != nil {
+			errMsg = *completedB.Error
+		}
+		t.Fatalf("task B: expected done, got %s (error: %s)", completedB.Status, errMsg)
+	}
+
+	// Verify A ran before B.
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) < 2 {
+		t.Fatalf("expected at least 2 calls, got %d", len(calls))
+	}
+	aIdx := -1
+	bIdx := -1
+	for i, c := range calls {
+		if c == "A" && aIdx == -1 {
+			aIdx = i
+		}
+		if c == "B" && bIdx == -1 {
+			bIdx = i
+		}
+	}
+	if aIdx == -1 || bIdx == -1 {
+		t.Fatalf("expected both A and B to run, calls=%v", calls)
+	}
+	if aIdx >= bIdx {
+		t.Errorf("expected A before B, got A@%d B@%d", aIdx, bIdx)
+	}
+}
+
+// Test 9: encrypted sync round-trip — init keystore, encrypt file, decrypt, verify match.
+func TestEncryptedSyncRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+
+	// Initialize keystore with a passphrase.
+	ks := syncpkg.NewKeyStore(dir)
+	if err := ks.Init("test-passphrase-42"); err != nil {
+		t.Fatalf("init keystore: %v", err)
+	}
+	if !ks.IsInitialized() {
+		t.Fatal("keystore should be initialized")
+	}
+
+	// Unlock the key.
+	key, err := ks.Unlock("test-passphrase-42")
+	if err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+
+	// Set up a store and sync engine.
+	dbPath := filepath.Join(dir, "wt.db")
+	s, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+
+	engine := &syncpkg.Engine{
+		MemoryDir: memDir,
+		MachineID: "machine-A",
+		Store:     s,
+	}
+	ee := &syncpkg.EncryptedEngine{Engine: engine, Key: key}
+
+	// Write a memory file.
+	content := []byte("# Secret Memory\nThis is sensitive data about projects.\n")
+	os.WriteFile(filepath.Join(memDir, "secret.md"), content, 0644)
+
+	// Encrypt the file content.
+	encrypted, err := ee.EncryptFile(content)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	// Verify encrypted != plaintext.
+	if string(encrypted) == string(content) {
+		t.Fatal("encrypted data should differ from plaintext")
+	}
+
+	// Decrypt.
+	decrypted, err := ee.DecryptFile(encrypted)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	if string(decrypted) != string(content) {
+		t.Fatalf("decrypted content mismatch: got %q", string(decrypted))
+	}
+
+	// Test thread entry encryption round-trip.
+	userInput := "encrypt this please"
+	entries := []*store.ThreadEntry{
+		{Summary: "deployed v2 to prod", MachineID: "machine-A", UserInput: &userInput},
+		{Summary: "ran tests, all green", MachineID: "machine-A"},
+	}
+
+	encEntries, err := ee.EncryptThreadEntries(entries)
+	if err != nil {
+		t.Fatalf("encrypt thread entries: %v", err)
+	}
+	// Summaries should be base64-encoded ciphertext.
+	if encEntries[0].Summary == "deployed v2 to prod" {
+		t.Fatal("encrypted summary should differ from plaintext")
+	}
+
+	decEntries, err := ee.DecryptThreadEntries(encEntries)
+	if err != nil {
+		t.Fatalf("decrypt thread entries: %v", err)
+	}
+	if decEntries[0].Summary != "deployed v2 to prod" {
+		t.Errorf("summary mismatch: %q", decEntries[0].Summary)
+	}
+	if decEntries[0].UserInput == nil || *decEntries[0].UserInput != "encrypt this please" {
+		t.Errorf("user_input mismatch: %v", decEntries[0].UserInput)
+	}
+	if decEntries[1].Summary != "ran tests, all green" {
+		t.Errorf("second summary mismatch: %q", decEntries[1].Summary)
+	}
+
+	// Wrong passphrase should fail.
+	_, err = ks.Unlock("wrong-passphrase")
+	if err == nil {
+		t.Fatal("unlock with wrong passphrase should fail")
+	}
+}
+
+// Test 10: thread merge from two machines — entries interleave by timestamp.
+func TestThreadMergeTwoMachines(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "wt.db")
+	s, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+
+	engine := &syncpkg.Engine{
+		MemoryDir: memDir,
+		MachineID: "mac",
+		Store:     s,
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	agentName := "claude"
+
+	// Local entries from "mac".
+	s.AppendThreadAt(&store.ThreadEntry{
+		MachineID: "mac",
+		Agent:     &agentName,
+		Summary:   "mac: morning standup",
+	}, now.Add(-2*time.Hour))
+
+	s.AppendThreadAt(&store.ThreadEntry{
+		MachineID: "mac",
+		Agent:     &agentName,
+		Summary:   "mac: deployed v2",
+	}, now.Add(-30*time.Minute))
+
+	// Remote entries from "wsl" to merge in.
+	remote := []*store.ThreadEntry{
+		{
+			MachineID: "wsl",
+			Agent:     &agentName,
+			Summary:   "wsl: GPU training job started",
+			Timestamp: now.Add(-90 * time.Minute),
+		},
+		{
+			MachineID: "wsl",
+			Agent:     &agentName,
+			Summary:   "wsl: training complete",
+			Timestamp: now.Add(-15 * time.Minute),
+		},
+	}
+
+	imported, err := engine.MergeThreadEntries(remote)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	if imported != 2 {
+		t.Errorf("expected 2 imported, got %d", imported)
+	}
+
+	// List all entries for today and verify interleave order.
+	entries, err := s.ListThreadByDate(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 4 {
+		t.Fatalf("expected 4 entries, got %d", len(entries))
+	}
+
+	// Expected order by timestamp:
+	// 1. mac: morning standup (-2h)
+	// 2. wsl: GPU training job started (-90m)
+	// 3. mac: deployed v2 (-30m)
+	// 4. wsl: training complete (-15m)
+	expectedOrder := []string{"mac", "wsl", "mac", "wsl"}
+	for i, e := range entries {
+		if e.MachineID != expectedOrder[i] {
+			t.Errorf("entry %d: expected machine %s, got %s (%s)", i, expectedOrder[i], e.MachineID, e.Summary)
+		}
+	}
+
+	// Verify multi-machine render shows machine IDs.
+	rendered := thread.Render(entries)
+	if !strings.Contains(rendered, "mac]") {
+		t.Errorf("rendered thread should show mac machine ID:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "wsl]") {
+		t.Errorf("rendered thread should show wsl machine ID:\n%s", rendered)
+	}
+
+	// Merge same entries again — should be deduplicated.
+	imported2, err := engine.MergeThreadEntries(remote)
+	if err != nil {
+		t.Fatalf("second merge: %v", err)
+	}
+	if imported2 != 0 {
+		t.Errorf("expected 0 imported on dedup, got %d", imported2)
+	}
+}
+
+// Test 11: skill registry — seed, list, get, search via relay HTTP handlers.
+func TestSkillRegistry(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "relay.db")
+
+	rs, err := relay.OpenRelay(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rs.Close()
+
+	// Seed the default skills.
+	if err := relay.SeedDefaultSkills(rs); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Create a relay server backed by the store.
+	srv := relay.NewServer(rs)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	// List all skills.
+	resp, err := http.Get(ts.URL + "/skills")
+	if err != nil {
+		t.Fatalf("list skills: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("list skills status: %d", resp.StatusCode)
+	}
+	var skills []map[string]string
+	json.NewDecoder(resp.Body).Decode(&skills)
+	if len(skills) < 10 {
+		t.Errorf("expected at least 10 skills, got %d", len(skills))
+	}
+
+	// Get a specific skill.
+	resp2, err := http.Get(ts.URL + "/skills/jira-briefing")
+	if err != nil {
+		t.Fatalf("get skill: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != 200 {
+		t.Fatalf("get skill status: %d", resp2.StatusCode)
+	}
+	var skill map[string]string
+	json.NewDecoder(resp2.Body).Decode(&skill)
+	if skill["name"] != "jira-briefing" {
+		t.Errorf("expected name jira-briefing, got %s", skill["name"])
+	}
+	if skill["content"] == "" {
+		t.Error("expected non-empty content")
+	}
+
+	// Get raw skill content.
+	resp3, err := http.Get(ts.URL + "/skills/pr-review/raw")
+	if err != nil {
+		t.Fatalf("get raw: %v", err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != 200 {
+		t.Fatalf("get raw status: %d", resp3.StatusCode)
+	}
+	if ct := resp3.Header.Get("Content-Type"); !strings.Contains(ct, "text/markdown") {
+		t.Errorf("expected markdown content-type, got %s", ct)
+	}
+
+	// Search skills.
+	resp4, err := http.Get(ts.URL + "/skills?q=deploy")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	defer resp4.Body.Close()
+	var results []map[string]string
+	json.NewDecoder(resp4.Body).Decode(&results)
+	if len(results) == 0 {
+		t.Error("expected at least one search result for 'deploy'")
+	}
+	found := false
+	for _, r := range results {
+		if r["name"] == "deploy-check" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("search for 'deploy' should find deploy-check skill")
+	}
+
+	// Filter by category.
+	resp5, err := http.Get(ts.URL + "/skills?category=ops")
+	if err != nil {
+		t.Fatalf("category filter: %v", err)
+	}
+	defer resp5.Body.Close()
+	var opsSkills []map[string]string
+	json.NewDecoder(resp5.Body).Decode(&opsSkills)
+	for _, s := range opsSkills {
+		if s["category"] != "ops" {
+			t.Errorf("expected category ops, got %s for skill %s", s["category"], s["name"])
+		}
+	}
+
+	// Seed again — should be idempotent.
+	if err := relay.SeedDefaultSkills(rs); err != nil {
+		t.Fatalf("second seed: %v", err)
+	}
+}
+
+// Test 12: gemini adapter — verify it satisfies the Agent interface and dispatches.
+func TestGeminiAdapterDispatch(t *testing.T) {
+	h := newHarness(t)
+
+	// Verify the gemini adapter struct satisfies the Agent interface at compile time.
+	var _ agent.Agent = agent.NewGemini("", 0)
+
+	// Verify the mock dispatch path works for a "gemini-like" prompt.
+	h.mock.output = func(prompt string) string {
+		return "gemini model response"
+	}
+
+	resp, err := h.client.SubmitTask(transport.SubmitTaskRequest{
+		What:  "summarize this paper using gemini",
+		Type:  "prompt",
+		Agent: "mock",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := h.waitForTask(resp.ID, 5*time.Second)
+	if task.Status != "done" {
+		t.Fatalf("expected done, got %s", task.Status)
+	}
+	if task.Output == nil || *task.Output != "gemini model response" {
+		t.Errorf("output = %v, want 'gemini model response'", task.Output)
 	}
 }
