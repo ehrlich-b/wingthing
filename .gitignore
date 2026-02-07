@@ -1,0 +1,4 @@
+/wt
+*.db
+*.db-journal
+*.db-wal
