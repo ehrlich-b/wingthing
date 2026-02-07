@@ -70,6 +70,8 @@ wt schedule remove <id>     # cancel recurring task
 wt agent list               # configured agents
 wt skill list               # installed skills
 wt skill add file.md        # install a skill
+wt login                    # authenticate with wingthing.ai
+wt logout                   # remove device token
 wt daemon                   # start daemon foreground
 wt init                     # initialize ~/.wingthing/
 ```
@@ -138,7 +140,18 @@ Schedule directives support `memory="file1,file2"` to declare which memory files
     └── *.md         # installed skills
 ```
 
-15 internal packages, single binary, no CGO, pure Go SQLite.
+21 packages, two binaries (`wt` daemon + `wtd` relay), no CGO, pure Go SQLite.
+
+The relay server (`wtd`) is a separate binary:
+
+```
+wtd --addr :8080 --db wtd.db
+├── WebSocket hub     ← daemon + client connections
+├── session manager   ← routes messages between daemons and clients
+├── auth endpoints    ← device code flow, token management
+├── web UI            ← PWA served at /app
+└── SQLite store      ← users, tokens, device codes, audit log
+```
 
 ## v0.2 features
 
@@ -151,15 +164,23 @@ Schedule directives support `memory="file1,file2"` to declare which memory files
 - **Schedule memory declarations** — follow-up tasks can declare which memory files to load
 - **Agent health** — startup probes, 60s TTL cache, unhealthy agents blocked from dispatch
 
-## wingthing.ai (future)
+## v0.3 features
+
+- **Memory sync** — file-level diffing with SHA-256 manifests, conflict logging, additive-only merges
+- **WebSocket client** — outbound connection to relay with auto-reconnect, exponential backoff, offline message queuing
+- **Device auth** — device code flow, token storage (0600 perms), `wt login` / `wt logout`
+- **Relay server** (`wtd`) — WebSocket routing between daemons and clients, session management, auth endpoints, audit log
+- **Web UI** — PWA at /app with task submission, timeline, thread view, real-time WebSocket updates, offline caching via service worker
+
+## wingthing.ai
 
 Not a hosted agent. A sync and relay layer.
 
-- Memory sync across machines (encrypted)
+- Memory sync across machines (encrypted at rest, relay sees ciphertext only)
 - Remote relay: phone/web -> WebSocket -> your daemon -> agent runs locally
-- Web UI for timeline, thread, task submission
+- Web UI for timeline, thread, task submission at wingthing.ai/app
 - Credentials never leave your machine
 
 ## Status
 
-v0.2 — Production runtime with real sandboxing, offline execution, recurring tasks, retry, and cost tracking. See [DRAFT.md](DRAFT.md) for the full design and [TODO.md](TODO.md) for the roadmap through v1.0.
+v0.3 — Sync, relay, and web UI. Your daemon reachable from anywhere. See [DRAFT.md](DRAFT.md) for the full design and [TODO.md](TODO.md) for the roadmap through v1.0.
