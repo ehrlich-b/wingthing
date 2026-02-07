@@ -1,0 +1,1 @@
+Pipeline architectures for batch, stream, and warehouse orchestration

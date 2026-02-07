@@ -1,0 +1,1 @@
+Objects, packfiles, refs, trees—how git actually stores and retrieves history

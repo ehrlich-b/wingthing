@@ -1,0 +1,1 @@
+Pricing volatility as geometric Brownian motion with strike
