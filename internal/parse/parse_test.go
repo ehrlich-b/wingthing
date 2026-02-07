@@ -213,3 +213,61 @@ func TestMalformedUnclosedMarker(t *testing.T) {
 		t.Errorf("got %d schedules, want 0 for unclosed marker", len(r.Schedules))
 	}
 }
+
+func TestScheduleWithMemorySingle(t *testing.T) {
+	r := Parse(`<!-- wt:schedule delay=10m memory="deploy-log" -->check deploy<!-- /wt:schedule -->`)
+	if len(r.Schedules) != 1 {
+		t.Fatalf("got %d schedules, want 1", len(r.Schedules))
+	}
+	if len(r.Schedules[0].Memory) != 1 {
+		t.Fatalf("got %d memory entries, want 1", len(r.Schedules[0].Memory))
+	}
+	if r.Schedules[0].Memory[0] != "deploy-log" {
+		t.Errorf("memory[0] = %q, want %q", r.Schedules[0].Memory[0], "deploy-log")
+	}
+}
+
+func TestScheduleWithMemoryMultiple(t *testing.T) {
+	r := Parse(`<!-- wt:schedule delay=10m memory="deploy-log,projects" -->check deploy<!-- /wt:schedule -->`)
+	if len(r.Schedules) != 1 {
+		t.Fatalf("got %d schedules, want 1", len(r.Schedules))
+	}
+	if len(r.Schedules[0].Memory) != 2 {
+		t.Fatalf("got %d memory entries, want 2", len(r.Schedules[0].Memory))
+	}
+	if r.Schedules[0].Memory[0] != "deploy-log" {
+		t.Errorf("memory[0] = %q, want %q", r.Schedules[0].Memory[0], "deploy-log")
+	}
+	if r.Schedules[0].Memory[1] != "projects" {
+		t.Errorf("memory[1] = %q, want %q", r.Schedules[0].Memory[1], "projects")
+	}
+}
+
+func TestScheduleWithoutMemory(t *testing.T) {
+	r := Parse(`<!-- wt:schedule delay=5m -->no memory here<!-- /wt:schedule -->`)
+	if len(r.Schedules) != 1 {
+		t.Fatalf("got %d schedules, want 1", len(r.Schedules))
+	}
+	if len(r.Schedules[0].Memory) != 0 {
+		t.Errorf("got %d memory entries, want 0", len(r.Schedules[0].Memory))
+	}
+}
+
+func TestScheduleMemoryWithSpaces(t *testing.T) {
+	r := Parse(`<!-- wt:schedule delay=5m memory="deploy-log, projects, notes" -->check stuff<!-- /wt:schedule -->`)
+	if len(r.Schedules) != 1 {
+		t.Fatalf("got %d schedules, want 1", len(r.Schedules))
+	}
+	if len(r.Schedules[0].Memory) != 3 {
+		t.Fatalf("got %d memory entries, want 3", len(r.Schedules[0].Memory))
+	}
+	if r.Schedules[0].Memory[0] != "deploy-log" {
+		t.Errorf("memory[0] = %q, want %q", r.Schedules[0].Memory[0], "deploy-log")
+	}
+	if r.Schedules[0].Memory[1] != "projects" {
+		t.Errorf("memory[1] = %q, want %q", r.Schedules[0].Memory[1], "projects")
+	}
+	if r.Schedules[0].Memory[2] != "notes" {
+		t.Errorf("memory[2] = %q, want %q", r.Schedules[0].Memory[2], "notes")
+	}
+}

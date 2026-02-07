@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"encoding/json"
+
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/cron"
 	"github.com/ehrlich-b/wingthing/internal/parse"
@@ -102,6 +104,11 @@ func (e *Engine) dispatch(ctx context.Context, task *store.Task) error {
 			Isolation: task.Isolation,
 			ParentID:  &task.ID,
 			Status:    "pending",
+		}
+		if len(sd.Memory) > 0 {
+			raw, _ := json.Marshal(sd.Memory)
+			s := string(raw)
+			followUp.Memory = &s
 		}
 		if err := e.Store.CreateTask(followUp); err != nil {
 			msg := fmt.Sprintf("create follow-up: %v", err)
