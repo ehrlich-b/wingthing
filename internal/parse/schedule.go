@@ -8,4 +8,5 @@ type ScheduleDirective struct {
 	Delay   time.Duration
 	At      time.Time
 	Content string
+	Memory  []string
 }

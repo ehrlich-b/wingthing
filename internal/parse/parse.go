@@ -65,6 +65,15 @@ func Parse(output string) Result {
 			sd.At = t
 		}
 
+		if mem := attrs["memory"]; mem != "" {
+			for _, f := range strings.Split(mem, ",") {
+				f = strings.TrimSpace(f)
+				if f != "" {
+					sd.Memory = append(sd.Memory, f)
+				}
+			}
+		}
+
 		r.Schedules = append(r.Schedules, sd)
 	}
 
