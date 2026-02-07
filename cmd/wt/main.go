@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemon"
 	"github.com/ehrlich-b/wingthing/internal/store"
@@ -64,6 +68,8 @@ func main() {
 		retryCmd(),
 		daemonCmd(),
 		initCmd(),
+		loginCmd(),
+		logoutCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -461,4 +467,89 @@ func installService() error {
 	fmt.Println("not implemented: service installation")
 	fmt.Println("run 'wt daemon' in a terminal or add to your shell startup")
 	return nil
+}
+
+func loginCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "login",
+		Short: "Authenticate this device with the relay server",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			ts := auth.NewTokenStore(cfg.Dir)
+
+			existing, err := ts.Load()
+			if err != nil {
+				return err
+			}
+			if ts.IsValid(existing) {
+				fmt.Println("already logged in")
+				return nil
+			}
+
+			if cfg.RelayURL == "" {
+				return fmt.Errorf("relay_url not configured in config.yaml")
+			}
+
+			dcr, err := auth.RequestDeviceCode(cfg.RelayURL, cfg.MachineID)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Visit %s and enter code: %s\n", dcr.VerificationURL, dcr.UserCode)
+
+			// Try to open browser, fail silently
+			switch runtime.GOOS {
+			case "darwin":
+				exec.Command("open", dcr.VerificationURL).Start()
+			case "linux":
+				exec.Command("xdg-open", dcr.VerificationURL).Start()
+			}
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			defer stop()
+
+			tr, err := auth.PollForToken(ctx, cfg.RelayURL, dcr.DeviceCode, dcr.Interval)
+			if err != nil {
+				return err
+			}
+
+			token := &auth.DeviceToken{
+				Token:     tr.Token,
+				ExpiresAt: tr.ExpiresAt,
+				IssuedAt:  time.Now().Unix(),
+				DeviceID:  cfg.MachineID,
+			}
+			if err := ts.Save(token); err != nil {
+				return err
+			}
+
+			fmt.Println("logged in successfully")
+			return nil
+		},
+	}
+}
+
+func logoutCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout",
+		Short: "Remove device authentication",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			ts := auth.NewTokenStore(cfg.Dir)
+			if err := ts.Delete(); err != nil {
+				return err
+			}
+
+			fmt.Println("logged out")
+			return nil
+		},
+	}
 }
