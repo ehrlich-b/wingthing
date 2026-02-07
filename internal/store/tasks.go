@@ -119,6 +119,22 @@ func (s *Store) SetTaskError(id, errMsg string) error {
 	return err
 }
 
+func (s *Store) ListRecurring() ([]*Task, error) {
+	rows, err := s.db.Query(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id,
+		created_at, started_at, finished_at, output, error
+		FROM tasks WHERE cron IS NOT NULL AND cron != '' ORDER BY run_at`)
+	if err != nil {
+		return nil, fmt.Errorf("list recurring: %w", err)
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
+func (s *Store) ClearTaskCron(id string) error {
+	_, err := s.db.Exec("UPDATE tasks SET cron = NULL WHERE id = ?", id)
+	return err
+}
+
 func scanTasks(rows *sql.Rows) ([]*Task, error) {
 	var tasks []*Task
 	for rows.Next() {

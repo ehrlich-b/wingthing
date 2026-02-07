@@ -60,6 +60,7 @@ func main() {
 		logCmd(),
 		agentCmd(),
 		skillCmd(),
+		scheduleCmd(),
 		daemonCmd(),
 		initCmd(),
 	)
@@ -306,6 +307,58 @@ func skillCmd() *cobra.Command {
 		},
 	})
 	return sk
+}
+
+func scheduleCmd() *cobra.Command {
+	sc := &cobra.Command{
+		Use:   "schedule",
+		Short: "Manage recurring tasks",
+	}
+	sc.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List recurring tasks",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := clientFromConfig()
+			tasks, err := c.ListSchedule()
+			if err != nil {
+				return err
+			}
+			if len(tasks) == 0 {
+				fmt.Println("no recurring tasks")
+				return nil
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "ID\tSTATUS\tCRON\tWHAT\tNEXT RUN")
+			for _, t := range tasks {
+				what := t.What
+				if len(what) > 40 {
+					what = what[:37] + "..."
+				}
+				cronExpr := ""
+				if t.Cron != nil {
+					cronExpr = *t.Cron
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, cronExpr, what, t.RunAt)
+			}
+			w.Flush()
+			return nil
+		},
+	})
+	sc.AddCommand(&cobra.Command{
+		Use:   "remove [id]",
+		Short: "Remove cron schedule from a task",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := clientFromConfig()
+			t, err := c.RemoveSchedule(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("removed schedule from %s (%s)\n", t.ID, t.What)
+			return nil
+		},
+	})
+	return sc
 }
 
 func daemonCmd() *cobra.Command {

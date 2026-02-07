@@ -7,10 +7,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/skill"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/thread"
 )
@@ -25,10 +27,15 @@ func genTaskID() string {
 type Server struct {
 	store      *store.Store
 	socketPath string
+	skillsDir  string
 }
 
 func NewServer(s *store.Store, socketPath string) *Server {
 	return &Server{store: s, socketPath: socketPath}
+}
+
+func (s *Server) SetSkillsDir(dir string) {
+	s.skillsDir = dir
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
@@ -72,6 +79,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /agents", s.handleListAgents)
 	mux.HandleFunc("GET /status", s.handleStatus)
 	mux.HandleFunc("GET /log/{taskId}", s.handleGetLog)
+	mux.HandleFunc("GET /schedule", s.handleListSchedule)
+	mux.HandleFunc("DELETE /schedule/{id}", s.handleRemoveSchedule)
 }
 
 // Request/response types
@@ -91,6 +100,7 @@ type taskResponse struct {
 	Agent      string  `json:"agent"`
 	Isolation  string  `json:"isolation"`
 	Status     string  `json:"status"`
+	Cron       *string `json:"cron,omitempty"`
 	CreatedAt  string  `json:"created_at"`
 	StartedAt  *string `json:"started_at,omitempty"`
 	FinishedAt *string `json:"finished_at,omitempty"`
@@ -114,6 +124,7 @@ func taskToResponse(t *store.Task) taskResponse {
 		Agent:     t.Agent,
 		Isolation: t.Isolation,
 		Status:    t.Status,
+		Cron:      t.Cron,
 		CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
 		Output:    t.Output,
 		Error:     t.Error,
@@ -164,6 +175,13 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		What:  req.What,
 		RunAt: runAt,
 		Agent: req.Agent,
+	}
+	// If skill type and we have a skills dir, check for a schedule field.
+	if req.Type == "skill" && s.skillsDir != "" {
+		sk, skErr := skill.Load(filepath.Join(s.skillsDir, req.What+".md"))
+		if skErr == nil && sk.Schedule != "" {
+			t.Cron = &sk.Schedule
+		}
 	}
 	if err := s.store.CreateTask(t); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -377,6 +395,38 @@ func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleListSchedule(w http.ResponseWriter, r *http.Request) {
+	tasks, err := s.store.ListRecurring()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	result := make([]taskResponse, 0, len(tasks))
+	for _, t := range tasks {
+		result = append(result, taskToResponse(t))
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleRemoveSchedule(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	t, err := s.store.GetTask(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if t == nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if err := s.store.ClearTaskCron(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	t.Cron = nil
+	writeJSON(w, http.StatusOK, taskToResponse(t))
 }
 
 // Helpers
