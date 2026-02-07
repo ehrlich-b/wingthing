@@ -1,1 +1,0 @@
-Infrastructure automation, configuration management, and deployment pipelines

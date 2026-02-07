@@ -1,1 +1,0 @@
-Latency-sensitive computation at the data periphery

@@ -1,1 +1,0 @@
-Switch physics, actuation curves, keycap profiles, custom firmware evolution

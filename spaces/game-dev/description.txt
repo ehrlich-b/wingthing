@@ -1,1 +1,0 @@
-Simulating interactive systems constrained by real-time computation

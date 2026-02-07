@@ -1,1 +1,0 @@
-Self-hosted infrastructure for learning systems administration firsthand

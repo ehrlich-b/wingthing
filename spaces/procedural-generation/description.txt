@@ -1,1 +1,0 @@
-Algorithms that synthesize infinite detail from compact rules

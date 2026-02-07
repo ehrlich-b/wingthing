@@ -1,1 +1,0 @@
-Running services on your own infrastructure instead of cloud platforms

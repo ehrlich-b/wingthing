@@ -1,1 +1,0 @@
-Data inference, uncertainty quantification, modeling stochastic phenomena rigorously

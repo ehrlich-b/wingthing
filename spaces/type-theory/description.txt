@@ -1,1 +1,0 @@
-Static correctness proofs for program construction and evolution

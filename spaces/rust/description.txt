@@ -1,1 +1,0 @@
-Systems programming with ownership semantics and zero-cost abstractions

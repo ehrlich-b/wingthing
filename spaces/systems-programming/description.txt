@@ -1,1 +1,0 @@
-Low-level control of hardware, memory, and processes

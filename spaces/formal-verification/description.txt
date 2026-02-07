@@ -1,1 +1,0 @@
-Proving programs correct using mathematical logic and automated theorem provers

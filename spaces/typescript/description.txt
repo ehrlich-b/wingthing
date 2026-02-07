@@ -1,1 +1,0 @@
-Static types meet gradual evolution and ecosystem scale

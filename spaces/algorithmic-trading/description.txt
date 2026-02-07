@@ -1,1 +1,0 @@
-Quantitative strategies, execution algorithms, market microstructure, backtesting frameworks

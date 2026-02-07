@@ -1,1 +1,0 @@
-Concurrency primitives, interfaces, channels, goroutines, memory model

@@ -1,1 +1,0 @@
-High-level language balancing simplicity with powerful metaprogramming capabilities

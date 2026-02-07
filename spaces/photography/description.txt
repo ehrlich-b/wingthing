@@ -1,1 +1,0 @@
-Light, sensor physics, composition geometry, and perception

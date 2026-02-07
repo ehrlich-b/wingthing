@@ -1,1 +1,0 @@
-JVM language blending null safety with functional conciseness

@@ -1,1 +1,0 @@
-Kernel internals, system calls, userspace tooling, distro packaging
