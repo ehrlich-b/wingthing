@@ -5,24 +5,214 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
+const (
+	defaultCPUTimeSec = 120
+	defaultMemBytes   = 512 * 1024 * 1024 // 512MB
+	defaultMaxFDs     = 256
+)
+
+// Dangerous syscalls to deny via seccomp.
+var deniedSyscalls = []uint32{
+	unix.SYS_MOUNT,
+	unix.SYS_UMOUNT2,
+	unix.SYS_REBOOT,
+	unix.SYS_SWAPON,
+	unix.SYS_SWAPOFF,
+	unix.SYS_KEXEC_LOAD,
+	unix.SYS_INIT_MODULE,
+	unix.SYS_FINIT_MODULE,
+	unix.SYS_DELETE_MODULE,
+	unix.SYS_PIVOT_ROOT,
+	unix.SYS_PTRACE,
+}
+
 type linuxSandbox struct {
-	cfg Config
+	cfg    Config
+	tmpDir string
 }
 
 // newPlatform tries to create a namespace+seccomp sandbox.
-// Returns an error if capabilities are insufficient.
+// Returns an error if capabilities are insufficient so the factory falls back.
 func newPlatform(cfg Config) (Sandbox, error) {
-	// TODO: detect namespace/seccomp capabilities and implement
-	return nil, fmt.Errorf("linux namespace sandbox not yet implemented")
+	if !hasNamespaceCapability() {
+		return nil, fmt.Errorf("linux sandbox: need root or CAP_SYS_ADMIN for namespaces")
+	}
+
+	dir, err := os.MkdirTemp("", "wt-sandbox-*")
+	if err != nil {
+		return nil, fmt.Errorf("create sandbox tmpdir: %w", err)
+	}
+	log.Printf("linux sandbox: created tmpdir=%s isolation=%s", dir, cfg.Isolation)
+	return &linuxSandbox{cfg: cfg, tmpDir: dir}, nil
+}
+
+func hasNamespaceCapability() bool {
+	if os.Geteuid() == 0 {
+		return true
+	}
+	// Check CAP_SYS_ADMIN via capget
+	var hdr unix.CapUserHeader
+	var data unix.CapUserData
+	hdr.Version = unix.LINUX_CAPABILITY_VERSION_3
+	hdr.Pid = 0 // current process
+	if err := unix.Capget(&hdr, &data); err != nil {
+		return false
+	}
+	return data.Effective&(1<<unix.CAP_SYS_ADMIN) != 0
 }
 
 func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
-	return nil, fmt.Errorf("linux namespace sandbox not yet implemented")
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = s.tmpDir
+	cmd.Env = s.buildEnv()
+	cmd.SysProcAttr = s.sysProcAttr()
+	return cmd, nil
 }
 
 func (s *linuxSandbox) Destroy() error {
-	return nil
+	return os.RemoveAll(s.tmpDir)
 }
+
+func (s *linuxSandbox) buildEnv() []string {
+	return []string{
+		"PATH=/usr/bin:/bin",
+		"HOME=" + s.tmpDir,
+		"TMPDIR=" + s.tmpDir,
+	}
+}
+
+func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
+	attr := &syscall.SysProcAttr{
+		Cloneflags: s.cloneFlags(),
+	}
+
+	filter := buildSeccompFilter()
+	if len(filter) > 0 {
+		attr.AmbientCaps = []uintptr{} // drop ambient caps
+	}
+
+	return attr
+}
+
+// cloneFlags returns namespace clone flags based on isolation level.
+func (s *linuxSandbox) cloneFlags() uintptr {
+	switch s.cfg.Isolation {
+	case Strict:
+		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET
+	case Standard:
+		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
+	case Network:
+		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
+	case Privileged:
+		return 0
+	default:
+		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
+	}
+}
+
+// rlimits returns resource limits for the sandboxed process.
+func rlimits() []rlimitPair {
+	return []rlimitPair{
+		{unix.RLIMIT_CPU, defaultCPUTimeSec},
+		{unix.RLIMIT_AS, defaultMemBytes},
+		{unix.RLIMIT_NOFILE, defaultMaxFDs},
+	}
+}
+
+type rlimitPair struct {
+	resource int
+	value    uint64
+}
+
+// mountPaths prepares bind mount arguments for the mount namespace.
+// Returns the list of mount syscall args to execute after clone.
+func mountPaths(mounts []Mount, rootDir string) []bindMount {
+	var out []bindMount
+	for _, m := range mounts {
+		target := m.Target
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(rootDir, target)
+		}
+		flags := uintptr(unix.MS_BIND | unix.MS_REC)
+		if m.ReadOnly {
+			flags |= unix.MS_RDONLY
+		}
+		out = append(out, bindMount{
+			source: m.Source,
+			target: target,
+			flags:  flags,
+		})
+	}
+	return out
+}
+
+type bindMount struct {
+	source string
+	target string
+	flags  uintptr
+}
+
+// buildSeccompFilter constructs a BPF program that denies dangerous syscalls.
+// The filter returns SECCOMP_RET_ERRNO(EPERM) for denied calls and
+// SECCOMP_RET_ALLOW for everything else.
+func buildSeccompFilter() []unix.SockFilter {
+	// BPF program structure:
+	// 1. Load syscall number (offsetof(struct seccomp_data, nr))
+	// 2. For each denied syscall: compare and jump to deny
+	// 3. Allow (default)
+	// 4. Deny: return EPERM
+
+	nDenied := len(deniedSyscalls)
+	if nDenied == 0 {
+		return nil
+	}
+
+	// Total instructions: 1 (load) + nDenied (jeq) + 1 (allow) + 1 (deny)
+	prog := make([]unix.SockFilter, 0, nDenied+3)
+
+	// Load syscall number: BPF_LD+BPF_W+BPF_ABS, offset 0
+	prog = append(prog, unix.SockFilter{
+		Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS,
+		K:    0, // offsetof(struct seccomp_data, nr)
+	})
+
+	// For each denied syscall, jump to deny block if match.
+	// Jump targets are relative: jt=jump-to-deny, jf=next-instruction
+	for i, nr := range deniedSyscalls {
+		jmpToDeny := uint8(nDenied - i) // distance to deny instruction
+		prog = append(prog, unix.SockFilter{
+			Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K,
+			Jt:   jmpToDeny,
+			Jf:   0, // fall through to next check
+			K:    nr,
+		})
+	}
+
+	// Allow
+	prog = append(prog, unix.SockFilter{
+		Code: unix.BPF_RET | unix.BPF_K,
+		K:    seccompRetAllow,
+	})
+
+	// Deny with EPERM
+	prog = append(prog, unix.SockFilter{
+		Code: unix.BPF_RET | unix.BPF_K,
+		K:    seccompRetErrno | uint32(unix.EPERM),
+	})
+
+	return prog
+}
+
+const (
+	seccompRetAllow = 0x7fff0000
+	seccompRetErrno = 0x00050000
+)

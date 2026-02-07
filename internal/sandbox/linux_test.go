@@ -1,0 +1,218 @@
+//go:build linux
+
+package sandbox
+
+import (
+	"syscall"
+	"testing"
+
+	"golang.org/x/sys/unix"
+)
+
+func TestCloneFlagsStrict(t *testing.T) {
+	s := &linuxSandbox{cfg: Config{Isolation: Strict}}
+	flags := s.cloneFlags()
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
+	if flags != want {
+		t.Errorf("Strict cloneFlags = 0x%x, want 0x%x", flags, want)
+	}
+}
+
+func TestCloneFlagsStandard(t *testing.T) {
+	s := &linuxSandbox{cfg: Config{Isolation: Standard}}
+	flags := s.cloneFlags()
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
+	if flags != want {
+		t.Errorf("Standard cloneFlags = 0x%x, want 0x%x", flags, want)
+	}
+	// Standard should NOT have CLONE_NEWNET
+	if flags&syscall.CLONE_NEWNET != 0 {
+		t.Error("Standard should not set CLONE_NEWNET")
+	}
+}
+
+func TestCloneFlagsNetwork(t *testing.T) {
+	s := &linuxSandbox{cfg: Config{Isolation: Network}}
+	flags := s.cloneFlags()
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
+	if flags != want {
+		t.Errorf("Network cloneFlags = 0x%x, want 0x%x", flags, want)
+	}
+	if flags&syscall.CLONE_NEWNET != 0 {
+		t.Error("Network should not set CLONE_NEWNET")
+	}
+}
+
+func TestCloneFlagsPrivileged(t *testing.T) {
+	s := &linuxSandbox{cfg: Config{Isolation: Privileged}}
+	flags := s.cloneFlags()
+	if flags != 0 {
+		t.Errorf("Privileged cloneFlags = 0x%x, want 0", flags)
+	}
+}
+
+func TestSeccompFilterStructure(t *testing.T) {
+	filter := buildSeccompFilter()
+	nDenied := len(deniedSyscalls)
+
+	// Expected: 1 (load) + nDenied (jeq checks) + 1 (allow) + 1 (deny)
+	wantLen := nDenied + 3
+	if len(filter) != wantLen {
+		t.Fatalf("filter length = %d, want %d", len(filter), wantLen)
+	}
+
+	// First instruction: load syscall number
+	load := filter[0]
+	if load.Code != unix.BPF_LD|unix.BPF_W|unix.BPF_ABS {
+		t.Errorf("load instruction code = 0x%x, want BPF_LD|BPF_W|BPF_ABS", load.Code)
+	}
+	if load.K != 0 {
+		t.Errorf("load offset = %d, want 0 (seccomp_data.nr)", load.K)
+	}
+
+	// Check each deny-check instruction
+	for i := 0; i < nDenied; i++ {
+		inst := filter[1+i]
+		if inst.Code != unix.BPF_JMP|unix.BPF_JEQ|unix.BPF_K {
+			t.Errorf("filter[%d] code = 0x%x, want BPF_JMP|BPF_JEQ|BPF_K", 1+i, inst.Code)
+		}
+		if inst.K != deniedSyscalls[i] {
+			t.Errorf("filter[%d] K = %d, want syscall %d", 1+i, inst.K, deniedSyscalls[i])
+		}
+		// Jt should jump to the deny instruction
+		wantJt := uint8(nDenied - i)
+		if inst.Jt != wantJt {
+			t.Errorf("filter[%d] Jt = %d, want %d", 1+i, inst.Jt, wantJt)
+		}
+		if inst.Jf != 0 {
+			t.Errorf("filter[%d] Jf = %d, want 0 (fall through)", 1+i, inst.Jf)
+		}
+	}
+
+	// Allow instruction (second to last)
+	allow := filter[len(filter)-2]
+	if allow.Code != unix.BPF_RET|unix.BPF_K {
+		t.Errorf("allow code = 0x%x, want BPF_RET|BPF_K", allow.Code)
+	}
+	if allow.K != seccompRetAllow {
+		t.Errorf("allow K = 0x%x, want 0x%x", allow.K, seccompRetAllow)
+	}
+
+	// Deny instruction (last)
+	deny := filter[len(filter)-1]
+	if deny.Code != unix.BPF_RET|unix.BPF_K {
+		t.Errorf("deny code = 0x%x, want BPF_RET|BPF_K", deny.Code)
+	}
+	wantDenyK := seccompRetErrno | uint32(unix.EPERM)
+	if deny.K != wantDenyK {
+		t.Errorf("deny K = 0x%x, want 0x%x", deny.K, wantDenyK)
+	}
+}
+
+func TestSeccompDeniedSyscallsIncluded(t *testing.T) {
+	filter := buildSeccompFilter()
+	// Collect all syscall numbers checked in the filter
+	checked := make(map[uint32]bool)
+	for _, inst := range filter {
+		if inst.Code == unix.BPF_JMP|unix.BPF_JEQ|unix.BPF_K {
+			checked[inst.K] = true
+		}
+	}
+	for _, nr := range deniedSyscalls {
+		if !checked[nr] {
+			t.Errorf("syscall %d not in seccomp filter", nr)
+		}
+	}
+}
+
+func TestRlimitValues(t *testing.T) {
+	limits := rlimits()
+
+	expected := map[int]uint64{
+		unix.RLIMIT_CPU:    defaultCPUTimeSec,
+		unix.RLIMIT_AS:     defaultMemBytes,
+		unix.RLIMIT_NOFILE: defaultMaxFDs,
+	}
+
+	if len(limits) != len(expected) {
+		t.Fatalf("rlimits count = %d, want %d", len(limits), len(expected))
+	}
+
+	for _, rl := range limits {
+		want, ok := expected[rl.resource]
+		if !ok {
+			t.Errorf("unexpected rlimit resource %d", rl.resource)
+			continue
+		}
+		if rl.value != want {
+			t.Errorf("rlimit %d value = %d, want %d", rl.resource, rl.value, want)
+		}
+	}
+}
+
+func TestRlimitDefaults(t *testing.T) {
+	if defaultCPUTimeSec != 120 {
+		t.Errorf("defaultCPUTimeSec = %d, want 120", defaultCPUTimeSec)
+	}
+	if defaultMemBytes != 512*1024*1024 {
+		t.Errorf("defaultMemBytes = %d, want %d", defaultMemBytes, 512*1024*1024)
+	}
+	if defaultMaxFDs != 256 {
+		t.Errorf("defaultMaxFDs = %d, want 256", defaultMaxFDs)
+	}
+}
+
+func TestMountPaths(t *testing.T) {
+	mounts := []Mount{
+		{Source: "/data/skills", Target: "skills", ReadOnly: true},
+		{Source: "/tmp/work", Target: "/workspace", ReadOnly: false},
+	}
+	result := mountPaths(mounts, "/sandbox/root")
+
+	if len(result) != 2 {
+		t.Fatalf("mountPaths returned %d entries, want 2", len(result))
+	}
+
+	// Relative target should be joined with rootDir
+	if result[0].target != "/sandbox/root/skills" {
+		t.Errorf("relative target = %q, want /sandbox/root/skills", result[0].target)
+	}
+	if result[0].source != "/data/skills" {
+		t.Errorf("source = %q, want /data/skills", result[0].source)
+	}
+	// ReadOnly should include MS_RDONLY
+	if result[0].flags&unix.MS_RDONLY == 0 {
+		t.Error("read-only mount should have MS_RDONLY flag")
+	}
+	if result[0].flags&unix.MS_BIND == 0 {
+		t.Error("mount should have MS_BIND flag")
+	}
+
+	// Absolute target should be kept as-is
+	if result[1].target != "/workspace" {
+		t.Errorf("absolute target = %q, want /workspace", result[1].target)
+	}
+	// Non-readonly should NOT have MS_RDONLY
+	if result[1].flags&unix.MS_RDONLY != 0 {
+		t.Error("non-readonly mount should not have MS_RDONLY flag")
+	}
+}
+
+func TestSysProcAttrCloneflags(t *testing.T) {
+	tests := []struct {
+		level Level
+		want  uintptr
+	}{
+		{Strict, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
+		{Standard, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
+		{Network, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
+		{Privileged, 0},
+	}
+	for _, tt := range tests {
+		s := &linuxSandbox{cfg: Config{Isolation: tt.level}}
+		attr := s.sysProcAttr()
+		if attr.Cloneflags != tt.want {
+			t.Errorf("level %s: Cloneflags = 0x%x, want 0x%x", tt.level, attr.Cloneflags, tt.want)
+		}
+	}
+}
