@@ -1,0 +1,795 @@
+- slug: 3d-printing
+  description: Additive manufacturing from thermoplastics to design constraints
+  centroid: >-
+    FDM FFF SLA DLSMS SLS resin PLA PETG ABS ASA TPU nylon polycarbonate support-structures bridging overhang retraction bed-adhesion warping layer-height infill-density Cura PrusaSlicer SuperSlicer OrcaSlicer Marlin Klipper RepRap Prusa Voron Bambu-Lab Creality Ender CoreXY Cartesian delta hotend extruder direct-drive Bowden nozzle heatbreak thermistor PID-tuning bed-leveling ABL mesh Z-offset stepper NEMA17 TMC2209 linear-rails v-slot print-bed PEI BuildTak cooling-fan part-fan bridging layer-adhesion extrusion-multiplier flow-rate travel-speed retraction-distance STL 3MF slicing G-code
+
+- slug: aerospace
+  description: Orbital mechanics, propulsion systems, and atmospheric flight dynamics
+  centroid: >-
+    orbital mechanics rocketry propulsion aerodynamics flight dynamics spacecraft design launch systems satellites reentry thermal protection avionics guidance navigation control hypersonics CFD turbulence drag lift supersonic transonic shock waves combustion engines turbofan turboprop ramjet scramjet rocket nozzle specific impulse delta-v Hohmann transfer Tsiolkovsky equation Oberth effect gravity assist trajectory optimization attitude control reaction wheels gyroscopes magnetorquers thrusters RCS staging fairing payload mass ratio ISP TWR
+
+- slug: ai-agents
+  description: Autonomous systems orchestrating multi-step tasks through tool use
+  centroid: >-
+    autonomous-agents LLM-agents multi-agent-systems ReAct tool-use function-calling AutoGPT BabyAGI LangChain LangGraph agent-frameworks ReWOO chain-of-thought prompt-engineering agentic-workflows task-decomposition planning-agents ReACT-pattern MRKL HuggingGPT reflection self-critique tool-learning API-agents web-agents code-agents AutoGen MetaGPT CrewAI agent-protocols memory-systems vector-stores RAG semantic-search embeddings agent-communication multi-agent-coordination hierarchical-agents swarm-intelligence agent-evaluation benchmarks
+
+- slug: algorithmic-trading
+  description: Quantitative strategies, execution algorithms, market microstructure, backtesting frameworks
+  centroid: >-
+    algorithmic-trading quantitative-finance high-frequency-trading HFT market-microstructure orderbook execution-algorithms TWAP VWAP statistical-arbitrage pairs-trading mean-reversion momentum alpha-generation backtesting walk-forward-analysis Sharpe-ratio Sortino downside-risk drawdown Kelly-criterion position-sizing risk-management portfolio-optimization Markowitz Black-Scholes options Greeks delta-hedging volatility-trading VIX term-structure implied-volatility market-making liquidity-provision spread-capture latency FIX-protocol WebSocket tick-data limit-orderbook matching-engine slippage transaction-costs impact-cost co-location FPGA low-latency
+
+- slug: amateur-astronomy
+  description: Observing deep sky objects with consumer-grade optical instruments
+  centroid: >-
+    telescope eyepiece collimation astrophotography CCD CMOS sensor stacking calibration flats darks bias frames mount equatorial alt-azimuth tracking polar alignment autoguiding GOTO Dobsonian refractor reflector Schmidt-Cassegrain Maksutov achromat apochromat focal length aperture obstruction backyard observatory light pollution Bortle scale narrowband filter Ha OIII SII broadband LP UHC nebula emission planetary galaxy deep-sky Messier NGC IC Caldwell seeing transparency FWHM pixelscale plate-solving PHD2 guiding SharpCap FireCapture PixInsight
+
+- slug: animation
+  description: Frame interpolation, timing curves, and motion principles
+  centroid: >-
+    keyframe interpolation tweening rigging skeletal inverse-kinematics procedural motion-capture mocap blendshapes easing bezier spline frame-rate onion-skinning squash-stretch anticipation follow-through secondary-action timing arcs appeal silhouette Disney twelve-principles Pixar physics-simulation cloth-simulation fluid-simulation particle-systems sprite-sheet bone-hierarchy forward-kinematics pose-to-pose straight-ahead smear-frames motion-blur cel-shading toon-shader anime sakuga limited-animation rotoscoping stopmotion claymation armature
+
+- slug: anthropology
+  description: Cultural patterns, kinship systems, symbolic meaning production
+  centroid: >-
+    anthropology ethnography kinship-systems cultural-evolution social-anthropology biological-anthropology archaeology linguistic-anthropology symbolic-anthropology structuralism Levi-Strauss Franz-Boas Margaret-Mead Clifford-Geertz thick-description participant-observation fieldwork ethnology material-culture gift-economy potlatch kula-ring reciprocity ritual kinship-diagrams descent-systems marriage-patterns totemism animism shamanism cosmology mythology rites-of-passage liminality Victor-Turner Mary-Douglas taboo classification ethnomethodology embodiment phenomenology
+
+- slug: api-design
+  description: REST semantics, hypermedia constraints, versioning strategies explored
+  centroid: >-
+    REST API GraphQL gRPC OpenAPI Swagger versioning backwards-compatibility pagination rate-limiting idempotency HTTP methods status codes HATEOAS hypermedia Richardson maturity webhooks polling WebSockets SSE error-handling validation authentication authorization OAuth JWT API keys CORS content-negotiation JSON XML Protocol-Buffers Thrift headers caching ETags conditional-requests API-gateway reverse-proxy load-balancing throttling circuit-breaker retry exponential-backoff bulk-operations batching filtering sorting PATCH PUT POST GET DELETE
+
+- slug: aquariums
+  description: Closed ecosystems balancing nitrogen cycles and biofilm communities
+  centroid: >-
+    aquarium nitrogen-cycle ammonia nitrite nitrate biofilter beneficial-bacteria planted-tank CO2-injection substrate aquascaping hardscape driftwood seiryu-stone iwagumi dutch-style nature-aquarium Takashi-Amano aquatic-plants stem-plants carpeting-plants Cryptocoryne Rotala Bucephalandra Anubias Vallisneria Java-fern Java-moss riccia monte-carlo dwarf-hairgrass PAR lighting photoperiod algae green-spot-algae BBA cyanobacteria diatoms water-parameters pH KH GH TDS conductivity buffering RO-water remineralization fertilization macro-nutrients
+
+- slug: archaeology
+  description: Stratigraphy, artifact dating, and interpreting ancient material culture
+  centroid: >-
+    stratigraphy radiocarbon-dating dendrochronology thermoluminescence excavation trowel Harris-matrix context ceramics lithics typology seriation archaeological-survey geophysical-prospection magnetometry ground-penetrating-radar lidar photogrammetry zooarchaeology archaeobotany palynology phytoliths isotope-analysis DNA-analysis osteology taphonomy site-formation ethnoarchaeology experimental-archaeology bioarchaeology mortuary-analysis geoarchaeology micromorphology obsidian-sourcing provenience stratum assemblage artifact ecofact feature matrix debitage
+
+- slug: astrophysics
+  description: Stars, galaxies, cosmology, dark matter, relativistic dynamics
+  centroid: >-
+    cosmology galaxies exoplanets black-holes neutron-stars supernovae dark-matter dark-energy gravitational-waves LIGO cosmic-microwave-background CMB redshift Hubble quasars pulsars gamma-ray-bursts stellar-evolution nucleosynthesis accretion-disks active-galactic-nuclei AGN jets relativistic-beaming spectroscopy photometry interferometry adaptive-optics radio-astronomy X-ray infrared telescopes JWST Hubble VLT Chandra Kepler TESS stellar-populations metallicity star-formation interstellar-medium ISM nebulae protoplanetary-disks planetary-migration habitable-zones astrobiology
+
+- slug: audio-programming
+  description: DSP synthesis and real-time audio systems fundamentals
+  centroid: >-
+    DSP audio-synthesis sampling FFT convolution reverb compression EQ filters IIR FIR ADSR oscillators wavetables granular FM additive subtractive modular VST AU JUCE SuperCollider Pure-Data Max/MSP ChucK Faust CLAP LV2 LADSPA real-time latency buffer JACK ALSA CoreAudio ASIO sample-rate bit-depth dithering quantization aliasing Nyquist phase vocoder pitch-shifting time-stretching spectral STFT MDCT polyphony voice-stealing MIDI MPE CV gate sequencing Ableton Reaper DAW sidechain multiband saturation distortion analog-modeling physical-modeling Karplus-Strong waveguide resonator modal-synthesis
+
+- slug: behavioral-economics
+  description: Cognitive biases, heuristics, and systematic deviations from rational choice
+  centroid: >-
+    behavioral-economics nudge theory loss-aversion prospect-theory framing-effects anchoring mental-accounting status-quo-bias confirmation-bias availability-heuristic representativeness-heuristic hyperbolic-discounting present-bias time-inconsistency Kahneman Tversky Thaler Ariely Sunstein choice-architecture libertarian-paternalism default-effects endowment-effect sunk-cost-fallacy decoy-effect priming social-proof scarcity commitment-devices precommitment bounded-rationality satisficing heuristics-and-biases dual-process-theory System-1
+
+- slug: bioinformatics
+  description: Computational analysis of biological sequence and structure data
+  centroid: >-
+    sequencing alignment BLAST genomics proteomics RNA-seq CRISPR phylogenetics structural-biology protein-folding molecular-dynamics PDB UniProt variant-calling transcriptomics metagenomics single-cell ChIP-seq ATAC-seq pathway-analysis gene-ontology network-biology systems-biology multi-omics pangenomics nanopore-sequencing Illumina PacBio genome-assembly annotation FASTA FASTQ SAM BAM VCF Bioconductor BioPython nextflow snakemake Galaxy HMM MSA ClustalW HMMER Ensembl NCBI KEGG metabolomics proteomics-workflows mass-spec alphafold rosetta
+
+- slug: birding
+  description: Field identification, migration patterns, and behavioral ecology in practice
+  centroid: >-
+    birding ornithology species identification field guides binoculars spotting scopes eBird Merlin Cornell Lab migration patterns warblers raptors shorebirds waterfowl passerines seabirds pelagic trips vagrant rarities ABA listing life list big year Christmas Bird Count breeding bird atlas citizen science BirdNET sound recording sonograms plumage molts juvenile adult eclipse breeding non-breeding dimorphism taxonomy phylogeny Sibley Peterson National Geographic range maps habitat ecology behavior foraging nesting territories phenology irruption vagrancy hotspots patch twitching digiscoping
+
+- slug: board-games
+  description: Strategic depth, emergent complexity, asymmetric player powers
+  centroid: >-
+    strategy mechanics eurogames deckbuilding worker-placement tile-placement area-control resource-management Catan Carcassonne Ticket-to-Ride Pandemic Agricola Dominion Terraforming-Mars Gloomhaven Spirit-Island Brass Scythe Wingspan 18xx wargames Twilight-Struggle Root Splendor Puerto-Rico Power-Grid Eclipse Arkham-Horror Eldritch-Horror Azul 7-Wonders drafting engine-building tableau-building set-collection asymmetric-powers negotiation bluffing hidden-information dice-rolling card-drafting action-selection simultaneous-play dexterity abstract-games cooperative competitive legacy campaign miniatures tokens meeples
+
+- slug: cartography
+  description: Maps as spatial arguments about territory and power
+  centroid: >-
+    cartography GIS projection geodesy map-design Mercator coordinate-systems datum WGS84 topography contour spatial-analysis choropleth symbology surveying QGIS PostGIS geographic-visualization terrain cartogram shapefile raster vector basemap hillshade navigation cadastral thematic-maps historical-cartography Ptolemy relief-shading scale generalization terrain-modeling geoid LIDAR remote-sensing satellite-imagery orienteering bathymetry isoline chorography azimuthal georeferencing cartographic-distortion graticule atlas mapmaking geospatial toponymy
+
+- slug: category-theory
+  description: Abstract structures, functors, and universal constructions in mathematics
+  centroid: >-
+    category functor natural-transformation monad monoid adjunction Yoneda lemma topos enriched Lawvere Mac-Lane Eilenberg limits colimits pullback pushout product coproduct universal-property morphism object arrow composition associativity identity terminal initial equalizer coequalizer kernel cokernel exact-sequence abelian commutative-diagram homological-algebra derived-functor Kan-extension presheaf sheaf Grothendieck fibration opfibration Beck monadicity descent homotopy-type-theory higher-category simplicial quasicategory infinity-category model-category
+
+- slug: cellular-automata
+  description: Self-organizing patterns emerging from simple local rules
+  centroid: >-
+    Conway Game-of-Life Wolfram Rule-30 Rule-110 universal-computation emergent-behavior self-replication von-Neumann automata Langton-loops Wireworld logic-gates spaceship glider LWSS MWSS breeder puffer gun oscillator methuselah R-pentomino patterns still-life Turing-complete discrete-dynamics lattice-models phase-transitions critical-phenomena Golly HashLife simulation CAM-8 reversible-automata Margolus-neighborhood totalistic-rules outer-totalistic generations Brian-Brain Seeds CoDi WireWorld complexity-classes edge-of-chaos
+
+- slug: chemistry
+  description: Reactions, bonds, synthesis, and molecular transformation
+  centroid: >-
+    chemistry organic inorganic physical analytical biochemistry synthesis reactions stoichiometry thermodynamics kinetics catalysis spectroscopy NMR mass-spectrometry chromatography quantum-chemistry computational DFT molecular-orbital electrochemistry polymer-chemistry supramolecular coordination medicinal drug-discovery retrosynthesis total-synthesis green-chemistry materials photochemistry organometallic stereochemistry chirality racemization peptide protein-folding enzymes metabolic-pathways CRISPR crystallography X-ray-diffraction pH titration redox oxidation reduction ligands
+
+- slug: chess
+  description: Strategic depth across sixty-four squares of infinite complexity
+  centroid: >-
+    opening theory endgame tactics middlegame strategy positional play combinations checkmate patterns zugzwang tempo piece activity king safety pawn structure passed pawns isolated pawns doubled pawns outpost weak squares bishop pair knight outpost rook endgames queen endgames sacrifice brilliancy calculation evaluation material imbalance compensation initiative attack defense prophylaxis candidate moves blunder hanging pieces pins forks skewers discovered attacks zwischenzug intermediate moves breakthrough clearance deflection decoy desperado windmill perpetual check stalemate draw fortress opposition triangulation
+
+- slug: ci-cd
+  description: Automating build, test, and deployment through pipelines
+  centroid: >-
+    continuous-integration continuous-deployment pipeline automation Jenkins GitLab-CI GitHub-Actions CircleCI Travis-CI buildkite TeamCity bamboo drone concourse tekton argo-workflows gitlab-runner artifact-management docker-build container-registry helm terraform ansible infrastructure-as-code gitops flux argocd spinnaker harness deployment-strategies blue-green canary rolling-update feature-flags trunk-based-development monorepo build-cache bazel gradle maven npm-workspaces turborepo nx test-automation unit-tests integration-tests e2e-tests
+
+- slug: climate-science
+  description: Atmospheric physics, carbon cycles, and predictive climate models
+  centroid: >-
+    climate models atmospheric physics radiative forcing greenhouse gases carbon cycle IPCC paleoclimate ice cores ocean circulation AMOC thermocline albedo feedback loops tipping points aerosols cloud physics paleoclimatology dendrochronology glaciology cryosphere sea level rise climate sensitivity forcing agents CO2 methane water vapor stratosphere troposphere Milankovitch cycles hockey stick proxy data reanalysis datasets CMIP ensemble modeling downscaling parameterization climate attribution extreme weather precipitation patterns drought ENSO
+
+- slug: cloud-infrastructure
+  description: Automating, orchestrating, and scaling distributed compute resources
+  centroid: >-
+    AWS GCP Azure Kubernetes Docker Terraform Ansible CloudFormation infrastructure-as-code IaC Pulumi serverless Lambda ECS Fargate EC2 S3 VPC IAM CloudFront Route53 RDS Aurora DynamoDB ElastiCache load-balancing auto-scaling availability-zones regions multi-region disaster-recovery high-availability HA observability CloudWatch Datadog Prometheus Grafana cost-optimization reserved-instances spot-instances CDN edge-computing cloud-native microservices service-mesh Istio Consul networking VPN transit-gateway security-groups RBAC secrets-management Vault KMS encryption-at-rest TLS compliance SOC2 HIPAA PCI-DSS
+
+- slug: cognitive-science
+  description: How minds compute thought, memory, and perception
+  centroid: >-
+    cognitive-science consciousness attention perception working-memory executive-function embodied-cognition distributed-cognition predictive-processing free-energy-principle Bayesian-brain dual-process theory-of-mind metacognition mental-models cognitive-load schema reasoning decision-making heuristics biases bounded-rationality Kahneman Tversky cognitive-architecture ACT-R SOAR mental-imagery semantic-memory episodic-memory language-processing concepts categorization prototypes conceptual-metaphor Lakoff embodiment situated-cognition enactivism
+
+- slug: compilers
+  description: Translating source code into executable machine instructions
+  centroid: >-
+    lexer parser tokenizer AST abstract syntax tree LLVM GCC Clang frontend backend IR intermediate representation optimization passes code generation register allocation SSA static single assignment type checking semantic analysis control flow graph CFG dataflow analysis dead code elimination constant folding inlining loop optimization JIT just-in-time AOT ahead-of-time bytecode assembly x86 ARM RISC-V machine code linking loader ELF Mach-O PE COFF symbol table relocation PLT GOT compiler construction dragon book ANTLR yacc bison lex flex recursive descent parser combinator
+
+- slug: computer-architecture
+  description: Hardware pipeline design, caches, memory hierarchies, ISAs
+  centroid: >-
+    CPU ISA RISC CISC ARM x86 MIPS pipeline superscalar out-of-order speculation branch-prediction cache coherence TLB MMU virtual-memory paging segmentation prefetch SIMD vector AVX NEON microarchitecture hazards forwarding bypass scoreboard Tomasulo register-renaming ROB reservation-station load-store ILP dataflow instruction-fetch decode execute writeback stall flush BTB RAS fetch-width retirement commit-width issue-width functional-units ALU FPU AGU LSU memory-hierarchy SRAM DRAM latency bandwidth NUMA SMP CMP multicore multi-threading SMT HTT atomic locks barriers
+
+- slug: computer-graphics
+  description: Rendering algorithms, rasterization, ray tracing, shaders, geometry processing
+  centroid: >-
+    rendering rasterization raytracing pathtracing GPU shader GLSL HLSL fragment vertex compute texture sampling mipmap antialiasing MSAA TAA FXAA mesh polygon triangle culling clipping zbuffer depth stencil framebuffer pipeline Vulkan OpenGL DirectX Metal WebGPU tessellation geometry normal mapping PBR BRDF radiometry photon mapping global illumination ambient occlusion shadow mapping deferred shading forward rendering blending alpha compositing transform matrix projection perspective orthographic quaternion Bézier spline interpolation subdivision surfaces skinning rigging morphing particles
+
+- slug: computer-vision
+  description: Image geometry, feature detection, and scene understanding algorithms
+  centroid: >-
+    image-processing convolution CNN ResNet ImageNet object-detection YOLO segmentation semantic-segmentation instance-segmentation U-Net Mask-RCNN keypoint-detection pose-estimation OpenPose optical-flow SLAM visual-odometry structure-from-motion photogrammetry stereo-vision depth-estimation monocular-depth NeRF 3D-reconstruction point-cloud feature-detection SIFT SURF ORB HOG edge-detection Canny Harris-corner Hough-transform contour morphological-operations dilation erosion OpenCV vision-transformers ViT CLIP DINO self-supervised SimCLR MAE
+
+- slug: conlangs
+  description: Constructed languages, syntax systems, and linguistic worldbuilding
+  centroid: >-
+    constructed languages conlangs Tolkien Elvish Quenya Sindarin Esperanto Lojban toki pona Ithkuil phonology morphology syntax semantics grammatical cases agglutination polysynthetic ergative IPA International Phonetic Alphabet naturalism artlang engelang loglang Klingon Dothraki Na'vi David Peterson language creation phoneme inventory writing systems orthography linguistic typology grammar design lexicon derivational morphology inflection sound change historical linguistics worldbuilding Language Creation Society
+
+- slug: containers
+  description: Isolation primitives for process, network, and filesystem boundaries
+  centroid: >-
+    Docker Kubernetes containerd runc OCI namespaces cgroups overlay2 image layers registry dockerfile multistage builds podman buildah skopeo LXC chroot pivot_root seccomp AppArmor SELinux capabilities docker-compose swarm orchestration deployments pods services ingress volumes persistent storage CNI flannel Calico Weave Cilium eBPF service-mesh Istio Linkerd sidecars envoy-proxy container-runtime CRI CRI-O gVisor Kata firecracker microVMs distroless scratch alpine slim security-scanning trivy Snyk vulnerability base-images tagging versioning immutability stateless twelve-factor
+
+- slug: cpp
+  description: Low-level systems, templates, zero-cost abstractions, modern C++
+  centroid: >-
+    C++ templates metaprogramming STL RAII smart pointers move semantics perfect forwarding constexpr concepts modules ranges coroutines memory model undefined behavior optimization compiler intrinsics assembly zero-cost abstractions value categories lvalues rvalues xvalues type traits SFINAE template specialization variadic templates fold expressions placement new allocators PMR standard library Boost Abseil fmt spdlog catch2 googletest CMake Bazel Meson Clang GCC MSVC sanitizers Valgrind perf profiling cache locality SIMD vectorization alignment
+
+- slug: creative-coding
+  description: Code as art medium: algorithms, visuals, generative systems
+  centroid: >-
+    Processing-P5js-OpenFrameworks-GLSL-shaders-WebGL-three.js-canvas-API-SVG-generative-art-algorithmic-art-procedural-generation-noise-Perlin-simplex-L-systems-fractals-recursion-particle-systems-physics-simulation-bezier-curves-trigonometry-easing-tweening-randomness-seeded-RNG-turtle-graphics-cellular-automata-Conway-Game-of-Life-flocking-boids-reaction-diffusion-Voronoi-Delaunay-triangulation-marching-squares-flow-fields-vector-fields-FFT-audio-reactivity-OSC-MIDI-projection-mapping-TouchDesigner-vvvv-Max-MSP-Pure-Data-Hydra-livecoding-TidalCy
+
+- slug: cryptography
+  description: Protocols for secure message encoding and decryption schemes
+  centroid: >-
+    AES RSA ECC Diffie-Hellman elliptic-curve cryptanalysis block-cipher stream-cipher SHA-256 HMAC public-key symmetric asymmetric key-exchange digital-signature hash-function collision-resistance lattice-based post-quantum Kyber Dilithium NIST timing-attack side-channel constant-time Bleichenbacher padding-oracle chosen-plaintext CCA IND-CPA semantic-security provable-security random-oracle-model authenticated-encryption GCM ChaCha20-Poly1305 TLS SSL certificate PKI X.509 zero-knowledge ZK-SNARK homomorphic-encryption MPC secure-multiparty threshold-cryptography Shamir-secret-sharing HSM TPM
+
+- slug: data-engineering
+  description: Pipeline architectures for batch, stream, and warehouse orchestration
+  centroid: >-
+    ETL pipelines Spark Kafka Airflow dbt Snowflake BigQuery Redshift columnar storage Parquet Avro data lakes warehouses dimensional modeling star schema Kimball OLAP batch streaming Lambda Kappa architectures CDC change-data-capture Debezium idempotency exactly-once semantics partitioning sharding compaction orchestration Flink data quality monitoring Databricks Delta Lake Iceberg Hudi lakehouse Presto Trino Druid ClickHouse real-time analytics MPP massively-parallel processing Fivetran Airbyte ingestion ELT reverse-ETL datalakes schemas
+
+- slug: data-visualization
+  description: Transforming quantitative data into spatial reasoning artifacts
+  centroid: >-
+    d3 plotly matplotlib ggplot2 vega altair observable seaborn bokeh datashader holoviews graphviz gephi tableau powerbi looker superset metabase redash grafana kibana streamlit dash shiny dimensionality-reduction tsne umap pca perceptual-uniformity colormap viridis edward-tufte small-multiples sparklines treemap sankey chord-diagram force-directed-graph scatterplot-matrix parallel-coordinates heatmap choropleth cartogram hexbin violin-plot ridgeline histogram kernel-density 3d-projection webgl canvas svg declarative-grammar grammar-of-graphics visual-encoding gestalt color-theory
+
+- slug: databases
+  description: Query engines for structured persistence and retrieval patterns
+  centroid: >-
+    ACID transactions MVCC isolation levels B-tree LSM-tree write-ahead-log replication sharding Postgres MySQL SQLite MongoDB Redis Cassandra DynamoDB consensus Raft Paxos distributed-transactions two-phase-commit eventual-consistency CAP theorem CRDT query-optimization indexes joins normalization denormalization OLTP OLAP columnar-storage Parquet ClickHouse TimescaleDB Cockroach FoundationDB RocksDB SQLite-internals buffer-pool vacuuming compaction WAL checkpoint recovery serializable snapshot-isolation PostgreSQL-internals query-planner cost-model statistics cardinality-estimation
+
+- slug: demoscene
+  description: Elite real-time audiovisual programming art and subculture
+  centroid: >-
+    demoscene democompo pouet scene.org assembly revision breakpoint demoparty realtime graphics 64k intro 4k intro bytebeat shader raymarching procedural generation size-coding GLSL fragment shader raytracing SDF signed distance fields oldskool Amiga C64 Atari tracker module music FastTracker ProTracker Renoise synthesizer software rendering VGA Mode13h rasterization copper blitter sprite VESA chiptune keygen music cracktro BBS ASCII art ANSI art pixel art voxel demo effects plasma fire metaballs tunnel rotozoomer starfield particle systems demo group Farbrausch Conspiracy Mercury ASD TBL crackers warez scene demotools werkzeug
+
+- slug: design
+  description: Visual systems, form, perception, and interface materiality
+  centroid: >-
+    user-interface user-experience interaction-design visual-design typography color-theory layout grid-systems whitespace information-architecture navigation wireframes prototyping Figma Sketch Adobe-XD accessibility WCAG inclusive-design design-systems component-libraries atomic-design design-tokens style-guides brand-identity motion-design micro-interactions animation responsive-design mobile-first adaptive breakpoints design-thinking human-centered-design usability heuristics cognitive-load affordances signifiers feedback mental-models personas user-research user-testing A/B-testing
+
+- slug: devops
+  description: Infrastructure automation, configuration management, and deployment pipelines
+  centroid: >-
+    Kubernetes Docker Terraform Ansible Jenkins GitLab CI GitHub Actions CircleCI containers orchestration infrastructure-as-code IaC Helm Prometheus Grafana observability monitoring Datadog New Relic APM tracing logging ELK Elasticsearch Fluentd service-mesh Istio Linkerd microservices cloud-native AWS EC2 S3 Lambda Azure GCP continuous-integration continuous-deployment pipelines blue-green canary rollback automation configuration-management Puppet Chef SaltStack GitOps ArgoCD Flux provisioning cloud-formation CDK networking load-balancing nginx
+
+- slug: digital-rights
+  description: Ownership, surveillance, censorship, and platform governance at scale
+  centroid: >-
+    privacy surveillance EFF ACLU GDPR CCPA encryption anonymity Tor VPN censorship freedom-of-speech net-neutrality right-to-repair data-sovereignty algorithmic-accountability content-moderation platform-governance Section230 DMCA DRM interoperability open-standards decentralization federated peer-to-peer self-hosting data-portability FOIA transparency whistleblowing Snowden Assange facial-recognition biometric mass-surveillance Five-Eyes Pegasus NSO-Group zero-knowledge end-to-end differential-privacy COPPA children online-tracking
+
+- slug: distributed-systems
+  description: Consensus protocols, consistency models, fault tolerance, distributed coordination
+  centroid: >-
+    consensus algorithms Paxos Raft Byzantine fault tolerance CAP theorem eventual consistency strong consistency distributed transactions two-phase commit three-phase commit vector clocks Lamport timestamps logical clocks happens-before causality CRDT conflict-free replicated data types gossip protocols epidemic algorithms quorum replication sharding partitioning consistent hashing DHT distributed hash table Chord Kademlia leader election split-brain network partition fault tolerance availability durability message queues Kafka RabbitMQ ZeroMQ
+
+- slug: ecology
+  description: Ecosystems, energy flow, nutrient cycles, population dynamics
+  centroid: >-
+    ecosystem biodiversity trophic-cascade keystone-species population-dynamics succession niche-partitioning mutualism predator-prey competition parasitism nutrient-cycling decomposition food-web primary-productivity biomass carbon-cycle nitrogen-fixation eutrophication disturbance resilience stability metapopulation island-biogeography community-assembly functional-diversity species-richness evenness Shannon-index Simpson-index rarefaction beta-diversity alpha-diversity gamma-diversity endemism invasive-species extinction fragmentation corridor
+
+- slug: economics
+  description: Incentive alignment, market failures, and resource allocation dynamics
+  centroid: >-
+    microeconomics macroeconomics game-theory mechanism-design behavioral-economics econometrics public-economics labor-economics development-economics international-trade monetary-policy fiscal-policy central-banking inflation stagflation recession GDP unemployment Keynesian neoclassical Austrian Chicago-school rational-expectations market-failures externalities public-goods asymmetric-information adverse-selection moral-hazard price-theory supply-demand elasticity utility marginal-cost deadweight-loss Pareto-efficiency Nash-equilibrium
+
+- slug: edge-computing
+  description: Latency-sensitive computation at the data periphery
+  centroid: >-
+    edge-computing CDN fog-computing cloudflare fastly akamai latency-sensitive edge-workers cloudflare-workers serverless deno-deploy vercel-edge lambda@edge compute-at-edge geographic-distribution content-delivery 5G MEC multi-access-edge ETSI mobile-edge regional-caching smart-cities IoT-gateway edge-analytics real-time-processing streaming low-latency WebAssembly wasm wasmtime edge-runtime v8-isolates firecracker microVM distributed-computing data-sovereignty GDPR locality video-transcoding image-optimization edge-storage KV-store durable-objects eventual-consistency CRDTs edge-AI inference model-serving tinyML embedded-inference autonomous-vehicles industrial-IoT predictive-maintenance
+
+- slug: electronic-music
+  description: Synthesis through oscillators, filters, and sequenced waveforms
+  centroid: >-
+    synthesizer modular-synthesis DAW Ableton Live Eurorack Max/MSP Pure Data SuperCollider ChucK MIDI CV gate sequencer drum-machine sampler granular-synthesis wavetable FM-synthesis subtractive-synthesis additive-synthesis vocoder filter resonance envelope LFO oscillator VCA VCF waveform sidechaining compression reverb delay DSP audio-programming FFT spectral-analysis phase-vocoder convolution Reaktor VCV-Rack Teenage-Engineering OP-1 808 909 303 Moog Buchla techno house ambient IDM breakbeat jungle dnb dubstep glitch microsound algorithmic-composition generative-music livecoding TidalCycles Sonic-Pi patch-bay modulation ADSR
+
+- slug: elixir
+  description: Fault-tolerant functional programming on the BEAM VM
+  centroid: >-
+    Elixir BEAM Erlang OTP GenServer Supervisor Phoenix LiveView Ecto Nerves embedded IoT concurrent functional immutable pattern-matching actor-model fault-tolerance hot-code-swapping distributed ERTS scheduler processes message-passing ETS DETS Mnesia clustering nodes Hex Mix ExUnit property-testing StreamData metaprogramming macros AST compile-time protocols behaviours telemetry Broadway Oban jobs PubSub channels WebSocket Plug cowboy ranch jose guardian authentication Absinthe GraphQL Nx numerical-computing Membrane multimedia Scenic embedded-UI
+
+- slug: embedded-systems
+  description: Low-level code where hardware constraints shape design
+  centroid: >-
+    microcontroller ARM Cortex-M STM32 ESP32 RISC-V bare-metal RTOS FreeRTOS Zephyr embedded-linux device-driver interrupt-handling DMA GPIO I2C SPI UART CAN bootloader firmware OTA linker-script memory-map flash EEPROM watchdog power-management sleep-modes ADC PWM timer real-time hard-real-time soft-real-time deterministic latency jitter WCET embedded-C volatile register bit-manipulation toolchain GCC cross-compile debugging JTAG SWD OpenOCD GDB oscilloscope logic-analyzer protocol-analyzer Embedded-Rust no_std embedded-hal svd2rust probe-rs
+
+- slug: energy
+  description: Power generation dynamics and thermodynamic conversion systems
+  centroid: >-
+    energy renewable solar photovoltaic wind turbine hydroelectric geothermal nuclear fission fusion tokamak ITER stellarator battery lithium-ion solid-state grid storage pumped-hydro power transmission HVDC superconductor fuel-cell hydrogen electrolysis ammonia methanol syngas carbon-capture CCS DAC biofuel biodiesel ethanol combustion thermodynamics Carnot efficiency heat-pump refrigeration HVAC insulation thermal-mass phase-change material PCM semiconductor perovskite tandem-cell inverter MPPT microgrid demand-response load-balancing
+
+- slug: epistemology
+  description: How knowledge justifies belief and skepticism fails
+  centroid: >-
+    knowledge epistemology justified-true-belief Gettier-problem foundationalism coherentism reliabilism externalism internalism skepticism Descartes Hume Kant empiricism rationalism a-priori a-posteriori analytic-synthetic Quine naturalized-epistemology social-epistemology testimony evidence belief-formation epistemic-justification inference induction deduction abduction probability Bayesian-epistemology epistemic-logic modal-logic possible-worlds knowledge-representation reasoning fallibilism infallibilism contextualism invariantism virtue-epistemology epistemic-virtues Plato Aristotle
+
+- slug: espresso
+  description: Extraction science, thermodynamics, and flavor chemistry in coffee
+  centroid: >-
+    espresso extraction pressure temperature grind-size distribution channeling puck-prep WDT dosing yield TDS refractometer VST basket IMS precision portafilter E61 grouphead PID flow-profile pressure-profiling bloom pre-infusion Decent Slayer La-Marzocco GS3 Linea lever Flair Robot pulls dialing-in god-shot crema tiger-striping blonding extraction-time brew-ratio 1:2 ristretto lungo turbo-shots filter-baskets puck-screen shower-screen backflushing descaling water-chemistry buffering alkalinity hardness magnesium calcium Third-Wave-Water burr-geometry SSP Mazzer Niche grinder-alignment
+
+- slug: ethics
+  description: Moral reasoning, normative frameworks, applied dilemmas
+  centroid: >-
+    moral-philosophy utilitarianism deontology virtue-ethics consequentialism Kant Aristotle Mill Rawls social-contract justice rights duties autonomy bioethics trolley-problem effective-altruism applied-ethics meta-ethics normative-ethics moral-realism relativism principlism beneficence non-maleficence informed-consent dual-use AI-alignment value-alignment existential-risk longtermism moral-agency personhood animal-ethics environmental-ethics business-ethics medical-ethics research-ethics Bentham Singer Nozick capabilities-approach care-ethics particularism moral-psychology
+
+- slug: exploit-development
+  description: Crafting exploits from vulnerability primitives to reliable code execution
+  centroid: >-
+    buffer overflow ROP return-oriented-programming heap exploitation use-after-free double-free stack-pivot shellcode ASLR DEP NX bypass PIE position-independent-executable GOT PLT relro stack-canary format-string arbitrary-write arbitrary-read memory-corruption integer-overflow off-by-one UAF tcache fastbin unsorted-bin house-of-force house-of-spirit one-gadget ret2libc ret2dlresolve SROP sigreturn-oriented syscall-gadgets pwntools gdb peda gef pwndbg checksec ROPgadget ropper angr symbolic-execution fuzzing AFL libFuzzer
+
+- slug: fermentation
+  description: Lactic acid bacteria, yeast metabolism, controlled microbial transformation
+  centroid: >-
+    lactic-acid-bacteria wild-yeast saccharomyces lactofermentation kombucha scoby kefir kimchi sauerkraut miso tempeh koji aspergillus-oryzae sourdough-starter kvass tepache pickling brine salt-percentage anaerobic-fermentation acetic-acid butyric-acid propionic-acid leuconostoc pediococcus lactobacillus-plantarum acetobacter ph-monitoring temperature-control airlock-fermentation spontaneous-fermentation inoculation mixed-culture terroir microbial-succession biogenic-amines histamine tyramine
+
+- slug: film
+  description: Cinematic language, montage theory, auteur vision, mise-en-scène
+  centroid: >-
+    cinematography montage mise-en-scène auteur theory French New Wave Italian Neorealism Soviet montage German Expressionism long take deep focus Steadicam dolly tracking shot 35mm 16mm anamorphic aspect ratio film noir Dogme95 Kuleshov effect Eisenstein Tarkovsky Kubrick Godard Truffaut Kurosawa Bergman Herzog Tati Ozu Bresson Wong Kar-wai editing continuity cutting match cut jump cut cross-cutting color grading LUT dailies rushes blocking three-point lighting practical effects matte painting rear projection VistaVision Technicolor Panavision
+
+- slug: finance
+  description: Derivatives pricing, capital structure, market microstructure dynamics
+  centroid: >-
+    portfolio-theory capital-asset-pricing-model CAPM efficient-market-hypothesis EMH options derivatives futures swaps Greeks delta gamma vega theta Black-Scholes stochastic-calculus Ito's-lemma risk-neutral-pricing martingale arbitrage no-arbitrage mean-reversion momentum value-investing quantitative-finance algorithmic-trading high-frequency-trading HFT market-microstructure order-book limit-order-book LOB market-making liquidity volatility VIX implied-volatility realized-volatility GARCH stochastic-volatility Heston-model interest-rate-models
+
+- slug: formal-verification
+  description: Proving programs correct using mathematical logic and automated theorem provers
+  centroid: >-
+    theorem-proving Coq Isabelle Lean Agda HOL TLA+ Z3 SMT solver SPARK Ada proof-assistant correctness invariants refinement Dafny F* dependent-types Curry-Howard separation-logic Hoare-logic model-checking temporal-logic LTL CTL SAT satisfiability bounded-model-checking CBMC symbolic-execution abstract-interpretation CompCert seL4 verified-compiler verified-OS proof-carrying-code certified-programming Floyd-Hoare predicate-transformer weakest-precondition strongest-postcondition verification-condition VCgen proof-obligations discharge tactic Ltac induction coinduction bisimulation process-calculus CSP pi-calculus
+
+- slug: fpga
+  description: Hardware description languages and reconfigurable logic design
+  centroid: >-
+    FPGA field-programmable gate array reconfigurable hardware logic synthesis HDL Verilog VHDL SystemVerilog RTL register transfer level LUT lookup table programmable logic block CLB configurable logic block DSP digital signal processing BRAM block RAM flip-flop multiplexer routing fabric bitstream synthesis implementation Vivado Quartus Xilinx Altera Intel timing constraints clock domain crossing CDC static timing analysis STA place and route P&R ASIC prototyping hardware acceleration parallel processing pipelining fabric architecture SERDES high-speed IO PCIe embedded systems SoC system on chip
+
+- slug: forth
+  description: Stack-based concatenative programming exploring computational minimalism
+  centroid: >-
+    forth stack-based concatenative factor postfix RPN Chuck-Moore colorForth MachineForth ANS-Forth SwiftForth gforth RETRO threaded-code direct-threaded-code indirect-threaded-code subroutine-threaded token-threaded dictionary colon-definitions immediate-words vocabularies screens blocks metacompilation self-hosting bootstrapping minimalism bare-metal no-parser words parsing-words CREATE DOES> postpone tick execute literal interpreter compiler turnkey flashforth mecrisp-stellaris amforth embedded-forth open-firmware thinking-forth starting-forth
+
+- slug: fractals
+  description: Self-similar geometric patterns exhibiting infinite recursive complexity
+  centroid: >-
+    Mandelbrot Julia Barnsley self-similarity chaos Hausdorff-dimension box-counting iterated-function-systems L-systems fractal-geometry complex-dynamics bifurcation Lyapunov Newton-method basin strange-attractor Sierpinski Koch dragon-curve Cantor-set power-law scale-invariance renormalization Feigenbaum multifractal DLA diffusion-limited-aggregation percolation coastline-paradox fractal-dimension escape-time orbit-trap continuous-potential distance-estimation perturbation deep-zoom arbitrary-precision buddhabrot burning-ship tricorn quaternion hypercomplex 3D-fractals volumetric raymarching
+
+- slug: game-dev
+  description: Simulating interactive systems constrained by real-time computation
+  centroid: >-
+    game-engine Unity Unreal Godot rendering shaders OpenGL Vulkan DirectX Metal physics collision raycast pathfinding AI FSM behavior-tree ECS entity-component procedural-generation noise perlin simplex terrain voxel tilemap sprite animation skeletal rigging IK inverse-kinematics particle-system VFX audio FMOD Wwise spatial-audio gameplay-programming netcode multiplayer client-server rollback-netcode lag-compensation asset-pipeline texture-compression LOD culling frustum-culling occlusion optimization profiling framerate vsync memory-pooling object-pooling scene-graph transform shader-graph PBR BRDF lighting deferred-rendering
+
+- slug: game-theory
+  description: Strategic decision-making under conflict and cooperation dynamics
+  centroid: >-
+    Nash equilibrium Pareto optimality dominant strategy prisoner's dilemma zero-sum non-zero-sum cooperative bargaining mechanism design auction theory matching markets voting systems social choice Arrow impossibility Gibbard-Satterthwaite evolutionary game theory ESS replicator dynamics repeated games folk theorem subgame perfect trembling hand Stackelberg Cournot Bertrand signaling screening adverse selection moral hazard principal-agent correlated equilibrium epistemic game theory backwards induction minimax regret mixed strategy pure strategy Bayesian games incomplete information perfect information imperfect information extensive form normal form
+
+- slug: generative-art
+  description: Algorithmic systems that create visual artifacts from rule-based processes
+  centroid: >-
+    generative-art algorithmic-art creative-coding Processing p5.js openFrameworks shaders GLSL fragment-shader vertex-shader noise Perlin Simplex flowfield particle-system L-system fractal recursion cellular-automata Conway Reaction-Diffusion gray-scott Voronoi Delaunay Poisson-disk strange-attractor chaos Lorenz Mandelbrot Julia-set IFS iterated-function fourier wavelet sine-wave oscillator modulo trigonometry polar-coordinates parametric bezier spline subdivision marching-squares noise-field vector-field autonomous-agent boid flocking emergence
+
+- slug: genetics
+  description: Heredity mechanisms, gene expression, and molecular evolution
+  centroid: >-
+    CRISPR gene-editing genome-sequencing DNA RNA epigenetics GWAS SNP allele mutation heredity Mendelian-inheritance polygenic phenotype genotype chromatin transcription-factor splicing mRNA tRNA ribosome codon translation protein-folding proteomics transcriptomics single-cell-sequencing NGS Illumina PacBio Oxford-Nanopore de-novo-assembly reference-genome annotation phylogenetics population-genetics drift selection Hardy-Weinberg linkage-disequilibrium recombination haplotype QTL eQTL knockout CRISPR-Cas9 base-editing prime-editing gene-therapy AAV lentivirus plasmid transgenic model-organism
+
+- slug: geology
+  description: Earth's structure, rocks, deep time, and tectonic processes
+  centroid: >-
+    geology geomorphology tectonics plate-boundaries subduction orogeny lithosphere asthenosphere mantle-convection crustal-deformation seismology earthquake-mechanics focal-mechanisms moment-tensor fault-systems thrust-faults normal-faults strike-slip rifting volcanism magma-chamber petrology igneous-rocks metamorphic-rocks sedimentary-rocks mineralogy crystallography silicates feldspars olivine pyroxene amphibole mica quartz clays stratigraphy geochronology radiometric-dating zircon-dating carbon-dating chronostratigraphy paleontology fossils
+
+- slug: git-internals
+  description: Objects, packfiles, refs, trees—how git actually stores and retrieves history
+  centroid: >-
+    git objects blob tree commit tag pack packfile index delta compression zlib SHA-1 SHA-256 refs heads branches remote-tracking symbolic-ref reflog plumbing porcelain hash-object cat-file ls-tree write-tree commit-tree update-ref rev-parse fsck gc prune repack loose objects object database content-addressable DAG directed acyclic graph parent ancestry merge commit octopus merge fast-forward three-way merge diff patch binary diff gitattributes clean smudge filter hooks pre-commit post-receive transfer pack protocol fetch push negotiation shallow clone
+
+- slug: go-game
+  description: Strategic depth through territorial influence and emergent complexity
+  centroid: >-
+    go baduk weiqi fuseki joseki tesuji tsumego yose komi atari ladder net sente gote territory influence moyo sabaki aji kikashi ko fight life-and-death groups eyes liberties AlphaGo Lee-Sedol Cho-Chikun Honinbo Kisei handicap stones dan kyu SGF game-records opening-theory endgame corner-sequences shape good-shape bad-shape thickness vital-points invasion reduction framework fighting reading deep-reading sacrifice exchange tenuki probe attachment hane kosumi keima diagonal knight-move capturing cutting connection ponnuki
+
+- slug: golang
+  description: Concurrency primitives, interfaces, channels, goroutines, memory model
+  centroid: >-
+    goroutines channels concurrency CSP goroutine-leaks context deadlocks select WaitGroup sync.Mutex RWMutex atomic race-detector errgroup semaphore pipelines worker-pools graceful-shutdown GC garbage-collection escape-analysis pprof profiling benchmarking testing table-driven-tests testify gomock race-condition memory-model happens-before interfaces duck-typing nil-interface struct-embedding composition pointer-semantics value-semantics defer panic recover error-handling sentinel-errors wrapping stack-traces generics type-parameters constraints
+
+- slug: ham-radio
+  description: Amateur radio operating, equipment, propagation, and protocol
+  centroid: >-
+    amateur radio HF VHF UHF propagation ionosphere skywave sporadic-E MUF QSO QRP CW SSB FT8 WSPR digital modes weak signal DX contesting ARRL field day SDR software-defined radio GNU Radio RTL-SDR transceiver antenna dipole Yagi vertical loop balun SWR impedance matching Smith chart modulation demodulation amplifier Morse callsign band plan spectrum license repeater simplex APRS packet radio DMR D-STAR emergency EMCOMM ARES SOTA Parks-on-the-Air moonbounce EME satellite AMSAT direction finding RF safety transmission line coax feedline
+
+- slug: haskell
+  description: Pure functional programming with strong static types
+  centroid: >-
+    lazy-evaluation pure-functional monads functors applicatives type-classes Hindley-Milner type-inference algebraic-data-types pattern-matching immutability referential-transparency higher-order-functions currying partial-application composition GHC Haskell-Platform QuickCheck parsec lens monad-transformers IO-monad State-monad Reader-monad Writer-monad Maybe Either list-comprehensions folds map filter recursion tail-recursion parametric-polymorphism ad-hoc-polymorphism GADTs existential-types rank-N-types phantom-types newtype type-families
+
+- slug: history-of-computing
+  description: From Babbage's difference engine to von Neumann architecture's lasting influence
+  centroid: >-
+    ENIAC UNIVAC Turing Babbage Lovelace von Neumann Hopper Knuth Dijkstra Ritchie Thompson Unix Multics CTSS timesharing mainframe minicomputer microprocessor Intel 4004 8080 6502 Z80 Altair IMAX PDP-11 VAX IBM System/360 ARPANET TCP/IP Ethernet Xerox PARC Alto Smalltalk Bell Labs C assembler FORTRAN COBOL LISP Pascal Ada transistor vacuum-tube magnetic-core memory punch-card tape-drive Winchester floppy-disk Apple II Commodore 64 Atari TRS-80 CP/M MS-DOS ASCII EBCDIC TTY terminal VT100 modem BBS Usenet BASIC assembly machine-code bootstrap
+
+- slug: history-of-science
+  description: How paradigm shifts emerged from experimental anomalies
+  centroid: >-
+    Kuhn paradigm-shifts scientific-revolution Galileo Newton Darwin Einstein Mendel Faraday Maxwell Bohr Heisenberg Curie Pasteur Lavoisier Kepler Copernicus empiricism falsifiability peer-review scientific-method experimentation observation hypothesis peer-review instrumentation telescope microscope spectroscopy phlogiston caloric luminiferous-aether alchemy vitalism spontaneous-generation geocentrism theory-change anomaly paradigm-shift discovery priority-disputes replication-crisis Royal-Society academies Principia Origin-of-Species publications journals Nature Science CERN Manhattan-Project Apollo Sputnik
+
+- slug: history
+  description: Past events, causal forces, and contingency in human civilizations
+  centroid: >-
+    historiography primary-sources archival-research medieval renaissance enlightenment industrial-revolution ancient-civilizations mesopotamia egypt greece rome byzantine ottoman empire military-history diplomatic-history social-history economic-history intellectual-history cultural-history microhistory longue-durée annales-school oral-history archaeology paleography epigraphy numismatics prosopography chronology periodization causation contingency counterfactual revisionism historical-materialism great-man-theory social-constructivism postcolonial subaltern world-systems dependency-theory modernization structuralism postmodernism historical-sociology comparative-history
+
+- slug: homelab
+  description: Self-hosted infrastructure for learning systems administration firsthand
+  centroid: >-
+    homelab self-hosted Proxmox TrueNAS unRAID Docker Kubernetes k3s Ansible Terraform Plex Jellyfin Nextcloud pfSense OPNsense VLANs hypervisor ESXi virtualization NAS RAID ZFS Synology QNAP reverse-proxy Traefik Nginx Caddy Wireguard Tailscale VPN Raspberry-Pi SBC mini-PC Intel-NUC homelab-rack UPS networking switch router 10GbE power-management remote-access SSH backup 3-2-1 Grafana Prometheus monitoring dashboards Home-Assistant smart-home automation MQTT zigbee z-wave Pi-hole AdGuard DNS self-hosting containers NFS SMB iSCSI storage infrastructure on-premises hardware energy-efficiency rack-mount patch-panel cabling labs homelabbing
+
+- slug: horror
+  description: Dread mechanics, cosmic indifference, and psychological unraveling
+  centroid: >-
+    horror psychological-horror cosmic-horror body-horror Gothic Lovecraft Stephen-King Poe folk-horror supernatural dread atmosphere tension folklore mythology Japanese-horror J-horror K-horror haunted visceral uncanny existential-dread liminal eldritch cosmic-indifference madness isolation paranoia creature-design practical-effects suspense terror slow-burn jump-scares found-footage anthology slasher survival-horror Cronenberg Carpenter del-Toro Eggers Aster Flanagan Junji-Ito atmosphere-first unreliable-narrator creepypasta SCP analog-horror ARG dread-building decay
+
+- slug: indie-games
+  description: Small-team creation against market gravity and creative constraints
+  centroid: >-
+    indie-game-development solo-developer pixel-art 2D platformers metroidvania roguelike procedural-generation Unity Godot GameMaker love2d itch.io Steam wishlisting marketing launch-strategy devlog gif-sharing screenshotsaturday gamedev-twitter crowdfunding Kickstarter early-access publishing self-publishing revenue-share Hollow-Knight Celeste Stardew-Valley Undertale Shovel-Knight Cave-Story scope-creep feature-creep MVP polishing juice game-feel animation-curves tweening particle-effects shaders GLSL shader-programming tilemaps
+
+- slug: information-design
+  description: Visual encoding of complex information for understanding
+  centroid: >-
+    information-design data-visualization infographics Edward-Tufte visual-encoding perceptual-psychology gestalt Bertin semiology small-multiples sparklines chartjunk data-ink-ratio Alberto-Cairo visualization-grammar narrative-flow wayfinding signage diagramming schematic typography readability legibility color-theory accessibility WCAG contrast hierarchy white-space proximity alignment consistency mental-models affordances Nadieh-Bremer D3.js Observable Tableau dashboards KPI metrics visual-analytics exploratory-analysis explanatory isotype pictogram heatmap treemap sankey flowchart network-diagram cartography choropleths projections legends scale annotation labeling
+
+- slug: information-theory
+  description: Encoding uncertainty, compressing signals, quantifying information flow
+  centroid: >-
+    Shannon entropy Kolmogorov complexity mutual information channel capacity coding theory source coding Huffman arithmetic codes lossless compression rate-distortion Hamming distance error correction Reed-Solomon LDPC turbo codes Shannon theorem noisy-channel Fano inequality data compression AEP typical set KL divergence cross-entropy relative entropy joint entropy conditional entropy information gain maximum entropy differential entropy Fisher information Cramer-Rao bound algorithmic information theory minimum description length MDL Solomonoff
+
+- slug: internet-culture
+  description: Digital folklore, memes, and networked tribal evolution
+  centroid: >-
+    memes viral content copypasta shitposting irony meta-irony sincerity cringe based terminally-online discourse parasocial streamers influencers creator-economy algorithmic feed doomscrolling cancel-culture imageboards forums 4chan Reddit Tumblr aesthetic vaporwave cottagecore normcore touch-grass quote-tweet ratio'd main-character dunking subtweet Discord community moderation platform dynamics engagement metrics attention economy content creation viral mechanics digital folklore networked subcultures online identity
+
+- slug: javascript
+  description: Event loop mechanics and asynchronous execution patterns
+  centroid: >-
+    JavaScript TypeScript Node.js V8 event-loop async-await promises callbacks closures prototypal-inheritance ES6 ES2015 arrow-functions destructuring spread-operator modules import-export bundlers webpack Vite esbuild Rollup transpilers Babel SWC tree-shaking code-splitting TypeScript-compiler tsc JSX React Vue Svelte Angular hooks virtual-DOM reconciliation SSR hydration Next.js Nuxt SvelteKit state-management Redux Zustand Pinia reactive reactivity signals functional-programming immutability pure-functions higher-order map-reduce currying hoisting scope-chain temporal-dead-zone
+
+- slug: kotlin
+  description: JVM language blending null safety with functional conciseness
+  centroid: >-
+    Kotlin JVM multiplatform coroutines suspend flow StateFlow Channel structured-concurrency Jetpack-Compose Android KMP native JS IR compiler inline reified sealed-class data-class delegation destructuring scope-functions let apply also run with null-safety Elvis operator smart-cast type-inference extensions DSL builder lambdas receiver-types variance covariance contravariance star-projection generics KSP annotation-processing Ktor server Exposed SQL Arrow functional Gradle Koin dependency-injection immutability Sequence asSequence lazy
+
+- slug: linguistics
+  description: Language structure, meaning, phonetics, syntax, and morphology
+  centroid: >-
+    phonetics phonology morphology syntax semantics pragmatics historical-linguistics comparative-linguistics sociolinguistics psycholinguistics neurolinguistics computational-linguistics corpus-linguistics lexicography morphosyntax typology universal-grammar generative-grammar transformational-grammar chomsky minimalist-program government-binding construction-grammar cognitive-linguistics functional-grammar dependency-grammar lexical-semantics compositional-semantics pragmatic-inference speech-acts implicature deixis reference-resolution anaphora
+
+- slug: linux
+  description: Kernel internals, system calls, userspace tooling, distro packaging
+  centroid: >-
+    kernel syscalls ELF ABI glibc musl systemd init cgroups namespaces capabilities SELinux AppArmor eBPF XDP perf ftrace kprobes tracepoints procfs sysfs netlink iptables nftables tc bpf modules kbuild device-tree ACPI UEFI GRUB initramfs busybox udev inotify epoll io_uring futex mmap fork exec clone vfork pthread scheduler CFS O(1) realtime PREEMPT_RT NUMA RCU lockless VFS ext4 btrfs xfs f2fs overlayfs FUSE block-layer dm-crypt LVM md RAID bcache io-scheduler deadline CFQ BFQ kyber memory-management slab slub buddy-allocator hugepages THP swap
+
+- slug: lisp
+  description: Recursive elegance through code as data transformation
+  centroid: >-
+    Lisp Scheme Racket Clojure Common-Lisp SBCL homoiconicity s-expressions macros metaprogramming code-as-data quasiquote syntax-rules defmacro hygiene continuation call/cc lambda-calculus Church-encoding Y-combinator recursion tail-call-optimization REPL eval apply cons car cdr list-processing symbolic-computation AI-heritage SISP McCarthy parentheses prefix-notation DSL embedded-languages macro-expansion reader compiler Emacs-Lisp elisp Guile AutoLISP dialects lexical-scope dynamic-scope CLOS multiple-dispatch multimethods protocols immutability persistent-data-structures
+
+- slug: llm-engineering
+  description: Prompting, grounding, tool use, architecture for LLM systems
+  centroid: >-
+    large-language-models transformers GPT BERT attention-mechanisms tokenization BPE sentencepiece embeddings vector-databases RAG retrieval-augmented-generation prompt-engineering few-shot zero-shot chain-of-thought CoT reasoning RLHF reinforcement-learning-human-feedback fine-tuning LoRA QLoRA instruction-tuning alignment constitutional-AI preference-learning inference-optimization quantization GPTQ AWQ model-compression KV-cache flash-attention vLLM TGI llamacpp OpenAI Anthropic Claude Gemini Mistral LLaMA context-length scaling-laws emergence
+
+- slug: lock-picking
+  description: Mechanical security through precision manipulation and binding order
+  centroid: >-
+    lock-picking pin-tumbler wafer spool-serrated security-pin bump-key tension-wrench rake single-pin-picking SPP impressioning bypass tubular dimple sidebar deviant-ollam LockPickingLawyer MIT guide TOOOL shims shim-picking lishi decoder bitting keyway plug driver chamber shear-line feedback counter-rotation binding-order false-set overset picking-gun snap-gun decoder-tool core padlock deadbolt Medeco Abloy disc-detainer Schlage Kwikset Master Lock ASSA physical-security red-team covert-entry locksmith challenge-lock gutting pinning CNC bitting-code
+
+- slug: machine-learning
+  description: Neural architectures, gradient descent, and statistical pattern recognition
+  centroid: >-
+    neural networks deep learning transformers attention backpropagation gradient descent CNNs RNNs LSTMs diffusion models GPT BERT PyTorch TensorFlow JAX embeddings reinforcement learning policy gradients supervised unsupervised contrastive self-supervised pretraining fine-tuning transfer learning regularization dropout batch normalization Adam optimizer loss functions cross-entropy softmax hyperparameter tuning quantization pruning distillation MLOps PCA t-SNE UMAP clustering autoencoders VAEs latent space gradient boosting XGBoost NeurIPS ICML arXiv LLaMA residual connections
+
+- slug: malware-analysis
+  description: Dissecting hostile code to understand attack vectors and evasion
+  centroid: >-
+    malware reverse-engineering IDA Ghidra binary-analysis disassembly debugger static-analysis dynamic-analysis PE ELF sandbox Cuckoo YARA signatures IOCs behavior-analysis packing unpacking obfuscation anti-debugging anti-VM polymorphic metamorphic shellcode rootkit backdoor RAT ransomware APT threat-intelligence x86 ARM assembly syscalls WinDbg gdb radare2 Binary-Ninja angr FLARE deobfuscation control-flow data-flow taint-analysis symbolic-execution emulation QEMU memory-forensics process-injection API-hooking IAT cryptanalysis C2 network-traffic Wireshark
+
+- slug: manga
+  description: Sequential art narratives blending visual storytelling with Japanese literary traditions
+  centroid: >-
+    manga Japanese comics storytelling visual narrative paneling sequential art shonen shojo seinen josei gekiga Tezuka Toriyama Otomo Araki Miura Togashi Urasawa Ito Takahashi weekly serialization tankōbon WSJ anthology mangaka assistants pen-name studio workflow page layout composition speedlines screentone effects lettering onomatopoeia motion lines black-white art style linework hatching anatomy proportion perspective background detail character design visual metaphor symbolism pacing timing beat structure cliffhanger fight choreography action
+
+- slug: materials-science
+  description: Structure and properties of matter at atomic scale
+  centroid: >-
+    ceramics glass polymers metallurgy alloys steel titanium composites carbon-fiber graphene nanotubes 2D-materials perovskites MOFs semiconductors silicon wafers doping band-gap superconductors high-Tc phase-diagrams crystal-structure XRD TEM SEM AFM spectroscopy Raman FTIR DFT molecular-dynamics microstructure grain-boundaries dislocations fracture fatigue corrosion oxidation coatings thin-films CVD PVD sputtering etching lithography MEMS biomaterials tissue-engineering scaffolds hydrogels shape-memory smart-materials piezoelectric ferroelectric thermoelectric photovoltaic
+
+- slug: math-olympiad
+  description: Problem-solving techniques for competition-level mathematical challenges
+  centroid: >-
+    IMO USAMO Putnam olympiad competition contest Evan-Chen OTIS EGMO AMC AIME combinatorics inequalities functional-equations number-theory geometry polynomial diophantine pigeonhole invariant monovariant induction extremal graph-theory projective synthetic barycentric complex-numbers Cauchy-Schwarz AM-GM Jensen Muirhead generating-functions recurrence Vieta Newton-identities modular-arithmetic Fermat Euler totient quadratic-residue Legendre-symbol Chinese-remainder p-adic valuation divisibility primality Bezout gcd lcm congruence angle-chasing
+
+- slug: mathematics
+  description: Number theory, proof techniques, abstract structures, computational complexity
+  centroid: >-
+    algebra analysis calculus differential-equations linear-algebra abstract-algebra group-theory ring-theory field-theory Galois-theory topology algebraic-topology differential-topology manifolds Riemann-surfaces number-theory analytic-number-theory algebraic-number-theory prime-numbers modular-forms elliptic-curves cryptography RSA category-theory functors monads homological-algebra sheaf-theory algebraic-geometry schemes varieties divisors intersection-theory logic proof-theory model-theory computability-theory Gödel incompleteness set-theory
+
+- slug: mechanical-keyboards
+  description: Switch physics, actuation curves, keycap profiles, custom firmware evolution
+  centroid: >-
+    mechanical-keyboards Cherry-MX gateron topre Alps buckling-spring keycaps PBT doubleshot dye-sub GMK JTK ePBT PCB hot-swap QMK VIA firmware layout 60% 65% 75% TKL ergonomic split ortholinear columnar-stagger switches tactile linear clicky actuation-force lubing spring-swap stabilizers plate-mount screw-in gasket-mount o-ring sound-dampening typing-feel per-key-RGB underglow artisan-keycaps group-buy in-stock deskmats coiled-cable aviator soldering desoldering diodes microcontroller Pro-Micro elite-C nice-nano wireless Bluetooth ZMK
+
+- slug: mechanism-design
+  description: Game theory applied to designing incentive-compatible social systems
+  centroid: >-
+    mechanism-design auction-theory incentive-compatibility strategy-proofness Vickrey-Clarke-Groves VCG revelation-principle dominant-strategy Nash-equilibrium Bayesian-mechanism social-choice Arrow welfare-economics Myerson optimal-auction revenue-equivalence price-discrimination matching-theory Gale-Shapley stable-matching kidney-exchange two-sided-markets platform-design market-design spectrum-auction FCC combinatorial-auction Milgrom Wilson Roth matching market-microstructure algorithmic-game-theory computational-mechanism implementation-theory budget-balance individual-rationality
+
+- slug: music-theory
+  description: Harmony, rhythm, counterpoint, and formal structure in sound
+  centroid: >-
+    scales intervals harmony counterpoint chord-progressions voice-leading modulation cadences key-signatures circle-of-fifths modes Ionian Dorian Phrygian Lydian Mixolydian Aeolian Locrian melodic-minor harmonic-minor pentatonic blues-scale chromatic diatonic enharmonic temperament just-intonation equal-temperament microtones quartertones serialism twelve-tone atonality polytonality bitonality modal-interchange borrowed-chords Neapolitan augmented-sixth tritone-substitution secondary-dominants tonicization functional-harmony
+
+- slug: mycology
+  description: Fungal taxonomy, ecology, cultivation, and psychoactive properties
+  centroid: >-
+    fungi mushrooms mycelium spores basidiomycota ascomycota cultivation taxonomy identification morel chanterelle psilocybin amanita ecology mycorrhizal decomposition saprotroph lichen symbiosis wood-decay pathogen Stamets phenology foraging cultivation substrate sterilization agar inoculation fruiting-body hypha clamp-connection dikaryotic mating-type phylogeny ITS sequencing microscopy KOH staining spore-print gills pores lamellae stipe cap veil annulus volva oyster shiitake lion's-mane reishi cordyceps truffle ergot rust smut mold yeast fermentation enzyme cellulase ligninase
+
+- slug: nanotechnology
+  description: Molecular engineering at the atomic scale
+  centroid: >-
+    nanomaterials carbon-nanotubes graphene quantum-dots fullerenes nanoparticles self-assembly molecular-machines DNA-origami nanofabrication top-down bottom-up lithography electron-beam AFM STM scanning-probe atomic-force manipulation nanoscale nanostructures nanowires nanocomposites nanoelectronics molecular-electronics spintronics nanooptics plasmonics metamaterials photonic-crystals nanophotonics drug-delivery targeted-therapy nanomedicine biosensors nanorobotics molecular-motors Drexler Feynman mechanosynthesis diamondoid MEMS NEMS lab-on-chip colloidal synthesis
+
+- slug: networking
+  description: Protocols, packets, and topologies connecting distributed systems
+  centroid: >-
+    TCP/IP OSI model routing switching BGP OSPF DNS DHCP subnetting CIDR VPN IPsec TLS HTTP/2 HTTP/3 QUIC WebSocket load-balancing NAT firewall iptables nftables packet-capture Wireshark tcpdump network-topology SDN OpenFlow VxLAN tunneling GRE MPLS QoS bandwidth latency jitter congestion-control flow-control sliding-window three-way-handshake socket programming epoll io_uring zero-copy kernel-bypass DPDK XDP eBPF network-stack netfilter bridge vlan trunking STP LACP bonding network-namespaces veth wireguard OpenVPN strongSwan multicast IGMP IPv6
+
+- slug: neuroscience
+  description: Neural circuits, synaptic plasticity, and brain computation mechanisms
+  centroid: >-
+    neuroscience brain neural nervous system cognitive neuron synapse cortex hippocampus amygdala prefrontal cerebellum basal ganglia neurotransmitter dopamine serotonin glutamate GABA acetylcholine action potential membrane potential dendrite axon myelin synaptic plasticity long-term potentiation LTP depression spike firing rate EEG fMRI MEG neuroimaging neural networks connectome white matter gray matter blood-brain barrier glia astrocyte oligodendrocyte microglia neurogenesis neurodegeneration Alzheimer Parkinson epilepsy stroke sensory motor visual auditory perception attention memory learning reward decision-making emotion cognition consciousness sleep circadian
+
+- slug: nix
+  description: Reproducible builds and declarative system configuration
+  centroid: >-
+    NixOS declarative functional reproducible derivations flakes home-manager nix-shell nixpkgs overlays stdenv mkDerivation buildInputs patchPhase installPhase fetchurl fetchFromGitHub substituteInPlace makeWrapper wrapProgram patchelf propagatedBuildInputs nixos-rebuild configuration.nix hardware-configuration.nix modules options systemPackages environment.systemPackages services.enable nixos-containers boot.loader.systemd-boot fileSystems networking.hostName users.users immutable atomic rollback generations channels unstable stable hydra binary-cache nix-store nix-env nix-build pure hermetic sandbox hash store-path
+
+- slug: nlp
+  description: Neural architectures for sequence transduction and semantic analysis
+  centroid: >-
+    NLP natural-language-processing transformers BERT GPT attention-mechanism tokenization word-embeddings word2vec GloVe fastText sequence-to-sequence encoder-decoder LSTM GRU recurrent-neural-networks language-models pre-training fine-tuning transfer-learning named-entity-recognition NER part-of-speech-tagging POS dependency-parsing constituency-parsing semantic-role-labeling coreference-resolution sentiment-analysis text-classification question-answering machine-translation neural-machine-translation beam-search text-generation language-modeling perplexity BLEU ROUGE evaluation-metrics
+
+- slug: nuclear
+  description: Fission, fusion, radiation physics, reactor engineering, isotope science
+  centroid: >-
+    fission fusion reactor neutron proton uranium plutonium enrichment isotope decay half-life criticality chain-reaction breeding fast-reactor thermal-reactor PWR BWR CANDU molten-salt thorium Gen-IV SMR NuScale TerraPower LFTR sodium-cooled lead-cooled gas-cooled RBMK containment coolant moderator control-rod fuel-rod zirconium cladding burnup reprocessing spent-fuel waste repository Yucca-Mountain vitrification transmutation actinides PUREX WIPP dosimetry sievert rem radiation shielding gamma-ray alpha-particle beta-particle neutronics Monte-Carlo MCNP Serpent cross-section
+
+- slug: number-theory
+  description: Prime factorization, modular arithmetic, Diophantine equations, congruences
+  centroid: >-
+    prime numbers Riemann hypothesis Diophantine equations modular arithmetic elliptic curves partitions p-adic analysis algebraic number theory Fermat Euler Gauss quadratic reciprocity analytic number theory zeta function L-functions Goldbach twin primes congruences multiplicative functions totient Ramanujan continued fractions Pell equations Chinese remainder theorem Dirichlet transcendental numbers algebraic integers class field theory Galois representations automorphic forms sieve methods additive combinatorics exponential sums cyclotomic fields Weil conjectures BSD conjecture
+
+- slug: observability
+  description: Metrics, traces, logs: debugging production system behavior
+  centroid: >-
+    metrics tracing logging instrumentation telemetry OpenTelemetry Prometheus Grafana Jaeger Zipkin distributed-tracing spans events cardinality sampling aggregation Datadog NewRelic Honeycomb SLOs SLIs SLAs RED-method USE-method golden-signals latency throughput errors saturation percentiles histograms counters gauges exemplars eBPF profiling continuous-profiling flame-graphs APM RUM structured-logging correlation-ids context-propagation baggage W3C-trace-context vendors backends collectors agents OTLP exporters receivers processors
+
+- slug: oceanography
+  description: Ocean circulation dynamics and geochemical cycling at scale
+  centroid: >-
+    oceanography ocean currents thermohaline circulation ENSO El-Niño mesoscale eddies ARGO floats CTD salinity temperature stratification mixed-layer thermocline halocline upwelling downwelling Ekman transport Sverdrup geostrophic Coriolis sea-level-rise tide gauge altimetry bathymetry sonar multibeam sidescan seismic-reflection sediment-cores paleoceanography marine-geology phytoplankton zooplankton primary-productivity chlorophyll nutrients nitrogen phosphorus silicate iron-fertilization biological-pump carbon-cycle dissolved-oxygen hypoxia anoxia
+
+- slug: open-source
+  description: Licensing models, governance patterns, and sustainability economics of collaborative software
+  centroid: >-
+    GPL MIT Apache licenses copyleft permissive BSD Linux kernel Git GitHub GitLab Linus Torvalds Richard Stallman FSF GNU contributor maintainer fork pull-request issue-tracker code-review CI/CD governance BDFL community RFC collaboration transparency commons public-domain Creative-Commons dual-licensing CLA contributor-agreement release-management semantic-versioning changelog packaging dependencies npm PyPI Cargo crates Homebrew apt yum federation decentralization self-hosted FOSS FLOSS proprietary vendor-lock-in supply-chain security CVE
+
+- slug: operating-systems
+  description: Kernels, scheduling, memory management, filesystems, process models
+  centroid: >-
+    kernel scheduler process thread memory-management virtual-memory paging TLB MMU context-switch syscall interrupt IPC semaphore mutex spinlock futex filesystem VFS inode dentry buffer-cache page-cache ext4 btrfs ZFS xfs RAID userspace ring0 ring3 microkernel monolithic exokernel unikernel Linux FreeBSD OpenBSD NetBSD Plan9 seL4 Redox Fuchsia MINIX QNX RTOS real-time scheduling CFS priority preemption concurrency race-condition deadlock livelock synchronization RCU copy-on-write fork exec mmap brk sbrk malloc kmalloc slab SLUB device-driver DMA IOMMU NUMA SMP multicore bootloader GRUB UEFI BIOS init systemd launchd
+
+- slug: options
+  description: Pricing volatility as geometric Brownian motion with strike
+  centroid: >-
+    options Greeks delta gamma theta vega rho implied-volatility Black-Scholes binomial-trees trinomial-models Monte-Carlo stochastic-volatility SABR Heston local-volatility volatility-surface smile skew term-structure American European exotic barrier Asian lookback digital call put spread straddle strangle butterfly condor iron-condor calendar diagonal ratio risk-neutral pricing martingale arbitrage put-call-parity synthetic hedge delta-neutral gamma-scalping vega-trading theta-decay time-value intrinsic-value moneyness strike expiration ITM OTM ATM vol-of-vol correlation quanto quanto-options
+
+- slug: pentesting
+  description: Adversarial enumeration and privilege escalation in deployed networks
+  centroid: >-
+    penetration-testing reconnaissance enumeration nmap masscan vulnerability-scanning nessus OpenVAS metasploit burp-suite OWASP-top-10 SQL-injection XSS CSRF command-injection RCE LFI RFI SSRF XXE deserialization privilege-escalation lateral-movement pivoting port-forwarding tunneling proxychains chisel ligolo post-exploitation mimikatz bloodhound active-directory kerberos NTLM pass-the-hash golden-ticket silver-ticket kerberoasting AS-REP-roasting LDAP SMB RDP winrm powershell-empire covenant sliver cobalt-strike linux-privesc SUID-binaries
+
+- slug: pharmacology
+  description: Drug mechanisms, therapeutic targets, and pharmacokinetic principles
+  centroid: >-
+    pharmacokinetics pharmacodynamics drug-metabolism ADME bioavailability Cmax AUC half-life clearance volume-distribution first-pass-effect cytochrome-P450 CYP3A4 CYP2D6 drug-interactions enzyme-induction enzyme-inhibition therapeutic-index dose-response LD50 ED50 receptor-binding agonist antagonist partial-agonist allosteric-modulation GPCR ion-channels enzyme-inhibitors prodrugs bioequivalence generic-drugs formulation controlled-release pharmacogenomics personalized-medicine adverse-reactions toxicology phase-trials clinical-pharmacology off-target-effects
+
+- slug: philosophy-of-mind
+  description: Consciousness, qualia, intentionality, and mental causation
+  centroid: >-
+    consciousness qualia intentionality phenomenology hard-problem explanatory-gap zombies Mary's-room Chinese-room Chalmers Dennett Searle functionalism computationalism embodied-cognition extended-mind enactivism predictive-processing global-workspace integrated-information-theory attention binding-problem free-will mental-causation epiphenomenalism emergence reduction physicalism dualism panpsychism neutral-monism representationalism higher-order-theories self-awareness metacognition theory-of-mind folk-psychology eliminativism property-dualism multiple-realizability
+
+- slug: philosophy
+  description: Foundational questions about existence, knowledge, ethics, and meaning
+  centroid: >-
+    epistemology metaphysics ethics logic phenomenology ontology rationalism empiricism Kant Hegel Nietzsche Wittgenstein Heidegger Descartes Plato Aristotle Spinoza Leibniz Russell Quine Kripke modal-logic formal-systems phenomenology existentialism pragmatism analytic-philosophy continental-philosophy philosophy-of-mind consciousness qualia hard-problem free-will determinism compatibilism moral-realism consequentialism deontology virtue-ethics philosophy-of-language semantics reference truth epistemology skepticism foundationalism coherentism philosophy-of-science
+
+- slug: photography
+  description: Light, sensor physics, composition geometry, and perception
+  centroid: >-
+    exposure aperture shutter-speed ISO focal-length depth-of-field bokeh composition rule-of-thirds golden-ratio leading-lines negative-space dynamic-range histogram RAW JPEG sensor crop-factor full-frame medium-format large-format film 35mm 120 darkroom developing Ansel-Adams zone-system dodge burn split-toning color-grading white-balance dynamic-range HDR bracketing long-exposure ND-filter polarizer lens prime zoom wide-angle telephoto macro tilt-shift chromatic-aberration distortion vignetting
+
+- slug: physics
+  description: Laws of motion, fields, and matter's fundamental structure
+  centroid: >-
+    quantum mechanics relativity thermodynamics electromagnetism statistical mechanics particle physics condensed matter optics fluid dynamics astrophysics cosmology quantum field theory string theory general relativity special relativity Schrödinger Heisenberg Feynman Einstein Maxwell Boltzmann Planck Dirac wave-particle duality uncertainty principle entanglement symmetry conservation laws Lagrangian Hamiltonian gauge theory renormalization phase transitions superconductivity superfluidity black holes gravitational waves dark matter dark energy Standard Model quarks leptons bosons fermions spin angular momentum energy momentum
+
+- slug: pixel-art
+  description: Digital art constrained by grid-based bitmap aesthetics
+  centroid: >-
+    pixel-art sprites tiles dithering palettes limited-color indexed-color Aseprite Pyxel-Edit pixel-perfect antialiasing subpixel animation sprite-sheet tile-map retro-graphics 8-bit 16-bit NES SNES Game-Boy demoscene isometric orthogonal hue-shifting color-ramps shading pixel-cluster readability silhouette line-art low-resolution constraints pixel-perfect-collision tile-based chunky-pixels crisp-edges nearest-neighbor scaling pixelation dot-matrix CRT scanlines palette-cycling bayer-dithering ordered-dither texture compression Game-Maker Unity Godot
+
+- slug: political-philosophy
+  description: Power, legitimacy, justice, rights, and distributive fairness
+  centroid: >-
+    political-philosophy social-contract rawls justice-as-fairness nozick libertarianism egalitarianism distributive-justice liberty equality proceduralism utilitarianism deontology virtue-ethics contractarianism republican-theory liberal-democracy deliberative-democracy participatory-democracy constitutionalism federalism separation-of-powers public-reason legitimacy authority sovereignty state-of-nature hobbesian locke rousseau kant mill anarchism marxism communitarianism capabilities-approach sen nussbaum deliberation civic-virtue pluralism
+
+- slug: privacy
+  description: Encryption, anonymity, surveillance resistance, and information control
+  centroid: >-
+    differential-privacy k-anonymity l-diversity t-closeness anonymization pseudonymization de-identification re-identification homomorphic-encryption secure-multi-party-computation zero-knowledge-proofs zkSNARKs garbled-circuits private-information-retrieval federated-learning differential-obfuscation randomized-response laplace-mechanism gaussian-mechanism exponential-mechanism privacy-budget epsilon-delta-DP local-differential-privacy GDPR CCPA HIPAA data-minimization purpose-limitation consent-management PII PET Tor i2p mixnets onion-routing
+
+- slug: procedural-generation
+  description: Algorithms that synthesize infinite detail from compact rules
+  centroid: >-
+    procedural-generation perlin-noise simplex-noise worley voronoi cellular-automata L-systems fractals midpoint-displacement diamond-square poisson-disk blue-noise wang-tiles wave-function-collapse markov-chains grammar-based context-free-grammar shape-grammar dungeon-generation BSP-trees maze-algorithms recursive-backtracking terrain-synthesis heightmap erosion-simulation hydraulic-erosion thermal-erosion biome-placement vegetation-scattering voxel meshing dual-contouring marching-cubes surface-nets signed-distance-fields noise-functions fbm
+
+- slug: programming-languages
+  description: Theory and practice of language design and implementation
+  centroid: >-
+    compilers parsers interpreters type-systems type-inference dependent-types linear-types effect-systems HM hindley-milner bidirectional-typechecking polymorphism generics monomorphization existential-types GADTs algebraic-data-types pattern-matching lambda-calculus simply-typed-lambda-calculus system-f curry-howard abstract-syntax-trees SSA static-single-assignment control-flow-graph dataflow-analysis register-allocation instruction-selection code-generation LLVM cranelift JIT bytecode virtual-machines GC garbage-collection reference-counting
+
+- slug: prompt-engineering
+  description: Designing prompts that steer model behavior and reasoning patterns
+  centroid: >-
+    prompt-engineering LLM GPT Claude ChatGPT few-shot zero-shot chain-of-thought CoT reasoning temperature top-p sampling system-prompts user-prompts context-window tokens embeddings retrieval-augmented-generation RAG hallucination grounding instruction-tuning RLHF reward-modeling constitutional-AI red-teaming jailbreaks prompt-injection adversarial-prompts delimiters XML JSON structured-outputs function-calling tool-use agents ReAct planning self-criticism tree-of-thoughts multimodal vision-language CLIP latent-space fine-tuning LoRA
+
+- slug: puzzles
+  description: Logic, constraints, and recreational problem-solving across mathematical domains
+  centroid: >-
+    logic-puzzles riddles cryptic-crosswords sudoku constraint-satisfaction SAT-solvers combinatorics graph-coloring NP-complete traveling-salesman knapsack P-vs-NP puzzle-hunts MIT-Mystery-Hunt Rubik's-cube twisty-puzzles speedcubing mechanical-puzzles Soma-cube tangram sliding-block Rush-Hour towers-of-Hanoi recreational-mathematics Martin-Gardner Scientific-American mathematical-games Donald-Knuth TAOCP Erdős-problems Ramsey-theory pigeonhole-principle inclusion-exclusion backtracking brute-force heuristics A-star minimax alpha-beta
+
+- slug: python
+  description: High-level language balancing simplicity with powerful metaprogramming capabilities
+  centroid: >-
+    Python CPython PyPy asyncio generators decorators context-managers metaclasses descriptors magic-methods GIL multiprocessing threading async-await type-hints mypy Pydantic dataclasses functools itertools collections pytest unittest mock NumPy pandas scikit-learn matplotlib seaborn Jupyter IPython FastAPI Django Flask SQLAlchemy Celery Redis asyncpg httpx Requests BeautifulSoup Scrapy Click Typer Poetry pip setuptools wheel packaging black isort flake8 ruff pylint Cython cffi ctypes pybind11 Rust-bindings WSGI ASGI uvicorn Gunicorn bytecode dis
+
+- slug: quantum-computing
+  description: Qubits, superposition, entanglement, and quantum algorithm implementation
+  centroid: >-
+    quantum qubit superposition entanglement decoherence gate fidelity Shor Grover annealing supremacy advantage NISQ variational VQE QAOA error-correction surface-code topological Majorana ion-trap superconducting transmon Josephson photonic cavity silicon-spin neutral-atom Rydberg QPU Qiskit Cirq PennyLane Q# braket lattice-surgery magic-state Clifford stabilizer Pauli ZX-calculus quantum-approximate-optimization adiabatic quantum-walk quantum-simulation Hamiltonian tensor-network MPS PEPS quantum-chemistry molecular VQE ansatz barren-plateau shot-noise mitigation ZNE PEC twirling benchmarking randomized
+
+- slug: reinforcement-learning
+  description: Value iteration and policy gradients in sequential decision-making
+  centroid: >-
+    reinforcement-learning MDP Markov-decision-process Bellman-equation Q-learning DQN deep-Q-network policy-gradient actor-critic A3C PPO TRPO TD temporal-difference SARSA Monte-Carlo value-function reward-shaping exploration-exploitation epsilon-greedy UCB multi-armed-bandit contextual-bandit off-policy on-policy experience-replay target-network Atari OpenAI-Gym model-based model-free MCTS AlphaGo AlphaZero MuZero advantage-function GAE eligibility-trace discount-factor gamma curiosity-driven intrinsic-motivation GAIL inverse-RL imitation-learning HER hindsight meta-RL MARL multi-agent world-models Dreamer PlaNet simulation Mujoco Brax sample-efficiency
+
+- slug: retrocomputing
+  description: Exploring obsolete architectures and restoring computational history
+  centroid: >-
+    6502 Z80 8080 8086 PDP-11 VAX Commodore-64 Amiga Apple-II TRS-80 Altair-8800 IMSAI Osborne-1 VIC-20 ZX-Spectrum BBC-Micro CP/M MS-DOS BASIC assembly 6809 68000 PDP-8 minicomputers mainframes punched-cards core-memory magnetic-tape floppy-disk MFM RLL Winchester CRT vector-display raster-scan TTL 7400-series wire-wrap S-100-bus ISA EISA MCA NuBus VME Multibus RS-232 parallel-port serial-terminal VT100 Teletype ASR-33 modem acoustic-coupler BBS UUCP Usenet FidoNet BITNET ARPANET packet-radio homebrew retrobrewing FPGA-recreation SIMH emulation preservation ROM-dumping disassembly
+
+- slug: reverse-engineering
+  description: Deconstructing binaries to expose hidden logic and vulnerability patterns
+  centroid: >-
+    disassembly decompilation binary-analysis IDA Ghidra radare2 Binary Ninja x86 ARM assembly opcodes debugger gdb LLDB WinDbg static-analysis dynamic-analysis control-flow data-flow obfuscation anti-debugging packing unpacking IDA-Pro Hex-Rays deobfuscation firmware-analysis ROM-hacking patch binary-patching instruction-set ELF PE Mach-O relocations symbols PLT GOT vtables calling-conventions stack-frames register-allocation memory-layout heap stack shellcode ROP gadgets exploit-dev vulnerability-analysis CVE 0day binary-diffing bindiff hooking
+
+- slug: robotics
+  description: Actuators, sensors, inverse kinematics, simultaneous localization and mapping
+  centroid: >-
+    robotics kinematics dynamics inverse-kinematics forward-kinematics jacobian ROS ROS2 robot-operating-system SLAM localization mapping path-planning motion-planning trajectory-optimization A-star RRT PRM D-star control-theory PID LQR MPC state-estimation kalman-filter particle-filter actuators servos stepper-motors DC-motors BLDC encoders IMU lidar depth-camera stereo-vision point-cloud manipulation grasping gripper end-effector mobile-robots wheeled-robots legged-robots quadruped bipedal Boston-Dynamics humanoid NAO Pepper UR5 Franka-Emika
+
+- slug: rust
+  description: Systems programming with ownership semantics and zero-cost abstractions
+  centroid: >-
+    ownership borrow lifetimes unsafe zero-cost-abstractions memory-safety RAII move-semantics affine-types linear-types typestate-pattern trait-objects dyn impl generics associated-types higher-ranked-trait-bounds lifetime-elision Pin Unpin Send Sync fearless-concurrency async-await tokio futures rayon crossbeam parking_lot Arc Mutex atomics lock-free LLVM MIR cargo crates.io procedural-macros macro_rules declarative-macros derive serde bincode postcard no_std embedded alloc Box Rc RefCell Cell Option Result panic unwrap expect pattern-matching exhaustiveness algebraic-data-types enum match
+
+- slug: sci-fi
+  description: Speculative futures through science, technology, and human consequence
+  centroid: >-
+    science-fiction cyberpunk Neuromancer Gibson Sterling Stephenson Greg-Egan Ted-Chiang Liu-Cixin Asimov Clarke Heinlein PKD Lem Hyperion Foundation Dune worldbuilding hard-sf space-opera generation-ships Dyson-sphere Matrioshka-brain von-Neumann-probes FTL warp-drive Alcubierre ansible wormholes Bussard-ramjet O'Neill-cylinder Ringworld megastructures Kardashev transhumanism posthuman AGI singularity mind-upload brain-computer-interface neural-lace Moravec sapient-AI existential-risk Fermi-paradox Great-Filter SETI techno-optimism dystopia
+
+- slug: security
+  description: Offensive and defensive techniques for protecting computational systems
+  centroid: >-
+    security penetration-testing vulnerability-assessment exploit-development zero-day buffer-overflow ROP shellcode privilege-escalation lateral-movement OWASP SQLi XSS CSRF SSRF RCE LFI RFI XXE IDOR authentication authorization JWT OAuth session-hijacking CSRF-token timing-attack side-channel cryptographic-failures weak-cipher padding-oracle hash-collision rainbow-tables salting bcrypt argon2 TLS certificate-pinning MITM ARP-spoofing DNS-poisoning reverse-engineering binary-analysis static-analysis dynamic-analysis fuzzing AFL libfuzzer
+
+- slug: self-hosted
+  description: Running services on your own infrastructure instead of cloud platforms
+  centroid: >-
+    self-hosted homelab infrastructure docker kubernetes proxmox unraid truenas plex jellyfin nextcloud gitea drone authentik traefik nginx caddy wireguard tailscale pihole adguard home-assistant grafana prometheus influxdb portainer yacht ansible terraform vault bitwarden vaultwarden photoprism immich bookstack paperless-ngx mealie grocy calibre calibre-web audiobookshelf navidrome airsonic subsonic syncthing resilio duplicati borg rclone minio s3 matrix synapse element mastodon lemmy peertube funkwhale pleroma firefly iii monica invoiceninja
+
+- slug: semiotics
+  description: Signs, symbols, and the structures of meaning-making
+  centroid: >-
+    signifier signified Saussure Peirce icon index symbol semiology structuralism Roland Barthes myth connotation denotation langue parole synchronic diachronic arbitrary sign dyadic triadic interpretant representamen object code syntax semantics pragmatics Eco Umberto referent polysemy syntagmatic paradigmatic binary opposition mediation cultural codes signifying practices intertextuality poststructuralism Derrida différance trace Lacan imaginary symbolic real Baudrillard simulacra hyperreality Foucault discourse Greimas semiotic square actant
+
+- slug: shell-scripting
+  description: Advanced shell automation techniques and scripting paradigms
+  centroid: >-
+    bash zsh fish POSIX sh scripting awk sed grep find xargs cut tr sort uniq jq yq envsubst getopts getopt command-line CLI pipes redirects process-substitution subshells parameter-expansion brace-expansion globbing regex STDERR STDOUT exit-codes signal-handling trap errexit pipefail nounset shellcheck shfmt shebang hashbang environment-variables PATH IFS arrays associative-arrays functions sourcing dot-command exec eval command builtin coreutils findutils moreutils parallel GNU BSD sponge tee mktemp basename dirname readlink realpath stat file-descriptors here-documents here-strings process-management background-jobs job-control wait
+
+- slug: site-reliability
+  description: Keeping production systems alive under real-world chaos
+  centroid: >-
+    SRE observability monitoring metrics Prometheus Grafana Datadog alerting on-call incident-response postmortems blameless SLO SLI SLA error-budgets toil-reduction automation chaos-engineering fault-injection resilience load-balancing autoscaling capacity-planning runbooks playbooks pagerduty escalation CI/CD deployment canary blue-green progressive-delivery feature-flags rollback Kubernetes orchestration distributed-tracing OpenTelemetry logging ELK Loki APM latency throughput availability MTTR MTBF reliability-engineering infrastructure-as-code Terraform Ansible configuration-management
+
+- slug: solo-dev
+  description: Independent technical problem-solving without organizational infrastructure or collaboration
+  centroid: >-
+    solo-dev indie-hacker bootstrapping SaaS MVP lean-startup product-hunt launch growth-hacking SEO content-marketing email-marketing landing-page conversion funnel metrics analytics stripe paddle revenue MRR ARR churn LTV CAC pricing freemium paywall tier subscription one-person-business solopreneur lifestyle-business ramen-profitable exit acquisition indie-games itch.io steam godot unity phaser construct bevy raylib LÖVE pico-8 game-jam ludum-dare self-published author kindle-publishing substack newsletter ghost wordpress static-site-generator
+
+- slug: sourdough
+  description: A living culture's slow transformation of flour and time
+  centroid: >-
+    sourdough starter levain fermentation lactobacillus wild yeast hydration autolyse bulk fermentation proofing banneton scoring lame oven spring crumb structure open crumb flour protein gluten development windowpane test feeding schedule discard ratio ambient temperature ambient fermentation sourdough culture tartine chad robertson ken forkish FWSY artisan bread baking stone dutch oven steam crust caramelization maillard reaction whole grain rye spelt einkorn ancient grains long fermentation cold retard shaping tension surface tension boule batard baguette ciabatta focaccia
+
+- slug: space-exploration
+  description: Orbital mechanics, propulsion physics, and interplanetary mission architecture
+  centroid: >-
+    orbital-mechanics rockets propulsion trajectory ISS Starship SpaceX Falcon Dragon Crew Artemis SLS Gateway lunar Mars rover Perseverance Curiosity Ingenuity JPL mission-design astrodynamics Hohmann-transfer delta-v specific-impulse Tsiolkovsky NewSpace reusable launch Raptor Merlin hypergolic cryogenic methalox RP-1 hydrazine staging fairing payload LEO GEO Lagrange-points radiation Van-Allen shielding life-support ECLSS microgravity in-situ-resource-utilization regolith Starlink satellite-constellation cubesat telemetry deep-space-network Voyager Hubble Webb JWST exoplanets transit spectroscopy astrobiology biosignatures Titan Europa Enceladus
+
+- slug: speedrunning
+  description: Optimizing human execution through frame-perfect mechanical precision
+  centroid: >-
+    speedrunning glitches frame-perfect tricks routing RNG manipulation timer splits sequence-breaking wrong-warp tool-assisted TAS clipping out-of-bounds ACE arbitrary-code-execution memory-corruption savestate rerecording input-display emulator accuracy console-verification AGDQ SGDQ GDQ charity-marathon leaderboards categories any% 100% glitchless blindfolded randomizer bingo speedrun.com livesplit autosplitter SRC moderators WR world-record PB personal-best movement-tech bunnyhopping strafing deathwarp zipping
+
+- slug: standup-comedy
+  description: Timing, misdirection, and the architecture of laughter
+  centroid: >-
+    standup-comedy timing rhythm callbacks premises punchlines setups act-outs misdirection rule-of-three bombing open-mic crowd-work hecklers tight-five headliner showcase booker roast battle improv sketch Carlin Pryor Hicks Chappelle Burr CK Gaffigan Mulaney Segura Normalization Iglesias Wong Carmichael crowd tags crowd-surfing premise-punchline observational absurdist deadpan sarcasm self-deprecation storytelling one-liners alt-comedy crowd-reading bombing-recovery stage-presence mic-technique comedic-persona bit-writing punch-up comedic-timing setup-callback comedic-structure
+
+- slug: statistics
+  description: Data inference, uncertainty quantification, modeling stochastic phenomena rigorously
+  centroid: >-
+    Bayesian inference hypothesis testing p-values confidence intervals regression ANOVA distributions sampling bootstrap maximum-likelihood causal-inference experimental-design A/B-testing multiple-comparisons false-discovery-rate power-analysis time-series MCMC variational-inference hierarchical-models mixed-effects survival-analysis Cox proportional-hazards nonparametric kernel-density splines robust GLM logistic Poisson outliers heteroscedasticity autocorrelation stationarity cointegration ARIMA Kalman-filter principal-component factor-analysis clustering dimensionality-reduction cross-validation bias-variance overfitting regularization
+
+- slug: swift
+  description: Apple's type-safe systems language for OS frameworks
+  centroid: >-
+    Swift iOS UIKit SwiftUI Combine async/await actor concurrency protocol-oriented-programming value-semantics copy-on-write ARC optionals Result type-safety generics property-wrappers result-builders KeyPath Codable Sendable MainActor structured-concurrency Xcode LLVM Swift-Package-Manager Vapor server-side-swift Foundation CoreData URLSession Observation macro-system SwiftSyntax protocol-extensions where-clauses associated-types opaque-types existentials SIMD Metal CoreGraphics CoreML CreateML RealityKit ARKit SpriteKit SceneKit StoreKit CloudKit CoreBluetooth CoreLocation
+
+- slug: synths
+  description: Analog signal processing through voltage-controlled modular sound synthesis
+  centroid: >-
+    modular synthesis polyphonic monophonic oscillator VCO VCA VCF ADSR envelope filter resonance cutoff LFO waveform sawtooth square sine triangle PWM frequency modulation FM wavetable granular subtractive additive analog digital eurorack Moog Buchla Roland Korg Yamaha DX7 Prophet Jupiter Juno MS-20 Minimoog voltage control CV gate MIDI MPE patch cable normalization attenuator mixer sequencer arpeggiator quantizer waveshaper distortion delay reverb chorus phaser flanger ring modulation sample hold noise generator VCO tracking keytracking portamento glide
+
+- slug: systems-programming
+  description: Low-level control of hardware, memory, and processes
+  centroid: >-
+    kernel Linux Unix C assembly x86 ARM memory-management virtual-memory paging syscalls system-calls interrupt-handling context-switching process scheduler threading IPC pipes signals sockets file-systems VFS block-layer drivers device-drivers memory-allocator malloc libc glibc musl stdlib ABI linking ELF loader dynamic-linking static-linking compiler toolchain GCC LLVM debugger GDB profiling perf strace ptrace kernel-debugging crash-dump core-dump bootloader GRUB UEFI firmware bare-metal embedded RTOS FreeROS Zephyr low-level optimization performance latency concurrency synchronization lock-free atomic spinlock mutex semaphore RCU futex
+
+- slug: tabletop-rpg
+  description: Mechanics for collaborative storytelling in structured imaginary worlds
+  centroid: >-
+    d20 OSR RPG rules-lite narrative-first dungeon-crawling sandbox hexcrawl character-death procedural-tables random-encounters GM-less solo-play worldbuilding lore monster-manual bestiary dungeons-dragons pathfinder GURPS call-of-cthulhu vampire-the-masquerade world-of-darkness fate-core powered-by-the-apocalypse blades-in-the-dark PBTA dice-mechanics initiative combat-resolution skill-checks saving-throws ability-scores character-sheets leveling-up XP campaigns modules adventures megadungeon west-marches session-zero player-agency
+
+- slug: technical-writing
+  description: Documentation craft: clarity, structure, precision, audience-first technical communication
+  centroid: >-
+    documentation technical-writing API-docs style-guides plain-language information-architecture Markdown reStructuredText AsciiDoc Sphinx Docusaurus MkDocs ReadTheDocs Javadoc Doxygen JSDoc audience-analysis task-oriented procedural conceptual reference tutorials how-to troubleshooting release-notes changelog versioning localization i18n accessibility a11y information-design content-strategy docs-as-code version-control Git CI/CD static-site-generators prose linters Vale write-good hemingway readability Flesch-Kincaid active-voice conciseness clarity consistency terminology glossaries index search navigation cross-references
+
+- slug: topology
+  description: Continuous deformation, spaces, and the shape of connectivity
+  centroid: >-
+    topology manifolds homeomorphism homotopy fundamental-group homology cohomology euler-characteristic knot-theory braid-group algebraic-topology differential-topology geometric-topology point-set hausdorff compactness connectedness metric-space CW-complex fiber-bundle covering-space simplex simplicial-complex morse-theory de-rham persistent-homology TDA computational-topology category-theory functors grothendieck sheaf-theory schemes topos etale cobordism characteristic-classes chern stiefel-whitney pontryagin surgery-theory 3-manifolds 4-manifolds poincare-conjecture thurston geometrization
+
+- slug: true-crime
+  description: Investigative analysis of real criminal cases and forensic methodology
+  centroid: >-
+    forensic-investigation serial-killers cold-cases criminal-profiling DNA-evidence fingerprinting ballistics crime-scene forensics FBI interrogation-techniques polygraph unsolved-mysteries missing-persons homicide detective forensic-psychology pathology autopsy blood-spatter toxicology entomology CODIS AFIS behavioral-analysis mass-murder spree-killer organized-disorganized modus-operandi signature victimology strangulation GSR luminol Bundy Dahmer BTK Zodiac Golden-State-Killer Gacy Ramirez West Jack-the-Ripper wrongful-conviction Innocence-Project eyewitness-testimony false-confession
+
+- slug: type-theory
+  description: Static correctness proofs for program construction and evolution
+  centroid: >-
+    dependent-types Martin-Löf Curry-Howard polymorphism lambda-calculus homotopy-type-theory HoTT cubical univalence Agda Coq Lean Idris proof-assistants propositions-as-types proofs-as-programs inductive-types coinduction totality termination decidability subtyping refinement-types linear-types affine session-types region-based gradual-typing bidirectional-typing hindley-milner system-F polymorphic-lambda-calculus existential-types GADT phantom-types type-families higher-kinded indexed-families dependent-pattern-matching universe-levels impredicative predicative
+
+- slug: typescript
+  description: Static types meet gradual evolution and ecosystem scale
+  centroid: >-
+    TypeScript structural-typing type-inference generics conditional-types mapped-types utility-types template-literal-types discriminated-unions type-guards narrowing variance strict-mode tsconfig compiler-api declaration-files ambient-declarations module-resolution ESM CommonJS bundlers webpack Vite esbuild SWC tsc type-predicates satisfies-operator assertion-functions const-assertions readonly-modifier tuple-types variadic-tuples infer-keyword branded-types phantom-types nominal-typing Zod tRPC Prisma TypeORM decorators experimental-features JSDoc-types gradual-typing
+
+- slug: typography
+  description: Letterforms, spacing, hierarchy, and the visual mechanics of readable text
+  centroid: >-
+    typography kerning tracking leading baseline metrics OpenType variable-fonts font-hinting antialiasing subpixel-rendering ClearType Bézier glyph outlines TrueType PostScript WOFF WOFF2 web-fonts font-rendering ligatures contextual-alternates small-caps swashes oldstyle-figures lining-figures tabular-figures proportional typeface-design type-foundries Hoefler Klim Grilli-Type FontFont Linotype Monotype Grotesk Garamond Helvetica Akzidenz Univers Futura Gill-Sans Bodoni Baskerville Caslon DIN geometric humanist serif sans-serif slab-serif
+
+- slug: urban-exploration
+  description: Documenting forgotten infrastructure through trespass and decay
+  centroid: >-
+    urban-exploration urbex abandoned-buildings industrial-decay forgotten-places access-routes infiltration rooftopping draining tunnel-systems subway-tunnels steam-tunnels cataphiles Paris-catacombs bunkers fallout-shelters Cold-War-sites derelict-hospitals asylums sanitariums psychiatric-facilities industrial-ruins factory-exploration power-plants cooling-towers grain-elevators warehouses Soviet-architecture brutalism modernist-ruins documentation photography long-exposure HDR night-photography trespassing legal-gray-areas
+
+- slug: vintage-hardware
+  description: Restoring and documenting computing artifacts from bygone eras
+  centroid: >-
+    6502 8080 Z80 PDP-11 VAX Commodore Amiga Atari Apple-II TRS-80 CP/M MITS-Altair IMSAI S-100 bus ISA EISA VLB PCI AGP MCA Multibus VME Unibus Q-bus SCSI MFM RLL ESDI ST-506 floppy 5.25 8-inch Winchester disk pack DECtape magtape punched-card teletype ASR33 VT100 VT220 ADM-3A terminal CRT phosphor nixie-tube oscilloscope logic-analyzer EPROM EEPROM UV-eraser wirewrap breadboard TTL 7400-series 4000-series CMOS discrete-logic flip-flop counter shift-register demultiplexer PAL GAL FPGA Motorola-68k 6809 i8086 i386 SPARC MIPS Alpha PowerPC retrocomputing bitsavers schematics datasheet
+
+- slug: vinyl
+  description: Analog playback mechanics and record collecting culture
+  centroid: >-
+    vinyl turntables cartridges stylus tonearm preamp phono RIAA equalization direct-drive belt-drive idler-wheel platter bearing tracking force anti-skate azimuth VTA SRA alignment protractor overhang Baerwald Löfgren Stevenson headshell MC MM moving-coil moving-magnet Ortofon Shure Audio-Technica Technics SL-1200 Rega Pro-Ject VPI wow flutter rumble deadwax runout-groove matrix stamper pressing-plant lacquer cutting DMM half-speed-mastering all-analog AAA reissue original-pressing first-pressing deadwax-etchings 33rpm 45rpm 78rpm shellac microgroove LP EP 7-inch 10-inch 12-inch
+
+- slug: wasm
+  description: Portable bytecode for cross-platform near-native execution
+  centroid: >-
+    WebAssembly bytecode compilation WASI runtime sandboxing wat wasm-bindgen AssemblyScript Emscripten LLVM backend memory linear-memory shared-memory atomics threads SIMD interface-types component-model GC proposals wasmtime wasmer wasm3 WABT binaryen wasm-pack webpack bundlers Rust target npm packages browser embedding JavaScript interop import export module instantiation performance near-native benchmark optimization AOT JIT compilation streaming stack-machine instruction-set validation type-system security isolation capability-based
+
+- slug: webdev
+  description: Browser runtime environments, DOM APIs, HTTP protocols, deployment pipelines
+  centroid: >-
+    HTML CSS JavaScript TypeScript React Vue Angular Svelte Next.js Nuxt Remix SvelteKit frontend backend fullstack Node.js Deno Bun Express Fastify Koa HTTP REST GraphQL tRPC WebSocket SSR SSG ISR hydration routing state-management Zustand Pinia Redux Tailwind CSS-in-JS styled-components Sass PostCSS responsive mobile-first accessibility WCAG ARIA semantic-HTML forms validation Zod Yup bundlers Vite webpack Rollup esbuild tree-shaking code-splitting lazy-loading Web-Vitals CLS LCP FID performance optimization caching CDN edge browser-APIs fetch
+
+- slug: woodworking
+  description: Hand-tool joinery, wood movement, and traditional craftsmanship
+  centroid: >-
+    joinery mortise-and-tenon dovetails hand-planes chisels tablesaw bandsaw router sharpening scrapers spokeshave mallet hardwoods softwoods grain figure spalting lumber milling rough-sawn bookmatching edge-banding veneer marquetry inlay finishing shellac polyurethane lacquer oil-finish wax Danish-oil rubbing-out french-polish hand-tools power-tools jigs fixtures crosscut rip dado rabbet groove miters splines biscuits dominos pocket-holes glue-ups clamps cauls tearout snipe kickback dust-collection workbench vise holdfast dogs apron stretchers
+
+- slug: worldbuilding
+  description: Crafting fictional universes through coherent internal logic and detail
+  centroid: >-
+    worldbuilding conlang constructed-language linguistics phonology grammar mythology cosmology magic-system hard-magic soft-magic geography cartography geopolitics culture-building religion pantheon creation-myth history timeline alternate-history speculative-fiction fantasy sci-fi setting-design ecology biome alien-biology xenobiology technology-level post-apocalyptic steampunk cyberpunk solarpunk dieselpunk economics trade currency governance political-system social-structure caste urban-planning architecture climate terrain plate-tectonics
+
+- slug: writing
+  description: Rhetorical craft, narrative structure, and stylistic precision
+  centroid: >-
+    prose rhetoric composition narrative structure voice style tone grammar syntax punctuation editing revision drafting storytelling exposition dialogue description pacing plot character-development worldbuilding themes motifs imagery symbolism metaphor foreshadowing show-dont-tell viewpoint POV first-person third-person omniscient unreliable-narrator minimalism maximalism brevity clarity concision active-voice passive-voice readability flow transitions hooks opening closing arc tension conflict resolution subtext beats scene-structure chapters
+
+- slug: zig
+  description: Low-level systems language with manual memory control and compile-time guarantees
+  centroid: >-
+    zig ziglang memory-safety comptime compile-time allocators manual-memory async-await coroutines no-hidden-control-flow explicit-error-handling error-unions defer errdefer build-system build-zig cross-compilation LLVM stage1-stage2-stage3 self-hosted-compiler C-interop translate-c cImport systems-programming bare-metal embedded kernel-development OS-dev performance zero-cost-abstractions packed-structs bit-manipulation SIMD vector-types inline-assembly testing built-in-testing Andrew-Kelley minimal-runtime no-libc freestanding
+
