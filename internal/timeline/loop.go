@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
@@ -12,6 +13,13 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
+
+const healthCacheTTL = 60 * time.Second
+
+type healthEntry struct {
+	healthy   bool
+	checkedAt time.Time
+}
 
 // Engine drives the task execution loop.
 type Engine struct {
@@ -21,6 +29,9 @@ type Engine struct {
 	Agents       map[string]agent.Agent
 	PollInterval time.Duration
 	MemoryDir    string
+
+	healthMu    sync.Mutex
+	healthCache map[string]healthEntry
 }
 
 // Run polls for pending tasks and dispatches them until ctx is cancelled.
@@ -69,4 +80,33 @@ func (e *Engine) poll(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// CheckHealth probes the named agent's health, using the cache if fresh.
+// Returns true if healthy, false otherwise. Updates both cache and store.
+func (e *Engine) CheckHealth(name string) bool {
+	e.healthMu.Lock()
+	if e.healthCache == nil {
+		e.healthCache = make(map[string]healthEntry)
+	}
+	if entry, ok := e.healthCache[name]; ok && time.Since(entry.checkedAt) < healthCacheTTL {
+		e.healthMu.Unlock()
+		return entry.healthy
+	}
+	e.healthMu.Unlock()
+
+	ag, ok := e.Agents[name]
+	if !ok {
+		return false
+	}
+
+	now := time.Now()
+	healthy := ag.Health() == nil
+
+	e.healthMu.Lock()
+	e.healthCache[name] = healthEntry{healthy: healthy, checkedAt: now}
+	e.healthMu.Unlock()
+
+	e.Store.UpdateAgentHealth(name, healthy, now)
+	return healthy
 }
