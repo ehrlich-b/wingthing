@@ -5,7 +5,8 @@ go 1.24.4
 require (
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/sys v0.37.0
+	golang.org/x/crypto v0.47.0
+	golang.org/x/sys v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.44.3
 	nhooyr.io/websocket v1.8.17
