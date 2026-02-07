@@ -1,27 +1,57 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"text/tabwriter"
+	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemon"
+	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/transport"
 	"github.com/spf13/cobra"
 )
 
 func main() {
+	var skillFlag string
+	var agentFlag string
+
 	root := &cobra.Command{
-		Use:   "wt",
+		Use:   "wt [prompt]",
 		Short: "wingthing — local-first AI task runner",
 		Long:  "Orchestrates LLM agents on your behalf. Manages context, memory, and task timelines.",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
+			if len(args) == 0 && skillFlag == "" {
 				return cmd.Help()
 			}
-			// bare string arg = ad-hoc prompt task
-			fmt.Printf("would submit task: %s\n", args[0])
+			c := clientFromConfig()
+			req := transport.SubmitTaskRequest{}
+			if skillFlag != "" {
+				req.What = skillFlag
+				req.Type = "skill"
+			} else {
+				req.What = args[0]
+				req.Type = "prompt"
+			}
+			if agentFlag != "" {
+				req.Agent = agentFlag
+			}
+			t, err := c.SubmitTask(req)
+			if err != nil {
+				return fmt.Errorf("submit task: %w", err)
+			}
+			fmt.Printf("submitted: %s (%s)\n", t.ID, t.What)
 			return nil
 		},
-		Args: cobra.MaximumNArgs(1),
 	}
+	root.Flags().StringVar(&skillFlag, "skill", "", "Run a named skill")
+	root.Flags().StringVar(&agentFlag, "agent", "", "Use specific agent")
 
 	root.AddCommand(
 		timelineCmd(),
@@ -39,12 +69,39 @@ func main() {
 	}
 }
 
+func clientFromConfig() *transport.Client {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	return transport.NewClient(cfg.SocketPath())
+}
+
 func timelineCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "timeline",
 		Short: "Show upcoming and recent tasks",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("not implemented")
+			c := clientFromConfig()
+			tasks, err := c.ListTasks("", 20)
+			if err != nil {
+				return err
+			}
+			if len(tasks) == 0 {
+				fmt.Println("no tasks")
+				return nil
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "ID\tSTATUS\tAGENT\tWHAT\tRUN AT")
+			for _, t := range tasks {
+				what := t.What
+				if len(what) > 50 {
+					what = what[:47] + "..."
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, t.Agent, what, t.RunAt)
+			}
+			w.Flush()
 			return nil
 		},
 	}
@@ -55,7 +112,21 @@ func threadCmd() *cobra.Command {
 		Use:   "thread",
 		Short: "Print today's daily thread",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("not implemented")
+			yesterday, _ := cmd.Flags().GetBool("yesterday")
+			c := clientFromConfig()
+			date := ""
+			if yesterday {
+				date = time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+			}
+			thread, err := c.GetThread(date, 0)
+			if err != nil {
+				return err
+			}
+			if thread == "" {
+				fmt.Println("(empty thread)")
+				return nil
+			}
+			fmt.Print(thread)
 			return nil
 		},
 	}
@@ -68,7 +139,12 @@ func statusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Daemon status and agent health",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("not implemented")
+			c := clientFromConfig()
+			s, err := c.Status()
+			if err != nil {
+				return fmt.Errorf("daemon not reachable: %w", err)
+			}
+			fmt.Printf("pending: %d\nrunning: %d\nagents:  %d\n", s.Pending, s.Running, s.Agents)
 			return nil
 		},
 	}
@@ -76,57 +152,160 @@ func statusCmd() *cobra.Command {
 
 func logCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "log",
+		Use:   "log [taskId]",
 		Short: "Show task log events",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("not implemented")
+			last, _ := cmd.Flags().GetBool("last")
+			showContext, _ := cmd.Flags().GetBool("context")
+			c := clientFromConfig()
+
+			taskID := ""
+			if len(args) > 0 {
+				taskID = args[0]
+			} else if last {
+				tasks, err := c.ListTasks("", 1)
+				if err != nil {
+					return err
+				}
+				if len(tasks) == 0 {
+					fmt.Println("no tasks")
+					return nil
+				}
+				taskID = tasks[0].ID
+			} else {
+				return fmt.Errorf("provide a task ID or use --last")
+			}
+
+			entries, err := c.GetLog(taskID)
+			if err != nil {
+				return err
+			}
+			for _, raw := range entries {
+				var entry struct {
+					Event  string  `json:"event"`
+					Detail *string `json:"detail"`
+					Time   string  `json:"timestamp"`
+				}
+				json.Unmarshal(raw, &entry)
+				if showContext && entry.Event == "prompt_built" && entry.Detail != nil {
+					fmt.Println(*entry.Detail)
+					return nil
+				}
+				detail := ""
+				if entry.Detail != nil {
+					detail = *entry.Detail
+					if len(detail) > 80 {
+						detail = detail[:77] + "..."
+					}
+				}
+				fmt.Printf("%s  %s  %s\n", entry.Time, entry.Event, detail)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().Bool("last", false, "Show most recent task")
-	cmd.Flags().Bool("context", false, "Include full prompt")
+	cmd.Flags().Bool("context", false, "Show full prompt for prompt_built event")
 	return cmd
 }
 
 func agentCmd() *cobra.Command {
-	agent := &cobra.Command{
+	ag := &cobra.Command{
 		Use:   "agent",
 		Short: "Manage agent adapters",
 	}
-	agent.AddCommand(&cobra.Command{
+	ag.AddCommand(&cobra.Command{
 		Use:   "list",
 		Short: "List configured agents",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("not implemented")
+			c := clientFromConfig()
+			agents, err := c.ListAgents()
+			if err != nil {
+				return err
+			}
+			if len(agents) == 0 {
+				fmt.Println("no agents configured")
+				return nil
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "NAME\tADAPTER\tHEALTHY\tCONTEXT")
+			for _, raw := range agents {
+				var a struct {
+					Name          string `json:"name"`
+					Adapter       string `json:"adapter"`
+					Healthy       bool   `json:"healthy"`
+					ContextWindow int    `json:"context_window"`
+				}
+				json.Unmarshal(raw, &a)
+				healthy := "no"
+				if a.Healthy {
+					healthy = "yes"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", a.Name, a.Adapter, healthy, a.ContextWindow)
+			}
+			w.Flush()
 			return nil
 		},
 	})
-	return agent
+	return ag
 }
 
 func skillCmd() *cobra.Command {
-	skill := &cobra.Command{
+	sk := &cobra.Command{
 		Use:   "skill",
 		Short: "Manage skills",
 	}
-	skill.AddCommand(&cobra.Command{
+	sk.AddCommand(&cobra.Command{
 		Use:   "list",
 		Short: "List installed skills",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("not implemented")
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			entries, err := os.ReadDir(cfg.SkillsDir())
+			if err != nil {
+				if os.IsNotExist(err) {
+					fmt.Println("no skills installed")
+					return nil
+				}
+				return err
+			}
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+					name := strings.TrimSuffix(e.Name(), ".md")
+					fmt.Println(name)
+				}
+			}
 			return nil
 		},
 	})
-	skill.AddCommand(&cobra.Command{
-		Use:   "add [name|file|url]",
+	sk.AddCommand(&cobra.Command{
+		Use:   "add [file]",
 		Short: "Install a skill",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("not implemented")
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			src := args[0]
+			data, err := os.ReadFile(src)
+			if err != nil {
+				return fmt.Errorf("read skill: %w", err)
+			}
+			name := filepath.Base(src)
+			dst := filepath.Join(cfg.SkillsDir(), name)
+			if err := os.MkdirAll(cfg.SkillsDir(), 0755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(dst, data, 0644); err != nil {
+				return fmt.Errorf("write skill: %w", err)
+			}
+			fmt.Printf("installed: %s\n", strings.TrimSuffix(name, ".md"))
 			return nil
 		},
 	})
-	return skill
+	return sk
 }
 
 func daemonCmd() *cobra.Command {
@@ -134,8 +313,15 @@ func daemonCmd() *cobra.Command {
 		Use:   "daemon",
 		Short: "Start the wingthing daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("not implemented")
-			return nil
+			install, _ := cmd.Flags().GetBool("install")
+			if install {
+				return installService()
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			return daemon.Run(cfg)
 		},
 	}
 	cmd.Flags().Bool("install", false, "Install as system service")
@@ -147,8 +333,61 @@ func initCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Initialize ~/.wingthing directory",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("not implemented")
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			dirs := []string{cfg.Dir, cfg.MemoryDir(), cfg.SkillsDir()}
+			for _, d := range dirs {
+				if err := os.MkdirAll(d, 0755); err != nil {
+					return fmt.Errorf("create %s: %w", d, err)
+				}
+			}
+
+			// Seed index.md
+			indexPath := filepath.Join(cfg.MemoryDir(), "index.md")
+			if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+				os.WriteFile(indexPath, []byte("# Memory Index\n\nThis file is always loaded into every prompt.\n"), 0644)
+			}
+
+			// Seed identity.md
+			idPath := filepath.Join(cfg.MemoryDir(), "identity.md")
+			if _, err := os.Stat(idPath); os.IsNotExist(err) {
+				os.WriteFile(idPath, []byte("---\nname: \"\"\n---\n# Identity\n\nEdit this file with your name, role, and preferences.\n"), 0644)
+			}
+
+			// Init database
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("init db: %w", err)
+			}
+			s.Close()
+
+			// Detect agents
+			fmt.Println("initialized:", cfg.Dir)
+			fmt.Println("  memory:", cfg.MemoryDir())
+			fmt.Println("  skills:", cfg.SkillsDir())
+			fmt.Println("  db:", cfg.DBPath())
+
+			agents := []struct{ name, cmd string }{
+				{"claude", "claude"},
+				{"gemini", "gemini"},
+				{"ollama", "ollama"},
+			}
+			for _, a := range agents {
+				if _, err := exec.LookPath(a.cmd); err == nil {
+					fmt.Printf("  agent found: %s\n", a.name)
+				}
+			}
+
 			return nil
 		},
 	}
+}
+
+func installService() error {
+	fmt.Println("not implemented: service installation")
+	fmt.Println("run 'wt daemon' in a terminal or add to your shell startup")
+	return nil
 }
