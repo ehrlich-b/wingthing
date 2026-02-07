@@ -225,6 +225,58 @@ func TestRenderDayEmpty(t *testing.T) {
 	}
 }
 
+func TestRender_SingleMachine(t *testing.T) {
+	entries := []*store.ThreadEntry{
+		{
+			ID: 1, Timestamp: time.Date(2026, 2, 6, 8, 0, 0, 0, time.UTC),
+			MachineID: "mac", Agent: strPtr("claude"), Skill: strPtr("jira"),
+			Summary: "Morning briefing",
+		},
+		{
+			ID: 2, Timestamp: time.Date(2026, 2, 6, 9, 0, 0, 0, time.UTC),
+			MachineID: "mac", Agent: strPtr("claude"), Summary: "PR review",
+		},
+	}
+	got := Render(entries)
+	// Single machine — should NOT show machine_id
+	if strings.Contains(got, "mac]") {
+		t.Errorf("single machine should not show machine_id in:\n%s", got)
+	}
+	if !strings.Contains(got, "[claude, jira]") {
+		t.Errorf("missing expected header format in:\n%s", got)
+	}
+}
+
+func TestRender_MultiMachine(t *testing.T) {
+	entries := []*store.ThreadEntry{
+		{
+			ID: 1, Timestamp: time.Date(2026, 2, 6, 8, 0, 0, 0, time.UTC),
+			MachineID: "mac", Agent: strPtr("claude"), Skill: strPtr("jira"),
+			Summary: "Morning briefing",
+		},
+		{
+			ID: 2, Timestamp: time.Date(2026, 2, 6, 8, 30, 0, 0, time.UTC),
+			MachineID: "wsl", Agent: strPtr("claude"), Skill: strPtr("build"),
+			Summary: "GPU compile job",
+		},
+		{
+			ID: 3, Timestamp: time.Date(2026, 2, 6, 9, 0, 0, 0, time.UTC),
+			MachineID: "mac", Agent: strPtr("claude"), Summary: "PR review",
+		},
+	}
+	got := Render(entries)
+	// Multi machine — should show machine_id for all entries
+	if !strings.Contains(got, "[claude, jira, mac]") {
+		t.Errorf("missing mac machine_id in header:\n%s", got)
+	}
+	if !strings.Contains(got, "[claude, build, wsl]") {
+		t.Errorf("missing wsl machine_id in header:\n%s", got)
+	}
+	if !strings.Contains(got, "[claude, ad-hoc, mac]") {
+		t.Errorf("missing ad-hoc with machine_id in header:\n%s", got)
+	}
+}
+
 func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	s, err := store.Open(":memory:")
