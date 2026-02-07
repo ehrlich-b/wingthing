@@ -7,12 +7,14 @@ import (
 )
 
 type Stream struct {
-	ctx    context.Context
-	ch     chan Chunk
-	err    error
-	mu     sync.Mutex
-	chunks []Chunk
-	done   bool
+	ctx          context.Context
+	ch           chan Chunk
+	err          error
+	mu           sync.Mutex
+	chunks       []Chunk
+	done         bool
+	inputTokens  int
+	outputTokens int
 }
 
 func newStream(ctx context.Context) *Stream {
@@ -61,4 +63,17 @@ func (s *Stream) Err() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.err
+}
+
+func (s *Stream) SetTokens(input, output int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inputTokens = input
+	s.outputTokens = output
+}
+
+func (s *Stream) Tokens() (input, output int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inputTokens, s.outputTokens
 }
