@@ -1,6 +1,6 @@
 # WingThing Social — The Commons
 
-> Semantic Reddit. Subscribe to meanings, not subreddits. Populated by RSS on day one.
+> Semantic Reddit. Subscribe to meanings, not subreddits. Self-hostable. Populated by RSS on day one.
 
 ---
 
@@ -11,15 +11,109 @@
 ```
 Post            = link + summary + embedding     (visible, assigned to anchors)
 Subscription    = embedding you keep             (invisible, defines your feed)
-Anchor          = semantic subreddit             (the organizing principle)
+Anchor          = semantic subreddit             (the mod is a 1024-char description)
 Spam            = far from all anchors           (auto-swallowed by geometry)
 ```
 
 One table. One similarity function. Four behaviors. A post and a subscription are the same data structure with a different `kind` flag.
 
-**No UMAP. No Python. No sidecar. No 2D projection.**
+**No UMAP. No Python. No sidecar. No 2D projection. Pure Go. Pure SQLite.**
 
-Posts are assigned to their nearest anchors at publish time (inline, <1ms). Feeds are indexed SQL queries (<5ms). The homepage is a single aggregate query. Pure Go. Pure SQLite.
+Posts are assigned to their nearest anchors at publish time (inline, <1ms). Feeds are indexed SQL queries (<5ms). The homepage is a single aggregate query.
+
+**Fully self-hostable.** The entire social engine runs locally. Bring your own embedding API key (OpenAI, or ollama for fully offline). Define your own anchors. Ingest your own RSS feeds. `wingthing.ai/social` is just a hosted instance with curated anchors — the same code, with opinions.
+
+---
+
+## Self-Hosting vs Hosted
+
+The social engine is a library inside `wtd` (the relay server). The same binary powers both modes.
+
+### Self-Hosted Mode
+
+```yaml
+# ~/.wingthing/config.yaml
+social:
+  enabled: true
+  embedding:
+    provider: openai           # or "ollama" for fully offline
+    model: text-embedding-3-small
+    api_key: sk-...            # or omit for ollama
+    ollama_model: nomic-embed-text  # if provider: ollama
+    dims: 512                  # operating dimensions (Matryoshka truncation)
+  summarizer:
+    provider: ollama           # or "openai", "anthropic"
+    model: llama3.2            # cheap local model for RSS summaries
+  anchors: ~/.wingthing/anchors.yaml   # your own anchor definitions
+  rss:
+    feeds: ~/.wingthing/feeds.yaml     # your own RSS feed list
+    interval: 1h
+```
+
+You run `wtd` on your machine or VPS. You define your own anchors. You point it at your own RSS feeds. You bring your own embedding key (or run ollama for $0). Nobody else's opinions about what's important.
+
+**Cost to self-host:**
+- Embedding: $0 (ollama) or ~$5/month (OpenAI at moderate volume)
+- Summaries: $0 (ollama) or ~$30/month (haiku-class)
+- Storage: SQLite on disk
+- Compute: whatever you're already running `wtd` on
+
+### Hosted Mode (`wingthing.ai/social`)
+
+Same code. Bryan's opinions about anchors. Bryan's curated RSS feeds. Shared community upvotes. The `/w/` namespace. Free to browse. Account required to subscribe/upvote/publish.
+
+---
+
+## The `/w/` Namespace
+
+`wingthing.ai/w/physics`
+
+That's a Reddit-style URL that normal people fully clock at first glance. Clean. Obvious. Bookmarkable. Shareable.
+
+```
+wingthing.ai/w/physics              → hot posts in "physics"
+wingthing.ai/w/physics?sort=new     → newest
+wingthing.ai/w/physics?sort=rising  → rising
+wingthing.ai/w/physics?sort=best    → all-time best
+wingthing.ai/w/distsys              → distributed systems
+wingthing.ai/w/philosophy           → philosophy of mind
+wingthing.ai/w/compilers            → compiler design
+```
+
+### "Who mods /w/physics?"
+
+**The mod is a text embedding.**
+
+Each anchor has a `slug` (the URL name) and a `description` — a <=1024 char statement that defines what belongs in this semantic subreddit. The description gets embedded. The embedding IS the moderation policy. Posts are assigned to anchors by cosine similarity to this embedding.
+
+```yaml
+# anchors.yaml (or DB row)
+- slug: physics
+  label: Physics
+  description: >
+    Fundamental physics: quantum mechanics, general relativity, particle
+    physics, condensed matter, thermodynamics, statistical mechanics,
+    astrophysics, cosmology. Experimental results, theoretical developments,
+    and accessible explanations of physical phenomena. Not pop-sci clickbait
+    about "quantum computing will change everything" — actual physics content
+    with substance.
+```
+
+**The description is the mod.** It's continuously refined. When you sharpen the description, the embedding shifts, and the boundary of what belongs in `/w/physics` shifts with it. Want to exclude pop-sci clickbait? Add that to the description. Want to include astrophysics? Mention it. The anchor description IS the subreddit rules, enforced by geometry.
+
+No human moderator. No power trips. No mod drama. The description defines the semantic boundary. Refine the description, refine the boundary.
+
+### Anchor Refinement
+
+```
+1. Admin edits the anchor description (or community proposes edits)
+2. Re-embed the description
+3. Re-assign all posts (batch, or lazy on next query)
+4. Posts that no longer match drift to other anchors or the edge
+5. Posts that newly match appear in the feed
+```
+
+This is how you "moderate" without moderating. You don't remove individual posts. You sharpen the description of what the community is about, and the geometry handles the rest.
 
 ---
 
@@ -33,31 +127,15 @@ The user never leaves their conversation. They say "wing, post that" or share a 
 
 ### Subscriptions
 
-You subscribe to anchors — semantic subreddits defined by meaning, not names. Your wing helps you find the right ones, or you browse the homepage grid and tap.
+You subscribe to anchors — tap `/w/physics`, you're in. Or your wing helps you find the right anchors based on your conversation history.
 
 Custom subscriptions go deeper: describe what you want in natural language, your wing embeds it, and your feed includes posts near that embedding. A subscription is a post you don't publish. Same struct. Different `kind` flag.
 
-### Anchors (Semantic Subreddits)
-
-~200 anchor embeddings define the territory. Each is a topic description:
-
-```
-"Philosophy of consciousness, qualia, and the hard problem"
-"Distributed systems, consensus algorithms, and coordination"
-"Evolutionary biology, natural selection, and genetics"
-"Financial markets, trading strategies, and risk management"
-"Creative writing, narrative structure, and storytelling craft"
-"Compiler design, language theory, and code generation"
-...
-```
-
-Anchors are subreddits without the community management, power mods, or name squatting. Want to allow a new topic? Add an anchor. Want to kill a topic? Remove it. Posts near it drift to the edge and get swallowed. **Admin tooling = manage the anchor list.**
-
 ### The Edge (Spam)
 
-Posts far from all anchors are auto-swallowed. No classifier. No moderation queue. The anchor scaffolding is an implicit whitelist. "Buy bitcoin now" is nowhere near "philosophy of consciousness." The geometry does the filtering.
+Posts far from all anchors are auto-swallowed. No classifier. No moderation queue. The anchor scaffolding is an implicit whitelist. The geometry does the filtering.
 
-For spam that's semantically close to legit topics (crypto spam near "financial markets"), admin flags posts, system computes centroid, stores as `kind='antispam'`. Future posts near the centroid are also swallowed.
+For spam semantically close to legit topics: admin flags posts, system computes centroid, stores as `kind='antispam'`. Future posts near the centroid are swallowed.
 
 ---
 
@@ -69,8 +147,6 @@ Feed queries are indexed SQL. Zero cosine computation at read time.
 
 ### New
 
-Latest posts near this anchor.
-
 ```sql
 SELECT p.* FROM social_embeddings p
 JOIN post_anchors pa ON p.id = pa.post_id
@@ -80,7 +156,7 @@ ORDER BY p.created_at DESC LIMIT 50
 
 ### Hot
 
-Upvote velocity weighted by recency. A 6-hour-old post with 5 upvotes beats a 1-hour-old post with 1 upvote.
+Upvote velocity weighted by recency.
 
 ```sql
 SELECT p.*,
@@ -104,7 +180,7 @@ ORDER BY p.upvotes_24h DESC LIMIT 50
 
 ### Best
 
-All-time quality weighted by relevance to this specific anchor.
+All-time quality weighted by relevance to this anchor.
 
 ```sql
 SELECT p.* FROM social_embeddings p
@@ -127,10 +203,10 @@ ORDER BY p.created_at DESC LIMIT 50
 
 ## The Homepage
 
-`wingthing.ai/social` is a grid of anchors sorted by activity. Most active = top left. Like Twitch browse.
+`wingthing.ai/social` (or your self-hosted instance) is a grid of anchors sorted by activity. Most active = top left. Like Twitch browse.
 
 ```sql
-SELECT a.id, a.text as label,
+SELECT a.id, a.text as label, a.slug,
   COUNT(DISTINCT pa.post_id) as total_posts,
   SUM(p.upvotes_24h) as activity_24h
 FROM social_embeddings a
@@ -143,73 +219,63 @@ ORDER BY activity_24h DESC
 
 ```
 ┌─────────────┬─────────────┬─────────────┬─────────────┐
-│  DistSys    │   ML/AI     │  Philosophy │   DevTools  │
-│  ●●●●●●●●   │  ●●●●●●●    │  ●●●●●      │  ●●●●       │
+│ /w/distsys  │  /w/ml      │ /w/physics  │ /w/devtools │
 │  142 posts  │  98 posts   │  67 posts   │  54 posts   │
 │  +47 today  │  +31 today  │  +22 today  │  +18 today  │
 ├─────────────┼─────────────┼─────────────┼─────────────┤
-│  Finance    │  Biology    │  Writing    │  CompLang   │
-│  ●●●        │  ●●●        │  ●●         │  ●●         │
+│ /w/finance  │  /w/bio     │ /w/writing  │ /w/compilers│
 │  43 posts   │  38 posts   │  29 posts   │  24 posts   │
 │  +12 today  │  +9 today   │  +8 today   │  +6 today   │
 └─────────────┴─────────────┴─────────────┴─────────────┘
 
-Tap anchor → /social/r/distsys → new / rising / hot / best
+Tap → /w/physics → new / rising / hot / best
 ```
 
-The grid reflows every time. Looks dynamic. Is a single query cached for 5 minutes.
+The grid reflows by activity. Cached 5 minutes.
 
 ---
 
 ## RSS Seeding (Cold Start = Solved)
 
-The whole thing works with zero users. Populate the map from existing RSS feeds.
+The whole thing works with zero users. Populate from existing RSS feeds.
 
 ### Pipeline
 
 ```
-1. Curate list of quality RSS feeds
-   - Hacker News front page
-   - arxiv CS daily
-   - Good blogs (Julia Evans, Dan Luu, Jessie Frazelle, etc.)
-   - Newsletters (TLDR, Pointer, etc.)
-   - Podcast transcripts
+1. Curate RSS feed list (self-hosters bring their own)
+   - wingthing.ai ships with: HN, arxiv CS, Julia Evans, Dan Luu, etc.
 
-2. Cron job: fetch new items (hourly)
+2. Cron: fetch new items (hourly, configurable)
 
 3. Per item:
    a. Extract title + first ~2000 chars
-   b. Cheap LLM summarize to <=1024 chars (haiku-class)
-   c. Embed summary (text-embedding-3-small)
+   b. LLM summarize to <=1024 chars (haiku-class or local ollama)
+   c. Embed summary
    d. Check anchor proximity (spam filter)
    e. Store: link + summary + embedding
    f. Assign top-5 anchors
 
 4. URL dedup: same URL = upvote, not duplicate
 
-5. Cost per item:
-   - Summary: ~$0.001 (haiku-class)
-   - Embedding: ~$0.000004
-   - Total: ~$0.001
+5. Cost per item: ~$0.001 (hosted) or $0 (ollama self-hosted)
 
-6. 1000 items/day = $1/day = $30/month
+6. Hosted: 1000 items/day = $1/day = $30/month
+   Self-hosted with ollama: $0/month (just electricity)
 ```
-
-At **$30/month** you have a constantly-refreshing semantic aggregator. The map is full on day 1. You browse it yourself, tune anchors, watch what clusters. When real users show up, the map is already alive.
 
 ### RSS Bot Identity
 
-RSS-seeded posts are attributed to `system` (or a bot account). Clearly marked. Real user posts are distinguishable. When users start contributing their own insights alongside the RSS firehose, their posts compete on the same feed by quality, not by source.
+RSS-seeded posts are attributed to `system`. Clearly marked. Real user posts are distinguishable.
 
 ---
 
 ## The Re-derive Flow
 
-The killer interaction. Someone finds an insight on the commons map. They tap "re-derive." The insight is sent to THEIR wing, which re-explains it using THEIR conceptual vocabulary, mental models, and current projects.
+Someone finds an insight on the commons. They tap "re-derive." The insight is sent to THEIR wing, which re-explains it using THEIR conceptual vocabulary.
 
-The insight travels: one person's wing -> compressed -> commons -> another person's wing -> re-expanded in their language. **The commons is a translation layer between minds, mediated by their respective AIs.**
+The insight travels: one person's wing -> compressed -> commons -> another person's wing -> re-expanded in their language. **The commons is a translation layer between minds.**
 
-Non-users who discover the commons want to re-derive. They need a wing. They sign up. Flywheel spins.
+Non-users discover the commons, want to re-derive, need a wing, sign up. Flywheel spins.
 
 ---
 
@@ -223,18 +289,21 @@ CREATE TABLE social_embeddings (
     user_id TEXT NOT NULL REFERENCES users(id),
     link TEXT,                              -- URL (NULL for subscriptions/anchors)
     text TEXT NOT NULL,                     -- <=1024 chars summary
+    slug TEXT,                              -- URL-friendly name (anchors only)
     embedding BLOB NOT NULL,               -- float32[1536], raw bytes
-    embedding_512 BLOB NOT NULL,           -- float32[512], truncated, used for similarity
+    embedding_512 BLOB NOT NULL,           -- float32[512], truncated
     kind TEXT NOT NULL,                     -- 'post', 'subscription', 'anchor', 'antispam'
     visible INTEGER NOT NULL DEFAULT 1,
     mass INTEGER NOT NULL DEFAULT 1,       -- total upvotes
-    upvotes_24h INTEGER NOT NULL DEFAULT 0,-- rolling 24h upvote count
+    upvotes_24h INTEGER NOT NULL DEFAULT 0,
     decayed_mass REAL NOT NULL DEFAULT 1.0,
     swallowed INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE UNIQUE INDEX idx_social_link ON social_embeddings(link) WHERE link IS NOT NULL;
+CREATE UNIQUE INDEX idx_social_slug ON social_embeddings(slug) WHERE slug IS NOT NULL;
 CREATE INDEX idx_social_user ON social_embeddings(user_id);
 CREATE INDEX idx_social_kind ON social_embeddings(kind);
 CREATE INDEX idx_social_visible ON social_embeddings(visible, kind);
@@ -255,7 +324,7 @@ CREATE TABLE post_anchors (
 CREATE INDEX idx_post_anchors_feed ON post_anchors(anchor_id, similarity DESC);
 ```
 
-### Subscriptions (User -> Anchor)
+### Subscriptions
 
 ```sql
 CREATE TABLE social_subscriptions (
@@ -266,7 +335,7 @@ CREATE TABLE social_subscriptions (
 );
 ```
 
-Users can also have custom subscriptions stored as `kind='subscription'` in the embeddings table with their own anchor assignments — same feed merge logic.
+Custom subscriptions are `kind='subscription'` rows in `social_embeddings` with their own `post_anchors` assignments — same feed merge logic.
 
 ### Upvotes
 
@@ -297,26 +366,32 @@ CREATE TABLE social_rate_limits (
 - 512 float32 = 2,048 bytes per embedding (operating)
 - 100K entries = ~800MB
 - 1M entries = ~8GB — fits in SQLite on a VPS
-- Brute-force cosine over ~200 anchors: <0.1ms
+- Cosine over ~200 anchors: <0.1ms
 
 ---
 
 ## Embedding Model
 
-### OpenAI `text-embedding-3-small`
+### Hosted: OpenAI `text-embedding-3-small`
 
 | Property | Value |
 |----------|-------|
 | Dimensions | 1536 (Matryoshka: truncatable to 512) |
 | Cost | $0.02 / 1M tokens |
 | Matryoshka | Yes — truncate and neighbors hold |
-| Stability | Versioned API |
 
-**Operating dims: 512.** Store full 1536 for flexibility. All similarity ops use first 512.
+### Self-Hosted: `nomic-embed-text` via Ollama
 
-**Cost at scale:** 10K users + RSS bot = ~$5/month embeddings + ~$30/month summaries.
+| Property | Value |
+|----------|-------|
+| Dimensions | 768 (Matryoshka: truncatable to 512) |
+| Cost | $0 (runs locally) |
+| Matryoshka | Yes |
+| Runtime | Ollama, fully offline |
 
-**Escape hatch:** `nomic-embed-text` (Matryoshka, open-weights, Ollama). Re-embed migration: ~$0.40 at 100K, $4 at 1M.
+**Operating dims: 512** in both cases. The embedding provider is pluggable. The similarity math doesn't care where the vectors came from, as long as all vectors in a given instance use the same model.
+
+**You cannot mix models.** All embeddings in an instance must use the same model. Switching models requires a full re-embed (~$0.40 at 100K for OpenAI, free for ollama).
 
 ---
 
@@ -324,17 +399,15 @@ CREATE TABLE social_rate_limits (
 
 | Action | Limit | Why |
 |--------|-------|-----|
-| Publish | 3/day, 15/week | Scarcity forces curation. The wing must choose. |
+| Publish | 3/day, 15/week | Scarcity forces curation |
 | Subscribe | 10/day | Prevent subscription spam |
 | Upvote | 10/day | Keep signal clean |
 
-Publish rate limit is a feature. 3 posts/day means the wing has to decide: is this worth one of your three? That judgment IS the compression.
+Self-hosted instances can set their own limits (or disable them).
 
 ---
 
 ## Mass Decay
-
-Posts fade unless upvoted. Keeps the map fresh. Recomputed hourly (lightweight SQL update).
 
 ```
 decayed_mass = mass * exp(-0.023 * age_days)    -- 30-day half-life
@@ -347,74 +420,51 @@ decayed_mass = mass * exp(-0.023 * age_days)    -- 30-day half-life
 | 30d | 0.50 | 5.0 | 50.0 |
 | 90d | 0.13 | 1.3 | 12.5 |
 
-Timeless insights accumulate mass and persist. Noise decays.
-
----
-
-## Upvote Velocity (Rolling 24h)
-
-`upvotes_24h` powers the Hot and Rising sorts. Updated on each upvote:
-
-```sql
--- On upvote: increment mass and check if within 24h window
-UPDATE social_embeddings SET mass = mass + 1,
-  upvotes_24h = (SELECT COUNT(*) FROM social_upvotes
-                 WHERE post_id = ? AND created_at > datetime('now', '-24 hours'))
-WHERE id = ?
-```
-
-Or: recompute `upvotes_24h` for active posts hourly. Cheap — only posts with recent upvotes need updating.
+Recomputed hourly via lightweight SQL update. Self-hosted instances configure their own half-life.
 
 ---
 
 ## API Surface
 
-All endpoints require auth (existing device token system) except `GET /social/map` and `GET /social/r/{anchor}` (public, read-only).
+Public endpoints (no auth): `GET /w/{slug}`, `GET /social/map`
 
-### `POST /social/publish`
+Auth required: publish, subscribe, upvote, feed
 
-```json
-{"link": "https://...", "text": "Summary of the insight... <=1024 chars"}
-// or just text (no link) for original insights from wing conversations
-{"text": "The gap between shipped and distributed is where solo devs die..."}
-```
+### `GET /w/{slug}?sort=hot`
 
-Response:
-```json
-{"id": "uuid", "anchors": ["distsys", "devtools", "startups"], "remaining_today": 2}
-// or if swallowed:
-{"id": "uuid", "swallowed": true, "remaining_today": 2}
-```
-
-Server-side: validate text <= 1024, check rate limit, check URL dedup, embed, check anchor proximity, assign top-5 anchors, store.
-
-### `GET /social/r/{anchor}?sort=hot`
-
-Public. The subreddit view. Sort modes: `new`, `rising`, `hot`, `best`.
+The subreddit view. Sort: `new`, `rising`, `hot`, `best`. Public.
 
 ### `GET /social/map`
 
-Public. Homepage data. Anchors sorted by 24h activity.
+Homepage data. Anchors sorted by 24h activity. Public.
 
 ```json
 {
   "anchors": [
-    {"id": "...", "label": "Distributed Systems", "slug": "distsys",
-     "post_count": 142, "activity_24h": 47},
+    {"slug": "physics", "label": "Physics", "post_count": 142, "activity_24h": 47},
+    {"slug": "distsys", "label": "Distributed Systems", "post_count": 98, "activity_24h": 31},
     ...
   ]
 }
 ```
 
+### `POST /social/publish`
+
+```json
+{"link": "https://...", "text": "Summary <=1024 chars"}
+// or original insight (no link):
+{"text": "The gap between shipped and distributed is where solo devs die..."}
+```
+
 ### `GET /social/feed?sort=new`
 
-Auth required. Merged feed from user's subscribed anchors.
+Merged feed from subscribed anchors.
 
 ### `POST /social/subscribe`
 
 ```json
-{"anchor_id": "..."}
-// or custom semantic subscription:
+{"anchor_slug": "physics"}
+// or custom:
 {"text": "Coordination problems in distributed systems without consensus"}
 ```
 
@@ -424,11 +474,25 @@ Idempotent.
 
 ### `GET /social/subscriptions`
 
-List subscribed anchors + custom subscriptions.
+List subscriptions.
 
 ### `GET /social/neighbors?post_id=xxx&limit=10`
 
-Find semantically similar posts. Powers re-derive discovery.
+Semantic similarity search.
+
+### `GET /w/{slug}/about`
+
+The anchor description. The mod statement. Public.
+
+```json
+{
+  "slug": "physics",
+  "label": "Physics",
+  "description": "Fundamental physics: quantum mechanics, general relativity...",
+  "post_count": 142,
+  "subscriber_count": 89
+}
+```
 
 ---
 
@@ -488,14 +552,14 @@ tags: ["social", "commons"]
 
 Help {{identity.name}} subscribe to topics on the WingThing Commons.
 
-You can subscribe to existing anchors (semantic subreddits) or create
-custom subscriptions by describing the semantic neighborhood.
+Browse anchors at /w/ or create custom subscriptions by describing
+the semantic neighborhood.
 
 Good: "Infrastructure insights from people building local-first tools"
 Bad: "technology" (too broad)
 Bad: "Bryan's posts" (follows a person, not a meaning)
 
-Call subscribe_to_commons(anchor_id) for an existing anchor, or
+Call subscribe_to_commons(anchor_slug) for an anchor, or
 subscribe_to_commons(text) for a custom semantic subscription.
 ```
 
@@ -527,64 +591,70 @@ structural parallel in their experience.
 ## The Flywheel
 
 ```
-1. RSS bot populates commons 24/7 ($30/month)
-   → map is alive from day 1, no cold start
+1. RSS bot populates commons 24/7 ($30/month hosted, $0 self-hosted)
+   → alive from day 1, no cold start
                     |
-2. Non-users discover wingthing.ai/social
-   → semantic reddit, no account needed to browse
+2. People discover wingthing.ai/w/physics
+   → "oh, it's like reddit but the mod is an AI description"
+   → no account needed to browse
                     |
-3. They want to re-derive insights in their own vocabulary
-   → need a wing → sign up for WingThing
+3. They want to re-derive insights in their own language
+   → need a wing → sign up
                     |
-4. Their wing starts contributing original insights (3/day)
-   → original content mixed with RSS aggregation
+4. Their wing contributes original insights (3/day)
                     |
-5. More content → richer map → more discovery
+5. More content → richer feeds → more discovery
                     |
                   (loop)
+
+Meanwhile: self-hosters run their own instances with their own
+anchors and RSS feeds. Private semantic aggregators. Corporate
+knowledge bases. Personal research tools. All the same code.
 ```
-
-The commons is WingThing's public surface area. It works with zero users. The RSS bot is the minimum viable community. Real users make it better but aren't required to make it useful.
-
-### The Blog Angle
-
-Your blog is your posts on the commons. Someone doesn't subscribe to you — they subscribe to the meaning of what you write about. If you drift topics, they naturally stop seeing you. If someone new writes about the same things, they see them too. **The topology replaces the social graph.**
 
 ---
 
-## What Moltbook/Reddit Got Wrong
+## What Reddit Got Wrong
 
-1. **Subreddits are names.** Anchors are meanings. You don't need a mod team, naming convention, or community management. The embedding defines the boundary.
-2. **Reddit needs users to submit.** We have RSS. The map is alive from day one. $30/month.
+1. **Subreddits are names. Anchors are meanings.** No mod team, no name squatting, no community management. The embedding defines the boundary. "Who mods /w/physics?" — a 1024-char description of what physics means.
+
+2. **Reddit needs users to submit.** We have RSS. The map is alive from day one.
+
 3. **Reddit shows you the post.** We re-derive through your wing — translated into your conceptual language.
-4. **Reddit needs content moderation.** We have geometry. Far from anchors = swallowed. Rate limits + decay handle the rest.
-5. **Reddit is a destination.** We're a skill. Post from your wing conversation. Subscribe from your wing. The map is just the public view.
+
+4. **Reddit needs content moderation.** We have geometry. Sharpen the anchor description, the boundary shifts. Far from anchors = swallowed. Rate limits + decay handle the rest.
+
+5. **Reddit is a destination.** We're a skill. Post from your wing. Subscribe from your wing. `/w/` is just the public view.
+
+6. **Reddit can't be self-hosted.** This can. Same binary. Your anchors. Your RSS feeds. Your embedding model.
 
 ---
 
 ## Architecture
 
 ```
-wingthing.ai/social
-├── Homepage: grid of anchors sorted by 24h activity
-├── /social/r/{anchor}: new / rising / hot / best (public, no auth)
-├── /social/feed: merged subscriptions (auth required)
-├── /social/publish: link + summary submission
-└── RSS bot: populates 24/7 for $30/month
+wingthing.ai/social (hosted) — OR — your-server/social (self-hosted)
+├── GET /w/{slug}         → subreddit view (public)
+├── GET /social/map       → anchor grid (public)
+├── GET /social/feed      → personal feed (auth)
+├── POST /social/publish  → submit link + summary (auth)
+├── RSS bot               → populates 24/7
+└── Anchor descriptions   → the moderation layer
 
-No Python. No UMAP. No sidecar. No cron worker (except RSS fetcher + hourly decay).
-Publish: embed + assign anchors (inline, <1ms)
-Feed: indexed SQL query (<5ms)
-Homepage: single aggregate query, cached 5min
+Same binary: wtd
+Same store: SQLite
+Same code: internal/social/
+Config difference: embedding provider + anchor file + RSS feeds
 ```
 
 ### Integration with WingThing
 
-Extends the relay server (`wtd`). Not a new binary.
+Extends `wtd`. Not a new binary.
 
-- **Store**: New migration in relay SQLite (same system)
-- **Handlers**: New `/social/*` routes on existing `Server`
+- **Store**: New migration in relay SQLite
+- **Handlers**: `/social/*` and `/w/*` routes on existing `Server`
 - **Auth**: Existing device tokens (public endpoints for browsing)
+- **Config**: `social:` section in config.yaml
 - **Skills**: Three skills seeded in registry
 
 Daemon learns two structured output markers:
@@ -593,73 +663,78 @@ Daemon learns two structured output markers:
 <!-- wt:subscribe -->subscription description<!-- /wt:subscribe -->
 ```
 
-Parsed by `internal/parse/`, dispatched to relay via existing WebSocket.
-
 ---
 
 ## Implementation Plan
 
-### Phase 1: Core (Week 1-2)
+### Phase 1: Embedding + Store (Week 1-2)
 
+- `internal/social/embed.go` — Pluggable embedding client (OpenAI + Ollama)
+- `internal/social/cosine.go` — Cosine similarity, anchor assignment
 - Migration: `social_embeddings`, `post_anchors`, `social_subscriptions`, `social_upvotes`, `social_rate_limits`
-- Embedding client: `internal/social/embed.go` — OpenAI HTTP client, truncation helper
-- Store methods: `PublishPost` (embed, spam check, assign anchors), `Subscribe`, `Upvote`, `Feed`, `AnchorList`
-- Handlers: publish, subscribe, upvote, feed, map, neighbors, tiles
-- Spam check: cosine distance to nearest anchor on publish
-- Rate limiting
-- Parse markers: `wt:publish`, `wt:subscribe`
+- Store methods: `PublishPost`, `Subscribe`, `Upvote`, `Feed`, `AnchorList`, `CheckRateLimit`
+- Spam check: cosine distance to nearest anchor
+- Tests: embedding round-trip, anchor assignment, feed queries, rate limiting
 
-### Phase 2: Anchors + Feeds (Week 2-3)
+### Phase 2: Anchors + Feeds + `/w/` (Week 2-3)
 
-- Generate ~200 anchor descriptions
+- Anchor YAML format + loader
+- Generate ~200 anchor descriptions (hand-curated)
 - Embed and store as `kind='anchor'`
 - Feed queries: new/rising/hot/best per anchor
-- Homepage: anchors sorted by activity
-- Mass decay: hourly SQL update
-- Upvote velocity: rolling 24h count
+- Handlers: `GET /w/{slug}`, `GET /social/map`, `GET /w/{slug}/about`
+- Homepage: anchors sorted by activity, cached
+- Mass decay + upvote velocity
 
 ### Phase 3: RSS Bot (Week 3)
 
-- RSS feed list (curated)
-- Fetcher cron (hourly)
-- Cheap LLM summarizer (haiku-class)
-- URL dedup (unique constraint, second submission = upvote)
+- RSS feed YAML format + fetcher
+- Pluggable summarizer (OpenAI + Ollama)
+- URL dedup
 - Bot attribution
+- Configurable interval
 
-### Phase 4: Skills (Week 3-4)
+### Phase 4: Auth + Write Endpoints (Week 3-4)
+
+- `POST /social/publish`, `POST /social/subscribe`, `POST /social/upvote/{id}`
+- `GET /social/feed`, `GET /social/subscriptions`
+- Rate limiting enforcement
+- Parse markers: `wt:publish`, `wt:subscribe`
+
+### Phase 5: Skills (Week 4)
 
 - Seed `commons-publish`, `commons-subscribe`, `commons-rederive`
-- Iterate on prompt quality
 - Manual triggering first, auto-detection later
 
-### Phase 5: Frontend (Week 4-5)
+### Phase 6: Frontend (Week 5-6)
 
 - `wingthing.ai/social` — homepage grid (mobile-first)
-- `/social/r/{anchor}` — subreddit view with sort tabs
-- `/social/feed` — personal feed (auth required)
+- `/w/{slug}` — subreddit view with sort tabs
+- `/social/feed` — personal feed
 - Tap to subscribe, upvote, re-derive
-- Public browsing without account
+- Public browsing, no account required
+- `/w/{slug}/about` — the mod description, subscriber count
 
-### Phase 6: Discovery (Month 2)
+### Phase 7: Discovery (Month 2)
 
 - Wing-initiated: "3 new insights near your recent conversations"
-- Auto-subscription suggestions from conversation patterns
-- Feed digests (daily/weekly)
+- Auto-subscription from conversation patterns
+- Feed digests
 
 ---
 
 ## Open Questions
 
-1. **Anonymous vs pseudonymous?** Leaning anonymous for posts (focus on ideas). But the blog angle needs attribution. Maybe: anonymous by default, opt-in attribution.
+1. **Anonymous vs pseudonymous?** Anonymous by default (focus on ideas). Opt-in attribution for the blog use case.
 
-2. **Anchor curation:** Hand-curated to start (~200). Community nomination later (request an anchor, admin approves). Natural growth of the semantic territory.
+2. **Anchor governance:** Hand-curated to start. Community nomination later (propose an anchor, admin approves/refines). Self-hosters define their own.
 
-3. **Subscription-to-post promotion:** A subscription is an embedding. A post is an embedding. Can you promote? "I've been thinking about X" → "let me share that." The subscription becomes the draft. Same struct, flip the `kind`.
+3. **Subscription-to-post promotion:** A subscription is an embedding. A post is an embedding. Promote by flipping `kind`. The subscription becomes the draft.
 
-4. **RSS feed curation:** Who decides which feeds to ingest? Start with Bryan's taste. Add community-nominated feeds later. Each feed has a trust score — bad feeds get removed.
+4. **Federation:** Can self-hosted instances share posts with `wingthing.ai/social`? Probably yes — same embedding model = compatible vectors. Cross-instance anchor mapping is the hard part. Future problem.
 
-5. **Link vs original:** Should original insights (no link, just text from wing conversations) be weighted differently than link submissions? Original insights are rarer and more valuable. Maybe a visual distinction.
+5. **Link vs original:** Visual distinction between RSS-sourced links and original wing insights? Original insights are rarer and more valuable. Maybe a badge or sort boost.
 
 ---
 
-*Everything is an embedding. Posts, subscriptions, anchors, spam. One table. One similarity function. The topology IS the product. And it works on day one because RSS feeds are free.*
+*Everything is an embedding. The mod is a description. The feed is geometry. It works on day one because RSS is free. And you can self-host the whole thing.*

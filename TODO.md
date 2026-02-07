@@ -482,14 +482,163 @@ All 5 are independent — **5 parallel worktrees.**
 
 ---
 
-## v0.5 — More Adapters + Advanced Orchestration
+## v0.5 — WingThing Social (The Commons)
+
+**Goal:** Semantic Reddit. RSS-seeded link aggregator with embedding-space moderation. Self-hostable. `/w/` namespace.
+
+**Design doc:** [WINGTHING_SOCIAL.md](WINGTHING_SOCIAL.md)
+
+### Dependency Graph
+
+```
+Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-ingest/    handlers/    cli/
+          ↑                ↑             ↑               ↑                ↑              ↑            ↑
+          relay/store      (new pkg)     embedding/      social-store/    embedding/     social-store/ transport/
+                                         social-store/   anchor-seed/     social-store/  feed-queries/
+```
+
+### Phase 15a: Foundation (3 parallel)
+
+#### [parallel] Social Store
+
+**Branch:** `wt/social-store` | **Package:** `internal/relay/`
+
+- [ ] Migration: `social_embeddings` table (id, user_id, link, text, slug, embedding, embedding_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at)
+- [ ] Migration: `post_anchors` table (post_id, anchor_id, similarity)
+- [ ] Migration: `social_votes` table (user_id, post_id, created_at)
+- [ ] Migration: `social_rate_limits` table (user_id, action, window_start, count)
+- [ ] CRUD: CreateEmbedding, GetEmbedding, ListByAnchor (new/rising/hot/best), SearchEmbeddings
+- [ ] Anchor assignment: cosine similarity against ~200 anchors, store top-5 in post_anchors
+- [ ] URL dedup: unique constraint on normalized link, second submission = upvote
+- [ ] Rate limiting: 3 posts/day, 15/week, 10 upvotes/day, 10 subscriptions/day
+- [ ] Tests: CRUD, anchor assignment, dedup, rate limits
+
+---
+
+#### [parallel] Embedding Package
+
+**Branch:** `wt/embedding` | **Package:** `internal/embedding/`
+
+- [ ] `embedding.go` — Interface: `Embed(text string) ([]float32, error)`
+- [ ] `openai.go` — OpenAI text-embedding-3-small (1536 dims, truncate to 512)
+- [ ] `ollama.go` — nomic-embed-text via ollama (768 dims, truncate to 512)
+- [ ] `cosine.go` — Cosine similarity, top-N nearest, batch operations
+- [ ] `matryoshka.go` — Dimension truncation (1536→512, 768→512)
+- [ ] Config: embedding provider selection (openai vs ollama), API key
+- [ ] Tests: cosine similarity, truncation, provider selection
+
+---
+
+#### [parallel] Anchor Seed
+
+**Branch:** `wt/anchor-seed` | **Package:** `internal/relay/`
+
+- [ ] `anchors.yaml` — ~200 anchor definitions (slug, name, description <=1024 chars)
+  - Categories: science, technology, programming, business, politics, arts, sports, gaming, health, education, philosophy, etc.
+- [ ] `seed_anchors.go` — Read anchors.yaml, embed each description, insert as kind='anchor'
+- [ ] Each anchor gets a slug (e.g., "physics", "golang", "machine-learning")
+- [ ] Idempotent: re-seed updates descriptions and re-embeds, doesn't duplicate
+- [ ] Tests: seed, re-seed idempotent, anchor count
+
+---
+
+### Phase 15b: Feeds + Ingestion (2 parallel)
+
+#### [parallel] Feed Queries
+
+**Branch:** `wt/feeds` | **Package:** `internal/relay/`
+
+- [ ] `/w/{slug}` feed queries: new, rising, hot, best (indexed SQL through post_anchors)
+- [ ] Hot sort: `upvotes_24h / (1 + age_days * 2)`
+- [ ] Rising: `upvotes_24h > 0 ORDER BY created_at DESC`
+- [ ] Best: `ORDER BY mass DESC`
+- [ ] Homepage: grid of anchors sorted by 24h activity (like Twitch browse)
+- [ ] Mass decay: `decayed_mass = mass * exp(-0.023 * age_days)` — 30-day half-life
+- [ ] Decay job: run on daemon tick, update decayed_mass for active posts
+- [ ] Tests: feed ordering, decay calculation, homepage sort
+
+---
+
+#### [parallel] RSS Ingestion
+
+**Branch:** `wt/rss` | **Package:** `internal/social/`
+
+- [ ] `rss.go` — RSS/Atom feed parser (use `github.com/mmcdole/gofeed`)
+- [ ] `ingest.go` — Pipeline: fetch feed → extract items → summarize (LLM) → embed → assign anchors → insert
+- [ ] `feeds.yaml` — Default RSS feeds to ingest (~50 feeds across categories)
+- [ ] Summarizer: configurable (claude, ollama, or skip for feeds with good descriptions)
+- [ ] Dedup: skip items with URLs already in social_embeddings
+- [ ] Rate: configurable poll interval per feed (default 1h)
+- [ ] Tests: feed parsing, dedup, pipeline end-to-end with mock summarizer
+
+---
+
+### Phase 15c: API + CLI (2 parallel)
+
+#### [parallel] Social Handlers
+
+**Branch:** `wt/social-handlers` | **Package:** `internal/relay/`
+
+- [ ] `GET /w` — Homepage: anchor grid sorted by activity
+- [ ] `GET /w/{slug}` — Feed for anchor (query param: sort=new|rising|hot|best)
+- [ ] `GET /w/{slug}/about` — Anchor description, post count, subscriber count
+- [ ] `POST /w/{slug}` — Submit post (link + optional text, auth required)
+- [ ] `POST /w/{slug}/vote` — Upvote post (auth required)
+- [ ] `GET /social/search` — Search posts by text (LIKE query on text field)
+- [ ] Register routes in server.go
+- [ ] Tests: all endpoints, auth, rate limiting, 404 for unknown slugs
+
+---
+
+#### [parallel] Social CLI
+
+**Branch:** `wt/social-cli` | **Package:** `cmd/wt/`
+
+- [ ] `wt social` — Browse homepage (anchor grid)
+- [ ] `wt social <slug>` — Browse feed for anchor
+- [ ] `wt social post <slug> <url>` — Submit a post
+- [ ] `wt social vote <post-id>` — Upvote
+- [ ] `wt social subscribe <slug>` — Subscribe to anchor
+- [ ] Integrate with existing transport client
+- [ ] Tests: CLI flag parsing
+
+---
+
+### Phase 15d: Self-Hosting Config
+
+- [ ] Config: `social:` section in config.yaml
+  - `embedding_provider: openai | ollama`
+  - `embedding_model: text-embedding-3-small | nomic-embed-text`
+  - `summarizer: claude | ollama | none`
+  - `anchors_file: anchors.yaml` (custom anchor definitions)
+  - `feeds_file: feeds.yaml` (custom RSS feeds)
+- [ ] Pluggable: same `wtd` binary, different config = different instance
+- [ ] Tests: config loading, provider selection
+
+---
+
+### Phase 16: v0.5 Integration + Ship
+
+- [ ] End-to-end: post a link → assigned to anchors → appears in feed
+- [ ] End-to-end: RSS ingestion → posts appear in correct feeds
+- [ ] End-to-end: upvote → hot sort changes
+- [ ] End-to-end: rate limiting blocks excessive posts
+- [ ] End-to-end: self-hosted config with ollama embedding
+- [ ] Seed anchors for wingthing.ai/social (~200)
+- [ ] Seed RSS feeds (~50)
+- [ ] Update README
+- [ ] Tag v0.5.0
+
+---
+
+## v0.6 — More Adapters + Advanced Orchestration
 
 **Goal:** Tier 1+2 agent adapters. Smart budget management. Two-pass loading. LLM orchestrator boost. Interactive sessions.
 
 ### Dependency Graph
 
 ```
-Phase 15: opencode/    codex/    goose/    amp/    budget/    two-pass/    llm-triage/    interactive/
+Phase 17: opencode/    codex/    goose/    amp/    budget/    two-pass/    llm-triage/    interactive/
           ↑            ↑         ↑         ↑       ↑          ↑            ↑              ↑
           agent/       agent/    agent/    agent/  orchestr/  orchestr/    orchestr/      agent/
                                                    thread/    memory/      memory/        timeline/
@@ -629,22 +778,22 @@ All 8 independent — **8 parallel worktrees.**
 
 ---
 
-### Phase 16: v0.5 Integration + Ship
+### Phase 18: v0.6 Integration + Ship
 
 - [ ] Integration test: each new adapter end-to-end
 - [ ] Integration test: smart budget with large thread + many memory files
 - [ ] Integration test: two-pass loading triggers and resolves
 - [ ] Integration test: interactive session multi-turn
 - [ ] Update README with adapter list, budget docs, interactive mode
-- [ ] Tag v0.5.0
+- [ ] Tag v0.6.0
 
 ---
 
-## v0.6 — Agent-Driven Install + Service Management
+## v0.7 — Agent-Driven Install + Service Management
 
 **Goal:** Any coding agent can install wingthing. Daemon runs as a system service.
 
-### Phase 17: Install + Service (2 parallel)
+### Phase 19: Install + Service (2 parallel)
 
 #### [parallel] Agent-Driven Install
 
@@ -687,7 +836,7 @@ All 8 independent — **8 parallel worktrees.**
 
 ---
 
-### Phase 18: v0.6 Integration + Ship
+### Phase 20: v0.7 Integration + Ship
 
 - [ ] End-to-end: install.sh on clean macOS + Linux (CI matrix)
 - [ ] End-to-end: launchd install/uninstall on macOS
@@ -695,7 +844,7 @@ All 8 independent — **8 parallel worktrees.**
 - [ ] Publish install.sh + install.md to wingthing.ai
 - [ ] GitHub Actions release pipeline
 - [ ] Update README
-- [ ] Tag v0.6.0
+- [ ] Tag v0.7.0
 
 ---
 
@@ -703,7 +852,7 @@ All 8 independent — **8 parallel worktrees.**
 
 **Goal:** Everything works. Everything is documented. Ship it.
 
-### Phase 19: Hardening
+### Phase 21: Hardening
 
 - [ ] Full error handling audit: every code path has proper error propagation
 - [ ] Graceful degradation: daemon stays up when individual components fail
@@ -714,7 +863,7 @@ All 8 independent — **8 parallel worktrees.**
 - [ ] SQLite: WAL checkpoint strategy, vacuum schedule, db size monitoring
 - [ ] Logging: structured logging (slog), log levels, log rotation
 
-### Phase 20: Documentation
+### Phase 22: Documentation
 
 - [ ] wingthing.ai landing page
 - [ ] Getting started guide
@@ -725,7 +874,7 @@ All 8 independent — **8 parallel worktrees.**
 - [ ] Troubleshooting guide
 - [ ] Contributing guide
 
-### Phase 21: Ship
+### Phase 23: Ship
 
 - [ ] All integration tests pass on macOS + Linux
 - [ ] All 128 skills verified
