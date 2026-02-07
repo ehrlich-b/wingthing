@@ -13,6 +13,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
+const maxRetryBackoff = 5 * time.Minute
+
 // Engine drives the task execution loop.
 type Engine struct {
 	Store        *store.Store
@@ -66,7 +68,46 @@ func (e *Engine) poll(ctx context.Context) error {
 		e.Store.SetTaskError(task.ID, errMsg)
 		e.Store.AppendLog(task.ID, "failed", &errMsg)
 		_, _ = fmt.Fprintf(os.Stderr, "task %s failed: %v\n", task.ID, err)
+
+		if task.RetryCount < task.MaxRetries {
+			e.scheduleRetry(task)
+		}
 	}
 
 	return nil
+}
+
+// RetryBackoff computes exponential backoff capped at maxRetryBackoff.
+func RetryBackoff(retryCount int) time.Duration {
+	d := time.Duration(1<<uint(retryCount)) * time.Second
+	if d > maxRetryBackoff {
+		d = maxRetryBackoff
+	}
+	return d
+}
+
+func (e *Engine) scheduleRetry(task *store.Task) {
+	backoff := RetryBackoff(task.RetryCount)
+	now := time.Now()
+	retryTask := &store.Task{
+		ID:         fmt.Sprintf("%s-r%d", task.ID, task.RetryCount+1),
+		Type:       task.Type,
+		What:       task.What,
+		RunAt:      now.Add(backoff),
+		Agent:      task.Agent,
+		Isolation:  task.Isolation,
+		Memory:     task.Memory,
+		Cron:       task.Cron,
+		ParentID:   &task.ID,
+		Status:     "pending",
+		RetryCount: task.RetryCount + 1,
+		MaxRetries: task.MaxRetries,
+	}
+	if err := e.Store.CreateTask(retryTask); err != nil {
+		msg := fmt.Sprintf("schedule retry: %v", err)
+		e.Store.AppendLog(task.ID, "retry_error", &msg)
+		return
+	}
+	detail := fmt.Sprintf("retry %d/%d in %s", retryTask.RetryCount, retryTask.MaxRetries, backoff)
+	e.Store.AppendLog(task.ID, "retry_scheduled", &detail)
 }

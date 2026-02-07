@@ -74,6 +74,7 @@ func Run(cfg *config.Config) error {
 	// Transport server
 	srv := transport.NewServer(s, cfg.SocketPath())
 	srv.SetSkillsDir(cfg.SkillsDir())
+	srv.DefaultMaxRetries = cfg.DefaultMaxRetries
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

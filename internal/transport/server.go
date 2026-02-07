@@ -25,9 +25,10 @@ func genTaskID() string {
 }
 
 type Server struct {
-	store      *store.Store
-	socketPath string
-	skillsDir  string
+	store             *store.Store
+	socketPath        string
+	skillsDir         string
+	DefaultMaxRetries int
 }
 
 func NewServer(s *store.Store, socketPath string) *Server {
@@ -86,10 +87,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 // Request/response types
 
 type createTaskRequest struct {
-	What  string `json:"what"`
-	Type  string `json:"type"`
-	Agent string `json:"agent"`
-	RunAt string `json:"run_at"`
+	What       string `json:"what"`
+	Type       string `json:"type"`
+	Agent      string `json:"agent"`
+	RunAt      string `json:"run_at"`
+	MaxRetries *int   `json:"max_retries,omitempty"`
 }
 
 type taskResponse struct {
@@ -107,6 +109,8 @@ type taskResponse struct {
 	Output     *string `json:"output,omitempty"`
 	Error      *string `json:"error,omitempty"`
 	ParentID   *string `json:"parent_id,omitempty"`
+	RetryCount int     `json:"retry_count"`
+	MaxRetries int     `json:"max_retries"`
 }
 
 type statusResponse struct {
@@ -117,18 +121,20 @@ type statusResponse struct {
 
 func taskToResponse(t *store.Task) taskResponse {
 	r := taskResponse{
-		ID:        t.ID,
-		Type:      t.Type,
-		What:      t.What,
-		RunAt:     t.RunAt.UTC().Format(time.RFC3339),
-		Agent:     t.Agent,
-		Isolation: t.Isolation,
-		Status:    t.Status,
-		Cron:      t.Cron,
-		CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
-		Output:    t.Output,
-		Error:     t.Error,
-		ParentID:  t.ParentID,
+		ID:         t.ID,
+		Type:       t.Type,
+		What:       t.What,
+		RunAt:      t.RunAt.UTC().Format(time.RFC3339),
+		Agent:      t.Agent,
+		Isolation:  t.Isolation,
+		Status:     t.Status,
+		Cron:       t.Cron,
+		CreatedAt:  t.CreatedAt.UTC().Format(time.RFC3339),
+		Output:     t.Output,
+		Error:      t.Error,
+		ParentID:   t.ParentID,
+		RetryCount: t.RetryCount,
+		MaxRetries: t.MaxRetries,
 	}
 	if t.StartedAt != nil {
 		s := t.StartedAt.UTC().Format(time.RFC3339)
@@ -169,12 +175,17 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		runAt = parsed.UTC()
 	}
 
+	maxRetries := s.DefaultMaxRetries
+	if req.MaxRetries != nil {
+		maxRetries = *req.MaxRetries
+	}
 	t := &store.Task{
-		ID:    genTaskID(),
-		Type:  req.Type,
-		What:  req.What,
-		RunAt: runAt,
-		Agent: req.Agent,
+		ID:         genTaskID(),
+		Type:       req.Type,
+		What:       req.What,
+		RunAt:      runAt,
+		Agent:      req.Agent,
+		MaxRetries: maxRetries,
 	}
 	// If skill type and we have a skills dir, check for a schedule field.
 	if req.Type == "skill" && s.skillsDir != "" {
@@ -270,22 +281,31 @@ func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reset to pending with run_at = now and clear error.
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	_, err = s.store.DB().Exec(
-		"UPDATE tasks SET status = 'pending', run_at = ?, error = NULL, started_at = NULL, finished_at = NULL WHERE id = ?",
-		now, id)
-	if err != nil {
+	newTask := &store.Task{
+		ID:         genTaskID(),
+		Type:       t.Type,
+		What:       t.What,
+		RunAt:      time.Now().UTC(),
+		Agent:      t.Agent,
+		Isolation:  t.Isolation,
+		Memory:     t.Memory,
+		Cron:       t.Cron,
+		ParentID:   &t.ID,
+		Status:     "pending",
+		RetryCount: 0,
+		MaxRetries: t.MaxRetries,
+	}
+	if err := s.store.CreateTask(newTask); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	t, _ = s.store.GetTask(id)
-	if t != nil {
-		writeJSON(w, http.StatusOK, taskToResponse(t))
-	} else {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	created, err := s.store.GetTask(newTask.ID)
+	if err != nil || created == nil {
+		writeJSON(w, http.StatusOK, taskToResponse(newTask))
+		return
 	}
+	writeJSON(w, http.StatusOK, taskToResponse(created))
 }
 
 func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request) {

@@ -202,8 +202,14 @@ func TestRetryTask(t *testing.T) {
 	if retried.Status != "pending" {
 		t.Errorf("want status=pending after retry, got %s", retried.Status)
 	}
-	if retried.Error != nil {
-		t.Errorf("want nil error after retry, got %v", retried.Error)
+	if retried.ID == created.ID {
+		t.Error("retry should create a new task, not reuse the old ID")
+	}
+	if retried.ParentID == nil || *retried.ParentID != created.ID {
+		t.Errorf("want parent_id=%s, got %v", created.ID, retried.ParentID)
+	}
+	if retried.RetryCount != 0 {
+		t.Errorf("want retry_count=0 for manual retry, got %d", retried.RetryCount)
 	}
 }
 
