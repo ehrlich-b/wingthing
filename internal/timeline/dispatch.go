@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
+	"github.com/ehrlich-b/wingthing/internal/cron"
 	"github.com/ehrlich-b/wingthing/internal/parse"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/skill"
@@ -152,6 +153,39 @@ func (e *Engine) dispatch(ctx context.Context, task *store.Task) error {
 	// 12. Mark task done
 	e.Store.UpdateTaskStatus(task.ID, "done")
 	e.Store.AppendLog(task.ID, "completed", nil)
+
+	// 13. Cron re-schedule: if task has a cron expression, create next occurrence
+	if task.Cron != nil && *task.Cron != "" {
+		sched, cronErr := cron.Parse(*task.Cron)
+		if cronErr != nil {
+			msg := fmt.Sprintf("cron parse: %v", cronErr)
+			e.Store.AppendLog(task.ID, "cron_error", &msg)
+		} else {
+			nextRun := sched.Next(time.Now())
+			if !nextRun.IsZero() {
+				nextTask := &store.Task{
+					ID:        fmt.Sprintf("%s-c%d", task.ID, nextRun.UnixMilli()),
+					Type:      task.Type,
+					What:      task.What,
+					RunAt:     nextRun,
+					Agent:     task.Agent,
+					Isolation: task.Isolation,
+					Memory:    task.Memory,
+					Cron:      task.Cron,
+					MachineID: task.MachineID,
+					ParentID:  &task.ID,
+					Status:    "pending",
+				}
+				if err := e.Store.CreateTask(nextTask); err != nil {
+					msg := fmt.Sprintf("cron reschedule: %v", err)
+					e.Store.AppendLog(task.ID, "cron_error", &msg)
+				} else {
+					msg := fmt.Sprintf("next run: %s (task %s)", nextRun.Format(time.RFC3339), nextTask.ID)
+					e.Store.AppendLog(task.ID, "cron_scheduled", &msg)
+				}
+			}
+		}
+	}
 
 	return nil
 }

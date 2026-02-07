@@ -181,6 +181,38 @@ func (c *Client) GetLog(taskID string) ([]json.RawMessage, error) {
 	return entries, nil
 }
 
+func (c *Client) ListSchedule() ([]taskResponse, error) {
+	resp, err := c.get("/schedule")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var tasks []taskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tasks); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return tasks, nil
+}
+
+func (c *Client) RemoveSchedule(id string) (*taskResponse, error) {
+	resp, err := c.delete("/schedule/" + id)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var t taskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&t); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &t, nil
+}
+
 // HTTP helpers
 
 func (c *Client) get(path string) (*http.Response, error) {
@@ -193,6 +225,14 @@ func (c *Client) post(path string, body []byte) (*http.Response, error) {
 		r = bytes.NewReader(body)
 	}
 	return c.http.Post("http://wt"+path, "application/json", r)
+}
+
+func (c *Client) delete(path string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodDelete, "http://wt"+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.http.Do(req)
 }
 
 func checkStatus(resp *http.Response, expected int) error {

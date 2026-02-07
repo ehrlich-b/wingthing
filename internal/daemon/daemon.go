@@ -73,6 +73,7 @@ func Run(cfg *config.Config) error {
 
 	// Transport server
 	srv := transport.NewServer(s, cfg.SocketPath())
+	srv.SetSkillsDir(cfg.SkillsDir())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -253,6 +253,52 @@ func TestRunCancelledContext(t *testing.T) {
 	}
 }
 
+func TestDispatchCronReschedule(t *testing.T) {
+	ag := &mockAgent{output: "cron task done"}
+	eng, s := setupEngine(t, ag)
+
+	cronExpr := "*/5 * * * *"
+	task := &store.Task{
+		ID:    "t-test-cron",
+		Type:  "prompt",
+		What:  "recurring job",
+		RunAt: time.Now().Add(-time.Second),
+		Agent: "test",
+		Cron:  &cronExpr,
+	}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := eng.poll(ctx); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+
+	got, err := s.GetTask("t-test-cron")
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if got.Status != "done" {
+		t.Fatalf("status = %q, want done", got.Status)
+	}
+
+	// Check that a follow-up recurring task was created
+	pending, _ := s.ListPending(time.Now().Add(10 * time.Minute))
+	found := false
+	for _, p := range pending {
+		if p.Cron != nil && *p.Cron == cronExpr && p.ParentID != nil && *p.ParentID == "t-test-cron" {
+			found = true
+			if p.What != "recurring job" {
+				t.Errorf("follow-up what = %q, want 'recurring job'", p.What)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected cron follow-up task to be created")
+	}
+}
+
 func TestDispatchThreadEntrySummaryTruncated(t *testing.T) {
 	long := strings.Repeat("x", 300)
 	ag := &mockAgent{output: long}
