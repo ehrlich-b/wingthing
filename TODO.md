@@ -507,14 +507,18 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
   - `centerpoint` TEXT: ~512 chars keyword-rich embedding target (anchors only)
   - `embedding`: from centerpoint for anchors, from text for posts
 - [ ] Migration: `post_anchors` table (post_id, anchor_id, similarity)
-- [ ] Migration: `social_votes` table (user_id, post_id, created_at)
+- [ ] Migration: `social_comments` table (id, post_id, user_id, parent_id, content, is_bot, created_at)
+- [ ] Migration: `social_users` table (id, provider, provider_id, display_name, avatar_url, is_pro, created_at) — social login via GitHub/Google OAuth
+- [ ] Migration: `social_upvotes` table (user_id, post_id, created_at)
 - [ ] Migration: `social_rate_limits` table (user_id, action, window_start, count)
 - [ ] CRUD: CreateEmbedding, GetEmbedding, ListByAnchor (new/rising/hot/best), SearchEmbeddings
+- [ ] CRUD: CreateComment, ListCommentsByPost (threaded)
 - [ ] Anchor assignment: cosine similarity against ~200 **effective anchors**, store top-2 above 0.40 in post_anchors; swallow below 0.25
+- [ ] Proximity boost: pro users get +0.05 additive similarity bonus on post assignment
 - [ ] Effective anchor: centroid_512, effective_512 columns; recompute centroid incrementally on publish, full refresh hourly
 - [ ] URL dedup: unique constraint on normalized link, second submission = upvote
-- [ ] Rate limiting: free (3 posts/day) vs pro (15/day) tiers
-- [ ] Tests: CRUD, anchor assignment, effective anchor drift, dedup, rate limits
+- [ ] Rate limiting: free (5 posts/day hard cap) vs pro (token bucket: burst 5, refill ~1/15min, 100/day unadvertised hard cap)
+- [ ] Tests: CRUD, anchor assignment, proximity boost, effective anchor drift, dedup, rate limits, comments
 
 ---
 
@@ -573,11 +577,13 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
 
 - [ ] `rss.go` — RSS/Atom feed parser (use `github.com/mmcdole/gofeed`)
 - [ ] `ingest.go` — Pipeline: fetch feed → extract items → summarize (LLM) → embed → assign anchors → insert
+- [ ] `comment_bot.go` — Bot comment pipeline: for high-similarity posts, generate insightful comment via ollama skill template, quality-gate, attach as is_bot=1
 - [ ] `feeds.yaml` — Default RSS feeds to ingest (~50 feeds across categories)
 - [ ] Summarizer: configurable (claude, ollama, or skip for feeds with good descriptions)
+- [ ] Comment skill template: tunable prompt that generates 1-2 paragraph insightful comments on articles
 - [ ] Dedup: skip items with URLs already in social_embeddings
 - [ ] Rate: configurable poll interval per feed (default 1h)
-- [ ] Tests: feed parsing, dedup, pipeline end-to-end with mock summarizer
+- [ ] Tests: feed parsing, dedup, bot comment generation, pipeline end-to-end with mock summarizer
 
 ---
 
@@ -587,15 +593,20 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
 
 **Branch:** `wt/social-handlers` | **Package:** `internal/relay/`
 
-- [ ] `GET /w` — Homepage: anchor grid sorted by activity
-- [ ] `GET /w/{slug}` — Feed for anchor (query param: sort=new|rising|hot|best)
-- [ ] `GET /w/{slug}/about` — Anchor description, post count, subscriber count
-- [ ] `POST /w/{slug}` — Submit post (link + optional text, auth required)
-- [ ] `POST /w/{slug}/vote` — Upvote post (auth required)
-- [ ] `GET /social/preview?text=...` — Preview anchor assignment before posting (no auth)
-- [ ] `GET /social/search` — Search posts by text (LIKE query on text field)
+- [ ] `GET /w` — Homepage: anchor grid sorted by activity (Cloudflare-cached 5min)
+- [ ] `GET /w/{slug}` — Feed for anchor (sort=new|rising|hot|best) (Cloudflare-cached 5min)
+- [ ] `GET /w/{slug}/about` — Anchor description, post count
+- [ ] `GET /w/{slug}/comments/{post_id}` — Threaded comments for a post
+- [ ] `POST /w/{slug}` — Submit post (link + optional text, social auth required)
+- [ ] `POST /w/{slug}/vote` — Upvote post (social auth required)
+- [ ] `POST /w/{slug}/comment` — Comment on post (social auth required)
+- [ ] `GET /social/preview?text=...` — Preview anchor assignment (no auth)
+- [ ] `GET /social/search` — Search posts by text (LIKE query)
+- [ ] `GET /auth/github` + `GET /auth/google` — OAuth login flow
+- [ ] `GET /auth/callback` — OAuth callback, create/find social_users, set session cookie
 - [ ] Register routes in server.go
-- [ ] Tests: all endpoints, auth, rate limiting, preview scoring, 404 for unknown slugs
+- [ ] Cache-Control headers for Cloudflare (5min on feeds, no-cache on writes)
+- [ ] Tests: all endpoints, OAuth flow, rate limiting, proximity boost for pro, comments, 404s
 
 ---
 

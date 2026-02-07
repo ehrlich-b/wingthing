@@ -423,6 +423,37 @@ CREATE TABLE social_upvotes (
 );
 ```
 
+### Comments
+
+```sql
+CREATE TABLE social_comments (
+    id TEXT PRIMARY KEY,
+    post_id TEXT NOT NULL REFERENCES social_embeddings(id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    parent_id TEXT REFERENCES social_comments(id),  -- threaded replies
+    content TEXT NOT NULL,                           -- <=2048 chars
+    is_bot INTEGER NOT NULL DEFAULT 0,              -- bot-generated flag
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_comments_post ON social_comments(post_id, created_at);
+```
+
+### Social Auth
+
+```sql
+CREATE TABLE social_users (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,              -- 'github', 'google'
+    provider_id TEXT NOT NULL,           -- OAuth subject ID
+    display_name TEXT NOT NULL,
+    avatar_url TEXT,
+    is_pro INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(provider, provider_id)
+);
+```
+
 ### Rate Limits
 
 ```sql
@@ -470,19 +501,45 @@ CREATE TABLE social_rate_limits (
 
 ---
 
-## Monetization
+## The Play
 
-**You only pay to post.** Browsing and RSS feeds are free forever. The constant flow of curated RSS content makes the site valuable even if nobody ever posts.
+**This is a distribution funnel.** `wingthing.ai/w/physics` is a URL someone finds, thinks "this is weirdly good," shares it, and discovers wingthing. The social layer is top-of-funnel. The task runner is the product underneath.
 
-| Tier | Posts | Boost | Cost |
-|------|-------|-------|------|
-| Free | 3/day | None | $0 |
-| Pro | 15/day | Homepage visibility boost | $5/mo |
-| Publisher | Unlimited | Homepage + feed priority | $15/mo |
+**The shoestring stack:**
+- `wtd` on a cheap VPS serving the web UI behind Cloudflare (5-min cache on feeds)
+- A beefy GPU machine (gaming PC) running ollama for embeddings + bot comment generation
+- GPU machine pushes content on a cron. Total hosting cost: ~$5/month.
+- Social login (GitHub/Google) for upvoting. Zero friction.
 
-**Why this works:** The RSS bot populates the feeds 24/7. Free users get a handful of posts. Paid users post more and get boosted on the homepage grid. But the core experience (browsing, subscribing, upvoting) is always free. The product works even if nobody pays — the RSS feeds keep it alive.
+### Bot Comments (The Zombie Town Fix)
 
-Self-hosted instances can set their own limits or disable them entirely.
+RSS content with no engagement is a newspaper. RSS content with a thoughtful 2-paragraph comment from a local model? That's value. The bot comment pipeline:
+
+```
+1. RSS item arrives → embed → assign anchors → store
+2. For interesting items (high similarity to active anchors):
+   a. Fetch full article (or use RSS description)
+   b. Generate insightful comment via ollama (tuned skill template)
+   c. Attach as system-attributed comment
+3. Quality gate: only publish comments above a confidence threshold
+```
+
+The comment prompt is a skill template — Bryan and his wing tune it until the comments are genuinely good. Not fake engagement. Actual insight from a GPU that has time to think.
+
+### Monetization
+
+**Everything is free.** Browsing, upvoting, posting (up to a limit). The product works if nobody ever pays.
+
+| Tier | Posts | Proximity Boost | Cost |
+|------|-------|----------------|------|
+| Free | 5/day | None | $0 |
+| Pro | Unlimited* | +0.05 similarity boost to all anchors | $5/mo |
+
+*Pro "unlimited" = 100/day hard cap (unadvertised), token bucket of 5 (can burst 5 in a row, refills ~1 per 15min). Just spam prevention — we want paid users to post a lot.
+
+**The only thing Pro boosts is nearness.** Your post gets a small additive bonus to its cosine similarity score, making it appear in more anchor feeds and rank slightly higher. You can't buy upvotes. You can't buy placement. You can only buy a little extra geometric reach. If the post is good, real upvotes do the rest. If it's bad, the boost barely matters — 0.05 on a 0.25 post still won't cross the 0.40 assign threshold.
+
+Self-hosted instances disable this entirely.
 
 ## Validated Thresholds (from experiment)
 
@@ -508,12 +565,13 @@ Tested against 50 live Moltbook posts (AI agent social network — mix of real c
 
 ## Rate Limiting
 
-| Action | Free | Pro | Why |
-|--------|------|-----|-----|
-| Publish | 3/day, 15/week | 15/day, 75/week | Scarcity forces curation |
-| Subscribe | 10/day | 10/day | Prevent subscription spam |
-| Upvote | 10/day | 30/day | Keep signal clean |
-| Preview | Unlimited | Unlimited | Let people play with embeddings |
+| Action | Free | Pro | Mechanism |
+|--------|------|-----|-----------|
+| Browse | Unlimited | Unlimited | This is the funnel |
+| Upvote | 30/day | 30/day | Social login required |
+| Publish | 5/day | Unlimited* | Token bucket (burst 5, refill ~1/15min, 100/day hard cap) |
+| Preview | Unlimited | Unlimited | No auth needed |
+| Comment | 10/day | 50/day | Prevent noise |
 
 ---
 
@@ -705,19 +763,25 @@ structural parallel in their experience.
 ## The Flywheel
 
 ```
-1. RSS bot populates commons 24/7 ($30/month hosted, $0 self-hosted)
+1. RSS bot populates feeds 24/7 ($5/month VPS + free GPU at home)
    → alive from day 1, no cold start
                     |
-2. People discover wingthing.ai/w/physics
-   → "oh, it's like reddit but the mod is an AI description"
-   → no account needed to browse
+2. Bot comments make feeds feel alive
+   → not fake engagement, actual insight from local GPU
+   → generated via tuned skill template, quality-gated
                     |
-3. They want to re-derive insights in their own language
-   → need a wing → sign up
+3. People discover wingthing.ai/w/compilers via search/sharing
+   → "what is this? it's like reddit but actually good"
+   → no account needed to browse, Cloudflare-cached
                     |
-4. Their wing contributes original insights (3/day)
+4. Social login to upvote (one click, GitHub/Google)
+   → upvotes feed the hot sort → better feeds → more sharing
                     |
-5. More content → richer feeds → more discovery
+5. Some people post their own links (5/day free)
+   → real community starts forming
+                    |
+6. "What's wingthing?" → discover the task runner
+   → the product underneath the funnel
                     |
                   (loop)
 
@@ -761,13 +825,27 @@ Same code: internal/social/
 Config difference: embedding provider + anchor file + RSS feeds
 ```
 
+### Hosting Architecture
+
+```
+Cloudflare (5-min cache on GET /w/*)
+    ↓
+VPS ($5/mo) running wtd
+    ↓                    ↑
+SQLite (feeds, posts)    GPU machine (gaming PC, home)
+                         ├── ollama for embeddings
+                         ├── ollama for bot comments
+                         └── pushes to VPS on cron
+```
+
 ### Integration with WingThing
 
 Extends `wtd`. Not a new binary.
 
 - **Store**: New migration in relay SQLite
 - **Handlers**: `/social/*` and `/w/*` routes on existing `Server`
-- **Auth**: Existing device tokens (public endpoints for browsing)
+- **Auth**: Social login (GitHub/Google OAuth) for upvoting + posting. Public endpoints for browsing.
+- **Caching**: Cloudflare CDN, 5-min TTL on feed endpoints. Purge on publish.
 - **Config**: `social:` section in config.yaml
 - **Skills**: Three skills seeded in registry
 
