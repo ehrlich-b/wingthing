@@ -57,9 +57,9 @@ func (e *Engine) Run(ctx context.Context) error {
 }
 
 func (e *Engine) poll(ctx context.Context) error {
-	tasks, err := e.Store.ListPending(time.Now())
+	tasks, err := e.Store.ListReady(time.Now())
 	if err != nil {
-		return fmt.Errorf("list pending: %w", err)
+		return fmt.Errorf("list ready: %w", err)
 	}
 	if len(tasks) == 0 {
 		return nil

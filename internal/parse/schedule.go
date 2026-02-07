@@ -9,4 +9,5 @@ type ScheduleDirective struct {
 	At      time.Time
 	Content string
 	Memory  []string
+	After   string
 }

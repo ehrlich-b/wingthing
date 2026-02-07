@@ -29,10 +29,11 @@ func NewClient(socketPath string) *Client {
 }
 
 type SubmitTaskRequest struct {
-	What  string `json:"what"`
-	Type  string `json:"type,omitempty"`
-	Agent string `json:"agent,omitempty"`
-	RunAt string `json:"run_at,omitempty"`
+	What      string `json:"what"`
+	Type      string `json:"type,omitempty"`
+	Agent     string `json:"agent,omitempty"`
+	RunAt     string `json:"run_at,omitempty"`
+	DependsOn string `json:"depends_on,omitempty"`
 }
 
 func (c *Client) SubmitTask(req SubmitTaskRequest) (*taskResponse, error) {

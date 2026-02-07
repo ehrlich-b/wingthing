@@ -110,6 +110,11 @@ func (e *Engine) dispatch(ctx context.Context, task *store.Task) error {
 			s := string(raw)
 			followUp.Memory = &s
 		}
+		if sd.After != "" {
+			deps, _ := json.Marshal([]string{sd.After})
+			s := string(deps)
+			followUp.DependsOn = &s
+		}
 		if err := e.Store.CreateTask(followUp); err != nil {
 			msg := fmt.Sprintf("create follow-up: %v", err)
 			e.Store.AppendLog(task.ID, "schedule_error", &msg)

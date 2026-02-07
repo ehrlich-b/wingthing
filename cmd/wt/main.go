@@ -24,6 +24,7 @@ import (
 func main() {
 	var skillFlag string
 	var agentFlag string
+	var afterFlag string
 
 	root := &cobra.Command{
 		Use:   "wt [prompt]",
@@ -46,6 +47,10 @@ func main() {
 			if agentFlag != "" {
 				req.Agent = agentFlag
 			}
+			if afterFlag != "" {
+				deps, _ := json.Marshal([]string{afterFlag})
+				req.DependsOn = string(deps)
+			}
 			t, err := c.SubmitTask(req)
 			if err != nil {
 				return fmt.Errorf("submit task: %w", err)
@@ -56,6 +61,7 @@ func main() {
 	}
 	root.Flags().StringVar(&skillFlag, "skill", "", "Run a named skill")
 	root.Flags().StringVar(&agentFlag, "agent", "", "Use specific agent")
+	root.Flags().StringVar(&afterFlag, "after", "", "Task ID this task depends on")
 
 	root.AddCommand(
 		timelineCmd(),
