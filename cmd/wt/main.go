@@ -144,7 +144,7 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("daemon not reachable: %w", err)
 			}
-			fmt.Printf("pending: %d\nrunning: %d\nagents:  %d\n", s.Pending, s.Running, s.Agents)
+			fmt.Printf("pending: %d\nrunning: %d\nagents:  %d\ntokens:  %d today / %d this week\n", s.Pending, s.Running, s.Agents, s.TokensToday, s.TokensWeek)
 			return nil
 		},
 	}

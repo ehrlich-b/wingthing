@@ -73,6 +73,19 @@ func (s *Store) DeleteThreadOlderThan(ts time.Time) (int64, error) {
 	return res.RowsAffected()
 }
 
+func (s *Store) SumTokensByDateRange(start, end time.Time) (int, error) {
+	var total sql.NullInt64
+	err := s.db.QueryRow(`SELECT SUM(tokens_used) FROM thread_entries WHERE timestamp >= ? AND timestamp < ?`,
+		start.UTC().Format(timeFmt), end.UTC().Format(timeFmt)).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("sum tokens: %w", err)
+	}
+	if !total.Valid {
+		return 0, nil
+	}
+	return int(total.Int64), nil
+}
+
 func scanThreadEntries(rows *sql.Rows) ([]*ThreadEntry, error) {
 	var entries []*ThreadEntry
 	for rows.Next() {

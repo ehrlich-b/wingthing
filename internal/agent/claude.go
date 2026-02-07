@@ -59,6 +59,9 @@ func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (*Stream,
 			if text, ok := parseStreamEvent(line); ok {
 				stream.send(Chunk{Text: text})
 			}
+			if input, output, ok := parseResultTokens(line); ok {
+				stream.SetTokens(input, output)
+			}
 		}
 		err := cmd.Wait()
 		if scanErr := scanner.Err(); scanErr != nil && err == nil {
@@ -88,6 +91,23 @@ type contentBlock struct {
 type deltaBody struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+}
+
+type resultEvent struct {
+	Type         string `json:"type"`
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+}
+
+func parseResultTokens(line string) (input, output int, ok bool) {
+	var ev resultEvent
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		return 0, 0, false
+	}
+	if ev.Type != "result" {
+		return 0, 0, false
+	}
+	return ev.InputTokens, ev.OutputTokens, true
 }
 
 func parseStreamEvent(line string) (string, bool) {

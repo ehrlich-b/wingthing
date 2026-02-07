@@ -100,9 +100,11 @@ type taskResponse struct {
 }
 
 type statusResponse struct {
-	Pending int `json:"pending"`
-	Running int `json:"running"`
-	Agents  int `json:"agents"`
+	Pending    int `json:"pending"`
+	Running    int `json:"running"`
+	Agents     int `json:"agents"`
+	TokensToday int `json:"tokens_today"`
+	TokensWeek  int `json:"tokens_week"`
 }
 
 func taskToResponse(t *store.Task) taskResponse {
@@ -345,10 +347,20 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	row.Scan(&running)
 	agents, _ := s.store.ListAgents()
 
+	now := time.Now().UTC()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	weekStart := todayStart.AddDate(0, 0, -6)
+	tomorrow := todayStart.AddDate(0, 0, 1)
+
+	tokensToday, _ := s.store.SumTokensByDateRange(todayStart, tomorrow)
+	tokensWeek, _ := s.store.SumTokensByDateRange(weekStart, tomorrow)
+
 	writeJSON(w, http.StatusOK, statusResponse{
-		Pending: pending,
-		Running: running,
-		Agents:  len(agents),
+		Pending:     pending,
+		Running:     running,
+		Agents:      len(agents),
+		TokensToday: tokensToday,
+		TokensWeek:  tokensWeek,
 	})
 }
 

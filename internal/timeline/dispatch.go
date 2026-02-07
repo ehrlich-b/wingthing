@@ -139,12 +139,18 @@ func (e *Engine) dispatch(ctx context.Context, task *store.Task) error {
 	if task.Type == "skill" {
 		skillName = &task.What
 	}
+	var tokensUsed *int
+	if inTok, outTok := stream.Tokens(); inTok+outTok > 0 {
+		total := inTok + outTok
+		tokensUsed = &total
+	}
 	entry := &store.ThreadEntry{
-		TaskID:    &task.ID,
-		MachineID: machineID,
-		Agent:     agentName,
-		Skill:     skillName,
-		Summary:   summary,
+		TaskID:     &task.ID,
+		MachineID:  machineID,
+		Agent:      agentName,
+		Skill:      skillName,
+		Summary:    summary,
+		TokensUsed: tokensUsed,
 	}
 	e.Store.AppendThread(entry)
 	e.Store.AppendLog(task.ID, "thread_appended", nil)
