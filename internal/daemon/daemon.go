@@ -36,13 +36,20 @@ func Run(cfg *config.Config) error {
 	// Set up agents
 	agents := map[string]agent.Agent{
 		"claude": agent.NewClaude(200000),
+		"ollama": agent.NewOllama("", 128000),
 	}
-	// Register agent in store if not present
+	// Register agents in store
 	s.UpsertAgent(&store.Agent{
 		Name:          "claude",
 		Adapter:       "claude",
 		Command:       "claude",
 		ContextWindow: 200000,
+	})
+	s.UpsertAgent(&store.Agent{
+		Name:          "ollama",
+		Adapter:       "ollama",
+		Command:       "ollama run llama3.2",
+		ContextWindow: 128000,
 	})
 
 	mem := memory.New(cfg.MemoryDir())
