@@ -478,7 +478,7 @@ All 5 are independent — **5 parallel worktrees.**
 - [x] End-to-end: thread merge from two machines
 - [x] Populate registry with initial 128 skills
 - [x] Update README
-- [ ] Tag v0.4.0
+- [x] Tag v0.4.0
 
 ---
 
