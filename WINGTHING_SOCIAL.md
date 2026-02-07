@@ -11,8 +11,8 @@
 ```
 Post            = link + summary + embedding     (visible, assigned to anchors)
 Subscription    = embedding you keep             (invisible, defines your feed)
-Anchor          = semantic subreddit             (the mod is a 1024-char description)
-Spam            = far from all anchors           (auto-swallowed by geometry)
+Anchor          = semantic subreddit             (three fields: slug, description, centerpoint)
+Spam            = far from all anchors           (auto-swallowed by geometry, sim < 0.25)
 ```
 
 One table. One similarity function. Four behaviors. A post and a subscription are the same data structure with a different `kind` flag.
@@ -87,19 +87,32 @@ wingthing.ai/w/compilers            → compiler design
 Each anchor has a `slug` (the URL name) and a `description` — a <=1024 char statement that defines what belongs in this semantic subreddit. The description gets embedded. The embedding IS the moderation policy. Posts are assigned to anchors by cosine similarity to this embedding.
 
 ```yaml
-# anchors.yaml (or DB row)
+# anchors.yaml (or DB row) — three fields per anchor
 - slug: physics
   label: Physics
+  # Human-readable: shown on /w/physics/about, for people
   description: >
-    Fundamental physics: quantum mechanics, general relativity, particle
-    physics, condensed matter, thermodynamics, statistical mechanics,
-    astrophysics, cosmology. Experimental results, theoretical developments,
-    and accessible explanations of physical phenomena. Not pop-sci clickbait
-    about "quantum computing will change everything" — actual physics content
-    with substance.
+    Fundamental physics — from quantum mechanics to astrophysics.
+    Theoretical and experimental.
+  # Embedding-optimized: ~512 chars of keyword-rich targeting, for the model
+  centerpoint: >
+    Quantum mechanics wave functions Schrodinger equation particle physics
+    Standard Model quarks leptons bosons general relativity spacetime
+    curvature gravitational waves condensed matter superconductivity
+    thermodynamics entropy statistical mechanics astrophysics black holes
+    neutron stars cosmology dark matter dark energy string theory quantum
+    field theory Feynman diagrams experimental physics CERN LHC spectroscopy
+    laser physics optics nuclear physics fusion fission plasma physics
 ```
 
-**The description is half the mod.** The community is the other half.
+**Three fields per anchor:**
+- **`slug`** — URL path (`/w/physics`)
+- **`description`** — human-readable, shown on the about page
+- **`centerpoint`** — ~512 chars of keyword-rich semantic targeting, embedded for similarity matching
+
+The centerpoint is NOT prose. It's a dense keyword cloud optimized for embedding quality. Experiment showed keyword-rich centerpoints score ~0.45-0.55 against matching posts vs ~0.25-0.35 for prose descriptions. This is the difference between the system working and not working.
+
+**The centerpoint is half the mod.** The community centroid is the other half.
 
 ### The Ouija Board: Effective Anchors
 
@@ -347,10 +360,11 @@ CREATE TABLE social_embeddings (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
     link TEXT,                              -- URL (NULL for subscriptions/anchors)
-    text TEXT NOT NULL,                     -- <=1024 chars summary
+    text TEXT NOT NULL,                     -- <=1024 chars: summary (posts) or description (anchors)
+    centerpoint TEXT,                       -- ~512 chars keyword-rich embedding target (anchors only)
     slug TEXT,                              -- URL-friendly name (anchors only)
-    embedding BLOB NOT NULL,               -- float32[1536], raw bytes
-    embedding_512 BLOB NOT NULL,           -- float32[512], truncated (static)
+    embedding BLOB NOT NULL,               -- float32[512], from centerpoint (anchors) or text (posts)
+    embedding_512 BLOB NOT NULL,           -- float32[512], truncated from provider dims
     centroid_512 BLOB,                     -- float32[512], community centroid (anchors only)
     effective_512 BLOB,                    -- float32[512], 0.5*static + 0.5*centroid (anchors only)
     kind TEXT NOT NULL,                     -- 'post', 'subscription', 'anchor', 'antispam'
@@ -469,6 +483,28 @@ CREATE TABLE social_rate_limits (
 **Why this works:** The RSS bot populates the feeds 24/7. Free users get a handful of posts. Paid users post more and get boosted on the homepage grid. But the core experience (browsing, subscribing, upvoting) is always free. The product works even if nobody pays — the RSS feeds keep it alive.
 
 Self-hosted instances can set their own limits or disable them entirely.
+
+## Validated Thresholds (from experiment)
+
+Tested against 50 live Moltbook posts (AI agent social network — mix of real content, crypto spam, multilingual) + 20 keyword-rich centerpoints at 512 dims via `text-embedding-3-small`.
+
+| Threshold | Value | What it means |
+|-----------|-------|---------------|
+| **Assign** | >= 0.40 | Post lands in this anchor's feed |
+| **Frontier** | 0.25 - 0.40 | Near-miss zone, `/w/frontier` candidates |
+| **Swallow** | < 0.25 | Off-topic / spam, invisible |
+| **Top-N** | 2 | Assign to best 2 anchors above threshold |
+
+**Key findings:**
+- Keyword-rich centerpoints (~512 chars) score 0.45-0.55 against matching posts. Prose descriptions score 0.25-0.35. **Centerpoints are mandatory.**
+- On-topic spam (e.g., repeated "CLAW Mint" token posts) correctly routes to `/w/crypto`. Rate limiting handles repetition; geometry handles relevance.
+- Multilingual works out of the box — Chinese/Korean posts route correctly via OpenAI embeddings.
+- Anchor-anchor max similarity ~0.57 (webdev↔devtools). Clean separation.
+- 512 Matryoshka dims are sufficient. No need for full 1536.
+
+**Experiment code:** `experiments/embedding/main.go`
+
+---
 
 ## Rate Limiting
 

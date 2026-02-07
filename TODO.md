@@ -503,12 +503,14 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
 
 **Branch:** `wt/social-store` | **Package:** `internal/relay/`
 
-- [ ] Migration: `social_embeddings` table (id, user_id, link, text, slug, embedding, embedding_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at)
+- [ ] Migration: `social_embeddings` table (id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at)
+  - `centerpoint` TEXT: ~512 chars keyword-rich embedding target (anchors only)
+  - `embedding`: from centerpoint for anchors, from text for posts
 - [ ] Migration: `post_anchors` table (post_id, anchor_id, similarity)
 - [ ] Migration: `social_votes` table (user_id, post_id, created_at)
 - [ ] Migration: `social_rate_limits` table (user_id, action, window_start, count)
 - [ ] CRUD: CreateEmbedding, GetEmbedding, ListByAnchor (new/rising/hot/best), SearchEmbeddings
-- [ ] Anchor assignment: cosine similarity against ~200 **effective anchors**, store top-5 in post_anchors
+- [ ] Anchor assignment: cosine similarity against ~200 **effective anchors**, store top-2 above 0.40 in post_anchors; swallow below 0.25
 - [ ] Effective anchor: centroid_512, effective_512 columns; recompute centroid incrementally on publish, full refresh hourly
 - [ ] URL dedup: unique constraint on normalized link, second submission = upvote
 - [ ] Rate limiting: free (3 posts/day) vs pro (15/day) tiers
@@ -521,13 +523,14 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
 **Branch:** `wt/embedding` | **Package:** `internal/embedding/`
 
 - [ ] `embedding.go` — Interface: `Embed(text string) ([]float32, error)`
-- [ ] `openai.go` — OpenAI text-embedding-3-small (1536 dims, truncate to 512)
-- [ ] `ollama.go` — nomic-embed-text via ollama (768 dims, truncate to 512)
+- [ ] `openai.go` — OpenAI text-embedding-3-small, request 512 dims directly (Matryoshka-native, no client-side truncation needed)
+- [ ] `ollama.go` — nomic-embed-text via ollama (768 dims, truncate to 512 client-side)
 - [ ] `cosine.go` — Cosine similarity, top-N nearest, batch operations, vector arithmetic
 - [ ] `effective.go` — Effective anchor: normalize(0.5*static + 0.5*community_centroid)
-- [ ] `matryoshka.go` — Dimension truncation (1536→512, 768→512)
-- [ ] Config: embedding provider selection (openai vs ollama), API key
-- [ ] Tests: cosine similarity, truncation, effective anchor blending, centroid drift
+- [ ] `assign.go` — Anchor assignment: compute sim against all anchors, top-2 above 0.40 threshold, swallow below 0.25
+- [ ] Config: embedding provider selection (openai vs ollama), API key from env `OPENAI_API_KEY`
+- [ ] Validated thresholds: assign >= 0.40, frontier 0.25-0.40, swallow < 0.25 (from experiment)
+- [ ] Tests: cosine similarity, effective anchor blending, anchor assignment with known centerpoints, centroid drift
 
 ---
 
@@ -535,11 +538,14 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
 
 **Branch:** `wt/anchor-seed` | **Package:** `internal/relay/`
 
-- [ ] `anchors.yaml` — ~200 anchor definitions (slug, name, description <=1024 chars)
+- [ ] `anchors.yaml` — ~200 anchor definitions, three fields each:
+  - `slug`: URL path (e.g., "physics", "golang", "machine-learning")
+  - `description`: human-readable, for /about page
+  - `centerpoint`: ~512 chars keyword-rich semantic targeting (NOT prose — dense keyword clouds for embedding quality)
   - Categories: science, technology, programming, business, politics, arts, sports, gaming, health, education, philosophy, etc.
-- [ ] `seed_anchors.go` — Read anchors.yaml, embed each description, insert as kind='anchor'
-- [ ] Each anchor gets a slug (e.g., "physics", "golang", "machine-learning")
-- [ ] Idempotent: re-seed updates descriptions and re-embeds, doesn't duplicate
+  - Reference: `experiments/embedding/main.go` has 20 validated centerpoints to start from
+- [ ] `seed_anchors.go` — Read anchors.yaml, embed each **centerpoint** (not description), insert as kind='anchor'
+- [ ] Idempotent: re-seed updates descriptions/centerpoints and re-embeds, doesn't duplicate
 - [ ] Tests: seed, re-seed idempotent, anchor count
 
 ---
