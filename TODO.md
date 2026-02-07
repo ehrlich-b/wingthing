@@ -497,6 +497,19 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
                                          social-store/   anchor-seed/     social-store/  feed-queries/
 ```
 
+### Phase 15-validate: End-to-End Pipeline Test
+
+**NEXT UP.** Validate the full pipeline before building more infrastructure.
+
+- [ ] `scripts/test_pipeline.sh` — fetch ~20 real blog posts from RSS (HN, lobste.rs, arxiv, Julia Evans, etc.)
+- [ ] Summarize each to <=1024 chars via `claude -p` (wingthing summarize skill template)
+- [ ] Embed summaries via OpenAI (same 512-dim model as spaces)
+- [ ] Compute cosine similarity against all `spaces/*/embedding.bin`
+- [ ] Print assignment matrix: which spaces each post lands in, similarity scores
+- [ ] Verify: physics posts → physics, compiler posts → compilers, etc.
+- [ ] Verify: spam/off-topic posts swallowed (sim < 0.25 to all spaces)
+- [ ] This validates the entire chain: RSS → summarize → embed → assign → correct space
+
 ### Phase 15a: Foundation (3 parallel)
 
 #### [parallel] Social Store
