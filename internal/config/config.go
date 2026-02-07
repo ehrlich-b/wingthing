@@ -10,11 +10,12 @@ import (
 )
 
 type Config struct {
-	Dir          string            `yaml:"-"`
-	DefaultAgent string            `yaml:"default_agent"`
-	MachineID    string            `yaml:"machine_id"`
-	PollInterval string            `yaml:"poll_interval"`
-	Vars         map[string]string `yaml:"vars"`
+	Dir               string            `yaml:"-"`
+	DefaultAgent      string            `yaml:"default_agent"`
+	MachineID         string            `yaml:"machine_id"`
+	PollInterval      string            `yaml:"poll_interval"`
+	DefaultMaxRetries int               `yaml:"max_retries"`
+	Vars              map[string]string `yaml:"vars"`
 }
 
 func Load() (*Config, error) {

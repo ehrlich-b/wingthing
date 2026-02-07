@@ -60,6 +60,7 @@ func main() {
 		logCmd(),
 		agentCmd(),
 		skillCmd(),
+		retryCmd(),
 		daemonCmd(),
 		initCmd(),
 	)
@@ -306,6 +307,23 @@ func skillCmd() *cobra.Command {
 		},
 	})
 	return sk
+}
+
+func retryCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "retry [task-id]",
+		Short: "Retry a failed task",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := clientFromConfig()
+			t, err := c.RetryTask(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("retried: %s\n", t.ID)
+			return nil
+		},
+	}
 }
 
 func daemonCmd() *cobra.Command {

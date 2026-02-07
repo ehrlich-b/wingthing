@@ -25,6 +25,8 @@ type Task struct {
 	FinishedAt *time.Time
 	Output     *string
 	Error      *string
+	RetryCount int
+	MaxRetries int
 }
 
 func (s *Store) CreateTask(t *Task) error {
@@ -40,9 +42,9 @@ func (s *Store) CreateTask(t *Task) error {
 	if t.Agent == "" {
 		t.Agent = "claude"
 	}
-	_, err := s.db.Exec(`INSERT INTO tasks (id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.Type, t.What, t.RunAt.UTC().Format(timeFmt), t.Agent, t.Isolation, t.Memory, t.ParentID, t.Status, t.Cron, t.MachineID)
+	_, err := s.db.Exec(`INSERT INTO tasks (id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id, retry_count, max_retries)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Type, t.What, t.RunAt.UTC().Format(timeFmt), t.Agent, t.Isolation, t.Memory, t.ParentID, t.Status, t.Cron, t.MachineID, t.RetryCount, t.MaxRetries)
 	if err != nil {
 		return fmt.Errorf("create task: %w", err)
 	}
@@ -54,9 +56,9 @@ func (s *Store) GetTask(id string) (*Task, error) {
 	var runAt, createdAt string
 	var startedAt, finishedAt *string
 	err := s.db.QueryRow(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id,
-		created_at, started_at, finished_at, output, error FROM tasks WHERE id = ?`, id).Scan(
+		created_at, started_at, finished_at, output, error, retry_count, max_retries FROM tasks WHERE id = ?`, id).Scan(
 		&t.ID, &t.Type, &t.What, &runAt, &t.Agent, &t.Isolation, &t.Memory, &t.ParentID, &t.Status, &t.Cron, &t.MachineID,
-		&createdAt, &startedAt, &finishedAt, &t.Output, &t.Error)
+		&createdAt, &startedAt, &finishedAt, &t.Output, &t.Error, &t.RetryCount, &t.MaxRetries)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -72,7 +74,7 @@ func (s *Store) GetTask(id string) (*Task, error) {
 
 func (s *Store) ListPending(now time.Time) ([]*Task, error) {
 	rows, err := s.db.Query(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id,
-		created_at, started_at, finished_at, output, error
+		created_at, started_at, finished_at, output, error, retry_count, max_retries
 		FROM tasks WHERE status = 'pending' AND run_at <= ? ORDER BY run_at`, now.UTC().Format(timeFmt))
 	if err != nil {
 		return nil, fmt.Errorf("list pending: %w", err)
@@ -83,7 +85,7 @@ func (s *Store) ListPending(now time.Time) ([]*Task, error) {
 
 func (s *Store) ListRecent(n int) ([]*Task, error) {
 	rows, err := s.db.Query(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id,
-		created_at, started_at, finished_at, output, error
+		created_at, started_at, finished_at, output, error, retry_count, max_retries
 		FROM tasks ORDER BY created_at DESC LIMIT ?`, n)
 	if err != nil {
 		return nil, fmt.Errorf("list recent: %w", err)
@@ -119,6 +121,11 @@ func (s *Store) SetTaskError(id, errMsg string) error {
 	return err
 }
 
+func (s *Store) IncrementRetryCount(taskID string) error {
+	_, err := s.db.Exec("UPDATE tasks SET retry_count = retry_count + 1 WHERE id = ?", taskID)
+	return err
+}
+
 func scanTasks(rows *sql.Rows) ([]*Task, error) {
 	var tasks []*Task
 	for rows.Next() {
@@ -126,7 +133,7 @@ func scanTasks(rows *sql.Rows) ([]*Task, error) {
 		var runAt, createdAt string
 		var startedAt, finishedAt *string
 		if err := rows.Scan(&t.ID, &t.Type, &t.What, &runAt, &t.Agent, &t.Isolation, &t.Memory, &t.ParentID,
-			&t.Status, &t.Cron, &t.MachineID, &createdAt, &startedAt, &finishedAt, &t.Output, &t.Error); err != nil {
+			&t.Status, &t.Cron, &t.MachineID, &createdAt, &startedAt, &finishedAt, &t.Output, &t.Error, &t.RetryCount, &t.MaxRetries); err != nil {
 			return nil, fmt.Errorf("scan task: %w", err)
 		}
 		t.RunAt = parseTime(runAt)
