@@ -57,13 +57,16 @@ wt thread
 ```
 wt "do the thing"           # one-shot task
 wt --skill jira             # run a skill
-wt --agent claude "prompt"  # use specific agent
+wt --agent ollama "prompt"  # use specific agent (claude, ollama)
 wt timeline                 # upcoming + recent tasks
 wt thread                   # today's daily thread
 wt thread --yesterday       # yesterday's thread
-wt status                   # daemon health
+wt status                   # daemon health + token usage
 wt log --last               # most recent task log
 wt log --last --context     # full prompt audit
+wt retry <task-id>          # retry a failed task
+wt schedule list            # recurring tasks
+wt schedule remove <id>     # cancel recurring task
 wt agent list               # configured agents
 wt skill list               # installed skills
 wt skill add file.md        # install a skill
@@ -110,7 +113,7 @@ Install with `wt skill add jira.md`, run with `wt --skill jira`.
 Agents can schedule follow-up tasks and write memory by including markers in their output:
 
 ```html
-<!-- wt:schedule delay="10m" -->
+<!-- wt:schedule delay="10m" memory="deploy-log,projects" -->
 check if the deploy succeeded
 <!-- /wt:schedule -->
 
@@ -118,6 +121,8 @@ check if the deploy succeeded
 Deployed v2.3.1 to production at 14:30 UTC.
 <!-- /wt:memory -->
 ```
+
+Schedule directives support `memory="file1,file2"` to declare which memory files the follow-up task should load.
 
 ## Architecture
 
@@ -133,7 +138,18 @@ Deployed v2.3.1 to production at 14:30 UTC.
     └── *.md         # installed skills
 ```
 
-12 internal packages, single binary, no CGO, pure Go SQLite.
+15 internal packages, single binary, no CGO, pure Go SQLite.
+
+## v0.2 features
+
+- **Ollama adapter** — fully offline task execution via local models
+- **Apple Containers sandbox** — lightweight Linux VMs on macOS 26+ for agent isolation
+- **Linux namespace/seccomp sandbox** — process isolation with restricted syscalls
+- **Recurring tasks** — cron expressions in skills (`schedule: "0 8 * * 1-5"`), auto-reschedule after each run
+- **Retry policies** — exponential backoff (1s, 2s, 4s... capped at 5min), configurable per task
+- **Cost tracking** — token usage from claude stream-json, `wt status` shows daily/weekly totals
+- **Schedule memory declarations** — follow-up tasks can declare which memory files to load
+- **Agent health** — startup probes, 60s TTL cache, unhealthy agents blocked from dispatch
 
 ## wingthing.ai (future)
 
@@ -146,4 +162,4 @@ Not a hosted agent. A sync and relay layer.
 
 ## Status
 
-v0.1 — Core pipeline works end-to-end. See [DRAFT.md](DRAFT.md) for the full design.
+v0.2 — Production runtime with real sandboxing, offline execution, recurring tasks, retry, and cost tracking. See [DRAFT.md](DRAFT.md) for the full design and [TODO.md](TODO.md) for the roadmap through v1.0.
