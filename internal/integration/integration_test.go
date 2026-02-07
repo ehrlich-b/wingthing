@@ -107,7 +107,7 @@ func newHarness(t *testing.T) *harness {
 		MemoryDir:    cfg.MemoryDir(),
 	}
 
-	srv := transport.NewServer(s, cfg.SocketPath())
+	srv := transport.NewServer(s, agents, cfg.SocketPath())
 
 	ctx, cancel := context.WithCancel(context.Background())
 

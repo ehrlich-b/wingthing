@@ -18,13 +18,13 @@ import (
 )
 
 func (e *Engine) dispatch(ctx context.Context, task *store.Task) error {
-	// 1. Agent health check
+	// 1. Agent health check (cached, 60s TTL)
 	ag, ok := e.Agents[task.Agent]
 	if !ok {
 		return fmt.Errorf("agent %q not found", task.Agent)
 	}
-	if err := ag.Health(); err != nil {
-		return fmt.Errorf("agent %q unhealthy: %w", task.Agent, err)
+	if !e.CheckHealth(task.Agent) {
+		return fmt.Errorf("agent %q is unhealthy", task.Agent)
 	}
 
 	// 2. Build prompt via orchestrator

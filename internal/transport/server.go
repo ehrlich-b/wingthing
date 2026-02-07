@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/skill"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/thread"
@@ -26,13 +27,14 @@ func genTaskID() string {
 
 type Server struct {
 	store             *store.Store
+	agents            map[string]agent.Agent
 	socketPath        string
 	skillsDir         string
 	DefaultMaxRetries int
 }
 
-func NewServer(s *store.Store, socketPath string) *Server {
-	return &Server{store: s, socketPath: socketPath}
+func NewServer(s *store.Store, agents map[string]agent.Agent, socketPath string) *Server {
+	return &Server{store: s, agents: agents, socketPath: socketPath}
 }
 
 func (s *Server) SetSkillsDir(dir string) {
@@ -344,6 +346,15 @@ func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
+	// If ?refresh=true, probe each agent's health before returning.
+	if r.URL.Query().Get("refresh") == "true" {
+		for name, ag := range s.agents {
+			now := time.Now()
+			healthy := ag.Health() == nil
+			s.store.UpdateAgentHealth(name, healthy, now)
+		}
+	}
+
 	agents, err := s.store.ListAgents()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

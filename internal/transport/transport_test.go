@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
@@ -24,7 +25,7 @@ func setup(t *testing.T) (*store.Store, *Client, context.CancelFunc) {
 	}
 
 	sock := filepath.Join(t.TempDir(), "wt.sock")
-	srv := NewServer(s, sock)
+	srv := NewServer(s, map[string]agent.Agent{}, sock)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ready := make(chan struct{})

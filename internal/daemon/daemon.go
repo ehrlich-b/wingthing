@@ -52,6 +52,17 @@ func Run(cfg *config.Config) error {
 		ContextWindow: 128000,
 	})
 
+	// Probe agent health at startup
+	for name, ag := range agents {
+		err := ag.Health()
+		s.UpdateAgentHealth(name, err == nil, time.Now())
+		if err != nil {
+			log.Printf("agent %s: unhealthy: %v", name, err)
+		} else {
+			log.Printf("agent %s: healthy", name)
+		}
+	}
+
 	mem := memory.New(cfg.MemoryDir())
 
 	builder := &orchestrator.Builder{
@@ -72,7 +83,7 @@ func Run(cfg *config.Config) error {
 	}
 
 	// Transport server
-	srv := transport.NewServer(s, cfg.SocketPath())
+	srv := transport.NewServer(s, agents, cfg.SocketPath())
 	srv.SetSkillsDir(cfg.SkillsDir())
 	srv.DefaultMaxRetries = cfg.DefaultMaxRetries
 
