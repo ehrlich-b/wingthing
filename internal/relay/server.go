@@ -26,6 +26,9 @@ func NewServer(store *RelayStore) *Server {
 	s.mux.HandleFunc("POST /auth/claim", s.handleAuthClaim)
 	s.mux.HandleFunc("POST /auth/refresh", s.handleAuthRefresh)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /skills", s.handleListSkills)
+	s.mux.HandleFunc("GET /skills/{name}", s.handleGetSkill)
+	s.mux.HandleFunc("GET /skills/{name}/raw", s.handleGetSkillRaw)
 	s.registerStaticRoutes()
 	return s
 }

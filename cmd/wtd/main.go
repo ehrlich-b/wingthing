@@ -25,6 +25,10 @@ func main() {
 			}
 			defer store.Close()
 
+			if err := relay.SeedDefaultSkills(store); err != nil {
+				return fmt.Errorf("seed skills: %w", err)
+			}
+
 			srv := relay.NewServer(store)
 
 			httpSrv := &http.Server{
