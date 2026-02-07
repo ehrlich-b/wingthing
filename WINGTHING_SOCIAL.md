@@ -19,7 +19,7 @@ One table. One similarity function. Four behaviors. A post and a subscription ar
 
 **No UMAP. No Python. No sidecar. No 2D projection. Pure Go. Pure SQLite.**
 
-Posts are assigned to their nearest anchors at publish time (inline, <1ms). Feeds are indexed SQL queries (<5ms). The homepage is a single aggregate query.
+Posts are assigned to their nearest **effective anchors** at publish time (inline, <1ms). Effective anchors blend the static description (50%) with the community centroid (50%), so feeds naturally drift toward what the community is talking about. Feed queries are indexed SQL (<5ms). The homepage is a single aggregate query.
 
 **Fully self-hostable.** The entire social engine runs locally. Bring your own embedding API key (OpenAI, or ollama for fully offline). Define your own anchors. Ingest your own RSS feeds. `wingthing.ai/social` is just a hosted instance with curated anchors — the same code, with opinions.
 
@@ -99,21 +99,58 @@ Each anchor has a `slug` (the URL name) and a `description` — a <=1024 char st
     with substance.
 ```
 
-**The description is the mod.** It's continuously refined. When you sharpen the description, the embedding shifts, and the boundary of what belongs in `/w/physics` shifts with it. Want to exclude pop-sci clickbait? Add that to the description. Want to include astrophysics? Mention it. The anchor description IS the subreddit rules, enforced by geometry.
+**The description is half the mod.** The community is the other half.
 
-No human moderator. No power trips. No mod drama. The description defines the semantic boundary. Refine the description, refine the boundary.
+### The Ouija Board: Effective Anchors
+
+The **effective anchor** is a 50/50 blend of the static description and the community centroid:
+
+```
+effective_embedding = normalize(
+    0.5 * static_anchor_embedding +
+    0.5 * community_centroid
+)
+
+community_centroid = weighted_average(
+    post_embeddings,
+    weights = decayed_mass
+)
+```
+
+The admin description provides gravity — 50% pull. The community provides drift — 50% pull. Upvoted posts pull harder. Old posts decay and lose influence. The subreddit is alive but leashed.
+
+**What this means in practice:** If everyone in `/w/physics` starts posting about quantum computing, the effective anchor drifts toward quantum computing. Posts about quantum computing score higher. The whole feed walks toward what the community is actually excited about — but the static anchor prevents it from drifting into `/w/computer-science`. The admin's 1024-char description is the leash. The community holds the ouija planchette.
+
+**The centroid is cached.** Recomputed on publish (incremental — rolling weighted average) and refreshed hourly (full recompute). Stored as `centroid_embedding` on the anchor row.
 
 ### Anchor Refinement
 
+Two forces shape the boundary:
+
 ```
-1. Admin edits the anchor description (or community proposes edits)
-2. Re-embed the description
-3. Re-assign all posts (batch, or lazy on next query)
-4. Posts that no longer match drift to other anchors or the edge
-5. Posts that newly match appear in the feed
+1. Admin sharpens the description → static embedding shifts → 50% gravity changes
+2. Community upvotes and posts   → centroid drifts         → 50% gravity changes
 ```
 
-This is how you "moderate" without moderating. You don't remove individual posts. You sharpen the description of what the community is about, and the geometry handles the rest.
+Admin edits are the "hard" control. Community drift is the "soft" control. Both converge on what the subreddit actually means right now.
+
+```
+Admin edit flow:
+1. Admin edits the anchor description
+2. Re-embed the description
+3. Recompute effective anchors
+4. Re-assign posts (batch, or lazy on next query)
+5. Posts that no longer match drift to other anchors or the edge
+
+Community drift flow:
+1. Upvoted post shifts community centroid
+2. Effective anchor subtly shifts
+3. New posts that are close to the community's conversation score higher
+4. Old posts decay, centroid refreshes
+5. The feed slowly walks toward what the community cares about
+```
+
+This is how you "moderate" without moderating. The admin holds the leash (static description). The community holds the planchette (weighted centroid). No individual post is removed. The geometry just shifts.
 
 ---
 
@@ -121,9 +158,31 @@ This is how you "moderate" without moderating. You don't remove individual posts
 
 ### Posts
 
-A user submits a link. Their wing (or the RSS bot) generates a <=1024 char summary. The relay embeds the summary, checks anchor proximity (spam filter), assigns the post to its top-5 nearest anchors, stores it. Done.
+A user submits a link. Their wing (or the RSS bot) generates a <=1024 char summary. The relay embeds the summary, checks **effective anchor** proximity (spam filter), assigns the post to its top-5 nearest effective anchors, stores it. Done.
 
 The user never leaves their conversation. They say "wing, post that" or share a link. The wing compresses, the relay embeds and files.
+
+### Post Preview ("Where will this land?")
+
+Before publishing, you can preview where your post would land. The relay computes cosine similarity against all effective anchors and shows the results:
+
+```json
+GET /social/preview?text=Quantum+entanglement+enables+faster+key+distribution
+
+{
+  "matches": [
+    {"slug": "physics", "label": "Physics", "similarity": 0.87},
+    {"slug": "cryptography", "label": "Cryptography", "similarity": 0.72},
+    {"slug": "infosec", "label": "InfoSec", "similarity": 0.58}
+  ],
+  "would_land_in": ["physics", "cryptography"],
+  "edge": false
+}
+```
+
+You can "attempt" to post in `/w/physics` and miss. Your post about quantum computing might score 0.87 against `/w/physics` but 0.91 against `/w/quantum-computing`. **The anchors route you, not your intent.** You don't choose the subreddit — the geometry does.
+
+Near-misses (max similarity < 0.3 to all anchors) hit the edge — swallowed. Interesting near-misses (0.3-0.5) could land in `/w/frontier` — a meta-feed of interdisciplinary posts that don't quite fit anywhere. The weird stuff. Might be the most interesting feed on the site.
 
 ### Subscriptions
 
@@ -141,7 +200,7 @@ For spam semantically close to legit topics: admin flags posts, system computes 
 
 ## Feeds: New / Rising / Hot / Best
 
-On publish, each post gets assigned to its top-5 nearest anchors with similarity scores. This is ~200 cosine similarity computations — sub-millisecond, inline, no background job.
+On publish, each post gets assigned to its top-5 nearest **effective anchors** with similarity scores. This is ~200 cosine similarity computations against the blended embeddings — sub-millisecond, inline, no background job. The effective anchor incorporates community drift, so a post that's close to what the community is discussing scores higher than the same post would against the static anchor alone.
 
 Feed queries are indexed SQL. Zero cosine computation at read time.
 
@@ -291,7 +350,9 @@ CREATE TABLE social_embeddings (
     text TEXT NOT NULL,                     -- <=1024 chars summary
     slug TEXT,                              -- URL-friendly name (anchors only)
     embedding BLOB NOT NULL,               -- float32[1536], raw bytes
-    embedding_512 BLOB NOT NULL,           -- float32[512], truncated
+    embedding_512 BLOB NOT NULL,           -- float32[512], truncated (static)
+    centroid_512 BLOB,                     -- float32[512], community centroid (anchors only)
+    effective_512 BLOB,                    -- float32[512], 0.5*static + 0.5*centroid (anchors only)
     kind TEXT NOT NULL,                     -- 'post', 'subscription', 'anchor', 'antispam'
     visible INTEGER NOT NULL DEFAULT 1,
     mass INTEGER NOT NULL DEFAULT 1,       -- total upvotes
@@ -395,15 +456,28 @@ CREATE TABLE social_rate_limits (
 
 ---
 
+## Monetization
+
+**You only pay to post.** Browsing and RSS feeds are free forever. The constant flow of curated RSS content makes the site valuable even if nobody ever posts.
+
+| Tier | Posts | Boost | Cost |
+|------|-------|-------|------|
+| Free | 3/day | None | $0 |
+| Pro | 15/day | Homepage visibility boost | $5/mo |
+| Publisher | Unlimited | Homepage + feed priority | $15/mo |
+
+**Why this works:** The RSS bot populates the feeds 24/7. Free users get a handful of posts. Paid users post more and get boosted on the homepage grid. But the core experience (browsing, subscribing, upvoting) is always free. The product works even if nobody pays — the RSS feeds keep it alive.
+
+Self-hosted instances can set their own limits or disable them entirely.
+
 ## Rate Limiting
 
-| Action | Limit | Why |
-|--------|-------|-----|
-| Publish | 3/day, 15/week | Scarcity forces curation |
-| Subscribe | 10/day | Prevent subscription spam |
-| Upvote | 10/day | Keep signal clean |
-
-Self-hosted instances can set their own limits (or disable them).
+| Action | Free | Pro | Why |
+|--------|------|-----|-----|
+| Publish | 3/day, 15/week | 15/day, 75/week | Scarcity forces curation |
+| Subscribe | 10/day | 10/day | Prevent subscription spam |
+| Upvote | 10/day | 30/day | Keep signal clean |
+| Preview | Unlimited | Unlimited | Let people play with embeddings |
 
 ---
 
@@ -475,6 +549,10 @@ Idempotent.
 ### `GET /social/subscriptions`
 
 List subscriptions.
+
+### `GET /social/preview?text=...`
+
+Preview where a post would land. Returns top-5 effective anchor matches with similarity scores. No auth required — let people play with embeddings.
 
 ### `GET /social/neighbors?post_id=xxx&limit=10`
 
@@ -616,7 +694,7 @@ knowledge bases. Personal research tools. All the same code.
 
 ## What Reddit Got Wrong
 
-1. **Subreddits are names. Anchors are meanings.** No mod team, no name squatting, no community management. The embedding defines the boundary. "Who mods /w/physics?" — a 1024-char description of what physics means.
+1. **Subreddits are names. Anchors are meanings.** No mod team, no name squatting, no community management. The effective embedding defines the boundary. "Who mods /w/physics?" — half a 1024-char description, half the community's weighted centroid. The subreddit ouija-boards around based on what people actually upvote.
 
 2. **Reddit needs users to submit.** We have RSS. The map is alive from day one.
 
@@ -670,11 +748,13 @@ Daemon learns two structured output markers:
 ### Phase 1: Embedding + Store (Week 1-2)
 
 - `internal/social/embed.go` — Pluggable embedding client (OpenAI + Ollama)
-- `internal/social/cosine.go` — Cosine similarity, anchor assignment
-- Migration: `social_embeddings`, `post_anchors`, `social_subscriptions`, `social_upvotes`, `social_rate_limits`
-- Store methods: `PublishPost`, `Subscribe`, `Upvote`, `Feed`, `AnchorList`, `CheckRateLimit`
-- Spam check: cosine distance to nearest anchor
-- Tests: embedding round-trip, anchor assignment, feed queries, rate limiting
+- `internal/social/cosine.go` — Cosine similarity, vector arithmetic, normalize
+- `internal/social/effective.go` — Effective anchor computation: 0.5*static + 0.5*community centroid
+- Migration: `social_embeddings` (with centroid_512, effective_512), `post_anchors`, `social_subscriptions`, `social_upvotes`, `social_rate_limits`
+- Store methods: `PublishPost`, `Subscribe`, `Upvote`, `Feed`, `AnchorList`, `CheckRateLimit`, `RefreshCentroids`
+- Centroid computation: incremental on publish (rolling weighted average), full refresh hourly
+- Spam check: cosine distance to nearest effective anchor
+- Tests: embedding round-trip, effective anchor blending, anchor assignment, centroid drift, feed queries, rate limiting
 
 ### Phase 2: Anchors + Feeds + `/w/` (Week 2-3)
 
@@ -698,7 +778,8 @@ Daemon learns two structured output markers:
 
 - `POST /social/publish`, `POST /social/subscribe`, `POST /social/upvote/{id}`
 - `GET /social/feed`, `GET /social/subscriptions`
-- Rate limiting enforcement
+- `GET /social/preview?text=...` — preview anchor assignment before posting (no auth)
+- Rate limiting enforcement (free vs pro tiers)
 - Parse markers: `wt:publish`, `wt:subscribe`
 
 ### Phase 5: Skills (Week 4)
@@ -737,4 +818,4 @@ Daemon learns two structured output markers:
 
 ---
 
-*Everything is an embedding. The mod is a description. The feed is geometry. It works on day one because RSS is free. And you can self-host the whole thing.*
+*Everything is an embedding. The mod is half a description, half the community. The feed is geometry. You can attempt to post in /w/physics and miss. The whole subreddit drifts with the conversation. It works on day one because RSS is free. And you can self-host the whole thing.*

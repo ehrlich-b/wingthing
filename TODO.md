@@ -508,10 +508,11 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
 - [ ] Migration: `social_votes` table (user_id, post_id, created_at)
 - [ ] Migration: `social_rate_limits` table (user_id, action, window_start, count)
 - [ ] CRUD: CreateEmbedding, GetEmbedding, ListByAnchor (new/rising/hot/best), SearchEmbeddings
-- [ ] Anchor assignment: cosine similarity against ~200 anchors, store top-5 in post_anchors
+- [ ] Anchor assignment: cosine similarity against ~200 **effective anchors**, store top-5 in post_anchors
+- [ ] Effective anchor: centroid_512, effective_512 columns; recompute centroid incrementally on publish, full refresh hourly
 - [ ] URL dedup: unique constraint on normalized link, second submission = upvote
-- [ ] Rate limiting: 3 posts/day, 15/week, 10 upvotes/day, 10 subscriptions/day
-- [ ] Tests: CRUD, anchor assignment, dedup, rate limits
+- [ ] Rate limiting: free (3 posts/day) vs pro (15/day) tiers
+- [ ] Tests: CRUD, anchor assignment, effective anchor drift, dedup, rate limits
 
 ---
 
@@ -522,10 +523,11 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
 - [ ] `embedding.go` — Interface: `Embed(text string) ([]float32, error)`
 - [ ] `openai.go` — OpenAI text-embedding-3-small (1536 dims, truncate to 512)
 - [ ] `ollama.go` — nomic-embed-text via ollama (768 dims, truncate to 512)
-- [ ] `cosine.go` — Cosine similarity, top-N nearest, batch operations
+- [ ] `cosine.go` — Cosine similarity, top-N nearest, batch operations, vector arithmetic
+- [ ] `effective.go` — Effective anchor: normalize(0.5*static + 0.5*community_centroid)
 - [ ] `matryoshka.go` — Dimension truncation (1536→512, 768→512)
 - [ ] Config: embedding provider selection (openai vs ollama), API key
-- [ ] Tests: cosine similarity, truncation, provider selection
+- [ ] Tests: cosine similarity, truncation, effective anchor blending, centroid drift
 
 ---
 
@@ -584,9 +586,10 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
 - [ ] `GET /w/{slug}/about` — Anchor description, post count, subscriber count
 - [ ] `POST /w/{slug}` — Submit post (link + optional text, auth required)
 - [ ] `POST /w/{slug}/vote` — Upvote post (auth required)
+- [ ] `GET /social/preview?text=...` — Preview anchor assignment before posting (no auth)
 - [ ] `GET /social/search` — Search posts by text (LIKE query on text field)
 - [ ] Register routes in server.go
-- [ ] Tests: all endpoints, auth, rate limiting, 404 for unknown slugs
+- [ ] Tests: all endpoints, auth, rate limiting, preview scoring, 404 for unknown slugs
 
 ---
 
