@@ -253,6 +253,29 @@ func TestScheduleWithoutMemory(t *testing.T) {
 	}
 }
 
+func TestScheduleWithAfter(t *testing.T) {
+	r := Parse(`<!-- wt:schedule delay=10m after="t-dep-001" -->Check after dep<!-- /wt:schedule -->`)
+	if len(r.Schedules) != 1 {
+		t.Fatalf("got %d schedules, want 1", len(r.Schedules))
+	}
+	if r.Schedules[0].After != "t-dep-001" {
+		t.Errorf("after = %q, want %q", r.Schedules[0].After, "t-dep-001")
+	}
+	if r.Schedules[0].Content != "Check after dep" {
+		t.Errorf("content = %q, want %q", r.Schedules[0].Content, "Check after dep")
+	}
+}
+
+func TestScheduleWithoutAfter(t *testing.T) {
+	r := Parse(`<!-- wt:schedule delay=5m -->No after<!-- /wt:schedule -->`)
+	if len(r.Schedules) != 1 {
+		t.Fatalf("got %d schedules, want 1", len(r.Schedules))
+	}
+	if r.Schedules[0].After != "" {
+		t.Errorf("after = %q, want empty", r.Schedules[0].After)
+	}
+}
+
 func TestScheduleMemoryWithSpaces(t *testing.T) {
 	r := Parse(`<!-- wt:schedule delay=5m memory="deploy-log, projects, notes" -->check stuff<!-- /wt:schedule -->`)
 	if len(r.Schedules) != 1 {

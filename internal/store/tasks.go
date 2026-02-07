@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -27,6 +28,7 @@ type Task struct {
 	Error      *string
 	RetryCount int
 	MaxRetries int
+	DependsOn  *string
 }
 
 func (s *Store) CreateTask(t *Task) error {
@@ -42,9 +44,9 @@ func (s *Store) CreateTask(t *Task) error {
 	if t.Agent == "" {
 		t.Agent = "claude"
 	}
-	_, err := s.db.Exec(`INSERT INTO tasks (id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id, retry_count, max_retries)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.Type, t.What, t.RunAt.UTC().Format(timeFmt), t.Agent, t.Isolation, t.Memory, t.ParentID, t.Status, t.Cron, t.MachineID, t.RetryCount, t.MaxRetries)
+	_, err := s.db.Exec(`INSERT INTO tasks (id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id, retry_count, max_retries, depends_on)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Type, t.What, t.RunAt.UTC().Format(timeFmt), t.Agent, t.Isolation, t.Memory, t.ParentID, t.Status, t.Cron, t.MachineID, t.RetryCount, t.MaxRetries, t.DependsOn)
 	if err != nil {
 		return fmt.Errorf("create task: %w", err)
 	}
@@ -56,9 +58,9 @@ func (s *Store) GetTask(id string) (*Task, error) {
 	var runAt, createdAt string
 	var startedAt, finishedAt *string
 	err := s.db.QueryRow(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id,
-		created_at, started_at, finished_at, output, error, retry_count, max_retries FROM tasks WHERE id = ?`, id).Scan(
+		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on FROM tasks WHERE id = ?`, id).Scan(
 		&t.ID, &t.Type, &t.What, &runAt, &t.Agent, &t.Isolation, &t.Memory, &t.ParentID, &t.Status, &t.Cron, &t.MachineID,
-		&createdAt, &startedAt, &finishedAt, &t.Output, &t.Error, &t.RetryCount, &t.MaxRetries)
+		&createdAt, &startedAt, &finishedAt, &t.Output, &t.Error, &t.RetryCount, &t.MaxRetries, &t.DependsOn)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -74,7 +76,7 @@ func (s *Store) GetTask(id string) (*Task, error) {
 
 func (s *Store) ListPending(now time.Time) ([]*Task, error) {
 	rows, err := s.db.Query(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id,
-		created_at, started_at, finished_at, output, error, retry_count, max_retries
+		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on
 		FROM tasks WHERE status = 'pending' AND run_at <= ? ORDER BY run_at`, now.UTC().Format(timeFmt))
 	if err != nil {
 		return nil, fmt.Errorf("list pending: %w", err)
@@ -85,13 +87,45 @@ func (s *Store) ListPending(now time.Time) ([]*Task, error) {
 
 func (s *Store) ListRecent(n int) ([]*Task, error) {
 	rows, err := s.db.Query(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id,
-		created_at, started_at, finished_at, output, error, retry_count, max_retries
+		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on
 		FROM tasks ORDER BY created_at DESC LIMIT ?`, n)
 	if err != nil {
 		return nil, fmt.Errorf("list recent: %w", err)
 	}
 	defer rows.Close()
 	return scanTasks(rows)
+}
+
+// ListReady returns pending tasks where all dependencies are done (or have no dependencies).
+func (s *Store) ListReady(now time.Time) ([]*Task, error) {
+	tasks, err := s.ListPending(now)
+	if err != nil {
+		return nil, err
+	}
+	var ready []*Task
+	for _, t := range tasks {
+		if t.DependsOn == nil {
+			ready = append(ready, t)
+			continue
+		}
+		var depIDs []string
+		if err := json.Unmarshal([]byte(*t.DependsOn), &depIDs); err != nil {
+			ready = append(ready, t)
+			continue
+		}
+		allDone := true
+		for _, depID := range depIDs {
+			dep, err := s.GetTask(depID)
+			if err != nil || dep == nil || dep.Status != "done" {
+				allDone = false
+				break
+			}
+		}
+		if allDone {
+			ready = append(ready, t)
+		}
+	}
+	return ready, nil
 }
 
 func (s *Store) UpdateTaskStatus(id, status string) error {
@@ -123,7 +157,7 @@ func (s *Store) SetTaskError(id, errMsg string) error {
 
 func (s *Store) ListRecurring() ([]*Task, error) {
 	rows, err := s.db.Query(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id,
-		created_at, started_at, finished_at, output, error, retry_count, max_retries
+		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on
 		FROM tasks WHERE cron IS NOT NULL AND cron != '' ORDER BY run_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list recurring: %w", err)
@@ -149,7 +183,7 @@ func scanTasks(rows *sql.Rows) ([]*Task, error) {
 		var runAt, createdAt string
 		var startedAt, finishedAt *string
 		if err := rows.Scan(&t.ID, &t.Type, &t.What, &runAt, &t.Agent, &t.Isolation, &t.Memory, &t.ParentID,
-			&t.Status, &t.Cron, &t.MachineID, &createdAt, &startedAt, &finishedAt, &t.Output, &t.Error, &t.RetryCount, &t.MaxRetries); err != nil {
+			&t.Status, &t.Cron, &t.MachineID, &createdAt, &startedAt, &finishedAt, &t.Output, &t.Error, &t.RetryCount, &t.MaxRetries, &t.DependsOn); err != nil {
 			return nil, fmt.Errorf("scan task: %w", err)
 		}
 		t.RunAt = parseTime(runAt)

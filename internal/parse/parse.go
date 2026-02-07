@@ -74,6 +74,10 @@ func Parse(output string) Result {
 			}
 		}
 
+		if after := attrs["after"]; after != "" {
+			sd.After = after
+		}
+
 		r.Schedules = append(r.Schedules, sd)
 	}
 

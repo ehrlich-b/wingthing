@@ -94,6 +94,7 @@ type createTaskRequest struct {
 	Agent      string `json:"agent"`
 	RunAt      string `json:"run_at"`
 	MaxRetries *int   `json:"max_retries,omitempty"`
+	DependsOn  string `json:"depends_on,omitempty"`
 }
 
 type taskResponse struct {
@@ -113,6 +114,7 @@ type taskResponse struct {
 	ParentID   *string `json:"parent_id,omitempty"`
 	RetryCount int     `json:"retry_count"`
 	MaxRetries int     `json:"max_retries"`
+	DependsOn  *string `json:"depends_on,omitempty"`
 }
 
 type statusResponse struct {
@@ -139,6 +141,7 @@ func taskToResponse(t *store.Task) taskResponse {
 		ParentID:   t.ParentID,
 		RetryCount: t.RetryCount,
 		MaxRetries: t.MaxRetries,
+		DependsOn:  t.DependsOn,
 	}
 	if t.StartedAt != nil {
 		s := t.StartedAt.UTC().Format(time.RFC3339)
@@ -190,6 +193,9 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		RunAt:      runAt,
 		Agent:      req.Agent,
 		MaxRetries: maxRetries,
+	}
+	if req.DependsOn != "" {
+		t.DependsOn = &req.DependsOn
 	}
 	// If skill type and we have a skills dir, check for a schedule field.
 	if req.Type == "skill" && s.skillsDir != "" {
