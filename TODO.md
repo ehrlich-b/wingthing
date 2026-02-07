@@ -517,7 +517,7 @@ Phase 15: social-store/    embedding/    anchor-seed/    feed-queries/    rss-in
 - [ ] Proximity boost: pro users get +0.05 additive similarity bonus on post assignment
 - [ ] Effective anchor: centroid_512, effective_512 columns; recompute centroid incrementally on publish, full refresh hourly
 - [ ] URL dedup: unique constraint on normalized link, second submission = upvote
-- [ ] Rate limiting: free (5 posts/day hard cap) vs pro (token bucket: burst 5, refill ~1/15min, 100/day unadvertised hard cap)
+- [ ] Rate limiting: free (5 posts/day hard cap) vs pro (token bucket: burst 5, refill 1/5min, ~288/day theoretical max)
 - [ ] Tests: CRUD, anchor assignment, proximity boost, effective anchor drift, dedup, rate limits, comments
 
 ---

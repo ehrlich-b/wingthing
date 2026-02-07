@@ -535,7 +535,7 @@ The comment prompt is a skill template — Bryan and his wing tune it until the 
 | Free | 5/day | None | $0 |
 | Pro | Unlimited* | +0.05 similarity boost to all anchors | $5/mo |
 
-*Pro "unlimited" = 100/day hard cap (unadvertised), token bucket of 5 (can burst 5 in a row, refills ~1 per 15min). Just spam prevention — we want paid users to post a lot.
+*Pro "unlimited" = token bucket of 5 (can burst 5 in a row, refills 1 per 5min, ~288/day theoretical max). Just spam prevention — we want paid users to post a lot.
 
 **The only thing Pro boosts is nearness.** Your post gets a small additive bonus to its cosine similarity score, making it appear in more anchor feeds and rank slightly higher. You can't buy upvotes. You can't buy placement. You can only buy a little extra geometric reach. If the post is good, real upvotes do the rest. If it's bad, the boost barely matters — 0.05 on a 0.25 post still won't cross the 0.40 assign threshold.
 
@@ -569,7 +569,7 @@ Tested against 50 live Moltbook posts (AI agent social network — mix of real c
 |--------|------|-----|-----------|
 | Browse | Unlimited | Unlimited | This is the funnel |
 | Upvote | 30/day | 30/day | Social login required |
-| Publish | 5/day | Unlimited* | Token bucket (burst 5, refill ~1/15min, 100/day hard cap) |
+| Publish | 5/day | Unlimited* | Token bucket (burst 5, refill 1/5min, ~288/day theoretical max) |
 | Preview | Unlimited | Unlimited | No auth needed |
 | Comment | 10/day | 50/day | Prevent noise |
 
