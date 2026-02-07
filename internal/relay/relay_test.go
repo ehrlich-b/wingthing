@@ -376,6 +376,80 @@ func TestMessageRouting(t *testing.T) {
 	}
 }
 
+func TestStaticFileServing(t *testing.T) {
+	_, ts := testServer(t)
+
+	resp, err := http.Get(ts.URL + "/app/")
+	if err != nil {
+		t.Fatalf("GET /app/: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "text/html") {
+		t.Errorf("content-type = %q, want text/html", ct)
+	}
+}
+
+func TestStaticCSS(t *testing.T) {
+	_, ts := testServer(t)
+
+	resp, err := http.Get(ts.URL + "/app/style.css")
+	if err != nil {
+		t.Fatalf("GET /app/style.css: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "css") {
+		t.Errorf("content-type = %q, want text/css", ct)
+	}
+}
+
+func TestStaticJS(t *testing.T) {
+	_, ts := testServer(t)
+
+	resp, err := http.Get(ts.URL + "/app/app.js")
+	if err != nil {
+		t.Fatalf("GET /app/app.js: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestStaticManifest(t *testing.T) {
+	_, ts := testServer(t)
+
+	resp, err := http.Get(ts.URL + "/app/manifest.json")
+	if err != nil {
+		t.Fatalf("GET /app/manifest.json: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Errorf("manifest.json is not valid JSON: %v", err)
+	}
+	if body["name"] != "wingthing" {
+		t.Errorf("manifest name = %q, want wingthing", body["name"])
+	}
+}
+
 func TestSessionManagerConcurrency(t *testing.T) {
 	sm := NewSessionManager()
 

@@ -1,7 +1,10 @@
 package relay
 
 import (
+	"io/fs"
 	"net/http"
+
+	"github.com/ehrlich-b/wingthing/web"
 )
 
 type Server struct {
@@ -23,7 +26,17 @@ func NewServer(store *RelayStore) *Server {
 	s.mux.HandleFunc("POST /auth/claim", s.handleAuthClaim)
 	s.mux.HandleFunc("POST /auth/refresh", s.handleAuthRefresh)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.registerStaticRoutes()
 	return s
+}
+
+func (s *Server) registerStaticRoutes() {
+	sub, _ := fs.Sub(web.FS, ".")
+	fileServer := http.FileServer(http.FS(sub))
+	s.mux.Handle("GET /app/", http.StripPrefix("/app/", fileServer))
+	s.mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
+	})
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
