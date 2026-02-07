@@ -420,6 +420,98 @@ func generateUserCode(n int) string {
 	return string(b)
 }
 
+func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
+	category := r.URL.Query().Get("category")
+	q := r.URL.Query().Get("q")
+
+	var skills []*SkillRow
+	var err error
+	if q != "" {
+		skills, err = s.Store.SearchSkills(q)
+	} else {
+		skills, err = s.Store.ListSkills(category)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	type skillMeta struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Category    string `json:"category"`
+		Agent       string `json:"agent"`
+		Tags        string `json:"tags"`
+		SHA256      string `json:"sha256"`
+		Publisher   string `json:"publisher"`
+	}
+
+	out := make([]skillMeta, len(skills))
+	for i, sk := range skills {
+		out[i] = skillMeta{
+			Name:        sk.Name,
+			Description: sk.Description,
+			Category:    sk.Category,
+			Agent:       sk.Agent,
+			Tags:        sk.Tags,
+			SHA256:      sk.SHA256,
+			Publisher:   sk.Publisher,
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetSkill(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	sk, err := s.Store.GetSkill(name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if sk == nil {
+		writeError(w, http.StatusNotFound, "skill not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name":        sk.Name,
+		"description": sk.Description,
+		"category":    sk.Category,
+		"agent":       sk.Agent,
+		"tags":        sk.Tags,
+		"content":     sk.Content,
+		"sha256":      sk.SHA256,
+		"publisher":   sk.Publisher,
+	})
+}
+
+func (s *Server) handleGetSkillRaw(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	sk, err := s.Store.GetSkill(name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if sk == nil {
+		writeError(w, http.StatusNotFound, "skill not found")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(sk.Content))
+}
+
 func strPtr(s string) *string {
 	return &s
 }
