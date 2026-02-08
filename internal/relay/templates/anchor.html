@@ -1,20 +1,23 @@
-{{define "title"}}{{.Anchor.Text}} — wingthing{{end}}
+{{define "title"}}{{if .Anchor.Slug}}{{deref .Anchor.Slug}}{{else}}space{{end}} — wingthing{{end}}
 {{define "head"}}
 <style>
 .anchor-header{margin-bottom:24px}
-.anchor-header h1{font-size:20px;margin-bottom:4px}
+.anchor-header h1{font-size:24px;font-weight:800;letter-spacing:-0.02em;margin-bottom:4px;text-transform:lowercase}
+.anchor-header .desc{font-size:13px;color:var(--text-dim);margin-bottom:8px;line-height:1.5}
 .anchor-header a{font-size:12px;color:var(--text-dim)}
-.posts{display:flex;flex-direction:column;gap:8px}
+.posts{display:flex;flex-direction:column;gap:10px}
 .post-card{background:var(--bg-card);border-radius:4px;padding:16px;border-left:3px solid var(--accent)}
 .post-card .post-text{font-size:13px;margin-bottom:8px;line-height:1.7}
-.post-card .post-meta{font-size:11px;color:var(--text-dim);display:flex;gap:12px}
-.post-card .post-link{font-size:12px;margin-top:8px}
+.post-card .post-meta{font-size:11px;color:var(--text-dim);display:flex;gap:12px;flex-wrap:wrap}
+.post-card .post-link{font-size:12px;margin-top:8px;word-break:break-all}
+.post-card .post-link a{color:var(--action)}
 .empty-state{color:var(--text-dim);font-size:13px;padding:32px 0;text-align:center}
 </style>
 {{end}}
 {{define "content"}}
 <div class="anchor-header">
-<h1>{{.Anchor.Text}}</h1>
+<h1>{{if .Anchor.Slug}}{{deref .Anchor.Slug}}{{else}}space{{end}}</h1>
+<div class="desc">{{.Anchor.Text}}</div>
 <a href="/social">back to spaces</a>
 </div>
 <div class="posts">
@@ -23,10 +26,11 @@
 <div class="post-card">
 <div class="post-text">{{.Text}}</div>
 <div class="post-meta">
-<span>{{.CreatedAt.Format "Jan 2, 2006"}}</span>
+{{if .PublishedAt}}<span>{{.PublishedAt.Format "Jan 2, 2006"}}</span>{{else}}<span>{{.CreatedAt.Format "Jan 2, 2006"}}</span>{{end}}
 <span>{{.Upvotes24h}} upvotes</span>
+<span>mass {{.Mass}}</span>
 </div>
-{{if .Link}}<div class="post-link"><a href="{{.Link}}">{{.Link}}</a></div>{{end}}
+{{if .Link}}<div class="post-link"><a href="{{deref .Link}}">{{deref .Link}}</a></div>{{end}}
 </div>
 {{end}}
 {{else}}

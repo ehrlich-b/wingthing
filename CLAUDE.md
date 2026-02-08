@@ -12,7 +12,7 @@ This is the well-built version of what OpenClaw, Moltbook, and the rest are stum
 
 **Curated > marketplace.** Skills live in `skills/` in this repo. They're reviewed, validated, and version-controlled. No storefront where anyone can publish prompt injections. Private skills go in `~/.wingthing/skills/`.
 
-**Sandbox-first.** `internal/sandbox/` has full implementations for Apple Containers (macOS) and namespace/seccomp (Linux). Isolation level is per-skill via frontmatter. **Current gap:** sandbox is built and tested but not wired into `runTask()` -- this is a high-priority TODO.
+**Sandbox-first.** `internal/sandbox/` has full implementations for Apple Containers (macOS) and namespace/seccomp (Linux). Isolation level is per-skill via frontmatter.
 
 **Agent-agnostic.** Every skill works with every backend. `--agent ollama` for free local inference, `--agent claude` when you need it. The interface is stable; providers change behind it.
 
@@ -130,9 +130,16 @@ Isolation levels: `strict` (no network, minimal fs), `standard` (no network, mou
 | `make build` | Build the `wt` binary |
 | `make test` | Run `go test ./...` |
 | `make web` | Build vite output (`cd web && npm run build`) |
+| `make serve` | Build then run `wt serve` in foreground |
 | `make clean` | Remove built binary |
 
 Run `make check` to verify changes. Run `make web` before `make check` if you changed anything in `web/`.
+
+### Running `wt serve` during development
+
+Use `make serve` in a separate terminal (or via Bash `run_in_background`). It builds and runs in foreground — ctrl-C to stop, rerun after code changes. For production self-hosted: launchd (macOS) or systemd user unit (Linux).
+
+**NEVER use `&` in Bash commands.** Use the Bash tool's `run_in_background` parameter instead. Appending `&` causes the process to die immediately and produces garbage output. If you need a background process: `run_in_background: true` on the Bash tool call, then check output via `Read` on the output file or `TaskOutput`.
 
 ## CLI Commands
 
@@ -154,6 +161,29 @@ Run `make check` to verify changes. Run `make web` before `make check` if you ch
 | `wt init` | Initialize ~/.wingthing directory and DB |
 | `wt login/logout` | Device auth with relay server |
 | `wt skill list/add/enable/disable` | Manage skills (local + registry) |
-| `wt post "text" --link URL --mass N` | Post to wt social (local, self-hosted) |
+| `wt post "text" --link URL --mass N --date DATE` | Post to wt social (local, self-hosted) |
 | `wt vote <post-id>` | Upvote a post on wt social |
 | `wt comment <post-id> "text"` | Comment on a post |
+
+## Social Pipeline
+
+The self-hosted content pipeline for wt.ai/social:
+
+```
+feeds.md (509 feeds) → pipeline.go → articles.tsv → compress_and_post.sh → social.db
+```
+
+**Feed target: 1000+ validated working feeds.** Validate with `/tmp/validate_feeds.go` — prune dead/empty feeds, replace with working ones.
+
+1. **Fetch**: `go run /tmp/pipeline.go skills/feeds.md > /tmp/articles.tsv` — reads feeds.md, fetches RSS/Atom in parallel (10 at a time), outputs TSV with SOURCE, TITLE, LINK, DATE, TEXT
+2. **Compress + Post**: `/tmp/compress_and_post.sh ./wt` — reads articles.tsv, compresses each via `claude -p sonnet` (free on $200 plan), posts via `wt post --date --link --mass`
+3. **Result**: everything lands in `~/.wingthing/social.db` with real embeddings (ollama mxbai-embed-large), space assignments (cosine similarity), and article publish dates (for proper decay)
+
+**Key details:**
+- Embeddings: ollama mxbai-embed-large (free, local)
+- Summarization: `claude -p --model claude-sonnet-4-5-20250929` (effectively free on $200 plan)
+- `--mass 10` for bot-curated content; `POST /api/post` forces mass=1 (public)
+- `--date` accepts RFC3339 or YYYY-MM-DD; decay uses `COALESCE(published_at, created_at)`
+- URL dedup: same link returns existing post
+- Back up DB: `cp ~/.wingthing/social.db ~/wt_bak/social_$(date +%Y%m%d).db`
+- Pipeline scripts live in `/tmp/` (not checked in — generated content)

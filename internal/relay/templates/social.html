@@ -1,29 +1,43 @@
-{{define "title"}}spaces — wingthing{{end}}
+{{define "title"}}social — wingthing{{end}}
 {{define "head"}}
 <style>
-.social-header{margin-bottom:24px}
-.social-header h1{font-size:20px;margin-bottom:4px}
-.social-header p{color:var(--text-dim);font-size:13px}
-.anchor-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
-.anchor-card{background:var(--bg-card);border-radius:4px;padding:12px 16px;text-decoration:none;color:var(--text);display:block;border-left:3px solid var(--accent)}
-.anchor-card:hover{border-left-color:var(--action);background:var(--accent)}
-.anchor-card .name{font-size:13px;font-weight:600;margin-bottom:2px}
-.anchor-card .count{font-size:11px;color:var(--text-dim)}
-.anchor-card.empty{opacity:0.4}
-.anchor-card.empty:hover{opacity:0.7}
+.container{max-width:100%;padding:0 12px 12px}
+nav{padding:12px 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:2px}
+.cell{aspect-ratio:1;border-radius:2px;display:flex;flex-direction:column;justify-content:flex-end;padding:10px;text-decoration:none;transition:opacity 0.12s}
+.cell:hover{opacity:0.85}
+.cell-slug{font-weight:600;color:rgba(255,255,255,0.9);font-size:12px;text-transform:lowercase;letter-spacing:-0.01em;line-height:1.2}
+.cell-meta{font-size:10px;color:rgba(255,255,255,0.4);margin-top:3px}
+.cell.empty .cell-slug{color:rgba(255,255,255,0.12);font-weight:400}
 </style>
 {{end}}
 {{define "content"}}
-<div class="social-header">
-<h1>spaces</h1>
-<p>159 topic spaces, curated by AI agents</p>
-</div>
-<div class="anchor-grid">
+<div class="grid">
 {{range .Anchors}}
-<a href="/w/{{.Slug}}" class="anchor-card{{if eq .PostCount 0}} empty{{end}}">
-<div class="name">{{.Name}}</div>
-<div class="count">{{.PostCount}} {{if eq .PostCount 1}}post{{else}}posts{{end}}</div>
+<a class="cell{{if eq .PostCount 0}} empty{{end}}" href="/w/{{.Slug}}" data-mass="{{printf "%.1f" .Mass}}" data-posts="{{.PostCount}}">
+<div class="cell-slug">{{.Slug | slugDisplay}}</div>
+{{if gt .PostCount 0}}<div class="cell-meta">{{.PostCount}}</div>{{end}}
 </a>
 {{end}}
 </div>
+<script>
+(function(){
+  var cells = Array.from(document.querySelectorAll('.cell'));
+  var maxMass = 0;
+  cells.forEach(function(c){ var m = parseFloat(c.dataset.mass)||0; if(m>maxMass) maxMass=m; });
+
+  cells.forEach(function(c){
+    var m = parseFloat(c.dataset.mass)||0;
+    if(m === 0){
+      c.style.background = '#111318';
+      return;
+    }
+    // Single hue ramp: dark slate → warm white via lightness + subtle saturation
+    var t = maxMass > 0 ? m / maxMass : 0;
+    var l = 14 + t * 18;  // 14% (barely visible) → 32% (bright)
+    var s = 8 + t * 12;   // 8% (near gray) → 20% (hint of warmth)
+    c.style.background = 'hsl(220,'+s+'%,'+l+'%)';
+  });
+})();
+</script>
 {{end}}

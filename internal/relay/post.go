@@ -3,16 +3,18 @@ package relay
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/embedding"
 	"github.com/google/uuid"
 )
 
 type PostParams struct {
-	UserID string
-	Text   string
-	Link   string
-	Mass   int
+	UserID      string
+	Text        string
+	Link        string
+	Mass        int
+	PublishedAt *time.Time
 }
 
 // CreatePost embeds text, assigns to anchors by cosine similarity, and stores the post.
@@ -82,6 +84,9 @@ func CreatePost(store *RelayStore, emb embedding.Embedder, p PostParams) (*Socia
 	}
 	if p.Link != "" {
 		post.Link = &p.Link
+	}
+	if p.PublishedAt != nil {
+		post.PublishedAt = p.PublishedAt
 	}
 
 	if err := store.CreateSocialEmbedding(post); err != nil {

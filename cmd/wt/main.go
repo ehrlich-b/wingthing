@@ -980,6 +980,7 @@ func relayPost(cfg *config.Config, path string, body any) (map[string]any, error
 func postCmd() *cobra.Command {
 	var linkFlag string
 	var massFlag int
+	var dateFlag string
 
 	cmd := &cobra.Command{
 		Use:   "post <text>",
@@ -1002,12 +1003,24 @@ func postCmd() *cobra.Command {
 				return fmt.Errorf("init embedder: %w", err)
 			}
 
-			post, err := relay.CreatePost(st, emb, relay.PostParams{
+			params := relay.PostParams{
 				UserID: "local",
 				Text:   args[0],
 				Link:   linkFlag,
 				Mass:   massFlag,
-			})
+			}
+			if dateFlag != "" {
+				t, parseErr := time.Parse(time.RFC3339, dateFlag)
+				if parseErr != nil {
+					t, parseErr = time.Parse("2006-01-02", dateFlag)
+				}
+				if parseErr != nil {
+					return fmt.Errorf("invalid --date (use RFC3339 or YYYY-MM-DD): %w", parseErr)
+				}
+				params.PublishedAt = &t
+			}
+
+			post, err := relay.CreatePost(st, emb, params)
 			if err != nil {
 				return err
 			}
@@ -1023,6 +1036,7 @@ func postCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&linkFlag, "link", "", "URL to link")
 	cmd.Flags().IntVar(&massFlag, "mass", 1, "Initial mass (self-hosted: set higher for bot-curated content)")
+	cmd.Flags().StringVar(&dateFlag, "date", "", "Article publish date (RFC3339 or YYYY-MM-DD)")
 
 	return cmd
 }

@@ -2,7 +2,7 @@
 
 Reference: [DRAFT.md](DRAFT.md) for full design. This file is the build plan.
 
-**Active:** Item 6 — Skill enable/disable
+**Active:** Phase 15-validate — social grid live, compress bot feeding posts
 
 ## Vision
 
@@ -959,11 +959,42 @@ All 8 independent — **8 parallel worktrees.**
 
 ## Next Up
 
+### Social Seeding & Prod Deployment
+
+**Pipeline (working):**
+```
+go run /tmp/pipeline.go skills/feeds.md > /tmp/articles.tsv   # fetch 10 articles/feed, dedup by URL slug
+bash /tmp/compress_and_post.sh ./wt                            # compress via claude -p sonnet, post via wt post
+```
+
+**Current state:**
+- 284 validated feeds in `skills/feeds.md` (pruned from 509 — dead/empty removed)
+- 2,695 unique articles fetched (10 per feed, URL slug dedup)
+- `/tmp/articles.tsv` is sorted newest-first — most recent articles get posted first
+- ~123 posts in social.db across ~55 spaces (bot was at article ~80 of 2,695 before restart)
+- URL dedup in `wt post` means restarting the bot skips already-posted articles
+- `published_at` dates stored and displayed (nullable, scanned via string → time.Time parse)
+
+**UI (working):**
+- `/social` — uniform grid of 159 spaces, same-size tiles, sorted by total decayed mass (hottest top-left)
+- `/w/{slug}` — anchor page with space slug as h1, posts with published dates and mass
+- Monochrome palette: dark slate ramp, not rainbow
+
+**TODO:**
+- [ ] Restart compress bot (articles.tsv ready, sorted newest-first)
+- [ ] Find 716+ more feeds to hit 1k target (36 spaces have zero feeds)
+- [ ] Filter out bad summaries ("I need permission to access..." from paywalled sites)
+- [ ] Back up social.db to ~/wt_bak/ periodically
+- Prod seeding: copy social.db to fly as initial seed data
+- Master key: local admin can push weighted summaries to prod (authenticated POST with mass > 1)
+- Run pipeline idly during work — effectively free summarization via $200 plan sonnet budget
+
 ### Relay Business Model
 
 Relay is the paid hosted layer:
-- $5/mo or $48/yr
-- Webhook consumer for phones (push notifications, mobile sync)
-- Social posting at wt.ai/social
-- Self-hosters bring their own connectivity
-- Distribution play for cinch and tunn
+- wt.ai/social IS the product — "HN for everything" with AI curation across 159 topics
+- Revenue: ads on wt.ai/social (low-cost funnel to wt CLI adoption)
+- Cost: embeddings near-zero (ollama), LLM compress batch-able
+- Trust play: transparent scoring, no pay-to-play
+- Funnel: wt.ai/social eyeballs → trust → "powered by wingthing" → install `wt`
+- Self-hosted = AI-powered RSS reader on mega steroids

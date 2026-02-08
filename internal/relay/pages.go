@@ -4,16 +4,30 @@ import (
 	"embed"
 	"html/template"
 	"net/http"
+	"sort"
+	"strings"
 )
 
 //go:embed templates
 var templateFS embed.FS
 
+var tmplFuncs = template.FuncMap{
+	"deref": func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	},
+	"slugDisplay": func(s string) string {
+		return strings.ReplaceAll(s, "-", " ")
+	},
+}
+
 var (
-	homeTmpl   = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/home.html"))
-	socialTmpl = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/social.html"))
-	anchorTmpl = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/anchor.html"))
-	loginTmpl  = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/login.html"))
+	homeTmpl   = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/home.html"))
+	socialTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/social.html"))
+	anchorTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/anchor.html"))
+	loginTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/login.html"))
 )
 
 type pageData struct {
@@ -24,6 +38,7 @@ type anchorCard struct {
 	Name      string
 	Slug      string
 	PostCount int
+	Mass      float64
 }
 
 type socialPageData struct {
@@ -60,6 +75,7 @@ func (s *Server) handleSocial(w http.ResponseWriter, r *http.Request) {
 	var cards []anchorCard
 	for _, a := range anchors {
 		count, _ := s.Store.CountPostsByAnchor(a.ID)
+		mass, _ := s.Store.SumDecayedMassByAnchor(a.ID)
 		slug := ""
 		if a.Slug != nil {
 			slug = *a.Slug
@@ -68,8 +84,13 @@ func (s *Server) handleSocial(w http.ResponseWriter, r *http.Request) {
 			Name:      a.Text,
 			Slug:      slug,
 			PostCount: count,
+			Mass:      mass,
 		})
 	}
+
+	sort.Slice(cards, func(i, j int) bool {
+		return cards[i].Mass > cards[j].Mass
+	})
 
 	data := socialPageData{
 		User:    s.sessionUser(r),

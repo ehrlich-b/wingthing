@@ -27,6 +27,7 @@ type SocialEmbedding struct {
 	Swallowed    bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	PublishedAt  *time.Time
 }
 
 type PostAnchor struct {
@@ -57,10 +58,10 @@ type SocialUser struct {
 
 func (s *RelayStore) CreateSocialEmbedding(e *SocialEmbedding) error {
 	_, err := s.db.Exec(
-		`INSERT INTO social_embeddings (id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO social_embeddings (id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, published_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.UserID, e.Link, e.Text, e.Centerpoint, e.Slug, e.Embedding, e.Embedding512, e.Centroid512, e.Effective512, e.Kind,
-		boolToInt(e.Visible), e.Mass, e.Upvotes24h, e.DecayedMass, boolToInt(e.Swallowed),
+		boolToInt(e.Visible), e.Mass, e.Upvotes24h, e.DecayedMass, boolToInt(e.Swallowed), e.PublishedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("create social embedding: %w", err)
@@ -70,7 +71,7 @@ func (s *RelayStore) CreateSocialEmbedding(e *SocialEmbedding) error {
 
 func (s *RelayStore) GetSocialEmbedding(id string) (*SocialEmbedding, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at
+		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
 		 FROM social_embeddings WHERE id = ?`, id,
 	)
 	return scanSocialEmbedding(row)
@@ -78,7 +79,7 @@ func (s *RelayStore) GetSocialEmbedding(id string) (*SocialEmbedding, error) {
 
 func (s *RelayStore) GetSocialEmbeddingByLink(link string) (*SocialEmbedding, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at
+		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
 		 FROM social_embeddings WHERE link = ?`, link,
 	)
 	return scanSocialEmbedding(row)
@@ -86,7 +87,7 @@ func (s *RelayStore) GetSocialEmbeddingByLink(link string) (*SocialEmbedding, er
 
 func (s *RelayStore) GetSocialEmbeddingBySlug(slug string) (*SocialEmbedding, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at
+		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
 		 FROM social_embeddings WHERE slug = ?`, slug,
 	)
 	return scanSocialEmbedding(row)
@@ -94,7 +95,7 @@ func (s *RelayStore) GetSocialEmbeddingBySlug(slug string) (*SocialEmbedding, er
 
 func (s *RelayStore) ListAnchors() ([]*SocialEmbedding, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at
+		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
 		 FROM social_embeddings WHERE kind = 'anchor' AND visible = 1 ORDER BY created_at`,
 	)
 	if err != nil {
@@ -134,28 +135,28 @@ func (s *RelayStore) ListPostsByAnchor(anchorID, sort string, limit int) ([]*Soc
 	var query string
 	switch sort {
 	case "hot":
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at
+		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
 			FROM social_embeddings p
 			JOIN post_anchors pa ON pa.post_id = p.id
 			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'
 			ORDER BY (p.upvotes_24h / (1.0 + (julianday('now') - julianday(p.created_at)) * 2.0)) DESC
 			LIMIT ?`
 	case "rising":
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at
+		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
 			FROM social_embeddings p
 			JOIN post_anchors pa ON pa.post_id = p.id
 			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post' AND p.created_at > datetime('now', '-48 hours')
 			ORDER BY p.upvotes_24h DESC
 			LIMIT ?`
 	case "best":
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at
+		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
 			FROM social_embeddings p
 			JOIN post_anchors pa ON pa.post_id = p.id
 			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'
 			ORDER BY pa.similarity * p.decayed_mass DESC
 			LIMIT ?`
 	default: // "new"
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at
+		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
 			FROM social_embeddings p
 			JOIN post_anchors pa ON pa.post_id = p.id
 			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'
@@ -357,7 +358,7 @@ func (s *RelayStore) CheckRateLimit(userID, action string, isPro bool) (bool, er
 func (s *RelayStore) DecayMasses() error {
 	_, err := s.db.Exec(
 		`UPDATE social_embeddings
-		 SET decayed_mass = mass * exp(-0.023 * (julianday('now') - julianday(created_at)))
+		 SET decayed_mass = mass * exp(-0.023 * (julianday('now') - julianday(COALESCE(published_at, created_at))))
 		 WHERE kind = 'post' AND visible = 1`,
 	)
 	if err != nil {
@@ -402,12 +403,26 @@ func (s *RelayStore) UpdateAnchorCentroid(anchorID string, centroid512 []byte) e
 	return nil
 }
 
+// parsePublishedAt parses a nullable datetime string from SQLite into *time.Time.
+func parsePublishedAt(s *string) *time.Time {
+	if s == nil || *s == "" {
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z", "2006-01-02 15:04:05", "2006-01-02"} {
+		if t, err := time.Parse(layout, *s); err == nil {
+			return &t
+		}
+	}
+	return nil
+}
+
 // scanSocialEmbedding scans a single row from *sql.Row.
 func scanSocialEmbedding(row *sql.Row) (*SocialEmbedding, error) {
 	var e SocialEmbedding
 	var visible, swallowed int
+	var publishedAt *string
 	err := row.Scan(&e.ID, &e.UserID, &e.Link, &e.Text, &e.Centerpoint, &e.Slug, &e.Embedding, &e.Embedding512, &e.Centroid512, &e.Effective512,
-		&e.Kind, &visible, &e.Mass, &e.Upvotes24h, &e.DecayedMass, &swallowed, &e.CreatedAt, &e.UpdatedAt)
+		&e.Kind, &visible, &e.Mass, &e.Upvotes24h, &e.DecayedMass, &swallowed, &e.CreatedAt, &e.UpdatedAt, &publishedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -416,6 +431,7 @@ func scanSocialEmbedding(row *sql.Row) (*SocialEmbedding, error) {
 	}
 	e.Visible = visible != 0
 	e.Swallowed = swallowed != 0
+	e.PublishedAt = parsePublishedAt(publishedAt)
 	return &e, nil
 }
 
@@ -423,13 +439,15 @@ func scanSocialEmbedding(row *sql.Row) (*SocialEmbedding, error) {
 func scanSocialEmbeddingRow(rows *sql.Rows) (*SocialEmbedding, error) {
 	var e SocialEmbedding
 	var visible, swallowed int
+	var publishedAt *string
 	err := rows.Scan(&e.ID, &e.UserID, &e.Link, &e.Text, &e.Centerpoint, &e.Slug, &e.Embedding, &e.Embedding512, &e.Centroid512, &e.Effective512,
-		&e.Kind, &visible, &e.Mass, &e.Upvotes24h, &e.DecayedMass, &swallowed, &e.CreatedAt, &e.UpdatedAt)
+		&e.Kind, &visible, &e.Mass, &e.Upvotes24h, &e.DecayedMass, &swallowed, &e.CreatedAt, &e.UpdatedAt, &publishedAt)
 	if err != nil {
 		return nil, fmt.Errorf("scan social embedding row: %w", err)
 	}
 	e.Visible = visible != 0
 	e.Swallowed = swallowed != 0
+	e.PublishedAt = parsePublishedAt(publishedAt)
 	return &e, nil
 }
 
@@ -445,6 +463,20 @@ func (s *RelayStore) CountPostsByAnchor(anchorID string) (int, error) {
 		return 0, fmt.Errorf("count posts by anchor: %w", err)
 	}
 	return count, nil
+}
+
+func (s *RelayStore) SumDecayedMassByAnchor(anchorID string) (float64, error) {
+	var mass float64
+	err := s.db.QueryRow(
+		`SELECT COALESCE(SUM(p.decayed_mass), 0) FROM post_anchors pa
+		 JOIN social_embeddings p ON p.id = pa.post_id
+		 WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'`,
+		anchorID,
+	).Scan(&mass)
+	if err != nil {
+		return 0, fmt.Errorf("sum decayed mass by anchor: %w", err)
+	}
+	return mass, nil
 }
 
 func (s *RelayStore) GetOrCreateSocialUserByEmail(email string) (*SocialUser, error) {
