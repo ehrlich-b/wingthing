@@ -136,14 +136,20 @@ func (c *sidebarCache) sidebarSlugs(currentSlug string) []string {
 		return slugs
 	}
 
-	// For a specific space, rank by connectivity * mass
+	// For a specific space: current slug first, then neighbors by connectivity * mass
+	var rest []string
+	for _, s := range slugs {
+		if s != currentSlug {
+			rest = append(rest, s)
+		}
+	}
 	edges := conn[currentSlug]
-	sort.Slice(slugs, func(i, j int) bool {
-		si := float64(edges[slugs[i]]) * masses[slugs[i]]
-		sj := float64(edges[slugs[j]]) * masses[slugs[j]]
+	sort.Slice(rest, func(i, j int) bool {
+		si := float64(edges[rest[i]]) * masses[rest[i]]
+		sj := float64(edges[rest[j]]) * masses[rest[j]]
 		return si > sj
 	})
-	return slugs
+	return append([]string{currentSlug}, rest...)
 }
 
 // Package-level sidebar cache shared by all requests.
