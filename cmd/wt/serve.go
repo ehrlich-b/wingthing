@@ -24,6 +24,7 @@ func envOr(key, fallback string) string {
 func serveCmd() *cobra.Command {
 	var addrFlag string
 	var spacesFlag string
+	var devFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -95,6 +96,10 @@ func serveCmd() *cobra.Command {
 
 			srv := relay.NewServer(store, srvCfg)
 			srv.Embedder = primaryEmb
+			if devFlag {
+				srv.DevTemplateDir = "internal/relay/templates"
+				fmt.Println("dev mode: templates reload from disk on each request")
+			}
 			relay.StartSidebarRefresh(store, 10*time.Minute)
 
 			httpSrv := &http.Server{
@@ -123,6 +128,7 @@ func serveCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&addrFlag, "addr", ":8080", "listen address")
 	cmd.Flags().StringVar(&spacesFlag, "spaces", "", "path to spaces.yaml (default: spaces.yaml)")
+	cmd.Flags().BoolVar(&devFlag, "dev", false, "reload templates from disk on each request")
 
 	return cmd
 }

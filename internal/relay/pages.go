@@ -3,9 +3,13 @@ package relay
 import (
 	"embed"
 	"fmt"
+	"html"
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -61,6 +65,24 @@ var (
 	loginTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/login.html"))
 	skillsTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skills.html"))
 )
+
+// template returns a parsed template. In dev mode (DevTemplateDir set),
+// re-reads from disk on every call so edits show up without rebuild.
+func (s *Server) template(cached *template.Template, files ...string) *template.Template {
+	if s.DevTemplateDir == "" {
+		return cached
+	}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = filepath.Join(s.DevTemplateDir, f)
+	}
+	t, err := template.New(filepath.Base(files[0])).Funcs(tmplFuncs).ParseFiles(paths...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "dev template reload error: %v\n", err)
+		return cached
+	}
+	return t
+}
 
 type pageData struct {
 	User *SocialUser
@@ -199,7 +221,7 @@ func StartSidebarRefresh(store *RelayStore, interval time.Duration) {
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	data := pageData{User: s.sessionUser(r)}
-	homeTmpl.ExecuteTemplate(w, "base", data)
+	s.template(homeTmpl, "base.html", "home.html").ExecuteTemplate(w, "base", data)
 }
 
 // rankPostAnchors ranks anchor slugs for a post, pinning currentSlug first
@@ -292,7 +314,7 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 
 	data := s.buildFeedData(slug, posts, r)
 	data.Sort = sort
-	feedTmpl.ExecuteTemplate(w, "base", data)
+	s.template(feedTmpl, "base.html", "feed.html").ExecuteTemplate(w, "base", data)
 }
 
 func (s *Server) handlePostPage(w http.ResponseWriter, r *http.Request) {
@@ -354,14 +376,23 @@ func (s *Server) handlePostPage(w http.ResponseWriter, r *http.Request) {
 		Voted:    voted,
 		Comments: postComments,
 	}
-	postTmpl.ExecuteTemplate(w, "base", data)
+	s.template(postTmpl, "base.html", "post.html").ExecuteTemplate(w, "base", data)
+}
+
+var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+
+// stripHTMLTitle removes HTML tags and decodes entities from RSS titles.
+func stripHTMLTitle(s string) string {
+	s = htmlTagRe.ReplaceAllString(s, "")
+	s = html.UnescapeString(s)
+	return strings.TrimSpace(s)
 }
 
 // extractTitleSummary derives a title and summary from a post.
 // Priority: explicit Title field > [Bracketed Title] in text > first sentence of text.
 func extractTitleSummary(p *SocialEmbedding) (title, summary string) {
 	if p.Title != nil && *p.Title != "" {
-		title = *p.Title
+		title = stripHTMLTitle(*p.Title)
 		summary = p.Text
 		// Strip bracketed header from summary if present
 		if strings.HasPrefix(summary, "[") {
@@ -517,7 +548,7 @@ func (s *Server) handleSkillsPage(w http.ResponseWriter, r *http.Request) {
 		User:   s.sessionUser(r),
 		Skills: items,
 	}
-	skillsTmpl.ExecuteTemplate(w, "base", data)
+	s.template(skillsTmpl, "base.html", "skills.html").ExecuteTemplate(w, "base", data)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -528,5 +559,5 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		HasGoogle: s.Config.GoogleClientID != "",
 		HasSMTP:   s.Config.SMTPHost != "",
 	}
-	loginTmpl.ExecuteTemplate(w, "base", data)
+	s.template(loginTmpl, "base.html", "login.html").ExecuteTemplate(w, "base", data)
 }

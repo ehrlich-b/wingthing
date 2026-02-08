@@ -23,10 +23,11 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	Store    *RelayStore
-	Embedder embedding.Embedder
-	Config   ServerConfig
-	mux      *http.ServeMux
+	Store          *RelayStore
+	Embedder       embedding.Embedder
+	Config         ServerConfig
+	DevTemplateDir string // if set, re-read templates from disk on each request
+	mux            *http.ServeMux
 }
 
 func NewServer(store *RelayStore, cfg ServerConfig) *Server {
@@ -85,7 +86,11 @@ func (s *Server) registerStaticRoutes() {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	if r.Method == "GET" && (path == "/" || path == "/social" || path == "/skills" || path == "/login" || strings.HasPrefix(path, "/w/") || strings.HasPrefix(path, "/p/")) {
-		w.Header().Set("Cache-Control", "public, max-age=900, s-maxage=900")
+		if r.URL.RawQuery != "" {
+			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=900, s-maxage=900")
+		}
 	}
 	s.mux.ServeHTTP(w, r)
 }

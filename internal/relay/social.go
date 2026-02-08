@@ -148,7 +148,7 @@ func (s *RelayStore) ListPostsByAnchor(anchorID, sort string, limit int) ([]*Soc
 	case "week", "month", "year":
 		query = `SELECT ` + cols + ` ` + base + ` ` + periods[sort] + ` ORDER BY p.mass DESC LIMIT ?`
 	case "new":
-		query = `SELECT ` + cols + ` ` + base + ` ORDER BY p.created_at DESC LIMIT ?`
+		query = `SELECT ` + cols + ` ` + base + ` ORDER BY COALESCE(p.published_at, p.created_at) DESC LIMIT ?`
 	default: // "hot"
 		query = `SELECT ` + cols + ` ` + base + ` ORDER BY pa.similarity * p.mass * exp(-1.386 * (julianday('now') - julianday(COALESCE(p.published_at, p.created_at)))) DESC LIMIT ?`
 	}
@@ -618,7 +618,7 @@ func (s *RelayStore) ListAllPosts(sort string, limit int) ([]*SocialEmbedding, e
 	periods := periodFilter("")
 	switch sort {
 	case "new":
-		orderBy = "created_at DESC"
+		orderBy = "COALESCE(published_at, created_at) DESC"
 	case "week", "month", "year":
 		orderBy = "mass DESC"
 		where = periods[sort]
