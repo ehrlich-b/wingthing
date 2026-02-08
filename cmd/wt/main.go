@@ -78,6 +78,7 @@ func main() {
 		initCmd(),
 		loginCmd(),
 		logoutCmd(),
+		embedCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
