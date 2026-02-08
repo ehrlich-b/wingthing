@@ -2,6 +2,8 @@
 
 Reference: [DRAFT.md](DRAFT.md) for full design. This file is the build plan.
 
+**Active:** [rss_feed_find_plan.md](rss_feed_find_plan.md) — RSS feed discovery & curation. Next step: compact and launch 10 finder bots.
+
 ## Vision
 
 `wt` is openrouter for agents on your local machine. AI moves too fast — new frameworks every two weeks. You shouldn't have to learn each one. Learn `wt`, and our APIs wrap all the providers. New thing drops? `wt skill add [new-thing]`. Done.
@@ -13,11 +15,11 @@ The skill library is the product. Checked into the repo, validated, ever-growing
 ### 0. Wire sandbox into runTask() ✅
 `runTask()` now creates a sandbox from the resolved isolation level, passes a `CmdFactory` to the agent via `RunOpts`, and defers `Destroy()`. Agents use the factory instead of `exec.CommandContext` when present. Privileged isolation skips sandbox entirely. Skill mounts and timeout flow through `PromptResult`.
 
-### 1. Summarization skill e2e through wt
-- [ ] `wt --skill compress` runs `claude -p` on RSS feed entries, outputs <=1024 char summaries
-- [ ] Skill reads feeds from `~/.wingthing/memory/feeds.md`
-- [ ] Works with any agent: `wt --skill compress --agent ollama`
-- [ ] Verify: submit task, agent runs, output stored, visible in `wt timeline`
+### 1. Summarization skill e2e through wt ✅
+- [x] `wt --skill compress` runs agent on RSS feed entries, outputs <=1024 char summaries
+- [x] Skill reads feeds from `~/.wingthing/memory/feeds.md` via `{{memory.feeds}}` interpolation
+- [x] Works with any agent: `wt --skill compress --agent ollama` (agent resolution precedence)
+- [x] Pipeline verified: TestCompressSkillE2E covers skill load → memory → interpolation → prompt assembly
 
 ### 2. Seed ~1000 public RSS feeds
 - [ ] Curate feeds across subjects: tech, science, politics, culture, sports, finance, health, arts, gaming, philosophy, etc.

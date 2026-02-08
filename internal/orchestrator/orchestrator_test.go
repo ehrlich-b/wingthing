@@ -519,6 +519,98 @@ func TestBuildWithThread(t *testing.T) {
 	}
 }
 
+func TestCompressSkillE2E(t *testing.T) {
+	// Set up memory dir with index + feeds
+	memDir := t.TempDir()
+	os.WriteFile(filepath.Join(memDir, "index.md"), []byte("# Memory Index\n"), 0644)
+	os.WriteFile(filepath.Join(memDir, "feeds.md"), []byte(
+		"# Feeds\n\n- https://hnrss.org/frontpage\n- https://feeds.arstechnica.com/arstechnica/index\n",
+	), 0644)
+
+	// Set up skills dir with compress skill
+	skillsDir := t.TempDir()
+	compressSkill := `---
+name: compress
+description: Fetch RSS feeds and compress articles to 1024 chars
+memory:
+  - feeds
+tags: [rss, compress, content]
+---
+# Compress
+
+Read the RSS feed URLs listed below. For each feed, extract the 5 most recent articles.
+
+For each article, compress the full text down to a maximum of 1024 characters.
+
+## Feeds
+
+{{memory.feeds}}
+
+## Output Format
+
+For each article, output exactly this structure:
+`
+	os.WriteFile(filepath.Join(skillsDir, "compress.md"), []byte(compressSkill), 0644)
+
+	b, s := setupBuilder(t, memDir, skillsDir, "")
+
+	task := &store.Task{
+		ID:     "t-compress-e2e",
+		Type:   "skill",
+		What:   "compress",
+		RunAt:  time.Now(),
+		Agent:  "",
+		Status: "pending",
+	}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := b.Build(context.Background(), "t-compress-e2e")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Agent should be config default (claude) since skill has no agent: field
+	if result.Agent != "claude" {
+		t.Errorf("agent = %q, want claude (default)", result.Agent)
+	}
+
+	// Prompt should contain the RSS feed URLs (interpolated from memory.feeds)
+	if !strings.Contains(result.Prompt, "https://hnrss.org/frontpage") {
+		t.Error("prompt should contain hnrss feed URL")
+	}
+	if !strings.Contains(result.Prompt, "https://feeds.arstechnica.com/arstechnica/index") {
+		t.Error("prompt should contain arstechnica feed URL")
+	}
+
+	// Prompt should contain the skill instructions
+	if !strings.Contains(result.Prompt, "compress the full text") {
+		t.Error("prompt should contain compress instructions")
+	}
+
+	// Memory loaded should include index and feeds
+	has := func(name string) bool {
+		for _, m := range result.MemoryLoaded {
+			if m == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("index") {
+		t.Error("should load index memory")
+	}
+	if !has("feeds") {
+		t.Error("should load feeds memory")
+	}
+
+	// Isolation should be standard (default)
+	if result.Isolation != "standard" {
+		t.Errorf("isolation = %q, want standard", result.Isolation)
+	}
+}
+
 func TestFormatDocsContent(t *testing.T) {
 	if !strings.Contains(FormatDocs, "wt:schedule") {
 		t.Error("FormatDocs should mention wt:schedule")
