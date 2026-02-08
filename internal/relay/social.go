@@ -139,36 +139,18 @@ func (s *RelayStore) AssignPostAnchors(postID string, assignments []PostAnchor) 
 }
 
 func (s *RelayStore) ListPostsByAnchor(anchorID, sort string, limit int) ([]*SocialEmbedding, error) {
+	cols := `p.id, p.user_id, p.link, p.text, p.title, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at`
+	base := `FROM social_embeddings p JOIN post_anchors pa ON pa.post_id = p.id WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'`
+	periods := periodFilter("p.")
+
 	var query string
 	switch sort {
-	case "hot":
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.title, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
-			FROM social_embeddings p
-			JOIN post_anchors pa ON pa.post_id = p.id
-			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'
-			ORDER BY (p.upvotes_24h / (1.0 + (julianday('now') - julianday(p.created_at)) * 2.0)) DESC
-			LIMIT ?`
-	case "rising":
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.title, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
-			FROM social_embeddings p
-			JOIN post_anchors pa ON pa.post_id = p.id
-			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post' AND p.created_at > datetime('now', '-48 hours')
-			ORDER BY p.upvotes_24h DESC
-			LIMIT ?`
-	case "best":
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.title, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
-			FROM social_embeddings p
-			JOIN post_anchors pa ON pa.post_id = p.id
-			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'
-			ORDER BY pa.similarity * p.decayed_mass DESC
-			LIMIT ?`
-	default: // "new"
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.title, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
-			FROM social_embeddings p
-			JOIN post_anchors pa ON pa.post_id = p.id
-			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'
-			ORDER BY p.created_at DESC
-			LIMIT ?`
+	case "week", "month", "year":
+		query = `SELECT ` + cols + ` ` + base + ` ` + periods[sort] + ` ORDER BY p.mass DESC LIMIT ?`
+	case "new":
+		query = `SELECT ` + cols + ` ` + base + ` ORDER BY p.created_at DESC LIMIT ?`
+	default: // "hot"
+		query = `SELECT ` + cols + ` ` + base + ` ORDER BY pa.similarity * p.mass * exp(-1.386 * (julianday('now') - julianday(COALESCE(p.published_at, p.created_at)))) DESC LIMIT ?`
 	}
 
 	rows, err := s.db.Query(query, anchorID, limit)
@@ -564,18 +546,38 @@ func (s *RelayStore) TopPostsByAnchor() (map[string]topPost, error) {
 	return out, rows.Err()
 }
 
+// liveDecaySQL computes decay at query time with 12-hour half-life.
+// k = ln(2)/0.5 = 1.386. Mostly today's content; exceptional posts survive ~3 days.
+// Uses published_at if available, otherwise created_at.
+const liveDecaySQL = `mass * exp(-1.386 * (julianday('now') - julianday(COALESCE(published_at, created_at))))`
+
+// periodFilter returns a SQL WHERE clause fragment for time-period sorts.
+func periodFilter(prefix string) map[string]string {
+	p := prefix
+	return map[string]string{
+		"week":  "AND " + p + "created_at > datetime('now', '-7 days')",
+		"month": "AND " + p + "created_at > datetime('now', '-30 days')",
+		"year":  "AND " + p + "created_at > datetime('now', '-365 days')",
+	}
+}
+
 // ListAllPosts returns all visible posts ordered by the given sort.
+// sort: "hot" (default, live decay), "new", "week", "month", "year".
 func (s *RelayStore) ListAllPosts(sort string, limit int) ([]*SocialEmbedding, error) {
-	var orderBy string
+	var orderBy, where string
+	periods := periodFilter("")
 	switch sort {
 	case "new":
 		orderBy = "created_at DESC"
-	default:
-		orderBy = "decayed_mass DESC"
+	case "week", "month", "year":
+		orderBy = "mass DESC"
+		where = periods[sort]
+	default: // "hot"
+		orderBy = liveDecaySQL + " DESC"
 	}
 	rows, err := s.db.Query(
 		`SELECT id, user_id, link, text, title, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
-		 FROM social_embeddings WHERE kind = 'post' AND visible = 1
+		 FROM social_embeddings WHERE kind = 'post' AND visible = 1 `+where+`
 		 ORDER BY `+orderBy+` LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list all posts: %w", err)

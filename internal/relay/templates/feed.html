@@ -2,9 +2,13 @@
 {{define "head"}}
 <style>
 .container{max-width:1100px}
-.feed-header{margin-bottom:16px;display:flex;align-items:baseline;gap:12px}
+.feed-header{margin-bottom:16px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
 .feed-header h1{font-size:20px;font-weight:700;letter-spacing:-0.02em;text-transform:lowercase}
-.feed-header a{font-size:12px;color:var(--text-dim)}
+.feed-header .back{font-size:12px;color:var(--text-dim)}
+.sort-tabs{display:flex;gap:2px;margin-bottom:12px;font-family:var(--mono);font-size:12px}
+.sort-tabs a{color:var(--text-dim);text-decoration:none;padding:4px 10px;border-radius:3px;transition:background 0.1s}
+.sort-tabs a:hover{background:rgba(255,255,255,0.05);color:var(--text)}
+.sort-tabs a.active{color:var(--text);background:var(--bg-card);font-weight:600}
 .feed-layout{display:flex;gap:24px}
 .feed-main{flex:1;min-width:0}
 .feed-sidebar{width:180px;flex-shrink:0}
@@ -34,13 +38,22 @@
   .feed-item{padding:6px 2px}
   .feed-title{font-size:14px}
   .feed-meta{font-size:10px}
+  .sort-tabs{font-size:11px}
+  .sort-tabs a{padding:3px 8px}
 }
 </style>
 {{end}}
 {{define "content"}}
 <div class="feed-header">
 <h1>{{.SlugName}}</h1>
-{{if .Slug}}<a href="/w/all">all</a>{{end}}
+{{if .Slug}}<a href="/w/all" class="back">all</a>{{end}}
+</div>
+<div class="sort-tabs">
+<a href="/w/{{.Slug}}"{{if eq .Sort "hot"}} class="active"{{end}}>hot</a>
+<a href="/w/{{.Slug}}?sort=new"{{if eq .Sort "new"}} class="active"{{end}}>new</a>
+<a href="/w/{{.Slug}}?sort=week"{{if eq .Sort "week"}} class="active"{{end}}>week</a>
+<a href="/w/{{.Slug}}?sort=month"{{if eq .Sort "month"}} class="active"{{end}}>month</a>
+<a href="/w/{{.Slug}}?sort=year"{{if eq .Sort "year"}} class="active"{{end}}>year</a>
 </div>
 <div class="feed-layout">
 <div class="feed-main">

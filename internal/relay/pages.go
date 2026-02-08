@@ -82,6 +82,7 @@ type feedPageData struct {
 	LoggedIn   bool
 	Slug       string
 	SlugName   string
+	Sort       string
 	Items      []feedItem
 	AllAnchors []string
 }
@@ -247,6 +248,16 @@ func (s *Server) handleSocial(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/w/all", http.StatusFound)
 }
 
+// validSort normalizes the sort query param.
+func validSort(s string) string {
+	switch s {
+	case "new", "week", "month", "year":
+		return s
+	default:
+		return "hot"
+	}
+}
+
 func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	if slug == "" {
@@ -254,11 +265,13 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sort := validSort(r.URL.Query().Get("sort"))
+
 	var posts []*SocialEmbedding
 	var err error
 
 	if slug == "all" {
-		posts, err = s.Store.ListAllPosts("best", 100)
+		posts, err = s.Store.ListAllPosts(sort, 100)
 	} else {
 		anchor, aerr := s.Store.GetSocialEmbeddingBySlug(slug)
 		if aerr != nil {
@@ -269,7 +282,7 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		posts, err = s.Store.ListPostsByAnchor(anchor.ID, "best", 100)
+		posts, err = s.Store.ListPostsByAnchor(anchor.ID, sort, 100)
 	}
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -277,6 +290,7 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := s.buildFeedData(slug, posts, r)
+	data.Sort = sort
 	feedTmpl.ExecuteTemplate(w, "base", data)
 }
 
