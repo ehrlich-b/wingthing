@@ -3,6 +3,7 @@ package relay
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,7 @@ type SocialEmbedding struct {
 	UserID       string
 	Link         *string
 	Text         string
+	Title        *string
 	Centerpoint  *string
 	Slug         *string
 	Embedding    []byte // raw float32 blob
@@ -63,9 +65,9 @@ func (s *RelayStore) CreateSocialEmbedding(e *SocialEmbedding) error {
 		pubAt = e.PublishedAt.UTC().Format("2006-01-02 15:04:05")
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO social_embeddings (id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, published_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.UserID, e.Link, e.Text, e.Centerpoint, e.Slug, e.Embedding, e.Embedding512, e.Centroid512, e.Effective512, e.Kind,
+		`INSERT INTO social_embeddings (id, user_id, link, text, title, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, published_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.UserID, e.Link, e.Text, e.Title, e.Centerpoint, e.Slug, e.Embedding, e.Embedding512, e.Centroid512, e.Effective512, e.Kind,
 		boolToInt(e.Visible), e.Mass, e.Upvotes24h, e.DecayedMass, boolToInt(e.Swallowed), pubAt,
 	)
 	if err != nil {
@@ -76,7 +78,7 @@ func (s *RelayStore) CreateSocialEmbedding(e *SocialEmbedding) error {
 
 func (s *RelayStore) GetSocialEmbedding(id string) (*SocialEmbedding, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
+		`SELECT id, user_id, link, text, title, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
 		 FROM social_embeddings WHERE id = ?`, id,
 	)
 	return scanSocialEmbedding(row)
@@ -84,7 +86,7 @@ func (s *RelayStore) GetSocialEmbedding(id string) (*SocialEmbedding, error) {
 
 func (s *RelayStore) GetSocialEmbeddingByLink(link string) (*SocialEmbedding, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
+		`SELECT id, user_id, link, text, title, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
 		 FROM social_embeddings WHERE link = ?`, link,
 	)
 	return scanSocialEmbedding(row)
@@ -92,7 +94,7 @@ func (s *RelayStore) GetSocialEmbeddingByLink(link string) (*SocialEmbedding, er
 
 func (s *RelayStore) GetSocialEmbeddingBySlug(slug string) (*SocialEmbedding, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
+		`SELECT id, user_id, link, text, title, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
 		 FROM social_embeddings WHERE slug = ?`, slug,
 	)
 	return scanSocialEmbedding(row)
@@ -100,7 +102,7 @@ func (s *RelayStore) GetSocialEmbeddingBySlug(slug string) (*SocialEmbedding, er
 
 func (s *RelayStore) ListAnchors() ([]*SocialEmbedding, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
+		`SELECT id, user_id, link, text, title, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
 		 FROM social_embeddings WHERE kind = 'anchor' AND visible = 1 ORDER BY created_at`,
 	)
 	if err != nil {
@@ -140,28 +142,28 @@ func (s *RelayStore) ListPostsByAnchor(anchorID, sort string, limit int) ([]*Soc
 	var query string
 	switch sort {
 	case "hot":
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
+		query = `SELECT p.id, p.user_id, p.link, p.text, p.title, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
 			FROM social_embeddings p
 			JOIN post_anchors pa ON pa.post_id = p.id
 			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'
 			ORDER BY (p.upvotes_24h / (1.0 + (julianday('now') - julianday(p.created_at)) * 2.0)) DESC
 			LIMIT ?`
 	case "rising":
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
+		query = `SELECT p.id, p.user_id, p.link, p.text, p.title, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
 			FROM social_embeddings p
 			JOIN post_anchors pa ON pa.post_id = p.id
 			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post' AND p.created_at > datetime('now', '-48 hours')
 			ORDER BY p.upvotes_24h DESC
 			LIMIT ?`
 	case "best":
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
+		query = `SELECT p.id, p.user_id, p.link, p.text, p.title, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
 			FROM social_embeddings p
 			JOIN post_anchors pa ON pa.post_id = p.id
 			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'
 			ORDER BY pa.similarity * p.decayed_mass DESC
 			LIMIT ?`
 	default: // "new"
-		query = `SELECT p.id, p.user_id, p.link, p.text, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
+		query = `SELECT p.id, p.user_id, p.link, p.text, p.title, p.centerpoint, p.slug, p.embedding, p.embedding_512, p.centroid_512, p.effective_512, p.kind, p.visible, p.mass, p.upvotes_24h, p.decayed_mass, p.swallowed, p.created_at, p.updated_at, p.published_at
 			FROM social_embeddings p
 			JOIN post_anchors pa ON pa.post_id = p.id
 			WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'
@@ -426,7 +428,7 @@ func scanSocialEmbedding(row *sql.Row) (*SocialEmbedding, error) {
 	var e SocialEmbedding
 	var visible, swallowed int
 	var publishedAt *string
-	err := row.Scan(&e.ID, &e.UserID, &e.Link, &e.Text, &e.Centerpoint, &e.Slug, &e.Embedding, &e.Embedding512, &e.Centroid512, &e.Effective512,
+	err := row.Scan(&e.ID, &e.UserID, &e.Link, &e.Text, &e.Title, &e.Centerpoint, &e.Slug, &e.Embedding, &e.Embedding512, &e.Centroid512, &e.Effective512,
 		&e.Kind, &visible, &e.Mass, &e.Upvotes24h, &e.DecayedMass, &swallowed, &e.CreatedAt, &e.UpdatedAt, &publishedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -445,7 +447,7 @@ func scanSocialEmbeddingRow(rows *sql.Rows) (*SocialEmbedding, error) {
 	var e SocialEmbedding
 	var visible, swallowed int
 	var publishedAt *string
-	err := rows.Scan(&e.ID, &e.UserID, &e.Link, &e.Text, &e.Centerpoint, &e.Slug, &e.Embedding, &e.Embedding512, &e.Centroid512, &e.Effective512,
+	err := rows.Scan(&e.ID, &e.UserID, &e.Link, &e.Text, &e.Title, &e.Centerpoint, &e.Slug, &e.Embedding, &e.Embedding512, &e.Centroid512, &e.Effective512,
 		&e.Kind, &visible, &e.Mass, &e.Upvotes24h, &e.DecayedMass, &swallowed, &e.CreatedAt, &e.UpdatedAt, &publishedAt)
 	if err != nil {
 		return nil, fmt.Errorf("scan social embedding row: %w", err)
@@ -485,14 +487,15 @@ func (s *RelayStore) SumDecayedMassByAnchor(anchorID string) (float64, error) {
 }
 
 type topPost struct {
-	Text string
-	Link string
+	Title string
+	Text  string
+	Link  string
 }
 
-// TopPostsByAnchor returns a map of anchorID -> top post (text + link) by highest decayed_mass.
+// TopPostsByAnchor returns a map of anchorID -> top post (title + text + link) by highest decayed_mass.
 func (s *RelayStore) TopPostsByAnchor() (map[string]topPost, error) {
 	rows, err := s.db.Query(
-		`SELECT pa.anchor_id, p.text, COALESCE(p.link, ''), p.decayed_mass FROM post_anchors pa
+		`SELECT pa.anchor_id, COALESCE(p.title, ''), p.text, COALESCE(p.link, ''), p.decayed_mass FROM post_anchors pa
 		 JOIN social_embeddings p ON p.id = pa.post_id
 		 WHERE p.visible = 1 AND p.kind = 'post'
 		 ORDER BY pa.anchor_id, p.decayed_mass DESC`)
@@ -503,14 +506,106 @@ func (s *RelayStore) TopPostsByAnchor() (map[string]topPost, error) {
 
 	out := make(map[string]topPost)
 	for rows.Next() {
-		var anchorID, text, link string
+		var anchorID, title, text, link string
 		var mass float64
-		if err := rows.Scan(&anchorID, &text, &link, &mass); err != nil {
+		if err := rows.Scan(&anchorID, &title, &text, &link, &mass); err != nil {
 			return nil, fmt.Errorf("scan top post: %w", err)
 		}
 		if _, ok := out[anchorID]; !ok {
-			out[anchorID] = topPost{Text: text, Link: link}
+			out[anchorID] = topPost{Title: title, Text: text, Link: link}
 		}
+	}
+	return out, rows.Err()
+}
+
+// ListAllPosts returns all visible posts ordered by the given sort.
+func (s *RelayStore) ListAllPosts(sort string, limit int) ([]*SocialEmbedding, error) {
+	var orderBy string
+	switch sort {
+	case "new":
+		orderBy = "created_at DESC"
+	default:
+		orderBy = "decayed_mass DESC"
+	}
+	rows, err := s.db.Query(
+		`SELECT id, user_id, link, text, title, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, created_at, updated_at, published_at
+		 FROM social_embeddings WHERE kind = 'post' AND visible = 1
+		 ORDER BY `+orderBy+` LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list all posts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*SocialEmbedding
+	for rows.Next() {
+		e, err := scanSocialEmbeddingRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// AnchorSlugsForPosts returns a map of postID -> []slug for the given post IDs.
+func (s *RelayStore) AnchorSlugsForPosts(postIDs []string) (map[string][]string, error) {
+	if len(postIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(postIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]interface{}, len(postIDs))
+	for i, id := range postIDs {
+		args[i] = id
+	}
+	rows, err := s.db.Query(
+		`SELECT pa.post_id, a.slug FROM post_anchors pa
+		 JOIN social_embeddings a ON a.id = pa.anchor_id
+		 WHERE pa.post_id IN (`+placeholders+`) AND a.slug IS NOT NULL
+		 ORDER BY pa.similarity DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("anchor slugs for posts: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string][]string)
+	for rows.Next() {
+		var postID, slug string
+		if err := rows.Scan(&postID, &slug); err != nil {
+			return nil, fmt.Errorf("scan anchor slug: %w", err)
+		}
+		out[postID] = append(out[postID], slug)
+	}
+	return out, rows.Err()
+}
+
+// CommentCountsForPosts returns a map of postID -> comment count.
+func (s *RelayStore) CommentCountsForPosts(postIDs []string) (map[string]int, error) {
+	if len(postIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(postIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]interface{}, len(postIDs))
+	for i, id := range postIDs {
+		args[i] = id
+	}
+	rows, err := s.db.Query(
+		`SELECT post_id, COUNT(*) FROM social_comments
+		 WHERE post_id IN (`+placeholders+`) GROUP BY post_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("comment counts for posts: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int)
+	for rows.Next() {
+		var postID string
+		var count int
+		if err := rows.Scan(&postID, &count); err != nil {
+			return nil, fmt.Errorf("scan comment count: %w", err)
+		}
+		out[postID] = count
 	}
 	return out, rows.Err()
 }
@@ -533,6 +628,62 @@ func (s *RelayStore) GetOrCreateSocialUserByEmail(email string) (*SocialUser, er
 		return nil, err
 	}
 	return u, nil
+}
+
+// AnchorMasses returns slug -> sum(decayed_mass) for all anchors with posts.
+func (s *RelayStore) AnchorMasses() (map[string]float64, error) {
+	rows, err := s.db.Query(
+		`SELECT a.slug, COALESCE(SUM(p.decayed_mass), 0)
+		 FROM social_embeddings a
+		 JOIN post_anchors pa ON pa.anchor_id = a.id
+		 JOIN social_embeddings p ON p.id = pa.post_id AND p.visible = 1 AND p.kind = 'post'
+		 WHERE a.kind = 'anchor' AND a.visible = 1 AND a.slug IS NOT NULL
+		 GROUP BY a.slug`)
+	if err != nil {
+		return nil, fmt.Errorf("anchor masses: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]float64)
+	for rows.Next() {
+		var slug string
+		var mass float64
+		if err := rows.Scan(&slug, &mass); err != nil {
+			return nil, fmt.Errorf("scan anchor mass: %w", err)
+		}
+		out[slug] = mass
+	}
+	return out, rows.Err()
+}
+
+// AnchorConnectivity returns a connectivity matrix: slug -> {slug -> shared_post_count}.
+// Two anchors are connected when they share posts via post_anchors.
+func (s *RelayStore) AnchorConnectivity() (map[string]map[string]int, error) {
+	rows, err := s.db.Query(
+		`SELECT a1.slug, a2.slug, COUNT(DISTINCT pa1.post_id)
+		 FROM post_anchors pa1
+		 JOIN post_anchors pa2 ON pa1.post_id = pa2.post_id AND pa1.anchor_id != pa2.anchor_id
+		 JOIN social_embeddings a1 ON a1.id = pa1.anchor_id AND a1.slug IS NOT NULL
+		 JOIN social_embeddings a2 ON a2.id = pa2.anchor_id AND a2.slug IS NOT NULL
+		 GROUP BY a1.slug, a2.slug`)
+	if err != nil {
+		return nil, fmt.Errorf("anchor connectivity: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]map[string]int)
+	for rows.Next() {
+		var s1, s2 string
+		var count int
+		if err := rows.Scan(&s1, &s2, &count); err != nil {
+			return nil, fmt.Errorf("scan connectivity: %w", err)
+		}
+		if out[s1] == nil {
+			out[s1] = make(map[string]int)
+		}
+		out[s1][s2] = count
+	}
+	return out, rows.Err()
 }
 
 func boolToInt(b bool) int {

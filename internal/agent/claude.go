@@ -35,7 +35,11 @@ func (c *Claude) Health() error {
 func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream, err error) {
 	args := []string{"-p", prompt, "--output-format", "stream-json", "--verbose"}
 	if opts.SystemPrompt != "" {
-		args = append(args, "--append-system-prompt", opts.SystemPrompt)
+		if opts.ReplaceSystemPrompt {
+			args = append(args, "--system-prompt", opts.SystemPrompt)
+		} else {
+			args = append(args, "--append-system-prompt", opts.SystemPrompt)
+		}
 	}
 	if len(opts.AllowedTools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(opts.AllowedTools, ","))

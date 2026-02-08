@@ -320,8 +320,9 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Text string `json:"text"`
-		Link string `json:"link"`
+		Text  string `json:"text"`
+		Title string `json:"title"`
+		Link  string `json:"link"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -340,6 +341,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	post, err := CreatePost(s.Store, s.Embedder, PostParams{
 		UserID: userID,
 		Text:   req.Text,
+		Title:  req.Title,
 		Link:   req.Link,
 		Mass:   1, // public API: mass always 1
 	})

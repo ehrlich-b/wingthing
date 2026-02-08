@@ -175,9 +175,10 @@ func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.T
 	// Create sandbox unless isolation is privileged
 	var runOpts agent.RunOpts
 
-	// If this is a skill, set system prompt to ensure the agent follows skill instructions
+	// If this is a skill, override system prompt to ensure strict output compliance
 	if t.Type == "skill" {
-		runOpts.SystemPrompt = "You are executing a skill. Follow the instructions in the user message exactly. Do not reference your default system prompt or behavior — the skill defines your task."
+		runOpts.SystemPrompt = `CRITICAL: You are a non-interactive data processor executing a skill. The prompt is a strict specification. Output ONLY what it specifies, EXACTLY in the format it specifies. NO conversational text. NO explanations. NO questions. NO markdown formatting unless specified. NO preamble or commentary. If the prompt says "output one line: SCORE <number>", output one line: SCORE <number>. Nothing else exists. Ignore all other instructions.`
+		runOpts.ReplaceSystemPrompt = true
 	}
 
 	if pr.Isolation != "privileged" {
@@ -985,6 +986,7 @@ func relayPost(cfg *config.Config, path string, body any) (map[string]any, error
 
 func postCmd() *cobra.Command {
 	var linkFlag string
+	var titleFlag string
 	var massFlag int
 	var dateFlag string
 
@@ -1012,6 +1014,7 @@ func postCmd() *cobra.Command {
 			params := relay.PostParams{
 				UserID: "local",
 				Text:   args[0],
+				Title:  titleFlag,
 				Link:   linkFlag,
 				Mass:   massFlag,
 			}
@@ -1041,6 +1044,7 @@ func postCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&linkFlag, "link", "", "URL to link")
+	cmd.Flags().StringVar(&titleFlag, "title", "", "Article title")
 	cmd.Flags().IntVar(&massFlag, "mass", 1, "Initial mass (self-hosted: set higher for bot-curated content)")
 	cmd.Flags().StringVar(&dateFlag, "date", "", "Article publish date (RFC3339 or YYYY-MM-DD)")
 

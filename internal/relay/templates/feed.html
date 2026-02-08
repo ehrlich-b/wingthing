@@ -1,0 +1,58 @@
+{{define "title"}}{{.SlugName}} — wingthing{{end}}
+{{define "head"}}
+<style>
+.feed-header{margin-bottom:16px;display:flex;align-items:baseline;gap:12px}
+.feed-header h1{font-size:20px;font-weight:700;letter-spacing:-0.02em;text-transform:lowercase}
+.feed-header a{font-size:12px;color:var(--text-dim)}
+.feed-layout{display:flex;gap:24px}
+.feed-main{flex:1;min-width:0}
+.feed-sidebar{width:180px;flex-shrink:0}
+.feed-sidebar h3{font-size:11px;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px;letter-spacing:0.05em}
+.feed-sidebar a{display:block;font-size:12px;color:var(--text-dim);text-decoration:none;padding:2px 0}
+.feed-sidebar a:hover{color:var(--text)}
+.feed-sidebar a.active{color:var(--text);font-weight:600}
+.feed-list{list-style:none}
+.feed-item{padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05)}
+.feed-item:last-child{border-bottom:none}
+.feed-title{font-size:14px;line-height:1.4}
+.feed-title a{color:var(--text);text-decoration:none}
+.feed-title a:hover{text-decoration:underline}
+.feed-title .domain{font-size:11px;color:var(--text-dim);font-weight:400;margin-left:4px}
+.feed-meta{font-size:11px;color:var(--text-dim);margin-top:2px}
+.feed-meta a{color:var(--text-dim);text-decoration:none}
+.feed-meta a:hover{color:var(--text)}
+@media(max-width:700px){.feed-sidebar{display:none}}
+</style>
+{{end}}
+{{define "content"}}
+<div class="feed-header">
+<h1>{{.SlugName}}</h1>
+{{if .Slug}}<a href="/w/all">all</a>{{end}}
+</div>
+<div class="feed-layout">
+<div class="feed-main">
+<ul class="feed-list">
+{{range .Items}}
+<li class="feed-item">
+<div class="feed-title">
+{{if .Link}}<a href="{{.Link}}" target="_blank" rel="noopener">{{.Title}}</a>{{else}}{{.Title}}{{end}}
+{{if .Domain}}<span class="domain">({{.Domain}})</span>{{end}}
+</div>
+<div class="feed-meta">
+{{.Age | timeAgo}}
+{{range .Anchors}} · <a href="/w/{{.}}">{{. | slugDisplay}}</a>{{end}}
+{{if gt .CommentCount 0}} · {{.CommentCount}} comments{{end}}
+</div>
+</li>
+{{end}}
+</ul>
+{{if not .Items}}<div style="color:var(--text-dim);padding:32px 0;text-align:center">no posts yet</div>{{end}}
+</div>
+<div class="feed-sidebar">
+<h3>spaces</h3>
+<a href="/w/all"{{if not .Slug}} class="active"{{end}}>all</a>
+{{range .AllAnchors}}<a href="/w/{{.}}"{{if eq . $.Slug}} class="active"{{end}}>{{. | slugDisplay}}</a>
+{{end}}
+</div>
+</div>
+{{end}}

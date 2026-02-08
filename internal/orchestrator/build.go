@@ -95,6 +95,30 @@ func (b *Builder) Build(ctx context.Context, taskID string) (*PromptResult, erro
 		skillDeps = sk.Memory
 	}
 
+	// If skill explicitly declares memory: [], skip ALL memory loading
+	// YAML parses memory: [] as non-nil empty slice []string{}
+	if sk != nil && len(skillDeps) == 0 {
+		// Skill wants zero memory — just interpolate the template with task.What
+		idata := skill.InterpolateData{
+			Memory:   make(map[string]string),
+			Identity: make(map[string]string),
+			Thread:   "",
+			Task:     task.What,
+		}
+		taskPrompt, _ := skill.Interpolate(sk.Body, idata)
+
+		return &PromptResult{
+			Prompt:       taskPrompt,
+			Agent:        rc.Agent,
+			Isolation:    rc.Isolation,
+			Mounts:       sk.Mounts,
+			Timeout:      rc.Timeout,
+			MemoryLoaded: nil,
+			BudgetUsed:   len(taskPrompt),
+			BudgetTotal:  contextWindow,
+		}, nil
+	}
+
 	// For ad-hoc tasks, always include identity
 	if task.Type == "prompt" {
 		hasIdentity := false

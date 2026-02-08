@@ -17,10 +17,11 @@ type Agent interface {
 type CmdFactory func(ctx context.Context, name string, args []string) (*exec.Cmd, error)
 
 type RunOpts struct {
-	AllowedTools []string
-	SystemPrompt string
-	Timeout      time.Duration
-	CmdFactory   CmdFactory
+	AllowedTools         []string
+	SystemPrompt         string
+	ReplaceSystemPrompt  bool
+	Timeout              time.Duration
+	CmdFactory           CmdFactory
 }
 
 type Chunk struct {

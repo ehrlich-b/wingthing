@@ -1,0 +1,23 @@
+app = "wingthing"
+primary_region = "ewr"
+
+[build]
+
+[env]
+  HOME = "/data"
+  WT_BASE_URL = "https://wt.ai"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[mounts]
+  source = "wt_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -12,6 +12,7 @@ import (
 type PostParams struct {
 	UserID      string
 	Text        string
+	Title       string
 	Link        string
 	Mass        int
 	PublishedAt *time.Time
@@ -81,6 +82,9 @@ func CreatePost(store *RelayStore, emb embedding.Embedder, p PostParams) (*Socia
 		Mass:         p.Mass,
 		DecayedMass:  float64(p.Mass),
 		Swallowed:    swallowed,
+	}
+	if p.Title != "" {
+		post.Title = &p.Title
 	}
 	if p.Link != "" {
 		post.Link = &p.Link
