@@ -174,6 +174,12 @@ func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.T
 
 	// Create sandbox unless isolation is privileged
 	var runOpts agent.RunOpts
+
+	// If this is a skill, set system prompt to ensure the agent follows skill instructions
+	if t.Type == "skill" {
+		runOpts.SystemPrompt = "You are executing a skill. Follow the instructions in the user message exactly. Do not reference your default system prompt or behavior — the skill defines your task."
+	}
+
 	if pr.Isolation != "privileged" {
 		var mounts []sandbox.Mount
 		for _, m := range pr.Mounts {
