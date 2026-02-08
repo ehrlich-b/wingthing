@@ -2,7 +2,7 @@
 
 Reference: [DRAFT.md](DRAFT.md) for full design. This file is the build plan.
 
-**Active:** Item 5 — Clear posting API
+**Active:** Item 6 — Skill enable/disable
 
 ## Vision
 
@@ -40,10 +40,14 @@ The skill library is the product. Checked into the repo, validated, ever-growing
 - [x] Idempotent upvotes, threaded comments (parent_id support)
 - [x] Posts time-decay naturally (existing `decayed_mass` mechanism)
 
-### 5. Clear posting API (skill-friendly)
-- [ ] APIs clean enough that a wt skill can post to wt social
-- [ ] Skill template: fetch, compress, score, post — full pipeline in one skill
-- [ ] `wt social post` works from CLI and from skills
+### 5. Clear posting API (skill-friendly) ✅
+- [x] `wt post "text" --link URL --mass N` — local CLI, writes directly to social DB
+- [x] `POST /api/post` — relay endpoint, authenticated, mass always 1 (public mode)
+- [x] Self-hosted: `--mass` flag for bots to set initial mass; public: mass=1 enforced
+- [x] Shared `CreatePost()` function: embeds text, cosine similarity to anchors, assigns top-2 above 0.40, swallows below 0.25
+- [x] Server embedder uses same `NewFromProvider("auto")` as `wt embed` — no special snowflake
+- [x] URL dedup: duplicate links return existing post instead of creating duplicate
+- [x] Returns 500 if no embedder available (server can start without one)
 
 ### 6. Skill enable/disable
 - [ ] `wt skill enable <name>` / `wt skill disable <name>`

@@ -313,6 +313,48 @@ func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 	return userID
 }
 
+func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
+	userID := s.requireToken(w, r)
+	if userID == "" {
+		return
+	}
+
+	var req struct {
+		Text string `json:"text"`
+		Link string `json:"link"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Text == "" {
+		writeError(w, http.StatusBadRequest, "text is required")
+		return
+	}
+
+	if s.Embedder == nil {
+		writeError(w, http.StatusInternalServerError, "no embedder available — server cannot create embeddings")
+		return
+	}
+
+	post, err := CreatePost(s.Store, s.Embedder, PostParams{
+		UserID: userID,
+		Text:   req.Text,
+		Link:   req.Link,
+		Mass:   1, // public API: mass always 1
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"post_id": post.ID,
+		"visible": post.Visible,
+	})
+}
+
 func (s *Server) handleVote(w http.ResponseWriter, r *http.Request) {
 	userID := s.requireToken(w, r)
 	if userID == "" {

@@ -203,3 +203,13 @@ func VecAsBytes(v []float32) []byte {
 	}
 	return buf
 }
+
+// BytesAsVec converts a raw byte blob back to a float32 vector.
+func BytesAsVec(b []byte) []float32 {
+	n := len(b) / 4
+	v := make([]float32, n)
+	for i := range v {
+		v[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
+	}
+	return v
+}

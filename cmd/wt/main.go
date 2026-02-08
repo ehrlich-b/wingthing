@@ -18,8 +18,10 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/embedding"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
+	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/skill"
 	"github.com/ehrlich-b/wingthing/internal/store"
@@ -108,6 +110,7 @@ func main() {
 		embedCmd(),
 		doctorCmd(),
 		serveCmd(),
+		postCmd(),
 		voteCmd(),
 		commentCmd(),
 	)
@@ -902,6 +905,56 @@ func relayPost(cfg *config.Config, path string, body any) (map[string]any, error
 		return nil, fmt.Errorf("relay: %v", errMsg)
 	}
 	return result, nil
+}
+
+func postCmd() *cobra.Command {
+	var linkFlag string
+	var massFlag int
+
+	cmd := &cobra.Command{
+		Use:   "post <text>",
+		Short: "Post to wt social (local)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			st, err := relay.OpenRelay(cfg.SocialDBPath())
+			if err != nil {
+				return fmt.Errorf("open social db: %w", err)
+			}
+			defer st.Close()
+
+			emb, err := embedding.NewFromProvider(cfg.DefaultEmbedder, "", "")
+			if err != nil {
+				return fmt.Errorf("init embedder: %w", err)
+			}
+
+			post, err := relay.CreatePost(st, emb, relay.PostParams{
+				UserID: "local",
+				Text:   args[0],
+				Link:   linkFlag,
+				Mass:   massFlag,
+			})
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("posted: %s", post.ID)
+			if !post.Visible {
+				fmt.Print(" (swallowed — low similarity to all spaces)")
+			}
+			fmt.Println()
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&linkFlag, "link", "", "URL to link")
+	cmd.Flags().IntVar(&massFlag, "mass", 1, "Initial mass (self-hosted: set higher for bot-curated content)")
+
+	return cmd
 }
 
 func voteCmd() *cobra.Command {

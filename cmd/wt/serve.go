@@ -79,6 +79,7 @@ func serveCmd() *cobra.Command {
 			}
 
 			srv := relay.NewServer(store, srvCfg)
+			srv.Embedder = emb
 
 			httpSrv := &http.Server{
 				Addr:    addrFlag,

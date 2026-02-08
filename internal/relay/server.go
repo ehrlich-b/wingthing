@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/ehrlich-b/wingthing/internal/embedding"
 	"github.com/ehrlich-b/wingthing/web"
 )
 
@@ -21,9 +22,10 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	Store  *RelayStore
-	Config ServerConfig
-	mux    *http.ServeMux
+	Store    *RelayStore
+	Embedder embedding.Embedder
+	Config   ServerConfig
+	mux      *http.ServeMux
 }
 
 func NewServer(store *RelayStore, cfg ServerConfig) *Server {
@@ -42,6 +44,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /skills", s.handleListSkills)
 	s.mux.HandleFunc("GET /skills/{name}", s.handleGetSkill)
 	s.mux.HandleFunc("GET /skills/{name}/raw", s.handleGetSkillRaw)
+	s.mux.HandleFunc("POST /api/post", s.handlePost)
 	s.mux.HandleFunc("POST /api/vote", s.handleVote)
 	s.mux.HandleFunc("POST /api/comment", s.handleComment)
 	s.mux.HandleFunc("GET /api/comments", s.handleListComments)
