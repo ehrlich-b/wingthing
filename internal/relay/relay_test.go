@@ -209,6 +209,111 @@ func TestAuthDeviceFlow(t *testing.T) {
 	}
 }
 
+func TestVoteAPI(t *testing.T) {
+	srv, ts := testServer(t)
+	token, _ := createTestToken(t, srv.Store, "dev1")
+
+	// Create a post to vote on
+	post := makeEmbedding("post")
+	if err := srv.Store.CreateSocialEmbedding(post); err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+
+	// Vote without auth — should fail
+	resp, err := http.Post(ts.URL+"/api/vote", "application/json",
+		strings.NewReader(`{"post_id":"`+post.ID+`"}`))
+	if err != nil {
+		t.Fatalf("POST /api/vote: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("unauthed vote status = %d, want 401", resp.StatusCode)
+	}
+
+	// Vote with auth
+	req, _ := http.NewRequest("POST", ts.URL+"/api/vote", strings.NewReader(`{"post_id":"`+post.ID+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/vote (authed): %v", err)
+	}
+	var result map[string]any
+	json.NewDecoder(resp.Body).Decode(&result)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("authed vote status = %d, want 200", resp.StatusCode)
+	}
+	if result["ok"] != true {
+		t.Errorf("expected ok=true, got %v", result["ok"])
+	}
+	if result["upvotes"] != float64(1) {
+		t.Errorf("upvotes = %v, want 1", result["upvotes"])
+	}
+
+	// Vote again (idempotent) — count stays 1
+	req, _ = http.NewRequest("POST", ts.URL+"/api/vote", strings.NewReader(`{"post_id":"`+post.ID+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/vote (dup): %v", err)
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+	resp.Body.Close()
+	if result["upvotes"] != float64(1) {
+		t.Errorf("dup upvotes = %v, want 1", result["upvotes"])
+	}
+}
+
+func TestCommentAPI(t *testing.T) {
+	srv, ts := testServer(t)
+	token, _ := createTestToken(t, srv.Store, "dev1")
+
+	post := makeEmbedding("post")
+	if err := srv.Store.CreateSocialEmbedding(post); err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+
+	// Comment with auth
+	req, _ := http.NewRequest("POST", ts.URL+"/api/comment",
+		strings.NewReader(`{"post_id":"`+post.ID+`","content":"great post"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/comment: %v", err)
+	}
+	var result map[string]any
+	json.NewDecoder(resp.Body).Decode(&result)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("comment status = %d, want 200", resp.StatusCode)
+	}
+	if result["ok"] != true {
+		t.Errorf("expected ok=true")
+	}
+	commentID, ok := result["comment_id"].(string)
+	if !ok || commentID == "" {
+		t.Fatal("expected comment_id in response")
+	}
+
+	// List comments
+	resp, err = http.Get(ts.URL + "/api/comments?post_id=" + post.ID)
+	if err != nil {
+		t.Fatalf("GET /api/comments: %v", err)
+	}
+	var comments []map[string]any
+	json.NewDecoder(resp.Body).Decode(&comments)
+	resp.Body.Close()
+	if len(comments) != 1 {
+		t.Fatalf("comments count = %d, want 1", len(comments))
+	}
+	if comments[0]["Content"] != "great post" {
+		t.Errorf("comment content = %v, want 'great post'", comments[0]["Content"])
+	}
+}
+
 func TestStaticFileServing(t *testing.T) {
 	_, ts := testServer(t)
 

@@ -154,3 +154,5 @@ Run `make check` to verify changes. Run `make web` before `make check` if you ch
 | `wt init` | Initialize ~/.wingthing directory and DB |
 | `wt login/logout` | Device auth with relay server |
 | `wt skill list/add` | Manage skills (local + registry) |
+| `wt vote <post-id>` | Upvote a post on wt social |
+| `wt comment <post-id> "text"` | Comment on a post |

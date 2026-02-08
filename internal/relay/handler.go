@@ -296,6 +296,93 @@ func (s *Server) handleGetSkillRaw(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(sk.Content))
 }
 
+// requireToken extracts and validates a Bearer token from the Authorization header.
+// Returns the userID or writes an error response and returns empty string.
+func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		writeError(w, http.StatusUnauthorized, "missing or invalid Authorization header")
+		return ""
+	}
+	token := strings.TrimPrefix(auth, "Bearer ")
+	userID, _, err := s.Store.ValidateToken(token)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return ""
+	}
+	return userID
+}
+
+func (s *Server) handleVote(w http.ResponseWriter, r *http.Request) {
+	userID := s.requireToken(w, r)
+	if userID == "" {
+		return
+	}
+	var req struct {
+		PostID string `json:"post_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.PostID == "" {
+		writeError(w, http.StatusBadRequest, "post_id is required")
+		return
+	}
+	if err := s.Store.Upvote(userID, req.PostID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	count, _ := s.Store.GetUpvoteCount(req.PostID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upvotes": count})
+}
+
+func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
+	userID := s.requireToken(w, r)
+	if userID == "" {
+		return
+	}
+	var req struct {
+		PostID   string  `json:"post_id"`
+		ParentID *string `json:"parent_id,omitempty"`
+		Content  string  `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.PostID == "" || req.Content == "" {
+		writeError(w, http.StatusBadRequest, "post_id and content are required")
+		return
+	}
+	c := &SocialComment{
+		ID:       uuid.New().String(),
+		PostID:   req.PostID,
+		UserID:   userID,
+		ParentID: req.ParentID,
+		Content:  req.Content,
+	}
+	if err := s.Store.CreateComment(c); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "comment_id": c.ID})
+}
+
+func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
+	postID := r.URL.Query().Get("post_id")
+	if postID == "" {
+		writeError(w, http.StatusBadRequest, "post_id query param required")
+		return
+	}
+	comments, err := s.Store.ListCommentsByPost(postID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, comments)
+}
+
 func strPtr(s string) *string {
 	return &s
 }

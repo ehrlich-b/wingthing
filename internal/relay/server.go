@@ -42,6 +42,9 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /skills", s.handleListSkills)
 	s.mux.HandleFunc("GET /skills/{name}", s.handleGetSkill)
 	s.mux.HandleFunc("GET /skills/{name}/raw", s.handleGetSkillRaw)
+	s.mux.HandleFunc("POST /api/vote", s.handleVote)
+	s.mux.HandleFunc("POST /api/comment", s.handleComment)
+	s.mux.HandleFunc("GET /api/comments", s.handleListComments)
 
 	// Web pages
 	s.mux.HandleFunc("GET /{$}", s.handleHome)

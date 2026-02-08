@@ -2,7 +2,7 @@
 
 Reference: [DRAFT.md](DRAFT.md) for full design. This file is the build plan.
 
-**Active:** Item 4 — Voting and comments through wt
+**Active:** Item 5 — Clear posting API
 
 ## Vision
 
@@ -32,11 +32,13 @@ The skill library is the product. Checked into the repo, validated, ever-growing
 - [x] Output: `SCORE [mass] | [title] | [source] | [reason]`
 - [x] Mass feeds directly into `decayed_mass = mass * exp(-0.023 * age_in_days)` for "best" sort
 
-### 4. Voting and comments through wt
-- [ ] `wt vote <post-id>` — upvote a post on wt social
-- [ ] `wt comment <post-id> "text"` — comment on a post
-- [ ] Votes append-logged in memory, bulk inserted into sqlite
-- [ ] Posts time-decay naturally (existing `decayed_mass` mechanism)
+### 4. Voting and comments through wt ✅
+- [x] `wt vote <post-id>` — upvote via `POST /api/vote` with Bearer token
+- [x] `wt comment <post-id> "text"` — comment via `POST /api/comment`
+- [x] `GET /api/comments?post_id=` — list comments
+- [x] Auth via `requireToken()` — validates device token from `wt login`
+- [x] Idempotent upvotes, threaded comments (parent_id support)
+- [x] Posts time-decay naturally (existing `decayed_mass` mechanism)
 
 ### 5. Clear posting API (skill-friendly)
 - [ ] APIs clean enough that a wt skill can post to wt social

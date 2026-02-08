@@ -108,6 +108,8 @@ func main() {
 		embedCmd(),
 		doctorCmd(),
 		serveCmd(),
+		voteCmd(),
+		commentCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -856,6 +858,90 @@ func logoutCmd() *cobra.Command {
 			}
 
 			fmt.Println("logged out")
+			return nil
+		},
+	}
+}
+
+// relayPost sends an authenticated POST to the relay API and returns the decoded response.
+func relayPost(cfg *config.Config, path string, body any) (map[string]any, error) {
+	if cfg.RelayURL == "" {
+		return nil, fmt.Errorf("relay_url not configured in config.yaml")
+	}
+
+	ts := auth.NewTokenStore(cfg.Dir)
+	tok, err := ts.Load()
+	if err != nil || !ts.IsValid(tok) {
+		return nil, fmt.Errorf("not logged in — run: wt login")
+	}
+
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	url := strings.TrimRight(cfg.RelayURL, "/") + path
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(data)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tok.Token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("relay request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	if errMsg, ok := result["error"]; ok {
+		return nil, fmt.Errorf("relay: %v", errMsg)
+	}
+	return result, nil
+}
+
+func voteCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "vote <post-id>",
+		Short: "Upvote a post on wt social",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			result, err := relayPost(cfg, "/api/vote", map[string]string{"post_id": args[0]})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("upvoted (total: %v)\n", result["upvotes"])
+			return nil
+		},
+	}
+}
+
+func commentCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "comment <post-id> <text>",
+		Short: "Comment on a post on wt social",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			result, err := relayPost(cfg, "/api/comment", map[string]string{
+				"post_id": args[0],
+				"content": args[1],
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("commented: %v\n", result["comment_id"])
 			return nil
 		},
 	}
