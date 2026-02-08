@@ -7,7 +7,7 @@
 .install{margin:0 0 24px;background:var(--bg-card);border-radius:6px;padding:14px 20px;font-size:13px;font-family:var(--mono);overflow-x:auto}
 .install .prompt{color:var(--text-dim);user-select:none}
 .install .cmd{color:var(--text)}
-.pitch{display:flex;flex-direction:column;gap:14px;margin-bottom:24px}
+.pitch{display:flex;flex-direction:column;gap:10px;margin-bottom:20px}
 .pitch-item{display:flex;gap:12px;align-items:baseline}
 .pitch-item .label{color:var(--action);font-size:11px;font-weight:600;min-width:90px;flex-shrink:0;text-transform:uppercase;letter-spacing:0.05em;font-family:var(--mono)}
 .pitch-item .desc{color:var(--text-dim);font-size:14px;line-height:1.5}
@@ -54,19 +54,24 @@ One CLI, every AI backend. New tool drops, <code>wt skill add</code> it. Done.</
 <span class="desc">Skills run in containers, not your home directory. Apple Containers on Mac, namespaces on Linux.</span>
 </div>
 <div class="pitch-item">
+<span class="label">scheduled</span>
+<span class="desc">Skills run on cron via your OS — launchd, systemd, whatever. No daemon sitting around.</span>
+</div>
+<div class="pitch-item">
+<span class="label">memory</span>
+<span class="desc">Persistent context across tasks. Skills declare what they remember. Syncs across machines.</span>
+</div>
+<div class="pitch-item">
 <span class="label">local-first</span>
 <span class="desc">Your machine, your keys, your data. Works offline. No account required.</span>
 </div>
 </div>
 <div class="example">
-<span class="line"><span class="comment"># run a task</span></span>
 <span class="line"><span class="prompt">$ </span><span class="cmd">wt "summarize my git log from this week"</span></span>
-<span class="line"></span>
-<span class="line"><span class="comment"># use a skill with any backend</span></span>
 <span class="line"><span class="prompt">$ </span><span class="cmd">wt --skill compress --agent ollama</span></span>
-<span class="line"></span>
-<span class="line"><span class="comment"># check what's available</span></span>
-<span class="line"><span class="prompt">$ </span><span class="cmd">wt doctor</span></span>
+<span class="line"><span class="prompt">$ </span><span class="cmd">wt schedule list</span></span>
+<span class="line"><span class="prompt">$ </span><span class="cmd">wt thread</span><span class="comment">                 # what happened today</span></span>
+<span class="line"><span class="prompt">$ </span><span class="cmd">wt doctor</span><span class="comment">                 # detect agents, keys, services</span></span>
 </div>
 <div class="links">
 <a href="https://github.com/ehrlich-b/wingthing" class="gh">github</a>
