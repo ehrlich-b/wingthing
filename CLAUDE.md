@@ -153,7 +153,7 @@ Run `make check` to verify changes. Run `make web` before `make check` if you ch
 | `wt serve` | Start the relay web server |
 | `wt init` | Initialize ~/.wingthing directory and DB |
 | `wt login/logout` | Device auth with relay server |
-| `wt skill list/add` | Manage skills (local + registry) |
+| `wt skill list/add/enable/disable` | Manage skills (local + registry) |
 | `wt post "text" --link URL --mass N` | Post to wt social (local, self-hosted) |
 | `wt vote <post-id>` | Upvote a post on wt social |
 | `wt comment <post-id> "text"` | Comment on a post |

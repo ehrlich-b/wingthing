@@ -49,11 +49,12 @@ The skill library is the product. Checked into the repo, validated, ever-growing
 - [x] URL dedup: duplicate links return existing post instead of creating duplicate
 - [x] Returns 500 if no embedder available (server can start without one)
 
-### 6. Skill enable/disable
-- [ ] `wt skill enable <name>` / `wt skill disable <name>`
-- [ ] Disabled skills stay installed but won't run on schedule
-- [ ] `wt skill list` shows enabled/disabled status
-- [ ] Repo skills are the validated library; user adds or opts out
+### 6. Skill enable/disable ✅
+- [x] `wt skill enable <name>` / `wt skill disable <name>`
+- [x] Disabled skills stay installed but won't run (`skill_state.json` in `~/.wingthing/`)
+- [x] `wt skill list` shows NAME + STATUS columns (enabled/disabled)
+- [x] Running a disabled skill errors with message pointing to `wt skill enable`
+- [x] State is exception-based: only disabled skills are tracked, new installs default to enabled
 
 ---
 

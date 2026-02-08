@@ -61,6 +61,11 @@ func main() {
 			if skillFlag != "" {
 				t.What = skillFlag
 				t.Type = "skill"
+				// Check if skill is disabled
+				state, stErr := skill.LoadState(cfg.Dir)
+				if stErr == nil && !state.IsEnabled(skillFlag) {
+					return fmt.Errorf("skill %q is disabled — run: wt skill enable %s", skillFlag, skillFlag)
+				}
 				// Check if skill has a schedule
 				sk, skErr := skill.Load(filepath.Join(cfg.SkillsDir(), skillFlag+".md"))
 				if skErr == nil && sk.Schedule != "" {
@@ -522,18 +527,83 @@ func skillCmd() *cobra.Command {
 				}
 				return err
 			}
+			state, err := skill.LoadState(cfg.Dir)
+			if err != nil {
+				return fmt.Errorf("load skill state: %w", err)
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "NAME\tSTATUS")
 			for _, e := range entries {
 				if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
 					name := strings.TrimSuffix(e.Name(), ".md")
-					fmt.Println(name)
+					status := "enabled"
+					if !state.IsEnabled(name) {
+						status = "disabled"
+					}
+					fmt.Fprintf(w, "%s\t%s\n", name, status)
 				}
 			}
+			w.Flush()
 			return nil
 		},
 	}
 	listCmd.Flags().Bool("available", false, "List skills from the registry")
 	listCmd.Flags().String("category", "", "Filter by category (used with --available)")
 	sk.AddCommand(listCmd)
+
+	sk.AddCommand(&cobra.Command{
+		Use:   "enable <name>",
+		Short: "Enable a skill",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			name := args[0]
+			path := filepath.Join(cfg.SkillsDir(), name+".md")
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				return fmt.Errorf("skill %q not installed", name)
+			}
+			state, err := skill.LoadState(cfg.Dir)
+			if err != nil {
+				return err
+			}
+			state.Enable(name)
+			if err := state.Save(cfg.Dir); err != nil {
+				return err
+			}
+			fmt.Printf("enabled: %s\n", name)
+			return nil
+		},
+	})
+
+	sk.AddCommand(&cobra.Command{
+		Use:   "disable <name>",
+		Short: "Disable a skill (stays installed but won't run on schedule)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			name := args[0]
+			path := filepath.Join(cfg.SkillsDir(), name+".md")
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				return fmt.Errorf("skill %q not installed", name)
+			}
+			state, err := skill.LoadState(cfg.Dir)
+			if err != nil {
+				return err
+			}
+			state.Disable(name)
+			if err := state.Save(cfg.Dir); err != nil {
+				return err
+			}
+			fmt.Printf("disabled: %s\n", name)
+			return nil
+		},
+	})
 
 	sk.AddCommand(&cobra.Command{
 		Use:   "add [file-or-name]",
