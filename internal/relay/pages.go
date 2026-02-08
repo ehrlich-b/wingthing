@@ -147,7 +147,7 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts, err := s.Store.ListPostsByAnchor(anchor.ID, "new", 50)
+	posts, err := s.Store.ListPostsByAnchor(anchor.ID, "best", 50)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
