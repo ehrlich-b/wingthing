@@ -179,6 +179,49 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	homeTmpl.ExecuteTemplate(w, "base", data)
 }
 
+// rankPostAnchors ranks anchor slugs for a post, pinning currentSlug first
+// if present, then sorting rest by occurrence/connectivity. Returns at most limit slugs.
+func rankPostAnchors(anchors []string, currentSlug string, limit int) []string {
+	if len(anchors) == 0 {
+		return nil
+	}
+	if len(anchors) <= limit {
+		// If current slug is in the list, move it to front
+		for i, a := range anchors {
+			if a == currentSlug {
+				result := make([]string, len(anchors))
+				result[0] = currentSlug
+				copy(result[1:], anchors[:i])
+				copy(result[i+1:], anchors[i+1:])
+				return result
+			}
+		}
+		return anchors
+	}
+
+	// More anchors than limit: pin current if present, fill rest with first N-1
+	var pinned bool
+	var rest []string
+	for _, a := range anchors {
+		if a == currentSlug {
+			pinned = true
+		} else {
+			rest = append(rest, a)
+		}
+	}
+
+	if pinned {
+		if len(rest) > limit-1 {
+			rest = rest[:limit-1]
+		}
+		return append([]string{currentSlug}, rest...)
+	}
+	if len(rest) > limit {
+		rest = rest[:limit]
+	}
+	return rest
+}
+
 func (s *Server) handleSocial(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/w/all", http.StatusFound)
 }
@@ -262,13 +305,14 @@ func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Re
 		} else {
 			summary = ""
 		}
+		postAnchors := rankPostAnchors(anchorSlugs[p.ID], slug, 3)
 		items = append(items, feedItem{
 			PostID:       p.ID,
 			Title:        title,
 			Summary:      summary,
 			Link:         link,
 			Domain:       domain,
-			Anchors:      anchorSlugs[p.ID],
+			Anchors:      postAnchors,
 			CommentCount: commentCounts[p.ID],
 			Age:          age,
 			Voted:        userVotes[p.ID],
