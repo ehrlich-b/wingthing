@@ -35,7 +35,8 @@ func NewOllama(model, baseURL string) *Ollama {
 	}
 }
 
-func (o *Ollama) Dims() int { return ollamaDims }
+func (o *Ollama) Dims() int    { return ollamaDims }
+func (o *Ollama) Name() string { return "ollama-" + o.model + "-512" }
 
 func (o *Ollama) Embed(texts []string) ([][]float32, error) {
 	body, err := json.Marshal(ollamaRequest{

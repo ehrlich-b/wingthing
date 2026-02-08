@@ -28,7 +28,8 @@ func NewOpenAI(apiKey string) *OpenAI {
 	}
 }
 
-func (o *OpenAI) Dims() int { return openAIDims }
+func (o *OpenAI) Dims() int    { return openAIDims }
+func (o *OpenAI) Name() string { return "openai-3small-512" }
 
 func (o *OpenAI) Embed(texts []string) ([][]float32, error) {
 	body, err := json.Marshal(openAIRequest{
