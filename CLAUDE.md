@@ -104,7 +104,7 @@ Full implementations exist in `internal/sandbox/`:
 
 Isolation levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs), `network` (network + mounted dirs), `privileged` (full access).
 
-**Status:** Built and tested. Not yet wired into `runTask()`. High-priority gap -- see TODO.md.
+**Status:** Built, tested, and wired into `runTask()`. Agents receive a `CmdFactory` via `RunOpts` that routes execution through the sandbox. Privileged isolation skips sandbox. Skill mounts and timeout flow through `PromptResult`.
 
 ## Key Packages
 

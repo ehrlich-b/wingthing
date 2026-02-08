@@ -20,6 +20,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/skill"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/thread"
@@ -161,7 +162,29 @@ func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.T
 	agentName := pr.Agent
 	a := agents[agentName]
 
-	stream, err := a.Run(ctx, pr.Prompt, agent.RunOpts{})
+	// Create sandbox unless isolation is privileged
+	var runOpts agent.RunOpts
+	if pr.Isolation != "privileged" {
+		var mounts []sandbox.Mount
+		for _, m := range pr.Mounts {
+			mounts = append(mounts, sandbox.Mount{Source: m, Target: m})
+		}
+		sb, sbErr := sandbox.New(sandbox.Config{
+			Isolation: sandbox.ParseLevel(pr.Isolation),
+			Mounts:    mounts,
+			Timeout:   pr.Timeout,
+		})
+		if sbErr != nil {
+			s.SetTaskError(t.ID, sbErr.Error())
+			return fmt.Errorf("create sandbox: %w", sbErr)
+		}
+		defer sb.Destroy()
+		runOpts.CmdFactory = func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
+			return sb.Exec(ctx, name, args)
+		}
+	}
+
+	stream, err := a.Run(ctx, pr.Prompt, runOpts)
 	if err != nil {
 		s.SetTaskError(t.ID, err.Error())
 		return fmt.Errorf("run agent: %w", err)

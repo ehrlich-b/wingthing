@@ -334,6 +334,91 @@ func TestBuildSkillTaskNoAgentFlag(t *testing.T) {
 	}
 }
 
+func TestBuildSkillTaskMountsAndTimeout(t *testing.T) {
+	memDir := setupMemory(t)
+	skillsDir := t.TempDir()
+
+	skillContent := `---
+name: mount-skill
+description: A skill with mounts
+isolation: network
+timeout: 45s
+mounts:
+  - /data/input
+  - /data/output
+memory:
+  - identity
+---
+# Mount Skill
+Process files in mounted directories.
+`
+	if err := os.WriteFile(filepath.Join(skillsDir, "mount-skill.md"), []byte(skillContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	b, s := setupBuilder(t, memDir, skillsDir, "")
+
+	task := &store.Task{
+		ID:     "t-test-mounts",
+		Type:   "skill",
+		What:   "mount-skill",
+		RunAt:  time.Now(),
+		Agent:  "",
+		Status: "pending",
+	}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := b.Build(context.Background(), "t-test-mounts")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Mounts) != 2 {
+		t.Fatalf("mounts = %v, want 2 entries", result.Mounts)
+	}
+	if result.Mounts[0] != "/data/input" || result.Mounts[1] != "/data/output" {
+		t.Errorf("mounts = %v, want [/data/input /data/output]", result.Mounts)
+	}
+	if result.Timeout != 45*time.Second {
+		t.Errorf("timeout = %v, want 45s", result.Timeout)
+	}
+	if result.Isolation != "network" {
+		t.Errorf("isolation = %q, want network", result.Isolation)
+	}
+}
+
+func TestBuildAdHocTaskNoMounts(t *testing.T) {
+	memDir := setupMemory(t)
+	skillsDir := setupSkills(t)
+	b, s := setupBuilder(t, memDir, skillsDir, "")
+
+	task := &store.Task{
+		ID:     "t-test-nomounts",
+		Type:   "prompt",
+		What:   "hello",
+		RunAt:  time.Now(),
+		Agent:  "claude",
+		Status: "pending",
+	}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := b.Build(context.Background(), "t-test-nomounts")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Mounts) != 0 {
+		t.Errorf("ad-hoc task should have no mounts, got %v", result.Mounts)
+	}
+	if result.Timeout != 120*time.Second {
+		t.Errorf("timeout = %v, want default 120s", result.Timeout)
+	}
+}
+
 func TestConfigPrecedence(t *testing.T) {
 	cfg := &config.Config{
 		DefaultAgent: "claude",

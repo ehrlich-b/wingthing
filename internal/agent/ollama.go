@@ -40,10 +40,18 @@ func (o *Ollama) Health() error {
 	return nil
 }
 
-func (o *Ollama) Run(ctx context.Context, prompt string, opts RunOpts) (*Stream, error) {
+func (o *Ollama) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream, err error) {
 	args := []string{"run", o.model}
 
-	cmd := exec.CommandContext(ctx, o.command, args...)
+	var cmd *exec.Cmd
+	if opts.CmdFactory != nil {
+		cmd, err = opts.CmdFactory(ctx, o.command, args)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox exec: %w", err)
+		}
+	} else {
+		cmd = exec.CommandContext(ctx, o.command, args...)
+	}
 	cmd.Stdin = strings.NewReader(prompt)
 
 	stdout, err := cmd.StdoutPipe()

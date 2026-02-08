@@ -40,10 +40,18 @@ func (g *Gemini) Health() error {
 	return nil
 }
 
-func (g *Gemini) Run(ctx context.Context, prompt string, opts RunOpts) (*Stream, error) {
+func (g *Gemini) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream, err error) {
 	args := []string{"-p", prompt}
 
-	cmd := exec.CommandContext(ctx, g.command, args...)
+	var cmd *exec.Cmd
+	if opts.CmdFactory != nil {
+		cmd, err = opts.CmdFactory(ctx, g.command, args)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox exec: %w", err)
+		}
+	} else {
+		cmd = exec.CommandContext(ctx, g.command, args...)
+	}
 	cmd.Stdin = strings.NewReader(prompt)
 
 	stdout, err := cmd.StdoutPipe()

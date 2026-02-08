@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"os/exec"
 	"time"
 )
 
@@ -11,10 +12,15 @@ type Agent interface {
 	ContextWindow() int
 }
 
+// CmdFactory creates an exec.Cmd that may run inside a sandbox.
+// When nil, agents fall back to exec.CommandContext.
+type CmdFactory func(ctx context.Context, name string, args []string) (*exec.Cmd, error)
+
 type RunOpts struct {
 	AllowedTools []string
 	SystemPrompt string
 	Timeout      time.Duration
+	CmdFactory   CmdFactory
 }
 
 type Chunk struct {

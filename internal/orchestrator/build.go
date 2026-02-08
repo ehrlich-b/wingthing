@@ -37,6 +37,8 @@ type PromptResult struct {
 	Prompt       string
 	Agent        string
 	Isolation    string
+	Mounts       []string
+	Timeout      time.Duration
 	MemoryLoaded []string
 	BudgetUsed   int
 	BudgetTotal  int
@@ -207,10 +209,17 @@ func (b *Builder) Build(ctx context.Context, taskID string) (*PromptResult, erro
 	prompt := strings.Join(sections, "\n\n")
 	budgetUsed := len(prompt)
 
+	var mounts []string
+	if sk != nil {
+		mounts = sk.Mounts
+	}
+
 	return &PromptResult{
 		Prompt:       prompt,
 		Agent:        rc.Agent,
 		Isolation:    rc.Isolation,
+		Mounts:       mounts,
+		Timeout:      rc.Timeout,
 		MemoryLoaded: memoryLoaded,
 		BudgetUsed:   budgetUsed,
 		BudgetTotal:  contextWindow,

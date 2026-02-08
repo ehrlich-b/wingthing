@@ -10,8 +10,8 @@ The skill library is the product. Checked into the repo, validated, ever-growing
 
 ## Now
 
-### 0. Wire sandbox into runTask()
-`internal/sandbox/` is fully built (Apple Containers, Linux ns/seccomp, fallback) and tested, but `runTask()` in `cmd/wt/main.go` calls `a.Run()` directly — never touches `sandbox.New()`. This is the core differentiator from OpenClaw and it's dead code in production. Wire it up: create sandbox from resolved isolation level, exec agent inside it, destroy on completion.
+### 0. Wire sandbox into runTask() ✅
+`runTask()` now creates a sandbox from the resolved isolation level, passes a `CmdFactory` to the agent via `RunOpts`, and defers `Destroy()`. Agents use the factory instead of `exec.CommandContext` when present. Privileged isolation skips sandbox entirely. Skill mounts and timeout flow through `PromptResult`.
 
 ### 1. Summarization skill e2e through wt
 - [ ] `wt --skill compress` runs `claude -p` on RSS feed entries, outputs <=1024 char summaries
@@ -139,7 +139,7 @@ All 8 are independent — **8 parallel worktrees.**
 
 - [x] `apple.go` — Apple Containers implementation (container CLI, per-task VMs, mount/network config, TTL, destroy)
 - [x] Tests: container lifecycle, mount validation, isolation level enforcement
-- [ ] **Wire into `runTask()`** — see "Now" section item 0
+- [x] Wired into `runTask()` via CmdFactory
 
 ---
 
@@ -149,7 +149,7 @@ All 8 are independent — **8 parallel worktrees.**
 
 - [x] `linux.go` — Namespace + seccomp sandbox (CLONE_NEWNS/PID/NET, seccomp filter, landlock, rlimits)
 - [x] Tests: namespace creation, seccomp filter application
-- [ ] **Wire into `runTask()`** — see "Now" section item 0
+- [x] Wired into `runTask()` via CmdFactory
 
 ---
 

@@ -32,7 +32,7 @@ func (c *Claude) Health() error {
 	return nil
 }
 
-func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (*Stream, error) {
+func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream, err error) {
 	args := []string{"-p", prompt, "--output-format", "stream-json", "--verbose"}
 	if opts.SystemPrompt != "" {
 		args = append(args, "--append-system-prompt", opts.SystemPrompt)
@@ -41,7 +41,15 @@ func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (*Stream,
 		args = append(args, "--allowedTools", strings.Join(opts.AllowedTools, ","))
 	}
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
+	var cmd *exec.Cmd
+	if opts.CmdFactory != nil {
+		cmd, err = opts.CmdFactory(ctx, "claude", args)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox exec: %w", err)
+		}
+	} else {
+		cmd = exec.CommandContext(ctx, "claude", args...)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
