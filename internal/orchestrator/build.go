@@ -69,7 +69,7 @@ func (b *Builder) Build(ctx context.Context, taskID string) (*PromptResult, erro
 	if dbAgent != nil {
 		agentIsolation = dbAgent.DefaultIsolation
 	}
-	rc := ResolveConfig(sk, agentIsolation, b.Config)
+	rc := ResolveConfig(sk, task.Agent, agentIsolation, b.Config)
 
 	// 4. Look up agent context window
 	contextWindow := 200000 // default

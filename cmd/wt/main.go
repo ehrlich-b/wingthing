@@ -133,19 +133,19 @@ func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.T
 	s.UpdateTaskStatus(t.ID, "running")
 	s.AppendLog(t.ID, "started", nil)
 
-	// Build prompt via orchestrator
-	agentName := t.Agent
-	if agentName == "" {
-		agentName = cfg.DefaultAgent
+	// Pre-create all agents so the builder can look up any agent's context window
+	agents := map[string]agent.Agent{
+		"claude": newAgent("claude"),
+		"ollama": newAgent("ollama"),
+		"gemini": newAgent("gemini"),
 	}
-	a := newAgent(agentName)
 	mem := memory.New(cfg.MemoryDir())
 
 	builder := &orchestrator.Builder{
 		Store:  s,
 		Memory: mem,
 		Config: cfg,
-		Agents: map[string]agent.Agent{agentName: a},
+		Agents: agents,
 	}
 
 	pr, err := builder.Build(ctx, t.ID)
@@ -157,7 +157,10 @@ func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.T
 	promptDetail := pr.Prompt
 	s.AppendLog(t.ID, "prompt_built", &promptDetail)
 
-	// Run the agent
+	// Use the agent resolved by the builder (respects CLI flag > skill > config)
+	agentName := pr.Agent
+	a := agents[agentName]
+
 	stream, err := a.Run(ctx, pr.Prompt, agent.RunOpts{})
 	if err != nil {
 		s.SetTaskError(t.ID, err.Error())

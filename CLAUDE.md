@@ -2,9 +2,21 @@
 
 ## What This Is
 
-`wt` is **SQLite on steroids** -- an inert chunk of state that animates itself with LLMs and OS-level scheduling (cron, launchd, systemd timers). There is no persistent daemon. The CLI reads/writes state and invokes agents directly. Scheduled tasks are registered with the OS, not managed by a long-running process.
+`wt` is a universal interface to AI agents. One binary, one skill format, any backend. The skill library is the product -- a curated, growing collection of validated skills checked into this repo. Users enable what they want, add their own, swap agents with a flag. When a new AI tool drops, we ship a skill. Users learn `wt` once.
 
-`wt serve` runs the **relay server** -- the social backend, HTTP + SQLite.
+This is the well-built version of what OpenClaw, Moltbook, and the rest are stumbling toward: agent tooling that's curated instead of a malware marketplace, sandboxed instead of "Docker is optional", and affordable instead of $300/day.
+
+`wt serve` runs the relay server -- social feed, web UI, HTTP + SQLite.
+
+## Design Philosophy
+
+**Curated > marketplace.** Skills live in `skills/` in this repo. They're reviewed, validated, and version-controlled. No storefront where anyone can publish prompt injections. Private skills go in `~/.wingthing/skills/`.
+
+**Sandbox-first.** `internal/sandbox/` has full implementations for Apple Containers (macOS) and namespace/seccomp (Linux). Isolation level is per-skill via frontmatter. **Current gap:** sandbox is built and tested but not wired into `runTask()` -- this is a high-priority TODO.
+
+**Agent-agnostic.** Every skill works with every backend. `--agent ollama` for free local inference, `--agent claude` when you need it. The interface is stable; providers change behind it.
+
+**Local-first.** Your machine, your keys, your data. No cloud dependency. Offline with ollama.
 
 ## Dogfooding
 
@@ -14,10 +26,10 @@ If you find yourself reaching for an external tool and wingthing _should_ handle
 
 ## Architecture
 
-- `wt` -- single binary. Inert state + direct agent invocation + OS-scheduled animation.
-- `wt serve` -- relay server (social backend), HTTP + SQLite
-- Agents are pluggable (claude, ollama, gemini). `wt` calls them directly.
-- All commands use direct store access via `store.Open(cfg.DBPath())`. No daemon, no socket.
+- `wt` -- single binary. SQLite + direct agent invocation + OS-scheduled tasks (cron, launchd, systemd timers). No daemon, no socket.
+- `wt serve` -- relay server (social feed + web UI), HTTP + SQLite
+- Agents are pluggable (claude, ollama, gemini). `wt` calls them as child processes.
+- All commands use direct store access via `store.Open(cfg.DBPath())`.
 
 ## Provider System
 
@@ -47,14 +59,66 @@ CLI tools detected by `wt doctor`:
 - `internal/embedding.SpaceIndex` loads YAML, embeds centroids, caches per-embedder as `.bin` files
 - Multi-embedder: embed centroids with every provided Embedder, anyone can bring their own
 
+## Agent Resolution Precedence
+
+Single resolution path for all contexts: **CLI flag (`--agent`) > skill frontmatter (`agent:`) > config default (`default_agent`)**
+
+This means `wt --skill compress --agent ollama` always runs ollama, regardless of what the skill declares.
+
+## Skill System
+
+Skills are the core abstraction. Markdown files with YAML frontmatter and a prompt template body.
+
+### Philosophy
+- **Repo skills** (`skills/`) are the validated library -- curated, tested, checked in
+- **User skills** (`~/.wingthing/skills/`) are private -- your own workflows, not shared
+- Skills are enableable/disableable (planned: `wt skill enable/disable`)
+- No agent lock-in: omit `agent:` from frontmatter and the user's default applies
+- Skills declare their memory deps, isolation level, and schedule -- the orchestrator handles the rest
+
+### Frontmatter fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Skill identifier (matches filename) |
+| `description` | yes | One-line summary |
+| `memory` | no | List of memory files to load (e.g. `[feeds, identity]`) |
+| `agent` | no | Default agent; overridable with `--agent` |
+| `isolation` | no | Sandbox isolation level (`strict`, `standard`, `network`, `privileged`) |
+| `timeout` | no | Duration string (e.g. `60s`) |
+| `tags` | no | Categorization tags |
+| `schedule` | no | Cron expression for recurring execution |
+| `mounts` | no | Directories to mount into sandbox |
+
+Install with `wt skill add skills/compress.md`. Memory files referenced by skills go in `~/.wingthing/memory/`.
+
+## Sandbox
+
+Full implementations exist in `internal/sandbox/`:
+
+| Platform | Implementation | How |
+|----------|---------------|-----|
+| macOS 26+ | Apple Containers | `container` CLI, per-task Linux VMs |
+| Linux | Namespaces + seccomp | CLONE_NEWNS/PID/NET, syscall filter, landlock |
+| Fallback | Process isolation | Restricted env, isolated tmpdir |
+
+Isolation levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs), `network` (network + mounted dirs), `privileged` (full access).
+
+**Status:** Built and tested. Not yet wired into `runTask()`. High-priority gap -- see TODO.md.
+
 ## Key Packages
 
 | Package | Role |
 |---------|------|
-| `internal/embedding` | Embedder interface, OpenAI/Ollama adapters, provider factory, SpaceIndex, cosine/blend |
-| `internal/relay` | RelayStore, social embeddings, anchor seeding (`SeedSpacesFromIndex`), skills |
 | `internal/agent` | LLM agent adapters (claude, ollama, gemini) |
-| `internal/config` | Config loading, `~/.wingthing/` paths, defaults (agent, embedder) |
+| `internal/orchestrator` | Prompt assembly, config resolution, budget management |
+| `internal/sandbox` | Container/namespace isolation per task |
+| `internal/embedding` | Embedder interface, OpenAI/Ollama adapters, SpaceIndex, cosine/blend |
+| `internal/relay` | RelayStore, social feed, space seeding, skills registry |
+| `internal/skill` | Skill loading, template interpolation |
+| `internal/memory` | Memory loading, layered retrieval |
+| `internal/config` | Config loading, `~/.wingthing/` paths, defaults |
+| `internal/store` | SQLite store -- tasks, thread, agents, logs |
 
 ## Build
 
@@ -74,7 +138,9 @@ Run `make check` to verify changes. Run `make web` before `make check` if you ch
 
 | Command | What it does |
 |---------|-------------|
-| `wt [prompt]` | Submit a task to the store |
+| `wt [prompt]` | Submit and run a task |
+| `wt --skill [name]` | Run a named skill |
+| `wt --agent [name]` | Override agent for this task |
 | `wt timeline` | List recent tasks |
 | `wt thread` | Print daily thread |
 | `wt log [id]` | Show task log events |

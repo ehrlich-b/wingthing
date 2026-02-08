@@ -2,6 +2,54 @@
 
 Reference: [DRAFT.md](DRAFT.md) for full design. This file is the build plan.
 
+## Vision
+
+`wt` is openrouter for agents on your local machine. AI moves too fast — new frameworks every two weeks. You shouldn't have to learn each one. Learn `wt`, and our APIs wrap all the providers. New thing drops? `wt skill add [new-thing]`. Done.
+
+The skill library is the product. Checked into the repo, validated, ever-growing. You enable what you want, disable what you don't. Bring your own skills too. Every skill works with every agent backend (`--agent ollama`, `--agent claude`, `--agent gemini`). Swiss army knife.
+
+## Now
+
+### 0. Wire sandbox into runTask()
+`internal/sandbox/` is fully built (Apple Containers, Linux ns/seccomp, fallback) and tested, but `runTask()` in `cmd/wt/main.go` calls `a.Run()` directly — never touches `sandbox.New()`. This is the core differentiator from OpenClaw and it's dead code in production. Wire it up: create sandbox from resolved isolation level, exec agent inside it, destroy on completion.
+
+### 1. Summarization skill e2e through wt
+- [ ] `wt --skill compress` runs `claude -p` on RSS feed entries, outputs <=1024 char summaries
+- [ ] Skill reads feeds from `~/.wingthing/memory/feeds.md`
+- [ ] Works with any agent: `wt --skill compress --agent ollama`
+- [ ] Verify: submit task, agent runs, output stored, visible in `wt timeline`
+
+### 2. Seed ~1000 public RSS feeds
+- [ ] Curate feeds across subjects: tech, science, politics, culture, sports, finance, health, arts, gaming, philosophy, etc.
+- [ ] Store as `feeds.md` memory file (or split by category)
+- [ ] Target: broad coverage, high-quality sources, no paywalled feeds
+
+### 3. Scorer skill (private, not checked in)
+- [ ] Estimates how many upvotes a post *should* get
+- [ ] Bounded heuristic: 10k is the ceiling (most upvotes ever)
+- [ ] Factors: novelty, broad appeal, information density, timeliness
+- [ ] Output: integer score per post
+- [ ] Private skill — lives in `~/.wingthing/skills/`, not in repo
+
+### 4. Voting and comments through wt
+- [ ] `wt vote <post-id>` — upvote a post on wt social
+- [ ] `wt comment <post-id> "text"` — comment on a post
+- [ ] Votes append-logged in memory, bulk inserted into sqlite
+- [ ] Posts time-decay naturally (existing `decayed_mass` mechanism)
+
+### 5. Clear posting API (skill-friendly)
+- [ ] APIs clean enough that a wt skill can post to wt social
+- [ ] Skill template: fetch, compress, score, post — full pipeline in one skill
+- [ ] `wt social post` works from CLI and from skills
+
+### 6. Skill enable/disable
+- [ ] `wt skill enable <name>` / `wt skill disable <name>`
+- [ ] Disabled skills stay installed but won't run on schedule
+- [ ] `wt skill list` shows enabled/disabled status
+- [ ] Repo skills are the validated library; user adds or opts out
+
+---
+
 ## Parallelization
 
 Tasks marked **[parallel]** within a phase can be developed simultaneously using git worktrees. Each gets its own branch, merged to main when the phase completes.
@@ -85,40 +133,23 @@ All 8 are independent — **8 parallel worktrees.**
 
 ---
 
-### [parallel] Apple Containers Sandbox
+### [parallel] Apple Containers Sandbox ✅ (built, not wired)
 
-**Branch:** `wt/apple-sandbox` | **Package:** `internal/sandbox/`
-**DRAFT.md ref:** "Sandbox Model", "macOS: Apple Containers"
+**Package:** `internal/sandbox/`
 
-- [ ] `apple.go` — Real Apple Containers implementation
-  - Detect via presence of `container` CLI or macOS 26+ version check
-  - Create lightweight Linux VM per task
-  - Configure mounts per isolation level (strict=read-only, standard=rw mounted dirs, network=+net, privileged=full)
-  - Network: expose ollama port (localhost:11434) into container for local model tasks
-  - TTL enforcement: kill container at timeout
-  - `Destroy()`: stop + remove container
-- [ ] Mount resolution: skill `$VAR` paths resolved before mount
-- [ ] Tests: container lifecycle (create, exec, destroy), mount validation, isolation level enforcement
-
-**Done when:** On macOS 26+, `sandbox.New()` returns an Apple Container instead of fallback. Tasks execute inside real VMs.
+- [x] `apple.go` — Apple Containers implementation (container CLI, per-task VMs, mount/network config, TTL, destroy)
+- [x] Tests: container lifecycle, mount validation, isolation level enforcement
+- [ ] **Wire into `runTask()`** — see "Now" section item 0
 
 ---
 
-### [parallel] Linux Sandbox
+### [parallel] Linux Sandbox ✅ (built, not wired)
 
-**Branch:** `wt/linux-sandbox` | **Package:** `internal/sandbox/`
-**DRAFT.md ref:** "Linux: Namespace + seccomp"
+**Package:** `internal/sandbox/`
 
-- [ ] `linux.go` — Namespace + seccomp sandbox
-  - `clone()` with CLONE_NEWNS, CLONE_NEWPID, CLONE_NEWNET (based on isolation level)
-  - Seccomp filter: restrict syscalls per isolation level
-  - Landlock (where available): filesystem access control
-  - Network namespace: allow localhost:11434 for ollama, block all else (standard), or allow all (network level)
-  - Mount namespace: bind-mount skill-declared paths
-  - Rlimits: CPU time, memory, file descriptors
-- [ ] Tests: namespace creation, seccomp filter application, build-tagged for linux only
-
-**Done when:** On Linux, `sandbox.New()` returns a namespace sandbox. Agents run in isolated namespaces with restricted syscalls.
+- [x] `linux.go` — Namespace + seccomp sandbox (CLONE_NEWNS/PID/NET, seccomp filter, landlock, rlimits)
+- [x] Tests: namespace creation, seccomp filter application
+- [ ] **Wire into `runTask()`** — see "Now" section item 0
 
 ---
 
@@ -919,14 +950,6 @@ All 8 independent — **8 parallel worktrees.**
 ---
 
 ## Next Up
-
-### RSS Feed Seed List
-
-Comprehensive public blog feeds as seed content for wt.ai/social. Curate a starter set of high-quality RSS/Atom feeds across tech, engineering, science, culture. These get ingested by the relay and surfaced to social users.
-
-### Summarization Skill
-
-First real skill: `summarize.md`. Takes RSS entries and summarizes them to 1024 chars. Template for future skills.
 
 ### Relay Business Model
 

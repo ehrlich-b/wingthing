@@ -245,6 +245,7 @@ func TestBuildSkillTask(t *testing.T) {
 	skillsDir := setupSkills(t)
 	b, s := setupBuilder(t, memDir, skillsDir, "08:00 - Did some morning work")
 
+	// task.Agent set → CLI flag wins over skill's agent: gemini
 	task := &store.Task{
 		ID:     "t-test-002",
 		Type:   "skill",
@@ -262,13 +263,18 @@ func TestBuildSkillTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Skill says agent: gemini
-	if result.Agent != "gemini" {
-		t.Errorf("agent = %q, want gemini (from skill)", result.Agent)
+	// CLI flag (task.Agent=claude) wins over skill's agent: gemini
+	if result.Agent != "claude" {
+		t.Errorf("agent = %q, want claude (CLI flag wins over skill)", result.Agent)
 	}
-	// Skill says isolation: network
+	// Skill says isolation: network (still applies, only agent was overridden)
 	if result.Isolation != "network" {
 		t.Errorf("isolation = %q, want network (from skill)", result.Isolation)
+	}
+
+	// Budget total should be claude's window since CLI flag won
+	if result.BudgetTotal != 200000 {
+		t.Errorf("budget total = %d, want 200000 (claude via CLI flag)", result.BudgetTotal)
 	}
 
 	// Should include identity and projects (skill-declared memory)
@@ -294,8 +300,35 @@ func TestBuildSkillTask(t *testing.T) {
 	if !strings.Contains(result.Prompt, "morning work") {
 		t.Error("prompt should contain thread content")
 	}
+}
 
-	// Budget total should be gemini's window
+func TestBuildSkillTaskNoAgentFlag(t *testing.T) {
+	memDir := setupMemory(t)
+	skillsDir := setupSkills(t)
+	b, s := setupBuilder(t, memDir, skillsDir, "")
+
+	// task.Agent empty → skill's agent: gemini wins
+	task := &store.Task{
+		ID:     "t-test-skill-noagent",
+		Type:   "skill",
+		What:   "test-skill",
+		RunAt:  time.Now(),
+		Agent:  "",
+		Status: "pending",
+	}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := b.Build(context.Background(), "t-test-skill-noagent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No CLI flag → skill's agent: gemini wins
+	if result.Agent != "gemini" {
+		t.Errorf("agent = %q, want gemini (from skill, no CLI flag)", result.Agent)
+	}
 	if result.BudgetTotal != 100000 {
 		t.Errorf("budget total = %d, want 100000 (gemini)", result.BudgetTotal)
 	}
@@ -307,8 +340,8 @@ func TestConfigPrecedence(t *testing.T) {
 		Vars:         map[string]string{},
 	}
 
-	// No skill: use defaults
-	rc := ResolveConfig(nil, "", cfg)
+	// No skill, no CLI flag: use defaults
+	rc := ResolveConfig(nil, "", "", cfg)
 	if rc.Agent != "claude" {
 		t.Errorf("no skill: agent = %q, want claude", rc.Agent)
 	}
@@ -317,18 +350,18 @@ func TestConfigPrecedence(t *testing.T) {
 	}
 
 	// Agent isolation override
-	rc = ResolveConfig(nil, "strict", cfg)
+	rc = ResolveConfig(nil, "", "strict", cfg)
 	if rc.Isolation != "strict" {
 		t.Errorf("agent override: isolation = %q, want strict", rc.Isolation)
 	}
 
-	// Skill overrides everything
+	// Skill overrides config defaults
 	sk := &skill.Skill{
 		Agent:     "gemini",
 		Isolation: "network",
 		Timeout:   "30s",
 	}
-	rc = ResolveConfig(sk, "strict", cfg)
+	rc = ResolveConfig(sk, "", "strict", cfg)
 	if rc.Agent != "gemini" {
 		t.Errorf("skill override: agent = %q, want gemini", rc.Agent)
 	}
@@ -339,9 +372,15 @@ func TestConfigPrecedence(t *testing.T) {
 		t.Errorf("skill override: timeout = %v, want 30s", rc.Timeout)
 	}
 
+	// CLI flag (taskAgent) wins over skill
+	rc = ResolveConfig(sk, "ollama", "strict", cfg)
+	if rc.Agent != "ollama" {
+		t.Errorf("CLI override: agent = %q, want ollama", rc.Agent)
+	}
+
 	// Skill with empty fields: fall through to agent/config defaults
 	sk2 := &skill.Skill{}
-	rc = ResolveConfig(sk2, "strict", cfg)
+	rc = ResolveConfig(sk2, "", "strict", cfg)
 	if rc.Agent != "claude" {
 		t.Errorf("empty skill: agent = %q, want claude (config default)", rc.Agent)
 	}

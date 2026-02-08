@@ -41,9 +41,6 @@ func (s *Store) CreateTask(t *Task) error {
 	if t.Type == "" {
 		t.Type = "prompt"
 	}
-	if t.Agent == "" {
-		t.Agent = "claude"
-	}
 	_, err := s.db.Exec(`INSERT INTO tasks (id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, machine_id, retry_count, max_retries, depends_on)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.Type, t.What, t.RunAt.UTC().Format(timeFmt), t.Agent, t.Isolation, t.Memory, t.ParentID, t.Status, t.Cron, t.MachineID, t.RetryCount, t.MaxRetries, t.DependsOn)

@@ -1,31 +1,35 @@
 # wingthing
 
-Local-first AI task runner. Orchestrates LLM agents on your behalf so you never write a prompt again.
+One interface to every AI agent. Curated skills, sandboxed execution, any backend.
 
 ## What it is
 
-A Go daemon (`wt`) that runs on your machine. It knows about you (text-file memory), constructs context-rich prompts, fires them at LLM CLIs (`claude -p`, `codex exec`, `gemini`, `ollama`), runs them in sandboxes, and manages a task timeline. Works offline.
+`wt` is a single Go binary that wraps every AI agent CLI behind one stable interface. New AI framework drops next week? `wt skill add [new-thing]`. You learn `wt` once. The providers change behind it.
 
 ```
-wt daemon
-├── timeline engine     ← tasks with a when, agents schedule follow-ups
-├── memory store        ← text files in ~/.wingthing/memory/, no embeddings
-├── daily thread        ← running markdown log of today, injected into every prompt
-├── orchestrator        ← pure Go context builder, not an LLM
-├── sandbox runtime     ← containers per task (Apple Containers, namespace/seccomp)
-├── agent adapters      ← claude, codex, gemini, ollama, opencode, goose...
-└── transport           ← HTTP-over-Unix-socket CLI ↔ daemon
+wt "summarize my git log"              # runs with your default agent
+wt --skill compress                    # run a curated skill
+wt --skill compress --agent ollama     # same skill, different backend
+wt --agent gemini "explain this error" # switch agents on the fly
 ```
+
+AI tooling moves too fast to learn every new CLI. Wingthing is the stable layer: a curated library of validated skills, persistent memory, and sandboxed execution across any LLM backend.
+
+## How it's different
+
+The current wave of open-source AI agents (175k-star projects with malware marketplaces, bot social networks full of slop, multi-agent orchestrators that cost $5k/month) gets the demand right but the execution wrong.
+
+**Curated, not marketplace.** Skills are checked into the repo, reviewed, validated. Not a storefront where anyone can publish prompt injections. You enable what you want, disable what you don't, add your own.
+
+**Sandboxed by default.** Agents run in containers (Apple Containers on macOS, namespace/seccomp on Linux) with explicit mount points and network controls. Isolation level is per-skill, not an afterthought you toggle on.
+
+**Agent-agnostic.** `claude`, `ollama`, `gemini` -- and whatever ships next. One skill works with any backend. Use ollama for free, claude when you need it. Not $300/day.
+
+**Local-first.** Your machine, your keys, your data. No cloud dependency. Works offline with ollama.
 
 ## Install
 
 Requires Go 1.21+.
-
-```bash
-go install github.com/ehrlich-b/wingthing/cmd/wt@latest
-```
-
-Or build from source:
 
 ```bash
 git clone https://github.com/ehrlich-b/wingthing.git
@@ -39,11 +43,11 @@ make build     # produces ./wt binary
 # 1. Initialize config, memory, and database
 wt init
 
-# 2. Start the daemon (foreground — open a second terminal for CLI)
-wt daemon
-
-# 3. Submit a task
+# 2. Run a task
 wt "summarize my git log for the last week"
+
+# 3. Run a skill
+wt --skill compress
 
 # 4. Check the timeline
 wt timeline
@@ -57,65 +61,79 @@ wt thread
 ```
 wt "do the thing"           # one-shot task
 wt --skill jira             # run a skill
-wt --agent ollama "prompt"  # use specific agent (claude, ollama)
-wt timeline                 # upcoming + recent tasks
+wt --agent ollama "prompt"  # use specific agent
+wt timeline                 # recent tasks
 wt thread                   # today's daily thread
-wt thread --yesterday       # yesterday's thread
-wt status                   # daemon health + token usage
+wt status                   # task counts + token usage
 wt log --last               # most recent task log
 wt log --last --context     # full prompt audit
 wt retry <task-id>          # retry a failed task
 wt schedule list            # recurring tasks
-wt schedule remove <id>     # cancel recurring task
 wt agent list               # configured agents
 wt skill list               # installed skills
-wt skill add file.md        # install a skill
-wt login                    # authenticate with wingthing.ai
-wt logout                   # remove device token
-wt daemon                   # start daemon foreground
+wt skill add file.md        # install a skill from file
+wt skill list --available   # browse the registry
+wt doctor                   # scan for agents, keys, services
+wt serve                    # start the relay/social server
 wt init                     # initialize ~/.wingthing/
+wt login / logout           # device auth with relay
 ```
-
-## Four pillars
-
-**Timeline** — Everything is a task with a `when`. Agents schedule follow-up tasks ("check the build in 10 min"). One abstraction replaces heartbeats, crons, and agent-to-agent communication.
-
-**Daily thread** — Running markdown log of everything that happened today. Injected into every task's prompt. Makes stateless invocations feel like a continuous conversation.
-
-**Memory** — Text files in `~/.wingthing/memory/`. Human-readable, git-diffable, no embeddings. Layered retrieval: always-loaded index, skill-declared deps, keyword grep. Pure Go, no model call needed.
-
-**Orchestrator** — Go code that assembles prompts: identity + memory + daily thread + skill template + task. Not an LLM. Rule-based context routing covers 80%+ of tasks.
 
 ## Skills
 
-Skills are markdown files with YAML frontmatter. They declare memory deps, agent preferences, isolation level, and a prompt template.
+Skills are the product. Markdown files with YAML frontmatter, checked into the repo, installable with `wt skill add`.
 
 ```markdown
 ---
-name: jira
-description: Jira briefing session
-agent: claude
+name: compress
+description: Fetch RSS feeds and compress articles to 1024 chars
 memory:
-  - identity
-  - projects
-memory_write: false
+  - feeds
+tags: [rss, compress, content]
 ---
-You are a Jira concierge. {{identity.name}} needs a briefing.
+Read the RSS feed URLs listed below. For each feed, extract the 5
+most recent articles. Compress each to max 1024 characters.
 
-Today so far:
-{{thread.summary}}
-
-The user said: {{task.what}}
+## Feeds
+{{memory.feeds}}
 ```
 
-Install with `wt skill add jira.md`, run with `wt --skill jira`.
+No `agent:` declared -- falls through to your default, overridable with `--agent`. Skills declare what memory they need, what isolation level to run at, and optionally a cron schedule for recurring execution. The skill body is a prompt template with interpolation.
+
+Install: `wt skill add skills/compress.md`
+Run: `wt --skill compress`
+Override agent: `wt --skill compress --agent ollama`
+
+## Memory
+
+Text files in `~/.wingthing/memory/`. Human-readable, git-diffable. Layered retrieval: always-loaded index, skill-declared deps, keyword matching. Pure Go, no model call needed.
+
+```
+~/.wingthing/memory/
+  index.md       # always loaded into every prompt
+  identity.md    # who you are
+  feeds.md       # RSS feeds for the compress skill
+  projects.md    # active work context
+```
+
+## Agents
+
+`wt doctor` detects what you have installed:
+
+| Agent | CLI | Context | Cost |
+|-------|-----|---------|------|
+| claude | `claude` | 200k tokens | API key |
+| ollama | `ollama` | model-dependent | free (local) |
+| gemini | `gemini` | 1M tokens | API key |
+
+Resolution precedence: **`--agent` flag > skill frontmatter > config default**
 
 ## Structured output
 
-Agents can schedule follow-up tasks and write memory by including markers in their output:
+Agents can schedule follow-up tasks and write to memory:
 
 ```html
-<!-- wt:schedule delay="10m" memory="deploy-log,projects" -->
+<!-- wt:schedule delay="10m" memory="deploy-log" -->
 check if the deploy succeeded
 <!-- /wt:schedule -->
 
@@ -124,71 +142,26 @@ Deployed v2.3.1 to production at 14:30 UTC.
 <!-- /wt:memory -->
 ```
 
-Schedule directives support `memory="file1,file2"` to declare which memory files the follow-up task should load.
-
 ## Architecture
 
 ```
 ~/.wingthing/
-├── config.yaml      # agent defaults, machine ID, custom vars
-├── wt.db            # SQLite — tasks, thread, agents, logs
-├── wt.sock          # Unix socket for CLI ↔ daemon
-├── memory/
-│   ├── index.md     # always loaded into every prompt
-│   └── identity.md  # who you are
-└── skills/
-    └── *.md         # installed skills
+  config.yaml      # agent defaults, machine ID
+  wt.db            # SQLite -- tasks, thread, agents, logs
+  memory/          # text files, always human-readable
+  skills/          # installed skill files
 ```
 
-21 packages, two binaries (`wt` daemon + `wtd` relay), no CGO, pure Go SQLite.
+Single binary, no daemon, no socket. `wt` reads/writes SQLite directly and invokes agents as child processes. Scheduled tasks use OS-level scheduling (cron, launchd, systemd timers).
 
-The relay server (`wtd`) is a separate binary:
+`wt serve` runs the relay server for the social feed and web UI.
 
-```
-wtd --addr :8080 --db wtd.db
-├── WebSocket hub     ← daemon + client connections
-├── session manager   ← routes messages between daemons and clients
-├── auth endpoints    ← device code flow, token management
-├── web UI            ← PWA served at /app
-└── SQLite store      ← users, tokens, device codes, audit log
-```
+## wt social
 
-## v0.2 features
+Link aggregator with embedding-based space assignment. RSS feeds in, compressed summaries scored and posted, natural time decay, voting, comments. 159 semantic spaces from physics to poetry.
 
-- **Ollama adapter** — fully offline task execution via local models
-- **Apple Containers sandbox** — lightweight Linux VMs on macOS 26+ for agent isolation
-- **Linux namespace/seccomp sandbox** — process isolation with restricted syscalls
-- **Recurring tasks** — cron expressions in skills (`schedule: "0 8 * * 1-5"`), auto-reschedule after each run
-- **Retry policies** — exponential backoff (1s, 2s, 4s... capped at 5min), configurable per task
-- **Cost tracking** — token usage from claude stream-json, `wt status` shows daily/weekly totals
-- **Schedule memory declarations** — follow-up tasks can declare which memory files to load
-- **Agent health** — startup probes, 60s TTL cache, unhealthy agents blocked from dispatch
-
-## v0.3 features
-
-- **Memory sync** — file-level diffing with SHA-256 manifests, conflict logging, additive-only merges
-- **WebSocket client** — outbound connection to relay with auto-reconnect, exponential backoff, offline message queuing
-- **Device auth** — device code flow, token storage (0600 perms), `wt login` / `wt logout`
-- **Relay server** (`wtd`) — WebSocket routing between daemons and clients, session management, auth endpoints, audit log
-- **Web UI** — PWA at /app with task submission, timeline, thread view, real-time WebSocket updates, offline caching via service worker
-
-## v0.4 features
-
-- **Gemini adapter** — third agent backend, shells out to `gemini` CLI with 1M token context window
-- **Skill registry** — relay-hosted skill catalog with categories, search, SHA-256 checksums; `wt skill add --available` to browse; seeded with 128 skills
-- **E2E encryption** — Argon2id key derivation + XChaCha20-Poly1305 symmetric encryption for memory sync; relay sees only ciphertext
-- **Task dependencies** — `wt "task B" --after <task-A-id>` or `<!-- wt:schedule after="<id>" -->` in agent output; blocked tasks wait until deps complete
-- **Thread merge** — multi-machine thread entries interleave by timestamp with dedup; renders with machine origin when entries come from multiple machines
-
-## wingthing.ai
-
-Not a hosted agent. A sync and relay layer.
-
-- Memory sync across machines (encrypted at rest, relay sees ciphertext only)
-- Remote relay: phone/web -> WebSocket -> your daemon -> agent runs locally
-- Web UI for timeline, thread, task submission at wingthing.ai/app
-- Credentials never leave your machine
+Not a bot network. Content is curated by skills you control, scored by heuristics you can tune, posted to a feed where humans vote.
 
 ## Status
 
-v0.4 — Skill registry, E2E encryption, task dependencies, multi-machine thread merge. See [DRAFT.md](DRAFT.md) for the full design and [TODO.md](TODO.md) for the roadmap through v1.0.
+Active development. See [TODO.md](TODO.md) for the roadmap.
