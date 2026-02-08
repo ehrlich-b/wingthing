@@ -800,3 +800,94 @@ Each space is a mini Hacker News for its topic. These feeds are the sources.
 - https://feeds.arstechnica.com/arstechnica/index  # Ars Technica — in-depth tech journalism
 - https://www.theverge.com/rss/index.xml  # The Verge — tech news and culture
 - https://blog.pragmaticengineer.com/rss/  # Pragmatic Engineer — software engineering industry
+
+# Reddit-discovered feeds (Feb 2026) — filling gaps in space coverage
+
+# Science & academia
+- https://arxiv.org/rss/cs.CV  # arXiv Computer Vision
+- https://arxiv.org/rss/cs.AI  # arXiv Artificial Intelligence
+- https://arxiv.org/rss/math.CT  # arXiv Category Theory
+- https://arxiv.org/rss/math.NT  # arXiv Number Theory
+- https://arxiv.org/rss/math.GN  # arXiv General Topology
+- https://arxiv.org/rss/quant-ph  # arXiv Quantum Physics
+- https://arxiv.org/rss/cs.CL  # arXiv Computational Linguistics
+- https://arxiv.org/rss/cond-mat.mtrl-sci  # arXiv Materials Science
+- https://arxiv.org/rss/q-bio.PE  # arXiv Population/Ecology
+- https://terrytao.wordpress.com/feed/  # Terence Tao — Fields Medal mathematician
+- https://scottaaronson.blog/?feed=rss2  # Scott Aaronson — quantum computing blog
+- https://phys.org/rss-feed/  # Phys.org — science news aggregator
+- https://livescience.com/feed.xml  # Live Science — accessible science journalism
+- https://spectrum.ieee.org/feeds/feed.rss  # IEEE Spectrum — engineering and technology
+- https://nasa.gov/feed  # NASA — space and aerospace news
+- https://blog.mycology.cornell.edu/feed/  # Cornell Mushroom Blog — academic mycology
+- https://ourworldindata.org/atom.xml  # Our World in Data — data-driven research
+
+# Nuclear & energy
+- https://www.world-nuclear-news.org/rss  # World Nuclear News
+- https://www.nucnet.org/rss  # NucNet — nuclear industry news
+- https://electrek.co/feed/  # Electrek — clean energy and EVs
+- https://interestingengineering.com/feed  # Interesting Engineering — STEM news
+
+# Privacy & security
+- https://www.bleepingcomputer.com/feed/  # BleepingComputer — cybersecurity news
+- https://reclaimthenet.org/feed  # Reclaim The Net — digital rights/privacy
+
+# News & journalism
+- https://www.theguardian.com/rss  # The Guardian — international news
+- https://variety.com/feed  # Variety — entertainment industry
+- https://fortune.com/feed  # Fortune — business and finance
+- https://thebrighterside.news/feed/  # The Brighter Side — positive science/tech news
+
+# Programming & dev
+- https://cpponline.uk/feed  # C++ Online — C++ community events
+- https://tea-age.solutions/feed  # Tea Age Solutions — C++ blog
+- https://thunderseethe.dev/index.xml  # thunderseethe — PL/compilers blog
+- https://futhark-lang.org/atom.xml  # Futhark — functional GPU programming language
+- https://faiface.github.io/index.xml  # faiface — Go/graphics programming
+- https://weekly.fatbobman.com/feed  # Fat Bob Man Weekly — Swift/SwiftUI
+
+# Game dev & demoscene
+- https://howtomarketagame.com/feed/  # How to Market a Game — indie game dev marketing
+- https://www.demoparty.net/rss.xml  # Demoparty.net — demoscene events
+
+# Archaeology
+- https://ancientist.com/feed/  # The Ancientist — archaeology blog
+
+# Mechanical keyboards
+- https://kbd.news/feed  # KBD News — mechanical keyboard news and reviews
+
+# Espresso & coffee
+- https://coffeeadastra.com/feed/  # Coffee ad Astra — espresso science and extraction physics
+- https://coffeeness.de/en/feed/  # Coffeeness — espresso tips and equipment reviews
+
+# Synthesizers
+- https://www.synthtopia.com/feed/  # Synthtopia — synth news, modular, electronic music
+- https://synthanatomy.com/feed/  # Synth Anatomy — music tech news and synth reviews
+- https://www.matrixsynth.com/feeds/posts/default?alt=rss  # MATRIXSYNTH — eurorack and modular synth news
+
+# Aquariums
+- https://reefbuilders.com/feed/  # Reef Builders — saltwater aquarium and coral news
+- https://www.aquariumcoop.com/blogs/aquarium.atom  # Aquarium Co-Op — freshwater fishkeeping
+
+# Lock picking
+- https://blackbag.toool.nl/?feed=rss2  # TOOOL Blackbag — locksport events and analysis
+- https://www.art-of-lockpicking.com/feed/  # Art of Lock Picking — locksport education
+
+# Woodworking
+- https://popularwoodworking.com/feed/  # Popular Woodworking — projects and hand tool techniques
+
+# Speedrunning
+- https://tasvideos.org/news.rss  # TASVideos — tool-assisted speedrun news
+
+# True crime
+- https://morbidology.com/feed/  # Morbidology — true crime podcast and research
+
+# Fermentation
+- https://fermentedfoodlab.com/feed/  # Fermented Food Lab — sauerkraut, kefir, kombucha
+- https://sourdough.co.uk/feed/  # Sourdough.co.uk — sourdough recipes and baking science
+
+# Mycology
+- https://fungiacademy.com/feed/  # Fungi Academy — mycology education and cultivation
+
+# Standup comedy
+- https://thecomicscomic.com/feed/  # The Comic's Comic — comedy industry news

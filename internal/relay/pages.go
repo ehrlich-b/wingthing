@@ -391,7 +391,7 @@ func stripHTMLTitle(s string) string {
 // extractTitleSummary derives a title and summary from a post.
 // Priority: explicit Title field > [Bracketed Title] in text > first sentence of text.
 func extractTitleSummary(p *SocialEmbedding) (title, summary string) {
-	if p.Title != nil && *p.Title != "" {
+	if p.Title != nil && *p.Title != "" && len(*p.Title) < 300 {
 		title = stripHTMLTitle(*p.Title)
 		summary = p.Text
 		// Strip bracketed header from summary if present
