@@ -55,6 +55,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /login", s.handleLogin)
 	s.mux.HandleFunc("GET /social", s.handleSocial)
 	s.mux.HandleFunc("GET /w/{slug}", s.handleAnchor)
+	s.mux.HandleFunc("GET /p/{postID}", s.handlePostPage)
 
 	// Web auth
 	s.mux.HandleFunc("GET /auth/github", s.handleGitHubAuth)
@@ -80,7 +81,7 @@ func (s *Server) registerStaticRoutes() {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if r.Method == "GET" && (path == "/" || path == "/social" || path == "/login" || strings.HasPrefix(path, "/w/")) {
+	if r.Method == "GET" && (path == "/" || path == "/social" || path == "/login" || strings.HasPrefix(path, "/w/") || strings.HasPrefix(path, "/p/")) {
 		w.Header().Set("Cache-Control", "public, max-age=900, s-maxage=900")
 	}
 	s.mux.ServeHTTP(w, r)

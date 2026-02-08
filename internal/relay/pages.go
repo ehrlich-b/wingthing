@@ -57,6 +57,7 @@ var tmplFuncs = template.FuncMap{
 var (
 	homeTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/home.html"))
 	feedTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/feed.html"))
+	postTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/post.html"))
 	loginTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/login.html"))
 )
 
@@ -83,6 +84,26 @@ type feedPageData struct {
 	SlugName   string
 	Items      []feedItem
 	AllAnchors []string
+}
+
+type postComment struct {
+	Content   string
+	IsBot     bool
+	CreatedAt time.Time
+}
+
+type postPageData struct {
+	User     *SocialUser
+	LoggedIn bool
+	PostID   string
+	Title    string
+	Summary  string
+	Link     string
+	Domain   string
+	Anchors  []string
+	Age      time.Time
+	Voted    bool
+	Comments []postComment
 }
 
 type loginPageData struct {
@@ -259,6 +280,135 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 	feedTmpl.ExecuteTemplate(w, "base", data)
 }
 
+func (s *Server) handlePostPage(w http.ResponseWriter, r *http.Request) {
+	postID := r.PathValue("postID")
+	if postID == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	post, err := s.Store.GetSocialEmbedding(postID)
+	if err != nil || post == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	title, summary := extractTitleSummary(post)
+	link := ""
+	domain := ""
+	if post.Link != nil {
+		link = *post.Link
+		if u, err := url.Parse(link); err == nil {
+			domain = strings.TrimPrefix(u.Hostname(), "www.")
+		}
+	}
+	age := post.CreatedAt
+	if post.PublishedAt != nil {
+		age = *post.PublishedAt
+	}
+
+	anchors, _ := s.Store.AnchorSlugsForPosts([]string{postID})
+	comments, _ := s.Store.ListCommentsByPost(postID)
+
+	user := s.sessionUser(r)
+	var voted bool
+	if user != nil {
+		votes, _ := s.Store.UserUpvotesForPosts(user.ID, []string{postID})
+		voted = votes[postID]
+	}
+
+	var postComments []postComment
+	for _, c := range comments {
+		postComments = append(postComments, postComment{
+			Content:   c.Content,
+			IsBot:     c.IsBot,
+			CreatedAt: c.CreatedAt,
+		})
+	}
+
+	data := postPageData{
+		User:     user,
+		LoggedIn: user != nil,
+		PostID:   postID,
+		Title:    title,
+		Summary:  summary,
+		Link:     link,
+		Domain:   domain,
+		Anchors:  anchors[postID],
+		Age:      age,
+		Voted:    voted,
+		Comments: postComments,
+	}
+	postTmpl.ExecuteTemplate(w, "base", data)
+}
+
+// extractTitleSummary derives a title and summary from a post.
+// Priority: explicit Title field > [Bracketed Title] in text > first sentence of text.
+func extractTitleSummary(p *SocialEmbedding) (title, summary string) {
+	if p.Title != nil && *p.Title != "" {
+		title = *p.Title
+		summary = p.Text
+		// Strip bracketed header from summary if present
+		if strings.HasPrefix(summary, "[") {
+			if idx := strings.Index(summary, "]\n"); idx != -1 {
+				summary = strings.TrimSpace(summary[idx+2:])
+			} else if idx := strings.Index(summary, "] "); idx != -1 {
+				summary = strings.TrimSpace(summary[idx+2:])
+			}
+		}
+		// Strip leading ** bold markdown
+		summary = strings.TrimPrefix(summary, "**")
+		if idx := strings.Index(summary, "**"); idx != -1 && idx < 100 {
+			summary = strings.TrimSpace(summary[idx+2:])
+		}
+		if len(summary) > 500 {
+			summary = summary[:500] + "..."
+		}
+		if len(title) > 200 {
+			title = title[:200] + "..."
+		}
+		return
+	}
+
+	text := p.Text
+
+	// Try extracting [Title — Source] or [Title] from start of text
+	if strings.HasPrefix(text, "[") || strings.HasPrefix(text, "**[") {
+		clean := strings.TrimPrefix(text, "**")
+		if end := strings.Index(clean, "]"); end != -1 && end < 300 {
+			bracket := clean[1:end]
+			// Strip source suffix like " — Julia Evans"
+			if dash := strings.LastIndex(bracket, " — "); dash != -1 {
+				title = bracket[:dash]
+			} else if dash := strings.LastIndex(bracket, " - "); dash != -1 {
+				title = bracket[:dash]
+			} else {
+				title = bracket
+			}
+			rest := strings.TrimSpace(clean[end+1:])
+			rest = strings.TrimPrefix(rest, "**")
+			rest = strings.TrimPrefix(rest, "\n")
+			rest = strings.TrimSpace(rest)
+			if len(rest) > 500 {
+				rest = rest[:500] + "..."
+			}
+			summary = rest
+			return
+		}
+	}
+
+	// Fallback: first sentence as title
+	if idx := strings.Index(text, ". "); idx != -1 && idx < 200 {
+		title = text[:idx]
+	} else if len(text) > 120 {
+		title = text[:120] + "..."
+	} else {
+		title = text
+	}
+	summary = ""
+	return
+}
+
 func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Request) feedPageData {
 	user := s.sessionUser(r)
 
@@ -277,13 +427,7 @@ func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Re
 
 	var items []feedItem
 	for _, p := range posts {
-		title := p.Text
-		if p.Title != nil && *p.Title != "" {
-			title = *p.Title
-		}
-		if len(title) > 200 {
-			title = title[:200] + "..."
-		}
+		title, summary := extractTitleSummary(p)
 		link := ""
 		domain := ""
 		if p.Link != nil {
@@ -295,15 +439,6 @@ func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Re
 		age := p.CreatedAt
 		if p.PublishedAt != nil {
 			age = *p.PublishedAt
-		}
-		summary := p.Text
-		if p.Title != nil && *p.Title != "" {
-			// Summary is the compressed text, distinct from the title
-			if len(summary) > 500 {
-				summary = summary[:500] + "..."
-			}
-		} else {
-			summary = ""
 		}
 		postAnchors := rankPostAnchors(anchorSlugs[p.ID], slug, 3)
 		items = append(items, feedItem{

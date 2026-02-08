@@ -1,0 +1,70 @@
+{{define "title"}}{{.Title}} — wingthing{{end}}
+{{define "head"}}
+<style>
+.container{max-width:1100px}
+.post-header{margin-bottom:20px}
+.post-title{font-size:20px;font-weight:700;line-height:1.4;margin-bottom:6px}
+.post-title a{color:var(--text);text-decoration:none}
+.post-title a:hover{text-decoration:underline}
+.post-title .domain{font-size:13px;color:var(--text-dim);font-weight:400;margin-left:6px}
+.post-meta{font-size:12px;color:var(--text-dim);font-family:var(--mono);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.post-meta a{color:var(--text-dim);text-decoration:none}
+.post-meta a:hover{color:var(--text)}
+.vote-btn{background:none;border:none;color:var(--text-dim);cursor:pointer;padding:2px 4px;font-size:12px;line-height:1;transition:color 0.1s}
+.vote-btn:hover{color:var(--action)}
+.vote-btn.voted{color:var(--action)}
+.post-summary{color:var(--text-dim);font-size:15px;line-height:1.7;margin:20px 0;max-width:720px}
+.post-link{display:inline-block;margin-bottom:20px;font-size:13px;font-family:var(--mono)}
+.comments-section{border-top:1px solid rgba(255,255,255,0.08);padding-top:16px;margin-top:24px}
+.comments-section h3{font-size:12px;text-transform:uppercase;color:var(--text-dim);margin-bottom:12px;letter-spacing:0.05em;font-family:var(--mono)}
+.comment{padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04)}
+.comment:last-child{border-bottom:none}
+.comment-meta{font-size:11px;color:var(--text-dim);margin-bottom:4px;font-family:var(--mono)}
+.comment-body{font-size:14px;color:var(--text);line-height:1.6}
+.no-comments{font-size:13px;color:var(--text-dim);font-style:italic}
+.back-link{font-size:12px;color:var(--text-dim);text-decoration:none;font-family:var(--mono);display:inline-block;margin-bottom:16px}
+.back-link:hover{color:var(--text)}
+@media(max-width:600px){
+  .post-title{font-size:17px}
+  .post-summary{font-size:14px}
+}
+</style>
+{{end}}
+{{define "content"}}
+<a href="/w/all" class="back-link">&larr; back</a>
+<div class="post-header">
+<div class="post-title">
+{{if .Link}}<a href="{{.Link}}" target="_blank" rel="noopener">{{.Title}}</a>{{else}}{{.Title}}{{end}}
+{{if .Domain}}<span class="domain">({{.Domain}})</span>{{end}}
+</div>
+<div class="post-meta">
+<button class="vote-btn{{if .Voted}} voted{{end}}" onclick="vote('{{.PostID}}')" title="upvote">&#9650;</button>
+<span>{{.Age | timeAgo}}</span>
+{{range .Anchors}} · <a href="/w/{{.}}">{{. | slugDisplay}}</a>{{end}}
+</div>
+</div>
+{{if .Summary}}<div class="post-summary">{{.Summary}}</div>{{end}}
+{{if .Link}}<a href="{{.Link}}" target="_blank" rel="noopener" class="post-link">{{.Link}}</a>{{end}}
+<div class="comments-section">
+<h3>comments</h3>
+{{if .Comments}}
+{{range .Comments}}
+<div class="comment">
+<div class="comment-meta">{{if .IsBot}}bot{{else}}user{{end}} · {{.CreatedAt | timeAgo}}</div>
+<div class="comment-body">{{.Content}}</div>
+</div>
+{{end}}
+{{else}}
+<div class="no-comments">no comments yet</div>
+{{end}}
+</div>
+<script>
+var loggedIn={{.LoggedIn}};
+function vote(id){
+  if(!loggedIn){window.location='/login';return;}
+  var btn=document.querySelector('.vote-btn');
+  btn.classList.toggle('voted');
+  fetch('/api/vote',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({post_id:id})});
+}
+</script>
+{{end}}
