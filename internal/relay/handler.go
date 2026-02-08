@@ -382,12 +382,12 @@ func (s *Server) handleVote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "post_id is required")
 		return
 	}
-	if err := s.Store.Upvote(userID, req.PostID); err != nil {
+	voted, err := s.Store.ToggleUpvote(userID, req.PostID)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	count, _ := s.Store.GetUpvoteCount(req.PostID)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upvotes": count})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "voted": voted})
 }
 
 func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {

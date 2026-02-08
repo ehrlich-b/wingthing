@@ -247,22 +247,22 @@ func TestVoteAPI(t *testing.T) {
 	if result["ok"] != true {
 		t.Errorf("expected ok=true, got %v", result["ok"])
 	}
-	if result["upvotes"] != float64(1) {
-		t.Errorf("upvotes = %v, want 1", result["upvotes"])
+	if result["voted"] != true {
+		t.Errorf("voted = %v, want true", result["voted"])
 	}
 
-	// Vote again (idempotent) — count stays 1
+	// Vote again (toggle) — removes the vote
 	req, _ = http.NewRequest("POST", ts.URL+"/api/vote", strings.NewReader(`{"post_id":"`+post.ID+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("POST /api/vote (dup): %v", err)
+		t.Fatalf("POST /api/vote (toggle): %v", err)
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
 	resp.Body.Close()
-	if result["upvotes"] != float64(1) {
-		t.Errorf("dup upvotes = %v, want 1", result["upvotes"])
+	if result["voted"] != false {
+		t.Errorf("toggle voted = %v, want false", result["voted"])
 	}
 }
 

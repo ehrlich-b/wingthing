@@ -73,10 +73,12 @@ type feedItem struct {
 	Anchors      []string
 	CommentCount int
 	Age          time.Time
+	Voted        bool
 }
 
 type feedPageData struct {
 	User       *SocialUser
+	LoggedIn   bool
 	Slug       string
 	SlugName   string
 	Items      []feedItem
@@ -91,47 +93,33 @@ type loginPageData struct {
 	HasSMTP   bool
 }
 
-// sidebarCache holds pre-computed anchor masses and connectivity with a TTL.
+// sidebarCache holds pre-computed anchor masses and connectivity.
+// Refreshed by a background goroutine, never on page load.
 type sidebarCache struct {
-	mu           sync.Mutex
+	mu           sync.RWMutex
 	masses       map[string]float64
 	connectivity map[string]map[string]int
-	computedAt   time.Time
 }
 
-const sidebarTTL = 5 * time.Minute
+// get returns a snapshot of the current cache under a read lock.
+func (c *sidebarCache) get() (map[string]float64, map[string]map[string]int) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.masses, c.connectivity
+}
 
-// refresh recomputes if stale. Returns masses and connectivity.
-func (c *sidebarCache) refresh(store *RelayStore) (map[string]float64, map[string]map[string]int) {
+// update replaces the cache contents under a write lock.
+func (c *sidebarCache) update(masses map[string]float64, conn map[string]map[string]int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	if time.Since(c.computedAt) < sidebarTTL && c.masses != nil {
-		return c.masses, c.connectivity
-	}
-
-	masses, err := store.AnchorMasses()
-	if err != nil {
-		if c.masses != nil {
-			return c.masses, c.connectivity
-		}
-		return nil, nil
-	}
-	conn, err := store.AnchorConnectivity()
-	if err != nil {
-		conn = nil
-	}
-
 	c.masses = masses
 	c.connectivity = conn
-	c.computedAt = time.Now()
-	return masses, conn
 }
 
 // sidebarSlugs returns sorted slugs for the sidebar.
 // /w/all: by mass descending. /w/{slug}: by connectivity*mass descending.
-func (c *sidebarCache) sidebarSlugs(store *RelayStore, currentSlug string) []string {
-	masses, conn := c.refresh(store)
+func (c *sidebarCache) sidebarSlugs(currentSlug string) []string {
+	masses, conn := c.get()
 	if masses == nil {
 		return nil
 	}
@@ -160,6 +148,25 @@ func (c *sidebarCache) sidebarSlugs(store *RelayStore, currentSlug string) []str
 
 // Package-level sidebar cache shared by all requests.
 var sidebar = &sidebarCache{}
+
+// StartSidebarRefresh launches a background goroutine that recomputes
+// the sidebar cache every interval. Does an initial compute synchronously.
+func StartSidebarRefresh(store *RelayStore, interval time.Duration) {
+	refresh := func() {
+		masses, _ := store.AnchorMasses()
+		conn, _ := store.AnchorConnectivity()
+		if masses != nil {
+			sidebar.update(masses, conn)
+		}
+	}
+	refresh() // initial sync compute
+	go func() {
+		for {
+			time.Sleep(interval)
+			refresh()
+		}
+	}()
+}
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	data := pageData{User: s.sessionUser(r)}
@@ -204,6 +211,8 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Request) feedPageData {
+	user := s.sessionUser(r)
+
 	postIDs := make([]string, len(posts))
 	for i, p := range posts {
 		postIDs[i] = p.ID
@@ -211,6 +220,11 @@ func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Re
 
 	anchorSlugs, _ := s.Store.AnchorSlugsForPosts(postIDs)
 	commentCounts, _ := s.Store.CommentCountsForPosts(postIDs)
+
+	var userVotes map[string]bool
+	if user != nil {
+		userVotes, _ = s.Store.UserUpvotesForPosts(user.ID, postIDs)
+	}
 
 	var items []feedItem
 	for _, p := range posts {
@@ -251,10 +265,11 @@ func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Re
 			Anchors:      anchorSlugs[p.ID],
 			CommentCount: commentCounts[p.ID],
 			Age:          age,
+			Voted:        userVotes[p.ID],
 		})
 	}
 
-	allSlugs := sidebar.sidebarSlugs(s.Store, slug)
+	allSlugs := sidebar.sidebarSlugs(slug)
 
 	slugName := "all"
 	if slug != "all" {
@@ -262,7 +277,8 @@ func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Re
 	}
 
 	return feedPageData{
-		User:       s.sessionUser(r),
+		User:       user,
+		LoggedIn:   user != nil,
 		Slug:       slug,
 		SlugName:   slugName,
 		Items:      items,

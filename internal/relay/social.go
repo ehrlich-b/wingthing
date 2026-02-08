@@ -199,6 +199,52 @@ func (s *RelayStore) Upvote(userID, postID string) error {
 	return nil
 }
 
+// ToggleUpvote inserts if not exists, deletes if exists. Returns true if now upvoted.
+func (s *RelayStore) ToggleUpvote(userID, postID string) (bool, error) {
+	var exists int
+	s.db.QueryRow("SELECT COUNT(*) FROM social_upvotes WHERE user_id = ? AND post_id = ?", userID, postID).Scan(&exists)
+	if exists > 0 {
+		_, err := s.db.Exec("DELETE FROM social_upvotes WHERE user_id = ? AND post_id = ?", userID, postID)
+		if err != nil {
+			return false, fmt.Errorf("remove upvote: %w", err)
+		}
+		return false, nil
+	}
+	_, err := s.db.Exec("INSERT INTO social_upvotes (user_id, post_id) VALUES (?, ?)", userID, postID)
+	if err != nil {
+		return false, fmt.Errorf("add upvote: %w", err)
+	}
+	return true, nil
+}
+
+// UserUpvotesForPosts returns the set of post IDs the user has upvoted from the given list.
+func (s *RelayStore) UserUpvotesForPosts(userID string, postIDs []string) (map[string]bool, error) {
+	if userID == "" || len(postIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(postIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := []interface{}{userID}
+	for _, id := range postIDs {
+		args = append(args, id)
+	}
+	rows, err := s.db.Query(
+		`SELECT post_id FROM social_upvotes WHERE user_id = ? AND post_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("user upvotes: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var pid string
+		if err := rows.Scan(&pid); err != nil {
+			return nil, err
+		}
+		out[pid] = true
+	}
+	return out, rows.Err()
+}
+
 func (s *RelayStore) GetUpvoteCount(postID string) (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM social_upvotes WHERE post_id = ?", postID).Scan(&count)
@@ -657,7 +703,7 @@ func (s *RelayStore) AnchorMasses() (map[string]float64, error) {
 }
 
 // AnchorConnectivity returns a connectivity matrix: slug -> {slug -> shared_post_count}.
-// Two anchors are connected when they share posts via post_anchors.
+// Two anchors are connected when they share posts via post_anchors. Only considers posts from the last 30 days.
 func (s *RelayStore) AnchorConnectivity() (map[string]map[string]int, error) {
 	rows, err := s.db.Query(
 		`SELECT a1.slug, a2.slug, COUNT(DISTINCT pa1.post_id)
@@ -665,6 +711,7 @@ func (s *RelayStore) AnchorConnectivity() (map[string]map[string]int, error) {
 		 JOIN post_anchors pa2 ON pa1.post_id = pa2.post_id AND pa1.anchor_id != pa2.anchor_id
 		 JOIN social_embeddings a1 ON a1.id = pa1.anchor_id AND a1.slug IS NOT NULL
 		 JOIN social_embeddings a2 ON a2.id = pa2.anchor_id AND a2.slug IS NOT NULL
+		 JOIN social_embeddings p ON p.id = pa1.post_id AND p.created_at > datetime('now', '-30 days')
 		 GROUP BY a1.slug, a2.slug`)
 	if err != nil {
 		return nil, fmt.Errorf("anchor connectivity: %w", err)

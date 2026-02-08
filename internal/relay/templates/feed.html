@@ -50,7 +50,7 @@
 {{range .Items}}
 <li class="feed-item" data-post-id="{{.PostID}}">
 <div class="feed-row">
-<button class="vote-btn" onclick="vote(event,'{{.PostID}}')" title="upvote">&#9650;</button>
+<button class="vote-btn{{if .Voted}} voted{{end}}" onclick="vote(event,'{{.PostID}}')" title="upvote">&#9650;</button>
 <div class="feed-content">
 <div class="feed-title">
 {{if .Link}}<a href="{{.Link}}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{.Title}}</a>{{else}}{{.Title}}{{end}}
@@ -83,10 +83,12 @@
 </div>
 </div>
 <script>
+var loggedIn={{.LoggedIn}};
 function vote(e,id){
   e.stopPropagation();
+  if(!loggedIn){window.location='/login';return;}
   var btn=e.currentTarget;
-  btn.classList.add('voted');
+  btn.classList.toggle('voted');
   fetch('/api/vote',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({post_id:id})});
 }
 document.querySelectorAll('.feed-item').forEach(function(li){

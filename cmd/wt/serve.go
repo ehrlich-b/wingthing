@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/embedding"
@@ -80,6 +81,7 @@ func serveCmd() *cobra.Command {
 
 			srv := relay.NewServer(store, srvCfg)
 			srv.Embedder = emb
+			relay.StartSidebarRefresh(store, 10*time.Minute)
 
 			httpSrv := &http.Server{
 				Addr:    addrFlag,
