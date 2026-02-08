@@ -2,7 +2,7 @@
 
 Reference: [DRAFT.md](DRAFT.md) for full design. This file is the build plan.
 
-**Active:** [rss_feed_find_plan.md](rss_feed_find_plan.md) — RSS feed discovery & curation. Next step: compact and launch 10 finder bots.
+**Active:** Item 4 — Voting and comments through wt
 
 ## Vision
 
@@ -21,17 +21,16 @@ The skill library is the product. Checked into the repo, validated, ever-growing
 - [x] Works with any agent: `wt --skill compress --agent ollama` (agent resolution precedence)
 - [x] Pipeline verified: TestCompressSkillE2E covers skill load → memory → interpolation → prompt assembly
 
-### 2. Seed ~1000 public RSS feeds
-- [ ] Curate feeds across subjects: tech, science, politics, culture, sports, finance, health, arts, gaming, philosophy, etc.
-- [ ] Store as `feeds.md` memory file (or split by category)
-- [ ] Target: broad coverage, high-quality sources, no paywalled feeds
+### 2. Seed ~1000 public RSS feeds ✅
+- [x] 509 curated feeds across all 159 spaces in `skills/feeds.md`
+- [x] 10 parallel finder bots → 3 curator bots → final assembly
+- [x] Quality bar: "would the HN of [topic] upvote this?"
 
-### 3. Scorer skill (private, not checked in)
-- [ ] Estimates how many upvotes a post *should* get
-- [ ] Bounded heuristic: 10k is the ceiling (most upvotes ever)
-- [ ] Factors: novelty, broad appeal, information density, timeliness
-- [ ] Output: integer score per post
-- [ ] Private skill — lives in `~/.wingthing/skills/`, not in repo
+### 3. Scorer skill (private, not checked in) ✅
+- [x] `~/.wingthing/skills/scorer.md` — scores compressed articles 1-10000
+- [x] Factors weighted: novelty 30%, info density 25%, practitioner signal 20%, timeliness 15%, broad appeal 10%
+- [x] Output: `SCORE [mass] | [title] | [source] | [reason]`
+- [x] Mass feeds directly into `decayed_mass = mass * exp(-0.023 * age_in_days)` for "best" sort
 
 ### 4. Voting and comments through wt
 - [ ] `wt vote <post-id>` — upvote a post on wt social
