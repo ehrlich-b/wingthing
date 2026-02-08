@@ -57,11 +57,16 @@ type SocialUser struct {
 }
 
 func (s *RelayStore) CreateSocialEmbedding(e *SocialEmbedding) error {
+	// Format published_at as SQLite-compatible string (no timezone suffix)
+	var pubAt interface{}
+	if e.PublishedAt != nil {
+		pubAt = e.PublishedAt.UTC().Format("2006-01-02 15:04:05")
+	}
 	_, err := s.db.Exec(
 		`INSERT INTO social_embeddings (id, user_id, link, text, centerpoint, slug, embedding, embedding_512, centroid_512, effective_512, kind, visible, mass, upvotes_24h, decayed_mass, swallowed, published_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.UserID, e.Link, e.Text, e.Centerpoint, e.Slug, e.Embedding, e.Embedding512, e.Centroid512, e.Effective512, e.Kind,
-		boolToInt(e.Visible), e.Mass, e.Upvotes24h, e.DecayedMass, boolToInt(e.Swallowed), e.PublishedAt,
+		boolToInt(e.Visible), e.Mass, e.Upvotes24h, e.DecayedMass, boolToInt(e.Swallowed), pubAt,
 	)
 	if err != nil {
 		return fmt.Errorf("create social embedding: %w", err)
