@@ -166,7 +166,7 @@ func TestSearchSkills(t *testing.T) {
 
 func testServerWithStore(t *testing.T, store *RelayStore) *httptest.Server {
 	t.Helper()
-	srv := NewServer(store)
+	srv := NewServer(store, ServerConfig{})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(func() { ts.Close() })
 	return ts

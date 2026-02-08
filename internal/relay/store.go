@@ -139,6 +139,86 @@ func (s *RelayStore) DeleteToken(token string) error {
 	return nil
 }
 
+// Session methods
+
+func (s *RelayStore) CreateSession(token, socialUserID string, expiresAt time.Time) error {
+	_, err := s.db.Exec(
+		"INSERT INTO sessions (token, social_user_id, expires_at) VALUES (?, ?, ?)",
+		token, socialUserID, expiresAt.UTC().Format("2006-01-02 15:04:05"),
+	)
+	if err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
+	return nil
+}
+
+func (s *RelayStore) GetSession(token string) (*SocialUser, error) {
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	row := s.db.QueryRow(
+		`SELECT u.id, u.provider, u.provider_id, u.display_name, u.avatar_url, u.is_pro, u.created_at
+		 FROM sessions s JOIN social_users u ON u.id = s.social_user_id
+		 WHERE s.token = ? AND s.expires_at > ?`,
+		token, now,
+	)
+	var u SocialUser
+	var isPro int
+	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &isPro, &u.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+	u.IsPro = isPro != 0
+	return &u, nil
+}
+
+func (s *RelayStore) DeleteSession(token string) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE token = ?", token)
+	if err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}
+
+// Magic link methods
+
+func (s *RelayStore) CreateMagicLink(id, email, token string, expiresAt time.Time) error {
+	_, err := s.db.Exec(
+		"INSERT INTO magic_links (id, email, token, expires_at) VALUES (?, ?, ?, ?)",
+		id, email, token, expiresAt.UTC().Format("2006-01-02 15:04:05"),
+	)
+	if err != nil {
+		return fmt.Errorf("create magic link: %w", err)
+	}
+	return nil
+}
+
+func (s *RelayStore) ConsumeMagicLink(token string) (string, error) {
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", fmt.Errorf("begin tx: %w", err)
+	}
+	var email string
+	err = tx.QueryRow(
+		"SELECT email FROM magic_links WHERE token = ? AND used = 0 AND expires_at > ?",
+		token, now,
+	).Scan(&email)
+	if err != nil {
+		tx.Rollback()
+		return "", fmt.Errorf("invalid or expired magic link")
+	}
+	if _, err := tx.Exec("UPDATE magic_links SET used = 1 WHERE token = ?", token); err != nil {
+		tx.Rollback()
+		return "", fmt.Errorf("consume magic link: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit: %w", err)
+	}
+	return email, nil
+}
+
 func (s *RelayStore) AppendAudit(userID, event string, detail *string) error {
 	_, err := s.db.Exec(
 		"INSERT INTO audit_log (user_id, event, detail) VALUES (?, ?, ?)",

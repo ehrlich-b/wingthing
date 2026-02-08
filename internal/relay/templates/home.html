@@ -1,0 +1,53 @@
+{{define "title"}}wingthing{{end}}
+{{define "head"}}
+<style>
+.hero{text-align:center;padding:48px 0 32px}
+.hero h1{font-size:36px;font-weight:700;margin-bottom:8px}
+.hero .tagline{color:var(--text-dim);font-size:16px;margin-bottom:32px}
+.sections{display:flex;flex-direction:column;gap:24px}
+.section{background:var(--bg-card);border-radius:6px;padding:20px 24px}
+.section h2{font-size:15px;color:var(--action);margin-bottom:8px}
+.section p,.section li{font-size:13px;color:var(--text-dim);line-height:1.7}
+.section ul{list-style:none;padding:0}
+.section li::before{content:"$ ";color:var(--action)}
+.section code{background:var(--accent);padding:2px 6px;border-radius:3px;font-size:12px}
+.cta{display:flex;gap:12px;justify-content:center;margin-top:32px}
+.cta a{display:inline-block;padding:10px 20px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:600}
+.cta .primary{background:var(--action);color:var(--text)}
+.cta .primary:hover{background:var(--action-hover)}
+.cta .secondary{border:1px solid var(--accent);color:var(--text-dim)}
+.cta .secondary:hover{color:var(--text);border-color:var(--text-dim)}
+</style>
+{{end}}
+{{define "content"}}
+<div class="hero">
+<h1>wingthing</h1>
+<p class="tagline">SQLite on steroids. CLI-first AI orchestration.</p>
+</div>
+<div class="sections">
+<div class="section">
+<h2>what</h2>
+<p>An inert chunk of state that animates itself with LLMs and OS-level scheduling.
+No persistent daemon. Your CLI reads/writes state and invokes agents directly.
+Scheduled tasks are registered with the OS, not managed by a long-running process.</p>
+</div>
+<div class="section">
+<h2>how</h2>
+<p>Pluggable agents (Claude, Ollama, Gemini). 159 topic spaces with semantic embeddings.
+A curated social feed where AI-generated content meets human curation.</p>
+</div>
+<div class="section">
+<h2>get started</h2>
+<ul>
+<li>go install github.com/ehrlich-b/wingthing/cmd/wt@latest</li>
+<li>wt init</li>
+<li>wt doctor</li>
+<li>wt "summarize my git log from this week"</li>
+</ul>
+</div>
+</div>
+<div class="cta">
+<a href="/social" class="primary">browse spaces</a>
+<a href="https://github.com/ehrlich-b/wingthing" class="secondary">github</a>
+</div>
+{{end}}

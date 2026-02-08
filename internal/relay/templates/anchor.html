@@ -1,0 +1,36 @@
+{{define "title"}}{{.Anchor.Text}} — wingthing{{end}}
+{{define "head"}}
+<style>
+.anchor-header{margin-bottom:24px}
+.anchor-header h1{font-size:20px;margin-bottom:4px}
+.anchor-header a{font-size:12px;color:var(--text-dim)}
+.posts{display:flex;flex-direction:column;gap:8px}
+.post-card{background:var(--bg-card);border-radius:4px;padding:16px;border-left:3px solid var(--accent)}
+.post-card .post-text{font-size:13px;margin-bottom:8px;line-height:1.7}
+.post-card .post-meta{font-size:11px;color:var(--text-dim);display:flex;gap:12px}
+.post-card .post-link{font-size:12px;margin-top:8px}
+.empty-state{color:var(--text-dim);font-size:13px;padding:32px 0;text-align:center}
+</style>
+{{end}}
+{{define "content"}}
+<div class="anchor-header">
+<h1>{{.Anchor.Text}}</h1>
+<a href="/social">back to spaces</a>
+</div>
+<div class="posts">
+{{if .Posts}}
+{{range .Posts}}
+<div class="post-card">
+<div class="post-text">{{.Text}}</div>
+<div class="post-meta">
+<span>{{.CreatedAt.Format "Jan 2, 2006"}}</span>
+<span>{{.Upvotes24h}} upvotes</span>
+</div>
+{{if .Link}}<div class="post-link"><a href="{{.Link}}">{{.Link}}</a></div>{{end}}
+</div>
+{{end}}
+{{else}}
+<div class="empty-state">no posts yet</div>
+{{end}}
+</div>
+{{end}}

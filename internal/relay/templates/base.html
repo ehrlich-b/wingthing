@@ -1,0 +1,43 @@
+{{define "base"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .}}wingthing{{end}}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#1a1a2e;--bg-card:#16213e;--text:#eee;--text-dim:#888;
+  --accent:#0f3460;--action:#e94560;--action-hover:#ff6b81;
+  --font:'SF Mono','Fira Code','Cascadia Code',monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;min-height:100vh}
+.container{max-width:800px;margin:0 auto;padding:16px 20px}
+nav{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--accent);margin-bottom:24px}
+nav .logo{font-size:18px;font-weight:700;color:var(--text);text-decoration:none}
+nav .logo:hover{color:var(--action)}
+.nav-links{display:flex;align-items:center;gap:16px}
+.nav-links a{color:var(--text-dim);text-decoration:none;font-size:13px}
+.nav-links a:hover{color:var(--text)}
+.nav-btn{background:none;border:none;color:var(--text-dim);font-family:var(--font);font-size:13px;cursor:pointer;padding:0}
+.nav-btn:hover{color:var(--text)}
+.user-name{color:var(--text);font-size:13px}
+a{color:var(--action)}a:hover{color:var(--action-hover)}
+</style>
+{{block "head" .}}{{end}}
+</head>
+<body>
+<div class="container">
+<nav>
+<a href="/" class="logo">wt</a>
+<div class="nav-links">
+<a href="/social">social</a>
+{{if .User}}<span class="user-name">{{.User.DisplayName}}</span>
+<form method="POST" action="/auth/logout" style="display:inline"><button type="submit" class="nav-btn">logout</button></form>
+{{else}}<a href="/login">login</a>{{end}}
+</div>
+</nav>
+{{template "content" .}}
+</div>
+</body>
+</html>{{end}}

@@ -1,0 +1,38 @@
+{{define "title"}}login — wingthing{{end}}
+{{define "head"}}
+<style>
+.login-box{max-width:360px;margin:48px auto;text-align:center}
+.login-box h1{font-size:20px;margin-bottom:8px}
+.login-box .subtitle{color:var(--text-dim);font-size:13px;margin-bottom:32px}
+.auth-buttons{display:flex;flex-direction:column;gap:10px;margin-bottom:24px}
+.auth-btn{display:block;padding:12px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:600;text-align:center;border:1px solid var(--accent);color:var(--text);background:var(--bg-card)}
+.auth-btn:hover{border-color:var(--action);color:var(--action)}
+.divider{color:var(--text-dim);font-size:12px;margin:16px 0;position:relative;text-align:center}
+.divider::before,.divider::after{content:'';position:absolute;top:50%;width:40%;height:1px;background:var(--accent)}
+.divider::before{left:0}.divider::after{right:0}
+.magic-form{display:flex;gap:8px}
+.magic-form input{flex:1;background:var(--bg-card);border:1px solid var(--accent);color:var(--text);font-family:var(--font);font-size:13px;padding:10px 12px;border-radius:4px;outline:none}
+.magic-form input:focus{border-color:var(--action)}
+.magic-form button{background:var(--action);color:var(--text);border:none;font-family:var(--font);font-size:13px;padding:10px 16px;border-radius:4px;cursor:pointer;font-weight:600}
+.magic-form button:hover{background:var(--action-hover)}
+.sent-msg{background:var(--bg-card);border:1px solid var(--accent);border-radius:4px;padding:16px;margin-bottom:24px;font-size:13px;color:var(--text-dim)}
+</style>
+{{end}}
+{{define "content"}}
+<div class="login-box">
+<h1>login</h1>
+<p class="subtitle">sign in to wingthing</p>
+{{if .Sent}}<div class="sent-msg">check your email for a login link</div>{{end}}
+<div class="auth-buttons">
+{{if .HasGitHub}}<a href="/auth/github" class="auth-btn">continue with GitHub</a>{{end}}
+{{if .HasGoogle}}<a href="/auth/google" class="auth-btn">continue with Google</a>{{end}}
+</div>
+{{if .HasSMTP}}
+{{if or .HasGitHub .HasGoogle}}<div class="divider">or</div>{{end}}
+<form method="POST" action="/auth/magic" class="magic-form">
+<input type="email" name="email" placeholder="you@example.com" required>
+<button type="submit">send link</button>
+</form>
+{{end}}
+</div>
+{{end}}

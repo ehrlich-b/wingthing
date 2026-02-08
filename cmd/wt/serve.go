@@ -13,6 +13,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func serveCmd() *cobra.Command {
 	var addrFlag string
 	var spacesFlag string
@@ -58,7 +65,20 @@ func serveCmd() *cobra.Command {
 				return fmt.Errorf("seed skills: %w", err)
 			}
 
-			srv := relay.NewServer(store)
+			srvCfg := relay.ServerConfig{
+				BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
+				GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
+				GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
+				GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+				GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+				SMTPHost:           os.Getenv("SMTP_HOST"),
+				SMTPPort:           envOr("SMTP_PORT", "587"),
+				SMTPUser:           os.Getenv("SMTP_USER"),
+				SMTPPass:           os.Getenv("SMTP_PASS"),
+				SMTPFrom:           os.Getenv("SMTP_FROM"),
+			}
+
+			srv := relay.NewServer(store, srvCfg)
 
 			httpSrv := &http.Server{
 				Addr:    addrFlag,

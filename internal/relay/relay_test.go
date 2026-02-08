@@ -22,7 +22,7 @@ func testStore(t *testing.T) *RelayStore {
 func testServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
 	store := testStore(t)
-	srv := NewServer(store)
+	srv := NewServer(store, ServerConfig{})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(func() { ts.Close() })
 	return srv, ts

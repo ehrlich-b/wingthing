@@ -7,16 +7,33 @@ import (
 	"github.com/ehrlich-b/wingthing/web"
 )
 
-type Server struct {
-	Store *RelayStore
-	mux   *http.ServeMux
+type ServerConfig struct {
+	BaseURL            string
+	GitHubClientID     string
+	GitHubClientSecret string
+	GoogleClientID     string
+	GoogleClientSecret string
+	SMTPHost           string
+	SMTPPort           string
+	SMTPUser           string
+	SMTPPass           string
+	SMTPFrom           string
 }
 
-func NewServer(store *RelayStore) *Server {
+type Server struct {
+	Store  *RelayStore
+	Config ServerConfig
+	mux    *http.ServeMux
+}
+
+func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s := &Server{
-		Store: store,
-		mux:   http.NewServeMux(),
+		Store:  store,
+		Config: cfg,
+		mux:    http.NewServeMux(),
 	}
+
+	// API routes
 	s.mux.HandleFunc("POST /auth/device", s.handleAuthDevice)
 	s.mux.HandleFunc("POST /auth/token", s.handleAuthToken)
 	s.mux.HandleFunc("POST /auth/claim", s.handleAuthClaim)
@@ -25,6 +42,22 @@ func NewServer(store *RelayStore) *Server {
 	s.mux.HandleFunc("GET /skills", s.handleListSkills)
 	s.mux.HandleFunc("GET /skills/{name}", s.handleGetSkill)
 	s.mux.HandleFunc("GET /skills/{name}/raw", s.handleGetSkillRaw)
+
+	// Web pages
+	s.mux.HandleFunc("GET /{$}", s.handleHome)
+	s.mux.HandleFunc("GET /login", s.handleLogin)
+	s.mux.HandleFunc("GET /social", s.handleSocial)
+	s.mux.HandleFunc("GET /w/{slug}", s.handleAnchor)
+
+	// Web auth
+	s.mux.HandleFunc("GET /auth/github", s.handleGitHubAuth)
+	s.mux.HandleFunc("GET /auth/github/callback", s.handleGitHubCallback)
+	s.mux.HandleFunc("GET /auth/google", s.handleGoogleAuth)
+	s.mux.HandleFunc("GET /auth/google/callback", s.handleGoogleCallback)
+	s.mux.HandleFunc("POST /auth/magic", s.handleMagicLink)
+	s.mux.HandleFunc("GET /auth/magic/verify", s.handleMagicVerify)
+	s.mux.HandleFunc("POST /auth/logout", s.handleLogout)
+
 	s.registerStaticRoutes()
 	return s
 }

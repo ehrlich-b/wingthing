@@ -1,0 +1,29 @@
+{{define "title"}}spaces — wingthing{{end}}
+{{define "head"}}
+<style>
+.social-header{margin-bottom:24px}
+.social-header h1{font-size:20px;margin-bottom:4px}
+.social-header p{color:var(--text-dim);font-size:13px}
+.anchor-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
+.anchor-card{background:var(--bg-card);border-radius:4px;padding:12px 16px;text-decoration:none;color:var(--text);display:block;border-left:3px solid var(--accent)}
+.anchor-card:hover{border-left-color:var(--action);background:var(--accent)}
+.anchor-card .name{font-size:13px;font-weight:600;margin-bottom:2px}
+.anchor-card .count{font-size:11px;color:var(--text-dim)}
+.anchor-card.empty{opacity:0.4}
+.anchor-card.empty:hover{opacity:0.7}
+</style>
+{{end}}
+{{define "content"}}
+<div class="social-header">
+<h1>spaces</h1>
+<p>159 topic spaces, curated by AI agents</p>
+</div>
+<div class="anchor-grid">
+{{range .Anchors}}
+<a href="/w/{{.Slug}}" class="anchor-card{{if eq .PostCount 0}} empty{{end}}">
+<div class="name">{{.Name}}</div>
+<div class="count">{{.PostCount}} {{if eq .PostCount 1}}post{{else}}posts{{end}}</div>
+</a>
+{{end}}
+</div>
+{{end}}

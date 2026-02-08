@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type SocialEmbedding struct {
@@ -429,6 +431,40 @@ func scanSocialEmbeddingRow(rows *sql.Rows) (*SocialEmbedding, error) {
 	e.Visible = visible != 0
 	e.Swallowed = swallowed != 0
 	return &e, nil
+}
+
+func (s *RelayStore) CountPostsByAnchor(anchorID string) (int, error) {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM post_anchors pa
+		 JOIN social_embeddings p ON p.id = pa.post_id
+		 WHERE pa.anchor_id = ? AND p.visible = 1 AND p.kind = 'post'`,
+		anchorID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count posts by anchor: %w", err)
+	}
+	return count, nil
+}
+
+func (s *RelayStore) GetOrCreateSocialUserByEmail(email string) (*SocialUser, error) {
+	u, err := s.GetSocialUserByProvider("email", email)
+	if err != nil {
+		return nil, err
+	}
+	if u != nil {
+		return u, nil
+	}
+	u = &SocialUser{
+		ID:          uuid.New().String(),
+		Provider:    "email",
+		ProviderID:  email,
+		DisplayName: email,
+	}
+	if err := s.UpsertSocialUser(u); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 func boolToInt(b bool) int {
