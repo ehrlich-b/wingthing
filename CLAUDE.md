@@ -56,6 +56,20 @@ CLI tools detected by `wt doctor`:
 | `internal/agent` | LLM agent adapters (claude, ollama, gemini) |
 | `internal/config` | Config loading, `~/.wingthing/` paths, defaults (agent, embedder) |
 
+## Build
+
+**Always use `make`, never bare `go build` / `go test`.**
+
+| Command | What it does |
+|---------|-------------|
+| `make check` | Run tests then build (the default verification step) |
+| `make build` | Build the `wt` binary |
+| `make test` | Run `go test ./...` |
+| `make web` | Build vite output (`cd web && npm run build`) |
+| `make clean` | Remove built binary |
+
+Run `make check` to verify changes. Run `make web` before `make check` if you changed anything in `web/`.
+
 ## CLI Commands
 
 | Command | What it does |

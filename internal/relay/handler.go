@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -10,14 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/google/uuid"
-	"nhooyr.io/websocket"
 )
 
 const (
-	writeTimeout     = 10 * time.Second
-	authTimeout      = 10 * time.Second
 	deviceCodeExpiry = 15 * time.Minute
 	userCodeChars    = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no I/O/0/1 for clarity
 )
@@ -186,217 +181,6 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		"token":      newToken,
 		"expires_at": 0,
 	})
-}
-
-func (s *Server) handleDaemonWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
-	})
-	if err != nil {
-		return
-	}
-	defer conn.Close(websocket.StatusInternalError, "unexpected close")
-
-	// Read auth message
-	authCtx, authCancel := context.WithTimeout(r.Context(), authTimeout)
-	_, data, err := conn.Read(authCtx)
-	authCancel()
-	if err != nil {
-		conn.Close(websocket.StatusPolicyViolation, "auth timeout")
-		return
-	}
-
-	var msg ws.Message
-	if err := json.Unmarshal(data, &msg); err != nil {
-		conn.Close(websocket.StatusPolicyViolation, "invalid message")
-		return
-	}
-	if msg.Type != ws.MsgAuth {
-		conn.Close(websocket.StatusPolicyViolation, "expected auth message")
-		return
-	}
-
-	var authPayload ws.AuthPayload
-	if err := msg.ParsePayload(&authPayload); err != nil {
-		conn.Close(websocket.StatusPolicyViolation, "invalid auth payload")
-		return
-	}
-
-	userID, deviceID, err := s.Store.ValidateToken(authPayload.DeviceToken)
-	if err != nil {
-		reply, _ := ws.NewMessage(ws.MsgAuthResult, ws.AuthResultPayload{Success: false, Error: "invalid token"})
-		replyData, _ := json.Marshal(reply)
-		conn.Write(r.Context(), websocket.MessageText, replyData)
-		conn.Close(websocket.StatusPolicyViolation, "auth failed")
-		return
-	}
-
-	// Auth success
-	reply, _ := ws.NewMessage(ws.MsgAuthResult, ws.AuthResultPayload{Success: true})
-	reply.ReplyTo = msg.ID
-	replyData, _ := json.Marshal(reply)
-	if err := conn.Write(r.Context(), websocket.MessageText, replyData); err != nil {
-		return
-	}
-
-	dc := s.sessions.AddDaemon(userID, deviceID, conn)
-	defer s.sessions.RemoveDaemon(userID, deviceID)
-
-	s.Store.AppendAudit(userID, "daemon_connected", strPtr(fmt.Sprintf("device=%s", deviceID)))
-
-	ctx := r.Context()
-
-	// Writer goroutine: sends messages from the Send channel to the WS connection
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-dc.Send:
-				if !ok {
-					return
-				}
-				data, err := json.Marshal(msg)
-				if err != nil {
-					continue
-				}
-				writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
-				err = conn.Write(writeCtx, websocket.MessageText, data)
-				cancel()
-				if err != nil {
-					return
-				}
-			}
-		}
-	}()
-
-	// Reader loop: reads messages from daemon and broadcasts to clients
-	for {
-		_, data, err := conn.Read(ctx)
-		if err != nil {
-			break
-		}
-
-		var incoming ws.Message
-		if err := json.Unmarshal(data, &incoming); err != nil {
-			continue
-		}
-
-		// Daemon sends results/status back — broadcast to connected clients
-		switch incoming.Type {
-		case ws.MsgTaskResult, ws.MsgTaskStatus, ws.MsgStatus, ws.MsgSyncResponse, ws.MsgPong:
-			s.sessions.BroadcastToClients(userID, &incoming)
-		case ws.MsgPing:
-			pong, err := ws.NewMessage(ws.MsgPong, nil)
-			if err == nil {
-				pongData, _ := json.Marshal(pong)
-				writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
-				conn.Write(writeCtx, websocket.MessageText, pongData)
-				cancel()
-			}
-		}
-	}
-
-	<-done
-	conn.Close(websocket.StatusNormalClosure, "closing")
-}
-
-func (s *Server) handleClientWS(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		http.Error(w, "token required", http.StatusUnauthorized)
-		return
-	}
-
-	userID, _, err := s.Store.ValidateToken(token)
-	if err != nil {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return
-	}
-
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
-	})
-	if err != nil {
-		return
-	}
-	defer conn.Close(websocket.StatusInternalError, "unexpected close")
-
-	cc := s.sessions.AddClient(userID, conn)
-	defer s.sessions.RemoveClient(userID, conn)
-
-	s.Store.AppendAudit(userID, "client_connected", nil)
-
-	ctx := r.Context()
-
-	// Writer goroutine: sends messages from the Send channel to the WS connection
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-cc.Send:
-				if !ok {
-					return
-				}
-				data, err := json.Marshal(msg)
-				if err != nil {
-					continue
-				}
-				writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
-				err = conn.Write(writeCtx, websocket.MessageText, data)
-				cancel()
-				if err != nil {
-					return
-				}
-			}
-		}
-	}()
-
-	// Reader loop: reads messages from client and routes to daemon
-	for {
-		_, data, err := conn.Read(ctx)
-		if err != nil {
-			break
-		}
-
-		var incoming ws.Message
-		if err := json.Unmarshal(data, &incoming); err != nil {
-			continue
-		}
-
-		// Client sends commands — route to daemon
-		switch incoming.Type {
-		case ws.MsgTaskSubmit, ws.MsgSyncRequest, ws.MsgPing:
-			if incoming.Type == ws.MsgPing {
-				pong, err := ws.NewMessage(ws.MsgPong, nil)
-				if err == nil {
-					pongData, _ := json.Marshal(pong)
-					writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
-					conn.Write(writeCtx, websocket.MessageText, pongData)
-					cancel()
-				}
-				continue
-			}
-			if err := s.sessions.RouteToUser(userID, &incoming); err != nil {
-				errMsg, _ := ws.NewMessage(ws.MsgError, ws.ErrorPayload{
-					Code:    "no_daemon",
-					Message: "no daemon connected",
-				})
-				errData, _ := json.Marshal(errMsg)
-				writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
-				conn.Write(writeCtx, websocket.MessageText, errData)
-				cancel()
-			}
-		}
-	}
-
-	<-done
-	conn.Close(websocket.StatusNormalClosure, "closing")
 }
 
 // Helpers

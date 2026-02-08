@@ -2,5 +2,5 @@ package web
 
 import "embed"
 
-//go:embed *.html *.css *.js *.json
+//go:embed dist
 var FS embed.FS

@@ -15,8 +15,11 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/memory"
+	"github.com/ehrlich-b/wingthing/internal/orchestrator"
 	"github.com/ehrlich-b/wingthing/internal/skill"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/thread"
@@ -27,6 +30,7 @@ func main() {
 	var skillFlag string
 	var agentFlag string
 	var afterFlag string
+	var noRun bool
 
 	root := &cobra.Command{
 		Use:   "wt [prompt]",
@@ -75,12 +79,18 @@ func main() {
 				return fmt.Errorf("create task: %w", err)
 			}
 			fmt.Printf("submitted: %s (%s)\n", t.ID, t.What)
-			return nil
+
+			if noRun {
+				return nil
+			}
+
+			return runTask(cmd.Context(), cfg, s, t)
 		},
 	}
 	root.Flags().StringVar(&skillFlag, "skill", "", "Run a named skill")
 	root.Flags().StringVar(&agentFlag, "agent", "", "Use specific agent")
 	root.Flags().StringVar(&afterFlag, "after", "", "Task ID this task depends on")
+	root.Flags().BoolVar(&noRun, "no-run", false, "Submit task without running it")
 
 	root.AddCommand(
 		timelineCmd(),
@@ -106,6 +116,97 @@ func main() {
 
 func genTaskID() string {
 	return fmt.Sprintf("t-%s", time.Now().Format("20060102-150405"))
+}
+
+func newAgent(name string) agent.Agent {
+	switch name {
+	case "ollama":
+		return agent.NewOllama("", 0)
+	case "gemini":
+		return agent.NewGemini("", 0)
+	default:
+		return agent.NewClaude(0)
+	}
+}
+
+func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.Task) error {
+	s.UpdateTaskStatus(t.ID, "running")
+	s.AppendLog(t.ID, "started", nil)
+
+	// Build prompt via orchestrator
+	agentName := t.Agent
+	if agentName == "" {
+		agentName = cfg.DefaultAgent
+	}
+	a := newAgent(agentName)
+	mem := memory.New(cfg.MemoryDir())
+
+	builder := &orchestrator.Builder{
+		Store:  s,
+		Memory: mem,
+		Config: cfg,
+		Agents: map[string]agent.Agent{agentName: a},
+	}
+
+	pr, err := builder.Build(ctx, t.ID)
+	if err != nil {
+		s.SetTaskError(t.ID, err.Error())
+		return fmt.Errorf("build prompt: %w", err)
+	}
+
+	promptDetail := pr.Prompt
+	s.AppendLog(t.ID, "prompt_built", &promptDetail)
+
+	// Run the agent
+	stream, err := a.Run(ctx, pr.Prompt, agent.RunOpts{})
+	if err != nil {
+		s.SetTaskError(t.ID, err.Error())
+		return fmt.Errorf("run agent: %w", err)
+	}
+
+	// Stream output to stdout
+	for {
+		chunk, ok := stream.Next()
+		if !ok {
+			break
+		}
+		fmt.Print(chunk.Text)
+	}
+	fmt.Println()
+
+	if err := stream.Err(); err != nil {
+		s.SetTaskError(t.ID, err.Error())
+		return fmt.Errorf("agent error: %w", err)
+	}
+
+	// Store result
+	output := stream.Text()
+	s.SetTaskOutput(t.ID, output)
+	s.UpdateTaskStatus(t.ID, "done")
+	s.AppendLog(t.ID, "done", nil)
+
+	// Record tokens in thread
+	inputTok, outputTok := stream.Tokens()
+	totalTok := inputTok + outputTok
+	if totalTok > 0 {
+		s.AppendThread(&store.ThreadEntry{
+			TaskID:     &t.ID,
+			MachineID:  cfg.MachineID,
+			Agent:      &agentName,
+			UserInput:  &t.What,
+			Summary:    truncate(output, 200),
+			TokensUsed: &totalTok,
+		})
+	}
+
+	return nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-3] + "..."
 }
 
 func timelineCmd() *cobra.Command {

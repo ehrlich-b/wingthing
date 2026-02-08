@@ -915,3 +915,24 @@ All 8 independent — **8 parallel worktrees.**
 - [ ] Security model documented
 - [ ] Tag v1.0.0
 - [ ] Launch
+
+---
+
+## Next Up
+
+### RSS Feed Seed List
+
+Comprehensive public blog feeds as seed content for wt.ai/social. Curate a starter set of high-quality RSS/Atom feeds across tech, engineering, science, culture. These get ingested by the relay and surfaced to social users.
+
+### Summarization Skill
+
+First real skill: `summarize.md`. Takes RSS entries and summarizes them to 1024 chars. Template for future skills.
+
+### Relay Business Model
+
+Relay is the paid hosted layer:
+- $5/mo or $48/yr
+- Webhook consumer for phones (push notifications, mobile sync)
+- Social posting at wt.ai/social
+- Self-hosters bring their own connectivity
+- Distribution play for cinch and tunn

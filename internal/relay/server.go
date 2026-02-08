@@ -8,19 +8,15 @@ import (
 )
 
 type Server struct {
-	Store    *RelayStore
-	sessions *SessionManager
-	mux      *http.ServeMux
+	Store *RelayStore
+	mux   *http.ServeMux
 }
 
 func NewServer(store *RelayStore) *Server {
 	s := &Server{
-		Store:    store,
-		sessions: NewSessionManager(),
-		mux:      http.NewServeMux(),
+		Store: store,
+		mux:   http.NewServeMux(),
 	}
-	s.mux.HandleFunc("GET /ws/daemon", s.handleDaemonWS)
-	s.mux.HandleFunc("GET /ws/client", s.handleClientWS)
 	s.mux.HandleFunc("POST /auth/device", s.handleAuthDevice)
 	s.mux.HandleFunc("POST /auth/token", s.handleAuthToken)
 	s.mux.HandleFunc("POST /auth/claim", s.handleAuthClaim)
@@ -34,7 +30,7 @@ func NewServer(store *RelayStore) *Server {
 }
 
 func (s *Server) registerStaticRoutes() {
-	sub, _ := fs.Sub(web.FS, ".")
+	sub, _ := fs.Sub(web.FS, "dist")
 	fileServer := http.FileServer(http.FS(sub))
 	s.mux.Handle("GET /app/", http.StripPrefix("/app/", fileServer))
 	s.mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
@@ -44,8 +40,4 @@ func (s *Server) registerStaticRoutes() {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
-}
-
-func (s *Server) Sessions() *SessionManager {
-	return s.sessions
 }

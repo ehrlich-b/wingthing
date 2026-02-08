@@ -1,17 +1,12 @@
 package relay
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
-
-	"github.com/ehrlich-b/wingthing/internal/ws"
-	"nhooyr.io/websocket"
 )
 
 func testStore(t *testing.T) *RelayStore {
@@ -214,168 +209,6 @@ func TestAuthDeviceFlow(t *testing.T) {
 	}
 }
 
-func TestDaemonWebSocket(t *testing.T) {
-	srv, ts := testServer(t)
-
-	token, _ := createTestToken(t, srv.Store, "daemon1")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/daemon"
-	conn, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial daemon ws: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "done")
-
-	// Send auth
-	authMsg, _ := ws.NewMessage(ws.MsgAuth, ws.AuthPayload{DeviceToken: token})
-	authData, _ := json.Marshal(authMsg)
-	if err := conn.Write(ctx, websocket.MessageText, authData); err != nil {
-		t.Fatalf("write auth: %v", err)
-	}
-
-	// Read auth result
-	_, data, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("read auth result: %v", err)
-	}
-	var reply ws.Message
-	json.Unmarshal(data, &reply)
-	if reply.Type != ws.MsgAuthResult {
-		t.Fatalf("expected auth_result, got %q", reply.Type)
-	}
-	var result ws.AuthResultPayload
-	reply.ParsePayload(&result)
-	if !result.Success {
-		t.Fatalf("auth failed: %s", result.Error)
-	}
-
-	// Verify session registered
-	if srv.Sessions().DaemonCount("user-daemon1") != 1 {
-		t.Error("expected 1 daemon session")
-	}
-}
-
-func TestClientWebSocket(t *testing.T) {
-	srv, ts := testServer(t)
-
-	token, _ := createTestToken(t, srv.Store, "client1")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/client?token=" + token
-	conn, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial client ws: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "done")
-
-	// Give session manager a moment to register
-	time.Sleep(50 * time.Millisecond)
-
-	if srv.Sessions().ClientCount("user-client1") != 1 {
-		t.Error("expected 1 client session")
-	}
-}
-
-func TestMessageRouting(t *testing.T) {
-	srv, ts := testServer(t)
-
-	// Create shared user and two tokens (daemon + client)
-	userID := "user-routing"
-	if err := srv.Store.CreateUser(userID); err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	daemonToken := "tok-daemon-routing"
-	clientToken := "tok-client-routing"
-	srv.Store.CreateDeviceToken(daemonToken, userID, "daemon-dev", nil)
-	srv.Store.CreateDeviceToken(clientToken, userID, "client-dev", nil)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Connect daemon
-	daemonURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/daemon"
-	daemonConn, _, err := websocket.Dial(ctx, daemonURL, nil)
-	if err != nil {
-		t.Fatalf("dial daemon: %v", err)
-	}
-	defer daemonConn.Close(websocket.StatusNormalClosure, "done")
-
-	// Authenticate daemon
-	authMsg, _ := ws.NewMessage(ws.MsgAuth, ws.AuthPayload{DeviceToken: daemonToken})
-	authData, _ := json.Marshal(authMsg)
-	daemonConn.Write(ctx, websocket.MessageText, authData)
-	_, _, err = daemonConn.Read(ctx) // read auth result
-	if err != nil {
-		t.Fatalf("daemon auth read: %v", err)
-	}
-
-	// Connect client
-	clientURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/client?token=" + clientToken
-	clientConn, _, err := websocket.Dial(ctx, clientURL, nil)
-	if err != nil {
-		t.Fatalf("dial client: %v", err)
-	}
-	defer clientConn.Close(websocket.StatusNormalClosure, "done")
-
-	// Give sessions a moment to register
-	time.Sleep(50 * time.Millisecond)
-
-	// Client sends task_submit -> should arrive at daemon
-	taskMsg, _ := ws.NewMessage(ws.MsgTaskSubmit, ws.TaskSubmitPayload{What: "test task"})
-	taskData, _ := json.Marshal(taskMsg)
-	if err := clientConn.Write(ctx, websocket.MessageText, taskData); err != nil {
-		t.Fatalf("client write: %v", err)
-	}
-
-	// Daemon reads the routed message
-	_, daemonData, err := daemonConn.Read(ctx)
-	if err != nil {
-		t.Fatalf("daemon read: %v", err)
-	}
-	var routed ws.Message
-	json.Unmarshal(daemonData, &routed)
-	if routed.Type != ws.MsgTaskSubmit {
-		t.Errorf("daemon got type=%q, want task_submit", routed.Type)
-	}
-	var payload ws.TaskSubmitPayload
-	routed.ParsePayload(&payload)
-	if payload.What != "test task" {
-		t.Errorf("daemon got what=%q, want 'test task'", payload.What)
-	}
-
-	// Daemon sends task_result -> should arrive at client
-	resultMsg, _ := ws.NewMessage(ws.MsgTaskResult, ws.TaskResultPayload{
-		TaskID: "t-001",
-		Status: "done",
-		Output: "result here",
-	})
-	resultData, _ := json.Marshal(resultMsg)
-	if err := daemonConn.Write(ctx, websocket.MessageText, resultData); err != nil {
-		t.Fatalf("daemon write result: %v", err)
-	}
-
-	// Client reads the broadcast
-	_, clientData, err := clientConn.Read(ctx)
-	if err != nil {
-		t.Fatalf("client read: %v", err)
-	}
-	var clientMsg ws.Message
-	json.Unmarshal(clientData, &clientMsg)
-	if clientMsg.Type != ws.MsgTaskResult {
-		t.Errorf("client got type=%q, want task_result", clientMsg.Type)
-	}
-	var resultPayload ws.TaskResultPayload
-	clientMsg.ParsePayload(&resultPayload)
-	if resultPayload.Output != "result here" {
-		t.Errorf("client got output=%q, want 'result here'", resultPayload.Output)
-	}
-}
-
 func TestStaticFileServing(t *testing.T) {
 	_, ts := testServer(t)
 
@@ -395,31 +228,12 @@ func TestStaticFileServing(t *testing.T) {
 	}
 }
 
-func TestStaticCSS(t *testing.T) {
+func TestStaticSW(t *testing.T) {
 	_, ts := testServer(t)
 
-	resp, err := http.Get(ts.URL + "/app/style.css")
+	resp, err := http.Get(ts.URL + "/app/sw.js")
 	if err != nil {
-		t.Fatalf("GET /app/style.css: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
-	}
-
-	ct := resp.Header.Get("Content-Type")
-	if !strings.Contains(ct, "css") {
-		t.Errorf("content-type = %q, want text/css", ct)
-	}
-}
-
-func TestStaticJS(t *testing.T) {
-	_, ts := testServer(t)
-
-	resp, err := http.Get(ts.URL + "/app/app.js")
-	if err != nil {
-		t.Fatalf("GET /app/app.js: %v", err)
+		t.Fatalf("GET /app/sw.js: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -447,37 +261,5 @@ func TestStaticManifest(t *testing.T) {
 	}
 	if body["name"] != "wingthing" {
 		t.Errorf("manifest name = %q, want wingthing", body["name"])
-	}
-}
-
-func TestSessionManagerConcurrency(t *testing.T) {
-	sm := NewSessionManager()
-
-	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(2)
-		go func(n int) {
-			defer wg.Done()
-			userID := "user-conc"
-			deviceID := "dev" + string(rune('A'+n%26))
-			// Use nil conn — we're just testing the data structure, not sending
-			sm.AddDaemon(userID, deviceID, nil)
-			sm.DaemonCount(userID)
-			sm.RemoveDaemon(userID, deviceID)
-		}(i)
-		go func(n int) {
-			defer wg.Done()
-			userID := "user-conc"
-			// Use nil conn
-			sm.AddClient(userID, nil)
-			sm.ClientCount(userID)
-			sm.RemoveClient(userID, nil)
-		}(i)
-	}
-	wg.Wait()
-
-	// After all goroutines finish, counts should be zero (or at least not panic)
-	if sm.DaemonCount("user-conc") < 0 {
-		t.Error("negative daemon count")
 	}
 }
