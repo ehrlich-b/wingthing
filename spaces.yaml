@@ -159,7 +159,7 @@
     C++ templates metaprogramming STL RAII smart pointers move semantics perfect forwarding constexpr concepts modules ranges coroutines memory model undefined behavior optimization compiler intrinsics assembly zero-cost abstractions value categories lvalues rvalues xvalues type traits SFINAE template specialization variadic templates fold expressions placement new allocators PMR standard library Boost Abseil fmt spdlog catch2 googletest CMake Bazel Meson Clang GCC MSVC sanitizers Valgrind perf profiling cache locality SIMD vectorization alignment
 
 - slug: creative-coding
-  description: Code as art medium: algorithms, visuals, generative systems
+  description: "Code as art medium: algorithms, visuals, generative systems"
   centroid: >-
     Processing-P5js-OpenFrameworks-GLSL-shaders-WebGL-three.js-canvas-API-SVG-generative-art-algorithmic-art-procedural-generation-noise-Perlin-simplex-L-systems-fractals-recursion-particle-systems-physics-simulation-bezier-curves-trigonometry-easing-tweening-randomness-seeded-RNG-turtle-graphics-cellular-automata-Conway-Game-of-Life-flocking-boids-reaction-diffusion-Voronoi-Delaunay-triangulation-marching-squares-flow-fields-vector-fields-FFT-audio-reactivity-OSC-MIDI-projection-mapping-TouchDesigner-vvvv-Max-MSP-Pure-Data-Hydra-livecoding-TidalCy
 
@@ -514,7 +514,7 @@
     prime numbers Riemann hypothesis Diophantine equations modular arithmetic elliptic curves partitions p-adic analysis algebraic number theory Fermat Euler Gauss quadratic reciprocity analytic number theory zeta function L-functions Goldbach twin primes congruences multiplicative functions totient Ramanujan continued fractions Pell equations Chinese remainder theorem Dirichlet transcendental numbers algebraic integers class field theory Galois representations automorphic forms sieve methods additive combinatorics exponential sums cyclotomic fields Weil conjectures BSD conjecture
 
 - slug: observability
-  description: Metrics, traces, logs: debugging production system behavior
+  description: "Metrics, traces, logs: debugging production system behavior"
   centroid: >-
     metrics tracing logging instrumentation telemetry OpenTelemetry Prometheus Grafana Jaeger Zipkin distributed-tracing spans events cardinality sampling aggregation Datadog NewRelic Honeycomb SLOs SLIs SLAs RED-method USE-method golden-signals latency throughput errors saturation percentiles histograms counters gauges exemplars eBPF profiling continuous-profiling flame-graphs APM RUM structured-logging correlation-ids context-propagation baggage W3C-trace-context vendors backends collectors agents OTLP exporters receivers processors
 
@@ -719,7 +719,7 @@
     d20 OSR RPG rules-lite narrative-first dungeon-crawling sandbox hexcrawl character-death procedural-tables random-encounters GM-less solo-play worldbuilding lore monster-manual bestiary dungeons-dragons pathfinder GURPS call-of-cthulhu vampire-the-masquerade world-of-darkness fate-core powered-by-the-apocalypse blades-in-the-dark PBTA dice-mechanics initiative combat-resolution skill-checks saving-throws ability-scores character-sheets leveling-up XP campaigns modules adventures megadungeon west-marches session-zero player-agency
 
 - slug: technical-writing
-  description: Documentation craft: clarity, structure, precision, audience-first technical communication
+  description: "Documentation craft: clarity, structure, precision, audience-first technical communication"
   centroid: >-
     documentation technical-writing API-docs style-guides plain-language information-architecture Markdown reStructuredText AsciiDoc Sphinx Docusaurus MkDocs ReadTheDocs Javadoc Doxygen JSDoc audience-analysis task-oriented procedural conceptual reference tutorials how-to troubleshooting release-notes changelog versioning localization i18n accessibility a11y information-design content-strategy docs-as-code version-control Git CI/CD static-site-generators prose linters Vale write-good hemingway readability Flesch-Kincaid active-voice conciseness clarity consistency terminology glossaries index search navigation cross-references
 
