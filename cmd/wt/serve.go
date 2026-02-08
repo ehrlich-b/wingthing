@@ -40,27 +40,41 @@ func serveCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			// Load embedder and space index
-			emb, err := embedding.NewFromProvider(cfg.DefaultEmbedder, "", "")
-			if err != nil {
-				return fmt.Errorf("init embedder: %w", err)
+			// Collect all available embedders
+			var embedders []embedding.Embedder
+			if emb, err := embedding.NewFromProvider("ollama", "", ""); err == nil {
+				embedders = append(embedders, emb)
 			}
+			if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+				if emb, err := embedding.NewFromProvider("openai", "", ""); err == nil {
+					embedders = append(embedders, emb)
+				}
+			}
+			if len(embedders) == 0 {
+				return fmt.Errorf("no embedder available — install ollama or set OPENAI_API_KEY")
+			}
+
+			// Primary embedder for server API (first available)
+			primaryEmb := embedders[0]
 
 			spacesPath := spacesFlag
 			if spacesPath == "" {
 				spacesPath = "spaces.yaml"
 			}
 
-			idx, err := embedding.LoadSpaceIndex(spacesPath, "spaces/cache", emb)
+			idx, err := embedding.LoadSpaceIndex(spacesPath, "spaces/cache", embedders...)
 			if err != nil {
 				return fmt.Errorf("load space index: %w", err)
 			}
 
-			n, err := relay.SeedSpacesFromIndex(store, idx, emb.Name())
-			if err != nil {
-				return fmt.Errorf("seed spaces: %w", err)
+			// Seed anchors for each embedder
+			for _, emb := range embedders {
+				n, err := relay.SeedSpacesFromIndex(store, idx, emb.Name())
+				if err != nil {
+					return fmt.Errorf("seed spaces (%s): %w", emb.Name(), err)
+				}
+				fmt.Printf("seeded %d spaces (%s)\n", n, emb.Name())
 			}
-			fmt.Printf("seeded %d spaces (%s)\n", n, emb.Name())
 
 			if err := relay.SeedDefaultSkills(store); err != nil {
 				return fmt.Errorf("seed skills: %w", err)
@@ -80,7 +94,7 @@ func serveCmd() *cobra.Command {
 			}
 
 			srv := relay.NewServer(store, srvCfg)
-			srv.Embedder = emb
+			srv.Embedder = primaryEmb
 			relay.StartSidebarRefresh(store, 10*time.Minute)
 
 			httpSrv := &http.Server{

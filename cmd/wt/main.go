@@ -485,7 +485,7 @@ func skillCmd() *cobra.Command {
 				if cfg.RelayURL == "" {
 					return fmt.Errorf("relay_url not configured — set it in ~/.wingthing/config.yaml")
 				}
-				url := strings.TrimRight(cfg.RelayURL, "/") + "/skills"
+				url := strings.TrimRight(cfg.RelayURL, "/") + "/api/skills"
 				if category != "" {
 					url += "?category=" + category
 				}
@@ -645,7 +645,7 @@ func skillCmd() *cobra.Command {
 			if cfg.RelayURL == "" {
 				return fmt.Errorf("relay_url not configured — set it in ~/.wingthing/config.yaml")
 			}
-			url := strings.TrimRight(cfg.RelayURL, "/") + "/skills/" + src + "/raw"
+			url := strings.TrimRight(cfg.RelayURL, "/") + "/api/skills/" + src + "/raw"
 			resp, err := http.Get(url)
 			if err != nil {
 				return fmt.Errorf("fetch skill: %w", err)

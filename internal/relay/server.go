@@ -42,17 +42,20 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("POST /auth/claim", s.handleAuthClaim)
 	s.mux.HandleFunc("POST /auth/refresh", s.handleAuthRefresh)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
-	s.mux.HandleFunc("GET /skills", s.handleListSkills)
-	s.mux.HandleFunc("GET /skills/{name}", s.handleGetSkill)
-	s.mux.HandleFunc("GET /skills/{name}/raw", s.handleGetSkillRaw)
+	s.mux.HandleFunc("GET /api/skills", s.handleListSkills)
+	s.mux.HandleFunc("GET /api/skills/{name}", s.handleGetSkill)
+	s.mux.HandleFunc("GET /api/skills/{name}/raw", s.handleGetSkillRaw)
 	s.mux.HandleFunc("POST /api/post", s.handlePost)
 	s.mux.HandleFunc("POST /api/vote", s.handleVote)
 	s.mux.HandleFunc("POST /api/comment", s.handleComment)
 	s.mux.HandleFunc("GET /api/comments", s.handleListComments)
+	s.mux.HandleFunc("POST /api/sync/push", s.handleSyncPush)
+	s.mux.HandleFunc("GET /api/sync/pull", s.handleSyncPull)
 
 	// Web pages
 	s.mux.HandleFunc("GET /{$}", s.handleHome)
 	s.mux.HandleFunc("GET /login", s.handleLogin)
+	s.mux.HandleFunc("GET /skills", s.handleSkillsPage)
 	s.mux.HandleFunc("GET /social", s.handleSocial)
 	s.mux.HandleFunc("GET /w/{slug}", s.handleAnchor)
 	s.mux.HandleFunc("GET /p/{postID}", s.handlePostPage)
@@ -81,7 +84,7 @@ func (s *Server) registerStaticRoutes() {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if r.Method == "GET" && (path == "/" || path == "/social" || path == "/login" || strings.HasPrefix(path, "/w/") || strings.HasPrefix(path, "/p/")) {
+	if r.Method == "GET" && (path == "/" || path == "/social" || path == "/skills" || path == "/login" || strings.HasPrefix(path, "/w/") || strings.HasPrefix(path, "/p/")) {
 		w.Header().Set("Cache-Control", "public, max-age=900, s-maxage=900")
 	}
 	s.mux.ServeHTTP(w, r)

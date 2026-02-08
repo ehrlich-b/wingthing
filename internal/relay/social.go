@@ -416,6 +416,56 @@ func (s *RelayStore) RefreshUpvotes24h() error {
 	return nil
 }
 
+// UpsertAnchorEmbedding inserts or updates a per-embedder centroid for an anchor.
+func (s *RelayStore) UpsertAnchorEmbedding(anchorID, embedderName string, centroid512 []byte) error {
+	_, err := s.db.Exec(
+		`INSERT INTO anchor_embeddings (anchor_id, embedder_name, centroid_512)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(anchor_id, embedder_name) DO UPDATE SET centroid_512 = excluded.centroid_512`,
+		anchorID, embedderName, centroid512,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert anchor embedding: %w", err)
+	}
+	return nil
+}
+
+// AnchorEmbedding holds an anchor's centroid for a specific embedder.
+type AnchorEmbedding struct {
+	AnchorID    string
+	Slug        string
+	Centroid512 []byte
+}
+
+// ListAnchorsForEmbedder returns visible anchors with centroids for the given embedder.
+func (s *RelayStore) ListAnchorsForEmbedder(embedderName string) ([]AnchorEmbedding, error) {
+	rows, err := s.db.Query(
+		`SELECT ae.anchor_id, a.slug, ae.centroid_512
+		 FROM anchor_embeddings ae
+		 JOIN social_embeddings a ON a.id = ae.anchor_id
+		 WHERE ae.embedder_name = ? AND a.kind = 'anchor' AND a.visible = 1`,
+		embedderName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list anchors for embedder: %w", err)
+	}
+	defer rows.Close()
+
+	var out []AnchorEmbedding
+	for rows.Next() {
+		var ae AnchorEmbedding
+		var slug *string
+		if err := rows.Scan(&ae.AnchorID, &slug, &ae.Centroid512); err != nil {
+			return nil, fmt.Errorf("scan anchor embedding: %w", err)
+		}
+		if slug != nil {
+			ae.Slug = *slug
+		}
+		out = append(out, ae)
+	}
+	return out, rows.Err()
+}
+
 func (s *RelayStore) UpdateAnchorEffective(anchorID string, effective512 []byte) error {
 	_, err := s.db.Exec(
 		"UPDATE social_embeddings SET effective_512 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -733,6 +783,190 @@ func (s *RelayStore) AnchorConnectivity() (map[string]map[string]int, error) {
 		out[s1][s2] = count
 	}
 	return out, rows.Err()
+}
+
+// ExportPost holds a post with its embedding and anchor assignments for sync.
+type ExportPost struct {
+	Text         string          `json:"text"`
+	Title        *string         `json:"title,omitempty"`
+	Link         *string         `json:"link,omitempty"`
+	Mass         int             `json:"mass"`
+	PublishedAt  *string         `json:"published_at,omitempty"`
+	Embedding512 []byte          `json:"embedding_512"`
+	EmbedderName string          `json:"embedder_name"`
+	Anchors      []ExportAnchor  `json:"anchors"`
+}
+
+type ExportAnchor struct {
+	Slug       string  `json:"slug"`
+	Similarity float64 `json:"similarity"`
+}
+
+// ExportPosts returns all visible posts with their embeddings and anchor assignments.
+func (s *RelayStore) ExportPosts() ([]ExportPost, error) {
+	rows, err := s.db.Query(
+		`SELECT p.text, p.title, p.link, p.mass, p.published_at, p.embedding_512
+		 FROM social_embeddings p
+		 WHERE p.kind = 'post' AND p.visible = 1
+		 ORDER BY p.created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("export posts: %w", err)
+	}
+	defer rows.Close()
+
+	type postRow struct {
+		Text        string
+		Title       *string
+		Link        *string
+		Mass        int
+		PublishedAt *string
+		Embedding   []byte
+	}
+
+	var posts []postRow
+	var links []string
+	for rows.Next() {
+		var p postRow
+		if err := rows.Scan(&p.Text, &p.Title, &p.Link, &p.Mass, &p.PublishedAt, &p.Embedding); err != nil {
+			return nil, fmt.Errorf("scan export post: %w", err)
+		}
+		posts = append(posts, p)
+		if p.Link != nil {
+			links = append(links, *p.Link)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Build link -> post index for anchor lookup
+	// Get all post IDs for anchor assignments
+	postIDs := make([]string, 0)
+	idRows, err := s.db.Query(
+		`SELECT id FROM social_embeddings WHERE kind = 'post' AND visible = 1 ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("export post ids: %w", err)
+	}
+	defer idRows.Close()
+	for idRows.Next() {
+		var id string
+		if err := idRows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan post id: %w", err)
+		}
+		postIDs = append(postIDs, id)
+	}
+
+	anchorSlugs, _ := s.AnchorSlugsForPosts(postIDs)
+	// Get similarities too
+	anchorSims := make(map[string]map[string]float64)
+	if len(postIDs) > 0 {
+		ph := strings.Repeat("?,", len(postIDs))
+		ph = ph[:len(ph)-1]
+		args := make([]interface{}, len(postIDs))
+		for i, id := range postIDs {
+			args[i] = id
+		}
+		simRows, err := s.db.Query(
+			`SELECT pa.post_id, a.slug, pa.similarity FROM post_anchors pa
+			 JOIN social_embeddings a ON a.id = pa.anchor_id
+			 WHERE pa.post_id IN (`+ph+`) AND a.slug IS NOT NULL`, args...)
+		if err == nil {
+			defer simRows.Close()
+			for simRows.Next() {
+				var pid, slug string
+				var sim float64
+				if err := simRows.Scan(&pid, &slug, &sim); err == nil {
+					if anchorSims[pid] == nil {
+						anchorSims[pid] = make(map[string]float64)
+					}
+					anchorSims[pid][slug] = sim
+				}
+			}
+		}
+	}
+
+	var out []ExportPost
+	for i, p := range posts {
+		ep := ExportPost{
+			Text:         p.Text,
+			Title:        p.Title,
+			Link:         p.Link,
+			Mass:         p.Mass,
+			PublishedAt:  p.PublishedAt,
+			Embedding512: p.Embedding,
+		}
+		if i < len(postIDs) {
+			pid := postIDs[i]
+			for _, slug := range anchorSlugs[pid] {
+				sim := anchorSims[pid][slug]
+				ep.Anchors = append(ep.Anchors, ExportAnchor{Slug: slug, Similarity: sim})
+			}
+		}
+		out = append(out, ep)
+	}
+	return out, nil
+}
+
+// ExportVote holds a vote keyed by link for sync.
+type ExportVote struct {
+	Link      string `json:"link"`
+	UserID    string `json:"user_id"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ExportComment holds a comment keyed by link for sync.
+type ExportComment struct {
+	Link      string  `json:"link"`
+	UserID    string  `json:"user_id"`
+	ParentID  *string `json:"parent_id,omitempty"`
+	Content   string  `json:"content"`
+	IsBot     bool    `json:"is_bot"`
+	CreatedAt string  `json:"created_at"`
+}
+
+// ExportVotesAndComments returns votes and comments since the given time, keyed by post link.
+func (s *RelayStore) ExportVotesAndComments(since time.Time) ([]ExportVote, []ExportComment, error) {
+	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
+
+	var votes []ExportVote
+	voteRows, err := s.db.Query(
+		`SELECT p.link, v.user_id, v.created_at
+		 FROM social_upvotes v
+		 JOIN social_embeddings p ON p.id = v.post_id
+		 WHERE v.created_at > ? AND p.link IS NOT NULL`, sinceStr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("export votes: %w", err)
+	}
+	defer voteRows.Close()
+	for voteRows.Next() {
+		var v ExportVote
+		if err := voteRows.Scan(&v.Link, &v.UserID, &v.CreatedAt); err != nil {
+			return nil, nil, fmt.Errorf("scan vote: %w", err)
+		}
+		votes = append(votes, v)
+	}
+
+	var comments []ExportComment
+	commentRows, err := s.db.Query(
+		`SELECT p.link, c.user_id, c.parent_id, c.content, c.is_bot, c.created_at
+		 FROM social_comments c
+		 JOIN social_embeddings p ON p.id = c.post_id
+		 WHERE c.created_at > ? AND p.link IS NOT NULL`, sinceStr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("export comments: %w", err)
+	}
+	defer commentRows.Close()
+	for commentRows.Next() {
+		var c ExportComment
+		var isBot int
+		if err := commentRows.Scan(&c.Link, &c.UserID, &c.ParentID, &c.Content, &isBot, &c.CreatedAt); err != nil {
+			return nil, nil, fmt.Errorf("scan comment: %w", err)
+		}
+		c.IsBot = isBot != 0
+		comments = append(comments, c)
+	}
+
+	return votes, comments, nil
 }
 
 func boolToInt(b bool) int {

@@ -20,6 +20,8 @@ type PostParams struct {
 
 // CreatePost embeds text, assigns to anchors by cosine similarity, and stores the post.
 // URL dedup: if Link is non-empty and already exists, returns the existing post (no duplicate).
+// It uses per-embedder centroids from anchor_embeddings when available, falling back to
+// the legacy embedding_512 column on social_embeddings.
 func CreatePost(store *RelayStore, emb embedding.Embedder, p PostParams) (*SocialEmbedding, error) {
 	if p.Mass < 1 {
 		p.Mass = 1
@@ -44,24 +46,37 @@ func CreatePost(store *RelayStore, emb embedding.Embedder, p PostParams) (*Socia
 	vec := vecs[0]
 	vecBytes := embedding.VecAsBytes(vec)
 
-	// List all anchors and compute cosine similarity
-	anchors, err := store.ListAnchors()
-	if err != nil {
-		return nil, fmt.Errorf("list anchors: %w", err)
-	}
-
+	// Try per-embedder centroids first, fall back to legacy
 	type anchorMatch struct {
 		ID         string
 		Similarity float32
 	}
 	var matches []anchorMatch
-	for _, a := range anchors {
-		if len(a.Embedding512) == 0 {
-			continue
+
+	anchorEmbs, _ := store.ListAnchorsForEmbedder(emb.Name())
+	if len(anchorEmbs) > 0 {
+		for _, ae := range anchorEmbs {
+			if len(ae.Centroid512) == 0 {
+				continue
+			}
+			anchorVec := embedding.BytesAsVec(ae.Centroid512)
+			sim := embedding.Cosine(vec, anchorVec)
+			matches = append(matches, anchorMatch{ID: ae.AnchorID, Similarity: sim})
 		}
-		anchorVec := embedding.BytesAsVec(a.Embedding512)
-		sim := embedding.Cosine(vec, anchorVec)
-		matches = append(matches, anchorMatch{ID: a.ID, Similarity: sim})
+	} else {
+		// Fallback: legacy embedding_512 on anchor rows
+		anchors, err := store.ListAnchors()
+		if err != nil {
+			return nil, fmt.Errorf("list anchors: %w", err)
+		}
+		for _, a := range anchors {
+			if len(a.Embedding512) == 0 {
+				continue
+			}
+			anchorVec := embedding.BytesAsVec(a.Embedding512)
+			sim := embedding.Cosine(vec, anchorVec)
+			matches = append(matches, anchorMatch{ID: a.ID, Similarity: sim})
+		}
 	}
 
 	sort.Slice(matches, func(i, j int) bool {

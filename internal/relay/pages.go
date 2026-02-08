@@ -55,10 +55,11 @@ var tmplFuncs = template.FuncMap{
 }
 
 var (
-	homeTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/home.html"))
-	feedTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/feed.html"))
-	postTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/post.html"))
-	loginTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/login.html"))
+	homeTmpl   = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/home.html"))
+	feedTmpl   = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/feed.html"))
+	postTmpl   = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/post.html"))
+	loginTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/login.html"))
+	skillsTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skills.html"))
 )
 
 type pageData struct {
@@ -483,6 +484,40 @@ func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Re
 		Items:      items,
 		AllAnchors: allSlugs,
 	}
+}
+
+type skillsPageItem struct {
+	Name        string
+	Description string
+	Category    string
+	Publisher   string
+}
+
+type skillsPageData struct {
+	User   *SocialUser
+	Skills []skillsPageItem
+}
+
+func (s *Server) handleSkillsPage(w http.ResponseWriter, r *http.Request) {
+	skills, err := s.Store.ListSkills("")
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	var items []skillsPageItem
+	for _, sk := range skills {
+		items = append(items, skillsPageItem{
+			Name:        sk.Name,
+			Description: sk.Description,
+			Category:    sk.Category,
+			Publisher:   sk.Publisher,
+		})
+	}
+	data := skillsPageData{
+		User:   s.sessionUser(r),
+		Skills: items,
+	}
+	skillsTmpl.ExecuteTemplate(w, "base", data)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

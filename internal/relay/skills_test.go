@@ -179,7 +179,7 @@ func TestHandlerListSkills(t *testing.T) {
 
 	ts := testServerWithStore(t, store)
 
-	resp, err := http.Get(ts.URL + "/skills")
+	resp, err := http.Get(ts.URL + "/api/skills")
 	if err != nil {
 		t.Fatalf("GET /skills: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestHandlerListSkillsCategory(t *testing.T) {
 
 	ts := testServerWithStore(t, store)
 
-	resp, err := http.Get(ts.URL + "/skills?category=dev")
+	resp, err := http.Get(ts.URL + "/api/skills?category=dev")
 	if err != nil {
 		t.Fatalf("GET /skills?category=dev: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestHandlerGetSkill(t *testing.T) {
 
 	ts := testServerWithStore(t, store)
 
-	resp, err := http.Get(ts.URL + "/skills/my-skill")
+	resp, err := http.Get(ts.URL + "/api/skills/my-skill")
 	if err != nil {
 		t.Fatalf("GET /skills/my-skill: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestHandlerGetSkillNotFound(t *testing.T) {
 	store := testStore(t)
 	ts := testServerWithStore(t, store)
 
-	resp, err := http.Get(ts.URL + "/skills/nonexistent")
+	resp, err := http.Get(ts.URL + "/api/skills/nonexistent")
 	if err != nil {
 		t.Fatalf("GET /skills/nonexistent: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestHandlerGetSkillRaw(t *testing.T) {
 
 	ts := testServerWithStore(t, store)
 
-	resp, err := http.Get(ts.URL + "/skills/raw-skill/raw")
+	resp, err := http.Get(ts.URL + "/api/skills/raw-skill/raw")
 	if err != nil {
 		t.Fatalf("GET /skills/raw-skill/raw: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestHandlerSearchSkills(t *testing.T) {
 
 	ts := testServerWithStore(t, store)
 
-	resp, err := http.Get(ts.URL + "/skills?q=jira")
+	resp, err := http.Get(ts.URL + "/api/skills?q=jira")
 	if err != nil {
 		t.Fatalf("GET /skills?q=jira: %v", err)
 	}

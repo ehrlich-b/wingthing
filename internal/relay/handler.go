@@ -436,6 +436,122 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, comments)
 }
 
+func (s *Server) handleSyncPush(w http.ResponseWriter, r *http.Request) {
+	userID := s.requireToken(w, r)
+	if userID == "" {
+		return
+	}
+
+	var req struct {
+		Posts []struct {
+			Text         string  `json:"text"`
+			Title        *string `json:"title"`
+			Link         *string `json:"link"`
+			Mass         int     `json:"mass"`
+			PublishedAt  *string `json:"published_at"`
+			Embedding512 []byte  `json:"embedding_512"`
+			EmbedderName string  `json:"embedder_name"`
+			Anchors      []struct {
+				Slug       string  `json:"slug"`
+				Similarity float64 `json:"similarity"`
+			} `json:"anchors"`
+		} `json:"posts"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	var created, skipped int
+	for _, p := range req.Posts {
+		// URL dedup
+		if p.Link != nil && *p.Link != "" {
+			existing, err := s.Store.GetSocialEmbeddingByLink(*p.Link)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if existing != nil {
+				skipped++
+				continue
+			}
+		}
+
+		post := &SocialEmbedding{
+			ID:           uuid.New().String(),
+			UserID:       userID,
+			Text:         p.Text,
+			Title:        p.Title,
+			Link:         p.Link,
+			Embedding:    p.Embedding512,
+			Embedding512: p.Embedding512,
+			Kind:         "post",
+			Visible:      true,
+			Mass:         p.Mass,
+			DecayedMass:  float64(p.Mass),
+		}
+		if p.PublishedAt != nil {
+			t := parsePublishedAt(p.PublishedAt)
+			post.PublishedAt = t
+		}
+
+		if err := s.Store.CreateSocialEmbedding(post); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		// Assign anchors by slug
+		var assignments []PostAnchor
+		for _, a := range p.Anchors {
+			anchor, err := s.Store.GetSocialEmbeddingBySlug(a.Slug)
+			if err != nil || anchor == nil {
+				continue
+			}
+			assignments = append(assignments, PostAnchor{
+				PostID:     post.ID,
+				AnchorID:   anchor.ID,
+				Similarity: a.Similarity,
+			})
+		}
+		if len(assignments) > 0 {
+			s.Store.AssignPostAnchors(post.ID, assignments)
+		}
+		created++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "created": created, "skipped": skipped})
+}
+
+func (s *Server) handleSyncPull(w http.ResponseWriter, r *http.Request) {
+	_ = s.requireToken(w, r)
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return // requireToken already wrote the error
+	}
+
+	sinceStr := r.URL.Query().Get("since")
+	var since time.Time
+	if sinceStr != "" {
+		var err error
+		since, err = time.Parse(time.RFC3339, sinceStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid since param (use RFC3339)")
+			return
+		}
+	}
+
+	votes, comments, err := s.Store.ExportVotesAndComments(since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"votes":    votes,
+		"comments": comments,
+	})
+}
+
 func strPtr(s string) *string {
 	return &s
 }

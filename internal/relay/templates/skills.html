@@ -1,0 +1,45 @@
+{{define "title"}}skills — wingthing{{end}}
+{{define "head"}}
+<style>
+.skills-header{margin-bottom:20px}
+.skills-header h1{font-size:20px;font-weight:700;letter-spacing:-0.02em}
+.skills-header p{color:var(--text-dim);font-size:13px;margin-top:4px}
+.skill-list{list-style:none}
+.skill-item{padding:12px 8px;border-bottom:1px solid rgba(255,255,255,0.05)}
+.skill-item:last-child{border-bottom:none}
+.skill-name{font-size:15px;font-weight:600;font-family:var(--mono)}
+.skill-desc{font-size:13px;color:var(--text-dim);margin-top:2px;line-height:1.5}
+.skill-meta{font-size:11px;color:var(--text-dim);margin-top:4px;font-family:var(--mono);display:flex;gap:12px;flex-wrap:wrap}
+.skill-meta .tag{background:var(--bg-card);padding:2px 8px;border-radius:3px}
+.skill-install{margin-top:24px;background:var(--bg-card);border-radius:6px;padding:14px 20px;font-size:13px;font-family:var(--mono)}
+.skill-install .prompt{color:var(--text-dim);user-select:none}
+.skill-install .cmd{color:var(--text)}
+@media(max-width:600px){
+  .skills-header h1{font-size:18px}
+  .skill-name{font-size:13px}
+  .skill-desc{font-size:12px}
+}
+</style>
+{{end}}
+{{define "content"}}
+<div class="skills-header">
+<h1>skills</h1>
+<p>Curated skills for the wt CLI. Install with <code>wt skill add &lt;name&gt;</code>.</p>
+</div>
+<ul class="skill-list">
+{{range .Skills}}
+<li class="skill-item">
+<div class="skill-name">{{.Name}}</div>
+<div class="skill-desc">{{.Description}}</div>
+<div class="skill-meta">
+{{if .Category}}<span class="tag">{{.Category}}</span>{{end}}
+{{if .Publisher}}<span>by {{.Publisher}}</span>{{end}}
+</div>
+</li>
+{{end}}
+{{if not .Skills}}<li style="color:var(--text-dim);padding:32px 0;text-align:center">no skills registered</li>{{end}}
+</ul>
+<div class="skill-install">
+<span class="prompt">$ </span><span class="cmd">wt skill add &lt;name&gt;</span>
+</div>
+{{end}}

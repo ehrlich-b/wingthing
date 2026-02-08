@@ -7,6 +7,7 @@ import (
 )
 
 // SeedSpacesFromIndex upserts anchors from a SpaceIndex with real embeddings.
+// It writes centroids to both the legacy embedding_512 column and the new anchor_embeddings table.
 func SeedSpacesFromIndex(store *RelayStore, idx *embedding.SpaceIndex, embedderName string) (int, error) {
 	vecs := idx.Vecs(embedderName)
 	if vecs == nil {
@@ -31,6 +32,9 @@ func SeedSpacesFromIndex(store *RelayStore, idx *embedding.SpaceIndex, embedderN
 			if err != nil {
 				return 0, fmt.Errorf("update anchor %s: %w", space.Slug, err)
 			}
+			if err := store.UpsertAnchorEmbedding(existing.ID, embedderName, vec); err != nil {
+				return 0, fmt.Errorf("upsert anchor embedding %s/%s: %w", space.Slug, embedderName, err)
+			}
 			continue
 		}
 
@@ -52,6 +56,9 @@ func SeedSpacesFromIndex(store *RelayStore, idx *embedding.SpaceIndex, embedderN
 		}
 		if err := store.CreateSocialEmbedding(e); err != nil {
 			return 0, fmt.Errorf("seed anchor %s: %w", space.Slug, err)
+		}
+		if err := store.UpsertAnchorEmbedding(id, embedderName, vec); err != nil {
+			return 0, fmt.Errorf("upsert anchor embedding %s/%s: %w", space.Slug, embedderName, err)
 		}
 	}
 
