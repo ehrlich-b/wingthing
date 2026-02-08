@@ -89,7 +89,3 @@ func (c *Config) SkillsDir() string {
 func (c *Config) SocialDBPath() string {
 	return filepath.Join(c.Dir, "social.db")
 }
-
-func (c *Config) SocketPath() string {
-	return filepath.Join(c.Dir, "wt.sock")
-}

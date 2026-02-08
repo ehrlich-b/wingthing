@@ -17,9 +17,9 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
-	"github.com/ehrlich-b/wingthing/internal/daemon"
+	"github.com/ehrlich-b/wingthing/internal/skill"
 	"github.com/ehrlich-b/wingthing/internal/store"
-	"github.com/ehrlich-b/wingthing/internal/transport"
+	"github.com/ehrlich-b/wingthing/internal/thread"
 	"github.com/spf13/cobra"
 )
 
@@ -37,25 +37,42 @@ func main() {
 			if len(args) == 0 && skillFlag == "" {
 				return cmd.Help()
 			}
-			c := clientFromConfig()
-			req := transport.SubmitTaskRequest{}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer s.Close()
+
+			t := &store.Task{
+				ID:    genTaskID(),
+				RunAt: time.Now().UTC(),
+			}
 			if skillFlag != "" {
-				req.What = skillFlag
-				req.Type = "skill"
+				t.What = skillFlag
+				t.Type = "skill"
+				// Check if skill has a schedule
+				sk, skErr := skill.Load(filepath.Join(cfg.SkillsDir(), skillFlag+".md"))
+				if skErr == nil && sk.Schedule != "" {
+					t.Cron = &sk.Schedule
+				}
 			} else {
-				req.What = args[0]
-				req.Type = "prompt"
+				t.What = args[0]
+				t.Type = "prompt"
 			}
 			if agentFlag != "" {
-				req.Agent = agentFlag
+				t.Agent = agentFlag
 			}
 			if afterFlag != "" {
 				deps, _ := json.Marshal([]string{afterFlag})
-				req.DependsOn = string(deps)
+				d := string(deps)
+				t.DependsOn = &d
 			}
-			t, err := c.SubmitTask(req)
-			if err != nil {
-				return fmt.Errorf("submit task: %w", err)
+			if err := s.CreateTask(t); err != nil {
+				return fmt.Errorf("create task: %w", err)
 			}
 			fmt.Printf("submitted: %s (%s)\n", t.ID, t.What)
 			return nil
@@ -74,7 +91,6 @@ func main() {
 		skillCmd(),
 		scheduleCmd(),
 		retryCmd(),
-		daemonCmd(),
 		initCmd(),
 		loginCmd(),
 		logoutCmd(),
@@ -88,13 +104,8 @@ func main() {
 	}
 }
 
-func clientFromConfig() *transport.Client {
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
-		os.Exit(1)
-	}
-	return transport.NewClient(cfg.SocketPath())
+func genTaskID() string {
+	return fmt.Sprintf("t-%s", time.Now().Format("20060102-150405"))
 }
 
 func timelineCmd() *cobra.Command {
@@ -102,8 +113,17 @@ func timelineCmd() *cobra.Command {
 		Use:   "timeline",
 		Short: "Show upcoming and recent tasks",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := clientFromConfig()
-			tasks, err := c.ListTasks("", 20)
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer s.Close()
+
+			tasks, err := s.ListRecent(20)
 			if err != nil {
 				return err
 			}
@@ -118,7 +138,7 @@ func timelineCmd() *cobra.Command {
 				if len(what) > 50 {
 					what = what[:47] + "..."
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, t.Agent, what, t.RunAt)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, t.Agent, what, t.RunAt.Format(time.RFC3339))
 			}
 			w.Flush()
 			return nil
@@ -132,20 +152,29 @@ func threadCmd() *cobra.Command {
 		Short: "Print today's daily thread",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			yesterday, _ := cmd.Flags().GetBool("yesterday")
-			c := clientFromConfig()
-			date := ""
-			if yesterday {
-				date = time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-			}
-			thread, err := c.GetThread(date, 0)
+			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			if thread == "" {
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer s.Close()
+
+			date := time.Now().UTC()
+			if yesterday {
+				date = date.AddDate(0, 0, -1)
+			}
+			rendered, err := thread.RenderDay(s, date, 0)
+			if err != nil {
+				return err
+			}
+			if rendered == "" {
 				fmt.Println("(empty thread)")
 				return nil
 			}
-			fmt.Print(thread)
+			fmt.Print(rendered)
 			return nil
 		},
 	}
@@ -156,14 +185,32 @@ func threadCmd() *cobra.Command {
 func statusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Daemon status and agent health",
+		Short: "Task counts and token usage",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := clientFromConfig()
-			s, err := c.Status()
+			cfg, err := config.Load()
 			if err != nil {
-				return fmt.Errorf("daemon not reachable: %w", err)
+				return err
 			}
-			fmt.Printf("pending: %d\nrunning: %d\nagents:  %d\ntokens:  %d today / %d this week\n", s.Pending, s.Running, s.Agents, s.TokensToday, s.TokensWeek)
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer s.Close()
+
+			var pending, running int
+			s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'pending'").Scan(&pending)
+			s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'running'").Scan(&running)
+			agents, _ := s.ListAgents()
+
+			now := time.Now().UTC()
+			todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+			weekStart := todayStart.AddDate(0, 0, -6)
+			tomorrow := todayStart.AddDate(0, 0, 1)
+
+			tokensToday, _ := s.SumTokensByDateRange(todayStart, tomorrow)
+			tokensWeek, _ := s.SumTokensByDateRange(weekStart, tomorrow)
+
+			fmt.Printf("pending: %d\nrunning: %d\nagents:  %d\ntokens:  %d today / %d this week\n", pending, running, len(agents), tokensToday, tokensWeek)
 			return nil
 		},
 	}
@@ -176,13 +223,22 @@ func logCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			last, _ := cmd.Flags().GetBool("last")
 			showContext, _ := cmd.Flags().GetBool("context")
-			c := clientFromConfig()
+
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer s.Close()
 
 			taskID := ""
 			if len(args) > 0 {
 				taskID = args[0]
 			} else if last {
-				tasks, err := c.ListTasks("", 1)
+				tasks, err := s.ListRecent(1)
 				if err != nil {
 					return err
 				}
@@ -195,29 +251,23 @@ func logCmd() *cobra.Command {
 				return fmt.Errorf("provide a task ID or use --last")
 			}
 
-			entries, err := c.GetLog(taskID)
+			entries, err := s.ListLogByTask(taskID)
 			if err != nil {
 				return err
 			}
-			for _, raw := range entries {
-				var entry struct {
-					Event  string  `json:"event"`
-					Detail *string `json:"detail"`
-					Time   string  `json:"timestamp"`
-				}
-				json.Unmarshal(raw, &entry)
-				if showContext && entry.Event == "prompt_built" && entry.Detail != nil {
-					fmt.Println(*entry.Detail)
+			for _, e := range entries {
+				if showContext && e.Event == "prompt_built" && e.Detail != nil {
+					fmt.Println(*e.Detail)
 					return nil
 				}
 				detail := ""
-				if entry.Detail != nil {
-					detail = *entry.Detail
+				if e.Detail != nil {
+					detail = *e.Detail
 					if len(detail) > 80 {
 						detail = detail[:77] + "..."
 					}
 				}
-				fmt.Printf("%s  %s  %s\n", entry.Time, entry.Event, detail)
+				fmt.Printf("%s  %s  %s\n", e.Timestamp.Format(time.RFC3339), e.Event, detail)
 			}
 			return nil
 		},
@@ -236,8 +286,17 @@ func agentCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List configured agents",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := clientFromConfig()
-			agents, err := c.ListAgents()
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer s.Close()
+
+			agents, err := s.ListAgents()
 			if err != nil {
 				return err
 			}
@@ -247,14 +306,7 @@ func agentCmd() *cobra.Command {
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "NAME\tADAPTER\tHEALTHY\tCONTEXT")
-			for _, raw := range agents {
-				var a struct {
-					Name          string `json:"name"`
-					Adapter       string `json:"adapter"`
-					Healthy       bool   `json:"healthy"`
-					ContextWindow int    `json:"context_window"`
-				}
-				json.Unmarshal(raw, &a)
+			for _, a := range agents {
 				healthy := "no"
 				if a.Healthy {
 					healthy = "yes"
@@ -423,8 +475,17 @@ func scheduleCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List recurring tasks",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := clientFromConfig()
-			tasks, err := c.ListSchedule()
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer s.Close()
+
+			tasks, err := s.ListRecurring()
 			if err != nil {
 				return err
 			}
@@ -443,7 +504,7 @@ func scheduleCmd() *cobra.Command {
 				if t.Cron != nil {
 					cronExpr = *t.Cron
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, cronExpr, what, t.RunAt)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, cronExpr, what, t.RunAt.Format(time.RFC3339))
 			}
 			w.Flush()
 			return nil
@@ -454,9 +515,24 @@ func scheduleCmd() *cobra.Command {
 		Short: "Remove cron schedule from a task",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := clientFromConfig()
-			t, err := c.RemoveSchedule(args[0])
+			cfg, err := config.Load()
 			if err != nil {
+				return err
+			}
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer s.Close()
+
+			t, err := s.GetTask(args[0])
+			if err != nil {
+				return err
+			}
+			if t == nil {
+				return fmt.Errorf("task not found: %s", args[0])
+			}
+			if err := s.ClearTaskCron(args[0]); err != nil {
 				return err
 			}
 			fmt.Printf("removed schedule from %s (%s)\n", t.ID, t.What)
@@ -472,35 +548,47 @@ func retryCmd() *cobra.Command {
 		Short: "Retry a failed task",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := clientFromConfig()
-			t, err := c.RetryTask(args[0])
-			if err != nil {
-				return err
-			}
-			fmt.Printf("retried: %s\n", t.ID)
-			return nil
-		},
-	}
-}
-
-func daemonCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "daemon",
-		Short: "Start the wingthing daemon",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			install, _ := cmd.Flags().GetBool("install")
-			if install {
-				return installService()
-			}
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			return daemon.Run(cfg)
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer s.Close()
+
+			t, err := s.GetTask(args[0])
+			if err != nil {
+				return err
+			}
+			if t == nil {
+				return fmt.Errorf("task not found: %s", args[0])
+			}
+			if t.Status != "failed" {
+				return fmt.Errorf("only failed tasks can be retried (status: %s)", t.Status)
+			}
+
+			newTask := &store.Task{
+				ID:         genTaskID(),
+				Type:       t.Type,
+				What:       t.What,
+				RunAt:      time.Now().UTC(),
+				Agent:      t.Agent,
+				Isolation:  t.Isolation,
+				Memory:     t.Memory,
+				Cron:       t.Cron,
+				ParentID:   &t.ID,
+				Status:     "pending",
+				MaxRetries: t.MaxRetries,
+			}
+			if err := s.CreateTask(newTask); err != nil {
+				return err
+			}
+			fmt.Printf("retried: %s\n", newTask.ID)
+			return nil
 		},
 	}
-	cmd.Flags().Bool("install", false, "Install as system service")
-	return cmd
 }
 
 func initCmd() *cobra.Command {
@@ -559,12 +647,6 @@ func initCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-func installService() error {
-	fmt.Println("not implemented: service installation")
-	fmt.Println("run 'wt daemon' in a terminal or add to your shell startup")
-	return nil
 }
 
 func loginCmd() *cobra.Command {

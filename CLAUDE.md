@@ -4,7 +4,7 @@
 
 `wt` is **SQLite on steroids** -- an inert chunk of state that animates itself with LLMs and OS-level scheduling (cron, launchd, systemd timers). There is no persistent daemon. The CLI reads/writes state and invokes agents directly. Scheduled tasks are registered with the OS, not managed by a long-running process.
 
-`wtd` is the **relay server** -- the social backend. Separate concern, separate binary, separate deployment.
+`wt serve` runs the **relay server** -- the social backend, HTTP + SQLite.
 
 ## Dogfooding
 
@@ -14,18 +14,10 @@ If you find yourself reaching for an external tool and wingthing _should_ handle
 
 ## Architecture
 
-- `wt` -- generic AI swiss army knife CLI. Inert state + direct agent invocation + OS-scheduled animation.
-- `wtd` -- relay server (social backend), HTTP + SQLite, separate deployment
-- Agents are pluggable (claude, ollama, gemini). `wt` calls them directly, not through a daemon.
-
-## Daemon Excision (in progress)
-
-Most commands still go through a unix socket to a daemon process. We are migrating them to call agents/stores directly. **`wt embed` and `wt doctor` are the template** -- they use config + direct invocation, no socket.
-
-Commands already daemon-free: `embed`, `doctor`, `init`, `login`, `logout`, `skill list` (local), `skill add`
-Commands still on socket: root prompt, `timeline`, `thread`, `log`, `retry`, `agent list`, `schedule`, `status`
-
-Pattern for migration: replace `clientFromConfig()` (socket) with `store.Open(cfg.DBPath())` (direct SQLite).
+- `wt` -- single binary. Inert state + direct agent invocation + OS-scheduled animation.
+- `wt serve` -- relay server (social backend), HTTP + SQLite
+- Agents are pluggable (claude, ollama, gemini). `wt` calls them directly.
+- All commands use direct store access via `store.Open(cfg.DBPath())`. No daemon, no socket.
 
 ## Provider System
 
@@ -66,15 +58,19 @@ CLI tools detected by `wt doctor`:
 
 ## CLI Commands
 
-| Command | Status | What it does |
-|---------|--------|-------------|
-| `wt embed` | Direct | Embed text via auto-detected or specified provider |
-| `wt doctor` | Direct | Scan for available agents, API keys, services |
-| `wt init` | Direct | Initialize ~/.wingthing directory and DB |
-| `wt login/logout` | Direct | Device auth with relay server |
-| `wt skill list/add` | Direct | Manage skills (local + registry) |
-| `wt [prompt]` | Socket | Submit task to daemon (needs migration) |
-| `wt timeline` | Socket | List tasks (needs migration) |
-| `wt thread` | Socket | Daily thread (needs migration) |
-| `wt log` | Socket | Task logs (needs migration) |
-| `wt daemon` | Legacy | Start daemon (will be removed) |
+| Command | What it does |
+|---------|-------------|
+| `wt [prompt]` | Submit a task to the store |
+| `wt timeline` | List recent tasks |
+| `wt thread` | Print daily thread |
+| `wt log [id]` | Show task log events |
+| `wt retry [id]` | Retry a failed task |
+| `wt status` | Task counts and token usage |
+| `wt schedule` | Manage recurring tasks |
+| `wt agent list` | List configured agents |
+| `wt embed` | Generate embeddings |
+| `wt doctor` | Scan for available agents, API keys, services |
+| `wt serve` | Start the relay web server |
+| `wt init` | Initialize ~/.wingthing directory and DB |
+| `wt login/logout` | Device auth with relay server |
+| `wt skill list/add` | Manage skills (local + registry) |
