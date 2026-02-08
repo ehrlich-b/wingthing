@@ -479,6 +479,37 @@ func (s *RelayStore) SumDecayedMassByAnchor(anchorID string) (float64, error) {
 	return mass, nil
 }
 
+type topPost struct {
+	Text string
+	Link string
+}
+
+// TopPostsByAnchor returns a map of anchorID -> top post (text + link) by highest decayed_mass.
+func (s *RelayStore) TopPostsByAnchor() (map[string]topPost, error) {
+	rows, err := s.db.Query(
+		`SELECT pa.anchor_id, p.text, COALESCE(p.link, ''), p.decayed_mass FROM post_anchors pa
+		 JOIN social_embeddings p ON p.id = pa.post_id
+		 WHERE p.visible = 1 AND p.kind = 'post'
+		 ORDER BY pa.anchor_id, p.decayed_mass DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("top posts by anchor: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]topPost)
+	for rows.Next() {
+		var anchorID, text, link string
+		var mass float64
+		if err := rows.Scan(&anchorID, &text, &link, &mass); err != nil {
+			return nil, fmt.Errorf("scan top post: %w", err)
+		}
+		if _, ok := out[anchorID]; !ok {
+			out[anchorID] = topPost{Text: text, Link: link}
+		}
+	}
+	return out, rows.Err()
+}
+
 func (s *RelayStore) GetOrCreateSocialUserByEmail(email string) (*SocialUser, error) {
 	u, err := s.GetSocialUserByProvider("email", email)
 	if err != nil {

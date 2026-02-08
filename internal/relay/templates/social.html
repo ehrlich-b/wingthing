@@ -3,11 +3,12 @@
 <style>
 .container{max-width:100%;padding:0 12px 12px}
 nav{padding:12px 8px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:2px}
-.cell{aspect-ratio:1;border-radius:2px;display:flex;flex-direction:column;justify-content:flex-end;padding:10px;text-decoration:none;transition:opacity 0.12s}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:2px}
+.cell{min-height:120px;border-radius:2px;display:flex;flex-direction:column;justify-content:flex-end;padding:12px 14px;text-decoration:none;transition:opacity 0.12s;overflow:hidden}
 .cell:hover{opacity:0.85}
-.cell-slug{font-weight:600;color:rgba(255,255,255,0.9);font-size:12px;text-transform:lowercase;letter-spacing:-0.01em;line-height:1.2}
+.cell-slug{font-weight:600;color:rgba(255,255,255,0.9);font-size:13px;text-transform:lowercase;letter-spacing:-0.01em;line-height:1.2}
 .cell-meta{font-size:10px;color:rgba(255,255,255,0.4);margin-top:3px}
+.cell-top{font-size:11px;color:rgba(255,255,255,0.55);margin-bottom:8px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .cell.empty .cell-slug{color:rgba(255,255,255,0.12);font-weight:400}
 </style>
 {{end}}
@@ -15,8 +16,9 @@ nav{padding:12px 8px}
 <div class="grid">
 {{range .Anchors}}
 <a class="cell{{if eq .PostCount 0}} empty{{end}}" href="/w/{{.Slug}}" data-mass="{{printf "%.1f" .Mass}}" data-posts="{{.PostCount}}">
+{{if .TopPost}}<div class="cell-top">{{.TopPost | stripMd}}</div>{{end}}
 <div class="cell-slug">{{.Slug | slugDisplay}}</div>
-{{if gt .PostCount 0}}<div class="cell-meta">{{.PostCount}}</div>{{end}}
+<div class="cell-meta">{{if .TopLink}}{{.TopLink | clipDomain}}{{end}}{{if gt .PostCount 0}} · {{.PostCount}}{{end}}</div>
 </a>
 {{end}}
 </div>

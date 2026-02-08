@@ -4,6 +4,8 @@ import (
 	"embed"
 	"html/template"
 	"net/http"
+	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -20,6 +22,24 @@ var tmplFuncs = template.FuncMap{
 	},
 	"slugDisplay": func(s string) string {
 		return strings.ReplaceAll(s, "-", " ")
+	},
+	"stripMd": func(s string) string {
+		s = regexp.MustCompile(`\*\*\[([^\]]*)\]\*\*`).ReplaceAllString(s, "$1")
+		s = regexp.MustCompile(`\[([^\]]*)\]`).ReplaceAllString(s, "$1")
+		s = strings.ReplaceAll(s, "**", "")
+		return s
+	},
+	"clipDomain": func(raw string) string {
+		if raw == "" {
+			return ""
+		}
+		u, err := url.Parse(raw)
+		if err != nil {
+			return raw
+		}
+		host := u.Hostname()
+		host = strings.TrimPrefix(host, "www.")
+		return host
 	},
 }
 
@@ -39,6 +59,8 @@ type anchorCard struct {
 	Slug      string
 	PostCount int
 	Mass      float64
+	TopPost   string // text of highest-mass post
+	TopLink   string // link domain of that post
 }
 
 type socialPageData struct {
@@ -72,6 +94,8 @@ func (s *Server) handleSocial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	topPosts, _ := s.Store.TopPostsByAnchor()
+
 	var cards []anchorCard
 	for _, a := range anchors {
 		count, _ := s.Store.CountPostsByAnchor(a.ID)
@@ -80,11 +104,18 @@ func (s *Server) handleSocial(w http.ResponseWriter, r *http.Request) {
 		if a.Slug != nil {
 			slug = *a.Slug
 		}
+		tp := topPosts[a.ID]
+		text := tp.Text
+		if len(text) > 140 {
+			text = text[:140] + "..."
+		}
 		cards = append(cards, anchorCard{
 			Name:      a.Text,
 			Slug:      slug,
 			PostCount: count,
 			Mass:      mass,
+			TopPost:   text,
+			TopLink:   tp.Link,
 		})
 	}
 
