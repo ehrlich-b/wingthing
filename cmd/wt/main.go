@@ -80,6 +80,7 @@ func main() {
 		logoutCmd(),
 		embedCmd(),
 		doctorCmd(),
+		serveCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
