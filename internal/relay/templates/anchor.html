@@ -27,8 +27,6 @@
 <div class="post-text">{{.Text}}</div>
 <div class="post-meta">
 {{if .PublishedAt}}<span>{{.PublishedAt.Format "Jan 2, 2006"}}</span>{{else}}<span>{{.CreatedAt.Format "Jan 2, 2006"}}</span>{{end}}
-<span>{{.Upvotes24h}} upvotes</span>
-<span>mass {{.Mass}}</span>
 </div>
 {{if .Link}}<div class="post-link"><a href="{{deref .Link}}">{{deref .Link}}</a></div>{{end}}
 </div>
