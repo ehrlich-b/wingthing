@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/embedding"
 	"github.com/spf13/cobra"
 )
@@ -16,13 +17,26 @@ func embedCmd() *cobra.Command {
 	var modelFlag string
 	var baseURLFlag string
 	var formatFlag string
+	var providerFlag string
 
 	cmd := &cobra.Command{
 		Use:   "embed [text]",
-		Short: "Generate embeddings using local Ollama",
-		Long:  "Embed text into vectors via Ollama. Accepts text as argument, -t flag, or stdin (one text per line).",
+		Short: "Generate embeddings",
+		Long:  "Embed text into vectors. Accepts text as argument, -t flag, or stdin (one text per line).",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			emb := embedding.NewOllama(modelFlag, baseURLFlag)
+			provider := providerFlag
+			if provider == "" {
+				cfg, err := config.Load()
+				if err != nil {
+					return fmt.Errorf("load config: %w", err)
+				}
+				provider = cfg.DefaultEmbedder
+			}
+
+			emb, err := embedding.NewFromProvider(provider, modelFlag, baseURLFlag)
+			if err != nil {
+				return err
+			}
 
 			// Collect texts: arg > flag > stdin
 			var texts []string
@@ -83,8 +97,9 @@ func embedCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&textFlag, "text", "t", "", "text to embed")
-	cmd.Flags().StringVarP(&modelFlag, "model", "m", "", "Ollama model (default: nomic-embed-text)")
-	cmd.Flags().StringVar(&baseURLFlag, "base-url", "", "Ollama base URL (default: http://localhost:11434)")
+	cmd.Flags().StringVarP(&providerFlag, "provider", "p", "", "embedder provider: ollama, openai (default from config)")
+	cmd.Flags().StringVarP(&modelFlag, "model", "m", "", "model name (provider-specific)")
+	cmd.Flags().StringVar(&baseURLFlag, "base-url", "", "base URL (for ollama)")
 	cmd.Flags().StringVarP(&formatFlag, "format", "f", "json", "output format: json, raw")
 
 	return cmd

@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	ollamaDefaultModel   = "nomic-embed-text"
+	ollamaDefaultModel   = "mxbai-embed-large"
 	ollamaDefaultBaseURL = "http://localhost:11434"
 	ollamaDims           = 512
 )

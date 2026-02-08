@@ -79,6 +79,7 @@ func main() {
 		loginCmd(),
 		logoutCmd(),
 		embedCmd(),
+		doctorCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

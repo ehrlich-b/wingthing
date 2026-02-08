@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Dir               string            `yaml:"-"`
 	DefaultAgent      string            `yaml:"default_agent"`
+	DefaultEmbedder   string            `yaml:"default_embedder"`
 	MachineID         string            `yaml:"machine_id"`
 	PollInterval      string            `yaml:"poll_interval"`
 	DefaultMaxRetries int               `yaml:"max_retries"`
@@ -30,10 +31,11 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Dir:          dir,
-		DefaultAgent: "claude",
-		PollInterval: "1s",
-		Vars:         make(map[string]string),
+		Dir:             dir,
+		DefaultAgent:    "claude",
+		DefaultEmbedder: "auto",
+		PollInterval:    "1s",
+		Vars:            make(map[string]string),
 	}
 
 	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
