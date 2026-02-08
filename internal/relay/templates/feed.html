@@ -12,8 +12,14 @@
 .feed-sidebar a:hover{color:var(--text)}
 .feed-sidebar a.active{color:var(--text);font-weight:600}
 .feed-list{list-style:none}
-.feed-item{padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05)}
+.feed-item{padding:8px 6px;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;border-radius:3px;transition:background 0.1s}
+.feed-item:hover{background:rgba(255,255,255,0.03)}
 .feed-item:last-child{border-bottom:none}
+.feed-row{display:flex;gap:8px;align-items:flex-start}
+.vote-btn{background:none;border:none;color:var(--text-dim);cursor:pointer;padding:2px 4px;font-size:10px;line-height:1;flex-shrink:0;margin-top:2px;transition:color 0.1s}
+.vote-btn:hover{color:var(--action)}
+.vote-btn.voted{color:var(--action)}
+.feed-content{flex:1;min-width:0}
 .feed-title{font-size:14px;line-height:1.4}
 .feed-title a{color:var(--text);text-decoration:none}
 .feed-title a:hover{text-decoration:underline}
@@ -21,6 +27,15 @@
 .feed-meta{font-size:11px;color:var(--text-dim);margin-top:2px}
 .feed-meta a{color:var(--text-dim);text-decoration:none}
 .feed-meta a:hover{color:var(--text)}
+.feed-detail{display:none;margin-top:8px;padding:8px 0 4px 20px;font-size:13px;color:var(--text-dim);line-height:1.5}
+.feed-detail.open{display:block}
+.feed-summary{margin-bottom:10px}
+.feed-comments{border-top:1px solid rgba(255,255,255,0.05);padding-top:8px}
+.feed-comments h4{font-size:11px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;letter-spacing:0.05em}
+.comment{padding:4px 0;font-size:12px}
+.comment .comment-meta{color:var(--text-dim);font-size:11px}
+.comment .comment-body{color:var(--text);margin-top:2px}
+.no-comments{font-size:11px;color:var(--text-dim);font-style:italic}
 @media(max-width:700px){.feed-sidebar{display:none}}
 </style>
 {{end}}
@@ -33,15 +48,27 @@
 <div class="feed-main">
 <ul class="feed-list">
 {{range .Items}}
-<li class="feed-item">
+<li class="feed-item" data-post-id="{{.PostID}}">
+<div class="feed-row">
+<button class="vote-btn" onclick="vote(event,'{{.PostID}}')" title="upvote">&#9650;</button>
+<div class="feed-content">
 <div class="feed-title">
-{{if .Link}}<a href="{{.Link}}" target="_blank" rel="noopener">{{.Title}}</a>{{else}}{{.Title}}{{end}}
+{{if .Link}}<a href="{{.Link}}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{.Title}}</a>{{else}}{{.Title}}{{end}}
 {{if .Domain}}<span class="domain">({{.Domain}})</span>{{end}}
 </div>
 <div class="feed-meta">
 {{.Age | timeAgo}}
-{{range .Anchors}} · <a href="/w/{{.}}">{{. | slugDisplay}}</a>{{end}}
-{{if gt .CommentCount 0}} · {{.CommentCount}} comments{{end}}
+{{range .Anchors}} · <a href="/w/{{.}}" onclick="event.stopPropagation()">{{. | slugDisplay}}</a>{{end}}
+· <span class="discuss-link">discuss</span>
+</div>
+</div>
+</div>
+<div class="feed-detail" id="detail-{{.PostID}}">
+{{if .Summary}}<div class="feed-summary">{{.Summary}}</div>{{end}}
+<div class="feed-comments" id="comments-{{.PostID}}">
+<h4>comments</h4>
+<div class="no-comments">loading...</div>
+</div>
 </div>
 </li>
 {{end}}
@@ -55,4 +82,39 @@
 {{end}}
 </div>
 </div>
+<script>
+function vote(e,id){
+  e.stopPropagation();
+  var btn=e.currentTarget;
+  btn.classList.add('voted');
+  fetch('/api/vote',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({post_id:id})});
+}
+document.querySelectorAll('.feed-item').forEach(function(li){
+  li.addEventListener('click',function(e){
+    if(e.target.closest('a'))return;
+    var id=li.dataset.postId;
+    var d=document.getElementById('detail-'+id);
+    if(d.classList.contains('open')){d.classList.remove('open');return;}
+    d.classList.add('open');
+    var c=document.getElementById('comments-'+id);
+    if(c.dataset.loaded)return;
+    c.dataset.loaded='1';
+    fetch('/api/comments?post_id='+id).then(function(r){return r.json()}).then(function(data){
+      if(!data.comments||data.comments.length===0){c.querySelector('.no-comments').textContent='no comments yet';return;}
+      c.querySelector('.no-comments').remove();
+      data.comments.forEach(function(cm){
+        var div=document.createElement('div');div.className='comment';
+        div.innerHTML='<div class="comment-meta">'+(cm.is_bot?'bot':'user')+' · '+timeAgo(cm.created_at)+'</div><div class="comment-body">'+esc(cm.content)+'</div>';
+        c.appendChild(div);
+      });
+    }).catch(function(){c.querySelector('.no-comments').textContent='no comments yet';});
+  });
+});
+function timeAgo(s){
+  var d=(Date.now()-new Date(s+'Z'))/1e3;
+  if(d<60)return 'just now';if(d<3600)return Math.floor(d/60)+'m ago';
+  if(d<86400)return Math.floor(d/3600)+'h ago';return Math.floor(d/86400)+'d ago';
+}
+function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+</script>
 {{end}}

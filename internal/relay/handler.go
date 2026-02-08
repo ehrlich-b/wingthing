@@ -296,6 +296,15 @@ func (s *Server) handleGetSkillRaw(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(sk.Content))
 }
 
+// requireUser checks session cookie first, then Bearer token.
+// Returns userID or writes 401 and returns empty string.
+func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) string {
+	if u := s.sessionUser(r); u != nil {
+		return u.ID
+	}
+	return s.requireToken(w, r)
+}
+
 // requireToken extracts and validates a Bearer token from the Authorization header.
 // Returns the userID or writes an error response and returns empty string.
 func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
@@ -358,7 +367,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVote(w http.ResponseWriter, r *http.Request) {
-	userID := s.requireToken(w, r)
+	userID := s.requireUser(w, r)
 	if userID == "" {
 		return
 	}
@@ -382,7 +391,7 @@ func (s *Server) handleVote(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
-	userID := s.requireToken(w, r)
+	userID := s.requireUser(w, r)
 	if userID == "" {
 		return
 	}

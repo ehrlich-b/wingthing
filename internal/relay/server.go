@@ -3,6 +3,7 @@ package relay
 import (
 	"io/fs"
 	"net/http"
+	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/embedding"
 	"github.com/ehrlich-b/wingthing/web"
@@ -78,5 +79,9 @@ func (s *Server) registerStaticRoutes() {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	if r.Method == "GET" && (path == "/" || path == "/social" || path == "/login" || strings.HasPrefix(path, "/w/")) {
+		w.Header().Set("Cache-Control", "public, max-age=900, s-maxage=900")
+	}
 	s.mux.ServeHTTP(w, r)
 }

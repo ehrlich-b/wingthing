@@ -67,6 +67,7 @@ type pageData struct {
 type feedItem struct {
 	PostID       string
 	Title        string
+	Summary      string
 	Link         string
 	Domain       string
 	Anchors      []string
@@ -232,9 +233,19 @@ func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Re
 		if p.PublishedAt != nil {
 			age = *p.PublishedAt
 		}
+		summary := p.Text
+		if p.Title != nil && *p.Title != "" {
+			// Summary is the compressed text, distinct from the title
+			if len(summary) > 500 {
+				summary = summary[:500] + "..."
+			}
+		} else {
+			summary = ""
+		}
 		items = append(items, feedItem{
 			PostID:       p.ID,
 			Title:        title,
+			Summary:      summary,
 			Link:         link,
 			Domain:       domain,
 			Anchors:      anchorSlugs[p.ID],
