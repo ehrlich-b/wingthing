@@ -101,13 +101,14 @@ type feedItem struct {
 }
 
 type feedPageData struct {
-	User       *SocialUser
-	LoggedIn   bool
-	Slug       string
-	SlugName   string
-	Sort       string
-	Items      []feedItem
-	AllAnchors []string
+	User        *SocialUser
+	LoggedIn    bool
+	Slug        string
+	SlugName    string
+	Description string
+	Sort        string
+	Items       []feedItem
+	AllAnchors  []string
 }
 
 type postComment struct {
@@ -293,8 +294,10 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 	var posts []*SocialEmbedding
 	var err error
 
+	var description string
 	if slug == "all" {
 		posts, err = s.Store.ListAllPosts(sort, 100)
+		description = "AI-curated feed across 159 topics, scored and sorted by community signal"
 	} else {
 		anchor, aerr := s.Store.GetSocialEmbeddingBySlug(slug)
 		if aerr != nil {
@@ -306,6 +309,7 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		posts, err = s.Store.ListPostsByAnchor(anchor.ID, sort, 100)
+		description = anchor.Text
 	}
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -314,6 +318,7 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 
 	data := s.buildFeedData(slug, posts, r)
 	data.Sort = sort
+	data.Description = description
 	s.template(feedTmpl, "base.html", "feed.html").ExecuteTemplate(w, "base", data)
 }
 

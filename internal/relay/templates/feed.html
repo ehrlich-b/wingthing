@@ -4,7 +4,7 @@
 .container{max-width:1100px}
 .feed-header{margin-bottom:16px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
 .feed-header h1{font-size:20px;font-weight:700;letter-spacing:-0.02em;text-transform:lowercase}
-.feed-header .back{font-size:12px;color:var(--text-dim)}
+.feed-header .desc{font-size:13px;color:var(--text-dim);font-weight:400}
 .sort-tabs{display:flex;gap:2px;margin-bottom:12px;font-family:var(--mono);font-size:12px}
 .sort-tabs a{color:var(--text-dim);text-decoration:none;padding:4px 10px;border-radius:3px;transition:background 0.1s}
 .sort-tabs a:hover{background:rgba(255,255,255,0.05);color:var(--text)}
@@ -45,7 +45,7 @@
 {{define "content"}}
 <div class="feed-header">
 <h1>{{.SlugName}}</h1>
-{{if .Slug}}<a href="/w/all" class="back">all</a>{{end}}
+{{if .Description}}<span class="desc">{{.Description}}</span>{{end}}
 </div>
 <div class="sort-tabs">
 <a href="/w/{{.Slug}}"{{if eq .Sort "hot"}} class="active"{{end}}>hot</a>
