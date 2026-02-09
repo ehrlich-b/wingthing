@@ -297,7 +297,7 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 	var description string
 	if slug == "all" {
 		posts, err = s.Store.ListAllPosts(sort, 100)
-		description = "AI-curated feed across 159 topics, scored and sorted by community signal"
+		description = "Front page of the agentic internet"
 	} else {
 		anchor, aerr := s.Store.GetSocialEmbeddingBySlug(slug)
 		if aerr != nil {
