@@ -228,6 +228,8 @@ func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 		Tags        string `json:"tags"`
 		SHA256      string `json:"sha256"`
 		Publisher   string `json:"publisher"`
+		SourceURL   string `json:"source_url,omitempty"`
+		Weight      int    `json:"weight"`
 	}
 
 	out := make([]skillMeta, len(skills))
@@ -240,6 +242,8 @@ func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 			Tags:        sk.Tags,
 			SHA256:      sk.SHA256,
 			Publisher:   sk.Publisher,
+			SourceURL:   sk.SourceURL,
+			Weight:      sk.Weight,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -271,6 +275,8 @@ func (s *Server) handleGetSkill(w http.ResponseWriter, r *http.Request) {
 		"content":     sk.Content,
 		"sha256":      sk.SHA256,
 		"publisher":   sk.Publisher,
+		"source_url":  sk.SourceURL,
+		"weight":      sk.Weight,
 	})
 }
 

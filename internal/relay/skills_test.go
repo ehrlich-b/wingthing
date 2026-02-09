@@ -11,7 +11,7 @@ import (
 func TestCreateAndGetSkill(t *testing.T) {
 	s := testStore(t)
 
-	err := s.CreateSkill("test-skill", "A test skill", "dev", "claude", `["dev","test"]`, "# content", "abc123")
+	err := s.CreateSkill("test-skill", "A test skill", "dev", "claude", `["dev","test"]`, "# content", "abc123", "", "", 0)
 	if err != nil {
 		t.Fatalf("create skill: %v", err)
 	}
@@ -64,10 +64,10 @@ func TestGetSkillNotFound(t *testing.T) {
 func TestCreateSkillUpsert(t *testing.T) {
 	s := testStore(t)
 
-	if err := s.CreateSkill("upsert", "v1", "dev", "", "[]", "body1", "hash1"); err != nil {
+	if err := s.CreateSkill("upsert", "v1", "dev", "", "[]", "body1", "hash1", "", "", 0); err != nil {
 		t.Fatalf("create v1: %v", err)
 	}
-	if err := s.CreateSkill("upsert", "v2", "code", "", "[]", "body2", "hash2"); err != nil {
+	if err := s.CreateSkill("upsert", "v2", "code", "", "[]", "body2", "hash2", "", "", 0); err != nil {
 		t.Fatalf("create v2: %v", err)
 	}
 
@@ -89,9 +89,9 @@ func TestCreateSkillUpsert(t *testing.T) {
 func TestListSkills(t *testing.T) {
 	s := testStore(t)
 
-	s.CreateSkill("alpha", "A", "dev", "", "[]", "a", "h1")
-	s.CreateSkill("beta", "B", "ops", "", "[]", "b", "h2")
-	s.CreateSkill("gamma", "C", "dev", "", "[]", "c", "h3")
+	s.CreateSkill("alpha", "A", "dev", "", "[]", "a", "h1", "", "", 0)
+	s.CreateSkill("beta", "B", "ops", "", "[]", "b", "h2", "", "", 0)
+	s.CreateSkill("gamma", "C", "dev", "", "[]", "c", "h3", "", "", 0)
 
 	// List all
 	all, err := s.ListSkills("")
@@ -129,9 +129,9 @@ func TestListSkills(t *testing.T) {
 func TestSearchSkills(t *testing.T) {
 	s := testStore(t)
 
-	s.CreateSkill("jira-briefing", "Brief me on Jira", "dev", "", "[]", "body", "h1")
-	s.CreateSkill("deploy-check", "Check deploy status", "ops", "", "[]", "body", "h2")
-	s.CreateSkill("blog-draft", "Draft a blog post", "writing", "", "[]", "body", "h3")
+	s.CreateSkill("jira-briefing", "Brief me on Jira", "dev", "", "[]", "body", "h1", "", "", 0)
+	s.CreateSkill("deploy-check", "Check deploy status", "ops", "", "[]", "body", "h2", "", "", 0)
+	s.CreateSkill("blog-draft", "Draft a blog post", "writing", "", "[]", "body", "h3", "", "", 0)
 
 	// Search by name
 	results, err := s.SearchSkills("jira")
@@ -174,8 +174,8 @@ func testServerWithStore(t *testing.T, store *RelayStore) *httptest.Server {
 
 func TestHandlerListSkills(t *testing.T) {
 	store := testStore(t)
-	store.CreateSkill("s1", "Skill 1", "dev", "", "[]", "body1", "h1")
-	store.CreateSkill("s2", "Skill 2", "ops", "", "[]", "body2", "h2")
+	store.CreateSkill("s1", "Skill 1", "dev", "", "[]", "body1", "h1", "", "", 0)
+	store.CreateSkill("s2", "Skill 2", "ops", "", "[]", "body2", "h2", "", "", 0)
 
 	ts := testServerWithStore(t, store)
 
@@ -205,9 +205,9 @@ func TestHandlerListSkills(t *testing.T) {
 
 func TestHandlerListSkillsCategory(t *testing.T) {
 	store := testStore(t)
-	store.CreateSkill("s1", "Skill 1", "dev", "", "[]", "body1", "h1")
-	store.CreateSkill("s2", "Skill 2", "ops", "", "[]", "body2", "h2")
-	store.CreateSkill("s3", "Skill 3", "dev", "", "[]", "body3", "h3")
+	store.CreateSkill("s1", "Skill 1", "dev", "", "[]", "body1", "h1", "", "", 0)
+	store.CreateSkill("s2", "Skill 2", "ops", "", "[]", "body2", "h2", "", "", 0)
+	store.CreateSkill("s3", "Skill 3", "dev", "", "[]", "body3", "h3", "", "", 0)
 
 	ts := testServerWithStore(t, store)
 
@@ -226,7 +226,7 @@ func TestHandlerListSkillsCategory(t *testing.T) {
 
 func TestHandlerGetSkill(t *testing.T) {
 	store := testStore(t)
-	store.CreateSkill("my-skill", "desc", "dev", "claude", `["dev"]`, "# content here", "sha1")
+	store.CreateSkill("my-skill", "desc", "dev", "claude", `["dev"]`, "# content here", "sha1", "", "", 0)
 
 	ts := testServerWithStore(t, store)
 
@@ -267,7 +267,7 @@ func TestHandlerGetSkillNotFound(t *testing.T) {
 
 func TestHandlerGetSkillRaw(t *testing.T) {
 	store := testStore(t)
-	store.CreateSkill("raw-skill", "desc", "dev", "", "[]", "---\nname: raw-skill\n---\nbody here", "sha1")
+	store.CreateSkill("raw-skill", "desc", "dev", "", "[]", "---\nname: raw-skill\n---\nbody here", "sha1", "", "", 0)
 
 	ts := testServerWithStore(t, store)
 
@@ -294,8 +294,8 @@ func TestHandlerGetSkillRaw(t *testing.T) {
 
 func TestHandlerSearchSkills(t *testing.T) {
 	store := testStore(t)
-	store.CreateSkill("jira-briefing", "Brief on Jira", "dev", "", "[]", "body", "h1")
-	store.CreateSkill("deploy-check", "Check deploy", "ops", "", "[]", "body", "h2")
+	store.CreateSkill("jira-briefing", "Brief on Jira", "dev", "", "[]", "body", "h1", "", "", 0)
+	store.CreateSkill("deploy-check", "Check deploy", "ops", "", "[]", "body", "h2", "", "", 0)
 
 	ts := testServerWithStore(t, store)
 
@@ -323,8 +323,8 @@ func TestSeedDefaultSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(all) < 100 {
-		t.Errorf("seeded count = %d, want >= 100", len(all))
+	if len(all) < 40 {
+		t.Errorf("seeded count = %d, want >= 40", len(all))
 	}
 	seedCount := len(all)
 

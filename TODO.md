@@ -981,6 +981,7 @@ bash /tmp/compress_and_post.sh ./wt                            # compress via cl
 - Monochrome palette: dark slate ramp, not rainbow
 
 **TODO:**
+- [x] Skills page overhaul — curated open-source skills with real attribution
 - [ ] Restart compress bot (articles.tsv ready, sorted newest-first)
 - [ ] Find 716+ more feeds to hit 1k target (36 spaces have zero feeds)
 - [ ] Filter out bad summaries ("I need permission to access..." from paywalled sites)

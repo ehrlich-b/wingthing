@@ -150,7 +150,7 @@ func (s *RelayStore) ListPostsByAnchor(anchorID, sort string, limit int) ([]*Soc
 	case "new":
 		query = `SELECT ` + cols + ` ` + base + ` ORDER BY COALESCE(p.published_at, p.created_at) DESC LIMIT ?`
 	default: // "hot"
-		query = `SELECT ` + cols + ` ` + base + ` ORDER BY pa.similarity * p.mass * exp(-1.386 * (julianday('now') - julianday(COALESCE(p.published_at, p.created_at)))) DESC LIMIT ?`
+		query = `SELECT ` + cols + ` ` + base + ` ORDER BY pa.similarity * p.mass * exp(-1.386 * MAX(0, julianday('now') - julianday(COALESCE(p.published_at, p.created_at)))) DESC LIMIT ?`
 	}
 
 	rows, err := s.db.Query(query, anchorID, limit)
@@ -599,7 +599,7 @@ func (s *RelayStore) TopPostsByAnchor() (map[string]topPost, error) {
 // liveDecaySQL computes decay at query time with 12-hour half-life.
 // k = ln(2)/0.5 = 1.386. Mostly today's content; exceptional posts survive ~3 days.
 // Uses published_at if available, otherwise created_at.
-const liveDecaySQL = `mass * exp(-1.386 * (julianday('now') - julianday(COALESCE(published_at, created_at))))`
+const liveDecaySQL = `mass * exp(-1.386 * MAX(0, julianday('now') - julianday(COALESCE(published_at, created_at))))`
 
 // periodFilter returns a SQL WHERE clause fragment for time-period sorts.
 func periodFilter(prefix string) map[string]string {
