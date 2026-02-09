@@ -28,7 +28,7 @@ func serveCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the wingthing web server",
+		Short: "Start the wt.ai web server",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -51,12 +51,12 @@ func serveCmd() *cobra.Command {
 					embedders = append(embedders, emb)
 				}
 			}
-			if len(embedders) == 0 {
-				return fmt.Errorf("no embedder available — install ollama or set OPENAI_API_KEY")
-			}
 
-			// Primary embedder for server API (first available)
-			primaryEmb := embedders[0]
+			// Primary embedder for server API (nil = read-only mode, no new posts)
+			var primaryEmb embedding.Embedder
+			if len(embedders) > 0 {
+				primaryEmb = embedders[0]
+			}
 
 			spacesPath := spacesFlag
 			if spacesPath == "" {

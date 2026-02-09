@@ -990,6 +990,25 @@ bash /tmp/compress_and_post.sh ./wt                            # compress via cl
 - Master key: local admin can push weighted summaries to prod (authenticated POST with mass > 1)
 - Run pipeline idly during work — effectively free summarization via $200 plan sonnet budget
 
+### Tomorrow (Fly Production)
+
+- [ ] Register GitHub OAuth app at github.com/settings/developers (callback: https://wt.ai/auth/github/callback)
+- [ ] Set fly secrets: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, OPENAI_API_KEY
+- [ ] wt sync push CLI command: export local posts → POST /api/sync/push to remote
+- [ ] Set up daily pipeline cron: fetch → compress → post → sync push
+
+### Self-Hosting Pass
+
+The copy and docs don't make it clear that wt.ai/social is fundamentally a self-hostable AI-powered RSS reader. Anyone can run their own instance with their own feeds, their own spaces, their own scoring. The relay is just one hosted instance.
+
+- [ ] Landing page / home.html copy: explain self-hosting clearly ("run your own wt.ai")
+- [ ] Self-hosting section in README: `docker run` or `fly deploy` one-liner
+- [ ] Make it obvious social = curated RSS aggregator, not just "a link site"
+- [ ] Document the pipeline: feeds.md → pipeline.go → compress → post (your own content)
+- [ ] Document embedder options: ollama (free/local) vs openai (cheap/remote)
+- [ ] Config example for self-hosters: custom feeds, custom spaces, custom scoring
+- [ ] wt sync push/pull CLI commands: push local posts to remote instance, pull from another
+
 ### Relay Business Model
 
 Relay is the paid hosted layer:

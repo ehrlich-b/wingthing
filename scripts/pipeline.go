@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Pipeline: fetch RSS feeds from feeds.md, extract articles, output as TSV.
 // Usage: go run pipeline.go /path/to/feeds.md
 // TSV format: SOURCE\tTITLE\tLINK\tDATE\tTEXT

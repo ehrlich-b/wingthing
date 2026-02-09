@@ -5,7 +5,7 @@ primary_region = "ewr"
 
 [env]
   HOME = "/data"
-  WT_BASE_URL = "https://wt.ai"
+  WT_BASE_URL = "https://wingthing.ai"
 
 [http_service]
   internal_port = 8080
