@@ -329,23 +329,52 @@ body {
 .box-menu-btn.active { opacity: 1; }
 .box-menu-btn:hover { color: var(--accent); }
 
-.box-detail {
-    padding: 8px 10px;
-    border-top: 1px solid var(--border);
-    font-size: 11px;
+.box-detail-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+}
+.box-detail-overlay.open { display: flex; }
+
+.box-detail-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+}
+
+.box-detail-dialog {
+    position: relative;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    min-width: 320px;
+    max-width: 420px;
+    font-size: 13px;
+    z-index: 1;
+}
+
+.box-detail-dialog h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 12px;
 }
 
 .detail-row {
     display: flex;
-    gap: 8px;
-    padding: 2px 0;
-    line-height: 1.4;
+    gap: 10px;
+    padding: 4px 0;
+    line-height: 1.5;
 }
 
 .detail-key {
     color: var(--text-dim);
-    min-width: 70px;
+    min-width: 80px;
     flex-shrink: 0;
+    font-size: 12px;
 }
 
 .detail-val {
@@ -358,9 +387,20 @@ body {
 
 .text-dim { color: var(--text-dim); }
 
-.box-detail .btn-sm {
-    margin-top: 6px;
+.box-detail-dialog .btn-sm {
+    margin-top: 10px;
     width: 100%;
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+.box-detail-dialog .detail-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
 }
 
 .btn-accent {
@@ -410,7 +450,8 @@ body {
     pointer-events: none;
 }
 
-.egg-preview:has(img)::after { display: none; }
+.egg-preview:has(img)::after,
+.egg-preview:has(.chat-icon)::after { display: none; }
 
 .egg-preview img {
     width: 100%;
@@ -419,6 +460,18 @@ body {
     image-rendering: auto;
     position: relative;
     z-index: 1;
+}
+
+.chat-icon {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;
+    color: var(--text-muted);
+    letter-spacing: 2px;
+    user-select: none;
 }
 
 .egg-footer {

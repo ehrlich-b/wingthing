@@ -35,6 +35,9 @@ let chatInstance = null;
 let pendingHistory = null;
 
 // DOM refs
+const detailOverlay = document.getElementById('detail-overlay');
+const detailBackdrop = document.getElementById('detail-backdrop');
+const detailDialog = document.getElementById('detail-dialog');
 const sessionTabs = document.getElementById('session-tabs');
 const newSessionBtn = document.getElementById('new-session-btn');
 const homeBtn = document.getElementById('home-btn');
@@ -384,6 +387,8 @@ async function loadHome() {
     }
 
     sessionsData = sortSessionsByOrder(sessions);
+    // Lock in order so new sessions get a stable position immediately
+    setEggOrder(sessionsData.map(function(s) { return s.id; }));
     setCachedSessions(sessionsData);
 
     // Merge live wings with cached wings (stable by machine_id)
@@ -646,47 +651,95 @@ function saveEggOrder() {
     sessionsData = reordered;
 }
 
-function setupBoxMenus(container) {
-    container.querySelectorAll('.box-menu-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var box = btn.closest('.wing-box, .egg-box');
-            if (!box) return;
-            var detail = box.querySelector('.box-detail');
-            if (!detail) return;
-            var isOpen = detail.style.display !== 'none';
-            // Close all other open details in this container
-            container.querySelectorAll('.box-detail').forEach(function(d) { d.style.display = 'none'; });
-            container.querySelectorAll('.box-menu-btn').forEach(function(b) { b.classList.remove('active'); });
-            if (!isOpen) {
-                detail.style.display = '';
-                btn.classList.add('active');
-            }
-        });
-    });
+function hideDetailModal() {
+    detailOverlay.classList.remove('open');
+    detailDialog.innerHTML = '';
+}
 
-    // Wing update buttons
-    container.querySelectorAll('.wing-update-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var wingId = btn.dataset.wingId;
-            btn.textContent = 'updating...';
-            btn.disabled = true;
-            fetch('/api/app/wings/' + wingId + '/update', { method: 'POST' })
+function showWingDetail(machineId) {
+    var w = wingsData.find(function(w) { return w.machine_id === machineId; });
+    if (!w) return;
+    var name = w.machine_id || w.id.substring(0, 8);
+    var projList = (w.projects || []).map(function(p) {
+        return '<div class="detail-subitem">' + escapeHtml(p.name) + ' <span class="text-dim">' + escapeHtml(shortenPath(p.path)) + '</span></div>';
+    }).join('') || '<span class="text-dim">none</span>';
+    var pubKeyShort = w.public_key ? w.public_key.substring(0, 16) + '...' : 'none';
+
+    detailDialog.innerHTML =
+        '<h3>' + escapeHtml(name) + '</h3>' +
+        '<div class="detail-row"><span class="detail-key">wing id</span><span class="detail-val text-dim">' + escapeHtml(w.id || '') + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(w.platform || 'unknown') + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + escapeHtml((w.agents || []).join(', ') || 'none') + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">labels</span><span class="detail-val">' + escapeHtml((w.labels || []).join(', ') || 'none') + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">public key</span><span class="detail-val text-dim">' + escapeHtml(pubKeyShort) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>' +
+        (w.online !== false ? '<div class="detail-actions"><button class="btn-sm btn-accent" id="detail-wing-update">update wing</button></div>' : '');
+
+    detailOverlay.classList.add('open');
+
+    var updateBtn = document.getElementById('detail-wing-update');
+    if (updateBtn) {
+        updateBtn.addEventListener('click', function() {
+            updateBtn.textContent = 'updating...';
+            updateBtn.disabled = true;
+            fetch('/api/app/wings/' + w.id + '/update', { method: 'POST' })
                 .then(function(r) { return r.json(); })
-                .then(function() { btn.textContent = 'sent'; })
-                .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+                .then(function() { updateBtn.textContent = 'sent'; })
+                .catch(function() { updateBtn.textContent = 'failed'; updateBtn.disabled = false; });
         });
+    }
+}
+
+function showEggDetail(sessionId) {
+    var s = sessionsData.find(function(s) { return s.id === sessionId; });
+    if (!s) return;
+    var name = projectName(s.cwd);
+    var kind = s.kind || 'terminal';
+    var wingName = '';
+    if (s.wing_id) {
+        var wing = wingsData.find(function(w) { return w.id === s.wing_id; });
+        if (wing) wingName = wing.machine_id || '';
+    }
+    var cwdDisplay = s.cwd ? shortenPath(s.cwd) : '~';
+
+    detailDialog.innerHTML =
+        '<h3>' + escapeHtml(name) + ' &middot; ' + escapeHtml(s.agent || '?') + '</h3>' +
+        '<div class="detail-row"><span class="detail-key">session</span><span class="detail-val text-dim">' + escapeHtml(s.id) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">wing</span><span class="detail-val">' + escapeHtml(wingName || 'unknown') + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">type</span><span class="detail-val">' + escapeHtml(kind) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">agent</span><span class="detail-val">' + escapeHtml(s.agent || '?') + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">cwd</span><span class="detail-val text-dim">' + escapeHtml(cwdDisplay) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">status</span><span class="detail-val">' + escapeHtml(s.status || 'unknown') + '</span></div>' +
+        '<div class="detail-actions">' +
+            '<button class="btn-sm btn-accent" id="detail-egg-connect">connect</button>' +
+            '<button class="btn-sm btn-danger" id="detail-egg-delete">delete session</button>' +
+        '</div>';
+
+    detailOverlay.classList.add('open');
+
+    document.getElementById('detail-egg-connect').addEventListener('click', function() {
+        hideDetailModal();
+        if (kind === 'chat') {
+            window._openChat(sessionId, s.agent || 'claude');
+        } else {
+            switchToSession(sessionId);
+        }
     });
 
-    // Egg delete from detail panel
-    container.querySelectorAll('.egg-delete-detail').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            window._deleteSession(btn.dataset.sid);
-        });
+    document.getElementById('detail-egg-delete').addEventListener('click', function() {
+        hideDetailModal();
+        window._deleteSession(sessionId);
     });
 }
+
+// Wire up detail modal close
+detailBackdrop.addEventListener('click', hideDetailModal);
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && detailOverlay.classList.contains('open')) {
+        e.stopImmediatePropagation();
+        hideDetailModal();
+    }
+});
 
 function renderDashboard() {
     // Wing boxes
@@ -697,11 +750,7 @@ function renderDashboard() {
             var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
-            var projList = (w.projects || []).map(function(p) {
-                return '<div class="detail-subitem">' + escapeHtml(p.name) + ' <span class="text-dim">' + escapeHtml(shortenPath(p.path)) + '</span></div>';
-            }).join('') || '<span class="text-dim">none</span>';
-            var pubKeyShort = w.public_key ? w.public_key.substring(0, 16) + '...' : 'none';
-            return '<div class="wing-box" draggable="true" data-machine-id="' + escapeHtml(w.machine_id || '') + '" data-wing-id="' + escapeHtml(w.id || '') + '">' +
+            return '<div class="wing-box" draggable="true" data-machine-id="' + escapeHtml(w.machine_id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
                     '<span class="wing-name">' + escapeHtml(name) + '</span>' +
@@ -712,21 +761,21 @@ function renderDashboard() {
                     '<span>' + escapeHtml(plat) + '</span>' +
                     (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>') +
                 '</div>' +
-                '<div class="box-detail" style="display:none">' +
-                    '<div class="detail-row"><span class="detail-key">wing id</span><span class="detail-val text-dim">' + escapeHtml(w.id || '') + '</span></div>' +
-                    '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(w.platform || 'unknown') + '</span></div>' +
-                    '<div class="detail-row"><span class="detail-key">labels</span><span class="detail-val">' + escapeHtml((w.labels || []).join(', ') || 'none') + '</span></div>' +
-                    '<div class="detail-row"><span class="detail-key">public key</span><span class="detail-val text-dim">' + escapeHtml(pubKeyShort) + '</span></div>' +
-                    '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>' +
-                    (w.online !== false ? '<button class="btn-sm btn-accent wing-update-btn" data-wing-id="' + escapeHtml(w.id || '') + '">update wing</button>' : '') +
-                '</div>' +
             '</div>';
         }).join('');
         wingHtml += '</div>';
         wingStatusEl.innerHTML = wingHtml;
 
         setupWingDrag();
-        setupBoxMenus(wingStatusEl);
+
+        // Wire wing menu buttons
+        wingStatusEl.querySelectorAll('.wing-box .box-menu-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var mid = btn.closest('.wing-box').dataset.machineId;
+                showWingDetail(mid);
+            });
+        });
     } else {
         wingStatusEl.innerHTML = '';
     }
@@ -749,18 +798,20 @@ function renderDashboard() {
         var dotClass = isActive ? 'live' : 'detached';
         if (needsAttention) dotClass = 'attention';
 
-        var thumbUrl = '';
-        try { thumbUrl = localStorage.getItem(TERM_THUMB_PREFIX + s.id) || ''; } catch(e) {}
-        var previewHtml = thumbUrl
-            ? '<img src="' + thumbUrl + '" alt="">'
-            : '';
+        var previewHtml = '';
+        if (kind === 'chat') {
+            previewHtml = '<div class="chat-icon">T</div>';
+        } else {
+            var thumbUrl = '';
+            try { thumbUrl = localStorage.getItem(TERM_THUMB_PREFIX + s.id) || ''; } catch(e) {}
+            if (thumbUrl) previewHtml = '<img src="' + thumbUrl + '" alt="">';
+        }
 
         var wingName = '';
         if (s.wing_id) {
             var wing = wingsData.find(function(w) { return w.id === s.wing_id; });
             if (wing) wingName = wing.machine_id || '';
         }
-        var cwdDisplay = s.cwd ? shortenPath(s.cwd) : '~';
 
         return '<div class="egg-box" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<div class="egg-preview">' + previewHtml + '</div>' +
@@ -769,17 +820,8 @@ function renderDashboard() {
                 '<span class="egg-label">' + escapeHtml(name) + ' \u00b7 ' + escapeHtml(s.agent || '?') +
                     (needsAttention ? ' \u00b7 !' : '') + '</span>' +
                 '<button class="box-menu-btn" title="details">\u22ef</button>' +
-                '<button class="btn-sm btn-danger egg-delete" data-sid="' + s.id + '">x</button>' +
             '</div>' +
             (wingName ? '<div class="egg-wing">' + escapeHtml(wingName) + '</div>' : '') +
-            '<div class="box-detail" style="display:none">' +
-                '<div class="detail-row"><span class="detail-key">session</span><span class="detail-val text-dim">' + escapeHtml(s.id) + '</span></div>' +
-                '<div class="detail-row"><span class="detail-key">wing</span><span class="detail-val">' + escapeHtml(wingName || 'unknown') + '</span></div>' +
-                '<div class="detail-row"><span class="detail-key">agent</span><span class="detail-val">' + escapeHtml(s.agent || '?') + '</span></div>' +
-                '<div class="detail-row"><span class="detail-key">cwd</span><span class="detail-val text-dim">' + escapeHtml(cwdDisplay) + '</span></div>' +
-                '<div class="detail-row"><span class="detail-key">status</span><span class="detail-val">' + escapeHtml(s.status || 'unknown') + '</span></div>' +
-                '<button class="btn-sm btn-danger egg-delete-detail" data-sid="' + s.id + '">delete session</button>' +
-            '</div>' +
         '</div>';
     }).join('');
     eggHtml += '</div>';
@@ -787,7 +829,7 @@ function renderDashboard() {
 
     sessionsList.querySelectorAll('.egg-box').forEach(function(card) {
         card.addEventListener('click', function(e) {
-            if (e.target.closest('.egg-delete, .box-menu-btn, .box-detail')) return;
+            if (e.target.closest('.box-menu-btn')) return;
             var sid = card.dataset.sid;
             var kind = card.dataset.kind;
             var agent = card.dataset.agent;
@@ -799,15 +841,16 @@ function renderDashboard() {
         });
     });
 
-    sessionsList.querySelectorAll('.egg-delete').forEach(function(btn) {
+    // Wire egg menu buttons
+    sessionsList.querySelectorAll('.egg-box .box-menu-btn').forEach(function(btn) {
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
-            window._deleteSession(btn.dataset.sid);
+            var sid = btn.closest('.egg-box').dataset.sid;
+            showEggDetail(sid);
         });
     });
 
     setupEggDrag();
-    setupBoxMenus(sessionsList);
 }
 
 // === Command Palette ===
