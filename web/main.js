@@ -754,10 +754,15 @@ function showEggDetail(sessionId) {
         }
     });
 
-    document.getElementById('detail-egg-delete').addEventListener('click', function() {
-        if (confirm('Close this session?')) {
+    var delBtn = document.getElementById('detail-egg-delete');
+    delBtn.addEventListener('click', function() {
+        if (delBtn.dataset.armed) {
             hideDetailModal();
             window._deleteSession(sessionId);
+        } else {
+            delBtn.dataset.armed = '1';
+            delBtn.textContent = 'are you sure?';
+            delBtn.classList.add('btn-armed');
         }
     });
 }
@@ -872,12 +877,21 @@ function renderDashboard() {
         });
     });
 
-    // Wire egg X buttons with confirmation
+    // Wire egg X buttons — click once to arm, click again to delete
     sessionsList.querySelectorAll('.egg-delete').forEach(function(btn) {
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
-            if (confirm('Close this session?')) {
+            if (btn.dataset.armed) {
                 window._deleteSession(btn.dataset.sid);
+            } else {
+                btn.dataset.armed = '1';
+                btn.textContent = 'sure?';
+                btn.classList.add('btn-armed');
+                setTimeout(function() {
+                    btn.dataset.armed = '';
+                    btn.textContent = 'x';
+                    btn.classList.remove('btn-armed');
+                }, 3000);
             }
         });
     });

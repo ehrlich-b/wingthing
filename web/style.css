@@ -857,6 +857,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     color: var(--text);
 }
 
+.btn-sm.btn-armed {
+    background: #8b0000;
+    color: #fff;
+    border-color: #8b0000;
+    opacity: 1;
+}
+
 /* === Mobile === */
 
 @media (max-width: 600px) {
