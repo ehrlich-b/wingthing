@@ -108,6 +108,19 @@ func (r *WingRegistry) ListForUser(userID string) []*ConnectedWing {
 	return result
 }
 
+// CountForUser returns the number of wings connected for a given user.
+func (r *WingRegistry) CountForUser(userID string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	n := 0
+	for _, w := range r.wings {
+		if w.UserID == userID {
+			n++
+		}
+	}
+	return n
+}
+
 // handleWingWS handles the WebSocket connection from a wing.
 func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
@@ -142,6 +155,12 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Per-user wing limit
+	if count := s.Wings.CountForUser(userID); count >= 5 {
+		http.Error(w, "too many wings connected", http.StatusTooManyRequests)
+		return
+	}
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true,
 	})
@@ -150,6 +169,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
+	conn.SetReadLimit(1 << 20) // 1MB max message
 
 	ctx := r.Context()
 

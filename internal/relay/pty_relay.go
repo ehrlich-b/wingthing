@@ -56,6 +56,19 @@ func (r *PTYRegistry) Get(id string) *PTYSession {
 	return r.sessions[id]
 }
 
+// CountForUser returns the number of PTY sessions for a given user.
+func (r *PTYRegistry) CountForUser(userID string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	n := 0
+	for _, s := range r.sessions {
+		if s.UserID == userID {
+			n++
+		}
+	}
+	return n
+}
+
 // ListForUser returns all PTY sessions for a given user.
 func (r *PTYRegistry) ListForUser(userID string) []*PTYSession {
 	r.mu.RLock()
@@ -112,6 +125,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
+	conn.SetReadLimit(1 << 20) // 1MB max message
 
 	ctx := r.Context()
 
@@ -151,6 +165,13 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		case ws.TypePTYStart:
 			var start ws.PTYStart
 			if err := json.Unmarshal(data, &start); err != nil {
+				continue
+			}
+
+			// Per-user session limit (PTY + chat combined)
+			if ptySess := s.PTY.CountForUser(userID); ptySess+s.Chat.CountForUser(userID) >= 20 {
+				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "session limit reached (20 max)"})
+				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
 			}
 
@@ -262,6 +283,15 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			var start ws.ChatStart
 			if err := json.Unmarshal(data, &start); err != nil {
 				continue
+			}
+
+			// Per-user session limit (PTY + chat combined) — skip for resume
+			if start.SessionID == "" {
+				if ptySess := s.PTY.CountForUser(userID); ptySess+s.Chat.CountForUser(userID) >= 20 {
+					errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "session limit reached (20 max)"})
+					conn.Write(ctx, websocket.MessageText, errMsg)
+					continue
+				}
 			}
 
 			wing := s.Wings.FindForUser(userID)
