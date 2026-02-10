@@ -96,6 +96,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("POST /auth/magic", s.handleMagicLink)
 	s.mux.HandleFunc("GET /auth/magic/verify", s.handleMagicVerify)
 	s.mux.HandleFunc("POST /auth/logout", s.handleLogout)
+	s.mux.HandleFunc("GET /auth/dev", s.handleDevLogin)
 
 	s.registerStaticRoutes()
 	return s

@@ -50,6 +50,20 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, token string) {
 	})
 }
 
+// handleDevLogin creates a session for the dev user. Only works in dev mode.
+func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.DevMode {
+		http.Error(w, "not available", http.StatusNotFound)
+		return
+	}
+	user, err := s.Store.CreateSocialUserDev()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.createSessionAndRedirect(w, r, user)
+}
+
 func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request, user *SocialUser) {
 	token := generateToken()
 	if err := s.Store.CreateSession(token, user.ID, time.Now().Add(sessionDuration)); err != nil {

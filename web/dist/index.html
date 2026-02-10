@@ -6,39 +6,45 @@
     <meta name="theme-color" content="#1a1a2e">
     <link rel="manifest" href="/app/assets/manifest-BpAsryLh.json">
     <title>wingthing</title>
-  <script type="module" crossorigin src="/app/assets/index-DofMSHwa.js"></script>
-  <link rel="stylesheet" crossorigin href="/app/assets/index-PGnWsMSK.css">
+  <script type="module" crossorigin src="/app/assets/index-B4alx7e2.js"></script>
+  <link rel="stylesheet" crossorigin href="/app/assets/index-BCcOjlkE.css">
 </head>
 <body>
     <div id="app">
         <header>
             <h1>wingthing</h1>
-            <nav id="mode-tabs">
-                <button class="tab active" data-mode="wings">wings</button>
-                <button class="tab" data-mode="terminal">terminal</button>
-            </nav>
-            <div id="user-info"></div>
+            <div id="header-right">
+                <span id="pty-status"></span>
+                <div class="split-btn small" id="header-launch" style="display:none;">
+                    <button id="header-launch-btn" class="split-main">new terminal</button>
+                    <button class="split-toggle" id="header-launch-toggle">&#9662;</button>
+                    <div class="split-menu" id="header-launch-menu"></div>
+                </div>
+                <div id="user-info"></div>
+            </div>
         </header>
 
-        <!-- Wings Dashboard -->
-        <section id="wings-section">
-            <div id="wings-list"></div>
-            <div id="no-wings" style="display:none;">
-                <p>no wings connected</p>
-                <p class="hint">run <code>wt wing</code> on your machine to connect</p>
+        <!-- Home: sessions list or empty state -->
+        <section id="home-section">
+            <div id="sessions-list"></div>
+            <div id="empty-state" style="display:none;">
+                <p>no active sessions</p>
+                <p class="hint">run <code>wt wing</code> on your machine, then start a session here</p>
+                <div class="launch-buttons">
+                    <div class="split-btn primary">
+                        <button id="launch-terminal-btn" class="split-main">Claude Code Terminal</button>
+                        <button class="split-toggle" id="terminal-toggle">&#9662;</button>
+                        <div class="split-menu" id="terminal-menu"></div>
+                    </div>
+                </div>
             </div>
         </section>
 
-        <!-- Terminal Mode -->
+        <!-- Terminal view -->
         <section id="terminal-section" style="display:none;">
             <div id="terminal-controls">
-                <select id="agent-select">
-                    <option value="claude">claude</option>
-                    <option value="codex">codex</option>
-                    <option value="ollama">ollama</option>
-                </select>
-                <button id="connect-btn">connect</button>
-                <span id="pty-status"></span>
+                <button id="back-btn">&larr; back</button>
+                <button id="disconnect-btn" style="display:none;">disconnect</button>
             </div>
             <div id="terminal-container"></div>
             <div id="modifier-keys">

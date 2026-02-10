@@ -266,7 +266,7 @@ func (s *RelayStore) CreateSocialUserDev() (*SocialUser, error) {
 		return u, nil
 	}
 	u = &SocialUser{
-		ID:          "dev-user",
+		ID:          "test-user",
 		Provider:    "dev",
 		ProviderID:  "dev",
 		DisplayName: "dev",
