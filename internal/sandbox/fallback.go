@@ -36,12 +36,19 @@ func (s *fallbackSandbox) Destroy() error {
 }
 
 func (s *fallbackSandbox) buildEnv() []string {
-	env := []string{
-		"PATH=/usr/bin:/bin",
-		"HOME=" + s.tmpDir,
-		"TMPDIR=" + s.tmpDir,
+	// Fallback sandbox is process-level isolation only (not a real sandbox).
+	// Pass through the full environment so agents can authenticate (keychain,
+	// session tokens, etc). Override TMPDIR for isolation. Real sandboxing
+	// happens via Apple Containers (macOS) or namespaces (Linux).
+	env := os.Environ()
+	filtered := env[:0]
+	for _, e := range env {
+		if len(e) > 7 && e[:7] == "TMPDIR=" {
+			continue
+		}
+		filtered = append(filtered, e)
 	}
-	return env
+	return append(filtered, "TMPDIR="+s.tmpDir)
 }
 
 func (s *fallbackSandbox) setLimits(cmd *exec.Cmd) {

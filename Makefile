@@ -1,7 +1,9 @@
 .PHONY: build test check clean web serve
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 build:
-	go build -o wt ./cmd/wt
+	go build -ldflags "-X main.version=$(VERSION)" -o wt ./cmd/wt
 
 test:
 	go test ./...

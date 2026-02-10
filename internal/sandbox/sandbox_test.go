@@ -80,25 +80,19 @@ func TestFallbackRestrictedEnv(t *testing.T) {
 	fb := sb.(*fallbackSandbox)
 	env := fb.buildEnv()
 
-	var hasPath, hasHome, hasTmpdir bool
+	// Fallback sandbox passes through full env, overrides TMPDIR only
+	var hasTmpdir bool
 	for _, e := range env {
-		switch {
-		case len(e) > 5 && e[:5] == "PATH=":
-			hasPath = true
-			if e != "PATH=/usr/bin:/bin" {
-				t.Errorf("PATH = %q, want PATH=/usr/bin:/bin", e)
-			}
-		case len(e) > 5 && e[:5] == "HOME=":
-			hasHome = true
-			if e != "HOME="+fb.tmpDir {
-				t.Errorf("HOME = %q, want HOME=%s", e, fb.tmpDir)
-			}
-		case len(e) > 7 && e[:7] == "TMPDIR=":
+		if len(e) > 7 && e[:7] == "TMPDIR=" {
 			hasTmpdir = true
+			want := "TMPDIR=" + fb.tmpDir
+			if e != want {
+				t.Errorf("TMPDIR = %q, want %q", e, want)
+			}
 		}
 	}
-	if !hasPath || !hasHome || !hasTmpdir {
-		t.Errorf("missing env vars: path=%v home=%v tmpdir=%v", hasPath, hasHome, hasTmpdir)
+	if !hasTmpdir {
+		t.Errorf("missing TMPDIR in env")
 	}
 }
 

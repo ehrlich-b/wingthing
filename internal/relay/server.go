@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/ehrlich-b/wingthing/internal/embedding"
 	"github.com/ehrlich-b/wingthing/web"
@@ -27,14 +28,21 @@ type Server struct {
 	Embedder       embedding.Embedder
 	Config         ServerConfig
 	DevTemplateDir string // if set, re-read templates from disk on each request
+	Wings          *WingRegistry
 	mux            *http.ServeMux
+
+	// Stream subscribers: taskID → list of channels receiving output chunks
+	streamMu   sync.RWMutex
+	streamSubs map[string][]chan string
 }
 
 func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s := &Server{
-		Store:  store,
-		Config: cfg,
-		mux:    http.NewServeMux(),
+		Store:      store,
+		Config:     cfg,
+		Wings:      NewWingRegistry(),
+		mux:        http.NewServeMux(),
+		streamSubs: make(map[string][]chan string),
 	}
 
 	// API routes
@@ -52,6 +60,12 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /api/comments", s.handleListComments)
 	s.mux.HandleFunc("POST /api/sync/push", s.handleSyncPush)
 	s.mux.HandleFunc("GET /api/sync/pull", s.handleSyncPull)
+
+	// Relay: worker WebSocket + task API
+	s.mux.HandleFunc("GET /ws/wing", s.handleWingWS)
+	s.mux.HandleFunc("POST /api/tasks", s.handleSubmitTask)
+	s.mux.HandleFunc("GET /api/tasks", s.handleListTasks)
+	s.mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
 
 	// Web pages
 	s.mux.HandleFunc("GET /{$}", s.handleHome)

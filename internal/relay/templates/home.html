@@ -1,4 +1,4 @@
-{{define "title"}}wt — your ai swiss army knife{{end}}
+{{define "title"}}wt — your agentic swiss army knife{{end}}
 {{define "head"}}
 <style>
 .hero{padding:28px 0 20px}
@@ -33,8 +33,8 @@
 {{end}}
 {{define "content"}}
 <div class="hero">
-<h1>your ai swiss army knife</h1>
-<p class="tagline">One CLI, every agentic backend. New tool drops, <code>wt skill add</code> it. Done.</p>
+<h1>your agentic swiss army knife</h1>
+<p class="tagline">One CLI, every backend. New agent framework, no problem — we support it the next day.</p>
 </div>
 <div class="install">
 <span class="prompt">$ </span><span class="cmd">go install github.com/ehrlich-b/wingthing/cmd/wt@latest</span>
@@ -42,7 +42,11 @@
 <div class="pitch">
 <div class="pitch-item">
 <span class="label">any agent</span>
-<span class="desc">Claude Code, Ollama, Gemini. Swap with a flag. <code>--agent ollama</code> for free, <code>--agent claude</code> to invoke Claude Code in a sandbox for the hard stuff.</span>
+<span class="desc">Claude Code, Ollama, Gemini. Swap with a flag. <code>--agent ollama</code> for free, <code>--agent claude</code> for the hard stuff.</span>
+</div>
+<div class="pitch-item">
+<span class="label">relay</span>
+<span class="desc">Tailscale for agents. Run <code>wt wing</code>, your machine is reachable from anywhere. Submit tasks from your phone, they run in a sandbox on your box.</span>
 </div>
 <div class="pitch-item">
 <span class="label">skills</span>
@@ -70,6 +74,7 @@
 <span class="line"><span class="prompt">$ </span><span class="cmd">wt --skill compress --agent ollama</span></span>
 <span class="line"><span class="prompt">$ </span><span class="cmd">wt schedule list</span></span>
 <span class="line"><span class="prompt">$ </span><span class="cmd">wt thread</span><span class="comment">                 # what happened today</span></span>
+<span class="line"><span class="prompt">$ </span><span class="cmd">wt wing</span><span class="comment">                   # your machine, reachable from anywhere</span></span>
 <span class="line"><span class="prompt">$ </span><span class="cmd">wt doctor</span><span class="comment">                 # detect agents, keys, services</span></span>
 </div>
 <div class="links">

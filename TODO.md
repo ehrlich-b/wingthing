@@ -6,9 +6,22 @@ Reference: [DRAFT.md](DRAFT.md) for full design. This file is the build plan.
 
 ## Vision
 
-`wt` is openrouter for agents on your local machine. AI moves too fast — new frameworks every two weeks. You shouldn't have to learn each one. Learn `wt`, and our APIs wrap all the providers. New thing drops? `wt skill add [new-thing]`. Done.
+**Tailscale for agents.** Not over the big names, not under them — between them.
 
-The skill library is the product. Checked into the repo, validated, ever-growing. You enable what you want, disable what you don't. Bring your own skills too. Every skill works with every agent backend (`--agent ollama`, `--agent claude`, `--agent gemini`). Swiss army knife.
+Nobody is going to win the agent race. They all are. Everyone will use multiple agents.
+Claude wants you on Claude. Codex wants you on Codex. They'll never build first-class
+support for each other. `wt` is the cross-platform distribution layer that none of them
+can ever be — the glue that holds them all together.
+
+Install, login, it works. Skills are the portable format — `wt` translates them into each
+agent's native mechanism (system prompts, CLAUDE.md, instruction flags, config files).
+Every agent runs at full power. No lowest common denominator. No prompt pipe.
+
+The relay is a cryptographically-verified dumb pipe. Ed25519 signed commands, E2E encrypted.
+The relay operator can't forge commands to your machine. Your agents, your keys, your data.
+
+**The moat:** curated skill library + cross-agent native installation + sandboxed execution
++ signed relay. Anyone can build a CLI wrapper. Nobody else is building this stack.
 
 ## Now
 
@@ -990,24 +1003,169 @@ bash /tmp/compress_and_post.sh ./wt                            # compress via cl
 - Master key: local admin can push weighted summaries to prod (authenticated POST with mass > 1)
 - Run pipeline idly during work — effectively free summarization via $200 plan sonnet budget
 
-### Tomorrow (Fly Production)
+### v0 — Wings (Tailscale for Agents)
 
-- [ ] Register GitHub OAuth app at github.com/settings/developers (callback: https://wt.ai/auth/github/callback)
-- [ ] Set fly secrets: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, OPENAI_API_KEY
-- [ ] wt sync push CLI command: export local posts → POST /api/sync/push to remote
-- [ ] Set up daily pipeline cron: fetch → compress → post → sync push
+A wing is your machine, reachable from anywhere. Run `wt wing`, it connects outbound
+to the relay. Talk to your wing from your phone. Same experience as sitting at the
+keyboard — because it IS running on your keyboard. You're just not there.
 
-### Self-Hosting Pass
+**This is not a new agent framework.** wt is a tool that makes you a great, consistent
+user of the existing ones. Claude Code, Ollama, Gemini — `wt wing` makes them all
+reachable remotely. That's it. You shouldn't have to walk over to your computer.
 
-The copy and docs don't make it clear that wt.ai/social is fundamentally a self-hostable AI-powered RSS reader. Anyone can run their own instance with their own feeds, their own spaces, their own scoring. The relay is just one hosted instance.
+**The four pillars:**
+1. **Relay** — Tailscale for agents. Your wing, reachable from anywhere.
+2. **Social** — HN for everything. AI-curated link aggregator across 159 spaces.
+3. **Skills** — Curated library. Markdown with superpowers, not a malware marketplace.
+4. **Sandbox** — Containers by default. Apple Containers on Mac, namespaces on Linux.
 
-- [ ] Landing page / home.html copy: explain self-hosting clearly ("run your own wt.ai")
-- [ ] Self-hosting section in README: `docker run` or `fly deploy` one-liner
-- [ ] Make it obvious social = curated RSS aggregator, not just "a link site"
-- [ ] Document the pipeline: feeds.md → pipeline.go → compress → post (your own content)
-- [ ] Document embedder options: ollama (free/local) vs openai (cheap/remote)
-- [ ] Config example for self-hosters: custom feeds, custom spaces, custom scoring
-- [ ] wt sync push/pull CLI commands: push local posts to remote instance, pull from another
+---
+
+#### How Wings Work
+
+```bash
+# Start a wing — your machine is now reachable
+wt wing
+
+# Self-hosted relay
+wt wing --relay https://my-relay.example.com
+
+# With labels
+wt wing --labels gpu,cuda,research
+```
+
+Your wing connects outbound to the relay via WebSocket. No port forwarding, no tunneling,
+no static IP. Works behind any NAT/firewall.
+
+When you send a prompt from your phone (PWA) or another machine, the relay routes it
+to your wing. Your wing runs it locally — same orchestrator, same sandbox, same agents,
+same memory. Output streams back in real-time.
+
+**A wing is just `runTask()` with a different input source.** Today you type
+`wt "summarize my git log"` at the keyboard. With a wing, the prompt arrives over
+WebSocket instead. Everything else is identical.
+
+#### Per-Wing Memory
+
+Each wing has its own identity and remembers your conversations. When you talk to
+your wing remotely, it's the same as `wt "prompt"` locally — the wing has your
+`~/.wingthing/memory/`, your thread, your skills, your config. Nothing crosses the
+wire except prompts and outputs.
+
+**Conversation modes:**
+
+| Mode | Behavior |
+|------|----------|
+| `auto` (default) | One rolling conversation per day, resets at midnight |
+| `new` | Fresh conversation, no prior context |
+| Named | `--conv project-x` for persistent topic threads |
+
+The default daily conversation means your wing accumulates context as you talk to it
+throughout the day, just like it does locally. Send a task at 10am, send another at 3pm,
+the afternoon task sees the morning's context in the thread.
+
+#### Nightly Dreaming
+
+At the end of each day, the wing runs a summarization pass over the day's thread:
+
+1. Load today's thread entries (all tasks, all agents, all outputs)
+2. Run a compress/summarize skill against the thread
+3. Extract key decisions, important outputs, recurring patterns
+4. Append to long-term `memory.md` in `~/.wingthing/memory/`
+
+Tomorrow's thread starts fresh, but the wing remembers yesterday. The dreaming skill
+uses whatever format the underlying agent supports — `wt` doesn't impose its own
+memory format. If you use Claude, it's Claude's style. Ollama, whatever model you run.
+
+**Dreaming is a skill, not magic.** It's `wt --skill dream` on a cron job. You can
+customize or replace it. The default ships in `skills/dream.md`.
+
+#### Wing-to-Wing (Later)
+
+v0 is you talking to your wing. One person, one machine, remote access.
+
+Later: wings talk to each other. Your home GPU wing runs inference, your cloud wing
+does web scraping, your work wing has access to internal APIs. They coordinate via
+the thread — each wing sees what the others did.
+
+Not v0.
+
+---
+
+#### v0 Implementation Checklist
+
+##### Wing Mode (DONE)
+- [x] `internal/ws/protocol.go` — message types: wing.register, wing.heartbeat, task.submit/chunk/done/error
+- [x] `internal/ws/client.go` — outbound WebSocket client with auto-reconnect (1s→60s backoff)
+- [x] `cmd/wt/wing.go` — `wt wing` command: connect, register, receive tasks, execute via orchestrator+sandbox
+- [x] `internal/relay/workers.go` — WingRegistry, WebSocket handler, task dispatch, offline queue drain
+- [x] `internal/relay/relay_tasks.go` — CRUD for relay_tasks table
+- [x] `internal/relay/task_handlers.go` — POST/GET /api/tasks
+- [x] `internal/relay/migrations/009_relay_tasks.sql` — relay_tasks schema
+
+##### v0.1 — Interactive Terminal Relay
+
+Relay an interactive Claude Code (or any agent) terminal session over WebSocket to
+a browser running xterm.js. Not task-based fire-and-forget — a live PTY session.
+
+```
+Browser (xterm.js)  ←→  WebSocket  ←→  Relay  ←→  WebSocket  ←→  Wing (PTY)
+     stdin/stdout bytes, dumb pipe, no interpretation
+```
+
+The wing allocates a PTY, spawns `claude` (or `ollama`, whatever), and pipes the raw
+terminal bytes over the existing WebSocket connection. The browser renders them in
+xterm.js. Keystrokes go back the same way. The relay is still a dumb pipe — it doesn't
+parse or understand the terminal stream, just forwards bytes.
+
+**Bandwidth:** ~1-5 KB/s active output, <100 bytes/s idle. A heavy day is 50-100 MB.
+Pennies on any hosting provider.
+
+**Why this matters:** This is Claude Code from your phone. You're not reselling Claude —
+the user brings their own credentials. You're selling the remote access layer. Same wing,
+same WebSocket, two modes: task mode (fire-and-forget with streaming output) and
+interactive mode (persistent PTY session).
+
+**New message types:**
+```
+wing → relay:  { "type": "pty.output", "session_id": "...", "data": "base64..." }
+relay → wing:  { "type": "pty.input",  "session_id": "...", "data": "base64..." }
+relay → wing:  { "type": "pty.resize", "session_id": "...", "cols": 80, "rows": 24 }
+wing → relay:  { "type": "pty.started", "session_id": "...", "agent": "claude" }
+wing → relay:  { "type": "pty.exited",  "session_id": "...", "exit_code": 0 }
+```
+
+**Implementation:**
+- [ ] `internal/ws/protocol.go` — add pty.* message types
+- [ ] `cmd/wt/wing.go` — PTY allocation, spawn agent process, pipe I/O to WebSocket
+- [ ] `internal/relay/workers.go` — route pty messages between browser and wing
+- [ ] `web/` — xterm.js terminal component, connect via WebSocket to relay
+- [ ] Session management: start/stop/list interactive sessions via API
+- [ ] `GET /ws/terminal/{session_id}` — browser WebSocket endpoint for PTY stream
+
+##### Agent Adapters (v0)
+
+| Agent | CLI | Status |
+|-------|-----|--------|
+| Claude Code | `claude -p "prompt"` | **built** |
+| Ollama | `ollama run model "prompt"` | **built** |
+| Gemini | `gemini -p "prompt"` | **built** |
+| Codex | `codex exec "prompt" --json` | v0 — headless mode |
+| Cursor | `cursor --headless "prompt"` | v0 — headless mode |
+
+Codex and Cursor are v0 because wings should support every major agent framework
+out of the box. Same pattern as claude/ollama/gemini: detect binary, shell out,
+parse output. The adapters are in `internal/agent/`.
+
+##### Still TODO (v0)
+- [ ] Codex adapter: `internal/agent/codex.go` — NDJSON stream parsing
+- [ ] Cursor adapter: `internal/agent/cursor.go` — headless mode
+- [ ] Nightly dreaming: `skills/dream.md` + cron/schedule integration
+- [ ] Named conversations: `--conv` flag for persistent topic threads
+- [ ] PWA: task input, live output streaming, wing status, task history
+- [ ] ws.wingthing.ai: WebSocket subdomain that bypasses Cloudflare
+- [ ] Self-hosting docs: how to run your own relay, how sandbox works
+- [x] End-to-end test: `wt serve` + `wt wing` on same machine (verified: task submit → dispatch → execute → result)
 
 ### Relay Business Model
 

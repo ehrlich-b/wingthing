@@ -29,6 +29,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "dev"
+
 func main() {
 	var skillFlag string
 	var agentFlag string
@@ -36,10 +38,11 @@ func main() {
 	var noRun bool
 
 	root := &cobra.Command{
-		Use:   "wt [prompt]",
-		Short: "wingthing — local-first AI task runner",
-		Long:  "Orchestrates LLM agents on your behalf. Manages context, memory, and task timelines.",
-		Args:  cobra.MaximumNArgs(1),
+		Use:     "wt [prompt]",
+		Short:   "wingthing — local-first AI task runner",
+		Long:    "Orchestrates LLM agents on your behalf. Manages context, memory, and task timelines.",
+		Version: version,
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 && skillFlag == "" {
 				return cmd.Help()
@@ -118,6 +121,7 @@ func main() {
 		postCmd(),
 		voteCmd(),
 		commentCmd(),
+		wingCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
