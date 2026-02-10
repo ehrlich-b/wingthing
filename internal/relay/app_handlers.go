@@ -129,7 +129,7 @@ func (s *Server) requestSessionSync(ctx context.Context, userID string) {
 
 		msg := ws.SessionsList{Type: ws.TypeSessionsList, RequestID: reqID}
 		data, _ := json.Marshal(msg)
-		writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		writeCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		err := wing.Conn.Write(writeCtx, websocket.MessageText, data)
 		cancel()
 		if err != nil {
@@ -139,8 +139,8 @@ func (s *Server) requestSessionSync(ctx context.Context, userID string) {
 		reqs = append(reqs, pending{reqID: reqID, ch: ch})
 	}
 
-	// Wait for all responses (up to 2s)
-	deadline := time.After(2 * time.Second)
+	// Wait for all responses (up to 500ms)
+	deadline := time.After(500 * time.Millisecond)
 	for _, req := range reqs {
 		select {
 		case <-req.ch:
