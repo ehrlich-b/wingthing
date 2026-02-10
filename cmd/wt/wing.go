@@ -684,7 +684,7 @@ func reclaimEggSessions(ctx context.Context, ec *egg.Client, wsClient *ws.Client
 
 	for _, s := range resp.Sessions {
 		log.Printf("egg: reclaiming session %s (agent=%s pid=%d)", s.SessionId, s.Agent, s.Pid)
-		wsClient.SendReclaim(ctx, s.SessionId)
+		wsClient.SendReclaim(ctx, s.SessionId, s.Agent, s.Cwd)
 	}
 }
 
