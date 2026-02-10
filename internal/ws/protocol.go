@@ -119,6 +119,7 @@ type PTYStart struct {
 	Rows      int    `json:"rows"`
 	PublicKey string `json:"public_key,omitempty"` // browser's ephemeral X25519 (base64)
 	CWD       string `json:"cwd,omitempty"`        // working directory for the agent
+	WingID    string `json:"wing_id,omitempty"`   // target wing (picks first if empty)
 }
 
 // PTYStarted confirms the PTY session is running.

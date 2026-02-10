@@ -56,6 +56,7 @@ const commandPalette = document.getElementById('command-palette');
 const paletteBackdrop = document.getElementById('palette-backdrop');
 const paletteSearch = document.getElementById('palette-search');
 const paletteResults = document.getElementById('palette-results');
+const paletteWing = document.getElementById('palette-wing');
 const paletteAgent = document.getElementById('palette-agent');
 const paletteGo = document.getElementById('palette-go');
 
@@ -359,16 +360,33 @@ function showPalette() {
         };
     });
 
-    // Populate agent selector
-    var agents = availableAgents.length > 0
-        ? availableAgents.map(function(a) { return a.agent; })
-        : ['claude'];
+    // Populate wing selector
+    if (wingsData.length > 1) {
+        paletteWing.style.display = '';
+        paletteWing.innerHTML = wingsData.map(function(w) {
+            var name = w.machine_id || w.id.substring(0, 8);
+            return '<option value="' + escapeHtml(w.id) + '">' + escapeHtml(name) + '</option>';
+        }).join('');
+        paletteWing.onchange = function() { populateAgentsForWing(); updatePaletteForMode(); };
+    } else {
+        paletteWing.style.display = 'none';
+        paletteWing.innerHTML = wingsData.length === 1
+            ? '<option value="' + escapeHtml(wingsData[0].id) + '">' + escapeHtml(wingsData[0].machine_id || wingsData[0].id.substring(0, 8)) + '</option>'
+            : '';
+    }
+
+    populateAgentsForWing();
+    updatePaletteForMode();
+}
+
+function populateAgentsForWing() {
+    var wingId = paletteWing.value;
+    var wing = wingsData.find(function(w) { return w.id === wingId; });
+    var agents = wing && wing.agents && wing.agents.length > 0 ? wing.agents : ['claude'];
     var lastAgent = getLastTermAgent();
     paletteAgent.innerHTML = agents.map(function(a) {
         return '<option value="' + escapeHtml(a) + '"' + (a === lastAgent ? ' selected' : '') + '>' + escapeHtml(a) + '</option>';
     }).join('');
-
-    updatePaletteForMode();
 }
 
 function updatePaletteForMode() {
@@ -396,10 +414,14 @@ function renderPaletteResults(filter) {
         items.push({ name: 'default directory', path: '', selected: true });
     }
 
-    var filtered = allProjects;
+    var wingId = paletteWing.value;
+    var wingProjects = wingId
+        ? allProjects.filter(function(p) { return p.wingId === wingId; })
+        : allProjects;
+    var filtered = wingProjects;
     if (filter) {
         var lower = filter.toLowerCase();
-        filtered = allProjects.filter(function(p) {
+        filtered = wingProjects.filter(function(p) {
             return p.name.toLowerCase().indexOf(lower) !== -1 ||
                    p.path.toLowerCase().indexOf(lower) !== -1;
         });
@@ -463,6 +485,7 @@ function shortenPath(path) {
 
 function launchFromPalette(cwd) {
     var agent = paletteAgent.value;
+    var wingId = paletteWing.value || '';
     hidePalette();
     if (paletteMode === 'chat') {
         launchChat(agent);
@@ -470,7 +493,7 @@ function launchFromPalette(cwd) {
         setLastTermAgent(agent);
         showTerminal();
         // Only pass CWD if it's an absolute path
-        connectPTY(agent, (cwd && cwd.charAt(0) === '/') ? cwd : '');
+        connectPTY(agent, (cwd && cwd.charAt(0) === '/') ? cwd : '', wingId);
     }
 }
 
@@ -916,7 +939,7 @@ function setupPTYHandlers(ws, reattach) {
     };
 }
 
-function connectPTY(agent, cwd) {
+function connectPTY(agent, cwd, wingId) {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
 
@@ -939,6 +962,7 @@ function connectPTY(agent, cwd) {
             public_key: pubKeyB64,
         };
         if (cwd) startMsg.cwd = cwd;
+        if (wingId) startMsg.wing_id = wingId;
         ptyWs.send(JSON.stringify(startMsg));
     };
 
