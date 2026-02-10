@@ -2,7 +2,7 @@
 set -e
 
 REPO="ehrlich-b/wingthing"
-INSTALL_DIR="${WT_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${WT_INSTALL_DIR:-$HOME/.local/bin}"
 
 # Detect OS and architecture
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -39,16 +39,21 @@ curl -fsSL -o "$TMP" "$URL"
 chmod +x "$TMP"
 
 # Install
-if [ -w "$INSTALL_DIR" ]; then
-    mv "$TMP" "${INSTALL_DIR}/wt"
-else
-    echo "installing to ${INSTALL_DIR} (requires sudo)..."
-    sudo mv "$TMP" "${INSTALL_DIR}/wt"
-fi
+mkdir -p "$INSTALL_DIR"
+mv "$TMP" "${INSTALL_DIR}/wt"
 
 echo "installed wt ${TAG} to ${INSTALL_DIR}/wt"
+
+# Check if INSTALL_DIR is in PATH
+case ":$PATH:" in
+    *":${INSTALL_DIR}:"*) ;;
+    *) echo ""
+       echo "add to your PATH:"
+       echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+       ;;
+esac
+
 echo ""
 echo "get started:"
-echo "  wt init"
-echo "  wt doctor"
 echo "  wt login"
+echo "  wt wing -d"
