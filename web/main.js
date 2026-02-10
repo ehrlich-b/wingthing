@@ -991,6 +991,7 @@ function showHome() {
     chatSection.style.display = 'none';
     headerTitle.textContent = '';
     ptyStatus.textContent = '';
+    detachPTY();
     destroyChat();
     renderSidebar();
     renderDashboard();
@@ -1016,11 +1017,6 @@ function showChat() {
 }
 
 function switchToSession(sessionId) {
-    // If we're already connected to this session, just show the terminal
-    if (ptySessionId === sessionId && ptyWs && ptyWs.readyState === WebSocket.OPEN) {
-        showTerminal();
-        return;
-    }
     detachPTY();
     showTerminal();
     attachPTY(sessionId);
@@ -1328,6 +1324,7 @@ function setupPTYHandlers(ws, reattach) {
     }
 
     ws.onmessage = function (e) {
+        if (ws !== ptyWs) return; // stale WebSocket
         var msg = JSON.parse(e.data);
         switch (msg.type) {
             case 'pty.started':
@@ -1377,8 +1374,8 @@ function setupPTYHandlers(ws, reattach) {
                 break;
 
             case 'pty.exited':
-                // Ignore exited events from stale sessions
-                if (msg.session_id && ptySessionId && msg.session_id !== ptySessionId) break;
+                // Ignore exited events from stale or unknown sessions
+                if (!ptySessionId || msg.session_id !== ptySessionId) break;
                 headerTitle.textContent = '';
                 ptyStatus.textContent = 'exited';
                 if (msg.session_id) clearTermBuffer(msg.session_id);

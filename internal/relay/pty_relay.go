@@ -220,6 +220,12 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			session.mu.Lock()
+			if session.BrowserConn != nil && session.Status == "active" {
+				session.mu.Unlock()
+				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "session already attached"})
+				conn.Write(ctx, websocket.MessageText, errMsg)
+				continue
+			}
 			session.BrowserConn = conn
 			session.Status = "active"
 			session.mu.Unlock()
