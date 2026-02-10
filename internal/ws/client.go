@@ -61,6 +61,7 @@ type Client struct {
 	OnChatStart   ChatStartHandler
 	OnChatMessage ChatMessageHandler
 	OnChatDelete  ChatDeleteHandler
+	OnDirList     DirHandler
 
 	// ptySessions tracks active PTY sessions for routing input/resize
 	ptySessions   map[string]chan []byte // session_id → input channel
@@ -256,6 +257,18 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			}
 			if c.OnChatDelete != nil {
 				go c.OnChatDelete(ctx, del, func(v any) error {
+					return c.writeJSON(ctx, v)
+				})
+			}
+
+		case TypeDirList:
+			var req DirList
+			if err := json.Unmarshal(data, &req); err != nil {
+				log.Printf("bad dir.list: %v", err)
+				continue
+			}
+			if c.OnDirList != nil {
+				go c.OnDirList(ctx, req, func(v any) error {
 					return c.writeJSON(ctx, v)
 				})
 			}

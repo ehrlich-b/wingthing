@@ -56,9 +56,8 @@ const commandPalette = document.getElementById('command-palette');
 const paletteBackdrop = document.getElementById('palette-backdrop');
 const paletteSearch = document.getElementById('palette-search');
 const paletteResults = document.getElementById('palette-results');
-const paletteWing = document.getElementById('palette-wing');
-const paletteAgent = document.getElementById('palette-agent');
-const paletteGo = document.getElementById('palette-go');
+const paletteStatus = document.getElementById('palette-status');
+const paletteHints = document.getElementById('palette-hints');
 
 // localStorage keys
 var CACHE_KEY = 'wt_sessions';
@@ -149,28 +148,25 @@ async function init() {
     // Palette events
     paletteBackdrop.addEventListener('click', hidePalette);
     paletteSearch.addEventListener('input', function() {
-        renderPaletteResults(paletteSearch.value);
+        debouncedDirList(paletteSearch.value);
     });
     paletteSearch.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
-            if (paletteMode === 'chat') {
-                launchFromPalette('');
-            } else {
-                var selected = paletteResults.querySelector('.palette-item.selected');
-                if (selected) launchFromPalette(selected.dataset.path);
-            }
+            e.preventDefault();
+            var selected = paletteResults.querySelector('.palette-item.selected');
+            launchFromPalette(selected ? selected.dataset.path : paletteSearch.value);
         }
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault();
             navigatePalette(e.key === 'ArrowDown' ? 1 : -1);
         }
-    });
-    paletteGo.addEventListener('click', function() {
-        if (paletteMode === 'chat') {
-            launchFromPalette('');
-        } else {
-            var selected = paletteResults.querySelector('.palette-item.selected');
-            if (selected) launchFromPalette(selected.dataset.path);
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            if (e.shiftKey) {
+                cyclePaletteMode();
+            } else {
+                cyclePaletteWing();
+            }
         }
     });
 
@@ -351,81 +347,80 @@ function renderDashboard() {
 // === Command Palette ===
 
 var paletteMode = 'terminal'; // 'terminal' or 'chat'
+var paletteWingIndex = 0;
+var paletteSelectedIndex = 0;
+var dirListTimer = null;
+var dirListAbort = null;
+
+function currentPaletteWing() {
+    if (wingsData.length === 0) return null;
+    return wingsData[paletteWingIndex % wingsData.length];
+}
+
+function currentPaletteAgent() {
+    var wing = currentPaletteWing();
+    if (!wing || !wing.agents || wing.agents.length === 0) return 'claude';
+    var last = getLastTermAgent();
+    if (wing.agents.indexOf(last) !== -1) return last;
+    return wing.agents[0];
+}
 
 function showPalette() {
-    if (availableAgents.length === 0 && wingsData.length === 0) return;
+    if (wingsData.length === 0) return;
     commandPalette.style.display = '';
     paletteSearch.value = '';
     paletteSearch.focus();
-
-    // Mode buttons
-    document.querySelectorAll('.palette-mode').forEach(function(btn) {
-        btn.classList.toggle('active', btn.dataset.mode === paletteMode);
-        btn.onclick = function() {
-            paletteMode = btn.dataset.mode;
-            document.querySelectorAll('.palette-mode').forEach(function(b) { b.classList.toggle('active', b.dataset.mode === paletteMode); });
-            updatePaletteForMode();
-        };
-    });
-
-    // Populate wing selector
-    if (wingsData.length > 1) {
-        paletteWing.style.display = '';
-        paletteWing.innerHTML = wingsData.map(function(w) {
-            var name = w.machine_id || w.id.substring(0, 8);
-            return '<option value="' + escapeHtml(w.id) + '">' + escapeHtml(name) + '</option>';
-        }).join('');
-        paletteWing.onchange = function() { populateAgentsForWing(); updatePaletteForMode(); };
-    } else {
-        paletteWing.style.display = 'none';
-        paletteWing.innerHTML = wingsData.length === 1
-            ? '<option value="' + escapeHtml(wingsData[0].id) + '">' + escapeHtml(wingsData[0].machine_id || wingsData[0].id.substring(0, 8)) + '</option>'
-            : '';
-    }
-
-    populateAgentsForWing();
-    updatePaletteForMode();
-}
-
-function populateAgentsForWing() {
-    var wingId = paletteWing.value;
-    var wing = wingsData.find(function(w) { return w.id === wingId; });
-    var agents = wing && wing.agents && wing.agents.length > 0 ? wing.agents : ['claude'];
-    var lastAgent = getLastTermAgent();
-    paletteAgent.innerHTML = agents.map(function(a) {
-        return '<option value="' + escapeHtml(a) + '"' + (a === lastAgent ? ' selected' : '') + '>' + escapeHtml(a) + '</option>';
-    }).join('');
-}
-
-function updatePaletteForMode() {
-    var search = document.getElementById('palette-search');
-    if (paletteMode === 'chat') {
-        search.style.display = 'none';
-        paletteResults.innerHTML = '<div class="palette-empty">press open to start a new chat session</div>';
-    } else {
-        search.style.display = '';
-        renderPaletteResults(search.value);
-    }
+    renderPaletteStatus();
+    renderPaletteResults('');
 }
 
 function hidePalette() {
     commandPalette.style.display = 'none';
+    if (dirListTimer) { clearTimeout(dirListTimer); dirListTimer = null; }
+    if (dirListAbort) { dirListAbort.abort(); dirListAbort = null; }
 }
 
-var paletteSelectedIndex = 0;
+function cyclePaletteWing() {
+    if (wingsData.length <= 1) return;
+    paletteWingIndex = (paletteWingIndex + 1) % wingsData.length;
+    renderPaletteStatus();
+    renderPaletteResults('');
+    paletteSearch.value = '';
+}
+
+function cyclePaletteMode() {
+    paletteMode = paletteMode === 'terminal' ? 'chat' : 'terminal';
+    renderPaletteStatus();
+    if (paletteMode === 'chat') {
+        paletteResults.innerHTML = '<div class="palette-empty">enter to start chat</div>';
+    } else {
+        renderPaletteResults(paletteSearch.value);
+    }
+}
+
+function renderPaletteStatus() {
+    var wing = currentPaletteWing();
+    var wingName = wing ? (wing.machine_id || wing.id.substring(0, 8)) : '?';
+    var agent = currentPaletteAgent();
+    paletteStatus.innerHTML = '<span class="accent">' + escapeHtml(wingName) + '</span> &middot; ' +
+        escapeHtml(paletteMode) + ' &middot; ' + escapeHtml(agent);
+}
 
 function renderPaletteResults(filter) {
-    var items = [];
-
-    // Always offer a "default directory" option (no cwd = wing's working dir)
-    if (!filter) {
-        items.push({ name: 'default directory', path: '', selected: true });
-    }
-
-    var wingId = paletteWing.value;
+    var wing = currentPaletteWing();
+    var wingId = wing ? wing.id : '';
     var wingProjects = wingId
         ? allProjects.filter(function(p) { return p.wingId === wingId; })
         : allProjects;
+
+    var items = [];
+
+    // Always show "home" option when no filter
+    if (!filter) {
+        items.push({ name: '~', path: '', isDir: true });
+    }
+
+    // Filter projects
     var filtered = wingProjects;
     if (filter) {
         var lower = filter.toLowerCase();
@@ -434,27 +429,26 @@ function renderPaletteResults(filter) {
                    p.path.toLowerCase().indexOf(lower) !== -1;
         });
     }
-
     filtered.forEach(function(p) {
-        items.push({ name: p.name, path: p.path, selected: items.length === 0 });
+        items.push({ name: p.name, path: p.path, isDir: true });
     });
 
-    // Custom path fallback — only if it looks like an absolute path
-    if (filter && filtered.length === 0 && (filter.charAt(0) === '/' || filter.charAt(0) === '~')) {
-        items.push({ name: 'custom path', path: filter, selected: items.length === 0 });
-    }
+    renderPaletteItems(items);
+}
 
+function renderPaletteItems(items) {
     paletteSelectedIndex = 0;
 
     if (items.length === 0) {
-        paletteResults.innerHTML = '<div class="palette-empty">type an absolute path (e.g. /home/user/project)</div>';
+        paletteResults.innerHTML = '<div class="palette-empty">no matches</div>';
         return;
     }
 
     paletteResults.innerHTML = items.map(function(item, i) {
-        return '<div class="palette-item' + (item.selected ? ' selected' : '') + '" data-path="' + escapeHtml(item.path) + '" data-index="' + i + '">' +
-            '<span class="palette-name">' + escapeHtml(item.name) + '</span>' +
-            '<span class="palette-path">' + escapeHtml(shortenPath(item.path)) + '</span>' +
+        var icon = item.isDir ? '/' : '';
+        return '<div class="palette-item' + (i === 0 ? ' selected' : '') + '" data-path="' + escapeHtml(item.path) + '" data-index="' + i + '">' +
+            '<span class="palette-name">' + escapeHtml(item.name) + icon + '</span>' +
+            (item.path ? '<span class="palette-path">' + escapeHtml(shortenPath(item.path)) + '</span>' : '') +
         '</div>';
     }).join('');
 
@@ -468,6 +462,43 @@ function renderPaletteResults(filter) {
             paletteSelectedIndex = parseInt(item.dataset.index);
         });
     });
+}
+
+function debouncedDirList(value) {
+    if (dirListTimer) clearTimeout(dirListTimer);
+    if (paletteMode === 'chat') return;
+
+    // If not a path, filter projects locally
+    if (!value || (value.charAt(0) !== '/' && value.charAt(0) !== '~')) {
+        renderPaletteResults(value);
+        return;
+    }
+
+    // Debounce remote directory listing
+    dirListTimer = setTimeout(function() { fetchDirList(value); }, 200);
+}
+
+function fetchDirList(path) {
+    var wing = currentPaletteWing();
+    if (!wing) return;
+
+    if (dirListAbort) dirListAbort.abort();
+    dirListAbort = new AbortController();
+
+    fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent(path), {
+        signal: dirListAbort.signal
+    }).then(function(r) { return r.json(); }).then(function(entries) {
+        if (!entries || !Array.isArray(entries)) { renderPaletteItems([]); return; }
+        var items = entries.map(function(e) {
+            return { name: e.name, path: e.path, isDir: e.is_dir };
+        });
+        // Directories first, then files
+        items.sort(function(a, b) {
+            if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+            return a.name.localeCompare(b.name);
+        });
+        renderPaletteItems(items);
+    }).catch(function() {});
 }
 
 function navigatePalette(dir) {
@@ -492,15 +523,15 @@ function shortenPath(path) {
 }
 
 function launchFromPalette(cwd) {
-    var agent = paletteAgent.value;
-    var wingId = paletteWing.value || '';
+    var wing = currentPaletteWing();
+    var wingId = wing ? wing.id : '';
+    var agent = currentPaletteAgent();
     hidePalette();
     if (paletteMode === 'chat') {
         launchChat(agent);
     } else {
         setLastTermAgent(agent);
         showTerminal();
-        // Only pass CWD if it's an absolute path
         connectPTY(agent, (cwd && cwd.charAt(0) === '/') ? cwd : '', wingId);
     }
 }
