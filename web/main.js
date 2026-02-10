@@ -1016,6 +1016,11 @@ function showChat() {
 }
 
 function switchToSession(sessionId) {
+    // If we're already connected to this session, just show the terminal
+    if (ptySessionId === sessionId && ptyWs && ptyWs.readyState === WebSocket.OPEN) {
+        showTerminal();
+        return;
+    }
     detachPTY();
     showTerminal();
     attachPTY(sessionId);
@@ -1347,12 +1352,7 @@ function setupPTYHandlers(ws, reattach) {
                         }
                     } catch (ex) {}
                 }).catch(function (err) {
-                    console.error('decrypt error:', err);
-                    var binary = atob(msg.data);
-                    var bytes = new Uint8Array(binary.length);
-                    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-                    term.write(bytes);
-                    saveTermBuffer();
+                    console.error('decrypt error, dropping frame:', err);
                 });
                 break;
 
