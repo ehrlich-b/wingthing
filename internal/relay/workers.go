@@ -26,6 +26,7 @@ type ConnectedWing struct {
 	Skills     []string
 	Labels     []string
 	Identities []string
+	Projects   []ws.WingProject
 	Conn       *websocket.Conn
 	LastSeen   time.Time
 }
@@ -194,6 +195,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		Skills:     reg.Skills,
 		Labels:     reg.Labels,
 		Identities: reg.Identities,
+		Projects:   reg.Projects,
 		Conn:       conn,
 		LastSeen:   time.Now(),
 	}

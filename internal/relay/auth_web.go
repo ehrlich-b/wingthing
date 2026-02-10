@@ -37,12 +37,27 @@ func (s *Server) sessionUser(r *http.Request) *SocialUser {
 	return user
 }
 
+// cookieDomain returns the domain for cross-subdomain cookies.
+// When AppHost is configured (e.g. app.wingthing.ai), returns ".wingthing.ai"
+// so cookies set on the main domain also work on subdomains.
+func (s *Server) cookieDomain() string {
+	if s.Config.AppHost == "" {
+		return "" // single host, no cross-subdomain needed
+	}
+	u, err := url.Parse(s.Config.BaseURL)
+	if err != nil {
+		return ""
+	}
+	return "." + u.Hostname()
+}
+
 func (s *Server) setSessionCookie(w http.ResponseWriter, token string) {
 	secure := strings.HasPrefix(s.Config.BaseURL, "https")
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
+		Domain:   s.cookieDomain(),
 		MaxAge:   int(sessionDuration.Seconds()),
 		HttpOnly: true,
 		Secure:   secure,
@@ -89,6 +104,7 @@ func (s *Server) setOAuthState(w http.ResponseWriter) string {
 		Name:     "oauth_state",
 		Value:    state,
 		Path:     "/auth",
+		Domain:   s.cookieDomain(),
 		MaxAge:   600,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,

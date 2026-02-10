@@ -39,6 +39,10 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	wings := s.Wings.ListForUser(user.ID)
 	out := make([]map[string]any, len(wings))
 	for i, wing := range wings {
+		projects := wing.Projects
+		if projects == nil {
+			projects = []ws.WingProject{}
+		}
 		out[i] = map[string]any{
 			"id":         wing.ID,
 			"machine_id": wing.MachineID,
@@ -46,6 +50,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			"labels":     wing.Labels,
 			"public_key": wing.PublicKey,
 			"last_seen":  wing.LastSeen,
+			"projects":   projects,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -67,13 +72,17 @@ func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
 		if status == "" {
 			status = "active"
 		}
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"id":      sess.ID,
 			"wing_id": sess.WingID,
 			"agent":   sess.Agent,
 			"status":  status,
 			"kind":    "terminal",
-		})
+		}
+		if sess.CWD != "" {
+			entry["cwd"] = sess.CWD
+		}
+		out = append(out, entry)
 	}
 
 	chatSessions := s.Chat.ListForUser(user.ID)

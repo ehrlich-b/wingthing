@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -65,6 +66,94 @@ func (r *ringBuffer) Bytes() []byte {
 	copy(result, r.buf[r.pos:])
 	copy(result[r.size-r.pos:], r.buf[:r.pos])
 	return result
+}
+
+// sessionTracker tracks active PTY child processes for graceful shutdown.
+type sessionTracker struct {
+	mu    sync.Mutex
+	procs map[string]*os.Process
+}
+
+func newSessionTracker() *sessionTracker {
+	return &sessionTracker{
+		procs: make(map[string]*os.Process),
+	}
+}
+
+func (t *sessionTracker) Add(id string, proc *os.Process) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.procs[id] = proc
+}
+
+func (t *sessionTracker) Remove(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.procs, id)
+}
+
+func (t *sessionTracker) Shutdown() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for id, proc := range t.procs {
+		log.Printf("terminating session %s (pid %d)", id, proc.Pid)
+		proc.Signal(syscall.SIGTERM)
+	}
+
+	if len(t.procs) == 0 {
+		return
+	}
+
+	// Wait for graceful exit, then force-kill stragglers
+	time.Sleep(5 * time.Second)
+	for id, proc := range t.procs {
+		if err := proc.Signal(syscall.Signal(0)); err == nil {
+			log.Printf("force-killing session %s (pid %d)", id, proc.Pid)
+			proc.Kill()
+		}
+	}
+}
+
+// discoverProjects scans dir for git repositories up to maxDepth levels deep.
+func discoverProjects(dir string, maxDepth int) []ws.WingProject {
+	var projects []ws.WingProject
+	scanDir(dir, 0, maxDepth, &projects)
+	return projects
+}
+
+func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
+	if depth > maxDepth {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		full := filepath.Join(dir, e.Name())
+		if e.Name() == ".git" {
+			// Parent is a git repo
+			*projects = append(*projects, ws.WingProject{
+				Name: filepath.Base(dir),
+				Path: dir,
+			})
+			return // don't recurse into .git
+		}
+		// Check if this child has a .git dir
+		gitDir := filepath.Join(full, ".git")
+		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
+			*projects = append(*projects, ws.WingProject{
+				Name: e.Name(),
+				Path: full,
+			})
+			continue // don't recurse into known repos
+		}
+		scanDir(full, depth+1, maxDepth, projects)
+	}
 }
 
 func wingPidPath() string {
@@ -220,11 +309,19 @@ func wingCmd() *cobra.Command {
 				labels = strings.Split(labelsFlag, ",")
 			}
 
+			// Scan for git projects in current directory
+			cwd, _ := os.Getwd()
+			projects := discoverProjects(cwd, 2)
+
 			fmt.Printf("connecting to %s\n", wsURL)
 			fmt.Printf("  agents: %v\n", agents)
 			fmt.Printf("  skills: %v\n", skills)
 			if len(labels) > 0 {
 				fmt.Printf("  labels: %v\n", labels)
+			}
+			fmt.Printf("  projects: %d found\n", len(projects))
+			for _, p := range projects {
+				fmt.Printf("    %s → %s\n", p.Name, p.Path)
 			}
 			fmt.Printf("  conv: %s\n", convFlag)
 			fmt.Println()
@@ -237,14 +334,17 @@ func wingCmd() *cobra.Command {
 				Agents:    agents,
 				Skills:    skills,
 				Labels:    labels,
+				Projects:  projects,
 			}
 
 			client.OnTask = func(ctx context.Context, task ws.TaskSubmit, send ws.ChunkSender) (string, error) {
 				return executeRelayTask(ctx, cfg, s, task, send)
 			}
 
+			tracker := newSessionTracker()
+
 			client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
-				handlePTYSession(ctx, cfg, start, write, input)
+				handlePTYSession(ctx, cfg, tracker, start, write, input)
 			}
 
 			client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
@@ -261,6 +361,15 @@ func wingCmd() *cobra.Command {
 
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
+
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+			go func() {
+				<-sigCh
+				log.Println("wing shutting down, terminating sessions...")
+				tracker.Shutdown()
+				cancel()
+			}()
 
 			return client.Run(ctx)
 		},
@@ -468,7 +577,7 @@ func agentCommand(agentName string) (string, []string) {
 // handlePTYSession spawns an agent in a PTY and pipes I/O over WebSocket.
 // If the browser sends a public key in pty.start, E2E encryption is used.
 // Keeps a ring buffer of recent output for session reattach replay.
-func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, tracker *sessionTracker, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
 	name, args := agentCommand(start.Agent)
 	if name == "" {
 		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
@@ -507,6 +616,15 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 
 	cmd := exec.CommandContext(sessionCtx, binPath, args...)
 	cmd.Env = os.Environ()
+	if start.CWD != "" {
+		cmd.Dir = start.CWD
+	}
+
+	// Graceful termination: SIGTERM on context cancel, force-kill after 5s
+	cmd.Cancel = func() error {
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = 5 * time.Second
 
 	size := &pty.Winsize{
 		Cols: uint16(start.Cols),
@@ -520,17 +638,21 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 	}
 	defer ptmx.Close()
 
+	tracker.Add(start.SessionID, cmd.Process)
+	defer tracker.Remove(start.SessionID)
+
 	// Ring buffer for replay on reattach (~50KB of plaintext output)
 	ring := newRingBuffer(50 * 1024)
 
 	log.Printf("pty session %s: spawned %s (pid %d)", start.SessionID, name, cmd.Process.Pid)
 
-	// Notify browser with wing's public key
+	// Notify browser with wing's public key and resolved CWD
 	write(ws.PTYStarted{
 		Type:      ws.TypePTYStarted,
 		SessionID: start.SessionID,
 		Agent:     start.Agent,
 		PublicKey: wingPubKeyB64,
+		CWD:       start.CWD,
 	})
 
 	// Read PTY output -> send to browser (encrypted if E2E)

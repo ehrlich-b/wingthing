@@ -629,6 +629,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			Name:     "oauth_next",
 			Value:    next,
 			Path:     "/auth",
+			Domain:   s.cookieDomain(),
 			MaxAge:   600,
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,

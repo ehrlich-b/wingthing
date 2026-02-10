@@ -45,14 +45,21 @@ type Envelope struct {
 	Type string `json:"type"`
 }
 
+// WingProject is a project directory discovered on the wing.
+type WingProject struct {
+	Name string `json:"name"` // directory name (e.g. "wingthing")
+	Path string `json:"path"` // absolute path (e.g. "/Users/ehrlich/repos/wingthing")
+}
+
 // WingRegister is sent by the wing on connect.
 type WingRegister struct {
-	Type       string   `json:"type"`
-	MachineID  string   `json:"machine_id"`
-	Agents     []string `json:"agents"`
-	Skills     []string `json:"skills"`
-	Labels     []string `json:"labels"`
-	Identities []string `json:"identities"`
+	Type       string        `json:"type"`
+	MachineID  string        `json:"machine_id"`
+	Agents     []string      `json:"agents"`
+	Skills     []string      `json:"skills"`
+	Labels     []string      `json:"labels"`
+	Identities []string      `json:"identities"`
+	Projects   []WingProject `json:"projects,omitempty"`
 }
 
 // WingHeartbeat is sent by the wing every 30s.
@@ -111,6 +118,7 @@ type PTYStart struct {
 	Cols      int    `json:"cols"`
 	Rows      int    `json:"rows"`
 	PublicKey string `json:"public_key,omitempty"` // browser's ephemeral X25519 (base64)
+	CWD       string `json:"cwd,omitempty"`        // working directory for the agent
 }
 
 // PTYStarted confirms the PTY session is running.
@@ -119,6 +127,7 @@ type PTYStarted struct {
 	SessionID string `json:"session_id"`
 	Agent     string `json:"agent"`
 	PublicKey string `json:"public_key,omitempty"` // wing's X25519 (base64)
+	CWD       string `json:"cwd,omitempty"`        // resolved working directory
 }
 
 // PTYOutput carries raw terminal bytes from wing to browser.

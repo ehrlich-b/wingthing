@@ -196,14 +196,20 @@ func (s *Server) handleClaimPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderClaimPage(w http.ResponseWriter, userCode, claimedBy, errMsg string) {
+	appURL := "/app/"
+	if s.Config.AppHost != "" {
+		appURL = "https://" + s.Config.AppHost + "/"
+	}
 	data := struct {
 		UserCode string
 		Claimed  bool
 		Error    string
+		AppURL   string
 	}{
 		UserCode: userCode,
 		Claimed:  claimedBy != "",
 		Error:    errMsg,
+		AppURL:   appURL,
 	}
 
 	t := s.template(claimTmpl, "claim.html")

@@ -54,6 +54,7 @@ type Client struct {
 	Skills     []string
 	Labels     []string
 	Identities []string
+	Projects   []WingProject
 
 	OnTask        TaskHandlerWithChunks
 	OnPTY         PTYHandler
@@ -127,6 +128,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		Skills:     c.Skills,
 		Labels:     c.Labels,
 		Identities: c.Identities,
+		Projects:   c.Projects,
 	}
 	if err := c.writeJSON(ctx, reg); err != nil {
 		return connected, fmt.Errorf("register: %w", err)

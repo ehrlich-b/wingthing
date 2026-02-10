@@ -21,6 +21,7 @@ type PTYSession struct {
 	WingID      string
 	UserID      string
 	Agent       string
+	CWD         string // working directory for this session
 	Status      string // "active", "detached", "exited"
 	BrowserConn *websocket.Conn
 	mu          sync.Mutex
@@ -188,6 +189,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				WingID:      wing.ID,
 				UserID:      userID,
 				Agent:       start.Agent,
+				CWD:         start.CWD,
 				Status:      "active",
 				BrowserConn: conn,
 			}

@@ -59,17 +59,27 @@ const launchChatBtn = document.getElementById('launch-chat-btn');
 const launchChatToggle = document.getElementById('launch-chat-toggle');
 const launchChatMenu = document.getElementById('launch-chat-menu');
 
+function loginRedirect() {
+    // Derive the main site login URL from the current hostname.
+    // On app.wingthing.ai → login at wingthing.ai; on localhost → same host.
+    var host = window.location.hostname.replace(/^app\./, '');
+    var port = window.location.port ? ':' + window.location.port : '';
+    var loginUrl = window.location.protocol + '//' + host + port +
+        '/login?next=' + encodeURIComponent(window.location.origin + '/');
+    window.location.href = loginUrl;
+}
+
 async function init() {
     try {
         var resp = await fetch('/api/app/me');
         if (resp.status === 401) {
-            window.location.href = '/login?next=/app/';
+            loginRedirect();
             return;
         }
         currentUser = await resp.json();
         userInfo.textContent = currentUser.display_name || 'user';
     } catch (e) {
-        window.location.href = '/login?next=/app/';
+        loginRedirect();
         return;
     }
 
