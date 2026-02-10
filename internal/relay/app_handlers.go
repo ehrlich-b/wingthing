@@ -177,6 +177,43 @@ func (s *Server) handleWingUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleAppWS is a dashboard WebSocket that pushes wing.online/wing.offline events.
+func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		return
+	}
+	defer conn.CloseNow()
+
+	ch := make(chan WingEvent, 16)
+	s.Wings.Subscribe(user.ID, ch)
+	defer s.Wings.Unsubscribe(user.ID, ch)
+
+	ctx := conn.CloseRead(r.Context())
+	for {
+		select {
+		case ev := <-ch:
+			data, _ := json.Marshal(ev)
+			writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := conn.Write(writeCtx, websocket.MessageText, data)
+			cancel()
+			if err != nil {
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 // handleWingLS proxies a directory listing request to a connected wing.
 func (s *Server) handleWingLS(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)

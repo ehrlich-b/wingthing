@@ -25,6 +25,7 @@ let sessionsData = [];
 let sessionNotifications = {};
 let activeView = 'home';
 let titleFlashTimer = null;
+let appWs = null;
 
 // Chat state
 let chatWs = null;
@@ -184,6 +185,7 @@ async function init() {
     initTerminal();
     loadHome();
     setInterval(loadHome, 10000);
+    connectAppWS();
 }
 
 // === localStorage helpers ===
@@ -213,6 +215,104 @@ function getCachedWings() {
 }
 function setCachedWings(wings) {
     try { localStorage.setItem(WINGS_CACHE_KEY, JSON.stringify(wings)); } catch (e) {}
+}
+
+// === Dashboard WebSocket (real-time wing status) ===
+
+function connectAppWS() {
+    if (appWs) { try { appWs.close(); } catch(e) {} }
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    appWs = new WebSocket(proto + '//' + location.host + '/ws/app');
+    appWs.onmessage = function(e) {
+        try { applyWingEvent(JSON.parse(e.data)); } catch(err) {}
+    };
+    appWs.onclose = function() {
+        appWs = null;
+        setTimeout(connectAppWS, 3000);
+    };
+    appWs.onerror = function() { appWs.close(); };
+}
+
+function applyWingEvent(ev) {
+    if (ev.type === 'wing.online') {
+        // Update or add the wing in wingsData
+        var found = false;
+        wingsData.forEach(function(w) {
+            if (w.machine_id === ev.machine_id) {
+                w.online = true;
+                w.id = ev.wing_id;
+                w.agents = ev.agents || w.agents;
+                w.labels = ev.labels || w.labels;
+                w.public_key = ev.public_key || w.public_key;
+                w.projects = ev.projects || w.projects;
+                found = true;
+            }
+        });
+        if (!found) {
+            wingsData.unshift({
+                id: ev.wing_id,
+                machine_id: ev.machine_id,
+                online: true,
+                agents: ev.agents || [],
+                labels: ev.labels || [],
+                public_key: ev.public_key,
+                projects: ev.projects || [],
+            });
+        }
+        // Rebuild agent + project lists
+        rebuildAgentLists();
+        setCachedWings(wingsData.map(function(w) {
+            return { machine_id: w.machine_id, id: w.id, agents: w.agents, labels: w.labels, projects: w.projects };
+        }));
+        if (activeView === 'home') renderDashboard();
+        // Animate the card
+        animateWingCard(ev.machine_id, 'wing-pop-in');
+    } else if (ev.type === 'wing.offline') {
+        wingsData.forEach(function(w) {
+            if (w.machine_id === ev.machine_id) {
+                w.online = false;
+            }
+        });
+        rebuildAgentLists();
+        setCachedWings(wingsData.map(function(w) {
+            return { machine_id: w.machine_id, id: w.id, agents: w.agents, labels: w.labels, projects: w.projects };
+        }));
+        if (activeView === 'home') renderDashboard();
+        animateWingCard(ev.machine_id, 'wing-pop-out');
+    }
+
+    // Refresh palette if open
+    if (commandPalette.style.display !== 'none') {
+        updatePaletteState();
+    }
+}
+
+function rebuildAgentLists() {
+    availableAgents = [];
+    allProjects = [];
+    var seenAgents = {};
+    wingsData.forEach(function(w) {
+        if (w.online === false) return;
+        (w.agents || []).forEach(function(a) {
+            if (!seenAgents[a]) { seenAgents[a] = true; availableAgents.push({ agent: a, wingId: w.id }); }
+        });
+        (w.projects || []).forEach(function(p) {
+            allProjects.push({ name: p.name, path: p.path, wingId: w.id, machine: w.machine_id });
+        });
+    });
+}
+
+function animateWingCard(machineId, className) {
+    requestAnimationFrame(function() {
+        var cards = wingStatusEl.querySelectorAll('.wing-card');
+        cards.forEach(function(card) {
+            if (card.dataset.machineId === machineId) {
+                card.classList.remove('wing-pop-in', 'wing-pop-out');
+                void card.offsetWidth; // force reflow
+                card.classList.add(className);
+            }
+        });
+    });
 }
 
 // === Data Loading ===
@@ -260,18 +360,7 @@ async function loadHome() {
         return { machine_id: w.machine_id, id: w.id, agents: w.agents, labels: w.labels, projects: w.projects };
     }));
 
-    // Build agent + project lists (only from online wings)
-    availableAgents = [];
-    allProjects = [];
-    var seenAgents = {};
-    (wings || []).forEach(function (w) {
-        (w.agents || []).forEach(function (a) {
-            if (!seenAgents[a]) { seenAgents[a] = true; availableAgents.push({ agent: a, wingId: w.id }); }
-        });
-        (w.projects || []).forEach(function (p) {
-            allProjects.push({ name: p.name, path: p.path, wingId: w.id, machine: w.machine_id });
-        });
-    });
+    rebuildAgentLists();
 
     renderSidebar();
     if (activeView === 'home') renderDashboard();
@@ -336,7 +425,7 @@ function renderDashboard() {
             var updateBtn = w.online !== false
                 ? ' <button class="btn-sm wing-update-btn" data-wing-id="' + escapeHtml(w.id) + '">update</button>'
                 : '';
-            return '<div class="wing-card">' +
+            return '<div class="wing-card" data-machine-id="' + escapeHtml(w.machine_id || '') + '">' +
                 '<span class="wing-dot ' + dotClass + '"></span>' +
                 '<span class="wing-name">' + escapeHtml(name) + '</span>' +
                 '<span class="wing-detail">' + escapeHtml((w.agents || []).join(', ')) +
