@@ -1,5 +1,6 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SerializeAddon } from '@xterm/addon-serialize';
 import '@xterm/xterm/css/xterm.css';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { createAiChat } from '@nlux/core';
@@ -10,6 +11,8 @@ let ptyWs = null;
 let ptySessionId = null;
 let term = null;
 let fitAddon = null;
+let serializeAddon = null;
+let saveBufferTimer = null;
 let ctrlActive = false;
 let altActive = false;
 let currentUser = null;
@@ -378,6 +381,7 @@ window._openChat = function (sessionId, agent) {
 window._deleteSession = function (sessionId) {
     var cached = getCachedSessions().filter(function (s) { return s.id !== sessionId; });
     setCachedSessions(cached);
+    clearTermBuffer(sessionId);
     fetch('/api/app/sessions/' + sessionId, { method: 'DELETE' }).then(function () {
         loadHome();
     });
@@ -579,7 +583,9 @@ function initTerminal() {
         allowProposedApi: true,
     });
     fitAddon = new FitAddon();
+    serializeAddon = new SerializeAddon();
     term.loadAddon(fitAddon);
+    term.loadAddon(serializeAddon);
     term.open(terminalContainer);
     fitAddon.fit();
 
@@ -603,6 +609,34 @@ function initTerminal() {
         }
         sendPTYInput(data);
     });
+}
+
+var TERM_BUF_PREFIX = 'wt_termbuf_';
+
+function saveTermBuffer() {
+    if (!ptySessionId || !serializeAddon) return;
+    clearTimeout(saveBufferTimer);
+    saveBufferTimer = setTimeout(function () {
+        try {
+            var data = serializeAddon.serialize();
+            // Cap at 200KB to avoid localStorage bloat
+            if (data.length > 200000) data = data.slice(-200000);
+            localStorage.setItem(TERM_BUF_PREFIX + ptySessionId, data);
+        } catch (e) {}
+    }, 500);
+}
+
+function restoreTermBuffer(sessionId) {
+    try {
+        var data = localStorage.getItem(TERM_BUF_PREFIX + sessionId);
+        if (data && term) {
+            term.write(data);
+        }
+    } catch (e) {}
+}
+
+function clearTermBuffer(sessionId) {
+    try { localStorage.removeItem(TERM_BUF_PREFIX + sessionId); } catch (e) {}
 }
 
 function sendPTYInput(text) {
@@ -668,7 +702,7 @@ async function e2eDecrypt(encoded) {
     return new Uint8Array(plaintext);
 }
 
-function setupPTYHandlers(ws) {
+function setupPTYHandlers(ws, reattach) {
     ws.onmessage = function (e) {
         var msg = JSON.parse(e.data);
         switch (msg.type) {
@@ -685,7 +719,7 @@ function setupPTYHandlers(ws) {
                     ptyStatus.textContent = msg.agent + ' (live)';
                 }
                 disconnectBtn.style.display = '';
-                term.clear();
+                if (!reattach) term.clear();
                 term.focus();
 
                 term.onResize(function (size) {
@@ -704,17 +738,20 @@ function setupPTYHandlers(ws) {
             case 'pty.output':
                 e2eDecrypt(msg.data).then(function (bytes) {
                     term.write(bytes);
+                    saveTermBuffer();
                 }).catch(function (err) {
                     console.error('decrypt error:', err);
                     var binary = atob(msg.data);
                     var bytes = new Uint8Array(binary.length);
                     for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
                     term.write(bytes);
+                    saveTermBuffer();
                 });
                 break;
 
             case 'pty.exited':
                 ptyStatus.textContent = 'exited (code ' + msg.exit_code + ')';
+                if (msg.session_id) clearTermBuffer(msg.session_id);
                 ptySessionId = null;
                 e2eKey = null;
                 ephemeralPrivKey = null;
@@ -763,12 +800,16 @@ function connectPTY(agent) {
         }));
     };
 
-    setupPTYHandlers(ptyWs);
+    setupPTYHandlers(ptyWs, false);
 }
 
 function attachPTY(sessionId) {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
+
+    // Restore last known terminal content instantly
+    term.clear();
+    restoreTermBuffer(sessionId);
 
     ptyStatus.textContent = 'reconnecting...';
 
@@ -788,7 +829,7 @@ function attachPTY(sessionId) {
         }));
     };
 
-    setupPTYHandlers(ptyWs);
+    setupPTYHandlers(ptyWs, true);
 }
 
 function disconnectPTY() {
