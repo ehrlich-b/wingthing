@@ -310,6 +310,24 @@ function setupCopyable(container) {
     });
 }
 
+// === Agent icons ===
+
+var AGENT_ICONS = {
+    claude: '<svg class="agent-icon" viewBox="0 0 16 16" fill="none"><path d="M8 2L3 5v6l5 3 5-3V5L8 2z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/></svg>',
+    codex: '<svg class="agent-icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M5 7l2 2-2 2M9 11h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    ollama: '<svg class="agent-icon" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="9" rx="5" ry="4" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="6.5" cy="8" r="1" fill="currentColor"/><circle cx="9.5" cy="8" r="1" fill="currentColor"/><path d="M6 4C6 2.5 7 2 8 2s2 .5 2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    gemini: '<svg class="agent-icon" viewBox="0 0 16 16" fill="none"><path d="M8 2c0 3-3 6-6 6 3 0 6 3 6 6 0-3 3-6 6-6-3 0-6-3-6-6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+    cursor: '<svg class="agent-icon" viewBox="0 0 16 16" fill="none"><path d="M3 3l4 10 1.5-3.5L12 8 3 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+};
+
+function agentIcon(name) {
+    return AGENT_ICONS[name] || '';
+}
+
+function agentWithIcon(name) {
+    return agentIcon(name) + escapeHtml(name);
+}
+
 // === Dashboard WebSocket (real-time wing status) ===
 
 function connectAppWS() {
@@ -919,7 +937,7 @@ function renderDashboard() {
                     '<span class="wing-name">' + escapeHtml(name) + '</span>' +
                     '<button class="box-menu-btn" title="details">\u22ef</button>' +
                 '</div>' +
-                '<span class="wing-agents">' + escapeHtml((w.agents || []).join(', ')) + '</span>' +
+                '<span class="wing-agents">' + (w.agents || []).map(function(a) { return agentWithIcon(a); }).join(', ') + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
                     (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>') +
@@ -980,7 +998,7 @@ function renderDashboard() {
             '<div class="egg-preview">' + previewHtml + '</div>' +
             '<div class="egg-footer">' +
                 '<span class="session-dot ' + dotClass + '"></span>' +
-                '<span class="egg-label">' + escapeHtml(name) + ' \u00b7 ' + escapeHtml(s.agent || '?') +
+                '<span class="egg-label">' + escapeHtml(name) + ' \u00b7 ' + agentWithIcon(s.agent || '?') +
                     (needsAttention ? ' \u00b7 !' : '') + '</span>' +
                 '<button class="box-menu-btn" title="details">\u22ef</button>' +
                 '<button class="btn-sm btn-danger egg-delete" data-sid="' + s.id + '">x</button>' +
@@ -1158,7 +1176,7 @@ function renderPaletteStatus() {
     var wingName = wing ? (wing.machine_id || wing.id.substring(0, 8)) : '?';
     var agent = currentPaletteAgent();
     paletteStatus.innerHTML = '<span class="accent">' + escapeHtml(wingName) + '</span> &middot; ' +
-        escapeHtml(paletteMode) + ' &middot; <span class="accent">' + escapeHtml(agent) + '</span>';
+        escapeHtml(paletteMode) + ' &middot; <span class="accent">' + agentWithIcon(agent) + '</span>';
 }
 
 function renderPaletteResults(filter) {
