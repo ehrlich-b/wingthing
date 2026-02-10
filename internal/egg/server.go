@@ -298,7 +298,7 @@ func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResp
 		return nil, status.Errorf(codes.NotFound, "agent %q not found: %v", name, err)
 	}
 
-	cmd := exec.Command(binPath, args...)
+	cmd := exec.CommandContext(context.Background(), binPath, args...)
 
 	// Set environment from request
 	if len(req.Env) > 0 {
