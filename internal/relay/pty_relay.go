@@ -29,13 +29,15 @@ type PTYSession struct {
 
 // PTYRegistry tracks active PTY sessions.
 type PTYRegistry struct {
-	mu       sync.RWMutex
-	sessions map[string]*PTYSession // session_id -> session
+	mu         sync.RWMutex
+	sessions   map[string]*PTYSession // session_id -> session
+	tombstones map[string]time.Time   // recently deleted IDs (skip in sync)
 }
 
 func NewPTYRegistry() *PTYRegistry {
 	return &PTYRegistry{
-		sessions: make(map[string]*PTYSession),
+		sessions:   make(map[string]*PTYSession),
+		tombstones: make(map[string]time.Time),
 	}
 }
 
@@ -49,6 +51,7 @@ func (r *PTYRegistry) Remove(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.sessions, id)
+	r.tombstones[id] = time.Now()
 }
 
 func (r *PTYRegistry) Get(id string) *PTYSession {
@@ -84,15 +87,28 @@ func (r *PTYRegistry) ListForUser(userID string) []*PTYSession {
 }
 
 // SyncFromWing reconciles the registry with the wing's authoritative session list.
-// Adds missing sessions, removes sessions the wing no longer has (for this wing only).
-func (r *PTYRegistry) SyncFromWing(wingID, userID string, sessions []ws.SessionInfo) {
+// When removeStale is true (on-demand requests), removes sessions the wing no longer reports.
+// When false (heartbeat), only adds missing sessions.
+func (r *PTYRegistry) SyncFromWing(wingID, userID string, sessions []ws.SessionInfo, removeStale bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Expire old tombstones (>30s)
+	now := time.Now()
+	for id, t := range r.tombstones {
+		if now.Sub(t) > 30*time.Second {
+			delete(r.tombstones, id)
+		}
+	}
 
 	// Build set of session IDs the wing reports
 	live := make(map[string]bool, len(sessions))
 	for _, s := range sessions {
 		live[s.SessionID] = true
+		// Skip tombstoned sessions (recently deleted by user)
+		if _, tomb := r.tombstones[s.SessionID]; tomb {
+			continue
+		}
 		if _, exists := r.sessions[s.SessionID]; !exists {
 			r.sessions[s.SessionID] = &PTYSession{
 				ID:     s.SessionID,
@@ -105,10 +121,12 @@ func (r *PTYRegistry) SyncFromWing(wingID, userID string, sessions []ws.SessionI
 		}
 	}
 
-	// Remove sessions for this wing that the wing no longer reports
-	for id, s := range r.sessions {
-		if s.WingID == wingID && !live[id] {
-			delete(r.sessions, id)
+	// Only remove stale sessions on explicit requests, not heartbeats
+	if removeStale {
+		for id, s := range r.sessions {
+			if s.WingID == wingID && !live[id] {
+				delete(r.sessions, id)
+			}
 		}
 	}
 }

@@ -423,7 +423,8 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		case ws.TypeSessionsSync:
 			var sync ws.SessionsSync
 			json.Unmarshal(data, &sync)
-			s.PTY.SyncFromWing(wing.ID, wing.UserID, sync.Sessions)
+			// Only remove stale sessions on explicit requests, not heartbeats
+			s.PTY.SyncFromWing(wing.ID, wing.UserID, sync.Sessions, sync.RequestID != "")
 			if sync.RequestID != "" {
 				s.Wings.ResolveSessionRequest(sync.RequestID, &sync)
 			}
