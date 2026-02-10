@@ -63,16 +63,11 @@
     <div id="command-palette" style="display:none;">
         <div id="palette-backdrop"></div>
         <div id="palette-dialog">
-            <div id="palette-header">
-                <button class="palette-mode active" data-mode="terminal">terminal</button>
-                <button class="palette-mode" data-mode="chat">chat</button>
-            </div>
-            <input id="palette-search" type="text" placeholder="search projects or type a path..." autocomplete="off" spellcheck="false">
+            <input id="palette-search" type="text" placeholder="type a path..." autocomplete="off" spellcheck="false">
             <div id="palette-results"></div>
             <div id="palette-footer">
-                <select id="palette-wing"></select>
-                <select id="palette-agent"></select>
-                <button id="palette-go">open</button>
+                <span id="palette-status"></span>
+                <span id="palette-hints">tab: wing &middot; shift+tab: mode &middot; enter: open</span>
             </div>
         </div>
     </div>

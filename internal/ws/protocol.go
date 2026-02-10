@@ -1,6 +1,9 @@
 package ws
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Message types for the relay WebSocket protocol.
 const (
@@ -34,6 +37,10 @@ const (
 	TypeChatHistory = "chat.history" // wing → relay → browser
 	TypeChatDelete  = "chat.delete"  // browser → relay → wing
 	TypeChatDeleted = "chat.deleted" // wing → relay → browser
+
+	// Directory listing (bidirectional through relay)
+	TypeDirList    = "dir.list"    // browser → relay → wing
+	TypeDirResults = "dir.results" // wing → relay → browser
 
 	// Relay → Wing (control)
 	TypeRegistered = "registered"
@@ -232,6 +239,31 @@ type ChatDeleted struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 }
+
+// DirList requests a directory listing from the wing.
+type DirList struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Path      string `json:"path"`
+	WingID    string `json:"wing_id,omitempty"`
+}
+
+// DirResults returns directory entries from the wing.
+type DirResults struct {
+	Type      string     `json:"type"`
+	RequestID string     `json:"request_id"`
+	Entries   []DirEntry `json:"entries"`
+}
+
+// DirEntry is a single entry in a directory listing.
+type DirEntry struct {
+	Name  string `json:"name"`
+	IsDir bool   `json:"is_dir"`
+	Path  string `json:"path"`
+}
+
+// DirHandler is called when the wing receives a dir.list request.
+type DirHandler func(ctx context.Context, req DirList, write PTYWriteFunc)
 
 // QueuedTask is a routing entry in the relay's volatile queue.
 // The relay stores only an opaque payload — it never inspects task content.

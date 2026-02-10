@@ -349,37 +349,9 @@ body {
     overflow: hidden;
 }
 
-#palette-header {
-    padding: 10px 16px 0;
-    display: flex;
-    gap: 4px;
-}
-
-.palette-mode {
-    background: transparent;
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-    padding: 4px 12px;
-    font-family: var(--font);
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    border-radius: 3px;
-    cursor: pointer;
-}
-
-.palette-mode:hover { color: var(--text-dim); border-color: var(--text-muted); }
-
-.palette-mode.active {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: rgba(233, 69, 96, 0.1);
-}
-
 #palette-search {
     width: 100%;
-    padding: 12px 16px;
+    padding: 14px 16px;
     background: transparent;
     border: none;
     border-bottom: 1px solid var(--border);
@@ -387,6 +359,7 @@ body {
     font-family: var(--font);
     font-size: 15px;
     outline: none;
+    border-radius: 12px 12px 0 0;
 }
 
 #palette-search::placeholder { color: var(--text-muted); }
@@ -435,37 +408,23 @@ body {
 #palette-footer {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
+    padding: 8px 16px;
     border-top: 1px solid var(--border);
-    justify-content: flex-end;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
 }
 
-#palette-agent {
-    background: var(--bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 6px 10px;
-    font-family: var(--font);
-    font-size: 12px;
-    outline: none;
+#palette-status {
+    color: var(--text-dim);
+}
+
+#palette-status .accent { color: var(--accent); }
+
+#palette-hints {
+    font-size: 10px;
     cursor: pointer;
 }
-
-#palette-go {
-    background: var(--accent);
-    color: var(--text);
-    border: none;
-    padding: 6px 16px;
-    border-radius: 4px;
-    font-family: var(--font);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-}
-
-#palette-go:hover { background: var(--accent-hover); }
 
 /* === Terminal === */
 

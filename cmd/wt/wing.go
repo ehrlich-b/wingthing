@@ -362,6 +362,10 @@ func wingCmd() *cobra.Command {
 				handleChatDelete(ctx, s, del, write)
 			}
 
+			client.OnDirList = func(ctx context.Context, req ws.DirList, write ws.PTYWriteFunc) {
+				handleDirList(ctx, req, write)
+			}
+
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
@@ -556,6 +560,38 @@ func executeRelayTask(ctx context.Context, cfg *config.Config, s *store.Store, t
 
 	fmt.Printf("task %s done (%d tokens)\n", task.TaskID, totalTok)
 	return output, nil
+}
+
+func handleDirList(_ context.Context, req ws.DirList, write ws.PTYWriteFunc) {
+	path := req.Path
+	if path == "" {
+		home, _ := os.UserHomeDir()
+		path = home
+	}
+	if strings.HasPrefix(path, "~") {
+		home, _ := os.UserHomeDir()
+		path = home + path[1:]
+	}
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		write(ws.DirResults{Type: ws.TypeDirResults, RequestID: req.RequestID})
+		return
+	}
+
+	var results []ws.DirEntry
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue // skip hidden files
+		}
+		full := filepath.Join(path, e.Name())
+		results = append(results, ws.DirEntry{
+			Name:  e.Name(),
+			IsDir: e.IsDir(),
+			Path:  full,
+		})
+	}
+	write(ws.DirResults{Type: ws.TypeDirResults, RequestID: req.RequestID, Entries: results})
 }
 
 func timeNow() time.Time {

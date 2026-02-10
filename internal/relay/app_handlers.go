@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -147,4 +148,44 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeError(w, http.StatusNotFound, "session not found")
+}
+
+// handleWingLS proxies a directory listing request to a connected wing.
+func (s *Server) handleWingLS(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	wingID := r.PathValue("wingID")
+	path := r.URL.Query().Get("path")
+
+	wing := s.Wings.FindByID(wingID)
+	if wing == nil || wing.UserID != user.ID {
+		writeError(w, http.StatusNotFound, "wing not found")
+		return
+	}
+
+	reqID := uuid.New().String()[:8]
+	ch := make(chan *ws.DirResults, 1)
+	s.Wings.RegisterDirRequest(reqID, ch)
+	defer s.Wings.UnregisterDirRequest(reqID)
+
+	msg := ws.DirList{Type: ws.TypeDirList, RequestID: reqID, Path: path}
+	data, _ := json.Marshal(msg)
+	writeCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
+		writeError(w, http.StatusBadGateway, "wing unreachable")
+		return
+	}
+
+	select {
+	case result := <-ch:
+		writeJSON(w, http.StatusOK, result.Entries)
+	case <-time.After(3 * time.Second):
+		writeError(w, http.StatusGatewayTimeout, "timeout")
+	case <-r.Context().Done():
+	}
 }

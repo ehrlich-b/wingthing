@@ -35,11 +35,39 @@ type ConnectedWing struct {
 type WingRegistry struct {
 	mu    sync.RWMutex
 	wings map[string]*ConnectedWing // wingID → wing
+
+	dirMu       sync.Mutex
+	dirRequests map[string]chan *ws.DirResults // requestID → response channel
 }
 
 func NewWingRegistry() *WingRegistry {
 	return &WingRegistry{
-		wings: make(map[string]*ConnectedWing),
+		wings:       make(map[string]*ConnectedWing),
+		dirRequests: make(map[string]chan *ws.DirResults),
+	}
+}
+
+func (r *WingRegistry) RegisterDirRequest(reqID string, ch chan *ws.DirResults) {
+	r.dirMu.Lock()
+	r.dirRequests[reqID] = ch
+	r.dirMu.Unlock()
+}
+
+func (r *WingRegistry) UnregisterDirRequest(reqID string) {
+	r.dirMu.Lock()
+	delete(r.dirRequests, reqID)
+	r.dirMu.Unlock()
+}
+
+func (r *WingRegistry) ResolveDirRequest(reqID string, results *ws.DirResults) {
+	r.dirMu.Lock()
+	ch := r.dirRequests[reqID]
+	r.dirMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- results:
+		default:
+		}
 	}
 }
 
@@ -267,6 +295,11 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			}
 			json.Unmarshal(data, &partial)
 			s.forwardChatToBrowser(partial.SessionID, data)
+
+		case ws.TypeDirResults:
+			var results ws.DirResults
+			json.Unmarshal(data, &results)
+			s.Wings.ResolveDirRequest(results.RequestID, &results)
 		}
 	}
 }
