@@ -3,8 +3,10 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -38,6 +40,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wings := s.Wings.ListForUser(user.ID)
+	latestVer := s.getLatestVersion()
 	out := make([]map[string]any, len(wings))
 	for i, wing := range wings {
 		projects := wing.Projects
@@ -45,17 +48,80 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			projects = []ws.WingProject{}
 		}
 		out[i] = map[string]any{
-			"id":         wing.ID,
-			"machine_id": wing.MachineID,
-			"platform":   wing.Platform,
-			"agents":     wing.Agents,
-			"labels":     wing.Labels,
-			"public_key": wing.PublicKey,
-			"last_seen":  wing.LastSeen,
-			"projects":   projects,
+			"id":             wing.ID,
+			"machine_id":     wing.MachineID,
+			"platform":       wing.Platform,
+			"version":        wing.Version,
+			"agents":         wing.Agents,
+			"labels":         wing.Labels,
+			"public_key":     wing.PublicKey,
+			"last_seen":      wing.LastSeen,
+			"projects":       projects,
+			"latest_version": latestVer,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// getLatestVersion returns the latest release version from cache, fetching from GitHub if stale.
+func (s *Server) getLatestVersion() string {
+	s.latestVersionMu.RLock()
+	ver := s.latestVersion
+	at := s.latestVersionAt
+	s.latestVersionMu.RUnlock()
+
+	if ver != "" && time.Since(at) < time.Hour {
+		return ver
+	}
+
+	// Fetch in background, return cached (possibly empty) for now
+	go s.fetchLatestVersion()
+	return ver
+}
+
+func (s *Server) fetchLatestVersion() {
+	s.latestVersionMu.Lock()
+	if s.latestVersion != "" && time.Since(s.latestVersionAt) < time.Hour {
+		s.latestVersionMu.Unlock()
+		return
+	}
+	s.latestVersionMu.Unlock()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/ehrlich-b/wingthing/releases/latest", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	if err != nil {
+		return
+	}
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.Unmarshal(body, &release); err != nil || release.TagName == "" {
+		return
+	}
+
+	ver := release.TagName
+	if !strings.HasPrefix(ver, "v") {
+		ver = "v" + ver
+	}
+
+	s.latestVersionMu.Lock()
+	s.latestVersion = ver
+	s.latestVersionAt = time.Now()
+	s.latestVersionMu.Unlock()
+	log.Printf("latest release version: %s", ver)
 }
 
 // handleAppSessions returns the user's active PTY and chat sessions.

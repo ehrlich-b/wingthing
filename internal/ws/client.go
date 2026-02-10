@@ -50,6 +50,7 @@ type Client struct {
 	Token     string // device auth token
 	MachineID string
 	Platform  string // runtime.GOOS
+	Version   string // build version
 
 	Agents     []string
 	Skills     []string
@@ -129,6 +130,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		Type:       TypeWingRegister,
 		MachineID:  c.MachineID,
 		Platform:   c.Platform,
+		Version:    c.Version,
 		Agents:     c.Agents,
 		Skills:     c.Skills,
 		Labels:     c.Labels,

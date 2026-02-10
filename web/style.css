@@ -386,6 +386,16 @@ body {
 }
 
 .text-dim { color: var(--text-dim); }
+.text-bright { color: var(--text); }
+
+.copyable { cursor: pointer; transition: color 0.15s; }
+.copyable:hover { color: var(--text); }
+
+.detail-update-hint { color: var(--accent); font-size: 12px; margin-left: 6px; }
+.detail-projects-more { color: var(--text-dim); font-size: 12px; margin-top: 4px; }
+.detail-connection-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+.detail-connection-dot.live { background: var(--green); }
+.detail-connection-dot.offline { background: var(--text-dim); }
 
 .box-detail-dialog .btn-sm {
     margin-top: 10px;

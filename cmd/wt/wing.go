@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,10 +35,55 @@ import (
 )
 
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
+// Returns group directories (sorted by project count) followed by individual repos (sorted by mtime).
 func discoverProjects(dir string, maxDepth int) []ws.WingProject {
-	var projects []ws.WingProject
-	scanDir(dir, 0, maxDepth, &projects)
-	return projects
+	var repos []ws.WingProject
+	scanDir(dir, 0, maxDepth, &repos)
+
+	// Count repos per parent directory
+	parentCount := make(map[string]int)
+	for _, r := range repos {
+		parent := filepath.Dir(r.Path)
+		if parent != dir { // skip the root scan dir itself
+			parentCount[parent]++
+		}
+	}
+
+	// Build group entries for parents with 2+ repos
+	var groups []ws.WingProject
+	seen := make(map[string]bool)
+	for parent, count := range parentCount {
+		if count >= 2 && !seen[parent] {
+			seen[parent] = true
+			groups = append(groups, ws.WingProject{
+				Name:    filepath.Base(parent),
+				Path:    parent,
+				ModTime: int64(count), // abuse ModTime to carry count for sorting
+			})
+		}
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].ModTime > groups[j].ModTime // most projects first
+	})
+	// Reset ModTime to actual value
+	for i := range groups {
+		groups[i].ModTime = projectModTime(groups[i].Path)
+	}
+
+	// Sort individual repos by mtime
+	sort.Slice(repos, func(i, j int) bool {
+		return repos[i].ModTime > repos[j].ModTime
+	})
+
+	return append(groups, repos...)
+}
+
+func projectModTime(dir string) int64 {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return 0
+	}
+	return info.ModTime().Unix()
 }
 
 func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
@@ -56,8 +102,9 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 		if e.Name() == ".git" {
 			// Parent is a git repo
 			*projects = append(*projects, ws.WingProject{
-				Name: filepath.Base(dir),
-				Path: dir,
+				Name:    filepath.Base(dir),
+				Path:    dir,
+				ModTime: projectModTime(dir),
 			})
 			return // don't recurse into .git
 		}
@@ -65,8 +112,9 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 		gitDir := filepath.Join(full, ".git")
 		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
 			*projects = append(*projects, ws.WingProject{
-				Name: e.Name(),
-				Path: full,
+				Name:    e.Name(),
+				Path:    full,
+				ModTime: projectModTime(full),
 			})
 			continue // don't recurse into known repos
 		}
@@ -259,6 +307,7 @@ func wingCmd() *cobra.Command {
 				Token:     tok.Token,
 				MachineID: cfg.MachineID,
 				Platform:  runtime.GOOS,
+				Version:   version,
 				Agents:    agents,
 				Skills:    skills,
 				Labels:    labels,
