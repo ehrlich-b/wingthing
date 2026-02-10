@@ -19,6 +19,9 @@ import (
 //go:embed templates
 var templateFS embed.FS
 
+//go:embed install.sh
+var installScript []byte
+
 var tmplFuncs = template.FuncMap{
 	"deref": func(s *string) string {
 		if s == nil {
@@ -230,6 +233,11 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSelfHost(w http.ResponseWriter, r *http.Request) {
 	data := pageData{User: s.sessionUser(r)}
 	s.template(selfhostTmpl, "base.html", "selfhost.html").ExecuteTemplate(w, "base", data)
+}
+
+func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(installScript)
 }
 
 // rankPostAnchors ranks anchor slugs for a post, pinning currentSlug first

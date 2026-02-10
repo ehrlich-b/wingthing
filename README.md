@@ -68,7 +68,7 @@ Levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs)
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ehrlich-b/wingthing/main/scripts/install.sh | sh
+curl -fsSL https://wingthing.ai/install.sh | sh
 ```
 
 Or with Go:

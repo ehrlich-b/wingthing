@@ -84,6 +84,9 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// Claim page
 	s.mux.HandleFunc("GET /auth/claim", s.handleClaimPage)
 
+	// Static files
+	s.mux.HandleFunc("GET /install.sh", s.handleInstallScript)
+
 	// Web pages
 	s.mux.HandleFunc("GET /{$}", s.handleHome)
 	s.mux.HandleFunc("GET /login", s.handleLogin)
