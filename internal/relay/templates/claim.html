@@ -22,7 +22,8 @@
         {{if .Error}}
             <p class="error">{{.Error}}</p>
         {{else if .Claimed}}
-            <p class="success">Device approved! You can close this tab.</p>
+            <p class="success">Device approved! Redirecting to app...</p>
+            <script>setTimeout(function(){ window.location.href = "/app/"; }, 5000);</script>
         {{else}}
             <p>Approve this device?</p>
             <div class="code">{{.UserCode}}</div>
