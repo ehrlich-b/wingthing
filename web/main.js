@@ -369,7 +369,7 @@ async function loadHome() {
     wingsData = sortWingsByOrder(Object.values(merged));
 
     // Cache for next load (only essential fields)
-    setCachedWings(mergedList.map(function (w) {
+    setCachedWings(wingsData.map(function (w) {
         return { machine_id: w.machine_id, id: w.id, agents: w.agents, labels: w.labels, projects: w.projects };
     }));
 
