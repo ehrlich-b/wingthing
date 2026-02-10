@@ -77,9 +77,9 @@ async function init() {
         }
     });
 
-    // Split-button: main click launches default agent terminal
-    launchTerminalBtn.addEventListener('click', function () { launchTerminal('claude'); });
-    headerLaunchBtn.addEventListener('click', function () { launchTerminal('claude'); });
+    // Split-button: main click launches last-used action
+    launchTerminalBtn.addEventListener('click', function () { launchLastAction(); });
+    headerLaunchBtn.addEventListener('click', function () { launchLastAction(); });
 
     // Split-button: toggle dropdown
     terminalToggle.addEventListener('click', function (e) {
@@ -131,6 +131,18 @@ async function init() {
 
 // localStorage session cache
 var CACHE_KEY = 'wt_sessions';
+var LAST_ACTION_KEY = 'wt_last_action';
+
+function getLastAction() {
+    try {
+        var raw = localStorage.getItem(LAST_ACTION_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+}
+
+function setLastAction(action, agent) {
+    try { localStorage.setItem(LAST_ACTION_KEY, JSON.stringify({ action: action, agent: agent })); } catch (e) {}
+}
 
 function getCachedSessions() {
     try {
@@ -235,15 +247,37 @@ async function loadHome() {
     renderSessions(sessions, wings);
 }
 
+function getDefaultAction() {
+    var last = getLastAction();
+    var agents = availableAgents.length > 0
+        ? availableAgents.map(function (a) { return a.agent; })
+        : ['claude', 'ollama'];
+    if (last && agents.indexOf(last.agent) !== -1) return last;
+    return { action: 'chat', agent: agents[0] || 'claude' };
+}
+
+function launchLastAction() {
+    var def = getDefaultAction();
+    if (def.action === 'chat') {
+        launchChat(def.agent);
+    } else {
+        launchTerminal(def.agent);
+    }
+}
+
+function updatePrimaryButtons() {
+    var def = getDefaultAction();
+    var label = def.action === 'chat' ? agentChatLabel(def.agent) : agentTermLabel(def.agent);
+    launchTerminalBtn.textContent = label;
+    headerLaunchBtn.textContent = label;
+}
+
 function populateDropdowns() {
     var agents = availableAgents.length > 0
         ? availableAgents.map(function (a) { return a.agent; })
         : ['claude', 'ollama'];
 
-    // Update main button label to first agent
-    var defaultAgent = agents[0] || 'claude';
-    launchTerminalBtn.textContent = agentTermLabel(defaultAgent);
-    headerLaunchBtn.textContent = 'new session';
+    updatePrimaryButtons();
 
     // Build dropdown items: terminals + chats
     [terminalMenu, headerLaunchMenu].forEach(function (menu) {
@@ -289,6 +323,8 @@ function agentChatLabel(agent) {
 }
 
 function launchTerminal(agent) {
+    setLastAction('terminal', agent);
+    updatePrimaryButtons();
     showTerminal();
     connectPTY(agent);
 }
@@ -347,6 +383,8 @@ window._deleteSession = function (sessionId) {
 // ========================
 
 function launchChat(agent) {
+    setLastAction('chat', agent);
+    updatePrimaryButtons();
     showChat();
     chatStatus.textContent = 'connecting...';
     chatDeleteBtn.style.display = 'none';
