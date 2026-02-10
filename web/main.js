@@ -382,8 +382,9 @@ async function loadHome() {
         if (sessResp.ok) sessions = await sessResp.json() || [];
         if (wingsResp.ok) wings = await wingsResp.json() || [];
     } catch (e) {
-        console.error('load home:', e);
-        return;
+        // Relay unreachable — render from cache
+        sessions = [];
+        wings = [];
     }
 
     // Merge live sessions with cache (same pattern as wings)
@@ -511,7 +512,11 @@ function setupWingDrag() {
             e.preventDefault();
             card.classList.remove('drag-over');
             if (!dragSrc || dragSrc === card) return;
-            grid.insertBefore(dragSrc, card);
+            if (dragSrc.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                grid.insertBefore(dragSrc, card.nextSibling);
+            } else {
+                grid.insertBefore(dragSrc, card);
+            }
             saveWingOrder();
         });
     });
@@ -547,7 +552,11 @@ function setupWingDrag() {
         cards.forEach(function(c) { c.classList.remove('drag-over'); });
         touchSrc.classList.remove('dragging');
         if (targetCard && targetCard !== touchSrc) {
-            grid.insertBefore(touchSrc, targetCard);
+            if (touchSrc.compareDocumentPosition(targetCard) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                grid.insertBefore(touchSrc, targetCard.nextSibling);
+            } else {
+                grid.insertBefore(touchSrc, targetCard);
+            }
             saveWingOrder();
         }
         touchSrc = null;
@@ -604,7 +613,11 @@ function setupEggDrag() {
             e.preventDefault();
             card.classList.remove('drag-over');
             if (!dragSrc || dragSrc === card) return;
-            grid.insertBefore(dragSrc, card);
+            if (dragSrc.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                grid.insertBefore(dragSrc, card.nextSibling);
+            } else {
+                grid.insertBefore(dragSrc, card);
+            }
             saveEggOrder();
         });
     });
@@ -640,7 +653,11 @@ function setupEggDrag() {
         cards.forEach(function(c) { c.classList.remove('drag-over'); });
         touchSrc.classList.remove('dragging');
         if (targetCard && targetCard !== touchSrc) {
-            grid.insertBefore(touchSrc, targetCard);
+            if (touchSrc.compareDocumentPosition(targetCard) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                grid.insertBefore(touchSrc, targetCard.nextSibling);
+            } else {
+                grid.insertBefore(touchSrc, targetCard);
+            }
             saveEggOrder();
         }
         touchSrc = null;
@@ -738,8 +755,10 @@ function showEggDetail(sessionId) {
     });
 
     document.getElementById('detail-egg-delete').addEventListener('click', function() {
-        hideDetailModal();
-        window._deleteSession(sessionId);
+        if (confirm('Close this session?')) {
+            hideDetailModal();
+            window._deleteSession(sessionId);
+        }
     });
 }
 
@@ -831,6 +850,7 @@ function renderDashboard() {
                 '<span class="egg-label">' + escapeHtml(name) + ' \u00b7 ' + escapeHtml(s.agent || '?') +
                     (needsAttention ? ' \u00b7 !' : '') + '</span>' +
                 '<button class="box-menu-btn" title="details">\u22ef</button>' +
+                '<button class="btn-sm btn-danger egg-delete" data-sid="' + s.id + '">x</button>' +
             '</div>' +
             (wingName ? '<div class="egg-wing">' + escapeHtml(wingName) + '</div>' : '') +
         '</div>';
@@ -840,7 +860,7 @@ function renderDashboard() {
 
     sessionsList.querySelectorAll('.egg-box').forEach(function(card) {
         card.addEventListener('click', function(e) {
-            if (e.target.closest('.box-menu-btn')) return;
+            if (e.target.closest('.box-menu-btn, .egg-delete')) return;
             var sid = card.dataset.sid;
             var kind = card.dataset.kind;
             var agent = card.dataset.agent;
@@ -848,6 +868,16 @@ function renderDashboard() {
                 window._openChat(sid, agent);
             } else {
                 switchToSession(sid);
+            }
+        });
+    });
+
+    // Wire egg X buttons with confirmation
+    sessionsList.querySelectorAll('.egg-delete').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (confirm('Close this session?')) {
+                window._deleteSession(btn.dataset.sid);
             }
         });
     });

@@ -40,7 +40,8 @@ document.addEventListener('keydown',function(e){
         var t=document.activeElement&&document.activeElement.tagName;
         if(t!=='INPUT'&&t!=='TEXTAREA'&&t!=='SELECT'){
             e.preventDefault();
-            window.location.href='/app';
+            var h=window.location.hostname;
+            window.location.href=(h==='wingthing.ai'||h==='www.wingthing.ai')?'https://app.wingthing.ai':'/app/';
         }
     }
 });
