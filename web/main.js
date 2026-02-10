@@ -67,6 +67,7 @@ var WINGS_CACHE_KEY = 'wt_wings';
 var LAST_TERM_KEY = 'wt_last_term_agent';
 var LAST_CHAT_KEY = 'wt_last_chat_agent';
 var TERM_BUF_PREFIX = 'wt_termbuf_';
+var WING_ORDER_KEY = 'wt_wing_order';
 
 function loginRedirect() {
     var host = window.location.hostname.replace(/^app\./, '');
@@ -216,6 +217,30 @@ function getCachedWings() {
 function setCachedWings(wings) {
     try { localStorage.setItem(WINGS_CACHE_KEY, JSON.stringify(wings)); } catch (e) {}
 }
+function getWingOrder() {
+    try { var raw = localStorage.getItem(WING_ORDER_KEY); return raw ? JSON.parse(raw) : []; }
+    catch (e) { return []; }
+}
+function setWingOrder(order) {
+    try { localStorage.setItem(WING_ORDER_KEY, JSON.stringify(order)); } catch (e) {}
+}
+function sortWingsByOrder(wings) {
+    var order = getWingOrder();
+    var orderMap = {};
+    order.forEach(function(id, i) { orderMap[id] = i; });
+    // Known wings keep stored position, unknown go to end
+    var known = [];
+    var unknown = [];
+    wings.forEach(function(w) {
+        if (orderMap.hasOwnProperty(w.machine_id)) {
+            known.push(w);
+        } else {
+            unknown.push(w);
+        }
+    });
+    known.sort(function(a, b) { return orderMap[a.machine_id] - orderMap[b.machine_id]; });
+    return known.concat(unknown);
+}
 
 // === Dashboard WebSocket (real-time wing status) ===
 
@@ -235,7 +260,6 @@ function connectAppWS() {
 
 function applyWingEvent(ev) {
     if (ev.type === 'wing.online') {
-        // Update or add the wing in wingsData
         var found = false;
         wingsData.forEach(function(w) {
             if (w.machine_id === ev.machine_id) {
@@ -249,7 +273,8 @@ function applyWingEvent(ev) {
             }
         });
         if (!found) {
-            wingsData.unshift({
+            // New wing goes to end
+            wingsData.push({
                 id: ev.wing_id,
                 machine_id: ev.machine_id,
                 online: true,
@@ -259,32 +284,38 @@ function applyWingEvent(ev) {
                 projects: ev.projects || [],
             });
         }
-        // Rebuild agent + project lists
-        rebuildAgentLists();
-        setCachedWings(wingsData.map(function(w) {
-            return { machine_id: w.machine_id, id: w.id, agents: w.agents, labels: w.labels, projects: w.projects };
-        }));
-        if (activeView === 'home') renderDashboard();
-        // Animate the card
-        animateWingCard(ev.machine_id, 'wing-pop-in');
     } else if (ev.type === 'wing.offline') {
         wingsData.forEach(function(w) {
             if (w.machine_id === ev.machine_id) {
                 w.online = false;
             }
         });
-        rebuildAgentLists();
-        setCachedWings(wingsData.map(function(w) {
-            return { machine_id: w.machine_id, id: w.id, agents: w.agents, labels: w.labels, projects: w.projects };
-        }));
-        if (activeView === 'home') renderDashboard();
-        animateWingCard(ev.machine_id, 'wing-pop-out');
     }
 
-    // Refresh palette if open
+    rebuildAgentLists();
+    setCachedWings(wingsData.map(function(w) {
+        return { machine_id: w.machine_id, id: w.id, agents: w.agents, labels: w.labels, projects: w.projects };
+    }));
+    if (activeView === 'home') {
+        renderDashboard();
+        // Subtle dot ping on status change
+        pingWingDot(ev.machine_id);
+    }
     if (commandPalette.style.display !== 'none') {
         updatePaletteState();
     }
+}
+
+function pingWingDot(machineId) {
+    requestAnimationFrame(function() {
+        var card = wingStatusEl.querySelector('.wing-card[data-machine-id="' + machineId + '"]');
+        if (!card) return;
+        var dot = card.querySelector('.wing-dot');
+        if (!dot) return;
+        dot.classList.remove('dot-ping');
+        void dot.offsetWidth;
+        dot.classList.add('dot-ping');
+    });
 }
 
 function rebuildAgentLists() {
@@ -298,19 +329,6 @@ function rebuildAgentLists() {
         });
         (w.projects || []).forEach(function(p) {
             allProjects.push({ name: p.name, path: p.path, wingId: w.id, machine: w.machine_id });
-        });
-    });
-}
-
-function animateWingCard(machineId, className) {
-    requestAnimationFrame(function() {
-        var cards = wingStatusEl.querySelectorAll('.wing-card');
-        cards.forEach(function(card) {
-            if (card.dataset.machineId === machineId) {
-                card.classList.remove('wing-pop-in', 'wing-pop-out');
-                void card.offsetWidth; // force reflow
-                card.classList.add(className);
-            }
         });
     });
 }
@@ -348,12 +366,7 @@ async function loadHome() {
             merged[w.machine_id] = w;
         }
     });
-    var mergedList = Object.values(merged);
-    mergedList.sort(function (a, b) {
-        if (a.online !== b.online) return a.online ? -1 : 1;
-        return (a.machine_id || '').localeCompare(b.machine_id || '');
-    });
-    wingsData = mergedList;
+    wingsData = sortWingsByOrder(Object.values(merged));
 
     // Cache for next load (only essential fields)
     setCachedWings(mergedList.map(function (w) {
@@ -415,6 +428,101 @@ function renderSidebar() {
     });
 }
 
+function setupWingDrag() {
+    var cards = wingStatusEl.querySelectorAll('.wing-card');
+    var dragSrc = null;
+
+    // Desktop drag
+    cards.forEach(function(card) {
+        card.addEventListener('dragstart', function(e) {
+            dragSrc = card;
+            card.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', card.dataset.machineId);
+        });
+        card.addEventListener('dragend', function() {
+            card.classList.remove('dragging');
+            cards.forEach(function(c) { c.classList.remove('drag-over'); });
+            dragSrc = null;
+        });
+        card.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (card !== dragSrc) {
+                cards.forEach(function(c) { c.classList.remove('drag-over'); });
+                card.classList.add('drag-over');
+            }
+        });
+        card.addEventListener('dragleave', function() {
+            card.classList.remove('drag-over');
+        });
+        card.addEventListener('drop', function(e) {
+            e.preventDefault();
+            card.classList.remove('drag-over');
+            if (!dragSrc || dragSrc === card) return;
+            // Reorder: move dragSrc before drop target
+            wingStatusEl.insertBefore(dragSrc, card);
+            saveWingOrder();
+        });
+    });
+
+    // Touch drag (mobile)
+    var touchSrc = null;
+    var touchClone = null;
+    var touchStartY = 0;
+
+    cards.forEach(function(card) {
+        card.addEventListener('touchstart', function(e) {
+            if (e.target.closest('.wing-update-btn')) return;
+            touchSrc = card;
+            touchStartY = e.touches[0].clientY;
+            card.classList.add('dragging');
+        }, { passive: true });
+    });
+
+    wingStatusEl.addEventListener('touchmove', function(e) {
+        if (!touchSrc) return;
+        e.preventDefault();
+        var touch = e.touches[0];
+        var target = document.elementFromPoint(touch.clientX, touch.clientY);
+        var targetCard = target ? target.closest('.wing-card') : null;
+        cards.forEach(function(c) { c.classList.remove('drag-over'); });
+        if (targetCard && targetCard !== touchSrc) {
+            targetCard.classList.add('drag-over');
+        }
+    }, { passive: false });
+
+    wingStatusEl.addEventListener('touchend', function(e) {
+        if (!touchSrc) return;
+        var touch = e.changedTouches[0];
+        var target = document.elementFromPoint(touch.clientX, touch.clientY);
+        var targetCard = target ? target.closest('.wing-card') : null;
+        cards.forEach(function(c) { c.classList.remove('drag-over'); });
+        touchSrc.classList.remove('dragging');
+        if (targetCard && targetCard !== touchSrc) {
+            wingStatusEl.insertBefore(touchSrc, targetCard);
+            saveWingOrder();
+        }
+        touchSrc = null;
+    }, { passive: true });
+}
+
+function saveWingOrder() {
+    var order = [];
+    wingStatusEl.querySelectorAll('.wing-card').forEach(function(card) {
+        if (card.dataset.machineId) order.push(card.dataset.machineId);
+    });
+    setWingOrder(order);
+    // Sync wingsData to match DOM order
+    var byMachine = {};
+    wingsData.forEach(function(w) { byMachine[w.machine_id] = w; });
+    var reordered = [];
+    order.forEach(function(mid) { if (byMachine[mid]) reordered.push(byMachine[mid]); });
+    // Add any not in order (shouldn't happen, but defensive)
+    wingsData.forEach(function(w) { if (order.indexOf(w.machine_id) === -1) reordered.push(w); });
+    wingsData = reordered;
+}
+
 function renderDashboard() {
     // Wing status cards
     if (wingsData.length > 0) {
@@ -425,7 +533,7 @@ function renderDashboard() {
             var updateBtn = w.online !== false
                 ? ' <button class="btn-sm wing-update-btn" data-wing-id="' + escapeHtml(w.id) + '">update</button>'
                 : '';
-            return '<div class="wing-card" data-machine-id="' + escapeHtml(w.machine_id || '') + '">' +
+            return '<div class="wing-card" draggable="true" data-machine-id="' + escapeHtml(w.machine_id || '') + '">' +
                 '<span class="wing-dot ' + dotClass + '"></span>' +
                 '<span class="wing-name">' + escapeHtml(name) + '</span>' +
                 '<span class="wing-detail">' + escapeHtml((w.agents || []).join(', ')) +
@@ -433,6 +541,8 @@ function renderDashboard() {
                 updateBtn +
             '</div>';
         }).join('');
+
+        setupWingDrag();
 
         wingStatusEl.querySelectorAll('.wing-update-btn').forEach(function(btn) {
             btn.addEventListener('click', function(e) {
