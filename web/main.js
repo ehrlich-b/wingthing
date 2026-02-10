@@ -147,6 +147,11 @@ async function init() {
         if (e.key === 'Escape' && commandPalette.style.display !== 'none') {
             hidePalette();
         }
+        // Ctrl+. = go back to dashboard from any view
+        if ((e.ctrlKey || e.metaKey) && e.key === '.' && activeView !== 'home') {
+            e.preventDefault();
+            showHome();
+        }
     });
 
     // Palette events
@@ -1172,6 +1177,16 @@ function initTerminal() {
     term.loadAddon(serializeAddon);
     term.open(terminalContainer);
     fitAddon.fit();
+
+    // Ctrl+. = go back to dashboard (intercepted before PTY)
+    term.attachCustomKeyEventHandler(function (e) {
+        if (e.type === 'keydown' && (e.ctrlKey || e.metaKey) && e.key === '.') {
+            e.preventDefault();
+            showHome();
+            return false;
+        }
+        return true;
+    });
 
     term.onData(function (data) {
         if (ctrlActive) {
