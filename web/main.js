@@ -439,20 +439,41 @@ async function loadHome() {
         }
     }
 
-    // Merge live wings with cached wings (stable by machine_id)
+    // Merge live wings with cached wings (stable by machine_id, preserve existing order)
     var cached = getCachedWings();
-    var merged = {};
+    var liveMap = {};
     wings.forEach(function (w) {
         w.online = true;
-        merged[w.machine_id] = w;
+        liveMap[w.machine_id] = w;
+    });
+    var cachedMap = {};
+    cached.forEach(function (w) {
+        w.online = false;
+        cachedMap[w.machine_id] = w;
+    });
+    // Start from existing wingsData order, update in place
+    var seen = {};
+    var merged = [];
+    wingsData.forEach(function (existing) {
+        var mid = existing.machine_id;
+        if (liveMap[mid]) {
+            merged.push(liveMap[mid]);
+        } else if (cachedMap[mid]) {
+            merged.push(cachedMap[mid]);
+        } else {
+            existing.online = false;
+            merged.push(existing);
+        }
+        seen[mid] = true;
+    });
+    // Append any new wings not in current order
+    wings.forEach(function (w) {
+        if (!seen[w.machine_id]) { merged.push(w); seen[w.machine_id] = true; }
     });
     cached.forEach(function (w) {
-        if (!merged[w.machine_id]) {
-            w.online = false;
-            merged[w.machine_id] = w;
-        }
+        if (!seen[w.machine_id]) { merged.push(w); seen[w.machine_id] = true; }
     });
-    wingsData = sortWingsByOrder(Object.values(merged));
+    wingsData = sortWingsByOrder(merged);
 
     // Extract latest_version from any wing response
     wingsData.forEach(function(w) {
