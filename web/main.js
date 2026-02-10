@@ -144,8 +144,12 @@ async function init() {
     });
     paletteSearch.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
-            var selected = paletteResults.querySelector('.palette-item.selected');
-            if (selected) launchFromPalette(selected.dataset.path);
+            if (paletteMode === 'chat') {
+                launchFromPalette('');
+            } else {
+                var selected = paletteResults.querySelector('.palette-item.selected');
+                if (selected) launchFromPalette(selected.dataset.path);
+            }
         }
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault();
@@ -153,8 +157,12 @@ async function init() {
         }
     });
     paletteGo.addEventListener('click', function() {
-        var selected = paletteResults.querySelector('.palette-item.selected');
-        if (selected) launchFromPalette(selected.dataset.path);
+        if (paletteMode === 'chat') {
+            launchFromPalette('');
+        } else {
+            var selected = paletteResults.querySelector('.palette-item.selected');
+            if (selected) launchFromPalette(selected.dataset.path);
+        }
     });
 
     window.addEventListener('resize', function () {
@@ -258,6 +266,9 @@ function renderSidebar() {
             var sid = tab.dataset.sid;
             var kind = tab.dataset.kind;
             var agent = tab.dataset.agent;
+            // Don't reconnect if already viewing this session
+            if (kind === 'chat' && sid === chatSessionId && activeView === 'chat') return;
+            if (kind !== 'chat' && sid === ptySessionId && activeView === 'terminal') return;
             if (kind === 'chat') {
                 window._openChat(sid, agent);
             } else {
@@ -330,11 +341,23 @@ function renderDashboard() {
 
 // === Command Palette ===
 
+var paletteMode = 'terminal'; // 'terminal' or 'chat'
+
 function showPalette() {
     if (availableAgents.length === 0 && wingsData.length === 0) return;
     commandPalette.style.display = '';
     paletteSearch.value = '';
     paletteSearch.focus();
+
+    // Mode buttons
+    document.querySelectorAll('.palette-mode').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.mode === paletteMode);
+        btn.onclick = function() {
+            paletteMode = btn.dataset.mode;
+            document.querySelectorAll('.palette-mode').forEach(function(b) { b.classList.toggle('active', b.dataset.mode === paletteMode); });
+            updatePaletteForMode();
+        };
+    });
 
     // Populate agent selector
     var agents = availableAgents.length > 0
@@ -345,7 +368,18 @@ function showPalette() {
         return '<option value="' + escapeHtml(a) + '"' + (a === lastAgent ? ' selected' : '') + '>' + escapeHtml(a) + '</option>';
     }).join('');
 
-    renderPaletteResults('');
+    updatePaletteForMode();
+}
+
+function updatePaletteForMode() {
+    var search = document.getElementById('palette-search');
+    if (paletteMode === 'chat') {
+        search.style.display = 'none';
+        paletteResults.innerHTML = '<div class="palette-empty">press open to start a new chat session</div>';
+    } else {
+        search.style.display = '';
+        renderPaletteResults(search.value);
+    }
 }
 
 function hidePalette() {
@@ -430,10 +464,14 @@ function shortenPath(path) {
 function launchFromPalette(cwd) {
     var agent = paletteAgent.value;
     hidePalette();
-    setLastTermAgent(agent);
-    showTerminal();
-    // Only pass CWD if it's an absolute path
-    connectPTY(agent, (cwd && cwd.charAt(0) === '/') ? cwd : '');
+    if (paletteMode === 'chat') {
+        launchChat(agent);
+    } else {
+        setLastTermAgent(agent);
+        showTerminal();
+        // Only pass CWD if it's an absolute path
+        connectPTY(agent, (cwd && cwd.charAt(0) === '/') ? cwd : '');
+    }
 }
 
 // === Notifications ===

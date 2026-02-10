@@ -62,7 +62,10 @@
     <div id="command-palette" style="display:none;">
         <div id="palette-backdrop"></div>
         <div id="palette-dialog">
-            <div id="palette-header">open terminal</div>
+            <div id="palette-header">
+                <button class="palette-mode active" data-mode="terminal">terminal</button>
+                <button class="palette-mode" data-mode="chat">chat</button>
+            </div>
             <input id="palette-search" type="text" placeholder="search projects or type a path..." autocomplete="off" spellcheck="false">
             <div id="palette-results"></div>
             <div id="palette-footer">

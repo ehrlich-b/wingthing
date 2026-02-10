@@ -350,11 +350,31 @@ body {
 }
 
 #palette-header {
-    padding: 14px 16px 0;
+    padding: 10px 16px 0;
+    display: flex;
+    gap: 4px;
+}
+
+.palette-mode {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    padding: 4px 12px;
+    font-family: var(--font);
     font-size: 11px;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: var(--text-muted);
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.palette-mode:hover { color: var(--text-dim); border-color: var(--text-muted); }
+
+.palette-mode.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(233, 69, 96, 0.1);
 }
 
 #palette-search {
