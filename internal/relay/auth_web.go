@@ -26,6 +26,9 @@ func generateToken() string {
 }
 
 func (s *Server) sessionUser(r *http.Request) *SocialUser {
+	if s.LocalMode && s.localUser != nil {
+		return s.localUser
+	}
 	c, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return nil

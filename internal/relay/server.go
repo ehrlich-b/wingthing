@@ -31,6 +31,8 @@ type Server struct {
 	Config         ServerConfig
 	DevTemplateDir string // if set, re-read templates from disk on each request
 	DevMode        bool   // if set, auto-claim device codes with test-user
+	LocalMode      bool   // if set, bypass auth — single-user, zero-config
+	localUser      *SocialUser
 	Wings          *WingRegistry
 	PTY            *PTYRegistry
 	Chat           *ChatRegistry
@@ -94,6 +96,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /login", s.handleLogin)
 	s.mux.HandleFunc("GET /skills", s.handleSkillsPage)
 	s.mux.HandleFunc("GET /skills/{name}", s.handleSkillDetailPage)
+	s.mux.HandleFunc("GET /install", s.handleInstallPage)
 	s.mux.HandleFunc("GET /self-host", s.handleSelfHost)
 	s.mux.HandleFunc("GET /social", s.handleSocial)
 	s.mux.HandleFunc("GET /w/{slug}", s.handleAnchor)
@@ -125,6 +128,10 @@ func stripPort(host string) string {
 		return host[:i]
 	}
 	return host
+}
+
+func (s *Server) SetLocalUser(u *SocialUser) {
+	s.localUser = u
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

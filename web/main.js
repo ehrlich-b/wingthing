@@ -54,6 +54,7 @@ const chatDeleteBtn = document.getElementById('chat-delete-btn');
 // Palette refs
 const commandPalette = document.getElementById('command-palette');
 const paletteBackdrop = document.getElementById('palette-backdrop');
+const paletteDialog = document.getElementById('palette-dialog');
 const paletteSearch = document.getElementById('palette-search');
 const paletteResults = document.getElementById('palette-results');
 const paletteStatus = document.getElementById('palette-status');
@@ -154,8 +155,9 @@ async function init() {
     paletteSearch.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
             e.preventDefault();
+            if (dirListPending) return; // wait for results
             var selected = paletteResults.querySelector('.palette-item.selected');
-            launchFromPalette(selected ? selected.dataset.path : paletteSearch.value);
+            if (selected) launchFromPalette(selected.dataset.path);
         }
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault();
@@ -273,6 +275,11 @@ async function loadHome() {
 
     renderSidebar();
     if (activeView === 'home') renderDashboard();
+
+    // Refresh palette if open (wing may have come online)
+    if (commandPalette.style.display !== 'none') {
+        updatePaletteState();
+    }
 }
 
 // === Rendering ===
@@ -411,6 +418,7 @@ var paletteAgentIndex = 0;
 var paletteSelectedIndex = 0;
 var dirListTimer = null;
 var dirListAbort = null;
+var dirListPending = false; // true while waiting for remote dir results
 
 function currentPaletteWing() {
     var online = onlineWings();
@@ -441,23 +449,51 @@ function onlineWings() {
 }
 
 function showPalette() {
-    if (onlineWings().length === 0) return;
     commandPalette.style.display = '';
     paletteSearch.value = '';
     paletteSearch.focus();
-    // Initialize agent index from last-used
-    var agents = currentPaletteAgents();
-    var last = getLastTermAgent();
-    var idx = agents.indexOf(last);
-    paletteAgentIndex = idx >= 0 ? idx : 0;
-    renderPaletteStatus();
-    renderPaletteResults('');
+    updatePaletteState();
+}
+
+function updatePaletteState() {
+    var online = onlineWings();
+    var alive = online.length > 0;
+    var wasWaiting = paletteDialog.classList.contains('palette-waiting');
+
+    paletteSearch.disabled = !alive;
+    paletteDialog.classList.toggle('palette-waiting', !alive);
+
+    if (alive) {
+        if (wasWaiting) {
+            paletteDialog.classList.add('palette-awake');
+            setTimeout(function() { paletteDialog.classList.remove('palette-awake'); }, 800);
+            paletteSearch.focus();
+        }
+        var agents = currentPaletteAgents();
+        var last = getLastTermAgent();
+        var idx = agents.indexOf(last);
+        paletteAgentIndex = idx >= 0 ? idx : 0;
+        renderPaletteStatus();
+        if (paletteMode === 'chat') {
+            paletteResults.innerHTML = '<div class="palette-empty">enter to start chat</div>';
+        } else {
+            renderPaletteResults(paletteSearch.value);
+        }
+    } else {
+        paletteStatus.innerHTML = '<span class="palette-waiting-text">no wings online</span>';
+        paletteResults.innerHTML = '<div class="palette-waiting-msg">' +
+            '<div class="waiting-dot"></div>' +
+            '<div>no wings online</div>' +
+            '<div class="palette-waiting-hint"><a href="https://wingthing.ai/install" target="_blank">install wt</a> and run <code>wt start</code></div>' +
+        '</div>';
+    }
 }
 
 function hidePalette() {
     commandPalette.style.display = 'none';
     if (dirListTimer) { clearTimeout(dirListTimer); dirListTimer = null; }
     if (dirListAbort) { dirListAbort.abort(); dirListAbort = null; }
+    dirListPending = false;
 }
 
 function cyclePaletteWing() {
@@ -552,11 +588,13 @@ function debouncedDirList(value) {
 
     // If not a path, filter projects locally
     if (!value || (value.charAt(0) !== '/' && value.charAt(0) !== '~')) {
+        dirListPending = false;
         renderPaletteResults(value);
         return;
     }
 
     // Debounce remote directory listing
+    dirListPending = true;
     dirListTimer = setTimeout(function() { fetchDirList(value); }, 200);
 }
 
@@ -566,10 +604,12 @@ function fetchDirList(path) {
 
     if (dirListAbort) dirListAbort.abort();
     dirListAbort = new AbortController();
+    dirListPending = true;
 
     fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent(path), {
         signal: dirListAbort.signal
     }).then(function(r) { return r.json(); }).then(function(entries) {
+        dirListPending = false;
         if (!entries || !Array.isArray(entries)) { renderPaletteItems([]); return; }
         var items = entries.map(function(e) {
             return { name: e.name, path: e.path, isDir: e.is_dir };
@@ -580,7 +620,7 @@ function fetchDirList(path) {
             return a.name.localeCompare(b.name);
         });
         renderPaletteItems(items);
-    }).catch(function() {});
+    }).catch(function() { dirListPending = false; });
 }
 
 function navigatePalette(dir) {
@@ -605,6 +645,7 @@ function shortenPath(path) {
 }
 
 function launchFromPalette(cwd) {
+    if (onlineWings().length === 0) return;
     var wing = currentPaletteWing();
     var wingId = wing ? wing.id : '';
     var agent = currentPaletteAgent();

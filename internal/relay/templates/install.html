@@ -1,0 +1,87 @@
+{{define "title"}}install — wingthing.ai{{end}}
+{{define "head"}}
+<style>
+.inst-hero{padding:28px 0 20px}
+.inst-hero h1{font-size:24px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
+.inst-hero p{color:var(--text-dim);font-size:14px;max-width:560px;line-height:1.6}
+.inst-section{margin-bottom:32px}
+.inst-section h2{font-size:16px;font-weight:600;margin-bottom:12px;color:var(--action)}
+.inst-section p{color:var(--text-dim);font-size:14px;line-height:1.6;margin-bottom:12px}
+.inst-code{background:var(--bg-card);border-radius:6px;padding:14px 20px;font-size:13px;line-height:1.7;font-family:var(--mono);overflow-x:auto;margin-bottom:16px;position:relative}
+.inst-code .prompt{color:var(--text-dim);user-select:none}
+.inst-code .cmd{color:var(--text)}
+.inst-code .comment{color:#666}
+.inst-copy{position:absolute;top:8px;right:8px;background:var(--accent);border:none;color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:3px;cursor:pointer}
+.inst-copy:hover{color:var(--text);background:var(--action)}
+.inst-steps{list-style:none;counter-reset:step}
+.inst-steps li{counter-increment:step;margin-bottom:20px;padding-left:36px;position:relative}
+.inst-steps li::before{content:counter(step);position:absolute;left:0;top:0;width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--text);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;font-family:var(--mono)}
+.inst-steps li h3{font-size:14px;font-weight:600;margin-bottom:6px}
+.inst-steps li p{color:var(--text-dim);font-size:13px;line-height:1.5;margin-bottom:8px}
+.inst-platforms{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.inst-platform{background:var(--bg-card);border-radius:6px;padding:10px 16px;font-family:var(--mono);font-size:12px;color:var(--text-dim)}
+.inst-platform span{color:var(--text);font-weight:600}
+@media(max-width:600px){
+  .inst-hero h1{font-size:20px}
+  .inst-code{font-size:11px;padding:12px 14px}
+  .inst-steps li{padding-left:30px}
+}
+</style>
+{{end}}
+{{define "content"}}
+<div class="inst-hero">
+<h1>install wt</h1>
+<p>One command. Single binary, no dependencies. macOS and Linux, x64 and arm64.</p>
+</div>
+
+<div class="inst-platforms">
+<div class="inst-platform"><span>macOS</span> arm64 / x64</div>
+<div class="inst-platform"><span>Linux</span> arm64 / x64</div>
+</div>
+
+<div class="inst-section">
+<h2>quick install</h2>
+<div class="inst-code">
+<button class="inst-copy" onclick="navigator.clipboard.writeText('curl -fsSL https://wingthing.ai/install.sh | sh')">copy</button>
+<span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span>
+</div>
+<p>Installs to <code>~/.local/bin/wt</code>. Set <code>WT_INSTALL_DIR</code> to change the location.</p>
+</div>
+
+<div class="inst-section">
+<h2>get started</h2>
+<ol class="inst-steps">
+<li>
+<h3>log in</h3>
+<p>Authenticate with the relay so your machine is reachable from the web.</p>
+<div class="inst-code">
+<span class="prompt">$ </span><span class="cmd">wt login</span>
+</div>
+</li>
+<li>
+<h3>start your wing</h3>
+<p>Your machine is now online. Open <a href="https://app.wingthing.ai">app.wingthing.ai</a> to start a terminal.</p>
+<div class="inst-code">
+<span class="prompt">$ </span><span class="cmd">wt start</span>
+</div>
+</li>
+<li>
+<h3>open a terminal</h3>
+<p>Press <code>.</code> or <code>+</code> in the web app to open the command palette and start a session on your machine.</p>
+</li>
+</ol>
+</div>
+
+<div class="inst-section">
+<h2>manual download</h2>
+<p>Grab the binary from <a href="https://github.com/ehrlich-b/wingthing/releases/latest">GitHub releases</a> and put it in your PATH.</p>
+</div>
+
+<div class="inst-section">
+<h2>update</h2>
+<div class="inst-code">
+<span class="prompt">$ </span><span class="cmd">wt update</span>
+</div>
+<p>Downloads the latest release and restarts the wing daemon if running. You can also trigger updates remotely from the web dashboard.</p>
+</div>
+{{end}}

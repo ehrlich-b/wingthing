@@ -69,6 +69,7 @@ var (
 	skillsTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skills.html"))
 	skillDetailTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skill_detail.html"))
 	selfhostTmpl    = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/selfhost.html"))
+	installTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/install.html"))
 	claimTmpl       = template.Must(template.New("claim.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/claim.html"))
 )
 
@@ -233,6 +234,11 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSelfHost(w http.ResponseWriter, r *http.Request) {
 	data := pageData{User: s.sessionUser(r)}
 	s.template(selfhostTmpl, "base.html", "selfhost.html").ExecuteTemplate(w, "base", data)
+}
+
+func (s *Server) handleInstallPage(w http.ResponseWriter, r *http.Request) {
+	data := pageData{User: s.sessionUser(r)}
+	s.template(installTmpl, "base.html", "install.html").ExecuteTemplate(w, "base", data)
 }
 
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
@@ -623,6 +629,10 @@ func (s *Server) handleSkillDetailPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if s.LocalMode {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	// Store next redirect in cookie so it survives OAuth round-trip
 	if next := r.URL.Query().Get("next"); next != "" {
 		http.SetCookie(w, &http.Cookie{
