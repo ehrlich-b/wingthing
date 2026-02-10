@@ -271,6 +271,23 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 			wing.Conn.Write(ctx, websocket.MessageText, data)
 
+		case ws.TypePTYDetach:
+			var det ws.PTYDetach
+			if err := json.Unmarshal(data, &det); err != nil {
+				continue
+			}
+			session := s.PTY.Get(det.SessionID)
+			if session == nil || session.UserID != userID {
+				continue
+			}
+			session.mu.Lock()
+			if session.BrowserConn == conn {
+				session.Status = "detached"
+				session.BrowserConn = nil
+				log.Printf("pty session %s: explicit detach (user=%s)", det.SessionID, userID)
+			}
+			session.mu.Unlock()
+
 		case ws.TypePTYKill:
 			var kill ws.PTYKill
 			if err := json.Unmarshal(data, &kill); err != nil {

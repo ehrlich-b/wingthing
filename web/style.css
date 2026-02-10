@@ -52,6 +52,30 @@ body {
 
 #sidebar::-webkit-scrollbar { width: 0; }
 
+#home-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    margin-bottom: 4px;
+    transition: all 0.15s;
+    font-family: var(--mono);
+}
+
+#home-btn:hover {
+    color: var(--text);
+    background: var(--bg-card);
+}
+
 #new-session-btn {
     width: 36px;
     height: 36px;
@@ -655,6 +679,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 @media (max-width: 600px) {
     #sidebar { width: 40px; }
+    #home-btn { width: 30px; height: 30px; font-size: 14px; }
     #new-session-btn { width: 30px; height: 30px; font-size: 16px; }
     .session-tab { width: 30px; height: 34px; }
     .tab-letter { font-size: 12px; }

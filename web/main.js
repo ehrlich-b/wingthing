@@ -37,6 +37,7 @@ let pendingHistory = null;
 // DOM refs
 const sessionTabs = document.getElementById('session-tabs');
 const newSessionBtn = document.getElementById('new-session-btn');
+const homeBtn = document.getElementById('home-btn');
 const headerLogo = document.getElementById('header-logo');
 const headerTitle = document.getElementById('header-title');
 const userInfo = document.getElementById('user-info');
@@ -93,8 +94,8 @@ async function init() {
     }
 
     // Event handlers
+    homeBtn.addEventListener('click', showHome);
     newSessionBtn.addEventListener('click', showPalette);
-    headerLogo.addEventListener('click', function(e) { e.preventDefault(); showHome(); });
 
     chatDeleteBtn.addEventListener('click', function () {
         if (chatSessionId) {
@@ -1030,6 +1031,9 @@ function switchToSession(sessionId) {
 
 function detachPTY() {
     if (ptyWs) {
+        if (ptySessionId && ptyWs.readyState === WebSocket.OPEN) {
+            ptyWs.send(JSON.stringify({ type: 'pty.detach', session_id: ptySessionId }));
+        }
         ptyWs.close();
         ptyWs = null;
     }
