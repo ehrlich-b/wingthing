@@ -150,6 +150,33 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "session not found")
 }
 
+// handleWingUpdate sends a wing.update command to a connected wing.
+func (s *Server) handleWingUpdate(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	wingID := r.PathValue("wingID")
+	wing := s.Wings.FindByID(wingID)
+	if wing == nil || wing.UserID != user.ID {
+		writeError(w, http.StatusNotFound, "wing not found")
+		return
+	}
+
+	msg := ws.WingUpdate{Type: ws.TypeWingUpdate}
+	data, _ := json.Marshal(msg)
+	writeCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
+		writeError(w, http.StatusBadGateway, "wing unreachable")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // handleWingLS proxies a directory listing request to a connected wing.
 func (s *Server) handleWingLS(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)

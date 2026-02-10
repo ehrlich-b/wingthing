@@ -62,6 +62,7 @@ type Client struct {
 	OnChatMessage ChatMessageHandler
 	OnChatDelete  ChatDeleteHandler
 	OnDirList     DirHandler
+	OnUpdate      func(ctx context.Context)
 
 	// ptySessions tracks active PTY sessions for routing input/resize
 	ptySessions   map[string]chan []byte // session_id → input channel
@@ -271,6 +272,11 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				go c.OnDirList(ctx, req, func(v any) error {
 					return c.writeJSON(ctx, v)
 				})
+			}
+
+		case TypeWingUpdate:
+			if c.OnUpdate != nil {
+				go c.OnUpdate(ctx)
 			}
 
 		case TypeError:

@@ -224,15 +224,26 @@ body {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--green);
+    background: var(--text-muted);
     flex-shrink: 0;
 }
+
+.wing-dot.dot-live { background: var(--green); }
+.wing-dot.dot-offline { background: var(--yellow); }
 
 .wing-detail {
     font-size: 11px;
     color: var(--text-dim);
     margin-left: auto;
 }
+
+.wing-update-btn {
+    margin-left: 8px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.wing-card:hover .wing-update-btn { opacity: 1; }
 
 /* === Session cards === */
 

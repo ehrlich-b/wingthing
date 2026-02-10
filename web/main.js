@@ -61,6 +61,7 @@ const paletteHints = document.getElementById('palette-hints');
 
 // localStorage keys
 var CACHE_KEY = 'wt_sessions';
+var WINGS_CACHE_KEY = 'wt_wings';
 var LAST_TERM_KEY = 'wt_last_term_agent';
 var LAST_CHAT_KEY = 'wt_last_chat_agent';
 var TERM_BUF_PREFIX = 'wt_termbuf_';
@@ -204,6 +205,13 @@ function getCachedSessions() {
 function setCachedSessions(sessions) {
     try { localStorage.setItem(CACHE_KEY, JSON.stringify(sessions)); } catch (e) {}
 }
+function getCachedWings() {
+    try { var raw = localStorage.getItem(WINGS_CACHE_KEY); return raw ? JSON.parse(raw) : []; }
+    catch (e) { return []; }
+}
+function setCachedWings(wings) {
+    try { localStorage.setItem(WINGS_CACHE_KEY, JSON.stringify(wings)); } catch (e) {}
+}
 
 // === Data Loading ===
 
@@ -223,10 +231,34 @@ async function loadHome() {
     }
 
     sessionsData = sessions;
-    wingsData = wings;
     setCachedSessions(sessions);
 
-    // Build agent + project lists
+    // Merge live wings with cached wings (stable by machine_id)
+    var cached = getCachedWings();
+    var merged = {};
+    wings.forEach(function (w) {
+        w.online = true;
+        merged[w.machine_id] = w;
+    });
+    cached.forEach(function (w) {
+        if (!merged[w.machine_id]) {
+            w.online = false;
+            merged[w.machine_id] = w;
+        }
+    });
+    var mergedList = Object.values(merged);
+    mergedList.sort(function (a, b) {
+        if (a.online !== b.online) return a.online ? -1 : 1;
+        return (a.machine_id || '').localeCompare(b.machine_id || '');
+    });
+    wingsData = mergedList;
+
+    // Cache for next load (only essential fields)
+    setCachedWings(mergedList.map(function (w) {
+        return { machine_id: w.machine_id, id: w.id, agents: w.agents, labels: w.labels, projects: w.projects };
+    }));
+
+    // Build agent + project lists (only from online wings)
     availableAgents = [];
     allProjects = [];
     var seenAgents = {};
@@ -293,13 +325,36 @@ function renderDashboard() {
         wingStatusEl.innerHTML = wingsData.map(function(w) {
             var name = w.machine_id || w.id.substring(0, 8);
             var projectCount = (w.projects || []).length;
+            var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
+            var updateBtn = w.online !== false
+                ? ' <button class="btn-sm wing-update-btn" data-wing-id="' + escapeHtml(w.id) + '">update</button>'
+                : '';
             return '<div class="wing-card">' +
-                '<span class="wing-dot"></span>' +
+                '<span class="wing-dot ' + dotClass + '"></span>' +
                 '<span class="wing-name">' + escapeHtml(name) + '</span>' +
                 '<span class="wing-detail">' + escapeHtml((w.agents || []).join(', ')) +
                     (projectCount ? ' \u00b7 ' + projectCount + ' projects' : '') + '</span>' +
+                updateBtn +
             '</div>';
         }).join('');
+
+        wingStatusEl.querySelectorAll('.wing-update-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var wingId = btn.dataset.wingId;
+                btn.disabled = true;
+                btn.textContent = 'updating...';
+                fetch('/api/app/wings/' + wingId + '/update', { method: 'POST' })
+                    .then(function(r) {
+                        btn.textContent = r.ok ? 'sent' : 'failed';
+                        setTimeout(function() { btn.textContent = 'update'; btn.disabled = false; }, 3000);
+                    })
+                    .catch(function() {
+                        btn.textContent = 'failed';
+                        setTimeout(function() { btn.textContent = 'update'; btn.disabled = false; }, 3000);
+                    });
+            });
+        });
     } else {
         wingStatusEl.innerHTML = '';
     }
@@ -358,8 +413,9 @@ var dirListTimer = null;
 var dirListAbort = null;
 
 function currentPaletteWing() {
-    if (wingsData.length === 0) return null;
-    return wingsData[paletteWingIndex % wingsData.length];
+    var online = onlineWings();
+    if (online.length === 0) return null;
+    return online[paletteWingIndex % online.length];
 }
 
 function currentPaletteAgents() {
@@ -380,8 +436,12 @@ function cyclePaletteAgent() {
     renderPaletteStatus();
 }
 
+function onlineWings() {
+    return wingsData.filter(function(w) { return w.online !== false; });
+}
+
 function showPalette() {
-    if (wingsData.length === 0) return;
+    if (onlineWings().length === 0) return;
     commandPalette.style.display = '';
     paletteSearch.value = '';
     paletteSearch.focus();
@@ -401,8 +461,9 @@ function hidePalette() {
 }
 
 function cyclePaletteWing() {
-    if (wingsData.length <= 1) return;
-    paletteWingIndex = (paletteWingIndex + 1) % wingsData.length;
+    var online = onlineWings();
+    if (online.length <= 1) return;
+    paletteWingIndex = (paletteWingIndex + 1) % online.length;
     paletteAgentIndex = 0; // reset agent for new wing
     renderPaletteStatus();
     renderPaletteResults('');
