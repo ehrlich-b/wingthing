@@ -35,6 +35,15 @@ type PTYWriteFunc func(v any) error
 // receives raw JSON messages (pty.input and pty.resize) from the browser.
 type PTYHandler func(ctx context.Context, start PTYStart, write PTYWriteFunc, input <-chan []byte)
 
+// ChatStartHandler is called when the wing receives a chat.start request.
+type ChatStartHandler func(ctx context.Context, start ChatStart, write PTYWriteFunc)
+
+// ChatMessageHandler is called when the wing receives a chat.message.
+type ChatMessageHandler func(ctx context.Context, msg ChatMessage, write PTYWriteFunc)
+
+// ChatDeleteHandler is called when the wing receives a chat.delete.
+type ChatDeleteHandler func(ctx context.Context, del ChatDelete, write PTYWriteFunc)
+
 // Client is an outbound WebSocket client that connects a wing to the relay.
 type Client struct {
 	RelayURL  string // e.g. "wss://ws.wingthing.ai/ws/wing"
@@ -46,8 +55,11 @@ type Client struct {
 	Labels     []string
 	Identities []string
 
-	OnTask TaskHandlerWithChunks
-	OnPTY  PTYHandler
+	OnTask        TaskHandlerWithChunks
+	OnPTY         PTYHandler
+	OnChatStart   ChatStartHandler
+	OnChatMessage ChatMessageHandler
+	OnChatDelete  ChatDeleteHandler
 
 	// ptySessions tracks active PTY sessions for routing input/resize
 	ptySessions   map[string]chan []byte // session_id → input channel
@@ -208,6 +220,42 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				case ch <- data:
 				default:
 				}
+			}
+
+		case TypeChatStart:
+			var start ChatStart
+			if err := json.Unmarshal(data, &start); err != nil {
+				log.Printf("bad chat.start: %v", err)
+				continue
+			}
+			if c.OnChatStart != nil {
+				go c.OnChatStart(ctx, start, func(v any) error {
+					return c.writeJSON(ctx, v)
+				})
+			}
+
+		case TypeChatMessage:
+			var msg ChatMessage
+			if err := json.Unmarshal(data, &msg); err != nil {
+				log.Printf("bad chat.message: %v", err)
+				continue
+			}
+			if c.OnChatMessage != nil {
+				go c.OnChatMessage(ctx, msg, func(v any) error {
+					return c.writeJSON(ctx, v)
+				})
+			}
+
+		case TypeChatDelete:
+			var del ChatDelete
+			if err := json.Unmarshal(data, &del); err != nil {
+				log.Printf("bad chat.delete: %v", err)
+				continue
+			}
+			if c.OnChatDelete != nil {
+				go c.OnChatDelete(ctx, del, func(v any) error {
+					return c.writeJSON(ctx, v)
+				})
 			}
 
 		case TypeError:

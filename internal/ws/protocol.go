@@ -25,6 +25,16 @@ const (
 	TypePTYAttach  = "pty.attach"  // browser → relay → wing (reattach)
 	TypePTYKill    = "pty.kill"    // browser → relay → wing (terminate session)
 
+	// Chat (bidirectional through relay)
+	TypeChatStart   = "chat.start"   // browser → relay → wing
+	TypeChatStarted = "chat.started" // wing → relay → browser
+	TypeChatMessage = "chat.message" // browser → relay → wing
+	TypeChatChunk   = "chat.chunk"   // wing → relay → browser
+	TypeChatDone    = "chat.done"    // wing → relay → browser
+	TypeChatHistory = "chat.history" // wing → relay → browser
+	TypeChatDelete  = "chat.delete"  // browser → relay → wing
+	TypeChatDeleted = "chat.deleted" // wing → relay → browser
+
 	// Relay → Wing (control)
 	TypeRegistered = "registered"
 	TypeError      = "error"
@@ -149,6 +159,66 @@ type PTYAttach struct {
 
 // PTYKill requests termination of a PTY session.
 type PTYKill struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+}
+
+// ChatStart requests a new or resumed chat session.
+type ChatStart struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id,omitempty"` // empty = new, set = resume
+	Agent     string `json:"agent"`
+}
+
+// ChatStarted confirms the chat session is ready.
+type ChatStarted struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Agent     string `json:"agent"`
+}
+
+// ChatMessage carries a user message to the wing.
+type ChatMessage struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Content   string `json:"content"`
+}
+
+// ChatChunk carries a streaming response chunk from wing to browser.
+type ChatChunk struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Text      string `json:"text"`
+}
+
+// ChatDone signals the assistant response is complete.
+type ChatDone struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Content   string `json:"content"` // full assistant response
+}
+
+// ChatHistoryMsg carries conversation history for a resumed session.
+type ChatHistoryMsg struct {
+	Type      string             `json:"type"`
+	SessionID string             `json:"session_id"`
+	Messages  []ChatHistoryEntry `json:"messages"`
+}
+
+// ChatHistoryEntry is a single message in the history payload.
+type ChatHistoryEntry struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ChatDelete requests deletion of a chat session.
+type ChatDelete struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+}
+
+// ChatDeleted confirms a chat session was deleted.
+type ChatDeleted struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 }

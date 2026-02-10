@@ -31,6 +31,7 @@ type Server struct {
 	DevMode        bool   // if set, auto-claim device codes with test-user
 	Wings          *WingRegistry
 	PTY            *PTYRegistry
+	Chat           *ChatRegistry
 	mux            *http.ServeMux
 
 	// Stream subscribers: taskID → list of channels receiving output chunks
@@ -44,6 +45,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 		Config:     cfg,
 		Wings:      NewWingRegistry(),
 		PTY:        NewPTYRegistry(),
+		Chat:       NewChatRegistry(),
 		mux:        http.NewServeMux(),
 		streamSubs: make(map[string][]chan string),
 	}

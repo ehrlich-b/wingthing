@@ -257,6 +257,72 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				s.PTY.Remove(kill.SessionID)
 			}
 			log.Printf("pty session %s: kill requested (user=%s)", kill.SessionID, userID)
+
+		case ws.TypeChatStart:
+			var start ws.ChatStart
+			if err := json.Unmarshal(data, &start); err != nil {
+				continue
+			}
+
+			wing := s.Wings.FindForUser(userID)
+			if wing == nil {
+				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "no wing connected"})
+				conn.Write(ctx, websocket.MessageText, errMsg)
+				continue
+			}
+
+			sessionID := start.SessionID
+			if sessionID == "" {
+				sessionID = uuid.New().String()[:8]
+				start.SessionID = sessionID
+			}
+			cs := &ChatSession{
+				ID:          sessionID,
+				WingID:      wing.ID,
+				UserID:      userID,
+				Agent:       start.Agent,
+				Status:      "active",
+				BrowserConn: conn,
+			}
+			s.Chat.Add(cs)
+
+			fwd, _ := json.Marshal(start)
+			wing.Conn.Write(ctx, websocket.MessageText, fwd)
+
+			log.Printf("chat session %s started (user=%s wing=%s agent=%s)", sessionID, userID, wing.ID, start.Agent)
+
+		case ws.TypeChatMessage:
+			var msg ws.ChatMessage
+			if err := json.Unmarshal(data, &msg); err != nil {
+				continue
+			}
+			cs := s.Chat.Get(msg.SessionID)
+			if cs == nil {
+				continue
+			}
+			wing := s.Wings.FindByID(cs.WingID)
+			if wing == nil {
+				continue
+			}
+			wing.Conn.Write(ctx, websocket.MessageText, data)
+
+		case ws.TypeChatDelete:
+			var del ws.ChatDelete
+			if err := json.Unmarshal(data, &del); err != nil {
+				continue
+			}
+			cs := s.Chat.Get(del.SessionID)
+			if cs == nil || cs.UserID != userID {
+				continue
+			}
+			wing := s.Wings.FindByID(cs.WingID)
+			if wing != nil {
+				fwd, _ := json.Marshal(del)
+				wing.Conn.Write(ctx, websocket.MessageText, fwd)
+			} else {
+				s.Chat.Remove(del.SessionID)
+			}
+			log.Printf("chat session %s: delete requested (user=%s)", del.SessionID, userID)
 		}
 	}
 }

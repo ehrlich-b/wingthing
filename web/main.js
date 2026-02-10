@@ -2,6 +2,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { x25519 } from '@noble/curves/ed25519.js';
+import { createAiChat } from '@nlux/core';
+import '@nlux/themes/nova.css';
 
 // State
 let ptyWs = null;
@@ -15,6 +17,12 @@ let e2eKey = null;
 let ephemeralPrivKey = null;
 let availableAgents = []; // [{agent, wingId}]
 
+// Chat state
+let chatWs = null;
+let chatSessionId = null;
+let chatObserver = null;
+let chatInstance = null;
+
 // DOM refs
 const userInfo = document.getElementById('user-info');
 const homeSection = document.getElementById('home-section');
@@ -25,6 +33,11 @@ const terminalContainer = document.getElementById('terminal-container');
 const ptyStatus = document.getElementById('pty-status');
 const backBtn = document.getElementById('back-btn');
 const disconnectBtn = document.getElementById('disconnect-btn');
+const chatSection = document.getElementById('chat-section');
+const chatContainer = document.getElementById('chat-container');
+const chatStatus = document.getElementById('chat-status');
+const chatBackBtn = document.getElementById('chat-back-btn');
+const chatDeleteBtn = document.getElementById('chat-delete-btn');
 
 // Header launch button (small, shown when sessions exist)
 const headerLaunch = document.getElementById('header-launch');
@@ -53,10 +66,20 @@ async function init() {
 
     backBtn.addEventListener('click', showHome);
     disconnectBtn.addEventListener('click', disconnectPTY);
+    chatBackBtn.addEventListener('click', showHome);
+    chatDeleteBtn.addEventListener('click', function () {
+        if (chatSessionId) {
+            var cached = getCachedSessions().filter(function (s) { return s.id !== chatSessionId; });
+            setCachedSessions(cached);
+            fetch('/api/app/sessions/' + chatSessionId, { method: 'DELETE' });
+            destroyChat();
+            showHome();
+        }
+    });
 
-    // Split-button: main click launches default agent
-    launchTerminalBtn.addEventListener('click', function () { launchAgent('claude'); });
-    headerLaunchBtn.addEventListener('click', function () { launchAgent('claude'); });
+    // Split-button: main click launches default agent terminal
+    launchTerminalBtn.addEventListener('click', function () { launchTerminal('claude'); });
+    headerLaunchBtn.addEventListener('click', function () { launchTerminal('claude'); });
 
     // Split-button: toggle dropdown
     terminalToggle.addEventListener('click', function (e) {
@@ -137,21 +160,32 @@ function renderSessions(sessions, wings) {
 
     var html = sessions.map(function (s) {
         var isActive = s.status === 'active';
+        var kind = s.kind || 'terminal';
+        var isChat = kind === 'chat';
         var statusClass = isActive ? 'active' : 'detached';
         var statusLabel = isActive ? 'live' : 'detached';
-        var label = s.agent || 'terminal';
+        var label = (isChat ? 'chat' : 'terminal') + ' / ' + (s.agent || 'unknown');
         var shortId = s.id.substring(0, 8);
+        var kindBadge = isChat ? '<span class="session-kind chat">chat</span>' : '<span class="session-kind term">term</span>';
+
+        var actionBtn;
+        if (isChat) {
+            actionBtn = '<button class="btn-sm btn-primary" onclick="window._openChat(\'' + s.id + '\', \'' + escapeHtml(s.agent || 'claude') + '\')">open</button>';
+        } else if (isActive) {
+            actionBtn = '<button class="btn-sm" onclick="window._viewSession(\'' + s.id + '\')">view</button>';
+        } else {
+            actionBtn = '<button class="btn-sm btn-primary" onclick="window._reattachSession(\'' + s.id + '\')">reconnect</button>';
+        }
 
         return '<div class="session-card ' + statusClass + '">' +
             '<div class="session-info">' +
-                '<span class="session-agent">' + escapeHtml(label) + '</span>' +
+                kindBadge +
+                '<span class="session-agent">' + escapeHtml(s.agent || 'unknown') + '</span>' +
                 '<span class="session-id">' + escapeHtml(shortId) + '</span>' +
                 '<span class="session-status ' + statusClass + '">' + statusLabel + '</span>' +
             '</div>' +
             '<div class="session-actions">' +
-                (isActive
-                    ? '<button class="btn-sm" onclick="window._viewSession(\'' + s.id + '\')">view</button>'
-                    : '<button class="btn-sm btn-primary" onclick="window._reattachSession(\'' + s.id + '\')">reconnect</button>') +
+                actionBtn +
                 '<button class="btn-sm btn-danger" onclick="window._deleteSession(\'' + s.id + '\')">delete</button>' +
             '</div>' +
         '</div>';
@@ -163,6 +197,7 @@ function renderSessions(sessions, wings) {
 // Load sessions + wings, render home
 async function loadHome() {
     if (terminalSection.style.display !== 'none') return;
+    if (chatSection.style.display !== 'none') return;
 
     // Render cached sessions instantly (no pop)
     var cached = getCachedSessions();
@@ -207,36 +242,53 @@ function populateDropdowns() {
 
     // Update main button label to first agent
     var defaultAgent = agents[0] || 'claude';
-    var defaultLabel = agentLabel(defaultAgent);
-    launchTerminalBtn.textContent = defaultLabel;
-    headerLaunchBtn.textContent = 'new terminal';
+    launchTerminalBtn.textContent = agentTermLabel(defaultAgent);
+    headerLaunchBtn.textContent = 'new session';
 
-    // Build dropdown items (all agents except the default shown on the button face)
+    // Build dropdown items: terminals + chats
     [terminalMenu, headerLaunchMenu].forEach(function (menu) {
-        menu.innerHTML = agents.map(function (a) {
-            return '<div class="split-menu-item" data-agent="' + escapeHtml(a) + '">' +
-                escapeHtml(agentLabel(a)) + '</div>';
-        }).join('');
+        var items = '';
+
+        // Chat options
+        agents.forEach(function (a) {
+            items += '<div class="split-menu-item" data-action="chat" data-agent="' + escapeHtml(a) + '">' +
+                escapeHtml(agentChatLabel(a)) + '</div>';
+        });
+
+        // Divider
+        items += '<div class="split-menu-divider"></div>';
+
+        // Terminal options
+        agents.forEach(function (a) {
+            items += '<div class="split-menu-item" data-action="terminal" data-agent="' + escapeHtml(a) + '">' +
+                escapeHtml(agentTermLabel(a)) + '</div>';
+        });
+
+        menu.innerHTML = items;
 
         menu.querySelectorAll('.split-menu-item').forEach(function (item) {
             item.addEventListener('click', function (e) {
                 e.stopPropagation();
                 menu.classList.remove('open');
-                launchAgent(item.dataset.agent);
+                if (item.dataset.action === 'chat') {
+                    launchChat(item.dataset.agent);
+                } else {
+                    launchTerminal(item.dataset.agent);
+                }
             });
         });
     });
 }
 
-function agentLabel(agent) {
-    if (agent === 'claude') return 'Claude Code Terminal';
-    if (agent === 'ollama') return 'Ollama Terminal';
-    if (agent === 'codex') return 'Codex Terminal';
-    if (agent === 'gemini') return 'Gemini Terminal';
-    return agent + ' Terminal';
+function agentTermLabel(agent) {
+    return agent + ' terminal';
 }
 
-function launchAgent(agent) {
+function agentChatLabel(agent) {
+    return agent + ' chat';
+}
+
+function launchTerminal(agent) {
     showTerminal();
     connectPTY(agent);
 }
@@ -244,21 +296,30 @@ function launchAgent(agent) {
 function showHome() {
     homeSection.style.display = '';
     terminalSection.style.display = 'none';
+    chatSection.style.display = 'none';
+    destroyChat();
     loadHome();
 }
 
 function showTerminal() {
     homeSection.style.display = 'none';
     terminalSection.style.display = '';
+    chatSection.style.display = 'none';
+    destroyChat();
     if (term && fitAddon) {
         fitAddon.fit();
         term.focus();
     }
 }
 
+function showChat() {
+    homeSection.style.display = 'none';
+    terminalSection.style.display = 'none';
+    chatSection.style.display = '';
+}
+
 // Expose for inline onclick
 window._viewSession = function (sessionId) {
-    // For active sessions, reattach to view live output
     showTerminal();
     attachPTY(sessionId);
 };
@@ -268,8 +329,12 @@ window._reattachSession = function (sessionId) {
     attachPTY(sessionId);
 };
 
+window._openChat = function (sessionId, agent) {
+    showChat();
+    resumeChat(sessionId, agent);
+};
+
 window._deleteSession = function (sessionId) {
-    // Remove from cache immediately so UI doesn't flash stale
     var cached = getCachedSessions().filter(function (s) { return s.id !== sessionId; });
     setCachedSessions(cached);
     fetch('/api/app/sessions/' + sessionId, { method: 'DELETE' }).then(function () {
@@ -277,7 +342,182 @@ window._deleteSession = function (sessionId) {
     });
 };
 
-// Terminal
+// ========================
+// Chat (NLUX)
+// ========================
+
+function launchChat(agent) {
+    showChat();
+    chatStatus.textContent = 'connecting...';
+    chatDeleteBtn.style.display = 'none';
+
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = proto + '//' + location.host + '/ws/pty';
+
+    chatWs = new WebSocket(url);
+
+    chatWs.onopen = function () {
+        chatStatus.textContent = 'starting chat...';
+        chatWs.send(JSON.stringify({
+            type: 'chat.start',
+            agent: agent,
+        }));
+    };
+
+    setupChatHandlers(chatWs, agent, null);
+}
+
+function resumeChat(sessionId, agent) {
+    chatStatus.textContent = 'loading...';
+    chatDeleteBtn.style.display = 'none';
+
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = proto + '//' + location.host + '/ws/pty';
+
+    chatWs = new WebSocket(url);
+
+    chatWs.onopen = function () {
+        chatStatus.textContent = 'loading history...';
+        chatWs.send(JSON.stringify({
+            type: 'chat.start',
+            session_id: sessionId,
+            agent: agent,
+        }));
+    };
+
+    setupChatHandlers(chatWs, agent, sessionId);
+}
+
+var pendingHistory = null;
+
+function setupChatHandlers(ws, agent, resumeSessionId) {
+    pendingHistory = null;
+
+    ws.onmessage = function (e) {
+        var msg = JSON.parse(e.data);
+        switch (msg.type) {
+            case 'chat.history':
+                // Store history for when chat.started arrives
+                pendingHistory = (msg.messages || []).map(function (m) {
+                    return { role: m.role, message: m.content };
+                });
+                break;
+
+            case 'chat.started':
+                chatSessionId = msg.session_id;
+                chatStatus.textContent = msg.agent + ' chat';
+                chatDeleteBtn.style.display = '';
+                mountNlux(agent, pendingHistory);
+                pendingHistory = null;
+                break;
+
+            case 'chat.chunk':
+                if (chatObserver) {
+                    chatObserver.next(msg.text);
+                }
+                break;
+
+            case 'chat.done':
+                if (chatObserver) {
+                    chatObserver.complete();
+                    chatObserver = null;
+                }
+                break;
+
+            case 'error':
+                chatStatus.textContent = msg.message;
+                if (chatObserver) {
+                    chatObserver.error(new Error(msg.message));
+                    chatObserver = null;
+                }
+                break;
+        }
+    };
+
+    ws.onclose = function () {
+        chatStatus.textContent = 'disconnected';
+        chatObserver = null;
+    };
+
+    ws.onerror = function () {
+        chatStatus.textContent = 'connection error';
+    };
+}
+
+function mountNlux(agent, initialMessages) {
+    // Clean up previous instance
+    if (chatInstance) {
+        chatInstance.unmount();
+        chatInstance = null;
+    }
+    chatContainer.innerHTML = '';
+
+    var adapter = {
+        streamText: function (message, observer) {
+            chatObserver = observer;
+            if (chatWs && chatWs.readyState === WebSocket.OPEN && chatSessionId) {
+                chatWs.send(JSON.stringify({
+                    type: 'chat.message',
+                    session_id: chatSessionId,
+                    content: message,
+                }));
+            } else {
+                observer.error(new Error('not connected'));
+            }
+        }
+    };
+
+    var chat = createAiChat()
+        .withAdapter(adapter)
+        .withDisplayOptions({
+            colorScheme: 'dark',
+            height: '100%',
+            width: '100%',
+        })
+        .withConversationOptions({
+            historyPayloadSize: 0, // we manage history server-side
+            layout: 'bubbles',
+        })
+        .withComposerOptions({
+            placeholder: 'message ' + agent + '...',
+            autoFocus: true,
+        })
+        .withPersonaOptions({
+            assistant: {
+                name: agent,
+                avatar: 'https://ui-avatars.com/api/?name=' + agent.charAt(0).toUpperCase() + '&background=e94560&color=fff&size=32',
+            },
+        })
+        .withMessageOptions({
+            waitTimeBeforeStreamCompletion: 'never',
+        });
+
+    if (initialMessages && initialMessages.length > 0) {
+        chat = chat.withInitialConversation(initialMessages);
+    }
+
+    chat.mount(chatContainer);
+    chatInstance = chat;
+}
+
+function destroyChat() {
+    if (chatInstance) {
+        chatInstance.unmount();
+        chatInstance = null;
+    }
+    if (chatWs) {
+        chatWs.close();
+        chatWs = null;
+    }
+    chatSessionId = null;
+    chatObserver = null;
+    chatContainer.innerHTML = '';
+}
+
+// ========================
+// Terminal (xterm.js)
+// ========================
+
 function initTerminal() {
     term = new Terminal({
         cursorBlink: true,

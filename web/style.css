@@ -303,6 +303,86 @@ header h1 {
     color: var(--text);
 }
 
+/* Session kind badges */
+
+.session-kind {
+    font-size: 9px;
+    text-transform: uppercase;
+    padding: 1px 5px;
+    border-radius: 2px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.session-kind.chat {
+    background: rgba(52, 152, 219, 0.2);
+    color: var(--running);
+}
+
+.session-kind.term {
+    background: rgba(46, 204, 113, 0.15);
+    color: var(--done);
+}
+
+/* Menu divider */
+
+.split-menu-divider {
+    height: 1px;
+    background: var(--accent);
+    margin: 4px 0;
+}
+
+/* Chat */
+
+#chat-section {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+#chat-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 0;
+    flex-shrink: 0;
+}
+
+#chat-back-btn {
+    background: var(--accent);
+    color: var(--text);
+    border: 1px solid var(--accent);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+#chat-back-btn:hover {
+    border-color: var(--action);
+}
+
+#chat-status {
+    font-size: 12px;
+    color: var(--text-dim);
+    flex: 1;
+}
+
+#chat-container {
+    flex: 1;
+    min-height: 0;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+/* NLUX overrides for dark theme consistency */
+#chat-container .nlux-AiChat-root {
+    height: 100%;
+    font-family: var(--font);
+}
+
 /* Terminal */
 
 #terminal-section {

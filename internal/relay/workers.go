@@ -238,6 +238,13 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			}
 			json.Unmarshal(data, &partial)
 			s.forwardPTYToBrowser(partial.SessionID, data)
+
+		case ws.TypeChatStarted, ws.TypeChatChunk, ws.TypeChatDone, ws.TypeChatHistory, ws.TypeChatDeleted:
+			var partial struct {
+				SessionID string `json:"session_id"`
+			}
+			json.Unmarshal(data, &partial)
+			s.forwardChatToBrowser(partial.SessionID, data)
 		}
 	}
 }

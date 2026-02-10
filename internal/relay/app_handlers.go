@@ -51,7 +51,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleAppSessions returns the user's active PTY sessions.
+// handleAppSessions returns the user's active PTY and chat sessions.
 func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
@@ -59,24 +59,41 @@ func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessions := s.PTY.ListForUser(user.ID)
-	out := make([]map[string]any, len(sessions))
-	for i, sess := range sessions {
+	var out []map[string]any
+
+	ptySessions := s.PTY.ListForUser(user.ID)
+	for _, sess := range ptySessions {
 		status := sess.Status
 		if status == "" {
 			status = "active"
 		}
-		out[i] = map[string]any{
+		out = append(out, map[string]any{
 			"id":      sess.ID,
 			"wing_id": sess.WingID,
 			"agent":   sess.Agent,
 			"status":  status,
-		}
+			"kind":    "terminal",
+		})
+	}
+
+	chatSessions := s.Chat.ListForUser(user.ID)
+	for _, sess := range chatSessions {
+		out = append(out, map[string]any{
+			"id":      sess.ID,
+			"wing_id": sess.WingID,
+			"agent":   sess.Agent,
+			"status":  sess.Status,
+			"kind":    "chat",
+		})
+	}
+
+	if out == nil {
+		out = make([]map[string]any, 0)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleDeleteSession kills or removes a PTY session.
+// handleDeleteSession kills or removes a PTY or chat session.
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
@@ -85,24 +102,40 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := r.PathValue("id")
-	session := s.PTY.Get(sessionID)
-	if session == nil || session.UserID != user.ID {
-		writeError(w, http.StatusNotFound, "session not found")
+
+	// Try PTY first
+	ptySession := s.PTY.Get(sessionID)
+	if ptySession != nil && ptySession.UserID == user.ID {
+		wing := s.Wings.FindByID(ptySession.WingID)
+		if wing != nil {
+			kill := ws.PTYKill{Type: ws.TypePTYKill, SessionID: sessionID}
+			data, _ := json.Marshal(kill)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			wing.Conn.Write(ctx, websocket.MessageText, data)
+			cancel()
+		}
+		s.PTY.Remove(sessionID)
+		log.Printf("pty session %s: deleted via API (user=%s)", sessionID, user.ID)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
 
-	// Try to tell the wing to kill the PTY
-	wing := s.Wings.FindByID(session.WingID)
-	if wing != nil {
-		kill := ws.PTYKill{Type: ws.TypePTYKill, SessionID: sessionID}
-		data, _ := json.Marshal(kill)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		wing.Conn.Write(ctx, websocket.MessageText, data)
-		cancel()
+	// Try chat
+	chatSession := s.Chat.Get(sessionID)
+	if chatSession != nil && chatSession.UserID == user.ID {
+		wing := s.Wings.FindByID(chatSession.WingID)
+		if wing != nil {
+			del := ws.ChatDelete{Type: ws.TypeChatDelete, SessionID: sessionID}
+			data, _ := json.Marshal(del)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			wing.Conn.Write(ctx, websocket.MessageText, data)
+			cancel()
+		}
+		s.Chat.Remove(sessionID)
+		log.Printf("chat session %s: deleted via API (user=%s)", sessionID, user.ID)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
 	}
 
-	// Clean up relay-side regardless
-	s.PTY.Remove(sessionID)
-	log.Printf("pty session %s: deleted via API (user=%s)", sessionID, user.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeError(w, http.StatusNotFound, "session not found")
 }

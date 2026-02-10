@@ -154,6 +154,18 @@ func wingCmd() *cobra.Command {
 				handlePTYSession(ctx, cfg, start, write, input)
 			}
 
+			client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
+				handleChatStart(ctx, s, start, write)
+			}
+
+			client.OnChatMessage = func(ctx context.Context, msg ws.ChatMessage, write ws.PTYWriteFunc) {
+				handleChatMessage(ctx, cfg, s, msg, write)
+			}
+
+			client.OnChatDelete = func(ctx context.Context, del ws.ChatDelete, write ws.PTYWriteFunc) {
+				handleChatDelete(ctx, s, del, write)
+			}
+
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
@@ -541,4 +553,134 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 
 	log.Printf("pty session %s: exited with code %d", start.SessionID, exitCode)
 	write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: exitCode})
+}
+
+// handleChatStart creates a new chat session or resumes an existing one.
+func handleChatStart(ctx context.Context, s *store.Store, start ws.ChatStart, write ws.PTYWriteFunc) {
+	sessionID := start.SessionID
+
+	// Resume: load history from local DB
+	if sessionID != "" {
+		existing, err := s.GetChatSession(sessionID)
+		if err == nil && existing != nil {
+			// Send history
+			msgs, _ := s.ListChatMessages(sessionID)
+			var entries []ws.ChatHistoryEntry
+			for _, m := range msgs {
+				entries = append(entries, ws.ChatHistoryEntry{Role: m.Role, Content: m.Content})
+			}
+			write(ws.ChatHistoryMsg{
+				Type:      ws.TypeChatHistory,
+				SessionID: sessionID,
+				Messages:  entries,
+			})
+			write(ws.ChatStarted{
+				Type:      ws.TypeChatStarted,
+				SessionID: sessionID,
+				Agent:     existing.Agent,
+			})
+			log.Printf("chat session %s resumed (%d messages)", sessionID, len(entries))
+			return
+		}
+	}
+
+	// New session
+	if err := s.CreateChatSession(start.SessionID, start.Agent); err != nil {
+		log.Printf("chat: create session: %v", err)
+		return
+	}
+
+	write(ws.ChatStarted{
+		Type:      ws.TypeChatStarted,
+		SessionID: start.SessionID,
+		Agent:     start.Agent,
+	})
+	log.Printf("chat session %s created (agent=%s)", start.SessionID, start.Agent)
+}
+
+// handleChatMessage processes a user message: stores it, calls the agent, streams the response.
+func handleChatMessage(ctx context.Context, cfg *config.Config, s *store.Store, msg ws.ChatMessage, write ws.PTYWriteFunc) {
+	// Store user message
+	if err := s.AppendChatMessage(msg.SessionID, "user", msg.Content); err != nil {
+		log.Printf("chat: store user message: %v", err)
+		return
+	}
+
+	// Load conversation history
+	messages, err := s.ListChatMessages(msg.SessionID)
+	if err != nil {
+		log.Printf("chat: load history: %v", err)
+		return
+	}
+
+	// Build prompt with conversation history
+	var promptBuilder strings.Builder
+	if len(messages) > 1 {
+		promptBuilder.WriteString("Previous conversation:\n\n")
+		for _, m := range messages[:len(messages)-1] {
+			if m.Role == "user" {
+				promptBuilder.WriteString("User: " + m.Content + "\n\n")
+			} else {
+				promptBuilder.WriteString("Assistant: " + m.Content + "\n\n")
+			}
+		}
+		promptBuilder.WriteString("Now respond to the user's latest message:\n\n")
+	}
+	promptBuilder.WriteString(msg.Content)
+
+	// Resolve agent
+	session, _ := s.GetChatSession(msg.SessionID)
+	agentName := "claude"
+	if session != nil && session.Agent != "" {
+		agentName = session.Agent
+	}
+
+	a := newAgent(agentName)
+	stream, err := a.Run(ctx, promptBuilder.String(), agent.RunOpts{})
+	if err != nil {
+		log.Printf("chat session %s: agent error: %v", msg.SessionID, err)
+		write(ws.ChatDone{
+			Type:      ws.TypeChatDone,
+			SessionID: msg.SessionID,
+			Content:   "Error: " + err.Error(),
+		})
+		return
+	}
+
+	// Stream chunks back
+	for {
+		chunk, ok := stream.Next()
+		if !ok {
+			break
+		}
+		write(ws.ChatChunk{
+			Type:      ws.TypeChatChunk,
+			SessionID: msg.SessionID,
+			Text:      chunk.Text,
+		})
+	}
+
+	fullResponse := stream.Text()
+
+	// Store assistant response
+	s.AppendChatMessage(msg.SessionID, "assistant", fullResponse)
+
+	write(ws.ChatDone{
+		Type:      ws.TypeChatDone,
+		SessionID: msg.SessionID,
+		Content:   fullResponse,
+	})
+	log.Printf("chat session %s: response complete (%d chars)", msg.SessionID, len(fullResponse))
+}
+
+// handleChatDelete removes a chat session from the local DB.
+func handleChatDelete(ctx context.Context, s *store.Store, del ws.ChatDelete, write ws.PTYWriteFunc) {
+	if err := s.DeleteChatSession(del.SessionID); err != nil {
+		log.Printf("chat: delete session %s: %v", del.SessionID, err)
+	}
+	write(ws.ChatDeleted{
+		Type:      ws.TypeChatDeleted,
+		SessionID: del.SessionID,
+	})
+	log.Printf("chat session %s deleted", del.SessionID)
 }
