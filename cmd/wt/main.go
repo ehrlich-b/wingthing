@@ -654,7 +654,7 @@ func skillCmd() *cobra.Command {
 
 			// Otherwise, fetch from registry
 			if cfg.RelayURL == "" {
-				return fmt.Errorf("relay_url not configured — set it in ~/.wingthing/config.yaml")
+				cfg.RelayURL = "https://wingthing.ai"
 			}
 			url := strings.TrimRight(cfg.RelayURL, "/") + "/api/skills/" + src + "/raw"
 			resp, err := http.Get(url)
@@ -891,7 +891,7 @@ func loginCmd() *cobra.Command {
 			}
 
 			if cfg.RelayURL == "" {
-				return fmt.Errorf("relay_url not configured in config.yaml")
+				cfg.RelayURL = "https://wingthing.ai"
 			}
 
 			// Generate or load X25519 keypair for E2E encryption
@@ -964,7 +964,7 @@ func logoutCmd() *cobra.Command {
 // relayPost sends an authenticated POST to the relay API and returns the decoded response.
 func relayPost(cfg *config.Config, path string, body any) (map[string]any, error) {
 	if cfg.RelayURL == "" {
-		return nil, fmt.Errorf("relay_url not configured in config.yaml")
+		cfg.RelayURL = "https://wingthing.ai"
 	}
 
 	ts := auth.NewTokenStore(cfg.Dir)
