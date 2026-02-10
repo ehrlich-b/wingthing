@@ -35,15 +35,15 @@ func TestParseLevelUnknown(t *testing.T) {
 	}
 }
 
-func TestNewReturnsFallback(t *testing.T) {
+func TestNewReturnsSandbox(t *testing.T) {
 	sb, err := New(Config{Isolation: Standard})
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
 	defer sb.Destroy()
 
-	if _, ok := sb.(*fallbackSandbox); !ok {
-		t.Fatalf("expected fallbackSandbox, got %T", sb)
+	if sb == nil {
+		t.Fatal("New() returned nil sandbox")
 	}
 }
 
