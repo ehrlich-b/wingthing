@@ -23,6 +23,8 @@ release: web
 		echo "Error: CINCH_TAG not set (run via Cinch CI on tag push)"; \
 		exit 1; \
 	fi
+	$(eval VERSION := $(CINCH_TAG))
+	$(eval LDFLAGS := -s -w -X main.version=$(VERSION))
 	@echo "Building $(CINCH_TAG) for all platforms..."
 	@mkdir -p dist
 	@for platform in $(PLATFORMS); do \
@@ -30,7 +32,7 @@ release: web
 		arch=$${platform#*/}; \
 		output="dist/wt-$$os-$$arch"; \
 		echo "  $$os/$$arch"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags="$(LDFLAGS)" -o $$output ./cmd/wt; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -buildvcs=false -ldflags="$(LDFLAGS)" -o $$output ./cmd/wt; \
 	done
 	@echo "Creating release $(CINCH_TAG)..."
 	cinch release dist/*
