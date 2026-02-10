@@ -133,6 +133,14 @@ async function init() {
             if (commandPalette.style.display === 'none') showPalette();
             else hidePalette();
         }
+        // "." or "+" opens palette when nothing is focused
+        if ((e.key === '.' || e.key === '+') && commandPalette.style.display === 'none') {
+            var tag = document.activeElement && document.activeElement.tagName;
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT' && !document.activeElement.closest('#terminal-container, #chat-container')) {
+                e.preventDefault();
+                showPalette();
+            }
+        }
         if (e.key === 'Escape' && commandPalette.style.display !== 'none') {
             hidePalette();
         }
