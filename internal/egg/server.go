@@ -279,6 +279,8 @@ func agentCommand(agentName string) (string, []string) {
 		return "claude", nil
 	case "codex":
 		return "codex", nil
+	case "cursor":
+		return "agent", nil
 	case "ollama":
 		return "ollama", []string{"run", "llama3.2"}
 	default:
