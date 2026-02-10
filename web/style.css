@@ -58,6 +58,11 @@ header h1 {
     gap: 10px;
 }
 
+#header-buttons {
+    display: flex;
+    gap: 6px;
+}
+
 #user-info {
     font-size: 12px;
     color: var(--text-dim);
@@ -134,6 +139,28 @@ header h1 {
 .split-btn.small .split-main:hover,
 .split-btn.small .split-toggle:hover {
     background: var(--action);
+}
+
+.split-btn.secondary .split-main,
+.split-btn.secondary .split-toggle {
+    background: var(--bg-card);
+    border-color: var(--accent);
+}
+
+.split-btn.secondary .split-main:hover,
+.split-btn.secondary .split-toggle:hover {
+    background: var(--accent);
+}
+
+.split-btn.primary.secondary .split-main,
+.split-btn.primary.secondary .split-toggle {
+    background: var(--bg-card);
+    border: 1px solid var(--accent);
+}
+
+.split-btn.primary.secondary .split-main:hover,
+.split-btn.primary.secondary .split-toggle:hover {
+    background: var(--accent);
 }
 
 .split-menu {
@@ -381,6 +408,12 @@ header h1 {
 #chat-container .nlux-AiChat-root {
     height: 100%;
     font-family: var(--font);
+}
+
+/* Dim composer while bot is thinking */
+#chat-container.thinking .nlux-comp-composer {
+    opacity: 0.4;
+    pointer-events: none;
 }
 
 /* Terminal */

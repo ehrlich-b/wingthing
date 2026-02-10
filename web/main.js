@@ -39,16 +39,22 @@ const chatStatus = document.getElementById('chat-status');
 const chatBackBtn = document.getElementById('chat-back-btn');
 const chatDeleteBtn = document.getElementById('chat-delete-btn');
 
-// Header launch button (small, shown when sessions exist)
-const headerLaunch = document.getElementById('header-launch');
-const headerLaunchBtn = document.getElementById('header-launch-btn');
-const headerLaunchToggle = document.getElementById('header-launch-toggle');
-const headerLaunchMenu = document.getElementById('header-launch-menu');
+// Header buttons (small, shown when wings connected)
+const headerButtons = document.getElementById('header-buttons');
+const headerTermBtn = document.getElementById('header-term-btn');
+const headerTermToggle = document.getElementById('header-term-toggle');
+const headerTermMenu = document.getElementById('header-term-menu');
+const headerChatBtn = document.getElementById('header-chat-btn');
+const headerChatToggle = document.getElementById('header-chat-toggle');
+const headerChatMenu = document.getElementById('header-chat-menu');
 
-// Empty state launch button (big, shown when no sessions)
-const launchTerminalBtn = document.getElementById('launch-terminal-btn');
-const terminalToggle = document.getElementById('terminal-toggle');
-const terminalMenu = document.getElementById('terminal-menu');
+// Empty state launch buttons (big)
+const launchTermBtn = document.getElementById('launch-term-btn');
+const launchTermToggle = document.getElementById('launch-term-toggle');
+const launchTermMenu = document.getElementById('launch-term-menu');
+const launchChatBtn = document.getElementById('launch-chat-btn');
+const launchChatToggle = document.getElementById('launch-chat-toggle');
+const launchChatMenu = document.getElementById('launch-chat-menu');
 
 async function init() {
     try {
@@ -77,25 +83,32 @@ async function init() {
         }
     });
 
-    // Split-button: main click launches last-used action
-    launchTerminalBtn.addEventListener('click', function () { launchLastAction(); });
-    headerLaunchBtn.addEventListener('click', function () { launchLastAction(); });
+    // Terminal buttons — primary click uses last-used agent
+    launchTermBtn.addEventListener('click', function () { launchTerminal(getLastTermAgent()); });
+    headerTermBtn.addEventListener('click', function () { launchTerminal(getLastTermAgent()); });
 
-    // Split-button: toggle dropdown
-    terminalToggle.addEventListener('click', function (e) {
-        e.stopPropagation();
-        terminalMenu.classList.toggle('open');
+    // Chat buttons — primary click uses last-used agent
+    launchChatBtn.addEventListener('click', function () { launchChat(getLastChatAgent()); });
+    headerChatBtn.addEventListener('click', function () { launchChat(getLastChatAgent()); });
+
+    // Toggle dropdowns
+    [launchTermToggle, headerTermToggle].forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            closeAllMenus();
+            btn.parentElement.querySelector('.split-menu').classList.toggle('open');
+        });
     });
-    headerLaunchToggle.addEventListener('click', function (e) {
-        e.stopPropagation();
-        headerLaunchMenu.classList.toggle('open');
+    [launchChatToggle, headerChatToggle].forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            closeAllMenus();
+            btn.parentElement.querySelector('.split-menu').classList.toggle('open');
+        });
     });
 
     // Close dropdowns on outside click
-    document.addEventListener('click', function () {
-        terminalMenu.classList.remove('open');
-        headerLaunchMenu.classList.remove('open');
-    });
+    document.addEventListener('click', closeAllMenus);
 
     // Modifier keys
     document.querySelectorAll('.mod-key').forEach(function (btn) {
@@ -131,17 +144,27 @@ async function init() {
 
 // localStorage session cache
 var CACHE_KEY = 'wt_sessions';
-var LAST_ACTION_KEY = 'wt_last_action';
+var LAST_TERM_KEY = 'wt_last_term_agent';
+var LAST_CHAT_KEY = 'wt_last_chat_agent';
 
-function getLastAction() {
-    try {
-        var raw = localStorage.getItem(LAST_ACTION_KEY);
-        return raw ? JSON.parse(raw) : null;
-    } catch (e) { return null; }
+function getLastTermAgent() {
+    try { return localStorage.getItem(LAST_TERM_KEY) || 'claude'; } catch (e) { return 'claude'; }
 }
 
-function setLastAction(action, agent) {
-    try { localStorage.setItem(LAST_ACTION_KEY, JSON.stringify({ action: action, agent: agent })); } catch (e) {}
+function setLastTermAgent(agent) {
+    try { localStorage.setItem(LAST_TERM_KEY, agent); } catch (e) {}
+}
+
+function getLastChatAgent() {
+    try { return localStorage.getItem(LAST_CHAT_KEY) || 'claude'; } catch (e) { return 'claude'; }
+}
+
+function setLastChatAgent(agent) {
+    try { localStorage.setItem(LAST_CHAT_KEY, agent); } catch (e) {}
+}
+
+function closeAllMenus() {
+    document.querySelectorAll('.split-menu').forEach(function (m) { m.classList.remove('open'); });
 }
 
 function getCachedSessions() {
@@ -158,7 +181,7 @@ function setCachedSessions(sessions) {
 function renderSessions(sessions, wings) {
     var hasSessions = sessions.length > 0;
     emptyState.style.display = hasSessions ? 'none' : '';
-    headerLaunch.style.display = (hasSessions && wings.length > 0) ? 'inline-flex' : 'none';
+    headerButtons.style.display = wings.length > 0 ? '' : 'none';
 
     if (!hasSessions) {
         sessionsList.innerHTML = '';
@@ -247,29 +270,15 @@ async function loadHome() {
     renderSessions(sessions, wings);
 }
 
-function getDefaultAction() {
-    var last = getLastAction();
-    var agents = availableAgents.length > 0
-        ? availableAgents.map(function (a) { return a.agent; })
-        : ['claude', 'ollama'];
-    if (last && agents.indexOf(last.agent) !== -1) return last;
-    return { action: 'chat', agent: agents[0] || 'claude' };
-}
-
-function launchLastAction() {
-    var def = getDefaultAction();
-    if (def.action === 'chat') {
-        launchChat(def.agent);
-    } else {
-        launchTerminal(def.agent);
-    }
-}
-
 function updatePrimaryButtons() {
-    var def = getDefaultAction();
-    var label = def.action === 'chat' ? agentChatLabel(def.agent) : agentTermLabel(def.agent);
-    launchTerminalBtn.textContent = label;
-    headerLaunchBtn.textContent = label;
+    var termAgent = getLastTermAgent();
+    var chatAgent = getLastChatAgent();
+    var termLabel = agentTermLabel(termAgent);
+    var chatLabel = agentChatLabel(chatAgent);
+    launchTermBtn.textContent = termLabel;
+    headerTermBtn.textContent = termLabel;
+    launchChatBtn.textContent = chatLabel;
+    headerChatBtn.textContent = chatLabel;
 }
 
 function populateDropdowns() {
@@ -279,36 +288,32 @@ function populateDropdowns() {
 
     updatePrimaryButtons();
 
-    // Build dropdown items: terminals + chats
-    [terminalMenu, headerLaunchMenu].forEach(function (menu) {
-        var items = '';
-
-        // Chat options
-        agents.forEach(function (a) {
-            items += '<div class="split-menu-item" data-action="chat" data-agent="' + escapeHtml(a) + '">' +
-                escapeHtml(agentChatLabel(a)) + '</div>';
-        });
-
-        // Divider
-        items += '<div class="split-menu-divider"></div>';
-
-        // Terminal options
-        agents.forEach(function (a) {
-            items += '<div class="split-menu-item" data-action="terminal" data-agent="' + escapeHtml(a) + '">' +
+    // Terminal menus
+    [launchTermMenu, headerTermMenu].forEach(function (menu) {
+        menu.innerHTML = agents.map(function (a) {
+            return '<div class="split-menu-item" data-agent="' + escapeHtml(a) + '">' +
                 escapeHtml(agentTermLabel(a)) + '</div>';
-        });
-
-        menu.innerHTML = items;
-
+        }).join('');
         menu.querySelectorAll('.split-menu-item').forEach(function (item) {
             item.addEventListener('click', function (e) {
                 e.stopPropagation();
-                menu.classList.remove('open');
-                if (item.dataset.action === 'chat') {
-                    launchChat(item.dataset.agent);
-                } else {
-                    launchTerminal(item.dataset.agent);
-                }
+                closeAllMenus();
+                launchTerminal(item.dataset.agent);
+            });
+        });
+    });
+
+    // Chat menus
+    [launchChatMenu, headerChatMenu].forEach(function (menu) {
+        menu.innerHTML = agents.map(function (a) {
+            return '<div class="split-menu-item" data-agent="' + escapeHtml(a) + '">' +
+                escapeHtml(agentChatLabel(a)) + '</div>';
+        }).join('');
+        menu.querySelectorAll('.split-menu-item').forEach(function (item) {
+            item.addEventListener('click', function (e) {
+                e.stopPropagation();
+                closeAllMenus();
+                launchChat(item.dataset.agent);
             });
         });
     });
@@ -323,7 +328,7 @@ function agentChatLabel(agent) {
 }
 
 function launchTerminal(agent) {
-    setLastAction('terminal', agent);
+    setLastTermAgent(agent);
     updatePrimaryButtons();
     showTerminal();
     connectPTY(agent);
@@ -383,7 +388,7 @@ window._deleteSession = function (sessionId) {
 // ========================
 
 function launchChat(agent) {
-    setLastAction('chat', agent);
+    setLastChatAgent(agent);
     updatePrimaryButtons();
     showChat();
     chatStatus.textContent = 'connecting...';
@@ -460,10 +465,12 @@ function setupChatHandlers(ws, agent, resumeSessionId) {
                     chatObserver.complete();
                     chatObserver = null;
                 }
+                chatContainer.classList.remove('thinking');
                 break;
 
             case 'error':
                 chatStatus.textContent = msg.message;
+                chatContainer.classList.remove('thinking');
                 if (chatObserver) {
                     chatObserver.error(new Error(msg.message));
                     chatObserver = null;
@@ -493,6 +500,7 @@ function mountNlux(agent, initialMessages) {
     var adapter = {
         streamText: function (message, observer) {
             chatObserver = observer;
+            chatContainer.classList.add('thinking');
             if (chatWs && chatWs.readyState === WebSocket.OPEN && chatSessionId) {
                 chatWs.send(JSON.stringify({
                     type: 'chat.message',
@@ -500,6 +508,7 @@ function mountNlux(agent, initialMessages) {
                     content: message,
                 }));
             } else {
+                chatContainer.classList.remove('thinking');
                 observer.error(new Error('not connected'));
             }
         }
