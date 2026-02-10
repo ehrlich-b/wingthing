@@ -1268,10 +1268,12 @@ function cellFgColor(cell) {
 function saveTermThumb() {
     if (!ptySessionId || !term) return;
     try {
+        var dpr = window.devicePixelRatio || 1;
         var W = 480, H = 260;
         var c = document.createElement('canvas');
-        c.width = W; c.height = H;
+        c.width = W * dpr; c.height = H * dpr;
         var ctx = c.getContext('2d');
+        ctx.scale(dpr, dpr);
         ctx.fillStyle = '#1a1a2e';
         ctx.fillRect(0, 0, W, H);
 
@@ -1308,7 +1310,7 @@ function saveTermThumb() {
             if (run) { ctx.fillStyle = lastColor; ctx.fillText(run, padX + runX * charW, padY + y * lineH); }
         }
 
-        localStorage.setItem(TERM_THUMB_PREFIX + ptySessionId, c.toDataURL('image/webp', 0.5));
+        localStorage.setItem(TERM_THUMB_PREFIX + ptySessionId, c.toDataURL('image/webp', 0.6));
     } catch (e) {}
 }
 
