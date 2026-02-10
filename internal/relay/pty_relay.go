@@ -83,6 +83,36 @@ func (r *PTYRegistry) ListForUser(userID string) []*PTYSession {
 	return result
 }
 
+// SyncFromWing reconciles the registry with the wing's authoritative session list.
+// Adds missing sessions, removes sessions the wing no longer has (for this wing only).
+func (r *PTYRegistry) SyncFromWing(wingID, userID string, sessions []ws.SessionInfo) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Build set of session IDs the wing reports
+	live := make(map[string]bool, len(sessions))
+	for _, s := range sessions {
+		live[s.SessionID] = true
+		if _, exists := r.sessions[s.SessionID]; !exists {
+			r.sessions[s.SessionID] = &PTYSession{
+				ID:     s.SessionID,
+				WingID: wingID,
+				UserID: userID,
+				Agent:  s.Agent,
+				CWD:    s.CWD,
+				Status: "detached",
+			}
+		}
+	}
+
+	// Remove sessions for this wing that the wing no longer reports
+	for id, s := range r.sessions {
+		if s.WingID == wingID && !live[id] {
+			delete(r.sessions, id)
+		}
+	}
+}
+
 // handlePTYWS handles the browser WebSocket for a PTY session.
 func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 	// Auth
