@@ -355,6 +355,13 @@ function hidePalette() {
 var paletteSelectedIndex = 0;
 
 function renderPaletteResults(filter) {
+    var items = [];
+
+    // Always offer a "default directory" option (no cwd = wing's working dir)
+    if (!filter) {
+        items.push({ name: 'default directory', path: '', selected: true });
+    }
+
     var filtered = allProjects;
     if (filter) {
         var lower = filter.toLowerCase();
@@ -364,19 +371,19 @@ function renderPaletteResults(filter) {
         });
     }
 
-    var items = [];
-    if (filtered.length > 0) {
-        items = filtered.map(function(p, i) {
-            return { name: p.name, path: p.path, selected: i === 0 };
-        });
-    } else if (filter) {
-        items = [{ name: filter, path: filter, selected: true }];
+    filtered.forEach(function(p) {
+        items.push({ name: p.name, path: p.path, selected: items.length === 0 });
+    });
+
+    // Custom path fallback — only if it looks like an absolute path
+    if (filter && filtered.length === 0 && (filter.charAt(0) === '/' || filter.charAt(0) === '~')) {
+        items.push({ name: 'custom path', path: filter, selected: items.length === 0 });
     }
 
     paletteSelectedIndex = 0;
 
     if (items.length === 0) {
-        paletteResults.innerHTML = '<div class="palette-empty">no projects found — type a path</div>';
+        paletteResults.innerHTML = '<div class="palette-empty">type an absolute path (e.g. /home/user/project)</div>';
         return;
     }
 
@@ -425,7 +432,8 @@ function launchFromPalette(cwd) {
     hidePalette();
     setLastTermAgent(agent);
     showTerminal();
-    connectPTY(agent, cwd);
+    // Only pass CWD if it's an absolute path
+    connectPTY(agent, (cwd && cwd.charAt(0) === '/') ? cwd : '');
 }
 
 // === Notifications ===
