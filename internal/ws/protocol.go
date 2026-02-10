@@ -277,10 +277,12 @@ type DirEntry struct {
 // DirHandler is called when the wing receives a dir.list request.
 type DirHandler func(ctx context.Context, req DirList, write PTYWriteFunc)
 
-// PTYReclaim is sent by the wing after restart to reclaim a surviving egg session.
+// PTYReclaim is sent by the wing after reconnect to reclaim a surviving egg session.
 type PTYReclaim struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
+	Agent     string `json:"agent,omitempty"`
+	CWD       string `json:"cwd,omitempty"`
 }
 
 // WingUpdate tells the wing to self-update to the latest release.

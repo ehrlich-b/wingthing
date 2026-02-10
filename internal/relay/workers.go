@@ -374,6 +374,17 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				session.WingID = wing.ID
 				session.mu.Unlock()
 				log.Printf("pty session %s reclaimed by wing %s", reclaim.SessionID, wing.ID)
+			} else {
+				// Session unknown (relay restarted) — recreate from wing's egg data
+				s.PTY.Add(&PTYSession{
+					ID:     reclaim.SessionID,
+					WingID: wing.ID,
+					UserID: wing.UserID,
+					Agent:  reclaim.Agent,
+					CWD:    reclaim.CWD,
+					Status: "detached",
+				})
+				log.Printf("pty session %s restored from wing %s (agent=%s)", reclaim.SessionID, wing.ID, reclaim.Agent)
 			}
 
 		case ws.TypeDirResults:
