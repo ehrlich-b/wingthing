@@ -18,10 +18,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
+	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
@@ -30,90 +31,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
 )
-
-// ringBuffer is a fixed-size circular buffer for PTY output replay.
-type ringBuffer struct {
-	mu   sync.Mutex
-	buf  []byte
-	size int
-	pos  int
-	full bool
-}
-
-func newRingBuffer(size int) *ringBuffer {
-	return &ringBuffer{buf: make([]byte, size), size: size}
-}
-
-func (r *ringBuffer) Write(p []byte) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, b := range p {
-		r.buf[r.pos] = b
-		r.pos = (r.pos + 1) % r.size
-		if r.pos == 0 {
-			r.full = true
-		}
-	}
-}
-
-func (r *ringBuffer) Bytes() []byte {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.full {
-		return append([]byte(nil), r.buf[:r.pos]...)
-	}
-	result := make([]byte, r.size)
-	copy(result, r.buf[r.pos:])
-	copy(result[r.size-r.pos:], r.buf[:r.pos])
-	return result
-}
-
-// sessionTracker tracks active PTY child processes for graceful shutdown.
-type sessionTracker struct {
-	mu    sync.Mutex
-	procs map[string]*os.Process
-}
-
-func newSessionTracker() *sessionTracker {
-	return &sessionTracker{
-		procs: make(map[string]*os.Process),
-	}
-}
-
-func (t *sessionTracker) Add(id string, proc *os.Process) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.procs[id] = proc
-}
-
-func (t *sessionTracker) Remove(id string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.procs, id)
-}
-
-func (t *sessionTracker) Shutdown() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	for id, proc := range t.procs {
-		log.Printf("terminating session %s (pid %d)", id, proc.Pid)
-		proc.Signal(syscall.SIGTERM)
-	}
-
-	if len(t.procs) == 0 {
-		return
-	}
-
-	// Wait for graceful exit, then force-kill stragglers
-	time.Sleep(5 * time.Second)
-	for id, proc := range t.procs {
-		if err := proc.Signal(syscall.Signal(0)); err == nil {
-			log.Printf("force-killing session %s (pid %d)", id, proc.Pid)
-			proc.Kill()
-		}
-	}
-}
 
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
 func discoverProjects(dir string, maxDepth int) []ws.WingProject {
@@ -344,10 +261,20 @@ func wingCmd() *cobra.Command {
 				return executeRelayTask(ctx, cfg, s, task, send)
 			}
 
-			tracker := newSessionTracker()
+			// Start or connect to the egg process
+			eggClient, eggErr := ensureEgg(cfg)
+			if eggErr != nil {
+				log.Printf("egg: %v (PTY sessions will fail)", eggErr)
+			} else {
+				defer eggClient.Close()
+			}
 
 			client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
-				handlePTYSession(ctx, cfg, tracker, start, write, input)
+				if eggClient == nil {
+					write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+					return
+				}
+				handlePTYSession(ctx, cfg, eggClient, start, write, input)
 			}
 
 			client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
@@ -369,12 +296,16 @@ func wingCmd() *cobra.Command {
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
+			// Reclaim surviving egg sessions after reconnect
+			if eggClient != nil {
+				go reclaimEggSessions(ctx, eggClient, client)
+			}
+
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 			go func() {
 				<-sigCh
-				log.Println("wing shutting down, terminating sessions...")
-				tracker.Shutdown()
+				log.Println("wing shutting down...")
 				cancel()
 			}()
 
@@ -425,6 +356,36 @@ func wingStatusCmd() *cobra.Command {
 			}
 			fmt.Printf("wing daemon is running (pid %d)\n", pid)
 			fmt.Printf("  log: %s\n", wingLogPath())
+
+			// Show egg status
+			cfg, _ := config.Load()
+			if cfg != nil {
+				eggPid, eggErr := readEggPid()
+				if eggErr != nil {
+					fmt.Println("  egg: not running")
+				} else {
+					fmt.Printf("  egg: running (pid %d)\n", eggPid)
+					// Try to list sessions
+					ec, dialErr := egg.Dial(
+						filepath.Join(cfg.Dir, "egg.sock"),
+						filepath.Join(cfg.Dir, "egg.token"),
+					)
+					if dialErr == nil {
+						defer ec.Close()
+						resp, listErr := ec.List(cmd.Context())
+						if listErr == nil && len(resp.Sessions) > 0 {
+							fmt.Println("  sessions:")
+							for _, s := range resp.Sessions {
+								started, _ := time.Parse(time.RFC3339, s.StartedAt)
+								ago := time.Since(started).Truncate(time.Second)
+								fmt.Printf("    %s  %s  %s  %s ago\n", s.SessionId, s.Agent, s.Cwd, ago)
+							}
+						} else {
+							fmt.Println("  sessions: none")
+						}
+					}
+				}
+			}
 			return nil
 		},
 	}
@@ -598,38 +559,96 @@ func timeNow() time.Time {
 	return time.Now().UTC()
 }
 
-// agentCommand returns the command and args for an interactive terminal session.
-// Not all agents support terminal mode — returns empty if unsupported.
-func agentCommand(agentName string) (string, []string) {
-	switch agentName {
-	case "claude":
-		return "claude", nil
-	case "codex":
-		return "codex", nil
-	case "ollama":
-		return "ollama", []string{"run", "llama3.2"}
-	default:
-		return "", nil
+// ensureEgg starts the egg process if not already running, returns a connected client.
+func ensureEgg(cfg *config.Config) (*egg.Client, error) {
+	sockPath := filepath.Join(cfg.Dir, "egg.sock")
+	tokenPath := filepath.Join(cfg.Dir, "egg.token")
+
+	// Try to connect to existing egg
+	ec, err := egg.Dial(sockPath, tokenPath)
+	if err == nil {
+		// Verify it's alive with a Version call
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		eggVer, verErr := ec.Version(ctx)
+		if verErr == nil {
+			if eggVer != version {
+				log.Printf("egg: version mismatch (egg=%s wing=%s) — reconnecting to old egg", eggVer, version)
+			}
+			log.Printf("egg: connected to existing process (version=%s)", eggVer)
+			return ec, nil
+		}
+		ec.Close()
+	}
+
+	// Clean stale files
+	os.Remove(sockPath)
+	os.Remove(tokenPath)
+	pidPath := filepath.Join(cfg.Dir, "egg.pid")
+	os.Remove(pidPath)
+
+	// Start a new egg process
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("find executable: %w", err)
+	}
+
+	logPath := filepath.Join(cfg.Dir, "egg.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("open egg log: %w", err)
+	}
+
+	child := exec.Command(exe, "egg")
+	child.Stdout = logFile
+	child.Stderr = logFile
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	if err := child.Start(); err != nil {
+		logFile.Close()
+		return nil, fmt.Errorf("start egg: %w", err)
+	}
+	logFile.Close()
+
+	log.Printf("egg: started (pid %d)", child.Process.Pid)
+
+	// Poll for socket to appear (100ms x 50 = 5s timeout)
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		ec, err = egg.Dial(sockPath, tokenPath)
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, listErr := ec.List(ctx)
+			cancel()
+			if listErr == nil {
+				return ec, nil
+			}
+			ec.Close()
+		}
+	}
+
+	return nil, fmt.Errorf("egg did not start within 5s")
+}
+
+// reclaimEggSessions discovers surviving egg sessions and sends pty.reclaim to the relay.
+func reclaimEggSessions(ctx context.Context, ec *egg.Client, wsClient *ws.Client) {
+	// Small delay to let registration complete
+	time.Sleep(500 * time.Millisecond)
+
+	resp, err := ec.List(ctx)
+	if err != nil || len(resp.Sessions) == 0 {
+		return
+	}
+
+	for _, s := range resp.Sessions {
+		log.Printf("egg: reclaiming session %s (agent=%s pid=%d)", s.SessionId, s.Agent, s.Pid)
+		wsClient.SendReclaim(ctx, s.SessionId)
 	}
 }
 
-// handlePTYSession spawns an agent in a PTY and pipes I/O over WebSocket.
-// If the browser sends a public key in pty.start, E2E encryption is used.
-// Keeps a ring buffer of recent output for session reattach replay.
-func handlePTYSession(ctx context.Context, cfg *config.Config, tracker *sessionTracker, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
-	name, args := agentCommand(start.Agent)
-	if name == "" {
-		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
-		return
-	}
-
-	binPath, err := exec.LookPath(name)
-	if err != nil {
-		log.Printf("pty: agent %q not found: %v", name, err)
-		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
-		return
-	}
-
+// handlePTYSession bridges a PTY session between the egg (local gRPC) and the relay (remote WS).
+// E2E encryption stays in the wing — the egg sees plaintext only.
+func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
 	// Set up E2E encryption if browser sent a public key
 	var gcmMu sync.Mutex
 	var gcm cipher.AEAD
@@ -650,42 +669,36 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, tracker *sessionT
 		}
 	}
 
-	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	defer sessionCancel()
-
-	cmd := exec.CommandContext(sessionCtx, binPath, args...)
-	cmd.Env = os.Environ()
-	if start.CWD != "" {
-		cmd.Dir = start.CWD
+	// Build env vars to pass to egg
+	envMap := make(map[string]string)
+	passthrough := []string{
+		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+		"HOME", "PATH", "SHELL", "TERM", "USER", "LANG",
+	}
+	for _, k := range passthrough {
+		if v := os.Getenv(k); v != "" {
+			envMap[k] = v
+		}
 	}
 
-	// Graceful termination: SIGTERM on context cancel, force-kill after 5s
-	cmd.Cancel = func() error {
-		return cmd.Process.Signal(syscall.SIGTERM)
-	}
-	cmd.WaitDelay = 5 * time.Second
-
-	size := &pty.Winsize{
-		Cols: uint16(start.Cols),
-		Rows: uint16(start.Rows),
-	}
-	ptmx, err := pty.StartWithSize(cmd, size)
+	// Spawn in egg
+	spawnResp, err := ec.Spawn(ctx, &pb.SpawnRequest{
+		SessionId: start.SessionID,
+		Agent:     start.Agent,
+		Cwd:       start.CWD,
+		Rows:      uint32(start.Rows),
+		Cols:      uint32(start.Cols),
+		Env:       envMap,
+	})
 	if err != nil {
-		log.Printf("pty: start failed: %v", err)
+		log.Printf("pty: egg spawn failed: %v", err)
 		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
 		return
 	}
-	defer ptmx.Close()
 
-	tracker.Add(start.SessionID, cmd.Process)
-	defer tracker.Remove(start.SessionID)
+	log.Printf("pty session %s: spawned in egg (pid %d)", start.SessionID, spawnResp.Pid)
 
-	// Ring buffer for replay on reattach (~50KB of plaintext output)
-	ring := newRingBuffer(50 * 1024)
-
-	log.Printf("pty session %s: spawned %s (pid %d)", start.SessionID, name, cmd.Process.Pid)
-
-	// Notify browser with wing's public key and resolved CWD
+	// Notify browser
 	write(ws.PTYStarted{
 		Type:      ws.TypePTYStarted,
 		SessionID: start.SessionID,
@@ -694,46 +707,61 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, tracker *sessionT
 		CWD:       start.CWD,
 	})
 
-	// Read PTY output -> send to browser (encrypted if E2E)
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := ptmx.Read(buf)
-			if n > 0 {
-				// Always store plaintext in ring buffer for replay
-				ring.Write(buf[:n])
+	// Attach to egg session stream
+	stream, err := ec.AttachSession(ctx, start.SessionID)
+	if err != nil {
+		log.Printf("pty: egg attach failed: %v", err)
+		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+		return
+	}
 
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	defer sessionCancel()
+
+	// Read output from egg -> encrypt -> send to browser
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				if err != io.EOF {
+					log.Printf("pty session %s: egg stream error: %v", start.SessionID, err)
+				}
+				return
+			}
+
+			switch p := msg.Payload.(type) {
+			case *pb.SessionMsg_Output:
 				gcmMu.Lock()
 				currentGCM := gcm
 				gcmMu.Unlock()
 
 				var data string
 				if currentGCM != nil {
-					encrypted, encErr := auth.Encrypt(currentGCM, buf[:n])
+					encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
 					if encErr != nil {
 						log.Printf("pty session %s: encrypt error: %v", start.SessionID, encErr)
 						continue
 					}
 					data = encrypted
 				} else {
-					data = base64.StdEncoding.EncodeToString(buf[:n])
+					data = base64.StdEncoding.EncodeToString(p.Output)
 				}
 				write(ws.PTYOutput{
 					Type:      ws.TypePTYOutput,
 					SessionID: start.SessionID,
 					Data:      data,
 				})
-			}
-			if err != nil {
-				if err != io.EOF {
-					log.Printf("pty session %s: read error: %v", start.SessionID, err)
-				}
+
+			case *pb.SessionMsg_ExitCode:
+				log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
+				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
+				sessionCancel()
 				return
 			}
 		}
 	}()
 
-	// Process input from browser (decrypt if E2E)
+	// Process input from browser -> decrypt -> send to egg
 	go func() {
 		for data := range input {
 			var env ws.Envelope
@@ -742,7 +770,6 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, tracker *sessionT
 			}
 			switch env.Type {
 			case ws.TypePTYAttach:
-				// Reattach: derive new E2E key with new browser's public key
 				var attach ws.PTYAttach
 				if err := json.Unmarshal(data, &attach); err != nil {
 					continue
@@ -759,33 +786,47 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, tracker *sessionT
 					}
 				}
 
-				// Replay buffered output with new key
-				buffered := ring.Bytes()
-				if len(buffered) > 0 {
-					gcmMu.Lock()
-					replayGCM := gcm
-					gcmMu.Unlock()
+				// Ask egg to replay ring buffer via a new attach stream
+				reattachStream, reErr := ec.AttachSession(ctx, start.SessionID)
+				if reErr != nil {
+					log.Printf("pty session %s: reattach to egg failed: %v", start.SessionID, reErr)
+				} else {
+					// Read replay data (ring buffer contents)
+					replayMsg, rErr := reattachStream.Recv()
+					if rErr == nil {
+						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
+							gcmMu.Lock()
+							replayGCM := gcm
+							gcmMu.Unlock()
 
-					var replayData string
-					if replayGCM != nil {
-						encrypted, encErr := auth.Encrypt(replayGCM, buffered)
-						if encErr != nil {
-							log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
-							continue
+							var replayData string
+							if replayGCM != nil {
+								encrypted, encErr := auth.Encrypt(replayGCM, replay.Output)
+								if encErr != nil {
+									log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
+								} else {
+									replayData = encrypted
+								}
+							} else {
+								replayData = base64.StdEncoding.EncodeToString(replay.Output)
+							}
+							if replayData != "" {
+								write(ws.PTYOutput{
+									Type:      ws.TypePTYOutput,
+									SessionID: start.SessionID,
+									Data:      replayData,
+								})
+								log.Printf("pty session %s: replayed %d bytes", start.SessionID, len(replay.Output))
+							}
 						}
-						replayData = encrypted
-					} else {
-						replayData = base64.StdEncoding.EncodeToString(buffered)
 					}
-					write(ws.PTYOutput{
-						Type:      ws.TypePTYOutput,
-						SessionID: start.SessionID,
-						Data:      replayData,
+					// Send detach to close the replay stream without affecting the main one
+					reattachStream.Send(&pb.SessionMsg{
+						SessionId: start.SessionID,
+						Payload:   &pb.SessionMsg_Detach{Detach: true},
 					})
-					log.Printf("pty session %s: replayed %d bytes", start.SessionID, len(buffered))
 				}
 
-				// Send pty.started so browser knows attach succeeded
 				write(ws.PTYStarted{
 					Type:      ws.TypePTYStarted,
 					SessionID: start.SessionID,
@@ -817,37 +858,34 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, tracker *sessionT
 						continue
 					}
 				}
-				ptmx.Write(decoded)
+				stream.Send(&pb.SessionMsg{
+					SessionId: start.SessionID,
+					Payload:   &pb.SessionMsg_Input{Input: decoded},
+				})
 
 			case ws.TypePTYResize:
 				var msg ws.PTYResize
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
 				}
-				pty.Setsize(ptmx, &pty.Winsize{
-					Cols: uint16(msg.Cols),
-					Rows: uint16(msg.Rows),
+				stream.Send(&pb.SessionMsg{
+					SessionId: start.SessionID,
+					Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{
+						Rows: uint32(msg.Rows),
+						Cols: uint32(msg.Cols),
+					}},
 				})
 
 			case ws.TypePTYKill:
-				log.Printf("pty session %s: kill received, terminating", start.SessionID)
-				sessionCancel()
+				log.Printf("pty session %s: kill received", start.SessionID)
+				ec.Kill(ctx, start.SessionID)
 				return
 			}
 		}
 	}()
 
-	exitCode := 0
-	if err := cmd.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1
-		}
-	}
-
-	log.Printf("pty session %s: exited with code %d", start.SessionID, exitCode)
-	write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: exitCode})
+	// Wait for session to end
+	<-sessionCtx.Done()
 }
 
 // handleChatStart creates a new chat session or resumes an existing one.

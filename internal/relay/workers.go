@@ -296,6 +296,17 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			json.Unmarshal(data, &partial)
 			s.forwardChatToBrowser(partial.SessionID, data)
 
+		case ws.TypePTYReclaim:
+			var reclaim ws.PTYReclaim
+			json.Unmarshal(data, &reclaim)
+			session := s.PTY.Get(reclaim.SessionID)
+			if session != nil {
+				session.mu.Lock()
+				session.WingID = wing.ID
+				session.mu.Unlock()
+				log.Printf("pty session %s reclaimed by wing %s", reclaim.SessionID, wing.ID)
+			}
+
 		case ws.TypeDirResults:
 			var results ws.DirResults
 			json.Unmarshal(data, &results)

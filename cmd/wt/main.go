@@ -122,6 +122,7 @@ func main() {
 		voteCmd(),
 		commentCmd(),
 		wingCmd(),
+		eggCmd(),
 		updateCmd(),
 	)
 
