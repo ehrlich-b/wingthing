@@ -839,6 +839,14 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, s
 					}
 				}
 
+				// Send pty.started FIRST so browser can derive E2E key before replay arrives
+				write(ws.PTYStarted{
+					Type:      ws.TypePTYStarted,
+					SessionID: start.SessionID,
+					Agent:     start.Agent,
+					PublicKey: wingPubKeyB64,
+				})
+
 				// Ask egg to replay ring buffer via a new attach stream
 				reattachStream, reErr := ec.AttachSession(ctx, start.SessionID)
 				if reErr != nil {
@@ -879,13 +887,6 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, s
 						Payload:   &pb.SessionMsg_Detach{Detach: true},
 					})
 				}
-
-				write(ws.PTYStarted{
-					Type:      ws.TypePTYStarted,
-					SessionID: start.SessionID,
-					Agent:     start.Agent,
-					PublicKey: wingPubKeyB64,
-				})
 
 			case ws.TypePTYInput:
 				var msg ws.PTYInput

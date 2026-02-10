@@ -1309,6 +1309,24 @@ async function e2eDecrypt(encoded) {
 // === PTY WebSocket ===
 
 function setupPTYHandlers(ws, reattach) {
+    var pendingOutput = [];
+    var keyReady = false;
+
+    function processOutput(dataStr) {
+        e2eDecrypt(dataStr).then(function (bytes) {
+            term.write(bytes);
+            saveTermBuffer();
+            try {
+                var text = new TextDecoder().decode(bytes);
+                if (checkForNotification(text)) {
+                    setNotification(ptySessionId);
+                }
+            } catch (ex) {}
+        }).catch(function (err) {
+            console.error('decrypt error, dropping frame:', err);
+        });
+    }
+
     ws.onmessage = function (e) {
         var msg = JSON.parse(e.data);
         switch (msg.type) {
@@ -1321,9 +1339,19 @@ function setupPTYHandlers(ws, reattach) {
                 if (msg.public_key) {
                     deriveE2EKey(msg.public_key).then(function (key) {
                         e2eKey = key;
+                        keyReady = true;
                         ptyStatus.textContent = key ? '\uD83D\uDD12' : '';
-                    }).catch(function () { ptyStatus.textContent = ''; });
+                        // Flush any output that arrived before key was ready
+                        pendingOutput.forEach(processOutput);
+                        pendingOutput = [];
+                    }).catch(function () {
+                        keyReady = true;
+                        ptyStatus.textContent = '';
+                        pendingOutput.forEach(processOutput);
+                        pendingOutput = [];
+                    });
                 } else {
+                    keyReady = true;
                     ptyStatus.textContent = '';
                 }
 
@@ -1341,19 +1369,11 @@ function setupPTYHandlers(ws, reattach) {
                 break;
 
             case 'pty.output':
-                e2eDecrypt(msg.data).then(function (bytes) {
-                    term.write(bytes);
-                    saveTermBuffer();
-                    // Check for notification patterns
-                    try {
-                        var text = new TextDecoder().decode(bytes);
-                        if (checkForNotification(text)) {
-                            setNotification(msg.session_id || ptySessionId);
-                        }
-                    } catch (ex) {}
-                }).catch(function (err) {
-                    console.error('decrypt error, dropping frame:', err);
-                });
+                if (!keyReady) {
+                    pendingOutput.push(msg.data);
+                } else {
+                    processOutput(msg.data);
+                }
                 break;
 
             case 'pty.exited':
