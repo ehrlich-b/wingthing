@@ -508,6 +508,9 @@ var paletteSelectedIndex = 0;
 var dirListTimer = null;
 var dirListAbort = null;
 var dirListPending = false; // true while waiting for remote dir results
+var dirListCache = [];      // last server results (full entries)
+var dirListCacheDir = '';    // the directory those results are for
+var dirListQuery = '';       // current query string for stale-check
 
 function currentPaletteWing() {
     var online = onlineWings();
@@ -583,6 +586,9 @@ function hidePalette() {
     if (dirListTimer) { clearTimeout(dirListTimer); dirListTimer = null; }
     if (dirListAbort) { dirListAbort.abort(); dirListAbort = null; }
     dirListPending = false;
+    dirListCache = [];
+    dirListCacheDir = '';
+    dirListQuery = '';
 }
 
 function cyclePaletteWing() {
@@ -671,45 +677,102 @@ function renderPaletteItems(items) {
     });
 }
 
+function dirParent(value) {
+    // Return the directory portion and trailing prefix for client-side filtering.
+    // "~/repos/cin" → { dir: "~/repos/", prefix: "cin" }
+    // "~/repos/"    → { dir: "~/repos/", prefix: "" }
+    var last = value.lastIndexOf('/');
+    if (last === -1) return { dir: value, prefix: '' };
+    return { dir: value.substring(0, last + 1), prefix: value.substring(last + 1).toLowerCase() };
+}
+
+function filterCachedItems(prefix) {
+    var items = dirListCache;
+    if (prefix) {
+        items = items.filter(function(e) {
+            return e.name.toLowerCase().indexOf(prefix) === 0;
+        });
+    }
+    return items;
+}
+
 function debouncedDirList(value) {
     if (dirListTimer) clearTimeout(dirListTimer);
     if (paletteMode === 'chat') return;
 
+    // Abort any in-flight fetch immediately on new input
+    if (dirListAbort) { dirListAbort.abort(); dirListAbort = null; }
+
     // If not a path, filter projects locally
     if (!value || (value.charAt(0) !== '/' && value.charAt(0) !== '~')) {
         dirListPending = false;
+        dirListCache = [];
+        dirListCacheDir = '';
         renderPaletteResults(value);
         return;
     }
 
-    // Debounce remote directory listing
+    dirListQuery = value;
+    var parsed = dirParent(value);
+
+    // If we have cached results for this directory, filter client-side immediately
+    if (dirListCacheDir && dirListCacheDir === parsed.dir) {
+        dirListPending = false;
+        renderPaletteItems(filterCachedItems(parsed.prefix));
+        return; // no need to re-fetch the same directory
+    }
+
+    // Show filtered cache while waiting (if the base directory changed, stale but better than nothing)
+    if (dirListCache.length > 0) {
+        renderPaletteItems(filterCachedItems(parsed.prefix));
+    }
+
+    // Debounce remote directory listing — always fetch the DIRECTORY, not the prefix
     dirListPending = true;
-    dirListTimer = setTimeout(function() { fetchDirList(value); }, 200);
+    dirListTimer = setTimeout(function() { fetchDirList(parsed.dir); }, 150);
 }
 
-function fetchDirList(path) {
+function fetchDirList(dirPath) {
     var wing = currentPaletteWing();
-    if (!wing) return;
+    if (!wing) { dirListPending = false; return; }
 
     if (dirListAbort) dirListAbort.abort();
     dirListAbort = new AbortController();
     dirListPending = true;
 
-    fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent(path), {
+    fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent(dirPath), {
         signal: dirListAbort.signal
     }).then(function(r) { return r.json(); }).then(function(entries) {
         dirListPending = false;
-        if (!entries || !Array.isArray(entries)) { renderPaletteItems([]); return; }
+
+        // Stale check: if user changed to a different directory, discard
+        var currentParsed = dirParent(paletteSearch.value);
+        if (currentParsed.dir !== dirPath) return;
+
+        if (!entries || !Array.isArray(entries)) {
+            dirListCache = [];
+            dirListCacheDir = '';
+            renderPaletteItems([]);
+            return;
+        }
         var items = entries.map(function(e) {
             return { name: e.name, path: e.path, isDir: e.is_dir };
         });
-        // Directories first, then files
         items.sort(function(a, b) {
             if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
             return a.name.localeCompare(b.name);
         });
-        renderPaletteItems(items);
-    }).catch(function() { dirListPending = false; });
+
+        // Cache full directory listing
+        dirListCache = items;
+        dirListCacheDir = dirPath;
+
+        // Filter for current prefix
+        renderPaletteItems(filterCachedItems(currentParsed.prefix));
+    }).catch(function(err) {
+        if (err && err.name === 'AbortError') return;
+        dirListPending = false;
+    });
 }
 
 function navigatePalette(dir) {
@@ -736,15 +799,18 @@ function shortenPath(path) {
 function launchFromPalette(cwd) {
     if (onlineWings().length === 0) return;
     var wing = currentPaletteWing();
-    var wingId = wing ? wing.id : '';
+    if (!wing) return;
+    var wingId = wing.id;
     var agent = currentPaletteAgent();
+    // Validate: only send absolute paths (wing returns these from dir listing)
+    var validCwd = (cwd && cwd.charAt(0) === '/') ? cwd : '';
     hidePalette();
     if (paletteMode === 'chat') {
         launchChat(agent);
     } else {
         setLastTermAgent(agent);
         showTerminal();
-        connectPTY(agent, (cwd && cwd.charAt(0) === '/') ? cwd : '', wingId);
+        connectPTY(agent, validCwd, wingId);
     }
 }
 
