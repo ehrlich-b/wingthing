@@ -349,7 +349,7 @@ func wingCmd() *cobra.Command {
 
 			// Reclaim surviving egg sessions after reconnect
 			if eggClient != nil {
-				go reclaimEggSessions(ctx, eggClient, client)
+				go reclaimEggSessions(ctx, cfg, eggClient, client)
 			}
 
 			sigCh := make(chan os.Signal, 1)
@@ -692,8 +692,9 @@ func ensureEgg(cfg *config.Config) (*egg.Client, error) {
 	return nil, fmt.Errorf("egg did not start within 5s")
 }
 
-// reclaimEggSessions discovers surviving egg sessions and sends pty.reclaim to the relay.
-func reclaimEggSessions(ctx context.Context, ec *egg.Client, wsClient *ws.Client) {
+// reclaimEggSessions discovers surviving egg sessions, sends pty.reclaim to the relay,
+// and sets up input routing so pty.attach/input/resize/kill messages get handled.
+func reclaimEggSessions(ctx context.Context, cfg *config.Config, ec *egg.Client, wsClient *ws.Client) {
 	// Small delay to let registration complete
 	time.Sleep(500 * time.Millisecond)
 
@@ -705,7 +706,163 @@ func reclaimEggSessions(ctx context.Context, ec *egg.Client, wsClient *ws.Client
 	for _, s := range resp.Sessions {
 		log.Printf("egg: reclaiming session %s (agent=%s pid=%d)", s.SessionId, s.Agent, s.Pid)
 		wsClient.SendReclaim(ctx, s.SessionId, s.Agent, s.Cwd)
+
+		// Set up input routing for this session
+		write, input, cleanup := wsClient.RegisterPTYSession(ctx, s.SessionId)
+		go func(sessionID, agentName, cwd string) {
+			defer cleanup()
+			handleReclaimedPTY(ctx, cfg, ec, sessionID, agentName, cwd, write, input)
+		}(s.SessionId, s.Agent, s.Cwd)
 	}
+}
+
+// handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
+// Unlike handlePTYSession, it skips spawn — the process already exists.
+func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, agentName, cwd string, write ws.PTYWriteFunc, input <-chan []byte) {
+	var gcmMu sync.Mutex
+	var gcm cipher.AEAD
+	var wingPubKeyB64 string
+	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
+	if privKeyErr == nil {
+		wingPubKeyB64 = base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
+	}
+
+	// Attach to existing egg session
+	stream, err := ec.AttachSession(ctx, sessionID)
+	if err != nil {
+		log.Printf("pty session %s: reclaim attach failed: %v", sessionID, err)
+		return
+	}
+
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	defer sessionCancel()
+
+	// Read output from egg -> encrypt -> send to relay
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				if err != io.EOF {
+					log.Printf("pty session %s: egg stream error: %v", sessionID, err)
+				}
+				return
+			}
+			switch p := msg.Payload.(type) {
+			case *pb.SessionMsg_Output:
+				gcmMu.Lock()
+				currentGCM := gcm
+				gcmMu.Unlock()
+				var data string
+				if currentGCM != nil {
+					encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
+					if encErr != nil {
+						continue
+					}
+					data = encrypted
+				} else {
+					data = base64.StdEncoding.EncodeToString(p.Output)
+				}
+				write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: data})
+			case *pb.SessionMsg_ExitCode:
+				log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
+				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
+				sessionCancel()
+				return
+			}
+		}
+	}()
+
+	// Process input from browser
+	go func() {
+		for data := range input {
+			var env ws.Envelope
+			if err := json.Unmarshal(data, &env); err != nil {
+				continue
+			}
+			switch env.Type {
+			case ws.TypePTYAttach:
+				var attach ws.PTYAttach
+				if err := json.Unmarshal(data, &attach); err != nil {
+					continue
+				}
+				if attach.PublicKey != "" && privKeyErr == nil {
+					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
+					if deriveErr == nil {
+						gcmMu.Lock()
+						gcm = derived
+						gcmMu.Unlock()
+						log.Printf("pty session %s: re-keyed E2E for reattach", sessionID)
+					}
+				}
+				write(ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, Agent: agentName, PublicKey: wingPubKeyB64})
+
+				// Replay ring buffer
+				reattachStream, reErr := ec.AttachSession(ctx, sessionID)
+				if reErr == nil {
+					replayMsg, rErr := reattachStream.Recv()
+					if rErr == nil {
+						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
+							gcmMu.Lock()
+							replayGCM := gcm
+							gcmMu.Unlock()
+							var replayData string
+							if replayGCM != nil {
+								encrypted, encErr := auth.Encrypt(replayGCM, replay.Output)
+								if encErr == nil {
+									replayData = encrypted
+								}
+							} else {
+								replayData = base64.StdEncoding.EncodeToString(replay.Output)
+							}
+							if replayData != "" {
+								write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: replayData})
+								log.Printf("pty session %s: replayed %d bytes", sessionID, len(replay.Output))
+							}
+						}
+					}
+					reattachStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Detach{Detach: true}})
+				}
+
+			case ws.TypePTYInput:
+				var msg ws.PTYInput
+				if err := json.Unmarshal(data, &msg); err != nil {
+					continue
+				}
+				gcmMu.Lock()
+				currentGCM := gcm
+				gcmMu.Unlock()
+				var decoded []byte
+				if currentGCM != nil {
+					var decErr error
+					decoded, decErr = auth.Decrypt(currentGCM, msg.Data)
+					if decErr != nil {
+						continue
+					}
+				} else {
+					var decErr error
+					decoded, decErr = base64.StdEncoding.DecodeString(msg.Data)
+					if decErr != nil {
+						continue
+					}
+				}
+				stream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Input{Input: decoded}})
+
+			case ws.TypePTYResize:
+				var msg ws.PTYResize
+				if err := json.Unmarshal(data, &msg); err != nil {
+					continue
+				}
+				stream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{Rows: uint32(msg.Rows), Cols: uint32(msg.Cols)}}})
+
+			case ws.TypePTYKill:
+				log.Printf("pty session %s: kill received", sessionID)
+				ec.Kill(ctx, sessionID)
+				return
+			}
+		}
+	}()
+
+	<-sessionCtx.Done()
 }
 
 // handlePTYSession bridges a PTY session between the egg (local gRPC) and the relay (remote WS).
