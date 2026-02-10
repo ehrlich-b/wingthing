@@ -244,17 +244,16 @@ body {
 
 /* === Wing boxes === */
 
-.wing-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.wing-grid { display: flex; flex-wrap: wrap; gap: 10px; }
 
 .wing-box {
-    width: 130px;
-    height: 96px;
+    width: 200px;
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
+    gap: 6px;
     background: var(--bg-card);
-    border-radius: 6px;
-    padding: 10px;
+    border-radius: 8px;
+    padding: 12px 14px;
     cursor: grab;
     user-select: none;
     transition: opacity 0.15s;
@@ -264,25 +263,19 @@ body {
 .wing-box-top {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
 }
 
 .wing-name { font-weight: 600; font-size: 13px; }
 
 .wing-agents {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-dim);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .wing-detail {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .wing-dot {
@@ -321,14 +314,14 @@ body {
 
 /* === Egg boxes (sessions) === */
 
-.egg-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.egg-grid { display: flex; flex-wrap: wrap; gap: 10px; }
 
 .egg-box {
-    width: 160px;
+    width: 240px;
     display: flex;
     flex-direction: column;
     background: var(--bg-card);
-    border-radius: 6px;
+    border-radius: 8px;
     overflow: hidden;
     cursor: pointer;
     transition: background 0.15s;
@@ -337,24 +330,43 @@ body {
 .egg-box:hover { background: var(--bg-hover); }
 
 .egg-preview {
-    height: 90px;
+    height: 130px;
     overflow: hidden;
-    background: #1a1a2e;
+    background: #0d0d1a;
+    border-bottom: 1px solid var(--border);
+    position: relative;
 }
+
+.egg-preview::after {
+    content: 'no preview';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    pointer-events: none;
+}
+
+.egg-preview:has(img)::after { display: none; }
 
 .egg-preview img {
     width: 100%;
     height: 100%;
     object-fit: cover;
     image-rendering: pixelated;
+    position: relative;
+    z-index: 1;
 }
 
 .egg-footer {
-    padding: 6px 8px;
+    padding: 8px 10px;
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 11px;
+    gap: 8px;
+    font-size: 12px;
 }
 
 .egg-label {
@@ -737,9 +749,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     #main-header { padding: 4px 0; }
     #modifier-keys { display: flex; flex-wrap: wrap; }
     .mod-key { flex: 1; min-width: 40px; }
-    .wing-box { width: 110px; height: 80px; padding: 8px; }
-    .egg-box { width: 140px; }
-    .egg-preview { height: 75px; }
+    .wing-box { width: 160px; padding: 10px; }
+    .egg-box { width: 180px; }
+    .egg-preview { height: 100px; }
     .egg-delete { opacity: 1; }
     #palette-dialog { margin: 0 12px; }
 }
