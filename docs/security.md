@@ -137,7 +137,7 @@ If an attacker gains full control of the Fly.io deployment (SSH access, deploy c
 ### 1. No wing identity verification (CRITICAL)
 The browser has no way to verify it's talking to the real wing vs. a relay-injected fake. A pin/fingerprint mechanism (TOFU or out-of-band verification of the wing's public key) would close this gap.
 
-**Mitigation path**: Display the wing's public key fingerprint in both the CLI (`wt wing status`) and the web UI. Users verify on first connect, subsequent connections check against the pinned key.
+**Mitigation path**: Open by default — connections work without pinning. Users who want stronger guarantees can pin wing fingerprints. Display the wing's public key fingerprint in both the CLI (`wt wing status`) and the web UI. Pinned wings warn/block on mismatch.
 
 ### 2. Web app served from relay (CRITICAL)
 Since `app.wingthing.ai` serves the JavaScript from the same infrastructure, a compromised relay can serve modified JS that bypasses E2E. This is the fundamental limitation of any web-based E2E system (same problem as WhatsApp Web, ProtonMail, etc.).
@@ -163,12 +163,11 @@ The wing keeps a plaintext ring buffer of recent terminal output for session rea
 
 ## Recommendations (Priority Order)
 
-1. **Wing fingerprint verification** — Display wing public key fingerprint, TOFU model, warn on change
-2. **E2E for chat** — Extend the same encryption to chat sessions
+1. **Wing identity pinning** — Open by default (any wing can connect, no friction), but users can opt into pinning a wing's public key fingerprint. On first connect the browser displays the fingerprint; `wt wing status` shows the same fingerprint locally. If the user pins it, subsequent connections warn/block on mismatch. This closes the fake-wing MITM attack for security-conscious users without adding friction to the default experience.
+2. **E2E for chat** — Extend the same X25519 + AES-256-GCM encryption to chat sessions
 3. **Signed web assets** — Publish SRI hashes out-of-band, or build a native client
-4. **Encrypt metadata where possible** — CWD and project names could be encrypted with a separate key
-5. **Rotate JWT signing secret** — Support secret rotation to limit blast radius of database compromise
-6. **Audit logging** — Tamper-evident log of wing registrations and session starts, stored separately from the relay
+4. **Rotate JWT signing secret** — Support secret rotation to limit blast radius of database compromise
+5. **Audit logging** — Tamper-evident log of wing registrations and session starts, stored separately from the relay
 
 ## Summary
 
