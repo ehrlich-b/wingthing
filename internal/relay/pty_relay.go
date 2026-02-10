@@ -41,10 +41,22 @@ func NewPTYRegistry() *PTYRegistry {
 	}
 }
 
-func (r *PTYRegistry) Add(s *PTYSession) {
+func (r *PTYRegistry) Add(s *PTYSession) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, tomb := r.tombstones[s.ID]; tomb {
+		return false
+	}
 	r.sessions[s.ID] = s
+	return true
+}
+
+// IsTombstoned returns true if the session was recently deleted.
+func (r *PTYRegistry) IsTombstoned(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.tombstones[id]
+	return ok
 }
 
 func (r *PTYRegistry) Remove(id string) {
@@ -93,10 +105,10 @@ func (r *PTYRegistry) SyncFromWing(wingID, userID string, sessions []ws.SessionI
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Expire old tombstones (>30s)
+	// Expire old tombstones (>5min)
 	now := time.Now()
 	for id, t := range r.tombstones {
-		if now.Sub(t) > 30*time.Second {
+		if now.Sub(t) > 5*time.Minute {
 			delete(r.tombstones, id)
 		}
 	}

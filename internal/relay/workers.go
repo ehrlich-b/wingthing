@@ -396,6 +396,16 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		case ws.TypePTYReclaim:
 			var reclaim ws.PTYReclaim
 			json.Unmarshal(data, &reclaim)
+
+			// If session was recently deleted, kill it on the wing instead of reclaiming
+			if s.PTY.IsTombstoned(reclaim.SessionID) {
+				kill := ws.PTYKill{Type: ws.TypePTYKill, SessionID: reclaim.SessionID}
+				killData, _ := json.Marshal(kill)
+				wing.Conn.Write(ctx, websocket.MessageText, killData)
+				log.Printf("pty session %s: tombstoned, sending kill to wing %s", reclaim.SessionID, wing.ID)
+				break
+			}
+
 			session := s.PTY.Get(reclaim.SessionID)
 			if session != nil {
 				session.mu.Lock()
