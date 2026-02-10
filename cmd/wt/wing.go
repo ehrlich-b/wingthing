@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -257,6 +258,7 @@ func wingCmd() *cobra.Command {
 				RelayURL:  wsURL,
 				Token:     tok.Token,
 				MachineID: cfg.MachineID,
+				Platform:  runtime.GOOS,
 				Agents:    agents,
 				Skills:    skills,
 				Labels:    labels,

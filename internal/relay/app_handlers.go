@@ -47,6 +47,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		out[i] = map[string]any{
 			"id":         wing.ID,
 			"machine_id": wing.MachineID,
+			"platform":   wing.Platform,
 			"agents":     wing.Agents,
 			"labels":     wing.Labels,
 			"public_key": wing.PublicKey,

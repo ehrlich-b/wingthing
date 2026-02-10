@@ -67,6 +67,7 @@ type WingProject struct {
 type WingRegister struct {
 	Type       string        `json:"type"`
 	MachineID  string        `json:"machine_id"`
+	Platform   string        `json:"platform,omitempty"` // runtime.GOOS (e.g. "darwin", "linux")
 	Agents     []string      `json:"agents"`
 	Skills     []string      `json:"skills"`
 	Labels     []string      `json:"labels"`

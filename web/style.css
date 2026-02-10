@@ -232,17 +232,58 @@ body {
 
 #wing-status { margin-bottom: 12px; }
 
-.wing-card {
+.section-label {
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: lowercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+}
+
+/* === Wing boxes === */
+
+.wing-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.wing-box {
+    width: 130px;
+    height: 96px;
     display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
+    flex-direction: column;
+    justify-content: space-between;
     background: var(--bg-card);
     border-radius: 6px;
-    margin-bottom: 6px;
+    padding: 10px;
+    cursor: grab;
+    user-select: none;
+    transition: opacity 0.15s;
+    position: relative;
+}
+
+.wing-box-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .wing-name { font-weight: 600; font-size: 13px; }
+
+.wing-agents {
+    font-size: 11px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.wing-detail {
+    font-size: 10px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 
 .wing-dot {
     width: 8px;
@@ -255,19 +296,15 @@ body {
 .wing-dot.dot-live { background: var(--green); }
 .wing-dot.dot-offline { background: var(--yellow); }
 
-.wing-detail {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-left: auto;
-}
-
 .wing-update-btn {
-    margin-left: 8px;
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
     opacity: 0;
     transition: opacity 0.15s;
 }
 
-.wing-card:hover .wing-update-btn { opacity: 1; }
+.wing-box:hover .wing-update-btn { opacity: 1; }
 
 /* Wing dot transitions */
 .wing-dot { transition: background 0.3s ease, transform 0.3s ease; }
@@ -278,26 +315,62 @@ body {
     100% { transform: scale(1); }
 }
 
-/* Wing card drag reorder */
-.wing-card { cursor: grab; user-select: none; transition: opacity 0.15s; }
-.wing-card.dragging { opacity: 0.3; }
-.wing-card.drag-over { border-top: 2px solid var(--action); margin-top: -2px; }
+/* Wing box drag reorder */
+.wing-box.dragging { opacity: 0.3; }
+.wing-box.drag-over { outline: 2px solid var(--accent); }
 
-/* === Session cards === */
+/* === Egg boxes (sessions) === */
 
-.session-card {
+.egg-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.egg-box {
+    width: 160px;
     display: flex;
-    align-items: center;
+    flex-direction: column;
     background: var(--bg-card);
     border-radius: 6px;
-    padding: 10px 14px;
-    margin-bottom: 4px;
+    overflow: hidden;
     cursor: pointer;
     transition: background 0.15s;
-    gap: 10px;
 }
 
-.session-card:hover { background: var(--bg-hover); }
+.egg-box:hover { background: var(--bg-hover); }
+
+.egg-preview {
+    height: 90px;
+    overflow: hidden;
+    background: #1a1a2e;
+}
+
+.egg-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    image-rendering: pixelated;
+}
+
+.egg-footer {
+    padding: 6px 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+}
+
+.egg-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.egg-delete {
+    opacity: 0;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+}
+
+.egg-box:hover .egg-delete { opacity: 1; }
 
 .session-dot {
     width: 8px;
@@ -312,30 +385,6 @@ body {
     background: var(--orange);
     animation: pulse 1s ease-in-out infinite;
 }
-
-.session-info { flex: 1; min-width: 0; }
-
-.session-project {
-    font-weight: 600;
-    font-size: 13px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.session-meta {
-    font-size: 11px;
-    color: var(--text-dim);
-}
-
-.session-actions {
-    display: flex;
-    gap: 4px;
-    opacity: 0;
-    transition: opacity 0.15s;
-}
-
-.session-card:hover .session-actions { opacity: 1; }
 
 /* Empty state */
 
@@ -688,8 +737,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     #main-header { padding: 4px 0; }
     #modifier-keys { display: flex; flex-wrap: wrap; }
     .mod-key { flex: 1; min-width: 40px; }
-    .session-actions { opacity: 1; }
-    .session-card { padding: 8px 10px; }
+    .wing-box { width: 110px; height: 80px; padding: 8px; }
+    .egg-box { width: 140px; }
+    .egg-preview { height: 75px; }
+    .egg-delete { opacity: 1; }
     #palette-dialog { margin: 0 12px; }
 }
 
