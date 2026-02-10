@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"syscall"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -41,6 +42,8 @@ func main() {
 
 	root.AddCommand(
 		runCmd(),
+		startCmd(),
+		stopCmd(),
 		timelineCmd(),
 		threadCmd(),
 		statusCmd(),
@@ -65,6 +68,47 @@ func main() {
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
+	}
+}
+
+func startCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "start",
+		Short: "Start the wing daemon (alias for wt wing -d)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Delegate to wing -d
+			if pid, err := readPid(); err == nil {
+				return fmt.Errorf("wing daemon already running (pid %d)", pid)
+			}
+			exe, exeErr := os.Executable()
+			if exeErr != nil {
+				return exeErr
+			}
+			child := exec.Command(exe, "wing", "-d")
+			child.Stdout = os.Stdout
+			child.Stderr = os.Stderr
+			return child.Run()
+		},
+	}
+}
+
+func stopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the wing daemon (alias for wt wing stop)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			pid, err := readPid()
+			if err != nil {
+				return fmt.Errorf("no wing daemon running")
+			}
+			proc, _ := os.FindProcess(pid)
+			if err := proc.Signal(syscall.SIGTERM); err != nil {
+				return fmt.Errorf("kill pid %d: %w", pid, err)
+			}
+			os.Remove(wingPidPath())
+			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
+			return nil
+		},
 	}
 }
 
