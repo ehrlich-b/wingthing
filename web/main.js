@@ -69,6 +69,7 @@ var LAST_TERM_KEY = 'wt_last_term_agent';
 var LAST_CHAT_KEY = 'wt_last_chat_agent';
 var TERM_BUF_PREFIX = 'wt_termbuf_';
 var WING_ORDER_KEY = 'wt_wing_order';
+var EGG_ORDER_KEY = 'wt_egg_order';
 var TERM_THUMB_PREFIX = 'wt_termthumb_';
 
 function loginRedirect() {
@@ -248,6 +249,29 @@ function sortWingsByOrder(wings) {
     known.sort(function(a, b) { return orderMap[a.machine_id] - orderMap[b.machine_id]; });
     return known.concat(unknown);
 }
+function getEggOrder() {
+    try { var raw = localStorage.getItem(EGG_ORDER_KEY); return raw ? JSON.parse(raw) : []; }
+    catch (e) { return []; }
+}
+function setEggOrder(order) {
+    try { localStorage.setItem(EGG_ORDER_KEY, JSON.stringify(order)); } catch (e) {}
+}
+function sortSessionsByOrder(sessions) {
+    var order = getEggOrder();
+    var orderMap = {};
+    order.forEach(function(id, i) { orderMap[id] = i; });
+    var known = [];
+    var unknown = [];
+    sessions.forEach(function(s) {
+        if (orderMap.hasOwnProperty(s.id)) {
+            known.push(s);
+        } else {
+            unknown.push(s);
+        }
+    });
+    known.sort(function(a, b) { return orderMap[a.id] - orderMap[b.id]; });
+    return known.concat(unknown);
+}
 
 // === Dashboard WebSocket (real-time wing status) ===
 
@@ -359,8 +383,8 @@ async function loadHome() {
         return;
     }
 
-    sessionsData = sessions;
-    setCachedSessions(sessions);
+    sessionsData = sortSessionsByOrder(sessions);
+    setCachedSessions(sessionsData);
 
     // Merge live wings with cached wings (stable by machine_id)
     var cached = getCachedWings();
@@ -530,6 +554,140 @@ function saveWingOrder() {
     wingsData = reordered;
 }
 
+function setupEggDrag() {
+    var grid = sessionsList.querySelector('.egg-grid');
+    if (!grid) return;
+    var cards = grid.querySelectorAll('.egg-box');
+    var dragSrc = null;
+
+    cards.forEach(function(card) {
+        card.setAttribute('draggable', 'true');
+        card.addEventListener('dragstart', function(e) {
+            dragSrc = card;
+            card.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', card.dataset.sid);
+        });
+        card.addEventListener('dragend', function() {
+            card.classList.remove('dragging');
+            cards.forEach(function(c) { c.classList.remove('drag-over'); });
+            dragSrc = null;
+        });
+        card.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (card !== dragSrc) {
+                cards.forEach(function(c) { c.classList.remove('drag-over'); });
+                card.classList.add('drag-over');
+            }
+        });
+        card.addEventListener('dragleave', function() {
+            card.classList.remove('drag-over');
+        });
+        card.addEventListener('drop', function(e) {
+            e.preventDefault();
+            card.classList.remove('drag-over');
+            if (!dragSrc || dragSrc === card) return;
+            grid.insertBefore(dragSrc, card);
+            saveEggOrder();
+        });
+    });
+
+    // Touch drag (mobile)
+    var touchSrc = null;
+
+    cards.forEach(function(card) {
+        card.addEventListener('touchstart', function(e) {
+            if (e.target.closest('.egg-delete')) return;
+            touchSrc = card;
+            card.classList.add('dragging');
+        }, { passive: true });
+    });
+
+    grid.addEventListener('touchmove', function(e) {
+        if (!touchSrc) return;
+        e.preventDefault();
+        var touch = e.touches[0];
+        var target = document.elementFromPoint(touch.clientX, touch.clientY);
+        var targetCard = target ? target.closest('.egg-box') : null;
+        cards.forEach(function(c) { c.classList.remove('drag-over'); });
+        if (targetCard && targetCard !== touchSrc) {
+            targetCard.classList.add('drag-over');
+        }
+    }, { passive: false });
+
+    grid.addEventListener('touchend', function(e) {
+        if (!touchSrc) return;
+        var touch = e.changedTouches[0];
+        var target = document.elementFromPoint(touch.clientX, touch.clientY);
+        var targetCard = target ? target.closest('.egg-box') : null;
+        cards.forEach(function(c) { c.classList.remove('drag-over'); });
+        touchSrc.classList.remove('dragging');
+        if (targetCard && targetCard !== touchSrc) {
+            grid.insertBefore(touchSrc, targetCard);
+            saveEggOrder();
+        }
+        touchSrc = null;
+    }, { passive: true });
+}
+
+function saveEggOrder() {
+    var order = [];
+    sessionsList.querySelectorAll('.egg-box').forEach(function(card) {
+        if (card.dataset.sid) order.push(card.dataset.sid);
+    });
+    setEggOrder(order);
+    // Sync sessionsData to match DOM order
+    var byId = {};
+    sessionsData.forEach(function(s) { byId[s.id] = s; });
+    var reordered = [];
+    order.forEach(function(sid) { if (byId[sid]) reordered.push(byId[sid]); });
+    sessionsData.forEach(function(s) { if (order.indexOf(s.id) === -1) reordered.push(s); });
+    sessionsData = reordered;
+}
+
+function setupBoxMenus(container) {
+    container.querySelectorAll('.box-menu-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var box = btn.closest('.wing-box, .egg-box');
+            if (!box) return;
+            var detail = box.querySelector('.box-detail');
+            if (!detail) return;
+            var isOpen = detail.style.display !== 'none';
+            // Close all other open details in this container
+            container.querySelectorAll('.box-detail').forEach(function(d) { d.style.display = 'none'; });
+            container.querySelectorAll('.box-menu-btn').forEach(function(b) { b.classList.remove('active'); });
+            if (!isOpen) {
+                detail.style.display = '';
+                btn.classList.add('active');
+            }
+        });
+    });
+
+    // Wing update buttons
+    container.querySelectorAll('.wing-update-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var wingId = btn.dataset.wingId;
+            btn.textContent = 'updating...';
+            btn.disabled = true;
+            fetch('/api/app/wings/' + wingId + '/update', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function() { btn.textContent = 'sent'; })
+                .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+        });
+    });
+
+    // Egg delete from detail panel
+    container.querySelectorAll('.egg-delete-detail').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            window._deleteSession(btn.dataset.sid);
+        });
+    });
+}
+
 function renderDashboard() {
     // Wing boxes
     if (wingsData.length > 0) {
@@ -539,15 +697,28 @@ function renderDashboard() {
             var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
-            return '<div class="wing-box" draggable="true" data-machine-id="' + escapeHtml(w.machine_id || '') + '">' +
+            var projList = (w.projects || []).map(function(p) {
+                return '<div class="detail-subitem">' + escapeHtml(p.name) + ' <span class="text-dim">' + escapeHtml(shortenPath(p.path)) + '</span></div>';
+            }).join('') || '<span class="text-dim">none</span>';
+            var pubKeyShort = w.public_key ? w.public_key.substring(0, 16) + '...' : 'none';
+            return '<div class="wing-box" draggable="true" data-machine-id="' + escapeHtml(w.machine_id || '') + '" data-wing-id="' + escapeHtml(w.id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
                     '<span class="wing-name">' + escapeHtml(name) + '</span>' +
+                    '<button class="box-menu-btn" title="details">\u22ef</button>' +
                 '</div>' +
                 '<span class="wing-agents">' + escapeHtml((w.agents || []).join(', ')) + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
                     (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>') +
+                '</div>' +
+                '<div class="box-detail" style="display:none">' +
+                    '<div class="detail-row"><span class="detail-key">wing id</span><span class="detail-val text-dim">' + escapeHtml(w.id || '') + '</span></div>' +
+                    '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(w.platform || 'unknown') + '</span></div>' +
+                    '<div class="detail-row"><span class="detail-key">labels</span><span class="detail-val">' + escapeHtml((w.labels || []).join(', ') || 'none') + '</span></div>' +
+                    '<div class="detail-row"><span class="detail-key">public key</span><span class="detail-val text-dim">' + escapeHtml(pubKeyShort) + '</span></div>' +
+                    '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>' +
+                    (w.online !== false ? '<button class="btn-sm btn-accent wing-update-btn" data-wing-id="' + escapeHtml(w.id || '') + '">update wing</button>' : '') +
                 '</div>' +
             '</div>';
         }).join('');
@@ -555,6 +726,7 @@ function renderDashboard() {
         wingStatusEl.innerHTML = wingHtml;
 
         setupWingDrag();
+        setupBoxMenus(wingStatusEl);
     } else {
         wingStatusEl.innerHTML = '';
     }
@@ -583,13 +755,30 @@ function renderDashboard() {
             ? '<img src="' + thumbUrl + '" alt="">'
             : '';
 
+        var wingName = '';
+        if (s.wing_id) {
+            var wing = wingsData.find(function(w) { return w.id === s.wing_id; });
+            if (wing) wingName = wing.machine_id || '';
+        }
+        var cwdDisplay = s.cwd ? shortenPath(s.cwd) : '~';
+
         return '<div class="egg-box" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<div class="egg-preview">' + previewHtml + '</div>' +
             '<div class="egg-footer">' +
                 '<span class="session-dot ' + dotClass + '"></span>' +
                 '<span class="egg-label">' + escapeHtml(name) + ' \u00b7 ' + escapeHtml(s.agent || '?') +
                     (needsAttention ? ' \u00b7 !' : '') + '</span>' +
+                '<button class="box-menu-btn" title="details">\u22ef</button>' +
                 '<button class="btn-sm btn-danger egg-delete" data-sid="' + s.id + '">x</button>' +
+            '</div>' +
+            (wingName ? '<div class="egg-wing">' + escapeHtml(wingName) + '</div>' : '') +
+            '<div class="box-detail" style="display:none">' +
+                '<div class="detail-row"><span class="detail-key">session</span><span class="detail-val text-dim">' + escapeHtml(s.id) + '</span></div>' +
+                '<div class="detail-row"><span class="detail-key">wing</span><span class="detail-val">' + escapeHtml(wingName || 'unknown') + '</span></div>' +
+                '<div class="detail-row"><span class="detail-key">agent</span><span class="detail-val">' + escapeHtml(s.agent || '?') + '</span></div>' +
+                '<div class="detail-row"><span class="detail-key">cwd</span><span class="detail-val text-dim">' + escapeHtml(cwdDisplay) + '</span></div>' +
+                '<div class="detail-row"><span class="detail-key">status</span><span class="detail-val">' + escapeHtml(s.status || 'unknown') + '</span></div>' +
+                '<button class="btn-sm btn-danger egg-delete-detail" data-sid="' + s.id + '">delete session</button>' +
             '</div>' +
         '</div>';
     }).join('');
@@ -598,7 +787,7 @@ function renderDashboard() {
 
     sessionsList.querySelectorAll('.egg-box').forEach(function(card) {
         card.addEventListener('click', function(e) {
-            if (e.target.closest('.egg-delete')) return;
+            if (e.target.closest('.egg-delete, .box-menu-btn, .box-detail')) return;
             var sid = card.dataset.sid;
             var kind = card.dataset.kind;
             var agent = card.dataset.agent;
@@ -616,6 +805,9 @@ function renderDashboard() {
             window._deleteSession(btn.dataset.sid);
         });
     });
+
+    setupEggDrag();
+    setupBoxMenus(sessionsList);
 }
 
 // === Command Palette ===

@@ -310,6 +310,66 @@ body {
 .wing-box.dragging { opacity: 0.3; }
 .wing-box.drag-over { outline: 2px solid var(--accent); }
 
+/* === Box detail menu (shared) === */
+
+.box-menu-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 4px;
+    margin-left: auto;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+}
+.wing-box:hover .box-menu-btn,
+.egg-box:hover .box-menu-btn,
+.box-menu-btn.active { opacity: 1; }
+.box-menu-btn:hover { color: var(--accent); }
+
+.box-detail {
+    padding: 8px 10px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+}
+
+.detail-row {
+    display: flex;
+    gap: 8px;
+    padding: 2px 0;
+    line-height: 1.4;
+}
+
+.detail-key {
+    color: var(--text-dim);
+    min-width: 70px;
+    flex-shrink: 0;
+}
+
+.detail-val {
+    word-break: break-all;
+}
+
+.detail-subitem {
+    padding: 1px 0;
+}
+
+.text-dim { color: var(--text-dim); }
+
+.box-detail .btn-sm {
+    margin-top: 6px;
+    width: 100%;
+}
+
+.btn-accent {
+    background: var(--accent);
+    color: #fff;
+    border: 1px solid var(--accent);
+}
+.btn-accent:hover { background: var(--accent-hover); }
+
 /* === Egg boxes (sessions) === */
 
 .egg-grid { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -326,6 +386,8 @@ body {
 }
 
 .egg-box:hover { background: var(--bg-hover); }
+.egg-box.dragging { opacity: 0.3; }
+.egg-box.drag-over { outline: 2px solid var(--accent); }
 
 .egg-preview {
     height: 130px;
@@ -378,6 +440,14 @@ body {
     opacity: 0;
     transition: opacity 0.15s;
     flex-shrink: 0;
+}
+
+.egg-wing {
+    padding: 4px 10px;
+    font-size: 10px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    letter-spacing: 0.5px;
 }
 
 .egg-box:hover .egg-delete { opacity: 1; }
