@@ -32,78 +32,15 @@ import (
 var version = "dev"
 
 func main() {
-	var skillFlag string
-	var agentFlag string
-	var afterFlag string
-	var noRun bool
-
 	root := &cobra.Command{
-		Use:     "wt [prompt]",
+		Use:     "wt",
 		Short:   "wingthing — local-first AI task runner",
 		Long:    "Orchestrates LLM agents on your behalf. Manages context, memory, and task timelines.",
 		Version: version,
-		Args:    cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 && skillFlag == "" {
-				return cmd.Help()
-			}
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			s, err := store.Open(cfg.DBPath())
-			if err != nil {
-				return fmt.Errorf("open db: %w", err)
-			}
-			defer s.Close()
-
-			t := &store.Task{
-				ID:    genTaskID(),
-				RunAt: time.Now().UTC(),
-			}
-			if skillFlag != "" {
-				t.What = skillFlag
-				t.Type = "skill"
-				// Check if skill is disabled
-				state, stErr := skill.LoadState(cfg.Dir)
-				if stErr == nil && !state.IsEnabled(skillFlag) {
-					return fmt.Errorf("skill %q is disabled — run: wt skill enable %s", skillFlag, skillFlag)
-				}
-				// Check if skill has a schedule
-				sk, skErr := skill.Load(filepath.Join(cfg.SkillsDir(), skillFlag+".md"))
-				if skErr == nil && sk.Schedule != "" {
-					t.Cron = &sk.Schedule
-				}
-			} else {
-				t.What = args[0]
-				t.Type = "prompt"
-			}
-			if agentFlag != "" {
-				t.Agent = agentFlag
-			}
-			if afterFlag != "" {
-				deps, _ := json.Marshal([]string{afterFlag})
-				d := string(deps)
-				t.DependsOn = &d
-			}
-			if err := s.CreateTask(t); err != nil {
-				return fmt.Errorf("create task: %w", err)
-			}
-			fmt.Printf("submitted: %s (%s)\n", t.ID, t.What)
-
-			if noRun {
-				return nil
-			}
-
-			return runTask(cmd.Context(), cfg, s, t)
-		},
 	}
-	root.Flags().StringVar(&skillFlag, "skill", "", "Run a named skill")
-	root.Flags().StringVar(&agentFlag, "agent", "", "Use specific agent")
-	root.Flags().StringVar(&afterFlag, "after", "", "Task ID this task depends on")
-	root.Flags().BoolVar(&noRun, "no-run", false, "Submit task without running it")
 
 	root.AddCommand(
+		runCmd(),
 		timelineCmd(),
 		threadCmd(),
 		statusCmd(),
@@ -133,6 +70,76 @@ func main() {
 
 func genTaskID() string {
 	return fmt.Sprintf("t-%s", time.Now().Format("20060102-150405"))
+}
+
+func runCmd() *cobra.Command {
+	var skillFlag string
+	var agentFlag string
+	var afterFlag string
+	var noRun bool
+
+	cmd := &cobra.Command{
+		Use:   "run [prompt]",
+		Short: "Run a prompt or skill",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 && skillFlag == "" {
+				return fmt.Errorf("provide a prompt or --skill flag")
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			s, err := store.Open(cfg.DBPath())
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer s.Close()
+
+			t := &store.Task{
+				ID:    genTaskID(),
+				RunAt: time.Now().UTC(),
+			}
+			if skillFlag != "" {
+				t.What = skillFlag
+				t.Type = "skill"
+				state, stErr := skill.LoadState(cfg.Dir)
+				if stErr == nil && !state.IsEnabled(skillFlag) {
+					return fmt.Errorf("skill %q is disabled — run: wt skill enable %s", skillFlag, skillFlag)
+				}
+				sk, skErr := skill.Load(filepath.Join(cfg.SkillsDir(), skillFlag+".md"))
+				if skErr == nil && sk.Schedule != "" {
+					t.Cron = &sk.Schedule
+				}
+			} else {
+				t.What = args[0]
+				t.Type = "prompt"
+			}
+			if agentFlag != "" {
+				t.Agent = agentFlag
+			}
+			if afterFlag != "" {
+				deps, _ := json.Marshal([]string{afterFlag})
+				d := string(deps)
+				t.DependsOn = &d
+			}
+			if err := s.CreateTask(t); err != nil {
+				return fmt.Errorf("create task: %w", err)
+			}
+			fmt.Printf("submitted: %s (%s)\n", t.ID, t.What)
+
+			if noRun {
+				return nil
+			}
+
+			return runTask(cmd.Context(), cfg, s, t)
+		},
+	}
+	cmd.Flags().StringVar(&skillFlag, "skill", "", "Run a named skill")
+	cmd.Flags().StringVar(&agentFlag, "agent", "", "Use specific agent")
+	cmd.Flags().StringVar(&afterFlag, "after", "", "Task ID this task depends on")
+	cmd.Flags().BoolVar(&noRun, "no-run", false, "Submit task without running it")
+	return cmd
 }
 
 func newAgent(name string) agent.Agent {

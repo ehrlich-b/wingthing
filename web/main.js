@@ -168,6 +168,10 @@ async function init() {
                 cyclePaletteWing();
             }
         }
+        if (e.key === '`') {
+            e.preventDefault();
+            cyclePaletteAgent();
+        }
     });
 
     window.addEventListener('resize', function () {
@@ -348,6 +352,7 @@ function renderDashboard() {
 
 var paletteMode = 'terminal'; // 'terminal' or 'chat'
 var paletteWingIndex = 0;
+var paletteAgentIndex = 0;
 var paletteSelectedIndex = 0;
 var dirListTimer = null;
 var dirListAbort = null;
@@ -357,12 +362,22 @@ function currentPaletteWing() {
     return wingsData[paletteWingIndex % wingsData.length];
 }
 
-function currentPaletteAgent() {
+function currentPaletteAgents() {
     var wing = currentPaletteWing();
-    if (!wing || !wing.agents || wing.agents.length === 0) return 'claude';
-    var last = getLastTermAgent();
-    if (wing.agents.indexOf(last) !== -1) return last;
-    return wing.agents[0];
+    if (!wing || !wing.agents || wing.agents.length === 0) return ['claude'];
+    return wing.agents;
+}
+
+function currentPaletteAgent() {
+    var agents = currentPaletteAgents();
+    return agents[paletteAgentIndex % agents.length];
+}
+
+function cyclePaletteAgent() {
+    var agents = currentPaletteAgents();
+    if (agents.length <= 1) return;
+    paletteAgentIndex = (paletteAgentIndex + 1) % agents.length;
+    renderPaletteStatus();
 }
 
 function showPalette() {
@@ -370,6 +385,11 @@ function showPalette() {
     commandPalette.style.display = '';
     paletteSearch.value = '';
     paletteSearch.focus();
+    // Initialize agent index from last-used
+    var agents = currentPaletteAgents();
+    var last = getLastTermAgent();
+    var idx = agents.indexOf(last);
+    paletteAgentIndex = idx >= 0 ? idx : 0;
     renderPaletteStatus();
     renderPaletteResults('');
 }
@@ -383,6 +403,7 @@ function hidePalette() {
 function cyclePaletteWing() {
     if (wingsData.length <= 1) return;
     paletteWingIndex = (paletteWingIndex + 1) % wingsData.length;
+    paletteAgentIndex = 0; // reset agent for new wing
     renderPaletteStatus();
     renderPaletteResults('');
     paletteSearch.value = '';
@@ -403,7 +424,7 @@ function renderPaletteStatus() {
     var wingName = wing ? (wing.machine_id || wing.id.substring(0, 8)) : '?';
     var agent = currentPaletteAgent();
     paletteStatus.innerHTML = '<span class="accent">' + escapeHtml(wingName) + '</span> &middot; ' +
-        escapeHtml(paletteMode) + ' &middot; ' + escapeHtml(agent);
+        escapeHtml(paletteMode) + ' &middot; <span class="accent">' + escapeHtml(agent) + '</span>';
 }
 
 function renderPaletteResults(filter) {
