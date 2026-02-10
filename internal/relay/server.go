@@ -45,11 +45,13 @@ type Server struct {
 }
 
 func NewServer(store *RelayStore, cfg ServerConfig) *Server {
+	pty := NewPTYRegistry()
+	pty.SetStore(store)
 	s := &Server{
 		Store:      store,
 		Config:     cfg,
 		Wings:      NewWingRegistry(),
-		PTY:        NewPTYRegistry(),
+		PTY:        pty,
 		Chat:       NewChatRegistry(),
 		mux:        http.NewServeMux(),
 		streamSubs: make(map[string][]chan string),

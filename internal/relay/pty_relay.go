@@ -27,10 +27,11 @@ type PTYSession struct {
 	mu          sync.Mutex
 }
 
-// PTYRegistry tracks active PTY sessions.
+// PTYRegistry tracks active PTY sessions with optional SQLite persistence.
 type PTYRegistry struct {
 	mu       sync.RWMutex
 	sessions map[string]*PTYSession // session_id -> session
+	store    *RelayStore            // nil = no persistence
 }
 
 func NewPTYRegistry() *PTYRegistry {
@@ -39,16 +40,57 @@ func NewPTYRegistry() *PTYRegistry {
 	}
 }
 
+// SetStore enables SQLite persistence and loads existing sessions.
+func (r *PTYRegistry) SetStore(store *RelayStore) {
+	r.store = store
+	rows, err := store.ListPTYSessions()
+	if err != nil {
+		log.Printf("load pty sessions from db: %v", err)
+		return
+	}
+	r.mu.Lock()
+	for _, row := range rows {
+		r.sessions[row.ID] = &PTYSession{
+			ID:     row.ID,
+			WingID: row.WingID,
+			UserID: row.UserID,
+			Agent:  row.Agent,
+			CWD:    row.CWD,
+			Status: "detached", // always detached on startup
+		}
+	}
+	r.mu.Unlock()
+	if len(rows) > 0 {
+		log.Printf("restored %d pty sessions from db", len(rows))
+	}
+}
+
 func (r *PTYRegistry) Add(s *PTYSession) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.sessions[s.ID] = s
+	r.mu.Unlock()
+	if r.store != nil {
+		r.store.SavePTYSession(&PTYSessionRow{
+			ID: s.ID, WingID: s.WingID, UserID: s.UserID,
+			Agent: s.Agent, CWD: s.CWD, Status: s.Status,
+		})
+	}
 }
 
 func (r *PTYRegistry) Remove(id string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	delete(r.sessions, id)
+	r.mu.Unlock()
+	if r.store != nil {
+		r.store.DeletePTYSession(id)
+	}
+}
+
+// UpdateStatus persists a status change.
+func (r *PTYRegistry) UpdateStatus(id, status string) {
+	if r.store != nil {
+		r.store.UpdatePTYSessionStatus(id, status)
+	}
 }
 
 func (r *PTYRegistry) Get(id string) *PTYSession {
@@ -144,6 +186,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				session.Status = "detached"
 				session.BrowserConn = nil
 				log.Printf("pty session %s: browser detached", sid)
+				s.PTY.UpdateStatus(sid, "detached")
 			}
 			session.mu.Unlock()
 		}
@@ -229,6 +272,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			session.BrowserConn = conn
 			session.Status = "active"
 			session.mu.Unlock()
+			s.PTY.UpdateStatus(attach.SessionID, "active")
 
 			ownedSessions = append(ownedSessions, attach.SessionID)
 
@@ -285,6 +329,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				session.Status = "detached"
 				session.BrowserConn = nil
 				log.Printf("pty session %s: explicit detach (user=%s)", det.SessionID, userID)
+				s.PTY.UpdateStatus(det.SessionID, "detached")
 			}
 			session.mu.Unlock()
 

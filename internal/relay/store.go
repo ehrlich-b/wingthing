@@ -350,6 +350,52 @@ func (s *RelayStore) AppendAudit(userID, event string, detail *string) error {
 	return nil
 }
 
+// PTY session persistence
+
+type PTYSessionRow struct {
+	ID     string
+	WingID string
+	UserID string
+	Agent  string
+	CWD    string
+	Status string
+}
+
+func (s *RelayStore) SavePTYSession(sess *PTYSessionRow) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO pty_sessions (id, wing_id, user_id, agent, cwd, status) VALUES (?, ?, ?, ?, ?, ?)`,
+		sess.ID, sess.WingID, sess.UserID, sess.Agent, sess.CWD, sess.Status,
+	)
+	return err
+}
+
+func (s *RelayStore) UpdatePTYSessionStatus(id, status string) error {
+	_, err := s.db.Exec(`UPDATE pty_sessions SET status = ? WHERE id = ?`, status, id)
+	return err
+}
+
+func (s *RelayStore) DeletePTYSession(id string) error {
+	_, err := s.db.Exec(`DELETE FROM pty_sessions WHERE id = ?`, id)
+	return err
+}
+
+func (s *RelayStore) ListPTYSessions() ([]*PTYSessionRow, error) {
+	rows, err := s.db.Query(`SELECT id, wing_id, user_id, agent, cwd, status FROM pty_sessions WHERE status != 'exited'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []*PTYSessionRow
+	for rows.Next() {
+		var r PTYSessionRow
+		if err := rows.Scan(&r.ID, &r.WingID, &r.UserID, &r.Agent, &r.CWD, &r.Status); err != nil {
+			return nil, err
+		}
+		result = append(result, &r)
+	}
+	return result, rows.Err()
+}
+
 func (s *RelayStore) migrate() error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT PRIMARY KEY,

@@ -34,6 +34,17 @@
 </style>
 {{end}}
 {{define "content"}}
+<script>
+document.addEventListener('keydown',function(e){
+    if(e.key==='.'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
+        var t=document.activeElement&&document.activeElement.tagName;
+        if(t!=='INPUT'&&t!=='TEXTAREA'&&t!=='SELECT'){
+            e.preventDefault();
+            window.location.href='/app';
+        }
+    }
+});
+</script>
 <div class="hero">
 <h1>your agentic swiss army knife</h1>
 <p class="tagline">One CLI, every backend. New agent framework, no problem — we support it the next day.</p>
