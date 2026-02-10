@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -114,6 +116,25 @@ func updateCmd() *cobra.Command {
 			}
 
 			fmt.Printf("updated to %s\n", rel.TagName)
+
+			// Restart wing daemon if running (egg survives, wing picks up new binary)
+			wingPid, pidErr := readPid()
+			if pidErr == nil {
+				fmt.Printf("restarting wing daemon (pid %d)...\n", wingPid)
+				proc, _ := os.FindProcess(wingPid)
+				proc.Signal(syscall.SIGTERM)
+				os.Remove(wingPidPath())
+
+				// Re-launch daemon with new binary
+				child := exec.Command(exe, "wing", "-d")
+				child.Stdout = os.Stdout
+				child.Stderr = os.Stderr
+				if err := child.Run(); err != nil {
+					fmt.Printf("warning: failed to restart wing: %v\n", err)
+					fmt.Println("run 'wt wing -d' manually to restart")
+				}
+			}
+
 			return nil
 		},
 	}

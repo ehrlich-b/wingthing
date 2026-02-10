@@ -326,6 +326,11 @@ func (c *Client) heartbeatLoop(ctx context.Context) {
 	}
 }
 
+// SendReclaim sends a pty.reclaim message to the relay for a surviving session.
+func (c *Client) SendReclaim(ctx context.Context, sessionID string) error {
+	return c.writeJSON(ctx, PTYReclaim{Type: TypePTYReclaim, SessionID: sessionID})
+}
+
 func (c *Client) writeJSON(ctx context.Context, v any) error {
 	c.mu.Lock()
 	conn := c.conn

@@ -42,6 +42,9 @@ const (
 	TypeDirList    = "dir.list"    // browser → relay → wing
 	TypeDirResults = "dir.results" // wing → relay → browser
 
+	// Wing → Relay (session reclaim after wing restart)
+	TypePTYReclaim = "pty.reclaim"
+
 	// Relay → Wing (control)
 	TypeRegistered = "registered"
 	TypeError      = "error"
@@ -264,6 +267,12 @@ type DirEntry struct {
 
 // DirHandler is called when the wing receives a dir.list request.
 type DirHandler func(ctx context.Context, req DirList, write PTYWriteFunc)
+
+// PTYReclaim is sent by the wing after restart to reclaim a surviving egg session.
+type PTYReclaim struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+}
 
 // QueuedTask is a routing entry in the relay's volatile queue.
 // The relay stores only an opaque payload — it never inspects task content.

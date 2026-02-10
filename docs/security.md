@@ -117,13 +117,13 @@ If an attacker gains full control of the Fly.io deployment (SSH access, deploy c
    - The attacker's fake wing generates its own keypair, derives a shared key with the browser
    - The attacker can now decrypt all terminal traffic
    - The real wing never receives the session
-   - **This breaks E2E completely** — the browser has no way to verify it's talking to the real wing
+   - **Mitigated by wing-side pinning**: The real wing ignores sessions from unknown public keys. The attacker can intercept new sessions but cannot trick the real wing into responding. The user sees their real wing is unresponsive to the attacker's sessions, which is the correct behavior.
 
 5. **Serve a modified web app** (`index.html`, `main.js`):
-   - Skip E2E encryption entirely
-   - Exfiltrate the ephemeral private key
-   - Send plaintext to a logging endpoint
-   - **The browser is served from the relay, so compromising the relay compromises the client**
+   - Show a fake terminal UI that captures keystrokes
+   - Attempt to establish sessions with forged credentials
+   - **With wing-side pinning**: this is reduced to a **phishing attack**. The modified client can capture what you type into a fake terminal, but cannot connect to your real wing (pinned keys reject unknown PKs), cannot read existing session output (E2E encrypted), and cannot hijack running sessions (already keyed to the real browser's ephemeral key). The attacker collects keystrokes into a void.
+   - **Without pinning**: the modified client could establish a real session with the wing and exfiltrate traffic
 
 ### What they CANNOT do (without additional compromise):
 
@@ -134,10 +134,14 @@ If an attacker gains full control of the Fly.io deployment (SSH access, deploy c
 
 ## Known Limitations and Gaps
 
-### 1. No wing identity verification (CRITICAL)
-The browser has no way to verify it's talking to the real wing vs. a relay-injected fake. A pin/fingerprint mechanism (TOFU or out-of-band verification of the wing's public key) would close this gap.
+### 1. Wing-side key pinning (CRITICAL — mitigates fake-wing MITM and compromised relay)
+The wing is the trust anchor — it's the machine you physically control. By default, a wing accepts any session from a user with a valid JWT (relay-validated). But wings can **pin** which browser public keys / user identities they respond to.
 
-**Mitigation path**: Open by default — connections work without pinning. Users who want stronger guarantees can pin wing fingerprints. Display the wing's public key fingerprint in both the CLI (`wt wing status`) and the web UI. Pinned wings warn/block on mismatch.
+**How it works**: The wing maintains an allowlist of trusted public keys at `~/.wingthing/pinned_keys`. When a `pty.start` or `dir.list` arrives, the wing checks the sender's public key against the allowlist. If pinning is enabled and the key isn't recognized, the wing refuses — no PTY session, no directory listings, no response at all.
+
+**Why this matters**: If Fly is compromised and an attacker forges a JWT to inject a new browser identity into your account, the wing blocks it. The attacker can talk to the relay all day, but the wing won't feed them back anything. This is the same model as Tailscale — the node (wing) controls who it accepts connections from.
+
+**Default behavior**: Open — wings accept any session from a JWT-validated user. No friction for new users. Pinning is opt-in for users who want stronger guarantees (`wt wing pin <fingerprint>`).
 
 ### 2. Web app served from relay (CRITICAL)
 Since `app.wingthing.ai` serves the JavaScript from the same infrastructure, a compromised relay can serve modified JS that bypasses E2E. This is the fundamental limitation of any web-based E2E system (same problem as WhatsApp Web, ProtonMail, etc.).
@@ -163,9 +167,9 @@ The wing keeps a plaintext ring buffer of recent terminal output for session rea
 
 ## Recommendations (Priority Order)
 
-1. **Wing identity pinning** — Open by default (any wing can connect, no friction), but users can opt into pinning a wing's public key fingerprint. On first connect the browser displays the fingerprint; `wt wing status` shows the same fingerprint locally. If the user pins it, subsequent connections warn/block on mismatch. This closes the fake-wing MITM attack for security-conscious users without adding friction to the default experience.
+1. **Wing-side key pinning** — The wing controls who it responds to. Open by default (accepts any JWT-validated session), but `wt wing pin <fingerprint>` locks the wing to specific browser public keys. If the relay is compromised and an attacker injects a new identity, the wing refuses to serve them. This is the primary defense against a compromised relay — the attacker can forge JWTs and talk to the relay, but the wing won't respond to unknown keys. Display fingerprints in `wt wing status` and the web UI for out-of-band verification.
 2. **E2E for chat** — Extend the same X25519 + AES-256-GCM encryption to chat sessions
-3. **Signed web assets** — Publish SRI hashes out-of-band, or build a native client
+3. **Signed web assets** — Publish SRI hashes out-of-band, or build a native client. With wing-side pinning, this is less critical (compromised client can only phish, not breach the wing), but still eliminates the phishing vector entirely.
 4. **Rotate JWT signing secret** — Support secret rotation to limit blast radius of database compromise
 5. **Audit logging** — Tamper-evident log of wing registrations and session starts, stored separately from the relay
 
@@ -177,8 +181,8 @@ The wing keeps a plaintext ring buffer of recent terminal output for session rea
 | Chat messages | No | Plaintext through relay |
 | Session metadata | No | Needed for routing |
 | Directory listings | No | Paths only, no file contents |
-| Wing auth | Partial | JWT can be forged if DB is compromised |
-| Web client integrity | No | Served from relay — compromised relay = compromised client |
+| Wing auth | Partial → Strong | JWT forgeable if DB compromised, but wing-side pinning blocks unknown keys |
+| Web client integrity | Partial | Served from relay — compromised relay can phish, but pinned wings reject fake sessions |
 | Wing machine access | Yes | Relay has no shell/SSH access to wings |
 
-The E2E encryption for terminal sessions is **real and meaningful** against passive observation and honest-but-curious relay operators. Against an active attacker who compromises the full Fly deployment, the main gaps are wing identity verification and the fact that the web client is served from the same infrastructure it's trying to distrust.
+The E2E encryption for terminal sessions is **real and meaningful** against passive observation and honest-but-curious relay operators. Wing-side key pinning extends this protection against an active attacker who compromises the relay — the wing refuses to respond to unknown public keys, so a forged JWT alone isn't enough to intercept traffic. A compromised relay can serve a modified web client, but with pinning enabled this is reduced to a phishing attack: the attacker can capture keystrokes typed into a fake terminal, but cannot connect to the real wing or read its existing sessions. The combination of E2E encryption + wing-side pinning means a full relay compromise yields metadata and phishing opportunities, but not access to terminal content or the wing itself.
