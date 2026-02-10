@@ -1,6 +1,8 @@
 # wingthing
 
-One interface to every AI agent. Curated skills, sandboxed execution, any backend.
+[![cinch](https://cinch.sh/badge/github.com/ehrlich-b/wingthing.svg)](https://cinch.sh/jobs/github.com/ehrlich-b/wingthing)
+
+One interface to every AI agent. Curated skills, sandboxed execution, any backend. Your machine, reachable from anywhere.
 
 ## What it is
 
@@ -13,155 +15,147 @@ wt --skill compress --agent ollama     # same skill, different backend
 wt --agent gemini "explain this error" # switch agents on the fly
 ```
 
-AI tooling moves too fast to learn every new CLI. Wingthing is the stable layer: a curated library of validated skills, persistent memory, and sandboxed execution across any LLM backend.
+## Wings (Tailscale for agents)
+
+A wing is your machine, reachable from anywhere. Run `wt wing` and it connects outbound to the relay via WebSocket. No port forwarding, no tunneling, no static IP. Works behind any NAT/firewall.
+
+```bash
+wt wing                                # connect to relay
+wt wing --relay https://my-relay.com   # self-hosted relay
+wt wing --labels gpu,cuda              # with labels for routing
+```
+
+Open the web dashboard from your phone or another machine. Start a live terminal session (Claude Code, Codex, ollama — any agent with a CLI), or chat. Output streams back in real-time. Detach and reattach sessions across devices.
+
+```
+Browser (xterm.js)  <->  Relay  <->  Wing (your machine)
+```
+
+The relay is a dumb pipe. It forwards opaque bytes between your browser and your wing. E2E encryption means the relay operator can't read your data.
 
 ## How it's different
 
-Most open-source AI agent projects get the demand right but the execution wrong.
+**Curated, not marketplace.** Skills are checked into the repo, reviewed, validated. You enable what you want, disable what you don't, add your own.
 
-**Curated, not marketplace.** Skills are checked into the repo, reviewed, validated. Not a storefront where anyone can publish prompt injections. You enable what you want, disable what you don't, add your own.
+**Sandboxed by default.** Agents run in containers (Apple Containers on macOS, namespace/seccomp on Linux) with explicit mount points and network controls. Isolation level is per-skill.
 
-**Sandboxed by default.** Agents run in containers (Apple Containers on macOS, namespace/seccomp on Linux) with explicit mount points and network controls. Isolation level is per-skill, not an afterthought you toggle on.
-
-**Agent-agnostic.** `claude`, `ollama`, `gemini` -- and whatever ships next. One skill works with any backend. Use ollama for free, claude when you need it.
+**Agent-agnostic.** `claude`, `ollama`, `gemini`, `codex` -- and whatever ships next. One skill works with any backend.
 
 **Local-first.** Your machine, your keys, your data. No cloud dependency. Works offline with ollama.
 
+**Self-hostable.** Run your own relay with `wt serve`. SQLite, single binary, no external dependencies.
+
 ## Install
 
-Requires Go 1.21+.
+Requires Go 1.25+ and Node.js (for web assets).
 
 ```bash
 git clone https://github.com/ehrlich-b/wingthing.git
 cd wingthing
-make build     # produces ./wt binary
+make check     # test + build (produces ./wt binary)
 ```
 
 ## Quick start
 
 ```bash
-# 1. Initialize config, memory, and database
-wt init
-
-# 2. Run a task
-wt "summarize my git log for the last week"
-
-# 3. Run a skill
-wt --skill compress
-
-# 4. Check the timeline
-wt timeline
-
-# 5. View today's thread
-wt thread
+wt init                                # initialize config + database
+wt doctor                              # scan for available agents
+wt "summarize my git log"              # run a task
+wt wing                                # connect to relay (remote access)
 ```
 
 ## CLI
 
 ```
-wt "do the thing"           # one-shot task
-wt --skill jira             # run a skill
+wt "prompt"                 # one-shot task
+wt --skill compress         # run a skill
 wt --agent ollama "prompt"  # use specific agent
+wt wing                     # connect to relay
+wt wing --labels gpu        # with routing labels
 wt timeline                 # recent tasks
 wt thread                   # today's daily thread
 wt status                   # task counts + token usage
 wt log --last               # most recent task log
-wt log --last --context     # full prompt audit
-wt retry <task-id>          # retry a failed task
-wt schedule list            # recurring tasks
-wt agent list               # configured agents
-wt skill list               # installed skills
-wt skill add file.md        # install a skill from file
-wt skill list --available   # browse the registry
 wt doctor                   # scan for agents, keys, services
-wt serve                    # start the relay/social server
-wt init                     # initialize ~/.wingthing/
+wt serve                    # start the relay server
 wt login / logout           # device auth with relay
+wt skill list               # installed skills
+wt skill add file.md        # install a skill
 ```
 
 ## Skills
 
-Skills are the product. Markdown files with YAML frontmatter, checked into the repo, installable with `wt skill add`.
+Markdown files with YAML frontmatter. Checked into the repo, installable with `wt skill add`.
 
 ```markdown
 ---
 name: compress
-description: Fetch RSS feeds and compress articles to 1024 chars
-memory:
-  - feeds
-tags: [rss, compress, content]
+description: Compress RSS articles to 1024 chars
+memory: [feeds]
+tags: [rss, compress]
 ---
-Read the RSS feed URLs listed below. For each feed, extract the 5
-most recent articles. Compress each to max 1024 characters.
+Read the RSS feeds below. For each, extract the 5 most recent
+articles. Compress each to max 1024 characters.
 
 ## Feeds
 {{memory.feeds}}
 ```
 
-No `agent:` declared -- falls through to your default, overridable with `--agent`. Skills declare what memory they need, what isolation level to run at, and optionally a cron schedule for recurring execution. The skill body is a prompt template with interpolation.
-
-Install: `wt skill add skills/compress.md`
-Run: `wt --skill compress`
-Override agent: `wt --skill compress --agent ollama`
-
-## Memory
-
-Text files in `~/.wingthing/memory/`. Human-readable, git-diffable. Layered retrieval: always-loaded index, skill-declared deps, keyword matching. Pure Go, no model call needed.
-
-```
-~/.wingthing/memory/
-  index.md       # always loaded into every prompt
-  identity.md    # who you are
-  feeds.md       # RSS feeds for the compress skill
-  projects.md    # active work context
-```
+Skills declare what memory they need, what isolation level to run at, and optionally a cron schedule. The skill body is a prompt template with interpolation. No `agent:` declared means it falls through to your default, overridable with `--agent`.
 
 ## Agents
 
 `wt doctor` detects what you have installed:
 
-| Agent | CLI | Context | Cost |
-|-------|-----|---------|------|
-| claude | `claude` | 200k tokens | API key |
-| ollama | `ollama` | model-dependent | free (local) |
-| gemini | `gemini` | 1M tokens | API key |
+| Agent | CLI | Notes |
+|-------|-----|-------|
+| Claude Code | `claude` | 200k context |
+| Ollama | `ollama` | free, local, offline |
+| Gemini | `gemini` | 1M context |
+| Codex | `codex` | OpenAI |
 
 Resolution precedence: **`--agent` flag > skill frontmatter > config default**
 
-## Structured output
+## Sandbox
 
-Agents can schedule follow-up tasks and write to memory:
+Every agent execution is isolated. Isolation level is per-skill via frontmatter.
 
-```html
-<!-- wt:schedule delay="10m" memory="deploy-log" -->
-check if the deploy succeeded
-<!-- /wt:schedule -->
+| Platform | Implementation |
+|----------|---------------|
+| macOS 26+ | Apple Containers |
+| Linux | Namespaces + seccomp + landlock |
+| Fallback | Process isolation (restricted env, isolated tmpdir) |
 
-<!-- wt:memory file="deploy-log" -->
-Deployed v2.3.1 to production at 14:30 UTC.
-<!-- /wt:memory -->
+Levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs), `network` (network + mounted dirs), `privileged` (full access, skips sandbox).
+
+## Self-hosting
+
+Run your own relay. Single binary, SQLite, no external dependencies.
+
+```bash
+make build
+./wt serve --addr :8080
 ```
 
-## Architecture
+Connect a wing to your self-hosted relay:
 
-```
-~/.wingthing/
-  config.yaml      # agent defaults, machine ID
-  wt.db            # SQLite -- tasks, thread, agents, logs
-  memory/          # text files, always human-readable
-  skills/          # installed skill files
+```bash
+wt wing --relay http://localhost:8080
 ```
 
-Single binary, no daemon, no socket. `wt` reads/writes SQLite directly and invokes agents as child processes. Scheduled tasks use OS-level scheduling (cron, launchd, systemd timers).
+Docker:
 
-`wt serve` runs the relay server for the social feed and web UI.
+```bash
+docker build -t wingthing .
+docker run -p 8080:8080 -v wt-data:/data wingthing
+```
 
 ## wt social
 
-Link aggregator with embedding-based space assignment. RSS feeds in, compressed summaries scored and posted, natural time decay, voting, comments. 159 semantic spaces from physics to poetry.
+Link aggregator with embedding-based space assignment. 159 semantic spaces from physics to poetry. RSS feeds in, AI-compressed summaries scored and posted, natural time decay, voting, comments.
 
-Not a bot network. Content is curated by skills you control, scored by heuristics you can tune, posted to a feed where humans vote.
+Live at [wingthing.ai/social](https://wingthing.ai/social).
 
-## Status
+## License
 
-Active development. See [TODO.md](TODO.md) for the roadmap.
+MIT

@@ -36,7 +36,9 @@ a{color:var(--action)}a:hover{color:var(--action-hover)}
 <div class="nav-links">
 <a href="/social">social</a>
 <a href="/skills">skills</a>
-{{if .User}}<span class="user-name">{{.User.DisplayName}}</span>
+<a href="/self-host">self-host</a>
+{{if .User}}<a href="/app/">app</a>
+<span class="user-name">{{.User.DisplayName}}</span>
 <form method="POST" action="/auth/logout" style="display:inline"><button type="submit" class="nav-btn">logout</button></form>
 {{else}}<a href="/login">login</a>{{end}}
 </div>

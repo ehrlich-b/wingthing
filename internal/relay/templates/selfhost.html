@@ -1,0 +1,88 @@
+{{define "title"}}self-host — wingthing.ai{{end}}
+{{define "head"}}
+<style>
+.sh-hero{padding:28px 0 20px}
+.sh-hero h1{font-size:24px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
+.sh-hero p{color:var(--text-dim);font-size:14px;max-width:560px;line-height:1.6}
+.sh-section{margin-bottom:32px}
+.sh-section h2{font-size:16px;font-weight:600;margin-bottom:12px;color:var(--action)}
+.sh-section p{color:var(--text-dim);font-size:14px;line-height:1.6;margin-bottom:12px}
+.sh-code{background:var(--bg-card);border-radius:6px;padding:14px 20px;font-size:13px;line-height:1.7;font-family:var(--mono);overflow-x:auto;margin-bottom:16px}
+.sh-code .prompt{color:var(--text-dim);user-select:none}
+.sh-code .cmd{color:var(--text)}
+.sh-code .comment{color:#666}
+.sh-table{width:100%;border-collapse:collapse;font-size:13px;font-family:var(--mono);margin-bottom:16px}
+.sh-table th,.sh-table td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--accent)}
+.sh-table th{color:var(--text-dim);font-weight:400}
+@media(max-width:600px){
+  .sh-hero h1{font-size:20px}
+  .sh-code{font-size:11px;padding:12px 14px}
+}
+</style>
+{{end}}
+{{define "content"}}
+<div class="sh-hero">
+<h1>self-host wingthing</h1>
+<p>Run your own relay. Single binary, SQLite, no external dependencies. Your agents, your keys, your data.</p>
+</div>
+
+<div class="sh-section">
+<h2>from source</h2>
+<div class="sh-code">
+<span class="prompt">$ </span><span class="cmd">git clone https://github.com/ehrlich-b/wingthing.git</span><br>
+<span class="prompt">$ </span><span class="cmd">cd wingthing && make check</span><br>
+<span class="prompt">$ </span><span class="cmd">./wt serve --addr :8080</span>
+</div>
+</div>
+
+<div class="sh-section">
+<h2>docker</h2>
+<div class="sh-code">
+<span class="prompt">$ </span><span class="cmd">docker build -t wingthing .</span><br>
+<span class="prompt">$ </span><span class="cmd">docker run -p 8080:8080 -v wt-data:/data wingthing</span>
+</div>
+</div>
+
+<div class="sh-section">
+<h2>fly.io</h2>
+<div class="sh-code">
+<span class="prompt">$ </span><span class="cmd">fly launch --name my-wingthing</span><br>
+<span class="prompt">$ </span><span class="cmd">fly deploy</span>
+</div>
+</div>
+
+<div class="sh-section">
+<h2>connect a wing</h2>
+<p>Point your wing at your self-hosted relay:</p>
+<div class="sh-code">
+<span class="prompt">$ </span><span class="cmd">wt login --relay https://my-relay.example.com</span><br>
+<span class="prompt">$ </span><span class="cmd">wt wing --relay https://my-relay.example.com</span>
+</div>
+</div>
+
+<div class="sh-section">
+<h2>what you get</h2>
+<table class="sh-table">
+<tr><th>feature</th><th>details</th></tr>
+<tr><td>relay</td><td>WebSocket bridge between browser and wings</td></tr>
+<tr><td>social</td><td>AI-curated link aggregator across 159 spaces</td></tr>
+<tr><td>skills</td><td>browse and install from the curated library</td></tr>
+<tr><td>dashboard</td><td>manage wings, start terminals, chat with agents</td></tr>
+<tr><td>auth</td><td>GitHub + Google OAuth, magic links, device auth</td></tr>
+</table>
+</div>
+
+<div class="sh-section">
+<h2>environment variables</h2>
+<table class="sh-table">
+<tr><th>var</th><th>purpose</th></tr>
+<tr><td>WT_BASE_URL</td><td>public URL for OAuth callbacks</td></tr>
+<tr><td>GITHUB_CLIENT_ID</td><td>GitHub OAuth app ID</td></tr>
+<tr><td>GITHUB_CLIENT_SECRET</td><td>GitHub OAuth app secret</td></tr>
+<tr><td>GOOGLE_CLIENT_ID</td><td>Google OAuth client ID</td></tr>
+<tr><td>GOOGLE_CLIENT_SECRET</td><td>Google OAuth client secret</td></tr>
+<tr><td>OPENAI_API_KEY</td><td>embeddings for social feed (optional)</td></tr>
+</table>
+<p>Without OAuth env vars, the server boots in read-only mode. Social feed and skills pages work, but login and posting are disabled.</p>
+</div>
+{{end}}
