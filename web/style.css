@@ -273,9 +273,14 @@ body {
     color: var(--text-dim);
 }
 
-.wing-detail {
-    font-size: 11px;
+.wing-statusbar {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
     color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
+    margin-top: auto;
 }
 
 .wing-dot {
@@ -289,15 +294,8 @@ body {
 .wing-dot.dot-live { background: var(--green); }
 .wing-dot.dot-offline { background: var(--yellow); }
 
-.wing-update-btn {
-    position: absolute;
-    bottom: 6px;
-    right: 6px;
-    opacity: 0;
-    transition: opacity 0.15s;
-}
-
-.wing-box:hover .wing-update-btn { opacity: 1; }
+/* Wing box hover */
+.wing-box:hover { background: var(--bg-hover); }
 
 /* Wing dot transitions */
 .wing-dot { transition: background 0.3s ease, transform 0.3s ease; }
