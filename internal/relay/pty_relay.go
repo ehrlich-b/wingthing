@@ -125,7 +125,6 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
-	conn.SetReadLimit(1 << 20) // 1MB max message
 
 	ctx := r.Context()
 
@@ -156,6 +155,13 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Meter bandwidth (applies backpressure via rate limiter)
+		if s.Bandwidth != nil {
+			if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
+				return
+			}
+		}
+
 		var env ws.Envelope
 		if err := json.Unmarshal(data, &env); err != nil {
 			continue
@@ -165,13 +171,6 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		case ws.TypePTYStart:
 			var start ws.PTYStart
 			if err := json.Unmarshal(data, &start); err != nil {
-				continue
-			}
-
-			// Per-user session limit (PTY + chat combined)
-			if ptySess := s.PTY.CountForUser(userID); ptySess+s.Chat.CountForUser(userID) >= 20 {
-				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "session limit reached (20 max)"})
-				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
 			}
 
@@ -283,15 +282,6 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			var start ws.ChatStart
 			if err := json.Unmarshal(data, &start); err != nil {
 				continue
-			}
-
-			// Per-user session limit (PTY + chat combined) — skip for resume
-			if start.SessionID == "" {
-				if ptySess := s.PTY.CountForUser(userID); ptySess+s.Chat.CountForUser(userID) >= 20 {
-					errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "session limit reached (20 max)"})
-					conn.Write(ctx, websocket.MessageText, errMsg)
-					continue
-				}
 			}
 
 			wing := s.Wings.FindForUser(userID)

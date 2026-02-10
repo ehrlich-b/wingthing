@@ -32,6 +32,7 @@ type Server struct {
 	Wings          *WingRegistry
 	PTY            *PTYRegistry
 	Chat           *ChatRegistry
+	Bandwidth      *BandwidthMeter
 	mux            *http.ServeMux
 
 	// Stream subscribers: taskID → list of channels receiving output chunks

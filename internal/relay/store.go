@@ -18,6 +18,9 @@ type RelayStore struct {
 	db *sql.DB
 }
 
+// DB returns the underlying database connection.
+func (s *RelayStore) DB() *sql.DB { return s.db }
+
 type DeviceCodeRow struct {
 	Code      string
 	UserCode  string

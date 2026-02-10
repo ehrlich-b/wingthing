@@ -96,6 +96,8 @@ func serveCmd() *cobra.Command {
 
 			srv := relay.NewServer(store, srvCfg)
 			srv.Embedder = primaryEmb
+			// Rate limiter: 256 KB/s sustained, 16 MB burst per user
+			srv.Bandwidth = relay.NewBandwidthMeter(256*1024, 16*1024*1024, store.DB())
 			if devFlag {
 				srv.DevTemplateDir = "internal/relay/templates"
 				srv.DevMode = true
@@ -110,6 +112,9 @@ func serveCmd() *cobra.Command {
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer stop()
+
+			// Sync bandwidth usage to DB every 10 minutes
+			srv.Bandwidth.StartSync(ctx, 10*time.Minute)
 
 			errCh := make(chan error, 1)
 			go func() {

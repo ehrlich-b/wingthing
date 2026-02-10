@@ -155,12 +155,6 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Per-user wing limit
-	if count := s.Wings.CountForUser(userID); count >= 5 {
-		http.Error(w, "too many wings connected", http.StatusTooManyRequests)
-		return
-	}
-
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true,
 	})
@@ -169,7 +163,6 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
-	conn.SetReadLimit(1 << 20) // 1MB max message
 
 	ctx := r.Context()
 
@@ -225,6 +218,13 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("wing %s disconnected: %v", wing.ID, err)
 			return
+		}
+
+		// Meter bandwidth (applies backpressure via rate limiter)
+		if s.Bandwidth != nil {
+			if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
+				return
+			}
 		}
 
 		var msg ws.Envelope
