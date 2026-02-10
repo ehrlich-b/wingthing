@@ -534,16 +534,27 @@ func handleDirList(_ context.Context, req ws.DirList, write ws.PTYWriteFunc) {
 		path = home + path[1:]
 	}
 
+	// Try path as a directory first; if it doesn't exist, treat the last
+	// component as a prefix filter on the parent (tab-completion behavior).
+	prefix := ""
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		write(ws.DirResults{Type: ws.TypeDirResults, RequestID: req.RequestID})
-		return
+		prefix = strings.ToLower(filepath.Base(path))
+		path = filepath.Dir(path)
+		entries, err = os.ReadDir(path)
+		if err != nil {
+			write(ws.DirResults{Type: ws.TypeDirResults, RequestID: req.RequestID})
+			return
+		}
 	}
 
 	var results []ws.DirEntry
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".") {
 			continue // skip hidden files
+		}
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(e.Name()), prefix) {
+			continue
 		}
 		full := filepath.Join(path, e.Name())
 		results = append(results, ws.DirEntry{
@@ -599,7 +610,7 @@ func ensureEgg(cfg *config.Config) (*egg.Client, error) {
 		return nil, fmt.Errorf("open egg log: %w", err)
 	}
 
-	child := exec.Command(exe, "egg")
+	child := exec.Command(exe, "egg", "serve")
 	child.Stdout = logFile
 	child.Stderr = logFile
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
