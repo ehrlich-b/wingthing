@@ -41,6 +41,7 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
 	if err != nil {
 		if os.IsNotExist(err) {
+			cfg.MachineID = defaultMachineID()
 			cfg.setStandardVars()
 			return cfg, nil
 		}
@@ -54,8 +55,18 @@ func Load() (*Config, error) {
 	if cfg.Vars == nil {
 		cfg.Vars = make(map[string]string)
 	}
+	if cfg.MachineID == "" {
+		cfg.MachineID = defaultMachineID()
+	}
 	cfg.setStandardVars()
 	return cfg, nil
+}
+
+func defaultMachineID() string {
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "unknown"
 }
 
 func (c *Config) setStandardVars() {
