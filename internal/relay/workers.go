@@ -50,7 +50,10 @@ type WingRegistry struct {
 	wings map[string]*ConnectedWing // wingID → wing
 
 	dirMu       sync.Mutex
-	dirRequests map[string]chan *ws.DirResults // requestID → response channel
+	dirRequests map[string]chan *ws.DirResults
+
+	sessMu       sync.Mutex
+	sessRequests map[string]chan *ws.SessionsSync // requestID → response channel
 
 	// Dashboard subscribers: userID → list of channels
 	subMu sync.RWMutex
@@ -59,9 +62,10 @@ type WingRegistry struct {
 
 func NewWingRegistry() *WingRegistry {
 	return &WingRegistry{
-		wings:       make(map[string]*ConnectedWing),
-		dirRequests: make(map[string]chan *ws.DirResults),
-		subs:        make(map[string][]chan WingEvent),
+		wings:        make(map[string]*ConnectedWing),
+		dirRequests:  make(map[string]chan *ws.DirResults),
+		sessRequests: make(map[string]chan *ws.SessionsSync),
+		subs:         make(map[string][]chan WingEvent),
 	}
 }
 
@@ -81,6 +85,30 @@ func (r *WingRegistry) ResolveDirRequest(reqID string, results *ws.DirResults) {
 	r.dirMu.Lock()
 	ch := r.dirRequests[reqID]
 	r.dirMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- results:
+		default:
+		}
+	}
+}
+
+func (r *WingRegistry) RegisterSessionRequest(reqID string, ch chan *ws.SessionsSync) {
+	r.sessMu.Lock()
+	r.sessRequests[reqID] = ch
+	r.sessMu.Unlock()
+}
+
+func (r *WingRegistry) UnregisterSessionRequest(reqID string) {
+	r.sessMu.Lock()
+	delete(r.sessRequests, reqID)
+	r.sessMu.Unlock()
+}
+
+func (r *WingRegistry) ResolveSessionRequest(reqID string, results *ws.SessionsSync) {
+	r.sessMu.Lock()
+	ch := r.sessRequests[reqID]
+	r.sessMu.Unlock()
 	if ch != nil {
 		select {
 		case ch <- results:
@@ -391,6 +419,14 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			var results ws.DirResults
 			json.Unmarshal(data, &results)
 			s.Wings.ResolveDirRequest(results.RequestID, &results)
+
+		case ws.TypeSessionsSync:
+			var sync ws.SessionsSync
+			json.Unmarshal(data, &sync)
+			s.PTY.SyncFromWing(wing.ID, wing.UserID, sync.Sessions)
+			if sync.RequestID != "" {
+				s.Wings.ResolveSessionRequest(sync.RequestID, &sync)
+			}
 		}
 	}
 }

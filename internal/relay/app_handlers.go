@@ -59,12 +59,16 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAppSessions returns the user's active PTY and chat sessions.
+// On each call, requests a fresh session list from connected wings to ensure accuracy.
 func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
+
+	// Request fresh session list from all connected wings
+	s.requestSessionSync(r.Context(), user.ID)
 
 	var out []map[string]any
 
@@ -102,6 +106,50 @@ func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
 		out = make([]map[string]any, 0)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// requestSessionSync asks all connected wings for the user to send their session list,
+// waits up to 2s for responses, and updates the PTYRegistry.
+func (s *Server) requestSessionSync(ctx context.Context, userID string) {
+	wings := s.Wings.ListForUser(userID)
+	if len(wings) == 0 {
+		return
+	}
+
+	type pending struct {
+		reqID string
+		ch    chan *ws.SessionsSync
+	}
+	var reqs []pending
+
+	for _, wing := range wings {
+		reqID := uuid.New().String()[:8]
+		ch := make(chan *ws.SessionsSync, 1)
+		s.Wings.RegisterSessionRequest(reqID, ch)
+
+		msg := ws.SessionsList{Type: ws.TypeSessionsList, RequestID: reqID}
+		data, _ := json.Marshal(msg)
+		writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := wing.Conn.Write(writeCtx, websocket.MessageText, data)
+		cancel()
+		if err != nil {
+			s.Wings.UnregisterSessionRequest(reqID)
+			continue
+		}
+		reqs = append(reqs, pending{reqID: reqID, ch: ch})
+	}
+
+	// Wait for all responses (up to 2s)
+	deadline := time.After(2 * time.Second)
+	for _, req := range reqs {
+		select {
+		case <-req.ch:
+			// SyncFromWing already called in handleWingWS when sessions.sync arrived
+		case <-deadline:
+		case <-ctx.Done():
+		}
+		s.Wings.UnregisterSessionRequest(req.reqID)
+	}
 }
 
 // handleDeleteSession kills or removes a PTY or chat session.

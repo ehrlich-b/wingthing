@@ -64,6 +64,7 @@ type Client struct {
 	OnChatDelete  ChatDeleteHandler
 	OnDirList     DirHandler
 	OnUpdate      func(ctx context.Context)
+	SessionLister func(ctx context.Context) []SessionInfo
 
 	// ptySessions tracks active PTY sessions for routing input/resize
 	ptySessions   map[string]chan []byte // session_id → input channel
@@ -276,6 +277,26 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				})
 			}
 
+		case TypeSessionsList:
+			var req SessionsList
+			if err := json.Unmarshal(data, &req); err != nil {
+				continue
+			}
+			go func() {
+				var sessions []SessionInfo
+				if c.SessionLister != nil {
+					sessions = c.SessionLister(ctx)
+				}
+				if sessions == nil {
+					sessions = []SessionInfo{}
+				}
+				c.writeJSON(ctx, SessionsSync{
+					Type:      TypeSessionsSync,
+					RequestID: req.RequestID,
+					Sessions:  sessions,
+				})
+			}()
+
 		case TypeWingUpdate:
 			if c.OnUpdate != nil {
 				go c.OnUpdate(ctx)
@@ -329,6 +350,17 @@ func (c *Client) heartbeatLoop(ctx context.Context) {
 			hb := WingHeartbeat{Type: TypeWingHeartbeat, MachineID: c.MachineID}
 			if err := c.writeJSON(ctx, hb); err != nil {
 				return
+			}
+			// Piggyback session list on heartbeat
+			if c.SessionLister != nil {
+				sessions := c.SessionLister(ctx)
+				if sessions == nil {
+					sessions = []SessionInfo{}
+				}
+				c.writeJSON(ctx, SessionsSync{
+					Type:     TypeSessionsSync,
+					Sessions: sessions,
+				})
 			}
 		}
 	}

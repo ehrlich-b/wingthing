@@ -46,6 +46,10 @@ const (
 	// Wing → Relay (session reclaim after wing restart)
 	TypePTYReclaim = "pty.reclaim"
 
+	// Session sync (relay requests, wing responds; also sent on heartbeat)
+	TypeSessionsList = "sessions.list" // relay → wing
+	TypeSessionsSync = "sessions.sync" // wing → relay
+
 	// Relay → Wing (control)
 	TypeRegistered  = "registered"
 	TypeWingUpdate  = "wing.update"
@@ -288,6 +292,26 @@ type PTYReclaim struct {
 // WingUpdate tells the wing to self-update to the latest release.
 type WingUpdate struct {
 	Type string `json:"type"`
+}
+
+// SessionsList requests the wing's current session list.
+type SessionsList struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+}
+
+// SessionsSync carries the wing's current session list.
+type SessionsSync struct {
+	Type      string        `json:"type"`
+	RequestID string        `json:"request_id,omitempty"` // set when responding to sessions.list
+	Sessions  []SessionInfo `json:"sessions"`
+}
+
+// SessionInfo describes one active session on a wing.
+type SessionInfo struct {
+	SessionID string `json:"session_id"`
+	Agent     string `json:"agent"`
+	CWD       string `json:"cwd,omitempty"`
 }
 
 // QueuedTask is a routing entry in the relay's volatile queue.

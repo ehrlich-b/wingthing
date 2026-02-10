@@ -309,6 +309,26 @@ func wingCmd() *cobra.Command {
 				handleDirList(ctx, req, write)
 			}
 
+			client.SessionLister = func(ctx context.Context) []ws.SessionInfo {
+				ec := eggClient
+				if ec == nil {
+					return nil
+				}
+				resp, err := ec.List(ctx)
+				if err != nil {
+					return nil
+				}
+				var out []ws.SessionInfo
+				for _, s := range resp.Sessions {
+					out = append(out, ws.SessionInfo{
+						SessionID: s.SessionId,
+						Agent:     s.Agent,
+						CWD:       s.Cwd,
+					})
+				}
+				return out
+			}
+
 			client.OnUpdate = func(ctx context.Context) {
 				log.Println("remote update requested")
 				exe, err := os.Executable()
