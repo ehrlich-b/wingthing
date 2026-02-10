@@ -27,6 +27,7 @@ const (
 	TypePTYExited  = "pty.exited"  // wing → relay → browser
 	TypePTYAttach  = "pty.attach"  // browser → relay → wing (reattach)
 	TypePTYKill    = "pty.kill"    // browser → relay → wing (terminate session)
+	TypePTYDetach  = "pty.detach"  // browser → relay (explicit detach before disconnect)
 
 	// Chat (bidirectional through relay)
 	TypeChatStart   = "chat.start"   // browser → relay → wing
@@ -180,6 +181,12 @@ type PTYAttach struct {
 
 // PTYKill requests termination of a PTY session.
 type PTYKill struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+}
+
+// PTYDetach explicitly detaches the browser from a PTY session.
+type PTYDetach struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 }
