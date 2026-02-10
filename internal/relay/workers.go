@@ -31,6 +31,17 @@ type ConnectedWing struct {
 	LastSeen   time.Time
 }
 
+// WingEvent is sent to dashboard subscribers when a wing connects or disconnects.
+type WingEvent struct {
+	Type      string           `json:"type"`       // "wing.online" or "wing.offline"
+	WingID    string           `json:"wing_id"`
+	MachineID string           `json:"machine_id"`
+	Agents    []string         `json:"agents,omitempty"`
+	Labels    []string         `json:"labels,omitempty"`
+	PublicKey string           `json:"public_key,omitempty"`
+	Projects  []ws.WingProject `json:"projects,omitempty"`
+}
+
 // WingRegistry tracks all connected wings.
 type WingRegistry struct {
 	mu    sync.RWMutex
@@ -38,12 +49,17 @@ type WingRegistry struct {
 
 	dirMu       sync.Mutex
 	dirRequests map[string]chan *ws.DirResults // requestID → response channel
+
+	// Dashboard subscribers: userID → list of channels
+	subMu sync.RWMutex
+	subs  map[string][]chan WingEvent
 }
 
 func NewWingRegistry() *WingRegistry {
 	return &WingRegistry{
 		wings:       make(map[string]*ConnectedWing),
 		dirRequests: make(map[string]chan *ws.DirResults),
+		subs:        make(map[string][]chan WingEvent),
 	}
 }
 
@@ -71,16 +87,65 @@ func (r *WingRegistry) ResolveDirRequest(reqID string, results *ws.DirResults) {
 	}
 }
 
+func (r *WingRegistry) Subscribe(userID string, ch chan WingEvent) {
+	r.subMu.Lock()
+	r.subs[userID] = append(r.subs[userID], ch)
+	r.subMu.Unlock()
+}
+
+func (r *WingRegistry) Unsubscribe(userID string, ch chan WingEvent) {
+	r.subMu.Lock()
+	defer r.subMu.Unlock()
+	list := r.subs[userID]
+	for i, c := range list {
+		if c == ch {
+			r.subs[userID] = append(list[:i], list[i+1:]...)
+			break
+		}
+	}
+	if len(r.subs[userID]) == 0 {
+		delete(r.subs, userID)
+	}
+}
+
+func (r *WingRegistry) notify(userID string, ev WingEvent) {
+	r.subMu.RLock()
+	defer r.subMu.RUnlock()
+	for _, ch := range r.subs[userID] {
+		select {
+		case ch <- ev:
+		default:
+		}
+	}
+}
+
 func (r *WingRegistry) Add(w *ConnectedWing) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.wings[w.ID] = w
+	r.mu.Unlock()
+	r.notify(w.UserID, WingEvent{
+		Type:      "wing.online",
+		WingID:    w.ID,
+		MachineID: w.MachineID,
+		Agents:    w.Agents,
+		Labels:    w.Labels,
+		PublicKey: w.PublicKey,
+		Projects:  w.Projects,
+	})
 }
 
 func (r *WingRegistry) Remove(id string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	w := r.wings[id]
 	delete(r.wings, id)
+	r.mu.Unlock()
+	if w != nil {
+		r.notify(w.UserID, WingEvent{
+			Type:      "wing.offline",
+			WingID:    w.ID,
+			MachineID: w.MachineID,
+		})
+	}
 }
 
 func (r *WingRegistry) FindForUser(userID string) *ConnectedWing {
