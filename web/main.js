@@ -423,9 +423,30 @@ async function loadHome() {
         wings = [];
     }
 
-    // Merge live sessions with cache (same pattern as wings)
+    // Merge live sessions with cache (preserve existing order)
     if (sessions.length > 0) {
-        sessionsData = sortSessionsByOrder(sessions);
+        var liveSessionMap = {};
+        sessions.forEach(function(s) { liveSessionMap[s.id] = s; });
+        var cachedSessions = getCachedSessions();
+        var cachedSessionMap = {};
+        cachedSessions.forEach(function(s) { cachedSessionMap[s.id] = s; });
+        // Preserve existing sessionsData order, update in place
+        var seenSess = {};
+        var mergedSessions = [];
+        sessionsData.forEach(function(existing) {
+            if (liveSessionMap[existing.id]) {
+                mergedSessions.push(liveSessionMap[existing.id]);
+            } else if (cachedSessionMap[existing.id]) {
+                cachedSessionMap[existing.id].status = 'detached';
+                mergedSessions.push(cachedSessionMap[existing.id]);
+            }
+            seenSess[existing.id] = true;
+        });
+        // Append new sessions not in current order
+        sessions.forEach(function(s) {
+            if (!seenSess[s.id]) { mergedSessions.push(s); seenSess[s.id] = true; }
+        });
+        sessionsData = sortSessionsByOrder(mergedSessions);
         setEggOrder(sessionsData.map(function(s) { return s.id; }));
         setCachedSessions(sessionsData);
     } else {
@@ -1451,8 +1472,13 @@ window._openChat = function (sessionId, agent) {
 window._deleteSession = function (sessionId) {
     var cached = getCachedSessions().filter(function (s) { return s.id !== sessionId; });
     setCachedSessions(cached);
+    // Remove from sessionsData and egg order immediately to prevent stale order
+    sessionsData = sessionsData.filter(function(s) { return s.id !== sessionId; });
+    setEggOrder(sessionsData.map(function(s) { return s.id; }));
     clearTermBuffer(sessionId);
     delete sessionNotifications[sessionId];
+    if (activeView === 'home') renderDashboard();
+    renderSidebar();
     fetch('/api/app/sessions/' + sessionId, { method: 'DELETE' }).then(function () {
         loadHome();
     });
