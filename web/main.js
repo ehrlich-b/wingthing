@@ -1357,6 +1357,8 @@ function setupPTYHandlers(ws, reattach) {
                 break;
 
             case 'pty.exited':
+                // Ignore exited events from stale sessions
+                if (msg.session_id && ptySessionId && msg.session_id !== ptySessionId) break;
                 headerTitle.textContent = '';
                 ptyStatus.textContent = 'exited';
                 if (msg.session_id) clearTermBuffer(msg.session_id);
@@ -1376,17 +1378,23 @@ function setupPTYHandlers(ws, reattach) {
     };
 
     ws.onclose = function () {
+        // Ignore close from stale WebSocket (user switched sessions)
+        if (ws !== ptyWs) return;
         ptyStatus.textContent = '';
         ptySessionId = null;
         renderSidebar();
     };
 
     ws.onerror = function () {
+        if (ws !== ptyWs) return;
         ptyStatus.textContent = 'error';
     };
 }
 
 function connectPTY(agent, cwd, wingId) {
+    // Detach any existing PTY connection first
+    detachPTY();
+
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
 
