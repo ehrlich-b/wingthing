@@ -10,74 +10,68 @@
 </head>
 <body>
     <div id="app">
-        <header>
-            <h1>wingthing.ai</h1>
-            <div id="header-right">
-                <span id="pty-status"></span>
-                <div id="header-buttons" style="display:none;">
-                    <div class="split-btn small">
-                        <button id="header-term-btn" class="split-main">terminal</button>
-                        <button class="split-toggle" id="header-term-toggle">&#9662;</button>
-                        <div class="split-menu" id="header-term-menu"></div>
-                    </div>
-                    <div class="split-btn small secondary">
-                        <button id="header-chat-btn" class="split-main">chat</button>
-                        <button class="split-toggle" id="header-chat-toggle">&#9662;</button>
-                        <div class="split-menu" id="header-chat-menu"></div>
-                    </div>
+        <nav id="sidebar">
+            <button id="new-session-btn" title="New session (Cmd+K)">+</button>
+            <div id="session-tabs"></div>
+        </nav>
+        <div id="main">
+            <header id="main-header">
+                <a href="/" id="header-logo" title="Home">wt</a>
+                <div id="header-center">
+                    <span id="header-title"></span>
+                    <span id="pty-status"></span>
                 </div>
-                <div id="user-info"></div>
-            </div>
-        </header>
-
-        <!-- Home: sessions list or empty state -->
-        <section id="home-section">
-            <div id="sessions-list"></div>
-            <div id="empty-state" style="display:none;">
-                <p>no active sessions</p>
-                <p class="hint">run <code>wt wing</code> on your machine, then start a session here</p>
-                <div class="launch-buttons">
-                    <div class="split-btn primary">
-                        <button id="launch-term-btn" class="split-main">terminal</button>
-                        <button class="split-toggle" id="launch-term-toggle">&#9662;</button>
-                        <div class="split-menu" id="launch-term-menu"></div>
-                    </div>
-                    <div class="split-btn primary secondary">
-                        <button id="launch-chat-btn" class="split-main">chat</button>
-                        <button class="split-toggle" id="launch-chat-toggle">&#9662;</button>
-                        <div class="split-menu" id="launch-chat-menu"></div>
-                    </div>
+                <div id="header-right">
+                    <span id="user-info"></span>
                 </div>
-            </div>
-        </section>
+            </header>
 
-        <!-- Terminal view -->
-        <section id="terminal-section" style="display:none;">
-            <div id="terminal-controls">
-                <button id="back-btn">&larr; back</button>
-                <button id="disconnect-btn" style="display:none;">disconnect</button>
-            </div>
-            <div id="terminal-container"></div>
-            <div id="modifier-keys">
-                <button class="mod-key" data-key="ctrl">ctrl</button>
-                <button class="mod-key" data-key="alt">alt</button>
-                <button class="mod-key" data-key="esc">esc</button>
-                <button class="mod-key" data-key="tab">tab</button>
-                <button class="mod-key" data-seq="&#x2191;">up</button>
-                <button class="mod-key" data-seq="&#x2193;">down</button>
-            </div>
-        </section>
+            <section id="home-section">
+                <div id="wing-status"></div>
+                <div id="sessions-list"></div>
+                <div id="empty-state" style="display:none;">
+                    <div class="empty-icon">~</div>
+                    <p>no active sessions</p>
+                    <p class="hint">run <code>wt wing</code> on your machine, then press <kbd>+</kbd> to start</p>
+                </div>
+            </section>
 
-        <!-- Chat view -->
-        <section id="chat-section" style="display:none;">
-            <div id="chat-controls">
-                <button id="chat-back-btn">&larr; back</button>
-                <span id="chat-status"></span>
-                <button id="chat-delete-btn" class="btn-sm btn-danger" style="display:none;">delete</button>
-            </div>
-            <div id="chat-container"></div>
-        </section>
+            <section id="terminal-section" style="display:none;">
+                <div id="terminal-container"></div>
+                <div id="modifier-keys">
+                    <button class="mod-key" data-key="ctrl">ctrl</button>
+                    <button class="mod-key" data-key="alt">alt</button>
+                    <button class="mod-key" data-key="esc">esc</button>
+                    <button class="mod-key" data-key="tab">tab</button>
+                    <button class="mod-key" data-seq="&#x2191;">up</button>
+                    <button class="mod-key" data-seq="&#x2193;">down</button>
+                </div>
+            </section>
+
+            <section id="chat-section" style="display:none;">
+                <div id="chat-controls">
+                    <span id="chat-status"></span>
+                    <button id="chat-delete-btn" class="btn-sm btn-danger" style="display:none;">delete</button>
+                </div>
+                <div id="chat-container"></div>
+            </section>
+        </div>
     </div>
+
+    <!-- Command palette overlay -->
+    <div id="command-palette" style="display:none;">
+        <div id="palette-backdrop"></div>
+        <div id="palette-dialog">
+            <div id="palette-header">open terminal</div>
+            <input id="palette-search" type="text" placeholder="search projects or type a path..." autocomplete="off" spellcheck="false">
+            <div id="palette-results"></div>
+            <div id="palette-footer">
+                <select id="palette-agent"></select>
+                <button id="palette-go">open</button>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="main.js"></script>
 </body>
 </html>

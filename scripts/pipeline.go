@@ -283,12 +283,22 @@ func main() {
 		close(results)
 	}()
 
-	// Dedup by URL path (slug)
+	// Dedup by URL path (slug), filter out articles older than 30 days
+	cutoff := time.Now().AddDate(0, 0, -30)
 	seen := make(map[string]bool)
 	count := 0
 	dupes := 0
+	old := 0
 	for r := range results {
 		for _, a := range r.articles {
+			// Skip articles older than 30 days
+			if a.Date != "" {
+				t, err := time.Parse(time.RFC3339, a.Date)
+				if err == nil && t.Before(cutoff) {
+					old++
+					continue
+				}
+			}
 			slug := urlSlug(a.Link)
 			if slug != "" && seen[slug] {
 				dupes++
@@ -301,5 +311,5 @@ func main() {
 			count++
 		}
 	}
-	fmt.Fprintf(os.Stderr, "fetched %d articles (%d dupes removed) from %d feeds\n", count, dupes, len(feeds))
+	fmt.Fprintf(os.Stderr, "fetched %d articles (%d dupes, %d older than 30d removed) from %d feeds\n", count, dupes, old, len(feeds))
 }

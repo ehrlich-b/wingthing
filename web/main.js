@@ -6,7 +6,7 @@ import { x25519 } from '@noble/curves/ed25519.js';
 import { createAiChat } from '@nlux/core';
 import '@nlux/themes/nova.css';
 
-// State
+// === State ===
 let ptyWs = null;
 let ptySessionId = null;
 let term = null;
@@ -18,50 +18,54 @@ let altActive = false;
 let currentUser = null;
 let e2eKey = null;
 let ephemeralPrivKey = null;
-let availableAgents = []; // [{agent, wingId}]
+let availableAgents = [];
+let allProjects = [];
+let wingsData = [];
+let sessionsData = [];
+let sessionNotifications = {};
+let activeView = 'home';
+let titleFlashTimer = null;
 
 // Chat state
 let chatWs = null;
 let chatSessionId = null;
 let chatObserver = null;
 let chatInstance = null;
+let pendingHistory = null;
 
 // DOM refs
+const sessionTabs = document.getElementById('session-tabs');
+const newSessionBtn = document.getElementById('new-session-btn');
+const headerLogo = document.getElementById('header-logo');
+const headerTitle = document.getElementById('header-title');
 const userInfo = document.getElementById('user-info');
 const homeSection = document.getElementById('home-section');
+const wingStatusEl = document.getElementById('wing-status');
 const sessionsList = document.getElementById('sessions-list');
 const emptyState = document.getElementById('empty-state');
 const terminalSection = document.getElementById('terminal-section');
 const terminalContainer = document.getElementById('terminal-container');
 const ptyStatus = document.getElementById('pty-status');
-const backBtn = document.getElementById('back-btn');
-const disconnectBtn = document.getElementById('disconnect-btn');
 const chatSection = document.getElementById('chat-section');
 const chatContainer = document.getElementById('chat-container');
 const chatStatus = document.getElementById('chat-status');
-const chatBackBtn = document.getElementById('chat-back-btn');
 const chatDeleteBtn = document.getElementById('chat-delete-btn');
 
-// Header buttons (small, shown when wings connected)
-const headerButtons = document.getElementById('header-buttons');
-const headerTermBtn = document.getElementById('header-term-btn');
-const headerTermToggle = document.getElementById('header-term-toggle');
-const headerTermMenu = document.getElementById('header-term-menu');
-const headerChatBtn = document.getElementById('header-chat-btn');
-const headerChatToggle = document.getElementById('header-chat-toggle');
-const headerChatMenu = document.getElementById('header-chat-menu');
+// Palette refs
+const commandPalette = document.getElementById('command-palette');
+const paletteBackdrop = document.getElementById('palette-backdrop');
+const paletteSearch = document.getElementById('palette-search');
+const paletteResults = document.getElementById('palette-results');
+const paletteAgent = document.getElementById('palette-agent');
+const paletteGo = document.getElementById('palette-go');
 
-// Empty state launch buttons (big)
-const launchTermBtn = document.getElementById('launch-term-btn');
-const launchTermToggle = document.getElementById('launch-term-toggle');
-const launchTermMenu = document.getElementById('launch-term-menu');
-const launchChatBtn = document.getElementById('launch-chat-btn');
-const launchChatToggle = document.getElementById('launch-chat-toggle');
-const launchChatMenu = document.getElementById('launch-chat-menu');
+// localStorage keys
+var CACHE_KEY = 'wt_sessions';
+var LAST_TERM_KEY = 'wt_last_term_agent';
+var LAST_CHAT_KEY = 'wt_last_chat_agent';
+var TERM_BUF_PREFIX = 'wt_termbuf_';
 
 function loginRedirect() {
-    // Derive the main site login URL from the current hostname.
-    // On app.wingthing.ai → login at wingthing.ai; on localhost → same host.
     var host = window.location.hostname.replace(/^app\./, '');
     var port = window.location.port ? ':' + window.location.port : '';
     var loginUrl = window.location.protocol + '//' + host + port +
@@ -69,23 +73,25 @@ function loginRedirect() {
     window.location.href = loginUrl;
 }
 
+// === Init ===
+
 async function init() {
     try {
         var resp = await fetch('/api/app/me');
-        if (resp.status === 401) {
-            loginRedirect();
-            return;
-        }
+        if (resp.status === 401) { loginRedirect(); return; }
         currentUser = await resp.json();
         userInfo.textContent = currentUser.display_name || 'user';
-    } catch (e) {
-        loginRedirect();
-        return;
+    } catch (e) { loginRedirect(); return; }
+
+    // Request notification permission
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
     }
 
-    backBtn.addEventListener('click', showHome);
-    disconnectBtn.addEventListener('click', disconnectPTY);
-    chatBackBtn.addEventListener('click', showHome);
+    // Event handlers
+    newSessionBtn.addEventListener('click', showPalette);
+    headerLogo.addEventListener('click', function(e) { e.preventDefault(); showHome(); });
+
     chatDeleteBtn.addEventListener('click', function () {
         if (chatSessionId) {
             var cached = getCachedSessions().filter(function (s) { return s.id !== chatSessionId; });
@@ -95,33 +101,6 @@ async function init() {
             showHome();
         }
     });
-
-    // Terminal buttons — primary click uses last-used agent
-    launchTermBtn.addEventListener('click', function () { launchTerminal(getLastTermAgent()); });
-    headerTermBtn.addEventListener('click', function () { launchTerminal(getLastTermAgent()); });
-
-    // Chat buttons — primary click uses last-used agent
-    launchChatBtn.addEventListener('click', function () { launchChat(getLastChatAgent()); });
-    headerChatBtn.addEventListener('click', function () { launchChat(getLastChatAgent()); });
-
-    // Toggle dropdowns
-    [launchTermToggle, headerTermToggle].forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-            e.stopPropagation();
-            closeAllMenus();
-            btn.parentElement.querySelector('.split-menu').classList.toggle('open');
-        });
-    });
-    [launchChatToggle, headerChatToggle].forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-            e.stopPropagation();
-            closeAllMenus();
-            btn.parentElement.querySelector('.split-menu').classList.toggle('open');
-        });
-    });
-
-    // Close dropdowns on outside click
-    document.addEventListener('click', closeAllMenus);
 
     // Modifier keys
     document.querySelectorAll('.mod-key').forEach(function (btn) {
@@ -146,6 +125,38 @@ async function init() {
         });
     });
 
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+            e.preventDefault();
+            if (commandPalette.style.display === 'none') showPalette();
+            else hidePalette();
+        }
+        if (e.key === 'Escape' && commandPalette.style.display !== 'none') {
+            hidePalette();
+        }
+    });
+
+    // Palette events
+    paletteBackdrop.addEventListener('click', hidePalette);
+    paletteSearch.addEventListener('input', function() {
+        renderPaletteResults(paletteSearch.value);
+    });
+    paletteSearch.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            var selected = paletteResults.querySelector('.palette-item.selected');
+            if (selected) launchFromPalette(selected.dataset.path);
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            navigatePalette(e.key === 'ArrowDown' ? 1 : -1);
+        }
+    });
+    paletteGo.addEventListener('click', function() {
+        var selected = paletteResults.querySelector('.palette-item.selected');
+        if (selected) launchFromPalette(selected.dataset.path);
+    });
+
     window.addEventListener('resize', function () {
         if (term && fitAddon) fitAddon.fit();
     });
@@ -155,102 +166,31 @@ async function init() {
     setInterval(loadHome, 10000);
 }
 
-// localStorage session cache
-var CACHE_KEY = 'wt_sessions';
-var LAST_TERM_KEY = 'wt_last_term_agent';
-var LAST_CHAT_KEY = 'wt_last_chat_agent';
+// === localStorage helpers ===
 
 function getLastTermAgent() {
     try { return localStorage.getItem(LAST_TERM_KEY) || 'claude'; } catch (e) { return 'claude'; }
 }
-
 function setLastTermAgent(agent) {
     try { localStorage.setItem(LAST_TERM_KEY, agent); } catch (e) {}
 }
-
 function getLastChatAgent() {
     try { return localStorage.getItem(LAST_CHAT_KEY) || 'claude'; } catch (e) { return 'claude'; }
 }
-
 function setLastChatAgent(agent) {
     try { localStorage.setItem(LAST_CHAT_KEY, agent); } catch (e) {}
 }
-
-function closeAllMenus() {
-    document.querySelectorAll('.split-menu').forEach(function (m) { m.classList.remove('open'); });
-}
-
 function getCachedSessions() {
-    try {
-        var raw = localStorage.getItem(CACHE_KEY);
-        return raw ? JSON.parse(raw) : [];
-    } catch (e) { return []; }
+    try { var raw = localStorage.getItem(CACHE_KEY); return raw ? JSON.parse(raw) : []; }
+    catch (e) { return []; }
 }
-
 function setCachedSessions(sessions) {
     try { localStorage.setItem(CACHE_KEY, JSON.stringify(sessions)); } catch (e) {}
 }
 
-function renderSessions(sessions, wings) {
-    var hasSessions = sessions.length > 0;
-    emptyState.style.display = hasSessions ? 'none' : '';
-    headerButtons.style.display = wings.length > 0 ? '' : 'none';
+// === Data Loading ===
 
-    if (!hasSessions) {
-        sessionsList.innerHTML = '';
-        if (wings.length === 0) {
-            emptyState.querySelector('.launch-buttons').style.display = 'none';
-        } else {
-            emptyState.querySelector('.launch-buttons').style.display = '';
-        }
-        return;
-    }
-
-    var html = sessions.map(function (s) {
-        var isActive = s.status === 'active';
-        var kind = s.kind || 'terminal';
-        var isChat = kind === 'chat';
-        var statusClass = isActive ? 'active' : 'detached';
-        var statusLabel = isActive ? 'live' : 'detached';
-        var label = (isChat ? 'chat' : 'terminal') + ' / ' + (s.agent || 'unknown');
-        var shortId = s.id.substring(0, 8);
-        var kindBadge = isChat ? '<span class="session-kind chat">chat</span>' : '<span class="session-kind term">term</span>';
-
-        var actionBtn;
-        if (isChat) {
-            actionBtn = '<button class="btn-sm btn-primary" onclick="window._openChat(\'' + s.id + '\', \'' + escapeHtml(s.agent || 'claude') + '\')">open</button>';
-        } else if (isActive) {
-            actionBtn = '<button class="btn-sm" onclick="window._viewSession(\'' + s.id + '\')">view</button>';
-        } else {
-            actionBtn = '<button class="btn-sm btn-primary" onclick="window._reattachSession(\'' + s.id + '\')">reconnect</button>';
-        }
-
-        return '<div class="session-card ' + statusClass + '">' +
-            '<div class="session-info">' +
-                kindBadge +
-                '<span class="session-agent">' + escapeHtml(s.agent || 'unknown') + '</span>' +
-                '<span class="session-id">' + escapeHtml(shortId) + '</span>' +
-                '<span class="session-status ' + statusClass + '">' + statusLabel + '</span>' +
-            '</div>' +
-            '<div class="session-actions">' +
-                actionBtn +
-                '<button class="btn-sm btn-danger" onclick="window._deleteSession(\'' + s.id + '\')">delete</button>' +
-            '</div>' +
-        '</div>';
-    }).join('');
-
-    sessionsList.innerHTML = html;
-}
-
-// Load sessions + wings, render home
 async function loadHome() {
-    if (terminalSection.style.display !== 'none') return;
-    if (chatSection.style.display !== 'none') return;
-
-    // Render cached sessions instantly (no pop)
-    var cached = getCachedSessions();
-    if (cached.length > 0) renderSessions(cached, availableAgents.length > 0 ? [1] : []);
-
     var sessions = [];
     var wings = [];
     try {
@@ -262,100 +202,296 @@ async function loadHome() {
         if (wingsResp.ok) wings = await wingsResp.json() || [];
     } catch (e) {
         console.error('load home:', e);
-        return; // keep showing cached data
+        return;
     }
 
+    sessionsData = sessions;
+    wingsData = wings;
     setCachedSessions(sessions);
 
-    // Build agent list from wings
+    // Build agent + project lists
     availableAgents = [];
-    var seen = {};
+    allProjects = [];
+    var seenAgents = {};
     (wings || []).forEach(function (w) {
         (w.agents || []).forEach(function (a) {
-            if (!seen[a]) {
-                seen[a] = true;
-                availableAgents.push({ agent: a, wingId: w.id });
+            if (!seenAgents[a]) { seenAgents[a] = true; availableAgents.push({ agent: a, wingId: w.id }); }
+        });
+        (w.projects || []).forEach(function (p) {
+            allProjects.push({ name: p.name, path: p.path, wingId: w.id, machine: w.machine_id });
+        });
+    });
+
+    renderSidebar();
+    if (activeView === 'home') renderDashboard();
+}
+
+// === Rendering ===
+
+function projectName(cwd) {
+    if (!cwd) return '~';
+    var parts = cwd.split('/').filter(Boolean);
+    return parts[parts.length - 1] || '~';
+}
+
+function renderSidebar() {
+    var tabs = sessionsData.map(function(s) {
+        var name = projectName(s.cwd);
+        var letter = name.charAt(0).toUpperCase();
+        var isActive = (activeView === 'terminal' && s.id === ptySessionId) ||
+                       (activeView === 'chat' && s.id === chatSessionId);
+        var needsAttention = sessionNotifications[s.id];
+        var dotClass = s.status === 'active' ? 'dot-live' : 'dot-detached';
+        if (needsAttention) dotClass = 'dot-attention';
+        var kind = s.kind || 'terminal';
+        return '<button class="session-tab' + (isActive ? ' active' : '') + '" ' +
+            'title="' + escapeHtml(name + ' \u00b7 ' + (s.agent || '?')) + '" ' +
+            'data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+            '<span class="tab-letter">' + escapeHtml(letter) + '</span>' +
+            '<span class="tab-dot ' + dotClass + '"></span>' +
+        '</button>';
+    }).join('');
+    sessionTabs.innerHTML = tabs;
+
+    sessionTabs.querySelectorAll('.session-tab').forEach(function(tab) {
+        tab.addEventListener('click', function() {
+            var sid = tab.dataset.sid;
+            var kind = tab.dataset.kind;
+            var agent = tab.dataset.agent;
+            if (kind === 'chat') {
+                window._openChat(sid, agent);
+            } else {
+                switchToSession(sid);
             }
         });
     });
-    populateDropdowns();
-
-    renderSessions(sessions, wings);
 }
 
-function updatePrimaryButtons() {
-    var termAgent = getLastTermAgent();
-    var chatAgent = getLastChatAgent();
-    var termLabel = agentTermLabel(termAgent);
-    var chatLabel = agentChatLabel(chatAgent);
-    launchTermBtn.textContent = termLabel;
-    headerTermBtn.textContent = termLabel;
-    launchChatBtn.textContent = chatLabel;
-    headerChatBtn.textContent = chatLabel;
+function renderDashboard() {
+    // Wing status cards
+    if (wingsData.length > 0) {
+        wingStatusEl.innerHTML = wingsData.map(function(w) {
+            var name = w.machine_id || w.id.substring(0, 8);
+            var projectCount = (w.projects || []).length;
+            return '<div class="wing-card">' +
+                '<span class="wing-dot"></span>' +
+                '<span class="wing-name">' + escapeHtml(name) + '</span>' +
+                '<span class="wing-detail">' + escapeHtml((w.agents || []).join(', ')) +
+                    (projectCount ? ' \u00b7 ' + projectCount + ' projects' : '') + '</span>' +
+            '</div>';
+        }).join('');
+    } else {
+        wingStatusEl.innerHTML = '';
+    }
+
+    // Session cards
+    var hasSessions = sessionsData.length > 0;
+    emptyState.style.display = hasSessions ? 'none' : '';
+
+    if (!hasSessions) {
+        sessionsList.innerHTML = '';
+        return;
+    }
+
+    sessionsList.innerHTML = sessionsData.map(function(s) {
+        var name = projectName(s.cwd);
+        var isActive = s.status === 'active';
+        var kind = s.kind || 'terminal';
+        var needsAttention = sessionNotifications[s.id];
+        var dotClass = isActive ? 'live' : 'detached';
+        if (needsAttention) dotClass = 'attention';
+
+        return '<div class="session-card" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+            '<span class="session-dot ' + dotClass + '"></span>' +
+            '<div class="session-info">' +
+                '<div class="session-project">' + escapeHtml(name) + '</div>' +
+                '<div class="session-meta">' + escapeHtml(s.agent || '?') + ' ' + kind +
+                    (needsAttention ? ' \u00b7 needs attention' : '') + '</div>' +
+            '</div>' +
+            '<div class="session-actions">' +
+                '<button class="btn-sm btn-danger" onclick="event.stopPropagation(); window._deleteSession(\'' + s.id + '\')">x</button>' +
+            '</div>' +
+        '</div>';
+    }).join('');
+
+    sessionsList.querySelectorAll('.session-card').forEach(function(card) {
+        card.addEventListener('click', function() {
+            var sid = card.dataset.sid;
+            var kind = card.dataset.kind;
+            var agent = card.dataset.agent;
+            if (kind === 'chat') {
+                window._openChat(sid, agent);
+            } else {
+                switchToSession(sid);
+            }
+        });
+    });
 }
 
-function populateDropdowns() {
+// === Command Palette ===
+
+function showPalette() {
+    if (availableAgents.length === 0 && wingsData.length === 0) return;
+    commandPalette.style.display = '';
+    paletteSearch.value = '';
+    paletteSearch.focus();
+
+    // Populate agent selector
     var agents = availableAgents.length > 0
-        ? availableAgents.map(function (a) { return a.agent; })
-        : ['claude', 'ollama'];
+        ? availableAgents.map(function(a) { return a.agent; })
+        : ['claude'];
+    var lastAgent = getLastTermAgent();
+    paletteAgent.innerHTML = agents.map(function(a) {
+        return '<option value="' + escapeHtml(a) + '"' + (a === lastAgent ? ' selected' : '') + '>' + escapeHtml(a) + '</option>';
+    }).join('');
 
-    updatePrimaryButtons();
+    renderPaletteResults('');
+}
 
-    // Terminal menus
-    [launchTermMenu, headerTermMenu].forEach(function (menu) {
-        menu.innerHTML = agents.map(function (a) {
-            return '<div class="split-menu-item" data-agent="' + escapeHtml(a) + '">' +
-                escapeHtml(agentTermLabel(a)) + '</div>';
-        }).join('');
-        menu.querySelectorAll('.split-menu-item').forEach(function (item) {
-            item.addEventListener('click', function (e) {
-                e.stopPropagation();
-                closeAllMenus();
-                launchTerminal(item.dataset.agent);
-            });
+function hidePalette() {
+    commandPalette.style.display = 'none';
+}
+
+var paletteSelectedIndex = 0;
+
+function renderPaletteResults(filter) {
+    var filtered = allProjects;
+    if (filter) {
+        var lower = filter.toLowerCase();
+        filtered = allProjects.filter(function(p) {
+            return p.name.toLowerCase().indexOf(lower) !== -1 ||
+                   p.path.toLowerCase().indexOf(lower) !== -1;
+        });
+    }
+
+    var items = [];
+    if (filtered.length > 0) {
+        items = filtered.map(function(p, i) {
+            return { name: p.name, path: p.path, selected: i === 0 };
+        });
+    } else if (filter) {
+        items = [{ name: filter, path: filter, selected: true }];
+    }
+
+    paletteSelectedIndex = 0;
+
+    if (items.length === 0) {
+        paletteResults.innerHTML = '<div class="palette-empty">no projects found — type a path</div>';
+        return;
+    }
+
+    paletteResults.innerHTML = items.map(function(item, i) {
+        return '<div class="palette-item' + (item.selected ? ' selected' : '') + '" data-path="' + escapeHtml(item.path) + '" data-index="' + i + '">' +
+            '<span class="palette-name">' + escapeHtml(item.name) + '</span>' +
+            '<span class="palette-path">' + escapeHtml(shortenPath(item.path)) + '</span>' +
+        '</div>';
+    }).join('');
+
+    paletteResults.querySelectorAll('.palette-item').forEach(function(item) {
+        item.addEventListener('click', function() {
+            launchFromPalette(item.dataset.path);
+        });
+        item.addEventListener('mouseenter', function() {
+            paletteResults.querySelectorAll('.palette-item').forEach(function(el) { el.classList.remove('selected'); });
+            item.classList.add('selected');
+            paletteSelectedIndex = parseInt(item.dataset.index);
         });
     });
-
-    // Chat menus
-    [launchChatMenu, headerChatMenu].forEach(function (menu) {
-        menu.innerHTML = agents.map(function (a) {
-            return '<div class="split-menu-item" data-agent="' + escapeHtml(a) + '">' +
-                escapeHtml(agentChatLabel(a)) + '</div>';
-        }).join('');
-        menu.querySelectorAll('.split-menu-item').forEach(function (item) {
-            item.addEventListener('click', function (e) {
-                e.stopPropagation();
-                closeAllMenus();
-                launchChat(item.dataset.agent);
-            });
-        });
-    });
 }
 
-function agentTermLabel(agent) {
-    return agent + ' terminal';
+function navigatePalette(dir) {
+    var items = paletteResults.querySelectorAll('.palette-item');
+    if (items.length === 0) return;
+    items[paletteSelectedIndex].classList.remove('selected');
+    paletteSelectedIndex = (paletteSelectedIndex + dir + items.length) % items.length;
+    items[paletteSelectedIndex].classList.add('selected');
+    items[paletteSelectedIndex].scrollIntoView({ block: 'nearest' });
 }
 
-function agentChatLabel(agent) {
-    return agent + ' chat';
+function shortenPath(path) {
+    if (path.indexOf('/Users/') === 0) {
+        var parts = path.split('/');
+        return '~/' + parts.slice(3).join('/');
+    }
+    if (path.indexOf('/home/') === 0) {
+        var parts = path.split('/');
+        return '~/' + parts.slice(3).join('/');
+    }
+    return path;
 }
 
-function launchTerminal(agent) {
+function launchFromPalette(cwd) {
+    var agent = paletteAgent.value;
+    hidePalette();
     setLastTermAgent(agent);
-    updatePrimaryButtons();
     showTerminal();
-    connectPTY(agent);
+    connectPTY(agent, cwd);
 }
+
+// === Notifications ===
+
+function checkForNotification(text) {
+    var tail = text.slice(-300);
+    if (/Allow .+\?/.test(tail)) return true;
+    if (/\[Y\/n\]\s*$/.test(tail)) return true;
+    if (/\[y\/N\]\s*$/.test(tail)) return true;
+    if (/Press Enter/i.test(tail)) return true;
+    if (/approve|permission|confirm/i.test(tail) && /\?\s*$/.test(tail)) return true;
+    return false;
+}
+
+function setNotification(sessionId) {
+    if (!sessionId || sessionNotifications[sessionId]) return;
+    sessionNotifications[sessionId] = true;
+    renderSidebar();
+    if (activeView === 'home') renderDashboard();
+
+    // Browser notification
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification('wingthing', { body: 'A session needs your attention' });
+    }
+
+    // Flash title
+    if (!titleFlashTimer) {
+        var on = true;
+        titleFlashTimer = setInterval(function() {
+            document.title = on ? '(!) wingthing' : 'wingthing';
+            on = !on;
+            if (!Object.keys(sessionNotifications).length) {
+                clearInterval(titleFlashTimer);
+                titleFlashTimer = null;
+                document.title = 'wingthing';
+            }
+        }, 1000);
+    }
+}
+
+function clearNotification(sessionId) {
+    if (!sessionId || !sessionNotifications[sessionId]) return;
+    delete sessionNotifications[sessionId];
+    renderSidebar();
+    if (activeView === 'home') renderDashboard();
+    if (!Object.keys(sessionNotifications).length) {
+        document.title = 'wingthing';
+    }
+}
+
+// === Navigation ===
 
 function showHome() {
+    activeView = 'home';
     homeSection.style.display = '';
     terminalSection.style.display = 'none';
     chatSection.style.display = 'none';
+    headerTitle.textContent = '';
+    ptyStatus.textContent = '';
     destroyChat();
-    loadHome();
+    renderSidebar();
+    renderDashboard();
 }
 
 function showTerminal() {
+    activeView = 'terminal';
     homeSection.style.display = 'none';
     terminalSection.style.display = '';
     chatSection.style.display = 'none';
@@ -367,22 +503,29 @@ function showTerminal() {
 }
 
 function showChat() {
+    activeView = 'chat';
     homeSection.style.display = 'none';
     terminalSection.style.display = 'none';
     chatSection.style.display = '';
 }
 
+function switchToSession(sessionId) {
+    detachPTY();
+    showTerminal();
+    attachPTY(sessionId);
+}
+
+function detachPTY() {
+    if (ptyWs) {
+        ptyWs.close();
+        ptyWs = null;
+    }
+    ptySessionId = null;
+    e2eKey = null;
+    ephemeralPrivKey = null;
+}
+
 // Expose for inline onclick
-window._viewSession = function (sessionId) {
-    showTerminal();
-    attachPTY(sessionId);
-};
-
-window._reattachSession = function (sessionId) {
-    showTerminal();
-    attachPTY(sessionId);
-};
-
 window._openChat = function (sessionId, agent) {
     showChat();
     resumeChat(sessionId, agent);
@@ -392,35 +535,27 @@ window._deleteSession = function (sessionId) {
     var cached = getCachedSessions().filter(function (s) { return s.id !== sessionId; });
     setCachedSessions(cached);
     clearTermBuffer(sessionId);
+    delete sessionNotifications[sessionId];
     fetch('/api/app/sessions/' + sessionId, { method: 'DELETE' }).then(function () {
         loadHome();
     });
 };
 
-// ========================
-// Chat (NLUX)
-// ========================
+// === Chat (NLUX) ===
 
 function launchChat(agent) {
     setLastChatAgent(agent);
-    updatePrimaryButtons();
     showChat();
     chatStatus.textContent = 'connecting...';
     chatDeleteBtn.style.display = 'none';
 
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
-
     chatWs = new WebSocket(url);
-
     chatWs.onopen = function () {
         chatStatus.textContent = 'starting chat...';
-        chatWs.send(JSON.stringify({
-            type: 'chat.start',
-            agent: agent,
-        }));
+        chatWs.send(JSON.stringify({ type: 'chat.start', agent: agent }));
     };
-
     setupChatHandlers(chatWs, agent, null);
 }
 
@@ -430,85 +565,52 @@ function resumeChat(sessionId, agent) {
 
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
-
     chatWs = new WebSocket(url);
-
     chatWs.onopen = function () {
         chatStatus.textContent = 'loading history...';
-        chatWs.send(JSON.stringify({
-            type: 'chat.start',
-            session_id: sessionId,
-            agent: agent,
-        }));
+        chatWs.send(JSON.stringify({ type: 'chat.start', session_id: sessionId, agent: agent }));
     };
-
     setupChatHandlers(chatWs, agent, sessionId);
 }
 
-var pendingHistory = null;
-
 function setupChatHandlers(ws, agent, resumeSessionId) {
     pendingHistory = null;
-
     ws.onmessage = function (e) {
         var msg = JSON.parse(e.data);
         switch (msg.type) {
             case 'chat.history':
-                // Store history for when chat.started arrives
                 pendingHistory = (msg.messages || []).map(function (m) {
                     return { role: m.role, message: m.content };
                 });
                 break;
-
             case 'chat.started':
                 chatSessionId = msg.session_id;
                 chatStatus.textContent = msg.agent + ' chat';
                 chatDeleteBtn.style.display = '';
                 mountNlux(agent, pendingHistory);
                 pendingHistory = null;
+                renderSidebar();
                 break;
-
             case 'chat.chunk':
-                if (chatObserver) {
-                    chatObserver.next(msg.text);
-                }
+                if (chatObserver) chatObserver.next(msg.text);
                 break;
-
             case 'chat.done':
-                if (chatObserver) {
-                    chatObserver.complete();
-                    chatObserver = null;
-                }
+                if (chatObserver) { chatObserver.complete(); chatObserver = null; }
                 chatContainer.classList.remove('thinking');
                 break;
-
             case 'error':
                 chatStatus.textContent = msg.message;
                 chatContainer.classList.remove('thinking');
-                if (chatObserver) {
-                    chatObserver.error(new Error(msg.message));
-                    chatObserver = null;
-                }
+                if (chatObserver) { chatObserver.error(new Error(msg.message)); chatObserver = null; }
                 break;
         }
     };
-
-    ws.onclose = function () {
-        chatStatus.textContent = 'disconnected';
-        chatObserver = null;
-    };
-
-    ws.onerror = function () {
-        chatStatus.textContent = 'connection error';
-    };
+    ws.onclose = function () { chatStatus.textContent = 'disconnected'; chatObserver = null; };
+    ws.onerror = function () { chatStatus.textContent = 'connection error'; };
 }
 
 function mountNlux(agent, initialMessages) {
-    // Clean up previous instance
-    if (chatInstance) {
-        chatInstance.unmount();
-        chatInstance = null;
-    }
+    if (chatInstance) { chatInstance.unmount(); chatInstance = null; }
     chatContainer.innerHTML = '';
 
     var adapter = {
@@ -516,11 +618,7 @@ function mountNlux(agent, initialMessages) {
             chatObserver = observer;
             chatContainer.classList.add('thinking');
             if (chatWs && chatWs.readyState === WebSocket.OPEN && chatSessionId) {
-                chatWs.send(JSON.stringify({
-                    type: 'chat.message',
-                    session_id: chatSessionId,
-                    content: message,
-                }));
+                chatWs.send(JSON.stringify({ type: 'chat.message', session_id: chatSessionId, content: message }));
             } else {
                 chatContainer.classList.remove('thinking');
                 observer.error(new Error('not connected'));
@@ -530,28 +628,16 @@ function mountNlux(agent, initialMessages) {
 
     var chat = createAiChat()
         .withAdapter(adapter)
-        .withDisplayOptions({
-            colorScheme: 'dark',
-            height: '100%',
-            width: '100%',
-        })
-        .withConversationOptions({
-            historyPayloadSize: 0, // we manage history server-side
-            layout: 'bubbles',
-        })
-        .withComposerOptions({
-            placeholder: 'message ' + agent + '...',
-            autoFocus: true,
-        })
+        .withDisplayOptions({ colorScheme: 'dark', height: '100%', width: '100%' })
+        .withConversationOptions({ historyPayloadSize: 0, layout: 'bubbles' })
+        .withComposerOptions({ placeholder: 'message ' + agent + '...', autoFocus: true })
         .withPersonaOptions({
             assistant: {
                 name: agent,
                 avatar: 'https://ui-avatars.com/api/?name=' + agent.charAt(0).toUpperCase() + '&background=e94560&color=fff&size=32',
             },
         })
-        .withMessageOptions({
-            waitTimeBeforeStreamCompletion: 'never',
-        });
+        .withMessageOptions({ waitTimeBeforeStreamCompletion: 'never' });
 
     if (initialMessages && initialMessages.length > 0) {
         chat = chat.withInitialConversation(initialMessages);
@@ -562,22 +648,14 @@ function mountNlux(agent, initialMessages) {
 }
 
 function destroyChat() {
-    if (chatInstance) {
-        chatInstance.unmount();
-        chatInstance = null;
-    }
-    if (chatWs) {
-        chatWs.close();
-        chatWs = null;
-    }
+    if (chatInstance) { chatInstance.unmount(); chatInstance = null; }
+    if (chatWs) { chatWs.close(); chatWs = null; }
     chatSessionId = null;
     chatObserver = null;
     chatContainer.innerHTML = '';
 }
 
-// ========================
-// Terminal (xterm.js)
-// ========================
+// === Terminal (xterm.js) ===
 
 function initTerminal() {
     term = new Terminal({
@@ -605,10 +683,7 @@ function initTerminal() {
             document.querySelector('[data-key="ctrl"]').classList.remove('active');
             if (data.length === 1) {
                 var code = data.toUpperCase().charCodeAt(0) - 64;
-                if (code >= 0 && code <= 31) {
-                    sendPTYInput(String.fromCharCode(code));
-                    return;
-                }
+                if (code >= 0 && code <= 31) { sendPTYInput(String.fromCharCode(code)); return; }
             }
         }
         if (altActive) {
@@ -619,9 +694,12 @@ function initTerminal() {
         }
         sendPTYInput(data);
     });
-}
 
-var TERM_BUF_PREFIX = 'wt_termbuf_';
+    // Bell = notification
+    term.onBell(function() {
+        if (ptySessionId) setNotification(ptySessionId);
+    });
+}
 
 function saveTermBuffer() {
     if (!ptySessionId || !serializeAddon) return;
@@ -629,7 +707,6 @@ function saveTermBuffer() {
     saveBufferTimer = setTimeout(function () {
         try {
             var data = serializeAddon.serialize();
-            // Cap at 200KB to avoid localStorage bloat
             if (data.length > 200000) data = data.slice(-200000);
             localStorage.setItem(TERM_BUF_PREFIX + ptySessionId, data);
         } catch (e) {}
@@ -639,9 +716,7 @@ function saveTermBuffer() {
 function restoreTermBuffer(sessionId) {
     try {
         var data = localStorage.getItem(TERM_BUF_PREFIX + sessionId);
-        if (data && term) {
-            term.write(data);
-        }
+        if (data && term) term.write(data);
     } catch (e) {}
 }
 
@@ -651,16 +726,14 @@ function clearTermBuffer(sessionId) {
 
 function sendPTYInput(text) {
     if (!ptyWs || ptyWs.readyState !== WebSocket.OPEN || !ptySessionId) return;
+    clearNotification(ptySessionId);
     e2eEncrypt(text).then(function (encoded) {
-        ptyWs.send(JSON.stringify({
-            type: 'pty.input',
-            session_id: ptySessionId,
-            data: encoded,
-        }));
+        ptyWs.send(JSON.stringify({ type: 'pty.input', session_id: ptySessionId, data: encoded }));
     });
 }
 
-// E2E crypto
+// === E2E Crypto ===
+
 function b64ToBytes(b64) {
     return Uint8Array.from(atob(b64), function(c) { return c.charCodeAt(0); });
 }
@@ -712,34 +785,35 @@ async function e2eDecrypt(encoded) {
     return new Uint8Array(plaintext);
 }
 
+// === PTY WebSocket ===
+
 function setupPTYHandlers(ws, reattach) {
     ws.onmessage = function (e) {
         var msg = JSON.parse(e.data);
         switch (msg.type) {
             case 'pty.started':
                 ptySessionId = msg.session_id;
+                var sessionCWD = msg.cwd || '';
+                var pName = projectName(sessionCWD);
+                headerTitle.textContent = pName !== '~' ? pName + ' \u00b7 ' + msg.agent : msg.agent;
+
                 if (msg.public_key) {
                     deriveE2EKey(msg.public_key).then(function (key) {
                         e2eKey = key;
-                        ptyStatus.textContent = msg.agent + (key ? ' (encrypted)' : ' (live)');
-                    }).catch(function () {
-                        ptyStatus.textContent = msg.agent + ' (live)';
-                    });
+                        ptyStatus.textContent = key ? '\uD83D\uDD12' : '';
+                    }).catch(function () { ptyStatus.textContent = ''; });
                 } else {
-                    ptyStatus.textContent = msg.agent + ' (live)';
+                    ptyStatus.textContent = '';
                 }
-                disconnectBtn.style.display = '';
+
                 if (!reattach) term.clear();
                 term.focus();
+                renderSidebar();
+                loadHome();
 
                 term.onResize(function (size) {
                     if (ptyWs && ptyWs.readyState === WebSocket.OPEN && ptySessionId) {
-                        ptyWs.send(JSON.stringify({
-                            type: 'pty.resize',
-                            session_id: ptySessionId,
-                            cols: size.cols,
-                            rows: size.rows,
-                        }));
+                        ptyWs.send(JSON.stringify({ type: 'pty.resize', session_id: ptySessionId, cols: size.cols, rows: size.rows }));
                     }
                 });
                 fitAddon.fit();
@@ -749,6 +823,13 @@ function setupPTYHandlers(ws, reattach) {
                 e2eDecrypt(msg.data).then(function (bytes) {
                     term.write(bytes);
                     saveTermBuffer();
+                    // Check for notification patterns
+                    try {
+                        var text = new TextDecoder().decode(bytes);
+                        if (checkForNotification(text)) {
+                            setNotification(msg.session_id || ptySessionId);
+                        }
+                    } catch (ex) {}
                 }).catch(function (err) {
                     console.error('decrypt error:', err);
                     var binary = atob(msg.data);
@@ -760,13 +841,16 @@ function setupPTYHandlers(ws, reattach) {
                 break;
 
             case 'pty.exited':
-                ptyStatus.textContent = 'exited (code ' + msg.exit_code + ')';
+                headerTitle.textContent = '';
+                ptyStatus.textContent = 'exited';
                 if (msg.session_id) clearTermBuffer(msg.session_id);
+                clearNotification(msg.session_id);
                 ptySessionId = null;
                 e2eKey = null;
                 ephemeralPrivKey = null;
-                disconnectBtn.style.display = 'none';
-                term.writeln('\r\n\x1b[1;31m--- session ended ---\x1b[0m');
+                term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
+                renderSidebar();
+                loadHome();
                 break;
 
             case 'error':
@@ -776,21 +860,22 @@ function setupPTYHandlers(ws, reattach) {
     };
 
     ws.onclose = function () {
-        ptyStatus.textContent = 'disconnected';
+        ptyStatus.textContent = '';
         ptySessionId = null;
-        disconnectBtn.style.display = 'none';
+        renderSidebar();
     };
 
     ws.onerror = function () {
-        ptyStatus.textContent = 'connection error';
+        ptyStatus.textContent = 'error';
     };
 }
 
-function connectPTY(agent) {
+function connectPTY(agent, cwd) {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
 
-    ptyStatus.textContent = 'connecting...';
+    headerTitle.textContent = 'connecting...';
+    ptyStatus.textContent = '';
 
     ephemeralPrivKey = x25519.utils.randomSecretKey();
     var ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
@@ -798,16 +883,17 @@ function connectPTY(agent) {
     e2eKey = null;
 
     ptyWs = new WebSocket(url);
-
     ptyWs.onopen = function () {
-        ptyStatus.textContent = 'starting ' + agent + '...';
-        ptyWs.send(JSON.stringify({
+        headerTitle.textContent = 'starting ' + agent + '...';
+        var startMsg = {
             type: 'pty.start',
             agent: agent,
             cols: term.cols,
             rows: term.rows,
             public_key: pubKeyB64,
-        }));
+        };
+        if (cwd) startMsg.cwd = cwd;
+        ptyWs.send(JSON.stringify(startMsg));
     };
 
     setupPTYHandlers(ptyWs, false);
@@ -817,11 +903,14 @@ function attachPTY(sessionId) {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
 
-    // Restore last known terminal content instantly
     term.clear();
     restoreTermBuffer(sessionId);
+    clearNotification(sessionId);
 
-    ptyStatus.textContent = 'reconnecting...';
+    // Find session info for header
+    var sess = sessionsData.find(function(s) { return s.id === sessionId; });
+    headerTitle.textContent = sess ? projectName(sess.cwd) + ' \u00b7 ' + (sess.agent || '?') : 'reconnecting...';
+    ptyStatus.textContent = '';
 
     ephemeralPrivKey = x25519.utils.randomSecretKey();
     var ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
@@ -829,14 +918,8 @@ function attachPTY(sessionId) {
     e2eKey = null;
 
     ptyWs = new WebSocket(url);
-
     ptyWs.onopen = function () {
-        ptyStatus.textContent = 'reattaching...';
-        ptyWs.send(JSON.stringify({
-            type: 'pty.attach',
-            session_id: sessionId,
-            public_key: pubKeyB64,
-        }));
+        ptyWs.send(JSON.stringify({ type: 'pty.attach', session_id: sessionId, public_key: pubKeyB64 }));
     };
 
     setupPTYHandlers(ptyWs, true);
@@ -844,21 +927,17 @@ function attachPTY(sessionId) {
 
 function disconnectPTY() {
     if (ptyWs && ptyWs.readyState === WebSocket.OPEN && ptySessionId) {
-        ptyWs.send(JSON.stringify({
-            type: 'pty.kill',
-            session_id: ptySessionId,
-        }));
+        ptyWs.send(JSON.stringify({ type: 'pty.kill', session_id: ptySessionId }));
     }
-    if (ptyWs) {
-        ptyWs.close();
-        ptyWs = null;
-    }
+    if (ptyWs) { ptyWs.close(); ptyWs = null; }
     ptySessionId = null;
     e2eKey = null;
     ephemeralPrivKey = null;
-    disconnectBtn.style.display = 'none';
-    ptyStatus.textContent = 'disconnected';
+    ptyStatus.textContent = '';
+    headerTitle.textContent = '';
 }
+
+// === Helpers ===
 
 function escapeHtml(str) {
     var div = document.createElement('div');
