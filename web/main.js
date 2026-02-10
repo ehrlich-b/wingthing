@@ -458,7 +458,7 @@ function connectPTY(agent) {
 
     ptyStatus.textContent = 'connecting...';
 
-    ephemeralPrivKey = x25519.utils.randomPrivateKey();
+    ephemeralPrivKey = x25519.utils.randomSecretKey();
     var ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
     var pubKeyB64 = bytesToB64(ephemeralPubKey);
     e2eKey = null;
@@ -485,7 +485,7 @@ function attachPTY(sessionId) {
 
     ptyStatus.textContent = 'reconnecting...';
 
-    ephemeralPrivKey = x25519.utils.randomPrivateKey();
+    ephemeralPrivKey = x25519.utils.randomSecretKey();
     var ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
     var pubKeyB64 = bytesToB64(ephemeralPubKey);
     e2eKey = null;
