@@ -4,9 +4,11 @@
 .hero{padding:28px 0 20px}
 .hero h1{font-size:26px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
 .hero .tagline{color:var(--text-dim);font-size:15px;line-height:1.5;max-width:540px}
-.install{margin:0 0 24px;background:var(--bg-card);border-radius:6px;padding:14px 20px;font-size:13px;font-family:var(--mono);overflow-x:auto}
+.install{margin:0 0 24px;background:var(--bg-card);border-radius:6px;padding:14px 20px;font-size:13px;font-family:var(--mono);overflow-x:auto;position:relative}
 .install .prompt{color:var(--text-dim);user-select:none}
 .install .cmd{color:var(--text)}
+.install-copy{position:absolute;top:8px;right:8px;background:var(--accent);border:none;color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:3px;cursor:pointer}
+.install-copy:hover{color:var(--text);background:var(--action)}
 .pitch{display:flex;flex-direction:column;gap:10px;margin-bottom:20px}
 .pitch-item{display:flex;gap:12px;align-items:baseline}
 .pitch-item .label{color:var(--action);font-size:11px;font-weight:600;min-width:90px;flex-shrink:0;text-transform:uppercase;letter-spacing:0.05em;font-family:var(--mono)}
@@ -37,6 +39,7 @@
 <p class="tagline">One CLI, every backend. New agent framework, no problem — we support it the next day.</p>
 </div>
 <div class="install">
+<button class="install-copy" onclick="navigator.clipboard.writeText('curl -fsSL https://wingthing.ai/install.sh | sh')">copy</button>
 <span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span>
 </div>
 <div class="example">

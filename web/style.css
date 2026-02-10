@@ -431,10 +431,74 @@ body {
 }
 
 #palette-status .accent { color: var(--accent); }
+#palette-status .palette-waiting-text { color: var(--text-muted); font-style: italic; }
 
 #palette-hints {
     font-size: 10px;
     cursor: pointer;
+}
+
+/* Palette waiting state */
+
+.palette-waiting #palette-search {
+    color: var(--text-muted);
+    cursor: default;
+}
+
+.palette-waiting #palette-search::placeholder { color: var(--text-muted); opacity: 0.4; }
+
+.palette-waiting-msg {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.palette-waiting-msg code {
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: var(--accent);
+    font-size: 12px;
+}
+
+.waiting-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--yellow);
+    margin: 0 auto 12px;
+    animation: dot-breathe 2s ease-in-out infinite;
+}
+
+.palette-waiting-hint {
+    font-size: 11px;
+    margin-top: 8px;
+    color: var(--text-muted);
+}
+
+.palette-waiting-hint a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.palette-waiting-hint a:hover { text-decoration: underline; }
+
+@keyframes dot-breathe {
+    0%, 100% { opacity: 0.3; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* Wake-up flash when wing connects while palette is open */
+
+.palette-awake {
+    animation: palette-flash 0.8s ease-out;
+}
+
+@keyframes palette-flash {
+    0% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0.6); }
+    40% { box-shadow: 0 0 30px 8px rgba(233, 69, 96, 0.3); }
+    100% { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
 }
 
 /* === Terminal === */

@@ -27,12 +27,23 @@
 </div>
 
 <div class="sh-section">
-<h2>from source</h2>
+<h2>quick start</h2>
+<p><code>--local</code> runs single-user mode: no OAuth, no env vars, no login page. Just works.</p>
 <div class="sh-code">
 <span class="prompt">$ </span><span class="cmd">git clone https://github.com/ehrlich-b/wingthing.git</span><br>
-<span class="prompt">$ </span><span class="cmd">cd wingthing && make check</span><br>
-<span class="prompt">$ </span><span class="cmd">./wt serve --addr :8080</span>
+<span class="prompt">$ </span><span class="cmd">cd wingthing && make build</span><br>
+<span class="prompt">$ </span><span class="cmd">./wt serve --local</span>
 </div>
+<p>Open <a href="http://localhost:8080">localhost:8080</a>. You're logged in automatically.</p>
+</div>
+
+<div class="sh-section">
+<h2>connect a wing</h2>
+<p>In another terminal, point a wing at your local relay:</p>
+<div class="sh-code">
+<span class="prompt">$ </span><span class="cmd">./wt wing --relay http://localhost:8080</span>
+</div>
+<p>In local mode the device token is written automatically — no <code>wt login</code> needed.</p>
 </div>
 
 <div class="sh-section">
@@ -52,12 +63,12 @@
 </div>
 
 <div class="sh-section">
-<h2>connect a wing</h2>
-<p>Point your wing at your self-hosted relay:</p>
+<h2>multi-user (production)</h2>
+<p>For shared relays, set up GitHub OAuth and run without <code>--local</code>:</p>
 <div class="sh-code">
-<span class="prompt">$ </span><span class="cmd">wt login --relay https://my-relay.example.com</span><br>
-<span class="prompt">$ </span><span class="cmd">wt wing --relay https://my-relay.example.com</span>
+<span class="prompt">$ </span><span class="cmd">./wt serve --addr :8080</span>
 </div>
+<p>Then connect wings with <code>wt login --relay https://my-relay.example.com</code>.</p>
 </div>
 
 <div class="sh-section">
@@ -84,6 +95,6 @@
 <tr><td>WT_APP_HOST</td><td>hostname for app subdomain (e.g. app.example.com)</td></tr>
 <tr><td>WT_WS_HOST</td><td>hostname for WebSocket subdomain (e.g. ws.example.com)</td></tr>
 </table>
-<p>Without OAuth env vars, the server boots in read-only mode. Social feed and skills pages work, but login and posting are disabled.</p>
+<p>Without OAuth env vars, use <code>--local</code> for single-user mode. Without <code>--local</code> or OAuth, the server boots read-only.</p>
 </div>
 {{end}}

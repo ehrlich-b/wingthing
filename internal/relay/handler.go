@@ -44,17 +44,19 @@ func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// In dev mode, auto-claim with a dev social user so login works without OAuth
+	// In dev/local mode, auto-claim so login works without OAuth
 	if s.DevMode {
 		devUser, err := s.Store.CreateSocialUserDev()
 		if err == nil {
 			s.Store.ClaimDeviceCode(deviceCode, devUser.ID)
 		}
+	} else if s.LocalMode && s.localUser != nil {
+		s.Store.ClaimDeviceCode(deviceCode, s.localUser.ID)
 	}
 
 	verificationURL := fmt.Sprintf("%s/auth/claim?code=%s", s.Config.BaseURL, userCode)
 	interval := 5
-	if s.DevMode {
+	if s.DevMode || s.LocalMode {
 		interval = 1
 	}
 

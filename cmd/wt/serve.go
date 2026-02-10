@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/embedding"
 	"github.com/ehrlich-b/wingthing/internal/relay"
@@ -25,6 +26,7 @@ func serveCmd() *cobra.Command {
 	var addrFlag string
 	var spacesFlag string
 	var devFlag bool
+	var localFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -104,6 +106,22 @@ func serveCmd() *cobra.Command {
 				srv.DevMode = true
 				fmt.Println("dev mode: templates reload, auto-claim login")
 			}
+			if localFlag {
+				user, token, err := store.CreateLocalUser()
+				if err != nil {
+					return fmt.Errorf("setup local user: %w", err)
+				}
+				srv.LocalMode = true
+				srv.SetLocalUser(user)
+
+				// Write device token so `wt wing` can connect without `wt login`
+				ts := auth.NewTokenStore(cfg.Dir)
+				ts.Save(&auth.DeviceToken{
+					Token:    token,
+					DeviceID: "local",
+				})
+				fmt.Println("local mode: auth bypassed, device token written")
+			}
 			relay.StartSidebarRefresh(store, 10*time.Minute)
 
 			httpSrv := &http.Server{
@@ -136,6 +154,7 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&addrFlag, "addr", ":8080", "listen address")
 	cmd.Flags().StringVar(&spacesFlag, "spaces", "", "path to spaces.yaml (default: spaces.yaml)")
 	cmd.Flags().BoolVar(&devFlag, "dev", false, "reload templates from disk on each request")
+	cmd.Flags().BoolVar(&localFlag, "local", false, "single-user mode, no login required")
 
 	return cmd
 }

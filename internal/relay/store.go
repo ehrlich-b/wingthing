@@ -280,6 +280,47 @@ func (s *RelayStore) CreateSocialUserDev() (*SocialUser, error) {
 	return u, nil
 }
 
+// CreateLocalUser creates the local-mode user and a non-expiring device token.
+// Returns the social user, device token string, and whether the user already existed.
+func (s *RelayStore) CreateLocalUser() (*SocialUser, string, error) {
+	const localUserID = "local"
+
+	u, err := s.GetSocialUserByProvider("local", "local")
+	if err != nil {
+		return nil, "", err
+	}
+	if u == nil {
+		u = &SocialUser{
+			ID:          localUserID,
+			Provider:    "local",
+			ProviderID:  "local",
+			DisplayName: "local",
+		}
+		if err := s.UpsertSocialUser(u); err != nil {
+			return nil, "", err
+		}
+		// Also create a relay user for device token validation
+		_ = s.CreateUser(localUserID)
+	}
+
+	// Check for existing device token
+	var existing string
+	err = s.db.QueryRow(
+		"SELECT token FROM device_tokens WHERE user_id = ? AND device_id = 'local'",
+		localUserID,
+	).Scan(&existing)
+	if err == nil {
+		return u, existing, nil
+	}
+
+	// Create non-expiring device token
+	token := generateToken()
+	if err := s.CreateDeviceToken(token, localUserID, "local", nil); err != nil {
+		return nil, "", fmt.Errorf("create local device token: %w", err)
+	}
+	return u, token, nil
+}
+
 // GetDeviceCodeByUserCode finds a device code by user_code.
 func (s *RelayStore) GetDeviceCodeByUserCode(userCode string) (*DeviceCodeRow, error) {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
