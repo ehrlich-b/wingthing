@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/embedding"
 	"github.com/ehrlich-b/wingthing/web"
@@ -38,6 +39,11 @@ type Server struct {
 	Chat           *ChatRegistry
 	Bandwidth      *BandwidthMeter
 	mux            *http.ServeMux
+
+	// Latest release version cache (fetched from GitHub)
+	latestVersion   string
+	latestVersionAt time.Time
+	latestVersionMu sync.RWMutex
 
 	// Stream subscribers: taskID → list of channels receiving output chunks
 	streamMu   sync.RWMutex

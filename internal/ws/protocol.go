@@ -63,8 +63,9 @@ type Envelope struct {
 
 // WingProject is a project directory discovered on the wing.
 type WingProject struct {
-	Name string `json:"name"` // directory name (e.g. "wingthing")
-	Path string `json:"path"` // absolute path (e.g. "/Users/ehrlich/repos/wingthing")
+	Name    string `json:"name"`               // directory name (e.g. "wingthing")
+	Path    string `json:"path"`               // absolute path (e.g. "/Users/ehrlich/repos/wingthing")
+	ModTime int64  `json:"mod_time,omitempty"` // unix timestamp of last modification
 }
 
 // WingRegister is sent by the wing on connect.
@@ -72,6 +73,7 @@ type WingRegister struct {
 	Type       string        `json:"type"`
 	MachineID  string        `json:"machine_id"`
 	Platform   string        `json:"platform,omitempty"` // runtime.GOOS (e.g. "darwin", "linux")
+	Version    string        `json:"version,omitempty"`  // build version (e.g. "v0.7.35")
 	Agents     []string      `json:"agents"`
 	Skills     []string      `json:"skills"`
 	Labels     []string      `json:"labels"`

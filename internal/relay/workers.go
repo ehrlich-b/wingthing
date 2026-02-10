@@ -22,6 +22,7 @@ type ConnectedWing struct {
 	UserID     string
 	MachineID  string
 	Platform   string // runtime.GOOS from wing
+	Version    string // build version from wing
 	PublicKey  string
 	Agents     []string
 	Skills     []string
@@ -38,6 +39,7 @@ type WingEvent struct {
 	WingID    string           `json:"wing_id"`
 	MachineID string           `json:"machine_id"`
 	Platform  string           `json:"platform,omitempty"`
+	Version   string           `json:"version,omitempty"`
 	Agents    []string         `json:"agents,omitempty"`
 	Labels    []string         `json:"labels,omitempty"`
 	PublicKey string           `json:"public_key,omitempty"`
@@ -158,6 +160,7 @@ func (r *WingRegistry) Add(w *ConnectedWing) {
 		WingID:    w.ID,
 		MachineID: w.MachineID,
 		Platform:  w.Platform,
+		Version:   w.Version,
 		Agents:    w.Agents,
 		Labels:    w.Labels,
 		PublicKey: w.PublicKey,
@@ -315,6 +318,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		UserID:     userID,
 		MachineID:  reg.MachineID,
 		Platform:   reg.Platform,
+		Version:    reg.Version,
 		PublicKey:  wingPublicKey,
 		Agents:     reg.Agents,
 		Skills:     reg.Skills,

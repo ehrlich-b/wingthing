@@ -26,6 +26,7 @@ let sessionNotifications = {};
 let activeView = 'home';
 let titleFlashTimer = null;
 let appWs = null;
+let latestVersion = '';
 
 // Chat state
 let chatWs = null;
@@ -276,6 +277,39 @@ function sortSessionsByOrder(sessions) {
     return known.concat(unknown);
 }
 
+// === Browser identity key ===
+
+var IDENTITY_PUBKEY_KEY = 'wt_identity_pubkey';
+var IDENTITY_PRIVKEY_KEY = 'wt_identity_privkey';
+
+function getOrCreateIdentityKey() {
+    try {
+        var stored = localStorage.getItem(IDENTITY_PUBKEY_KEY);
+        if (stored) return stored;
+        var priv = x25519.utils.randomSecretKey();
+        localStorage.setItem(IDENTITY_PRIVKEY_KEY, bytesToB64(priv));
+        var pub = bytesToB64(x25519.getPublicKey(priv));
+        localStorage.setItem(IDENTITY_PUBKEY_KEY, pub);
+        return pub;
+    } catch (e) { return ''; }
+}
+
+var identityPubKey = getOrCreateIdentityKey();
+
+// === Copyable helper ===
+
+function setupCopyable(container) {
+    container.querySelectorAll('.copyable').forEach(function(el) {
+        el.style.cursor = 'pointer';
+        el.addEventListener('click', function() {
+            navigator.clipboard.writeText(el.dataset.copy || el.textContent);
+            var orig = el.textContent;
+            el.textContent = 'copied';
+            setTimeout(function() { el.textContent = orig; }, 1200);
+        });
+    });
+}
+
 // === Dashboard WebSocket (real-time wing status) ===
 
 function connectAppWS() {
@@ -302,6 +336,7 @@ function applyWingEvent(ev) {
                 w.agents = ev.agents || w.agents;
                 w.labels = ev.labels || w.labels;
                 w.platform = ev.platform || w.platform;
+                w.version = ev.version || w.version;
                 w.public_key = ev.public_key || w.public_key;
                 w.projects = ev.projects || w.projects;
                 found = true;
@@ -313,6 +348,7 @@ function applyWingEvent(ev) {
                 id: ev.wing_id,
                 machine_id: ev.machine_id,
                 platform: ev.platform || '',
+                version: ev.version || '',
                 online: true,
                 agents: ev.agents || [],
                 labels: ev.labels || [],
@@ -330,7 +366,7 @@ function applyWingEvent(ev) {
 
     rebuildAgentLists();
     setCachedWings(wingsData.map(function(w) {
-        return { machine_id: w.machine_id, id: w.id, platform: w.platform, agents: w.agents, labels: w.labels, projects: w.projects };
+        return { machine_id: w.machine_id, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects };
     }));
     if (activeView === 'home') {
         renderDashboard();
@@ -418,9 +454,14 @@ async function loadHome() {
     });
     wingsData = sortWingsByOrder(Object.values(merged));
 
+    // Extract latest_version from any wing response
+    wingsData.forEach(function(w) {
+        if (w.latest_version) latestVersion = w.latest_version;
+    });
+
     // Cache for next load (only essential fields)
     setCachedWings(wingsData.map(function (w) {
-        return { machine_id: w.machine_id, id: w.id, platform: w.platform, agents: w.agents, labels: w.labels, projects: w.projects };
+        return { machine_id: w.machine_id, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects };
     }));
 
     rebuildAgentLists();
@@ -688,21 +729,66 @@ function showWingDetail(machineId) {
     var w = wingsData.find(function(w) { return w.machine_id === machineId; });
     if (!w) return;
     var name = w.machine_id || w.id.substring(0, 8);
-    var projList = (w.projects || []).map(function(p) {
+    var isOnline = w.online !== false;
+    var dotClass = isOnline ? 'live' : 'offline';
+
+    // Wing ID: truncated to 8 chars, copyable
+    var wingIdShort = w.id ? w.id.substring(0, 8) + '...' : 'none';
+    var wingIdHtml = w.id
+        ? '<span class="detail-val text-dim copyable" data-copy="' + escapeHtml(w.id) + '">' + escapeHtml(wingIdShort) + '</span>'
+        : '<span class="detail-val text-dim">none</span>';
+
+    // Version with update hint
+    var versionHtml = escapeHtml(w.version || 'unknown');
+    var updateAvailable = latestVersion && w.version && w.version !== latestVersion;
+    if (updateAvailable) {
+        versionHtml += '<span class="detail-update-hint">(update available)</span>';
+    }
+
+    // Public key: truncated to 16 chars, copyable
+    var pubKeyHtml;
+    if (w.public_key) {
+        var pubKeyShort = w.public_key.substring(0, 16) + '...';
+        pubKeyHtml = '<span class="detail-val text-dim copyable" data-copy="' + escapeHtml(w.public_key) + '">' + escapeHtml(pubKeyShort) + '</span>';
+    } else {
+        pubKeyHtml = '<span class="detail-val text-dim">none</span>';
+    }
+
+    // My key (browser identity)
+    var myKeyHtml;
+    if (identityPubKey) {
+        var myKeyShort = identityPubKey.substring(0, 16) + '...';
+        myKeyHtml = '<span class="detail-val text-dim copyable" data-copy="' + escapeHtml(identityPubKey) + '">' + escapeHtml(myKeyShort) + '</span>';
+    } else {
+        myKeyHtml = '<span class="detail-val text-dim">none</span>';
+    }
+
+    // Projects: sorted by mod_time desc, show first 8
+    var projects = (w.projects || []).slice();
+    projects.sort(function(a, b) { return (b.mod_time || 0) - (a.mod_time || 0); });
+    var maxProjects = 8;
+    var visibleProjects = projects.slice(0, maxProjects);
+    var projList = visibleProjects.map(function(p) {
         return '<div class="detail-subitem">' + escapeHtml(p.name) + ' <span class="text-dim">' + escapeHtml(shortenPath(p.path)) + '</span></div>';
-    }).join('') || '<span class="text-dim">none</span>';
-    var pubKeyShort = w.public_key ? w.public_key.substring(0, 16) + '...' : 'none';
+    }).join('');
+    if (projects.length > maxProjects) {
+        projList += '<div class="detail-projects-more">+' + (projects.length - maxProjects) + ' more</div>';
+    }
+    if (!projList) projList = '<span class="text-dim">none</span>';
 
     detailDialog.innerHTML =
-        '<h3>' + escapeHtml(name) + '</h3>' +
-        '<div class="detail-row"><span class="detail-key">wing id</span><span class="detail-val text-dim">' + escapeHtml(w.id || '') + '</span></div>' +
+        '<h3><span class="detail-connection-dot ' + dotClass + '"></span>' + escapeHtml(name) + '</h3>' +
+        '<div class="detail-row"><span class="detail-key">wing id</span>' + wingIdHtml + '</div>' +
         '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(w.platform || 'unknown') + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">version</span><span class="detail-val">' + versionHtml + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + escapeHtml((w.agents || []).join(', ') || 'none') + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">labels</span><span class="detail-val">' + escapeHtml((w.labels || []).join(', ') || 'none') + '</span></div>' +
-        '<div class="detail-row"><span class="detail-key">public key</span><span class="detail-val text-dim">' + escapeHtml(pubKeyShort) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">public key</span>' + pubKeyHtml + '</div>' +
+        '<div class="detail-row"><span class="detail-key">my key</span>' + myKeyHtml + '</div>' +
         '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>' +
-        (w.online !== false ? '<div class="detail-actions"><button class="btn-sm btn-accent" id="detail-wing-update">update wing</button></div>' : '');
+        (isOnline && updateAvailable ? '<div class="detail-actions"><button class="btn-sm btn-accent" id="detail-wing-update">update wing</button></div>' : '');
 
+    setupCopyable(detailDialog);
     detailOverlay.classList.add('open');
 
     var updateBtn = document.getElementById('detail-wing-update');
