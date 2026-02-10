@@ -276,11 +276,19 @@ func wingCmd() *cobra.Command {
 			}
 
 			client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
-				if eggClient == nil {
-					write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
-					return
+				ec := eggClient
+				if ec == nil {
+					// Try to start egg if it wasn't available at boot
+					var err error
+					ec, err = ensureEgg(cfg)
+					if err != nil {
+						log.Printf("pty: egg unavailable: %v", err)
+						write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+						return
+					}
+					eggClient = ec
 				}
-				handlePTYSession(ctx, cfg, eggClient, start, write, input)
+				handlePTYSession(ctx, cfg, ec, start, write, input)
 			}
 
 			client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
@@ -713,19 +721,32 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, s
 		}
 	}
 
-	// Spawn in egg
-	spawnResp, err := ec.Spawn(ctx, &pb.SpawnRequest{
+	// Spawn in egg (retry once if egg died)
+	spawnReq := &pb.SpawnRequest{
 		SessionId: start.SessionID,
 		Agent:     start.Agent,
 		Cwd:       start.CWD,
 		Rows:      uint32(start.Rows),
 		Cols:      uint32(start.Cols),
 		Env:       envMap,
-	})
+	}
+	spawnResp, err := ec.Spawn(ctx, spawnReq)
 	if err != nil {
-		log.Printf("pty: egg spawn failed: %v", err)
-		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
-		return
+		log.Printf("pty: egg spawn failed, restarting egg: %v", err)
+		ec.Close()
+		newEC, ensureErr := ensureEgg(cfg)
+		if ensureErr != nil {
+			log.Printf("pty: egg restart failed: %v", ensureErr)
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+			return
+		}
+		ec = newEC
+		spawnResp, err = ec.Spawn(ctx, spawnReq)
+		if err != nil {
+			log.Printf("pty: egg spawn retry failed: %v", err)
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+			return
+		}
 	}
 
 	log.Printf("pty session %s: spawned in egg (pid %d)", start.SessionID, spawnResp.Pid)

@@ -307,7 +307,7 @@ function applyWingEvent(ev) {
         pingWingDot(ev.machine_id);
     }
     if (commandPalette.style.display !== 'none') {
-        updatePaletteState();
+        updatePaletteState(true);
     }
 }
 
@@ -385,7 +385,7 @@ async function loadHome() {
 
     // Refresh palette if open (wing may have come online)
     if (commandPalette.style.display !== 'none') {
-        updatePaletteState();
+        updatePaletteState(true);
     }
 }
 
@@ -662,7 +662,7 @@ function showPalette() {
     updatePaletteState();
 }
 
-function updatePaletteState() {
+function updatePaletteState(isOpen) {
     var online = onlineWings();
     var alive = online.length > 0;
     var wasWaiting = paletteDialog.classList.contains('palette-waiting');
@@ -676,15 +676,20 @@ function updatePaletteState() {
             setTimeout(function() { paletteDialog.classList.remove('palette-awake'); }, 800);
             paletteSearch.focus();
         }
-        var agents = currentPaletteAgents();
-        var last = getLastTermAgent();
-        var idx = agents.indexOf(last);
-        paletteAgentIndex = idx >= 0 ? idx : 0;
+        // Only reset agent selection when palette first opens, not on background updates
+        if (!isOpen) {
+            var agents = currentPaletteAgents();
+            var last = paletteMode === 'chat' ? getLastChatAgent() : getLastTermAgent();
+            var idx = agents.indexOf(last);
+            paletteAgentIndex = idx >= 0 ? idx : 0;
+        }
         renderPaletteStatus();
-        if (paletteMode === 'chat') {
-            paletteResults.innerHTML = '<div class="palette-empty">enter to start chat</div>';
-        } else {
-            renderPaletteResults(paletteSearch.value);
+        if (!isOpen) {
+            if (paletteMode === 'chat') {
+                paletteResults.innerHTML = '<div class="palette-empty">enter to start chat</div>';
+            } else {
+                renderPaletteResults(paletteSearch.value);
+            }
         }
     } else {
         paletteStatus.innerHTML = '<span class="palette-waiting-text">no wings online</span>';
