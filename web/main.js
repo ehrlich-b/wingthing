@@ -539,44 +539,22 @@ function renderDashboard() {
             var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
-            var detailParts = [];
-            if (plat) detailParts.push(plat);
-            if (projectCount) detailParts.push(projectCount + ' proj');
-            var updateBtn = w.online !== false
-                ? '<button class="btn-sm wing-update-btn" data-wing-id="' + escapeHtml(w.id) + '">update</button>'
-                : '';
             return '<div class="wing-box" draggable="true" data-machine-id="' + escapeHtml(w.machine_id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
                     '<span class="wing-name">' + escapeHtml(name) + '</span>' +
                 '</div>' +
                 '<span class="wing-agents">' + escapeHtml((w.agents || []).join(', ')) + '</span>' +
-                (detailParts.length ? '<span class="wing-detail">' + escapeHtml(detailParts.join(' \u00b7 ')) + '</span>' : '') +
-                updateBtn +
+                '<div class="wing-statusbar">' +
+                    '<span>' + escapeHtml(plat) + '</span>' +
+                    (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>') +
+                '</div>' +
             '</div>';
         }).join('');
         wingHtml += '</div>';
         wingStatusEl.innerHTML = wingHtml;
 
         setupWingDrag();
-
-        wingStatusEl.querySelectorAll('.wing-update-btn').forEach(function(btn) {
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                var wingId = btn.dataset.wingId;
-                btn.disabled = true;
-                btn.textContent = 'updating...';
-                fetch('/api/app/wings/' + wingId + '/update', { method: 'POST' })
-                    .then(function(r) {
-                        btn.textContent = r.ok ? 'sent' : 'failed';
-                        setTimeout(function() { btn.textContent = 'update'; btn.disabled = false; }, 3000);
-                    })
-                    .catch(function() {
-                        btn.textContent = 'failed';
-                        setTimeout(function() { btn.textContent = 'update'; btn.disabled = false; }, 3000);
-                    });
-            });
-        });
     } else {
         wingStatusEl.innerHTML = '';
     }
@@ -1266,22 +1244,70 @@ function saveTermBuffer() {
     }, 500);
 }
 
+var ANSI_PALETTE = [
+    '#000','#c33','#3c3','#cc3','#33c','#c3c','#3cc','#ccc',
+    '#888','#f66','#6f6','#ff6','#66f','#f6f','#6ff','#fff'
+];
+
+function cellFgColor(cell) {
+    if (cell.isFgDefault()) return '#eee';
+    if (cell.isFgRGB()) {
+        var c = cell.getFgColor();
+        return '#' + ((c >> 16) & 0xff).toString(16).padStart(2, '0') +
+               ((c >> 8) & 0xff).toString(16).padStart(2, '0') +
+               (c & 0xff).toString(16).padStart(2, '0');
+    }
+    if (cell.isFgPalette()) {
+        var idx = cell.getFgColor();
+        if (idx < 16) return ANSI_PALETTE[idx];
+        return '#eee';
+    }
+    return '#eee';
+}
+
 function saveTermThumb() {
-    if (!ptySessionId) return;
-    var canvases = terminalContainer.querySelectorAll('canvas');
-    if (!canvases.length) return;
+    if (!ptySessionId || !term) return;
     try {
+        var W = 480, H = 260;
         var c = document.createElement('canvas');
-        c.width = 480; c.height = 260;
+        c.width = W; c.height = H;
         var ctx = c.getContext('2d');
         ctx.fillStyle = '#1a1a2e';
-        ctx.fillRect(0, 0, 480, 260);
-        // Composite all xterm canvas layers (text, cursor, selection)
-        canvases.forEach(function(src) {
-            if (src.width > 0 && src.height > 0) {
-                ctx.drawImage(src, 0, 0, 480, 260);
+        ctx.fillRect(0, 0, W, H);
+
+        var buffer = term.buffer.active;
+        var charW = 5.6;
+        var lineH = 11;
+        var padX = 4, padY = 10;
+        var maxRows = Math.min(term.rows, Math.floor((H - padY) / lineH));
+        var maxCols = Math.min(term.cols, Math.floor((W - padX) / charW));
+        ctx.font = '9px monospace';
+        ctx.textBaseline = 'top';
+
+        var nullCell = buffer.getNullCell();
+        for (var y = 0; y < maxRows; y++) {
+            var line = buffer.getLine(buffer.viewportY + y);
+            if (!line) continue;
+            var lastColor = '';
+            var run = '';
+            var runX = 0;
+            for (var x = 0; x < maxCols; x++) {
+                var cell = line.getCell(x, nullCell);
+                if (!cell) continue;
+                var ch = cell.getChars() || ' ';
+                var fg = cell.isDim() ? '#666' : cellFgColor(cell);
+                if (fg !== lastColor) {
+                    if (run) { ctx.fillStyle = lastColor; ctx.fillText(run, padX + runX * charW, padY + y * lineH); }
+                    lastColor = fg;
+                    run = ch;
+                    runX = x;
+                } else {
+                    run += ch;
+                }
             }
-        });
+            if (run) { ctx.fillStyle = lastColor; ctx.fillText(run, padX + runX * charW, padY + y * lineH); }
+        }
+
         localStorage.setItem(TERM_THUMB_PREFIX + ptySessionId, c.toDataURL('image/webp', 0.5));
     } catch (e) {}
 }
