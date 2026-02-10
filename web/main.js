@@ -1268,13 +1268,21 @@ function saveTermBuffer() {
 
 function saveTermThumb() {
     if (!ptySessionId) return;
-    var src = terminalContainer.querySelector('canvas');
-    if (!src) return;
+    var canvases = terminalContainer.querySelectorAll('canvas');
+    if (!canvases.length) return;
     try {
         var c = document.createElement('canvas');
-        c.width = 200; c.height = 120;
-        c.getContext('2d').drawImage(src, 0, 0, 200, 120);
-        localStorage.setItem(TERM_THUMB_PREFIX + ptySessionId, c.toDataURL('image/webp', 0.4));
+        c.width = 480; c.height = 260;
+        var ctx = c.getContext('2d');
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, 480, 260);
+        // Composite all xterm canvas layers (text, cursor, selection)
+        canvases.forEach(function(src) {
+            if (src.width > 0 && src.height > 0) {
+                ctx.drawImage(src, 0, 0, 480, 260);
+            }
+        });
+        localStorage.setItem(TERM_THUMB_PREFIX + ptySessionId, c.toDataURL('image/webp', 0.5));
     } catch (e) {}
 }
 
