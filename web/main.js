@@ -1446,7 +1446,6 @@ function attachPTY(sessionId) {
     var url = proto + '//' + location.host + '/ws/pty';
 
     term.clear();
-    restoreTermBuffer(sessionId);
     clearNotification(sessionId);
 
     // Find session info for header
