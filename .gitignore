@@ -1,4 +1,5 @@
 /wt
+/dist
 *.db
 *.db-journal
 *.db-wal
