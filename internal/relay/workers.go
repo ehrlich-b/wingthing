@@ -373,13 +373,6 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				session.mu.Lock()
 				session.WingID = wing.ID
 				session.mu.Unlock()
-				// Update DB with new wing_id
-				if s.PTY.store != nil {
-					s.PTY.store.SavePTYSession(&PTYSessionRow{
-						ID: session.ID, WingID: wing.ID, UserID: session.UserID,
-						Agent: session.Agent, CWD: session.CWD, Status: session.Status,
-					})
-				}
 				log.Printf("pty session %s reclaimed by wing %s", reclaim.SessionID, wing.ID)
 			} else {
 				// Session unknown (relay restarted) — recreate from wing's egg data
