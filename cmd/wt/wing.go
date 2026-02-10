@@ -208,9 +208,15 @@ func wingCmd() *cobra.Command {
 
 			// Detect available agents
 			var agents []string
-			for _, name := range []string{"claude", "ollama", "gemini", "codex", "agent"} {
-				if _, err := exec.LookPath(name); err == nil {
-					agents = append(agents, name)
+			for _, a := range []struct{ name, cmd string }{
+				{"claude", "claude"},
+				{"ollama", "ollama"},
+				{"gemini", "gemini"},
+				{"codex", "codex"},
+				{"cursor", "agent"},
+			} {
+				if _, err := exec.LookPath(a.cmd); err == nil {
+					agents = append(agents, a.name)
 				}
 			}
 
