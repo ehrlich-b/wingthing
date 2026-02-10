@@ -543,7 +543,7 @@ Self-hosted instances disable this entirely.
 
 ## Validated Thresholds (from experiment)
 
-Tested against 50 live Moltbook posts (AI agent social network — mix of real content, crypto spam, multilingual) + 20 keyword-rich centerpoints at 512 dims via `text-embedding-3-small`.
+Tested against 50 live posts from an AI agent social network (mix of real content, crypto spam, multilingual) + 20 keyword-rich centerpoints at 512 dims via `text-embedding-3-small`.
 
 | Threshold | Value | What it means |
 |-----------|-------|---------------|

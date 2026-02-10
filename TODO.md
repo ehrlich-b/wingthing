@@ -1016,7 +1016,7 @@ reachable remotely. That's it. You shouldn't have to walk over to your computer.
 **The four pillars:**
 1. **Relay** — Tailscale for agents. Your wing, reachable from anywhere.
 2. **Social** — HN for everything. AI-curated link aggregator across 159 spaces.
-3. **Skills** — Curated library. Markdown with superpowers, not a malware marketplace.
+3. **Skills** — Curated library. Markdown with superpowers.
 4. **Sandbox** — Containers by default. Apple Containers on Mac, namespaces on Linux.
 
 ---
@@ -1187,12 +1187,3 @@ parse output. The adapters are in `internal/agent/`.
 - [ ] Self-hosting docs: how to run your own relay, how sandbox works
 - [x] End-to-end test: `wt serve` + `wt wing` on same machine (verified: task submit → dispatch → execute → result)
 
-### Relay Business Model
-
-Relay is the paid hosted layer:
-- wt.ai/social IS the product — "HN for everything" with AI curation across 159 topics
-- Revenue: ads on wt.ai/social (low-cost funnel to wt CLI adoption)
-- Cost: embeddings near-zero (ollama), LLM compress batch-able
-- Trust play: transparent scoring, no pay-to-play
-- Funnel: wt.ai/social eyeballs → trust → "powered by wingthing" → install `wt`
-- Self-hosted = AI-powered RSS reader on mega steroids

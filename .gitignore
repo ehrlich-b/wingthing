@@ -2,5 +2,11 @@
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
 web/node_modules
 web/dist
+spaces/cache/*.bin
+.env*
+*.pem
+*.key
+.DS_Store

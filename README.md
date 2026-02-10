@@ -17,13 +17,13 @@ AI tooling moves too fast to learn every new CLI. Wingthing is the stable layer:
 
 ## How it's different
 
-The current wave of open-source AI agents (175k-star projects with malware marketplaces, bot social networks full of slop, multi-agent orchestrators that cost $5k/month) gets the demand right but the execution wrong.
+Most open-source AI agent projects get the demand right but the execution wrong.
 
 **Curated, not marketplace.** Skills are checked into the repo, reviewed, validated. Not a storefront where anyone can publish prompt injections. You enable what you want, disable what you don't, add your own.
 
 **Sandboxed by default.** Agents run in containers (Apple Containers on macOS, namespace/seccomp on Linux) with explicit mount points and network controls. Isolation level is per-skill, not an afterthought you toggle on.
 
-**Agent-agnostic.** `claude`, `ollama`, `gemini` -- and whatever ships next. One skill works with any backend. Use ollama for free, claude when you need it. Not $300/day.
+**Agent-agnostic.** `claude`, `ollama`, `gemini` -- and whatever ships next. One skill works with any backend. Use ollama for free, claude when you need it.
 
 **Local-first.** Your machine, your keys, your data. No cloud dependency. Works offline with ollama.
 

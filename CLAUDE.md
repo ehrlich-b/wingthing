@@ -4,8 +4,6 @@
 
 `wt` is a universal interface to AI agents. One binary, one skill format, any backend. The skill library is the product -- a curated, growing collection of validated skills checked into this repo. Users enable what they want, add their own, swap agents with a flag. When a new AI tool drops, we ship a skill. Users learn `wt` once.
 
-This is the well-built version of what OpenClaw, Moltbook, and the rest are stumbling toward: agent tooling that's curated instead of a malware marketplace, sandboxed instead of "Docker is optional", and affordable instead of $300/day.
-
 `wt serve` runs the relay server -- social feed, web UI, HTTP + SQLite.
 
 ## Design Philosophy
