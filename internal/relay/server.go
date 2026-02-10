@@ -28,7 +28,9 @@ type Server struct {
 	Embedder       embedding.Embedder
 	Config         ServerConfig
 	DevTemplateDir string // if set, re-read templates from disk on each request
+	DevMode        bool   // if set, auto-claim device codes with test-user
 	Wings          *WingRegistry
+	PTY            *PTYRegistry
 	mux            *http.ServeMux
 
 	// Stream subscribers: taskID → list of channels receiving output chunks
@@ -41,6 +43,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 		Store:      store,
 		Config:     cfg,
 		Wings:      NewWingRegistry(),
+		PTY:        NewPTYRegistry(),
 		mux:        http.NewServeMux(),
 		streamSubs: make(map[string][]chan string),
 	}
@@ -64,9 +67,17 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// Relay: worker WebSocket + task API
 	s.mux.HandleFunc("GET /ws/wing", s.handleWingWS)
 	s.mux.HandleFunc("POST /api/tasks", s.handleSubmitTask)
-	s.mux.HandleFunc("GET /api/tasks", s.handleListTasks)
-	s.mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
 	s.mux.HandleFunc("GET /api/tasks/{id}/stream", s.handleTaskStream)
+	s.mux.HandleFunc("GET /ws/pty", s.handlePTYWS)
+
+	// App dashboard API (cookie auth)
+	s.mux.HandleFunc("GET /api/app/me", s.handleAppMe)
+	s.mux.HandleFunc("GET /api/app/wings", s.handleAppWings)
+	s.mux.HandleFunc("GET /api/app/sessions", s.handleAppSessions)
+	s.mux.HandleFunc("DELETE /api/app/sessions/{id}", s.handleDeleteSession)
+
+	// Claim page
+	s.mux.HandleFunc("GET /auth/claim", s.handleClaimPage)
 
 	// Web pages
 	s.mux.HandleFunc("GET /{$}", s.handleHome)

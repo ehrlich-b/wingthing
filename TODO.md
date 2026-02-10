@@ -1103,45 +1103,53 @@ Not v0.
 - [x] `internal/relay/task_handlers.go` — POST/GET /api/tasks
 - [x] `internal/relay/migrations/009_relay_tasks.sql` — relay_tasks schema
 
-##### v0.1 — Interactive Terminal Relay
+##### NOW: Terminal Mode (PTY Relay)
 
-Relay an interactive Claude Code (or any agent) terminal session over WebSocket to
-a browser running xterm.js. Not task-based fire-and-forget — a live PTY session.
+Live Claude Code / Codex sessions in the browser via xterm.js. Not task-based
+fire-and-forget — a real interactive PTY streamed over WebSocket. Resumable
+sessions — start on your laptop, pull up on your phone, it's still running.
 
 ```
 Browser (xterm.js)  ←→  WebSocket  ←→  Relay  ←→  WebSocket  ←→  Wing (PTY)
-     stdin/stdout bytes, dumb pipe, no interpretation
+                         raw bytes, dumb pipe, no interpretation
 ```
 
-The wing allocates a PTY, spawns `claude` (or `ollama`, whatever), and pipes the raw
-terminal bytes over the existing WebSocket connection. The browser renders them in
-xterm.js. Keystrokes go back the same way. The relay is still a dumb pipe — it doesn't
-parse or understand the terminal stream, just forwards bytes.
+**Not all agents have interactive terminals:**
 
-**Bandwidth:** ~1-5 KB/s active output, <100 bytes/s idle. A heavy day is 50-100 MB.
-Pennies on any hosting provider.
-
-**Why this matters:** This is Claude Code from your phone. You're not reselling Claude —
-the user brings their own credentials. You're selling the remote access layer. Same wing,
-same WebSocket, two modes: task mode (fire-and-forget with streaming output) and
-interactive mode (persistent PTY session).
-
-**New message types:**
-```
-wing → relay:  { "type": "pty.output", "session_id": "...", "data": "base64..." }
-relay → wing:  { "type": "pty.input",  "session_id": "...", "data": "base64..." }
-relay → wing:  { "type": "pty.resize", "session_id": "...", "cols": 80, "rows": 24 }
-wing → relay:  { "type": "pty.started", "session_id": "...", "agent": "claude" }
-wing → relay:  { "type": "pty.exited",  "session_id": "...", "exit_code": 0 }
-```
+| Agent | Terminal Mode | Command |
+|-------|-------------|---------|
+| Claude Code | yes | `claude` |
+| Codex | yes | `codex` |
+| Ollama | yes | `ollama run <model>` |
+| Gemini | maybe | TBD |
+| Cursor | no | GUI app |
 
 **Implementation:**
-- [ ] `internal/ws/protocol.go` — add pty.* message types
-- [ ] `cmd/wt/wing.go` — PTY allocation, spawn agent process, pipe I/O to WebSocket
-- [ ] `internal/relay/workers.go` — route pty messages between browser and wing
-- [ ] `web/` — xterm.js terminal component, connect via WebSocket to relay
-- [ ] Session management: start/stop/list interactive sessions via API
-- [ ] `GET /ws/terminal/{session_id}` — browser WebSocket endpoint for PTY stream
+- [ ] `internal/ws/protocol.go` — pty.start/started/output/input/resize/exited types
+- [ ] `cmd/wt/wing.go` — PTY allocation via creack/pty, spawn agent, pipe I/O
+- [ ] `internal/ws/client.go` — handle PTY messages in read loop
+- [ ] `internal/relay/pty_relay.go` — route PTY bytes between browser WS and wing WS
+- [ ] `internal/relay/server.go` — GET /ws/pty browser WebSocket endpoint
+- [ ] `web/` — xterm.js terminal, WebSocket connect, keystroke forwarding, resize
+- [ ] Mobile: virtual modifier key toolbar (Ctrl/Alt/Esc/Tab)
+
+##### NEXT: Thread Mode (Wing Queries)
+
+Click a wing → request recent conversations from its local SQLite → browse →
+follow up. Wing is the data source, relay is the dumb pipe.
+
+```
+relay → wing:  { "type": "wing.query", "query_id": "q1", "path": "/threads" }
+wing → relay:  { "type": "wing.response", "query_id": "q1", "data": [...] }
+```
+
+HTTP-over-WebSocket. The wing serves its local data through the relay.
+
+**Implementation:**
+- [ ] `internal/ws/protocol.go` — wing.query, wing.response types
+- [ ] `cmd/wt/wing.go` — handle queries, serve threads/conversations from local DB
+- [ ] `internal/relay/workers.go` — route queries between browser and wing
+- [ ] `web/` — conversation list, click to view, follow-up input
 
 ##### Agent Adapters (v0)
 
@@ -1157,12 +1165,24 @@ Codex and Cursor are v0 because wings should support every major agent framework
 out of the box. Same pattern as claude/ollama/gemini: detect binary, shell out,
 parse output. The adapters are in `internal/agent/`.
 
+##### Per-User Relay Safety Limits
+- [ ] Per-user throughput limits on relay traffic — allow bursting for responsiveness but cap sustained throughput over any ~10s window
+- [ ] If someone starts transmitting GBs, throttle and eventually disconnect
+- [ ] Lean toward permissive for now — "friends and family" distribution, fun over lockdown
+- [ ] Implement as middleware in relay WebSocket handler (workers.go / pty_relay.go)
+
 ##### Still TODO (v0)
-- [ ] Codex adapter: `internal/agent/codex.go` — NDJSON stream parsing
-- [ ] Cursor adapter: `internal/agent/cursor.go` — headless mode
-- [ ] Nightly dreaming: `skills/dream.md` + cron/schedule integration
-- [ ] Named conversations: `--conv` flag for persistent topic threads
-- [ ] PWA: task input, live output streaming, wing status, task history
+- [x] Codex adapter: `internal/agent/codex.go` — NDJSON stream parsing
+- [x] Cursor adapter: `internal/agent/cursor.go` — headless mode
+- [x] Nightly dreaming: `skills/dream.md` + cron/schedule integration
+- [x] Named conversations: `--conv` flag for persistent topic threads
+- [x] PWA: task input, live output streaming, wing status, task history
+- [x] Dumb pipe refactor: relay forwards opaque payloads, zero content storage
+- [ ] Context sync: teleport CLAUDE.md, memory files, skill configs to wings on connect
+- [ ] Cinch CI build: set up cinch worker (~/repos/cinch), GitHub release pipeline
+- [ ] Cinch badge + checkmarks on repo
+- [ ] GitHub app: OAuth login works in prod
+- [ ] Wing self-update: pull latest release from GitHub based on GOOS/GOARCH
 - [ ] ws.wingthing.ai: WebSocket subdomain that bypasses Cloudflare
 - [ ] Self-hosting docs: how to run your own relay, how sandbox works
 - [x] End-to-end test: `wt serve` + `wt wing` on same machine (verified: task submit → dispatch → execute → result)

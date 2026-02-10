@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
@@ -28,35 +31,39 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := s.SubmitRelayTask(r.Context(), userID, req.Prompt, req.Skill, req.Agent, req.Isolation, req.Target)
+	taskID := fmt.Sprintf("rt-%s", time.Now().Format("20060102-150405"))
+
+	// Build the opaque payload — this is what the wing receives.
+	// The relay forwards it as-is without inspecting content.
+	submit := ws.TaskSubmit{
+		Type:      ws.TypeTaskSubmit,
+		TaskID:    taskID,
+		Prompt:    req.Prompt,
+		Skill:     req.Skill,
+		Agent:     req.Agent,
+		Isolation: req.Isolation,
+	}
+	payload, _ := json.Marshal(submit)
+
+	identity := req.Target
+	if identity == "" {
+		identity = userID
+	}
+
+	err := s.SubmitTask(r.Context(), userID, identity, taskID, payload)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusServiceUnavailable, "no wing available: "+err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"task_id": task.ID,
-		"status":  task.Status,
+		"task_id": taskID,
 	})
 }
 
-func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
-	userID := s.requireUser(w, r)
-	if userID == "" {
-		return
-	}
-
-	tasks, err := s.Store.ListRelayTasksForUser(userID, 50)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, tasks)
-}
-
-func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
+// handleTaskStream serves SSE for live task output. No DB reads — purely in-memory.
+func (s *Server) handleTaskStream(w http.ResponseWriter, r *http.Request) {
 	userID := s.requireUser(w, r)
 	if userID == "" {
 		return
@@ -65,37 +72,6 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
 	if taskID == "" {
 		writeError(w, http.StatusBadRequest, "task id required")
-		return
-	}
-
-	task, err := s.Store.GetRelayTask(taskID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if task == nil {
-		writeError(w, http.StatusNotFound, "task not found")
-		return
-	}
-	if task.UserID != userID {
-		writeError(w, http.StatusNotFound, "task not found")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, task)
-}
-
-// handleTaskStream serves SSE for live task output.
-func (s *Server) handleTaskStream(w http.ResponseWriter, r *http.Request) {
-	userID := s.requireUser(w, r)
-	if userID == "" {
-		return
-	}
-
-	taskID := r.PathValue("id")
-	task, err := s.Store.GetRelayTask(taskID)
-	if err != nil || task == nil || task.UserID != userID {
-		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
 
@@ -108,14 +84,6 @@ func (s *Server) handleTaskStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-
-	// If task is already done, send the output and close
-	if task.Status == "done" || task.Status == "failed" {
-		fmt.Fprintf(w, "data: %s\n\n", task.Output)
-		fmt.Fprintf(w, "event: done\ndata: %s\n\n", task.Status)
-		flusher.Flush()
-		return
-	}
 
 	// Subscribe to live chunks
 	ch := make(chan string, 64)
@@ -130,13 +98,7 @@ func (s *Server) handleTaskStream(w http.ResponseWriter, r *http.Request) {
 			return
 		case text, ok := <-ch:
 			if !ok {
-				// Channel closed — task done or errored
-				updated, _ := s.Store.GetRelayTask(taskID)
-				status := "done"
-				if updated != nil {
-					status = updated.Status
-				}
-				fmt.Fprintf(w, "event: done\ndata: %s\n\n", status)
+				fmt.Fprintf(w, "event: done\ndata: done\n\n")
 				flusher.Flush()
 				return
 			}

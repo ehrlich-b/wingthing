@@ -2,12 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/cipher"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -19,6 +26,43 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
 )
+
+// ringBuffer is a fixed-size circular buffer for PTY output replay.
+type ringBuffer struct {
+	mu   sync.Mutex
+	buf  []byte
+	size int
+	pos  int
+	full bool
+}
+
+func newRingBuffer(size int) *ringBuffer {
+	return &ringBuffer{buf: make([]byte, size), size: size}
+}
+
+func (r *ringBuffer) Write(p []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, b := range p {
+		r.buf[r.pos] = b
+		r.pos = (r.pos + 1) % r.size
+		if r.pos == 0 {
+			r.full = true
+		}
+	}
+}
+
+func (r *ringBuffer) Bytes() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.full {
+		return append([]byte(nil), r.buf[:r.pos]...)
+	}
+	result := make([]byte, r.size)
+	copy(result, r.buf[r.pos:])
+	copy(result[r.size-r.pos:], r.buf[:r.pos])
+	return result
+}
 
 func wingCmd() *cobra.Command {
 	var relayFlag string
@@ -104,6 +148,10 @@ func wingCmd() *cobra.Command {
 
 			client.OnTask = func(ctx context.Context, task ws.TaskSubmit, send ws.ChunkSender) (string, error) {
 				return executeRelayTask(ctx, cfg, s, task, send)
+			}
+
+			client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
+				handlePTYSession(ctx, cfg, start, write, input)
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -254,4 +302,243 @@ func executeRelayTask(ctx context.Context, cfg *config.Config, s *store.Store, t
 
 func timeNow() time.Time {
 	return time.Now().UTC()
+}
+
+// agentCommand returns the command and args for an interactive terminal session.
+// Not all agents support terminal mode — returns empty if unsupported.
+func agentCommand(agentName string) (string, []string) {
+	switch agentName {
+	case "claude":
+		return "claude", nil
+	case "codex":
+		return "codex", nil
+	case "ollama":
+		return "ollama", []string{"run", "llama3.2"}
+	default:
+		return "", nil
+	}
+}
+
+// handlePTYSession spawns an agent in a PTY and pipes I/O over WebSocket.
+// If the browser sends a public key in pty.start, E2E encryption is used.
+// Keeps a ring buffer of recent output for session reattach replay.
+func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
+	name, args := agentCommand(start.Agent)
+	if name == "" {
+		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+		return
+	}
+
+	binPath, err := exec.LookPath(name)
+	if err != nil {
+		log.Printf("pty: agent %q not found: %v", name, err)
+		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+		return
+	}
+
+	// Set up E2E encryption if browser sent a public key
+	var gcmMu sync.Mutex
+	var gcm cipher.AEAD
+	var wingPubKeyB64 string
+	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
+	if privKeyErr != nil {
+		log.Printf("pty: load private key: %v (E2E disabled)", privKeyErr)
+	} else {
+		wingPubKeyB64 = base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
+	}
+	if start.PublicKey != "" && privKeyErr == nil {
+		derived, deriveErr := auth.DeriveSharedKey(privKey, start.PublicKey)
+		if deriveErr != nil {
+			log.Printf("pty: derive shared key: %v", deriveErr)
+		} else {
+			gcm = derived
+			log.Printf("pty session %s: E2E encryption enabled", start.SessionID)
+		}
+	}
+
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	defer sessionCancel()
+
+	cmd := exec.CommandContext(sessionCtx, binPath, args...)
+	cmd.Env = os.Environ()
+
+	size := &pty.Winsize{
+		Cols: uint16(start.Cols),
+		Rows: uint16(start.Rows),
+	}
+	ptmx, err := pty.StartWithSize(cmd, size)
+	if err != nil {
+		log.Printf("pty: start failed: %v", err)
+		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+		return
+	}
+	defer ptmx.Close()
+
+	// Ring buffer for replay on reattach (~50KB of plaintext output)
+	ring := newRingBuffer(50 * 1024)
+
+	log.Printf("pty session %s: spawned %s (pid %d)", start.SessionID, name, cmd.Process.Pid)
+
+	// Notify browser with wing's public key
+	write(ws.PTYStarted{
+		Type:      ws.TypePTYStarted,
+		SessionID: start.SessionID,
+		Agent:     start.Agent,
+		PublicKey: wingPubKeyB64,
+	})
+
+	// Read PTY output -> send to browser (encrypted if E2E)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(buf)
+			if n > 0 {
+				// Always store plaintext in ring buffer for replay
+				ring.Write(buf[:n])
+
+				gcmMu.Lock()
+				currentGCM := gcm
+				gcmMu.Unlock()
+
+				var data string
+				if currentGCM != nil {
+					encrypted, encErr := auth.Encrypt(currentGCM, buf[:n])
+					if encErr != nil {
+						log.Printf("pty session %s: encrypt error: %v", start.SessionID, encErr)
+						continue
+					}
+					data = encrypted
+				} else {
+					data = base64.StdEncoding.EncodeToString(buf[:n])
+				}
+				write(ws.PTYOutput{
+					Type:      ws.TypePTYOutput,
+					SessionID: start.SessionID,
+					Data:      data,
+				})
+			}
+			if err != nil {
+				if err != io.EOF {
+					log.Printf("pty session %s: read error: %v", start.SessionID, err)
+				}
+				return
+			}
+		}
+	}()
+
+	// Process input from browser (decrypt if E2E)
+	go func() {
+		for data := range input {
+			var env ws.Envelope
+			if err := json.Unmarshal(data, &env); err != nil {
+				continue
+			}
+			switch env.Type {
+			case ws.TypePTYAttach:
+				// Reattach: derive new E2E key with new browser's public key
+				var attach ws.PTYAttach
+				if err := json.Unmarshal(data, &attach); err != nil {
+					continue
+				}
+				if attach.PublicKey != "" && privKeyErr == nil {
+					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
+					if deriveErr != nil {
+						log.Printf("pty session %s: reattach derive key: %v", start.SessionID, deriveErr)
+					} else {
+						gcmMu.Lock()
+						gcm = derived
+						gcmMu.Unlock()
+						log.Printf("pty session %s: re-keyed E2E for reattach", start.SessionID)
+					}
+				}
+
+				// Replay buffered output with new key
+				buffered := ring.Bytes()
+				if len(buffered) > 0 {
+					gcmMu.Lock()
+					replayGCM := gcm
+					gcmMu.Unlock()
+
+					var replayData string
+					if replayGCM != nil {
+						encrypted, encErr := auth.Encrypt(replayGCM, buffered)
+						if encErr != nil {
+							log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
+							continue
+						}
+						replayData = encrypted
+					} else {
+						replayData = base64.StdEncoding.EncodeToString(buffered)
+					}
+					write(ws.PTYOutput{
+						Type:      ws.TypePTYOutput,
+						SessionID: start.SessionID,
+						Data:      replayData,
+					})
+					log.Printf("pty session %s: replayed %d bytes", start.SessionID, len(buffered))
+				}
+
+				// Send pty.started so browser knows attach succeeded
+				write(ws.PTYStarted{
+					Type:      ws.TypePTYStarted,
+					SessionID: start.SessionID,
+					Agent:     start.Agent,
+					PublicKey: wingPubKeyB64,
+				})
+
+			case ws.TypePTYInput:
+				var msg ws.PTYInput
+				if err := json.Unmarshal(data, &msg); err != nil {
+					continue
+				}
+				gcmMu.Lock()
+				currentGCM := gcm
+				gcmMu.Unlock()
+
+				var decoded []byte
+				if currentGCM != nil {
+					var decErr error
+					decoded, decErr = auth.Decrypt(currentGCM, msg.Data)
+					if decErr != nil {
+						log.Printf("pty session %s: decrypt error: %v", start.SessionID, decErr)
+						continue
+					}
+				} else {
+					var decErr error
+					decoded, decErr = base64.StdEncoding.DecodeString(msg.Data)
+					if decErr != nil {
+						continue
+					}
+				}
+				ptmx.Write(decoded)
+
+			case ws.TypePTYResize:
+				var msg ws.PTYResize
+				if err := json.Unmarshal(data, &msg); err != nil {
+					continue
+				}
+				pty.Setsize(ptmx, &pty.Winsize{
+					Cols: uint16(msg.Cols),
+					Rows: uint16(msg.Rows),
+				})
+
+			case ws.TypePTYKill:
+				log.Printf("pty session %s: kill received, terminating", start.SessionID)
+				sessionCancel()
+				return
+			}
+		}
+	}()
+
+	exitCode := 0
+	if err := cmd.Wait(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+
+	log.Printf("pty session %s: exited with code %d", start.SessionID, exitCode)
+	write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: exitCode})
 }

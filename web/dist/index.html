@@ -2,51 +2,54 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <meta name="theme-color" content="#1a1a2e">
     <link rel="manifest" href="/app/assets/manifest-BpAsryLh.json">
     <title>wingthing</title>
-  <script type="module" crossorigin src="/app/assets/index-KBb3G8Kd.js"></script>
-  <link rel="stylesheet" crossorigin href="/app/assets/index-BXQ_Jokt.css">
+  <script type="module" crossorigin src="/app/assets/index-DofMSHwa.js"></script>
+  <link rel="stylesheet" crossorigin href="/app/assets/index-PGnWsMSK.css">
 </head>
 <body>
     <div id="app">
         <header>
             <h1>wingthing</h1>
-            <div id="connection-status">disconnected</div>
+            <nav id="mode-tabs">
+                <button class="tab active" data-mode="wings">wings</button>
+                <button class="tab" data-mode="terminal">terminal</button>
+            </nav>
+            <div id="user-info"></div>
         </header>
-        <main>
-            <section id="login-section" style="display:none;">
-                <form id="login-form">
-                    <p>connect a device to get started.</p>
-                    <button type="submit">pair device</button>
-                </form>
-                <div id="login-pending" style="display:none;">
-                    <p>enter this code on your daemon:</p>
-                    <div id="user-code"></div>
-                    <p class="hint">polling for confirmation...</p>
-                </div>
-            </section>
-            <section id="submit-section" style="display:none;">
-                <form id="task-form">
-                    <input type="text" id="task-input" placeholder="what should I do?" autocomplete="off">
-                    <button type="submit">go</button>
-                </form>
-            </section>
-            <section id="status-section" style="display:none;">
-                <div class="stat"><span id="pending-count">0</span> pending</div>
-                <div class="stat"><span id="running-count">0</span> running</div>
-                <div class="stat"><span id="tokens-today">0</span> tokens today</div>
-            </section>
-            <section id="timeline-section" style="display:none;">
-                <h2>timeline</h2>
-                <div id="timeline-list"></div>
-            </section>
-            <section id="thread-section" style="display:none;">
-                <h2>thread</h2>
-                <div id="thread-content"></div>
-            </section>
-        </main>
+
+        <!-- Wings Dashboard -->
+        <section id="wings-section">
+            <div id="wings-list"></div>
+            <div id="no-wings" style="display:none;">
+                <p>no wings connected</p>
+                <p class="hint">run <code>wt wing</code> on your machine to connect</p>
+            </div>
+        </section>
+
+        <!-- Terminal Mode -->
+        <section id="terminal-section" style="display:none;">
+            <div id="terminal-controls">
+                <select id="agent-select">
+                    <option value="claude">claude</option>
+                    <option value="codex">codex</option>
+                    <option value="ollama">ollama</option>
+                </select>
+                <button id="connect-btn">connect</button>
+                <span id="pty-status"></span>
+            </div>
+            <div id="terminal-container"></div>
+            <div id="modifier-keys">
+                <button class="mod-key" data-key="ctrl">ctrl</button>
+                <button class="mod-key" data-key="alt">alt</button>
+                <button class="mod-key" data-key="esc">esc</button>
+                <button class="mod-key" data-key="tab">tab</button>
+                <button class="mod-key" data-seq="&#x2191;">up</button>
+                <button class="mod-key" data-seq="&#x2193;">down</button>
+            </div>
+        </section>
     </div>
 </body>
 </html>

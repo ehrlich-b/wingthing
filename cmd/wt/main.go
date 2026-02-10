@@ -893,12 +893,18 @@ func loginCmd() *cobra.Command {
 				return fmt.Errorf("relay_url not configured in config.yaml")
 			}
 
-			dcr, err := auth.RequestDeviceCode(cfg.RelayURL, cfg.MachineID)
+			// Generate or load X25519 keypair for E2E encryption
+			pubKeyB64, err := auth.EnsureKeyPair(cfg.Dir)
+			if err != nil {
+				return fmt.Errorf("keypair: %w", err)
+			}
+
+			dcr, err := auth.RequestDeviceCode(cfg.RelayURL, cfg.MachineID, pubKeyB64)
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("Visit %s and enter code: %s\n", dcr.VerificationURL, dcr.UserCode)
+			fmt.Printf("Visit: %s\n", dcr.VerificationURL)
 
 			// Try to open browser, fail silently
 			switch runtime.GOOS {
@@ -921,6 +927,7 @@ func loginCmd() *cobra.Command {
 				ExpiresAt: tr.ExpiresAt,
 				IssuedAt:  time.Now().Unix(),
 				DeviceID:  cfg.MachineID,
+				PublicKey: pubKeyB64,
 			}
 			if err := ts.Save(token); err != nil {
 				return err

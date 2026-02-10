@@ -23,6 +23,7 @@ type DeviceCodeRow struct {
 	UserCode  string
 	UserID    *string
 	DeviceID  string
+	PublicKey *string
 	CreatedAt time.Time
 	ExpiresAt time.Time
 	Claimed   bool
@@ -72,6 +73,17 @@ func (s *RelayStore) CreateDeviceCode(code, userCode, deviceID string, expiresAt
 	return nil
 }
 
+func (s *RelayStore) CreateDeviceCodeWithKey(code, userCode, deviceID, publicKey string, expiresAt time.Time) error {
+	_, err := s.db.Exec(
+		"INSERT INTO device_codes (code, user_code, device_id, public_key, expires_at) VALUES (?, ?, ?, ?, ?)",
+		code, userCode, deviceID, publicKey, expiresAt.UTC().Format("2006-01-02 15:04:05"),
+	)
+	if err != nil {
+		return fmt.Errorf("create device code: %w", err)
+	}
+	return nil
+}
+
 func (s *RelayStore) ClaimDeviceCode(code, userID string) error {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	res, err := s.db.Exec(
@@ -90,11 +102,11 @@ func (s *RelayStore) ClaimDeviceCode(code, userID string) error {
 
 func (s *RelayStore) GetDeviceCode(code string) (*DeviceCodeRow, error) {
 	row := s.db.QueryRow(
-		"SELECT code, user_code, user_id, device_id, created_at, expires_at, claimed FROM device_codes WHERE code = ?",
+		"SELECT code, user_code, user_id, device_id, public_key, created_at, expires_at, claimed FROM device_codes WHERE code = ?",
 		code,
 	)
 	var dc DeviceCodeRow
-	err := row.Scan(&dc.Code, &dc.UserCode, &dc.UserID, &dc.DeviceID, &dc.CreatedAt, &dc.ExpiresAt, &dc.Claimed)
+	err := row.Scan(&dc.Code, &dc.UserCode, &dc.UserID, &dc.DeviceID, &dc.PublicKey, &dc.CreatedAt, &dc.ExpiresAt, &dc.Claimed)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -217,6 +229,70 @@ func (s *RelayStore) ConsumeMagicLink(token string) (string, error) {
 		return "", fmt.Errorf("commit: %w", err)
 	}
 	return email, nil
+}
+
+// GetRelayConfig reads a value from the relay_config table.
+func (s *RelayStore) GetRelayConfig(key string) (string, error) {
+	var val string
+	err := s.db.QueryRow("SELECT value FROM relay_config WHERE key = ?", key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get relay config %s: %w", key, err)
+	}
+	return val, nil
+}
+
+// SetRelayConfig writes a value to the relay_config table.
+func (s *RelayStore) SetRelayConfig(key, value string) error {
+	_, err := s.db.Exec(
+		"INSERT OR REPLACE INTO relay_config (key, value) VALUES (?, ?)",
+		key, value,
+	)
+	if err != nil {
+		return fmt.Errorf("set relay config %s: %w", key, err)
+	}
+	return nil
+}
+
+// CreateSocialUserDev creates a dev-mode social user if one doesn't exist.
+func (s *RelayStore) CreateSocialUserDev() (*SocialUser, error) {
+	u, err := s.GetSocialUserByProvider("dev", "dev")
+	if err != nil {
+		return nil, err
+	}
+	if u != nil {
+		return u, nil
+	}
+	u = &SocialUser{
+		ID:          "dev-user",
+		Provider:    "dev",
+		ProviderID:  "dev",
+		DisplayName: "dev",
+	}
+	if err := s.UpsertSocialUser(u); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// GetDeviceCodeByUserCode finds a device code by user_code.
+func (s *RelayStore) GetDeviceCodeByUserCode(userCode string) (*DeviceCodeRow, error) {
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	row := s.db.QueryRow(
+		"SELECT code, user_code, user_id, device_id, public_key, created_at, expires_at, claimed FROM device_codes WHERE user_code = ? AND expires_at > ?",
+		userCode, now,
+	)
+	var dc DeviceCodeRow
+	err := row.Scan(&dc.Code, &dc.UserCode, &dc.UserID, &dc.DeviceID, &dc.PublicKey, &dc.CreatedAt, &dc.ExpiresAt, &dc.Claimed)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get device code by user_code: %w", err)
+	}
+	return &dc, nil
 }
 
 func (s *RelayStore) AppendAudit(userID, event string, detail *string) error {

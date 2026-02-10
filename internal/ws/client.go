@@ -14,7 +14,7 @@ import (
 const (
 	heartbeatInterval = 30 * time.Second
 	writeTimeout      = 10 * time.Second
-	maxReconnectDelay = 60 * time.Second
+	maxReconnectDelay = 10 * time.Second
 )
 
 // TaskHandler is called when the wing receives a task to execute.
@@ -25,6 +25,15 @@ type ChunkSender func(taskID, text string)
 
 // TaskHandlerWithChunks is called when the wing receives a task, with a chunk sender for streaming.
 type TaskHandlerWithChunks func(ctx context.Context, task TaskSubmit, send ChunkSender) (output string, err error)
+
+// PTYWriteFunc sends a message back to the relay over the wing's WebSocket.
+type PTYWriteFunc func(v any) error
+
+// PTYHandler is called when the wing receives a pty.start request.
+// It should spawn the agent in a PTY and manage I/O. The write function
+// sends messages back through the relay to the browser. The input channel
+// receives raw JSON messages (pty.input and pty.resize) from the browser.
+type PTYHandler func(ctx context.Context, start PTYStart, write PTYWriteFunc, input <-chan []byte)
 
 // Client is an outbound WebSocket client that connects a wing to the relay.
 type Client struct {
@@ -38,6 +47,11 @@ type Client struct {
 	Identities []string
 
 	OnTask TaskHandlerWithChunks
+	OnPTY  PTYHandler
+
+	// ptySessions tracks active PTY sessions for routing input/resize
+	ptySessions   map[string]chan []byte // session_id → input channel
+	ptySessionsMu sync.Mutex
 
 	conn *websocket.Conn
 	mu   sync.Mutex
@@ -48,9 +62,13 @@ type Client struct {
 func (c *Client) Run(ctx context.Context) error {
 	delay := time.Second
 	for {
-		err := c.connectAndServe(ctx)
+		connected, err := c.connectAndServe(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if connected {
+			// Was connected successfully — reset backoff
+			delay = time.Second
 		}
 		log.Printf("relay disconnected: %v — reconnecting in %s", err, delay)
 		select {
@@ -65,20 +83,29 @@ func (c *Client) Run(ctx context.Context) error {
 	}
 }
 
-func (c *Client) connectAndServe(ctx context.Context) error {
+func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error) {
 	opts := &websocket.DialOptions{
 		HTTPHeader: make(map[string][]string),
 	}
 	opts.HTTPHeader.Set("Authorization", "Bearer "+c.Token)
 
-	conn, _, err := websocket.Dial(ctx, c.RelayURL, opts)
-	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+	conn, _, dialErr := websocket.Dial(ctx, c.RelayURL, opts)
+	if dialErr != nil {
+		return false, fmt.Errorf("dial: %w", dialErr)
 	}
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()
 	defer conn.CloseNow()
+	connected = true
+
+	// Preserve PTY sessions across reconnects — running processes survive relay outages.
+	// Only initialize the map on first connect.
+	c.ptySessionsMu.Lock()
+	if c.ptySessions == nil {
+		c.ptySessions = make(map[string]chan []byte)
+	}
+	c.ptySessionsMu.Unlock()
 
 	// Send registration
 	reg := WingRegister{
@@ -90,7 +117,7 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 		Identities: c.Identities,
 	}
 	if err := c.writeJSON(ctx, reg); err != nil {
-		return fmt.Errorf("register: %w", err)
+		return connected, fmt.Errorf("register: %w", err)
 	}
 
 	// Start heartbeat
@@ -102,7 +129,7 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
-			return fmt.Errorf("read: %w", err)
+			return connected, fmt.Errorf("read: %w", err)
 		}
 
 		var env Envelope
@@ -124,6 +151,64 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 				continue
 			}
 			go c.handleTask(ctx, task)
+
+		case TypePTYStart:
+			var start PTYStart
+			if err := json.Unmarshal(data, &start); err != nil {
+				log.Printf("bad pty.start: %v", err)
+				continue
+			}
+			if c.OnPTY != nil {
+				inputCh := make(chan []byte, 64)
+				c.ptySessionsMu.Lock()
+				c.ptySessions[start.SessionID] = inputCh
+				c.ptySessionsMu.Unlock()
+				go func() {
+					defer func() {
+						c.ptySessionsMu.Lock()
+						delete(c.ptySessions, start.SessionID)
+						c.ptySessionsMu.Unlock()
+					}()
+					c.OnPTY(ctx, start, func(v any) error {
+						return c.writeJSON(ctx, v)
+					}, inputCh)
+				}()
+			}
+
+		case TypePTYAttach, TypePTYKill:
+			// Forward to existing session (attach for re-key, kill to terminate)
+			var partial struct {
+				SessionID string `json:"session_id"`
+			}
+			if err := json.Unmarshal(data, &partial); err != nil {
+				continue
+			}
+			c.ptySessionsMu.Lock()
+			ch := c.ptySessions[partial.SessionID]
+			c.ptySessionsMu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- data:
+				default:
+				}
+			}
+
+		case TypePTYInput, TypePTYResize:
+			var partial struct {
+				SessionID string `json:"session_id"`
+			}
+			if err := json.Unmarshal(data, &partial); err != nil {
+				continue
+			}
+			c.ptySessionsMu.Lock()
+			ch := c.ptySessions[partial.SessionID]
+			c.ptySessionsMu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- data:
+				default:
+				}
+			}
 
 		case TypeError:
 			var msg ErrorMsg
@@ -147,13 +232,13 @@ func (c *Client) handleTask(ctx context.Context, task TaskSubmit) {
 		c.writeJSON(ctx, chunk)
 	}
 
-	output, err := c.OnTask(ctx, task, sender)
+	_, err := c.OnTask(ctx, task, sender)
 	if err != nil {
 		c.sendError(ctx, task.TaskID, err.Error())
 		return
 	}
 
-	done := TaskDone{Type: TypeTaskDone, TaskID: task.TaskID, Output: output}
+	done := TaskDone{Type: TypeTaskDone, TaskID: task.TaskID}
 	c.writeJSON(ctx, done)
 }
 

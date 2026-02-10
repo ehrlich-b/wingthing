@@ -24,6 +24,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		MachineID string `json:"machine_id"`
+		PublicKey string `json:"public_key,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -38,18 +39,31 @@ func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 	userCode := generateUserCode(6)
 	expiresAt := time.Now().Add(deviceCodeExpiry)
 
-	if err := s.Store.CreateDeviceCode(deviceCode, userCode, req.MachineID, expiresAt); err != nil {
+	if err := s.Store.CreateDeviceCodeWithKey(deviceCode, userCode, req.MachineID, req.PublicKey, expiresAt); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// TODO: rate limiting on this endpoint
+	// In dev mode, auto-claim with a dev social user so login works without OAuth
+	if s.DevMode {
+		devUser, err := s.Store.CreateSocialUserDev()
+		if err == nil {
+			s.Store.ClaimDeviceCode(deviceCode, devUser.ID)
+		}
+	}
+
+	verificationURL := fmt.Sprintf("%s/auth/claim?code=%s", s.Config.BaseURL, userCode)
+	interval := 5
+	if s.DevMode {
+		interval = 1
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"device_code":      deviceCode,
 		"user_code":        userCode,
-		"verification_url": "/auth/claim",
+		"verification_url": verificationURL,
 		"expires_in":       int(deviceCodeExpiry.Seconds()),
-		"interval":         5,
+		"interval":         interval,
 	})
 }
 
@@ -80,68 +94,121 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !dc.Claimed || dc.UserID == nil {
-		// TODO: rate limiting — could return slow_down
 		writeJSON(w, http.StatusOK, map[string]string{"error": "authorization_pending"})
 		return
 	}
 
-	token := uuid.New().String()
-	if err := s.Store.CreateDeviceToken(token, *dc.UserID, dc.DeviceID, nil); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	// Issue JWT instead of UUID token
+	secret, err := GenerateOrLoadSecret(s.Store)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "jwt secret: "+err.Error())
 		return
 	}
 
-	s.Store.AppendAudit(*dc.UserID, "token_issued", strPtr(fmt.Sprintf("device=%s", dc.DeviceID)))
+	publicKey := ""
+	if dc.PublicKey != nil {
+		publicKey = *dc.PublicKey
+	}
+
+	token, exp, err := IssueWingJWT(secret, *dc.UserID, publicKey, dc.DeviceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "issue jwt: "+err.Error())
+		return
+	}
+
+	// Also store in device_tokens for backward compat with social API auth
+	s.Store.CreateDeviceToken(token, *dc.UserID, dc.DeviceID, nil)
+
+	s.Store.AppendAudit(*dc.UserID, "jwt_issued", strPtr(fmt.Sprintf("device=%s", dc.DeviceID)))
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      token,
-		"expires_at": 0,
+		"expires_at": exp.Unix(),
 	})
 }
 
+// handleAuthClaim handles POST /auth/claim — requires web session (OAuth).
 func (s *Server) handleAuthClaim(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UserCode string `json:"user_code"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	user := s.sessionUser(r)
+	if user == nil {
+		// Not logged in via form POST — redirect to login
+		userCode := r.FormValue("user_code")
+		if userCode == "" {
+			writeError(w, http.StatusBadRequest, "user_code is required")
+			return
+		}
+		http.Redirect(w, r, "/login?next="+fmt.Sprintf("/auth/claim?code=%s", userCode), http.StatusSeeOther)
 		return
 	}
-	if req.UserCode == "" {
+
+	userCode := r.FormValue("user_code")
+	if userCode == "" {
 		writeError(w, http.StatusBadRequest, "user_code is required")
 		return
 	}
 
-	// Find device code by user_code
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	var code string
-	err := s.Store.db.QueryRow(
-		"SELECT code FROM device_codes WHERE user_code = ? AND claimed = 0 AND expires_at > ?",
-		strings.ToUpper(req.UserCode), now,
-	).Scan(&code)
+	dc, err := s.Store.GetDeviceCodeByUserCode(strings.ToUpper(userCode))
 	if err != nil {
-		writeError(w, http.StatusNotFound, "invalid or expired user code")
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if dc == nil || dc.Claimed {
+		s.renderClaimPage(w, userCode, "", "Invalid or expired code")
 		return
 	}
 
-	// Auto-create user for now (no OAuth)
-	userID := uuid.New().String()
-	if err := s.Store.CreateUser(userID); err != nil {
+	if err := s.Store.ClaimDeviceCode(dc.Code, user.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	if err := s.Store.ClaimDeviceCode(code, userID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	s.Store.AppendAudit(user.ID, "device_claimed", strPtr(fmt.Sprintf("code=%s user_code=%s", dc.Code, userCode)))
+
+	s.renderClaimPage(w, userCode, user.ID, "")
+}
+
+// handleClaimPage handles GET /auth/claim — shows the approve page.
+func (s *Server) handleClaimPage(w http.ResponseWriter, r *http.Request) {
+	userCode := r.URL.Query().Get("code")
+	if userCode == "" {
+		s.renderClaimPage(w, "", "", "No device code provided")
 		return
 	}
 
-	s.Store.AppendAudit(userID, "device_claimed", strPtr(fmt.Sprintf("code=%s", code)))
+	user := s.sessionUser(r)
+	if user == nil {
+		// Redirect to login with next param to come back here
+		http.Redirect(w, r, "/login?next="+fmt.Sprintf("/auth/claim?code=%s", userCode), http.StatusSeeOther)
+		return
+	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"claimed": true,
-		"user_id": userID,
-	})
+	dc, err := s.Store.GetDeviceCodeByUserCode(strings.ToUpper(userCode))
+	if err != nil || dc == nil {
+		s.renderClaimPage(w, userCode, "", "Invalid or expired code")
+		return
+	}
+	if dc.Claimed {
+		s.renderClaimPage(w, userCode, "", "")
+		return
+	}
+
+	s.renderClaimPage(w, userCode, "", "")
+}
+
+func (s *Server) renderClaimPage(w http.ResponseWriter, userCode, claimedBy, errMsg string) {
+	data := struct {
+		UserCode string
+		Claimed  bool
+		Error    string
+	}{
+		UserCode: userCode,
+		Claimed:  claimedBy != "",
+		Error:    errMsg,
+	}
+
+	t := s.template(claimTmpl, "claim.html")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	t.Execute(w, data)
 }
 
 func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
@@ -311,7 +378,7 @@ func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) string {
 	return s.requireToken(w, r)
 }
 
-// requireToken extracts and validates a Bearer token from the Authorization header.
+// requireToken extracts and validates a Bearer token (JWT or DB) from the Authorization header.
 // Returns the userID or writes an error response and returns empty string.
 func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 	auth := r.Header.Get("Authorization")
@@ -324,6 +391,16 @@ func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 		writeError(w, http.StatusUnauthorized, "missing or invalid Authorization header")
 		return ""
 	}
+
+	// Try JWT first
+	secret, secretErr := GenerateOrLoadSecret(s.Store)
+	if secretErr == nil {
+		if claims, err := ValidateWingJWT(secret, token); err == nil {
+			return claims.Subject
+		}
+	}
+
+	// Fall back to DB token
 	userID, _, err := s.Store.ValidateToken(token)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid or expired token")

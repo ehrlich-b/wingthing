@@ -14,6 +14,7 @@ type DeviceToken struct {
 	ExpiresAt int64  `json:"expires_at" yaml:"expires_at"`
 	IssuedAt  int64  `json:"issued_at" yaml:"issued_at"`
 	DeviceID  string `json:"device_id" yaml:"device_id"`
+	PublicKey string `json:"public_key,omitempty" yaml:"public_key,omitempty"`
 }
 
 type DeviceCodeResponse struct {
@@ -30,8 +31,12 @@ type TokenResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
-func RequestDeviceCode(baseURL, machineID string) (*DeviceCodeResponse, error) {
-	body, err := json.Marshal(map[string]string{"machine_id": machineID})
+func RequestDeviceCode(baseURL, machineID string, publicKey ...string) (*DeviceCodeResponse, error) {
+	req := map[string]string{"machine_id": machineID}
+	if len(publicKey) > 0 && publicKey[0] != "" {
+		req["public_key"] = publicKey[0]
+	}
+	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}

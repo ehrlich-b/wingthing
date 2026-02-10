@@ -15,7 +15,7 @@ func TestEnvelopeRouting(t *testing.T) {
 		{"heartbeat", WingHeartbeat{Type: TypeWingHeartbeat, MachineID: "m1"}, TypeWingHeartbeat},
 		{"submit", TaskSubmit{Type: TypeTaskSubmit, TaskID: "t1", Prompt: "hi"}, TypeTaskSubmit},
 		{"chunk", TaskChunk{Type: TypeTaskChunk, TaskID: "t1", Text: "hello"}, TypeTaskChunk},
-		{"done", TaskDone{Type: TypeTaskDone, TaskID: "t1", Output: "result"}, TypeTaskDone},
+		{"done", TaskDone{Type: TypeTaskDone, TaskID: "t1"}, TypeTaskDone},
 		{"error", TaskErrorMsg{Type: TypeTaskError, TaskID: "t1", Error: "oops"}, TypeTaskError},
 	}
 

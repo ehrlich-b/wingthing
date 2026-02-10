@@ -142,11 +142,12 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestAuthDeviceFlow(t *testing.T) {
-	_, ts := testServer(t)
+	srv, ts := testServer(t)
+	srv.DevMode = true // auto-claim in dev mode
 
-	// 1. Request device code
+	// 1. Request device code (dev mode auto-claims)
 	resp, err := http.Post(ts.URL+"/auth/device", "application/json",
-		strings.NewReader(`{"machine_id":"mac1"}`))
+		strings.NewReader(`{"machine_id":"mac1","public_key":"dGVzdGtleQ=="}`))
 	if err != nil {
 		t.Fatalf("POST /auth/device: %v", err)
 	}
@@ -156,10 +157,11 @@ func TestAuthDeviceFlow(t *testing.T) {
 	}
 
 	var dcResp struct {
-		DeviceCode string `json:"device_code"`
-		UserCode   string `json:"user_code"`
-		ExpiresIn  int    `json:"expires_in"`
-		Interval   int    `json:"interval"`
+		DeviceCode      string `json:"device_code"`
+		UserCode        string `json:"user_code"`
+		ExpiresIn       int    `json:"expires_in"`
+		Interval        int    `json:"interval"`
+		VerificationURL string `json:"verification_url"`
 	}
 	json.NewDecoder(resp.Body).Decode(&dcResp)
 	if dcResp.DeviceCode == "" || dcResp.UserCode == "" {
@@ -169,7 +171,44 @@ func TestAuthDeviceFlow(t *testing.T) {
 		t.Errorf("user_code length = %d, want 6", len(dcResp.UserCode))
 	}
 
-	// 2. Poll before claim — should be pending
+	// 2. Poll — dev mode auto-claims, so should get JWT immediately
+	resp2, err := http.Post(ts.URL+"/auth/token", "application/json",
+		strings.NewReader(`{"device_code":"`+dcResp.DeviceCode+`"}`))
+	if err != nil {
+		t.Fatalf("POST /auth/token: %v", err)
+	}
+	var tokenResp map[string]any
+	json.NewDecoder(resp2.Body).Decode(&tokenResp)
+	resp2.Body.Close()
+	if tokenResp["token"] == nil || tokenResp["token"] == "" {
+		t.Errorf("expected JWT token in response, got %v", tokenResp)
+	}
+	// Verify it's a JWT (has dots)
+	if tok, ok := tokenResp["token"].(string); ok {
+		if !strings.Contains(tok, ".") {
+			t.Error("expected JWT format with dots")
+		}
+	}
+	if tokenResp["expires_at"] == nil {
+		t.Error("expected expires_at in response")
+	}
+}
+
+func TestAuthDeviceFlowNonDevMode(t *testing.T) {
+	_, ts := testServer(t)
+
+	// Without dev mode, poll should return authorization_pending
+	resp, err := http.Post(ts.URL+"/auth/device", "application/json",
+		strings.NewReader(`{"machine_id":"mac1"}`))
+	if err != nil {
+		t.Fatalf("POST /auth/device: %v", err)
+	}
+	var dcResp struct {
+		DeviceCode string `json:"device_code"`
+	}
+	json.NewDecoder(resp.Body).Decode(&dcResp)
+	resp.Body.Close()
+
 	resp2, err := http.Post(ts.URL+"/auth/token", "application/json",
 		strings.NewReader(`{"device_code":"`+dcResp.DeviceCode+`"}`))
 	if err != nil {
@@ -180,32 +219,6 @@ func TestAuthDeviceFlow(t *testing.T) {
 	resp2.Body.Close()
 	if pendingResp["error"] != "authorization_pending" {
 		t.Errorf("expected authorization_pending, got %q", pendingResp["error"])
-	}
-
-	// 3. Claim the code
-	resp3, err := http.Post(ts.URL+"/auth/claim", "application/json",
-		strings.NewReader(`{"user_code":"`+dcResp.UserCode+`"}`))
-	if err != nil {
-		t.Fatalf("POST /auth/claim: %v", err)
-	}
-	var claimResp map[string]any
-	json.NewDecoder(resp3.Body).Decode(&claimResp)
-	resp3.Body.Close()
-	if claimResp["claimed"] != true {
-		t.Errorf("expected claimed=true, got %v", claimResp["claimed"])
-	}
-
-	// 4. Poll after claim — should get token
-	resp4, err := http.Post(ts.URL+"/auth/token", "application/json",
-		strings.NewReader(`{"device_code":"`+dcResp.DeviceCode+`"}`))
-	if err != nil {
-		t.Fatalf("POST /auth/token (after claim): %v", err)
-	}
-	var tokenResp map[string]any
-	json.NewDecoder(resp4.Body).Decode(&tokenResp)
-	resp4.Body.Close()
-	if tokenResp["token"] == nil || tokenResp["token"] == "" {
-		t.Error("expected token in response")
 	}
 }
 

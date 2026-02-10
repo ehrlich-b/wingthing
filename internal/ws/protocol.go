@@ -15,6 +15,16 @@ const (
 	TypeTaskSubmit = "task.submit"
 	TypeTaskCancel = "task.cancel"
 
+	// PTY (bidirectional)
+	TypePTYStart   = "pty.start"   // browser → relay → wing
+	TypePTYStarted = "pty.started" // wing → relay → browser
+	TypePTYOutput  = "pty.output"  // wing → relay → browser
+	TypePTYInput   = "pty.input"   // browser → relay → wing
+	TypePTYResize  = "pty.resize"  // browser → relay → wing
+	TypePTYExited  = "pty.exited"  // wing → relay → browser
+	TypePTYAttach  = "pty.attach"  // browser → relay → wing (reattach)
+	TypePTYKill    = "pty.kill"    // browser → relay → wing (terminate session)
+
 	// Relay → Wing (control)
 	TypeRegistered = "registered"
 	TypeError      = "error"
@@ -62,7 +72,6 @@ type TaskChunk struct {
 type TaskDone struct {
 	Type   string `json:"type"`
 	TaskID string `json:"task_id"`
-	Output string `json:"output"`
 }
 
 // TaskErrorMsg is sent by the wing when a task fails.
@@ -84,20 +93,74 @@ type ErrorMsg struct {
 	Message string `json:"message"`
 }
 
-// RelayTask represents a task stored in the relay's queue.
-type RelayTask struct {
-	ID         string     `json:"id"`
-	UserID     string     `json:"user_id"`
-	Identity   string     `json:"identity"`
-	Prompt     string     `json:"prompt"`
-	Skill      string     `json:"skill,omitempty"`
-	Agent      string     `json:"agent,omitempty"`
-	Isolation  string     `json:"isolation,omitempty"`
-	Status     string     `json:"status"` // pending, running, done, failed
-	Output     string     `json:"output,omitempty"`
-	Error      string     `json:"error,omitempty"`
-	WingID     string     `json:"wing_id,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
+// PTYStart requests a new interactive terminal session on the wing.
+type PTYStart struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Agent     string `json:"agent"` // "claude", "codex", "ollama"
+	Cols      int    `json:"cols"`
+	Rows      int    `json:"rows"`
+	PublicKey string `json:"public_key,omitempty"` // browser's ephemeral X25519 (base64)
+}
+
+// PTYStarted confirms the PTY session is running.
+type PTYStarted struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Agent     string `json:"agent"`
+	PublicKey string `json:"public_key,omitempty"` // wing's X25519 (base64)
+}
+
+// PTYOutput carries raw terminal bytes from wing to browser.
+type PTYOutput struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Data      string `json:"data"` // base64-encoded
+}
+
+// PTYInput carries keystrokes from browser to wing.
+type PTYInput struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Data      string `json:"data"` // base64-encoded
+}
+
+// PTYResize tells the wing to resize the terminal.
+type PTYResize struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Cols      int    `json:"cols"`
+	Rows      int    `json:"rows"`
+}
+
+// PTYExited tells the browser the process exited.
+type PTYExited struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	ExitCode  int    `json:"exit_code"`
+}
+
+// PTYAttach requests reattachment to an existing PTY session.
+type PTYAttach struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	PublicKey string `json:"public_key,omitempty"` // new browser ephemeral key
+}
+
+// PTYKill requests termination of a PTY session.
+type PTYKill struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+}
+
+// QueuedTask is a routing entry in the relay's volatile queue.
+// The relay stores only an opaque payload — it never inspects task content.
+type QueuedTask struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Identity  string    `json:"identity"`
+	Payload   string    `json:"-"`         // opaque JSON forwarded to wing
+	WingID    string    `json:"wing_id,omitempty"`
+	Status    string    `json:"status"`    // pending, dispatched
+	CreatedAt time.Time `json:"created_at"`
 }

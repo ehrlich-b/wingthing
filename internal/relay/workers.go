@@ -21,6 +21,7 @@ type ConnectedWing struct {
 	ID         string
 	UserID     string
 	MachineID  string
+	PublicKey  string
 	Agents     []string
 	Skills     []string
 	Labels     []string
@@ -73,12 +74,17 @@ func (r *WingRegistry) FindByIdentity(identity string) *ConnectedWing {
 				return w
 			}
 		}
-		// Also match by userID as default identity
 		if w.UserID == identity {
 			return w
 		}
 	}
 	return nil
+}
+
+func (r *WingRegistry) FindByID(wingID string) *ConnectedWing {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.wings[wingID]
 }
 
 func (r *WingRegistry) Touch(wingID string) {
@@ -89,9 +95,21 @@ func (r *WingRegistry) Touch(wingID string) {
 	}
 }
 
+// ListForUser returns all wings connected for a given user.
+func (r *WingRegistry) ListForUser(userID string) []*ConnectedWing {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []*ConnectedWing
+	for _, w := range r.wings {
+		if w.UserID == userID {
+			result = append(result, w)
+		}
+	}
+	return result
+}
+
 // handleWingWS handles the WebSocket connection from a wing.
 func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
-	// Auth: extract token from query param or header
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		auth := r.Header.Get("Authorization")
@@ -104,14 +122,28 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, _, err := s.Store.ValidateToken(token)
-	if err != nil {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return
+	// Try JWT validation first, fall back to DB token
+	var userID string
+	var wingPublicKey string
+	secret, secretErr := GenerateOrLoadSecret(s.Store)
+	if secretErr == nil {
+		claims, jwtErr := ValidateWingJWT(secret, token)
+		if jwtErr == nil {
+			userID = claims.Subject
+			wingPublicKey = claims.PublicKey
+		}
+	}
+	if userID == "" {
+		var err error
+		userID, _, err = s.Store.ValidateToken(token)
+		if err != nil {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // allow any origin for now
+		InsecureSkipVerify: true,
 	})
 	if err != nil {
 		log.Printf("websocket accept: %v", err)
@@ -144,6 +176,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		ID:         uuid.New().String(),
 		UserID:     userID,
 		MachineID:  reg.MachineID,
+		PublicKey:  wingPublicKey,
 		Agents:     reg.Agents,
 		Skills:     reg.Skills,
 		Labels:     reg.Labels,
@@ -166,7 +199,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	// Drain any queued tasks for this user
 	go s.drainQueuedTasks(ctx, wing)
 
-	// Read loop — handle heartbeats, task results, chunks
+	// Read loop — forward messages, never inspect content
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
@@ -186,42 +219,34 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		case ws.TypeTaskChunk:
 			var chunk ws.TaskChunk
 			json.Unmarshal(data, &chunk)
-			s.handleTaskChunk(chunk)
+			s.forwardChunk(chunk)
 
 		case ws.TypeTaskDone:
 			var done ws.TaskDone
 			json.Unmarshal(data, &done)
-			s.handleTaskDone(done)
+			s.forwardDone(done)
 
 		case ws.TypeTaskError:
 			var errMsg ws.TaskErrorMsg
 			json.Unmarshal(data, &errMsg)
-			s.handleTaskError(errMsg)
+			s.forwardError(errMsg)
+
+		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited:
+			// Extract session_id and forward to browser
+			var partial struct {
+				SessionID string `json:"session_id"`
+			}
+			json.Unmarshal(data, &partial)
+			s.forwardPTYToBrowser(partial.SessionID, data)
 		}
 	}
 }
 
-// SubmitRelayTask creates a task and routes it to a connected wing.
-func (s *Server) SubmitRelayTask(ctx context.Context, userID, prompt, skill, agent, isolation, target string) (*ws.RelayTask, error) {
-	identity := target
+// SubmitTask routes a task to a connected wing or queues it for offline delivery.
+// The relay only sees the task ID and routing info — never the content.
+func (s *Server) SubmitTask(ctx context.Context, userID, identity, taskID string, payload []byte) error {
 	if identity == "" {
 		identity = userID
-	}
-
-	task := &ws.RelayTask{
-		ID:        fmt.Sprintf("rt-%s", time.Now().Format("20060102-150405")),
-		UserID:    userID,
-		Identity:  identity,
-		Prompt:    prompt,
-		Skill:     skill,
-		Agent:     agent,
-		Isolation: isolation,
-		Status:    "pending",
-		CreatedAt: time.Now().UTC(),
-	}
-
-	if err := s.Store.CreateRelayTask(task); err != nil {
-		return nil, fmt.Errorf("create relay task: %w", err)
 	}
 
 	// Find a wing
@@ -231,49 +256,49 @@ func (s *Server) SubmitRelayTask(ctx context.Context, userID, prompt, skill, age
 	}
 
 	if wing != nil {
-		s.dispatchTask(ctx, wing, task)
-	}
-	// If no wing online, task stays queued — delivered when wing connects
-
-	return task, nil
-}
-
-func (s *Server) dispatchTask(ctx context.Context, wing *ConnectedWing, task *ws.RelayTask) {
-	submit := ws.TaskSubmit{
-		Type:      ws.TypeTaskSubmit,
-		TaskID:    task.ID,
-		Prompt:    task.Prompt,
-		Skill:     task.Skill,
-		Agent:     task.Agent,
-		Isolation: task.Isolation,
-	}
-	data, _ := json.Marshal(submit)
-	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
-		log.Printf("dispatch to wing %s failed: %v", wing.ID, err)
-		return
+		// Wing online — forward directly, no DB write
+		writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := wing.Conn.Write(writeCtx, websocket.MessageText, payload); err != nil {
+			log.Printf("dispatch to wing %s failed: %v", wing.ID, err)
+			return fmt.Errorf("dispatch failed: %w", err)
+		}
+		return nil
 	}
 
-	now := time.Now().UTC()
-	task.Status = "running"
-	task.WingID = wing.ID
-	task.StartedAt = &now
-	s.Store.UpdateRelayTask(task)
+	// Wing offline — queue for later delivery
+	qt := &ws.QueuedTask{
+		ID:        taskID,
+		UserID:    userID,
+		Identity:  identity,
+		Payload:   string(payload),
+		Status:    "pending",
+		CreatedAt: time.Now().UTC(),
+	}
+	return s.Store.EnqueueTask(qt)
 }
 
 func (s *Server) drainQueuedTasks(ctx context.Context, wing *ConnectedWing) {
-	tasks, err := s.Store.ListPendingRelayTasks(wing.UserID)
+	tasks, err := s.Store.ListPendingTasks(wing.UserID)
 	if err != nil {
 		log.Printf("drain queue error: %v", err)
 		return
 	}
 	for _, task := range tasks {
-		s.dispatchTask(ctx, wing, task)
+		writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := wing.Conn.Write(writeCtx, websocket.MessageText, []byte(task.Payload))
+		cancel()
+		if err != nil {
+			log.Printf("drain to wing %s failed: %v", wing.ID, err)
+			return
+		}
+		// Delete from queue after successful dispatch
+		s.Store.DequeueTask(task.ID)
 	}
 }
 
-func (s *Server) handleTaskChunk(chunk ws.TaskChunk) {
+// forwardChunk sends a chunk to SSE subscribers. No DB write.
+func (s *Server) forwardChunk(chunk ws.TaskChunk) {
 	s.streamMu.RLock()
 	subs := s.streamSubs[chunk.TaskID]
 	s.streamMu.RUnlock()
@@ -285,10 +310,8 @@ func (s *Server) handleTaskChunk(chunk ws.TaskChunk) {
 	}
 }
 
-func (s *Server) handleTaskDone(done ws.TaskDone) {
-	now := time.Now().UTC()
-	s.Store.CompleteRelayTask(done.TaskID, done.Output, &now)
-
+// forwardDone notifies SSE subscribers that the task completed. No DB write.
+func (s *Server) forwardDone(done ws.TaskDone) {
 	s.streamMu.Lock()
 	subs := s.streamSubs[done.TaskID]
 	delete(s.streamSubs, done.TaskID)
@@ -298,10 +321,8 @@ func (s *Server) handleTaskDone(done ws.TaskDone) {
 	}
 }
 
-func (s *Server) handleTaskError(errMsg ws.TaskErrorMsg) {
-	now := time.Now().UTC()
-	s.Store.FailRelayTask(errMsg.TaskID, errMsg.Error, &now)
-
+// forwardError notifies SSE subscribers that the task failed. No DB write.
+func (s *Server) forwardError(errMsg ws.TaskErrorMsg) {
 	s.streamMu.Lock()
 	subs := s.streamSubs[errMsg.TaskID]
 	delete(s.streamSubs, errMsg.TaskID)

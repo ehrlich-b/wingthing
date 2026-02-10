@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Approve Device - wingthing</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #1a1a2e; color: #eee; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .card { background: #16213e; border-radius: 8px; padding: 32px; max-width: 400px; width: 100%; text-align: center; }
+        h1 { font-size: 18px; margin: 0 0 8px; }
+        .code { font-size: 32px; font-weight: 700; letter-spacing: 6px; color: #e94560; padding: 16px 0; font-family: monospace; }
+        p { color: #888; font-size: 14px; margin: 12px 0; }
+        button { background: #e94560; color: #fff; border: none; padding: 12px 32px; font-size: 16px; border-radius: 4px; cursor: pointer; margin-top: 16px; }
+        button:hover { background: #ff6b81; }
+        .error { color: #e74c3c; }
+        .success { color: #2ecc71; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>wingthing</h1>
+        {{if .Error}}
+            <p class="error">{{.Error}}</p>
+        {{else if .Claimed}}
+            <p class="success">Device approved! You can close this tab.</p>
+        {{else}}
+            <p>Approve this device?</p>
+            <div class="code">{{.UserCode}}</div>
+            <form method="POST" action="/auth/claim">
+                <input type="hidden" name="user_code" value="{{.UserCode}}">
+                <button type="submit">Approve</button>
+            </form>
+        {{end}}
+    </div>
+</body>
+</html>

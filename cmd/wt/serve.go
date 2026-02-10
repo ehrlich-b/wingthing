@@ -98,7 +98,8 @@ func serveCmd() *cobra.Command {
 			srv.Embedder = primaryEmb
 			if devFlag {
 				srv.DevTemplateDir = "internal/relay/templates"
-				fmt.Println("dev mode: templates reload from disk on each request")
+				srv.DevMode = true
+				fmt.Println("dev mode: templates reload, auto-claim login")
 			}
 			relay.StartSidebarRefresh(store, 10*time.Minute)
 

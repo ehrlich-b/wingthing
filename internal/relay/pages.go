@@ -65,6 +65,7 @@ var (
 	loginTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/login.html"))
 	skillsTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skills.html"))
 	skillDetailTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skill_detail.html"))
+	claimTmpl       = template.Must(template.New("claim.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/claim.html"))
 )
 
 // template returns a parsed template. In dev mode (DevTemplateDir set),
@@ -609,6 +610,17 @@ func (s *Server) handleSkillDetailPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	// Store next redirect in cookie so it survives OAuth round-trip
+	if next := r.URL.Query().Get("next"); next != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "oauth_next",
+			Value:    next,
+			Path:     "/auth",
+			MaxAge:   600,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 	data := loginPageData{
 		User:      s.sessionUser(r),
 		Sent:      r.URL.Query().Get("sent") == "1",

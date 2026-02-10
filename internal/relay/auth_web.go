@@ -57,6 +57,13 @@ func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.setSessionCookie(w, token)
+
+	// Respect ?next= redirect (stored in oauth_next cookie during OAuth flow)
+	if c, err := r.Cookie("oauth_next"); err == nil && c.Value != "" {
+		http.SetCookie(w, &http.Cookie{Name: "oauth_next", Path: "/auth", MaxAge: -1})
+		http.Redirect(w, r, c.Value, http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, "/social", http.StatusSeeOther)
 }
 
