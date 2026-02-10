@@ -96,6 +96,15 @@ func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request
 		http.Redirect(w, r, c.Value, http.StatusSeeOther)
 		return
 	}
+	// Default: send to app dashboard if AppHost is configured, otherwise /social
+	if s.Config.AppHost != "" {
+		proto := "https"
+		if strings.HasPrefix(s.Config.BaseURL, "http://") {
+			proto = "http"
+		}
+		http.Redirect(w, r, proto+"://"+s.Config.AppHost+"/", http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, "/social", http.StatusSeeOther)
 }
 
