@@ -46,8 +46,9 @@ const (
 	TypePTYReclaim = "pty.reclaim"
 
 	// Relay → Wing (control)
-	TypeRegistered = "registered"
-	TypeError      = "error"
+	TypeRegistered  = "registered"
+	TypeWingUpdate  = "wing.update"
+	TypeError       = "error"
 )
 
 // Envelope wraps every WebSocket message with a type field for routing.
@@ -272,6 +273,11 @@ type DirHandler func(ctx context.Context, req DirList, write PTYWriteFunc)
 type PTYReclaim struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
+}
+
+// WingUpdate tells the wing to self-update to the latest release.
+type WingUpdate struct {
+	Type string `json:"type"`
 }
 
 // QueuedTask is a routing entry in the relay's volatile queue.

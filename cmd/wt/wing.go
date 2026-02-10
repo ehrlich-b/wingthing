@@ -293,6 +293,21 @@ func wingCmd() *cobra.Command {
 				handleDirList(ctx, req, write)
 			}
 
+			client.OnUpdate = func(ctx context.Context) {
+				log.Println("remote update requested")
+				exe, err := os.Executable()
+				if err != nil {
+					log.Printf("update: find executable: %v", err)
+					return
+				}
+				cmd := exec.Command(exe, "update")
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					log.Printf("update: %v", err)
+				}
+			}
+
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
