@@ -160,6 +160,8 @@ func wingCmd() *cobra.Command {
 				os.WriteFile(wingPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644)
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Printf("  log: %s\n", wingLogPath())
+				fmt.Println()
+				fmt.Println("open https://app.wingthing.ai to start a terminal")
 				return nil
 			}
 
@@ -225,6 +227,8 @@ func wingCmd() *cobra.Command {
 				fmt.Printf("  labels: %v\n", labels)
 			}
 			fmt.Printf("  conv: %s\n", convFlag)
+			fmt.Println()
+			fmt.Println("open https://app.wingthing.ai to start a terminal")
 
 			client := &ws.Client{
 				RelayURL:  wsURL,
