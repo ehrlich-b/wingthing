@@ -58,6 +58,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			"last_seen":      wing.LastSeen,
 			"projects":       projects,
 			"latest_version": latestVer,
+			"egg_config":     wing.EggConfig,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -153,6 +154,9 @@ func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		if sess.CWD != "" {
 			entry["cwd"] = sess.CWD
+		}
+		if sess.EggConfig != "" {
+			entry["egg_config"] = sess.EggConfig
 		}
 		out = append(out, entry)
 	}
@@ -288,6 +292,44 @@ func (s *Server) handleWingUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "wing unreachable")
 		return
 	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleWingEggConfig pushes a new egg config to a connected wing.
+func (s *Server) handleWingEggConfig(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	wingID := r.PathValue("wingID")
+	wing := s.Wings.FindByID(wingID)
+	if wing == nil || wing.UserID != user.ID {
+		writeError(w, http.StatusNotFound, "wing not found")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+	yamlStr := string(body)
+
+	// Push to wing via WebSocket
+	msg := ws.EggConfigUpdate{Type: ws.TypeEggConfigUpdate, YAML: yamlStr}
+	data, _ := json.Marshal(msg)
+	writeCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
+		writeError(w, http.StatusBadGateway, "wing unreachable")
+		return
+	}
+
+	// Update cached config on the ConnectedWing
+	wing.EggConfig = yamlStr
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

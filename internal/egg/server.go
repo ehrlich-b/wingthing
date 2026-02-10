@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -42,24 +43,27 @@ type Server struct {
 	mu         sync.RWMutex
 	grpcServer *grpc.Server
 	listener   net.Listener
+	config     *EggConfig // current active config
+	configMu   sync.RWMutex
 }
 
 // Session holds a single PTY process and its state.
 type Session struct {
-	ID        string
-	PID       int
-	Agent     string
-	CWD       string
-	Isolation string
-	StartedAt time.Time
-	ptmx      *os.File
-	ring      *ringBuffer
-	sb        sandbox.Sandbox
-	cmd       *exec.Cmd
-	subs      map[string]chan []byte // stream subscribers
-	mu        sync.Mutex
-	done      chan struct{} // closed when process exits
-	exitCode  int
+	ID         string
+	PID        int
+	Agent      string
+	CWD        string
+	Isolation  string
+	ConfigYAML string // egg config snapshot at spawn time
+	StartedAt  time.Time
+	ptmx       *os.File
+	ring       *ringBuffer
+	sb         sandbox.Sandbox
+	cmd        *exec.Cmd
+	subs       map[string]chan []byte // stream subscribers
+	mu         sync.Mutex
+	done       chan struct{} // closed when process exits
+	exitCode   int
 }
 
 type ringBuffer struct {
@@ -115,6 +119,7 @@ func NewServer(dir, version string) (*Server, error) {
 		token:      token,
 		version:    version,
 		sessions:   make(map[string]*Session),
+		config:     DefaultEggConfig(),
 	}
 	return s, nil
 }
@@ -122,6 +127,31 @@ func NewServer(dir, version string) (*Server, error) {
 // Version returns the egg's binary version.
 func (s *Server) Version(ctx context.Context, req *pb.VersionRequest) (*pb.VersionResponse, error) {
 	return &pb.VersionResponse{Version: s.version}, nil
+}
+
+// GetConfig returns the current active egg config as YAML.
+func (s *Server) GetConfig(ctx context.Context, req *pb.GetConfigRequest) (*pb.GetConfigResponse, error) {
+	s.configMu.RLock()
+	cfg := s.config
+	s.configMu.RUnlock()
+	yamlStr, err := cfg.YAML()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "serialize config: %v", err)
+	}
+	return &pb.GetConfigResponse{Yaml: yamlStr}, nil
+}
+
+// SetConfig updates the active egg config from YAML. New sessions use the updated config.
+func (s *Server) SetConfig(ctx context.Context, req *pb.SetConfigRequest) (*pb.SetConfigResponse, error) {
+	cfg, err := parseEggConfigYAML(req.Yaml)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "parse config: %v", err)
+	}
+	s.configMu.Lock()
+	s.config = cfg
+	s.configMu.Unlock()
+	log.Printf("egg: config updated (isolation=%s)", cfg.Isolation)
+	return &pb.SetConfigResponse{Ok: true}, nil
 }
 
 // Run starts the gRPC server. Blocks until context is cancelled or idle timeout.
@@ -273,24 +303,47 @@ func (s *Server) checkToken(ctx context.Context) error {
 }
 
 // agentCommand returns the command and args for an interactive terminal session.
-func agentCommand(agentName string) (string, []string) {
+// When dangerouslySkip is true, adds the appropriate flag to skip permission prompts.
+func agentCommand(agentName string, dangerouslySkip bool, shell string) (string, []string) {
+	var name string
+	var args []string
+
 	switch agentName {
 	case "claude":
-		return "claude", nil
+		name = "claude"
+		if dangerouslySkip {
+			args = append(args, "--dangerously-skip-permissions")
+		}
 	case "codex":
-		return "codex", nil
+		name = "codex"
+		if dangerouslySkip {
+			args = append(args, "--full-auto")
+		}
 	case "cursor":
-		return "agent", nil
+		name = "agent"
+		if dangerouslySkip {
+			args = append(args, "--dangerously-skip-permissions")
+		}
 	case "ollama":
-		return "ollama", []string{"run", "llama3.2"}
+		name = "ollama"
+		args = []string{"run", "llama3.2"}
 	default:
 		return "", nil
 	}
+
+	return name, args
 }
 
 // Spawn creates a new PTY session.
+// The critical fix: sandbox is created BEFORE the process starts, and the sandbox's
+// Exec() produces the cmd that gets passed to pty.StartWithSize().
 func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResponse, error) {
-	name, args := agentCommand(req.Agent)
+	// Safety gate: refuse dangerously_skip_permissions without real sandbox
+	if req.DangerouslySkipPermissions && (req.Isolation == "" || req.Isolation == "privileged") {
+		return nil, status.Errorf(codes.InvalidArgument, "dangerously_skip_permissions requires sandbox isolation (not privileged)")
+	}
+
+	name, args := agentCommand(req.Agent, req.DangerouslySkipPermissions, req.Shell)
 	if name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported agent: %s", req.Agent)
 	}
@@ -300,21 +353,69 @@ func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResp
 		return nil, status.Errorf(codes.NotFound, "agent %q not found: %v", name, err)
 	}
 
-	cmd := exec.CommandContext(context.Background(), binPath, args...)
-
-	// Set environment from request
+	// Build environment
+	var envSlice []string
 	if len(req.Env) > 0 {
-		var envSlice []string
 		for k, v := range req.Env {
 			envSlice = append(envSlice, k+"="+v)
 		}
-		cmd.Env = envSlice
 	} else {
-		cmd.Env = os.Environ()
+		envSlice = os.Environ()
 	}
 
-	if req.Cwd != "" {
-		cmd.Dir = req.Cwd
+	// Build sandbox config from request
+	var sb sandbox.Sandbox
+	var cmd *exec.Cmd
+
+	if req.Isolation != "" && req.Isolation != "privileged" {
+		mounts := protoMountsToSandbox(req.Mounts)
+		sbCfg := sandbox.Config{
+			Isolation: sandbox.ParseLevel(req.Isolation),
+			Mounts:    mounts,
+			Deny:      req.Deny,
+		}
+		if req.TimeoutSeconds > 0 {
+			sbCfg.Timeout = time.Duration(req.TimeoutSeconds) * time.Second
+		}
+		if req.ResourceLimits != nil {
+			if req.ResourceLimits.CpuSeconds > 0 {
+				sbCfg.CPULimit = time.Duration(req.ResourceLimits.CpuSeconds) * time.Second
+			}
+			if req.ResourceLimits.MemoryBytes > 0 {
+				sbCfg.MemLimit = req.ResourceLimits.MemoryBytes
+			}
+			if req.ResourceLimits.MaxFds > 0 {
+				sbCfg.MaxFDs = req.ResourceLimits.MaxFds
+			}
+		}
+
+		var sbErr error
+		sb, sbErr = sandbox.New(sbCfg)
+		if sbErr != nil {
+			log.Printf("egg: sandbox init failed, running unsandboxed: %v", sbErr)
+			cmd = exec.CommandContext(context.Background(), binPath, args...)
+			cmd.Env = envSlice
+			if req.Cwd != "" {
+				cmd.Dir = req.Cwd
+			}
+		} else {
+			cmd, err = sb.Exec(context.Background(), binPath, args)
+			if err != nil {
+				sb.Destroy()
+				return nil, status.Errorf(codes.Internal, "sandbox exec: %v", err)
+			}
+			// Sandbox sets its own env; merge request env on top
+			cmd.Env = envSlice
+			if req.Cwd != "" {
+				cmd.Dir = req.Cwd
+			}
+		}
+	} else {
+		cmd = exec.CommandContext(context.Background(), binPath, args...)
+		cmd.Env = envSlice
+		if req.Cwd != "" {
+			cmd.Dir = req.Cwd
+		}
 	}
 
 	// Graceful termination
@@ -329,38 +430,41 @@ func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResp
 	}
 	ptmx, err := pty.StartWithSize(cmd, size)
 	if err != nil {
+		if sb != nil {
+			sb.Destroy()
+		}
 		return nil, status.Errorf(codes.Internal, "start pty: %v", err)
 	}
 
-	sess := &Session{
-		ID:        req.SessionId,
-		PID:       cmd.Process.Pid,
-		Agent:     req.Agent,
-		CWD:       req.Cwd,
-		Isolation: req.Isolation,
-		StartedAt: time.Now(),
-		ptmx:      ptmx,
-		ring:      newRingBuffer(ringSize),
-		cmd:       cmd,
-		subs:      make(map[string]chan []byte),
-		done:      make(chan struct{}),
+	// Apply post-start hooks (e.g. rlimits on Linux)
+	if sb != nil {
+		if psErr := sb.PostStart(cmd.Process.Pid); psErr != nil {
+			log.Printf("egg: sandbox post-start warning: %v", psErr)
+		}
 	}
 
-	// Create sandbox if requested
-	if req.Isolation != "" && req.Isolation != "privileged" {
-		sb, sbErr := sandbox.New(sandbox.Config{
-			Isolation: sandbox.ParseLevel(req.Isolation),
-		})
-		if sbErr == nil {
-			sess.sb = sb
-		}
+	sess := &Session{
+		ID:         req.SessionId,
+		PID:        cmd.Process.Pid,
+		Agent:      req.Agent,
+		CWD:        req.Cwd,
+		Isolation:  req.Isolation,
+		ConfigYAML: req.ConfigYaml,
+		StartedAt:  time.Now(),
+		ptmx:       ptmx,
+		ring:       newRingBuffer(ringSize),
+		sb:         sb,
+		cmd:        cmd,
+		subs:       make(map[string]chan []byte),
+		done:       make(chan struct{}),
 	}
 
 	s.mu.Lock()
 	s.sessions[req.SessionId] = sess
 	s.mu.Unlock()
 
-	log.Printf("egg: spawned session %s agent=%s pid=%d", req.SessionId, req.Agent, cmd.Process.Pid)
+	log.Printf("egg: spawned session %s agent=%s pid=%d isolation=%s",
+		req.SessionId, req.Agent, cmd.Process.Pid, req.Isolation)
 
 	// Output reader goroutine — reads PTY, writes to ring buffer, fans out to subscribers
 	go s.readPTY(sess)
@@ -397,6 +501,19 @@ func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResp
 	}, nil
 }
 
+// protoMountsToSandbox converts proto Mount messages to sandbox.Mount.
+func protoMountsToSandbox(mounts []*pb.Mount) []sandbox.Mount {
+	var out []sandbox.Mount
+	for _, m := range mounts {
+		out = append(out, sandbox.Mount{
+			Source:   m.Source,
+			Target:   m.Target,
+			ReadOnly: m.ReadOnly,
+		})
+	}
+	return out
+}
+
 func (s *Server) readPTY(sess *Session) {
 	buf := make([]byte, 4096)
 	for {
@@ -431,12 +548,13 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 	var infos []*pb.SessionInfo
 	for _, sess := range s.sessions {
 		infos = append(infos, &pb.SessionInfo{
-			SessionId: sess.ID,
-			Pid:       int32(sess.PID),
-			Agent:     sess.Agent,
-			Cwd:       sess.CWD,
-			StartedAt: sess.StartedAt.Format(time.RFC3339),
-			Isolation: sess.Isolation,
+			SessionId:  sess.ID,
+			Pid:        int32(sess.PID),
+			Agent:      sess.Agent,
+			Cwd:        sess.CWD,
+			StartedAt:  sess.StartedAt.Format(time.RFC3339),
+			Isolation:  sess.Isolation,
+			ConfigYaml: sess.ConfigYAML,
 		})
 	}
 	return &pb.ListResponse{Sessions: infos}, nil
@@ -565,4 +683,16 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 			}
 		}
 	}
+}
+
+// parseEggConfigYAML parses an EggConfig from a YAML string.
+func parseEggConfigYAML(yamlStr string) (*EggConfig, error) {
+	var cfg EggConfig
+	if err := yaml.Unmarshal([]byte(yamlStr), &cfg); err != nil {
+		return nil, err
+	}
+	if cfg.Isolation == "" {
+		cfg.Isolation = "network"
+	}
+	return &cfg, nil
 }

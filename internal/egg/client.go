@@ -98,6 +98,21 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return resp.Version, nil
 }
 
+// GetConfig returns the egg's current active config as YAML.
+func (c *Client) GetConfig(ctx context.Context) (string, error) {
+	resp, err := c.client.GetConfig(c.authCtx(ctx), &pb.GetConfigRequest{})
+	if err != nil {
+		return "", err
+	}
+	return resp.Yaml, nil
+}
+
+// SetConfig updates the egg's active config from YAML.
+func (c *Client) SetConfig(ctx context.Context, yamlStr string) error {
+	_, err := c.client.SetConfig(c.authCtx(ctx), &pb.SetConfigRequest{Yaml: yamlStr})
+	return err
+}
+
 // Close closes the gRPC connection.
 func (c *Client) Close() error {
 	return c.conn.Close()

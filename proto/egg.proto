@@ -9,6 +9,8 @@ service Egg {
     rpc Resize(ResizeRequest) returns (ResizeResponse);
     rpc Session(stream SessionMsg) returns (stream SessionMsg);
     rpc Version(VersionRequest) returns (VersionResponse);
+    rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+    rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
 }
 
 message SpawnRequest {
@@ -25,6 +27,9 @@ message SpawnRequest {
     string skill = 11;                    // skill name for logging/tracking
     map<string, string> metadata = 12;    // arbitrary key-value pairs
     string shell = 13;                    // override shell (default: agent decides)
+    string config_yaml = 14;              // serialized egg config at spawn time
+    bool dangerously_skip_permissions = 15;
+    repeated string deny = 16;            // paths to mask in sandbox
 }
 
 message Mount {
@@ -57,6 +62,7 @@ message SessionInfo {
     string cwd = 4;
     string started_at = 5;
     string isolation = 6;
+    string config_yaml = 7;              // egg config snapshot at spawn time
 }
 
 message KillRequest { string session_id = 1; }
@@ -89,4 +95,16 @@ message Resize {
 message VersionRequest {}
 message VersionResponse {
     string version = 1;
+}
+
+message GetConfigRequest {}
+message GetConfigResponse {
+    string yaml = 1;
+}
+
+message SetConfigRequest {
+    string yaml = 1;
+}
+message SetConfigResponse {
+    bool ok = 1;
 }

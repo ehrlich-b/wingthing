@@ -51,9 +51,10 @@ const (
 	TypeSessionsSync = "sessions.sync" // wing → relay
 
 	// Relay → Wing (control)
-	TypeRegistered  = "registered"
-	TypeWingUpdate  = "wing.update"
-	TypeError       = "error"
+	TypeRegistered     = "registered"
+	TypeWingUpdate     = "wing.update"
+	TypeEggConfigUpdate = "egg.config_update" // relay → wing: push new egg config
+	TypeError          = "error"
 )
 
 // Envelope wraps every WebSocket message with a type field for routing.
@@ -311,9 +312,16 @@ type SessionsSync struct {
 
 // SessionInfo describes one active session on a wing.
 type SessionInfo struct {
-	SessionID string `json:"session_id"`
-	Agent     string `json:"agent"`
-	CWD       string `json:"cwd,omitempty"`
+	SessionID  string `json:"session_id"`
+	Agent      string `json:"agent"`
+	CWD        string `json:"cwd,omitempty"`
+	EggConfig  string `json:"egg_config,omitempty"` // YAML config snapshot
+}
+
+// EggConfigUpdate pushes a new egg config from relay to wing.
+type EggConfigUpdate struct {
+	Type string `json:"type"`
+	YAML string `json:"yaml"` // serialized egg.yaml content
 }
 
 // QueuedTask is a routing entry in the relay's volatile queue.

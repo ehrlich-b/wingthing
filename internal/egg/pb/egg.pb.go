@@ -22,22 +22,25 @@ const (
 )
 
 type SpawnRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Agent          string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
-	Cwd            string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`
-	Rows           uint32                 `protobuf:"varint,4,opt,name=rows,proto3" json:"rows,omitempty"`
-	Cols           uint32                 `protobuf:"varint,5,opt,name=cols,proto3" json:"cols,omitempty"`
-	Isolation      string                 `protobuf:"bytes,6,opt,name=isolation,proto3" json:"isolation,omitempty"`
-	Env            map[string]string      `protobuf:"bytes,7,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Mounts         []*Mount               `protobuf:"bytes,8,rep,name=mounts,proto3" json:"mounts,omitempty"`
-	TimeoutSeconds uint32                 `protobuf:"varint,9,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
-	ResourceLimits *ResourceLimits        `protobuf:"bytes,10,opt,name=resource_limits,json=resourceLimits,proto3" json:"resource_limits,omitempty"`
-	Skill          string                 `protobuf:"bytes,11,opt,name=skill,proto3" json:"skill,omitempty"`                                                                                 // skill name for logging/tracking
-	Metadata       map[string]string      `protobuf:"bytes,12,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // arbitrary key-value pairs
-	Shell          string                 `protobuf:"bytes,13,opt,name=shell,proto3" json:"shell,omitempty"`                                                                                 // override shell (default: agent decides)
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	SessionId                  string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Agent                      string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
+	Cwd                        string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	Rows                       uint32                 `protobuf:"varint,4,opt,name=rows,proto3" json:"rows,omitempty"`
+	Cols                       uint32                 `protobuf:"varint,5,opt,name=cols,proto3" json:"cols,omitempty"`
+	Isolation                  string                 `protobuf:"bytes,6,opt,name=isolation,proto3" json:"isolation,omitempty"`
+	Env                        map[string]string      `protobuf:"bytes,7,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Mounts                     []*Mount               `protobuf:"bytes,8,rep,name=mounts,proto3" json:"mounts,omitempty"`
+	TimeoutSeconds             uint32                 `protobuf:"varint,9,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	ResourceLimits             *ResourceLimits        `protobuf:"bytes,10,opt,name=resource_limits,json=resourceLimits,proto3" json:"resource_limits,omitempty"`
+	Skill                      string                 `protobuf:"bytes,11,opt,name=skill,proto3" json:"skill,omitempty"`                                                                                 // skill name for logging/tracking
+	Metadata                   map[string]string      `protobuf:"bytes,12,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // arbitrary key-value pairs
+	Shell                      string                 `protobuf:"bytes,13,opt,name=shell,proto3" json:"shell,omitempty"`                                                                                 // override shell (default: agent decides)
+	ConfigYaml                 string                 `protobuf:"bytes,14,opt,name=config_yaml,json=configYaml,proto3" json:"config_yaml,omitempty"`                                                     // serialized egg config at spawn time
+	DangerouslySkipPermissions bool                   `protobuf:"varint,15,opt,name=dangerously_skip_permissions,json=dangerouslySkipPermissions,proto3" json:"dangerously_skip_permissions,omitempty"`
+	Deny                       []string               `protobuf:"bytes,16,rep,name=deny,proto3" json:"deny,omitempty"` // paths to mask in sandbox
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *SpawnRequest) Reset() {
@@ -159,6 +162,27 @@ func (x *SpawnRequest) GetShell() string {
 		return x.Shell
 	}
 	return ""
+}
+
+func (x *SpawnRequest) GetConfigYaml() string {
+	if x != nil {
+		return x.ConfigYaml
+	}
+	return ""
+}
+
+func (x *SpawnRequest) GetDangerouslySkipPermissions() bool {
+	if x != nil {
+		return x.DangerouslySkipPermissions
+	}
+	return false
+}
+
+func (x *SpawnRequest) GetDeny() []string {
+	if x != nil {
+		return x.Deny
+	}
+	return nil
 }
 
 type Mount struct {
@@ -429,6 +453,7 @@ type SessionInfo struct {
 	Cwd           string                 `protobuf:"bytes,4,opt,name=cwd,proto3" json:"cwd,omitempty"`
 	StartedAt     string                 `protobuf:"bytes,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	Isolation     string                 `protobuf:"bytes,6,opt,name=isolation,proto3" json:"isolation,omitempty"`
+	ConfigYaml    string                 `protobuf:"bytes,7,opt,name=config_yaml,json=configYaml,proto3" json:"config_yaml,omitempty"` // egg config snapshot at spawn time
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -501,6 +526,13 @@ func (x *SessionInfo) GetStartedAt() string {
 func (x *SessionInfo) GetIsolation() string {
 	if x != nil {
 		return x.Isolation
+	}
+	return ""
+}
+
+func (x *SessionInfo) GetConfigYaml() string {
+	if x != nil {
+		return x.ConfigYaml
 	}
 	return ""
 }
@@ -967,11 +999,179 @@ func (x *VersionResponse) GetVersion() string {
 	return ""
 }
 
+type GetConfigRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetConfigRequest) Reset() {
+	*x = GetConfigRequest{}
+	mi := &file_egg_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetConfigRequest) ProtoMessage() {}
+
+func (x *GetConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_egg_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetConfigRequest.ProtoReflect.Descriptor instead.
+func (*GetConfigRequest) Descriptor() ([]byte, []int) {
+	return file_egg_proto_rawDescGZIP(), []int{15}
+}
+
+type GetConfigResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Yaml          string                 `protobuf:"bytes,1,opt,name=yaml,proto3" json:"yaml,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetConfigResponse) Reset() {
+	*x = GetConfigResponse{}
+	mi := &file_egg_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetConfigResponse) ProtoMessage() {}
+
+func (x *GetConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_egg_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetConfigResponse.ProtoReflect.Descriptor instead.
+func (*GetConfigResponse) Descriptor() ([]byte, []int) {
+	return file_egg_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GetConfigResponse) GetYaml() string {
+	if x != nil {
+		return x.Yaml
+	}
+	return ""
+}
+
+type SetConfigRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Yaml          string                 `protobuf:"bytes,1,opt,name=yaml,proto3" json:"yaml,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetConfigRequest) Reset() {
+	*x = SetConfigRequest{}
+	mi := &file_egg_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetConfigRequest) ProtoMessage() {}
+
+func (x *SetConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_egg_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetConfigRequest.ProtoReflect.Descriptor instead.
+func (*SetConfigRequest) Descriptor() ([]byte, []int) {
+	return file_egg_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *SetConfigRequest) GetYaml() string {
+	if x != nil {
+		return x.Yaml
+	}
+	return ""
+}
+
+type SetConfigResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetConfigResponse) Reset() {
+	*x = SetConfigResponse{}
+	mi := &file_egg_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetConfigResponse) ProtoMessage() {}
+
+func (x *SetConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_egg_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetConfigResponse.ProtoReflect.Descriptor instead.
+func (*SetConfigResponse) Descriptor() ([]byte, []int) {
+	return file_egg_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *SetConfigResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
 var File_egg_proto protoreflect.FileDescriptor
 
 const file_egg_proto_rawDesc = "" +
 	"\n" +
-	"\tegg.proto\x12\x03egg\"\xb2\x04\n" +
+	"\tegg.proto\x12\x03egg\"\xa9\x05\n" +
 	"\fSpawnRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -988,7 +1188,11 @@ const file_egg_proto_rawDesc = "" +
 	" \x01(\v2\x13.egg.ResourceLimitsR\x0eresourceLimits\x12\x14\n" +
 	"\x05skill\x18\v \x01(\tR\x05skill\x12;\n" +
 	"\bmetadata\x18\f \x03(\v2\x1f.egg.SpawnRequest.MetadataEntryR\bmetadata\x12\x14\n" +
-	"\x05shell\x18\r \x01(\tR\x05shell\x1a6\n" +
+	"\x05shell\x18\r \x01(\tR\x05shell\x12\x1f\n" +
+	"\vconfig_yaml\x18\x0e \x01(\tR\n" +
+	"configYaml\x12@\n" +
+	"\x1cdangerously_skip_permissions\x18\x0f \x01(\bR\x1adangerouslySkipPermissions\x12\x12\n" +
+	"\x04deny\x18\x10 \x03(\tR\x04deny\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
@@ -1011,7 +1215,7 @@ const file_egg_proto_rawDesc = "" +
 	"\x03pid\x18\x02 \x01(\x05R\x03pid\"\r\n" +
 	"\vListRequest\"<\n" +
 	"\fListResponse\x12,\n" +
-	"\bsessions\x18\x01 \x03(\v2\x10.egg.SessionInfoR\bsessions\"\xa3\x01\n" +
+	"\bsessions\x18\x01 \x03(\v2\x10.egg.SessionInfoR\bsessions\"\xc4\x01\n" +
 	"\vSessionInfo\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x10\n" +
@@ -1020,7 +1224,9 @@ const file_egg_proto_rawDesc = "" +
 	"\x03cwd\x18\x04 \x01(\tR\x03cwd\x12\x1d\n" +
 	"\n" +
 	"started_at\x18\x05 \x01(\tR\tstartedAt\x12\x1c\n" +
-	"\tisolation\x18\x06 \x01(\tR\tisolation\",\n" +
+	"\tisolation\x18\x06 \x01(\tR\tisolation\x12\x1f\n" +
+	"\vconfig_yaml\x18\a \x01(\tR\n" +
+	"configYaml\",\n" +
 	"\vKillRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x0e\n" +
@@ -1047,14 +1253,23 @@ const file_egg_proto_rawDesc = "" +
 	"\x04cols\x18\x02 \x01(\rR\x04cols\"\x10\n" +
 	"\x0eVersionRequest\"+\n" +
 	"\x0fVersionResponse\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\tR\aversion2\xa9\x02\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\"\x12\n" +
+	"\x10GetConfigRequest\"'\n" +
+	"\x11GetConfigResponse\x12\x12\n" +
+	"\x04yaml\x18\x01 \x01(\tR\x04yaml\"&\n" +
+	"\x10SetConfigRequest\x12\x12\n" +
+	"\x04yaml\x18\x01 \x01(\tR\x04yaml\"#\n" +
+	"\x11SetConfigResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok2\xa1\x03\n" +
 	"\x03Egg\x12.\n" +
 	"\x05Spawn\x12\x11.egg.SpawnRequest\x1a\x12.egg.SpawnResponse\x12+\n" +
 	"\x04List\x12\x10.egg.ListRequest\x1a\x11.egg.ListResponse\x12+\n" +
 	"\x04Kill\x12\x10.egg.KillRequest\x1a\x11.egg.KillResponse\x121\n" +
 	"\x06Resize\x12\x12.egg.ResizeRequest\x1a\x13.egg.ResizeResponse\x12/\n" +
 	"\aSession\x12\x0f.egg.SessionMsg\x1a\x0f.egg.SessionMsg(\x010\x01\x124\n" +
-	"\aVersion\x12\x13.egg.VersionRequest\x1a\x14.egg.VersionResponseB0Z.github.com/ehrlich-b/wingthing/internal/egg/pbb\x06proto3"
+	"\aVersion\x12\x13.egg.VersionRequest\x1a\x14.egg.VersionResponse\x12:\n" +
+	"\tGetConfig\x12\x15.egg.GetConfigRequest\x1a\x16.egg.GetConfigResponse\x12:\n" +
+	"\tSetConfig\x12\x15.egg.SetConfigRequest\x1a\x16.egg.SetConfigResponseB0Z.github.com/ehrlich-b/wingthing/internal/egg/pbb\x06proto3"
 
 var (
 	file_egg_proto_rawDescOnce sync.Once
@@ -1068,31 +1283,35 @@ func file_egg_proto_rawDescGZIP() []byte {
 	return file_egg_proto_rawDescData
 }
 
-var file_egg_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_egg_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_egg_proto_goTypes = []any{
-	(*SpawnRequest)(nil),    // 0: egg.SpawnRequest
-	(*Mount)(nil),           // 1: egg.Mount
-	(*ResourceLimits)(nil),  // 2: egg.ResourceLimits
-	(*SpawnResponse)(nil),   // 3: egg.SpawnResponse
-	(*ListRequest)(nil),     // 4: egg.ListRequest
-	(*ListResponse)(nil),    // 5: egg.ListResponse
-	(*SessionInfo)(nil),     // 6: egg.SessionInfo
-	(*KillRequest)(nil),     // 7: egg.KillRequest
-	(*KillResponse)(nil),    // 8: egg.KillResponse
-	(*ResizeRequest)(nil),   // 9: egg.ResizeRequest
-	(*ResizeResponse)(nil),  // 10: egg.ResizeResponse
-	(*SessionMsg)(nil),      // 11: egg.SessionMsg
-	(*Resize)(nil),          // 12: egg.Resize
-	(*VersionRequest)(nil),  // 13: egg.VersionRequest
-	(*VersionResponse)(nil), // 14: egg.VersionResponse
-	nil,                     // 15: egg.SpawnRequest.EnvEntry
-	nil,                     // 16: egg.SpawnRequest.MetadataEntry
+	(*SpawnRequest)(nil),      // 0: egg.SpawnRequest
+	(*Mount)(nil),             // 1: egg.Mount
+	(*ResourceLimits)(nil),    // 2: egg.ResourceLimits
+	(*SpawnResponse)(nil),     // 3: egg.SpawnResponse
+	(*ListRequest)(nil),       // 4: egg.ListRequest
+	(*ListResponse)(nil),      // 5: egg.ListResponse
+	(*SessionInfo)(nil),       // 6: egg.SessionInfo
+	(*KillRequest)(nil),       // 7: egg.KillRequest
+	(*KillResponse)(nil),      // 8: egg.KillResponse
+	(*ResizeRequest)(nil),     // 9: egg.ResizeRequest
+	(*ResizeResponse)(nil),    // 10: egg.ResizeResponse
+	(*SessionMsg)(nil),        // 11: egg.SessionMsg
+	(*Resize)(nil),            // 12: egg.Resize
+	(*VersionRequest)(nil),    // 13: egg.VersionRequest
+	(*VersionResponse)(nil),   // 14: egg.VersionResponse
+	(*GetConfigRequest)(nil),  // 15: egg.GetConfigRequest
+	(*GetConfigResponse)(nil), // 16: egg.GetConfigResponse
+	(*SetConfigRequest)(nil),  // 17: egg.SetConfigRequest
+	(*SetConfigResponse)(nil), // 18: egg.SetConfigResponse
+	nil,                       // 19: egg.SpawnRequest.EnvEntry
+	nil,                       // 20: egg.SpawnRequest.MetadataEntry
 }
 var file_egg_proto_depIdxs = []int32{
-	15, // 0: egg.SpawnRequest.env:type_name -> egg.SpawnRequest.EnvEntry
+	19, // 0: egg.SpawnRequest.env:type_name -> egg.SpawnRequest.EnvEntry
 	1,  // 1: egg.SpawnRequest.mounts:type_name -> egg.Mount
 	2,  // 2: egg.SpawnRequest.resource_limits:type_name -> egg.ResourceLimits
-	16, // 3: egg.SpawnRequest.metadata:type_name -> egg.SpawnRequest.MetadataEntry
+	20, // 3: egg.SpawnRequest.metadata:type_name -> egg.SpawnRequest.MetadataEntry
 	6,  // 4: egg.ListResponse.sessions:type_name -> egg.SessionInfo
 	12, // 5: egg.SessionMsg.resize:type_name -> egg.Resize
 	0,  // 6: egg.Egg.Spawn:input_type -> egg.SpawnRequest
@@ -1101,14 +1320,18 @@ var file_egg_proto_depIdxs = []int32{
 	9,  // 9: egg.Egg.Resize:input_type -> egg.ResizeRequest
 	11, // 10: egg.Egg.Session:input_type -> egg.SessionMsg
 	13, // 11: egg.Egg.Version:input_type -> egg.VersionRequest
-	3,  // 12: egg.Egg.Spawn:output_type -> egg.SpawnResponse
-	5,  // 13: egg.Egg.List:output_type -> egg.ListResponse
-	8,  // 14: egg.Egg.Kill:output_type -> egg.KillResponse
-	10, // 15: egg.Egg.Resize:output_type -> egg.ResizeResponse
-	11, // 16: egg.Egg.Session:output_type -> egg.SessionMsg
-	14, // 17: egg.Egg.Version:output_type -> egg.VersionResponse
-	12, // [12:18] is the sub-list for method output_type
-	6,  // [6:12] is the sub-list for method input_type
+	15, // 12: egg.Egg.GetConfig:input_type -> egg.GetConfigRequest
+	17, // 13: egg.Egg.SetConfig:input_type -> egg.SetConfigRequest
+	3,  // 14: egg.Egg.Spawn:output_type -> egg.SpawnResponse
+	5,  // 15: egg.Egg.List:output_type -> egg.ListResponse
+	8,  // 16: egg.Egg.Kill:output_type -> egg.KillResponse
+	10, // 17: egg.Egg.Resize:output_type -> egg.ResizeResponse
+	11, // 18: egg.Egg.Session:output_type -> egg.SessionMsg
+	14, // 19: egg.Egg.Version:output_type -> egg.VersionResponse
+	16, // 20: egg.Egg.GetConfig:output_type -> egg.GetConfigResponse
+	18, // 21: egg.Egg.SetConfig:output_type -> egg.SetConfigResponse
+	14, // [14:22] is the sub-list for method output_type
+	6,  // [6:14] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -1133,7 +1356,7 @@ func file_egg_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_egg_proto_rawDesc), len(file_egg_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   17,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -19,12 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Egg_Spawn_FullMethodName   = "/egg.Egg/Spawn"
-	Egg_List_FullMethodName    = "/egg.Egg/List"
-	Egg_Kill_FullMethodName    = "/egg.Egg/Kill"
-	Egg_Resize_FullMethodName  = "/egg.Egg/Resize"
-	Egg_Session_FullMethodName = "/egg.Egg/Session"
-	Egg_Version_FullMethodName = "/egg.Egg/Version"
+	Egg_Spawn_FullMethodName     = "/egg.Egg/Spawn"
+	Egg_List_FullMethodName      = "/egg.Egg/List"
+	Egg_Kill_FullMethodName      = "/egg.Egg/Kill"
+	Egg_Resize_FullMethodName    = "/egg.Egg/Resize"
+	Egg_Session_FullMethodName   = "/egg.Egg/Session"
+	Egg_Version_FullMethodName   = "/egg.Egg/Version"
+	Egg_GetConfig_FullMethodName = "/egg.Egg/GetConfig"
+	Egg_SetConfig_FullMethodName = "/egg.Egg/SetConfig"
 )
 
 // EggClient is the client API for Egg service.
@@ -37,6 +39,8 @@ type EggClient interface {
 	Resize(ctx context.Context, in *ResizeRequest, opts ...grpc.CallOption) (*ResizeResponse, error)
 	Session(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SessionMsg, SessionMsg], error)
 	Version(ctx context.Context, in *VersionRequest, opts ...grpc.CallOption) (*VersionResponse, error)
+	GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error)
+	SetConfig(ctx context.Context, in *SetConfigRequest, opts ...grpc.CallOption) (*SetConfigResponse, error)
 }
 
 type eggClient struct {
@@ -110,6 +114,26 @@ func (c *eggClient) Version(ctx context.Context, in *VersionRequest, opts ...grp
 	return out, nil
 }
 
+func (c *eggClient) GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetConfigResponse)
+	err := c.cc.Invoke(ctx, Egg_GetConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *eggClient) SetConfig(ctx context.Context, in *SetConfigRequest, opts ...grpc.CallOption) (*SetConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetConfigResponse)
+	err := c.cc.Invoke(ctx, Egg_SetConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // EggServer is the server API for Egg service.
 // All implementations must embed UnimplementedEggServer
 // for forward compatibility.
@@ -120,6 +144,8 @@ type EggServer interface {
 	Resize(context.Context, *ResizeRequest) (*ResizeResponse, error)
 	Session(grpc.BidiStreamingServer[SessionMsg, SessionMsg]) error
 	Version(context.Context, *VersionRequest) (*VersionResponse, error)
+	GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error)
+	SetConfig(context.Context, *SetConfigRequest) (*SetConfigResponse, error)
 	mustEmbedUnimplementedEggServer()
 }
 
@@ -147,6 +173,12 @@ func (UnimplementedEggServer) Session(grpc.BidiStreamingServer[SessionMsg, Sessi
 }
 func (UnimplementedEggServer) Version(context.Context, *VersionRequest) (*VersionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Version not implemented")
+}
+func (UnimplementedEggServer) GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetConfig not implemented")
+}
+func (UnimplementedEggServer) SetConfig(context.Context, *SetConfigRequest) (*SetConfigResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetConfig not implemented")
 }
 func (UnimplementedEggServer) mustEmbedUnimplementedEggServer() {}
 func (UnimplementedEggServer) testEmbeddedByValue()             {}
@@ -266,6 +298,42 @@ func _Egg_Version_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Egg_GetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EggServer).GetConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Egg_GetConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EggServer).GetConfig(ctx, req.(*GetConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Egg_SetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EggServer).SetConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Egg_SetConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EggServer).SetConfig(ctx, req.(*SetConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Egg_ServiceDesc is the grpc.ServiceDesc for Egg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -292,6 +360,14 @@ var Egg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Version",
 			Handler:    _Egg_Version_Handler,
+		},
+		{
+			MethodName: "GetConfig",
+			Handler:    _Egg_GetConfig_Handler,
+		},
+		{
+			MethodName: "SetConfig",
+			Handler:    _Egg_SetConfig_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

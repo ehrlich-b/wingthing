@@ -29,6 +29,7 @@ type ConnectedWing struct {
 	Labels     []string
 	Identities []string
 	Projects   []ws.WingProject
+	EggConfig  string // serialized YAML of wing's egg config
 	Conn       *websocket.Conn
 	LastSeen   time.Time
 }

@@ -58,14 +58,15 @@ type Client struct {
 	Identities []string
 	Projects   []WingProject
 
-	OnTask        TaskHandlerWithChunks
-	OnPTY         PTYHandler
-	OnChatStart   ChatStartHandler
-	OnChatMessage ChatMessageHandler
-	OnChatDelete  ChatDeleteHandler
-	OnDirList     DirHandler
-	OnUpdate      func(ctx context.Context)
-	SessionLister func(ctx context.Context) []SessionInfo
+	OnTask            TaskHandlerWithChunks
+	OnPTY             PTYHandler
+	OnChatStart       ChatStartHandler
+	OnChatMessage     ChatMessageHandler
+	OnChatDelete      ChatDeleteHandler
+	OnDirList         DirHandler
+	OnUpdate          func(ctx context.Context)
+	OnEggConfigUpdate func(ctx context.Context, yamlStr string)
+	SessionLister     func(ctx context.Context) []SessionInfo
 
 	// ptySessions tracks active PTY sessions for routing input/resize
 	ptySessions   map[string]chan []byte // session_id → input channel
@@ -302,6 +303,15 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		case TypeWingUpdate:
 			if c.OnUpdate != nil {
 				go c.OnUpdate(ctx)
+			}
+
+		case TypeEggConfigUpdate:
+			var update EggConfigUpdate
+			if err := json.Unmarshal(data, &update); err != nil {
+				continue
+			}
+			if c.OnEggConfigUpdate != nil {
+				go c.OnEggConfigUpdate(ctx, update.YAML)
 			}
 
 		case TypeError:

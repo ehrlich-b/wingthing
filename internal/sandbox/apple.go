@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
@@ -58,6 +60,10 @@ func (s *appleSandbox) Exec(ctx context.Context, name string, args []string) (*e
 	return cmd, nil
 }
 
+func (s *appleSandbox) PostStart(pid int) error {
+	return nil // Apple Containers handles isolation at the container level
+}
+
 func (s *appleSandbox) Destroy() error {
 	if out, err := exec.Command("container", "stop", s.name).CombinedOutput(); err != nil {
 		return fmt.Errorf("container stop %s: %s: %w", s.name, string(out), err)
@@ -70,17 +76,85 @@ func (s *appleSandbox) Destroy() error {
 }
 
 // buildMounts returns mount flag values based on isolation level and config.
+// When deny paths are set and a mount source is a parent of a denied path,
+// the mount is expanded to individual child dirs minus denied ones.
 func buildMounts(cfg Config) []string {
 	var mounts []string
 	for _, m := range cfg.Mounts {
 		ro := m.ReadOnly || cfg.Isolation == Strict
-		spec := m.Source + ":" + m.Target
-		if ro {
-			spec += ":ro"
+
+		// Check if any deny path is under this mount source
+		expanded := expandMountDeny(m.Source, m.Target, cfg.Deny)
+		if len(expanded) > 0 {
+			for _, em := range expanded {
+				spec := em.source + ":" + em.target
+				if ro {
+					spec += ":ro"
+				}
+				mounts = append(mounts, spec)
+			}
+		} else {
+			spec := m.Source + ":" + m.Target
+			if ro {
+				spec += ":ro"
+			}
+			mounts = append(mounts, spec)
 		}
-		mounts = append(mounts, spec)
 	}
 	return mounts
+}
+
+type expandedMount struct {
+	source string
+	target string
+}
+
+// expandMountDeny checks if any deny path is a child of source. If so, it enumerates
+// the immediate children of source and returns mounts for each non-denied child.
+func expandMountDeny(source, target string, deny []string) []expandedMount {
+	if len(deny) == 0 {
+		return nil
+	}
+
+	// Resolve source for comparison
+	absSource, err := filepath.Abs(source)
+	if err != nil {
+		return nil
+	}
+
+	// Check if any deny path is under this source
+	hasDeny := false
+	denySet := make(map[string]bool)
+	for _, d := range deny {
+		absD, err := filepath.Abs(d)
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(absD, absSource+"/") || absD == absSource {
+			hasDeny = true
+			denySet[absD] = true
+		}
+	}
+	if !hasDeny {
+		return nil
+	}
+
+	// Enumerate immediate children of source, skip denied ones
+	entries, err := os.ReadDir(absSource)
+	if err != nil {
+		return nil
+	}
+
+	var result []expandedMount
+	for _, e := range entries {
+		childPath := filepath.Join(absSource, e.Name())
+		if denySet[childPath] {
+			continue
+		}
+		childTarget := filepath.Join(target, e.Name())
+		result = append(result, expandedMount{source: childPath, target: childTarget})
+	}
+	return result
 }
 
 // hasNetwork returns whether the isolation level permits network access.

@@ -166,6 +166,7 @@ func wingCmd() *cobra.Command {
 	var labelsFlag string
 	var convFlag string
 	var daemonFlag bool
+	var eggConfigFlag string
 
 	cmd := &cobra.Command{
 		Use:   "wing",
@@ -194,6 +195,9 @@ func wingCmd() *cobra.Command {
 				}
 				if convFlag != "auto" {
 					childArgs = append(childArgs, "--conv", convFlag)
+				}
+				if eggConfigFlag != "" {
+					childArgs = append(childArgs, "--egg-config", eggConfigFlag)
 				}
 
 				logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -227,6 +231,27 @@ func wingCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// Load wing-level egg config
+			var wingEggCfg *egg.EggConfig
+			if eggConfigFlag != "" {
+				wingEggCfg, err = egg.LoadEggConfig(eggConfigFlag)
+				if err != nil {
+					return fmt.Errorf("load egg config: %w", err)
+				}
+				log.Printf("egg: loaded wing config from %s (isolation=%s)", eggConfigFlag, wingEggCfg.Isolation)
+			} else {
+				// Check ~/.wingthing/egg.yaml
+				defaultPath := filepath.Join(cfg.Dir, "egg.yaml")
+				wingEggCfg, err = egg.LoadEggConfig(defaultPath)
+				if err != nil {
+					wingEggCfg = egg.DefaultEggConfig()
+					log.Printf("egg: using default config (isolation=%s)", wingEggCfg.Isolation)
+				} else {
+					log.Printf("egg: loaded wing config from %s (isolation=%s)", defaultPath, wingEggCfg.Isolation)
+				}
+			}
+			var wingEggMu sync.Mutex
 
 			// Resolve relay URL
 			relayURL := relayFlag
@@ -339,7 +364,12 @@ func wingCmd() *cobra.Command {
 					}
 					eggClient = ec
 				}
-				handlePTYSession(ctx, cfg, ec, start, write, input)
+				// Discover egg config: project-level egg.yaml > wing default
+				wingEggMu.Lock()
+				currentEggCfg := wingEggCfg
+				wingEggMu.Unlock()
+				eggCfg := egg.DiscoverEggConfig(start.CWD, currentEggCfg)
+				handlePTYSession(ctx, cfg, ec, start, write, input, eggCfg)
 			}
 
 			client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
@@ -373,9 +403,28 @@ func wingCmd() *cobra.Command {
 						SessionID: s.SessionId,
 						Agent:     s.Agent,
 						CWD:       s.Cwd,
+						EggConfig: s.ConfigYaml,
 					})
 				}
 				return out
+			}
+
+			client.OnEggConfigUpdate = func(ctx context.Context, yamlStr string) {
+				newCfg, err := egg.LoadEggConfigFromYAML(yamlStr)
+				if err != nil {
+					log.Printf("egg: bad config update: %v", err)
+					return
+				}
+				wingEggMu.Lock()
+				wingEggCfg = newCfg
+				wingEggMu.Unlock()
+				log.Printf("egg: config updated from relay (isolation=%s)", newCfg.Isolation)
+				// Push to running egg server
+				if eggClient != nil {
+					if err := eggClient.SetConfig(ctx, yamlStr); err != nil {
+						log.Printf("egg: push config to egg server: %v", err)
+					}
+				}
 			}
 
 			client.OnUpdate = func(ctx context.Context) {
@@ -417,6 +466,7 @@ func wingCmd() *cobra.Command {
 	cmd.Flags().StringVar(&labelsFlag, "labels", "", "comma-separated wing labels (e.g. gpu,cuda,research)")
 	cmd.Flags().StringVar(&convFlag, "conv", "auto", "conversation mode: auto (daily rolling), new (fresh), or a named thread")
 	cmd.Flags().BoolVarP(&daemonFlag, "daemon", "d", false, "run as background daemon")
+	cmd.Flags().StringVar(&eggConfigFlag, "egg-config", "", "path to egg.yaml for wing-level sandbox defaults")
 
 	cmd.AddCommand(wingStopCmd())
 	cmd.AddCommand(wingStatusCmd())
@@ -916,7 +966,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between the egg (local gRPC) and the relay (remote WS).
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig) {
 	// Set up E2E encryption if browser sent a public key
 	var gcmMu sync.Mutex
 	var gcm cipher.AEAD
@@ -937,26 +987,44 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, s
 		}
 	}
 
-	// Build env vars to pass to egg
-	envMap := make(map[string]string)
-	passthrough := []string{
-		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-		"HOME", "PATH", "SHELL", "TERM", "USER", "LANG",
+	// Build env from egg config
+	envMap := eggCfg.BuildEnvMap()
+
+	// Convert egg config to proto fields
+	sbCfg := eggCfg.ToSandboxConfig()
+	var protoMounts []*pb.Mount
+	for _, m := range sbCfg.Mounts {
+		protoMounts = append(protoMounts, &pb.Mount{
+			Source:   m.Source,
+			Target:   m.Target,
+			ReadOnly: m.ReadOnly,
+		})
 	}
-	for _, k := range passthrough {
-		if v := os.Getenv(k); v != "" {
-			envMap[k] = v
+	var resourceLimits *pb.ResourceLimits
+	if sbCfg.CPULimit > 0 || sbCfg.MemLimit > 0 || sbCfg.MaxFDs > 0 {
+		resourceLimits = &pb.ResourceLimits{
+			CpuSeconds:  uint32(sbCfg.CPULimit.Seconds()),
+			MemoryBytes: sbCfg.MemLimit,
+			MaxFds:      sbCfg.MaxFDs,
 		}
 	}
+	configYAML, _ := eggCfg.YAML()
 
 	// Spawn in egg (retry once if egg died)
 	spawnReq := &pb.SpawnRequest{
-		SessionId: start.SessionID,
-		Agent:     start.Agent,
-		Cwd:       start.CWD,
-		Rows:      uint32(start.Rows),
-		Cols:      uint32(start.Cols),
-		Env:       envMap,
+		SessionId:                  start.SessionID,
+		Agent:                      start.Agent,
+		Cwd:                        start.CWD,
+		Rows:                       uint32(start.Rows),
+		Cols:                       uint32(start.Cols),
+		Env:                        envMap,
+		Isolation:                  eggCfg.Isolation,
+		Mounts:                     protoMounts,
+		Deny:                       sbCfg.Deny,
+		ResourceLimits:             resourceLimits,
+		Shell:                      eggCfg.Shell,
+		DangerouslySkipPermissions: eggCfg.DangerouslySkipPermissions,
+		ConfigYaml:                 configYAML,
 	}
 	spawnResp, err := ec.Spawn(ctx, spawnReq)
 	if err != nil {

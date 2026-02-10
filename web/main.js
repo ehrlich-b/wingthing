@@ -876,6 +876,23 @@ function showEggDetail(sessionId) {
     }
     var cwdDisplay = s.cwd ? shortenPath(s.cwd) : '~';
 
+    // Build config summary if available
+    var configSummary = '';
+    var configYaml = s.egg_config || '';
+    if (configYaml) {
+        var isoMatch = configYaml.match(/isolation:\s*(\S+)/);
+        var mountCount = (configYaml.match(/^\s*-\s+~/gm) || []).length;
+        var denyCount = (configYaml.match(/deny:/g) || []).length > 0 ? (configYaml.match(/^\s+-\s+~/gm) || []).length : 0;
+        var isoLevel = isoMatch ? isoMatch[1] : '?';
+        var parts = [isoLevel];
+        if (mountCount > 0) parts.push(mountCount + ' mount' + (mountCount > 1 ? 's' : ''));
+        if (denyCount > 0) parts.push(denyCount + ' denied');
+        configSummary =
+            '<div class="detail-row"><span class="detail-key">config</span>' +
+            '<span class="detail-val copyable" data-copy="' + escapeHtml(configYaml) + '" title="click to copy full YAML">' +
+            escapeHtml(parts.join(' | ')) + '</span></div>';
+    }
+
     detailDialog.innerHTML =
         '<h3>' + escapeHtml(name) + ' &middot; ' + escapeHtml(s.agent || '?') + '</h3>' +
         '<div class="detail-row"><span class="detail-key">session</span><span class="detail-val text-dim">' + escapeHtml(s.id) + '</span></div>' +
@@ -884,11 +901,13 @@ function showEggDetail(sessionId) {
         '<div class="detail-row"><span class="detail-key">agent</span><span class="detail-val">' + escapeHtml(s.agent || '?') + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">cwd</span><span class="detail-val text-dim">' + escapeHtml(cwdDisplay) + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">status</span><span class="detail-val">' + escapeHtml(s.status || 'unknown') + '</span></div>' +
+        configSummary +
         '<div class="detail-actions">' +
             '<button class="btn-sm btn-accent" id="detail-egg-connect">connect</button>' +
             '<button class="btn-sm btn-danger" id="detail-egg-delete">delete session</button>' +
         '</div>';
 
+    setupCopyable(detailDialog);
     detailOverlay.classList.add('open');
 
     document.getElementById('detail-egg-connect').addEventListener('click', function() {

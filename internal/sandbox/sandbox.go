@@ -9,6 +9,7 @@ import (
 // Sandbox provides isolated execution of commands.
 type Sandbox interface {
 	Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error)
+	PostStart(pid int) error // apply rlimits etc. after process starts
 	Destroy() error
 }
 
@@ -23,7 +24,11 @@ type Mount struct {
 type Config struct {
 	Isolation Level
 	Mounts    []Mount
+	Deny      []string      // paths to mask (e.g. ~/.ssh)
 	Timeout   time.Duration
+	CPULimit  time.Duration // RLIMIT_CPU (0 = backend default)
+	MemLimit  uint64        // RLIMIT_AS in bytes (0 = backend default)
+	MaxFDs    uint32        // RLIMIT_NOFILE (0 = backend default)
 }
 
 // New creates a platform-appropriate sandbox. It tries platform-specific

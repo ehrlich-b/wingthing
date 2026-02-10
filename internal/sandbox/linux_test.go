@@ -5,6 +5,7 @@ package sandbox
 import (
 	"syscall"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -21,13 +22,13 @@ func TestCloneFlagsStrict(t *testing.T) {
 func TestCloneFlagsStandard(t *testing.T) {
 	s := &linuxSandbox{cfg: Config{Isolation: Standard}}
 	flags := s.cloneFlags()
-	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
 	if flags != want {
 		t.Errorf("Standard cloneFlags = 0x%x, want 0x%x", flags, want)
 	}
-	// Standard should NOT have CLONE_NEWNET
-	if flags&syscall.CLONE_NEWNET != 0 {
-		t.Error("Standard should not set CLONE_NEWNET")
+	// Standard SHOULD have CLONE_NEWNET (no network access)
+	if flags&syscall.CLONE_NEWNET == 0 {
+		t.Error("Standard should set CLONE_NEWNET (deny network)")
 	}
 }
 
@@ -125,8 +126,9 @@ func TestSeccompDeniedSyscallsIncluded(t *testing.T) {
 	}
 }
 
-func TestRlimitValues(t *testing.T) {
-	limits := rlimits()
+func TestRlimitDefaults(t *testing.T) {
+	s := &linuxSandbox{cfg: Config{Isolation: Standard}}
+	limits := s.rlimits()
 
 	expected := map[int]uint64{
 		unix.RLIMIT_CPU:    defaultCPUTimeSec,
@@ -150,7 +152,33 @@ func TestRlimitValues(t *testing.T) {
 	}
 }
 
-func TestRlimitDefaults(t *testing.T) {
+func TestRlimitConfigOverrides(t *testing.T) {
+	s := &linuxSandbox{cfg: Config{
+		Isolation: Standard,
+		CPULimit:  300 * time.Second,
+		MemLimit:  2 * 1024 * 1024 * 1024, // 2GB
+		MaxFDs:    1024,
+	}}
+	limits := s.rlimits()
+
+	expected := map[int]uint64{
+		unix.RLIMIT_CPU:    300,
+		unix.RLIMIT_AS:     2 * 1024 * 1024 * 1024,
+		unix.RLIMIT_NOFILE: 1024,
+	}
+
+	for _, rl := range limits {
+		want, ok := expected[rl.resource]
+		if !ok {
+			continue
+		}
+		if rl.value != want {
+			t.Errorf("rlimit %d value = %d, want %d", rl.resource, rl.value, want)
+		}
+	}
+}
+
+func TestRlimitDefaultConstants(t *testing.T) {
 	if defaultCPUTimeSec != 120 {
 		t.Errorf("defaultCPUTimeSec = %d, want 120", defaultCPUTimeSec)
 	}
@@ -204,7 +232,7 @@ func TestSysProcAttrCloneflags(t *testing.T) {
 		want  uintptr
 	}{
 		{Strict, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
-		{Standard, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
+		{Standard, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
 		{Network, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
 		{Privileged, 0},
 	}
