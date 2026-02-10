@@ -23,6 +23,7 @@ import (
 func wingCmd() *cobra.Command {
 	var relayFlag string
 	var labelsFlag string
+	var convFlag string
 
 	cmd := &cobra.Command{
 		Use:   "wing",
@@ -63,7 +64,7 @@ func wingCmd() *cobra.Command {
 
 			// Detect available agents
 			var agents []string
-			for _, name := range []string{"claude", "ollama", "gemini"} {
+			for _, name := range []string{"claude", "ollama", "gemini", "codex", "agent"} {
 				if _, err := exec.LookPath(name); err == nil {
 					agents = append(agents, name)
 				}
@@ -90,6 +91,7 @@ func wingCmd() *cobra.Command {
 			if len(labels) > 0 {
 				fmt.Printf("  labels: %v\n", labels)
 			}
+			fmt.Printf("  conv: %s\n", convFlag)
 
 			client := &ws.Client{
 				RelayURL:  wsURL,
@@ -113,6 +115,7 @@ func wingCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&relayFlag, "relay", "", "relay server URL (default: ws.wingthing.ai)")
 	cmd.Flags().StringVar(&labelsFlag, "labels", "", "comma-separated wing labels (e.g. gpu,cuda,research)")
+	cmd.Flags().StringVar(&convFlag, "conv", "auto", "conversation mode: auto (daily rolling), new (fresh), or a named thread")
 
 	return cmd
 }
@@ -154,6 +157,8 @@ func executeRelayTask(ctx context.Context, cfg *config.Config, s *store.Store, t
 		"claude": newAgent("claude"),
 		"ollama": newAgent("ollama"),
 		"gemini": newAgent("gemini"),
+		"codex":  newAgent("codex"),
+		"cursor": newAgent("cursor"),
 	}
 	mem := memory.New(cfg.MemoryDir())
 

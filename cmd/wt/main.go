@@ -139,6 +139,10 @@ func newAgent(name string) agent.Agent {
 		return agent.NewOllama("", 0)
 	case "gemini":
 		return agent.NewGemini("", 0)
+	case "codex":
+		return agent.NewCodex(0)
+	case "cursor":
+		return agent.NewCursor(0)
 	default:
 		return agent.NewClaude(0)
 	}
@@ -153,6 +157,8 @@ func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.T
 		"claude": newAgent("claude"),
 		"ollama": newAgent("ollama"),
 		"gemini": newAgent("gemini"),
+		"codex":  newAgent("codex"),
+		"cursor": newAgent("cursor"),
 	}
 	mem := memory.New(cfg.MemoryDir())
 

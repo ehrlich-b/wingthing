@@ -315,11 +315,15 @@ func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) string {
 // Returns the userID or writes an error response and returns empty string.
 func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
+	var token string
+	if strings.HasPrefix(auth, "Bearer ") {
+		token = strings.TrimPrefix(auth, "Bearer ")
+	} else if t := r.URL.Query().Get("token"); t != "" {
+		token = t
+	} else {
 		writeError(w, http.StatusUnauthorized, "missing or invalid Authorization header")
 		return ""
 	}
-	token := strings.TrimPrefix(auth, "Bearer ")
 	userID, _, err := s.Store.ValidateToken(token)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid or expired token")

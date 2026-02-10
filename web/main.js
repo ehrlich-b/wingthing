@@ -4,6 +4,7 @@ let deviceId = localStorage.getItem('wt_device_id');
 let tasks = [];
 let selectedTaskId = null;
 let pollTimer = null;
+let refreshTimer = null;
 
 // DOM refs
 const connectionStatus = document.getElementById('connection-status');
@@ -32,6 +33,8 @@ function init() {
 
     if (token) {
         showApp();
+        loadTasks();
+        refreshTimer = setInterval(loadTasks, 10000);
     } else {
         showLogin();
     }
@@ -43,7 +46,7 @@ function init() {
 
     taskForm.addEventListener('submit', function (e) {
         e.preventDefault();
-        const what = taskInput.value.trim();
+        var what = taskInput.value.trim();
         if (what) {
             submitTask(what);
             taskInput.value = '';
@@ -69,8 +72,6 @@ function showApp() {
     timelineSection.style.display = '';
     threadSection.style.display = '';
     updateConnectionStatus('connected');
-    renderTimeline();
-    renderThread();
 }
 
 // Connection status
@@ -79,38 +80,98 @@ function updateConnectionStatus(status) {
     connectionStatus.className = status;
 }
 
-// Task management
-function addTask(id, what) {
-    tasks.unshift({
-        id,
-        what,
-        status: 'pending',
-        output: '',
-        error: '',
-        timestamp: Date.now()
-    });
-    renderTimeline();
-}
-
-function updateTask(taskId, updates) {
-    for (let i = 0; i < tasks.length; i++) {
-        if (tasks[i].id === taskId) {
-            Object.assign(tasks[i], updates);
-            renderTimeline();
-            if (selectedTaskId === taskId) {
-                renderThread();
-            }
-            return;
+// API helpers
+function api(method, path, body) {
+    var opts = {
+        method: method,
+        headers: {
+            'Authorization': 'Bearer ' + token,
+            'Content-Type': 'application/json'
         }
-    }
+    };
+    if (body) opts.body = JSON.stringify(body);
+    return fetch(path, opts).then(function (resp) {
+        if (resp.status === 401) {
+            token = null;
+            localStorage.removeItem('wt_token');
+            showLogin();
+            throw new Error('unauthorized');
+        }
+        return resp.json();
+    });
 }
 
-function submitTask(what) {
-    const id = crypto.randomUUID();
-    addTask(id, what);
-    selectedTaskId = id;
-    renderThread();
-    // TODO: POST to API when task submission endpoint exists
+// Load tasks from server
+function loadTasks() {
+    api('GET', '/api/tasks').then(function (data) {
+        if (Array.isArray(data)) {
+            tasks = data;
+            renderTimeline();
+            updateStats();
+            if (selectedTaskId) renderThread();
+        }
+    }).catch(function () {});
+}
+
+function updateStats() {
+    var pending = 0, running = 0;
+    for (var i = 0; i < tasks.length; i++) {
+        if (tasks[i].status === 'pending') pending++;
+        if (tasks[i].status === 'running') running++;
+    }
+    pendingCount.textContent = pending;
+    runningCount.textContent = running;
+}
+
+// Task submission
+function submitTask(prompt) {
+    api('POST', '/api/tasks', { prompt: prompt }).then(function (data) {
+        if (data.task_id) {
+            selectedTaskId = data.task_id;
+            loadTasks();
+            streamTask(data.task_id);
+        }
+    }).catch(function (err) {
+        console.error('submit error:', err);
+    });
+}
+
+// SSE streaming
+function streamTask(taskId) {
+    var es = new EventSource('/api/tasks/' + taskId + '/stream?token=' + encodeURIComponent(token));
+    var output = '';
+
+    es.onmessage = function (e) {
+        output += e.data;
+        // Update task in local list
+        for (var i = 0; i < tasks.length; i++) {
+            if (tasks[i].id === taskId) {
+                tasks[i].output = output;
+                tasks[i].status = 'running';
+                break;
+            }
+        }
+        if (selectedTaskId === taskId) renderThread();
+    };
+
+    es.addEventListener('done', function (e) {
+        es.close();
+        for (var i = 0; i < tasks.length; i++) {
+            if (tasks[i].id === taskId) {
+                tasks[i].status = e.data;
+                break;
+            }
+        }
+        renderTimeline();
+        if (selectedTaskId === taskId) renderThread();
+        // Refresh from server to get final state
+        setTimeout(loadTasks, 500);
+    });
+
+    es.onerror = function () {
+        es.close();
+        setTimeout(loadTasks, 1000);
+    };
 }
 
 // Rendering
@@ -120,26 +181,29 @@ function renderTimeline() {
         timelineList.innerHTML = '<div class="timeline-item"><span class="task-what" style="color:var(--text-dim)">no tasks yet</span></div>';
         return;
     }
-    for (const task of tasks) {
-        const el = document.createElement('div');
+    for (var i = 0; i < tasks.length; i++) {
+        var task = tasks[i];
+        var el = document.createElement('div');
         el.className = 'timeline-item ' + task.status;
         el.setAttribute('data-id', task.id);
 
-        const whatSpan = document.createElement('span');
+        var whatSpan = document.createElement('span');
         whatSpan.className = 'task-what';
-        whatSpan.textContent = task.what;
+        whatSpan.textContent = task.prompt || task.skill || task.id;
 
-        const statusSpan = document.createElement('span');
+        var statusSpan = document.createElement('span');
         statusSpan.className = 'task-status';
         statusSpan.textContent = task.status;
 
         el.appendChild(whatSpan);
         el.appendChild(statusSpan);
 
-        el.addEventListener('click', () => {
-            selectedTaskId = task.id;
-            renderThread();
-        });
+        el.addEventListener('click', (function (id) {
+            return function () {
+                selectedTaskId = id;
+                renderThread();
+            };
+        })(task.id));
 
         timelineList.appendChild(el);
     }
@@ -150,18 +214,20 @@ function renderThread() {
         threadContent.innerHTML = '<span class="empty">select a task to view details</span>';
         return;
     }
-    const task = tasks.find(t => t.id === selectedTaskId);
+    var task = null;
+    for (var i = 0; i < tasks.length; i++) {
+        if (tasks[i].id === selectedTaskId) { task = tasks[i]; break; }
+    }
     if (!task) {
         threadContent.innerHTML = '<span class="empty">task not found</span>';
         return;
     }
 
-    let html = '<pre>';
-    html += 'task: ' + escapeHtml(task.what) + '\n';
+    var html = '<pre>';
+    html += 'task: ' + escapeHtml(task.prompt || task.skill || task.id) + '\n';
     html += 'status: ' + escapeHtml(task.status) + '\n';
-    if (task.progress) {
-        html += 'progress: ' + task.progress + '%\n';
-    }
+    if (task.agent) html += 'agent: ' + escapeHtml(task.agent) + '\n';
+    if (task.wing_id) html += 'wing: ' + escapeHtml(task.wing_id) + '\n';
     if (task.output) {
         html += '\n--- output ---\n' + escapeHtml(task.output);
     }
@@ -182,8 +248,8 @@ function startDeviceAuth() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ machine_id: deviceId })
     })
-    .then(resp => resp.json())
-    .then(data => {
+    .then(function (resp) { return resp.json(); })
+    .then(function (data) {
         if (data.error) {
             loginForm.style.display = '';
             loginPending.style.display = 'none';
@@ -192,7 +258,7 @@ function startDeviceAuth() {
         userCodeEl.textContent = data.user_code;
         pollForToken(data.device_code, data.interval || 5);
     })
-    .catch(() => {
+    .catch(function () {
         loginForm.style.display = '';
         loginPending.style.display = 'none';
     });
@@ -201,20 +267,22 @@ function startDeviceAuth() {
 function pollForToken(deviceCode, interval) {
     if (pollTimer) clearInterval(pollTimer);
 
-    pollTimer = setInterval(() => {
+    pollTimer = setInterval(function () {
         fetch('/auth/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ device_code: deviceCode })
         })
-        .then(resp => resp.json())
-        .then(data => {
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
             if (data.token) {
                 clearInterval(pollTimer);
                 pollTimer = null;
                 token = data.token;
                 localStorage.setItem('wt_token', token);
                 showApp();
+                loadTasks();
+                refreshTimer = setInterval(loadTasks, 10000);
             }
             if (data.error && data.error !== 'authorization_pending') {
                 clearInterval(pollTimer);
@@ -222,22 +290,20 @@ function pollForToken(deviceCode, interval) {
                 showLogin();
             }
         })
-        .catch(() => {
-            // Network error — keep trying
-        });
+        .catch(function () {});
     }, interval * 1000);
 }
 
 // Helpers
 function escapeHtml(str) {
-    const div = document.createElement('div');
+    var div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
 }
 
 // Service worker
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').catch(function () {});
 }
 
 // Boot

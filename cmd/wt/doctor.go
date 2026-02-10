@@ -30,6 +30,8 @@ var wellKnownCLIs = []struct {
 	{"claude", "claude", "agents"},
 	{"ollama", "ollama", "agents, embeddings"},
 	{"gemini", "gemini", "agents"},
+	{"codex", "codex", "agents"},
+	{"cursor", "agent", "agents"},
 }
 
 func doctorCmd() *cobra.Command {

@@ -66,6 +66,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("POST /api/tasks", s.handleSubmitTask)
 	s.mux.HandleFunc("GET /api/tasks", s.handleListTasks)
 	s.mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
+	s.mux.HandleFunc("GET /api/tasks/{id}/stream", s.handleTaskStream)
 
 	// Web pages
 	s.mux.HandleFunc("GET /{$}", s.handleHome)
