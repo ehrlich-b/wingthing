@@ -235,7 +235,10 @@ func wingCmd() *cobra.Command {
 					return fmt.Errorf("open log: %w", err)
 				}
 
+				home, _ := os.UserHomeDir()
+
 				child := exec.Command(exe, childArgs...)
+				child.Dir = home
 				child.Stdout = logFile
 				child.Stderr = logFile
 				child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
