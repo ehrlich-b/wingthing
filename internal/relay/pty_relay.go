@@ -175,7 +175,12 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			wing := s.Wings.FindForUser(userID)
+			var wing *ConnectedWing
+			if start.WingID != "" {
+				wing = s.Wings.FindByID(start.WingID)
+			} else {
+				wing = s.Wings.FindForUser(userID)
+			}
 			if wing == nil {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "no wing connected"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
