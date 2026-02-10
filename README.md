@@ -68,12 +68,23 @@ Levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs)
 ## Install
 
 ```bash
-git clone https://github.com/ehrlich-b/wingthing.git
-cd wingthing
-make check     # test + build → ./wt
+curl -fsSL https://raw.githubusercontent.com/ehrlich-b/wingthing/main/scripts/install.sh | sh
 ```
 
-Requires Go 1.25+ and Node.js.
+Or with Go:
+
+```bash
+go install github.com/ehrlich-b/wingthing/cmd/wt@latest
+```
+
+Or from source (requires Go 1.25+ and Node.js):
+
+```bash
+git clone https://github.com/ehrlich-b/wingthing.git
+cd wingthing && make check    # test + build → ./wt
+```
+
+Update: `wt update`
 
 ## Self-hosting
 

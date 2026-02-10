@@ -10,8 +10,11 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
@@ -64,16 +67,102 @@ func (r *ringBuffer) Bytes() []byte {
 	return result
 }
 
+func wingPidPath() string {
+	cfg, _ := config.Load()
+	if cfg != nil {
+		return filepath.Join(cfg.Dir, "wing.pid")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".wingthing", "wing.pid")
+}
+
+func wingLogPath() string {
+	cfg, _ := config.Load()
+	if cfg != nil {
+		return filepath.Join(cfg.Dir, "wing.log")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".wingthing", "wing.log")
+}
+
+func readPid() (int, error) {
+	data, err := os.ReadFile(wingPidPath())
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, err
+	}
+	// Check if process is alive
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return 0, err
+	}
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		os.Remove(wingPidPath())
+		return 0, fmt.Errorf("stale pid")
+	}
+	return pid, nil
+}
+
 func wingCmd() *cobra.Command {
 	var relayFlag string
 	var labelsFlag string
 	var convFlag string
+	var daemonFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "wing",
 		Short: "Connect to relay and accept remote tasks",
 		Long:  "Start a wing — your machine becomes reachable from anywhere via the relay. Same as sitting at the keyboard, just remote.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Daemonize: re-exec detached, write PID file, return
+			if daemonFlag {
+				if pid, err := readPid(); err == nil {
+					return fmt.Errorf("wing daemon already running (pid %d)", pid)
+				}
+
+				exe, err := os.Executable()
+				if err != nil {
+					return err
+				}
+
+				// Build args without -d
+				var childArgs []string
+				childArgs = append(childArgs, "wing")
+				if relayFlag != "" {
+					childArgs = append(childArgs, "--relay", relayFlag)
+				}
+				if labelsFlag != "" {
+					childArgs = append(childArgs, "--labels", labelsFlag)
+				}
+				if convFlag != "auto" {
+					childArgs = append(childArgs, "--conv", convFlag)
+				}
+
+				logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+				if err != nil {
+					return fmt.Errorf("open log: %w", err)
+				}
+
+				child := exec.Command(exe, childArgs...)
+				child.Stdout = logFile
+				child.Stderr = logFile
+				child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+				if err := child.Start(); err != nil {
+					logFile.Close()
+					return fmt.Errorf("start daemon: %w", err)
+				}
+				logFile.Close()
+
+				os.WriteFile(wingPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644)
+				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
+				fmt.Printf("  log: %s\n", wingLogPath())
+				return nil
+			}
+
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -176,8 +265,49 @@ func wingCmd() *cobra.Command {
 	cmd.Flags().StringVar(&relayFlag, "relay", "", "relay server URL (default: ws.wingthing.ai)")
 	cmd.Flags().StringVar(&labelsFlag, "labels", "", "comma-separated wing labels (e.g. gpu,cuda,research)")
 	cmd.Flags().StringVar(&convFlag, "conv", "auto", "conversation mode: auto (daily rolling), new (fresh), or a named thread")
+	cmd.Flags().BoolVarP(&daemonFlag, "daemon", "d", false, "run as background daemon")
+
+	cmd.AddCommand(wingStopCmd())
+	cmd.AddCommand(wingStatusCmd())
 
 	return cmd
+}
+
+func wingStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the wing daemon",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			pid, err := readPid()
+			if err != nil {
+				return fmt.Errorf("no wing daemon running")
+			}
+			proc, _ := os.FindProcess(pid)
+			if err := proc.Signal(syscall.SIGTERM); err != nil {
+				return fmt.Errorf("kill pid %d: %w", pid, err)
+			}
+			os.Remove(wingPidPath())
+			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
+			return nil
+		},
+	}
+}
+
+func wingStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Check wing daemon status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			pid, err := readPid()
+			if err != nil {
+				fmt.Println("wing daemon is not running")
+				return nil
+			}
+			fmt.Printf("wing daemon is running (pid %d)\n", pid)
+			fmt.Printf("  log: %s\n", wingLogPath())
+			return nil
+		},
+	}
 }
 
 // executeRelayTask runs a task received from the relay using the local agent + sandbox.
