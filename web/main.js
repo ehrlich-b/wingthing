@@ -386,10 +386,21 @@ async function loadHome() {
         return;
     }
 
-    sessionsData = sortSessionsByOrder(sessions);
-    // Lock in order so new sessions get a stable position immediately
-    setEggOrder(sessionsData.map(function(s) { return s.id; }));
-    setCachedSessions(sessionsData);
+    // Merge live sessions with cache (same pattern as wings)
+    if (sessions.length > 0) {
+        sessionsData = sortSessionsByOrder(sessions);
+        setEggOrder(sessionsData.map(function(s) { return s.id; }));
+        setCachedSessions(sessionsData);
+    } else {
+        // API empty (relay restarted, wing hasn't reclaimed yet) — keep cached
+        var cachedSessions = getCachedSessions();
+        if (cachedSessions.length > 0) {
+            cachedSessions.forEach(function(s) { s.status = 'detached'; });
+            sessionsData = sortSessionsByOrder(cachedSessions);
+        } else {
+            sessionsData = [];
+        }
+    }
 
     // Merge live wings with cached wings (stable by machine_id)
     var cached = getCachedWings();
