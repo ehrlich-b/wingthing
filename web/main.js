@@ -69,6 +69,7 @@ var LAST_TERM_KEY = 'wt_last_term_agent';
 var LAST_CHAT_KEY = 'wt_last_chat_agent';
 var TERM_BUF_PREFIX = 'wt_termbuf_';
 var WING_ORDER_KEY = 'wt_wing_order';
+var TERM_THUMB_PREFIX = 'wt_termthumb_';
 
 function loginRedirect() {
     var host = window.location.hostname.replace(/^app\./, '');
@@ -273,6 +274,7 @@ function applyWingEvent(ev) {
                 w.id = ev.wing_id;
                 w.agents = ev.agents || w.agents;
                 w.labels = ev.labels || w.labels;
+                w.platform = ev.platform || w.platform;
                 w.public_key = ev.public_key || w.public_key;
                 w.projects = ev.projects || w.projects;
                 found = true;
@@ -283,6 +285,7 @@ function applyWingEvent(ev) {
             wingsData.push({
                 id: ev.wing_id,
                 machine_id: ev.machine_id,
+                platform: ev.platform || '',
                 online: true,
                 agents: ev.agents || [],
                 labels: ev.labels || [],
@@ -300,7 +303,7 @@ function applyWingEvent(ev) {
 
     rebuildAgentLists();
     setCachedWings(wingsData.map(function(w) {
-        return { machine_id: w.machine_id, id: w.id, agents: w.agents, labels: w.labels, projects: w.projects };
+        return { machine_id: w.machine_id, id: w.id, platform: w.platform, agents: w.agents, labels: w.labels, projects: w.projects };
     }));
     if (activeView === 'home') {
         renderDashboard();
@@ -314,7 +317,7 @@ function applyWingEvent(ev) {
 
 function pingWingDot(machineId) {
     requestAnimationFrame(function() {
-        var card = wingStatusEl.querySelector('.wing-card[data-machine-id="' + machineId + '"]');
+        var card = wingStatusEl.querySelector('.wing-box[data-machine-id="' + machineId + '"]');
         if (!card) return;
         var dot = card.querySelector('.wing-dot');
         if (!dot) return;
@@ -376,7 +379,7 @@ async function loadHome() {
 
     // Cache for next load (only essential fields)
     setCachedWings(wingsData.map(function (w) {
-        return { machine_id: w.machine_id, id: w.id, agents: w.agents, labels: w.labels, projects: w.projects };
+        return { machine_id: w.machine_id, id: w.id, platform: w.platform, agents: w.agents, labels: w.labels, projects: w.projects };
     }));
 
     rebuildAgentLists();
@@ -435,7 +438,9 @@ function renderSidebar() {
 }
 
 function setupWingDrag() {
-    var cards = wingStatusEl.querySelectorAll('.wing-card');
+    var grid = wingStatusEl.querySelector('.wing-grid');
+    if (!grid) return;
+    var cards = grid.querySelectorAll('.wing-box');
     var dragSrc = null;
 
     // Desktop drag
@@ -466,47 +471,43 @@ function setupWingDrag() {
             e.preventDefault();
             card.classList.remove('drag-over');
             if (!dragSrc || dragSrc === card) return;
-            // Reorder: move dragSrc before drop target
-            wingStatusEl.insertBefore(dragSrc, card);
+            grid.insertBefore(dragSrc, card);
             saveWingOrder();
         });
     });
 
     // Touch drag (mobile)
     var touchSrc = null;
-    var touchClone = null;
-    var touchStartY = 0;
 
     cards.forEach(function(card) {
         card.addEventListener('touchstart', function(e) {
             if (e.target.closest('.wing-update-btn')) return;
             touchSrc = card;
-            touchStartY = e.touches[0].clientY;
             card.classList.add('dragging');
         }, { passive: true });
     });
 
-    wingStatusEl.addEventListener('touchmove', function(e) {
+    grid.addEventListener('touchmove', function(e) {
         if (!touchSrc) return;
         e.preventDefault();
         var touch = e.touches[0];
         var target = document.elementFromPoint(touch.clientX, touch.clientY);
-        var targetCard = target ? target.closest('.wing-card') : null;
+        var targetCard = target ? target.closest('.wing-box') : null;
         cards.forEach(function(c) { c.classList.remove('drag-over'); });
         if (targetCard && targetCard !== touchSrc) {
             targetCard.classList.add('drag-over');
         }
     }, { passive: false });
 
-    wingStatusEl.addEventListener('touchend', function(e) {
+    grid.addEventListener('touchend', function(e) {
         if (!touchSrc) return;
         var touch = e.changedTouches[0];
         var target = document.elementFromPoint(touch.clientX, touch.clientY);
-        var targetCard = target ? target.closest('.wing-card') : null;
+        var targetCard = target ? target.closest('.wing-box') : null;
         cards.forEach(function(c) { c.classList.remove('drag-over'); });
         touchSrc.classList.remove('dragging');
         if (targetCard && targetCard !== touchSrc) {
-            wingStatusEl.insertBefore(touchSrc, targetCard);
+            grid.insertBefore(touchSrc, targetCard);
             saveWingOrder();
         }
         touchSrc = null;
@@ -515,7 +516,7 @@ function setupWingDrag() {
 
 function saveWingOrder() {
     var order = [];
-    wingStatusEl.querySelectorAll('.wing-card').forEach(function(card) {
+    wingStatusEl.querySelectorAll('.wing-box').forEach(function(card) {
         if (card.dataset.machineId) order.push(card.dataset.machineId);
     });
     setWingOrder(order);
@@ -530,23 +531,32 @@ function saveWingOrder() {
 }
 
 function renderDashboard() {
-    // Wing status cards
+    // Wing boxes
     if (wingsData.length > 0) {
-        wingStatusEl.innerHTML = wingsData.map(function(w) {
+        var wingHtml = '<h3 class="section-label">wings</h3><div class="wing-grid">';
+        wingHtml += wingsData.map(function(w) {
             var name = w.machine_id || w.id.substring(0, 8);
-            var projectCount = (w.projects || []).length;
             var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
+            var projectCount = (w.projects || []).length;
+            var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
+            var detailParts = [];
+            if (plat) detailParts.push(plat);
+            if (projectCount) detailParts.push(projectCount + ' proj');
             var updateBtn = w.online !== false
-                ? ' <button class="btn-sm wing-update-btn" data-wing-id="' + escapeHtml(w.id) + '">update</button>'
+                ? '<button class="btn-sm wing-update-btn" data-wing-id="' + escapeHtml(w.id) + '">update</button>'
                 : '';
-            return '<div class="wing-card" draggable="true" data-machine-id="' + escapeHtml(w.machine_id || '') + '">' +
-                '<span class="wing-dot ' + dotClass + '"></span>' +
-                '<span class="wing-name">' + escapeHtml(name) + '</span>' +
-                '<span class="wing-detail">' + escapeHtml((w.agents || []).join(', ')) +
-                    (projectCount ? ' \u00b7 ' + projectCount + ' projects' : '') + '</span>' +
+            return '<div class="wing-box" draggable="true" data-machine-id="' + escapeHtml(w.machine_id || '') + '">' +
+                '<div class="wing-box-top">' +
+                    '<span class="wing-dot ' + dotClass + '"></span>' +
+                    '<span class="wing-name">' + escapeHtml(name) + '</span>' +
+                '</div>' +
+                '<span class="wing-agents">' + escapeHtml((w.agents || []).join(', ')) + '</span>' +
+                (detailParts.length ? '<span class="wing-detail">' + escapeHtml(detailParts.join(' \u00b7 ')) + '</span>' : '') +
                 updateBtn +
             '</div>';
         }).join('');
+        wingHtml += '</div>';
+        wingStatusEl.innerHTML = wingHtml;
 
         setupWingDrag();
 
@@ -571,7 +581,7 @@ function renderDashboard() {
         wingStatusEl.innerHTML = '';
     }
 
-    // Session cards
+    // Egg boxes (sessions)
     var hasSessions = sessionsData.length > 0;
     emptyState.style.display = hasSessions ? 'none' : '';
 
@@ -580,7 +590,8 @@ function renderDashboard() {
         return;
     }
 
-    sessionsList.innerHTML = sessionsData.map(function(s) {
+    var eggHtml = '<h3 class="section-label">eggs</h3><div class="egg-grid">';
+    eggHtml += sessionsData.map(function(s) {
         var name = projectName(s.cwd);
         var isActive = s.status === 'active';
         var kind = s.kind || 'terminal';
@@ -588,21 +599,28 @@ function renderDashboard() {
         var dotClass = isActive ? 'live' : 'detached';
         if (needsAttention) dotClass = 'attention';
 
-        return '<div class="session-card" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
-            '<span class="session-dot ' + dotClass + '"></span>' +
-            '<div class="session-info">' +
-                '<div class="session-project">' + escapeHtml(name) + '</div>' +
-                '<div class="session-meta">' + escapeHtml(s.agent || '?') + ' ' + kind +
-                    (needsAttention ? ' \u00b7 needs attention' : '') + '</div>' +
-            '</div>' +
-            '<div class="session-actions">' +
-                '<button class="btn-sm btn-danger" onclick="event.stopPropagation(); window._deleteSession(\'' + s.id + '\')">x</button>' +
+        var thumbUrl = '';
+        try { thumbUrl = localStorage.getItem(TERM_THUMB_PREFIX + s.id) || ''; } catch(e) {}
+        var previewHtml = thumbUrl
+            ? '<img src="' + thumbUrl + '" alt="">'
+            : '';
+
+        return '<div class="egg-box" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+            '<div class="egg-preview">' + previewHtml + '</div>' +
+            '<div class="egg-footer">' +
+                '<span class="session-dot ' + dotClass + '"></span>' +
+                '<span class="egg-label">' + escapeHtml(name) + ' \u00b7 ' + escapeHtml(s.agent || '?') +
+                    (needsAttention ? ' \u00b7 !' : '') + '</span>' +
+                '<button class="btn-sm btn-danger egg-delete" data-sid="' + s.id + '">x</button>' +
             '</div>' +
         '</div>';
     }).join('');
+    eggHtml += '</div>';
+    sessionsList.innerHTML = eggHtml;
 
-    sessionsList.querySelectorAll('.session-card').forEach(function(card) {
-        card.addEventListener('click', function() {
+    sessionsList.querySelectorAll('.egg-box').forEach(function(card) {
+        card.addEventListener('click', function(e) {
+            if (e.target.closest('.egg-delete')) return;
             var sid = card.dataset.sid;
             var kind = card.dataset.kind;
             var agent = card.dataset.agent;
@@ -611,6 +629,13 @@ function renderDashboard() {
             } else {
                 switchToSession(sid);
             }
+        });
+    });
+
+    sessionsList.querySelectorAll('.egg-delete').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            window._deleteSession(btn.dataset.sid);
         });
     });
 }
@@ -1236,8 +1261,21 @@ function saveTermBuffer() {
             var data = serializeAddon.serialize();
             if (data.length > 200000) data = data.slice(-200000);
             localStorage.setItem(TERM_BUF_PREFIX + ptySessionId, data);
+            saveTermThumb();
         } catch (e) {}
     }, 500);
+}
+
+function saveTermThumb() {
+    if (!ptySessionId) return;
+    var src = terminalContainer.querySelector('canvas');
+    if (!src) return;
+    try {
+        var c = document.createElement('canvas');
+        c.width = 200; c.height = 120;
+        c.getContext('2d').drawImage(src, 0, 0, 200, 120);
+        localStorage.setItem(TERM_THUMB_PREFIX + ptySessionId, c.toDataURL('image/webp', 0.4));
+    } catch (e) {}
 }
 
 function restoreTermBuffer(sessionId) {
@@ -1249,6 +1287,7 @@ function restoreTermBuffer(sessionId) {
 
 function clearTermBuffer(sessionId) {
     try { localStorage.removeItem(TERM_BUF_PREFIX + sessionId); } catch (e) {}
+    try { localStorage.removeItem(TERM_THUMB_PREFIX + sessionId); } catch (e) {}
 }
 
 function sendPTYInput(text) {

@@ -49,6 +49,7 @@ type Client struct {
 	RelayURL  string // e.g. "wss://ws.wingthing.ai/ws/wing"
 	Token     string // device auth token
 	MachineID string
+	Platform  string // runtime.GOOS
 
 	Agents     []string
 	Skills     []string
@@ -126,6 +127,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 	reg := WingRegister{
 		Type:       TypeWingRegister,
 		MachineID:  c.MachineID,
+		Platform:   c.Platform,
 		Agents:     c.Agents,
 		Skills:     c.Skills,
 		Labels:     c.Labels,
