@@ -122,6 +122,7 @@ func main() {
 		voteCmd(),
 		commentCmd(),
 		wingCmd(),
+		updateCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

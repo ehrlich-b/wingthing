@@ -83,11 +83,12 @@ func serveCmd() *cobra.Command {
 
 			srvCfg := relay.ServerConfig{
 				BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
+				AppHost:            os.Getenv("WT_APP_HOST"),
+				WSHost:             os.Getenv("WT_WS_HOST"),
+				JWTSecret:          os.Getenv("WT_JWT_SECRET"),
 				GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
 				GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-				GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-				GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-				SMTPHost:           os.Getenv("SMTP_HOST"),
+					SMTPHost:           os.Getenv("SMTP_HOST"),
 				SMTPPort:           envOr("SMTP_PORT", "587"),
 				SMTPUser:           os.Getenv("SMTP_USER"),
 				SMTPPass:           os.Getenv("SMTP_PASS"),

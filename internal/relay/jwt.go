@@ -18,9 +18,13 @@ type WingClaims struct {
 	MachineID string `json:"machine,omitempty"`
 }
 
-// GenerateOrLoadSecret loads the JWT signing secret from relay_config,
-// or generates and stores a new one if none exists.
-func GenerateOrLoadSecret(store *RelayStore) ([]byte, error) {
+// GenerateOrLoadSecret returns the JWT signing secret.
+// Priority: envSecret (from WT_JWT_SECRET) > relay_config DB > auto-generate.
+func GenerateOrLoadSecret(store *RelayStore, envSecret string) ([]byte, error) {
+	if envSecret != "" {
+		return base64.StdEncoding.DecodeString(envSecret)
+	}
+
 	val, err := store.GetRelayConfig(jwtSecretKey)
 	if err != nil {
 		return nil, err

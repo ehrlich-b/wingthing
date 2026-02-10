@@ -138,7 +138,6 @@ type loginPageData struct {
 	User      *SocialUser
 	Sent      bool
 	HasGitHub bool
-	HasGoogle bool
 	HasSMTP   bool
 }
 
@@ -631,7 +630,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		User:      s.sessionUser(r),
 		Sent:      r.URL.Query().Get("sent") == "1",
 		HasGitHub: s.Config.GitHubClientID != "",
-		HasGoogle: s.Config.GoogleClientID != "",
 		HasSMTP:   s.Config.SMTPHost != "",
 	}
 	s.template(loginTmpl, "base.html", "login.html").ExecuteTemplate(w, "base", data)

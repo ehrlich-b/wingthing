@@ -99,7 +99,7 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Issue JWT instead of UUID token
-	secret, err := GenerateOrLoadSecret(s.Store)
+	secret, err := GenerateOrLoadSecret(s.Store, s.Config.JWTSecret)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "jwt secret: "+err.Error())
 		return
@@ -393,7 +393,7 @@ func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 	}
 
 	// Try JWT first
-	secret, secretErr := GenerateOrLoadSecret(s.Store)
+	secret, secretErr := GenerateOrLoadSecret(s.Store, s.Config.JWTSecret)
 	if secretErr == nil {
 		if claims, err := ValidateWingJWT(secret, token); err == nil {
 			return claims.Subject

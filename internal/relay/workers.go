@@ -138,7 +138,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	// Try JWT validation first, fall back to DB token
 	var userID string
 	var wingPublicKey string
-	secret, secretErr := GenerateOrLoadSecret(s.Store)
+	secret, secretErr := GenerateOrLoadSecret(s.Store, s.Config.JWTSecret)
 	if secretErr == nil {
 		claims, jwtErr := ValidateWingJWT(secret, token)
 		if jwtErr == nil {

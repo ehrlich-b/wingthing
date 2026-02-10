@@ -68,7 +68,7 @@
 <tr><td>social</td><td>AI-curated link aggregator across 159 spaces</td></tr>
 <tr><td>skills</td><td>browse and install from the curated library</td></tr>
 <tr><td>dashboard</td><td>manage wings, start terminals, chat with agents</td></tr>
-<tr><td>auth</td><td>GitHub + Google OAuth, magic links, device auth</td></tr>
+<tr><td>auth</td><td>GitHub OAuth, magic links, device auth</td></tr>
 </table>
 </div>
 
@@ -79,9 +79,10 @@
 <tr><td>WT_BASE_URL</td><td>public URL for OAuth callbacks</td></tr>
 <tr><td>GITHUB_CLIENT_ID</td><td>GitHub OAuth app ID</td></tr>
 <tr><td>GITHUB_CLIENT_SECRET</td><td>GitHub OAuth app secret</td></tr>
-<tr><td>GOOGLE_CLIENT_ID</td><td>Google OAuth client ID</td></tr>
-<tr><td>GOOGLE_CLIENT_SECRET</td><td>Google OAuth client secret</td></tr>
 <tr><td>OPENAI_API_KEY</td><td>embeddings for social feed (optional)</td></tr>
+<tr><td>WT_JWT_SECRET</td><td>base64-encoded JWT signing key (auto-generated if unset)</td></tr>
+<tr><td>WT_APP_HOST</td><td>hostname for app subdomain (e.g. app.example.com)</td></tr>
+<tr><td>WT_WS_HOST</td><td>hostname for WebSocket subdomain (e.g. ws.example.com)</td></tr>
 </table>
 <p>Without OAuth env vars, the server boots in read-only mode. Social feed and skills pages work, but login and posting are disabled.</p>
 </div>

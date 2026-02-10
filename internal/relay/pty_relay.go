@@ -101,7 +101,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		secret, secretErr := GenerateOrLoadSecret(s.Store)
+		secret, secretErr := GenerateOrLoadSecret(s.Store, s.Config.JWTSecret)
 		if secretErr == nil {
 			if claims, err := ValidateWingJWT(secret, token); err == nil {
 				userID = claims.Subject

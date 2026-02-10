@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -12,10 +13,11 @@ import (
 
 type ServerConfig struct {
 	BaseURL            string
+	AppHost            string // e.g. "app.wingthing.ai" — serve SPA at root
+	WSHost             string // e.g. "ws.wingthing.ai" — WebSocket only
+	JWTSecret          string // base64-encoded; overrides DB-stored secret
 	GitHubClientID     string
 	GitHubClientSecret string
-	GoogleClientID     string
-	GoogleClientSecret string
 	SMTPHost           string
 	SMTPPort           string
 	SMTPUser           string
@@ -95,8 +97,6 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// Web auth
 	s.mux.HandleFunc("GET /auth/github", s.handleGitHubAuth)
 	s.mux.HandleFunc("GET /auth/github/callback", s.handleGitHubCallback)
-	s.mux.HandleFunc("GET /auth/google", s.handleGoogleAuth)
-	s.mux.HandleFunc("GET /auth/google/callback", s.handleGoogleCallback)
 	s.mux.HandleFunc("POST /auth/magic", s.handleMagicLink)
 	s.mux.HandleFunc("GET /auth/magic/verify", s.handleMagicVerify)
 	s.mux.HandleFunc("POST /auth/logout", s.handleLogout)
@@ -115,8 +115,39 @@ func (s *Server) registerStaticRoutes() {
 	})
 }
 
+func stripPort(host string) string {
+	if i := strings.LastIndex(host, ":"); i != -1 {
+		return host[:i]
+	}
+	return host
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	host := stripPort(r.Host)
 	path := r.URL.Path
+
+	// app.wingthing.ai: SPA at root, plus API/auth/ws/assets
+	if s.Config.AppHost != "" && host == s.Config.AppHost {
+		if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/auth/") ||
+			strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/app/") {
+			s.mux.ServeHTTP(w, r)
+			return
+		}
+		s.serveAppIndex(w, r)
+		return
+	}
+
+	// ws.wingthing.ai: WebSocket + health only
+	if s.Config.WSHost != "" && host == s.Config.WSHost {
+		if strings.HasPrefix(path, "/ws/") || path == "/health" {
+			s.mux.ServeHTTP(w, r)
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+
+	// Default host: full site with caching
 	if r.Method == "GET" && (path == "/" || path == "/social" || path == "/skills" || path == "/login" || path == "/self-host" || strings.HasPrefix(path, "/w/") || strings.HasPrefix(path, "/p/")) {
 		if r.URL.RawQuery != "" {
 			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
@@ -125,4 +156,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+func (s *Server) serveAppIndex(w http.ResponseWriter, r *http.Request) {
+	f, err := web.FS.Open("dist/index.html")
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	stat, _ := f.Stat()
+	http.ServeContent(w, r, "index.html", stat.ModTime(), f.(io.ReadSeeker))
 }
