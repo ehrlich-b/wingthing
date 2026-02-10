@@ -51,6 +51,13 @@ func (s *fallbackSandbox) buildEnv() []string {
 	return append(filtered, "TMPDIR="+s.tmpDir)
 }
 
+func (s *fallbackSandbox) PostStart(pid int) error {
+	if len(s.cfg.Deny) > 0 {
+		log.Printf("warning: fallback sandbox does not support deny paths")
+	}
+	return nil
+}
+
 func (s *fallbackSandbox) setLimits(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{}
 }

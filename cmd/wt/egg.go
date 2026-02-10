@@ -47,22 +47,27 @@ func readEggPid() (int, error) {
 }
 
 func eggCmd() *cobra.Command {
+	var configFlag string
+
 	cmd := &cobra.Command{
 		Use:   "egg [agent]",
 		Short: "Run an agent in a sandboxed session",
-		Long:  "Spawns an agent (claude, ollama, codex) inside the egg process with PTY persistence and optional sandboxing.",
+		Long:  "Spawns an agent (claude, ollama, codex) inside the egg process with PTY persistence and optional sandboxing.\nStandalone eggs use dangerously_skip_permissions by default — the sandbox IS the permission boundary.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return eggSpawn(cmd.Context(), args[0])
+			return eggSpawn(cmd.Context(), args[0], configFlag)
 		},
 	}
+
+	cmd.Flags().StringVar(&configFlag, "config", "", "path to egg.yaml (default: discover from cwd, then ~/.wingthing/egg.yaml, then built-in)")
 
 	cmd.AddCommand(eggServeCmd())
 	cmd.AddCommand(eggStopCmd())
 	cmd.AddCommand(eggListCmd())
+	cmd.AddCommand(eggConfigCmd())
 	return cmd
 }
 
@@ -148,8 +153,37 @@ func eggListCmd() *cobra.Command {
 	}
 }
 
+// eggConfigCmd reads the egg's current config.
+func eggConfigCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "config",
+		Short: "Show the running egg's config",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			ec, err := ensureEgg(cfg)
+			if err != nil {
+				return fmt.Errorf("connect to egg: %w", err)
+			}
+			defer ec.Close()
+			yamlStr, err := ec.GetConfig(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("get config: %w", err)
+			}
+			if yamlStr == "" {
+				fmt.Println("(no config set)")
+				return nil
+			}
+			fmt.Print(yamlStr)
+			return nil
+		},
+	}
+}
+
 // eggSpawn starts an agent session in the egg and attaches the terminal.
-func eggSpawn(ctx context.Context, agentName string) error {
+func eggSpawn(ctx context.Context, agentName, configPath string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -160,6 +194,22 @@ func eggSpawn(ctx context.Context, agentName string) error {
 		return fmt.Errorf("connect to egg: %w", err)
 	}
 	defer ec.Close()
+
+	// Load egg config: --config flag > discover from cwd > wing default > built-in
+	var eggCfg *egg.EggConfig
+	if configPath != "" {
+		eggCfg, err = egg.LoadEggConfig(configPath)
+		if err != nil {
+			return fmt.Errorf("load egg config: %w", err)
+		}
+	} else {
+		cwd, _ := os.Getwd()
+		eggCfg = egg.DiscoverEggConfig(cwd, nil)
+	}
+	// Standalone eggs default to dangerously_skip_permissions ON
+	if !eggCfg.DangerouslySkipPermissions {
+		eggCfg.DangerouslySkipPermissions = true
+	}
 
 	// Get terminal size
 	fd := int(os.Stdin.Fd())
@@ -174,21 +224,43 @@ func eggSpawn(ctx context.Context, agentName string) error {
 	cwd, _ := os.Getwd()
 	sessionID := uuid.New().String()[:8]
 
-	// Pass through current environment
-	env := make(map[string]string)
-	for _, e := range os.Environ() {
-		if k, v, ok := strings.Cut(e, "="); ok {
-			env[k] = v
+	// Build env from config
+	envMap := eggCfg.BuildEnvMap()
+
+	// Build proto fields from config
+	sbCfg := eggCfg.ToSandboxConfig()
+	var protoMounts []*pb.Mount
+	for _, m := range sbCfg.Mounts {
+		protoMounts = append(protoMounts, &pb.Mount{
+			Source:   m.Source,
+			Target:   m.Target,
+			ReadOnly: m.ReadOnly,
+		})
+	}
+	var resourceLimits *pb.ResourceLimits
+	if sbCfg.CPULimit > 0 || sbCfg.MemLimit > 0 || sbCfg.MaxFDs > 0 {
+		resourceLimits = &pb.ResourceLimits{
+			CpuSeconds:  uint32(sbCfg.CPULimit.Seconds()),
+			MemoryBytes: sbCfg.MemLimit,
+			MaxFds:      sbCfg.MaxFDs,
 		}
 	}
+	configYAML, _ := eggCfg.YAML()
 
 	_, err = ec.Spawn(ctx, &pb.SpawnRequest{
-		SessionId: sessionID,
-		Agent:     agentName,
-		Cwd:       cwd,
-		Rows:      uint32(rows),
-		Cols:      uint32(cols),
-		Env:       env,
+		SessionId:                  sessionID,
+		Agent:                      agentName,
+		Cwd:                        cwd,
+		Rows:                       uint32(rows),
+		Cols:                       uint32(cols),
+		Env:                        envMap,
+		Isolation:                  eggCfg.Isolation,
+		Mounts:                     protoMounts,
+		Deny:                       sbCfg.Deny,
+		ResourceLimits:             resourceLimits,
+		Shell:                      eggCfg.Shell,
+		DangerouslySkipPermissions: eggCfg.DangerouslySkipPermissions,
+		ConfigYaml:                 configYAML,
 	})
 	if err != nil {
 		return fmt.Errorf("spawn %s: %w", agentName, err)

@@ -78,6 +78,20 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 	return cmd, nil
 }
 
+// PostStart applies resource limits to the sandboxed process via prlimit.
+func (s *linuxSandbox) PostStart(pid int) error {
+	for _, rl := range s.rlimits() {
+		lim := unix.Rlimit{Cur: rl.value, Max: rl.value}
+		if err := unix.Prlimit(pid, rl.resource, &lim, nil); err != nil {
+			log.Printf("linux sandbox: prlimit(%d, %d, %d) failed: %v", pid, rl.resource, rl.value, err)
+		}
+	}
+	if len(s.cfg.Deny) > 0 {
+		log.Printf("linux sandbox: deny paths not yet supported (deferred to v0.8.x)")
+	}
+	return nil
+}
+
 func (s *linuxSandbox) Destroy() error {
 	return os.RemoveAll(s.tmpDir)
 }
@@ -95,6 +109,7 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 		Cloneflags: s.cloneFlags(),
 	}
 
+	// TODO(v0.8.x): install seccomp filter via child-side prctl
 	filter := buildSeccompFilter()
 	if len(filter) > 0 {
 		attr.AmbientCaps = []uintptr{} // drop ambient caps
@@ -109,9 +124,9 @@ func (s *linuxSandbox) cloneFlags() uintptr {
 	case Strict:
 		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET
 	case Standard:
-		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
+		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET // no network
 	case Network:
-		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
+		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID // network allowed
 	case Privileged:
 		return 0
 	default:
@@ -119,12 +134,24 @@ func (s *linuxSandbox) cloneFlags() uintptr {
 	}
 }
 
-// rlimits returns resource limits for the sandboxed process.
-func rlimits() []rlimitPair {
+// rlimits returns resource limits for the sandboxed process, using config overrides or defaults.
+func (s *linuxSandbox) rlimits() []rlimitPair {
+	cpuSec := uint64(defaultCPUTimeSec)
+	if s.cfg.CPULimit > 0 {
+		cpuSec = uint64(s.cfg.CPULimit.Seconds())
+	}
+	memBytes := uint64(defaultMemBytes)
+	if s.cfg.MemLimit > 0 {
+		memBytes = s.cfg.MemLimit
+	}
+	maxFDs := uint64(defaultMaxFDs)
+	if s.cfg.MaxFDs > 0 {
+		maxFDs = uint64(s.cfg.MaxFDs)
+	}
 	return []rlimitPair{
-		{unix.RLIMIT_CPU, defaultCPUTimeSec},
-		{unix.RLIMIT_AS, defaultMemBytes},
-		{unix.RLIMIT_NOFILE, defaultMaxFDs},
+		{unix.RLIMIT_CPU, cpuSec},
+		{unix.RLIMIT_AS, memBytes},
+		{unix.RLIMIT_NOFILE, maxFDs},
 	}
 }
 

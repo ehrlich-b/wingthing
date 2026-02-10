@@ -22,6 +22,7 @@ type PTYSession struct {
 	UserID      string
 	Agent       string
 	CWD         string // working directory for this session
+	EggConfig   string // serialized YAML of egg config at spawn time
 	Status      string // "active", "detached", "exited"
 	BrowserConn *websocket.Conn
 	mu          sync.Mutex
@@ -123,12 +124,13 @@ func (r *PTYRegistry) SyncFromWing(wingID, userID string, sessions []ws.SessionI
 		}
 		if _, exists := r.sessions[s.SessionID]; !exists {
 			r.sessions[s.SessionID] = &PTYSession{
-				ID:     s.SessionID,
-				WingID: wingID,
-				UserID: userID,
-				Agent:  s.Agent,
-				CWD:    s.CWD,
-				Status: "detached",
+				ID:        s.SessionID,
+				WingID:    wingID,
+				UserID:    userID,
+				Agent:     s.Agent,
+				CWD:       s.CWD,
+				EggConfig: s.EggConfig,
+				Status:    "detached",
 			}
 		}
 	}

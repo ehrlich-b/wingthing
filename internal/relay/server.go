@@ -91,6 +91,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /api/app/wings/{wingID}/ls", s.handleWingLS)
 	s.mux.HandleFunc("GET /ws/app", s.handleAppWS)
 	s.mux.HandleFunc("POST /api/app/wings/{wingID}/update", s.handleWingUpdate)
+	s.mux.HandleFunc("POST /api/app/wings/{wingID}/egg-config", s.handleWingEggConfig)
 
 	// Claim page
 	s.mux.HandleFunc("GET /auth/claim", s.handleClaimPage)
