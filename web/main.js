@@ -991,7 +991,13 @@ function showHome() {
     chatSection.style.display = 'none';
     headerTitle.textContent = '';
     ptyStatus.textContent = '';
+    // Mark detaching session as yellow immediately (don't wait for poll)
+    var detachingId = ptySessionId;
     detachPTY();
+    if (detachingId) {
+        var s = sessionsData.find(function(s) { return s.id === detachingId; });
+        if (s) s.status = 'detached';
+    }
     destroyChat();
     renderSidebar();
     renderDashboard();
