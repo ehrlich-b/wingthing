@@ -667,7 +667,8 @@ body {
 #palette-status .palette-waiting-text { color: var(--text-muted); font-style: italic; }
 
 #palette-hints {
-    font-size: 10px;
+    font-size: 11px;
+    color: var(--text-dim);
     cursor: pointer;
 }
 
