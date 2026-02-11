@@ -424,27 +424,19 @@ func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResp
 			}
 		}
 
-		var sbErr error
-		sb, sbErr = sandbox.New(sbCfg)
-		if sbErr != nil {
-			log.Printf("egg: sandbox init failed, running unsandboxed: %v", sbErr)
-			cmd = exec.CommandContext(context.Background(), binPath, args...)
-			cmd.Env = envSlice
-			if req.Cwd != "" {
-				cmd.Dir = req.Cwd
-			}
-		} else {
-			log.Printf("egg: spawn step=sandbox_exec")
-			cmd, err = sb.Exec(context.Background(), binPath, args)
-			if err != nil {
-				sb.Destroy()
-				return nil, status.Errorf(codes.Internal, "sandbox exec: %v", err)
-			}
-			// Sandbox sets its own env; merge request env on top
-			cmd.Env = envSlice
-			if req.Cwd != "" {
-				cmd.Dir = req.Cwd
-			}
+		sb, err = sandbox.New(sbCfg)
+		if err != nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "%v", err)
+		}
+		log.Printf("egg: spawn step=sandbox_exec")
+		cmd, err = sb.Exec(context.Background(), binPath, args)
+		if err != nil {
+			sb.Destroy()
+			return nil, status.Errorf(codes.Internal, "sandbox exec: %v", err)
+		}
+		cmd.Env = envSlice
+		if req.Cwd != "" {
+			cmd.Dir = req.Cwd
 		}
 	} else {
 		log.Printf("egg: spawn step=no_sandbox (privileged or empty isolation)")

@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,15 +36,19 @@ func TestParseLevelUnknown(t *testing.T) {
 	}
 }
 
-func TestNewReturnsSandbox(t *testing.T) {
-	sb, err := New(Config{Isolation: Standard})
-	if err != nil {
-		t.Fatalf("New() error: %v", err)
+func TestNewRejectsWithoutPlatformSandbox(t *testing.T) {
+	_, err := New(Config{Isolation: Standard})
+	if err == nil {
+		// Platform sandbox is available (e.g. running as root or with Apple Containers).
+		// That's fine — this test only checks the rejection path on systems without one.
+		t.Skip("platform sandbox available, skipping enforcement error test")
 	}
-	defer sb.Destroy()
-
-	if sb == nil {
-		t.Fatal("New() returned nil sandbox")
+	var ee *EnforcementError
+	if !errors.As(err, &ee) {
+		t.Fatalf("expected EnforcementError, got %T: %v", err, err)
+	}
+	if len(ee.Gaps) == 0 {
+		t.Fatal("EnforcementError has no gaps")
 	}
 }
 
