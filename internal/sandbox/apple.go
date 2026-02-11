@@ -59,14 +59,11 @@ func buildProfile(cfg Config) string {
 	sb.WriteString("(version 1)\n")
 	sb.WriteString("(allow default)\n")
 
-	// Network isolation for strict/standard
-	if !hasNetwork(cfg.Isolation) {
-		if cfg.AllowOutbound {
-			// Agent needs API access — block inbound only
-			sb.WriteString("(deny network-inbound)\n")
-		} else {
-			sb.WriteString("(deny network*)\n")
-		}
+	// Network isolation for strict/standard.
+	// When AllowOutbound is set, skip network deny entirely — cloud agents
+	// need full network (API calls, TLS, DNS via mDNS, update checks).
+	if !hasNetwork(cfg.Isolation) && !cfg.AllowOutbound {
+		sb.WriteString("(deny network*)\n")
 	}
 
 	// Deny paths — block reads and writes to specific directories.
