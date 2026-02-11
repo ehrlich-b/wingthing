@@ -2039,6 +2039,30 @@ async function e2eDecrypt(encoded) {
 
 // === PTY WebSocket ===
 
+function showReplayOverlay() {
+    var overlay = document.getElementById('replay-overlay');
+    var fill = document.getElementById('replay-fill');
+    overlay.style.display = '';
+    overlay.classList.remove('fade-out');
+    fill.style.width = '0%';
+    // Animate bar: fast to 70%, then slow crawl
+    setTimeout(function () { fill.style.width = '70%'; fill.style.transition = 'width 0.8s ease-out'; }, 20);
+    setTimeout(function () { fill.style.transition = 'width 4s linear'; fill.style.width = '95%'; }, 850);
+    // Safety: if replay never arrives, hide after 5s
+    setTimeout(function () { if (overlay.style.display !== 'none') hideReplayOverlay(); }, 5000);
+}
+
+function hideReplayOverlay() {
+    var overlay = document.getElementById('replay-overlay');
+    var fill = document.getElementById('replay-fill');
+    fill.style.transition = 'width 0.1s linear';
+    fill.style.width = '100%';
+    setTimeout(function () {
+        overlay.classList.add('fade-out');
+        setTimeout(function () { overlay.style.display = 'none'; }, 200);
+    }, 80);
+}
+
 function setupPTYHandlers(ws, reattach) {
     var pendingOutput = [];
     var keyReady = false;
@@ -2059,6 +2083,23 @@ function setupPTYHandlers(ws, reattach) {
         });
     }
 
+    // Flush pending output for reattach: decrypt all, concatenate, write once with completion callback
+    function flushReplay() {
+        var pending = pendingOutput;
+        pendingOutput = [];
+        if (pending.length === 0) { hideReplayOverlay(); return; }
+        Promise.all(pending.map(function (d) { return e2eDecrypt(d); })).then(function (chunks) {
+            if (ws !== ptyWs) return;
+            var total = 0;
+            for (var i = 0; i < chunks.length; i++) total += chunks[i].length;
+            var combined = new Uint8Array(total);
+            var off = 0;
+            for (var i = 0; i < chunks.length; i++) { combined.set(chunks[i], off); off += chunks[i].length; }
+            term.reset();
+            term.write(combined, function () { hideReplayOverlay(); term.focus(); });
+        }).catch(function () { hideReplayOverlay(); });
+    }
+
     ws.onmessage = function (e) {
         if (ws !== ptyWs) return; // stale WebSocket
         var msg = JSON.parse(e.data);
@@ -2072,28 +2113,23 @@ function setupPTYHandlers(ws, reattach) {
 
                 if (msg.public_key) {
                     deriveE2EKey(msg.public_key).then(function (key) {
-                        if (ws !== ptyWs) return; // session switched during key derivation
+                        if (ws !== ptyWs) return;
                         e2eKey = key;
                         keyReady = true;
                         ptyStatus.textContent = key ? '\uD83D\uDD12' : '';
-                        // Flush any output that arrived before key was ready
-                        pendingOutput.forEach(processOutput);
-                        pendingOutput = [];
+                        if (reattach) { flushReplay(); } else { pendingOutput.forEach(processOutput); pendingOutput = []; }
                     }).catch(function () {
                         if (ws !== ptyWs) return;
                         keyReady = true;
                         ptyStatus.textContent = '';
-                        pendingOutput.forEach(processOutput);
-                        pendingOutput = [];
+                        if (reattach) { flushReplay(); } else { pendingOutput.forEach(processOutput); pendingOutput = []; }
                     });
                 } else {
                     keyReady = true;
                     ptyStatus.textContent = '';
                 }
 
-                if (reattach) {
-                    term.reset();
-                } else {
+                if (!reattach) {
                     term.clear();
                 }
                 term.focus();
@@ -2206,7 +2242,7 @@ function attachPTY(sessionId) {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
 
-    term.clear();
+    showReplayOverlay();
     clearNotification(sessionId);
 
     // Find session info for header

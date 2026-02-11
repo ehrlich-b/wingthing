@@ -1059,20 +1059,18 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				}
 				write(ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, PublicKey: wingPubKeyB64})
 
-				// Replay ring buffer with terminal reset prefix
+				// Replay ring buffer (raw, no terminal reset — browser keeps old state)
 				reattachStream, reErr := ec.AttachSession(ctx, sessionID)
 				if reErr == nil {
 					replayMsg, rErr := reattachStream.Recv()
 					if rErr == nil {
 						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
-							// Prepend RIS (Reset to Initial State) so partial escape sequences don't corrupt xterm
-							replayData := append([]byte("\x1bc"), replay.Output...)
 							gcmMu.Lock()
 							replayGCM := gcm
 							gcmMu.Unlock()
 							if replayGCM == nil {
 								log.Printf("pty session %s: dropping replay — E2E not established", sessionID)
-							} else if encrypted, encErr := auth.Encrypt(replayGCM, replayData); encErr != nil {
+							} else if encrypted, encErr := auth.Encrypt(replayGCM, replay.Output); encErr != nil {
 								log.Printf("pty session %s: replay encrypt error: %v", sessionID, encErr)
 							} else {
 								write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
@@ -1268,19 +1266,17 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 				if reErr != nil {
 					log.Printf("pty session %s: reattach to egg failed: %v", start.SessionID, reErr)
 				} else {
-					// Read replay data (ring buffer contents)
+					// Read replay data (ring buffer contents, raw — no terminal reset)
 					replayMsg, rErr := reattachStream.Recv()
 					if rErr == nil {
 						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
-							// Prepend RIS (Reset to Initial State) so partial escape sequences don't corrupt xterm
-							replayData := append([]byte("\x1bc"), replay.Output...)
 							gcmMu.Lock()
 							replayGCM := gcm
 							gcmMu.Unlock()
 
 							if replayGCM == nil {
 								log.Printf("pty session %s: dropping replay — E2E not established", start.SessionID)
-							} else if encrypted, encErr := auth.Encrypt(replayGCM, replayData); encErr != nil {
+							} else if encrypted, encErr := auth.Encrypt(replayGCM, replay.Output); encErr != nil {
 								log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
 							} else {
 								write(ws.PTYOutput{

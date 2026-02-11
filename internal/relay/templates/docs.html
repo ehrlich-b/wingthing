@@ -41,6 +41,8 @@
 <a href="#self-hosting">self-hosting</a>
 <a href="#roost-configuration">roost configuration</a>
 <a href="#security">security</a>
+<a href="#sandbox-limits">sandbox limits</a>
+<a href="#disclaimer">disclaimer</a>
 </nav>
 <div class="docs-body">
 <h1>documentation</h1>
@@ -90,14 +92,15 @@
 
 <div class="docs-section" id="egg-configuration">
 <h2>egg configuration</h2>
-<p>Every agent session runs inside a sandbox. Configure isolation, mounts, and deny paths in <code>egg.yaml</code>.</p>
+<p>Every agent session runs inside a platform-native sandbox. Configure isolation, mounts, and deny paths in <code>egg.yaml</code>.</p>
 <table class="docs-table">
-<tr><th>level</th><th>network</th><th>filesystem</th></tr>
-<tr><td>strict</td><td>denied</td><td>minimal (no mounts)</td></tr>
-<tr><td>standard</td><td>denied</td><td>mounted dirs only</td></tr>
-<tr><td>network</td><td>allowed</td><td>mounted dirs only</td></tr>
-<tr><td>privileged</td><td>allowed</td><td>full access (no sandbox)</td></tr>
+<tr><th>level</th><th>network</th><th>filesystem</th><th>use case</th></tr>
+<tr><td>strict</td><td>denied</td><td>minimal read-only</td><td>offline agents (ollama)</td></tr>
+<tr><td>standard</td><td>denied *</td><td>mounted dirs + deny list</td><td>most tasks</td></tr>
+<tr><td>network</td><td>allowed</td><td>mounted dirs + deny list</td><td>agents needing APIs</td></tr>
+<tr><td>privileged</td><td>allowed</td><td>full access (no sandbox)</td><td>trusted tasks only</td></tr>
 </table>
+<p style="font-size:12px;color:var(--text-dim)">* See <a href="#sandbox-limits">sandbox limits</a> — network deny for <code>standard</code> has platform-specific caveats.</p>
 <p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically.</p>
 <p>Example <code>egg.yaml</code>:</p>
 <div class="docs-code">
@@ -109,6 +112,17 @@ deny:<br>
 &nbsp;&nbsp;- /home/me/.aws
 </div>
 <p>The sandbox auto-injects mounts for the agent binary's install root and config directory, so you don't need to know where Claude or Codex is installed.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what each config field does</h3>
+<table class="docs-table">
+<tr><th>field</th><th>effect</th></tr>
+<tr><td>isolation</td><td>sandbox level (strict, standard, network, privileged)</td></tr>
+<tr><td>mounts</td><td>directories the agent can read/write (only for standard/network)</td></tr>
+<tr><td>deny</td><td>paths hidden from the agent — blocked by SBPL (macOS) or tmpfs overlays (Linux)</td></tr>
+<tr><td>cpu</td><td>CPU time limit in seconds (Linux only, ignored on macOS)</td></tr>
+<tr><td>memory</td><td>memory limit, e.g. <code>4G</code> (Linux only, ignored on macOS)</td></tr>
+<tr><td>max_fds</td><td>max open file descriptors (Linux only, ignored on macOS)</td></tr>
+</table>
 </div>
 
 <div class="docs-section" id="self-hosting">
@@ -168,12 +182,46 @@ deny:<br>
 
 <div class="docs-section" id="security">
 <h2>security</h2>
-<p>Two layers of protection:</p>
+<p>Three layers of protection:</p>
 <ul>
-<li><strong>Sandbox:</strong> Every egg session runs in a platform-native sandbox. Seatbelt on macOS, user namespaces + seccomp on Linux. The sandbox is the permission boundary — agents get full tool access because the sandbox constrains what they can do.</li>
-<li><strong>E2E encryption:</strong> PTY traffic between your browser and your wing is encrypted end-to-end using X25519 key exchange and AES-GCM. The roost never sees plaintext terminal data.</li>
+<li><strong>Sandbox:</strong> Every egg session runs in a platform-native sandbox — Seatbelt (macOS) or user namespaces + seccomp (Linux). The sandbox constrains filesystem access and network. On Linux, seccomp also filters system calls.</li>
+<li><strong>E2E encryption:</strong> PTY traffic between your browser and your wing is encrypted end-to-end using X25519 key exchange and AES-GCM. The roost never sees plaintext terminal data. Keys are re-derived on every reattach.</li>
+<li><strong>Outbound-only connections:</strong> Wings connect outbound to the roost — no inbound ports, no static IP, works behind any NAT or firewall. Nothing listens on your machine.</li>
 </ul>
-<p>Wings connect outbound to the roost — no inbound ports, no static IP, works behind any NAT or firewall.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what the sandbox enforces</h3>
+<table class="docs-table">
+<tr><th>feature</th><th>macOS</th><th>Linux</th></tr>
+<tr><td>deny paths (.ssh, .aws, etc.)</td><td>SBPL rules</td><td>tmpfs overlays</td></tr>
+<tr><td>write isolation (HOME read-only)</td><td>SBPL rules</td><td>bind-mount read-only + writable holes</td></tr>
+<tr><td>network deny (strict/standard)</td><td>full block via SBPL</td><td>network namespace (CLONE_NEWNET)</td></tr>
+<tr><td>port filtering (HTTPS-only)</td><td>443/80 + DNS only</td><td>not available *</td></tr>
+<tr><td>seccomp syscall filter</td><td>n/a</td><td>blocks mount, ptrace, kexec, etc.</td></tr>
+<tr><td>resource limits (CPU, mem, FDs)</td><td>not available</td><td>rlimit(2)</td></tr>
+<tr><td>PID isolation</td><td>n/a</td><td>CLONE_NEWPID</td></tr>
+</table>
+<p style="font-size:12px;color:var(--text-dim)">* See sandbox limits below.</p>
+</div>
+
+<div class="docs-section" id="sandbox-limits">
+<h2>sandbox limits</h2>
+<p>The sandbox is a meaningful security boundary, but it is not a container runtime. Here is what it does <em>not</em> do:</p>
+<ul>
+<li><strong>Linux network filtering is all-or-nothing.</strong> Unprivileged user namespaces cannot do port-level filtering (no CAP_NET_ADMIN for iptables). If the agent needs HTTPS (Claude, Codex, Gemini), the network namespace is dropped entirely — the agent gets full network access, not just ports 443/80. macOS does not have this limitation (Seatbelt filters by port). Use <code>isolation: strict</code> with local-only agents (ollama) for true network isolation on Linux.</li>
+<li><strong>Agent credentials are accessible.</strong> The agent needs its own API keys and config files to function. These are mounted into the sandbox. A task running inside the agent could read them.</li>
+<li><strong>HOME is readable.</strong> Outside of deny-listed paths, your home directory is mounted read-only. The agent needs to read your codebase. Sensitive directories should be added to the <code>deny</code> list in your egg.yaml.</li>
+<li><strong>Agent config is writable.</strong> The agent's config directory (e.g. <code>~/.claude/</code>) must be writable for the agent to function. A task could modify agent settings.</li>
+<li><strong>Resource limits are Linux-only.</strong> macOS Seatbelt does not support rlimits. An agent on macOS can consume unbounded CPU and memory.</li>
+<li><strong>No env var filtering yet.</strong> All parent environment variables are currently passed through to the sandbox. Filtering is planned.</li>
+</ul>
+<p>The sandbox is designed to prevent accidental damage and limit blast radius — not to run untrusted adversarial code. Think of it as guardrails, not a jail. If you need hard isolation, run wingthing inside a VM or container.</p>
+</div>
+
+<div class="docs-section" id="disclaimer">
+<h2>disclaimer</h2>
+<p>wingthing is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and noninfringement. The sandbox is a best-effort security boundary — it reduces risk but does not eliminate it. You are responsible for what runs on your machine.</p>
+<p>The authors are not liable for any damages, data loss, or security incidents arising from the use of this software. By using wingthing, you accept these terms. See the <a href="https://github.com/ehrlich-b/wingthing/blob/main/LICENSE">MIT license</a> for full details.</p>
+<p>If you find a security issue, please report it to <a href="mailto:security@wingthing.ai">security@wingthing.ai</a>.</p>
 </div>
 
 </div>

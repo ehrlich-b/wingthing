@@ -815,6 +815,39 @@ body {
     padding: 4px;
 }
 
+#terminal-section { position: relative; }
+#replay-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--bg);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    transition: opacity 0.15s ease-out;
+}
+#replay-overlay.fade-out { opacity: 0; pointer-events: none; }
+#replay-bar {
+    width: 200px;
+    height: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+    overflow: hidden;
+}
+#replay-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--action);
+    transition: width 0.1s linear;
+}
+#replay-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+}
+
 #modifier-keys {
     display: none;
     gap: 4px;

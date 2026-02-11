@@ -26,7 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const ringSize = 50 * 1024 // 50KB replay buffer
+const maxReplaySize = 10 * 1024 * 1024 // 10MB replay buffer, resets on screen clear
 
 // Server implements the Egg gRPC service — wraps a SINGLE process.
 // Each egg is its own child process with its own socket/PID/token in ~/.wingthing/eggs/<session-id>/.
@@ -50,7 +50,7 @@ type Session struct {
 	Isolation string
 	StartedAt time.Time
 	ptmx      *os.File
-	ring      *ringBuffer
+	replay    *replayBuffer
 	sb        sandbox.Sandbox
 	cmd       *exec.Cmd
 	subs      map[string]chan []byte // stream subscribers
@@ -77,40 +77,68 @@ type RunConfig struct {
 	MaxFDs                     uint32
 }
 
-type ringBuffer struct {
-	mu   sync.Mutex
-	buf  []byte
-	size int
-	pos  int
-	full bool
+// replayBuffer captures PTY output and resets on screen-clear sequences.
+// On reattach the entire buffer is replayed, starting from the last clear.
+type replayBuffer struct {
+	mu  sync.Mutex
+	buf []byte
 }
 
-func newRingBuffer(size int) *ringBuffer {
-	return &ringBuffer{buf: make([]byte, size), size: size}
+func newReplayBuffer() *replayBuffer {
+	return &replayBuffer{buf: make([]byte, 0, 64*1024)}
 }
 
-func (r *ringBuffer) Write(p []byte) {
+func (r *replayBuffer) Write(p []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, b := range p {
-		r.buf[r.pos] = b
-		r.pos = (r.pos + 1) % r.size
-		if r.pos == 0 {
-			r.full = true
+
+	// If p contains a screen-clear sequence, reset and keep only content after the last one
+	if idx := lastScreenClear(p); idx >= 0 {
+		r.buf = r.buf[:0]
+		p = p[idx:]
+	}
+
+	r.buf = append(r.buf, p...)
+
+	// Cap at maxReplaySize by trimming from the front
+	if len(r.buf) > maxReplaySize {
+		excess := len(r.buf) - maxReplaySize
+		r.buf = append(r.buf[:0], r.buf[excess:]...)
+	}
+}
+
+func (r *replayBuffer) Bytes() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]byte(nil), r.buf...)
+}
+
+// lastScreenClear returns the index AFTER the last screen-clear sequence in p,
+// or -1 if none found. Detected sequences:
+//
+//	\x1bc       RIS (Reset to Initial State)
+//	\x1b[2J     ED 2 (Erase entire display)
+//	\x1b[3J     ED 3 (Erase display + scrollback)
+func lastScreenClear(p []byte) int {
+	last := -1
+	for i := 0; i < len(p); i++ {
+		if p[i] != 0x1b {
+			continue
+		}
+		// \x1bc (RIS)
+		if i+1 < len(p) && p[i+1] == 'c' {
+			last = i + 2
+			i++
+			continue
+		}
+		// \x1b[2J or \x1b[3J
+		if i+3 < len(p) && p[i+1] == '[' && (p[i+2] == '2' || p[i+2] == '3') && p[i+3] == 'J' {
+			last = i + 4
+			i += 3
+			continue
 		}
 	}
-}
-
-func (r *ringBuffer) Bytes() []byte {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.full {
-		return append([]byte(nil), r.buf[:r.pos]...)
-	}
-	result := make([]byte, r.size)
-	copy(result, r.buf[r.pos:])
-	copy(result[r.size-r.pos:], r.buf[:r.pos])
-	return result
+	return last
 }
 
 // NewServer creates a new per-session egg server.
@@ -288,7 +316,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		Isolation: rc.Isolation,
 		StartedAt: time.Now(),
 		ptmx:      ptmx,
-		ring:      newRingBuffer(ringSize),
+		replay:    newReplayBuffer(),
 		sb:        sb,
 		cmd:       cmd,
 		subs:      make(map[string]chan []byte),
@@ -426,7 +454,7 @@ func (s *Server) readPTY(sess *Session) {
 			}
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			sess.ring.Write(data)
+			sess.replay.Write(data)
 
 			sess.mu.Lock()
 			for _, ch := range sess.subs {
@@ -502,7 +530,7 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 
 	// Handle attach — replay ring buffer
 	if msg.GetAttach() {
-		buffered := sess.ring.Bytes()
+		buffered := sess.replay.Bytes()
 		if len(buffered) > 0 {
 			if err := stream.Send(&pb.SessionMsg{
 				SessionId: sessionID,
@@ -663,7 +691,7 @@ func (s *Server) startupWatchdog(sess *Session) {
 	}
 
 	// Check if we got any output
-	if len(sess.ring.Bytes()) > 0 {
+	if len(sess.replay.Bytes()) > 0 {
 		return // got output, all good
 	}
 
@@ -719,7 +747,7 @@ func (s *Server) startupWatchdog(sess *Session) {
 	case <-timer2.C:
 	}
 
-	if len(sess.ring.Bytes()) > 0 {
+	if len(sess.replay.Bytes()) > 0 {
 		return
 	}
 
