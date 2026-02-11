@@ -25,13 +25,14 @@ type Mount struct {
 
 // Config holds sandbox creation parameters.
 type Config struct {
-	Isolation Level
-	Mounts    []Mount
-	Deny      []string      // paths to mask (e.g. ~/.ssh)
-	Timeout   time.Duration
-	CPULimit  time.Duration // RLIMIT_CPU (0 = backend default)
-	MemLimit  uint64        // RLIMIT_AS in bytes (0 = backend default)
-	MaxFDs    uint32        // RLIMIT_NOFILE (0 = backend default)
+	Isolation      Level
+	Mounts         []Mount
+	Deny           []string      // paths to mask (e.g. ~/.ssh)
+	AllowOutbound  bool          // allow outbound network even if isolation denies it
+	Timeout        time.Duration
+	CPULimit       time.Duration // RLIMIT_CPU (0 = backend default)
+	MemLimit       uint64        // RLIMIT_AS in bytes (0 = backend default)
+	MaxFDs         uint32        // RLIMIT_NOFILE (0 = backend default)
 }
 
 // EnforcementError is returned when the system cannot enforce the requested sandbox config.
