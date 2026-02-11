@@ -69,6 +69,8 @@ var (
 	skillsTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skills.html"))
 	skillDetailTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skill_detail.html"))
 	docsTmpl        = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/docs.html"))
+	termsTmpl       = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/terms.html"))
+	privacyTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/privacy.html"))
 	installTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/install.html"))
 	claimTmpl       = template.Must(template.New("claim.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/claim.html"))
 )
@@ -238,6 +240,16 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
 	s.template(docsTmpl, "base.html", "docs.html").ExecuteTemplate(w, "base", data)
+}
+
+func (s *Server) handleTerms(w http.ResponseWriter, r *http.Request) {
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
+	s.template(termsTmpl, "base.html", "terms.html").ExecuteTemplate(w, "base", data)
+}
+
+func (s *Server) handlePrivacy(w http.ResponseWriter, r *http.Request) {
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
+	s.template(privacyTmpl, "base.html", "privacy.html").ExecuteTemplate(w, "base", data)
 }
 
 func (s *Server) handleInstallPage(w http.ResponseWriter, r *http.Request) {

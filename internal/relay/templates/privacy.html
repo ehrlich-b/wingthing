@@ -1,0 +1,68 @@
+{{define "title"}}privacy policy — wingthing.ai{{end}}
+{{define "head"}}
+<style>
+.legal{max-width:700px;margin:0 auto}
+.legal h1{font-size:24px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
+.legal .updated{color:var(--text-dim);font-size:13px;margin-bottom:28px}
+.legal h2{font-size:16px;font-weight:600;margin:24px 0 8px;color:var(--action)}
+.legal p,.legal li{color:var(--text-dim);font-size:14px;line-height:1.7;margin-bottom:10px}
+.legal ul{padding-left:20px;margin-bottom:12px}
+.legal a{color:var(--action)}
+.legal .tldr{background:var(--bg-card);border-radius:6px;padding:14px 20px;margin-bottom:24px;font-family:var(--mono);font-size:13px;color:var(--text)}
+</style>
+{{end}}
+{{define "content"}}
+<div class="legal">
+<h1>privacy policy</h1>
+<p class="updated">Last updated: February 11, 2026</p>
+
+<div class="tldr">tl;dr — wingthing is a dumb pipe. Your terminal traffic is end-to-end encrypted. We can't read it. We don't want to.</div>
+
+<h2>1. what we collect</h2>
+<p>When you use the hosted service at wingthing.ai, we collect:</p>
+<ul>
+<li><strong>Account information:</strong> If you authenticate via GitHub OAuth or magic link, we store your username and email address for the purpose of identifying your account and your wings.</li>
+<li><strong>Device tokens:</strong> When you run <code>wt login</code>, a device token is generated and stored on the server to authenticate your wing's WebSocket connection.</li>
+<li><strong>Session metadata:</strong> Session IDs, agent type (e.g. "claude", "ollama"), and connection timestamps. This is operational metadata required to route WebSocket connections.</li>
+<li><strong>Social feed content:</strong> Posts, votes, and comments you submit to the public social feed at wingthing.ai/social.</li>
+</ul>
+
+<h2>2. what we do not collect</h2>
+<ul>
+<li><strong>Terminal content:</strong> All PTY traffic between your browser and your wing is encrypted end-to-end using X25519 key exchange and AES-GCM. The roost relays encrypted bytes. It cannot decrypt them. We do not log, inspect, store, or analyze your terminal sessions.</li>
+<li><strong>File contents:</strong> We do not access, read, or store any files on your machine. Your wing runs on your hardware.</li>
+<li><strong>Agent conversations:</strong> We do not see what you say to AI agents or what they say to you.</li>
+<li><strong>Keystrokes:</strong> Input is encrypted before it leaves your browser. We relay ciphertext.</li>
+</ul>
+
+<h2>3. how we use your data</h2>
+<p>Account and session metadata is used solely to:</p>
+<ul>
+<li>Authenticate your connection to the roost</li>
+<li>Route WebSocket messages between your browser and your wing</li>
+<li>Display your active sessions in the web interface</li>
+</ul>
+<p>We do not sell, rent, or share your data with third parties. We do not use your data for advertising, analytics, or model training.</p>
+
+<h2>4. data storage</h2>
+<p>The hosted roost stores data in SQLite on a single Fly.io machine. Social feed content is public by design. Account metadata is stored for the duration of your account. Session metadata is ephemeral and does not persist across server restarts.</p>
+
+<h2>5. self-hosted instances</h2>
+<p>If you self-host wingthing, your data never touches our servers. You control everything. This privacy policy applies only to the hosted service at wingthing.ai.</p>
+
+<h2>6. third-party services</h2>
+<ul>
+<li><strong>GitHub OAuth:</strong> If you authenticate via GitHub, GitHub's privacy policy applies to the authentication flow. We receive only your username and email.</li>
+<li><strong>Fly.io:</strong> The hosted roost runs on Fly.io infrastructure. Fly.io's privacy policy governs their handling of network-level data.</li>
+</ul>
+
+<h2>7. data deletion</h2>
+<p>To delete your account and associated data, contact <a href="mailto:privacy@wingthing.ai">privacy@wingthing.ai</a>. Social feed posts are public and may be retained in accordance with our content policies.</p>
+
+<h2>8. changes to this policy</h2>
+<p>We may update this policy. Material changes will be communicated via the Service. Continued use constitutes acceptance.</p>
+
+<h2>9. contact</h2>
+<p>Privacy questions: <a href="mailto:privacy@wingthing.ai">privacy@wingthing.ai</a></p>
+</div>
+{{end}}

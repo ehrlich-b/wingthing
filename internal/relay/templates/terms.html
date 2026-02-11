@@ -1,0 +1,64 @@
+{{define "title"}}terms of service — wingthing.ai{{end}}
+{{define "head"}}
+<style>
+.legal{max-width:700px;margin:0 auto}
+.legal h1{font-size:24px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
+.legal .updated{color:var(--text-dim);font-size:13px;margin-bottom:28px}
+.legal h2{font-size:16px;font-weight:600;margin:24px 0 8px;color:var(--action)}
+.legal p,.legal li{color:var(--text-dim);font-size:14px;line-height:1.7;margin-bottom:10px}
+.legal ul{padding-left:20px;margin-bottom:12px}
+.legal a{color:var(--action)}
+</style>
+{{end}}
+{{define "content"}}
+<div class="legal">
+<h1>terms of service</h1>
+<p class="updated">Last updated: February 11, 2026</p>
+
+<p>These Terms of Service ("Terms") govern your use of the wingthing software and service ("Service") operated by Bryan Ehrlich ("we", "us", "our"). By using the Service, you agree to be bound by these Terms. If you do not agree, do not use the Service.</p>
+
+<h2>1. the service</h2>
+<p>wingthing provides a command-line tool and relay infrastructure for running AI agent sessions on your own hardware and accessing them remotely. The Service includes the <code>wt</code> CLI, the relay server ("roost"), and the web interface at wingthing.ai and app.wingthing.ai.</p>
+
+<h2>2. acceptable use</h2>
+<p>You agree not to use the Service to:</p>
+<ul>
+<li>Violate any applicable law, regulation, or third-party right</li>
+<li>Distribute malware, ransomware, or other malicious software</li>
+<li>Conduct unauthorized access to systems or data you do not own or have permission to access</li>
+<li>Abuse, harass, or harm other users or third parties</li>
+<li>Interfere with or disrupt the Service or its infrastructure</li>
+<li>Circumvent any security measures, rate limits, or access controls</li>
+<li>Use the Service to generate, store, or distribute illegal content</li>
+</ul>
+
+<h2>3. your content and data</h2>
+<p>You retain ownership of all content you create, transmit, or store through the Service. We do not claim any rights to your code, terminal sessions, or data. PTY traffic between your browser and your wing is end-to-end encrypted - the roost cannot read it.</p>
+
+<h2>4. termination</h2>
+<p>We may suspend or terminate your access to the Service at any time, for any reason, with or without notice. You may stop using the Service at any time. Upon termination, your right to use the Service ceases immediately. Self-hosted instances are yours to run indefinitely under the MIT license.</p>
+
+<h2>5. disclaimer of warranties</h2>
+<p>THE SERVICE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NONINFRINGEMENT, AND ANY WARRANTY ARISING FROM COURSE OF DEALING OR USAGE OF TRADE.</p>
+<p>The sandbox feature is a best-effort security boundary. It reduces risk but does not guarantee isolation. We make no representations that the sandbox will prevent all unauthorized access, data exfiltration, or damage. You are solely responsible for what runs on your machine and for configuring appropriate isolation levels.</p>
+
+<h2>6. limitation of liability</h2>
+<p>TO THE MAXIMUM EXTENT PERMITTED BY LAW, WE SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS, DATA, USE, GOODWILL, OR OTHER INTANGIBLE LOSSES, RESULTING FROM (A) YOUR USE OR INABILITY TO USE THE SERVICE; (B) ANY UNAUTHORIZED ACCESS TO OR ALTERATION OF YOUR DATA OR TRANSMISSIONS; (C) ANY CONDUCT OR CONTENT OF ANY THIRD PARTY ON THE SERVICE; OR (D) ANY ACTIONS TAKEN BY AI AGENTS RUNNING WITHIN THE SERVICE.</p>
+<p>OUR TOTAL LIABILITY FOR ALL CLAIMS ARISING FROM THE SERVICE SHALL NOT EXCEED THE AMOUNT YOU PAID US IN THE TWELVE MONTHS PRECEDING THE CLAIM.</p>
+
+<h2>7. indemnification</h2>
+<p>You agree to indemnify and hold us harmless from any claims, damages, losses, or expenses (including reasonable attorneys' fees) arising from your use of the Service, your violation of these Terms, or your violation of any third-party right.</p>
+
+<h2>8. changes to terms</h2>
+<p>We may update these Terms at any time. Continued use of the Service after changes constitutes acceptance of the revised Terms. Material changes will be communicated via the Service or by email if available.</p>
+
+<h2>9. open source</h2>
+<p>The wingthing software is released under the <a href="https://github.com/ehrlich-b/wingthing/blob/main/LICENSE">MIT License</a>. These Terms apply to the hosted Service at wingthing.ai. Self-hosted instances are governed solely by the MIT License.</p>
+
+<h2>10. governing law</h2>
+<p>These Terms are governed by the laws of the State of Florida, without regard to conflict of law principles.</p>
+
+<h2>11. contact</h2>
+<p>Questions about these Terms: <a href="mailto:legal@wingthing.ai">legal@wingthing.ai</a></p>
+</div>
+{{end}}
