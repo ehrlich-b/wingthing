@@ -333,6 +333,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		return fmt.Errorf("write pid: %w", err)
 	}
 
+	// Write session metadata so the wing can read it on reclaim
+	metaPath := filepath.Join(s.dir, "egg.meta")
+	metaContent := fmt.Sprintf("agent=%s\ncwd=%s\nisolation=%s\n", rc.Agent, rc.CWD, rc.Isolation)
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+		log.Printf("egg: warning: write meta: %v", err)
+	}
+
 	s.grpcServer = grpc.NewServer(
 		grpc.ChainUnaryInterceptor(recoveryUnary, s.authUnary),
 		grpc.ChainStreamInterceptor(recoveryStream, s.authStream),
