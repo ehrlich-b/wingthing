@@ -80,13 +80,23 @@ func hasNamespaceCapability() bool {
 func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
 	var cmd *exec.Cmd
 
-	if len(s.cfg.Deny) > 0 {
-		// Wrap through _deny_init to mask denied paths via tmpfs overmounts.
+	// Collect writable mount paths for write isolation.
+	var writablePaths []string
+	for _, m := range s.cfg.Mounts {
+		if !m.ReadOnly {
+			writablePaths = append(writablePaths, m.Source)
+		}
+	}
+
+	needsWrapper := len(s.cfg.Deny) > 0 || len(writablePaths) > 0
+	if needsWrapper {
+		// Wrap through _sandbox_init to apply deny paths (tmpfs overmounts)
+		// and write isolation (HOME read-only + writable sub-mounts).
 		// The wrapper runs as root in the namespace (needs CAP_SYS_ADMIN for mount),
 		// then drops to real UID via nested user namespace before exec'ing the agent.
 		exe, err := os.Executable()
 		if err != nil {
-			return nil, fmt.Errorf("resolve executable for deny wrapper: %w", err)
+			return nil, fmt.Errorf("resolve executable for sandbox wrapper: %w", err)
 		}
 		uid := os.Getuid()
 		gid := os.Getgid()
@@ -96,6 +106,13 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		}
 		for _, d := range s.cfg.Deny {
 			wrapArgs = append(wrapArgs, "--deny", d)
+		}
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			wrapArgs = append(wrapArgs, "--home", home)
+		}
+		for _, p := range writablePaths {
+			wrapArgs = append(wrapArgs, "--writable", p)
 		}
 		wrapArgs = append(wrapArgs, "--")
 		wrapArgs = append(wrapArgs, name)
@@ -147,9 +164,10 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 		uid := os.Getuid()
 		gid := os.Getgid()
 
-		if len(s.cfg.Deny) > 0 {
-			// Deny paths need tmpfs mounts → need CAP_SYS_ADMIN → map to UID 0.
-			// The _deny_init wrapper drops to real UID via nested user namespace
+		needsRoot := len(s.cfg.Deny) > 0 || len(s.cfg.Mounts) > 0
+		if needsRoot {
+			// Wrapper needs CAP_SYS_ADMIN for mounts → map to UID 0.
+			// The wrapper drops to real UID via nested user namespace
 			// before exec'ing the agent.
 			attr.UidMappings = []syscall.SysProcIDMap{{
 				ContainerID: 0,
@@ -162,7 +180,7 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 				Size:        1,
 			}}
 		} else {
-			// No deny paths — map to real uid/gid so agents don't see root.
+			// No wrapper — map to real uid/gid so agents don't see root.
 			attr.UidMappings = []syscall.SysProcIDMap{{
 				ContainerID: uid,
 				HostID:      uid,
