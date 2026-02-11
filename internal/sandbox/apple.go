@@ -62,23 +62,12 @@ func buildProfile(cfg Config) string {
 
 	// Network rules: combine isolation level with agent's NetworkNeed.
 	// If the isolation level already allows network (Network/Privileged), no deny.
-	// Otherwise, apply granular rules based on what the agent needs.
-	if !hasNetwork(cfg.Isolation) {
-		switch cfg.NetworkNeed {
-		case NetworkNone:
-			sb.WriteString("(deny network*)\n")
-		case NetworkLocal:
-			sb.WriteString("(deny network*)\n")
-			sb.WriteString("(allow network* (local udp) (local tcp))\n")
-		case NetworkHTTPS:
-			sb.WriteString("(deny network*)\n")
-			sb.WriteString("(allow network-outbound (remote tcp \"*:443\"))\n")
-			sb.WriteString("(allow network-outbound (remote tcp \"*:80\"))\n")
-			sb.WriteString("(allow network-outbound (remote udp \"*:53\"))\n")
-			sb.WriteString("(allow network-outbound (remote tcp \"*:53\"))\n")
-		case NetworkFull:
-			// no deny — agent needs full network
-		}
+	// Otherwise, deny unless the agent needs network access.
+	// Note: sandbox-exec (SBPL) doesn't support port-level filtering,
+	// so Local/HTTPS/Full all get full network. Port filtering would
+	// require Network Extension or PF, which sandbox-exec can't do.
+	if !hasNetwork(cfg.Isolation) && cfg.NetworkNeed == NetworkNone {
+		sb.WriteString("(deny network*)\n")
 	}
 
 	// Deny paths — block reads and writes to specific directories.
