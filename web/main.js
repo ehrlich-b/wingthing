@@ -177,15 +177,13 @@ async function init() {
             e.preventDefault();
             navigatePalette(e.key === 'ArrowDown' ? 1 : -1);
         }
-        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-            if (paletteSearch.value === '' || paletteSearch.selectionStart === 0) {
-                e.preventDefault();
-                cyclePaletteAgent(e.key === 'ArrowLeft' ? -1 : 1);
-            }
-        }
         if (e.key === 'Tab') {
             e.preventDefault();
-            tabCompletePalette();
+            if (e.shiftKey) {
+                cyclePaletteAgent();
+            } else {
+                tabCompletePalette();
+            }
         }
         if (e.key === '`') {
             e.preventDefault();
