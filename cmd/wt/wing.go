@@ -768,13 +768,25 @@ func ensureEgg(cfg *config.Config) (*egg.Client, error) {
 		defer cancel()
 		eggVer, verErr := ec.Version(ctx)
 		if verErr == nil {
-			if eggVer != version {
-				log.Printf("egg: version mismatch (egg=%s wing=%s) — reconnecting to old egg", eggVer, version)
+			if eggVer == version {
+				log.Printf("egg: connected to existing process (version=%s)", eggVer)
+				return ec, nil
 			}
-			log.Printf("egg: connected to existing process (version=%s)", eggVer)
-			return ec, nil
+			// Version mismatch — kill old egg, start fresh with new binary
+			log.Printf("egg: version mismatch (egg=%s wing=%s) — killing old egg", eggVer, version)
+			pidPath := filepath.Join(cfg.Dir, "egg.pid")
+			if pidData, pidErr := os.ReadFile(pidPath); pidErr == nil {
+				if pid, atoiErr := strconv.Atoi(strings.TrimSpace(string(pidData))); atoiErr == nil {
+					if proc, findErr := os.FindProcess(pid); findErr == nil {
+						proc.Signal(syscall.SIGTERM)
+						time.Sleep(500 * time.Millisecond)
+					}
+				}
+			}
+			ec.Close()
+		} else {
+			ec.Close()
 		}
-		ec.Close()
 	}
 
 	// Clean stale files
