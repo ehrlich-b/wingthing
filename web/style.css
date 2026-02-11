@@ -562,6 +562,40 @@ body {
     font-size: 12px;
 }
 
+.install-block {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-card);
+    padding: 10px 16px;
+    border-radius: 6px;
+    margin: 12px 0;
+    font-size: 13px;
+}
+
+.install-block code {
+    background: none;
+    padding: 0;
+    font-size: 13px;
+    color: var(--text);
+}
+
+.install-copy-btn {
+    background: var(--bg-hover);
+    border: none;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.install-copy-btn:hover {
+    color: var(--text);
+    background: var(--accent);
+}
+
 /* === Command Palette === */
 
 #command-palette {
