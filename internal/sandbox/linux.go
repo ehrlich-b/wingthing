@@ -15,11 +15,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const (
-	defaultCPUTimeSec = 120
-	defaultMemBytes   = 512 * 1024 * 1024 // 512MB
-	defaultMaxFDs     = 256
-)
+// No default resource limits — only apply when explicitly configured.
+// V8/Bun/Node need 1GB+ virtual address space for JIT CodeRange alone,
+// and interactive sessions shouldn't have a CPU time limit.
 
 // Dangerous syscalls to deny via seccomp.
 var deniedSyscalls = []uint32{
@@ -156,25 +154,20 @@ func (s *linuxSandbox) cloneFlags() uintptr {
 	}
 }
 
-// rlimits returns resource limits for the sandboxed process, using config overrides or defaults.
+// rlimits returns resource limits for the sandboxed process.
+// Only applies limits when explicitly configured — no defaults.
 func (s *linuxSandbox) rlimits() []rlimitPair {
-	cpuSec := uint64(defaultCPUTimeSec)
+	var pairs []rlimitPair
 	if s.cfg.CPULimit > 0 {
-		cpuSec = uint64(s.cfg.CPULimit.Seconds())
+		pairs = append(pairs, rlimitPair{unix.RLIMIT_CPU, uint64(s.cfg.CPULimit.Seconds())})
 	}
-	memBytes := uint64(defaultMemBytes)
 	if s.cfg.MemLimit > 0 {
-		memBytes = s.cfg.MemLimit
+		pairs = append(pairs, rlimitPair{unix.RLIMIT_AS, s.cfg.MemLimit})
 	}
-	maxFDs := uint64(defaultMaxFDs)
 	if s.cfg.MaxFDs > 0 {
-		maxFDs = uint64(s.cfg.MaxFDs)
+		pairs = append(pairs, rlimitPair{unix.RLIMIT_NOFILE, uint64(s.cfg.MaxFDs)})
 	}
-	return []rlimitPair{
-		{unix.RLIMIT_CPU, cpuSec},
-		{unix.RLIMIT_AS, memBytes},
-		{unix.RLIMIT_NOFILE, maxFDs},
-	}
+	return pairs
 }
 
 type rlimitPair struct {

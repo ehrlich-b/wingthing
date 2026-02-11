@@ -126,29 +126,12 @@ func TestSeccompDeniedSyscallsIncluded(t *testing.T) {
 	}
 }
 
-func TestRlimitDefaults(t *testing.T) {
+func TestRlimitNoDefaults(t *testing.T) {
 	s := &linuxSandbox{cfg: Config{Isolation: Standard}}
 	limits := s.rlimits()
 
-	expected := map[int]uint64{
-		unix.RLIMIT_CPU:    defaultCPUTimeSec,
-		unix.RLIMIT_AS:     defaultMemBytes,
-		unix.RLIMIT_NOFILE: defaultMaxFDs,
-	}
-
-	if len(limits) != len(expected) {
-		t.Fatalf("rlimits count = %d, want %d", len(limits), len(expected))
-	}
-
-	for _, rl := range limits {
-		want, ok := expected[rl.resource]
-		if !ok {
-			t.Errorf("unexpected rlimit resource %d", rl.resource)
-			continue
-		}
-		if rl.value != want {
-			t.Errorf("rlimit %d value = %d, want %d", rl.resource, rl.value, want)
-		}
+	if len(limits) != 0 {
+		t.Fatalf("rlimits count = %d, want 0 (no defaults)", len(limits))
 	}
 }
 
@@ -178,15 +161,15 @@ func TestRlimitConfigOverrides(t *testing.T) {
 	}
 }
 
-func TestRlimitDefaultConstants(t *testing.T) {
-	if defaultCPUTimeSec != 120 {
-		t.Errorf("defaultCPUTimeSec = %d, want 120", defaultCPUTimeSec)
+func TestRlimitOnlyExplicit(t *testing.T) {
+	// Only CPU set — should only get CPU limit
+	s := &linuxSandbox{cfg: Config{Isolation: Standard, CPULimit: 60 * time.Second}}
+	limits := s.rlimits()
+	if len(limits) != 1 {
+		t.Fatalf("rlimits count = %d, want 1", len(limits))
 	}
-	if defaultMemBytes != 512*1024*1024 {
-		t.Errorf("defaultMemBytes = %d, want %d", defaultMemBytes, 512*1024*1024)
-	}
-	if defaultMaxFDs != 256 {
-		t.Errorf("defaultMaxFDs = %d, want 256", defaultMaxFDs)
+	if limits[0].resource != unix.RLIMIT_CPU || limits[0].value != 60 {
+		t.Errorf("got resource=%d value=%d, want RLIMIT_CPU=60", limits[0].resource, limits[0].value)
 	}
 }
 

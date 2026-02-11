@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -167,6 +168,22 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		var deny []string
 		for _, d := range rc.Deny {
 			deny = append(deny, expandTilde(d, home))
+		}
+
+		// Auto-inject: allow agent binary + config dir so the sandbox works
+		// without the config author needing to know where agents are installed.
+		if home != "" && len(mounts) > 0 {
+			realBin := binPath
+			if resolved, err := filepath.EvalSymlinks(binPath); err == nil {
+				realBin = resolved
+			}
+			binDir := filepath.Dir(realBin)
+			if strings.HasPrefix(binDir, home+string(filepath.Separator)) {
+				root := installRoot(binDir, home)
+				mounts = append(mounts, sandbox.Mount{Source: root, Target: root})
+			}
+			configDir := filepath.Join(home, "."+rc.Agent)
+			mounts = append(mounts, sandbox.Mount{Source: configDir, Target: configDir})
 		}
 
 		sbCfg := sandbox.Config{
@@ -572,4 +589,16 @@ func (s *Server) checkToken(ctx context.Context) error {
 		return status.Error(codes.Unauthenticated, "invalid token")
 	}
 	return nil
+}
+
+// installRoot returns the top-level directory under home for a binary path.
+// e.g., ~/.bun/install/global/.../bin -> ~/.bun
+//       ~/.local/bin               -> ~/.local
+func installRoot(binDir, home string) string {
+	rel, err := filepath.Rel(home, binDir)
+	if err != nil {
+		return binDir
+	}
+	parts := strings.SplitN(rel, string(filepath.Separator), 2)
+	return filepath.Join(home, parts[0])
 }
