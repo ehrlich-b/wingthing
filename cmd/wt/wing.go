@@ -1087,7 +1087,11 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 				}
 
-				// Phase 2: Fetch replay while output goroutine is dropping.
+				// Phase 2: Send pty.started so browser can begin key derivation
+				// while we fetch the replay.
+				write(ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, PublicKey: wingPubKeyB64})
+
+				// Phase 3: Fetch replay while output goroutine is dropping.
 				// The snapshot includes everything the goroutine is dropping.
 				var replayData []byte
 				if newGCM != nil {
@@ -1103,14 +1107,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 				}
 
-				// Phase 3: Enter queue mode NOW — only output arriving after
+				// Phase 4: Enter queue mode — only output arriving after
 				// the replay snapshot gets queued (no duplicates).
 				gcmMu.Lock()
 				reattaching = true
 				reattachQueue = reattachQueue[:0]
 				gcmMu.Unlock()
-
-				write(ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, PublicKey: wingPubKeyB64})
 				if newGCM != nil && len(replayData) > 0 {
 					if encrypted, encErr := auth.Encrypt(newGCM, replayData); encErr != nil {
 						log.Printf("pty session %s: replay encrypt error: %v", sessionID, encErr)
@@ -1120,7 +1122,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 				}
 
-				// Phase 4: Exit queue mode, flush any output that arrived during send.
+				// Phase 5: Exit queue mode, flush any output that arrived during send.
 				gcmMu.Lock()
 				gcm = newGCM
 				reattaching = false
@@ -1318,7 +1320,16 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					}
 				}
 
-				// Phase 2: Fetch replay while output goroutine is dropping.
+				// Phase 2: Send pty.started so browser can begin key derivation
+				// while we fetch the replay.
+				write(ws.PTYStarted{
+					Type:      ws.TypePTYStarted,
+					SessionID: start.SessionID,
+					Agent:     start.Agent,
+					PublicKey: wingPubKeyB64,
+				})
+
+				// Phase 3: Fetch replay while output goroutine is dropping.
 				// The snapshot includes everything the goroutine is dropping.
 				var replayData []byte
 				if newGCM != nil {
@@ -1339,19 +1350,12 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					}
 				}
 
-				// Phase 3: Enter queue mode NOW — only output arriving after
+				// Phase 4: Enter queue mode — only output arriving after
 				// the replay snapshot gets queued (no duplicates).
 				gcmMu.Lock()
 				reattaching = true
 				reattachQueue = reattachQueue[:0]
 				gcmMu.Unlock()
-
-				write(ws.PTYStarted{
-					Type:      ws.TypePTYStarted,
-					SessionID: start.SessionID,
-					Agent:     start.Agent,
-					PublicKey: wingPubKeyB64,
-				})
 				if newGCM != nil && len(replayData) > 0 {
 					if encrypted, encErr := auth.Encrypt(newGCM, replayData); encErr != nil {
 						log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
@@ -1365,7 +1369,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					}
 				}
 
-				// Phase 4: Exit queue mode, flush any output that arrived during send.
+				// Phase 5: Exit queue mode, flush any output that arrived during send.
 				gcmMu.Lock()
 				gcm = newGCM
 				reattaching = false

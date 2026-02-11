@@ -524,16 +524,14 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 		sess.mu.Unlock()
 	}()
 
-	// Handle attach — replay ring buffer
+	// Handle attach — always send replay (even empty) so caller's Recv() never blocks
 	if msg.GetAttach() {
 		buffered := sess.replay.Bytes()
-		if len(buffered) > 0 {
-			if err := stream.Send(&pb.SessionMsg{
-				SessionId: sessionID,
-				Payload:   &pb.SessionMsg_Output{Output: buffered},
-			}); err != nil {
-				return err
-			}
+		if err := stream.Send(&pb.SessionMsg{
+			SessionId: sessionID,
+			Payload:   &pb.SessionMsg_Output{Output: buffered},
+		}); err != nil {
+			return err
 		}
 	}
 
