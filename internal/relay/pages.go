@@ -92,7 +92,8 @@ func (s *Server) template(cached *template.Template, files ...string) *template.
 }
 
 type pageData struct {
-	User *SocialUser
+	User      *SocialUser
+	LocalMode bool
 }
 
 type feedItem struct {
@@ -109,6 +110,7 @@ type feedItem struct {
 
 type feedPageData struct {
 	User        *SocialUser
+	LocalMode   bool
 	LoggedIn    bool
 	Slug        string
 	SlugName    string
@@ -125,8 +127,9 @@ type postComment struct {
 }
 
 type postPageData struct {
-	User     *SocialUser
-	LoggedIn bool
+	User      *SocialUser
+	LocalMode bool
+	LoggedIn  bool
 	PostID   string
 	Title    string
 	Summary  string
@@ -140,6 +143,7 @@ type postPageData struct {
 
 type loginPageData struct {
 	User      *SocialUser
+	LocalMode bool
 	Sent      bool
 	HasGitHub bool
 	HasSMTP   bool
@@ -227,17 +231,17 @@ func StartSidebarRefresh(store *RelayStore, interval time.Duration) {
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
-	data := pageData{User: s.sessionUser(r)}
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
 	s.template(homeTmpl, "base.html", "home.html").ExecuteTemplate(w, "base", data)
 }
 
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
-	data := pageData{User: s.sessionUser(r)}
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
 	s.template(docsTmpl, "base.html", "docs.html").ExecuteTemplate(w, "base", data)
 }
 
 func (s *Server) handleInstallPage(w http.ResponseWriter, r *http.Request) {
-	data := pageData{User: s.sessionUser(r)}
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
 	s.template(installTmpl, "base.html", "install.html").ExecuteTemplate(w, "base", data)
 }
 
@@ -390,8 +394,9 @@ func (s *Server) handlePostPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := postPageData{
-		User:     user,
-		LoggedIn: user != nil,
+		User:      user,
+		LocalMode: s.LocalMode,
+		LoggedIn:  user != nil,
 		PostID:   postID,
 		Title:    title,
 		Summary:  summary,
@@ -535,6 +540,7 @@ func (s *Server) buildFeedData(slug string, posts []*SocialEmbedding, r *http.Re
 
 	return feedPageData{
 		User:       user,
+		LocalMode:  s.LocalMode,
 		LoggedIn:   user != nil,
 		Slug:       slug,
 		SlugName:   slugName,
@@ -553,8 +559,9 @@ type skillsPageItem struct {
 }
 
 type skillsPageData struct {
-	User   *SocialUser
-	Skills []skillsPageItem
+	User      *SocialUser
+	LocalMode bool
+	Skills    []skillsPageItem
 }
 
 func (s *Server) handleSkillsPage(w http.ResponseWriter, r *http.Request) {
@@ -575,14 +582,16 @@ func (s *Server) handleSkillsPage(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	data := skillsPageData{
-		User:   s.sessionUser(r),
-		Skills: items,
+		User:      s.sessionUser(r),
+		LocalMode: s.LocalMode,
+		Skills:    items,
 	}
 	s.template(skillsTmpl, "base.html", "skills.html").ExecuteTemplate(w, "base", data)
 }
 
 type skillDetailPageData struct {
 	User      *SocialUser
+	LocalMode bool
 	Name      string
 	Description string
 	Category  string
@@ -617,6 +626,7 @@ func (s *Server) handleSkillDetailPage(w http.ResponseWriter, r *http.Request) {
 
 	data := skillDetailPageData{
 		User:        s.sessionUser(r),
+		LocalMode:   s.LocalMode,
 		Name:        sk.Name,
 		Description: sk.Description,
 		Category:    sk.Category,
@@ -647,6 +657,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	data := loginPageData{
 		User:      s.sessionUser(r),
+		LocalMode: s.LocalMode,
 		Sent:      r.URL.Query().Get("sent") == "1",
 		HasGitHub: s.Config.GitHubClientID != "",
 		HasSMTP:   s.Config.SMTPHost != "",
