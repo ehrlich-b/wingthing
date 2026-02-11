@@ -38,7 +38,7 @@ release: web
 	cinch release dist/*
 
 deploy: check
-	fly deploy --local-only
+	fly deploy
 
 proto:
 	protoc -I proto --go_out=paths=source_relative:internal/egg/pb --go-grpc_out=paths=source_relative:internal/egg/pb proto/egg.proto
