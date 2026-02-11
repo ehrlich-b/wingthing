@@ -546,10 +546,12 @@ async function loadHome() {
 
     rebuildAgentLists();
 
-    // Check for terminal bell attention flags from wing
+    // Sync terminal bell attention flags from wing
     sessionsData.forEach(function(s) {
         if (s.needs_attention && s.id !== ptySessionId) {
             setNotification(s.id);
+        } else if (!s.needs_attention && sessionNotifications[s.id]) {
+            clearNotification(s.id);
         }
     });
 
