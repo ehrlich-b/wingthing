@@ -21,522 +21,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type SpawnRequest struct {
-	state                      protoimpl.MessageState `protogen:"open.v1"`
-	SessionId                  string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Agent                      string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
-	Cwd                        string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`
-	Rows                       uint32                 `protobuf:"varint,4,opt,name=rows,proto3" json:"rows,omitempty"`
-	Cols                       uint32                 `protobuf:"varint,5,opt,name=cols,proto3" json:"cols,omitempty"`
-	Isolation                  string                 `protobuf:"bytes,6,opt,name=isolation,proto3" json:"isolation,omitempty"`
-	Env                        map[string]string      `protobuf:"bytes,7,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Mounts                     []*Mount               `protobuf:"bytes,8,rep,name=mounts,proto3" json:"mounts,omitempty"`
-	TimeoutSeconds             uint32                 `protobuf:"varint,9,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
-	ResourceLimits             *ResourceLimits        `protobuf:"bytes,10,opt,name=resource_limits,json=resourceLimits,proto3" json:"resource_limits,omitempty"`
-	Skill                      string                 `protobuf:"bytes,11,opt,name=skill,proto3" json:"skill,omitempty"`                                                                                 // skill name for logging/tracking
-	Metadata                   map[string]string      `protobuf:"bytes,12,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // arbitrary key-value pairs
-	Shell                      string                 `protobuf:"bytes,13,opt,name=shell,proto3" json:"shell,omitempty"`                                                                                 // override shell (default: agent decides)
-	ConfigYaml                 string                 `protobuf:"bytes,14,opt,name=config_yaml,json=configYaml,proto3" json:"config_yaml,omitempty"`                                                     // serialized egg config at spawn time
-	DangerouslySkipPermissions bool                   `protobuf:"varint,15,opt,name=dangerously_skip_permissions,json=dangerouslySkipPermissions,proto3" json:"dangerously_skip_permissions,omitempty"`
-	Deny                       []string               `protobuf:"bytes,16,rep,name=deny,proto3" json:"deny,omitempty"` // paths to mask in sandbox
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
-}
-
-func (x *SpawnRequest) Reset() {
-	*x = SpawnRequest{}
-	mi := &file_egg_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SpawnRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SpawnRequest) ProtoMessage() {}
-
-func (x *SpawnRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SpawnRequest.ProtoReflect.Descriptor instead.
-func (*SpawnRequest) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *SpawnRequest) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
-	}
-	return ""
-}
-
-func (x *SpawnRequest) GetAgent() string {
-	if x != nil {
-		return x.Agent
-	}
-	return ""
-}
-
-func (x *SpawnRequest) GetCwd() string {
-	if x != nil {
-		return x.Cwd
-	}
-	return ""
-}
-
-func (x *SpawnRequest) GetRows() uint32 {
-	if x != nil {
-		return x.Rows
-	}
-	return 0
-}
-
-func (x *SpawnRequest) GetCols() uint32 {
-	if x != nil {
-		return x.Cols
-	}
-	return 0
-}
-
-func (x *SpawnRequest) GetIsolation() string {
-	if x != nil {
-		return x.Isolation
-	}
-	return ""
-}
-
-func (x *SpawnRequest) GetEnv() map[string]string {
-	if x != nil {
-		return x.Env
-	}
-	return nil
-}
-
-func (x *SpawnRequest) GetMounts() []*Mount {
-	if x != nil {
-		return x.Mounts
-	}
-	return nil
-}
-
-func (x *SpawnRequest) GetTimeoutSeconds() uint32 {
-	if x != nil {
-		return x.TimeoutSeconds
-	}
-	return 0
-}
-
-func (x *SpawnRequest) GetResourceLimits() *ResourceLimits {
-	if x != nil {
-		return x.ResourceLimits
-	}
-	return nil
-}
-
-func (x *SpawnRequest) GetSkill() string {
-	if x != nil {
-		return x.Skill
-	}
-	return ""
-}
-
-func (x *SpawnRequest) GetMetadata() map[string]string {
-	if x != nil {
-		return x.Metadata
-	}
-	return nil
-}
-
-func (x *SpawnRequest) GetShell() string {
-	if x != nil {
-		return x.Shell
-	}
-	return ""
-}
-
-func (x *SpawnRequest) GetConfigYaml() string {
-	if x != nil {
-		return x.ConfigYaml
-	}
-	return ""
-}
-
-func (x *SpawnRequest) GetDangerouslySkipPermissions() bool {
-	if x != nil {
-		return x.DangerouslySkipPermissions
-	}
-	return false
-}
-
-func (x *SpawnRequest) GetDeny() []string {
-	if x != nil {
-		return x.Deny
-	}
-	return nil
-}
-
-type Mount struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
-	Target        string                 `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty"`
-	ReadOnly      bool                   `protobuf:"varint,3,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Mount) Reset() {
-	*x = Mount{}
-	mi := &file_egg_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Mount) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Mount) ProtoMessage() {}
-
-func (x *Mount) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Mount.ProtoReflect.Descriptor instead.
-func (*Mount) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *Mount) GetSource() string {
-	if x != nil {
-		return x.Source
-	}
-	return ""
-}
-
-func (x *Mount) GetTarget() string {
-	if x != nil {
-		return x.Target
-	}
-	return ""
-}
-
-func (x *Mount) GetReadOnly() bool {
-	if x != nil {
-		return x.ReadOnly
-	}
-	return false
-}
-
-type ResourceLimits struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CpuSeconds    uint32                 `protobuf:"varint,1,opt,name=cpu_seconds,json=cpuSeconds,proto3" json:"cpu_seconds,omitempty"`    // RLIMIT_CPU (0 = no limit)
-	MemoryBytes   uint64                 `protobuf:"varint,2,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"` // RLIMIT_AS (0 = no limit)
-	MaxFds        uint32                 `protobuf:"varint,3,opt,name=max_fds,json=maxFds,proto3" json:"max_fds,omitempty"`                // RLIMIT_NOFILE (0 = no limit)
-	MaxPids       uint32                 `protobuf:"varint,4,opt,name=max_pids,json=maxPids,proto3" json:"max_pids,omitempty"`             // cgroup pids.max (0 = no limit)
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ResourceLimits) Reset() {
-	*x = ResourceLimits{}
-	mi := &file_egg_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ResourceLimits) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ResourceLimits) ProtoMessage() {}
-
-func (x *ResourceLimits) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ResourceLimits.ProtoReflect.Descriptor instead.
-func (*ResourceLimits) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *ResourceLimits) GetCpuSeconds() uint32 {
-	if x != nil {
-		return x.CpuSeconds
-	}
-	return 0
-}
-
-func (x *ResourceLimits) GetMemoryBytes() uint64 {
-	if x != nil {
-		return x.MemoryBytes
-	}
-	return 0
-}
-
-func (x *ResourceLimits) GetMaxFds() uint32 {
-	if x != nil {
-		return x.MaxFds
-	}
-	return 0
-}
-
-func (x *ResourceLimits) GetMaxPids() uint32 {
-	if x != nil {
-		return x.MaxPids
-	}
-	return 0
-}
-
-type SpawnResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Pid           int32                  `protobuf:"varint,2,opt,name=pid,proto3" json:"pid,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SpawnResponse) Reset() {
-	*x = SpawnResponse{}
-	mi := &file_egg_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SpawnResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SpawnResponse) ProtoMessage() {}
-
-func (x *SpawnResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SpawnResponse.ProtoReflect.Descriptor instead.
-func (*SpawnResponse) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *SpawnResponse) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
-	}
-	return ""
-}
-
-func (x *SpawnResponse) GetPid() int32 {
-	if x != nil {
-		return x.Pid
-	}
-	return 0
-}
-
-type ListRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ListRequest) Reset() {
-	*x = ListRequest{}
-	mi := &file_egg_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ListRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ListRequest) ProtoMessage() {}
-
-func (x *ListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
-func (*ListRequest) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{4}
-}
-
-type ListResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Sessions      []*SessionInfo         `protobuf:"bytes,1,rep,name=sessions,proto3" json:"sessions,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ListResponse) Reset() {
-	*x = ListResponse{}
-	mi := &file_egg_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ListResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ListResponse) ProtoMessage() {}
-
-func (x *ListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
-func (*ListResponse) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *ListResponse) GetSessions() []*SessionInfo {
-	if x != nil {
-		return x.Sessions
-	}
-	return nil
-}
-
-type SessionInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Pid           int32                  `protobuf:"varint,2,opt,name=pid,proto3" json:"pid,omitempty"`
-	Agent         string                 `protobuf:"bytes,3,opt,name=agent,proto3" json:"agent,omitempty"`
-	Cwd           string                 `protobuf:"bytes,4,opt,name=cwd,proto3" json:"cwd,omitempty"`
-	StartedAt     string                 `protobuf:"bytes,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	Isolation     string                 `protobuf:"bytes,6,opt,name=isolation,proto3" json:"isolation,omitempty"`
-	ConfigYaml    string                 `protobuf:"bytes,7,opt,name=config_yaml,json=configYaml,proto3" json:"config_yaml,omitempty"` // egg config snapshot at spawn time
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SessionInfo) Reset() {
-	*x = SessionInfo{}
-	mi := &file_egg_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SessionInfo) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SessionInfo) ProtoMessage() {}
-
-func (x *SessionInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SessionInfo.ProtoReflect.Descriptor instead.
-func (*SessionInfo) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *SessionInfo) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
-	}
-	return ""
-}
-
-func (x *SessionInfo) GetPid() int32 {
-	if x != nil {
-		return x.Pid
-	}
-	return 0
-}
-
-func (x *SessionInfo) GetAgent() string {
-	if x != nil {
-		return x.Agent
-	}
-	return ""
-}
-
-func (x *SessionInfo) GetCwd() string {
-	if x != nil {
-		return x.Cwd
-	}
-	return ""
-}
-
-func (x *SessionInfo) GetStartedAt() string {
-	if x != nil {
-		return x.StartedAt
-	}
-	return ""
-}
-
-func (x *SessionInfo) GetIsolation() string {
-	if x != nil {
-		return x.Isolation
-	}
-	return ""
-}
-
-func (x *SessionInfo) GetConfigYaml() string {
-	if x != nil {
-		return x.ConfigYaml
-	}
-	return ""
-}
-
 type KillRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -546,7 +30,7 @@ type KillRequest struct {
 
 func (x *KillRequest) Reset() {
 	*x = KillRequest{}
-	mi := &file_egg_proto_msgTypes[7]
+	mi := &file_egg_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -558,7 +42,7 @@ func (x *KillRequest) String() string {
 func (*KillRequest) ProtoMessage() {}
 
 func (x *KillRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[7]
+	mi := &file_egg_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -571,7 +55,7 @@ func (x *KillRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KillRequest.ProtoReflect.Descriptor instead.
 func (*KillRequest) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{7}
+	return file_egg_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *KillRequest) GetSessionId() string {
@@ -589,7 +73,7 @@ type KillResponse struct {
 
 func (x *KillResponse) Reset() {
 	*x = KillResponse{}
-	mi := &file_egg_proto_msgTypes[8]
+	mi := &file_egg_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -601,7 +85,7 @@ func (x *KillResponse) String() string {
 func (*KillResponse) ProtoMessage() {}
 
 func (x *KillResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[8]
+	mi := &file_egg_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -614,7 +98,7 @@ func (x *KillResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KillResponse.ProtoReflect.Descriptor instead.
 func (*KillResponse) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{8}
+	return file_egg_proto_rawDescGZIP(), []int{1}
 }
 
 type ResizeRequest struct {
@@ -628,7 +112,7 @@ type ResizeRequest struct {
 
 func (x *ResizeRequest) Reset() {
 	*x = ResizeRequest{}
-	mi := &file_egg_proto_msgTypes[9]
+	mi := &file_egg_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -640,7 +124,7 @@ func (x *ResizeRequest) String() string {
 func (*ResizeRequest) ProtoMessage() {}
 
 func (x *ResizeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[9]
+	mi := &file_egg_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -653,7 +137,7 @@ func (x *ResizeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResizeRequest.ProtoReflect.Descriptor instead.
 func (*ResizeRequest) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{9}
+	return file_egg_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ResizeRequest) GetSessionId() string {
@@ -685,7 +169,7 @@ type ResizeResponse struct {
 
 func (x *ResizeResponse) Reset() {
 	*x = ResizeResponse{}
-	mi := &file_egg_proto_msgTypes[10]
+	mi := &file_egg_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -697,7 +181,7 @@ func (x *ResizeResponse) String() string {
 func (*ResizeResponse) ProtoMessage() {}
 
 func (x *ResizeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[10]
+	mi := &file_egg_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -710,7 +194,7 @@ func (x *ResizeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResizeResponse.ProtoReflect.Descriptor instead.
 func (*ResizeResponse) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{10}
+	return file_egg_proto_rawDescGZIP(), []int{3}
 }
 
 type SessionMsg struct {
@@ -731,7 +215,7 @@ type SessionMsg struct {
 
 func (x *SessionMsg) Reset() {
 	*x = SessionMsg{}
-	mi := &file_egg_proto_msgTypes[11]
+	mi := &file_egg_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -743,7 +227,7 @@ func (x *SessionMsg) String() string {
 func (*SessionMsg) ProtoMessage() {}
 
 func (x *SessionMsg) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[11]
+	mi := &file_egg_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -756,7 +240,7 @@ func (x *SessionMsg) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionMsg.ProtoReflect.Descriptor instead.
 func (*SessionMsg) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{11}
+	return file_egg_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SessionMsg) GetSessionId() string {
@@ -877,7 +361,7 @@ type Resize struct {
 
 func (x *Resize) Reset() {
 	*x = Resize{}
-	mi := &file_egg_proto_msgTypes[12]
+	mi := &file_egg_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -889,7 +373,7 @@ func (x *Resize) String() string {
 func (*Resize) ProtoMessage() {}
 
 func (x *Resize) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[12]
+	mi := &file_egg_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -902,7 +386,7 @@ func (x *Resize) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resize.ProtoReflect.Descriptor instead.
 func (*Resize) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{12}
+	return file_egg_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Resize) GetRows() uint32 {
@@ -919,314 +403,11 @@ func (x *Resize) GetCols() uint32 {
 	return 0
 }
 
-type VersionRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *VersionRequest) Reset() {
-	*x = VersionRequest{}
-	mi := &file_egg_proto_msgTypes[13]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *VersionRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VersionRequest) ProtoMessage() {}
-
-func (x *VersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[13]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VersionRequest.ProtoReflect.Descriptor instead.
-func (*VersionRequest) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{13}
-}
-
-type VersionResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *VersionResponse) Reset() {
-	*x = VersionResponse{}
-	mi := &file_egg_proto_msgTypes[14]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *VersionResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VersionResponse) ProtoMessage() {}
-
-func (x *VersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[14]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VersionResponse.ProtoReflect.Descriptor instead.
-func (*VersionResponse) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{14}
-}
-
-func (x *VersionResponse) GetVersion() string {
-	if x != nil {
-		return x.Version
-	}
-	return ""
-}
-
-type GetConfigRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *GetConfigRequest) Reset() {
-	*x = GetConfigRequest{}
-	mi := &file_egg_proto_msgTypes[15]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *GetConfigRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*GetConfigRequest) ProtoMessage() {}
-
-func (x *GetConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[15]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use GetConfigRequest.ProtoReflect.Descriptor instead.
-func (*GetConfigRequest) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{15}
-}
-
-type GetConfigResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Yaml          string                 `protobuf:"bytes,1,opt,name=yaml,proto3" json:"yaml,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *GetConfigResponse) Reset() {
-	*x = GetConfigResponse{}
-	mi := &file_egg_proto_msgTypes[16]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *GetConfigResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*GetConfigResponse) ProtoMessage() {}
-
-func (x *GetConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[16]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use GetConfigResponse.ProtoReflect.Descriptor instead.
-func (*GetConfigResponse) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{16}
-}
-
-func (x *GetConfigResponse) GetYaml() string {
-	if x != nil {
-		return x.Yaml
-	}
-	return ""
-}
-
-type SetConfigRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Yaml          string                 `protobuf:"bytes,1,opt,name=yaml,proto3" json:"yaml,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SetConfigRequest) Reset() {
-	*x = SetConfigRequest{}
-	mi := &file_egg_proto_msgTypes[17]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SetConfigRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SetConfigRequest) ProtoMessage() {}
-
-func (x *SetConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[17]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SetConfigRequest.ProtoReflect.Descriptor instead.
-func (*SetConfigRequest) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{17}
-}
-
-func (x *SetConfigRequest) GetYaml() string {
-	if x != nil {
-		return x.Yaml
-	}
-	return ""
-}
-
-type SetConfigResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SetConfigResponse) Reset() {
-	*x = SetConfigResponse{}
-	mi := &file_egg_proto_msgTypes[18]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SetConfigResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SetConfigResponse) ProtoMessage() {}
-
-func (x *SetConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[18]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SetConfigResponse.ProtoReflect.Descriptor instead.
-func (*SetConfigResponse) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{18}
-}
-
-func (x *SetConfigResponse) GetOk() bool {
-	if x != nil {
-		return x.Ok
-	}
-	return false
-}
-
 var File_egg_proto protoreflect.FileDescriptor
 
 const file_egg_proto_rawDesc = "" +
 	"\n" +
-	"\tegg.proto\x12\x03egg\"\xa9\x05\n" +
-	"\fSpawnRequest\x12\x1d\n" +
-	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
-	"\x05agent\x18\x02 \x01(\tR\x05agent\x12\x10\n" +
-	"\x03cwd\x18\x03 \x01(\tR\x03cwd\x12\x12\n" +
-	"\x04rows\x18\x04 \x01(\rR\x04rows\x12\x12\n" +
-	"\x04cols\x18\x05 \x01(\rR\x04cols\x12\x1c\n" +
-	"\tisolation\x18\x06 \x01(\tR\tisolation\x12,\n" +
-	"\x03env\x18\a \x03(\v2\x1a.egg.SpawnRequest.EnvEntryR\x03env\x12\"\n" +
-	"\x06mounts\x18\b \x03(\v2\n" +
-	".egg.MountR\x06mounts\x12'\n" +
-	"\x0ftimeout_seconds\x18\t \x01(\rR\x0etimeoutSeconds\x12<\n" +
-	"\x0fresource_limits\x18\n" +
-	" \x01(\v2\x13.egg.ResourceLimitsR\x0eresourceLimits\x12\x14\n" +
-	"\x05skill\x18\v \x01(\tR\x05skill\x12;\n" +
-	"\bmetadata\x18\f \x03(\v2\x1f.egg.SpawnRequest.MetadataEntryR\bmetadata\x12\x14\n" +
-	"\x05shell\x18\r \x01(\tR\x05shell\x12\x1f\n" +
-	"\vconfig_yaml\x18\x0e \x01(\tR\n" +
-	"configYaml\x12@\n" +
-	"\x1cdangerously_skip_permissions\x18\x0f \x01(\bR\x1adangerouslySkipPermissions\x12\x12\n" +
-	"\x04deny\x18\x10 \x03(\tR\x04deny\x1a6\n" +
-	"\bEnvEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
-	"\rMetadataEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"T\n" +
-	"\x05Mount\x12\x16\n" +
-	"\x06source\x18\x01 \x01(\tR\x06source\x12\x16\n" +
-	"\x06target\x18\x02 \x01(\tR\x06target\x12\x1b\n" +
-	"\tread_only\x18\x03 \x01(\bR\breadOnly\"\x88\x01\n" +
-	"\x0eResourceLimits\x12\x1f\n" +
-	"\vcpu_seconds\x18\x01 \x01(\rR\n" +
-	"cpuSeconds\x12!\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\x12\x17\n" +
-	"\amax_fds\x18\x03 \x01(\rR\x06maxFds\x12\x19\n" +
-	"\bmax_pids\x18\x04 \x01(\rR\amaxPids\"@\n" +
-	"\rSpawnResponse\x12\x1d\n" +
-	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x10\n" +
-	"\x03pid\x18\x02 \x01(\x05R\x03pid\"\r\n" +
-	"\vListRequest\"<\n" +
-	"\fListResponse\x12,\n" +
-	"\bsessions\x18\x01 \x03(\v2\x10.egg.SessionInfoR\bsessions\"\xc4\x01\n" +
-	"\vSessionInfo\x12\x1d\n" +
-	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x10\n" +
-	"\x03pid\x18\x02 \x01(\x05R\x03pid\x12\x14\n" +
-	"\x05agent\x18\x03 \x01(\tR\x05agent\x12\x10\n" +
-	"\x03cwd\x18\x04 \x01(\tR\x03cwd\x12\x1d\n" +
-	"\n" +
-	"started_at\x18\x05 \x01(\tR\tstartedAt\x12\x1c\n" +
-	"\tisolation\x18\x06 \x01(\tR\tisolation\x12\x1f\n" +
-	"\vconfig_yaml\x18\a \x01(\tR\n" +
-	"configYaml\",\n" +
+	"\tegg.proto\x12\x03egg\",\n" +
 	"\vKillRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x0e\n" +
@@ -1250,26 +431,11 @@ const file_egg_proto_rawDesc = "" +
 	"\apayload\"0\n" +
 	"\x06Resize\x12\x12\n" +
 	"\x04rows\x18\x01 \x01(\rR\x04rows\x12\x12\n" +
-	"\x04cols\x18\x02 \x01(\rR\x04cols\"\x10\n" +
-	"\x0eVersionRequest\"+\n" +
-	"\x0fVersionResponse\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\tR\aversion\"\x12\n" +
-	"\x10GetConfigRequest\"'\n" +
-	"\x11GetConfigResponse\x12\x12\n" +
-	"\x04yaml\x18\x01 \x01(\tR\x04yaml\"&\n" +
-	"\x10SetConfigRequest\x12\x12\n" +
-	"\x04yaml\x18\x01 \x01(\tR\x04yaml\"#\n" +
-	"\x11SetConfigResponse\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok2\xa1\x03\n" +
-	"\x03Egg\x12.\n" +
-	"\x05Spawn\x12\x11.egg.SpawnRequest\x1a\x12.egg.SpawnResponse\x12+\n" +
-	"\x04List\x12\x10.egg.ListRequest\x1a\x11.egg.ListResponse\x12+\n" +
+	"\x04cols\x18\x02 \x01(\rR\x04cols2\x96\x01\n" +
+	"\x03Egg\x12+\n" +
 	"\x04Kill\x12\x10.egg.KillRequest\x1a\x11.egg.KillResponse\x121\n" +
 	"\x06Resize\x12\x12.egg.ResizeRequest\x1a\x13.egg.ResizeResponse\x12/\n" +
-	"\aSession\x12\x0f.egg.SessionMsg\x1a\x0f.egg.SessionMsg(\x010\x01\x124\n" +
-	"\aVersion\x12\x13.egg.VersionRequest\x1a\x14.egg.VersionResponse\x12:\n" +
-	"\tGetConfig\x12\x15.egg.GetConfigRequest\x1a\x16.egg.GetConfigResponse\x12:\n" +
-	"\tSetConfig\x12\x15.egg.SetConfigRequest\x1a\x16.egg.SetConfigResponseB0Z.github.com/ehrlich-b/wingthing/internal/egg/pbb\x06proto3"
+	"\aSession\x12\x0f.egg.SessionMsg\x1a\x0f.egg.SessionMsg(\x010\x01B0Z.github.com/ehrlich-b/wingthing/internal/egg/pbb\x06proto3"
 
 var (
 	file_egg_proto_rawDescOnce sync.Once
@@ -1283,58 +449,28 @@ func file_egg_proto_rawDescGZIP() []byte {
 	return file_egg_proto_rawDescData
 }
 
-var file_egg_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_egg_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_egg_proto_goTypes = []any{
-	(*SpawnRequest)(nil),      // 0: egg.SpawnRequest
-	(*Mount)(nil),             // 1: egg.Mount
-	(*ResourceLimits)(nil),    // 2: egg.ResourceLimits
-	(*SpawnResponse)(nil),     // 3: egg.SpawnResponse
-	(*ListRequest)(nil),       // 4: egg.ListRequest
-	(*ListResponse)(nil),      // 5: egg.ListResponse
-	(*SessionInfo)(nil),       // 6: egg.SessionInfo
-	(*KillRequest)(nil),       // 7: egg.KillRequest
-	(*KillResponse)(nil),      // 8: egg.KillResponse
-	(*ResizeRequest)(nil),     // 9: egg.ResizeRequest
-	(*ResizeResponse)(nil),    // 10: egg.ResizeResponse
-	(*SessionMsg)(nil),        // 11: egg.SessionMsg
-	(*Resize)(nil),            // 12: egg.Resize
-	(*VersionRequest)(nil),    // 13: egg.VersionRequest
-	(*VersionResponse)(nil),   // 14: egg.VersionResponse
-	(*GetConfigRequest)(nil),  // 15: egg.GetConfigRequest
-	(*GetConfigResponse)(nil), // 16: egg.GetConfigResponse
-	(*SetConfigRequest)(nil),  // 17: egg.SetConfigRequest
-	(*SetConfigResponse)(nil), // 18: egg.SetConfigResponse
-	nil,                       // 19: egg.SpawnRequest.EnvEntry
-	nil,                       // 20: egg.SpawnRequest.MetadataEntry
+	(*KillRequest)(nil),    // 0: egg.KillRequest
+	(*KillResponse)(nil),   // 1: egg.KillResponse
+	(*ResizeRequest)(nil),  // 2: egg.ResizeRequest
+	(*ResizeResponse)(nil), // 3: egg.ResizeResponse
+	(*SessionMsg)(nil),     // 4: egg.SessionMsg
+	(*Resize)(nil),         // 5: egg.Resize
 }
 var file_egg_proto_depIdxs = []int32{
-	19, // 0: egg.SpawnRequest.env:type_name -> egg.SpawnRequest.EnvEntry
-	1,  // 1: egg.SpawnRequest.mounts:type_name -> egg.Mount
-	2,  // 2: egg.SpawnRequest.resource_limits:type_name -> egg.ResourceLimits
-	20, // 3: egg.SpawnRequest.metadata:type_name -> egg.SpawnRequest.MetadataEntry
-	6,  // 4: egg.ListResponse.sessions:type_name -> egg.SessionInfo
-	12, // 5: egg.SessionMsg.resize:type_name -> egg.Resize
-	0,  // 6: egg.Egg.Spawn:input_type -> egg.SpawnRequest
-	4,  // 7: egg.Egg.List:input_type -> egg.ListRequest
-	7,  // 8: egg.Egg.Kill:input_type -> egg.KillRequest
-	9,  // 9: egg.Egg.Resize:input_type -> egg.ResizeRequest
-	11, // 10: egg.Egg.Session:input_type -> egg.SessionMsg
-	13, // 11: egg.Egg.Version:input_type -> egg.VersionRequest
-	15, // 12: egg.Egg.GetConfig:input_type -> egg.GetConfigRequest
-	17, // 13: egg.Egg.SetConfig:input_type -> egg.SetConfigRequest
-	3,  // 14: egg.Egg.Spawn:output_type -> egg.SpawnResponse
-	5,  // 15: egg.Egg.List:output_type -> egg.ListResponse
-	8,  // 16: egg.Egg.Kill:output_type -> egg.KillResponse
-	10, // 17: egg.Egg.Resize:output_type -> egg.ResizeResponse
-	11, // 18: egg.Egg.Session:output_type -> egg.SessionMsg
-	14, // 19: egg.Egg.Version:output_type -> egg.VersionResponse
-	16, // 20: egg.Egg.GetConfig:output_type -> egg.GetConfigResponse
-	18, // 21: egg.Egg.SetConfig:output_type -> egg.SetConfigResponse
-	14, // [14:22] is the sub-list for method output_type
-	6,  // [6:14] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	5, // 0: egg.SessionMsg.resize:type_name -> egg.Resize
+	0, // 1: egg.Egg.Kill:input_type -> egg.KillRequest
+	2, // 2: egg.Egg.Resize:input_type -> egg.ResizeRequest
+	4, // 3: egg.Egg.Session:input_type -> egg.SessionMsg
+	1, // 4: egg.Egg.Kill:output_type -> egg.KillResponse
+	3, // 5: egg.Egg.Resize:output_type -> egg.ResizeResponse
+	4, // 6: egg.Egg.Session:output_type -> egg.SessionMsg
+	4, // [4:7] is the sub-list for method output_type
+	1, // [1:4] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_egg_proto_init() }
@@ -1342,7 +478,7 @@ func file_egg_proto_init() {
 	if File_egg_proto != nil {
 		return
 	}
-	file_egg_proto_msgTypes[11].OneofWrappers = []any{
+	file_egg_proto_msgTypes[4].OneofWrappers = []any{
 		(*SessionMsg_Output)(nil),
 		(*SessionMsg_Input)(nil),
 		(*SessionMsg_Resize)(nil),
@@ -1356,7 +492,7 @@ func file_egg_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_egg_proto_rawDesc), len(file_egg_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
