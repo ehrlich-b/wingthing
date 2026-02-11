@@ -188,7 +188,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 				mounts = append(mounts, sandbox.Mount{Source: root, Target: root})
 			}
 			configDir := filepath.Join(home, "."+rc.Agent)
-			mounts = append(mounts, sandbox.Mount{Source: configDir, Target: configDir})
+			mounts = append(mounts, sandbox.Mount{Source: configDir, Target: configDir, UseRegex: true})
 			// Claude Code writes update staging to ~/.cache/claude
 			cacheDir := filepath.Join(home, ".cache", rc.Agent)
 			mounts = append(mounts, sandbox.Mount{Source: cacheDir, Target: cacheDir})
