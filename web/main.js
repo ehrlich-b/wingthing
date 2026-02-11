@@ -1919,8 +1919,9 @@ function setupPTYHandlers(ws, reattach) {
                 break;
 
             case 'pty.exited':
-                // Ignore exited events from stale or unknown sessions
-                if (!ptySessionId || msg.session_id !== ptySessionId) break;
+                // Accept exited with error even if session never started (spawn failure)
+                if (ptySessionId && msg.session_id !== ptySessionId) break;
+                if (!ptySessionId && !msg.error) break;
                 headerTitle.textContent = '';
                 if (msg.session_id) clearTermBuffer(msg.session_id);
                 clearNotification(msg.session_id);
