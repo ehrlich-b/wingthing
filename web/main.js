@@ -1208,16 +1208,12 @@ function cyclePaletteWing() {
     paletteSearch.value = '';
 }
 
-var chatCapableAgents = { claude: true, ollama: true, gemini: true };
-
 function renderPaletteStatus() {
     var wing = currentPaletteWing();
     var wingName = wing ? (wing.machine_id || wing.id.substring(0, 8)) : '?';
     var agent = currentPaletteAgent();
     paletteStatus.innerHTML = '<span class="accent">' + escapeHtml(wingName) + '</span> &middot; ' +
         'terminal &middot; <span class="accent">' + agentWithIcon(agent) + '</span>';
-    var chatLink = document.getElementById('palette-chat-link');
-    if (chatLink) chatLink.style.display = chatCapableAgents[agent] ? '' : 'none';
 }
 
 function renderPaletteResults(filter) {
