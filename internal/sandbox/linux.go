@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -67,10 +68,16 @@ func hasNamespaceCapability() bool {
 	var data unix.CapUserData
 	hdr.Version = unix.LINUX_CAPABILITY_VERSION_1
 	hdr.Pid = 0 // current process
-	if err := unix.Capget(&hdr, &data); err != nil {
-		return false
+	if err := unix.Capget(&hdr, &data); err == nil {
+		if data.Effective&(1<<unix.CAP_SYS_ADMIN) != 0 {
+			return true
+		}
 	}
-	return data.Effective&(1<<unix.CAP_SYS_ADMIN) != 0
+	// Check unprivileged user namespaces (works without root on most modern distros)
+	if val, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone"); err == nil {
+		return strings.TrimSpace(string(val)) == "1"
+	}
+	return false
 }
 
 func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
@@ -108,14 +115,26 @@ func (s *linuxSandbox) buildEnv() []string {
 }
 
 func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
+	flags := s.cloneFlags()
+
 	attr := &syscall.SysProcAttr{
-		Cloneflags: s.cloneFlags(),
+		Cloneflags: flags,
 	}
 
-	// TODO(v0.8.x): install seccomp filter via child-side prctl
-	filter := buildSeccompFilter()
-	if len(filter) > 0 {
-		attr.AmbientCaps = []uintptr{} // drop ambient caps
+	// When not root, use user namespaces for unprivileged isolation.
+	// Map current uid/gid to root inside the namespace.
+	if os.Geteuid() != 0 && flags != 0 {
+		attr.Cloneflags |= syscall.CLONE_NEWUSER
+		attr.UidMappings = []syscall.SysProcIDMap{{
+			ContainerID: 0,
+			HostID:      os.Getuid(),
+			Size:        1,
+		}}
+		attr.GidMappings = []syscall.SysProcIDMap{{
+			ContainerID: 0,
+			HostID:      os.Getgid(),
+			Size:        1,
+		}}
 	}
 
 	return attr

@@ -3,112 +3,12 @@
 package sandbox
 
 import (
+	"bytes"
+	"context"
+	"os"
+	"strings"
 	"testing"
-	"time"
 )
-
-func TestValidContainerName(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  bool
-	}{
-		{"valid", "wt-550e8400-e29b-41d4-a716-446655440000", true},
-		{"missing prefix", "550e8400-e29b-41d4-a716-446655440000", false},
-		{"wrong prefix", "xx-550e8400-e29b-41d4-a716-446655440000", false},
-		{"bad uuid", "wt-not-a-uuid", false},
-		{"empty", "", false},
-		{"prefix only", "wt-", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := validContainerName(tt.input); got != tt.want {
-				t.Errorf("validContainerName(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestBuildMountsStrict(t *testing.T) {
-	cfg := Config{
-		Isolation: Strict,
-		Mounts: []Mount{
-			{Source: "/host/data", Target: "/data", ReadOnly: false},
-			{Source: "/host/config", Target: "/config", ReadOnly: true},
-		},
-	}
-	mounts := buildMounts(cfg)
-	if len(mounts) != 2 {
-		t.Fatalf("got %d mounts, want 2", len(mounts))
-	}
-	// Strict forces all mounts read-only
-	for i, m := range mounts {
-		if m[len(m)-3:] != ":ro" {
-			t.Errorf("mount[%d] = %q, want :ro suffix (strict forces read-only)", i, m)
-		}
-	}
-}
-
-func TestBuildMountsStandard(t *testing.T) {
-	cfg := Config{
-		Isolation: Standard,
-		Mounts: []Mount{
-			{Source: "/host/data", Target: "/data", ReadOnly: false},
-			{Source: "/host/config", Target: "/config", ReadOnly: true},
-		},
-	}
-	mounts := buildMounts(cfg)
-	if len(mounts) != 2 {
-		t.Fatalf("got %d mounts, want 2", len(mounts))
-	}
-	// Standard respects the ReadOnly flag
-	if mounts[0] != "/host/data:/data" {
-		t.Errorf("mount[0] = %q, want %q", mounts[0], "/host/data:/data")
-	}
-	if mounts[1] != "/host/config:/config:ro" {
-		t.Errorf("mount[1] = %q, want %q", mounts[1], "/host/config:/config:ro")
-	}
-}
-
-func TestBuildMountsNetwork(t *testing.T) {
-	cfg := Config{
-		Isolation: Network,
-		Mounts: []Mount{
-			{Source: "/host/data", Target: "/data", ReadOnly: false},
-		},
-	}
-	mounts := buildMounts(cfg)
-	if len(mounts) != 1 {
-		t.Fatalf("got %d mounts, want 1", len(mounts))
-	}
-	if mounts[0] != "/host/data:/data" {
-		t.Errorf("mount[0] = %q, want %q", mounts[0], "/host/data:/data")
-	}
-}
-
-func TestBuildMountsPrivileged(t *testing.T) {
-	cfg := Config{
-		Isolation: Privileged,
-		Mounts: []Mount{
-			{Source: "/host/all", Target: "/all", ReadOnly: false},
-		},
-	}
-	mounts := buildMounts(cfg)
-	if len(mounts) != 1 {
-		t.Fatalf("got %d mounts, want 1", len(mounts))
-	}
-	if mounts[0] != "/host/all:/all" {
-		t.Errorf("mount[0] = %q, want %q", mounts[0], "/host/all:/all")
-	}
-}
-
-func TestBuildMountsEmpty(t *testing.T) {
-	cfg := Config{Isolation: Standard}
-	mounts := buildMounts(cfg)
-	if len(mounts) != 0 {
-		t.Errorf("got %d mounts, want 0", len(mounts))
-	}
-}
 
 func TestHasNetwork(t *testing.T) {
 	tests := []struct {
@@ -127,85 +27,184 @@ func TestHasNetwork(t *testing.T) {
 	}
 }
 
-func TestBuildExecArgs(t *testing.T) {
-	tests := []struct {
-		name      string
-		container string
-		cmd       string
-		args      []string
-		want      []string
-	}{
-		{
-			name:      "simple",
-			container: "wt-abc",
-			cmd:       "echo",
-			args:      []string{"hello"},
-			want:      []string{"exec", "wt-abc", "--", "echo", "hello"},
-		},
-		{
-			name:      "no args",
-			container: "wt-abc",
-			cmd:       "ls",
-			args:      nil,
-			want:      []string{"exec", "wt-abc", "--", "ls"},
-		},
-		{
-			name:      "multiple args",
-			container: "wt-abc",
-			cmd:       "bash",
-			args:      []string{"-c", "echo hello && echo world"},
-			want:      []string{"exec", "wt-abc", "--", "bash", "-c", "echo hello && echo world"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := buildExecArgs(tt.container, tt.cmd, tt.args)
-			if len(got) != len(tt.want) {
-				t.Fatalf("len = %d, want %d: %v", len(got), len(tt.want), got)
-			}
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("arg[%d] = %q, want %q", i, got[i], tt.want[i])
-				}
-			}
-		})
+func TestBuildProfileNetworkDeny(t *testing.T) {
+	profile := buildProfile(Config{Isolation: Standard})
+	if !strings.Contains(profile, "(deny network*)") {
+		t.Errorf("standard isolation profile should deny network, got:\n%s", profile)
 	}
 }
 
-func TestAppleSandboxExecBuildsCommand(t *testing.T) {
-	// Unit test the Exec method without a real container runtime.
-	// We construct the struct directly (skipping newPlatform which requires the CLI).
-	sb := &appleSandbox{
-		cfg:  Config{Isolation: Standard, Timeout: 30 * time.Second},
-		name: "wt-test-fake",
+func TestBuildProfileNetworkAllow(t *testing.T) {
+	profile := buildProfile(Config{Isolation: Network})
+	if strings.Contains(profile, "(deny network*)") {
+		t.Errorf("network isolation profile should not deny network, got:\n%s", profile)
 	}
+}
 
-	ctx := t.Context()
-	cmd, err := sb.Exec(ctx, "echo", []string{"hello"})
+func TestBuildProfileDenyPaths(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	profile := buildProfile(Config{
+		Isolation: Standard,
+		Deny:      []string{home + "/.ssh", home + "/.gnupg"},
+	})
+	if !strings.Contains(profile, home+"/.ssh") {
+		t.Errorf("profile should deny .ssh, got:\n%s", profile)
+	}
+	if !strings.Contains(profile, home+"/.gnupg") {
+		t.Errorf("profile should deny .gnupg, got:\n%s", profile)
+	}
+}
+
+func TestBuildProfileMountWriteIsolation(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	profile := buildProfile(Config{
+		Isolation: Standard,
+		Mounts: []Mount{
+			{Source: home + "/scratch/jail", Target: home + "/scratch/jail"},
+		},
+	})
+	// Should deny writes to home
+	if !strings.Contains(profile, "(deny file-write* (subpath \""+home+"\"))") {
+		t.Errorf("profile should deny writes to home, got:\n%s", profile)
+	}
+	// Should allow writes to mount path
+	if !strings.Contains(profile, "(allow file-write* (subpath \""+home+"/scratch/jail\"))") {
+		t.Errorf("profile should allow writes to mount, got:\n%s", profile)
+	}
+}
+
+func TestSeatbeltExecBuildsCommand(t *testing.T) {
+	sb := &seatbeltSandbox{
+		cfg:     Config{Isolation: Standard},
+		profile: "(version 1)(allow default)",
+		tmpDir:  "/tmp/test",
+	}
+	cmd, err := sb.Exec(context.Background(), "echo", []string{"hello"})
 	if err != nil {
 		t.Fatalf("Exec error: %v", err)
 	}
-
-	// cmd.Path should be the container binary (resolved path)
-	// cmd.Args should be [container exec wt-test-fake -- echo hello]
 	args := cmd.Args
-	if len(args) < 6 {
-		t.Fatalf("expected at least 6 args, got %d: %v", len(args), args)
+	if len(args) < 4 {
+		t.Fatalf("expected at least 4 args, got %d: %v", len(args), args)
 	}
-	// args[0] is the resolved path to "container", check the rest
-	if args[1] != "exec" {
-		t.Errorf("args[1] = %q, want %q", args[1], "exec")
+	// args: [sandbox-exec, -p, <profile>, echo, hello]
+	if args[1] != "-p" {
+		t.Errorf("args[1] = %q, want -p", args[1])
 	}
-	if args[2] != "wt-test-fake" {
-		t.Errorf("args[2] = %q, want %q", args[2], "wt-test-fake")
+	if args[3] != "echo" {
+		t.Errorf("args[3] = %q, want echo", args[3])
 	}
-	if args[3] != "--" {
-		t.Errorf("args[3] = %q, want %q", args[3], "--")
+	if args[4] != "hello" {
+		t.Errorf("args[4] = %q, want hello", args[4])
 	}
-	if args[4] != "echo" {
-		t.Errorf("args[4] = %q, want %q", args[4], "echo")
+}
+
+// Integration tests — actually run sandboxed processes
+
+func TestSeatbeltNetworkBlocked(t *testing.T) {
+	sb, err := newPlatform(Config{Isolation: Standard})
+	if err != nil {
+		t.Fatalf("newPlatform: %v", err)
 	}
-	if args[5] != "hello" {
-		t.Errorf("args[5] = %q, want %q", args[5], "hello")
+	defer sb.Destroy()
+
+	cmd, err := sb.Exec(context.Background(), "/usr/bin/curl", []string{"-s", "--max-time", "3", "https://example.com"})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err = cmd.Run()
+	if err == nil {
+		t.Fatal("expected curl to fail with network denied, but it succeeded")
+	}
+}
+
+func TestSeatbeltNetworkAllowed(t *testing.T) {
+	sb, err := newPlatform(Config{Isolation: Network})
+	if err != nil {
+		t.Fatalf("newPlatform: %v", err)
+	}
+	defer sb.Destroy()
+
+	// Just verify the process runs — don't actually hit the network in tests
+	cmd, err := sb.Exec(context.Background(), "/bin/echo", []string{"network-ok"})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "network-ok" {
+		t.Errorf("output = %q, want %q", got, "network-ok")
+	}
+}
+
+func TestSeatbeltDenyPathBlocked(t *testing.T) {
+	// Create a temp file, deny access to its directory
+	tmpDir := t.TempDir()
+	testFile := tmpDir + "/secret.txt"
+	os.WriteFile(testFile, []byte("secret"), 0644)
+
+	sb, err := newPlatform(Config{
+		Isolation: Network,
+		Deny:      []string{tmpDir},
+	})
+	if err != nil {
+		t.Fatalf("newPlatform: %v", err)
+	}
+	defer sb.Destroy()
+
+	cmd, err := sb.Exec(context.Background(), "/bin/cat", []string{testFile})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err = cmd.Run()
+	if err == nil {
+		t.Fatal("expected cat to fail on denied path, but it succeeded")
+	}
+}
+
+func TestSeatbeltWriteRestriction(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	jail := t.TempDir()
+
+	sb, err := newPlatform(Config{
+		Isolation: Network,
+		Mounts: []Mount{
+			{Source: jail, Target: jail},
+		},
+	})
+	if err != nil {
+		t.Fatalf("newPlatform: %v", err)
+	}
+	defer sb.Destroy()
+
+	// Write inside mount should succeed
+	cmd, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", "echo ok > " + jail + "/test.txt"})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("write to mount path should succeed: %v", err)
+	}
+	os.Remove(jail + "/test.txt")
+
+	// Write outside mount (in home) should fail
+	target := home + "/wt-sandbox-test-delete-me"
+	cmd2, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", "echo fail > " + target})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	err = cmd2.Run()
+	os.Remove(target) // clean up in case it leaked
+	if err == nil {
+		t.Fatal("expected write outside mount to fail, but it succeeded")
 	}
 }
