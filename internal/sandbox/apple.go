@@ -32,6 +32,7 @@ func newPlatform(cfg Config) (Sandbox, error) {
 
 	profile := buildProfile(cfg)
 	log.Printf("seatbelt sandbox: created tmpdir=%s isolation=%s", dir, cfg.Isolation)
+	log.Printf("seatbelt profile:\n%s", profile)
 	return &seatbeltSandbox{cfg: cfg, profile: profile, tmpDir: dir}, nil
 }
 

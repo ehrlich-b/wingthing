@@ -3,10 +3,10 @@
 package sandbox
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"syscall"
 
@@ -15,8 +15,13 @@ import (
 
 // DenyInit is called early in main when the binary is re-exec'd as a sandbox
 // deny-path wrapper. It runs as root (UID 0) inside the user namespace so it
-// can mount tmpfs over denied paths. After mounting, it creates a nested user
-// namespace to drop back to the real UID, then execs the agent command.
+// can mount tmpfs over denied paths. After mounting, it spawns the agent in a
+// nested user namespace (via exec.Command + CLONE_NEWUSER) mapped to the real
+// UID, so the agent doesn't see root.
+//
+// We can't use syscall.Unshare(CLONE_NEWUSER) because Go processes are
+// multi-threaded; unshare requires single-threaded. Instead we use
+// exec.Command which clones before the child has threads.
 //
 // Args format: --uid UID --gid GID --deny PATH [--deny PATH...] -- CMD ARGS...
 func DenyInit(args []string) {
@@ -60,27 +65,51 @@ func DenyInit(args []string) {
 		}
 	}
 
-	// Drop from root to real UID via nested user namespace.
-	// This prevents agents (e.g. Claude Code) from seeing euid==0 and
-	// refusing --dangerously-skip-permissions.
+	// Spawn agent in a new user namespace mapped to real UID.
+	// exec.Command uses clone() which happens before the child has Go threads,
+	// so CLONE_NEWUSER works (unlike syscall.Unshare which fails with EINVAL).
+	cmdArgs := args[cmdStart:]
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+
 	if uid != 0 {
-		if err := syscall.Unshare(syscall.CLONE_NEWUSER); err != nil {
-			log.Printf("_deny_init: unshare user ns: %v (continuing as root)", err)
-		} else {
-			// Must deny setgroups before writing gid_map (unprivileged user ns requirement)
-			os.WriteFile("/proc/self/setgroups", []byte("deny"), 0)
-			os.WriteFile("/proc/self/uid_map", []byte(fmt.Sprintf("%d 0 1\n", uid)), 0)
-			os.WriteFile("/proc/self/gid_map", []byte(fmt.Sprintf("%d 0 1\n", gid)), 0)
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Cloneflags: syscall.CLONE_NEWUSER,
+			UidMappings: []syscall.SysProcIDMap{{
+				ContainerID: uid,
+				HostID:      0, // 0 in our namespace = real uid on host
+				Size:        1,
+			}},
+			GidMappings: []syscall.SysProcIDMap{{
+				ContainerID: gid,
+				HostID:      0,
+				Size:        1,
+			}},
 		}
 	}
 
-	// Exec the real command — replaces this process.
-	cmdArgs := args[cmdStart:]
-	binary, err := exec.LookPath(cmdArgs[0])
-	if err != nil {
-		log.Fatalf("_deny_init: %v", err)
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("_deny_init: start agent: %v", err)
 	}
-	if err := syscall.Exec(binary, cmdArgs, os.Environ()); err != nil {
-		log.Fatalf("_deny_init: exec %s: %v", binary, err)
+
+	// Forward signals to child
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	go func() {
+		for sig := range sigCh {
+			cmd.Process.Signal(sig)
+		}
+	}()
+
+	if err := cmd.Wait(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		log.Printf("_deny_init: wait: %v", err)
+		os.Exit(1)
 	}
+	os.Exit(0)
 }
