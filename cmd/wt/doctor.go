@@ -79,11 +79,11 @@ func doctorCmd() *cobra.Command {
 			} else {
 				fmt.Printf("  %-12s not reachable\n", "ollama")
 			}
-			if cfg.RelayURL != "" {
-				if relayReachable(cfg.RelayURL) {
-					fmt.Printf("  %-12s reachable at %s\n", "relay", cfg.RelayURL)
+			if cfg.RoostURL != "" {
+				if roostReachable(cfg.RoostURL) {
+					fmt.Printf("  %-12s reachable at %s\n", "roost", cfg.RoostURL)
 				} else {
-					fmt.Printf("  %-12s not reachable at %s\n", "relay", cfg.RelayURL)
+					fmt.Printf("  %-12s not reachable at %s\n", "roost", cfg.RoostURL)
 				}
 			}
 			fmt.Println()
@@ -93,8 +93,8 @@ func doctorCmd() *cobra.Command {
 			fmt.Printf("  dir:              %s\n", cfg.Dir)
 			fmt.Printf("  default_agent:    %s\n", cfg.DefaultAgent)
 			fmt.Printf("  default_embedder: %s\n", cfg.DefaultEmbedder)
-			if cfg.RelayURL != "" {
-				fmt.Printf("  relay_url:        %s\n", cfg.RelayURL)
+			if cfg.RoostURL != "" {
+				fmt.Printf("  roost_url:        %s\n", cfg.RoostURL)
 			}
 
 			return nil
@@ -116,9 +116,9 @@ func lookupEnv(key string) string {
 	return os.Getenv(key)
 }
 
-func relayReachable(relayURL string) bool {
+func roostReachable(roostURL string) bool {
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(relayURL + "/health")
+	resp, err := client.Get(roostURL + "/health")
 	if err != nil {
 		return false
 	}

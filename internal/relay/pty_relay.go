@@ -17,15 +17,16 @@ import (
 
 // PTYSession tracks a browser <-> wing PTY connection through the relay.
 type PTYSession struct {
-	ID          string
-	WingID      string
-	UserID      string
-	Agent       string
-	CWD         string // working directory for this session
-	EggConfig   string // serialized YAML of egg config at spawn time
-	Status      string // "active", "detached", "exited"
-	BrowserConn *websocket.Conn
-	mu          sync.Mutex
+	ID             string
+	WingID         string
+	UserID         string
+	Agent          string
+	CWD            string // working directory for this session
+	EggConfig      string // serialized YAML of egg config at spawn time
+	NeedsAttention bool   // terminal bell detected — session wants user attention
+	Status         string // "active", "detached", "exited"
+	BrowserConn    *websocket.Conn
+	mu             sync.Mutex
 }
 
 // PTYRegistry tracks active PTY sessions.
@@ -122,15 +123,18 @@ func (r *PTYRegistry) SyncFromWing(wingID, userID string, sessions []ws.SessionI
 		if _, tomb := r.tombstones[s.SessionID]; tomb {
 			continue
 		}
-		if _, exists := r.sessions[s.SessionID]; !exists {
+		if existing, exists := r.sessions[s.SessionID]; exists {
+			existing.NeedsAttention = s.NeedsAttention
+		} else {
 			r.sessions[s.SessionID] = &PTYSession{
-				ID:        s.SessionID,
-				WingID:    wingID,
-				UserID:    userID,
-				Agent:     s.Agent,
-				CWD:       s.CWD,
-				EggConfig: s.EggConfig,
-				Status:    "detached",
+				ID:             s.SessionID,
+				WingID:         wingID,
+				UserID:         userID,
+				Agent:          s.Agent,
+				CWD:            s.CWD,
+				EggConfig:      s.EggConfig,
+				NeedsAttention: s.NeedsAttention,
+				Status:         "detached",
 			}
 		}
 	}

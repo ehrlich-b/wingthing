@@ -16,7 +16,7 @@ type Config struct {
 	MachineID         string            `yaml:"machine_id"`
 	PollInterval      string            `yaml:"poll_interval"`
 	DefaultMaxRetries int               `yaml:"max_retries"`
-	RelayURL          string            `yaml:"relay_url"`
+	RoostURL          string            `yaml:"roost_url"`
 	Vars              map[string]string `yaml:"vars"`
 }
 

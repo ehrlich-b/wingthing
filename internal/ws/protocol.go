@@ -313,10 +313,11 @@ type SessionsSync struct {
 
 // SessionInfo describes one active session on a wing.
 type SessionInfo struct {
-	SessionID  string `json:"session_id"`
-	Agent      string `json:"agent"`
-	CWD        string `json:"cwd,omitempty"`
-	EggConfig  string `json:"egg_config,omitempty"` // YAML config snapshot
+	SessionID      string `json:"session_id"`
+	Agent          string `json:"agent"`
+	CWD            string `json:"cwd,omitempty"`
+	EggConfig      string `json:"egg_config,omitempty"` // YAML config snapshot
+	NeedsAttention bool   `json:"needs_attention,omitempty"`
 }
 
 // EggConfigUpdate pushes a new egg config from relay to wing.

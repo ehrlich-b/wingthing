@@ -158,6 +158,9 @@ func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
 		if sess.EggConfig != "" {
 			entry["egg_config"] = sess.EggConfig
 		}
+		if sess.NeedsAttention {
+			entry["needs_attention"] = true
+		}
 		out = append(out, entry)
 	}
 

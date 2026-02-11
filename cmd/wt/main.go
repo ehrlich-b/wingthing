@@ -552,10 +552,10 @@ func skillCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if cfg.RelayURL == "" {
-					return fmt.Errorf("relay_url not configured — set it in ~/.wingthing/config.yaml")
+				if cfg.RoostURL == "" {
+					return fmt.Errorf("roost_url not configured — set it in ~/.wingthing/config.yaml")
 				}
-				url := strings.TrimRight(cfg.RelayURL, "/") + "/api/skills"
+				url := strings.TrimRight(cfg.RoostURL, "/") + "/api/skills"
 				if category != "" {
 					url += "?category=" + category
 				}
@@ -712,10 +712,10 @@ func skillCmd() *cobra.Command {
 			}
 
 			// Otherwise, fetch from registry
-			if cfg.RelayURL == "" {
-				cfg.RelayURL = "https://wingthing.ai"
+			if cfg.RoostURL == "" {
+				cfg.RoostURL = "https://wingthing.ai"
 			}
-			url := strings.TrimRight(cfg.RelayURL, "/") + "/api/skills/" + src + "/raw"
+			url := strings.TrimRight(cfg.RoostURL, "/") + "/api/skills/" + src + "/raw"
 			resp, err := http.Get(url)
 			if err != nil {
 				return fmt.Errorf("fetch skill: %w", err)
@@ -949,8 +949,8 @@ func loginCmd() *cobra.Command {
 				return nil
 			}
 
-			if cfg.RelayURL == "" {
-				cfg.RelayURL = "https://wingthing.ai"
+			if cfg.RoostURL == "" {
+				cfg.RoostURL = "https://wingthing.ai"
 			}
 
 			// Generate or load X25519 keypair for E2E encryption
@@ -959,7 +959,7 @@ func loginCmd() *cobra.Command {
 				return fmt.Errorf("keypair: %w", err)
 			}
 
-			dcr, err := auth.RequestDeviceCode(cfg.RelayURL, cfg.MachineID, pubKeyB64)
+			dcr, err := auth.RequestDeviceCode(cfg.RoostURL, cfg.MachineID, pubKeyB64)
 			if err != nil {
 				return err
 			}
@@ -977,7 +977,7 @@ func loginCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer stop()
 
-			tr, err := auth.PollForToken(ctx, cfg.RelayURL, dcr.DeviceCode, dcr.Interval)
+			tr, err := auth.PollForToken(ctx, cfg.RoostURL, dcr.DeviceCode, dcr.Interval)
 			if err != nil {
 				return err
 			}
@@ -1020,10 +1020,10 @@ func logoutCmd() *cobra.Command {
 	}
 }
 
-// relayPost sends an authenticated POST to the relay API and returns the decoded response.
-func relayPost(cfg *config.Config, path string, body any) (map[string]any, error) {
-	if cfg.RelayURL == "" {
-		cfg.RelayURL = "https://wingthing.ai"
+// roostPost sends an authenticated POST to the roost API and returns the decoded response.
+func roostPost(cfg *config.Config, path string, body any) (map[string]any, error) {
+	if cfg.RoostURL == "" {
+		cfg.RoostURL = "https://wingthing.ai"
 	}
 
 	ts := auth.NewTokenStore(cfg.Dir)
@@ -1037,7 +1037,7 @@ func relayPost(cfg *config.Config, path string, body any) (map[string]any, error
 		return nil, err
 	}
 
-	url := strings.TrimRight(cfg.RelayURL, "/") + path
+	url := strings.TrimRight(cfg.RoostURL, "/") + path
 	req, err := http.NewRequest("POST", url, strings.NewReader(string(data)))
 	if err != nil {
 		return nil, err
@@ -1047,7 +1047,7 @@ func relayPost(cfg *config.Config, path string, body any) (map[string]any, error
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("relay request: %w", err)
+		return nil, fmt.Errorf("roost request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -1056,7 +1056,7 @@ func relayPost(cfg *config.Config, path string, body any) (map[string]any, error
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	if errMsg, ok := result["error"]; ok {
-		return nil, fmt.Errorf("relay: %v", errMsg)
+		return nil, fmt.Errorf("roost: %v", errMsg)
 	}
 	return result, nil
 }
@@ -1138,7 +1138,7 @@ func voteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := relayPost(cfg, "/api/vote", map[string]string{"post_id": args[0]})
+			result, err := roostPost(cfg, "/api/vote", map[string]string{"post_id": args[0]})
 			if err != nil {
 				return err
 			}
@@ -1158,7 +1158,7 @@ func commentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := relayPost(cfg, "/api/comment", map[string]string{
+			result, err := roostPost(cfg, "/api/comment", map[string]string{
 				"post_id": args[0],
 				"content": args[1],
 			})

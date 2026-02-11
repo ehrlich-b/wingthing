@@ -180,15 +180,23 @@ async function init() {
         if (e.key === 'Tab') {
             e.preventDefault();
             if (e.shiftKey) {
-                cyclePaletteMode();
-            } else {
                 cyclePaletteWing();
+            } else {
+                tabCompletePalette();
             }
         }
         if (e.key === '`') {
             e.preventDefault();
             cyclePaletteAgent();
         }
+    });
+
+    // Chat link in palette footer
+    document.getElementById('palette-chat-link').addEventListener('click', function(e) {
+        e.preventDefault();
+        var agent = currentPaletteAgent();
+        hidePalette();
+        launchChat(agent);
     });
 
     window.addEventListener('resize', function () {
@@ -525,6 +533,13 @@ async function loadHome() {
     }));
 
     rebuildAgentLists();
+
+    // Check for terminal bell attention flags from wing
+    sessionsData.forEach(function(s) {
+        if (s.needs_attention && s.id !== ptySessionId) {
+            setNotification(s.id);
+        }
+    });
 
     renderSidebar();
     if (activeView === 'home') renderDashboard();
@@ -1075,7 +1090,6 @@ function renderDashboard() {
 
 // === Command Palette ===
 
-var paletteMode = 'terminal'; // 'terminal' or 'chat'
 var paletteWingIndex = 0;
 var paletteAgentIndex = 0;
 var paletteSelectedIndex = 0;
@@ -1114,11 +1128,26 @@ function onlineWings() {
     return wingsData.filter(function(w) { return w.online !== false; });
 }
 
+var homeDirCache = []; // pre-cached ~/  entries
+
 function showPalette() {
     commandPalette.style.display = '';
     paletteSearch.value = '';
     paletteSearch.focus();
     updatePaletteState();
+    // Pre-cache home dir entries in background
+    var wing = currentPaletteWing();
+    if (wing && homeDirCache.length === 0) {
+        fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent('~/')).then(function(r) {
+            return r.json();
+        }).then(function(entries) {
+            if (entries && Array.isArray(entries)) {
+                homeDirCache = entries.map(function(e) {
+                    return { name: e.name, path: e.path, isDir: e.is_dir };
+                });
+            }
+        }).catch(function() {});
+    }
 }
 
 function updatePaletteState(isOpen) {
@@ -1138,17 +1167,13 @@ function updatePaletteState(isOpen) {
         // Only reset agent selection when palette first opens, not on background updates
         if (!isOpen) {
             var agents = currentPaletteAgents();
-            var last = paletteMode === 'chat' ? getLastChatAgent() : getLastTermAgent();
+            var last = getLastTermAgent();
             var idx = agents.indexOf(last);
             paletteAgentIndex = idx >= 0 ? idx : 0;
         }
         renderPaletteStatus();
         if (!isOpen) {
-            if (paletteMode === 'chat') {
-                paletteResults.innerHTML = '<div class="palette-empty">enter to start chat</div>';
-            } else {
-                renderPaletteResults(paletteSearch.value);
-            }
+            renderPaletteResults(paletteSearch.value);
         }
     } else {
         paletteStatus.innerHTML = '<span class="palette-waiting-text">no wings online</span>';
@@ -1168,6 +1193,7 @@ function hidePalette() {
     dirListCache = [];
     dirListCacheDir = '';
     dirListQuery = '';
+    homeDirCache = [];
 }
 
 function cyclePaletteWing() {
@@ -1180,22 +1206,12 @@ function cyclePaletteWing() {
     paletteSearch.value = '';
 }
 
-function cyclePaletteMode() {
-    paletteMode = paletteMode === 'terminal' ? 'chat' : 'terminal';
-    renderPaletteStatus();
-    if (paletteMode === 'chat') {
-        paletteResults.innerHTML = '<div class="palette-empty">enter to start chat</div>';
-    } else {
-        renderPaletteResults(paletteSearch.value);
-    }
-}
-
 function renderPaletteStatus() {
     var wing = currentPaletteWing();
     var wingName = wing ? (wing.machine_id || wing.id.substring(0, 8)) : '?';
     var agent = currentPaletteAgent();
     paletteStatus.innerHTML = '<span class="accent">' + escapeHtml(wingName) + '</span> &middot; ' +
-        escapeHtml(paletteMode) + ' &middot; <span class="accent">' + agentWithIcon(agent) + '</span>';
+        'terminal &middot; <span class="accent">' + agentWithIcon(agent) + '</span>';
 }
 
 function renderPaletteResults(filter) {
@@ -1207,22 +1223,29 @@ function renderPaletteResults(filter) {
 
     var items = [];
 
-    // Always show "home" option when no filter
+    // Empty palette shows nothing
     if (!filter) {
-        items.push({ name: '~', path: '', isDir: true });
+        renderPaletteItems(items);
+        return;
     }
 
     // Filter projects
-    var filtered = wingProjects;
-    if (filter) {
-        var lower = filter.toLowerCase();
-        filtered = wingProjects.filter(function(p) {
-            return p.name.toLowerCase().indexOf(lower) !== -1 ||
-                   p.path.toLowerCase().indexOf(lower) !== -1;
-        });
-    }
+    var lower = filter.toLowerCase();
+    var filtered = wingProjects.filter(function(p) {
+        return p.name.toLowerCase().indexOf(lower) !== -1 ||
+               p.path.toLowerCase().indexOf(lower) !== -1;
+    });
     filtered.forEach(function(p) {
         items.push({ name: p.name, path: p.path, isDir: true });
+    });
+
+    // Also search cached home dir entries for fuzzy matching
+    var seenPaths = {};
+    items.forEach(function(it) { seenPaths[it.path] = true; });
+    homeDirCache.forEach(function(e) {
+        if (!seenPaths[e.path] && e.name.toLowerCase().indexOf(lower) !== -1) {
+            items.push({ name: e.name, path: e.path, isDir: e.isDir });
+        }
     });
 
     renderPaletteItems(items);
@@ -1277,7 +1300,6 @@ function filterCachedItems(prefix) {
 
 function debouncedDirList(value) {
     if (dirListTimer) clearTimeout(dirListTimer);
-    if (paletteMode === 'chat') return;
 
     // Abort any in-flight fetch immediately on new input
     if (dirListAbort) { dirListAbort.abort(); dirListAbort = null; }
@@ -1363,6 +1385,23 @@ function navigatePalette(dir) {
     items[paletteSelectedIndex].scrollIntoView({ block: 'nearest' });
 }
 
+function tabCompletePalette() {
+    var selected = paletteResults.querySelector('.palette-item.selected');
+    if (!selected) return;
+    var path = selected.dataset.path;
+    if (!path) return;
+    var short = shortenPath(path);
+    // Check if item is a directory (has trailing / in display name)
+    var nameEl = selected.querySelector('.palette-name');
+    var isDir = nameEl && nameEl.textContent.slice(-1) === '/';
+    if (isDir) {
+        paletteSearch.value = short + '/';
+        debouncedDirList(paletteSearch.value);
+    } else {
+        paletteSearch.value = short;
+    }
+}
+
 function shortenPath(path) {
     if (path.indexOf('/Users/') === 0) {
         var parts = path.split('/');
@@ -1384,13 +1423,9 @@ function launchFromPalette(cwd) {
     // Validate: only send absolute paths (wing returns these from dir listing)
     var validCwd = (cwd && cwd.charAt(0) === '/') ? cwd : '';
     hidePalette();
-    if (paletteMode === 'chat') {
-        launchChat(agent);
-    } else {
-        setLastTermAgent(agent);
-        showTerminal();
-        connectPTY(agent, validCwd, wingId);
-    }
+    setLastTermAgent(agent);
+    showTerminal();
+    connectPTY(agent, validCwd, wingId);
 }
 
 // === Notifications ===
