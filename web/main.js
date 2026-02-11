@@ -1289,6 +1289,17 @@ function renderPaletteStatus() {
         'terminal &middot; <span class="accent">' + agentWithIcon(agent) + '</span>';
 }
 
+// Count how many git repos from the projects list are at or under a given path.
+function nestedRepoCount(dirPath, projects) {
+    var prefix = dirPath + '/';
+    var count = 0;
+    for (var i = 0; i < projects.length; i++) {
+        var p = projects[i].path;
+        if (p === dirPath || p.indexOf(prefix) === 0) count++;
+    }
+    return count;
+}
+
 function renderPaletteResults(filter) {
     var wing = currentPaletteWing();
     var wingId = wing ? wing.id : '';
@@ -1298,28 +1309,19 @@ function renderPaletteResults(filter) {
 
     var items = [];
 
-    // Empty palette shows nothing
-    if (!filter) {
-        renderPaletteItems(items);
-        return;
-    }
+    // Filter projects (empty filter = show all)
+    var lower = filter ? filter.toLowerCase() : '';
+    var filtered = lower
+        ? wingProjects.filter(function(p) {
+            return p.name.toLowerCase().indexOf(lower) !== -1 ||
+                   p.path.toLowerCase().indexOf(lower) !== -1;
+        })
+        : wingProjects.slice();
 
-    // Filter projects
-    var lower = filter.toLowerCase();
-    var filtered = wingProjects.filter(function(p) {
-        return p.name.toLowerCase().indexOf(lower) !== -1 ||
-               p.path.toLowerCase().indexOf(lower) !== -1;
-    });
-
-    // Sort projects: directories with more projects rank higher on ties
-    var projectCount = {};
-    wingProjects.forEach(function(p) {
-        var parent = p.path.replace(/\/[^\/]+$/, '');
-        projectCount[parent] = (projectCount[parent] || 0) + 1;
-    });
+    // Sort by nested git repo count (dirs with more repos inside rank first)
     filtered.sort(function(a, b) {
-        var ca = projectCount[a.path] || 0;
-        var cb = projectCount[b.path] || 0;
+        var ca = nestedRepoCount(a.path, wingProjects);
+        var cb = nestedRepoCount(b.path, wingProjects);
         if (ca !== cb) return cb - ca;
         return a.name.localeCompare(b.name);
     });
@@ -1328,13 +1330,22 @@ function renderPaletteResults(filter) {
         items.push({ name: p.name, path: p.path, isDir: true });
     });
 
-    // Also search cached home dir entries for fuzzy matching
+    // Also include cached home dir entries
     var seenPaths = {};
     items.forEach(function(it) { seenPaths[it.path] = true; });
-    homeDirCache.forEach(function(e) {
-        if (!seenPaths[e.path] && e.name.toLowerCase().indexOf(lower) !== -1) {
-            items.push({ name: e.name, path: e.path, isDir: e.isDir });
-        }
+    var homeExtras = homeDirCache.filter(function(e) {
+        if (seenPaths[e.path]) return false;
+        return !lower || e.name.toLowerCase().indexOf(lower) !== -1;
+    });
+    // Sort home extras by nested repo count too
+    homeExtras.sort(function(a, b) {
+        var ca = nestedRepoCount(a.path, wingProjects);
+        var cb = nestedRepoCount(b.path, wingProjects);
+        if (ca !== cb) return cb - ca;
+        return a.name.localeCompare(b.name);
+    });
+    homeExtras.forEach(function(e) {
+        items.push({ name: e.name, path: e.path, isDir: e.isDir });
     });
 
     renderPaletteItems(items);
@@ -1344,7 +1355,7 @@ function renderPaletteItems(items) {
     paletteSelectedIndex = 0;
 
     if (items.length === 0) {
-        paletteResults.innerHTML = '<div class="palette-empty">no matches</div>';
+        paletteResults.innerHTML = '';
         return;
     }
 
@@ -1448,14 +1459,12 @@ function fetchDirList(dirPath) {
         var items = entries.map(function(e) {
             return { name: e.name, path: e.path, isDir: e.is_dir };
         });
-        // Sort: dirs with more projects first, then alphabetical
-        var projPaths = {};
-        allProjects.forEach(function(p) { projPaths[p.path] = true; });
+        // Sort: dirs first, then by nested git repo count (most repos first), then alphabetical
         items.sort(function(a, b) {
             if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-            var pa = projPaths[a.path] ? 1 : 0;
-            var pb = projPaths[b.path] ? 1 : 0;
-            if (pa !== pb) return pb - pa;
+            var ca = nestedRepoCount(a.path, allProjects);
+            var cb = nestedRepoCount(b.path, allProjects);
+            if (ca !== cb) return cb - ca;
             return a.name.localeCompare(b.name);
         });
         // Prepend the directory itself so e.g. "~" shows "~/" at top

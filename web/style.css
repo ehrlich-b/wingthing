@@ -630,7 +630,7 @@ body {
     border: 1px solid var(--border);
     border-radius: 12px;
     width: 100%;
-    max-width: 480px;
+    max-width: 500px;
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
     overflow: hidden;
 }
@@ -713,6 +713,10 @@ body {
     font-size: 11px;
     color: var(--text-dim);
     cursor: default;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
 }
 #palette-chat-link {
     cursor: pointer;
