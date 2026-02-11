@@ -1574,7 +1574,7 @@ function clearNotification(sessionId) {
 
 // === Navigation ===
 
-function showHome() {
+function showHome(pushHistory) {
     activeView = 'home';
     homeSection.style.display = '';
     terminalSection.style.display = 'none';
@@ -1591,6 +1591,9 @@ function showHome() {
     destroyChat();
     renderSidebar();
     renderDashboard();
+    if (pushHistory !== false) {
+        history.pushState({ view: 'home' }, '', '#');
+    }
 }
 
 function showTerminal() {
@@ -1612,10 +1615,13 @@ function showChat() {
     chatSection.style.display = '';
 }
 
-function switchToSession(sessionId) {
+function switchToSession(sessionId, pushHistory) {
     detachPTY();
     showTerminal();
     attachPTY(sessionId);
+    if (pushHistory !== false) {
+        history.pushState({ view: 'terminal', sessionId: sessionId }, '', '#s/' + sessionId);
+    }
 }
 
 function detachPTY() {
@@ -2007,6 +2013,7 @@ function setupPTYHandlers(ws, reattach) {
             case 'pty.started':
                 ptySessionId = msg.session_id;
                 headerTitle.textContent = sessionTitle(msg.agent, ptyWingId);
+                history.pushState({ view: 'terminal', sessionId: msg.session_id }, '', '#s/' + msg.session_id);
 
                 if (msg.public_key) {
                     deriveE2EKey(msg.public_key).then(function (key) {
@@ -2180,6 +2187,20 @@ function escapeHtml(str) {
     div.textContent = str;
     return div.innerHTML;
 }
+
+// === Browser history (back/forward) ===
+
+// Set initial state so first back goes to home, not off-app
+history.replaceState({ view: 'home' }, '', '#');
+
+window.addEventListener('popstate', function(e) {
+    var state = e.state;
+    if (!state || state.view === 'home') {
+        showHome(false);
+    } else if (state.view === 'terminal' && state.sessionId) {
+        switchToSession(state.sessionId, false);
+    }
+});
 
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(function () {});

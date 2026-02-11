@@ -276,16 +276,16 @@ body {
 }
 
 .wing-agents .agent-icon {
-    width: 24px;
-    height: 24px;
-    vertical-align: -4px;
-    margin-right: 6px;
+    width: 18px;
+    height: 18px;
+    vertical-align: -3px;
+    margin-right: 4px;
 }
 
 .wing-statusbar {
     display: flex;
     justify-content: space-between;
-    font-size: 18px;
+    font-size: 13px;
     color: var(--text-muted);
     border-top: 1px solid var(--border);
     padding-top: 6px;
