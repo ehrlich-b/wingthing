@@ -429,6 +429,10 @@ func wingCmd() *cobra.Command {
 				log.Printf("egg: config updated from relay (isolation=%s)", newCfg.Isolation)
 			}
 
+			client.OnOrphanKill = func(ctx context.Context, sessionID string) {
+				killOrphanEgg(cfg, sessionID)
+			}
+
 			client.OnUpdate = func(ctx context.Context) {
 				log.Println("remote update requested")
 				exe, err := os.Executable()
@@ -804,6 +808,35 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		out = append(out, info)
 	}
 	return out
+}
+
+// killOrphanEgg kills an egg session that has no active goroutine managing it.
+// This handles the case where a pty.kill arrives but the session was never reclaimed.
+func killOrphanEgg(cfg *config.Config, sessionID string) {
+	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
+	sockPath := filepath.Join(dir, "egg.sock")
+	tokenPath := filepath.Join(dir, "egg.token")
+
+	ec, err := egg.Dial(sockPath, tokenPath)
+	if err != nil {
+		// Can't reach egg — try to kill by PID
+		pidPath := filepath.Join(dir, "egg.pid")
+		data, readErr := os.ReadFile(pidPath)
+		if readErr == nil {
+			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil {
+				if proc, findErr := os.FindProcess(pid); findErr == nil {
+					proc.Signal(syscall.SIGTERM)
+				}
+			}
+		}
+		cleanEggDir(dir)
+		log.Printf("pty session %s: orphan killed (pid)", sessionID)
+		return
+	}
+	ec.Kill(context.Background(), sessionID)
+	ec.Close()
+	cleanEggDir(dir)
+	log.Printf("pty session %s: orphan killed (grpc)", sessionID)
 }
 
 // readEggCrashInfo reads the last lines of an egg's log looking for panic/crash info.

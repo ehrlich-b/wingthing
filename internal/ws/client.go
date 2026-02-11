@@ -66,6 +66,7 @@ type Client struct {
 	OnDirList         DirHandler
 	OnUpdate          func(ctx context.Context)
 	OnEggConfigUpdate func(ctx context.Context, yamlStr string)
+	OnOrphanKill      func(ctx context.Context, sessionID string) // kill egg with no active goroutine
 	SessionLister     func(ctx context.Context) []SessionInfo
 
 	// ptySessions tracks active PTY sessions for routing input/resize
@@ -213,6 +214,8 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				case ch <- data:
 				default:
 				}
+			} else if env.Type == TypePTYKill && c.OnOrphanKill != nil {
+				go c.OnOrphanKill(ctx, partial.SessionID)
 			}
 
 		case TypePTYInput, TypePTYResize:
