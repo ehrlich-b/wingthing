@@ -997,7 +997,12 @@ function renderDashboard() {
 
     // Egg boxes (sessions)
     var hasSessions = sessionsData.length > 0;
+    var hasWings = wingsData.length > 0;
     emptyState.style.display = hasSessions ? 'none' : '';
+    var noWingsEl = document.getElementById('empty-no-wings');
+    var noSessionsEl = document.getElementById('empty-no-sessions');
+    if (noWingsEl) noWingsEl.style.display = (!hasSessions && !hasWings) ? '' : 'none';
+    if (noSessionsEl) noSessionsEl.style.display = (!hasSessions && hasWings) ? '' : 'none';
 
     if (!hasSessions) {
         sessionsList.innerHTML = '';
@@ -1180,7 +1185,7 @@ function updatePaletteState(isOpen) {
         paletteResults.innerHTML = '<div class="palette-waiting-msg">' +
             '<div class="waiting-dot"></div>' +
             '<div>no wings online</div>' +
-            '<div class="palette-waiting-hint"><a href="https://wingthing.ai/install" target="_blank">install wt</a> and run <code>wt start</code></div>' +
+            '<div class="palette-waiting-hint"><a href="https://wingthing.ai/install" target="_blank">install wt</a>, then <code>wt login</code> and <code>wt start</code></div>' +
         '</div>';
     }
 }
