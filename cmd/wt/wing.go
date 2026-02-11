@@ -1007,6 +1007,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				}
 
 			case ws.TypePTYInput:
+				wingAttention.Delete(sessionID)
 				var msg ws.PTYInput
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
@@ -1229,6 +1230,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 				}
 
 			case ws.TypePTYInput:
+				wingAttention.Delete(start.SessionID)
 				var msg ws.PTYInput
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
