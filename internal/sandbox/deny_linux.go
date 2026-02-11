@@ -65,6 +65,14 @@ func DenyInit(args []string) {
 		}
 	}
 
+	// Remount /proc for our PID namespace so Go's runtime can write
+	// /proc/<child_pid>/uid_map for the nested CLONE_NEWUSER below.
+	// Without this, /proc still shows host PIDs and the uid_map write fails,
+	// causing execve to return ENOENT.
+	if err := unix.Mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
+		log.Printf("_deny_init: remount /proc: %v (nested userns may fail)", err)
+	}
+
 	// Spawn agent in a new user namespace mapped to real UID.
 	// exec.Command uses clone() which happens before the child has Go threads,
 	// so CLONE_NEWUSER works (unlike syscall.Unshare which fails with EINVAL).

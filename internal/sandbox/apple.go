@@ -80,8 +80,10 @@ func buildProfile(cfg Config) string {
 		fmt.Fprintf(&sb, "(deny file-read* file-write* (subpath %q))\n", abs)
 	}
 
-	// Mount-based filesystem write isolation
-	// Deny writes to $HOME, then allow only mount paths (most-specific-wins)
+	// Mount-based filesystem write isolation.
+	// Deny writes to $HOME, then allow mount paths via most-specific-wins.
+	// Agent config dirs use regex instead of subpath so that files like
+	// ~/.claude.json (adjacent to ~/.claude/) are also writable.
 	if len(cfg.Mounts) > 0 {
 		home, _ := os.UserHomeDir()
 		if real, err := filepath.EvalSymlinks(home); err == nil {
@@ -100,7 +102,13 @@ func buildProfile(cfg Config) string {
 				if real, err := filepath.EvalSymlinks(abs); err == nil {
 					abs = real
 				}
-				fmt.Fprintf(&sb, "(allow file-write* (subpath %q))\n", abs)
+				if m.UseRegex {
+					// Regex covers both the directory and adjacent files with the same prefix.
+					// e.g. ~/.claude/ AND ~/.claude.json — subpath only covers the directory.
+					fmt.Fprintf(&sb, "(allow file-write* (regex #\"^%s\"))\n", sbplRegexEscape(abs))
+				} else {
+					fmt.Fprintf(&sb, "(allow file-write* (subpath %q))\n", abs)
+				}
 			}
 		}
 		// Always allow writes to system tmp dirs (resolve symlinks for macOS /tmp -> /private/tmp)
@@ -118,6 +126,19 @@ func buildProfile(cfg Config) string {
 // hasNetwork returns whether the isolation level permits network access.
 func hasNetwork(level Level) bool {
 	return level >= Network
+}
+
+// sbplRegexEscape escapes regex metacharacters for SBPL (regex #"...") patterns.
+func sbplRegexEscape(s string) string {
+	var sb strings.Builder
+	for _, c := range s {
+		switch c {
+		case '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|', '^', '$', '\\':
+			sb.WriteByte('\\')
+		}
+		sb.WriteRune(c)
+	}
+	return sb.String()
 }
 
 // profileString returns the generated profile for testing.
