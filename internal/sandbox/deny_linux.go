@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -26,11 +28,12 @@ import (
 // itself is NOT in a PID namespace — this keeps host /proc valid so Go can
 // write uid_map for the nested CLONE_NEWUSER without remounting /proc.
 //
-// Args format: --uid UID --gid GID [--deny PATH...] [--home PATH] [--writable PATH...] -- CMD ARGS...
+// Args format: --uid UID --gid GID [--log PATH] [--deny PATH...] [--home PATH] [--writable PATH...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
 	var writablePaths []string
 	var home string
+	var logPath string
 	var uid, gid int
 	var cmdStart int
 
@@ -50,6 +53,9 @@ func DenyInit(args []string) {
 			case "--home":
 				home = args[i+1]
 				i++
+			case "--log":
+				logPath = args[i+1]
+				i++
 			case "--uid":
 				uid, _ = strconv.Atoi(args[i+1])
 				i++
@@ -57,6 +63,14 @@ func DenyInit(args []string) {
 				gid, _ = strconv.Atoi(args[i+1])
 				i++
 			}
+		}
+	}
+
+	// Redirect logs to file so they don't leak into the agent's PTY.
+	if logPath != "" {
+		if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+			log.SetOutput(f)
+			defer f.Close()
 		}
 	}
 
@@ -81,6 +95,32 @@ func DenyInit(args []string) {
 				}
 				if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
 					log.Printf("_deny_init: bind writable %s: %v", p, err)
+				}
+			}
+			// Also bind-mount files adjacent to writable dirs that share the
+			// same prefix. This is the Linux equivalent of macOS regex rules:
+			// e.g., writable ~/.claude also makes ~/.claude.json writable.
+			for _, p := range writablePaths {
+				dir := filepath.Dir(p)
+				base := filepath.Base(p)
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					continue
+				}
+				for _, e := range entries {
+					name := e.Name()
+					if name == base || !strings.HasPrefix(name, base) {
+						continue
+					}
+					if e.IsDir() {
+						continue // only handle files; dirs should be explicit writable paths
+					}
+					fp := filepath.Join(dir, name)
+					if err := unix.Mount(fp, fp, "", unix.MS_BIND, ""); err != nil {
+						log.Printf("_deny_init: bind writable file %s: %v", fp, err)
+					} else {
+						log.Printf("_deny_init: bind writable file %s (prefix match)", fp)
+					}
 				}
 			}
 			// Remount HOME read-only. Child bind-mounts at writable paths are
