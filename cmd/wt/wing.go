@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/cipher"
 	"encoding/base64"
@@ -133,13 +134,29 @@ func wingPidPath() string {
 
 const maxLogSize = 1 << 20 // 1MB
 
-// rotateLog renames path to path.1 if it exceeds maxLogSize.
+// rotateLog rotates path when it exceeds maxLogSize.
+// Chain: .log -> .log.1 -> .log.2.gz -> deleted
 func rotateLog(path string) {
 	info, err := os.Stat(path)
 	if err != nil || info.Size() < maxLogSize {
 		return
 	}
-	os.Remove(path + ".1")
+
+	// Delete oldest (.log.2.gz)
+	os.Remove(path + ".2.gz")
+
+	// Compress .log.1 -> .log.2.gz
+	if data, err := os.ReadFile(path + ".1"); err == nil {
+		if gz, err := os.Create(path + ".2.gz"); err == nil {
+			w := gzip.NewWriter(gz)
+			w.Write(data)
+			w.Close()
+			gz.Close()
+			os.Remove(path + ".1")
+		}
+	}
+
+	// Rotate current -> .log.1
 	os.Rename(path, path+".1")
 }
 
