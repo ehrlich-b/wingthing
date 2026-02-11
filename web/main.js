@@ -177,17 +177,19 @@ async function init() {
             e.preventDefault();
             navigatePalette(e.key === 'ArrowDown' ? 1 : -1);
         }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            if (paletteSearch.value === '' || paletteSearch.selectionStart === 0) {
+                e.preventDefault();
+                cyclePaletteAgent(e.key === 'ArrowLeft' ? -1 : 1);
+            }
+        }
         if (e.key === 'Tab') {
             e.preventDefault();
-            if (e.shiftKey) {
-                cyclePaletteWing();
-            } else {
-                tabCompletePalette();
-            }
+            tabCompletePalette();
         }
         if (e.key === '`') {
             e.preventDefault();
-            cyclePaletteAgent();
+            cyclePaletteWing();
         }
     });
 
@@ -1117,10 +1119,10 @@ function currentPaletteAgent() {
     return agents[paletteAgentIndex % agents.length];
 }
 
-function cyclePaletteAgent() {
+function cyclePaletteAgent(dir) {
     var agents = currentPaletteAgents();
     if (agents.length <= 1) return;
-    paletteAgentIndex = (paletteAgentIndex + 1) % agents.length;
+    paletteAgentIndex = (paletteAgentIndex + (dir || 1) + agents.length) % agents.length;
     renderPaletteStatus();
 }
 
@@ -1206,12 +1208,16 @@ function cyclePaletteWing() {
     paletteSearch.value = '';
 }
 
+var chatCapableAgents = { claude: true, ollama: true, gemini: true };
+
 function renderPaletteStatus() {
     var wing = currentPaletteWing();
     var wingName = wing ? (wing.machine_id || wing.id.substring(0, 8)) : '?';
     var agent = currentPaletteAgent();
     paletteStatus.innerHTML = '<span class="accent">' + escapeHtml(wingName) + '</span> &middot; ' +
         'terminal &middot; <span class="accent">' + agentWithIcon(agent) + '</span>';
+    var chatLink = document.getElementById('palette-chat-link');
+    if (chatLink) chatLink.style.display = chatCapableAgents[agent] ? '' : 'none';
 }
 
 function renderPaletteResults(filter) {
@@ -1235,6 +1241,20 @@ function renderPaletteResults(filter) {
         return p.name.toLowerCase().indexOf(lower) !== -1 ||
                p.path.toLowerCase().indexOf(lower) !== -1;
     });
+
+    // Sort projects: directories with more projects rank higher on ties
+    var projectCount = {};
+    wingProjects.forEach(function(p) {
+        var parent = p.path.replace(/\/[^\/]+$/, '');
+        projectCount[parent] = (projectCount[parent] || 0) + 1;
+    });
+    filtered.sort(function(a, b) {
+        var ca = projectCount[a.path] || 0;
+        var cb = projectCount[b.path] || 0;
+        if (ca !== cb) return cb - ca;
+        return a.name.localeCompare(b.name);
+    });
+
     filtered.forEach(function(p) {
         items.push({ name: p.name, path: p.path, isDir: true });
     });
@@ -1359,10 +1379,24 @@ function fetchDirList(dirPath) {
         var items = entries.map(function(e) {
             return { name: e.name, path: e.path, isDir: e.is_dir };
         });
+        // Sort: dirs with more projects first, then alphabetical
+        var projPaths = {};
+        allProjects.forEach(function(p) { projPaths[p.path] = true; });
         items.sort(function(a, b) {
             if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+            var pa = projPaths[a.path] ? 1 : 0;
+            var pb = projPaths[b.path] ? 1 : 0;
+            if (pa !== pb) return pb - pa;
             return a.name.localeCompare(b.name);
         });
+        // Prepend the directory itself so e.g. "~" shows "~/" at top
+        // Derive absolute path from first entry (wing returns absolute paths)
+        var absDirPath = dirPath;
+        if (items.length > 0 && items[0].path) {
+            absDirPath = items[0].path.replace(/\/[^\/]+$/, '');
+        }
+        var dirLabel = shortenPath(absDirPath).replace(/\/$/, '') || absDirPath;
+        items.unshift({ name: dirLabel, path: absDirPath, isDir: true });
 
         // Cache full directory listing
         dirListCache = items;

@@ -669,7 +669,19 @@ body {
 #palette-hints {
     font-size: 11px;
     color: var(--text-dim);
+    cursor: default;
+}
+#palette-chat-link {
     cursor: pointer;
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-muted);
+    margin-left: 2px;
+}
+#palette-chat-link:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
 }
 
 /* Palette waiting state */
