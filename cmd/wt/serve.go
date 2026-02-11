@@ -99,8 +99,10 @@ func serveCmd() *cobra.Command {
 
 			srv := relay.NewServer(store, srvCfg)
 			srv.Embedder = primaryEmb
-			// Rate limiter: 256 KB/s sustained, 16 MB burst per user
-			srv.Bandwidth = relay.NewBandwidthMeter(256*1024, 16*1024*1024, store.DB())
+			// Bandwidth: 64 KB/s sustained, 1 MB burst per user (PTY-only traffic)
+			srv.Bandwidth = relay.NewBandwidthMeter(64*1024, 1*1024*1024, store.DB())
+			// Rate limit: 5 req/s sustained, 20 burst per IP (friends-and-family)
+			srv.RateLimit = relay.NewRateLimiter(5, 20)
 			if devFlag {
 				srv.DevTemplateDir = "internal/relay/templates"
 				srv.DevMode = true

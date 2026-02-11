@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -138,4 +140,92 @@ func humanBytes(n int64) string {
 	default:
 		return fmt.Sprintf("%d B", n)
 	}
+}
+
+// RateLimiter applies per-IP request rate limiting.
+// "Friends and family" limits — just enough to prevent abuse.
+type RateLimiter struct {
+	mu       sync.Mutex
+	limiters map[string]*ipLimiter
+	rate     rate.Limit
+	burst    int
+}
+
+type ipLimiter struct {
+	lim      *rate.Limiter
+	lastSeen time.Time
+}
+
+// NewRateLimiter creates a per-IP rate limiter.
+// reqPerSec is the sustained rate, burst is the max burst size.
+func NewRateLimiter(reqPerSec float64, burst int) *RateLimiter {
+	rl := &RateLimiter{
+		limiters: make(map[string]*ipLimiter),
+		rate:     rate.Limit(reqPerSec),
+		burst:    burst,
+	}
+	// Evict stale entries every 5 minutes
+	go func() {
+		for range time.Tick(5 * time.Minute) {
+			rl.mu.Lock()
+			for ip, l := range rl.limiters {
+				if time.Since(l.lastSeen) > 10*time.Minute {
+					delete(rl.limiters, ip)
+				}
+			}
+			rl.mu.Unlock()
+		}
+	}()
+	return rl
+}
+
+func (rl *RateLimiter) getLimiter(ip string) *rate.Limiter {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	l, ok := rl.limiters[ip]
+	if !ok {
+		l = &ipLimiter{lim: rate.NewLimiter(rl.rate, rl.burst)}
+		rl.limiters[ip] = l
+	}
+	l.lastSeen = time.Now()
+	return l.lim
+}
+
+// Allow returns true if the request is within rate limits for the given IP.
+func (rl *RateLimiter) Allow(ip string) bool {
+	return rl.getLimiter(ip).Allow()
+}
+
+// Middleware wraps an http.Handler with rate limiting.
+func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := clientIP(r)
+		if !rl.Allow(ip) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func clientIP(r *http.Request) string {
+	// Check X-Forwarded-For (fly.io, cloudflare, etc.)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// First IP is the client
+		if i := len(xff); i > 0 {
+			parts := xff
+			for j := 0; j < len(parts); j++ {
+				if parts[j] == ',' {
+					return parts[:j]
+				}
+			}
+			return parts
+		}
+	}
+	// Fall back to RemoteAddr
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
 }

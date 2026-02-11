@@ -38,6 +38,7 @@ type Server struct {
 	PTY            *PTYRegistry
 	Chat           *ChatRegistry
 	Bandwidth      *BandwidthMeter
+	RateLimit      *RateLimiter
 	mux            *http.ServeMux
 
 	// Latest release version cache (fetched from GitHub)
@@ -149,6 +150,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := stripPort(r.Host)
 	path := r.URL.Path
 
+	// Rate limit auth and mutating API endpoints
+	if s.RateLimit != nil && s.shouldRateLimit(r.Method, path) {
+		ip := clientIP(r)
+		if !s.RateLimit.Allow(ip) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+	}
+
 	// app.wingthing.ai: SPA at root, plus API/auth/ws/assets
 	if s.Config.AppHost != "" && host == s.Config.AppHost {
 		if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/auth/") ||
@@ -179,6 +189,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// shouldRateLimit returns true for endpoints that should be rate limited.
+// Auth endpoints, mutating API calls, and WebSocket upgrades.
+func (s *Server) shouldRateLimit(method, path string) bool {
+	// All auth endpoints (login, token exchange, magic link, device auth)
+	if strings.HasPrefix(path, "/auth/") {
+		return true
+	}
+	// Mutating API endpoints
+	if method == "POST" && strings.HasPrefix(path, "/api/") {
+		return true
+	}
+	// WebSocket upgrades
+	if strings.HasPrefix(path, "/ws/") {
+		return true
+	}
+	return false
 }
 
 func (s *Server) serveAppIndex(w http.ResponseWriter, r *http.Request) {
