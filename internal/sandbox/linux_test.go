@@ -173,42 +173,6 @@ func TestRlimitOnlyExplicit(t *testing.T) {
 	}
 }
 
-func TestMountPaths(t *testing.T) {
-	mounts := []Mount{
-		{Source: "/data/skills", Target: "skills", ReadOnly: true},
-		{Source: "/tmp/work", Target: "/workspace", ReadOnly: false},
-	}
-	result := mountPaths(mounts, "/sandbox/root")
-
-	if len(result) != 2 {
-		t.Fatalf("mountPaths returned %d entries, want 2", len(result))
-	}
-
-	// Relative target should be joined with rootDir
-	if result[0].target != "/sandbox/root/skills" {
-		t.Errorf("relative target = %q, want /sandbox/root/skills", result[0].target)
-	}
-	if result[0].source != "/data/skills" {
-		t.Errorf("source = %q, want /data/skills", result[0].source)
-	}
-	// ReadOnly should include MS_RDONLY
-	if result[0].flags&unix.MS_RDONLY == 0 {
-		t.Error("read-only mount should have MS_RDONLY flag")
-	}
-	if result[0].flags&unix.MS_BIND == 0 {
-		t.Error("mount should have MS_BIND flag")
-	}
-
-	// Absolute target should be kept as-is
-	if result[1].target != "/workspace" {
-		t.Errorf("absolute target = %q, want /workspace", result[1].target)
-	}
-	// Non-readonly should NOT have MS_RDONLY
-	if result[1].flags&unix.MS_RDONLY != 0 {
-		t.Error("non-readonly mount should not have MS_RDONLY flag")
-	}
-}
-
 func TestSysProcAttrCloneflags(t *testing.T) {
 	tests := []struct {
 		level Level
@@ -225,5 +189,17 @@ func TestSysProcAttrCloneflags(t *testing.T) {
 		if attr.Cloneflags != tt.want {
 			t.Errorf("level %s: Cloneflags = 0x%x, want 0x%x", tt.level, attr.Cloneflags, tt.want)
 		}
+	}
+}
+
+func TestAllowOutboundClearsNewnet(t *testing.T) {
+	s := &linuxSandbox{cfg: Config{Isolation: Standard, AllowOutbound: true}}
+	flags := s.cloneFlags()
+	if flags&syscall.CLONE_NEWNET != 0 {
+		t.Error("AllowOutbound should clear CLONE_NEWNET")
+	}
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
+	if flags != want {
+		t.Errorf("cloneFlags with AllowOutbound = 0x%x, want 0x%x", flags, want)
 	}
 }

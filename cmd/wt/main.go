@@ -33,6 +33,13 @@ import (
 var version = "dev"
 
 func main() {
+	// Fast path: re-exec'd as sandbox deny-path wrapper (Linux mount namespace).
+	// Must run before cobra to avoid any overhead — this process execs immediately.
+	if len(os.Args) > 1 && os.Args[1] == "_deny_init" {
+		sandbox.DenyInit(os.Args[2:])
+		return
+	}
+
 	root := &cobra.Command{
 		Use:     "wt",
 		Short:   "wingthing — local-first AI task runner",

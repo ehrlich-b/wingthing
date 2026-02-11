@@ -8,7 +8,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -79,7 +78,27 @@ func hasNamespaceCapability() bool {
 }
 
 func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	var cmd *exec.Cmd
+
+	if len(s.cfg.Deny) > 0 {
+		// Wrap through _deny_init to mask denied paths via tmpfs overmounts
+		// inside the mount namespace. The wrapper execs the real command after mounting.
+		exe, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("resolve executable for deny wrapper: %w", err)
+		}
+		wrapArgs := []string{"_deny_init"}
+		for _, d := range s.cfg.Deny {
+			wrapArgs = append(wrapArgs, "--deny", d)
+		}
+		wrapArgs = append(wrapArgs, "--")
+		wrapArgs = append(wrapArgs, name)
+		wrapArgs = append(wrapArgs, args...)
+		cmd = exec.CommandContext(ctx, exe, wrapArgs...)
+	} else {
+		cmd = exec.CommandContext(ctx, name, args...)
+	}
+
 	cmd.Dir = s.tmpDir
 	cmd.Env = s.buildEnv()
 	cmd.SysProcAttr = s.sysProcAttr()
@@ -93,9 +112,6 @@ func (s *linuxSandbox) PostStart(pid int) error {
 		if err := unix.Prlimit(pid, rl.resource, &lim, nil); err != nil {
 			log.Printf("linux sandbox: prlimit(%d, %d, %d) failed: %v", pid, rl.resource, rl.value, err)
 		}
-	}
-	if len(s.cfg.Deny) > 0 {
-		log.Printf("linux sandbox: deny paths not yet supported (deferred to v0.8.x)")
 	}
 	return nil
 }
@@ -184,33 +200,6 @@ type rlimitPair struct {
 	value    uint64
 }
 
-// mountPaths prepares bind mount arguments for the mount namespace.
-// Returns the list of mount syscall args to execute after clone.
-func mountPaths(mounts []Mount, rootDir string) []bindMount {
-	var out []bindMount
-	for _, m := range mounts {
-		target := m.Target
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(rootDir, target)
-		}
-		flags := uintptr(unix.MS_BIND | unix.MS_REC)
-		if m.ReadOnly {
-			flags |= unix.MS_RDONLY
-		}
-		out = append(out, bindMount{
-			source: m.Source,
-			target: target,
-			flags:  flags,
-		})
-	}
-	return out
-}
-
-type bindMount struct {
-	source string
-	target string
-	flags  uintptr
-}
 
 // buildSeccompFilter constructs a BPF program that denies dangerous syscalls.
 // The filter returns SECCOMP_RET_ERRNO(EPERM) for denied calls and
