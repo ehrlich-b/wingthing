@@ -38,6 +38,27 @@ import (
 // wingAttention tracks sessions that have triggered a terminal bell (need user attention).
 var wingAttention sync.Map // sessionID → bool
 
+// readEggMeta reads agent/cwd from an egg's meta file.
+func readEggMeta(dir string) (agent, cwd string) {
+	data, err := os.ReadFile(filepath.Join(dir, "egg.meta"))
+	if err != nil {
+		return "", ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "agent":
+			agent = v
+		case "cwd":
+			cwd = v
+		}
+	}
+	return agent, cwd
+}
+
 // containsBell returns true if data contains the BEL character (0x07).
 func containsBell(data []byte) bool {
 	for _, b := range data {
@@ -480,8 +501,10 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
-	// Reclaim surviving egg sessions after reconnect
-	go reclaimEggSessions(ctx, cfg, client)
+	// Reclaim surviving egg sessions on every (re)connect
+	client.OnReconnect = func(rctx context.Context) {
+		reclaimEggSessions(rctx, cfg, client)
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -769,6 +792,7 @@ func cleanEggDir(dir string) {
 	os.Remove(filepath.Join(dir, "egg.sock"))
 	os.Remove(filepath.Join(dir, "egg.token"))
 	os.Remove(filepath.Join(dir, "egg.pid"))
+	os.Remove(filepath.Join(dir, "egg.meta"))
 	os.Remove(filepath.Join(dir, "egg.log"))
 	os.Remove(dir)
 }
@@ -815,8 +839,11 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		}
 		ec.Close()
 
+		agent, sessionCWD := readEggMeta(dir)
 		info := ws.SessionInfo{
 			SessionID: sessionID,
+			Agent:     agent,
+			CWD:       sessionCWD,
 		}
 		if _, ok := wingAttention.Load(sessionID); ok {
 			info.NeedsAttention = true
@@ -931,8 +958,11 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 			continue
 		}
 
-		log.Printf("egg: reclaiming session %s (pid %d)", sessionID, pid)
-		wsClient.SendReclaim(ctx, sessionID, "", "")
+		// Read metadata from egg's meta file
+		agent, cwd := readEggMeta(dir)
+
+		log.Printf("egg: reclaiming session %s (pid %d agent=%s)", sessionID, pid, agent)
+		wsClient.SendReclaim(ctx, sessionID, agent, cwd)
 
 		// Set up input routing for this session
 		write, input, cleanup := wsClient.RegisterPTYSession(ctx, sessionID)

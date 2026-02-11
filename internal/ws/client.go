@@ -67,6 +67,7 @@ type Client struct {
 	OnUpdate          func(ctx context.Context)
 	OnEggConfigUpdate func(ctx context.Context, yamlStr string)
 	OnOrphanKill      func(ctx context.Context, sessionID string) // kill egg with no active goroutine
+	OnReconnect       func(ctx context.Context)                  // called after re-registration with relay
 	SessionLister     func(ctx context.Context) []SessionInfo
 
 	// ptySessions tracks active PTY sessions for routing input/resize
@@ -166,6 +167,9 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			var msg RegisteredMsg
 			json.Unmarshal(data, &msg)
 			log.Printf("registered with relay as wing %s", msg.WingID)
+			if c.OnReconnect != nil {
+				go c.OnReconnect(ctx)
+			}
 
 		case TypeTaskSubmit:
 			var task TaskSubmit

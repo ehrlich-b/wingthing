@@ -133,6 +133,7 @@ func eggRunCmd() *cobra.Command {
 			os.Remove(filepath.Join(dir, "egg.sock"))
 			os.Remove(filepath.Join(dir, "egg.token"))
 			os.Remove(filepath.Join(dir, "egg.pid"))
+			os.Remove(filepath.Join(dir, "egg.meta"))
 			os.Remove(filepath.Join(dir, "egg.log"))
 			os.Remove(dir)
 
@@ -232,6 +233,7 @@ func eggListCmd() *cobra.Command {
 					os.Remove(filepath.Join(eggsDir, sessionID, "egg.sock"))
 					os.Remove(filepath.Join(eggsDir, sessionID, "egg.token"))
 					os.Remove(filepath.Join(eggsDir, sessionID, "egg.pid"))
+					os.Remove(filepath.Join(eggsDir, sessionID, "egg.meta"))
 					os.Remove(filepath.Join(eggsDir, sessionID, "egg.log"))
 					os.Remove(filepath.Join(eggsDir, sessionID))
 					continue
