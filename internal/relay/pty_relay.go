@@ -339,6 +339,24 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 			wing.Conn.Write(ctx, websocket.MessageText, data)
 
+		case ws.TypePTYAttentionAck:
+			var ack ws.PTYAttentionAck
+			if err := json.Unmarshal(data, &ack); err != nil {
+				continue
+			}
+			session := s.PTY.Get(ack.SessionID)
+			if session == nil || session.UserID != userID {
+				continue
+			}
+			session.mu.Lock()
+			session.NeedsAttention = false
+			session.mu.Unlock()
+			// Forward to wing so it clears wingAttention
+			wing := s.Wings.FindByID(session.WingID)
+			if wing != nil {
+				wing.Conn.Write(ctx, websocket.MessageText, data)
+			}
+
 		case ws.TypePTYDetach:
 			var det ws.PTYDetach
 			if err := json.Unmarshal(data, &det); err != nil {

@@ -1543,8 +1543,26 @@ function checkForNotification(text) {
     return false;
 }
 
+function sendAttentionAck(sessionId) {
+    if (!sessionId || !ptyWs || ptyWs.readyState !== WebSocket.OPEN) return;
+    ptyWs.send(JSON.stringify({ type: 'pty.attention_ack', session_id: sessionId }));
+}
+
+function isViewingSession(sessionId) {
+    return activeView === 'terminal' && sessionId === ptySessionId &&
+           document.visibilityState === 'visible';
+}
+
 function setNotification(sessionId) {
-    if (!sessionId || sessionNotifications[sessionId]) return;
+    if (!sessionId) return;
+
+    // If user is actively viewing this session in the foreground, auto-ack immediately
+    if (isViewingSession(sessionId)) {
+        sendAttentionAck(sessionId);
+        return;
+    }
+
+    if (sessionNotifications[sessionId]) return;
     sessionNotifications[sessionId] = true;
     renderSidebar();
     if (activeView === 'home') renderDashboard();
@@ -1580,12 +1598,22 @@ function setNotification(sessionId) {
 function clearNotification(sessionId) {
     if (!sessionId || !sessionNotifications[sessionId]) return;
     delete sessionNotifications[sessionId];
+    sendAttentionAck(sessionId);
     renderSidebar();
     if (activeView === 'home') renderDashboard();
     if (!Object.keys(sessionNotifications).length) {
         document.title = 'wingthing';
     }
 }
+
+// When tab becomes visible, ack any notification for the active session
+document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible' && activeView === 'terminal' && ptySessionId) {
+        if (sessionNotifications[ptySessionId]) {
+            clearNotification(ptySessionId);
+        }
+    }
+});
 
 // === Navigation ===
 
@@ -2008,6 +2036,7 @@ function setupPTYHandlers(ws, reattach) {
 
     function processOutput(dataStr) {
         e2eDecrypt(dataStr).then(function (bytes) {
+            if (ws !== ptyWs) return; // session switched during async decrypt
             term.write(bytes);
             saveTermBuffer();
             try {
@@ -2034,6 +2063,7 @@ function setupPTYHandlers(ws, reattach) {
 
                 if (msg.public_key) {
                     deriveE2EKey(msg.public_key).then(function (key) {
+                        if (ws !== ptyWs) return; // session switched during key derivation
                         e2eKey = key;
                         keyReady = true;
                         ptyStatus.textContent = key ? '\uD83D\uDD12' : '';
@@ -2041,6 +2071,7 @@ function setupPTYHandlers(ws, reattach) {
                         pendingOutput.forEach(processOutput);
                         pendingOutput = [];
                     }).catch(function () {
+                        if (ws !== ptyWs) return;
                         keyReady = true;
                         ptyStatus.textContent = '';
                         pendingOutput.forEach(processOutput);
@@ -2051,7 +2082,11 @@ function setupPTYHandlers(ws, reattach) {
                     ptyStatus.textContent = '';
                 }
 
-                if (!reattach) term.clear();
+                if (reattach) {
+                    term.reset();
+                } else {
+                    term.clear();
+                }
                 term.focus();
                 renderSidebar();
                 loadHome();
