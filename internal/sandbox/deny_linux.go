@@ -69,7 +69,21 @@ func DenyInit(args []string) {
 	// exec.Command uses clone() which happens before the child has Go threads,
 	// so CLONE_NEWUSER works (unlike syscall.Unshare which fails with EINVAL).
 	cmdArgs := args[cmdStart:]
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	binPath := cmdArgs[0]
+
+	// Debug: verify binary is accessible before exec
+	if info, err := os.Lstat(binPath); err != nil {
+		log.Printf("_deny_init: binary %s: %v", binPath, err)
+	} else {
+		log.Printf("_deny_init: binary %s mode=%s size=%d", binPath, info.Mode(), info.Size())
+		if info.Mode()&os.ModeSymlink != 0 {
+			if target, err := os.Readlink(binPath); err == nil {
+				log.Printf("_deny_init: symlink -> %s", target)
+			}
+		}
+	}
+
+	cmd := exec.Command(binPath, cmdArgs[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

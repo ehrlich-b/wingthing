@@ -143,6 +143,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	if err != nil {
 		return fmt.Errorf("agent %q not found: %v", name, err)
 	}
+	// Resolve symlinks so the real binary path works inside namespaces
+	// (e.g. ~/.local/bin/claude -> ~/.claude/bin/claude)
+	if resolved, err := filepath.EvalSymlinks(binPath); err == nil {
+		binPath = resolved
+	}
 
 	// Build environment
 	var envSlice []string
@@ -170,8 +175,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			deny = append(deny, expandTilde(d, home))
 		}
 
-		// Auto-inject: allow agent binary + config dir so the sandbox works
-		// without the config author needing to know where agents are installed.
+		// Auto-inject: allow agent binary, config dir, and cache dir so the
+		// sandbox works without the config author needing to know internals.
 		if home != "" && len(mounts) > 0 {
 			realBin := binPath
 			if resolved, err := filepath.EvalSymlinks(binPath); err == nil {
@@ -184,6 +189,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			}
 			configDir := filepath.Join(home, "."+rc.Agent)
 			mounts = append(mounts, sandbox.Mount{Source: configDir, Target: configDir})
+			// Claude Code writes update staging to ~/.cache/claude
+			cacheDir := filepath.Join(home, ".cache", rc.Agent)
+			mounts = append(mounts, sandbox.Mount{Source: cacheDir, Target: cacheDir})
 		}
 
 		sbCfg := sandbox.Config{
