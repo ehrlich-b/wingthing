@@ -11,14 +11,14 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// Client wraps the generated gRPC client for the egg.
+// Client wraps the generated gRPC client for a single egg process.
 type Client struct {
 	conn   *grpc.ClientConn
 	client pb.EggClient
 	token  string
 }
 
-// Dial connects to the egg Unix socket and reads the auth token.
+// Dial connects to an egg's Unix socket and reads its auth token.
 func Dial(socketPath, tokenPath string) (*Client, error) {
 	tokenData, err := os.ReadFile(tokenPath)
 	if err != nil {
@@ -45,23 +45,13 @@ func (c *Client) authCtx(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, "authorization", c.token)
 }
 
-// Spawn creates a new PTY session in the egg.
-func (c *Client) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResponse, error) {
-	return c.client.Spawn(c.authCtx(ctx), req)
-}
-
-// List returns all active sessions.
-func (c *Client) List(ctx context.Context) (*pb.ListResponse, error) {
-	return c.client.List(c.authCtx(ctx), &pb.ListRequest{})
-}
-
-// Kill terminates a session.
+// Kill terminates the session.
 func (c *Client) Kill(ctx context.Context, sessionID string) error {
 	_, err := c.client.Kill(c.authCtx(ctx), &pb.KillRequest{SessionId: sessionID})
 	return err
 }
 
-// Resize changes terminal dimensions of a session.
+// Resize changes terminal dimensions.
 func (c *Client) Resize(ctx context.Context, sessionID string, rows, cols uint32) error {
 	_, err := c.client.Resize(c.authCtx(ctx), &pb.ResizeRequest{
 		SessionId: sessionID,
@@ -78,7 +68,6 @@ func (c *Client) AttachSession(ctx context.Context, sessionID string) (pb.Egg_Se
 		return nil, err
 	}
 
-	// Send attach message
 	if err := stream.Send(&pb.SessionMsg{
 		SessionId: sessionID,
 		Payload:   &pb.SessionMsg_Attach{Attach: true},
@@ -87,30 +76,6 @@ func (c *Client) AttachSession(ctx context.Context, sessionID string) (pb.Egg_Se
 	}
 
 	return stream, nil
-}
-
-// Version returns the egg's binary version.
-func (c *Client) Version(ctx context.Context) (string, error) {
-	resp, err := c.client.Version(c.authCtx(ctx), &pb.VersionRequest{})
-	if err != nil {
-		return "", err
-	}
-	return resp.Version, nil
-}
-
-// GetConfig returns the egg's current active config as YAML.
-func (c *Client) GetConfig(ctx context.Context) (string, error) {
-	resp, err := c.client.GetConfig(c.authCtx(ctx), &pb.GetConfigRequest{})
-	if err != nil {
-		return "", err
-	}
-	return resp.Yaml, nil
-}
-
-// SetConfig updates the egg's active config from YAML.
-func (c *Client) SetConfig(ctx context.Context, yamlStr string) error {
-	_, err := c.client.SetConfig(c.authCtx(ctx), &pb.SetConfigRequest{Yaml: yamlStr})
-	return err
 }
 
 // Close closes the gRPC connection.

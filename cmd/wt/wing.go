@@ -33,8 +33,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
@@ -359,6 +357,9 @@ func wingCmd() *cobra.Command {
 			fmt.Println()
 			fmt.Println("open https://app.wingthing.ai to start a terminal")
 
+			// Reap dead egg directories on startup
+			reapDeadEggs(cfg)
+
 			client := &ws.Client{
 				RelayURL:  wsURL,
 				Token:     tok.Token,
@@ -375,33 +376,12 @@ func wingCmd() *cobra.Command {
 				return executeRelayTask(ctx, cfg, s, task, send)
 			}
 
-			// Start or connect to the egg process
-			eggClient, eggErr := ensureEgg(cfg)
-			if eggErr != nil {
-				log.Printf("egg: %v (PTY sessions will fail)", eggErr)
-			} else {
-				defer eggClient.Close()
-			}
-
 			client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
-				ec := eggClient
-				if ec == nil {
-					// Try to start egg if it wasn't available at boot
-					var err error
-					ec, err = ensureEgg(cfg)
-					if err != nil {
-						log.Printf("pty: egg unavailable: %v", err)
-						write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
-						return
-					}
-					eggClient = ec
-				}
-				// Discover egg config: project-level egg.yaml > wing default
 				wingEggMu.Lock()
 				currentEggCfg := wingEggCfg
 				wingEggMu.Unlock()
 				eggCfg := egg.DiscoverEggConfig(start.CWD, currentEggCfg)
-				handlePTYSession(ctx, cfg, ec, start, write, input, eggCfg)
+				handlePTYSession(ctx, cfg, start, write, input, eggCfg)
 			}
 
 			client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
@@ -421,24 +401,7 @@ func wingCmd() *cobra.Command {
 			}
 
 			client.SessionLister = func(ctx context.Context) []ws.SessionInfo {
-				ec := eggClient
-				if ec == nil {
-					return nil
-				}
-				resp, err := ec.List(ctx)
-				if err != nil {
-					return nil
-				}
-				var out []ws.SessionInfo
-				for _, s := range resp.Sessions {
-					out = append(out, ws.SessionInfo{
-						SessionID: s.SessionId,
-						Agent:     s.Agent,
-						CWD:       s.Cwd,
-						EggConfig: s.ConfigYaml,
-					})
-				}
-				return out
+				return listAliveEggSessions(cfg)
 			}
 
 			client.OnEggConfigUpdate = func(ctx context.Context, yamlStr string) {
@@ -451,12 +414,6 @@ func wingCmd() *cobra.Command {
 				wingEggCfg = newCfg
 				wingEggMu.Unlock()
 				log.Printf("egg: config updated from relay (isolation=%s)", newCfg.Isolation)
-				// Push to running egg server
-				if eggClient != nil {
-					if err := eggClient.SetConfig(ctx, yamlStr); err != nil {
-						log.Printf("egg: push config to egg server: %v", err)
-					}
-				}
 			}
 
 			client.OnUpdate = func(ctx context.Context) {
@@ -478,9 +435,7 @@ func wingCmd() *cobra.Command {
 			defer cancel()
 
 			// Reclaim surviving egg sessions after reconnect
-			if eggClient != nil {
-				go reclaimEggSessions(ctx, cfg, eggClient, client)
-			}
+			go reclaimEggSessions(ctx, cfg, client)
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -539,33 +494,17 @@ func wingStatusCmd() *cobra.Command {
 			fmt.Printf("wing daemon is running (pid %d)\n", pid)
 			fmt.Printf("  log: %s\n", wingLogPath())
 
-			// Show egg status
+			// Show egg sessions from filesystem
 			cfg, _ := config.Load()
 			if cfg != nil {
-				eggPid, eggErr := readEggPid()
-				if eggErr != nil {
-					fmt.Println("  egg: not running")
-				} else {
-					fmt.Printf("  egg: running (pid %d)\n", eggPid)
-					// Try to list sessions
-					ec, dialErr := egg.Dial(
-						filepath.Join(cfg.Dir, "egg.sock"),
-						filepath.Join(cfg.Dir, "egg.token"),
-					)
-					if dialErr == nil {
-						defer ec.Close()
-						resp, listErr := ec.List(cmd.Context())
-						if listErr == nil && len(resp.Sessions) > 0 {
-							fmt.Println("  sessions:")
-							for _, s := range resp.Sessions {
-								started, _ := time.Parse(time.RFC3339, s.StartedAt)
-								ago := time.Since(started).Truncate(time.Second)
-								fmt.Printf("    %s  %s  %s  %s ago\n", s.SessionId, s.Agent, s.Cwd, ago)
-							}
-						} else {
-							fmt.Println("  sessions: none")
-						}
+				sessions := listAliveEggSessions(cfg)
+				if len(sessions) > 0 {
+					fmt.Println("  egg sessions:")
+					for _, s := range sessions {
+						fmt.Printf("    %s  %s  %s\n", s.SessionID, s.Agent, s.CWD)
 					}
+				} else {
+					fmt.Println("  egg sessions: none")
 				}
 			}
 			return nil
@@ -755,92 +694,102 @@ func timeNow() time.Time {
 	return time.Now().UTC()
 }
 
-// ensureEgg starts the egg process if not already running, returns a connected client.
-func ensureEgg(cfg *config.Config) (*egg.Client, error) {
-	sockPath := filepath.Join(cfg.Dir, "egg.sock")
-	tokenPath := filepath.Join(cfg.Dir, "egg.token")
-
-	// Try to connect to existing egg
-	ec, err := egg.Dial(sockPath, tokenPath)
-	if err == nil {
-		// Verify it's alive with a Version call
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		eggVer, verErr := ec.Version(ctx)
-		if verErr == nil {
-			if eggVer == version {
-				log.Printf("egg: connected to existing process (version=%s)", eggVer)
-				return ec, nil
-			}
-			// Version mismatch — kill old egg, start fresh with new binary
-			log.Printf("egg: version mismatch (egg=%s wing=%s) — killing old egg", eggVer, version)
-			pidPath := filepath.Join(cfg.Dir, "egg.pid")
-			if pidData, pidErr := os.ReadFile(pidPath); pidErr == nil {
-				if pid, atoiErr := strconv.Atoi(strings.TrimSpace(string(pidData))); atoiErr == nil {
-					if proc, findErr := os.FindProcess(pid); findErr == nil {
-						proc.Signal(syscall.SIGTERM)
-						time.Sleep(500 * time.Millisecond)
-					}
-				}
-			}
-			ec.Close()
-		} else {
-			ec.Close()
+// reapDeadEggs removes egg directories for dead processes on startup.
+func reapDeadEggs(cfg *config.Config) {
+	eggsDir := filepath.Join(cfg.Dir, "eggs")
+	entries, err := os.ReadDir(eggsDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(eggsDir, e.Name())
+		pidPath := filepath.Join(dir, "egg.pid")
+		data, err := os.ReadFile(pidPath)
+		if err != nil {
+			// No pid file — stale dir, clean up
+			cleanEggDir(dir)
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err != nil {
+			cleanEggDir(dir)
+			continue
+		}
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			cleanEggDir(dir)
+			continue
+		}
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			// Dead process
+			log.Printf("egg: reaping dead egg %s (pid %d)", e.Name(), pid)
+			cleanEggDir(dir)
 		}
 	}
-
-	// Clean stale files
-	os.Remove(sockPath)
-	os.Remove(tokenPath)
-	pidPath := filepath.Join(cfg.Dir, "egg.pid")
-	os.Remove(pidPath)
-
-	// Start a new egg process
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("find executable: %w", err)
-	}
-
-	logPath := filepath.Join(cfg.Dir, "egg.log")
-	rotateLog(logPath)
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("open egg log: %w", err)
-	}
-
-	child := exec.Command(exe, "egg", "serve")
-	child.Stdout = logFile
-	child.Stderr = logFile
-	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-
-	if err := child.Start(); err != nil {
-		logFile.Close()
-		return nil, fmt.Errorf("start egg: %w", err)
-	}
-	logFile.Close()
-
-	log.Printf("egg: started (pid %d)", child.Process.Pid)
-
-	// Poll for socket to appear (100ms x 50 = 5s timeout)
-	for i := 0; i < 50; i++ {
-		time.Sleep(100 * time.Millisecond)
-		ec, err = egg.Dial(sockPath, tokenPath)
-		if err == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_, listErr := ec.List(ctx)
-			cancel()
-			if listErr == nil {
-				return ec, nil
-			}
-			ec.Close()
-		}
-	}
-
-	return nil, fmt.Errorf("egg did not start within 5s")
 }
 
-// readEggCrashInfo reads the last lines of egg.log looking for panic/crash info.
-// Returns a user-friendly error string for display in the browser.
+// cleanEggDir removes the files in an egg session directory, then the directory itself.
+func cleanEggDir(dir string) {
+	os.Remove(filepath.Join(dir, "egg.sock"))
+	os.Remove(filepath.Join(dir, "egg.token"))
+	os.Remove(filepath.Join(dir, "egg.pid"))
+	os.Remove(filepath.Join(dir, "egg.log"))
+	os.Remove(dir)
+}
+
+// listAliveEggSessions scans ~/.wingthing/eggs/ for alive egg processes.
+func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
+	eggsDir := filepath.Join(cfg.Dir, "eggs")
+	entries, err := os.ReadDir(eggsDir)
+	if err != nil {
+		return nil
+	}
+
+	var out []ws.SessionInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sessionID := e.Name()
+		dir := filepath.Join(eggsDir, sessionID)
+		pidPath := filepath.Join(dir, "egg.pid")
+		data, err := os.ReadFile(pidPath)
+		if err != nil {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err != nil {
+			continue
+		}
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			cleanEggDir(dir)
+			continue
+		}
+
+		// Alive — try to dial to confirm it's responsive
+		sockPath := filepath.Join(dir, "egg.sock")
+		tokenPath := filepath.Join(dir, "egg.token")
+		ec, dialErr := egg.Dial(sockPath, tokenPath)
+		if dialErr != nil {
+			continue
+		}
+		ec.Close()
+
+		out = append(out, ws.SessionInfo{
+			SessionID: sessionID,
+		})
+	}
+	return out
+}
+
+// readEggCrashInfo reads the last lines of an egg's log looking for panic/crash info.
 func readEggCrashInfo(dir string) string {
 	logPath := filepath.Join(dir, "egg.log")
 	data, err := os.ReadFile(logPath)
@@ -860,7 +809,7 @@ func readEggCrashInfo(dir string) string {
 	}
 
 	if lastPanic == -1 {
-		return "egg process crashed (check ~/.wingthing/egg.log)"
+		return fmt.Sprintf("egg process crashed (check %s)", logPath)
 	}
 
 	// Extract up to 20 lines from the panic point
@@ -872,33 +821,65 @@ func readEggCrashInfo(dir string) string {
 	return fmt.Sprintf("egg crashed: %s", strings.TrimSpace(excerpt))
 }
 
-// reclaimEggSessions discovers surviving egg sessions, sends pty.reclaim to the relay,
-// and sets up input routing so pty.attach/input/resize/kill messages get handled.
-func reclaimEggSessions(ctx context.Context, cfg *config.Config, ec *egg.Client, wsClient *ws.Client) {
+// reclaimEggSessions discovers surviving egg sessions and sends pty.reclaim to the relay.
+func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Client) {
 	// Small delay to let registration complete
 	time.Sleep(500 * time.Millisecond)
 
-	resp, err := ec.List(ctx)
-	if err != nil || len(resp.Sessions) == 0 {
+	eggsDir := filepath.Join(cfg.Dir, "eggs")
+	entries, err := os.ReadDir(eggsDir)
+	if err != nil {
 		return
 	}
 
-	for _, s := range resp.Sessions {
-		log.Printf("egg: reclaiming session %s (agent=%s pid=%d)", s.SessionId, s.Agent, s.Pid)
-		wsClient.SendReclaim(ctx, s.SessionId, s.Agent, s.Cwd)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sessionID := e.Name()
+		dir := filepath.Join(eggsDir, sessionID)
+		pidPath := filepath.Join(dir, "egg.pid")
+		data, err := os.ReadFile(pidPath)
+		if err != nil {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err != nil {
+			continue
+		}
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			cleanEggDir(dir)
+			continue
+		}
+
+		// Alive — dial and reclaim
+		sockPath := filepath.Join(dir, "egg.sock")
+		tokenPath := filepath.Join(dir, "egg.token")
+		ec, dialErr := egg.Dial(sockPath, tokenPath)
+		if dialErr != nil {
+			log.Printf("egg: reclaim %s: dial failed: %v", sessionID, dialErr)
+			continue
+		}
+
+		log.Printf("egg: reclaiming session %s (pid %d)", sessionID, pid)
+		wsClient.SendReclaim(ctx, sessionID, "", "")
 
 		// Set up input routing for this session
-		write, input, cleanup := wsClient.RegisterPTYSession(ctx, s.SessionId)
-		go func(sessionID, agentName, cwd string) {
+		write, input, cleanup := wsClient.RegisterPTYSession(ctx, sessionID)
+		go func(sid string, ec *egg.Client, dir string) {
 			defer cleanup()
-			handleReclaimedPTY(ctx, cfg, ec, sessionID, agentName, cwd, write, input)
-		}(s.SessionId, s.Agent, s.Cwd)
+			defer ec.Close()
+			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input)
+		}(sessionID, ec, dir)
 	}
 }
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
-// Unlike handlePTYSession, it skips spawn — the process already exists.
-func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, agentName, cwd string, write ws.PTYWriteFunc, input <-chan []byte) {
+func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte) {
 	var gcmMu sync.Mutex
 	var gcm cipher.AEAD
 	var wingPubKeyB64 string
@@ -974,7 +955,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 						log.Printf("pty session %s: re-keyed E2E for reattach", sessionID)
 					}
 				}
-				write(ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, Agent: agentName, PublicKey: wingPubKeyB64})
+				write(ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, PublicKey: wingPubKeyB64})
 
 				// Replay ring buffer
 				reattachStream, reErr := ec.AttachSession(ctx, sessionID)
@@ -1045,9 +1026,9 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	<-sessionCtx.Done()
 }
 
-// handlePTYSession bridges a PTY session between the egg (local gRPC) and the relay (remote WS).
+// handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig) {
 	// Set up E2E encryption if browser sent a public key
 	var gcmMu sync.Mutex
 	var gcm cipher.AEAD
@@ -1068,76 +1049,18 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, s
 		}
 	}
 
-	// Build env from egg config
-	envMap := eggCfg.BuildEnvMap()
-
-	// Convert egg config to proto fields
-	sbCfg := eggCfg.ToSandboxConfig()
-	var protoMounts []*pb.Mount
-	for _, m := range sbCfg.Mounts {
-		protoMounts = append(protoMounts, &pb.Mount{
-			Source:   m.Source,
-			Target:   m.Target,
-			ReadOnly: m.ReadOnly,
-		})
-	}
-	var resourceLimits *pb.ResourceLimits
-	if sbCfg.CPULimit > 0 || sbCfg.MemLimit > 0 || sbCfg.MaxFDs > 0 {
-		resourceLimits = &pb.ResourceLimits{
-			CpuSeconds:  uint32(sbCfg.CPULimit.Seconds()),
-			MemoryBytes: sbCfg.MemLimit,
-			MaxFds:      sbCfg.MaxFDs,
-		}
-	}
-	configYAML, _ := eggCfg.YAML()
-
-	// Spawn in egg (retry once if egg died)
-	spawnReq := &pb.SpawnRequest{
-		SessionId:                  start.SessionID,
-		Agent:                      start.Agent,
-		Cwd:                        start.CWD,
-		Rows:                       uint32(start.Rows),
-		Cols:                       uint32(start.Cols),
-		Env:                        envMap,
-		Isolation:                  eggCfg.Isolation,
-		Mounts:                     protoMounts,
-		Deny:                       sbCfg.Deny,
-		ResourceLimits:             resourceLimits,
-		Shell:                      eggCfg.Shell,
-		DangerouslySkipPermissions: eggCfg.DangerouslySkipPermissions,
-		ConfigYaml:                 configYAML,
-	}
-	spawnResp, err := ec.Spawn(ctx, spawnReq)
+	// Spawn a per-session egg
+	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD)
 	if err != nil {
-		st, _ := status.FromError(err)
-		if st.Code() == codes.Unavailable || st.Code() == codes.Canceled {
-			// Connection-level error — egg crashed, reconnect
-			log.Printf("pty: egg connection lost, restarting: %v", err)
-			ec.Close()
-			newEC, ensureErr := ensureEgg(cfg)
-			if ensureErr != nil {
-				log.Printf("pty: egg restart failed: %v", ensureErr)
-				crashInfo := readEggCrashInfo(cfg.Dir)
-				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
-				return
-			}
-			ec = newEC
-			spawnResp, err = ec.Spawn(ctx, spawnReq)
-			if err != nil {
-				log.Printf("pty: egg spawn retry failed: %v", err)
-				crashInfo := readEggCrashInfo(cfg.Dir)
-				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
-				return
-			}
-		} else {
-			// Application error — don't kill the connection, just report
-			log.Printf("pty: egg spawn error: %v", err)
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: st.Message()})
-			return
-		}
+		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
+		crashInfo := readEggCrashInfo(eggDir)
+		log.Printf("pty session %s: spawn egg failed: %v", start.SessionID, err)
+		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
+		return
 	}
+	defer ec.Close()
 
-	log.Printf("pty session %s: spawned in egg (pid %d)", start.SessionID, spawnResp.Pid)
+	log.Printf("pty session %s: egg spawned", start.SessionID)
 
 	// Notify browser
 	write(ws.PTYStarted{

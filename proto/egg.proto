@@ -3,66 +3,9 @@ package egg;
 option go_package = "github.com/ehrlich-b/wingthing/internal/egg/pb";
 
 service Egg {
-    rpc Spawn(SpawnRequest) returns (SpawnResponse);
-    rpc List(ListRequest) returns (ListResponse);
     rpc Kill(KillRequest) returns (KillResponse);
     rpc Resize(ResizeRequest) returns (ResizeResponse);
     rpc Session(stream SessionMsg) returns (stream SessionMsg);
-    rpc Version(VersionRequest) returns (VersionResponse);
-    rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
-    rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
-}
-
-message SpawnRequest {
-    string session_id = 1;
-    string agent = 2;
-    string cwd = 3;
-    uint32 rows = 4;
-    uint32 cols = 5;
-    string isolation = 6;
-    map<string, string> env = 7;
-    repeated Mount mounts = 8;
-    uint32 timeout_seconds = 9;
-    ResourceLimits resource_limits = 10;
-    string skill = 11;                    // skill name for logging/tracking
-    map<string, string> metadata = 12;    // arbitrary key-value pairs
-    string shell = 13;                    // override shell (default: agent decides)
-    string config_yaml = 14;              // serialized egg config at spawn time
-    bool dangerously_skip_permissions = 15;
-    repeated string deny = 16;            // paths to mask in sandbox
-}
-
-message Mount {
-    string source = 1;
-    string target = 2;
-    bool read_only = 3;
-}
-
-message ResourceLimits {
-    uint32 cpu_seconds = 1;     // RLIMIT_CPU (0 = no limit)
-    uint64 memory_bytes = 2;    // RLIMIT_AS (0 = no limit)
-    uint32 max_fds = 3;         // RLIMIT_NOFILE (0 = no limit)
-    uint32 max_pids = 4;        // cgroup pids.max (0 = no limit)
-}
-
-message SpawnResponse {
-    string session_id = 1;
-    int32 pid = 2;
-}
-
-message ListRequest {}
-message ListResponse {
-    repeated SessionInfo sessions = 1;
-}
-
-message SessionInfo {
-    string session_id = 1;
-    int32 pid = 2;
-    string agent = 3;
-    string cwd = 4;
-    string started_at = 5;
-    string isolation = 6;
-    string config_yaml = 7;              // egg config snapshot at spawn time
 }
 
 message KillRequest { string session_id = 1; }
@@ -90,21 +33,4 @@ message SessionMsg {
 message Resize {
     uint32 rows = 1;
     uint32 cols = 2;
-}
-
-message VersionRequest {}
-message VersionResponse {
-    string version = 1;
-}
-
-message GetConfigRequest {}
-message GetConfigResponse {
-    string yaml = 1;
-}
-
-message SetConfigRequest {
-    string yaml = 1;
-}
-message SetConfigResponse {
-    bool ok = 1;
 }

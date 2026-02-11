@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
@@ -17,42 +20,13 @@ import (
 	"golang.org/x/term"
 )
 
-func eggPidPath() string {
-	cfg, _ := config.Load()
-	if cfg != nil {
-		return cfg.Dir + "/egg.pid"
-	}
-	home, _ := os.UserHomeDir()
-	return home + "/.wingthing/egg.pid"
-}
-
-func readEggPid() (int, error) {
-	data, err := os.ReadFile(eggPidPath())
-	if err != nil {
-		return 0, err
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		return 0, err
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return 0, err
-	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		os.Remove(eggPidPath())
-		return 0, fmt.Errorf("stale pid")
-	}
-	return pid, nil
-}
-
 func eggCmd() *cobra.Command {
 	var configFlag string
 
 	cmd := &cobra.Command{
 		Use:   "egg [agent]",
 		Short: "Run an agent in a sandboxed session",
-		Long:  "Spawns an agent (claude, ollama, codex) inside the egg process with PTY persistence and optional sandboxing.\nStandalone eggs use dangerously_skip_permissions by default — the sandbox IS the permission boundary.",
+		Long:  "Spawns an agent (claude, ollama, codex) inside a per-session egg process with PTY persistence and optional sandboxing.\nStandalone eggs use dangerously_skip_permissions by default — the sandbox IS the permission boundary.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -64,18 +38,31 @@ func eggCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&configFlag, "config", "", "path to egg.yaml (default: discover from cwd, then ~/.wingthing/egg.yaml, then built-in)")
 
-	cmd.AddCommand(eggServeCmd())
+	cmd.AddCommand(eggRunCmd())
 	cmd.AddCommand(eggStopCmd())
 	cmd.AddCommand(eggListCmd())
-	cmd.AddCommand(eggConfigCmd())
 	return cmd
 }
 
-// eggServeCmd starts the gRPC server (internal, called by wing).
-func eggServeCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:    "serve",
-		Short:  "Start egg gRPC server (internal)",
+// eggRunCmd starts a single per-session egg process (hidden, called by wing or eggSpawn).
+func eggRunCmd() *cobra.Command {
+	var (
+		sessionID  string
+		agentName  string
+		cwd        string
+		isolation  string
+		shell      string
+		rows       uint32
+		cols       uint32
+		mountsFlag []string
+		denyFlag   []string
+		envFlag    []string
+		dangerouslySkipPermissions bool
+	)
+
+	cmd := &cobra.Command{
+		Use:    "run",
+		Short:  "Run a single-session egg process (internal)",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
@@ -83,9 +70,36 @@ func eggServeCmd() *cobra.Command {
 				return err
 			}
 
-			srv, err := egg.NewServer(cfg.Dir, version)
+			dir := filepath.Join(cfg.Dir, "eggs", sessionID)
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				return fmt.Errorf("create egg dir: %w", err)
+			}
+
+			srv, err := egg.NewServer(dir)
 			if err != nil {
 				return err
+			}
+
+			// Parse env flags into map
+			envMap := make(map[string]string)
+			for _, e := range envFlag {
+				k, v, ok := strings.Cut(e, "=")
+				if ok {
+					envMap[k] = v
+				}
+			}
+
+			rc := egg.RunConfig{
+				Agent:     agentName,
+				CWD:       cwd,
+				Isolation: isolation,
+				Shell:     shell,
+				Mounts:    mountsFlag,
+				Deny:      denyFlag,
+				Env:       envMap,
+				Rows:      rows,
+				Cols:      cols,
+				DangerouslySkipPermissions: dangerouslySkipPermissions,
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -98,25 +112,63 @@ func eggServeCmd() *cobra.Command {
 				cancel()
 			}()
 
-			return srv.Run(ctx)
+			err = srv.RunSession(ctx, rc)
+
+			// Clean up session directory on exit
+			os.Remove(filepath.Join(dir, "egg.sock"))
+			os.Remove(filepath.Join(dir, "egg.token"))
+			os.Remove(filepath.Join(dir, "egg.pid"))
+			os.Remove(filepath.Join(dir, "egg.log"))
+			os.Remove(dir)
+
+			return err
 		},
 	}
+
+	cmd.Flags().StringVar(&sessionID, "session-id", "", "session ID")
+	cmd.Flags().StringVar(&agentName, "agent", "claude", "agent name")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory")
+	cmd.Flags().StringVar(&isolation, "isolation", "network", "sandbox isolation level")
+	cmd.Flags().StringVar(&shell, "shell", "", "override shell")
+	cmd.Flags().Uint32Var(&rows, "rows", 24, "terminal rows")
+	cmd.Flags().Uint32Var(&cols, "cols", 80, "terminal cols")
+	cmd.Flags().StringArrayVar(&mountsFlag, "mounts", nil, "sandbox mounts (~/repos:rw)")
+	cmd.Flags().StringArrayVar(&denyFlag, "deny", nil, "paths to deny")
+	cmd.Flags().StringArrayVar(&envFlag, "env", nil, "environment variables (KEY=VAL)")
+	cmd.Flags().BoolVar(&dangerouslySkipPermissions, "dangerously-skip-permissions", false, "skip agent permission prompts")
+	cmd.MarkFlagRequired("session-id")
+
+	return cmd
 }
 
 func eggStopCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "stop",
-		Short: "Stop the egg process",
+		Use:   "stop <session-id>",
+		Short: "Stop an egg session",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pid, err := readEggPid()
+			cfg, err := config.Load()
 			if err != nil {
-				return fmt.Errorf("no egg process running")
+				return err
 			}
-			proc, _ := os.FindProcess(pid)
+			sessionID := args[0]
+			pidPath := filepath.Join(cfg.Dir, "eggs", sessionID, "egg.pid")
+			data, err := os.ReadFile(pidPath)
+			if err != nil {
+				return fmt.Errorf("session %s not found", sessionID)
+			}
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err != nil {
+				return fmt.Errorf("bad pid file")
+			}
+			proc, err := os.FindProcess(pid)
+			if err != nil {
+				return fmt.Errorf("find process: %w", err)
+			}
 			if err := proc.Signal(syscall.SIGTERM); err != nil {
 				return fmt.Errorf("kill pid %d: %w", pid, err)
 			}
-			fmt.Printf("egg stopped (pid %d)\n", pid)
+			fmt.Printf("egg %s stopped (pid %d)\n", sessionID, pid)
 			return nil
 		},
 	}
@@ -131,71 +183,60 @@ func eggListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ec, err := ensureEgg(cfg)
+			eggsDir := filepath.Join(cfg.Dir, "eggs")
+			entries, err := os.ReadDir(eggsDir)
 			if err != nil {
-				return fmt.Errorf("connect to egg: %w", err)
-			}
-			defer ec.Close()
-
-			resp, err := ec.List(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("list sessions: %w", err)
-			}
-			if len(resp.Sessions) == 0 {
 				fmt.Println("no active sessions")
 				return nil
 			}
-			for _, s := range resp.Sessions {
-				fmt.Printf("  %s  %s  %s  %s\n", s.SessionId, s.Agent, s.Cwd, s.StartedAt)
+
+			found := false
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				sessionID := e.Name()
+				pidPath := filepath.Join(eggsDir, sessionID, "egg.pid")
+				data, err := os.ReadFile(pidPath)
+				if err != nil {
+					continue
+				}
+				pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+				if err != nil {
+					continue
+				}
+				proc, err := os.FindProcess(pid)
+				if err != nil {
+					continue
+				}
+				if err := proc.Signal(syscall.Signal(0)); err != nil {
+					// Dead — clean up
+					os.Remove(filepath.Join(eggsDir, sessionID, "egg.sock"))
+					os.Remove(filepath.Join(eggsDir, sessionID, "egg.token"))
+					os.Remove(filepath.Join(eggsDir, sessionID, "egg.pid"))
+					os.Remove(filepath.Join(eggsDir, sessionID, "egg.log"))
+					os.Remove(filepath.Join(eggsDir, sessionID))
+					continue
+				}
+				fmt.Printf("  %s  pid=%d\n", sessionID, pid)
+				found = true
+			}
+			if !found {
+				fmt.Println("no active sessions")
 			}
 			return nil
 		},
 	}
 }
 
-// eggConfigCmd reads the egg's current config.
-func eggConfigCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "config",
-		Short: "Show the running egg's config",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			ec, err := ensureEgg(cfg)
-			if err != nil {
-				return fmt.Errorf("connect to egg: %w", err)
-			}
-			defer ec.Close()
-			yamlStr, err := ec.GetConfig(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("get config: %w", err)
-			}
-			if yamlStr == "" {
-				fmt.Println("(no config set)")
-				return nil
-			}
-			fmt.Print(yamlStr)
-			return nil
-		},
-	}
-}
-
-// eggSpawn starts an agent session in the egg and attaches the terminal.
+// eggSpawn starts an agent session in a per-session egg and attaches the terminal.
 func eggSpawn(ctx context.Context, agentName, configPath string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 
-	ec, err := ensureEgg(cfg)
-	if err != nil {
-		return fmt.Errorf("connect to egg: %w", err)
-	}
-	defer ec.Close()
-
-	// Load egg config: --config flag > discover from cwd > wing default > built-in
+	// Load egg config
 	var eggCfg *egg.EggConfig
 	if configPath != "" {
 		eggCfg, err = egg.LoadEggConfig(configPath)
@@ -224,47 +265,12 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 	cwd, _ := os.Getwd()
 	sessionID := uuid.New().String()[:8]
 
-	// Build env from config
-	envMap := eggCfg.BuildEnvMap()
-
-	// Build proto fields from config
-	sbCfg := eggCfg.ToSandboxConfig()
-	var protoMounts []*pb.Mount
-	for _, m := range sbCfg.Mounts {
-		protoMounts = append(protoMounts, &pb.Mount{
-			Source:   m.Source,
-			Target:   m.Target,
-			ReadOnly: m.ReadOnly,
-		})
-	}
-	var resourceLimits *pb.ResourceLimits
-	if sbCfg.CPULimit > 0 || sbCfg.MemLimit > 0 || sbCfg.MaxFDs > 0 {
-		resourceLimits = &pb.ResourceLimits{
-			CpuSeconds:  uint32(sbCfg.CPULimit.Seconds()),
-			MemoryBytes: sbCfg.MemLimit,
-			MaxFds:      sbCfg.MaxFDs,
-		}
-	}
-	configYAML, _ := eggCfg.YAML()
-
-	_, err = ec.Spawn(ctx, &pb.SpawnRequest{
-		SessionId:                  sessionID,
-		Agent:                      agentName,
-		Cwd:                        cwd,
-		Rows:                       uint32(rows),
-		Cols:                       uint32(cols),
-		Env:                        envMap,
-		Isolation:                  eggCfg.Isolation,
-		Mounts:                     protoMounts,
-		Deny:                       sbCfg.Deny,
-		ResourceLimits:             resourceLimits,
-		Shell:                      eggCfg.Shell,
-		DangerouslySkipPermissions: eggCfg.DangerouslySkipPermissions,
-		ConfigYaml:                 configYAML,
-	})
+	// Spawn egg as child process
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd)
 	if err != nil {
-		return fmt.Errorf("spawn %s: %w", agentName, err)
+		return fmt.Errorf("spawn egg: %w", err)
 	}
+	defer ec.Close()
 
 	stream, err := ec.AttachSession(ctx, sessionID)
 	if err != nil {
@@ -337,4 +343,71 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 		return fmt.Errorf("agent exited with code %d", exitCode)
 	}
 	return nil
+}
+
+// spawnEgg starts a per-session egg child process and returns a connected client.
+func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string) (*egg.Client, error) {
+	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("create egg dir: %w", err)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("find executable: %w", err)
+	}
+
+	args := []string{"egg", "run",
+		"--session-id", sessionID,
+		"--agent", agentName,
+		"--cwd", cwd,
+		"--isolation", eggCfg.Isolation,
+		"--rows", strconv.Itoa(int(rows)),
+		"--cols", strconv.Itoa(int(cols)),
+	}
+	if eggCfg.Shell != "" {
+		args = append(args, "--shell", eggCfg.Shell)
+	}
+	if eggCfg.DangerouslySkipPermissions {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	for _, m := range eggCfg.Mounts {
+		args = append(args, "--mounts", m)
+	}
+	for _, d := range eggCfg.Deny {
+		args = append(args, "--deny", d)
+	}
+	for k, v := range eggCfg.BuildEnvMap() {
+		args = append(args, "--env", k+"="+v)
+	}
+
+	logPath := filepath.Join(dir, "egg.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("open egg log: %w", err)
+	}
+
+	child := exec.Command(exe, args...)
+	child.Stdout = logFile
+	child.Stderr = logFile
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	if err := child.Start(); err != nil {
+		logFile.Close()
+		return nil, fmt.Errorf("start egg: %w", err)
+	}
+	logFile.Close()
+
+	// Poll for socket
+	sockPath := filepath.Join(dir, "egg.sock")
+	tokenPath := filepath.Join(dir, "egg.token")
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		ec, err := egg.Dial(sockPath, tokenPath)
+		if err == nil {
+			return ec, nil
+		}
+	}
+
+	return nil, fmt.Errorf("egg did not start within 5s (check %s)", logPath)
 }
