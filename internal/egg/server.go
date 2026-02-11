@@ -114,11 +114,14 @@ func (r *replayBuffer) Bytes() []byte {
 }
 
 // lastScreenClear returns the index AFTER the last screen-clear sequence in p,
-// or -1 if none found. Detected sequences:
+// or -1 if none found. Only detects strong "start fresh" signals:
 //
 //	\x1bc       RIS (Reset to Initial State)
-//	\x1b[2J     ED 2 (Erase entire display)
-//	\x1b[3J     ED 3 (Erase display + scrollback)
+//	\x1b[3J     ED 3 (Erase scrollback — explicit "clear everything")
+//
+// NOTE: \x1b[2J (Erase Display) is intentionally NOT detected. TUI apps like
+// Claude Code emit it on every render cycle, which would reset the replay buffer
+// mid-render and cause partial/empty replays on reattach.
 func lastScreenClear(p []byte) int {
 	last := -1
 	for i := 0; i < len(p); i++ {
@@ -131,8 +134,8 @@ func lastScreenClear(p []byte) int {
 			i++
 			continue
 		}
-		// \x1b[2J or \x1b[3J
-		if i+3 < len(p) && p[i+1] == '[' && (p[i+2] == '2' || p[i+2] == '3') && p[i+3] == 'J' {
+		// \x1b[3J only (erase scrollback)
+		if i+3 < len(p) && p[i+1] == '[' && p[i+2] == '3' && p[i+3] == 'J' {
 			last = i + 4
 			i += 3
 			continue

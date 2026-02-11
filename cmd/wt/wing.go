@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/cipher"
@@ -59,31 +60,11 @@ func readEggMeta(dir string) (agent, cwd string) {
 	return agent, cwd
 }
 
-// containsBell returns true if data contains a standalone BEL character (0x07)
-// that is NOT inside an OSC escape sequence. OSC sequences (\x1b]...\x07) use
-// 0x07 as a terminator for titles, hyperlinks, shell integration marks, etc.
-func containsBell(data []byte) bool {
-	inOSC := false
-	for i := 0; i < len(data); i++ {
-		if data[i] == 0x1b && i+1 < len(data) && data[i+1] == ']' {
-			inOSC = true
-			i++ // skip ]
-			continue
-		}
-		if data[i] == 0x07 {
-			if inOSC {
-				inOSC = false // OSC terminator, not a bell
-				continue
-			}
-			return true // standalone bell
-		}
-		// ST (\x1b\) also terminates OSC
-		if inOSC && data[i] == 0x1b && i+1 < len(data) && data[i+1] == '\\' {
-			inOSC = false
-			i++
-		}
-	}
-	return false
+// hasBell returns true if data contains any BEL character (0x07).
+// Does NOT try to distinguish OSC terminators from "real" bells — callers
+// use a time-window heuristic instead (repeated BELs = real notification).
+func hasBell(data []byte) bool {
+	return bytes.IndexByte(data, 0x07) >= 0
 }
 
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
@@ -1017,6 +998,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 	// Read output from egg -> encrypt -> send to relay
 	go func() {
+		var lastHadBell bool
 		for {
 			msg, err := stream.Recv()
 			if err != nil {
@@ -1027,8 +1009,16 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 			}
 			switch p := msg.Payload.(type) {
 			case *pb.SessionMsg_Output:
-				if containsBell(p.Output) {
-					wingAttention.Store(sessionID, true)
+				// Two consecutive chunks with BEL = real notification.
+				// Single BEL is likely an OSC terminator; repeated means
+				// the agent is persistently pinging for attention.
+				if hasBell(p.Output) {
+					if lastHadBell {
+						wingAttention.Store(sessionID, true)
+					}
+					lastHadBell = true
+				} else {
+					lastHadBell = false
 				}
 				gcmMu.Lock()
 				if reattaching {
@@ -1239,6 +1229,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 
 	// Read output from egg -> encrypt -> send to browser
 	go func() {
+		var lastHadBell bool
 		for {
 			msg, err := stream.Recv()
 			if err != nil {
@@ -1250,9 +1241,13 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 
 			switch p := msg.Payload.(type) {
 			case *pb.SessionMsg_Output:
-				// Detect terminal bell (0x07) for attention pings
-				if containsBell(p.Output) {
-					wingAttention.Store(start.SessionID, true)
+				if hasBell(p.Output) {
+					if lastHadBell {
+						wingAttention.Store(start.SessionID, true)
+					}
+					lastHadBell = true
+				} else {
+					lastHadBell = false
 				}
 
 				gcmMu.Lock()
