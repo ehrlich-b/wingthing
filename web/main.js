@@ -95,6 +95,9 @@ async function init() {
         userInfo.textContent = currentUser.display_name || 'user';
     } catch (e) { loginRedirect(); return; }
 
+    // Mark initial page load as home so back button works
+    history.replaceState({ view: 'home' }, '');
+
     // Event handlers
     homeBtn.addEventListener('click', showHome);
     newSessionBtn.addEventListener('click', showPalette);
@@ -1592,7 +1595,7 @@ function showHome(pushHistory) {
     renderSidebar();
     renderDashboard();
     if (pushHistory !== false) {
-        history.pushState({ view: 'home' }, '', '#');
+        history.pushState({ view: 'home' }, '');
     }
 }
 
@@ -1620,7 +1623,7 @@ function switchToSession(sessionId, pushHistory) {
     showTerminal();
     attachPTY(sessionId);
     if (pushHistory !== false) {
-        history.pushState({ view: 'terminal', sessionId: sessionId }, '', '#s/' + sessionId);
+        history.pushState({ view: 'terminal', sessionId: sessionId }, '');
     }
 }
 
@@ -2013,7 +2016,9 @@ function setupPTYHandlers(ws, reattach) {
             case 'pty.started':
                 ptySessionId = msg.session_id;
                 headerTitle.textContent = sessionTitle(msg.agent, ptyWingId);
-                history.pushState({ view: 'terminal', sessionId: msg.session_id }, '', '#s/' + msg.session_id);
+                if (!reattach) {
+                    history.pushState({ view: 'terminal', sessionId: msg.session_id }, '');
+                }
 
                 if (msg.public_key) {
                     deriveE2EKey(msg.public_key).then(function (key) {
@@ -2189,9 +2194,6 @@ function escapeHtml(str) {
 }
 
 // === Browser history (back/forward) ===
-
-// Set initial state so first back goes to home, not off-app
-history.replaceState({ view: 'home' }, '', '#');
 
 window.addEventListener('popstate', function(e) {
     var state = e.state;
