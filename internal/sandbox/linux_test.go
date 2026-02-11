@@ -146,7 +146,7 @@ func TestRlimitConfigOverrides(t *testing.T) {
 
 	expected := map[int]uint64{
 		unix.RLIMIT_CPU:    300,
-		unix.RLIMIT_AS:     2 * 1024 * 1024 * 1024,
+		unix.RLIMIT_AS:     4 * 1024 * 1024 * 1024, // 4GB floor (JIT needs virtual address space)
 		unix.RLIMIT_NOFILE: 1024,
 	}
 
