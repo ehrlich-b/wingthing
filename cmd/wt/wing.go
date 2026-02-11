@@ -35,6 +35,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// wingAttention tracks sessions that have triggered a terminal bell (need user attention).
+var wingAttention sync.Map // sessionID → bool
+
+// containsBell returns true if data contains the BEL character (0x07).
+func containsBell(data []byte) bool {
+	for _, b := range data {
+		if b == 0x07 {
+			return true
+		}
+	}
+	return false
+}
+
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
 // Returns group directories (sorted by project count) followed by individual repos (sorted by mtime).
 func discoverProjects(dir string, maxDepth int) []ws.WingProject {
@@ -191,7 +204,7 @@ func readPid() (int, error) {
 }
 
 func wingCmd() *cobra.Command {
-	var relayFlag string
+	var roostFlag string
 	var labelsFlag string
 	var convFlag string
 	var daemonFlag bool
@@ -199,8 +212,8 @@ func wingCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "wing",
-		Short: "Connect to relay and accept remote tasks",
-		Long:  "Start a wing — your machine becomes reachable from anywhere via the relay. Same as sitting at the keyboard, just remote.",
+		Short: "Connect to roost and accept remote tasks",
+		Long:  "Start a wing — your machine becomes reachable from anywhere via the roost. Same as sitting at the keyboard, just remote.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Daemonize: re-exec detached, write PID file, return
 			if daemonFlag {
@@ -216,8 +229,8 @@ func wingCmd() *cobra.Command {
 				// Build args without -d
 				var childArgs []string
 				childArgs = append(childArgs, "wing")
-				if relayFlag != "" {
-					childArgs = append(childArgs, "--relay", relayFlag)
+				if roostFlag != "" {
+					childArgs = append(childArgs, "--roost", roostFlag)
 				}
 				if labelsFlag != "" {
 					childArgs = append(childArgs, "--labels", labelsFlag)
@@ -283,16 +296,16 @@ func wingCmd() *cobra.Command {
 			}
 			var wingEggMu sync.Mutex
 
-			// Resolve relay URL
-			relayURL := relayFlag
-			if relayURL == "" {
-				relayURL = cfg.RelayURL
+			// Resolve roost URL
+			roostURL := roostFlag
+			if roostURL == "" {
+				roostURL = cfg.RoostURL
 			}
-			if relayURL == "" {
-				relayURL = "https://ws.wingthing.ai"
+			if roostURL == "" {
+				roostURL = "https://ws.wingthing.ai"
 			}
 			// Convert HTTP URL to WebSocket URL
-			wsURL := strings.Replace(relayURL, "https://", "wss://", 1)
+			wsURL := strings.Replace(roostURL, "https://", "wss://", 1)
 			wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
 			wsURL = strings.TrimRight(wsURL, "/") + "/ws/wing"
 
@@ -361,7 +374,7 @@ func wingCmd() *cobra.Command {
 			reapDeadEggs(cfg)
 
 			client := &ws.Client{
-				RelayURL:  wsURL,
+				RoostURL:  wsURL,
 				Token:     tok.Token,
 				MachineID: cfg.MachineID,
 				Platform:  runtime.GOOS,
@@ -449,7 +462,7 @@ func wingCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&relayFlag, "relay", "", "relay server URL (default: ws.wingthing.ai)")
+	cmd.Flags().StringVar(&roostFlag, "roost", "", "roost server URL (default: ws.wingthing.ai)")
 	cmd.Flags().StringVar(&labelsFlag, "labels", "", "comma-separated wing labels (e.g. gpu,cuda,research)")
 	cmd.Flags().StringVar(&convFlag, "conv", "auto", "conversation mode: auto (daily rolling), new (fresh), or a named thread")
 	cmd.Flags().BoolVarP(&daemonFlag, "daemon", "d", false, "run as background daemon")
@@ -782,9 +795,13 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		}
 		ec.Close()
 
-		out = append(out, ws.SessionInfo{
+		info := ws.SessionInfo{
 			SessionID: sessionID,
-		})
+		}
+		if _, ok := wingAttention.Load(sessionID); ok {
+			info.NeedsAttention = true
+		}
+		out = append(out, info)
 	}
 	return out
 }
@@ -910,6 +927,9 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 			}
 			switch p := msg.Payload.(type) {
 			case *pb.SessionMsg_Output:
+				if containsBell(p.Output) {
+					wingAttention.Store(sessionID, true)
+				}
 				gcmMu.Lock()
 				currentGCM := gcm
 				gcmMu.Unlock()
@@ -927,6 +947,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 			case *pb.SessionMsg_ExitCode:
 				log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
 				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
+				wingAttention.Delete(sessionID)
 				sessionCancel()
 				return
 			}
@@ -946,6 +967,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if err := json.Unmarshal(data, &attach); err != nil {
 					continue
 				}
+				wingAttention.Delete(sessionID)
 				if attach.PublicKey != "" && privKeyErr == nil {
 					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
 					if deriveErr == nil {
@@ -1095,6 +1117,11 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 
 			switch p := msg.Payload.(type) {
 			case *pb.SessionMsg_Output:
+				// Detect terminal bell (0x07) for attention pings
+				if containsBell(p.Output) {
+					wingAttention.Store(start.SessionID, true)
+				}
+
 				gcmMu.Lock()
 				currentGCM := gcm
 				gcmMu.Unlock()
@@ -1119,6 +1146,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 			case *pb.SessionMsg_ExitCode:
 				log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
 				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
+				wingAttention.Delete(start.SessionID)
 				sessionCancel()
 				return
 			}
@@ -1138,6 +1166,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 				if err := json.Unmarshal(data, &attach); err != nil {
 					continue
 				}
+				wingAttention.Delete(start.SessionID)
 				if attach.PublicKey != "" && privKeyErr == nil {
 					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
 					if deriveErr != nil {

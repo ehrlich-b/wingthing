@@ -23,7 +23,7 @@
 {{define "content"}}
 <div class="sh-hero">
 <h1>self-host wingthing</h1>
-<p>Run your own relay. Single binary, SQLite, no external dependencies. Your agents, your keys, your data.</p>
+<p>Run your own roost. Single binary, SQLite, no external dependencies. Your agents, your keys, your data.</p>
 </div>
 
 <div class="sh-section">
@@ -39,9 +39,9 @@
 
 <div class="sh-section">
 <h2>connect a wing</h2>
-<p>In another terminal, point a wing at your local relay:</p>
+<p>In another terminal, point a wing at your local roost:</p>
 <div class="sh-code">
-<span class="prompt">$ </span><span class="cmd">./wt wing --relay http://localhost:8080</span>
+<span class="prompt">$ </span><span class="cmd">./wt wing --roost http://localhost:8080</span>
 </div>
 <p>In local mode the device token is written automatically — no <code>wt login</code> needed.</p>
 </div>
@@ -64,18 +64,18 @@
 
 <div class="sh-section">
 <h2>multi-user (production)</h2>
-<p>For shared relays, set up GitHub OAuth and run without <code>--local</code>:</p>
+<p>For shared roosts, set up GitHub OAuth and run without <code>--local</code>:</p>
 <div class="sh-code">
 <span class="prompt">$ </span><span class="cmd">./wt serve --addr :8080</span>
 </div>
-<p>Then connect wings with <code>wt login --relay https://my-relay.example.com</code>.</p>
+<p>Then connect wings with <code>wt login --roost https://my-roost.example.com</code>.</p>
 </div>
 
 <div class="sh-section">
 <h2>what you get</h2>
 <table class="sh-table">
 <tr><th>feature</th><th>details</th></tr>
-<tr><td>relay</td><td>WebSocket bridge between browser and wings</td></tr>
+<tr><td>roost</td><td>WebSocket bridge between browser and wings</td></tr>
 <tr><td>social</td><td>AI-curated link aggregator across 159 spaces</td></tr>
 <tr><td>skills</td><td>browse and install from the curated library</td></tr>
 <tr><td>dashboard</td><td>manage wings, start terminals, chat with agents</td></tr>

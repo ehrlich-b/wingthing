@@ -44,9 +44,9 @@ type ChatMessageHandler func(ctx context.Context, msg ChatMessage, write PTYWrit
 // ChatDeleteHandler is called when the wing receives a chat.delete.
 type ChatDeleteHandler func(ctx context.Context, del ChatDelete, write PTYWriteFunc)
 
-// Client is an outbound WebSocket client that connects a wing to the relay.
+// Client is an outbound WebSocket client that connects a wing to the roost.
 type Client struct {
-	RelayURL  string // e.g. "wss://ws.wingthing.ai/ws/wing"
+	RoostURL  string // e.g. "wss://ws.wingthing.ai/ws/wing"
 	Token     string // device auth token
 	MachineID string
 	Platform  string // runtime.GOOS
@@ -108,7 +108,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 	}
 	opts.HTTPHeader.Set("Authorization", "Bearer "+c.Token)
 
-	conn, _, dialErr := websocket.Dial(ctx, c.RelayURL, opts)
+	conn, _, dialErr := websocket.Dial(ctx, c.RoostURL, opts)
 	if dialErr != nil {
 		return false, fmt.Errorf("dial: %w", dialErr)
 	}
