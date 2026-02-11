@@ -81,13 +81,19 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 	var cmd *exec.Cmd
 
 	if len(s.cfg.Deny) > 0 {
-		// Wrap through _deny_init to mask denied paths via tmpfs overmounts
-		// inside the mount namespace. The wrapper execs the real command after mounting.
+		// Wrap through _deny_init to mask denied paths via tmpfs overmounts.
+		// The wrapper runs as root in the namespace (needs CAP_SYS_ADMIN for mount),
+		// then drops to real UID via nested user namespace before exec'ing the agent.
 		exe, err := os.Executable()
 		if err != nil {
 			return nil, fmt.Errorf("resolve executable for deny wrapper: %w", err)
 		}
-		wrapArgs := []string{"_deny_init"}
+		uid := os.Getuid()
+		gid := os.Getgid()
+		wrapArgs := []string{"_deny_init",
+			"--uid", fmt.Sprintf("%d", uid),
+			"--gid", fmt.Sprintf("%d", gid),
+		}
 		for _, d := range s.cfg.Deny {
 			wrapArgs = append(wrapArgs, "--deny", d)
 		}
@@ -136,22 +142,38 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 	}
 
 	// When not root, use user namespaces for unprivileged isolation.
-	// Map to the same uid/gid — not root — so agents like Claude Code
-	// don't refuse --dangerously-skip-permissions due to euid==0.
 	if os.Geteuid() != 0 && flags != 0 {
 		attr.Cloneflags |= syscall.CLONE_NEWUSER
 		uid := os.Getuid()
 		gid := os.Getgid()
-		attr.UidMappings = []syscall.SysProcIDMap{{
-			ContainerID: uid,
-			HostID:      uid,
-			Size:        1,
-		}}
-		attr.GidMappings = []syscall.SysProcIDMap{{
-			ContainerID: gid,
-			HostID:      gid,
-			Size:        1,
-		}}
+
+		if len(s.cfg.Deny) > 0 {
+			// Deny paths need tmpfs mounts → need CAP_SYS_ADMIN → map to UID 0.
+			// The _deny_init wrapper drops to real UID via nested user namespace
+			// before exec'ing the agent.
+			attr.UidMappings = []syscall.SysProcIDMap{{
+				ContainerID: 0,
+				HostID:      uid,
+				Size:        1,
+			}}
+			attr.GidMappings = []syscall.SysProcIDMap{{
+				ContainerID: 0,
+				HostID:      gid,
+				Size:        1,
+			}}
+		} else {
+			// No deny paths — map to real uid/gid so agents don't see root.
+			attr.UidMappings = []syscall.SysProcIDMap{{
+				ContainerID: uid,
+				HostID:      uid,
+				Size:        1,
+			}}
+			attr.GidMappings = []syscall.SysProcIDMap{{
+				ContainerID: gid,
+				HostID:      gid,
+				Size:        1,
+			}}
+		}
 	}
 
 	return attr
