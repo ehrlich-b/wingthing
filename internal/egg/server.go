@@ -158,10 +158,6 @@ func NewServer(dir string) (*Server, error) {
 func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	os.Setenv("GOTRACEBACK", "all")
 
-	if rc.DangerouslySkipPermissions && (rc.Isolation == "" || rc.Isolation == "privileged") {
-		return fmt.Errorf("dangerously_skip_permissions requires sandbox isolation (not privileged)")
-	}
-
 	name, args := agentCommand(rc.Agent, rc.DangerouslySkipPermissions, rc.Shell)
 	if name == "" {
 		return fmt.Errorf("unsupported agent: %s", rc.Agent)

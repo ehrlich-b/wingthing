@@ -1,4 +1,4 @@
-{{define "title"}}docs — wingthing.ai{{end}}
+{{define "title"}}docs - wingthing.ai{{end}}
 {{define "head"}}
 <style>
 .docs-layout{display:flex;gap:32px;align-items:flex-start}
@@ -50,14 +50,14 @@
 
 <div class="docs-section" id="overview">
 <h2>overview</h2>
-<p>wingthing is a CLI tool (<code>wt</code>) that lets you run Claude Code, Codex, Ollama, and other AI agents in sandboxed sessions on your own hardware — then access them remotely from any device via an encrypted relay.</p>
+<p>wingthing is a CLI tool (<code>wt</code>) that lets you run Claude Code, Codex, Ollama, and other AI agents in sandboxed sessions on your own hardware - then access them remotely from any device via an encrypted relay.</p>
 <table class="vocab-table">
 <tr><th>term</th><th>what it is</th></tr>
 <tr><td>wing</td><td>Your machine. Install <code>wt</code>, run <code>wt start</code>, and it connects outbound to the roost. One machine = one wing.</td></tr>
 <tr><td>roost</td><td>The relay server. Wings connect to it; browsers connect to it. It bridges the two. Use ours at <code>wingthing.ai</code> or self-host.</td></tr>
 <tr><td>egg</td><td>A sandboxed agent session. Each egg is an isolated process with its own PTY, sandbox profile, and gRPC socket. Runs Claude, Codex, Ollama, etc.</td></tr>
 </table>
-<p>The architecture is simple: wings connect outbound to the roost (no port forwarding needed), and the roost bridges WebSocket connections between wings and browsers. All PTY traffic is E2E encrypted.</p>
+<p>Wings connect outbound to the roost (no port forwarding needed), and the roost bridges WebSocket connections between wings and browsers. All PTY traffic is E2E encrypted.</p>
 </div>
 
 <div class="docs-section" id="installation">
@@ -92,7 +92,8 @@
 
 <div class="docs-section" id="egg-configuration">
 <h2>egg configuration</h2>
-<p>Every agent session runs inside a platform-native sandbox. Configure isolation, mounts, and deny paths in <code>egg.yaml</code>.</p>
+<p>Without an <code>egg.yaml</code>, agents run like normal - asking permission for each action. Fine for quick tasks where you're watching.</p>
+<p>For unattended work, create an <code>egg.yaml</code> in your project directory. Set isolation to <code>standard</code> or <code>strict</code>, allowlist only the directories the agent needs, deny sensitive paths like <code>~/.ssh</code>, and set <code>dangerously_skip_permissions: true</code>. The agent runs with <code>--dangerously-skip-permissions</code> because the sandbox is the permission boundary - it can only touch what you allowed. <code>egg.yaml</code> is per-project, so each repo gets its own rules.</p>
 <table class="docs-table">
 <tr><th>level</th><th>network</th><th>filesystem</th><th>use case</th></tr>
 <tr><td>strict</td><td>denied</td><td>minimal read-only</td><td>offline agents (ollama)</td></tr>
@@ -100,11 +101,12 @@
 <tr><td>network</td><td>allowed</td><td>mounted dirs + deny list</td><td>agents needing APIs</td></tr>
 <tr><td>privileged</td><td>allowed</td><td>full access (no sandbox)</td><td>trusted tasks only</td></tr>
 </table>
-<p style="font-size:12px;color:var(--text-dim)">* See <a href="#sandbox-limits">sandbox limits</a> — network deny for <code>standard</code> has platform-specific caveats.</p>
+<p style="font-size:12px;color:var(--text-dim)">* See <a href="#sandbox-limits">sandbox limits</a> - network deny for <code>standard</code> has platform-specific caveats.</p>
 <p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically.</p>
 <p>Example <code>egg.yaml</code>:</p>
 <div class="docs-code">
 isolation: standard<br>
+dangerously_skip_permissions: true<br>
 mounts:<br>
 &nbsp;&nbsp;- /home/me/projects/myapp<br>
 deny:<br>
@@ -116,13 +118,16 @@ deny:<br>
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what each config field does</h3>
 <table class="docs-table">
 <tr><th>field</th><th>effect</th></tr>
-<tr><td>isolation</td><td>sandbox level (strict, standard, network, privileged)</td></tr>
-<tr><td>mounts</td><td>directories the agent can read/write (only for standard/network)</td></tr>
-<tr><td>deny</td><td>paths hidden from the agent — blocked by SBPL (macOS) or tmpfs overlays (Linux)</td></tr>
-<tr><td>cpu</td><td>CPU time limit in seconds (Linux only, ignored on macOS)</td></tr>
-<tr><td>memory</td><td>memory limit, e.g. <code>4G</code> (Linux only, ignored on macOS)</td></tr>
-<tr><td>max_fds</td><td>max open file descriptors (Linux only, ignored on macOS)</td></tr>
+<tr><td>isolation</td><td>sandbox level (strict, standard, network, privileged). Network filtering on Linux is all-or-nothing *</td></tr>
+<tr><td>dangerously_skip_permissions</td><td>let the agent run without asking</td></tr>
+<tr><td>mounts</td><td>directories the agent can read/write (standard/network only)</td></tr>
+<tr><td>deny</td><td>paths hidden from the agent. SBPL on macOS, tmpfs overlays on Linux</td></tr>
+<tr><td>cpu *</td><td>CPU time limit in seconds. Linux only, ignored on macOS</td></tr>
+<tr><td>memory *</td><td>memory limit, e.g. <code>4G</code>. Linux only, ignored on macOS</td></tr>
+<tr><td>max_fds *</td><td>max open file descriptors. Linux only, ignored on macOS</td></tr>
+<tr><td>env</td><td>environment variable allowlist. Default passes everything through. Set <code>allow_all: false</code> + <code>allow: [VAR1, VAR2]</code> to filter</td></tr>
 </table>
+<p style="font-size:12px;color:var(--text-dim)">* Linux only. macOS Seatbelt doesn't support resource limits. If these limitations are blocking you, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a>.</p>
 </div>
 
 <div class="docs-section" id="self-hosting">
@@ -143,7 +148,7 @@ deny:<br>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt wing start --roost http://localhost:8080 --foreground</span>
 </div>
-<p>In local mode the device token is written automatically — no <code>wt login</code> needed.</p>
+<p>In local mode the device token is written automatically - no <code>wt login</code> needed.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">docker</h3>
 <div class="docs-code">
@@ -184,9 +189,9 @@ deny:<br>
 <h2>security</h2>
 <p>Three layers of protection:</p>
 <ul>
-<li><strong>Sandbox:</strong> Every egg session runs in a platform-native sandbox — Seatbelt (macOS) or user namespaces + seccomp (Linux). The sandbox constrains filesystem access and network. On Linux, seccomp also filters system calls.</li>
+<li><strong>Sandbox:</strong> Egg sessions run inside a platform-native sandbox - Seatbelt (macOS) or user namespaces + seccomp (Linux). Create an <code>egg.yaml</code> to lock down what the agent can reach, then let it run unattended. See <a href="#egg-configuration">egg configuration</a>.</li>
 <li><strong>E2E encryption:</strong> PTY traffic between your browser and your wing is encrypted end-to-end using X25519 key exchange and AES-GCM. The roost never sees plaintext terminal data. Keys are re-derived on every reattach.</li>
-<li><strong>Outbound-only connections:</strong> Wings connect outbound to the roost — no inbound ports, no static IP, works behind any NAT or firewall. Nothing listens on your machine.</li>
+<li><strong>Outbound-only connections:</strong> Wings connect outbound to the roost - no inbound ports, no static IP, works behind any NAT or firewall. Nothing listens on your machine.</li>
 </ul>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what the sandbox enforces</h3>
@@ -205,21 +210,21 @@ deny:<br>
 
 <div class="docs-section" id="sandbox-limits">
 <h2>sandbox limits</h2>
-<p>The sandbox is a meaningful security boundary, but it is not a container runtime. Here is what it does <em>not</em> do:</p>
+<p>Even with a strict <code>egg.yaml</code>, the sandbox is not a container runtime. Known gaps:</p>
 <ul>
-<li><strong>Linux network filtering is all-or-nothing.</strong> Unprivileged user namespaces cannot do port-level filtering (no CAP_NET_ADMIN for iptables). If the agent needs HTTPS (Claude, Codex, Gemini), the network namespace is dropped entirely — the agent gets full network access, not just ports 443/80. macOS does not have this limitation (Seatbelt filters by port). Use <code>isolation: strict</code> with local-only agents (ollama) for true network isolation on Linux.</li>
-<li><strong>Agent credentials are accessible.</strong> The agent needs its own API keys and config files to function. These are mounted into the sandbox. A task running inside the agent could read them.</li>
-<li><strong>HOME is readable.</strong> Outside of deny-listed paths, your home directory is mounted read-only. The agent needs to read your codebase. Sensitive directories should be added to the <code>deny</code> list in your egg.yaml.</li>
-<li><strong>Agent config is writable.</strong> The agent's config directory (e.g. <code>~/.claude/</code>) must be writable for the agent to function. A task could modify agent settings.</li>
-<li><strong>Resource limits are Linux-only.</strong> macOS Seatbelt does not support rlimits. An agent on macOS can consume unbounded CPU and memory.</li>
-<li><strong>No env var filtering yet.</strong> All parent environment variables are currently passed through to the sandbox. Filtering is planned.</li>
+<li><strong>Linux network is all-or-nothing.</strong> No port-level filtering without CAP_NET_ADMIN. If the agent needs HTTPS, it gets full network access. macOS can filter by port via Seatbelt. For true network isolation on Linux, use <code>isolation: strict</code> with local agents like ollama.</li>
+<li><strong>Agent credentials are readable.</strong> API keys and config files are mounted into the sandbox. The agent needs them to work.</li>
+<li><strong>HOME is readable.</strong> The agent reads your codebase. Put sensitive directories in the <code>deny</code> list.</li>
+<li><strong>Agent config is writable.</strong> <code>~/.claude/</code> and similar directories must be writable for the agent to function.</li>
+<li><strong>Resource limits are Linux-only.</strong> macOS agents can consume unbounded CPU and memory.</li>
+<li><strong>Env vars pass through by default.</strong> Set <code>env: {allow_all: false, allow: [ANTHROPIC_API_KEY]}</code> in egg.yaml to filter. HOME, PATH, TERM, LANG always pass through.</li>
 </ul>
-<p>The sandbox is designed to prevent accidental damage and limit blast radius — not to run untrusted adversarial code. Think of it as guardrails, not a jail. If you need hard isolation, run wingthing inside a VM or container.</p>
+<p>These are on the roadmap. If any of these are blocking you, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a> - it helps us prioritize. If you need hard isolation today, run wingthing inside a VM or container.</p>
 </div>
 
 <div class="docs-section" id="disclaimer">
 <h2>disclaimer</h2>
-<p>wingthing is provided "as is" with no warranty. The sandbox is a best-effort security boundary — it reduces risk but does not eliminate it. You are responsible for what runs on your machine. See the full <a href="/terms">terms of service</a> and <a href="/privacy">privacy policy</a>.</p>
+<p>wingthing is provided "as is" with no warranty. The sandbox reduces risk when configured but does not eliminate it. You are responsible for what runs on your machine. See the full <a href="/terms">terms of service</a> and <a href="/privacy">privacy policy</a>.</p>
 <p>If you find a security issue, please report it to <a href="mailto:security@wingthing.ai">security@wingthing.ai</a>.</p>
 </div>
 
