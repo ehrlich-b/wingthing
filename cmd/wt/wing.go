@@ -33,6 +33,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
@@ -730,8 +732,11 @@ func handleDirList(_ context.Context, req ws.DirList, write ws.PTYWriteFunc) {
 
 	var results []ws.DirEntry
 	for _, e := range entries {
+		if !e.IsDir() {
+			continue // dirs only — this is for cwd selection
+		}
 		if strings.HasPrefix(e.Name(), ".") {
-			continue // skip hidden files
+			continue // skip hidden dirs
 		}
 		if prefix != "" && !strings.HasPrefix(strings.ToLower(e.Name()), prefix) {
 			continue
@@ -739,7 +744,7 @@ func handleDirList(_ context.Context, req ws.DirList, write ws.PTYWriteFunc) {
 		full := filepath.Join(path, e.Name())
 		results = append(results, ws.DirEntry{
 			Name:  e.Name(),
-			IsDir: e.IsDir(),
+			IsDir: true,
 			Path:  full,
 		})
 	}
@@ -1092,21 +1097,30 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, s
 	}
 	spawnResp, err := ec.Spawn(ctx, spawnReq)
 	if err != nil {
-		log.Printf("pty: egg spawn failed, restarting egg: %v", err)
-		ec.Close()
-		newEC, ensureErr := ensureEgg(cfg)
-		if ensureErr != nil {
-			log.Printf("pty: egg restart failed: %v", ensureErr)
-			crashInfo := readEggCrashInfo(cfg.Dir)
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
-			return
-		}
-		ec = newEC
-		spawnResp, err = ec.Spawn(ctx, spawnReq)
-		if err != nil {
-			log.Printf("pty: egg spawn retry failed: %v", err)
-			crashInfo := readEggCrashInfo(cfg.Dir)
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
+		st, _ := status.FromError(err)
+		if st.Code() == codes.Unavailable || st.Code() == codes.Canceled {
+			// Connection-level error — egg crashed, reconnect
+			log.Printf("pty: egg connection lost, restarting: %v", err)
+			ec.Close()
+			newEC, ensureErr := ensureEgg(cfg)
+			if ensureErr != nil {
+				log.Printf("pty: egg restart failed: %v", ensureErr)
+				crashInfo := readEggCrashInfo(cfg.Dir)
+				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
+				return
+			}
+			ec = newEC
+			spawnResp, err = ec.Spawn(ctx, spawnReq)
+			if err != nil {
+				log.Printf("pty: egg spawn retry failed: %v", err)
+				crashInfo := readEggCrashInfo(cfg.Dir)
+				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
+				return
+			}
+		} else {
+			// Application error — don't kill the connection, just report
+			log.Printf("pty: egg spawn error: %v", err)
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: st.Message()})
 			return
 		}
 	}
