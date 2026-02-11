@@ -60,11 +60,25 @@ func buildProfile(cfg Config) string {
 	sb.WriteString("(version 1)\n")
 	sb.WriteString("(allow default)\n")
 
-	// Network isolation for strict/standard.
-	// When AllowOutbound is set, skip network deny entirely — cloud agents
-	// need full network (API calls, TLS, DNS via mDNS, update checks).
-	if !hasNetwork(cfg.Isolation) && !cfg.AllowOutbound {
-		sb.WriteString("(deny network*)\n")
+	// Network rules: combine isolation level with agent's NetworkNeed.
+	// If the isolation level already allows network (Network/Privileged), no deny.
+	// Otherwise, apply granular rules based on what the agent needs.
+	if !hasNetwork(cfg.Isolation) {
+		switch cfg.NetworkNeed {
+		case NetworkNone:
+			sb.WriteString("(deny network*)\n")
+		case NetworkLocal:
+			sb.WriteString("(deny network*)\n")
+			sb.WriteString("(allow network* (local udp) (local tcp))\n")
+		case NetworkHTTPS:
+			sb.WriteString("(deny network*)\n")
+			sb.WriteString("(allow network-outbound (remote tcp \"*:443\"))\n")
+			sb.WriteString("(allow network-outbound (remote tcp \"*:80\"))\n")
+			sb.WriteString("(allow network-outbound (remote udp \"*:53\"))\n")
+			sb.WriteString("(allow network-outbound (remote tcp \"*:53\"))\n")
+		case NetworkFull:
+			// no deny — agent needs full network
+		}
 	}
 
 	// Deny paths — block reads and writes to specific directories.

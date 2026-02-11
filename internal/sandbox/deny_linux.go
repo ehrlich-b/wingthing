@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -113,6 +114,25 @@ func DenyInit(args []string) {
 		}
 	}
 
+	// Install seccomp filter before starting the agent. PR_SET_NO_NEW_PRIVS
+	// is required before seccomp and the filter is inherited by the child.
+	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+		log.Printf("_deny_init: PR_SET_NO_NEW_PRIVS: %v (seccomp skipped)", err)
+	} else {
+		filter := buildSeccompFilter()
+		if len(filter) > 0 {
+			prog := unix.SockFprog{
+				Len:    uint16(len(filter)),
+				Filter: &filter[0],
+			}
+			if err := seccompSetModeFilter(&prog); err != nil {
+				log.Printf("_deny_init: seccomp: %v (continuing without filter)", err)
+			} else {
+				log.Printf("_deny_init: seccomp filter installed (%d instructions)", len(filter))
+			}
+		}
+	}
+
 	if err := cmd.Start(); err != nil {
 		log.Fatalf("_deny_init: start agent: %v", err)
 	}
@@ -134,4 +154,14 @@ func DenyInit(args []string) {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+// seccompSetModeFilter installs a seccomp BPF filter via the seccomp syscall.
+func seccompSetModeFilter(prog *unix.SockFprog) error {
+	const seccompSetModeFilterOp = 1 // SECCOMP_SET_MODE_FILTER
+	_, _, errno := unix.Syscall(unix.SYS_SECCOMP, seccompSetModeFilterOp, 0, uintptr(unsafe.Pointer(prog)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }

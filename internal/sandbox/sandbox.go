@@ -29,7 +29,7 @@ type Config struct {
 	Isolation      Level
 	Mounts         []Mount
 	Deny           []string      // paths to mask (e.g. ~/.ssh)
-	AllowOutbound  bool          // allow outbound network even if isolation denies it
+	NetworkNeed    NetworkNeed    // granular network access required by the agent
 	Timeout        time.Duration
 	CPULimit       time.Duration // RLIMIT_CPU (0 = backend default)
 	MemLimit       uint64        // RLIMIT_AS in bytes (0 = backend default)
