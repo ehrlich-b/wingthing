@@ -5,7 +5,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
 build:
-	go build -ldflags "-X main.version=$(VERSION)" -o wt ./cmd/wt
+	go build -buildvcs=false -ldflags "-X main.version=$(VERSION)" -o wt ./cmd/wt
 
 test:
 	go test ./...
