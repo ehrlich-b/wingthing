@@ -3,12 +3,14 @@
 package sandbox
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"os/signal"
 	"strconv"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -17,8 +19,12 @@ import (
 // wrapper. It runs as root (UID 0) inside the user namespace so it can:
 //   1. Mount tmpfs over denied paths to hide their contents
 //   2. Apply write isolation: make HOME read-only, then bind writable sub-mounts
-// After setup, it spawns the agent in a nested user namespace (via
-// exec.Command + CLONE_NEWUSER) mapped to the real UID.
+//   3. Install seccomp filter to prevent agent from undoing isolation
+//
+// After setup, it spawns the agent in a nested user namespace (CLONE_NEWUSER
+// for UID drop) + PID namespace (CLONE_NEWPID for PID isolation). The wrapper
+// itself is NOT in a PID namespace — this keeps host /proc valid so Go can
+// write uid_map for the nested CLONE_NEWUSER without remounting /proc.
 //
 // Args format: --uid UID --gid GID [--deny PATH...] [--home PATH] [--writable PATH...] -- CMD ARGS...
 func DenyInit(args []string) {
@@ -99,17 +105,16 @@ func DenyInit(args []string) {
 		}
 	}
 
-	// Remount /proc for our PID namespace so Go's runtime can write
-	// /proc/<child_pid>/uid_map for the nested CLONE_NEWUSER below.
-	// Without this, /proc still shows host PIDs and the uid_map write fails,
-	// causing execve to return ENOENT.
-	if err := unix.Mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
-		log.Printf("_deny_init: remount /proc: %v (nested userns may fail)", err)
+	// Install seccomp filter AFTER mounts (SYS_MOUNT is in the deny list).
+	// This prevents the agent from undoing deny-path overmounts or write
+	// isolation via mount/umount. The filter is inherited by child processes.
+	if err := installSeccomp(); err != nil {
+		log.Printf("_deny_init: seccomp: %v (continuing without)", err)
 	}
 
-	// Spawn agent in a new user namespace mapped to real UID.
-	// exec.Command uses clone() which happens before the child has Go threads,
-	// so CLONE_NEWUSER works (unlike syscall.Unshare which fails with EINVAL).
+	// Spawn agent with CLONE_NEWPID (PID isolation) + CLONE_NEWUSER (UID drop).
+	// The wrapper is NOT in a PID namespace (parent strips CLONE_NEWPID for it),
+	// so host /proc is valid and Go can write uid_map without remounting /proc.
 	cmdArgs := args[cmdStart:]
 	binPath := cmdArgs[0]
 
@@ -126,20 +131,21 @@ func DenyInit(args []string) {
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
 
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWPID,
+	}
 	if uid != 0 {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Cloneflags: syscall.CLONE_NEWUSER,
-			UidMappings: []syscall.SysProcIDMap{{
-				ContainerID: uid,
-				HostID:      0, // 0 in our namespace = real uid on host
-				Size:        1,
-			}},
-			GidMappings: []syscall.SysProcIDMap{{
-				ContainerID: gid,
-				HostID:      0,
-				Size:        1,
-			}},
-		}
+		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWUSER
+		cmd.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{
+			ContainerID: uid,
+			HostID:      0, // 0 in our namespace = real uid on host
+			Size:        1,
+		}}
+		cmd.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{
+			ContainerID: gid,
+			HostID:      0,
+			Size:        1,
+		}}
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -163,6 +169,36 @@ func DenyInit(args []string) {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+// installSeccomp installs a BPF seccomp filter that denies dangerous syscalls
+// (mount, umount, ptrace, etc.). Must be called AFTER all mounts are complete.
+// The filter is inherited by child processes via fork/exec.
+func installSeccomp() error {
+	prog := buildSeccompFilter()
+	if prog == nil {
+		return nil
+	}
+
+	// PR_SET_NO_NEW_PRIVS is required before installing seccomp filters.
+	if _, _, errno := unix.RawSyscall(unix.SYS_PRCTL,
+		unix.PR_SET_NO_NEW_PRIVS, 1, 0); errno != 0 {
+		return fmt.Errorf("prctl(NO_NEW_PRIVS): %v", errno)
+	}
+
+	bpfProg := unix.SockFprog{
+		Len:    uint16(len(prog)),
+		Filter: &prog[0],
+	}
+
+	// SECCOMP_SET_MODE_FILTER = 1
+	if _, _, errno := unix.RawSyscall(unix.SYS_SECCOMP,
+		1, 0, uintptr(unsafe.Pointer(&bpfProg))); errno != 0 {
+		return fmt.Errorf("seccomp(SET_MODE_FILTER): %v", errno)
+	}
+
+	log.Printf("_deny_init: seccomp installed (%d denied syscalls)", len(deniedSyscalls))
+	return nil
 }
 
 // containsPath checks if the path list contains the given path.
