@@ -1,4 +1,4 @@
-.PHONY: build test check clean web serve release proto
+.PHONY: build test check clean web serve release proto deploy
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -36,6 +36,9 @@ release: web
 	done
 	@echo "Creating release $(CINCH_TAG)..."
 	cinch release dist/*
+
+deploy: check
+	fly deploy --local-only
 
 proto:
 	protoc -I proto --go_out=paths=source_relative:internal/egg/pb --go-grpc_out=paths=source_relative:internal/egg/pb proto/egg.proto
