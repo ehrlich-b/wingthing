@@ -59,11 +59,28 @@ func readEggMeta(dir string) (agent, cwd string) {
 	return agent, cwd
 }
 
-// containsBell returns true if data contains the BEL character (0x07).
+// containsBell returns true if data contains a standalone BEL character (0x07)
+// that is NOT inside an OSC escape sequence. OSC sequences (\x1b]...\x07) use
+// 0x07 as a terminator for titles, hyperlinks, shell integration marks, etc.
 func containsBell(data []byte) bool {
-	for _, b := range data {
-		if b == 0x07 {
-			return true
+	inOSC := false
+	for i := 0; i < len(data); i++ {
+		if data[i] == 0x1b && i+1 < len(data) && data[i+1] == ']' {
+			inOSC = true
+			i++ // skip ]
+			continue
+		}
+		if data[i] == 0x07 {
+			if inOSC {
+				inOSC = false // OSC terminator, not a bell
+				continue
+			}
+			return true // standalone bell
+		}
+		// ST (\x1b\) also terminates OSC
+		if inOSC && data[i] == 0x1b && i+1 < len(data) && data[i+1] == '\\' {
+			inOSC = false
+			i++
 		}
 	}
 	return false
@@ -1046,6 +1063,10 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					continue
 				}
 				wingAttention.Delete(sessionID)
+				// Nil out gcm first so output goroutine stops sending old-key frames
+				gcmMu.Lock()
+				gcm = nil
+				gcmMu.Unlock()
 				if attach.PublicKey != "" {
 					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
 					if deriveErr != nil {
@@ -1240,11 +1261,14 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					continue
 				}
 				wingAttention.Delete(start.SessionID)
+				// Nil out gcm first so output goroutine stops sending old-key frames
+				gcmMu.Lock()
+				gcm = nil
+				gcmMu.Unlock()
 				if attach.PublicKey != "" {
 					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
 					if deriveErr != nil {
 						log.Printf("pty session %s: reattach derive key failed: %v", start.SessionID, deriveErr)
-						// Don't update gcm — keep existing encryption or refuse data
 					} else {
 						gcmMu.Lock()
 						gcm = derived

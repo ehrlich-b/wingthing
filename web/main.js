@@ -2083,18 +2083,23 @@ function setupPTYHandlers(ws, reattach) {
         });
     }
 
-    // Flush pending output for reattach: decrypt all, concatenate, write once with completion callback
+    // Flush pending output for reattach: decrypt each frame, skip failures (old-key
+    // frames may be mixed in with new-key replay), concatenate survivors, write once
     function flushReplay() {
         var pending = pendingOutput;
         pendingOutput = [];
         if (pending.length === 0) { hideReplayOverlay(); return; }
-        Promise.all(pending.map(function (d) { return e2eDecrypt(d); })).then(function (chunks) {
+        Promise.all(pending.map(function (d) {
+            return e2eDecrypt(d).catch(function () { return null; });
+        })).then(function (chunks) {
             if (ws !== ptyWs) return;
+            var good = chunks.filter(function (c) { return c !== null; });
+            if (good.length === 0) { hideReplayOverlay(); return; }
             var total = 0;
-            for (var i = 0; i < chunks.length; i++) total += chunks[i].length;
+            for (var i = 0; i < good.length; i++) total += good[i].length;
             var combined = new Uint8Array(total);
             var off = 0;
-            for (var i = 0; i < chunks.length; i++) { combined.set(chunks[i], off); off += chunks[i].length; }
+            for (var i = 0; i < good.length; i++) { combined.set(good[i], off); off += good[i].length; }
             term.reset();
             term.write(combined, function () { hideReplayOverlay(); term.focus(); });
         }).catch(function () { hideReplayOverlay(); });
@@ -2245,16 +2250,23 @@ function attachPTY(sessionId) {
     showReplayOverlay();
     clearNotification(sessionId);
 
+    // Close old WebSocket if still open
+    if (ptyWs) { try { ptyWs.close(); } catch(e) {} }
+
     // Find session info for header
     var sess = sessionsData.find(function(s) { return s.id === sessionId; });
     ptyWingId = sess ? sess.wing_id : null;
     headerTitle.textContent = sess ? sessionTitle(sess.agent || '?', sess.wing_id) : 'reconnecting...';
     ptyStatus.textContent = '';
 
-    ephemeralPrivKey = x25519.utils.randomSecretKey();
+    // Reuse existing key if we have one - avoids decrypt failures from
+    // in-flight frames encrypted with the old key during re-key window
+    if (!ephemeralPrivKey) {
+        ephemeralPrivKey = x25519.utils.randomSecretKey();
+    }
     var ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
     var pubKeyB64 = bytesToB64(ephemeralPubKey);
-    e2eKey = null;
+    // Keep existing e2eKey - wing will derive the same shared secret from same public key
 
     ptyWs = new WebSocket(url);
     ptyWs.onopen = function () {
