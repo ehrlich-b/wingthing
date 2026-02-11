@@ -142,6 +142,10 @@ Configure via `egg.yaml` (project-level, `~/.wingthing/egg.yaml`, or built-in de
 
 Run `make check` to verify changes. Run `make web` before `make check` if you changed anything in `web/`.
 
+### CI
+
+CI runs via **cinch**. Use `cinch run` to trigger a build, `cinch status` to check results. When Bryan says "cinch run" or "cinch status", run those commands directly.
+
 ### Running `wt serve` during development
 
 Use `make serve` in a separate terminal (or via Bash `run_in_background`). It builds and runs in foreground — ctrl-C to stop, rerun after code changes. For production self-hosted: launchd (macOS) or systemd user unit (Linux).
