@@ -202,7 +202,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			binDir := filepath.Dir(realBin)
 			if strings.HasPrefix(binDir, home+string(filepath.Separator)) {
 				root := installRoot(binDir, home)
-				mounts = append(mounts, sandbox.Mount{Source: root, Target: root})
+				mounts = append(mounts, sandbox.Mount{Source: root, Target: root, ReadOnly: true})
 			}
 		}
 

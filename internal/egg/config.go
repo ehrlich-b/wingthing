@@ -126,8 +126,8 @@ func (c *EggConfig) BuildEnv() []string {
 	for _, k := range c.Env.Allow {
 		allowed[k] = true
 	}
-	// Always pass through essentials
-	for _, k := range []string{"HOME", "PATH", "SHELL", "TERM", "USER", "LANG"} {
+	// Always pass through essentials (minimal set — agents set their own vars at runtime)
+	for _, k := range []string{"HOME", "PATH", "TERM", "LANG"} {
 		allowed[k] = true
 	}
 	var env []string
