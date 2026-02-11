@@ -2066,6 +2066,7 @@ function hideReplayOverlay() {
 function setupPTYHandlers(ws, reattach) {
     var pendingOutput = [];
     var keyReady = false;
+    var replayDone = !reattach; // false during reattach until flushReplay completes
 
     function processOutput(dataStr) {
         e2eDecrypt(dataStr).then(function (bytes) {
@@ -2084,25 +2085,34 @@ function setupPTYHandlers(ws, reattach) {
     }
 
     // Flush pending output for reattach: decrypt each frame, skip failures (old-key
-    // frames may be mixed in with new-key replay), concatenate survivors, write once
+    // frames may be mixed in with new-key replay), concatenate survivors, write once.
+    // Output arriving during async decrypt is buffered (replayDone=false) and drained after.
     function flushReplay() {
         var pending = pendingOutput;
         pendingOutput = [];
-        if (pending.length === 0) { hideReplayOverlay(); return; }
+        if (pending.length === 0) { term.reset(); replayDone = true; hideReplayOverlay(); return; }
         Promise.all(pending.map(function (d) {
             return e2eDecrypt(d).catch(function () { return null; });
         })).then(function (chunks) {
             if (ws !== ptyWs) return;
             var good = chunks.filter(function (c) { return c !== null; });
-            if (good.length === 0) { hideReplayOverlay(); return; }
+            if (good.length === 0) { replayDone = true; hideReplayOverlay(); return; }
             var total = 0;
             for (var i = 0; i < good.length; i++) total += good[i].length;
             var combined = new Uint8Array(total);
             var off = 0;
             for (var i = 0; i < good.length; i++) { combined.set(good[i], off); off += good[i].length; }
             term.reset();
-            term.write(combined, function () { hideReplayOverlay(); term.focus(); });
-        }).catch(function () { hideReplayOverlay(); });
+            term.write(combined, function () {
+                hideReplayOverlay();
+                term.focus();
+                // Drain any output that arrived during async flush
+                replayDone = true;
+                var queued = pendingOutput;
+                pendingOutput = [];
+                queued.forEach(processOutput);
+            });
+        }).catch(function () { replayDone = true; hideReplayOverlay(); });
     }
 
     ws.onmessage = function (e) {
@@ -2150,7 +2160,7 @@ function setupPTYHandlers(ws, reattach) {
                 break;
 
             case 'pty.output':
-                if (!keyReady) {
+                if (!keyReady || !replayDone) {
                     pendingOutput.push(msg.data);
                 } else {
                     processOutput(msg.data);

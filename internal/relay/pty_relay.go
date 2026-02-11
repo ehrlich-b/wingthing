@@ -199,18 +199,20 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 	var ownedSessions []string
 
 	defer func() {
-		// On browser disconnect: mark owned sessions as detached, don't remove
+		// On browser disconnect: mark owned sessions as detached, don't remove.
+		// Only clear BrowserConn if it still points to THIS connection — a new
+		// browser may have already reattached (race between old WS cleanup and
+		// new WS attach).
 		for _, sid := range ownedSessions {
 			session := s.PTY.Get(sid)
 			if session == nil {
 				continue
 			}
 			session.mu.Lock()
-			if session.Status == "active" {
+			if session.BrowserConn == conn {
 				session.Status = "detached"
 				session.BrowserConn = nil
 				log.Printf("pty session %s: browser detached", sid)
-	
 			}
 			session.mu.Unlock()
 		}
