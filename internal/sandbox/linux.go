@@ -59,10 +59,13 @@ func hasNamespaceCapability() bool {
 	if os.Geteuid() == 0 {
 		return true
 	}
-	// Check CAP_SYS_ADMIN via capget
+	// Check CAP_SYS_ADMIN via capget. Use VERSION_1 which needs only one
+	// CapUserData struct (VERSION_3 requires [2]CapUserData — passing a single
+	// struct corrupts the stack because the kernel writes past the end).
+	// VERSION_1 covers caps 0-31 which includes CAP_SYS_ADMIN (cap 21).
 	var hdr unix.CapUserHeader
 	var data unix.CapUserData
-	hdr.Version = unix.LINUX_CAPABILITY_VERSION_3
+	hdr.Version = unix.LINUX_CAPABILITY_VERSION_1
 	hdr.Pid = 0 // current process
 	if err := unix.Capget(&hdr, &data); err != nil {
 		return false
