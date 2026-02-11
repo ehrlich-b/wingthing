@@ -1938,6 +1938,8 @@ function setupPTYHandlers(ws, reattach) {
                     ptyStatus.textContent = 'exited';
                     term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
                 }
+                // Auto-cleanup dead session from cache and relay
+                if (msg.session_id) window._deleteSession(msg.session_id);
                 renderSidebar();
                 loadHome();
                 break;
