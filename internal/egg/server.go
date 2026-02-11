@@ -261,8 +261,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 
 	log.Printf("egg: session %s agent=%s pid=%d isolation=%s", sessionID, rc.Agent, cmd.Process.Pid, rc.Isolation)
 
-	// Read PTY output
+	// Read PTY output (with first-byte timing)
 	go s.readPTY(sess)
+
+	// Watchdog: if no PTY output within 15s, dump diagnostic info
+	go s.startupWatchdog(sess)
 
 	// Write files and start gRPC server
 	sockPath := filepath.Join(s.dir, "egg.sock")
@@ -366,9 +369,14 @@ func (s *Server) cleanup() {
 
 func (s *Server) readPTY(sess *Session) {
 	buf := make([]byte, 4096)
+	firstByte := true
 	for {
 		n, err := sess.ptmx.Read(buf)
 		if n > 0 {
+			if firstByte {
+				log.Printf("egg: first PTY output from pid %d after %s (%d bytes)", sess.PID, time.Since(sess.StartedAt).Round(time.Millisecond), n)
+				firstByte = false
+			}
 			data := make([]byte, n)
 			copy(data, buf[:n])
 			sess.ring.Write(data)
@@ -604,6 +612,89 @@ func agentNeedsNetwork(agent string) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+// startupWatchdog logs diagnostic info if no PTY output within 15 seconds.
+func (s *Server) startupWatchdog(sess *Session) {
+	timer := time.NewTimer(15 * time.Second)
+	defer timer.Stop()
+
+	select {
+	case <-sess.done:
+		return
+	case <-timer.C:
+	}
+
+	// Check if we got any output
+	if len(sess.ring.Bytes()) > 0 {
+		return // got output, all good
+	}
+
+	log.Printf("egg: WATCHDOG: no output from pid %d after 15s — dumping diagnostics", sess.PID)
+
+	// Is the process still alive?
+	if sess.cmd != nil && sess.cmd.Process != nil {
+		if err := sess.cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			log.Printf("egg: WATCHDOG: process %d is DEAD: %v", sess.PID, err)
+		} else {
+			log.Printf("egg: WATCHDOG: process %d is ALIVE but producing no output", sess.PID)
+		}
+	}
+
+	// Dump process tree under our PID
+	if out, err := exec.Command("ps", "-o", "pid,ppid,stat,wchan,command", "-p", strconv.Itoa(sess.PID)).CombinedOutput(); err == nil {
+		log.Printf("egg: WATCHDOG: ps output:\n%s", string(out))
+	}
+
+	// On macOS, check for sandbox denials in the unified log
+	if runtime.GOOS == "darwin" {
+		if out, err := exec.Command("log", "show", "--predicate",
+			fmt.Sprintf("eventMessage contains \"deny\" AND process == \"sandbox-exec\""),
+			"--last", "30s", "--style", "compact").CombinedOutput(); err == nil {
+			lines := strings.TrimSpace(string(out))
+			if lines != "" && !strings.HasPrefix(lines, "Filtering the log data") {
+				log.Printf("egg: WATCHDOG: sandbox denials:\n%s", lines)
+			} else {
+				log.Printf("egg: WATCHDOG: no sandbox denials in last 30s")
+			}
+		}
+	}
+
+	// Also try to find child processes (sandbox-exec spawns the real process)
+	if out, err := exec.Command("pgrep", "-P", strconv.Itoa(sess.PID)).CombinedOutput(); err == nil {
+		childPids := strings.TrimSpace(string(out))
+		if childPids != "" {
+			log.Printf("egg: WATCHDOG: child PIDs of %d: %s", sess.PID, childPids)
+			for _, cpid := range strings.Fields(childPids) {
+				if out2, err := exec.Command("ps", "-o", "pid,stat,wchan,command", "-p", cpid).CombinedOutput(); err == nil {
+					log.Printf("egg: WATCHDOG: child %s:\n%s", cpid, string(out2))
+				}
+			}
+		}
+	}
+
+	// Second watchdog at 30s with lsof
+	timer2 := time.NewTimer(15 * time.Second)
+	defer timer2.Stop()
+	select {
+	case <-sess.done:
+		return
+	case <-timer2.C:
+	}
+
+	if len(sess.ring.Bytes()) > 0 {
+		return
+	}
+
+	log.Printf("egg: WATCHDOG: still no output at 30s, checking open files")
+	if out, err := exec.Command("lsof", "-p", strconv.Itoa(sess.PID)).CombinedOutput(); err == nil {
+		// Just log first 50 lines to avoid spam
+		lines := strings.Split(string(out), "\n")
+		if len(lines) > 50 {
+			lines = lines[:50]
+		}
+		log.Printf("egg: WATCHDOG: lsof (first 50 lines):\n%s", strings.Join(lines, "\n"))
 	}
 }
 

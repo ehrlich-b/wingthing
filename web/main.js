@@ -1968,6 +1968,9 @@ function connectPTY(agent, cwd, wingId) {
     // Detach any existing PTY connection first
     detachPTY();
 
+    // Clear terminal immediately so stale output from previous session isn't visible
+    term.clear();
+
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
 
