@@ -9,6 +9,7 @@ import '@nlux/themes/nova.css';
 // === State ===
 let ptyWs = null;
 let ptySessionId = null;
+let ptyWingId = null;
 let term = null;
 let fitAddon = null;
 let serializeAddon = null;
@@ -97,6 +98,9 @@ async function init() {
     // Event handlers
     homeBtn.addEventListener('click', showHome);
     newSessionBtn.addEventListener('click', showPalette);
+    headerTitle.addEventListener('click', function() {
+        if (ptySessionId) showSessionInfo();
+    });
 
     chatDeleteBtn.addEventListener('click', function () {
         if (chatSessionId) {
@@ -553,6 +557,17 @@ function projectName(cwd) {
     return parts[parts.length - 1] || '~';
 }
 
+function wingMachineName(wingId) {
+    var wing = wingsData.find(function(w) { return w.id === wingId; });
+    return wing ? (wing.machine_id || wing.id.substring(0, 8)) : '';
+}
+
+function sessionTitle(agent, wingId) {
+    var machine = wingMachineName(wingId);
+    if (machine) return machine + ' \u00b7 ' + agent;
+    return agent || '';
+}
+
 function renderSidebar() {
     var tabs = sessionsData.map(function(s) {
         var name = projectName(s.cwd);
@@ -940,6 +955,51 @@ function showEggDetail(sessionId) {
             delBtn.classList.add('btn-armed');
         }
     });
+}
+
+function showSessionInfo() {
+    var s = sessionsData.find(function(s) { return s.id === ptySessionId; });
+    var w = ptyWingId ? wingsData.find(function(w) { return w.id === ptyWingId; }) : null;
+    if (!s && !w) return;
+
+    var machineName = w ? (w.machine_id || w.id.substring(0, 8)) : 'unknown';
+    var agent = s ? (s.agent || '?') : '?';
+    var cwdDisplay = s && s.cwd ? shortenPath(s.cwd) : '~';
+
+    // Wing info
+    var wingVersion = w ? (w.version || 'unknown') : 'unknown';
+    var wingPlatform = w ? (w.platform || 'unknown') : 'unknown';
+    var wingAgents = w ? (w.agents || []).join(', ') || 'none' : 'unknown';
+    var isOnline = w ? w.online !== false : false;
+    var dotClass = isOnline ? 'live' : 'offline';
+
+    // Egg config summary
+    var configSummary = '';
+    if (s && s.egg_config) {
+        var isoMatch = s.egg_config.match(/isolation:\s*(\S+)/);
+        var isoLevel = isoMatch ? isoMatch[1] : '?';
+        configSummary = '<div class="detail-row"><span class="detail-key">isolation</span>' +
+            '<span class="detail-val copyable" data-copy="' + escapeHtml(s.egg_config) + '" title="click to copy full YAML">' +
+            escapeHtml(isoLevel) + '</span></div>';
+    }
+
+    // E2E status
+    var e2eStatus = e2eKey ? 'active' : 'none';
+
+    detailDialog.innerHTML =
+        '<h3><span class="detail-connection-dot ' + dotClass + '"></span>' + escapeHtml(machineName) + ' &middot; ' + escapeHtml(agent) + '</h3>' +
+        '<div class="detail-row"><span class="detail-key">session</span><span class="detail-val text-dim">' + escapeHtml(ptySessionId || '') + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">cwd</span><span class="detail-val text-dim">' + escapeHtml(cwdDisplay) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">e2e</span><span class="detail-val">' + e2eStatus + '</span></div>' +
+        configSummary +
+        '<div class="detail-row" style="margin-top:12px"><span class="detail-key" style="font-weight:600">wing</span></div>' +
+        '<div class="detail-row"><span class="detail-key">machine</span><span class="detail-val">' + escapeHtml(machineName) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">version</span><span class="detail-val">' + escapeHtml(wingVersion) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(wingPlatform) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + escapeHtml(wingAgents) + '</span></div>';
+
+    setupCopyable(detailDialog);
+    detailOverlay.classList.add('open');
 }
 
 // Wire up detail modal close
@@ -1567,6 +1627,7 @@ function detachPTY() {
         ptyWs = null;
     }
     ptySessionId = null;
+    ptyWingId = null;
     e2eKey = null;
     ephemeralPrivKey = null;
 }
@@ -1945,9 +2006,7 @@ function setupPTYHandlers(ws, reattach) {
         switch (msg.type) {
             case 'pty.started':
                 ptySessionId = msg.session_id;
-                var sessionCWD = msg.cwd || '';
-                var pName = projectName(sessionCWD);
-                headerTitle.textContent = pName !== '~' ? pName + ' \u00b7 ' + msg.agent : msg.agent;
+                headerTitle.textContent = sessionTitle(msg.agent, ptyWingId);
 
                 if (msg.public_key) {
                     deriveE2EKey(msg.public_key).then(function (key) {
@@ -2026,6 +2085,7 @@ function setupPTYHandlers(ws, reattach) {
         if (ws !== ptyWs) return;
         ptyStatus.textContent = '';
         ptySessionId = null;
+        ptyWingId = null;
         renderSidebar();
     };
 
@@ -2041,6 +2101,9 @@ function connectPTY(agent, cwd, wingId) {
 
     // Clear terminal immediately so stale output from previous session isn't visible
     term.clear();
+
+    // Track which wing this session is on
+    ptyWingId = wingId || (onlineWings()[0] || {}).id || null;
 
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
@@ -2080,7 +2143,8 @@ function attachPTY(sessionId) {
 
     // Find session info for header
     var sess = sessionsData.find(function(s) { return s.id === sessionId; });
-    headerTitle.textContent = sess ? projectName(sess.cwd) + ' \u00b7 ' + (sess.agent || '?') : 'reconnecting...';
+    ptyWingId = sess ? sess.wing_id : null;
+    headerTitle.textContent = sess ? sessionTitle(sess.agent || '?', sess.wing_id) : 'reconnecting...';
     ptyStatus.textContent = '';
 
     ephemeralPrivKey = x25519.utils.randomSecretKey();
@@ -2102,6 +2166,7 @@ function disconnectPTY() {
     }
     if (ptyWs) { ptyWs.close(); ptyWs = null; }
     ptySessionId = null;
+    ptyWingId = null;
     e2eKey = null;
     ephemeralPrivKey = null;
     ptyStatus.textContent = '';
