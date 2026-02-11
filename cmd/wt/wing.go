@@ -948,11 +948,13 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte) {
 	var gcmMu sync.Mutex
 	var gcm cipher.AEAD
-	var wingPubKeyB64 string
 	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
-	if privKeyErr == nil {
-		wingPubKeyB64 = base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
+	if privKeyErr != nil {
+		log.Printf("pty session %s: FATAL: load private key: %v (reclaim aborted)", sessionID, privKeyErr)
+		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: 1, Error: "E2E encryption required but wing private key missing"})
+		return
 	}
+	wingPubKeyB64 := base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
 
 	// Attach to existing egg session
 	stream, err := ec.AttachSession(ctx, sessionID)
@@ -982,17 +984,14 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				gcmMu.Lock()
 				currentGCM := gcm
 				gcmMu.Unlock()
-				var data string
-				if currentGCM != nil {
-					encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
-					if encErr != nil {
-						continue
-					}
-					data = encrypted
-				} else {
-					data = base64.StdEncoding.EncodeToString(p.Output)
+				if currentGCM == nil {
+					continue // drop output until E2E established via reattach
 				}
-				write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: data})
+				encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
+				if encErr != nil {
+					continue
+				}
+				write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
 			case *pb.SessionMsg_ExitCode:
 				log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
 				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
@@ -1017,9 +1016,11 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					continue
 				}
 				wingAttention.Delete(sessionID)
-				if attach.PublicKey != "" && privKeyErr == nil {
+				if attach.PublicKey != "" {
 					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
-					if deriveErr == nil {
+					if deriveErr != nil {
+						log.Printf("pty session %s: reattach derive key failed: %v", sessionID, deriveErr)
+					} else {
 						gcmMu.Lock()
 						gcm = derived
 						gcmMu.Unlock()
@@ -1037,17 +1038,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							gcmMu.Lock()
 							replayGCM := gcm
 							gcmMu.Unlock()
-							var replayData string
-							if replayGCM != nil {
-								encrypted, encErr := auth.Encrypt(replayGCM, replay.Output)
-								if encErr == nil {
-									replayData = encrypted
-								}
+							if replayGCM == nil {
+								log.Printf("pty session %s: dropping replay — E2E not established", sessionID)
+							} else if encrypted, encErr := auth.Encrypt(replayGCM, replay.Output); encErr != nil {
+								log.Printf("pty session %s: replay encrypt error: %v", sessionID, encErr)
 							} else {
-								replayData = base64.StdEncoding.EncodeToString(replay.Output)
-							}
-							if replayData != "" {
-								write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: replayData})
+								write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
 								log.Printf("pty session %s: replayed %d bytes", sessionID, len(replay.Output))
 							}
 						}
@@ -1064,19 +1060,13 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				gcmMu.Lock()
 				currentGCM := gcm
 				gcmMu.Unlock()
-				var decoded []byte
-				if currentGCM != nil {
-					var decErr error
-					decoded, decErr = auth.Decrypt(currentGCM, msg.Data)
-					if decErr != nil {
-						continue
-					}
-				} else {
-					var decErr error
-					decoded, decErr = base64.StdEncoding.DecodeString(msg.Data)
-					if decErr != nil {
-						continue
-					}
+				if currentGCM == nil {
+					log.Printf("pty session %s: rejecting input — E2E not established", sessionID)
+					continue
+				}
+				decoded, decErr := auth.Decrypt(currentGCM, msg.Data)
+				if decErr != nil {
+					continue
 				}
 				stream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Input{Input: decoded}})
 
@@ -1101,24 +1091,26 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
 func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig) {
-	// Set up E2E encryption if browser sent a public key
+	// Set up E2E encryption — required, no plaintext fallback
 	var gcmMu sync.Mutex
 	var gcm cipher.AEAD
 	var wingPubKeyB64 string
 	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
 	if privKeyErr != nil {
-		log.Printf("pty: load private key: %v (E2E disabled)", privKeyErr)
-	} else {
-		wingPubKeyB64 = base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
+		log.Printf("pty session %s: FATAL: load private key: %v", start.SessionID, privKeyErr)
+		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E encryption required but wing private key missing"})
+		return
 	}
-	if start.PublicKey != "" && privKeyErr == nil {
+	wingPubKeyB64 = base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
+	if start.PublicKey != "" {
 		derived, deriveErr := auth.DeriveSharedKey(privKey, start.PublicKey)
 		if deriveErr != nil {
-			log.Printf("pty: derive shared key: %v", deriveErr)
-		} else {
-			gcm = derived
-			log.Printf("pty session %s: E2E encryption enabled", start.SessionID)
+			log.Printf("pty session %s: FATAL: derive shared key: %v", start.SessionID, deriveErr)
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E key exchange failed"})
+			return
 		}
+		gcm = derived
+		log.Printf("pty session %s: E2E encryption enabled", start.SessionID)
 	}
 
 	// Spawn a per-session egg
@@ -1176,21 +1168,19 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 				currentGCM := gcm
 				gcmMu.Unlock()
 
-				var data string
-				if currentGCM != nil {
-					encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
-					if encErr != nil {
-						log.Printf("pty session %s: encrypt error: %v", start.SessionID, encErr)
-						continue
-					}
-					data = encrypted
-				} else {
-					data = base64.StdEncoding.EncodeToString(p.Output)
+				if currentGCM == nil {
+					// E2E not yet established — drop output until key exchange completes
+					continue
+				}
+				encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
+				if encErr != nil {
+					log.Printf("pty session %s: encrypt error: %v", start.SessionID, encErr)
+					continue
 				}
 				write(ws.PTYOutput{
 					Type:      ws.TypePTYOutput,
 					SessionID: start.SessionID,
-					Data:      data,
+					Data:      encrypted,
 				})
 
 			case *pb.SessionMsg_ExitCode:
@@ -1217,10 +1207,11 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					continue
 				}
 				wingAttention.Delete(start.SessionID)
-				if attach.PublicKey != "" && privKeyErr == nil {
+				if attach.PublicKey != "" {
 					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
 					if deriveErr != nil {
-						log.Printf("pty session %s: reattach derive key: %v", start.SessionID, deriveErr)
+						log.Printf("pty session %s: reattach derive key failed: %v", start.SessionID, deriveErr)
+						// Don't update gcm — keep existing encryption or refuse data
 					} else {
 						gcmMu.Lock()
 						gcm = derived
@@ -1250,22 +1241,15 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 							replayGCM := gcm
 							gcmMu.Unlock()
 
-							var replayData string
-							if replayGCM != nil {
-								encrypted, encErr := auth.Encrypt(replayGCM, replay.Output)
-								if encErr != nil {
-									log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
-								} else {
-									replayData = encrypted
-								}
+							if replayGCM == nil {
+								log.Printf("pty session %s: dropping replay — E2E not established", start.SessionID)
+							} else if encrypted, encErr := auth.Encrypt(replayGCM, replay.Output); encErr != nil {
+								log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
 							} else {
-								replayData = base64.StdEncoding.EncodeToString(replay.Output)
-							}
-							if replayData != "" {
 								write(ws.PTYOutput{
 									Type:      ws.TypePTYOutput,
 									SessionID: start.SessionID,
-									Data:      replayData,
+									Data:      encrypted,
 								})
 								log.Printf("pty session %s: replayed %d bytes", start.SessionID, len(replay.Output))
 							}
@@ -1288,20 +1272,14 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 				currentGCM := gcm
 				gcmMu.Unlock()
 
-				var decoded []byte
-				if currentGCM != nil {
-					var decErr error
-					decoded, decErr = auth.Decrypt(currentGCM, msg.Data)
-					if decErr != nil {
-						log.Printf("pty session %s: decrypt error: %v", start.SessionID, decErr)
-						continue
-					}
-				} else {
-					var decErr error
-					decoded, decErr = base64.StdEncoding.DecodeString(msg.Data)
-					if decErr != nil {
-						continue
-					}
+				if currentGCM == nil {
+					log.Printf("pty session %s: rejecting input — E2E not established", start.SessionID)
+					continue
+				}
+				decoded, decErr := auth.Decrypt(currentGCM, msg.Data)
+				if decErr != nil {
+					log.Printf("pty session %s: decrypt error: %v", start.SessionID, decErr)
+					continue
 				}
 				stream.Send(&pb.SessionMsg{
 					SessionId: start.SessionID,
