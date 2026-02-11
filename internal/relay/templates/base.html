@@ -23,6 +23,8 @@ nav .logo:hover{color:var(--action)}
 .nav-links a:hover{color:var(--text)}
 .nav-btn{background:none;border:none;color:var(--text-dim);font-family:var(--mono);font-size:13px;cursor:pointer;padding:0}
 .nav-btn:hover{color:var(--text)}
+.nav-cta{background:var(--action);color:#fff !important;padding:6px 14px;border-radius:4px;font-weight:600;text-decoration:none}
+.nav-cta:hover{background:var(--action-hover);color:#fff !important}
 .user-name{color:var(--text);font-size:13px}
 a{color:var(--action)}a:hover{color:var(--action-hover)}
 @media(max-width:600px){.container{padding:12px 12px}}
@@ -34,13 +36,13 @@ a{color:var(--action)}a:hover{color:var(--action-hover)}
 <nav>
 <a href="/" class="logo">wingthing.ai</a>
 <div class="nav-links">
-<a href="/social">social</a>
+<a href="/docs">docs</a>
 <a href="/skills">skills</a>
-<a href="/self-host">self-host</a>
-{{if .User}}<a href="https://app.wingthing.ai">app</a>
+<a href="/social">social</a>
+{{if .User}}<a href="https://app.wingthing.ai" class="nav-cta">open app</a>
 <span class="user-name">{{.User.DisplayName}}</span>
 <form method="POST" action="/auth/logout" style="display:inline"><button type="submit" class="nav-btn">logout</button></form>
-{{else}}<a href="/login">login</a>{{end}}
+{{else}}<a href="/login" class="nav-cta">login</a>{{end}}
 </div>
 </nav>
 {{template "content" .}}

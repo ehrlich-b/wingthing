@@ -1,0 +1,181 @@
+{{define "title"}}docs — wingthing.ai{{end}}
+{{define "head"}}
+<style>
+.docs-layout{display:flex;gap:32px;align-items:flex-start}
+.docs-nav{position:sticky;top:24px;min-width:160px;flex-shrink:0;font-family:var(--mono);font-size:12px}
+.docs-nav a{display:block;color:var(--text-dim);text-decoration:none;padding:5px 0;border-left:2px solid transparent;padding-left:10px}
+.docs-nav a:hover,.docs-nav a.active{color:var(--text);border-left-color:var(--action)}
+.docs-body{flex:1;min-width:0;max-width:780px}
+.docs-body h1{font-size:24px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
+.docs-body>p.lead{color:var(--text-dim);font-size:14px;line-height:1.6;margin-bottom:28px}
+.docs-section{margin-bottom:40px}
+.docs-section h2{font-size:17px;font-weight:600;margin-bottom:12px;color:var(--action);padding-top:16px}
+.docs-section p{color:var(--text-dim);font-size:14px;line-height:1.6;margin-bottom:12px}
+.docs-section ul{color:var(--text-dim);font-size:14px;line-height:1.6;margin-bottom:12px;padding-left:20px}
+.docs-section li{margin-bottom:4px}
+.docs-code{background:var(--bg-card);border-radius:6px;padding:14px 20px;font-size:13px;line-height:1.7;font-family:var(--mono);overflow-x:auto;margin-bottom:16px}
+.docs-code .prompt{color:var(--text-dim);user-select:none}
+.docs-code .cmd{color:var(--text)}
+.docs-code .comment{color:#666}
+.docs-table{width:100%;border-collapse:collapse;font-size:13px;font-family:var(--mono);margin-bottom:16px}
+.docs-table th,.docs-table td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--accent)}
+.docs-table th{color:var(--text-dim);font-weight:400}
+.vocab-table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px}
+.vocab-table th,.vocab-table td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--accent)}
+.vocab-table th{color:var(--text-dim);font-weight:400;font-family:var(--mono);font-size:12px}
+.vocab-table td:first-child{color:var(--action);font-weight:600;font-family:var(--mono);white-space:nowrap}
+@media(max-width:700px){
+  .docs-nav{display:none}
+  .docs-body h1{font-size:20px}
+  .docs-code{font-size:11px;padding:12px 14px}
+}
+</style>
+{{end}}
+{{define "content"}}
+<div class="docs-layout">
+<nav class="docs-nav">
+<a href="#overview">overview</a>
+<a href="#installation">installation</a>
+<a href="#wing-setup">wing setup</a>
+<a href="#egg-configuration">egg configuration</a>
+<a href="#self-hosting">self-hosting</a>
+<a href="#roost-configuration">roost configuration</a>
+<a href="#security">security</a>
+</nav>
+<div class="docs-body">
+<h1>documentation</h1>
+<p class="lead">wingthing runs AI agents sandboxed on your machine, accessible from anywhere.</p>
+
+<div class="docs-section" id="overview">
+<h2>overview</h2>
+<p>wingthing is a CLI tool (<code>wt</code>) that lets you run Claude Code, Codex, Ollama, and other AI agents in sandboxed sessions on your own hardware — then access them remotely from any device via an encrypted relay.</p>
+<table class="vocab-table">
+<tr><th>term</th><th>what it is</th></tr>
+<tr><td>wing</td><td>Your machine. Install <code>wt</code>, run <code>wt start</code>, and it connects outbound to the roost. One machine = one wing.</td></tr>
+<tr><td>roost</td><td>The relay server. Wings connect to it; browsers connect to it. It bridges the two. Use ours at <code>wingthing.ai</code> or self-host.</td></tr>
+<tr><td>egg</td><td>A sandboxed agent session. Each egg is an isolated process with its own PTY, sandbox profile, and gRPC socket. Runs Claude, Codex, Ollama, etc.</td></tr>
+</table>
+<p>The architecture is simple: wings connect outbound to the roost (no port forwarding needed), and the roost bridges WebSocket connections between wings and browsers. All PTY traffic is E2E encrypted.</p>
+</div>
+
+<div class="docs-section" id="installation">
+<h2>installation</h2>
+<p>Single binary, no dependencies. macOS and Linux, x64 and arm64.</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span>
+</div>
+<p>Installs to <code>~/.local/bin/wt</code>. Set <code>WT_INSTALL_DIR</code> to change the location.</p>
+<p>Or grab the binary from <a href="https://github.com/ehrlich-b/wingthing/releases/latest">GitHub releases</a>.</p>
+<p>To update:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt update</span>
+</div>
+</div>
+
+<div class="docs-section" id="wing-setup">
+<h2>wing setup</h2>
+<p>Three commands to go from install to remote access:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt login</span><span class="comment">                  # authenticate with the roost</span><br>
+<span class="prompt">$ </span><span class="cmd">wt start</span><span class="comment">                  # start the wing daemon</span><br>
+<span class="prompt">$ </span><span class="cmd">open app.wingthing.ai</span><span class="comment">     # start terminals from your browser</span>
+</div>
+<p><code>wt start</code> runs the wing as a background daemon. Use <code>wt wing start --foreground</code> for debugging.</p>
+<p>Other wing commands:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt wing status</span><span class="comment">            # check daemon status + active sessions</span><br>
+<span class="prompt">$ </span><span class="cmd">wt stop</span><span class="comment">                   # stop the wing daemon</span>
+</div>
+</div>
+
+<div class="docs-section" id="egg-configuration">
+<h2>egg configuration</h2>
+<p>Every agent session runs inside a sandbox. Configure isolation, mounts, and deny paths in <code>egg.yaml</code>.</p>
+<table class="docs-table">
+<tr><th>level</th><th>network</th><th>filesystem</th></tr>
+<tr><td>strict</td><td>denied</td><td>minimal (no mounts)</td></tr>
+<tr><td>standard</td><td>denied</td><td>mounted dirs only</td></tr>
+<tr><td>network</td><td>allowed</td><td>mounted dirs only</td></tr>
+<tr><td>privileged</td><td>allowed</td><td>full access (no sandbox)</td></tr>
+</table>
+<p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically.</p>
+<p>Example <code>egg.yaml</code>:</p>
+<div class="docs-code">
+isolation: standard<br>
+mounts:<br>
+&nbsp;&nbsp;- /home/me/projects/myapp<br>
+deny:<br>
+&nbsp;&nbsp;- /home/me/.ssh<br>
+&nbsp;&nbsp;- /home/me/.aws
+</div>
+<p>The sandbox auto-injects mounts for the agent binary's install root and config directory, so you don't need to know where Claude or Codex is installed.</p>
+</div>
+
+<div class="docs-section" id="self-hosting">
+<h2>self-hosting</h2>
+<p>Run your own roost. Single binary, SQLite, no external dependencies.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">quick start</h3>
+<p><code>--local</code> runs single-user mode: no OAuth, no env vars, no login page. Just works.</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">git clone https://github.com/ehrlich-b/wingthing.git</span><br>
+<span class="prompt">$ </span><span class="cmd">cd wingthing && make build</span><br>
+<span class="prompt">$ </span><span class="cmd">./wt serve --local</span>
+</div>
+<p>Open <a href="http://localhost:8080">localhost:8080</a>. You're logged in automatically.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">connect a wing</h3>
+<p>In another terminal, point a wing at your local roost:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt wing start --roost http://localhost:8080 --foreground</span>
+</div>
+<p>In local mode the device token is written automatically — no <code>wt login</code> needed.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">docker</h3>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">docker build -t wingthing .</span><br>
+<span class="prompt">$ </span><span class="cmd">docker run -p 8080:8080 -v wt-data:/data wingthing</span>
+</div>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">fly.io</h3>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">fly launch --name my-wingthing</span><br>
+<span class="prompt">$ </span><span class="cmd">fly deploy</span>
+</div>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">multi-user (production)</h3>
+<p>For shared roosts, set up GitHub OAuth and run without <code>--local</code>:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">./wt serve --addr :8080</span>
+</div>
+<p>Then connect wings with <code>wt login --roost https://my-roost.example.com</code>.</p>
+</div>
+
+<div class="docs-section" id="roost-configuration">
+<h2>roost configuration</h2>
+<table class="docs-table">
+<tr><th>var</th><th>purpose</th></tr>
+<tr><td>WT_BASE_URL</td><td>public URL for OAuth callbacks</td></tr>
+<tr><td>GITHUB_CLIENT_ID</td><td>GitHub OAuth app ID</td></tr>
+<tr><td>GITHUB_CLIENT_SECRET</td><td>GitHub OAuth app secret</td></tr>
+<tr><td>OPENAI_API_KEY</td><td>embeddings for social feed (optional)</td></tr>
+<tr><td>WT_JWT_SECRET</td><td>base64-encoded JWT signing key (auto-generated if unset)</td></tr>
+<tr><td>WT_APP_HOST</td><td>hostname for app subdomain (e.g. app.example.com)</td></tr>
+<tr><td>WT_WS_HOST</td><td>hostname for WebSocket subdomain (e.g. ws.example.com)</td></tr>
+</table>
+<p>Without OAuth env vars, use <code>--local</code> for single-user mode. Without <code>--local</code> or OAuth, the server boots read-only.</p>
+</div>
+
+<div class="docs-section" id="security">
+<h2>security</h2>
+<p>Two layers of protection:</p>
+<ul>
+<li><strong>Sandbox:</strong> Every egg session runs in a platform-native sandbox. Seatbelt on macOS, user namespaces + seccomp on Linux. The sandbox is the permission boundary — agents get full tool access because the sandbox constrains what they can do.</li>
+<li><strong>E2E encryption:</strong> PTY traffic between your browser and your wing is encrypted end-to-end using X25519 key exchange and AES-GCM. The roost never sees plaintext terminal data.</li>
+</ul>
+<p>Wings connect outbound to the roost — no inbound ports, no static IP, works behind any NAT or firewall.</p>
+</div>
+
+</div>
+</div>
+{{end}}

@@ -204,278 +204,294 @@ func readPid() (int, error) {
 }
 
 func wingCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "wing",
+		Short: "Manage your wing",
+		Long:  "Your wing makes this machine reachable from anywhere via the roost. Use 'wt wing start' to go online.",
+	}
+
+	cmd.AddCommand(wingStartCmd())
+	cmd.AddCommand(wingStopCmd())
+	cmd.AddCommand(wingStatusCmd())
+
+	return cmd
+}
+
+func wingStartCmd() *cobra.Command {
 	var roostFlag string
 	var labelsFlag string
 	var convFlag string
-	var daemonFlag bool
+	var foregroundFlag bool
 	var eggConfigFlag string
 
 	cmd := &cobra.Command{
-		Use:   "wing",
-		Short: "Connect to roost and accept remote tasks",
-		Long:  "Start a wing — your machine becomes reachable from anywhere via the roost. Same as sitting at the keyboard, just remote.",
+		Use:   "start",
+		Short: "Start wing daemon and go online",
+		Long:  "Start a wing — your machine becomes reachable from anywhere via the roost. Runs as a background daemon by default. Use --foreground for debugging.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Daemonize: re-exec detached, write PID file, return
-			if daemonFlag {
-				if pid, err := readPid(); err == nil {
-					return fmt.Errorf("wing daemon already running (pid %d)", pid)
-				}
-
-				exe, err := os.Executable()
-				if err != nil {
-					return err
-				}
-
-				// Build args without -d
-				var childArgs []string
-				childArgs = append(childArgs, "wing")
-				if roostFlag != "" {
-					childArgs = append(childArgs, "--roost", roostFlag)
-				}
-				if labelsFlag != "" {
-					childArgs = append(childArgs, "--labels", labelsFlag)
-				}
-				if convFlag != "auto" {
-					childArgs = append(childArgs, "--conv", convFlag)
-				}
-				if eggConfigFlag != "" {
-					childArgs = append(childArgs, "--egg-config", eggConfigFlag)
-				}
-
-				rotateLog(wingLogPath())
-				logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-				if err != nil {
-					return fmt.Errorf("open log: %w", err)
-				}
-
-				home, _ := os.UserHomeDir()
-
-				child := exec.Command(exe, childArgs...)
-				child.Dir = home
-				child.Stdout = logFile
-				child.Stderr = logFile
-				child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-
-				if err := child.Start(); err != nil {
-					logFile.Close()
-					return fmt.Errorf("start daemon: %w", err)
-				}
-				logFile.Close()
-
-				os.WriteFile(wingPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644)
-				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
-				fmt.Printf("  log: %s\n", wingLogPath())
-				fmt.Println()
-				fmt.Println("open https://app.wingthing.ai to start a terminal")
-				return nil
+			// Foreground mode: run directly
+			if foregroundFlag {
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag)
 			}
 
-			cfg, err := config.Load()
+			// Daemon mode (default): re-exec detached, write PID file, return
+			if pid, err := readPid(); err == nil {
+				return fmt.Errorf("wing daemon already running (pid %d)", pid)
+			}
+
+			exe, err := os.Executable()
 			if err != nil {
 				return err
 			}
 
-			// Load wing-level egg config
-			var wingEggCfg *egg.EggConfig
-			if eggConfigFlag != "" {
-				wingEggCfg, err = egg.LoadEggConfig(eggConfigFlag)
-				if err != nil {
-					return fmt.Errorf("load egg config: %w", err)
-				}
-				log.Printf("egg: loaded wing config from %s (isolation=%s)", eggConfigFlag, wingEggCfg.Isolation)
-			} else {
-				// Check ~/.wingthing/egg.yaml
-				defaultPath := filepath.Join(cfg.Dir, "egg.yaml")
-				wingEggCfg, err = egg.LoadEggConfig(defaultPath)
-				if err != nil {
-					wingEggCfg = egg.DefaultEggConfig()
-					log.Printf("egg: using default config (isolation=%s)", wingEggCfg.Isolation)
-				} else {
-					log.Printf("egg: loaded wing config from %s (isolation=%s)", defaultPath, wingEggCfg.Isolation)
-				}
+			// Build args for foreground child
+			var childArgs []string
+			childArgs = append(childArgs, "wing", "start", "--foreground")
+			if roostFlag != "" {
+				childArgs = append(childArgs, "--roost", roostFlag)
 			}
-			var wingEggMu sync.Mutex
-
-			// Resolve roost URL
-			roostURL := roostFlag
-			if roostURL == "" {
-				roostURL = cfg.RoostURL
-			}
-			if roostURL == "" {
-				roostURL = "https://ws.wingthing.ai"
-			}
-			// Convert HTTP URL to WebSocket URL
-			wsURL := strings.Replace(roostURL, "https://", "wss://", 1)
-			wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
-			wsURL = strings.TrimRight(wsURL, "/") + "/ws/wing"
-
-			// Load auth token
-			ts := auth.NewTokenStore(cfg.Dir)
-			tok, err := ts.Load()
-			if err != nil || !ts.IsValid(tok) {
-				return fmt.Errorf("not logged in — run: wt login")
-			}
-
-			// Open local store for task execution
-			s, err := store.Open(cfg.DBPath())
-			if err != nil {
-				return fmt.Errorf("open db: %w", err)
-			}
-			defer s.Close()
-
-			// Detect available agents
-			var agents []string
-			for _, a := range []struct{ name, cmd string }{
-				{"claude", "claude"},
-				{"ollama", "ollama"},
-				{"gemini", "gemini"},
-				{"codex", "codex"},
-				{"cursor", "agent"},
-			} {
-				if _, err := exec.LookPath(a.cmd); err == nil {
-					agents = append(agents, a.name)
-				}
-			}
-
-			// List installed skills
-			var skills []string
-			entries, _ := os.ReadDir(cfg.SkillsDir())
-			for _, e := range entries {
-				if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-					skills = append(skills, strings.TrimSuffix(e.Name(), ".md"))
-				}
-			}
-
-			// Parse labels
-			var labels []string
 			if labelsFlag != "" {
-				labels = strings.Split(labelsFlag, ",")
+				childArgs = append(childArgs, "--labels", labelsFlag)
+			}
+			if convFlag != "auto" {
+				childArgs = append(childArgs, "--conv", convFlag)
+			}
+			if eggConfigFlag != "" {
+				childArgs = append(childArgs, "--egg-config", eggConfigFlag)
 			}
 
-			// Scan for git projects in current directory
-			cwd, _ := os.Getwd()
-			projects := discoverProjects(cwd, 2)
+			rotateLog(wingLogPath())
+			logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err != nil {
+				return fmt.Errorf("open log: %w", err)
+			}
 
-			fmt.Printf("connecting to %s\n", wsURL)
-			fmt.Printf("  agents: %v\n", agents)
-			fmt.Printf("  skills: %v\n", skills)
-			if len(labels) > 0 {
-				fmt.Printf("  labels: %v\n", labels)
+			home, _ := os.UserHomeDir()
+
+			child := exec.Command(exe, childArgs...)
+			child.Dir = home
+			child.Stdout = logFile
+			child.Stderr = logFile
+			child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+			if err := child.Start(); err != nil {
+				logFile.Close()
+				return fmt.Errorf("start daemon: %w", err)
 			}
-			fmt.Printf("  projects: %d found\n", len(projects))
-			for _, p := range projects {
-				fmt.Printf("    %s → %s\n", p.Name, p.Path)
-			}
-			fmt.Printf("  conv: %s\n", convFlag)
+			logFile.Close()
+
+			os.WriteFile(wingPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644)
+			fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
+			fmt.Printf("  log: %s\n", wingLogPath())
 			fmt.Println()
 			fmt.Println("open https://app.wingthing.ai to start a terminal")
-
-			// Reap dead egg directories on startup
-			reapDeadEggs(cfg)
-
-			client := &ws.Client{
-				RoostURL:  wsURL,
-				Token:     tok.Token,
-				MachineID: cfg.MachineID,
-				Platform:  runtime.GOOS,
-				Version:   version,
-				Agents:    agents,
-				Skills:    skills,
-				Labels:    labels,
-				Projects:  projects,
-			}
-
-			client.OnTask = func(ctx context.Context, task ws.TaskSubmit, send ws.ChunkSender) (string, error) {
-				return executeRelayTask(ctx, cfg, s, task, send)
-			}
-
-			client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
-				wingEggMu.Lock()
-				currentEggCfg := wingEggCfg
-				wingEggMu.Unlock()
-				eggCfg := egg.DiscoverEggConfig(start.CWD, currentEggCfg)
-				handlePTYSession(ctx, cfg, start, write, input, eggCfg)
-			}
-
-			client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
-				handleChatStart(ctx, s, start, write)
-			}
-
-			client.OnChatMessage = func(ctx context.Context, msg ws.ChatMessage, write ws.PTYWriteFunc) {
-				handleChatMessage(ctx, cfg, s, msg, write)
-			}
-
-			client.OnChatDelete = func(ctx context.Context, del ws.ChatDelete, write ws.PTYWriteFunc) {
-				handleChatDelete(ctx, s, del, write)
-			}
-
-			client.OnDirList = func(ctx context.Context, req ws.DirList, write ws.PTYWriteFunc) {
-				handleDirList(ctx, req, write)
-			}
-
-			client.SessionLister = func(ctx context.Context) []ws.SessionInfo {
-				return listAliveEggSessions(cfg)
-			}
-
-			client.OnEggConfigUpdate = func(ctx context.Context, yamlStr string) {
-				newCfg, err := egg.LoadEggConfigFromYAML(yamlStr)
-				if err != nil {
-					log.Printf("egg: bad config update: %v", err)
-					return
-				}
-				wingEggMu.Lock()
-				wingEggCfg = newCfg
-				wingEggMu.Unlock()
-				log.Printf("egg: config updated from relay (isolation=%s)", newCfg.Isolation)
-			}
-
-			client.OnOrphanKill = func(ctx context.Context, sessionID string) {
-				killOrphanEgg(cfg, sessionID)
-			}
-
-			client.OnUpdate = func(ctx context.Context) {
-				log.Println("remote update requested")
-				exe, err := os.Executable()
-				if err != nil {
-					log.Printf("update: find executable: %v", err)
-					return
-				}
-				cmd := exec.Command(exe, "update")
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				if err := cmd.Run(); err != nil {
-					log.Printf("update: %v", err)
-				}
-			}
-
-			ctx, cancel := context.WithCancel(cmd.Context())
-			defer cancel()
-
-			// Reclaim surviving egg sessions after reconnect
-			go reclaimEggSessions(ctx, cfg, client)
-
-			sigCh := make(chan os.Signal, 1)
-			signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-			go func() {
-				<-sigCh
-				log.Println("wing shutting down...")
-				cancel()
-			}()
-
-			return client.Run(ctx)
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&roostFlag, "roost", "", "roost server URL (default: ws.wingthing.ai)")
 	cmd.Flags().StringVar(&labelsFlag, "labels", "", "comma-separated wing labels (e.g. gpu,cuda,research)")
 	cmd.Flags().StringVar(&convFlag, "conv", "auto", "conversation mode: auto (daily rolling), new (fresh), or a named thread")
-	cmd.Flags().BoolVarP(&daemonFlag, "daemon", "d", false, "run as background daemon")
+	cmd.Flags().BoolVar(&foregroundFlag, "foreground", false, "run in foreground instead of daemonizing")
 	cmd.Flags().StringVar(&eggConfigFlag, "egg-config", "", "path to egg.yaml for wing-level sandbox defaults")
 
-	cmd.AddCommand(wingStopCmd())
-	cmd.AddCommand(wingStatusCmd())
-
 	return cmd
+}
+
+func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// Load wing-level egg config
+	var wingEggCfg *egg.EggConfig
+	if eggConfigFlag != "" {
+		wingEggCfg, err = egg.LoadEggConfig(eggConfigFlag)
+		if err != nil {
+			return fmt.Errorf("load egg config: %w", err)
+		}
+		log.Printf("egg: loaded wing config from %s (isolation=%s)", eggConfigFlag, wingEggCfg.Isolation)
+	} else {
+		// Check ~/.wingthing/egg.yaml
+		defaultPath := filepath.Join(cfg.Dir, "egg.yaml")
+		wingEggCfg, err = egg.LoadEggConfig(defaultPath)
+		if err != nil {
+			wingEggCfg = egg.DefaultEggConfig()
+			log.Printf("egg: using default config (isolation=%s)", wingEggCfg.Isolation)
+		} else {
+			log.Printf("egg: loaded wing config from %s (isolation=%s)", defaultPath, wingEggCfg.Isolation)
+		}
+	}
+	var wingEggMu sync.Mutex
+
+	// Resolve roost URL
+	roostURL := roostFlag
+	if roostURL == "" {
+		roostURL = cfg.RoostURL
+	}
+	if roostURL == "" {
+		roostURL = "https://ws.wingthing.ai"
+	}
+	// Convert HTTP URL to WebSocket URL
+	wsURL := strings.Replace(roostURL, "https://", "wss://", 1)
+	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	wsURL = strings.TrimRight(wsURL, "/") + "/ws/wing"
+
+	// Load auth token
+	ts := auth.NewTokenStore(cfg.Dir)
+	tok, err := ts.Load()
+	if err != nil || !ts.IsValid(tok) {
+		return fmt.Errorf("not logged in — run: wt login")
+	}
+
+	// Open local store for task execution
+	s, err := store.Open(cfg.DBPath())
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer s.Close()
+
+	// Detect available agents
+	var agents []string
+	for _, a := range []struct{ name, cmd string }{
+		{"claude", "claude"},
+		{"ollama", "ollama"},
+		{"gemini", "gemini"},
+		{"codex", "codex"},
+		{"cursor", "agent"},
+	} {
+		if _, err := exec.LookPath(a.cmd); err == nil {
+			agents = append(agents, a.name)
+		}
+	}
+
+	// List installed skills
+	var skills []string
+	entries, _ := os.ReadDir(cfg.SkillsDir())
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			skills = append(skills, strings.TrimSuffix(e.Name(), ".md"))
+		}
+	}
+
+	// Parse labels
+	var labels []string
+	if labelsFlag != "" {
+		labels = strings.Split(labelsFlag, ",")
+	}
+
+	// Scan for git projects in current directory
+	cwd, _ := os.Getwd()
+	projects := discoverProjects(cwd, 2)
+
+	fmt.Printf("connecting to %s\n", wsURL)
+	fmt.Printf("  agents: %v\n", agents)
+	fmt.Printf("  skills: %v\n", skills)
+	if len(labels) > 0 {
+		fmt.Printf("  labels: %v\n", labels)
+	}
+	fmt.Printf("  projects: %d found\n", len(projects))
+	for _, p := range projects {
+		fmt.Printf("    %s → %s\n", p.Name, p.Path)
+	}
+	fmt.Printf("  conv: %s\n", convFlag)
+	fmt.Println()
+	fmt.Println("open https://app.wingthing.ai to start a terminal")
+
+	// Reap dead egg directories on startup
+	reapDeadEggs(cfg)
+
+	client := &ws.Client{
+		RoostURL:  wsURL,
+		Token:     tok.Token,
+		MachineID: cfg.MachineID,
+		Platform:  runtime.GOOS,
+		Version:   version,
+		Agents:    agents,
+		Skills:    skills,
+		Labels:    labels,
+		Projects:  projects,
+	}
+
+	client.OnTask = func(ctx context.Context, task ws.TaskSubmit, send ws.ChunkSender) (string, error) {
+		return executeRelayTask(ctx, cfg, s, task, send)
+	}
+
+	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
+		wingEggMu.Lock()
+		currentEggCfg := wingEggCfg
+		wingEggMu.Unlock()
+		eggCfg := egg.DiscoverEggConfig(start.CWD, currentEggCfg)
+		handlePTYSession(ctx, cfg, start, write, input, eggCfg)
+	}
+
+	client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
+		handleChatStart(ctx, s, start, write)
+	}
+
+	client.OnChatMessage = func(ctx context.Context, msg ws.ChatMessage, write ws.PTYWriteFunc) {
+		handleChatMessage(ctx, cfg, s, msg, write)
+	}
+
+	client.OnChatDelete = func(ctx context.Context, del ws.ChatDelete, write ws.PTYWriteFunc) {
+		handleChatDelete(ctx, s, del, write)
+	}
+
+	client.OnDirList = func(ctx context.Context, req ws.DirList, write ws.PTYWriteFunc) {
+		handleDirList(ctx, req, write)
+	}
+
+	client.SessionLister = func(ctx context.Context) []ws.SessionInfo {
+		return listAliveEggSessions(cfg)
+	}
+
+	client.OnEggConfigUpdate = func(ctx context.Context, yamlStr string) {
+		newCfg, err := egg.LoadEggConfigFromYAML(yamlStr)
+		if err != nil {
+			log.Printf("egg: bad config update: %v", err)
+			return
+		}
+		wingEggMu.Lock()
+		wingEggCfg = newCfg
+		wingEggMu.Unlock()
+		log.Printf("egg: config updated from relay (isolation=%s)", newCfg.Isolation)
+	}
+
+	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
+		killOrphanEgg(cfg, sessionID)
+	}
+
+	client.OnUpdate = func(ctx context.Context) {
+		log.Println("remote update requested")
+		exe, err := os.Executable()
+		if err != nil {
+			log.Printf("update: find executable: %v", err)
+			return
+		}
+		c := exec.Command(exe, "update")
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		if err := c.Run(); err != nil {
+			log.Printf("update: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	// Reclaim surviving egg sessions after reconnect
+	go reclaimEggSessions(ctx, cfg, client)
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigCh
+		log.Println("wing shutting down...")
+		cancel()
+	}()
+
+	return client.Run(ctx)
 }
 
 func wingStopCmd() *cobra.Command {
