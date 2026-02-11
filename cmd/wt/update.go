@@ -126,12 +126,12 @@ func updateCmd() *cobra.Command {
 				os.Remove(wingPidPath())
 
 				// Re-launch daemon with new binary
-				child := exec.Command(exe, "wing", "-d")
+				child := exec.Command(exe, "wing", "start")
 				child.Stdout = os.Stdout
 				child.Stderr = os.Stderr
 				if err := child.Run(); err != nil {
 					fmt.Printf("warning: failed to restart wing: %v\n", err)
-					fmt.Println("run 'wt wing -d' manually to restart")
+					fmt.Println("run 'wt start' manually to restart")
 				}
 			}
 
