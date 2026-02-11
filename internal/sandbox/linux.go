@@ -120,17 +120,20 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 	}
 
 	// When not root, use user namespaces for unprivileged isolation.
-	// Map current uid/gid to root inside the namespace.
+	// Map to the same uid/gid — not root — so agents like Claude Code
+	// don't refuse --dangerously-skip-permissions due to euid==0.
 	if os.Geteuid() != 0 && flags != 0 {
 		attr.Cloneflags |= syscall.CLONE_NEWUSER
+		uid := os.Getuid()
+		gid := os.Getgid()
 		attr.UidMappings = []syscall.SysProcIDMap{{
-			ContainerID: 0,
-			HostID:      os.Getuid(),
+			ContainerID: uid,
+			HostID:      uid,
 			Size:        1,
 		}}
 		attr.GidMappings = []syscall.SysProcIDMap{{
-			ContainerID: 0,
-			HostID:      os.Getgid(),
+			ContainerID: gid,
+			HostID:      gid,
 			Size:        1,
 		}}
 	}
@@ -140,18 +143,24 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 
 // cloneFlags returns namespace clone flags based on isolation level.
 func (s *linuxSandbox) cloneFlags() uintptr {
+	var flags uintptr
 	switch s.cfg.Isolation {
 	case Strict:
-		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET
+		flags = syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET
 	case Standard:
-		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET // no network
+		flags = syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET
 	case Network:
-		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID // network allowed
+		flags = syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
 	case Privileged:
 		return 0
 	default:
-		return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
+		flags = syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
 	}
+	// Cloud agents need outbound network for API access
+	if s.cfg.AllowOutbound {
+		flags &^= syscall.CLONE_NEWNET
+	}
+	return flags
 }
 
 // rlimits returns resource limits for the sandboxed process.

@@ -2,15 +2,17 @@
 
 ## What This Is
 
-`wt` is a universal interface to AI agents. One binary, one skill format, any backend. The skill library is the product -- a curated, growing collection of validated skills checked into this repo. Users enable what they want, add their own, swap agents with a flag. When a new AI tool drops, we ship a skill. Users learn `wt` once.
+`wt` runs AI agents sandboxed on your machine, accessible from anywhere. The primary use case is `wt egg <agent>` (sandboxed agent sessions) and `wt wing` (remote access via relay). Skills, social feed, and task execution are secondary features.
 
-`wt serve` runs the relay server -- social feed, web UI, HTTP + SQLite.
+- `wt egg claude` -- run Claude Code in a per-session sandbox with PTY persistence
+- `wt wing -d` -- connect your machine to the relay, access from app.wingthing.ai
+- `wt serve` -- relay server (social feed, web UI, WebSocket relay), HTTP + SQLite
 
 ## Design Philosophy
 
 **Curated > marketplace.** Skills live in `skills/` in this repo. They're reviewed, validated, and version-controlled. No storefront where anyone can publish prompt injections. Private skills go in `~/.wingthing/skills/`.
 
-**Sandbox-first.** `internal/sandbox/` has full implementations for Apple Containers (macOS) and namespace/seccomp (Linux). Isolation level is per-skill via frontmatter.
+**Sandbox-first.** `internal/sandbox/` has Seatbelt (macOS) and user namespace/seccomp (Linux). The sandbox IS the permission boundary for egg sessions — agents get `--dangerously-skip-permissions` because the sandbox constrains them.
 
 **Agent-agnostic.** Every skill works with every backend. `--agent ollama` for free local inference, `--agent claude` when you need it. The interface is stable; providers change behind it.
 
@@ -24,9 +26,11 @@ If you find yourself reaching for an external tool and wingthing _should_ handle
 
 ## Architecture
 
-- `wt` -- single binary. SQLite + direct agent invocation + OS-scheduled tasks (cron, launchd, systemd timers). No daemon, no socket.
-- `wt serve` -- relay server (social feed + web UI), HTTP + SQLite
-- Agents are pluggable (claude, ollama, gemini). `wt` calls them as child processes.
+- `wt egg <agent>` -- spawns a per-session child process (`wt egg run`) with its own sandbox, PTY, and gRPC socket at `~/.wingthing/eggs/<session-id>/`
+- `wt wing` -- WebSocket client that connects outbound to the relay, accepts remote PTY/task/chat requests, spawns eggs for each session
+- `wt serve` -- relay server (social feed + web UI + WebSocket relay), HTTP + SQLite
+- `wt run` -- direct agent invocation for prompts and skills (the old `wt [prompt]`)
+- Agents are pluggable (claude, ollama, gemini, codex, cursor). `wt` calls them as child processes.
 - All commands use direct store access via `store.Open(cfg.DBPath())`.
 
 ## Provider System
@@ -92,31 +96,36 @@ Install with `wt skill add skills/compress.md`. Memory files referenced by skill
 
 ## Sandbox
 
-Full implementations exist in `internal/sandbox/`:
+Implementations in `internal/sandbox/`:
 
 | Platform | Implementation | How |
 |----------|---------------|-----|
-| macOS 26+ | Apple Containers | `container` CLI, per-task Linux VMs |
-| Linux | Namespaces + seccomp | CLONE_NEWNS/PID/NET, syscall filter, landlock |
-| Fallback | Process isolation | Restricted env, isolated tmpdir |
+| macOS | Seatbelt | `sandbox-exec` with generated SBPL profile |
+| Linux | User namespaces + seccomp | CLONE_NEWUSER/NEWNS/NEWPID/NEWNET, BPF syscall filter |
 
-Isolation levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs), `network` (network + mounted dirs), `privileged` (full access).
+No fallback — if the platform can't enforce the requested isolation, the egg fails with `EnforcementError`.
 
-**Status:** Built, tested, and wired into `runTask()`. Agents receive a `CmdFactory` via `RunOpts` that routes execution through the sandbox. Privileged isolation skips sandbox. Skill mounts and timeout flow through `PromptResult`.
+Isolation levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs), `network` (network + mounted dirs), `privileged` (no sandbox).
+
+Configure via `egg.yaml` (project-level, `~/.wingthing/egg.yaml`, or built-in defaults). The sandbox auto-injects mounts for the agent binary's install root and config dir (`~/.<agent>/`) so config authors don't need to know where agents are installed. Resource limits (CPU, memory, max FDs) only apply when explicitly configured — no defaults.
 
 ## Key Packages
 
 | Package | Role |
 |---------|------|
-| `internal/agent` | LLM agent adapters (claude, ollama, gemini) |
+| `internal/egg` | Per-session egg server (gRPC, PTY, sandbox lifecycle), client, config |
+| `internal/egg/pb` | Protobuf-generated gRPC types (Kill, Resize, Session) |
+| `internal/sandbox` | Seatbelt (macOS) and namespace (Linux) sandbox implementations |
+| `internal/ws` | WebSocket protocol (wing<->relay messages), client with auto-reconnect |
+| `internal/auth` | ECDH key exchange, AES-GCM E2E encryption, device auth, token store |
+| `internal/agent` | LLM agent adapters (claude, ollama, gemini, codex, cursor) |
+| `internal/relay` | Relay server: social feed, web UI, WebSocket handler, wing registry |
 | `internal/orchestrator` | Prompt assembly, config resolution, budget management |
-| `internal/sandbox` | Container/namespace isolation per task |
 | `internal/embedding` | Embedder interface, OpenAI/Ollama adapters, SpaceIndex, cosine/blend |
-| `internal/relay` | RelayStore, social feed, space seeding, skills registry |
 | `internal/skill` | Skill loading, template interpolation |
 | `internal/memory` | Memory loading, layered retrieval |
 | `internal/config` | Config loading, `~/.wingthing/` paths, defaults |
-| `internal/store` | SQLite store -- tasks, thread, agents, logs |
+| `internal/store` | SQLite store -- tasks, thread, agents, logs, chat sessions |
 
 ## Build
 
@@ -143,23 +152,22 @@ Use `make serve` in a separate terminal (or via Bash `run_in_background`). It bu
 
 | Command | What it does |
 |---------|-------------|
-| `wt [prompt]` | Submit and run a task |
-| `wt --skill [name]` | Run a named skill |
-| `wt --agent [name]` | Override agent for this task |
-| `wt timeline` | List recent tasks |
-| `wt thread` | Print daily thread |
-| `wt log [id]` | Show task log events |
-| `wt retry [id]` | Retry a failed task |
-| `wt status` | Task counts and token usage |
-| `wt schedule` | Manage recurring tasks |
-| `wt agent list` | List configured agents |
-| `wt embed` | Generate embeddings |
+| `wt egg <agent>` | Run agent in sandboxed session (claude, codex, ollama) |
+| `wt egg list` | List active egg sessions |
+| `wt egg stop <id>` | Stop an egg session |
+| `wt wing` | Connect to relay, accept remote tasks |
+| `wt wing -d` | Start wing as background daemon |
+| `wt wing stop` | Stop wing daemon |
+| `wt wing status` | Check wing daemon and active sessions |
+| `wt start` / `wt stop` | Aliases for `wt wing -d` / `wt wing stop` |
+| `wt login` / `wt logout` | Device auth with relay server |
+| `wt run [prompt]` | Run a prompt or skill directly |
+| `wt run --skill [name]` | Run a named skill |
 | `wt doctor` | Scan for available agents, API keys, services |
 | `wt serve` | Start the relay web server |
-| `wt init` | Initialize ~/.wingthing directory and DB |
-| `wt login/logout` | Device auth with relay server |
 | `wt skill list/add/enable/disable` | Manage skills (local + registry) |
-| `wt post "text" --link URL --mass N --date DATE` | Post to wt social (local, self-hosted) |
+| `wt update` | Update wt to latest release |
+| `wt post "text" --link URL --mass N --date DATE` | Post to wt social |
 | `wt vote <post-id>` | Upvote a post on wt social |
 | `wt comment <post-id> "text"` | Comment on a post |
 

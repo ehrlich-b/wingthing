@@ -1,4 +1,4 @@
-{{define "title"}}wt — your agentic swiss army knife{{end}}
+{{define "title"}}wt — run sandboxed agents from anywhere{{end}}
 {{define "head"}}
 <style>
 .hero{padding:28px 0 20px}
@@ -47,34 +47,30 @@ document.addEventListener('keydown',function(e){
 });
 </script>
 <div class="hero">
-<h1>your agentic swiss army knife</h1>
-<p class="tagline">One CLI, every backend. New agent framework, no problem — we support it the next day.</p>
+<h1>run sandboxed agents from anywhere</h1>
+<p class="tagline">Claude Code, Codex, Ollama — sandboxed on your machine, accessible from any device. One CLI, any backend.</p>
 </div>
 <div class="install">
 <button class="install-copy" onclick="navigator.clipboard.writeText('curl -fsSL https://wingthing.ai/install.sh | sh')">copy</button>
 <span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span>
 </div>
 <div class="example">
-<span class="line"><span class="prompt">$ </span><span class="cmd">wt login</span><span class="comment">                  # sign in with GitHub</span></span>
-<span class="line"><span class="prompt">$ </span><span class="cmd">wt wing -d</span><span class="comment">                # your machine, reachable from anywhere</span></span>
-<span class="line"><span class="prompt">$ </span><span class="cmd">open app.wingthing.ai</span><span class="comment">     # start a terminal from your browser</span></span>
+<span class="line"><span class="prompt">$ </span><span class="cmd">wt egg claude</span><span class="comment">             # sandboxed Claude Code session</span></span>
+<span class="line"><span class="prompt">$ </span><span class="cmd">wt wing -d</span><span class="comment">                # make your machine reachable remotely</span></span>
+<span class="line"><span class="prompt">$ </span><span class="cmd">open app.wingthing.ai</span><span class="comment">     # start terminals from your browser</span></span>
 </div>
 <div class="pitch">
 <div class="pitch-item">
-<span class="label">relay</span>
-<span class="desc">Tailscale for agents. <code>wt wing</code> connects outbound — no port forwarding, no static IP, works behind any NAT. Start a terminal from your phone.</span>
+<span class="label">sandboxed</span>
+<span class="desc">Every session runs in its own sandbox. Seatbelt on macOS, namespaces on Linux. The sandbox IS the permission boundary — configure mounts, deny paths, isolation level.</span>
+</div>
+<div class="pitch-item">
+<span class="label">remote</span>
+<span class="desc">Tailscale for agents. <code>wt wing</code> connects outbound — no port forwarding, no static IP, works behind any NAT. E2E encrypted. Start a terminal from your phone.</span>
 </div>
 <div class="pitch-item">
 <span class="label">any agent</span>
-<span class="desc">Claude Code, Ollama, Gemini, Codex. Swap with a flag. <code>--agent ollama</code> for free, <code>--agent claude</code> for the hard stuff.</span>
-</div>
-<div class="pitch-item">
-<span class="label">skills</span>
-<span class="desc">Markdown prompt templates. Curated, version-controlled. Install with <code>wt skill add</code>.</span>
-</div>
-<div class="pitch-item">
-<span class="label">sandboxed</span>
-<span class="desc">Apple Containers on Mac, namespaces on Linux. Isolation level is per-skill.</span>
+<span class="desc">Claude Code, Codex, Ollama, Cursor. Swap with a flag. <code>wt egg ollama</code> for free, <code>wt egg claude</code> for the hard stuff.</span>
 </div>
 <div class="pitch-item">
 <span class="label">local-first</span>
@@ -82,9 +78,9 @@ document.addEventListener('keydown',function(e){
 </div>
 </div>
 <div class="example">
-<span class="line"><span class="prompt">$ </span><span class="cmd">wt "summarize my git log from this week"</span></span>
-<span class="line"><span class="prompt">$ </span><span class="cmd">wt --skill compress --agent ollama</span></span>
-<span class="line"><span class="prompt">$ </span><span class="cmd">wt wing status</span><span class="comment">            # check daemon</span></span>
+<span class="line"><span class="prompt">$ </span><span class="cmd">wt egg claude</span><span class="comment">             # local sandboxed session</span></span>
+<span class="line"><span class="prompt">$ </span><span class="cmd">wt egg list</span><span class="comment">               # see active sessions</span></span>
+<span class="line"><span class="prompt">$ </span><span class="cmd">wt wing status</span><span class="comment">            # check remote daemon</span></span>
 <span class="line"><span class="prompt">$ </span><span class="cmd">wt doctor</span><span class="comment">                 # detect agents, keys, services</span></span>
 </div>
 <div class="links">

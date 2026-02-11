@@ -187,12 +187,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		}
 
 		sbCfg := sandbox.Config{
-			Isolation: sandbox.ParseLevel(rc.Isolation),
-			Mounts:    mounts,
-			Deny:      deny,
-			CPULimit:  rc.CPULimit,
-			MemLimit:  rc.MemLimit,
-			MaxFDs:    rc.MaxFDs,
+			Isolation:     sandbox.ParseLevel(rc.Isolation),
+			Mounts:        mounts,
+			Deny:          deny,
+			AllowOutbound: agentNeedsNetwork(rc.Agent),
+			CPULimit:      rc.CPULimit,
+			MemLimit:      rc.MemLimit,
+			MaxFDs:        rc.MaxFDs,
 		}
 
 		sb, err = sandbox.New(sbCfg)
@@ -594,6 +595,18 @@ func (s *Server) checkToken(ctx context.Context) error {
 // installRoot returns the top-level directory under home for a binary path.
 // e.g., ~/.bun/install/global/.../bin -> ~/.bun
 //       ~/.local/bin               -> ~/.local
+// agentNeedsNetwork returns true for cloud-based agents that require outbound
+// network access to reach their API (Claude, Codex, Gemini, etc.).
+// Local agents like ollama don't need network.
+func agentNeedsNetwork(agent string) bool {
+	switch agent {
+	case "ollama":
+		return false
+	default:
+		return true
+	}
+}
+
 func installRoot(binDir, home string) string {
 	rel, err := filepath.Rel(home, binDir)
 	if err != nil {
