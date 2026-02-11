@@ -57,6 +57,9 @@ func eggRunCmd() *cobra.Command {
 		mountsFlag []string
 		denyFlag   []string
 		envFlag    []string
+		cpuFlag    string
+		memFlag    string
+		maxFDsFlag uint32
 		dangerouslySkipPermissions bool
 	)
 
@@ -89,6 +92,15 @@ func eggRunCmd() *cobra.Command {
 				}
 			}
 
+			var cpuLimit time.Duration
+			if cpuFlag != "" {
+				cpuLimit, _ = time.ParseDuration(cpuFlag)
+			}
+			var memLimit uint64
+			if memFlag != "" {
+				memLimit = parseMemFlag(memFlag)
+			}
+
 			rc := egg.RunConfig{
 				Agent:     agentName,
 				CWD:       cwd,
@@ -100,6 +112,9 @@ func eggRunCmd() *cobra.Command {
 				Rows:      rows,
 				Cols:      cols,
 				DangerouslySkipPermissions: dangerouslySkipPermissions,
+				CPULimit:  cpuLimit,
+				MemLimit:  memLimit,
+				MaxFDs:    maxFDsFlag,
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -136,6 +151,9 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&denyFlag, "deny", nil, "paths to deny")
 	cmd.Flags().StringArrayVar(&envFlag, "env", nil, "environment variables (KEY=VAL)")
 	cmd.Flags().BoolVar(&dangerouslySkipPermissions, "dangerously-skip-permissions", false, "skip agent permission prompts")
+	cmd.Flags().StringVar(&cpuFlag, "cpu", "", "CPU time limit (e.g. 300s)")
+	cmd.Flags().StringVar(&memFlag, "memory", "", "memory limit (e.g. 2GB)")
+	cmd.Flags().Uint32Var(&maxFDsFlag, "max-fds", 0, "max open file descriptors")
 	cmd.MarkFlagRequired("session-id")
 
 	return cmd
@@ -380,6 +398,15 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	for k, v := range eggCfg.BuildEnvMap() {
 		args = append(args, "--env", k+"="+v)
 	}
+	if eggCfg.Resources.CPU != "" {
+		args = append(args, "--cpu", eggCfg.Resources.CPU)
+	}
+	if eggCfg.Resources.Memory != "" {
+		args = append(args, "--memory", eggCfg.Resources.Memory)
+	}
+	if eggCfg.Resources.MaxFDs > 0 {
+		args = append(args, "--max-fds", strconv.Itoa(int(eggCfg.Resources.MaxFDs)))
+	}
 
 	logPath := filepath.Join(dir, "egg.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -410,4 +437,25 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 
 	return nil, fmt.Errorf("egg did not start within 5s (check %s)", logPath)
+}
+
+// parseMemFlag parses a memory string like "2GB" or "512MB" into bytes.
+func parseMemFlag(s string) uint64 {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	multiplier := uint64(1)
+	if strings.HasSuffix(s, "GB") {
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "GB")
+	} else if strings.HasSuffix(s, "MB") {
+		multiplier = 1024 * 1024
+		s = strings.TrimSuffix(s, "MB")
+	} else if strings.HasSuffix(s, "KB") {
+		multiplier = 1024
+		s = strings.TrimSuffix(s, "KB")
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n * multiplier
 }

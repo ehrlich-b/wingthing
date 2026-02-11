@@ -149,14 +149,32 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		binPath = resolved
 	}
 
-	// Build environment
-	var envSlice []string
-	if len(rc.Env) > 0 {
-		for k, v := range rc.Env {
-			envSlice = append(envSlice, k+"="+v)
+	// Build environment: always use rc.Env (caller filtered via BuildEnvMap).
+	// Merge agent profile required vars + essentials from host env if missing.
+	profile := Profile(rc.Agent)
+	envMap := make(map[string]string, len(rc.Env))
+	for k, v := range rc.Env {
+		envMap[k] = v
+	}
+	// Merge required env vars from agent profile
+	for _, k := range profile.EnvVars {
+		if _, ok := envMap[k]; !ok {
+			if v := os.Getenv(k); v != "" {
+				envMap[k] = v
+			}
 		}
-	} else {
-		envSlice = os.Environ()
+	}
+	// Ensure essentials are present
+	for _, k := range []string{"HOME", "PATH", "TERM"} {
+		if _, ok := envMap[k]; !ok {
+			if v := os.Getenv(k); v != "" {
+				envMap[k] = v
+			}
+		}
+	}
+	var envSlice []string
+	for k, v := range envMap {
+		envSlice = append(envSlice, k+"="+v)
 	}
 
 	// Build sandbox and command
@@ -175,8 +193,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			deny = append(deny, expandTilde(d, home))
 		}
 
-		// Auto-inject: allow agent binary, config dir, and cache dir so the
-		// sandbox works without the config author needing to know internals.
+		// Auto-inject agent binary install root so sandbox can find it.
 		if home != "" && len(mounts) > 0 {
 			realBin := binPath
 			if resolved, err := filepath.EvalSymlinks(binPath); err == nil {
@@ -187,21 +204,36 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 				root := installRoot(binDir, home)
 				mounts = append(mounts, sandbox.Mount{Source: root, Target: root})
 			}
-			configDir := filepath.Join(home, "."+rc.Agent)
-			mounts = append(mounts, sandbox.Mount{Source: configDir, Target: configDir, UseRegex: true})
-			// Claude Code writes update staging to ~/.cache/claude
-			cacheDir := filepath.Join(home, ".cache", rc.Agent)
-			mounts = append(mounts, sandbox.Mount{Source: cacheDir, Target: cacheDir})
+		}
+
+		// Auto-inject agent profile write dirs.
+		if home != "" && len(mounts) > 0 {
+			for _, d := range profile.WriteRegex {
+				abs := filepath.Join(home, d)
+				mounts = append(mounts, sandbox.Mount{Source: abs, Target: abs, UseRegex: true})
+			}
+			for _, d := range profile.WriteDirs {
+				abs := filepath.Join(home, d)
+				mounts = append(mounts, sandbox.Mount{Source: abs, Target: abs})
+			}
+		}
+
+		// Set network need from agent profile, but only when isolation
+		// denies network (Strict/Standard). When isolation allows network,
+		// the profile doesn't need to override anything.
+		netNeed := sandbox.NetworkNone
+		if sandbox.ParseLevel(rc.Isolation) < sandbox.Network {
+			netNeed = profile.Network
 		}
 
 		sbCfg := sandbox.Config{
-			Isolation:     sandbox.ParseLevel(rc.Isolation),
-			Mounts:        mounts,
-			Deny:          deny,
-			AllowOutbound: agentNeedsNetwork(rc.Agent),
-			CPULimit:      rc.CPULimit,
-			MemLimit:      rc.MemLimit,
-			MaxFDs:        rc.MaxFDs,
+			Isolation:   sandbox.ParseLevel(rc.Isolation),
+			Mounts:      mounts,
+			Deny:        deny,
+			NetworkNeed: netNeed,
+			CPULimit:    rc.CPULimit,
+			MemLimit:    rc.MemLimit,
+			MaxFDs:      rc.MaxFDs,
 		}
 
 		sb, err = sandbox.New(sbCfg)
@@ -611,17 +643,6 @@ func (s *Server) checkToken(ctx context.Context) error {
 // installRoot returns the top-level directory under home for a binary path.
 // e.g., ~/.bun/install/global/.../bin -> ~/.bun
 //       ~/.local/bin               -> ~/.local
-// agentNeedsNetwork returns true for cloud-based agents that require outbound
-// network access to reach their API (Claude, Codex, Gemini, etc.).
-// Local agents like ollama don't need network.
-func agentNeedsNetwork(agent string) bool {
-	switch agent {
-	case "ollama":
-		return false
-	default:
-		return true
-	}
-}
 
 // startupWatchdog logs diagnostic info if no PTY output within 15 seconds.
 func (s *Server) startupWatchdog(sess *Session) {

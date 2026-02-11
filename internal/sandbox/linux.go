@@ -194,8 +194,10 @@ func (s *linuxSandbox) cloneFlags() uintptr {
 	default:
 		flags = syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
 	}
-	// Cloud agents need outbound network for API access
-	if s.cfg.AllowOutbound {
+	// Strip network namespace for agents that need network access.
+	// Linux can't do port-level filtering in userns without iptables,
+	// so HTTPS and Full both get full network. Local gets it too (localhost).
+	if s.cfg.NetworkNeed >= NetworkLocal {
 		flags &^= syscall.CLONE_NEWNET
 	}
 	return flags

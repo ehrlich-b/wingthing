@@ -40,3 +40,28 @@ func ParseLevel(s string) Level {
 		return Standard
 	}
 }
+
+// NetworkNeed describes how much network access an agent requires.
+type NetworkNeed int
+
+const (
+	NetworkNone  NetworkNeed = iota // fully isolated
+	NetworkLocal                    // localhost only (e.g. ollama)
+	NetworkHTTPS                    // outbound 443/80 + DNS 53
+	NetworkFull                     // no restrictions
+)
+
+func (n NetworkNeed) String() string {
+	switch n {
+	case NetworkNone:
+		return "none"
+	case NetworkLocal:
+		return "local"
+	case NetworkHTTPS:
+		return "https"
+	case NetworkFull:
+		return "full"
+	default:
+		return "unknown"
+	}
+}

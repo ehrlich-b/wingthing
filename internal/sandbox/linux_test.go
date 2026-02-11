@@ -192,14 +192,25 @@ func TestSysProcAttrCloneflags(t *testing.T) {
 	}
 }
 
-func TestAllowOutboundClearsNewnet(t *testing.T) {
-	s := &linuxSandbox{cfg: Config{Isolation: Standard, AllowOutbound: true}}
-	flags := s.cloneFlags()
-	if flags&syscall.CLONE_NEWNET != 0 {
-		t.Error("AllowOutbound should clear CLONE_NEWNET")
+func TestNetworkNeedClearsNewnet(t *testing.T) {
+	tests := []struct {
+		need    NetworkNeed
+		wantNet bool // true = CLONE_NEWNET should be absent
+	}{
+		{NetworkNone, false},
+		{NetworkLocal, true},
+		{NetworkHTTPS, true},
+		{NetworkFull, true},
 	}
-	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
-	if flags != want {
-		t.Errorf("cloneFlags with AllowOutbound = 0x%x, want 0x%x", flags, want)
+	for _, tt := range tests {
+		s := &linuxSandbox{cfg: Config{Isolation: Standard, NetworkNeed: tt.need}}
+		flags := s.cloneFlags()
+		hasNewnet := flags&syscall.CLONE_NEWNET != 0
+		if tt.wantNet && hasNewnet {
+			t.Errorf("NetworkNeed %v should clear CLONE_NEWNET", tt.need)
+		}
+		if !tt.wantNet && !hasNewnet {
+			t.Errorf("NetworkNeed %v should keep CLONE_NEWNET", tt.need)
+		}
 	}
 }
