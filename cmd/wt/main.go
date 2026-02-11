@@ -81,17 +81,13 @@ func main() {
 func startCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",
-		Short: "Start the wing daemon (alias for wt wing -d)",
+		Short: "Start the wing daemon (alias for wt wing start)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Delegate to wing -d
-			if pid, err := readPid(); err == nil {
-				return fmt.Errorf("wing daemon already running (pid %d)", pid)
-			}
 			exe, exeErr := os.Executable()
 			if exeErr != nil {
 				return exeErr
 			}
-			child := exec.Command(exe, "wing", "-d")
+			child := exec.Command(exe, "wing", "start")
 			child.Stdout = os.Stdout
 			child.Stderr = os.Stderr
 			return child.Run()
@@ -931,7 +927,7 @@ func initCmd() *cobra.Command {
 func loginCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "login",
-		Short: "Authenticate this device with the relay server",
+		Short: "Authenticate this device with the roost",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {

@@ -105,7 +105,10 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /skills", s.handleSkillsPage)
 	s.mux.HandleFunc("GET /skills/{name}", s.handleSkillDetailPage)
 	s.mux.HandleFunc("GET /install", s.handleInstallPage)
-	s.mux.HandleFunc("GET /self-host", s.handleSelfHost)
+	s.mux.HandleFunc("GET /docs", s.handleDocs)
+	s.mux.HandleFunc("GET /self-host", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/docs", http.StatusMovedPermanently)
+	})
 	s.mux.HandleFunc("GET /social", s.handleSocial)
 	s.mux.HandleFunc("GET /w/{slug}", s.handleAnchor)
 	s.mux.HandleFunc("GET /p/{postID}", s.handlePostPage)
@@ -168,7 +171,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Default host: full site with caching
-	if r.Method == "GET" && (path == "/" || path == "/social" || path == "/skills" || path == "/login" || path == "/self-host" || strings.HasPrefix(path, "/w/") || strings.HasPrefix(path, "/p/")) {
+	if r.Method == "GET" && (path == "/" || path == "/social" || path == "/skills" || path == "/login" || path == "/docs" || strings.HasPrefix(path, "/w/") || strings.HasPrefix(path, "/p/")) {
 		if r.URL.RawQuery != "" {
 			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
 		} else {

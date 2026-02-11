@@ -68,7 +68,7 @@ var (
 	loginTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/login.html"))
 	skillsTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skills.html"))
 	skillDetailTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skill_detail.html"))
-	selfhostTmpl    = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/selfhost.html"))
+	docsTmpl        = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/docs.html"))
 	installTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/install.html"))
 	claimTmpl       = template.Must(template.New("claim.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/claim.html"))
 )
@@ -231,9 +231,9 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	s.template(homeTmpl, "base.html", "home.html").ExecuteTemplate(w, "base", data)
 }
 
-func (s *Server) handleSelfHost(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 	data := pageData{User: s.sessionUser(r)}
-	s.template(selfhostTmpl, "base.html", "selfhost.html").ExecuteTemplate(w, "base", data)
+	s.template(docsTmpl, "base.html", "docs.html").ExecuteTemplate(w, "base", data)
 }
 
 func (s *Server) handleInstallPage(w http.ResponseWriter, r *http.Request) {
