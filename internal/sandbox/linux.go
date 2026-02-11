@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -100,9 +101,11 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		}
 		uid := os.Getuid()
 		gid := os.Getgid()
+		logPath := filepath.Join(s.tmpDir, "deny_init.log")
 		wrapArgs := []string{"_deny_init",
 			"--uid", fmt.Sprintf("%d", uid),
 			"--gid", fmt.Sprintf("%d", gid),
+			"--log", logPath,
 		}
 		for _, d := range s.cfg.Deny {
 			wrapArgs = append(wrapArgs, "--deny", d)
