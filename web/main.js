@@ -96,7 +96,9 @@ async function init() {
     } catch (e) { loginRedirect(); return; }
 
     // Mark initial page load as home so back button works
-    history.replaceState({ view: 'home' }, '');
+    if (!location.hash.startsWith('#s/')) {
+        history.replaceState({ view: 'home' }, '', location.pathname);
+    }
 
     // Event handlers
     homeBtn.addEventListener('click', showHome);
@@ -209,6 +211,14 @@ async function init() {
     loadHome();
     setInterval(loadHome, 10000);
     connectAppWS();
+
+    // Deep link: #s/<sessionId> auto-attaches to session
+    var hashMatch = location.hash.match(/^#s\/(.+)$/);
+    if (hashMatch) {
+        var deepSessionId = hashMatch[1];
+        history.replaceState({ view: 'home' }, '', location.pathname);
+        switchToSession(deepSessionId);
+    }
 }
 
 // === localStorage helpers ===
@@ -1595,7 +1605,7 @@ function showHome(pushHistory) {
     renderSidebar();
     renderDashboard();
     if (pushHistory !== false) {
-        history.pushState({ view: 'home' }, '');
+        history.pushState({ view: 'home' }, '', location.pathname);
     }
 }
 
@@ -1623,7 +1633,7 @@ function switchToSession(sessionId, pushHistory) {
     showTerminal();
     attachPTY(sessionId);
     if (pushHistory !== false) {
-        history.pushState({ view: 'terminal', sessionId: sessionId }, '');
+        history.pushState({ view: 'terminal', sessionId: sessionId }, '', '#s/' + sessionId);
     }
 }
 
@@ -2017,7 +2027,7 @@ function setupPTYHandlers(ws, reattach) {
                 ptySessionId = msg.session_id;
                 headerTitle.textContent = sessionTitle(msg.agent, ptyWingId);
                 if (!reattach) {
-                    history.pushState({ view: 'terminal', sessionId: msg.session_id }, '');
+                    history.pushState({ view: 'terminal', sessionId: msg.session_id }, '', '#s/' + msg.session_id);
                 }
 
                 if (msg.public_key) {
