@@ -9,24 +9,22 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
 // DenyInit is called early in main when the binary is re-exec'd as a sandbox
-// deny-path wrapper. It runs as root (UID 0) inside the user namespace so it
-// can mount tmpfs over denied paths. After mounting, it spawns the agent in a
-// nested user namespace (via exec.Command + CLONE_NEWUSER) mapped to the real
-// UID, so the agent doesn't see root.
+// wrapper. It runs as root (UID 0) inside the user namespace so it can:
+//   1. Mount tmpfs over denied paths to hide their contents
+//   2. Apply write isolation: make HOME read-only, then bind writable sub-mounts
+// After setup, it spawns the agent in a nested user namespace (via
+// exec.Command + CLONE_NEWUSER) mapped to the real UID.
 //
-// We can't use syscall.Unshare(CLONE_NEWUSER) because Go processes are
-// multi-threaded; unshare requires single-threaded. Instead we use
-// exec.Command which clones before the child has threads.
-//
-// Args format: --uid UID --gid GID --deny PATH [--deny PATH...] -- CMD ARGS...
+// Args format: --uid UID --gid GID [--deny PATH...] [--home PATH] [--writable PATH...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
+	var writablePaths []string
+	var home string
 	var uid, gid int
 	var cmdStart int
 
@@ -39,6 +37,12 @@ func DenyInit(args []string) {
 			switch args[i] {
 			case "--deny":
 				denyPaths = append(denyPaths, args[i+1])
+				i++
+			case "--writable":
+				writablePaths = append(writablePaths, args[i+1])
+				i++
+			case "--home":
+				home = args[i+1]
 				i++
 			case "--uid":
 				uid, _ = strconv.Atoi(args[i+1])
@@ -54,8 +58,37 @@ func DenyInit(args []string) {
 		log.Fatal("_deny_init: missing -- separator or command")
 	}
 
+	// Write isolation: make HOME read-only, then punch writable holes.
+	// Must happen BEFORE deny mounts so deny tmpfs overlays take precedence.
+	// Skip if HOME itself is in the writable list (user wants full HOME rw).
+	if home != "" && len(writablePaths) > 0 && !containsPath(writablePaths, home) {
+		// Bind-mount HOME to itself so we can remount it
+		if err := unix.Mount(home, home, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			log.Printf("_deny_init: bind HOME %s: %v (write isolation skipped)", home, err)
+		} else {
+			// Bind-mount each writable path BEFORE remounting HOME read-only.
+			// These are independent mount points that survive the parent remount-ro.
+			for _, p := range writablePaths {
+				if err := os.MkdirAll(p, 0755); err != nil {
+					log.Printf("_deny_init: mkdir writable %s: %v", p, err)
+					continue
+				}
+				if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
+					log.Printf("_deny_init: bind writable %s: %v", p, err)
+				}
+			}
+			// Remount HOME read-only. Child bind-mounts at writable paths are
+			// separate mount points and stay read-write.
+			if err := unix.Mount("", home, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, ""); err != nil {
+				log.Printf("_deny_init: remount HOME ro: %v", err)
+			} else {
+				log.Printf("_deny_init: write isolation: HOME=%s ro, %d writable paths", home, len(writablePaths))
+			}
+		}
+	}
+
 	// Mount empty read-only tmpfs over each deny path to hide its contents.
-	// We're UID 0 in the namespace → have CAP_SYS_ADMIN → can mount.
+	// We're UID 0 in the namespace -> have CAP_SYS_ADMIN -> can mount.
 	for _, p := range denyPaths {
 		if err := os.MkdirAll(p, 0755); err != nil {
 			log.Printf("_deny_init: mkdir %s: %v", p, err)
@@ -85,11 +118,6 @@ func DenyInit(args []string) {
 		log.Printf("_deny_init: binary %s: %v", binPath, err)
 	} else {
 		log.Printf("_deny_init: binary %s mode=%s size=%d", binPath, info.Mode(), info.Size())
-		if info.Mode()&os.ModeSymlink != 0 {
-			if target, err := os.Readlink(binPath); err == nil {
-				log.Printf("_deny_init: symlink -> %s", target)
-			}
-		}
 	}
 
 	cmd := exec.Command(binPath, cmdArgs[1:]...)
@@ -111,25 +139,6 @@ func DenyInit(args []string) {
 				HostID:      0,
 				Size:        1,
 			}},
-		}
-	}
-
-	// Install seccomp filter before starting the agent. PR_SET_NO_NEW_PRIVS
-	// is required before seccomp and the filter is inherited by the child.
-	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-		log.Printf("_deny_init: PR_SET_NO_NEW_PRIVS: %v (seccomp skipped)", err)
-	} else {
-		filter := buildSeccompFilter()
-		if len(filter) > 0 {
-			prog := unix.SockFprog{
-				Len:    uint16(len(filter)),
-				Filter: &filter[0],
-			}
-			if err := seccompSetModeFilter(&prog); err != nil {
-				log.Printf("_deny_init: seccomp: %v (continuing without filter)", err)
-			} else {
-				log.Printf("_deny_init: seccomp filter installed (%d instructions)", len(filter))
-			}
 		}
 	}
 
@@ -156,12 +165,12 @@ func DenyInit(args []string) {
 	os.Exit(0)
 }
 
-// seccompSetModeFilter installs a seccomp BPF filter via the seccomp syscall.
-func seccompSetModeFilter(prog *unix.SockFprog) error {
-	const seccompSetModeFilterOp = 1 // SECCOMP_SET_MODE_FILTER
-	_, _, errno := unix.Syscall(unix.SYS_SECCOMP, seccompSetModeFilterOp, 0, uintptr(unsafe.Pointer(prog)))
-	if errno != 0 {
-		return errno
+// containsPath checks if the path list contains the given path.
+func containsPath(paths []string, target string) bool {
+	for _, p := range paths {
+		if p == target {
+			return true
+		}
 	}
-	return nil
+	return false
 }
