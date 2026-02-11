@@ -6,6 +6,13 @@
 .hero .tagline{color:var(--text-dim);font-size:15px;line-height:1.5;max-width:480px;margin:0 auto 24px}
 .hero-cta{display:inline-block;background:var(--action);color:#fff;padding:12px 32px;border-radius:6px;font-size:15px;font-weight:600;text-decoration:none;font-family:var(--mono)}
 .hero-cta:hover{background:var(--action-hover);color:#fff}
+.prompt-flow{font-family:var(--mono);font-size:18px;margin-top:8px}
+.prompt-line{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0}
+.prompt-dim{color:var(--text-dim)}
+.prompt-key{color:var(--text);font-weight:700;background:var(--bg-card);padding:2px 8px;border-radius:3px}
+.prompt-hidden{display:none}
+a.prompt-line{text-decoration:none}
+a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 .install{margin:28px 0 24px;background:var(--bg-card);border-radius:6px;padding:14px 20px;font-size:13px;font-family:var(--mono);overflow-x:auto;position:relative;max-width:520px;margin-left:auto;margin-right:auto}
 .install .prompt{color:var(--text-dim);user-select:none}
 .install .cmd{color:var(--text)}
@@ -36,22 +43,38 @@
 {{end}}
 {{define "content"}}
 <script>
-document.addEventListener('keydown',function(e){
-    if(e.key==='.'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
+(function(){
+    var step=1;
+    document.addEventListener('keydown',function(e){
         var t=document.activeElement&&document.activeElement.tagName;
-        if(t!=='INPUT'&&t!=='TEXTAREA'&&t!=='SELECT'){
+        if(t==='INPUT'||t==='TEXTAREA'||t==='SELECT')return;
+        if(e.key==='.'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
             e.preventDefault();
+            var flow=document.getElementById('prompt-flow');
+            if(flow&&step===1){
+                document.getElementById('prompt-step1').style.display='none';
+                document.getElementById('prompt-step2').style.display='flex';
+                step=2;
+                return;
+            }
             var h=window.location.hostname;
             window.location.href=(h==='wingthing.ai'||h==='www.wingthing.ai')?'https://app.wingthing.ai':'/app/';
         }
-    }
-});
+        if(e.key==='Enter'&&step===2){
+            e.preventDefault();
+            document.getElementById('prompt-step2').click();
+        }
+    });
+})();
 </script>
 <div class="hero">
 <h1>your AI agents, reachable from anywhere</h1>
 <p class="tagline">Claude Code, Codex, Ollama — sandboxed on your machine, accessible from any device.</p>
 {{if .User}}<a href="https://app.wingthing.ai" class="hero-cta">open app</a>
-{{else}}<a href="/login" class="hero-cta">login</a>{{end}}
+{{else}}<div class="prompt-flow" id="prompt-flow">
+<div class="prompt-line" id="prompt-step1"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to start</span></div>
+<a href="/auth/github" class="prompt-line prompt-hidden" id="prompt-step2"><span class="prompt-dim">continue with GitHub</span> <span class="prompt-key">[enter]</span></a>
+</div>{{end}}
 </div>
 <div class="install">
 <button class="install-copy" onclick="navigator.clipboard.writeText('curl -fsSL https://wingthing.ai/install.sh | sh')">copy</button>
