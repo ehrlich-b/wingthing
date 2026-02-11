@@ -236,7 +236,17 @@ func (s *linuxSandbox) rlimits() []rlimitPair {
 		pairs = append(pairs, rlimitPair{unix.RLIMIT_CPU, uint64(s.cfg.CPULimit.Seconds())})
 	}
 	if s.cfg.MemLimit > 0 {
-		pairs = append(pairs, rlimitPair{unix.RLIMIT_AS, s.cfg.MemLimit})
+		// RLIMIT_AS limits virtual address space, not physical RAM.
+		// JIT runtimes (Bun/JSC, V8, Node) reserve 1GB+ of virtual address
+		// space for JIT CodeRange alone, plus heap, stack, and shared libs.
+		// Enforce a 4GB floor so JIT-based agents don't OOM on startup.
+		mem := s.cfg.MemLimit
+		const minVAS = 4 * 1024 * 1024 * 1024 // 4GB
+		if mem < minVAS {
+			log.Printf("linux sandbox: bumping RLIMIT_AS from %dMB to 4GB (JIT needs virtual address space)", mem/1024/1024)
+			mem = minVAS
+		}
+		pairs = append(pairs, rlimitPair{unix.RLIMIT_AS, mem})
 	}
 	if s.cfg.MaxFDs > 0 {
 		pairs = append(pairs, rlimitPair{unix.RLIMIT_NOFILE, uint64(s.cfg.MaxFDs)})
