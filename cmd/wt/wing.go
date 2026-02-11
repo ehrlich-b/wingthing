@@ -131,6 +131,18 @@ func wingPidPath() string {
 	return filepath.Join(home, ".wingthing", "wing.pid")
 }
 
+const maxLogSize = 1 << 20 // 1MB
+
+// rotateLog renames path to path.1 if it exceeds maxLogSize.
+func rotateLog(path string) {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() < maxLogSize {
+		return
+	}
+	os.Remove(path + ".1")
+	os.Rename(path, path+".1")
+}
+
 func wingLogPath() string {
 	cfg, _ := config.Load()
 	if cfg != nil {
@@ -200,6 +212,7 @@ func wingCmd() *cobra.Command {
 					childArgs = append(childArgs, "--egg-config", eggConfigFlag)
 				}
 
+				rotateLog(wingLogPath())
 				logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 				if err != nil {
 					return fmt.Errorf("open log: %w", err)
@@ -755,6 +768,7 @@ func ensureEgg(cfg *config.Config) (*egg.Client, error) {
 	}
 
 	logPath := filepath.Join(cfg.Dir, "egg.log")
+	rotateLog(logPath)
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open egg log: %w", err)
@@ -789,6 +803,39 @@ func ensureEgg(cfg *config.Config) (*egg.Client, error) {
 	}
 
 	return nil, fmt.Errorf("egg did not start within 5s")
+}
+
+// readEggCrashInfo reads the last lines of egg.log looking for panic/crash info.
+// Returns a user-friendly error string for display in the browser.
+func readEggCrashInfo(dir string) string {
+	logPath := filepath.Join(dir, "egg.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return "egg process crashed (no log available)"
+	}
+
+	lines := strings.Split(string(data), "\n")
+
+	// Find the last panic
+	lastPanic := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], "panic") || strings.Contains(lines[i], "PANIC") || strings.Contains(lines[i], "fatal error") {
+			lastPanic = i
+			break
+		}
+	}
+
+	if lastPanic == -1 {
+		return "egg process crashed (check ~/.wingthing/egg.log)"
+	}
+
+	// Extract up to 20 lines from the panic point
+	end := lastPanic + 20
+	if end > len(lines) {
+		end = len(lines)
+	}
+	excerpt := strings.Join(lines[lastPanic:end], "\n")
+	return fmt.Sprintf("egg crashed: %s", strings.TrimSpace(excerpt))
 }
 
 // reclaimEggSessions discovers surviving egg sessions, sends pty.reclaim to the relay,
@@ -1033,14 +1080,16 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, ec *egg.Client, s
 		newEC, ensureErr := ensureEgg(cfg)
 		if ensureErr != nil {
 			log.Printf("pty: egg restart failed: %v", ensureErr)
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+			crashInfo := readEggCrashInfo(cfg.Dir)
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
 			return
 		}
 		ec = newEC
 		spawnResp, err = ec.Spawn(ctx, spawnReq)
 		if err != nil {
 			log.Printf("pty: egg spawn retry failed: %v", err)
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+			crashInfo := readEggCrashInfo(cfg.Dir)
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
 			return
 		}
 	}

@@ -178,6 +178,7 @@ type PTYExited struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 	ExitCode  int    `json:"exit_code"`
+	Error     string `json:"error,omitempty"` // crash/error info for display
 }
 
 // PTYAttach requests reattachment to an existing PTY session.

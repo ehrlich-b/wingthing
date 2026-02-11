@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -156,6 +157,9 @@ func (s *Server) SetConfig(ctx context.Context, req *pb.SetConfigRequest) (*pb.S
 
 // Run starts the gRPC server. Blocks until context is cancelled or idle timeout.
 func (s *Server) Run(ctx context.Context) error {
+	// Enable full stack traces for crashes (helps debug unrecoverable panics)
+	os.Setenv("GOTRACEBACK", "all")
+
 	// Clean stale socket
 	os.Remove(s.socketPath)
 
@@ -179,8 +183,8 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.grpcServer = grpc.NewServer(
-		grpc.UnaryInterceptor(s.authUnary),
-		grpc.StreamInterceptor(s.authStream),
+		grpc.ChainUnaryInterceptor(recoveryUnary, s.authUnary),
+		grpc.ChainStreamInterceptor(recoveryStream, s.authStream),
 	)
 	pb.RegisterEggServer(s.grpcServer, s)
 
@@ -275,6 +279,31 @@ func (s *Server) idleWatcher(ctx context.Context) {
 	}
 }
 
+// Recovery interceptors — catch panics in gRPC handlers and return errors instead of crashing.
+func recoveryUnary(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			stack := make([]byte, 16384)
+			n := runtime.Stack(stack, false)
+			log.Printf("egg: PANIC in %s: %v\n%s", info.FullMethod, r, stack[:n])
+			err = status.Errorf(codes.Internal, "egg panic in %s: %v", info.FullMethod, r)
+		}
+	}()
+	return handler(ctx, req)
+}
+
+func recoveryStream(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			stack := make([]byte, 16384)
+			n := runtime.Stack(stack, false)
+			log.Printf("egg: PANIC in %s: %v\n%s", info.FullMethod, r, stack[:n])
+			err = status.Errorf(codes.Internal, "egg panic in %s: %v", info.FullMethod, r)
+		}
+	}()
+	return handler(srv, ss)
+}
+
 // Auth interceptors — validate token from metadata.
 func (s *Server) authUnary(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	if err := s.checkToken(ctx); err != nil {
@@ -338,6 +367,8 @@ func agentCommand(agentName string, dangerouslySkip bool, shell string) (string,
 // The critical fix: sandbox is created BEFORE the process starts, and the sandbox's
 // Exec() produces the cmd that gets passed to pty.StartWithSize().
 func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResponse, error) {
+	log.Printf("egg: spawn request: agent=%s isolation=%s cwd=%s", req.Agent, req.Isolation, req.Cwd)
+
 	// Safety gate: refuse dangerously_skip_permissions without real sandbox
 	if req.DangerouslySkipPermissions && (req.Isolation == "" || req.Isolation == "privileged") {
 		return nil, status.Errorf(codes.InvalidArgument, "dangerously_skip_permissions requires sandbox isolation (not privileged)")
@@ -347,11 +378,13 @@ func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResp
 	if name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported agent: %s", req.Agent)
 	}
+	log.Printf("egg: spawn step=agent_resolved name=%s", name)
 
 	binPath, err := exec.LookPath(name)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "agent %q not found: %v", name, err)
 	}
+	log.Printf("egg: spawn step=lookpath bin=%s", binPath)
 
 	// Build environment
 	var envSlice []string
@@ -362,12 +395,14 @@ func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResp
 	} else {
 		envSlice = os.Environ()
 	}
+	log.Printf("egg: spawn step=env count=%d", len(envSlice))
 
 	// Build sandbox config from request
 	var sb sandbox.Sandbox
 	var cmd *exec.Cmd
 
 	if req.Isolation != "" && req.Isolation != "privileged" {
+		log.Printf("egg: spawn step=sandbox_init isolation=%s", req.Isolation)
 		mounts := protoMountsToSandbox(req.Mounts)
 		sbCfg := sandbox.Config{
 			Isolation: sandbox.ParseLevel(req.Isolation),
@@ -399,6 +434,7 @@ func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResp
 				cmd.Dir = req.Cwd
 			}
 		} else {
+			log.Printf("egg: spawn step=sandbox_exec")
 			cmd, err = sb.Exec(context.Background(), binPath, args)
 			if err != nil {
 				sb.Destroy()
@@ -411,6 +447,7 @@ func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResp
 			}
 		}
 	} else {
+		log.Printf("egg: spawn step=no_sandbox (privileged or empty isolation)")
 		cmd = exec.CommandContext(context.Background(), binPath, args...)
 		cmd.Env = envSlice
 		if req.Cwd != "" {
@@ -418,12 +455,15 @@ func (s *Server) Spawn(ctx context.Context, req *pb.SpawnRequest) (*pb.SpawnResp
 		}
 	}
 
+	log.Printf("egg: spawn step=cmd_ready dir=%s", cmd.Dir)
+
 	// Graceful termination
 	cmd.Cancel = func() error {
 		return cmd.Process.Signal(syscall.SIGTERM)
 	}
 	cmd.WaitDelay = 5 * time.Second
 
+	log.Printf("egg: spawn step=pty_start rows=%d cols=%d", req.Rows, req.Cols)
 	size := &pty.Winsize{
 		Cols: uint16(req.Cols),
 		Rows: uint16(req.Rows),
