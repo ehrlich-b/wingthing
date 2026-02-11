@@ -124,7 +124,14 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 
 	cmd.Dir = s.tmpDir
 	cmd.Env = s.buildEnv()
-	cmd.SysProcAttr = s.sysProcAttr()
+	attr := s.sysProcAttr()
+	if needsWrapper {
+		// Don't put wrapper in PID namespace — it needs host /proc to
+		// write uid_map for agent's CLONE_NEWUSER. The wrapper creates
+		// the PID namespace when spawning the agent instead.
+		attr.Cloneflags &^= syscall.CLONE_NEWPID
+	}
+	cmd.SysProcAttr = attr
 	return cmd, nil
 }
 
