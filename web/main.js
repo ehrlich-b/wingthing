@@ -1922,13 +1922,21 @@ function setupPTYHandlers(ws, reattach) {
                 // Ignore exited events from stale or unknown sessions
                 if (!ptySessionId || msg.session_id !== ptySessionId) break;
                 headerTitle.textContent = '';
-                ptyStatus.textContent = 'exited';
                 if (msg.session_id) clearTermBuffer(msg.session_id);
                 clearNotification(msg.session_id);
                 ptySessionId = null;
                 e2eKey = null;
                 ephemeralPrivKey = null;
-                term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
+                if (msg.error) {
+                    ptyStatus.textContent = 'crashed';
+                    term.writeln('\r\n\x1b[31;1m--- egg crashed ---\x1b[0m');
+                    term.writeln('\x1b[2m' + msg.error.replace(/\n/g, '\r\n') + '\x1b[0m');
+                    term.writeln('');
+                    term.writeln('\x1b[33mPlease report this bug: https://github.com/ehrlich-b/wingthing/issues\x1b[0m');
+                } else {
+                    ptyStatus.textContent = 'exited';
+                    term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
+                }
                 renderSidebar();
                 loadHome();
                 break;
