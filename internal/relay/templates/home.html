@@ -4,8 +4,6 @@
 .hero{padding:40px 0 24px;text-align:center}
 .hero h1{font-size:28px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
 .hero .tagline{color:var(--text-dim);font-size:15px;line-height:1.5;max-width:480px;margin:0 auto 24px}
-.hero-cta{display:inline-block;background:var(--action);color:#fff;padding:12px 32px;border-radius:6px;font-size:15px;font-weight:600;text-decoration:none;font-family:var(--mono)}
-.hero-cta:hover{background:var(--action-hover);color:#fff}
 .prompt-flow{font-family:var(--mono);font-size:18px;margin-top:8px}
 .prompt-line{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0}
 .prompt-dim{color:var(--text-dim)}
@@ -60,7 +58,9 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <div class="hero">
 <h1>your AI agents, reachable from anywhere</h1>
 <p class="tagline">Claude Code, Codex, Cursor, Gemini, and more — sandboxed on your machine, accessible from any device.</p>
-{{if .User}}<a href="https://app.wingthing.ai" class="hero-cta">open app</a>
+{{if .User}}<div class="prompt-flow">
+<a href="https://app.wingthing.ai" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open app</span></a>
+</div>
 {{else}}<div class="prompt-flow" id="prompt-flow">
 <div class="prompt-line" id="prompt-step1"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to start</span></div>
 <a href="/auth/github" class="prompt-line prompt-hidden" id="prompt-step2"><span class="prompt-dim">continue with GitHub</span> <span class="prompt-key">[enter]</span></a>
@@ -71,15 +71,41 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <div class="how-grid">
 <div class="how-card">
 <h3>wing</h3>
-<p>Your machine. <code>wt login</code>, <code>wt start</code>, you're online. One machine = one wing, always on.</p>
+<p>Session manager running on your machine. <code>wt login</code>, <code>wt start</code>, you're online. One machine = one wing, always on.</p>
 </div>
 <div class="how-card">
 <h3>roost</h3>
-<p>The encrypted relay. Wings connect outbound — no port forwarding, no static IP. Use ours or <a href="/docs#self-hosting">host your own</a>.</p>
+<p>The encrypted relay. Wings connect outbound, no port forwarding, no static IP. Use ours or <a href="/docs#self-hosting">host your own</a>.</p>
 </div>
 <div class="how-card">
 <h3>egg</h3>
-<p>A sandboxed agent session. Open from any device. Claude Code, Codex, Cursor, Gemini, and more.</p>
+<p>Sandboxed agent session that stays running after you disconnect. Claude Code, Codex, Cursor, Gemini, and more.</p>
+</div>
+</div>
+<div class="how-grid">
+<div class="how-card">
+<h3>single binary</h3>
+<p>curl install, SQLite, nothing else to install. MIT licensed. Runs on macOS and Linux, x64 and arm64.</p>
+</div>
+<div class="how-card">
+<h3>sandbox-first</h3>
+<p>Agents get full tool access because the sandbox constrains them. Seatbelt on macOS, namespaces on Linux.</p>
+</div>
+<div class="how-card">
+<h3>e2e encrypted</h3>
+<p>X25519 key exchange, AES-GCM. The roost is a dumb pipe, it never sees your terminal data.</p>
+</div>
+<div class="how-card">
+<h3>self-hostable</h3>
+<p>Don't trust us? <code>wt serve --local</code> and you're running your own roost. Same binary, same features.</p>
+</div>
+<div class="how-card">
+<h3>any agent</h3>
+<p>Same interface, any backend. <code>wt egg claude</code> for the hard stuff, <code>wt egg ollama</code> for free. Support new agents next day.</p>
+</div>
+<div class="how-card">
+<h3>no open ports</h3>
+<p>Wings connect outbound. No port forwarding, no firewall holes, no dynamic DNS. Simpler than SSH.</p>
 </div>
 </div>
 </div>
