@@ -94,11 +94,6 @@ async function init() {
         userInfo.textContent = currentUser.display_name || 'user';
     } catch (e) { loginRedirect(); return; }
 
-    // Request notification permission
-    if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission();
-    }
-
     // Event handlers
     homeBtn.addEventListener('click', showHome);
     newSessionBtn.addEventListener('click', showPalette);
@@ -1479,9 +1474,17 @@ function setNotification(sessionId) {
     renderSidebar();
     if (activeView === 'home') renderDashboard();
 
-    // Browser notification
-    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
-        new Notification('wingthing', { body: 'A session needs your attention' });
+    // Browser notification — request permission on first ping, not page load
+    if (document.hidden && 'Notification' in window) {
+        if (Notification.permission === 'granted') {
+            new Notification('wingthing', { body: 'A session needs your attention' });
+        } else if (Notification.permission === 'default') {
+            Notification.requestPermission().then(function(p) {
+                if (p === 'granted') {
+                    new Notification('wingthing', { body: 'A session needs your attention' });
+                }
+            });
+        }
     }
 
     // Flash title
