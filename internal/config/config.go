@@ -98,5 +98,17 @@ func (c *Config) SkillsDir() string {
 }
 
 func (c *Config) RelayDBPath() string {
-	return filepath.Join(c.Dir, "social.db")
+	newPath := filepath.Join(c.Dir, "roost.db")
+	oldPath := filepath.Join(c.Dir, "social.db")
+	if _, err := os.Stat(newPath); err == nil {
+		return newPath
+	}
+	if _, err := os.Stat(oldPath); err == nil {
+		os.Rename(oldPath, newPath)
+		// Also migrate WAL and SHM if present
+		os.Rename(oldPath+"-wal", newPath+"-wal")
+		os.Rename(oldPath+"-shm", newPath+"-shm")
+		return newPath
+	}
+	return newPath
 }
