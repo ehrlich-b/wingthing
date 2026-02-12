@@ -98,5 +98,5 @@ func (c *Config) SkillsDir() string {
 }
 
 func (c *Config) RelayDBPath() string {
-	return filepath.Join(c.Dir, "relay.db")
+	return filepath.Join(c.Dir, "social.db")
 }
