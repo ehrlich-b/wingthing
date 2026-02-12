@@ -10,7 +10,6 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
-	"github.com/ehrlich-b/wingthing/internal/embedding"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/spf13/cobra"
 )
@@ -24,7 +23,6 @@ func envOr(key, fallback string) string {
 
 func serveCmd() *cobra.Command {
 	var addrFlag string
-	var spacesFlag string
 	var devFlag bool
 	var localFlag bool
 
@@ -37,47 +35,11 @@ func serveCmd() *cobra.Command {
 				return err
 			}
 
-			store, err := relay.OpenRelay(cfg.SocialDBPath())
+			store, err := relay.OpenRelay(cfg.RelayDBPath())
 			if err != nil {
-				return fmt.Errorf("open social db: %w", err)
+				return fmt.Errorf("open relay db: %w", err)
 			}
 			defer store.Close()
-
-			// Collect all available embedders
-			var embedders []embedding.Embedder
-			if emb, err := embedding.NewFromProvider("ollama", "", ""); err == nil {
-				embedders = append(embedders, emb)
-			}
-			if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-				if emb, err := embedding.NewFromProvider("openai", "", ""); err == nil {
-					embedders = append(embedders, emb)
-				}
-			}
-
-			// Primary embedder for server API (nil = read-only mode, no new posts)
-			var primaryEmb embedding.Embedder
-			if len(embedders) > 0 {
-				primaryEmb = embedders[0]
-			}
-
-			spacesPath := spacesFlag
-			if spacesPath == "" {
-				spacesPath = "spaces.yaml"
-			}
-
-			idx, err := embedding.LoadSpaceIndex(spacesPath, "spaces/cache", embedders...)
-			if err != nil {
-				return fmt.Errorf("load space index: %w", err)
-			}
-
-			// Seed anchors for each embedder
-			for _, emb := range embedders {
-				n, err := relay.SeedSpacesFromIndex(store, idx, emb.Name())
-				if err != nil {
-					return fmt.Errorf("seed spaces (%s): %w", emb.Name(), err)
-				}
-				fmt.Printf("seeded %d spaces (%s)\n", n, emb.Name())
-			}
 
 			if err := relay.SeedDefaultSkills(store); err != nil {
 				return fmt.Errorf("seed skills: %w", err)
@@ -90,7 +52,7 @@ func serveCmd() *cobra.Command {
 				JWTSecret:          os.Getenv("WT_JWT_SECRET"),
 				GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
 				GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-					SMTPHost:           os.Getenv("SMTP_HOST"),
+				SMTPHost:           os.Getenv("SMTP_HOST"),
 				SMTPPort:           envOr("SMTP_PORT", "587"),
 				SMTPUser:           os.Getenv("SMTP_USER"),
 				SMTPPass:           os.Getenv("SMTP_PASS"),
@@ -98,7 +60,6 @@ func serveCmd() *cobra.Command {
 			}
 
 			srv := relay.NewServer(store, srvCfg)
-			srv.Embedder = primaryEmb
 			// Bandwidth: 64 KB/s sustained, 1 MB burst per user (PTY-only traffic)
 			srv.Bandwidth = relay.NewBandwidthMeter(64*1024, 1*1024*1024, store.DB())
 			// Rate limit: 5 req/s sustained, 20 burst per IP (friends-and-family)
@@ -124,7 +85,6 @@ func serveCmd() *cobra.Command {
 				})
 				fmt.Println("local mode: auth bypassed, device token written")
 			}
-			relay.StartSidebarRefresh(store, 10*time.Minute)
 
 			httpSrv := &http.Server{
 				Addr:    addrFlag,
@@ -154,7 +114,6 @@ func serveCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&addrFlag, "addr", ":8080", "listen address")
-	cmd.Flags().StringVar(&spacesFlag, "spaces", "", "path to spaces.yaml (default: spaces.yaml)")
 	cmd.Flags().BoolVar(&devFlag, "dev", false, "reload templates from disk on each request")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "single-user mode, no login required")
 

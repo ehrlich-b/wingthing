@@ -350,6 +350,78 @@ func (s *RelayStore) AppendAudit(userID, event string, detail *string) error {
 	return nil
 }
 
+// SocialUser represents an authenticated user (via OAuth, magic link, or local mode).
+type SocialUser struct {
+	ID          string
+	Provider    string
+	ProviderID  string
+	DisplayName string
+	AvatarURL   *string
+	IsPro       bool
+	CreatedAt   time.Time
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func (s *RelayStore) UpsertSocialUser(u *SocialUser) error {
+	_, err := s.db.Exec(
+		`INSERT INTO social_users (id, provider, provider_id, display_name, avatar_url, is_pro)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   display_name = excluded.display_name,
+		   avatar_url = excluded.avatar_url,
+		   is_pro = excluded.is_pro`,
+		u.ID, u.Provider, u.ProviderID, u.DisplayName, u.AvatarURL, boolToInt(u.IsPro),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert social user: %w", err)
+	}
+	return nil
+}
+
+func (s *RelayStore) GetSocialUserByProvider(provider, providerID string) (*SocialUser, error) {
+	row := s.db.QueryRow(
+		"SELECT id, provider, provider_id, display_name, avatar_url, is_pro, created_at FROM social_users WHERE provider = ? AND provider_id = ?",
+		provider, providerID,
+	)
+	var u SocialUser
+	var isPro int
+	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &isPro, &u.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get social user by provider: %w", err)
+	}
+	u.IsPro = isPro != 0
+	return &u, nil
+}
+
+func (s *RelayStore) GetOrCreateSocialUserByEmail(email string) (*SocialUser, error) {
+	u, err := s.GetSocialUserByProvider("email", email)
+	if err != nil {
+		return nil, err
+	}
+	if u != nil {
+		return u, nil
+	}
+	u = &SocialUser{
+		ID:          generateToken(),
+		Provider:    "email",
+		ProviderID:  email,
+		DisplayName: email,
+	}
+	if err := s.UpsertSocialUser(u); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
 func (s *RelayStore) migrate() error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT PRIMARY KEY,

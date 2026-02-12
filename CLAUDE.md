@@ -2,11 +2,11 @@
 
 ## What This Is
 
-`wt` runs AI agents sandboxed on your machine, accessible from anywhere. The primary use case is `wt egg <agent>` (sandboxed agent sessions) and `wt wing` (remote access via relay). Skills, social feed, and task execution are secondary features.
+`wt` runs AI agents sandboxed on your machine, accessible from anywhere. The primary use case is `wt egg <agent>` (sandboxed agent sessions) and `wt wing` (remote access via relay). Skills and task execution are secondary features.
 
 - `wt egg claude` -- run Claude Code in a per-session sandbox with PTY persistence
 - `wt wing -d` -- connect your machine to the relay, access from app.wingthing.ai
-- `wt serve` -- relay server (social feed, web UI, WebSocket relay), HTTP + SQLite
+- `wt serve` -- relay server (web UI, WebSocket relay, skill registry), HTTP + SQLite
 
 ## Design Philosophy
 
@@ -28,7 +28,7 @@ If you find yourself reaching for an external tool and wingthing _should_ handle
 
 - `wt egg <agent>` -- spawns a per-session child process (`wt egg run`) with its own sandbox, PTY, and gRPC socket at `~/.wingthing/eggs/<session-id>/`
 - `wt wing` -- WebSocket client that connects outbound to the relay, accepts remote PTY/task/chat requests, spawns eggs for each session
-- `wt serve` -- relay server (social feed + web UI + WebSocket relay), HTTP + SQLite
+- `wt serve` -- relay server (web UI + WebSocket relay + skill registry), HTTP + SQLite
 - `wt run` -- direct agent invocation for prompts and skills (the old `wt [prompt]`)
 - Agents are pluggable (claude, ollama, gemini, codex, cursor). `wt` calls them as child processes.
 - All commands use direct store access via `store.Open(cfg.DBPath())`.
@@ -55,17 +55,9 @@ CLI tools detected by `wt doctor`:
 - `ANTHROPIC_API_KEY` -- Anthropic/Claude API
 - `GEMINI_API_KEY` / `GOOGLE_API_KEY` -- Google/Gemini
 
-## Spaces
-
-- `spaces.yaml` is the single source of truth for space definitions (159 entries)
-- `internal/embedding.SpaceIndex` loads YAML, embeds centroids, caches per-embedder as `.bin` files
-- Multi-embedder: embed centroids with every provided Embedder, anyone can bring their own
-
 ## Agent Resolution Precedence
 
 Single resolution path for all contexts: **CLI flag (`--agent`) > skill frontmatter (`agent:`) > config default (`default_agent`)**
-
-This means `wt --skill compress --agent ollama` always runs ollama, regardless of what the skill declares.
 
 ## Skill System
 
@@ -84,7 +76,7 @@ Skills are the core abstraction. Markdown files with YAML frontmatter and a prom
 |-------|----------|-------------|
 | `name` | yes | Skill identifier (matches filename) |
 | `description` | yes | One-line summary |
-| `memory` | no | List of memory files to load (e.g. `[feeds, identity]`) |
+| `memory` | no | List of memory files to load (e.g. `[identity]`) |
 | `agent` | no | Default agent; overridable with `--agent` |
 | `isolation` | no | Sandbox isolation level (`strict`, `standard`, `network`, `privileged`) |
 | `timeout` | no | Duration string (e.g. `60s`) |
@@ -92,7 +84,7 @@ Skills are the core abstraction. Markdown files with YAML frontmatter and a prom
 | `schedule` | no | Cron expression for recurring execution |
 | `mounts` | no | Directories to mount into sandbox |
 
-Install with `wt skill add skills/compress.md`. Memory files referenced by skills go in `~/.wingthing/memory/`.
+Install with `wt skill add skills/dream.md`. Memory files referenced by skills go in `~/.wingthing/memory/`.
 
 ## Sandbox
 
@@ -133,9 +125,9 @@ When `isolation` is `strict` or `standard` (no network), the sandbox automatical
 | `internal/ws` | WebSocket protocol (wing<->relay messages), client with auto-reconnect |
 | `internal/auth` | ECDH key exchange, AES-GCM E2E encryption, device auth, token store |
 | `internal/agent` | LLM agent adapters (claude, ollama, gemini, codex, cursor) |
-| `internal/relay` | Relay server: social feed, web UI, WebSocket handler, wing registry |
+| `internal/relay` | Relay server: web UI, WebSocket handler, wing registry, skill registry |
 | `internal/orchestrator` | Prompt assembly, config resolution, budget management |
-| `internal/embedding` | Embedder interface, OpenAI/Ollama adapters, SpaceIndex, cosine/blend |
+| `internal/embedding` | Embedder interface, OpenAI/Ollama adapters, cosine/blend utilities |
 | `internal/skill` | Skill loading, template interpolation |
 | `internal/memory` | Memory loading, layered retrieval |
 | `internal/config` | Config loading, `~/.wingthing/` paths, defaults |
@@ -159,6 +151,15 @@ Run `make check` to verify changes. Run `make web` before `make check` if you ch
 ### CI
 
 CI runs via **cinch**. Use `cinch run` to trigger a build, `cinch status` to check results. When Bryan says "cinch run" or "cinch status", run those commands directly.
+
+### Development is LOCAL
+
+**Prod (wingthing.fly.dev) is Bryan's daily driver.** Do not deploy to Fly during development unless explicitly asked. All development and testing happens locally.
+
+- `make serve` starts a local relay on `:8080`
+- `wt wing --relay http://localhost:8080` connects a wing to the local relay
+- Test the full stack locally before even thinking about prod
+- End-of-day or explicit request = deploy to Fly
 
 ### Running `wt serve` during development
 
@@ -185,29 +186,3 @@ Use `make serve` in a separate terminal (or via Bash `run_in_background`). It bu
 | `wt serve` | Start the relay web server |
 | `wt skill list/add/enable/disable` | Manage skills (local + registry) |
 | `wt update` | Update wt to latest release |
-| `wt post "text" --link URL --mass N --date DATE` | Post to wt social |
-| `wt vote <post-id>` | Upvote a post on wt social |
-| `wt comment <post-id> "text"` | Comment on a post |
-
-## Social Pipeline
-
-The self-hosted content pipeline for wt.ai/social:
-
-```
-feeds.md (509 feeds) → pipeline.go → articles.tsv → compress_and_post.sh → social.db
-```
-
-**Feed target: 1000+ validated working feeds.** Validate with `/tmp/validate_feeds.go` — prune dead/empty feeds, replace with working ones.
-
-1. **Fetch**: `go run /tmp/pipeline.go skills/feeds.md > /tmp/articles.tsv` — reads feeds.md, fetches RSS/Atom in parallel (10 at a time), outputs TSV with SOURCE, TITLE, LINK, DATE, TEXT
-2. **Compress + Post**: `/tmp/compress_and_post.sh ./wt` — reads articles.tsv, compresses each via `claude -p sonnet` (free on $200 plan), posts via `wt post --date --link --mass`
-3. **Result**: everything lands in `~/.wingthing/social.db` with real embeddings (ollama mxbai-embed-large), space assignments (cosine similarity), and article publish dates (for proper decay)
-
-**Key details:**
-- Embeddings: ollama mxbai-embed-large (free, local)
-- Summarization: `claude -p --model claude-sonnet-4-5-20250929` (effectively free on $200 plan)
-- `--mass 10` for bot-curated content; `POST /api/post` forces mass=1 (public)
-- `--date` accepts RFC3339 or YYYY-MM-DD; decay uses `COALESCE(published_at, created_at)`
-- URL dedup: same link returns existing post
-- Back up DB: `cp ~/.wingthing/social.db ~/wt_bak/social_$(date +%Y%m%d).db`
-- Pipeline scripts live in `/tmp/` (not checked in — generated content)

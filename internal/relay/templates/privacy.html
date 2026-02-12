@@ -24,7 +24,6 @@
 <li><strong>Account information:</strong> If you authenticate via GitHub OAuth or magic link, we store your username and email address to identify your account and your wings.</li>
 <li><strong>Device tokens:</strong> When you run <code>wt login</code>, a device token is generated and stored on the server to authenticate your wing's WebSocket connection.</li>
 <li><strong>Session metadata:</strong> Session IDs, agent type (e.g. "claude", "ollama"), and connection timestamps. We need this to route WebSocket connections.</li>
-<li><strong>Social feed content:</strong> Posts, votes, and comments you submit to the public social feed at wingthing.ai/social.</li>
 </ul>
 
 <h2>2. what we do not collect</h2>
@@ -45,7 +44,7 @@
 <p>We do not sell, rent, or share your data with third parties. We do not use your data for advertising, analytics, or model training.</p>
 
 <h2>4. data storage</h2>
-<p>The hosted roost stores data in SQLite on a single Fly.io machine. Social feed content is public by design. Account metadata is stored for the duration of your account. Session metadata is ephemeral and does not persist across server restarts.</p>
+<p>The hosted relay stores data in SQLite on a single Fly.io machine. Account metadata is stored for the duration of your account. Session metadata is ephemeral and does not persist across server restarts.</p>
 
 <h2>5. self-hosted instances</h2>
 <p>If you self-host wingthing, your data never touches our servers. You control everything. This privacy policy applies only to the hosted service at wingthing.ai.</p>
@@ -57,7 +56,7 @@
 </ul>
 
 <h2>7. data deletion</h2>
-<p>To delete your account and associated data, contact <a href="mailto:privacy@wingthing.ai">privacy@wingthing.ai</a>. Social feed posts are public and may be retained.</p>
+<p>To delete your account and associated data, contact <a href="mailto:privacy@wingthing.ai">privacy@wingthing.ai</a>.</p>
 
 <h2>8. changes to this policy</h2>
 <p>We may update this policy. Material changes will be communicated via the Service. Continued use constitutes acceptance.</p>

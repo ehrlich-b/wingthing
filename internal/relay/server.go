@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ehrlich-b/wingthing/internal/embedding"
 	"github.com/ehrlich-b/wingthing/web"
 )
 
@@ -28,7 +27,6 @@ type ServerConfig struct {
 
 type Server struct {
 	Store          *RelayStore
-	Embedder       embedding.Embedder
 	Config         ServerConfig
 	DevTemplateDir string // if set, re-read templates from disk on each request
 	DevMode        bool   // if set, auto-claim device codes with test-user
@@ -71,13 +69,6 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /api/skills", s.handleListSkills)
 	s.mux.HandleFunc("GET /api/skills/{name}", s.handleGetSkill)
 	s.mux.HandleFunc("GET /api/skills/{name}/raw", s.handleGetSkillRaw)
-	s.mux.HandleFunc("POST /api/post", s.handlePost)
-	s.mux.HandleFunc("POST /api/vote", s.handleVote)
-	s.mux.HandleFunc("POST /api/comment", s.handleComment)
-	s.mux.HandleFunc("GET /api/comments", s.handleListComments)
-	s.mux.HandleFunc("POST /api/sync/push", s.handleSyncPush)
-	s.mux.HandleFunc("GET /api/sync/pull", s.handleSyncPull)
-
 	// Relay: worker WebSocket + task API
 	s.mux.HandleFunc("GET /ws/wing", s.handleWingWS)
 	s.mux.HandleFunc("POST /api/tasks", s.handleSubmitTask)
@@ -112,10 +103,6 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /self-host", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/docs", http.StatusMovedPermanently)
 	})
-	s.mux.HandleFunc("GET /social", s.handleSocial)
-	s.mux.HandleFunc("GET /w/{slug}", s.handleAnchor)
-	s.mux.HandleFunc("GET /p/{postID}", s.handlePostPage)
-
 	// Web auth
 	s.mux.HandleFunc("GET /auth/github", s.handleGitHubAuth)
 	s.mux.HandleFunc("GET /auth/github/callback", s.handleGitHubCallback)
@@ -144,9 +131,7 @@ func stripPort(host string) string {
 	return host
 }
 
-func (s *Server) SetLocalUser(u *SocialUser) {
-	s.localUser = u
-}
+func (s *Server) SetLocalUser(u *SocialUser) { s.localUser = u }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := stripPort(r.Host)
@@ -183,7 +168,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Default host: full site with caching
-	if r.Method == "GET" && (path == "/" || path == "/social" || path == "/skills" || path == "/login" || path == "/docs" || path == "/terms" || path == "/privacy" || strings.HasPrefix(path, "/w/") || strings.HasPrefix(path, "/p/")) {
+	if r.Method == "GET" && (path == "/" || path == "/skills" || path == "/login" || path == "/docs" || path == "/terms" || path == "/privacy") {
 		if r.URL.RawQuery != "" {
 			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
 		} else {

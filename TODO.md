@@ -1165,6 +1165,89 @@ Codex and Cursor are v0 because wings should support every major agent framework
 out of the box. Same pattern as claude/ollama/gemini: detect binary, shell out,
 parse output. The adapters are in `internal/agent/`.
 
+##### Local E2E Test Harness
+
+Before building GUI streaming, get a proper local test loop. Prod is the daily driver —
+all development and testing happens locally. No deploying to Fly until end of day.
+
+- [ ] `internal/harness/harness.go` — test helper that spins up the full local stack:
+  - Start relay (`relay.NewServer`) on ephemeral port via `httptest.Server`
+  - Connect a wing client (`ws.Client`) to the local relay
+  - Provide helpers: `SubmitTask()`, `StartPTY()`, `WaitForOutput()`
+  - `:memory:` SQLite for both main store and social DB
+  - Auto-cleanup via `t.Cleanup()`
+- [ ] `internal/harness/harness_test.go` — verify the harness itself works:
+  - Wing registers with relay
+  - Submit task → wing executes → output streams back
+  - PTY session: start → send input → receive output → stop
+- [ ] `make e2e` target — runs `go test ./internal/harness/ -v -count=1`
+- [ ] Document in CLAUDE.md: `make e2e` for full stack local tests
+
+##### GUI Streaming (H.264 Over WebSocket)
+
+**Design doc:** [gui-streaming-design.md](docs/gui-streaming-design.md)
+
+Remote GUI windows in the browser. Same relay, same E2E encryption, new payload type.
+Terminal windows = xterm.js. GUI windows = `<video>` via MSE. Both are "windows" in the
+same UI. The relay doesn't change — it's still a dumb pipe forwarding opaque payloads.
+
+**Phase 0: Standalone macOS capture spike**
+- [ ] `cmd/wt-capture/main.go` — throwaway binary, not wired into wt yet
+- [ ] ScreenCaptureKit cgo: list windows, capture one by ID, dump NV12 to callback
+- [ ] VideoToolbox cgo: accept NV12 CVPixelBuffer, emit H.264 NALs to callback
+- [ ] Write raw H.264 annex-B stream to file, verify with `ffplay /tmp/out.h264`
+- [ ] Print stats: fps achieved, bytes/frame, CPU %
+- [ ] Decision gate: if quality/perf are good, proceed to Phase 1
+
+**Phase 1: macOS Capture + Encode PoC**
+- [ ] Move capture code into `internal/gui/` with proper interfaces
+- [ ] `Capturer` interface + `darwin` build-tagged implementation
+- [ ] `Encoder` interface + `darwin` build-tagged VideoToolbox implementation
+- [ ] Wire into a test: capture → encode → count frames, measure bitrate
+
+**Phase 2: fMP4 Mux + Browser Playback**
+- [ ] Pure Go fMP4 muxer — wrap H.264 NALs into fragmented MP4 segments
+- [ ] Static HTML page with MSE `<video>` playback
+- [ ] Local WebSocket: capture → encode → mux → ws → browser
+
+**Phase 3: Integrate into Egg + Wing**
+- [ ] `gui.*` message types in `internal/ws/protocol.go` (gui.init, gui.frame, gui.input, gui.attach)
+- [ ] Wire capture pipeline into egg session lifecycle
+- [ ] GUI replay buffer (last IDR + P-frames for reattach)
+- [ ] E2E encrypt gui.frame same as pty.output
+- [ ] Browser player component in `web/` alongside xterm.js
+- [ ] Input forwarding: keyboard/mouse via CGEventPost (macOS) / XTest (Linux)
+
+**Phase 4: Linux Support**
+- [ ] OpenH264 cgo encoder (BSD-licensed, MIT-compatible, `SCREEN_CONTENT_REAL_TIME` mode)
+- [ ] X11 XShm capture
+- [ ] Xvfb integration for headless eggs
+- [ ] BGRA → NV12 color conversion
+
+**Phase 5: Wayland Support**
+- [ ] PipeWire + xdg-desktop-portal capture (universal Wayland, requires one-time picker dialog)
+- [ ] ext-image-copy-capture-v1 for wlroots compositors (Sway, Labwc — non-interactive)
+- [ ] Headless Linux always uses Xvfb (no Wayland dependency)
+
+##### Horizontal Relay Scaling (Multi-Node Fly)
+
+Wing connects to fly-iad, browser connects to fly-sjc — they need to find each other.
+Fly's internal WireGuard mesh (`.internal` DNS) connects all instances. Use it.
+
+- [ ] **Wing registry gossip** — when a wing registers on node A, broadcast to other nodes via Fly internal network (lightweight: wing_id + node_id + user_id, not the traffic itself)
+- [ ] **Browser routing** — browser connects to nearest node, node checks local wing registry, if miss → query other nodes via `.internal`, pipe traffic to the node that has the wing
+- [ ] **`fly-replay` fast path** — for initial HTTP upgrade, use Fly's `fly-replay` response header to redirect the browser's WebSocket to the correct instance before upgrade. Zero-hop after handshake.
+- [ ] **Inter-node pipe** — when wing and browser are on different nodes, relay traffic over Fly internal WireGuard mesh. Fly internal bandwidth is free. Add ~5-20ms per hop (inter-region).
+- [ ] **Sticky sessions** — once browser finds the wing's node, cache the mapping. Re-lookup on disconnect.
+- [ ] **Node failure** — wing reconnects to any node (anycast), re-registers, browser's stale mapping fails, re-lookup finds new node.
+
+**Why this works:**
+- Fly internal traffic between instances is free (WireGuard mesh)
+- Anycast means both wing and browser always connect to nearest edge
+- Most of the time wing and browser are in the same region (same user, same geography) — zero hops
+- For cross-region: one extra hop over Fly's backbone, still faster than routing through a single central server
+- No external dependencies: no Redis, no shared database, just instances talking to each other
+
 ##### Per-User Relay Safety Limits
 - [ ] Per-user throughput limits on relay traffic — allow bursting for responsiveness but cap sustained throughput over any ~10s window
 - [ ] If someone starts transmitting GBs, throttle and eventually disconnect
