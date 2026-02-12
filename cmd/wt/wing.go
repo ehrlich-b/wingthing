@@ -1009,10 +1009,10 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
 func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte) {
-	var gcmMu sync.Mutex
+	var mu sync.Mutex
 	var gcm cipher.AEAD
-	var reattaching bool       // true during reattach window — output goroutine queues instead of drops
-	var reattachQueue [][]byte // queued output during reattach
+	var activeStream pb.Egg_SessionClient
+	var cancelStream context.CancelFunc
 	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
 	if privKeyErr != nil {
 		log.Printf("pty session %s: FATAL: load private key: %v (reclaim aborted)", sessionID, privKeyErr)
@@ -1022,11 +1022,15 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	wingPubKeyB64 := base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
 
 	// Attach to existing egg session
-	stream, err := ec.AttachSession(ctx, sessionID)
+	streamCtx, sCancel := context.WithCancel(ctx)
+	stream, err := ec.AttachSession(streamCtx, sessionID)
 	if err != nil {
+		sCancel()
 		log.Printf("pty session %s: reclaim attach failed: %v", sessionID, err)
 		return
 	}
+	activeStream = stream
+	cancelStream = sCancel
 
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	defer sessionCancel()
@@ -1055,16 +1059,11 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				} else {
 					lastHadBell = false
 				}
-				gcmMu.Lock()
-				if reattaching {
-					reattachQueue = append(reattachQueue, p.Output)
-					gcmMu.Unlock()
-					continue
-				}
+				mu.Lock()
 				currentGCM := gcm
-				gcmMu.Unlock()
+				mu.Unlock()
 				if currentGCM == nil {
-					continue // no key yet (initial connect, before first attach)
+					continue // no key yet or reattach in progress
 				}
 				encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
 				if encErr != nil {
@@ -1095,12 +1094,15 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					continue
 				}
 				wingAttention.Delete(sessionID)
-				// Phase 1: Invalidate old key. Output goroutine drops frames
-				// (gcm=nil, reattaching=false). Dropped data is safe — it's in
-				// the replay buffer which we snapshot below.
-				gcmMu.Lock()
+				// 1. Invalidate key — old output goroutine stops sending
+				mu.Lock()
 				gcm = nil
-				gcmMu.Unlock()
+				if cancelStream != nil {
+					cancelStream()
+				}
+				mu.Unlock()
+
+				// 2. Derive new key
 				var newGCM cipher.AEAD
 				if attach.PublicKey != "" {
 					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
@@ -1112,60 +1114,85 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 				}
 
-				// Phase 2: Send pty.started so browser can begin key derivation
-				// while we fetch the replay.
+				// 3. Send pty.started so browser can derive key
 				write(ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, PublicKey: wingPubKeyB64})
 
-				// Phase 3: Fetch replay while output goroutine is dropping.
-				// The snapshot includes everything the goroutine is dropping.
-				var replayData []byte
+				// 4. New egg subscriber — replay first (atomic), then live frames
+				newStreamCtx, newSCancel := context.WithCancel(ctx)
+				newStream, reErr := ec.AttachSession(newStreamCtx, sessionID)
+				if reErr != nil {
+					newSCancel()
+					log.Printf("pty session %s: reattach to egg failed: %v", sessionID, reErr)
+					continue
+				}
+
+				// 5. Read replay (first message) and send to browser
 				if newGCM != nil {
-					reattachStream, reErr := ec.AttachSession(ctx, sessionID)
-					if reErr == nil {
-						replayMsg, rErr := reattachStream.Recv()
-						if rErr == nil {
-							if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
-								replayData = replay.Output
+					replayMsg, rErr := newStream.Recv()
+					if rErr == nil {
+						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
+							compressed, gzErr := gzipData(replay.Output)
+							if gzErr != nil {
+								compressed = replay.Output
+							}
+							isCompressed := gzErr == nil
+							if encrypted, encErr := auth.Encrypt(newGCM, compressed); encErr != nil {
+								log.Printf("pty session %s: replay encrypt error: %v", sessionID, encErr)
+							} else {
+								write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed})
+								log.Printf("pty session %s: replayed %d bytes (gzip %d)", sessionID, len(replay.Output), len(compressed))
 							}
 						}
-						reattachStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Detach{Detach: true}})
 					}
 				}
 
-				// Phase 4: Enter queue mode — only output arriving after
-				// the replay snapshot gets queued (no duplicates).
-				gcmMu.Lock()
-				reattaching = true
-				reattachQueue = reattachQueue[:0]
-				gcmMu.Unlock()
-				if newGCM != nil && len(replayData) > 0 {
-					compressed, gzErr := gzipData(replayData)
-					if gzErr != nil {
-						compressed = replayData // fall back to uncompressed
-					}
-					isCompressed := gzErr == nil
-					if encrypted, encErr := auth.Encrypt(newGCM, compressed); encErr != nil {
-						log.Printf("pty session %s: replay encrypt error: %v", sessionID, encErr)
-					} else {
-						write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed})
-						log.Printf("pty session %s: replayed %d bytes (gzip %d)", sessionID, len(replayData), len(compressed))
-					}
-				}
-
-				// Phase 5: Exit queue mode, flush any output that arrived during send.
-				gcmMu.Lock()
+				// 6. Activate new key + stream, start new output goroutine
+				mu.Lock()
 				gcm = newGCM
-				reattaching = false
-				queued := append([][]byte(nil), reattachQueue...)
-				reattachQueue = reattachQueue[:0]
-				gcmMu.Unlock()
-				if newGCM != nil {
-					for _, data := range queued {
-						if encrypted, encErr := auth.Encrypt(newGCM, data); encErr == nil {
+				activeStream = newStream
+				cancelStream = newSCancel
+				mu.Unlock()
+
+				go func() {
+					var lastHadBell bool
+					for {
+						msg, err := newStream.Recv()
+						if err != nil {
+							if err != io.EOF {
+								log.Printf("pty session %s: egg stream error: %v", sessionID, err)
+							}
+							return
+						}
+						switch p := msg.Payload.(type) {
+						case *pb.SessionMsg_Output:
+							if hasBell(p.Output) {
+								if lastHadBell {
+									wingAttention.Store(sessionID, true)
+								}
+								lastHadBell = true
+							} else {
+								lastHadBell = false
+							}
+							mu.Lock()
+							currentGCM := gcm
+							mu.Unlock()
+							if currentGCM == nil {
+								continue
+							}
+							encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
+							if encErr != nil {
+								continue
+							}
 							write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
+						case *pb.SessionMsg_ExitCode:
+							log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
+							write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
+							wingAttention.Delete(sessionID)
+							sessionCancel()
+							return
 						}
 					}
-				}
+				}()
 
 			case ws.TypePTYInput:
 				wingAttention.Delete(sessionID)
@@ -1173,10 +1200,11 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
 				}
-				gcmMu.Lock()
+				mu.Lock()
 				currentGCM := gcm
-				gcmMu.Unlock()
-				if currentGCM == nil {
+				currentStream := activeStream
+				mu.Unlock()
+				if currentGCM == nil || currentStream == nil {
 					log.Printf("pty session %s: rejecting input — E2E not established", sessionID)
 					continue
 				}
@@ -1184,7 +1212,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if decErr != nil {
 					continue
 				}
-				stream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Input{Input: decoded}})
+				currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Input{Input: decoded}})
 
 			case ws.TypePTYAttentionAck:
 				wingAttention.Delete(sessionID)
@@ -1194,7 +1222,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
 				}
-				stream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{Rows: uint32(msg.Rows), Cols: uint32(msg.Cols)}}})
+				mu.Lock()
+				currentStream := activeStream
+				mu.Unlock()
+				if currentStream != nil {
+					currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{Rows: uint32(msg.Rows), Cols: uint32(msg.Cols)}}})
+				}
 
 			case ws.TypePTYKill:
 				log.Printf("pty session %s: kill received", sessionID)
@@ -1211,10 +1244,10 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 // E2E encryption stays in the wing — the egg sees plaintext only.
 func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig) {
 	// Set up E2E encryption — required, no plaintext fallback
-	var gcmMu sync.Mutex
+	var mu sync.Mutex
 	var gcm cipher.AEAD
-	var reattaching bool
-	var reattachQueue [][]byte
+	var activeStream pb.Egg_SessionClient
+	var cancelStream context.CancelFunc
 	var wingPubKeyB64 string
 	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
 	if privKeyErr != nil {
@@ -1257,12 +1290,16 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 	})
 
 	// Attach to egg session stream
-	stream, err := ec.AttachSession(ctx, start.SessionID)
+	streamCtx, sCancel := context.WithCancel(ctx)
+	stream, err := ec.AttachSession(streamCtx, start.SessionID)
 	if err != nil {
+		sCancel()
 		log.Printf("pty: egg attach failed: %v", err)
 		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
 		return
 	}
+	activeStream = stream
+	cancelStream = sCancel
 
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	defer sessionCancel()
@@ -1290,17 +1327,10 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					lastHadBell = false
 				}
 
-				gcmMu.Lock()
-				if reattaching {
-					reattachQueue = append(reattachQueue, p.Output)
-					gcmMu.Unlock()
-					continue
-				}
+				mu.Lock()
 				currentGCM := gcm
-				gcmMu.Unlock()
-
+				mu.Unlock()
 				if currentGCM == nil {
-					// E2E not yet established — drop output until key exchange completes
 					continue
 				}
 				encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
@@ -1338,12 +1368,15 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					continue
 				}
 				wingAttention.Delete(start.SessionID)
-				// Phase 1: Invalidate old key. Output goroutine drops frames
-				// (gcm=nil, reattaching=false). Dropped data is safe — it's in
-				// the replay buffer which we snapshot below.
-				gcmMu.Lock()
+				// 1. Invalidate key — old output goroutine stops sending
+				mu.Lock()
 				gcm = nil
-				gcmMu.Unlock()
+				if cancelStream != nil {
+					cancelStream()
+				}
+				mu.Unlock()
+
+				// 2. Derive new key
 				var newGCM cipher.AEAD
 				if attach.PublicKey != "" {
 					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
@@ -1355,8 +1388,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					}
 				}
 
-				// Phase 2: Send pty.started so browser can begin key derivation
-				// while we fetch the replay.
+				// 3. Send pty.started so browser can derive key
 				write(ws.PTYStarted{
 					Type:      ws.TypePTYStarted,
 					SessionID: start.SessionID,
@@ -1364,70 +1396,91 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					PublicKey: wingPubKeyB64,
 				})
 
-				// Phase 3: Fetch replay while output goroutine is dropping.
-				// The snapshot includes everything the goroutine is dropping.
-				var replayData []byte
+				// 4. New egg subscriber — replay first (atomic), then live frames
+				newStreamCtx, newSCancel := context.WithCancel(ctx)
+				newStream, reErr := ec.AttachSession(newStreamCtx, start.SessionID)
+				if reErr != nil {
+					newSCancel()
+					log.Printf("pty session %s: reattach to egg failed: %v", start.SessionID, reErr)
+					continue
+				}
+
+				// 5. Read replay (first message) and send to browser
 				if newGCM != nil {
-					reattachStream, reErr := ec.AttachSession(ctx, start.SessionID)
-					if reErr != nil {
-						log.Printf("pty session %s: reattach to egg failed: %v", start.SessionID, reErr)
-					} else {
-						replayMsg, rErr := reattachStream.Recv()
-						if rErr == nil {
-							if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
-								replayData = replay.Output
+					replayMsg, rErr := newStream.Recv()
+					if rErr == nil {
+						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
+							compressed, gzErr := gzipData(replay.Output)
+							if gzErr != nil {
+								compressed = replay.Output
+							}
+							isCompressed := gzErr == nil
+							if encrypted, encErr := auth.Encrypt(newGCM, compressed); encErr != nil {
+								log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
+							} else {
+								write(ws.PTYOutput{
+									Type:       ws.TypePTYOutput,
+									SessionID:  start.SessionID,
+									Data:       encrypted,
+									Compressed: isCompressed,
+								})
+								log.Printf("pty session %s: replayed %d bytes (gzip %d)", start.SessionID, len(replay.Output), len(compressed))
 							}
 						}
-						reattachStream.Send(&pb.SessionMsg{
-							SessionId: start.SessionID,
-							Payload:   &pb.SessionMsg_Detach{Detach: true},
-						})
 					}
 				}
 
-				// Phase 4: Enter queue mode — only output arriving after
-				// the replay snapshot gets queued (no duplicates).
-				gcmMu.Lock()
-				reattaching = true
-				reattachQueue = reattachQueue[:0]
-				gcmMu.Unlock()
-				if newGCM != nil && len(replayData) > 0 {
-					compressed, gzErr := gzipData(replayData)
-					if gzErr != nil {
-						compressed = replayData
-					}
-					isCompressed := gzErr == nil
-					if encrypted, encErr := auth.Encrypt(newGCM, compressed); encErr != nil {
-						log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
-					} else {
-						write(ws.PTYOutput{
-							Type:       ws.TypePTYOutput,
-							SessionID:  start.SessionID,
-							Data:       encrypted,
-							Compressed: isCompressed,
-						})
-						log.Printf("pty session %s: replayed %d bytes (gzip %d)", start.SessionID, len(replayData), len(compressed))
-					}
-				}
-
-				// Phase 5: Exit queue mode, flush any output that arrived during send.
-				gcmMu.Lock()
+				// 6. Activate new key + stream, start new output goroutine
+				mu.Lock()
 				gcm = newGCM
-				reattaching = false
-				queued := append([][]byte(nil), reattachQueue...)
-				reattachQueue = reattachQueue[:0]
-				gcmMu.Unlock()
-				if newGCM != nil {
-					for _, data := range queued {
-						if encrypted, encErr := auth.Encrypt(newGCM, data); encErr == nil {
+				activeStream = newStream
+				cancelStream = newSCancel
+				mu.Unlock()
+
+				go func() {
+					var lastHadBell bool
+					for {
+						msg, err := newStream.Recv()
+						if err != nil {
+							if err != io.EOF {
+								log.Printf("pty session %s: egg stream error: %v", start.SessionID, err)
+							}
+							return
+						}
+						switch p := msg.Payload.(type) {
+						case *pb.SessionMsg_Output:
+							if hasBell(p.Output) {
+								if lastHadBell {
+									wingAttention.Store(start.SessionID, true)
+								}
+								lastHadBell = true
+							} else {
+								lastHadBell = false
+							}
+							mu.Lock()
+							currentGCM := gcm
+							mu.Unlock()
+							if currentGCM == nil {
+								continue
+							}
+							encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
+							if encErr != nil {
+								continue
+							}
 							write(ws.PTYOutput{
 								Type:      ws.TypePTYOutput,
 								SessionID: start.SessionID,
 								Data:      encrypted,
 							})
+						case *pb.SessionMsg_ExitCode:
+							log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
+							write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
+							wingAttention.Delete(start.SessionID)
+							sessionCancel()
+							return
 						}
 					}
-				}
+				}()
 
 			case ws.TypePTYInput:
 				wingAttention.Delete(start.SessionID)
@@ -1435,11 +1488,11 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
 				}
-				gcmMu.Lock()
+				mu.Lock()
 				currentGCM := gcm
-				gcmMu.Unlock()
-
-				if currentGCM == nil {
+				currentStream := activeStream
+				mu.Unlock()
+				if currentGCM == nil || currentStream == nil {
 					log.Printf("pty session %s: rejecting input — E2E not established", start.SessionID)
 					continue
 				}
@@ -1448,7 +1501,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					log.Printf("pty session %s: decrypt error: %v", start.SessionID, decErr)
 					continue
 				}
-				stream.Send(&pb.SessionMsg{
+				currentStream.Send(&pb.SessionMsg{
 					SessionId: start.SessionID,
 					Payload:   &pb.SessionMsg_Input{Input: decoded},
 				})
@@ -1461,13 +1514,18 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
 				}
-				stream.Send(&pb.SessionMsg{
-					SessionId: start.SessionID,
-					Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{
-						Rows: uint32(msg.Rows),
-						Cols: uint32(msg.Cols),
-					}},
-				})
+				mu.Lock()
+				currentStream := activeStream
+				mu.Unlock()
+				if currentStream != nil {
+					currentStream.Send(&pb.SessionMsg{
+						SessionId: start.SessionID,
+						Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{
+							Rows: uint32(msg.Rows),
+							Cols: uint32(msg.Cols),
+						}},
+					})
+				}
 
 			case ws.TypePTYKill:
 				log.Printf("pty session %s: kill received", start.SessionID)

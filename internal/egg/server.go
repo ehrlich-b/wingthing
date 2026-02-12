@@ -416,13 +416,13 @@ func (s *Server) readPTY(sess *Session) {
 			}
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			sess.replay.Write(data)
 
 			sess.mu.Lock()
+			sess.replay.Write(data)
 			for _, ch := range sess.subs {
 				select {
 				case ch <- data:
-				default:
+				default: // subscriber slow — drop from live stream, replay buffer still has it
 				}
 			}
 			sess.mu.Unlock()
@@ -480,19 +480,28 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 	subID := fmt.Sprintf("%p", stream)
 	outputCh := make(chan []byte, 256)
 
+	// Atomic: register subscriber + snapshot replay under same lock.
+	// readPTY also holds sess.mu when writing to replay + broadcasting,
+	// so the snapshot is consistent with the subscriber's start point:
+	// replay contains everything BEFORE this point, outputCh gets everything AFTER.
+	var buffered []byte
 	sess.mu.Lock()
 	sess.subs[subID] = outputCh
+	if msg.GetAttach() {
+		buffered = sess.replay.Bytes()
+	}
 	sess.mu.Unlock()
 
 	defer func() {
 		sess.mu.Lock()
 		delete(sess.subs, subID)
+		close(outputCh)
 		sess.mu.Unlock()
 	}()
 
-	// Handle attach — always send replay (even empty) so caller's Recv() never blocks
+	// Send replay before draining live output — sequential, no gap, no duplicates.
+	// Always send (even empty) so caller's first Recv() is always the replay message.
 	if msg.GetAttach() {
-		buffered := sess.replay.Bytes()
 		if err := stream.Send(&pb.SessionMsg{
 			SessionId: sessionID,
 			Payload:   &pb.SessionMsg_Output{Output: buffered},
@@ -509,10 +518,12 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 				if !ok {
 					return
 				}
-				stream.Send(&pb.SessionMsg{
+				if err := stream.Send(&pb.SessionMsg{
 					SessionId: sessionID,
 					Payload:   &pb.SessionMsg_Output{Output: data},
-				})
+				}); err != nil {
+					return
+				}
 			case <-sess.done:
 				sess.mu.Lock()
 				code := sess.exitCode
