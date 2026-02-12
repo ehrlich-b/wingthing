@@ -92,12 +92,6 @@ func (r *replayBuffer) Write(p []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// If p contains a screen-clear sequence, reset and keep only content after the last one
-	if idx := lastScreenClear(p); idx >= 0 {
-		r.buf = r.buf[:0]
-		p = p[idx:]
-	}
-
 	r.buf = append(r.buf, p...)
 
 	// Cap at maxReplaySize by trimming from the front
@@ -111,37 +105,6 @@ func (r *replayBuffer) Bytes() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]byte(nil), r.buf...)
-}
-
-// lastScreenClear returns the index AFTER the last screen-clear sequence in p,
-// or -1 if none found. Only detects strong "start fresh" signals:
-//
-//	\x1bc       RIS (Reset to Initial State)
-//	\x1b[3J     ED 3 (Erase scrollback — explicit "clear everything")
-//
-// NOTE: \x1b[2J (Erase Display) is intentionally NOT detected. TUI apps like
-// Claude Code emit it on every render cycle, which would reset the replay buffer
-// mid-render and cause partial/empty replays on reattach.
-func lastScreenClear(p []byte) int {
-	last := -1
-	for i := 0; i < len(p); i++ {
-		if p[i] != 0x1b {
-			continue
-		}
-		// \x1bc (RIS)
-		if i+1 < len(p) && p[i+1] == 'c' {
-			last = i + 2
-			i++
-			continue
-		}
-		// \x1b[3J only (erase scrollback)
-		if i+3 < len(p) && p[i+1] == '[' && p[i+2] == '3' && p[i+3] == 'J' {
-			last = i + 4
-			i += 3
-			continue
-		}
-	}
-	return last
 }
 
 // NewServer creates a new per-session egg server.

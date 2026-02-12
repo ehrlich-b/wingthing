@@ -154,9 +154,10 @@ type PTYStarted struct {
 
 // PTYOutput carries raw terminal bytes from wing to browser.
 type PTYOutput struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Data      string `json:"data"` // base64-encoded
+	Type       string `json:"type"`
+	SessionID  string `json:"session_id"`
+	Data       string `json:"data"`                  // base64-encoded
+	Compressed bool   `json:"compressed,omitempty"` // gzip before encrypt
 }
 
 // PTYInput carries keystrokes from browser to wing.

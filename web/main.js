@@ -2068,9 +2068,36 @@ function setupPTYHandlers(ws, reattach) {
     var keyReady = false;
     var replayDone = !reattach; // false during reattach until flushReplay completes
 
-    function processOutput(dataStr) {
+    function gunzip(data) {
+        var ds = new DecompressionStream('gzip');
+        var writer = ds.writable.getWriter();
+        writer.write(data);
+        writer.close();
+        var reader = ds.readable.getReader();
+        var chunks = [];
+        function pump() {
+            return reader.read().then(function (result) {
+                if (result.done) {
+                    var total = 0;
+                    for (var i = 0; i < chunks.length; i++) total += chunks[i].length;
+                    var out = new Uint8Array(total);
+                    var off = 0;
+                    for (var i = 0; i < chunks.length; i++) { out.set(chunks[i], off); off += chunks[i].length; }
+                    return out;
+                }
+                chunks.push(new Uint8Array(result.value));
+                return pump();
+            });
+        }
+        return pump();
+    }
+
+    function processOutput(dataStr, compressed) {
         e2eDecrypt(dataStr).then(function (bytes) {
-            if (ws !== ptyWs) return; // session switched during async decrypt
+            if (ws !== ptyWs) return;
+            return compressed ? gunzip(bytes) : bytes;
+        }).then(function (bytes) {
+            if (!bytes || ws !== ptyWs) return;
             term.write(bytes);
             saveTermBuffer();
             try {
@@ -2091,8 +2118,13 @@ function setupPTYHandlers(ws, reattach) {
         var pending = pendingOutput;
         pendingOutput = [];
         if (pending.length === 0) { term.reset(); replayDone = true; hideReplayOverlay(); return; }
-        Promise.all(pending.map(function (d) {
-            return e2eDecrypt(d).catch(function () { return null; });
+        Promise.all(pending.map(function (item) {
+            // item is { data, compressed } or legacy string
+            var dataStr = typeof item === 'string' ? item : item.data;
+            var isCompressed = typeof item === 'object' && item.compressed;
+            return e2eDecrypt(dataStr).then(function (bytes) {
+                return isCompressed ? gunzip(bytes) : bytes;
+            }).catch(function () { return null; });
         })).then(function (chunks) {
             if (ws !== ptyWs) return;
             var good = chunks.filter(function (c) { return c !== null; });
@@ -2161,9 +2193,9 @@ function setupPTYHandlers(ws, reattach) {
 
             case 'pty.output':
                 if (!keyReady || !replayDone) {
-                    pendingOutput.push(msg.data);
+                    pendingOutput.push({ data: msg.data, compressed: !!msg.compressed });
                 } else {
-                    processOutput(msg.data);
+                    processOutput(msg.data, !!msg.compressed);
                 }
                 break;
 

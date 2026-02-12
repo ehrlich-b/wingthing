@@ -67,6 +67,18 @@ func hasBell(data []byte) bool {
 	return bytes.IndexByte(data, 0x07) >= 0
 }
 
+func gzipData(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(data); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
 // Returns group directories (sorted by project count) followed by individual repos (sorted by mtime).
 func discoverProjects(dir string, maxDepth int) []ws.WingProject {
@@ -1104,11 +1116,16 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				reattachQueue = reattachQueue[:0]
 				gcmMu.Unlock()
 				if newGCM != nil && len(replayData) > 0 {
-					if encrypted, encErr := auth.Encrypt(newGCM, replayData); encErr != nil {
+					compressed, gzErr := gzipData(replayData)
+					if gzErr != nil {
+						compressed = replayData // fall back to uncompressed
+					}
+					isCompressed := gzErr == nil
+					if encrypted, encErr := auth.Encrypt(newGCM, compressed); encErr != nil {
 						log.Printf("pty session %s: replay encrypt error: %v", sessionID, encErr)
 					} else {
-						write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
-						log.Printf("pty session %s: replayed %d bytes", sessionID, len(replayData))
+						write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed})
+						log.Printf("pty session %s: replayed %d bytes (gzip %d)", sessionID, len(replayData), len(compressed))
 					}
 				}
 
@@ -1352,15 +1369,21 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 				reattachQueue = reattachQueue[:0]
 				gcmMu.Unlock()
 				if newGCM != nil && len(replayData) > 0 {
-					if encrypted, encErr := auth.Encrypt(newGCM, replayData); encErr != nil {
+					compressed, gzErr := gzipData(replayData)
+					if gzErr != nil {
+						compressed = replayData
+					}
+					isCompressed := gzErr == nil
+					if encrypted, encErr := auth.Encrypt(newGCM, compressed); encErr != nil {
 						log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
 					} else {
 						write(ws.PTYOutput{
-							Type:      ws.TypePTYOutput,
-							SessionID: start.SessionID,
-							Data:      encrypted,
+							Type:       ws.TypePTYOutput,
+							SessionID:  start.SessionID,
+							Data:       encrypted,
+							Compressed: isCompressed,
 						})
-						log.Printf("pty session %s: replayed %d bytes", start.SessionID, len(replayData))
+						log.Printf("pty session %s: replayed %d bytes (gzip %d)", start.SessionID, len(replayData), len(compressed))
 					}
 				}
 
