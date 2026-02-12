@@ -390,6 +390,14 @@ func (c *Client) SendReclaim(ctx context.Context, sessionID, agent, cwd string) 
 	return c.writeJSON(ctx, PTYReclaim{Type: TypePTYReclaim, SessionID: sessionID, Agent: agent, CWD: cwd})
 }
 
+// HasPTYSession returns true if a goroutine is already handling this session.
+func (c *Client) HasPTYSession(sessionID string) bool {
+	c.ptySessionsMu.Lock()
+	defer c.ptySessionsMu.Unlock()
+	_, ok := c.ptySessions[sessionID]
+	return ok
+}
+
 // RegisterPTYSession creates an input channel for a reclaimed session so pty.attach/input/resize/kill
 // messages from the relay get routed to it. Returns the input channel and a write function.
 // The caller must start a goroutine to handle the session and clean up when done.

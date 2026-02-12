@@ -122,6 +122,8 @@ func (s *Server) registerStaticRoutes() {
 	s.mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
 	})
+	// Serve /assets/ for app.wingthing.ai SPA (Vite puts hashed bundles here)
+	s.mux.Handle("GET /assets/", fileServer)
 }
 
 func stripPort(host string) string {
@@ -149,7 +151,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// app.wingthing.ai: SPA at root, plus API/auth/ws/assets
 	if s.Config.AppHost != "" && host == s.Config.AppHost {
 		if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/auth/") ||
-			strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/app/") {
+			strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/app/") ||
+			strings.HasPrefix(path, "/assets/") {
 			s.mux.ServeHTTP(w, r)
 			return
 		}

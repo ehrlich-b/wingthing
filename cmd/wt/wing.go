@@ -972,6 +972,19 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 			continue
 		}
 
+		// Read metadata from egg's meta file
+		agent, cwd := readEggMeta(dir)
+
+		// If a goroutine is already handling this session (survived the
+		// reconnect), just tell the relay about it — don't create a
+		// duplicate subscriber or goroutine, which would cause decrypt
+		// errors (old goroutine encrypts with old key, browser has new key).
+		if wsClient.HasPTYSession(sessionID) {
+			log.Printf("egg: session %s already tracked, sending reclaim only", sessionID)
+			wsClient.SendReclaim(ctx, sessionID, agent, cwd)
+			continue
+		}
+
 		// Alive — dial and reclaim
 		sockPath := filepath.Join(dir, "egg.sock")
 		tokenPath := filepath.Join(dir, "egg.token")
@@ -980,9 +993,6 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 			log.Printf("egg: reclaim %s: dial failed: %v", sessionID, dialErr)
 			continue
 		}
-
-		// Read metadata from egg's meta file
-		agent, cwd := readEggMeta(dir)
 
 		log.Printf("egg: reclaiming session %s (pid %d agent=%s)", sessionID, pid, agent)
 		wsClient.SendReclaim(ctx, sessionID, agent, cwd)
