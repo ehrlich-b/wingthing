@@ -127,7 +127,8 @@ func (c *EggConfig) BuildEnv() []string {
 		allowed[k] = true
 	}
 	// Always pass through essentials (minimal set — agents set their own vars at runtime)
-	for _, k := range []string{"HOME", "PATH", "TERM", "LANG"} {
+	// USER is required for macOS Keychain lookups (e.g. Claude Code OAuth tokens).
+	for _, k := range []string{"HOME", "PATH", "TERM", "LANG", "USER"} {
 		allowed[k] = true
 	}
 	var env []string
