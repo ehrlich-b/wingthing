@@ -1309,7 +1309,7 @@ function renderPaletteResults(filter) {
 
     var items = [];
 
-    // Filter projects (empty filter = show all)
+    // Filter projects: substring match on name or full path
     var lower = filter ? filter.toLowerCase() : '';
     var filtered = lower
         ? wingProjects.filter(function(p) {
@@ -1335,7 +1335,8 @@ function renderPaletteResults(filter) {
     items.forEach(function(it) { seenPaths[it.path] = true; });
     var homeExtras = homeDirCache.filter(function(e) {
         if (seenPaths[e.path]) return false;
-        return !lower || e.name.toLowerCase().indexOf(lower) !== -1;
+        return !lower || e.name.toLowerCase().indexOf(lower) !== -1 ||
+               e.path.toLowerCase().indexOf(lower) !== -1;
     });
     // Sort home extras by nested repo count too
     homeExtras.sort(function(a, b) {

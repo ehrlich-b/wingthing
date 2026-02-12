@@ -412,9 +412,22 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		labels = strings.Split(labelsFlag, ",")
 	}
 
-	// Scan for git projects in current directory
+	// Scan for git projects in home dir and CWD
+	home, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
-	projects := discoverProjects(cwd, 2)
+	projects := discoverProjects(home, 3)
+	if cwd != home {
+		// Merge CWD projects (may overlap, dedup by path)
+		seen := make(map[string]bool, len(projects))
+		for _, p := range projects {
+			seen[p.Path] = true
+		}
+		for _, p := range discoverProjects(cwd, 2) {
+			if !seen[p.Path] {
+				projects = append(projects, p)
+			}
+		}
+	}
 
 	fmt.Printf("connecting to %s\n", wsURL)
 	fmt.Printf("  agents: %v\n", agents)
