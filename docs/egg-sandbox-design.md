@@ -299,6 +299,10 @@ deny:
 
 9. **Env essentials too broad** — `BuildEnv()` hardcoded SHELL and USER as always-passed essentials, leaking them even when the egg.yaml allow list didn't include them. Fixed: reduced essentials to HOME, PATH, TERM, LANG. Agents set their own runtime vars (GIT_EDITOR, CLAUDE_CODE_ENTRYPOINT, etc.) which is expected.
 
+#### v0.16.0
+
+10. **USER env var needed for macOS Keychain** — Claude Code stores OAuth tokens in the macOS Keychain under the user's account name. Without `USER` in the env, Keychain lookups fail and Claude reports "Not logged in." Fixed: added USER to the always-passed essentials list.
+
 ## SBPL Network Filtering Reference (macOS)
 
 sandbox-exec uses SBPL (Sandbox Profile Language).
@@ -360,7 +364,9 @@ DNS resolution goes through `/private/var/run/mDNSResponder` (Unix domain socket
 
 1. **Linux network pinholes** — veth pair + iptables in namespace for port-level filtering. This closes the biggest gap between macOS and Linux security. Without it, Linux lockdown mode has full network for any agent that needs HTTPS.
 
-2. **Agent config snapshotting** — Snapshot agent config (e.g. `~/.claude/settings.json`) before egg session, restore on exit. Prevents persistence attacks via hook injection.
+2. **SNI-based domain filtering (both platforms)** — Currently NetworkHTTPS opens outbound TCP 443/80 to ALL hosts. The agent profile should declare allowed domains (e.g. `api.anthropic.com` for Claude). A lightweight SNI proxy or eBPF filter can inspect the TLS ClientHello SNI field and block connections to non-allowlisted domains. Anthropic publishes their IP ranges (`160.79.104.0/23`, `2607:6bc0::/48`) but SBPL can't filter by IP/CIDR. An SNI proxy running in the sandbox's network path would solve this for both platforms. This is the gap between "opens all websites on 443" and "opens only what the agent needs."
+
+3. **Agent config snapshotting** — Snapshot agent config (e.g. `~/.claude/settings.json`) before egg session, restore on exit. Prevents persistence attacks via hook injection.
 
 ### Medium priority
 

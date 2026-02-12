@@ -109,6 +109,20 @@ Isolation levels: `strict` (no network, minimal fs), `standard` (no network, mou
 
 Configure via `egg.yaml` (project-level, `~/.wingthing/egg.yaml`, or built-in defaults). The sandbox auto-injects mounts for the agent binary's install root and config dir (`~/.<agent>/`) so config authors don't need to know where agents are installed. Resource limits (CPU, memory, max FDs) only apply when explicitly configured — no defaults.
 
+### Agent network auto-drilling
+
+When `isolation` is `strict` or `standard` (no network), the sandbox automatically punches holes for the agent to function. Each agent has a profile declaring its network needs:
+
+| Agent | Network | What it opens |
+|-------|---------|---------------|
+| claude | HTTPS | **All outbound TCP 443/80 + DNS.** Required for api.anthropic.com. macOS seatbelt cannot filter by hostname or IP — only by port. |
+| codex | HTTPS | Same as claude (for api.openai.com) |
+| gemini | HTTPS | Same as claude (for googleapis.com) |
+| cursor | HTTPS | Same as claude |
+| ollama | Local | Localhost only (127.0.0.1, no external) |
+
+**Important:** `standard` isolation with a cloud agent (claude, codex, gemini, cursor) allows outbound HTTPS to **any host**, not just the agent's API. This is a platform limitation — macOS seatbelt cannot filter by domain or IP range. On Linux, the agent currently gets full network access (no port filtering in unprivileged namespaces). See `docs/egg-sandbox-design.md` for details and the roadmap for SNI-based domain filtering.
+
 ## Key Packages
 
 | Package | Role |
