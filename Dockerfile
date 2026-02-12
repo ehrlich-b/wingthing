@@ -17,7 +17,5 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=build /app/wt .
-COPY spaces.yaml .
-COPY spaces/cache/ spaces/cache/
 EXPOSE 8080
 CMD ["sh", "-c", "mkdir -p /data/.wingthing && exec ./wt serve --addr :8080"]
