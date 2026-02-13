@@ -60,15 +60,53 @@ func (e *EnvField) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+// BaseField handles the `base` key in egg configs. It can be a scalar string
+// (backward compat: "none", "strict", etc.) or an object with per-section masks.
+type BaseField struct {
+	Name    string `yaml:"name,omitempty"`
+	FS      string `yaml:"fs,omitempty"`
+	Network string `yaml:"network,omitempty"`
+	Env     string `yaml:"env,omitempty"`
+}
+
+func (b *BaseField) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		b.Name = value.Value
+		return nil
+	}
+	type plain BaseField
+	return value.Decode((*plain)(b))
+}
+
+func (b BaseField) MarshalYAML() (interface{}, error) {
+	if b.FS == "" && b.Network == "" && b.Env == "" {
+		if b.Name == "" {
+			return nil, nil
+		}
+		return b.Name, nil
+	}
+	type plain BaseField
+	return plain(b), nil
+}
+
+func (b BaseField) IsZero() bool {
+	return b.Name == "" && b.FS == "" && b.Network == "" && b.Env == ""
+}
+
+func (b BaseField) HasMasks() bool {
+	return b.FS != "" || b.Network != "" || b.Env != ""
+}
+
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
-	Base                       string       `yaml:"base,omitempty"`
+	Base                       BaseField    `yaml:"base,omitempty"`
 	FS                         []string     `yaml:"fs"`
 	Network                    NetworkField `yaml:"network"`
 	Env                        EnvField     `yaml:"env"`
 	Resources                  EggResources `yaml:"resources"`
 	Shell                      string       `yaml:"shell"`
 	DangerouslySkipPermissions bool         `yaml:"dangerously_skip_permissions"`
+	Audit                      bool         `yaml:"audit"`
 }
 
 // EggResources configures resource limits for sandboxed processes.
@@ -110,7 +148,8 @@ func DefaultEggConfig() *EggConfig {
 	}
 	fs = append(fs, "deny-write:./egg.yaml")
 	return &EggConfig{
-		FS: fs,
+		FS:  fs,
+		Env: EnvField{"HOME", "PATH", "TERM", "LANG", "USER"},
 	}
 }
 
@@ -179,19 +218,31 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 		return nil, err
 	}
 
-	switch child.Base {
+	var parent *EggConfig
+	switch child.Base.Name {
 	case "none":
+		if child.Base.HasMasks() {
+			return nil, fmt.Errorf("base masks invalid with base: none (nothing to mask)")
+		}
 		return child, nil
 	case "":
-		return MergeEggConfig(DefaultEggConfig(), child), nil
+		parent = DefaultEggConfig()
 	default:
-		parentPath := resolveBasePath(child.Base, filepath.Dir(abs))
-		parent, err := resolveEggConfig(parentPath, visited, depth+1)
+		parentPath := resolveBasePath(child.Base.Name, filepath.Dir(abs))
+		var err error
+		parent, err = resolveEggConfig(parentPath, visited, depth+1)
 		if err != nil {
-			return nil, fmt.Errorf("resolve base %q: %w", child.Base, err)
+			return nil, fmt.Errorf("resolve base %q: %w", child.Base.Name, err)
 		}
-		return MergeEggConfig(parent, child), nil
 	}
+
+	if child.Base.HasMasks() {
+		if err := applySectionMasks(parent, child.Base, filepath.Dir(abs), visited, depth); err != nil {
+			return nil, err
+		}
+	}
+
+	return MergeEggConfig(parent, child), nil
 }
 
 // resolveBasePath turns a base value into an absolute path.
@@ -207,6 +258,50 @@ func resolveBasePath(base, configDir string) string {
 	// Named base: ~/.wingthing/bases/<name>.yaml
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".wingthing", "bases", base+".yaml")
+}
+
+// applySectionMasks replaces individual sections of the parent config based on
+// per-section mask values. "none" clears the section; a name/path resolves
+// that file's full chain and extracts the section.
+func applySectionMasks(parent *EggConfig, masks BaseField, configDir string,
+	visited map[string]bool, depth int) error {
+	if masks.FS != "" {
+		if masks.FS == "none" {
+			parent.FS = nil
+		} else {
+			refPath := resolveBasePath(masks.FS, configDir)
+			ref, err := resolveEggConfig(refPath, visited, depth+1)
+			if err != nil {
+				return fmt.Errorf("resolve base.fs %q: %w", masks.FS, err)
+			}
+			parent.FS = ref.FS
+		}
+	}
+	if masks.Network != "" {
+		if masks.Network == "none" {
+			parent.Network = nil
+		} else {
+			refPath := resolveBasePath(masks.Network, configDir)
+			ref, err := resolveEggConfig(refPath, visited, depth+1)
+			if err != nil {
+				return fmt.Errorf("resolve base.network %q: %w", masks.Network, err)
+			}
+			parent.Network = ref.Network
+		}
+	}
+	if masks.Env != "" {
+		if masks.Env == "none" {
+			parent.Env = nil
+		} else {
+			refPath := resolveBasePath(masks.Env, configDir)
+			ref, err := resolveEggConfig(refPath, visited, depth+1)
+			if err != nil {
+				return fmt.Errorf("resolve base.env %q: %w", masks.Env, err)
+			}
+			parent.Env = ref.Env
+		}
+	}
+	return nil
 }
 
 // MergeEggConfig merges a child config on top of a parent config.
@@ -239,6 +334,9 @@ func MergeEggConfig(parent, child *EggConfig) *EggConfig {
 
 	// DangerouslySkipPermissions: OR
 	merged.DangerouslySkipPermissions = parent.DangerouslySkipPermissions || child.DangerouslySkipPermissions
+
+	// Audit: OR (once enabled by org/parent, can't be disabled)
+	merged.Audit = parent.Audit || child.Audit
 
 	return merged
 }
@@ -392,11 +490,6 @@ func (c *EggConfig) BuildEnv() []string {
 	}
 	allowed := make(map[string]bool)
 	for _, k := range c.Env {
-		allowed[k] = true
-	}
-	// Always pass through essentials (minimal set — agents set their own vars at runtime)
-	// USER is required for macOS Keychain lookups (e.g. Claude Code OAuth tokens).
-	for _, k := range []string{"HOME", "PATH", "TERM", "LANG", "USER"} {
 		allowed[k] = true
 	}
 	var env []string

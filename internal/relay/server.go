@@ -18,6 +18,8 @@ type ServerConfig struct {
 	JWTSecret          string // base64-encoded; overrides DB-stored secret
 	GitHubClientID     string
 	GitHubClientSecret string
+	GoogleClientID     string
+	GoogleClientSecret string
 	SMTPHost           string
 	SMTPPort           string
 	SMTPUser           string
@@ -84,6 +86,8 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /ws/app", s.handleAppWS)
 	s.mux.HandleFunc("POST /api/app/wings/{wingID}/update", s.handleWingUpdate)
 	s.mux.HandleFunc("POST /api/app/wings/{wingID}/egg-config", s.handleWingEggConfig)
+	s.mux.HandleFunc("GET /api/app/usage", s.handleAppUsage)
+	s.mux.HandleFunc("POST /api/app/upgrade", s.handleAppUpgrade)
 
 	// Claim page
 	s.mux.HandleFunc("GET /auth/claim", s.handleClaimPage)
@@ -106,10 +110,21 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// Web auth
 	s.mux.HandleFunc("GET /auth/github", s.handleGitHubAuth)
 	s.mux.HandleFunc("GET /auth/github/callback", s.handleGitHubCallback)
+	s.mux.HandleFunc("GET /auth/google", s.handleGoogleAuth)
+	s.mux.HandleFunc("GET /auth/google/callback", s.handleGoogleCallback)
 	s.mux.HandleFunc("POST /auth/magic", s.handleMagicLink)
 	s.mux.HandleFunc("GET /auth/magic/verify", s.handleMagicVerify)
 	s.mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /auth/dev", s.handleDevLogin)
+
+	// Org management API (cookie auth)
+	s.mux.HandleFunc("POST /api/orgs", s.handleCreateOrg)
+	s.mux.HandleFunc("GET /api/orgs", s.handleListOrgs)
+	s.mux.HandleFunc("GET /api/orgs/{slug}", s.handleGetOrg)
+	s.mux.HandleFunc("GET /api/orgs/{slug}/members", s.handleListOrgMembers)
+	s.mux.HandleFunc("POST /api/orgs/{slug}/invite", s.handleOrgInvite)
+	s.mux.HandleFunc("DELETE /api/orgs/{slug}/members/{userID}", s.handleRemoveOrgMember)
+	s.mux.HandleFunc("GET /invite/{token}", s.handleAcceptInvite)
 
 	s.registerStaticRoutes()
 	return s

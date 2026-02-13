@@ -288,6 +288,9 @@ func wingStartCmd() *cobra.Command {
 	var foregroundFlag bool
 	var debugFlag bool
 	var eggConfigFlag string
+	var orgFlag string
+	var allowFlag string
+	var rootFlag string
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -296,7 +299,7 @@ func wingStartCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Foreground mode: run directly
 			if foregroundFlag {
-				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, debugFlag)
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlag, rootFlag, debugFlag)
 			}
 
 			// Daemon mode (default): re-exec detached, write PID file, return
@@ -323,6 +326,15 @@ func wingStartCmd() *cobra.Command {
 			}
 			if eggConfigFlag != "" {
 				childArgs = append(childArgs, "--egg-config", eggConfigFlag)
+			}
+			if orgFlag != "" {
+				childArgs = append(childArgs, "--org", orgFlag)
+			}
+			if allowFlag != "" {
+				childArgs = append(childArgs, "--allow", allowFlag)
+			}
+			if rootFlag != "" {
+				childArgs = append(childArgs, "--root", rootFlag)
 			}
 			if debugFlag {
 				childArgs = append(childArgs, "--debug")
@@ -363,11 +375,14 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&foregroundFlag, "foreground", false, "run in foreground instead of daemonizing")
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp/wt-pty-<session>.bin for each egg")
 	cmd.Flags().StringVar(&eggConfigFlag, "egg-config", "", "path to egg.yaml for wing-level sandbox defaults")
+	cmd.Flags().StringVar(&orgFlag, "org", "", "org slug — share this wing with org members")
+	cmd.Flags().StringVar(&allowFlag, "allow", "", "comma-separated email allow list for wing access")
+	cmd.Flags().StringVar(&rootFlag, "root", "", "constrain wing to this directory tree")
 
 	return cmd
 }
 
-func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag string, debug bool) error {
+func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlag, rootFlag string, debug bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -484,16 +499,39 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	// Reap dead egg directories on startup
 	reapDeadEggs(cfg)
 
+	// Parse allow emails
+	var allowEmails []string
+	if allowFlag != "" {
+		for _, e := range strings.Split(allowFlag, ",") {
+			e = strings.TrimSpace(e)
+			if e != "" {
+				allowEmails = append(allowEmails, e)
+			}
+		}
+	}
+
+	// Resolve root dir to absolute path
+	resolvedRoot := rootFlag
+	if resolvedRoot != "" {
+		abs, absErr := filepath.Abs(resolvedRoot)
+		if absErr == nil {
+			resolvedRoot = abs
+		}
+	}
+
 	client := &ws.Client{
-		RoostURL:  wsURL,
-		Token:     tok.Token,
-		MachineID: cfg.MachineID,
-		Platform:  runtime.GOOS,
-		Version:   version,
-		Agents:    agents,
-		Skills:    skills,
-		Labels:    labels,
-		Projects:  projects,
+		RoostURL:    wsURL,
+		Token:       tok.Token,
+		MachineID:   cfg.MachineID,
+		Platform:    runtime.GOOS,
+		Version:     version,
+		Agents:      agents,
+		Skills:      skills,
+		Labels:      labels,
+		Projects:    projects,
+		OrgSlug:     orgFlag,
+		AllowEmails: allowEmails,
+		RootDir:     resolvedRoot,
 	}
 
 	client.OnTask = func(ctx context.Context, task ws.TaskSubmit, send ws.ChunkSender) (string, error) {
@@ -501,6 +539,10 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
+		// Clamp CWD to root if configured
+		if resolvedRoot != "" && !strings.HasPrefix(start.CWD, resolvedRoot) {
+			start.CWD = resolvedRoot
+		}
 		wingEggMu.Lock()
 		currentEggCfg := wingEggCfg
 		wingEggMu.Unlock()
@@ -521,6 +563,17 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 
 	client.OnDirList = func(ctx context.Context, req ws.DirList, write ws.PTYWriteFunc) {
+		// Constrain dir listing to root if configured
+		if resolvedRoot != "" {
+			p := req.Path
+			if p == "" {
+				p = resolvedRoot
+			}
+			abs, _ := filepath.Abs(p)
+			if !strings.HasPrefix(abs, resolvedRoot) {
+				req.Path = resolvedRoot
+			}
+		}
 		handleDirList(ctx, req, write)
 	}
 

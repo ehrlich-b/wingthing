@@ -25,6 +25,7 @@
 {{if .Sent}}<div class="sent-msg">check your email for a login link</div>{{end}}
 <div class="auth-buttons">
 {{if .HasGitHub}}<a href="/auth/github" class="auth-btn">continue with GitHub</a>{{end}}
+{{if .HasGoogle}}<a href="/auth/google" class="auth-btn">continue with Google</a>{{end}}
 </div>
 {{if .HasSMTP}}
 {{if .HasGitHub}}<div class="divider">or</div>{{end}}

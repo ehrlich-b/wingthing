@@ -100,6 +100,17 @@ func (r *PTYRegistry) ListForUser(userID string) []*PTYSession {
 	return result
 }
 
+// All returns all PTY sessions.
+func (r *PTYRegistry) All() []*PTYSession {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]*PTYSession, 0, len(r.sessions))
+	for _, s := range r.sessions {
+		result = append(result, s)
+	}
+	return result
+}
+
 // SyncFromWing reconciles the registry with the wing's authoritative session list.
 // When removeStale is true (on-demand requests), removes sessions the wing no longer reports.
 // When false (heartbeat), only adds missing sessions.
@@ -247,8 +258,11 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			var wing *ConnectedWing
 			if start.WingID != "" {
 				wing = s.Wings.FindByID(start.WingID)
+				if wing != nil && !s.canAccessWing(userID, wing) {
+					wing = nil
+				}
 			} else {
-				wing = s.Wings.FindForUser(userID)
+				wing = s.findAccessibleWing(userID)
 			}
 			if wing == nil {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "no wing connected"})
@@ -282,7 +296,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			session := s.PTY.Get(attach.SessionID)
-			if session == nil || session.UserID != userID {
+			if session == nil || !s.canAccessSession(userID, session) {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "session not found"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
@@ -347,7 +361,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			session := s.PTY.Get(ack.SessionID)
-			if session == nil || session.UserID != userID {
+			if session == nil || !s.canAccessSession(userID, session) {
 				continue
 			}
 			session.mu.Lock()
@@ -365,7 +379,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			session := s.PTY.Get(det.SessionID)
-			if session == nil || session.UserID != userID {
+			if session == nil || !s.canAccessSession(userID, session) {
 				continue
 			}
 			session.mu.Lock()
@@ -383,7 +397,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			session := s.PTY.Get(kill.SessionID)
-			if session == nil || session.UserID != userID {
+			if session == nil || !s.canAccessSession(userID, session) {
 				continue
 			}
 			// Forward kill to wing so it terminates the PTY process
@@ -403,7 +417,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			wing := s.Wings.FindForUser(userID)
+			wing := s.findAccessibleWing(userID)
 			if wing == nil {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "no wing connected"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
@@ -451,8 +465,15 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			cs := s.Chat.Get(del.SessionID)
-			if cs == nil || cs.UserID != userID {
+			if cs == nil {
 				continue
+			}
+			// Check access: owner or org member
+			if cs.UserID != userID {
+				cWing := s.Wings.FindByID(cs.WingID)
+				if cWing == nil || !s.canAccessWing(userID, cWing) {
+					continue
+				}
 			}
 			wing := s.Wings.FindByID(cs.WingID)
 			if wing != nil {

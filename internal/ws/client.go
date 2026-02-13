@@ -52,11 +52,14 @@ type Client struct {
 	Platform  string // runtime.GOOS
 	Version   string // build version
 
-	Agents     []string
-	Skills     []string
-	Labels     []string
-	Identities []string
-	Projects   []WingProject
+	Agents      []string
+	Skills      []string
+	Labels      []string
+	Identities  []string
+	Projects    []WingProject
+	OrgSlug     string
+	AllowEmails []string
+	RootDir     string
 
 	OnTask            TaskHandlerWithChunks
 	OnPTY             PTYHandler
@@ -131,15 +134,18 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 
 	// Send registration
 	reg := WingRegister{
-		Type:       TypeWingRegister,
-		MachineID:  c.MachineID,
-		Platform:   c.Platform,
-		Version:    c.Version,
-		Agents:     c.Agents,
-		Skills:     c.Skills,
-		Labels:     c.Labels,
-		Identities: c.Identities,
-		Projects:   c.Projects,
+		Type:        TypeWingRegister,
+		MachineID:   c.MachineID,
+		Platform:    c.Platform,
+		Version:     c.Version,
+		Agents:      c.Agents,
+		Skills:      c.Skills,
+		Labels:      c.Labels,
+		Identities:  c.Identities,
+		Projects:    c.Projects,
+		OrgSlug:     c.OrgSlug,
+		AllowEmails: c.AllowEmails,
+		RootDir:     c.RootDir,
 	}
 	if err := c.writeJSON(ctx, reg); err != nil {
 		return connected, fmt.Errorf("register: %w", err)

@@ -60,6 +60,7 @@ func eggRunCmd() *cobra.Command {
 		memFlag    string
 		maxFDsFlag uint32
 		debugFlag  bool
+		auditFlag  bool
 		renderedConfigFlag string
 		dangerouslySkipPermissions bool
 	)
@@ -116,6 +117,7 @@ func eggRunCmd() *cobra.Command {
 				MemLimit:       memLimit,
 				MaxFDs:         maxFDsFlag,
 				Debug:          debugFlag,
+				Audit:          auditFlag,
 				RenderedConfig: renderedConfigFlag,
 			}
 
@@ -157,6 +159,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&memFlag, "memory", "", "memory limit (e.g. 2GB)")
 	cmd.Flags().Uint32Var(&maxFDsFlag, "max-fds", 0, "max open file descriptors")
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp")
+	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable input audit log and PTY stream recording")
 	cmd.Flags().StringVar(&renderedConfigFlag, "rendered-config", "", "rendered egg config YAML (internal)")
 	cmd.MarkFlagRequired("session-id")
 
@@ -469,6 +472,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if debug {
 		args = append(args, "--debug")
+	}
+	if eggCfg.Audit {
+		args = append(args, "--audit")
 	}
 
 	// Serialize rendered config as YAML for status RPC

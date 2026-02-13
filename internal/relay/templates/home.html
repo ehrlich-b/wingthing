@@ -164,18 +164,13 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <div class="sb-controls">
 
 <div class="sb-section">
-<h3>base</h3>
-<label class="sb-env-toggle"><input type="checkbox" id="sb-base" checked onchange="sbRender()"> inherit defaults</label>
-<span class="sb-hint">built-in deny rules for sensitive dirs</span>
-</div>
-
-<div class="sb-section">
 <h3>agent</h3>
 <div class="sb-pills" id="sb-agents"></div>
 </div>
 
 <div class="sb-section">
 <h3>filesystem</h3>
+<label class="sb-env-toggle"><input type="checkbox" id="sb-base-fs" checked onchange="sbRender()"> inherit defaults</label>
 <div class="sb-empty" id="sb-fs-empty">add rules to override defaults</div>
 <div class="sb-list" id="sb-fs"></div>
 <button class="sb-btn sb-add" onclick="sbAddFS()">+ add rule</button>
@@ -183,6 +178,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 
 <div class="sb-section">
 <h3>network</h3>
+<label class="sb-env-toggle"><input type="checkbox" id="sb-base-net" checked onchange="sbRender()"> inherit defaults</label>
 <div class="sb-radios" id="sb-net-mode"></div>
 <div class="sb-list" id="sb-net-domains" style="margin-top:8px"></div>
 <button class="sb-btn sb-add" id="sb-net-add" onclick="sbAddDomain()" style="display:none">+ add domain</button>
@@ -190,6 +186,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 
 <div class="sb-section">
 <h3>environment</h3>
+<label class="sb-env-toggle"><input type="checkbox" id="sb-base-env" checked onchange="sbRender()"> inherit defaults</label>
 <label class="sb-env-toggle"><input type="checkbox" id="sb-env-all" onchange="sbRender()"> pass all ("*")</label>
 <div class="sb-list" id="sb-env"></div>
 <button class="sb-btn sb-add" onclick="sbAddEnv()">+ add var</button>
@@ -212,11 +209,63 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </div>
 </div>
 </div>
+<div class="how" id="pricing">
+<h2>pricing</h2>
+<div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-bottom:20px;font-family:var(--mono);font-size:13px">
+<span style="color:var(--text-dim)">monthly</span>
+<label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer">
+<input type="checkbox" id="yearly-toggle" checked onchange="toggleBilling()" style="opacity:0;width:0;height:0">
+<span style="position:absolute;inset:0;background:var(--accent);border-radius:11px;transition:background 0.2s"></span>
+<span style="position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:transform 0.2s" id="toggle-dot"></span>
+</label>
+<span>yearly <span style="color:var(--action);font-weight:600">save 20%</span></span>
+</div>
+<div class="how-grid">
+<div class="how-card">
+<h3>free</h3>
+<p style="font-size:20px;font-weight:700;margin:8px 0">$0</p>
+<p>1 GB/month relay bandwidth<br>1 Mbit/s rate limit<br>5 concurrent relay sessions<br>Unlimited local eggs</p>
+</div>
+<div class="how-card" style="border:1px solid var(--action)">
+<h3>pro</h3>
+<p style="font-size:20px;font-weight:700;margin:8px 0" id="pro-price">$4<span style="font-size:13px;font-weight:400">/mo</span></p>
+<p style="font-size:11px;color:var(--text-dim);margin-bottom:8px" id="pro-note">billed yearly ($48)</p>
+<p>Unlimited relay bandwidth<br>3 Mbit/s rate limit<br>Unlimited relay sessions<br>Priority support</p>
+</div>
+<div class="how-card">
+<h3>team</h3>
+<p style="font-size:20px;font-weight:700;margin:8px 0" id="team-price">$4<span style="font-size:13px;font-weight:400">/seat/mo</span></p>
+<p style="font-size:11px;color:var(--text-dim);margin-bottom:8px" id="team-note">billed yearly ($48/seat)</p>
+<p>Everything in Pro<br>Shared wings (org access)<br>Audit logging<br>Invite-by-email</p>
+</div>
+</div>
+<p style="text-align:center;font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-top:12px">Self-hosting is always free. MIT licensed. <code style="background:var(--bg-card);padding:2px 6px;border-radius:3px;font-size:11px">wt serve --local</code></p>
+</div>
 <div class="links">
 <a href="/docs">docs</a>
 <a href="/skills">skills</a>
 <a href="https://github.com/ehrlich-b/wingthing">github</a>
 </div>
+<script>
+function toggleBilling(){
+  var y=document.getElementById('yearly-toggle').checked;
+  var dot=document.getElementById('toggle-dot');
+  dot.style.transform=y?'translateX(18px)':'';
+  document.getElementById('pro-price').innerHTML=y
+    ?'$4<span style="font-size:13px;font-weight:400">/mo</span>'
+    :'$5<span style="font-size:13px;font-weight:400">/mo</span>';
+  document.getElementById('pro-note').textContent=y?'billed yearly ($48)':'billed monthly';
+  document.getElementById('team-price').innerHTML=y
+    ?'$4<span style="font-size:13px;font-weight:400">/seat/mo</span>'
+    :'$5<span style="font-size:13px;font-weight:400">/seat/mo</span>';
+  document.getElementById('team-note').textContent=y?'billed yearly ($48/seat)':'billed monthly';
+}
+// Init toggle dot position (starts checked = yearly)
+document.addEventListener('DOMContentLoaded',function(){
+  var dot=document.getElementById('toggle-dot');
+  if(dot)dot.style.transform='translateX(18px)';
+});
+</script>
 <script>
 (function(){
 var agents=['claude','codex','cursor','ollama','gemini'];
@@ -250,7 +299,7 @@ var netModes=[
 ];
 
 var state={
-  baseOn:true,
+  baseFS:true,baseNet:true,baseEnv:true,
   agent:'',
   fs:[],
   netMode:'default',
@@ -383,7 +432,9 @@ function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g
 function rpad(s,n){while(s.length<n)s+=' ';return s;}
 
 window.sbRender=function(){
-  state.baseOn=document.getElementById('sb-base').checked;
+  state.baseFS=document.getElementById('sb-base-fs').checked;
+  state.baseNet=document.getElementById('sb-base-net').checked;
+  state.baseEnv=document.getElementById('sb-base-env').checked;
   state.envAll=document.getElementById('sb-env-all').checked;
   state.cpu=document.getElementById('sb-cpu').value;
   state.mem=document.getElementById('sb-mem').value;
@@ -391,7 +442,14 @@ window.sbRender=function(){
 
   // 1. Build explicit yaml (user's egg.yaml for copy)
   var explLines=[];
-  if(!state.baseOn)explLines.push('base: none');
+  if(!state.baseFS&&!state.baseNet&&!state.baseEnv){
+    explLines.push('base: none');
+  }else if(!state.baseFS||!state.baseNet||!state.baseEnv){
+    explLines.push('base:');
+    if(!state.baseFS)explLines.push('  fs: none');
+    if(!state.baseNet)explLines.push('  network: none');
+    if(!state.baseEnv)explLines.push('  env: none');
+  }
   var userFS=state.fs.filter(function(r){return r.path;});
   if(userFS.length){
     explLines.push('fs:');
@@ -429,6 +487,16 @@ window.sbRender=function(){
     pv.push({text:'',cls:'y-base'});
   }
 
+  // Base line in preview
+  if(!state.baseFS&&!state.baseNet&&!state.baseEnv){
+    pv.push({text:'base: none',cls:'y-user'});
+  }else if(!state.baseFS||!state.baseNet||!state.baseEnv){
+    pv.push({text:'base:',cls:'y-user'});
+    if(!state.baseFS)pv.push({text:'  fs: none',cls:'y-user'});
+    if(!state.baseNet)pv.push({text:'  network: none',cls:'y-user'});
+    if(!state.baseEnv)pv.push({text:'  env: none',cls:'y-user'});
+  }
+
   // Collect user rw/ro paths for deny override
   var userAccess={};
   state.fs.forEach(function(r){
@@ -436,7 +504,7 @@ window.sbRender=function(){
   });
 
   // --- FS section ---
-  if(state.baseOn){
+  if(state.baseFS){
     pv.push({text:rpad('fs:',32)+'# [base]',cls:'y-base'});
     // Base rw entries first
     defaultFS.forEach(function(r){
@@ -462,8 +530,7 @@ window.sbRender=function(){
       pv.push({text:'  - "'+r.mode+':'+r.path+'"',cls:'y-user'});
     });
   }else{
-    // base: none — no defaults
-    pv.push({text:'base: none',cls:'y-user'});
+    // base.fs: none — no defaults
     var showFS=ap||userFS.length;
     if(showFS){
       pv.push({text:'fs:',cls:userFS.length?'y-user':'y-agent'});
@@ -503,7 +570,7 @@ window.sbRender=function(){
       agentNet.forEach(function(d){
         pv.push({text:rpad('  - "'+d+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
       });
-    }else if(state.baseOn){
+    }else if(state.baseNet){
       pv.push({text:rpad('network: none',32)+'# [base]',cls:'y-base'});
     }
   }
@@ -521,10 +588,10 @@ window.sbRender=function(){
     userEnv.forEach(function(e){
       pv.push({text:'  - "'+e+'"',cls:'y-user'});
     });
-    if(state.baseOn){
+    if(state.baseEnv){
       pv.push({text:'  # '+defaultEnv.join(', '),cls:'y-base'});
     }
-  }else if(state.baseOn){
+  }else if(state.baseEnv){
     pv.push({text:rpad('env: ['+defaultEnv.join(', ')+']',38)+'# [base]',cls:'y-base'});
   }
 
@@ -544,7 +611,8 @@ window.sbRender=function(){
 
   // 4. Update copy button
   var copyBtn=document.getElementById('sb-copy-btn');
-  if(hasExplicit){
+  var anyBaseCut=!state.baseFS||!state.baseNet||!state.baseEnv;
+  if(hasExplicit||anyBaseCut){
     copyBtn.disabled=false;
     copyBtn.textContent='copy your egg.yaml';
   }else{

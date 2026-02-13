@@ -170,14 +170,14 @@ func (s *RelayStore) CreateSession(token, socialUserID string, expiresAt time.Ti
 func (s *RelayStore) GetSession(token string) (*SocialUser, error) {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	row := s.db.QueryRow(
-		`SELECT u.id, u.provider, u.provider_id, u.display_name, u.avatar_url, u.is_pro, u.created_at
+		`SELECT u.id, u.provider, u.provider_id, u.display_name, u.avatar_url, u.email, u.tier, u.is_pro, u.created_at
 		 FROM sessions s JOIN social_users u ON u.id = s.social_user_id
 		 WHERE s.token = ? AND s.expires_at > ?`,
 		token, now,
 	)
 	var u SocialUser
 	var isPro int
-	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &isPro, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &u.Email, &u.Tier, &isPro, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -357,8 +357,39 @@ type SocialUser struct {
 	ProviderID  string
 	DisplayName string
 	AvatarURL   *string
+	Email       *string
+	Tier        string // "free", "pro", "team"
 	IsPro       bool
 	CreatedAt   time.Time
+}
+
+// Org represents an organization that can share wings among members.
+type Org struct {
+	ID          string
+	Name        string
+	Slug        string
+	OwnerUserID string
+	MaxSeats    int
+	CreatedAt   time.Time
+}
+
+// OrgMember represents a user's membership in an org.
+type OrgMember struct {
+	OrgID     string
+	UserID    string
+	Role      string // "owner", "admin", "member"
+	CreatedAt time.Time
+}
+
+// OrgInvite represents a pending invite to an org.
+type OrgInvite struct {
+	ID        string
+	OrgID     string
+	Email     string
+	Token     string
+	InvitedBy string
+	CreatedAt time.Time
+	ClaimedAt *time.Time
 }
 
 func boolToInt(b bool) int {
@@ -386,12 +417,12 @@ func (s *RelayStore) UpsertSocialUser(u *SocialUser) error {
 
 func (s *RelayStore) GetSocialUserByProvider(provider, providerID string) (*SocialUser, error) {
 	row := s.db.QueryRow(
-		"SELECT id, provider, provider_id, display_name, avatar_url, is_pro, created_at FROM social_users WHERE provider = ? AND provider_id = ?",
+		"SELECT id, provider, provider_id, display_name, avatar_url, email, tier, is_pro, created_at FROM social_users WHERE provider = ? AND provider_id = ?",
 		provider, providerID,
 	)
 	var u SocialUser
 	var isPro int
-	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &isPro, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &u.Email, &u.Tier, &isPro, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -420,6 +451,284 @@ func (s *RelayStore) GetOrCreateSocialUserByEmail(email string) (*SocialUser, er
 		return nil, err
 	}
 	return u, nil
+}
+
+// GetSocialUserByID returns a user by their ID.
+func (s *RelayStore) GetSocialUserByID(id string) (*SocialUser, error) {
+	row := s.db.QueryRow(
+		"SELECT id, provider, provider_id, display_name, avatar_url, email, tier, is_pro, created_at FROM social_users WHERE id = ?",
+		id,
+	)
+	var u SocialUser
+	var isPro int
+	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &u.Email, &u.Tier, &isPro, &u.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get social user by id: %w", err)
+	}
+	u.IsPro = isPro != 0
+	return &u, nil
+}
+
+// UpdateUserEmail sets the email for a user.
+func (s *RelayStore) UpdateUserEmail(userID, email string) error {
+	_, err := s.db.Exec("UPDATE social_users SET email = ? WHERE id = ?", email, userID)
+	return err
+}
+
+// UpdateUserTier sets the tier for a user.
+func (s *RelayStore) UpdateUserTier(userID, tier string) error {
+	_, err := s.db.Exec("UPDATE social_users SET tier = ? WHERE id = ?", tier, userID)
+	return err
+}
+
+// GetSocialUserByEmail returns a user by email.
+func (s *RelayStore) GetSocialUserByEmail(email string) (*SocialUser, error) {
+	row := s.db.QueryRow(
+		"SELECT id, provider, provider_id, display_name, avatar_url, email, tier, is_pro, created_at FROM social_users WHERE email = ?",
+		email,
+	)
+	var u SocialUser
+	var isPro int
+	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &u.Email, &u.Tier, &isPro, &u.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get social user by email: %w", err)
+	}
+	u.IsPro = isPro != 0
+	return &u, nil
+}
+
+// --- Org CRUD ---
+
+// CreateOrg creates a new org and adds the owner as an owner member.
+func (s *RelayStore) CreateOrg(id, name, slug, ownerUserID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	_, err = tx.Exec(
+		"INSERT INTO orgs (id, name, slug, owner_user_id) VALUES (?, ?, ?, ?)",
+		id, name, slug, ownerUserID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("create org: %w", err)
+	}
+	_, err = tx.Exec(
+		"INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, 'owner')",
+		id, ownerUserID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("add owner member: %w", err)
+	}
+	return tx.Commit()
+}
+
+// GetOrgBySlug returns an org by slug.
+func (s *RelayStore) GetOrgBySlug(slug string) (*Org, error) {
+	row := s.db.QueryRow(
+		"SELECT id, name, slug, owner_user_id, max_seats, created_at FROM orgs WHERE slug = ?",
+		slug,
+	)
+	var o Org
+	err := row.Scan(&o.ID, &o.Name, &o.Slug, &o.OwnerUserID, &o.MaxSeats, &o.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get org by slug: %w", err)
+	}
+	return &o, nil
+}
+
+// GetOrgByID returns an org by ID.
+func (s *RelayStore) GetOrgByID(id string) (*Org, error) {
+	row := s.db.QueryRow(
+		"SELECT id, name, slug, owner_user_id, max_seats, created_at FROM orgs WHERE id = ?",
+		id,
+	)
+	var o Org
+	err := row.Scan(&o.ID, &o.Name, &o.Slug, &o.OwnerUserID, &o.MaxSeats, &o.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get org by id: %w", err)
+	}
+	return &o, nil
+}
+
+// ListOrgsForUser returns all orgs a user belongs to.
+func (s *RelayStore) ListOrgsForUser(userID string) ([]*Org, error) {
+	rows, err := s.db.Query(
+		`SELECT o.id, o.name, o.slug, o.owner_user_id, o.max_seats, o.created_at
+		 FROM orgs o JOIN org_members m ON o.id = m.org_id
+		 WHERE m.user_id = ? ORDER BY o.name`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list orgs: %w", err)
+	}
+	defer rows.Close()
+	var result []*Org
+	for rows.Next() {
+		var o Org
+		if err := rows.Scan(&o.ID, &o.Name, &o.Slug, &o.OwnerUserID, &o.MaxSeats, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, &o)
+	}
+	return result, nil
+}
+
+// AddOrgMember adds a user to an org, enforcing max_seats.
+func (s *RelayStore) AddOrgMember(orgID, userID, role string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	var count, maxSeats int
+	err = tx.QueryRow("SELECT COUNT(*) FROM org_members WHERE org_id = ?", orgID).Scan(&count)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	err = tx.QueryRow("SELECT max_seats FROM orgs WHERE id = ?", orgID).Scan(&maxSeats)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	if count >= maxSeats {
+		tx.Rollback()
+		return fmt.Errorf("org has reached max seats (%d)", maxSeats)
+	}
+	_, err = tx.Exec(
+		"INSERT OR IGNORE INTO org_members (org_id, user_id, role) VALUES (?, ?, ?)",
+		orgID, userID, role,
+	)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("add org member: %w", err)
+	}
+	return tx.Commit()
+}
+
+// RemoveOrgMember removes a user from an org.
+func (s *RelayStore) RemoveOrgMember(orgID, userID string) error {
+	_, err := s.db.Exec("DELETE FROM org_members WHERE org_id = ? AND user_id = ?", orgID, userID)
+	return err
+}
+
+// ListOrgMembers returns all members of an org with their user info.
+func (s *RelayStore) ListOrgMembers(orgID string) ([]*OrgMember, error) {
+	rows, err := s.db.Query(
+		"SELECT org_id, user_id, role, created_at FROM org_members WHERE org_id = ? ORDER BY created_at",
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list org members: %w", err)
+	}
+	defer rows.Close()
+	var result []*OrgMember
+	for rows.Next() {
+		var m OrgMember
+		if err := rows.Scan(&m.OrgID, &m.UserID, &m.Role, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, &m)
+	}
+	return result, nil
+}
+
+// IsOrgMember returns true if the user is a member of the org.
+func (s *RelayStore) IsOrgMember(orgID, userID string) bool {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM org_members WHERE org_id = ? AND user_id = ?", orgID, userID).Scan(&count)
+	return err == nil && count > 0
+}
+
+// GetOrgMemberRole returns the role of a user in an org, or "" if not a member.
+func (s *RelayStore) GetOrgMemberRole(orgID, userID string) string {
+	var role string
+	err := s.db.QueryRow("SELECT role FROM org_members WHERE org_id = ? AND user_id = ?", orgID, userID).Scan(&role)
+	if err != nil {
+		return ""
+	}
+	return role
+}
+
+// CreateOrgInvite creates a pending invite.
+func (s *RelayStore) CreateOrgInvite(id, orgID, email, token, invitedBy string) error {
+	_, err := s.db.Exec(
+		"INSERT INTO org_invites (id, org_id, email, token, invited_by) VALUES (?, ?, ?, ?, ?)",
+		id, orgID, email, token, invitedBy,
+	)
+	if err != nil {
+		return fmt.Errorf("create org invite: %w", err)
+	}
+	return nil
+}
+
+// ConsumeOrgInvite validates a token, marks it claimed, returns the invite info.
+func (s *RelayStore) ConsumeOrgInvite(token string) (string, string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", "", fmt.Errorf("begin tx: %w", err)
+	}
+	var email, orgID string
+	err = tx.QueryRow(
+		"SELECT email, org_id FROM org_invites WHERE token = ? AND claimed_at IS NULL",
+		token,
+	).Scan(&email, &orgID)
+	if err != nil {
+		tx.Rollback()
+		return "", "", fmt.Errorf("invalid or already claimed invite")
+	}
+	_, err = tx.Exec(
+		"UPDATE org_invites SET claimed_at = datetime('now') WHERE token = ?",
+		token,
+	)
+	if err != nil {
+		tx.Rollback()
+		return "", "", fmt.Errorf("consume invite: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", "", err
+	}
+	return email, orgID, nil
+}
+
+// ListPendingInvites returns unclaimed invites for an org.
+func (s *RelayStore) ListPendingInvites(orgID string) ([]*OrgInvite, error) {
+	rows, err := s.db.Query(
+		"SELECT id, org_id, email, token, invited_by, created_at FROM org_invites WHERE org_id = ? AND claimed_at IS NULL ORDER BY created_at",
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pending invites: %w", err)
+	}
+	defer rows.Close()
+	var result []*OrgInvite
+	for rows.Next() {
+		var inv OrgInvite
+		if err := rows.Scan(&inv.ID, &inv.OrgID, &inv.Email, &inv.Token, &inv.InvitedBy, &inv.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, &inv)
+	}
+	return result, nil
+}
+
+// SetOrgMaxSeats updates the max seat count for an org.
+func (s *RelayStore) SetOrgMaxSeats(orgID string, seats int) error {
+	_, err := s.db.Exec("UPDATE orgs SET max_seats = ? WHERE id = ?", seats, orgID)
+	return err
 }
 
 func (s *RelayStore) migrate() error {

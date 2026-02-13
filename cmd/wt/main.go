@@ -75,6 +75,9 @@ func main() {
 
 func startCmd() *cobra.Command {
 	var debugFlag bool
+	var orgFlag string
+	var allowFlag string
+	var rootFlag string
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the wing daemon (alias for wt wing start)",
@@ -84,6 +87,15 @@ func startCmd() *cobra.Command {
 				return exeErr
 			}
 			childArgs := []string{"wing", "start"}
+			if orgFlag != "" {
+				childArgs = append(childArgs, "--org", orgFlag)
+			}
+			if allowFlag != "" {
+				childArgs = append(childArgs, "--allow", allowFlag)
+			}
+			if rootFlag != "" {
+				childArgs = append(childArgs, "--root", rootFlag)
+			}
 			if debugFlag {
 				childArgs = append(childArgs, "--debug")
 			}
@@ -94,6 +106,9 @@ func startCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp/wt-pty-<session>.bin for each egg")
+	cmd.Flags().StringVar(&orgFlag, "org", "", "org slug — share this wing with org members")
+	cmd.Flags().StringVar(&allowFlag, "allow", "", "comma-separated email allow list for wing access")
+	cmd.Flags().StringVar(&rootFlag, "root", "", "constrain wing to this directory tree")
 	return cmd
 }
 

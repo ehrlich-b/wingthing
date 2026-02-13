@@ -14,21 +14,35 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// Tier rate/cap constants.
+const (
+	freeRate     = 125_000     // 1 Mbit/s
+	proRate      = 375_000     // 3 Mbit/s
+	freeMonthlyCap int64 = 1 << 30 // 1 GiB
+	defaultBurst = 1 * 1024 * 1024 // 1 MB
+)
+
+// TierLookup returns a user's tier string ("free", "pro", "team").
+type TierLookup func(userID string) string
+
 // BandwidthMeter applies per-user rate limiting on relay traffic
 // and periodically syncs usage to the DB.
 type BandwidthMeter struct {
 	mu       sync.Mutex
 	limiters map[string]*rate.Limiter
+	tiers    map[string]string // cached tier per user
 	counters map[string]*atomic.Int64
 	rateVal  rate.Limit
 	burst    int
 	db       *sql.DB
+	tierFn   TierLookup
 }
 
 // NewBandwidthMeter creates a meter with the given sustained rate (bytes/sec) and burst (bytes).
 func NewBandwidthMeter(bytesPerSec int, burst int, db *sql.DB) *BandwidthMeter {
 	return &BandwidthMeter{
 		limiters: make(map[string]*rate.Limiter),
+		tiers:    make(map[string]string),
 		counters: make(map[string]*atomic.Int64),
 		rateVal:  rate.Limit(bytesPerSec),
 		burst:    burst,
@@ -36,7 +50,13 @@ func NewBandwidthMeter(bytesPerSec int, burst int, db *sql.DB) *BandwidthMeter {
 	}
 }
 
+// SetTierLookup sets the function used to look up user tiers for rate differentiation.
+func (b *BandwidthMeter) SetTierLookup(fn TierLookup) {
+	b.tierFn = fn
+}
+
 // Wait blocks until the user's rate limiter allows n bytes, or ctx is done.
+// Always records usage regardless of tier.
 func (b *BandwidthMeter) Wait(ctx context.Context, userID string, n int) error {
 	b.counter(userID).Add(int64(n))
 	lim := b.limiter(userID)
@@ -57,12 +77,59 @@ func (b *BandwidthMeter) Wait(ctx context.Context, userID string, n int) error {
 	return nil
 }
 
+// ExceededMonthly returns true if a free-tier user has exceeded their monthly cap.
+// Always returns false for pro/team users.
+func (b *BandwidthMeter) ExceededMonthly(userID string) bool {
+	tier := b.userTier(userID)
+	if tier != "" && tier != "free" {
+		return false
+	}
+	return b.counter(userID).Load() >= freeMonthlyCap
+}
+
+// MonthlyUsage returns the user's current month bandwidth usage in bytes.
+func (b *BandwidthMeter) MonthlyUsage(userID string) int64 {
+	return b.counter(userID).Load()
+}
+
+func (b *BandwidthMeter) userTier(userID string) string {
+	b.mu.Lock()
+	tier, ok := b.tiers[userID]
+	b.mu.Unlock()
+	if ok {
+		return tier
+	}
+	if b.tierFn != nil {
+		tier = b.tierFn(userID)
+		b.mu.Lock()
+		b.tiers[userID] = tier
+		b.mu.Unlock()
+		return tier
+	}
+	return "free"
+}
+
 func (b *BandwidthMeter) limiter(userID string) *rate.Limiter {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	lim, ok := b.limiters[userID]
 	if !ok {
-		lim = rate.NewLimiter(b.rateVal, b.burst)
+		// Tier-aware rate: pro/team get 3 Mbit/s, free gets 1 Mbit/s
+		r := b.rateVal
+		if b.tierFn != nil {
+			tier := b.tiers[userID]
+			if tier == "" {
+				// lookup and cache
+				tier = b.tierFn(userID)
+				b.tiers[userID] = tier
+			}
+			if tier == "pro" || tier == "team" {
+				r = rate.Limit(proRate)
+			} else {
+				r = rate.Limit(freeRate)
+			}
+		}
+		lim = rate.NewLimiter(r, b.burst)
 		b.limiters[userID] = lim
 	}
 	return lim

@@ -2,8 +2,10 @@ package egg
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -65,6 +67,8 @@ type Session struct {
 	done           chan struct{} // closed when process exits
 	exitCode       int
 	debug          bool
+	audit          bool
+	auditor        *inputAuditor // nil when audit disabled
 }
 
 // RunConfig holds everything needed to start a single egg session.
@@ -83,6 +87,7 @@ type RunConfig struct {
 	MemLimit                   uint64
 	MaxFDs                     uint32
 	Debug                      bool
+	Audit                      bool
 	RenderedConfig             string // effective egg config as YAML (after merge/resolve)
 }
 
@@ -490,6 +495,19 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		cmd:            cmd,
 		done:           make(chan struct{}),
 		debug:          rc.Debug,
+		audit:          rc.Audit,
+	}
+
+	// Set up input auditor if audit is enabled
+	if rc.Audit {
+		auditPath := filepath.Join(s.dir, "audit.log")
+		auditor, auditErr := newInputAuditor(auditPath)
+		if auditErr != nil {
+			log.Printf("egg: audit log failed: %v", auditErr)
+		} else {
+			sess.auditor = auditor
+			log.Printf("egg: audit enabled → %s", auditPath)
+		}
 	}
 
 	s.mu.Lock()
@@ -629,6 +647,22 @@ func (s *Server) readPTY(sess *Session) {
 		}
 	}
 
+	// PTY stream audit: gzipped varint delta format for replay
+	var ptyWriter *gzip.Writer
+	var ptyFile *os.File
+	var lastMS uint64
+	if sess.audit {
+		path := filepath.Join(s.dir, "audit.pty.gz")
+		f, err := os.Create(path)
+		if err != nil {
+			log.Printf("egg: audit pty recording failed: %v", err)
+		} else {
+			ptyFile = f
+			ptyWriter = gzip.NewWriter(f)
+			defer func() { ptyWriter.Close(); ptyFile.Close() }()
+		}
+	}
+
 	buf := make([]byte, 4096)
 	firstByte := true
 	for {
@@ -644,11 +678,30 @@ func (s *Server) readPTY(sess *Session) {
 			if debugFile != nil {
 				debugFile.Write(data)
 			}
+			if ptyWriter != nil {
+				ms := uint64(time.Since(sess.StartedAt).Milliseconds())
+				delta := ms - lastMS
+				lastMS = ms
+				writeVarint(ptyWriter, delta)
+				writeVarint(ptyWriter, uint64(n))
+				ptyWriter.Write(data)
+			}
 		}
 		if err != nil {
+			// Close auditor on PTY exit
+			if sess.auditor != nil {
+				sess.auditor.Close()
+			}
 			return
 		}
 	}
+}
+
+// writeVarint writes a protobuf-style unsigned varint.
+func writeVarint(w io.Writer, v uint64) {
+	var buf [10]byte
+	n := binary.PutUvarint(buf[:], v)
+	w.Write(buf[:n])
 }
 
 // Kill terminates the session.
@@ -787,6 +840,9 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 
 		switch p := msg.Payload.(type) {
 		case *pb.SessionMsg_Input:
+			if sess.auditor != nil {
+				sess.auditor.Process(p.Input)
+			}
 			sess.ptmx.Write(p.Input)
 		case *pb.SessionMsg_Resize:
 			pty.Setsize(sess.ptmx, &pty.Winsize{

@@ -22,12 +22,18 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
+	tier := user.Tier
+	if tier == "" {
+		tier = "free"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":           user.ID,
 		"display_name": user.DisplayName,
 		"provider":     user.Provider,
 		"avatar_url":   user.AvatarURL,
 		"is_pro":       user.IsPro,
+		"tier":         tier,
+		"email":        user.Email,
 	})
 }
 
@@ -39,7 +45,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wings := s.Wings.ListForUser(user.ID)
+	wings := s.listAccessibleWings(user.ID)
 	latestVer := s.getLatestVersion()
 	out := make([]map[string]any, len(wings))
 	for i, wing := range wings {
@@ -134,12 +140,12 @@ func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Request fresh session list from all connected wings
+	// Request fresh session list from all accessible wings
 	s.requestSessionSync(r.Context(), user.ID)
 
 	var out []map[string]any
 
-	ptySessions := s.PTY.ListForUser(user.ID)
+	ptySessions := s.listAccessiblePTYSessions(user.ID)
 	for _, sess := range ptySessions {
 		status := sess.Status
 		if status == "" {
@@ -164,7 +170,7 @@ func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, entry)
 	}
 
-	chatSessions := s.Chat.ListForUser(user.ID)
+	chatSessions := s.listAccessibleChatSessions(user.ID)
 	for _, sess := range chatSessions {
 		out = append(out, map[string]any{
 			"id":      sess.ID,
@@ -184,7 +190,7 @@ func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
 // requestSessionSync asks all connected wings for the user to send their session list,
 // waits up to 2s for responses, and updates the PTYRegistry.
 func (s *Server) requestSessionSync(ctx context.Context, userID string) {
-	wings := s.Wings.ListForUser(userID)
+	wings := s.listAccessibleWings(userID)
 	if len(wings) == 0 {
 		return
 	}
@@ -237,7 +243,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	// Try PTY first
 	ptySession := s.PTY.Get(sessionID)
-	if ptySession != nil && ptySession.UserID == user.ID {
+	if ptySession != nil && s.canAccessSession(user.ID, ptySession) {
 		wing := s.Wings.FindByID(ptySession.WingID)
 		if wing != nil {
 			kill := ws.PTYKill{Type: ws.TypePTYKill, SessionID: sessionID}
@@ -254,19 +260,26 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	// Try chat
 	chatSession := s.Chat.Get(sessionID)
-	if chatSession != nil && chatSession.UserID == user.ID {
-		wing := s.Wings.FindByID(chatSession.WingID)
-		if wing != nil {
-			del := ws.ChatDelete{Type: ws.TypeChatDelete, SessionID: sessionID}
-			data, _ := json.Marshal(del)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			wing.Conn.Write(ctx, websocket.MessageText, data)
-			cancel()
+	if chatSession != nil {
+		canAccess := chatSession.UserID == user.ID
+		if !canAccess {
+			cWing := s.Wings.FindByID(chatSession.WingID)
+			canAccess = cWing != nil && s.canAccessWing(user.ID, cWing)
 		}
-		s.Chat.Remove(sessionID)
-		log.Printf("chat session %s: deleted via API (user=%s)", sessionID, user.ID)
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-		return
+		if canAccess {
+			wing := s.Wings.FindByID(chatSession.WingID)
+			if wing != nil {
+				del := ws.ChatDelete{Type: ws.TypeChatDelete, SessionID: sessionID}
+				data, _ := json.Marshal(del)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				wing.Conn.Write(ctx, websocket.MessageText, data)
+				cancel()
+			}
+			s.Chat.Remove(sessionID)
+			log.Printf("chat session %s: deleted via API (user=%s)", sessionID, user.ID)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		}
 	}
 
 	writeError(w, http.StatusNotFound, "session not found")
@@ -282,7 +295,7 @@ func (s *Server) handleWingUpdate(w http.ResponseWriter, r *http.Request) {
 
 	wingID := r.PathValue("wingID")
 	wing := s.Wings.FindByID(wingID)
-	if wing == nil || wing.UserID != user.ID {
+	if wing == nil || !s.canAccessWing(user.ID, wing) {
 		writeError(w, http.StatusNotFound, "wing not found")
 		return
 	}
@@ -309,7 +322,7 @@ func (s *Server) handleWingEggConfig(w http.ResponseWriter, r *http.Request) {
 
 	wingID := r.PathValue("wingID")
 	wing := s.Wings.FindByID(wingID)
-	if wing == nil || wing.UserID != user.ID {
+	if wing == nil || !s.canAccessWing(user.ID, wing) {
 		writeError(w, http.StatusNotFound, "wing not found")
 		return
 	}
@@ -386,7 +399,7 @@ func (s *Server) handleWingLS(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 
 	wing := s.Wings.FindByID(wingID)
-	if wing == nil || wing.UserID != user.ID {
+	if wing == nil || !s.canAccessWing(user.ID, wing) {
 		writeError(w, http.StatusNotFound, "wing not found")
 		return
 	}
@@ -412,4 +425,53 @@ func (s *Server) handleWingLS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusGatewayTimeout, "timeout")
 	case <-r.Context().Done():
 	}
+}
+
+// handleAppUsage returns the user's current bandwidth usage and tier info.
+func (s *Server) handleAppUsage(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	tier := user.Tier
+	if tier == "" {
+		tier = "free"
+	}
+
+	var usageBytes int64
+	if s.Bandwidth != nil {
+		usageBytes = s.Bandwidth.MonthlyUsage(user.ID)
+	}
+
+	out := map[string]any{
+		"tier":        tier,
+		"usage_bytes": usageBytes,
+	}
+	if tier == "free" {
+		out["cap_bytes"] = freeMonthlyCap
+		out["exceeded"] = usageBytes >= freeMonthlyCap
+	} else {
+		// Pro/team: show usage but no cap
+		out["cap_bytes"] = nil
+		out["exceeded"] = false
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleAppUpgrade sets the user's tier to "pro".
+// TODO: integrate Stripe — this is a placeholder that grants pro immediately.
+func (s *Server) handleAppUpgrade(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	if err := s.Store.UpdateUserTier(user.ID, "pro"); err != nil {
+		writeError(w, http.StatusInternalServerError, "update tier: "+err.Error())
+		return
+	}
+	log.Printf("user %s (%s) upgraded to pro (no billing)", user.ID, user.DisplayName)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": "pro"})
 }

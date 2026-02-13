@@ -103,6 +103,8 @@ async function init() {
     // Event handlers
     homeBtn.addEventListener('click', showHome);
     newSessionBtn.addEventListener('click', showPalette);
+    userInfo.addEventListener('click', showAccountModal);
+    userInfo.style.cursor = 'pointer';
     headerTitle.addEventListener('click', function() {
         if (ptySessionId) showSessionInfo();
     });
@@ -818,6 +820,52 @@ function saveEggOrder() {
     order.forEach(function(sid) { if (byId[sid]) reordered.push(byId[sid]); });
     sessionsData.forEach(function(s) { if (order.indexOf(s.id) === -1) reordered.push(s); });
     sessionsData = reordered;
+}
+
+function showAccountModal() {
+    if (!currentUser) return;
+    var tier = currentUser.tier || 'free';
+    var email = currentUser.email || '';
+    var provider = currentUser.provider || '';
+
+    var html = '<h3>account</h3>' +
+        '<div class="detail-row"><span class="detail-key">name</span><span class="detail-val">' + escapeHtml(currentUser.display_name || '') + '</span></div>' +
+        (email ? '<div class="detail-row"><span class="detail-key">email</span><span class="detail-val">' + escapeHtml(email) + '</span></div>' : '') +
+        '<div class="detail-row"><span class="detail-key">login</span><span class="detail-val">' + escapeHtml(provider) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">tier</span><span class="detail-val">' + escapeHtml(tier) + '</span></div>';
+
+    if (tier === 'free') {
+        html += '<div class="detail-actions"><button class="btn-sm btn-accent" id="account-upgrade">give me pro</button></div>';
+    }
+
+    html += '<div class="detail-actions" style="margin-top:12px"><button class="btn-sm btn-danger" id="account-logout">log out</button></div>';
+
+    detailDialog.innerHTML = html;
+    detailOverlay.classList.add('open');
+
+    var upgradeBtn = document.getElementById('account-upgrade');
+    if (upgradeBtn) {
+        upgradeBtn.addEventListener('click', function() {
+            upgradeBtn.textContent = 'upgrading...';
+            upgradeBtn.disabled = true;
+            fetch('/api/app/upgrade', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.tier) currentUser.tier = data.tier;
+                    upgradeBtn.textContent = 'done — you are pro';
+                })
+                .catch(function() { upgradeBtn.textContent = 'failed'; upgradeBtn.disabled = false; });
+        });
+    }
+
+    var logoutBtn = document.getElementById('account-logout');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', function() {
+            fetch('/auth/logout', { method: 'POST' }).then(function() {
+                window.location.href = '/';
+            });
+        });
+    }
 }
 
 function hideDetailModal() {

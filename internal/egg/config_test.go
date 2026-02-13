@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestDefaultEggConfig(t *testing.T) {
@@ -361,5 +363,306 @@ func TestDiscoverEggConfig_WingDefault(t *testing.T) {
 	cfg := DiscoverEggConfig("/nonexistent", wingCfg)
 	if len(cfg.Network) != 1 || cfg.Network[0] != "*" {
 		t.Error("should use wing default when no project config")
+	}
+}
+
+func TestBaseField_UnmarshalYAML(t *testing.T) {
+	tests := []struct {
+		yaml string
+		want BaseField
+	}{
+		{`base: none`, BaseField{Name: "none"}},
+		{`base: strict`, BaseField{Name: "strict"}},
+		{`base: ""`, BaseField{}},
+		{
+			"base:\n  fs: none\n  env: team-env",
+			BaseField{FS: "none", Env: "team-env"},
+		},
+		{
+			"base:\n  name: strict\n  fs: none\n  network: none",
+			BaseField{Name: "strict", FS: "none", Network: "none"},
+		},
+	}
+	for _, tt := range tests {
+		var cfg EggConfig
+		if err := yaml.Unmarshal([]byte(tt.yaml), &cfg); err != nil {
+			t.Fatalf("unmarshal %q: %v", tt.yaml, err)
+		}
+		if cfg.Base != tt.want {
+			t.Errorf("unmarshal %q:\n  got  %+v\n  want %+v", tt.yaml, cfg.Base, tt.want)
+		}
+	}
+}
+
+func TestBaseField_MarshalRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		base BaseField
+		want string // expected YAML substring
+	}{
+		{"scalar", BaseField{Name: "strict"}, "base: strict"},
+		{"object", BaseField{Name: "strict", FS: "none"}, "name: strict"},
+	}
+	for _, tt := range tests {
+		cfg := EggConfig{Base: tt.base}
+		data, err := yaml.Marshal(&cfg)
+		if err != nil {
+			t.Fatalf("%s: marshal: %v", tt.name, err)
+		}
+		if !strings.Contains(string(data), tt.want) {
+			t.Errorf("%s: yaml = %q, want substring %q", tt.name, string(data), tt.want)
+		}
+		// Round-trip
+		var cfg2 EggConfig
+		if err := yaml.Unmarshal(data, &cfg2); err != nil {
+			t.Fatalf("%s: unmarshal: %v", tt.name, err)
+		}
+		if cfg2.Base != tt.base {
+			t.Errorf("%s: round-trip got %+v, want %+v", tt.name, cfg2.Base, tt.base)
+		}
+	}
+}
+
+func TestSectionMask_None(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "egg.yaml")
+	os.WriteFile(path, []byte("base:\n  fs: none\n"), 0644)
+
+	cfg, err := ResolveEggConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// FS should be empty (cut from defaults)
+	if len(cfg.FS) != 0 {
+		t.Errorf("fs should be empty with base.fs: none, got %v", cfg.FS)
+	}
+	// Env should still come from defaults
+	hasHome := false
+	for _, v := range cfg.Env {
+		if v == "HOME" {
+			hasHome = true
+		}
+	}
+	if !hasHome {
+		t.Error("env should still have HOME from defaults when only fs is masked")
+	}
+}
+
+func TestSectionMask_FileRef(t *testing.T) {
+	dir := t.TempDir()
+	// Create a base config with specific env
+	os.WriteFile(filepath.Join(dir, "prod-env.yaml"), []byte("base: none\nenv:\n  - PROD_KEY\n  - DB_URL\n"), 0644)
+	// Project references it for env only
+	path := filepath.Join(dir, "egg.yaml")
+	os.WriteFile(path, []byte("base:\n  env: ./prod-env.yaml\n"), 0644)
+
+	cfg, err := ResolveEggConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// FS should come from defaults (not masked)
+	if len(cfg.FS) == 0 {
+		t.Error("fs should come from defaults")
+	}
+	// Env should come from prod-env.yaml (resolved)
+	hasProd := false
+	for _, v := range cfg.Env {
+		if v == "PROD_KEY" {
+			hasProd = true
+		}
+	}
+	if !hasProd {
+		t.Error("env should include PROD_KEY from prod-env.yaml")
+	}
+	// Default env essentials should NOT be present (prod-env has base: none)
+	hasHome := false
+	for _, v := range cfg.Env {
+		if v == "HOME" {
+			hasHome = true
+		}
+	}
+	if hasHome {
+		t.Error("env should not have HOME — prod-env.yaml has base: none")
+	}
+}
+
+func TestSectionMask_FallThrough(t *testing.T) {
+	home := t.TempDir()
+	old := os.Getenv("HOME")
+	os.Setenv("HOME", home)
+	defer os.Setenv("HOME", old)
+
+	basesDir := filepath.Join(home, ".wingthing", "bases")
+	os.MkdirAll(basesDir, 0755)
+	// team-env has no fs of its own, just env. Its base resolves defaults, so fs comes from defaults.
+	os.WriteFile(filepath.Join(basesDir, "team-env.yaml"), []byte("env:\n  - TEAM_KEY\n"), 0644)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "egg.yaml")
+	os.WriteFile(path, []byte("base:\n  env: team-env\n"), 0644)
+
+	cfg, err := ResolveEggConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Env: team-env resolves against defaults, so gets HOME,PATH,etc + TEAM_KEY
+	hasTeam := false
+	hasHome := false
+	for _, v := range cfg.Env {
+		if v == "TEAM_KEY" {
+			hasTeam = true
+		}
+		if v == "HOME" {
+			hasHome = true
+		}
+	}
+	if !hasTeam {
+		t.Error("env should include TEAM_KEY from team-env.yaml")
+	}
+	if !hasHome {
+		t.Error("env should include HOME — team-env.yaml inherits defaults")
+	}
+}
+
+func TestSectionMask_Combo(t *testing.T) {
+	home := t.TempDir()
+	old := os.Getenv("HOME")
+	os.Setenv("HOME", home)
+	defer os.Setenv("HOME", old)
+
+	basesDir := filepath.Join(home, ".wingthing", "bases")
+	os.MkdirAll(basesDir, 0755)
+	os.WriteFile(filepath.Join(basesDir, "strict.yaml"), []byte("base: none\nfs:\n  - rw:./\nnetwork:\n  - api.internal.corp\n"), 0644)
+
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "prod-env.yaml"), []byte("base: none\nenv:\n  - PROD_KEY\n"), 0644)
+	path := filepath.Join(dir, "egg.yaml")
+	os.WriteFile(path, []byte("base:\n  name: strict\n  fs: none\n  env: ./prod-env.yaml\n"), 0644)
+
+	cfg, err := ResolveEggConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// FS: masked to none, so empty
+	if len(cfg.FS) != 0 {
+		t.Errorf("fs should be empty (masked none), got %v", cfg.FS)
+	}
+	// Network: from strict
+	if len(cfg.Network) != 1 || cfg.Network[0] != "api.internal.corp" {
+		t.Errorf("network should come from strict, got %v", cfg.Network)
+	}
+	// Env: from prod-env
+	if len(cfg.Env) != 1 || cfg.Env[0] != "PROD_KEY" {
+		t.Errorf("env should come from prod-env, got %v", cfg.Env)
+	}
+}
+
+func TestSectionMask_CycleDetection(t *testing.T) {
+	dir := t.TempDir()
+	// a.yaml references b.yaml for env, b.yaml references a.yaml
+	os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("base:\n  env: ./b.yaml\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "b.yaml"), []byte("base: ./a.yaml\n"), 0644)
+
+	_, err := ResolveEggConfig(filepath.Join(dir, "a.yaml"))
+	if err == nil {
+		t.Fatal("expected cycle error")
+	}
+	if !strings.Contains(err.Error(), "circular") {
+		t.Errorf("error = %q, want circular reference error", err)
+	}
+}
+
+func TestSectionMask_WithBaseNone_Error(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "egg.yaml")
+	os.WriteFile(path, []byte("base:\n  name: none\n  fs: none\n"), 0644)
+
+	_, err := ResolveEggConfig(path)
+	if err == nil {
+		t.Fatal("expected error: can't mask with base: none")
+	}
+	if !strings.Contains(err.Error(), "nothing to mask") {
+		t.Errorf("error = %q, want 'nothing to mask'", err)
+	}
+}
+
+func TestBaseField_BackwardCompat(t *testing.T) {
+	dir := t.TempDir()
+
+	// String "none" should work exactly as before
+	pathNone := filepath.Join(dir, "none.yaml")
+	os.WriteFile(pathNone, []byte("base: none\nfs:\n  - rw:./\n"), 0644)
+	cfg, err := ResolveEggConfig(pathNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.FS) != 1 || cfg.FS[0] != "rw:./" {
+		t.Errorf("base:none backward compat failed, fs = %v", cfg.FS)
+	}
+
+	// String base with named ref should work
+	home := t.TempDir()
+	old := os.Getenv("HOME")
+	os.Setenv("HOME", home)
+	defer os.Setenv("HOME", old)
+	basesDir := filepath.Join(home, ".wingthing", "bases")
+	os.MkdirAll(basesDir, 0755)
+	os.WriteFile(filepath.Join(basesDir, "strict.yaml"), []byte("base: none\nfs:\n  - rw:./\n"), 0644)
+
+	pathStrict := filepath.Join(dir, "strict.yaml")
+	os.WriteFile(pathStrict, []byte("base: strict\nenv:\n  - CUSTOM_VAR\n"), 0644)
+	cfg2, err := ResolveEggConfig(pathStrict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg2.FS) != 1 || cfg2.FS[0] != "rw:./" {
+		t.Errorf("base:strict backward compat failed, fs = %v", cfg2.FS)
+	}
+	hasCustom := false
+	for _, v := range cfg2.Env {
+		if v == "CUSTOM_VAR" {
+			hasCustom = true
+		}
+	}
+	if !hasCustom {
+		t.Error("base:strict should merge child env")
+	}
+}
+
+func TestDefaultEggConfig_EnvEssentials(t *testing.T) {
+	cfg := DefaultEggConfig()
+	essentials := []string{"HOME", "PATH", "TERM", "LANG", "USER"}
+	for _, k := range essentials {
+		found := false
+		for _, v := range cfg.Env {
+			if v == k {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("default config missing env essential: %s", k)
+		}
+	}
+}
+
+func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "egg.yaml")
+	os.WriteFile(path, []byte("base:\n  env: none\nenv:\n  - CUSTOM_ONLY\n"), 0644)
+
+	cfg, err := ResolveEggConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Env should only have CUSTOM_ONLY — no HOME, PATH, etc.
+	if len(cfg.Env) != 1 || cfg.Env[0] != "CUSTOM_ONLY" {
+		t.Errorf("env should be [CUSTOM_ONLY], got %v", cfg.Env)
+	}
+	env := cfg.BuildEnv()
+	for _, e := range env {
+		k, _, _ := strings.Cut(e, "=")
+		if k == "HOME" || k == "PATH" {
+			t.Errorf("BuildEnv should not include %s with env: none mask", k)
+		}
 	}
 }

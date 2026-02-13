@@ -72,15 +72,18 @@ type WingProject struct {
 
 // WingRegister is sent by the wing on connect.
 type WingRegister struct {
-	Type       string        `json:"type"`
-	MachineID  string        `json:"machine_id"`
-	Platform   string        `json:"platform,omitempty"` // runtime.GOOS (e.g. "darwin", "linux")
-	Version    string        `json:"version,omitempty"`  // build version (e.g. "v0.7.35")
-	Agents     []string      `json:"agents"`
-	Skills     []string      `json:"skills"`
-	Labels     []string      `json:"labels"`
-	Identities []string      `json:"identities"`
-	Projects   []WingProject `json:"projects,omitempty"`
+	Type        string        `json:"type"`
+	MachineID   string        `json:"machine_id"`
+	Platform    string        `json:"platform,omitempty"` // runtime.GOOS (e.g. "darwin", "linux")
+	Version     string        `json:"version,omitempty"`  // build version (e.g. "v0.7.35")
+	Agents      []string      `json:"agents"`
+	Skills      []string      `json:"skills"`
+	Labels      []string      `json:"labels"`
+	Identities  []string      `json:"identities"`
+	Projects    []WingProject `json:"projects,omitempty"`
+	OrgSlug     string        `json:"org_slug,omitempty"`
+	AllowEmails []string      `json:"allow_emails,omitempty"`
+	RootDir     string        `json:"root_dir,omitempty"`
 }
 
 // WingHeartbeat is sent by the wing every 30s.

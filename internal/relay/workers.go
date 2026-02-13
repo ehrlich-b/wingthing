@@ -18,20 +18,23 @@ import (
 
 // ConnectedWing represents a wing connected via WebSocket.
 type ConnectedWing struct {
-	ID         string
-	UserID     string
-	MachineID  string
-	Platform   string // runtime.GOOS from wing
-	Version    string // build version from wing
-	PublicKey  string
-	Agents     []string
-	Skills     []string
-	Labels     []string
-	Identities []string
-	Projects   []ws.WingProject
-	EggConfig  string // serialized YAML of wing's egg config
-	Conn       *websocket.Conn
-	LastSeen   time.Time
+	ID          string
+	UserID      string
+	MachineID   string
+	Platform    string // runtime.GOOS from wing
+	Version     string // build version from wing
+	PublicKey   string
+	Agents      []string
+	Skills      []string
+	Labels      []string
+	Identities  []string
+	Projects    []ws.WingProject
+	EggConfig   string // serialized YAML of wing's egg config
+	OrgID       string   // org slug this wing serves (from --org flag)
+	AllowEmails []string // explicit email allow list (from --allow flag)
+	RootDir     string   // root directory constraint (from --root flag)
+	Conn        *websocket.Conn
+	LastSeen    time.Time
 }
 
 // WingEvent is sent to dashboard subscribers when a wing connects or disconnects.
@@ -237,6 +240,17 @@ func (r *WingRegistry) ListForUser(userID string) []*ConnectedWing {
 	return result
 }
 
+// All returns all connected wings.
+func (r *WingRegistry) All() []*ConnectedWing {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]*ConnectedWing, 0, len(r.wings))
+	for _, w := range r.wings {
+		result = append(result, w)
+	}
+	return result
+}
+
 // CountForUser returns the number of wings connected for a given user.
 func (r *WingRegistry) CountForUser(userID string) int {
 	r.mu.RLock()
@@ -316,19 +330,40 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wing := &ConnectedWing{
-		ID:         uuid.New().String(),
-		UserID:     userID,
-		MachineID:  reg.MachineID,
-		Platform:   reg.Platform,
-		Version:    reg.Version,
-		PublicKey:  wingPublicKey,
-		Agents:     reg.Agents,
-		Skills:     reg.Skills,
-		Labels:     reg.Labels,
-		Identities: reg.Identities,
-		Projects:   reg.Projects,
-		Conn:       conn,
-		LastSeen:   time.Now(),
+		ID:          uuid.New().String(),
+		UserID:      userID,
+		MachineID:   reg.MachineID,
+		Platform:    reg.Platform,
+		Version:     reg.Version,
+		PublicKey:    wingPublicKey,
+		Agents:      reg.Agents,
+		Skills:      reg.Skills,
+		Labels:      reg.Labels,
+		Identities:  reg.Identities,
+		Projects:    reg.Projects,
+		OrgID:       reg.OrgSlug,
+		AllowEmails: reg.AllowEmails,
+		RootDir:     reg.RootDir,
+		Conn:        conn,
+		LastSeen:    time.Now(),
+	}
+
+	// Validate org membership if org slug specified
+	if wing.OrgID != "" {
+		org, orgErr := s.Store.GetOrgBySlug(wing.OrgID)
+		if orgErr != nil || org == nil {
+			errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org not found: " + wing.OrgID}
+			data, _ := json.Marshal(errMsg)
+			conn.Write(ctx, websocket.MessageText, data)
+			return
+		}
+		role := s.Store.GetOrgMemberRole(org.ID, userID)
+		if role != "owner" && role != "admin" {
+			errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "not authorized to register wing for org: " + wing.OrgID}
+			data, _ := json.Marshal(errMsg)
+			conn.Write(ctx, websocket.MessageText, data)
+			return
+		}
 	}
 
 	s.Wings.Add(wing)

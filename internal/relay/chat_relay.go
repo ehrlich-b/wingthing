@@ -65,6 +65,17 @@ func (r *ChatRegistry) CountForUser(userID string) int {
 	return n
 }
 
+// All returns all chat sessions.
+func (r *ChatRegistry) All() []*ChatSession {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]*ChatSession, 0, len(r.sessions))
+	for _, s := range r.sessions {
+		result = append(result, s)
+	}
+	return result
+}
+
 // ListForUser returns all chat sessions for a given user.
 func (r *ChatRegistry) ListForUser(userID string) []*ChatSession {
 	r.mu.RLock()

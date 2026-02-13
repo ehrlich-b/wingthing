@@ -52,6 +52,8 @@ func serveCmd() *cobra.Command {
 				JWTSecret:          os.Getenv("WT_JWT_SECRET"),
 				GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
 				GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
+				GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+				GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 				SMTPHost:           os.Getenv("SMTP_HOST"),
 				SMTPPort:           envOr("SMTP_PORT", "587"),
 				SMTPUser:           os.Getenv("SMTP_USER"),
@@ -62,6 +64,16 @@ func serveCmd() *cobra.Command {
 			srv := relay.NewServer(store, srvCfg)
 			// Bandwidth: 64 KB/s sustained, 1 MB burst per user (PTY-only traffic)
 			srv.Bandwidth = relay.NewBandwidthMeter(64*1024, 1*1024*1024, store.DB())
+			srv.Bandwidth.SetTierLookup(func(userID string) string {
+				u, err := store.GetSocialUserByID(userID)
+				if err != nil || u == nil {
+					return "free"
+				}
+				if u.Tier == "" {
+					return "free"
+				}
+				return u.Tier
+			})
 			// Rate limit: 5 req/s sustained, 20 burst per IP (friends-and-family)
 			srv.RateLimit = relay.NewRateLimiter(5, 20)
 			if devFlag {
