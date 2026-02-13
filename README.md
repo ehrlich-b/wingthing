@@ -2,88 +2,77 @@
 
 [![cinch](https://cinch.sh/badge/github.com/ehrlich-b/wingthing.svg)](https://cinch.sh/jobs/github.com/ehrlich-b/wingthing)
 
-Run AI agents sandboxed on your machine. Access them from anywhere.
+Sandboxed AI agents on your machine, accessible from anywhere.
 
 ```
 wt egg claude              # sandboxed Claude Code session
-wt wing -d                 # make your machine reachable remotely
-open app.wingthing.ai      # start terminals from your browser
+wt wing -d                 # connect your machine to the relay
+open app.wingthing.ai      # start sessions from any browser
 ```
 
-## Sandboxed agents
+## How it works
 
-`wt egg` runs any supported agent inside an isolated sandbox with full terminal support. The sandbox IS the permission boundary — agents get `--dangerously-skip-permissions` because the sandbox constrains what they can do.
+`wt egg` spawns an agent inside an OS-level sandbox. The sandbox is the permission boundary - agents run with `--dangerously-skip-permissions` because they can't escape the sandbox anyway.
 
-Each session is its own process with its own sandbox. Detach and reattach without losing state.
+macOS uses Seatbelt (`sandbox-exec`). Linux uses user namespaces and seccomp. No containers, no VMs.
+
+Each session gets its own process and sandbox. Detach and reattach without losing state.
 
 ```
-wt egg claude              # Claude Code, sandboxed
-wt egg codex               # Codex, sandboxed
-wt egg ollama              # Ollama, sandboxed (free, local)
-wt egg list                # see active sessions
-wt egg stop <id>           # kill a session
+wt egg claude              # Claude Code
+wt egg codex               # Codex
+wt egg ollama              # local inference, free, offline
+wt egg list                # active sessions
+wt egg stop <id>           # kill one
 ```
 
-### Sandbox
+### Configuration
 
-| Platform | Method |
-|----------|--------|
-| macOS | Seatbelt (sandbox-exec) |
-| Linux | User namespaces + seccomp |
-
-Configure via `egg.yaml` in your project or `~/.wingthing/egg.yaml`:
+Drop an `egg.yaml` in your project or `~/.wingthing/egg.yaml`:
 
 ```yaml
-isolation: network          # strict, standard, network, privileged
-mounts:
-  - ~/repos:rw
-  - ~/docs:ro
+isolation: network
+fs:
+  - "rw:~/repos"
+  - "ro:~/docs"
 deny:
-  - ~/.ssh
-  - ~/.gnupg
+  - "~/.ssh"
+  - "~/.gnupg"
 ```
 
-The sandbox auto-discovers where your agent binary and config live — you don't need to mount them explicitly.
+Four isolation levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs), `network` (full network + mounts), `privileged` (no sandbox).
 
-Levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs), `network` (network + mounted dirs), `privileged` (no sandbox).
+The sandbox auto-discovers where agent binaries and configs live. You don't mount those yourself.
 
 ## Remote access
 
-`wt wing` connects your machine outbound to the relay via WebSocket. No port forwarding, no static IP, works behind any NAT. Open `app.wingthing.ai` to start sandboxed terminals on your machine from any device.
+`wt wing` opens an outbound WebSocket to the relay. No port forwarding, no static IP, works behind NAT.
 
 ```
 wt login                   # authenticate with GitHub
-wt wing -d                 # start as background daemon
-wt wing status             # check daemon status
-wt wing stop               # stop daemon
+wt wing -d                 # background daemon
+wt wing status             # check it
 ```
 
 ```
-Browser (xterm.js) <-> Relay (dumb pipe) <-> Your machine
+browser (xterm.js) <-> relay (dumb pipe) <-> your machine
 ```
 
-Sessions are end-to-end encrypted (ECDH + AES-GCM). The relay forwards opaque bytes — it never reads your data.
+The relay never sees your data. Sessions are end-to-end encrypted (ECDH + AES-GCM). The relay forwards opaque bytes.
+
+Open `app.wingthing.ai` to browse your connected wings, start sessions, and view session history.
 
 ## Agents
 
-`wt doctor` detects what's installed. Swap agents with a flag.
+`wt doctor` shows what's installed. Swap agents per-session.
 
-| Agent | CLI | Notes |
-|-------|-----|-------|
-| Claude Code | `claude` | Anthropic |
-| Codex | `codex` | OpenAI |
-| Cursor Agent | `agent` | Cursor |
-| Ollama | `ollama` | Free, local, offline |
-
-## Skills
-
-Markdown prompt templates with YAML frontmatter. Curated, version-controlled, agent-agnostic.
-
-```
-wt run --skill compress --agent ollama
-wt skill list
-wt skill add skills/compress.md
-```
+| Agent | CLI |
+|-------|-----|
+| Claude Code | `claude` |
+| Codex | `codex` |
+| Cursor Agent | `agent` |
+| Ollama | `ollama` |
+| Gemini | `gemini` |
 
 ## Install
 
@@ -91,28 +80,22 @@ wt skill add skills/compress.md
 curl -fsSL https://wingthing.ai/install.sh | sh
 ```
 
-Or with Go:
-
-```bash
-go install github.com/ehrlich-b/wingthing/cmd/wt@latest
-```
-
-Or from source (requires Go 1.25+ and Node.js):
+Or build from source (Go 1.25+, Node.js):
 
 ```bash
 git clone https://github.com/ehrlich-b/wingthing.git
-cd wingthing && make check    # test + build → ./wt
+cd wingthing && make check
 ```
 
-Update: `wt update`
+Update with `wt update`.
 
 ## Self-hosting
 
-Single binary, SQLite, no external dependencies.
+Single binary, SQLite, no external deps.
 
 ```bash
-wt serve --addr :8080                       # start relay
-wt wing --relay http://localhost:8080        # connect to it
+wt serve --addr :8080
+wt wing --relay http://localhost:8080
 ```
 
 ## License
