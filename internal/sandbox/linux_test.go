@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"os"
 	"syscall"
 	"testing"
 	"time"
@@ -174,11 +175,17 @@ func TestSysProcAttrCloneflags(t *testing.T) {
 		{NetworkHTTPS, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
 		{NetworkFull, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
 	}
+	// sysProcAttr adds CLONE_NEWUSER for non-root
+	var extra uintptr
+	if os.Geteuid() != 0 {
+		extra = syscall.CLONE_NEWUSER
+	}
 	for _, tt := range tests {
 		s := &linuxSandbox{cfg: Config{NetworkNeed: tt.need}}
 		attr := s.sysProcAttr()
-		if attr.Cloneflags != tt.want {
-			t.Errorf("NetworkNeed %v: Cloneflags = 0x%x, want 0x%x", tt.need, attr.Cloneflags, tt.want)
+		want := tt.want | extra
+		if attr.Cloneflags != want {
+			t.Errorf("NetworkNeed %v: Cloneflags = 0x%x, want 0x%x", tt.need, attr.Cloneflags, want)
 		}
 	}
 }

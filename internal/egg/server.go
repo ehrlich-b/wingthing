@@ -50,20 +50,21 @@ type Server struct {
 
 // Session holds a single PTY process and its state.
 type Session struct {
-	ID        string
-	PID       int
-	Agent     string
-	CWD       string
-	Network   string // summary: "none", "*", or comma-separated domains
-	StartedAt time.Time
-	ptmx      *os.File
-	replay    *replayBuffer
-	sb        sandbox.Sandbox
-	cmd       *exec.Cmd
-	mu        sync.Mutex
-	done      chan struct{} // closed when process exits
-	exitCode  int
-	debug     bool
+	ID             string
+	PID            int
+	Agent          string
+	CWD            string
+	Network        string // summary: "none", "*", or comma-separated domains
+	RenderedConfig string // effective egg config as YAML (after merge/resolve)
+	StartedAt      time.Time
+	ptmx           *os.File
+	replay         *replayBuffer
+	sb             sandbox.Sandbox
+	cmd            *exec.Cmd
+	mu             sync.Mutex
+	done           chan struct{} // closed when process exits
+	exitCode       int
+	debug          bool
 }
 
 // RunConfig holds everything needed to start a single egg session.
@@ -82,6 +83,7 @@ type RunConfig struct {
 	MemLimit                   uint64
 	MaxFDs                     uint32
 	Debug                      bool
+	RenderedConfig             string // effective egg config as YAML (after merge/resolve)
 }
 
 // replayBuffer is an append-only (bounded) log of PTY output.
@@ -385,7 +387,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	hasSandbox := len(rc.FS) > 0 || netNeed < sandbox.NetworkFull
 	if hasSandbox {
 		home, _ := os.UserHomeDir()
-		mounts, deny := ParseFSRules(rc.FS, home)
+		mounts, deny, denyWrite := ParseFSRules(rc.FS, home)
 
 		// Auto-inject agent binary install root so sandbox can find it.
 		if home != "" && len(mounts) > 0 {
@@ -420,6 +422,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		sbCfg := sandbox.Config{
 			Mounts:      mounts,
 			Deny:        deny,
+			DenyWrite:   denyWrite,
 			NetworkNeed: netNeed,
 			Domains:     mergedDomains,
 			ProxyPort:   proxyPort,
@@ -474,18 +477,19 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	sessionID := filepath.Base(s.dir)
 	networkSummary := networkSummaryFromDomains(mergedDomains)
 	sess := &Session{
-		ID:        sessionID,
-		PID:       cmd.Process.Pid,
-		Agent:     rc.Agent,
-		CWD:       rc.CWD,
-		Network:   networkSummary,
-		StartedAt: time.Now(),
-		ptmx:      ptmx,
-		replay:    newReplayBuffer(),
-		sb:        sb,
-		cmd:       cmd,
-		done:      make(chan struct{}),
-		debug:     rc.Debug,
+		ID:             sessionID,
+		PID:            cmd.Process.Pid,
+		Agent:          rc.Agent,
+		CWD:            rc.CWD,
+		Network:        networkSummary,
+		RenderedConfig: rc.RenderedConfig,
+		StartedAt:      time.Now(),
+		ptmx:           ptmx,
+		replay:         newReplayBuffer(),
+		sb:             sb,
+		cmd:            cmd,
+		done:           make(chan struct{}),
+		debug:          rc.Debug,
 	}
 
 	s.mu.Lock()
@@ -685,13 +689,14 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 	}
 	st := sess.replay.Stats()
 	return &pb.StatusResponse{
-		SessionId:     sess.ID,
-		Agent:         sess.Agent,
-		BufferBytes:   int64(st.BufSize),
-		TotalWritten:  st.Written,
-		TotalTrimmed:  st.Trimmed,
-		Readers:       int32(st.Readers),
-		UptimeSeconds: int64(time.Since(sess.StartedAt).Seconds()),
+		SessionId:      sess.ID,
+		Agent:          sess.Agent,
+		BufferBytes:    int64(st.BufSize),
+		TotalWritten:   st.Written,
+		TotalTrimmed:   st.Trimmed,
+		Readers:        int32(st.Readers),
+		UptimeSeconds:  int64(time.Since(sess.StartedAt).Seconds()),
+		RenderedConfig: sess.RenderedConfig,
 	}, nil
 }
 

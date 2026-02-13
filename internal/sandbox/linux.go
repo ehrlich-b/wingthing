@@ -89,7 +89,7 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		}
 	}
 
-	needsWrapper := len(s.cfg.Deny) > 0 || len(writablePaths) > 0
+	needsWrapper := len(s.cfg.Deny) > 0 || len(s.cfg.DenyWrite) > 0 || len(writablePaths) > 0
 	if needsWrapper {
 		// Wrap through _sandbox_init to apply deny paths (tmpfs overmounts)
 		// and write isolation (HOME read-only + writable sub-mounts).
@@ -109,6 +109,9 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		}
 		for _, d := range s.cfg.Deny {
 			wrapArgs = append(wrapArgs, "--deny", d)
+		}
+		for _, d := range s.cfg.DenyWrite {
+			wrapArgs = append(wrapArgs, "--deny-write", d)
 		}
 		home, _ := os.UserHomeDir()
 		if home != "" {

@@ -373,10 +373,10 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		return err
 	}
 
-	// Load wing-level egg config
+	// Load wing-level egg config (with base chain resolution)
 	var wingEggCfg *egg.EggConfig
 	if eggConfigFlag != "" {
-		wingEggCfg, err = egg.LoadEggConfig(eggConfigFlag)
+		wingEggCfg, err = egg.ResolveEggConfig(eggConfigFlag)
 		if err != nil {
 			return fmt.Errorf("load egg config: %w", err)
 		}
@@ -384,7 +384,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	} else {
 		// Check ~/.wingthing/egg.yaml
 		defaultPath := filepath.Join(cfg.Dir, "egg.yaml")
-		wingEggCfg, err = egg.LoadEggConfig(defaultPath)
+		wingEggCfg, err = egg.ResolveEggConfig(defaultPath)
 		if err != nil {
 			wingEggCfg = egg.DefaultEggConfig()
 			log.Printf("egg: using default config (network=%s)", wingEggCfg.NetworkSummary())

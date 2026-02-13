@@ -97,6 +97,18 @@ func buildProfile(cfg Config) string {
 		fmt.Fprintf(&sb, "(deny file-read* file-write* (subpath %q))\n", abs)
 	}
 
+	// Deny-write paths — block writes only, reads allowed.
+	for _, d := range cfg.DenyWrite {
+		abs, err := filepath.Abs(d)
+		if err != nil {
+			continue
+		}
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = real
+		}
+		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
+	}
+
 	// Mount-based filesystem write isolation.
 	// Deny writes to $HOME, then allow mount paths via most-specific-wins.
 	// Agent config dirs use regex instead of subpath so that files like

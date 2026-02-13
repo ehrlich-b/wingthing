@@ -62,6 +62,7 @@ func (e *EnvField) UnmarshalYAML(value *yaml.Node) error {
 
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
+	Base                       string       `yaml:"base,omitempty"`
 	FS                         []string     `yaml:"fs"`
 	Network                    NetworkField `yaml:"network"`
 	Env                        EnvField     `yaml:"env"`
@@ -87,11 +88,13 @@ func DefaultDenyPaths() []string {
 
 // DefaultEggConfig returns the restrictive default config used when no egg.yaml exists.
 // CWD is writable, home is read-only except agent-drilled holes. Sensitive dirs are denied.
+// egg.yaml itself is deny-write so agents can read but not modify their sandbox config.
 func DefaultEggConfig() *EggConfig {
 	fs := []string{"rw:./"}
 	for _, d := range DefaultDenyPaths() {
 		fs = append(fs, "deny:"+d)
 	}
+	fs = append(fs, "deny-write:./egg.yaml")
 	return &EggConfig{
 		FS: fs,
 	}
@@ -120,11 +123,12 @@ func LoadEggConfigFromYAML(yamlStr string) (*EggConfig, error) {
 }
 
 // DiscoverEggConfig looks for egg.yaml in the given directory, falls back to the
-// wing default, then to built-in defaults.
+// wing default, then to built-in defaults. Project configs are resolved through
+// the base chain (additive inheritance) before being returned.
 func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	if cwd != "" {
 		path := filepath.Join(cwd, "egg.yaml")
-		if cfg, err := LoadEggConfig(path); err == nil {
+		if cfg, err := ResolveEggConfig(path); err == nil {
 			return cfg
 		}
 	}
@@ -134,11 +138,189 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	return DefaultEggConfig()
 }
 
-// ParseFSRules splits fs entries into mounts and deny paths.
-// Entries are "mode:path" where mode is rw, ro, or deny.
-func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string) {
+const maxBaseDepth = 10
+
+// ResolveEggConfig loads an egg.yaml and resolves its base chain, returning
+// a fully merged config. If base is empty, merges on top of DefaultEggConfig.
+// If base is "none", returns the config as-is (empty slate).
+func ResolveEggConfig(path string) (*EggConfig, error) {
+	return resolveEggConfig(path, make(map[string]bool), 0)
+}
+
+func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConfig, error) {
+	if depth > maxBaseDepth {
+		return nil, fmt.Errorf("egg config base chain too deep (max %d)", maxBaseDepth)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	if visited[abs] {
+		return nil, fmt.Errorf("egg config circular base reference: %s", abs)
+	}
+	visited[abs] = true
+
+	child, err := LoadEggConfig(abs)
+	if err != nil {
+		return nil, err
+	}
+
+	switch child.Base {
+	case "none":
+		return child, nil
+	case "":
+		return MergeEggConfig(DefaultEggConfig(), child), nil
+	default:
+		parentPath := resolveBasePath(child.Base, filepath.Dir(abs))
+		parent, err := resolveEggConfig(parentPath, visited, depth+1)
+		if err != nil {
+			return nil, fmt.Errorf("resolve base %q: %w", child.Base, err)
+		}
+		return MergeEggConfig(parent, child), nil
+	}
+}
+
+// resolveBasePath turns a base value into an absolute path.
+// - Relative path (starts with . or /) -> resolve relative to configDir
+// - Named base -> ~/.wingthing/bases/<name>.yaml
+func resolveBasePath(base, configDir string) string {
+	if filepath.IsAbs(base) {
+		return base
+	}
+	if strings.HasPrefix(base, "./") || strings.HasPrefix(base, "../") {
+		return filepath.Join(configDir, base)
+	}
+	// Named base: ~/.wingthing/bases/<name>.yaml
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".wingthing", "bases", base+".yaml")
+}
+
+// MergeEggConfig merges a child config on top of a parent config.
+// - fs: append child to parent; child ro/rw overrides parent deny for same path
+// - network: union (dedup); "*" in either -> ["*"]
+// - env: union (dedup); "*" in either -> ["*"]
+// - resources: child wins per-field (non-zero overrides parent)
+// - shell: child wins if non-empty
+// - dangerously_skip_permissions: OR
+func MergeEggConfig(parent, child *EggConfig) *EggConfig {
+	merged := &EggConfig{}
+
+	// FS: append child to parent, with deny override logic
+	merged.FS = mergeFS(parent.FS, child.FS)
+
+	// Network: union with wildcard short-circuit
+	merged.Network = NetworkField(mergeStringSet([]string(parent.Network), []string(child.Network)))
+
+	// Env: union with wildcard short-circuit
+	merged.Env = EnvField(mergeStringSet([]string(parent.Env), []string(child.Env)))
+
+	// Resources: child wins per-field
+	merged.Resources = mergeResources(parent.Resources, child.Resources)
+
+	// Shell: child wins if non-empty
+	merged.Shell = parent.Shell
+	if child.Shell != "" {
+		merged.Shell = child.Shell
+	}
+
+	// DangerouslySkipPermissions: OR
+	merged.DangerouslySkipPermissions = parent.DangerouslySkipPermissions || child.DangerouslySkipPermissions
+
+	return merged
+}
+
+// mergeFS appends child fs rules to parent, but if child has ro:P or rw:P,
+// drops deny:P from parent (normalized path comparison).
+func mergeFS(parent, child []string) []string {
+	home, _ := os.UserHomeDir()
+
+	// Collect child access paths (ro/rw) for deny override
+	childAccess := make(map[string]bool)
+	for _, entry := range child {
+		mode, path, ok := strings.Cut(entry, ":")
+		if !ok {
+			continue
+		}
+		if mode == "ro" || mode == "rw" {
+			childAccess[normalizeFSPath(path, home)] = true
+		}
+	}
+
+	// Copy parent rules, dropping denies that child overrides
+	var result []string
+	for _, entry := range parent {
+		mode, path, ok := strings.Cut(entry, ":")
+		if !ok {
+			result = append(result, entry)
+			continue
+		}
+		if mode == "deny" && childAccess[normalizeFSPath(path, home)] {
+			continue // child overrides this deny
+		}
+		result = append(result, entry)
+	}
+
+	// Append all child rules
+	result = append(result, child...)
+	return result
+}
+
+// normalizeFSPath expands tilde and cleans the path for comparison.
+func normalizeFSPath(path, home string) string {
+	expanded := expandTilde(path, home)
+	return filepath.Clean(expanded)
+}
+
+// mergeStringSet unions two string slices with dedup. "*" in either -> ["*"].
+func mergeStringSet(a, b []string) []string {
+	for _, s := range a {
+		if s == "*" {
+			return []string{"*"}
+		}
+	}
+	for _, s := range b {
+		if s == "*" {
+			return []string{"*"}
+		}
+	}
+	seen := make(map[string]bool, len(a)+len(b))
+	var out []string
+	for _, s := range a {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	for _, s := range b {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// mergeResources returns a merged EggResources where child non-zero fields win.
+func mergeResources(parent, child EggResources) EggResources {
+	r := parent
+	if child.CPU != "" {
+		r.CPU = child.CPU
+	}
+	if child.Memory != "" {
+		r.Memory = child.Memory
+	}
+	if child.MaxFDs > 0 {
+		r.MaxFDs = child.MaxFDs
+	}
+	return r
+}
+
+// ParseFSRules splits fs entries into mounts, deny paths, and deny-write paths.
+// Entries are "mode:path" where mode is rw, ro, deny, or deny-write.
+func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string, []string) {
 	var mounts []sandbox.Mount
 	var deny []string
+	var denyWrite []string
 	for _, entry := range fs {
 		mode, path, ok := strings.Cut(entry, ":")
 		if !ok {
@@ -150,24 +332,27 @@ func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string) {
 		switch mode {
 		case "deny":
 			deny = append(deny, expanded)
+		case "deny-write":
+			denyWrite = append(denyWrite, expanded)
 		case "ro":
 			mounts = append(mounts, sandbox.Mount{Source: expanded, Target: expanded, ReadOnly: true})
 		default: // "rw" or unknown
 			mounts = append(mounts, sandbox.Mount{Source: expanded, Target: expanded})
 		}
 	}
-	return mounts, deny
+	return mounts, deny, denyWrite
 }
 
 // ToSandboxConfig converts the egg config to a sandbox.Config.
 func (c *EggConfig) ToSandboxConfig() sandbox.Config {
 	home, _ := os.UserHomeDir()
-	mounts, deny := ParseFSRules(c.FS, home)
+	mounts, deny, denyWrite := ParseFSRules(c.FS, home)
 	netNeed := sandbox.NetworkNeedFromDomains([]string(c.Network))
 
 	return sandbox.Config{
 		Mounts:      mounts,
 		Deny:        deny,
+		DenyWrite:   denyWrite,
 		NetworkNeed: netNeed,
 		Domains:     []string(c.Network),
 		CPULimit:    c.Resources.CPUDuration(),

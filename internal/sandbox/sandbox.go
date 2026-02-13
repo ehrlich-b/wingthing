@@ -27,7 +27,8 @@ type Mount struct {
 // Config holds sandbox creation parameters.
 type Config struct {
 	Mounts      []Mount
-	Deny        []string    // paths to mask (e.g. ~/.ssh)
+	Deny        []string    // paths to mask (e.g. ~/.ssh) — deny read+write
+	DenyWrite   []string    // paths to deny writes only (e.g. ./egg.yaml) — read allowed
 	NetworkNeed NetworkNeed // granular network access required by the agent
 	Domains     []string    // domain allowlist for proxy filtering
 	ProxyPort   int         // local domain-filtering proxy port (0 = no proxy)

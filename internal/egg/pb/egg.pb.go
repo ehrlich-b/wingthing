@@ -58,16 +58,17 @@ func (*StatusRequest) Descriptor() ([]byte, []int) {
 }
 
 type StatusResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Agent         string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
-	BufferBytes   int64                  `protobuf:"varint,3,opt,name=buffer_bytes,json=bufferBytes,proto3" json:"buffer_bytes,omitempty"`
-	TotalWritten  int64                  `protobuf:"varint,4,opt,name=total_written,json=totalWritten,proto3" json:"total_written,omitempty"`
-	TotalTrimmed  int64                  `protobuf:"varint,5,opt,name=total_trimmed,json=totalTrimmed,proto3" json:"total_trimmed,omitempty"`
-	Readers       int32                  `protobuf:"varint,6,opt,name=readers,proto3" json:"readers,omitempty"`
-	UptimeSeconds int64                  `protobuf:"varint,7,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Agent          string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
+	BufferBytes    int64                  `protobuf:"varint,3,opt,name=buffer_bytes,json=bufferBytes,proto3" json:"buffer_bytes,omitempty"`
+	TotalWritten   int64                  `protobuf:"varint,4,opt,name=total_written,json=totalWritten,proto3" json:"total_written,omitempty"`
+	TotalTrimmed   int64                  `protobuf:"varint,5,opt,name=total_trimmed,json=totalTrimmed,proto3" json:"total_trimmed,omitempty"`
+	Readers        int32                  `protobuf:"varint,6,opt,name=readers,proto3" json:"readers,omitempty"`
+	UptimeSeconds  int64                  `protobuf:"varint,7,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
+	RenderedConfig string                 `protobuf:"bytes,8,opt,name=rendered_config,json=renderedConfig,proto3" json:"rendered_config,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *StatusResponse) Reset() {
@@ -147,6 +148,13 @@ func (x *StatusResponse) GetUptimeSeconds() int64 {
 		return x.UptimeSeconds
 	}
 	return 0
+}
+
+func (x *StatusResponse) GetRenderedConfig() string {
+	if x != nil {
+		return x.RenderedConfig
+	}
+	return ""
 }
 
 type KillRequest struct {
@@ -536,7 +544,7 @@ var File_egg_proto protoreflect.FileDescriptor
 const file_egg_proto_rawDesc = "" +
 	"\n" +
 	"\tegg.proto\x12\x03egg\"\x0f\n" +
-	"\rStatusRequest\"\xf3\x01\n" +
+	"\rStatusRequest\"\x9c\x02\n" +
 	"\x0eStatusResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -545,7 +553,8 @@ const file_egg_proto_rawDesc = "" +
 	"\rtotal_written\x18\x04 \x01(\x03R\ftotalWritten\x12#\n" +
 	"\rtotal_trimmed\x18\x05 \x01(\x03R\ftotalTrimmed\x12\x18\n" +
 	"\areaders\x18\x06 \x01(\x05R\areaders\x12%\n" +
-	"\x0euptime_seconds\x18\a \x01(\x03R\ruptimeSeconds\",\n" +
+	"\x0euptime_seconds\x18\a \x01(\x03R\ruptimeSeconds\x12'\n" +
+	"\x0frendered_config\x18\b \x01(\tR\x0erenderedConfig\",\n" +
 	"\vKillRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x0e\n" +

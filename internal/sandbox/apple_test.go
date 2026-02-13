@@ -82,6 +82,25 @@ func TestSeatbeltExecBuildsCommand(t *testing.T) {
 	}
 }
 
+func TestBuildProfileDenyWritePaths(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	eggYaml := home + "/project/egg.yaml"
+	profile := buildProfile(Config{
+		NetworkNeed: NetworkFull,
+		DenyWrite:   []string{eggYaml},
+	})
+	// Should contain a deny file-write* with literal for the specific file
+	want := `(deny file-write* (literal "` + eggYaml + `"))`
+	if !strings.Contains(profile, want) {
+		t.Errorf("profile should deny writes to egg.yaml, got:\n%s", profile)
+	}
+	// Should NOT deny reads
+	denyRead := `(deny file-read* (literal "` + eggYaml + `"))`
+	if strings.Contains(profile, denyRead) {
+		t.Error("deny-write should not block reads")
+	}
+}
+
 // Integration tests — actually run sandboxed processes
 
 func TestSeatbeltNetworkBlocked(t *testing.T) {
@@ -189,5 +208,50 @@ func TestSeatbeltWriteRestriction(t *testing.T) {
 	os.Remove(target) // clean up in case it leaked
 	if err == nil {
 		t.Fatal("expected write outside mount to fail, but it succeeded")
+	}
+}
+
+func TestSeatbeltDenyWriteBlocksWrite(t *testing.T) {
+	// Create a file that should be readable but not writable
+	tmpDir := t.TempDir()
+	protectedFile := tmpDir + "/egg.yaml"
+	os.WriteFile(protectedFile, []byte("original content"), 0644)
+
+	sb, err := newPlatform(Config{
+		NetworkNeed: NetworkFull,
+		DenyWrite:   []string{protectedFile},
+	})
+	if err != nil {
+		t.Fatalf("newPlatform: %v", err)
+	}
+	defer sb.Destroy()
+
+	// Read should succeed
+	cmd, err := sb.Exec(context.Background(), "/bin/cat", []string{protectedFile})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("reading deny-write file should succeed: %v", err)
+	}
+	if got := out.String(); got != "original content" {
+		t.Errorf("read content = %q, want %q", got, "original content")
+	}
+
+	// Write should fail
+	cmd2, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", "echo hacked > " + protectedFile})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	err = cmd2.Run()
+	if err == nil {
+		// Verify file wasn't modified
+		data, _ := os.ReadFile(protectedFile)
+		if string(data) != "original content" {
+			t.Fatal("deny-write file was modified!")
+		}
+		t.Fatal("expected write to deny-write file to fail, but it succeeded")
 	}
 }

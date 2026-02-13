@@ -18,6 +18,7 @@ message StatusResponse {
     int64 total_trimmed = 5;
     int32 readers = 6;
     int64 uptime_seconds = 7;
+    string rendered_config = 8;
 }
 
 message KillRequest { string session_id = 1; }

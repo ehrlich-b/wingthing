@@ -60,6 +60,7 @@ func eggRunCmd() *cobra.Command {
 		memFlag    string
 		maxFDsFlag uint32
 		debugFlag  bool
+		renderedConfigFlag string
 		dangerouslySkipPermissions bool
 	)
 
@@ -111,10 +112,11 @@ func eggRunCmd() *cobra.Command {
 				Rows:    rows,
 				Cols:    cols,
 				DangerouslySkipPermissions: dangerouslySkipPermissions,
-				CPULimit:  cpuLimit,
-				MemLimit:  memLimit,
-				MaxFDs:    maxFDsFlag,
-				Debug:     debugFlag,
+				CPULimit:       cpuLimit,
+				MemLimit:       memLimit,
+				MaxFDs:         maxFDsFlag,
+				Debug:          debugFlag,
+				RenderedConfig: renderedConfigFlag,
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -155,6 +157,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&memFlag, "memory", "", "memory limit (e.g. 2GB)")
 	cmd.Flags().Uint32Var(&maxFDsFlag, "max-fds", 0, "max open file descriptors")
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp")
+	cmd.Flags().StringVar(&renderedConfigFlag, "rendered-config", "", "rendered egg config YAML (internal)")
 	cmd.MarkFlagRequired("session-id")
 
 	return cmd
@@ -301,10 +304,10 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 		return err
 	}
 
-	// Load egg config
+	// Load egg config (with base chain resolution)
 	var eggCfg *egg.EggConfig
 	if configPath != "" {
-		eggCfg, err = egg.LoadEggConfig(configPath)
+		eggCfg, err = egg.ResolveEggConfig(configPath)
 		if err != nil {
 			return fmt.Errorf("load egg config: %w", err)
 		}
@@ -466,6 +469,11 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if debug {
 		args = append(args, "--debug")
+	}
+
+	// Serialize rendered config as YAML for status RPC
+	if rendered, yamlErr := eggCfg.YAML(); yamlErr == nil {
+		args = append(args, "--rendered-config", rendered)
 	}
 
 	logPath := filepath.Join(dir, "egg.log")

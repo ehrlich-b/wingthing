@@ -31,6 +31,7 @@ import (
 // Args format: --uid UID --gid GID [--log PATH] [--deny PATH...] [--home PATH] [--writable PATH...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
+	var denyWritePaths []string
 	var writablePaths []string
 	var home string
 	var logPath string
@@ -46,6 +47,9 @@ func DenyInit(args []string) {
 			switch args[i] {
 			case "--deny":
 				denyPaths = append(denyPaths, args[i+1])
+				i++
+			case "--deny-write":
+				denyWritePaths = append(denyWritePaths, args[i+1])
 				i++
 			case "--writable":
 				writablePaths = append(writablePaths, args[i+1])
@@ -142,6 +146,20 @@ func DenyInit(args []string) {
 		}
 		if err := unix.Mount("tmpfs", p, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, "size=0"); err != nil {
 			log.Printf("_deny_init: mount deny %s: %v", p, err)
+		}
+	}
+
+	// Deny-write paths — bind mount read-only so agent can read but not modify.
+	for _, p := range denyWritePaths {
+		if _, err := os.Stat(p); err != nil {
+			continue // file doesn't exist, skip
+		}
+		if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
+			log.Printf("_deny_init: bind deny-write %s: %v", p, err)
+			continue
+		}
+		if err := unix.Mount("", p, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, ""); err != nil {
+			log.Printf("_deny_init: remount deny-write ro %s: %v", p, err)
 		}
 	}
 
