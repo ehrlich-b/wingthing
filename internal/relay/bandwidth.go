@@ -32,6 +32,8 @@ type BandwidthMeter struct {
 	limiters map[string]*rate.Limiter
 	tiers    map[string]string // cached tier per user
 	counters map[string]*atomic.Int64
+	exceeded map[string]bool   // users who exceeded monthly cap (set by login via sync)
+	month    string             // current month "2006-01" — counters reset on rollover
 	rateVal  rate.Limit
 	burst    int
 	db       *sql.DB
@@ -55,9 +57,51 @@ func (b *BandwidthMeter) SetTierLookup(fn TierLookup) {
 	b.tierFn = fn
 }
 
+// SetExceeded replaces the set of users who exceeded their monthly cap (pushed from login via sync).
+func (b *BandwidthMeter) SetExceeded(userIDs []string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.exceeded = make(map[string]bool, len(userIDs))
+	for _, id := range userIDs {
+		b.exceeded[id] = true
+	}
+}
+
+// IsExceeded returns true if a user has been flagged as over their monthly cap.
+func (b *BandwidthMeter) IsExceeded(userID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.exceeded[userID]
+}
+
+// ExceededUsers returns user IDs that have exceeded their monthly bandwidth cap.
+// Only meaningful on the login node where counters reflect cluster-wide totals.
+func (b *BandwidthMeter) ExceededUsers() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var result []string
+	for userID, c := range b.counters {
+		if c.Load() < freeMonthlyCap {
+			continue
+		}
+		tier := b.tiers[userID]
+		if tier == "" && b.tierFn != nil {
+			tier = b.tierFn(userID)
+			b.tiers[userID] = tier
+		}
+		if tier == "" || tier == "free" {
+			result = append(result, userID)
+		}
+	}
+	return result
+}
+
 // Wait blocks until the user's rate limiter allows n bytes, or ctx is done.
-// Always records usage regardless of tier.
+// Rejects immediately if the user has exceeded their monthly bandwidth cap.
 func (b *BandwidthMeter) Wait(ctx context.Context, userID string, n int) error {
+	if b.IsExceeded(userID) || b.ExceededMonthly(userID) {
+		return fmt.Errorf("bandwidth limit exceeded")
+	}
 	b.counter(userID).Add(int64(n))
 	lim := b.limiter(userID)
 	if n <= b.burst {
@@ -145,12 +189,46 @@ func (b *BandwidthMeter) limiter(userID string) *rate.Limiter {
 func (b *BandwidthMeter) counter(userID string) *atomic.Int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	// Reset all counters on month rollover
+	m := currentMonth()
+	if b.month != m {
+		b.month = m
+		b.counters = make(map[string]*atomic.Int64)
+	}
+
 	c, ok := b.counters[userID]
 	if !ok {
 		c = &atomic.Int64{}
 		b.counters[userID] = c
 	}
 	return c
+}
+
+// DrainCounters returns per-user byte counts accumulated since the last drain, then resets them.
+// Used by edge nodes to report usage to login via the sync protocol.
+func (b *BandwidthMeter) DrainCounters() map[string]int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.counters) == 0 {
+		return nil
+	}
+	result := make(map[string]int64, len(b.counters))
+	for userID, c := range b.counters {
+		v := c.Swap(0)
+		if v > 0 {
+			result[userID] = v
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// AddUsage adds external usage bytes (reported by edge nodes) to the local counters.
+func (b *BandwidthMeter) AddUsage(userID string, bytes int64) {
+	b.counter(userID).Add(bytes)
 }
 
 // StartSync syncs per-user bandwidth to the DB every interval. Only writes users with changes.

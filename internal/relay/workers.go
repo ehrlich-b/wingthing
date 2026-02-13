@@ -401,10 +401,8 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Wings.Add(wing)
-	s.bufferGossipEvent(wing, "online")
 	defer func() {
 		s.Wings.Remove(wing.ID)
-		s.bufferGossipEvent(wing, "offline")
 	}()
 
 	log.Printf("wing %s connected (user=%s machine=%s agents=%v)",

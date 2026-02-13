@@ -12,7 +12,7 @@ func (s *Server) registerInternalRoutes() {
 	s.mux.HandleFunc("GET /internal/status", s.withInternalAuth(s.handleInternalStatus))
 	s.mux.HandleFunc("GET /internal/entitlements", s.withInternalAuth(s.handleInternalEntitlements))
 	s.mux.HandleFunc("GET /internal/sessions/{token}", s.withInternalAuth(s.handleInternalSession))
-	s.mux.HandleFunc("POST /internal/gossip/sync", s.withInternalAuth(s.handleGossipSync))
+	s.mux.HandleFunc("POST /internal/sync", s.withInternalAuth(s.handleSync))
 }
 
 // withInternalAuth wraps a handler to only allow requests from Fly's internal network.
@@ -134,42 +134,50 @@ func (s *Server) handleInternalSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGossipSync handles the gossip sync protocol between login and edge nodes.
-// Edge pulls: sends its local events, gets back login's GossipLog delta.
-// Login pulls: applies edge events to PeerDirectory, returns GossipLog since edge's lastSeq.
-func (s *Server) handleGossipSync(w http.ResponseWriter, r *http.Request) {
-	var req GossipSyncRequest
+// handleSync handles the full-state cluster sync protocol.
+// Edges POST their full wing list, login responds with all other wings.
+func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
+	var req SyncRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// Apply incoming events (from edge) to our PeerDirectory + notify browser subs
-	s.applyGossipAndNotify(req.Events)
-
-	// Login node: append edge events to GossipLog so other edges can see them
-	if s.Gossip != nil && len(req.Events) > 0 {
-		s.Gossip.Append(req.Events)
-	}
-
-	// Login node: return events from GossipLog since edge's last seq
-	if s.Gossip != nil {
-		events, latestSeq := s.Gossip.Since(req.LatestSeq)
-		if events == nil {
-			events = []GossipEvent{}
-		}
-		writeJSON(w, http.StatusOK, GossipSyncResponse{Events: events, LatestSeq: latestSeq})
+	if s.Cluster == nil {
+		writeJSON(w, http.StatusOK, SyncResponse{Wings: []SyncWing{}})
 		return
 	}
 
-	// Edge node (shouldn't normally receive sync requests, but handle gracefully)
-	var localEvents []GossipEvent
-	s.gossipOutMu.Lock()
-	localEvents = s.gossipOutbuf
-	s.gossipOutbuf = nil
-	s.gossipOutMu.Unlock()
-	if localEvents == nil {
-		localEvents = []GossipEvent{}
+	// Absorb edge bandwidth usage into login's meter for DB persistence
+	if s.Bandwidth != nil && len(req.Bandwidth) > 0 {
+		for userID, bytes := range req.Bandwidth {
+			s.Bandwidth.AddUsage(userID, bytes)
+		}
 	}
-	writeJSON(w, http.StatusOK, GossipSyncResponse{Events: localEvents})
+
+	others, all := s.Cluster.Sync(req.NodeID, req.Wings)
+
+	// Update login's PeerDirectory from full cluster state
+	if s.Peers != nil {
+		peers := make([]*PeerWing, len(all))
+		for i, sw := range all {
+			peers[i] = syncToPeer(sw)
+		}
+		added, removed := s.Peers.Replace(peers)
+		s.notifyPeerDiff(added, removed)
+	}
+
+	// Add login's own local wings to response
+	for _, w := range s.Wings.All() {
+		others = append(others, connectedToSync(s.Config.FlyMachineID, w))
+	}
+
+	if others == nil {
+		others = []SyncWing{}
+	}
+	var banned []string
+	if s.Bandwidth != nil {
+		banned = s.Bandwidth.ExceededUsers()
+	}
+	writeJSON(w, http.StatusOK, SyncResponse{Wings: others, BannedUsers: banned})
 }

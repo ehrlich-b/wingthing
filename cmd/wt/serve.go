@@ -129,7 +129,7 @@ func serveCmd() *cobra.Command {
 					return "free"
 				})
 				if nodeRole == "login" {
-					srv.Gossip = relay.NewGossipLog()
+					srv.Cluster = relay.NewClusterState()
 					srv.Peers = relay.NewPeerDirectory()
 					fmt.Printf("login node: machine=%s region=%s\n", flyMachineID, flyRegion)
 				}
@@ -173,16 +173,13 @@ func serveCmd() *cobra.Command {
 				srv.Bandwidth.StartSync(ctx, 10*time.Minute)
 			}
 
-			// Start gossip subsystems
-			if srv.Gossip != nil {
-				srv.Gossip.StartCompaction(ctx, 60*time.Second)
-			}
-			if srv.Peers != nil {
-				srv.Peers.StartStaleExpiry(ctx)
+			// Start cluster sync
+			if srv.Cluster != nil {
+				srv.StartClusterExpiry(ctx)
 			}
 			if isEdge && loginAddr != "" {
-				srv.StartEdgeGossipPull(ctx, loginAddr, 100*time.Millisecond)
-				fmt.Println("edge gossip pull started (100ms interval)")
+				srv.StartEdgeSync(ctx, loginAddr, 1*time.Second)
+				fmt.Println("edge sync started (1s interval)")
 			}
 			if srv.EntitlementCache != nil {
 				srv.EntitlementCache.StartSync(ctx, 60*time.Second)

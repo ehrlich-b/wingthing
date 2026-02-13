@@ -9,19 +9,16 @@ import (
 // PeerWing represents a wing connected to a remote node.
 type PeerWing struct {
 	WingID    string
-	MachineID string // Fly machine hosting this wing
+	MachineID string // Fly machine hosting this wing (for fly-replay)
 	NodeID    string
 	WingInfo  *WingInfo
 }
 
-// PeerDirectory tracks wings on other nodes, updated via gossip.
+// PeerDirectory tracks wings on other nodes, updated via full-state sync.
 type PeerDirectory struct {
-	mu        sync.RWMutex
-	wings     map[string]*PeerWing // wingID → peer (fresh)
-	stale     map[string]*PeerWing // stale layer (kept during login restart)
-	staleAt   time.Time            // when stale mode was entered
-	lastSeq   uint64               // last gossip seq seen from login
-	updateCh  chan struct{}         // notified on every delta application
+	mu       sync.RWMutex
+	wings    map[string]*PeerWing
+	updateCh chan struct{}
 }
 
 func NewPeerDirectory() *PeerDirectory {
@@ -31,81 +28,57 @@ func NewPeerDirectory() *PeerDirectory {
 	}
 }
 
-// ApplyDelta applies gossip events from the login node.
-func (p *PeerDirectory) ApplyDelta(events []GossipEvent) {
+// Replace swaps the entire wing set and returns the diff.
+func (p *PeerDirectory) Replace(wings []*PeerWing) (added, removed []*PeerWing) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	for _, ev := range events {
-		switch ev.Event {
-		case "online":
-			// Remove stale entry for same wing machine (reconnect with new UUID)
-			if ev.WingInfo != nil && ev.WingInfo.MachineID != "" {
-				for id, pw := range p.wings {
-					if pw.WingInfo != nil && pw.WingInfo.MachineID == ev.WingInfo.MachineID {
-						delete(p.wings, id)
-					}
-				}
-			}
-			p.wings[ev.WingID] = &PeerWing{
-				WingID:    ev.WingID,
-				MachineID: ev.MachineID,
-				NodeID:    ev.NodeID,
-				WingInfo:  ev.WingInfo,
-			}
-		case "offline":
-			delete(p.wings, ev.WingID)
+	newMap := make(map[string]*PeerWing, len(wings))
+	for _, w := range wings {
+		newMap[w.WingID] = w
+	}
+
+	for id, old := range p.wings {
+		if _, ok := newMap[id]; !ok {
+			removed = append(removed, old)
+		}
+	}
+	for id, w := range newMap {
+		if _, ok := p.wings[id]; !ok {
+			added = append(added, w)
 		}
 	}
 
-	// Notify waiters
+	p.wings = newMap
+
 	select {
 	case p.updateCh <- struct{}{}:
 	default:
 	}
+	return
 }
 
-// RemoveWing removes a wing from both fresh and stale layers.
+// RemoveWing removes a single wing.
 func (p *PeerDirectory) RemoveWing(wingID string) {
 	p.mu.Lock()
 	delete(p.wings, wingID)
-	if p.stale != nil {
-		delete(p.stale, wingID)
-	}
 	p.mu.Unlock()
 }
 
-// FindWing looks up a wing, checking fresh layer first then stale.
+// FindWing looks up a wing by ID.
 func (p *PeerDirectory) FindWing(wingID string) *PeerWing {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-
-	if w, ok := p.wings[wingID]; ok {
-		return w
-	}
-	if p.stale != nil {
-		return p.stale[wingID]
-	}
-	return nil
+	return p.wings[wingID]
 }
 
-// AllWings returns all known remote wings for dashboard aggregation.
+// AllWings returns all known remote wings.
 func (p *PeerDirectory) AllWings() []*PeerWing {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-
-	seen := make(map[string]bool)
-	var result []*PeerWing
+	result := make([]*PeerWing, 0, len(p.wings))
 	for _, w := range p.wings {
 		result = append(result, w)
-		seen[w.WingID] = true
-	}
-	if p.stale != nil {
-		for _, w := range p.stale {
-			if !seen[w.WingID] {
-				result = append(result, w)
-			}
-		}
 	}
 	return result
 }
@@ -123,95 +96,24 @@ func (p *PeerDirectory) CountForUser(userID string) int {
 	return n
 }
 
-// LastSeq returns the last seen gossip sequence number.
-func (p *PeerDirectory) LastSeq() uint64 {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.lastSeq
-}
-
-// SetLastSeq updates the last seen gossip sequence number.
-func (p *PeerDirectory) SetLastSeq(seq uint64) {
-	p.mu.Lock()
-	p.lastSeq = seq
-	p.mu.Unlock()
-}
-
-// EnterStaleMode copies current wings to the stale layer (for login restart recovery).
-func (p *PeerDirectory) EnterStaleMode() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.stale != nil {
-		return // already in stale mode
-	}
-
-	p.stale = make(map[string]*PeerWing, len(p.wings))
-	for k, v := range p.wings {
-		p.stale[k] = v
-	}
-	p.staleAt = time.Now()
-	p.wings = make(map[string]*PeerWing)
-}
-
-// ExpireStale drops the stale layer. Called after 30s timeout.
-func (p *PeerDirectory) ExpireStale() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.stale = nil
-}
-
-// StartStaleExpiry runs a background goroutine that expires the stale layer after 30s.
-func (p *PeerDirectory) StartStaleExpiry(ctx context.Context) {
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				p.mu.RLock()
-				staleAt := p.staleAt
-				hasStale := p.stale != nil
-				p.mu.RUnlock()
-
-				if hasStale && !staleAt.IsZero() && time.Since(staleAt) > 30*time.Second {
-					p.ExpireStale()
-				}
-			}
-		}
-	}()
-}
-
-// UpdateCh returns a channel that receives a signal when the directory is updated.
+// UpdateCh returns a channel signaled on updates.
 func (p *PeerDirectory) UpdateCh() <-chan struct{} {
 	return p.updateCh
 }
 
-// WaitForWing waits for a wing to appear either locally or via gossip.
-// Returns the machine ID if found on a peer, empty string if found locally, or error on timeout.
+// WaitForWing waits for a wing to appear locally or via sync.
 func WaitForWing(ctx context.Context, local *WingRegistry, peers *PeerDirectory, wingID string, timeout time.Duration) (machineID string, found bool) {
-	// Check local first
 	if w := local.FindByID(wingID); w != nil {
 		return "", true
 	}
-	// Check peers
 	if peers != nil {
 		if pw := peers.FindWing(wingID); pw != nil {
 			return pw.MachineID, true
 		}
 	}
 
-	// Wait with timeout
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-
-	// Subscribe to local wing registry events
-	localCh := make(chan WingEvent, 4)
-	// We use a synthetic userID since we don't know the user
-	// This won't get notifications via the normal user-based subscription,
-	// so we poll instead
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -219,8 +121,6 @@ func WaitForWing(ctx context.Context, local *WingRegistry, peers *PeerDirectory,
 	if peers != nil {
 		peerCh = peers.UpdateCh()
 	}
-
-	_ = localCh // suppress unused warning
 
 	for {
 		select {

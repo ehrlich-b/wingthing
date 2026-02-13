@@ -64,11 +64,9 @@ type Server struct {
 	browserMu    sync.Mutex
 	browserConns map[*websocket.Conn]struct{}
 
-	// Gossip / peer state (multi-node)
-	Peers        *PeerDirectory
-	Gossip       *GossipLog
-	gossipOutMu  sync.Mutex
-	gossipOutbuf []GossipEvent // local wing events buffered for next gossip sync
+	// Cluster sync (multi-node)
+	Peers   *PeerDirectory
+	Cluster *ClusterState
 
 	// Edge node: reverse proxy to login node + session/entitlement caches
 	loginProxy       http.Handler
@@ -195,39 +193,6 @@ func (s *Server) SetLoginProxy(p http.Handler) { s.loginProxy = p }
 // SetSessionCache sets the session cache for edge nodes.
 func (s *Server) SetSessionCache(sc *SessionCache) { s.sessionCache = sc }
 
-// bufferGossipEvent adds a local wing event to the outbound gossip buffer.
-// The event is sent to the login node on the next gossip sync cycle.
-func (s *Server) bufferGossipEvent(wing *ConnectedWing, event string) {
-	if s.Gossip != nil {
-		// Login node: record directly into the log
-		s.Gossip.RecordWingEvent(s.Config.FlyMachineID, wing, event)
-		return
-	}
-
-	// Edge node: buffer for next gossip sync response
-	ev := GossipEvent{
-		NodeID:    s.Config.FlyMachineID,
-		MachineID: s.Config.FlyMachineID,
-		WingID:    wing.ID,
-		Event:     event,
-	}
-	if event == "online" {
-		ev.WingInfo = &WingInfo{
-			UserID:    wing.UserID,
-			MachineID: wing.MachineID,
-			Platform:  wing.Platform,
-			Version:   wing.Version,
-			Agents:    wing.Agents,
-			Labels:    wing.Labels,
-			Projects:  wing.Projects,
-			PublicKey: wing.PublicKey,
-			OrgID:     wing.OrgID,
-		}
-	}
-	s.gossipOutMu.Lock()
-	s.gossipOutbuf = append(s.gossipOutbuf, ev)
-	s.gossipOutMu.Unlock()
-}
 
 func (s *Server) trackBrowser(conn *websocket.Conn) {
 	s.browserMu.Lock()
