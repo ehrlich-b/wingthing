@@ -14,7 +14,7 @@ COPY --from=web /app/web/dist web/dist
 RUN CGO_ENABLED=0 go build -o wt ./cmd/wt
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates sqlite
 WORKDIR /app
 COPY --from=build /app/wt .
 EXPOSE 8080

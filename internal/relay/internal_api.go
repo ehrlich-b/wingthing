@@ -78,7 +78,7 @@ func (s *Server) handleInternalEntitlements(w http.ResponseWriter, r *http.Reque
 	rows, err := s.Store.DB().Query(`
 		SELECT DISTINCT e.user_id,
 			CASE WHEN e.id IS NOT NULL THEN 'pro' ELSE 'free' END as tier
-		FROM social_users u
+		FROM users u
 		LEFT JOIN entitlements e ON e.user_id = u.id
 	`)
 	if err != nil {
@@ -135,7 +135,8 @@ func (s *Server) handleInternalSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGossipSync handles the gossip sync protocol between login and edge nodes.
-// Login pushes delta events to edge; edge responds with its local events.
+// Edge pulls: sends its local events, gets back login's GossipLog delta.
+// Login pulls: applies edge events to PeerDirectory, returns GossipLog since edge's lastSeq.
 func (s *Server) handleGossipSync(w http.ResponseWriter, r *http.Request) {
 	var req GossipSyncRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -143,30 +144,27 @@ func (s *Server) handleGossipSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply incoming events to our PeerDirectory
-	if s.Peers != nil && len(req.Events) > 0 {
-		s.Peers.ApplyDelta(req.Events)
+	// Apply incoming events (from edge) to our PeerDirectory + notify browser subs
+	s.applyGossipAndNotify(req.Events)
+
+	// Login node: return events from GossipLog since edge's last seq
+	if s.Gossip != nil {
+		events, latestSeq := s.Gossip.Since(req.LatestSeq)
+		if events == nil {
+			events = []GossipEvent{}
+		}
+		writeJSON(w, http.StatusOK, GossipSyncResponse{Events: events, LatestSeq: latestSeq})
+		return
 	}
 
-	// Detect login restart (seq reset)
-	if s.Peers != nil && req.LatestSeq < s.Peers.LastSeq() {
-		s.Peers.EnterStaleMode()
-	}
-	if s.Peers != nil {
-		s.Peers.SetLastSeq(req.LatestSeq)
-	}
-
-	// Respond with our local wing events since last sync
+	// Edge node (shouldn't normally receive sync requests, but handle gracefully)
 	var localEvents []GossipEvent
-	if s.gossipOutbuf != nil {
-		s.gossipOutMu.Lock()
-		localEvents = s.gossipOutbuf
-		s.gossipOutbuf = nil
-		s.gossipOutMu.Unlock()
-	}
+	s.gossipOutMu.Lock()
+	localEvents = s.gossipOutbuf
+	s.gossipOutbuf = nil
+	s.gossipOutMu.Unlock()
 	if localEvents == nil {
 		localEvents = []GossipEvent{}
 	}
-
 	writeJSON(w, http.StatusOK, GossipSyncResponse{Events: localEvents})
 }

@@ -558,6 +558,9 @@ func (s *Server) SubmitTask(ctx context.Context, userID, identity, taskID string
 }
 
 func (s *Server) drainQueuedTasks(ctx context.Context, wing *ConnectedWing) {
+	if s.Store == nil {
+		return
+	}
 	tasks, err := s.Store.ListPendingTasks(wing.UserID)
 	if err != nil {
 		log.Printf("drain queue error: %v", err)

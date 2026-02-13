@@ -85,12 +85,12 @@ func (s *Server) template(cached *template.Template, files ...string) *template.
 }
 
 type pageData struct {
-	User      *SocialUser
+	User      *User
 	LocalMode bool
 }
 
 type loginPageData struct {
-	User      *SocialUser
+	User      *User
 	LocalMode bool
 	Sent      bool
 	HasGitHub bool
@@ -138,7 +138,7 @@ type skillsPageItem struct {
 }
 
 type skillsPageData struct {
-	User      *SocialUser
+	User      *User
 	LocalMode bool
 	Skills    []skillsPageItem
 }
@@ -169,7 +169,7 @@ func (s *Server) handleSkillsPage(w http.ResponseWriter, r *http.Request) {
 }
 
 type skillDetailPageData struct {
-	User        *SocialUser
+	User        *User
 	LocalMode   bool
 	Name        string
 	Description string
@@ -222,8 +222,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+	next := r.URL.Query().Get("next")
+	// Already logged in — skip login page and go to next (or home)
+	if user := s.sessionUser(r); user != nil {
+		dest := "/"
+		if next != "" {
+			dest = next
+		}
+		http.Redirect(w, r, dest, http.StatusSeeOther)
+		return
+	}
 	// Store next redirect in cookie so it survives OAuth round-trip
-	if next := r.URL.Query().Get("next"); next != "" {
+	if next != "" {
 		http.SetCookie(w, &http.Cookie{
 			Name:     "oauth_next",
 			Value:    next,
@@ -232,6 +242,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			MaxAge:   600,
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
+		})
+	} else {
+		// Clear stale oauth_next cookie from previous flows
+		http.SetCookie(w, &http.Cookie{
+			Name:   "oauth_next",
+			Path:   "/auth",
+			Domain: s.cookieDomain(),
+			MaxAge: -1,
 		})
 	}
 	data := loginPageData{

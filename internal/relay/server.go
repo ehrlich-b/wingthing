@@ -43,7 +43,7 @@ type Server struct {
 	DevTemplateDir string // if set, re-read templates from disk on each request
 	DevMode        bool   // if set, auto-claim device codes with test-user
 	LocalMode      bool   // if set, bypass auth — single-user, zero-config
-	localUser      *SocialUser
+	localUser      *User
 	Wings          *WingRegistry
 	PTY            *PTYRegistry
 	Chat           *ChatRegistry
@@ -178,7 +178,7 @@ func stripPort(host string) string {
 	return host
 }
 
-func (s *Server) SetLocalUser(u *SocialUser) { s.localUser = u }
+func (s *Server) SetLocalUser(u *User) { s.localUser = u }
 
 // IsEdge returns true if this node is an edge relay (no SQLite).
 func (s *Server) IsEdge() bool { return s.Config.NodeRole == "edge" }
@@ -214,6 +214,7 @@ func (s *Server) bufferGossipEvent(wing *ConnectedWing, event string) {
 	if event == "online" {
 		ev.WingInfo = &WingInfo{
 			UserID:    wing.UserID,
+			MachineID: wing.MachineID,
 			Platform:  wing.Platform,
 			Version:   wing.Version,
 			Agents:    wing.Agents,

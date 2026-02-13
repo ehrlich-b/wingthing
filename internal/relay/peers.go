@@ -39,6 +39,14 @@ func (p *PeerDirectory) ApplyDelta(events []GossipEvent) {
 	for _, ev := range events {
 		switch ev.Event {
 		case "online":
+			// Remove stale entry for same wing machine (reconnect with new UUID)
+			if ev.WingInfo != nil && ev.WingInfo.MachineID != "" {
+				for id, pw := range p.wings {
+					if pw.WingInfo != nil && pw.WingInfo.MachineID == ev.WingInfo.MachineID {
+						delete(p.wings, id)
+					}
+				}
+			}
 			p.wings[ev.WingID] = &PeerWing{
 				WingID:    ev.WingID,
 				MachineID: ev.MachineID,
@@ -55,6 +63,16 @@ func (p *PeerDirectory) ApplyDelta(events []GossipEvent) {
 	case p.updateCh <- struct{}{}:
 	default:
 	}
+}
+
+// RemoveWing removes a wing from both fresh and stale layers.
+func (p *PeerDirectory) RemoveWing(wingID string) {
+	p.mu.Lock()
+	delete(p.wings, wingID)
+	if p.stale != nil {
+		delete(p.stale, wingID)
+	}
+	p.mu.Unlock()
 }
 
 // FindWing looks up a wing, checking fresh layer first then stale.

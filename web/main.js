@@ -1210,7 +1210,8 @@ function showWingDetail(machineId) {
         '<div class="detail-row"><span class="detail-key">public key</span>' + pubKeyHtml + '</div>' +
         '<div class="detail-row"><span class="detail-key">my key</span>' + myKeyHtml + '</div>' +
         '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>' +
-        (isOnline && updateAvailable ? '<div class="detail-actions"><button class="btn-sm btn-accent" id="detail-wing-update">update wing</button></div>' : '');
+        (isOnline && updateAvailable ? '<div class="detail-actions"><button class="btn-sm btn-accent" id="detail-wing-update">update wing</button></div>' : '') +
+        (!isOnline ? '<div class="detail-actions"><button class="btn-sm btn-danger" id="detail-wing-dismiss">dismiss</button></div>' : '');
 
     setupCopyable(detailDialog);
     detailOverlay.classList.add('open');
@@ -1224,6 +1225,18 @@ function showWingDetail(machineId) {
                 .then(function(r) { return r.json(); })
                 .then(function() { updateBtn.textContent = 'sent'; })
                 .catch(function() { updateBtn.textContent = 'failed'; updateBtn.disabled = false; });
+        });
+    }
+
+    var dismissBtn = document.getElementById('detail-wing-dismiss');
+    if (dismissBtn) {
+        dismissBtn.addEventListener('click', function() {
+            wingsData = wingsData.filter(function(ww) { return ww.machine_id !== machineId; });
+            setCachedWings(wingsData.map(function(ww) {
+                return { machine_id: ww.machine_id, platform: ww.platform, version: ww.version, agents: ww.agents, labels: ww.labels, projects: ww.projects, online: ww.online };
+            }));
+            hideDetailModal();
+            renderDashboard();
         });
     }
 }

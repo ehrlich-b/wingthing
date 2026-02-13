@@ -26,6 +26,7 @@ type GossipEvent struct {
 // WingInfo contains summary info about a wing for gossip propagation.
 type WingInfo struct {
 	UserID    string           `json:"user_id"`
+	MachineID string           `json:"machine_id,omitempty"` // wing's machine ID (stable across reconnects)
 	Platform  string           `json:"platform,omitempty"`
 	Version   string           `json:"version,omitempty"`
 	Agents    []string         `json:"agents,omitempty"`
@@ -43,7 +44,8 @@ type GossipSyncRequest struct {
 
 // GossipSyncResponse is returned from edge → login with local wing events.
 type GossipSyncResponse struct {
-	Events []GossipEvent `json:"events"`
+	Events    []GossipEvent `json:"events"`
+	LatestSeq uint64        `json:"latest_seq,omitempty"`
 }
 
 // GossipLog is the sequenced event log maintained by the login node.
@@ -142,6 +144,7 @@ func (g *GossipLog) RecordWingEvent(machineID string, wing *ConnectedWing, event
 	if event == "online" {
 		ev.WingInfo = &WingInfo{
 			UserID:    wing.UserID,
+			MachineID: wing.MachineID,
 			Platform:  wing.Platform,
 			Version:   wing.Version,
 			Agents:    wing.Agents,
@@ -229,6 +232,133 @@ func (g *GossipLog) syncWithEdge(ctx context.Context, peer *EdgePeer) {
 	}
 
 	peer.LastSeq = latestSeq
+}
+
+// applyGossipAndNotify applies gossip events to PeerDirectory and notifies browser subscribers.
+// Must look up offline wings BEFORE applying delta (which removes them).
+func (s *Server) applyGossipAndNotify(events []GossipEvent) {
+	if s.Peers == nil || len(events) == 0 {
+		return
+	}
+
+	// For offline events, look up userID from PeerDirectory before removal
+	offlineUsers := make(map[string]string) // wingID → userID
+	for _, ev := range events {
+		if ev.Event == "offline" {
+			if pw := s.Peers.FindWing(ev.WingID); pw != nil && pw.WingInfo != nil {
+				offlineUsers[ev.WingID] = pw.WingInfo.UserID
+			}
+		}
+	}
+
+	s.Peers.ApplyDelta(events)
+
+	// Notify browser subscribers
+	for _, ev := range events {
+		var userID string
+		if ev.WingInfo != nil {
+			userID = ev.WingInfo.UserID
+		} else if ev.Event == "offline" {
+			userID = offlineUsers[ev.WingID]
+		}
+		if userID == "" {
+			continue
+		}
+		evType := "wing.online"
+		if ev.Event == "offline" {
+			evType = "wing.offline"
+		}
+		we := WingEvent{
+			Type:      evType,
+			WingID:    ev.WingID,
+			MachineID: ev.MachineID,
+		}
+		if ev.WingInfo != nil {
+			we.Platform = ev.WingInfo.Platform
+			we.Version = ev.WingInfo.Version
+			we.Agents = ev.WingInfo.Agents
+			we.Labels = ev.WingInfo.Labels
+			we.PublicKey = ev.WingInfo.PublicKey
+			we.Projects = ev.WingInfo.Projects
+		}
+		s.Wings.notify(userID, we)
+	}
+}
+
+// StartEdgeGossipPull runs a loop on edge nodes, polling login for gossip events.
+func (s *Server) StartEdgeGossipPull(ctx context.Context, loginAddr string, interval time.Duration) {
+	var lastSeq uint64
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.edgeGossipPull(ctx, loginAddr, &lastSeq)
+			}
+		}
+	}()
+}
+
+func (s *Server) edgeGossipPull(ctx context.Context, loginAddr string, lastSeq *uint64) {
+	// Drain local events
+	s.gossipOutMu.Lock()
+	localEvents := s.gossipOutbuf
+	s.gossipOutbuf = nil
+	s.gossipOutMu.Unlock()
+	if localEvents == nil {
+		localEvents = []GossipEvent{}
+	}
+
+	reqBody := GossipSyncRequest{
+		Events:    localEvents,
+		LatestSeq: *lastSeq,
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST",
+		loginAddr+"/internal/gossip/sync",
+		bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	var syncResp GossipSyncResponse
+	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
+		return
+	}
+
+	// Detect login restart (seq reset)
+	if s.Peers != nil && syncResp.LatestSeq < *lastSeq {
+		s.Peers.EnterStaleMode()
+	}
+
+	// Apply login's events to our PeerDirectory + notify browser subs
+	s.applyGossipAndNotify(syncResp.Events)
+
+	if s.Peers != nil {
+		s.Peers.SetLastSeq(syncResp.LatestSeq)
+	}
+	*lastSeq = syncResp.LatestSeq
 }
 
 // StartCompaction runs periodic compaction of the gossip log.

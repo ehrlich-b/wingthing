@@ -58,7 +58,10 @@ func (s *RelayStore) Close() error {
 }
 
 func (s *RelayStore) CreateUser(id string) error {
-	_, err := s.db.Exec("INSERT INTO users (id) VALUES (?)", id)
+	_, err := s.db.Exec(
+		"INSERT INTO users (id, provider, provider_id, display_name) VALUES (?, 'device', ?, ?)",
+		id, id, id,
+	)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
 	}
@@ -156,10 +159,10 @@ func (s *RelayStore) DeleteToken(token string) error {
 
 // Session methods
 
-func (s *RelayStore) CreateSession(token, socialUserID string, expiresAt time.Time) error {
+func (s *RelayStore) CreateSession(token, userID string, expiresAt time.Time) error {
 	_, err := s.db.Exec(
-		"INSERT INTO sessions (token, social_user_id, expires_at) VALUES (?, ?, ?)",
-		token, socialUserID, expiresAt.UTC().Format("2006-01-02 15:04:05"),
+		"INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+		token, userID, expiresAt.UTC().Format("2006-01-02 15:04:05"),
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -167,15 +170,15 @@ func (s *RelayStore) CreateSession(token, socialUserID string, expiresAt time.Ti
 	return nil
 }
 
-func (s *RelayStore) GetSession(token string) (*SocialUser, error) {
+func (s *RelayStore) GetSession(token string) (*User, error) {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	row := s.db.QueryRow(
 		`SELECT u.id, u.provider, u.provider_id, u.display_name, u.avatar_url, u.email, u.tier, u.is_pro, u.created_at
-		 FROM sessions s JOIN social_users u ON u.id = s.social_user_id
+		 FROM sessions s JOIN users u ON u.id = s.user_id
 		 WHERE s.token = ? AND s.expires_at > ?`,
 		token, now,
 	)
-	var u SocialUser
+	var u User
 	var isPro int
 	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &u.Email, &u.Tier, &isPro, &u.CreatedAt)
 	if err == sql.ErrNoRows {
@@ -259,22 +262,22 @@ func (s *RelayStore) SetRelayConfig(key, value string) error {
 	return nil
 }
 
-// CreateSocialUserDev creates a dev-mode social user if one doesn't exist.
-func (s *RelayStore) CreateSocialUserDev() (*SocialUser, error) {
-	u, err := s.GetSocialUserByProvider("dev", "dev")
+// CreateUserDev creates a dev-mode social user if one doesn't exist.
+func (s *RelayStore) CreateUserDev() (*User, error) {
+	u, err := s.GetUserByProvider("dev", "dev")
 	if err != nil {
 		return nil, err
 	}
 	if u != nil {
 		return u, nil
 	}
-	u = &SocialUser{
+	u = &User{
 		ID:          "test-user",
 		Provider:    "dev",
 		ProviderID:  "dev",
 		DisplayName: "dev",
 	}
-	if err := s.UpsertSocialUser(u); err != nil {
+	if err := s.UpsertUser(u); err != nil {
 		return nil, err
 	}
 	return u, nil
@@ -282,25 +285,23 @@ func (s *RelayStore) CreateSocialUserDev() (*SocialUser, error) {
 
 // CreateLocalUser creates the local-mode user and a non-expiring device token.
 // Returns the social user, device token string, and whether the user already existed.
-func (s *RelayStore) CreateLocalUser() (*SocialUser, string, error) {
+func (s *RelayStore) CreateLocalUser() (*User, string, error) {
 	const localUserID = "local"
 
-	u, err := s.GetSocialUserByProvider("local", "local")
+	u, err := s.GetUserByProvider("local", "local")
 	if err != nil {
 		return nil, "", err
 	}
 	if u == nil {
-		u = &SocialUser{
+		u = &User{
 			ID:          localUserID,
 			Provider:    "local",
 			ProviderID:  "local",
 			DisplayName: "local",
 		}
-		if err := s.UpsertSocialUser(u); err != nil {
+		if err := s.UpsertUser(u); err != nil {
 			return nil, "", err
 		}
-		// Also create a relay user for device token validation
-		_ = s.CreateUser(localUserID)
 	}
 
 	// Check for existing device token
@@ -350,8 +351,8 @@ func (s *RelayStore) AppendAudit(userID, event string, detail *string) error {
 	return nil
 }
 
-// SocialUser represents an authenticated user (via OAuth, magic link, or local mode).
-type SocialUser struct {
+// User represents an authenticated user (via OAuth, magic link, or local mode).
+type User struct {
 	ID          string
 	Provider    string
 	ProviderID  string
@@ -399,9 +400,9 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-func (s *RelayStore) UpsertSocialUser(u *SocialUser) error {
+func (s *RelayStore) UpsertUser(u *User) error {
 	_, err := s.db.Exec(
-		`INSERT INTO social_users (id, provider, provider_id, display_name, avatar_url, is_pro)
+		`INSERT INTO users (id, provider, provider_id, display_name, avatar_url, is_pro)
 		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   display_name = excluded.display_name,
@@ -415,12 +416,12 @@ func (s *RelayStore) UpsertSocialUser(u *SocialUser) error {
 	return nil
 }
 
-func (s *RelayStore) GetSocialUserByProvider(provider, providerID string) (*SocialUser, error) {
+func (s *RelayStore) GetUserByProvider(provider, providerID string) (*User, error) {
 	row := s.db.QueryRow(
-		"SELECT id, provider, provider_id, display_name, avatar_url, email, tier, is_pro, created_at FROM social_users WHERE provider = ? AND provider_id = ?",
+		"SELECT id, provider, provider_id, display_name, avatar_url, email, tier, is_pro, created_at FROM users WHERE provider = ? AND provider_id = ?",
 		provider, providerID,
 	)
-	var u SocialUser
+	var u User
 	var isPro int
 	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &u.Email, &u.Tier, &isPro, &u.CreatedAt)
 	if err == sql.ErrNoRows {
@@ -433,33 +434,33 @@ func (s *RelayStore) GetSocialUserByProvider(provider, providerID string) (*Soci
 	return &u, nil
 }
 
-func (s *RelayStore) GetOrCreateSocialUserByEmail(email string) (*SocialUser, error) {
-	u, err := s.GetSocialUserByProvider("email", email)
+func (s *RelayStore) GetOrCreateUserByEmail(email string) (*User, error) {
+	u, err := s.GetUserByProvider("email", email)
 	if err != nil {
 		return nil, err
 	}
 	if u != nil {
 		return u, nil
 	}
-	u = &SocialUser{
+	u = &User{
 		ID:          generateToken(),
 		Provider:    "email",
 		ProviderID:  email,
 		DisplayName: email,
 	}
-	if err := s.UpsertSocialUser(u); err != nil {
+	if err := s.UpsertUser(u); err != nil {
 		return nil, err
 	}
 	return u, nil
 }
 
-// GetSocialUserByID returns a user by their ID.
-func (s *RelayStore) GetSocialUserByID(id string) (*SocialUser, error) {
+// GetUserByID returns a user by their ID.
+func (s *RelayStore) GetUserByID(id string) (*User, error) {
 	row := s.db.QueryRow(
-		"SELECT id, provider, provider_id, display_name, avatar_url, email, tier, is_pro, created_at FROM social_users WHERE id = ?",
+		"SELECT id, provider, provider_id, display_name, avatar_url, email, tier, is_pro, created_at FROM users WHERE id = ?",
 		id,
 	)
-	var u SocialUser
+	var u User
 	var isPro int
 	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &u.Email, &u.Tier, &isPro, &u.CreatedAt)
 	if err == sql.ErrNoRows {
@@ -474,23 +475,23 @@ func (s *RelayStore) GetSocialUserByID(id string) (*SocialUser, error) {
 
 // UpdateUserEmail sets the email for a user.
 func (s *RelayStore) UpdateUserEmail(userID, email string) error {
-	_, err := s.db.Exec("UPDATE social_users SET email = ? WHERE id = ?", email, userID)
+	_, err := s.db.Exec("UPDATE users SET email = ? WHERE id = ?", email, userID)
 	return err
 }
 
 // UpdateUserTier sets the tier for a user.
 func (s *RelayStore) UpdateUserTier(userID, tier string) error {
-	_, err := s.db.Exec("UPDATE social_users SET tier = ? WHERE id = ?", tier, userID)
+	_, err := s.db.Exec("UPDATE users SET tier = ? WHERE id = ?", tier, userID)
 	return err
 }
 
-// GetSocialUserByEmail returns a user by email.
-func (s *RelayStore) GetSocialUserByEmail(email string) (*SocialUser, error) {
+// GetUserByEmail returns a user by email.
+func (s *RelayStore) GetUserByEmail(email string) (*User, error) {
 	row := s.db.QueryRow(
-		"SELECT id, provider, provider_id, display_name, avatar_url, email, tier, is_pro, created_at FROM social_users WHERE email = ?",
+		"SELECT id, provider, provider_id, display_name, avatar_url, email, tier, is_pro, created_at FROM users WHERE email = ?",
 		email,
 	)
-	var u SocialUser
+	var u User
 	var isPro int
 	err := row.Scan(&u.ID, &u.Provider, &u.ProviderID, &u.DisplayName, &u.AvatarURL, &u.Email, &u.Tier, &isPro, &u.CreatedAt)
 	if err == sql.ErrNoRows {
@@ -861,7 +862,7 @@ func (s *RelayStore) IsUserPro(userID string) bool {
 
 func (s *RelayStore) BackfillProUsers() error {
 	rows, err := s.db.Query(
-		`SELECT id FROM social_users WHERE tier = 'pro'
+		`SELECT id FROM users WHERE tier = 'pro'
 		 AND id NOT IN (SELECT e.user_id FROM entitlements e JOIN subscriptions s ON e.subscription_id = s.id WHERE s.status = 'active')`,
 	)
 	if err != nil {

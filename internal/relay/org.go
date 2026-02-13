@@ -226,7 +226,7 @@ func (s *Server) handleListOrgMembers(w http.ResponseWriter, r *http.Request) {
 			"user_id": m.UserID,
 			"role":    m.Role,
 		}
-		u, _ := s.Store.GetSocialUserByID(m.UserID)
+		u, _ := s.Store.GetUserByID(m.UserID)
 		if u != nil {
 			entry["display_name"] = u.DisplayName
 			entry["email"] = u.Email

@@ -48,9 +48,9 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	wings := s.listAccessibleWings(user.ID)
 	latestVer := s.getLatestVersion()
 	out := make([]map[string]any, 0, len(wings))
-	seenWings := make(map[string]bool)
+	seenMachines := make(map[string]bool) // dedup by wing machine_id
 	for _, wing := range wings {
-		seenWings[wing.ID] = true
+		seenMachines[wing.MachineID] = true
 		projects := wing.Projects
 		if projects == nil {
 			projects = []ws.WingProject{}
@@ -70,15 +70,20 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Include peer wings from gossip
+	// Include peer wings from gossip (dedup by wing machine_id)
 	if s.Peers != nil {
 		for _, pw := range s.Peers.AllWings() {
-			if seenWings[pw.WingID] {
-				continue
-			}
 			if pw.WingInfo == nil || pw.WingInfo.UserID != user.ID {
 				continue
 			}
+			wingMachineID := pw.WingInfo.MachineID
+			if wingMachineID == "" {
+				wingMachineID = pw.WingID // fallback
+			}
+			if seenMachines[wingMachineID] {
+				continue
+			}
+			seenMachines[wingMachineID] = true
 			var projects []ws.WingProject
 			if pw.WingInfo.Projects != nil {
 				projects = pw.WingInfo.Projects
@@ -87,7 +92,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, map[string]any{
 				"id":             pw.WingID,
-				"machine_id":    pw.MachineID,
+				"machine_id":     wingMachineID,
 				"platform":       pw.WingInfo.Platform,
 				"version":        pw.WingInfo.Version,
 				"agents":         pw.WingInfo.Agents,
@@ -95,7 +100,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 				"public_key":     pw.WingInfo.PublicKey,
 				"projects":       projects,
 				"latest_version": latestVer,
-				"remote_node":    pw.MachineID, // indicates wing is on another node
+				"remote_node":    pw.MachineID, // Fly machine hosting this wing
 			})
 		}
 	}

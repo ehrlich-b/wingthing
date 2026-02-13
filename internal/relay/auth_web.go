@@ -25,7 +25,7 @@ func generateToken() string {
 	return hex.EncodeToString(b)
 }
 
-func (s *Server) sessionUser(r *http.Request) *SocialUser {
+func (s *Server) sessionUser(r *http.Request) *User {
 	if s.LocalMode && s.localUser != nil {
 		return s.localUser
 	}
@@ -81,7 +81,7 @@ func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not available", http.StatusNotFound)
 		return
 	}
-	user, err := s.Store.CreateSocialUserDev()
+	user, err := s.Store.CreateUserDev()
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -89,7 +89,7 @@ func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	s.createSessionAndRedirect(w, r, user)
 }
 
-func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request, user *SocialUser) {
+func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request, user *User) {
 	token := generateToken()
 	if err := s.Store.CreateSession(token, user.ID, time.Now().Add(sessionDuration)); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -249,13 +249,13 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	providerID := fmt.Sprintf("%d", ghUser.ID)
-	user, err := s.Store.GetSocialUserByProvider("github", providerID)
+	user, err := s.Store.GetUserByProvider("github", providerID)
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	if user == nil {
-		user = &SocialUser{
+		user = &User{
 			ID:         uuid.New().String(),
 			Provider:   "github",
 			ProviderID: providerID,
@@ -264,7 +264,7 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	user.DisplayName = ghUser.Login
 	avatarURL := ghUser.AvatarURL
 	user.AvatarURL = &avatarURL
-	if err := s.Store.UpsertSocialUser(user); err != nil {
+	if err := s.Store.UpsertUser(user); err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
@@ -378,13 +378,13 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.Store.GetSocialUserByProvider("google", gUser.ID)
+	user, err := s.Store.GetUserByProvider("google", gUser.ID)
 	if err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
 	if user == nil {
-		user = &SocialUser{
+		user = &User{
 			ID:         uuid.New().String(),
 			Provider:   "google",
 			ProviderID: gUser.ID,
@@ -398,7 +398,7 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	if gUser.Picture != "" {
 		user.AvatarURL = &gUser.Picture
 	}
-	if err := s.Store.UpsertSocialUser(user); err != nil {
+	if err := s.Store.UpsertUser(user); err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
@@ -467,7 +467,7 @@ func (s *Server) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.Store.GetOrCreateSocialUserByEmail(email)
+	user, err := s.Store.GetOrCreateUserByEmail(email)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

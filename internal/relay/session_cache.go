@@ -17,7 +17,7 @@ type SessionCache struct {
 }
 
 type sessionCacheEntry struct {
-	user      *SocialUser
+	user      *User
 	fetchedAt time.Time
 }
 
@@ -29,7 +29,7 @@ func NewSessionCache() *SessionCache {
 }
 
 // Validate checks the cache or calls the login node to validate a session token.
-func (sc *SessionCache) Validate(token, loginAddr string) *SocialUser {
+func (sc *SessionCache) Validate(token, loginAddr string) *User {
 	sc.mu.RLock()
 	entry := sc.entries[token]
 	sc.mu.RUnlock()
@@ -63,7 +63,7 @@ func (sc *SessionCache) Validate(token, loginAddr string) *SocialUser {
 		return nil
 	}
 
-	user := &SocialUser{
+	user := &User{
 		ID:          sv.UserID,
 		DisplayName: sv.DisplayName,
 	}

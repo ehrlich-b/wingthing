@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -46,7 +47,7 @@ func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 
 	// In dev/local mode, auto-claim so login works without OAuth
 	if s.DevMode {
-		devUser, err := s.Store.CreateSocialUserDev()
+		devUser, err := s.Store.CreateUserDev()
 		if err == nil {
 			s.Store.ClaimDeviceCode(deviceCode, devUser.ID)
 		}
@@ -139,7 +140,7 @@ func (s *Server) handleAuthClaim(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "user_code is required")
 			return
 		}
-		http.Redirect(w, r, "/login?next="+fmt.Sprintf("/auth/claim?code=%s", userCode), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(fmt.Sprintf("/auth/claim?code=%s", userCode)), http.StatusSeeOther)
 		return
 	}
 
@@ -180,7 +181,7 @@ func (s *Server) handleClaimPage(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
 		// Redirect to login with next param to come back here
-		http.Redirect(w, r, "/login?next="+fmt.Sprintf("/auth/claim?code=%s", userCode), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(fmt.Sprintf("/auth/claim?code=%s", userCode)), http.StatusSeeOther)
 		return
 	}
 

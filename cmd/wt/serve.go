@@ -180,6 +180,10 @@ func serveCmd() *cobra.Command {
 			if srv.Peers != nil {
 				srv.Peers.StartStaleExpiry(ctx)
 			}
+			if isEdge && loginAddr != "" {
+				srv.StartEdgeGossipPull(ctx, loginAddr, 100*time.Millisecond)
+				fmt.Println("edge gossip pull started (100ms interval)")
+			}
 			if srv.EntitlementCache != nil {
 				srv.EntitlementCache.StartSync(ctx, 60*time.Second)
 			}
