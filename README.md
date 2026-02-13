@@ -6,7 +6,7 @@ Sandboxed AI agents on your machine, accessible from anywhere.
 
 ```
 wt egg claude              # sandboxed Claude Code session
-wt wing -d                 # connect your machine to the relay
+wt start                   # connect your machine to the relay
 open app.wingthing.ai      # start sessions from any browser
 ```
 
@@ -50,8 +50,9 @@ The sandbox auto-discovers where agent binaries and configs live. You don't moun
 
 ```
 wt login                   # authenticate with GitHub
-wt wing -d                 # background daemon
-wt wing status             # check it
+wt start                   # background daemon
+wt status                  # check it
+wt stop                    # stop it
 ```
 
 ```
