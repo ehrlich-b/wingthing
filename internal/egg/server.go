@@ -349,10 +349,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			}
 		}
 	}
-	var envSlice []string
-	for k, v := range envMap {
-		envSlice = append(envSlice, k+"="+v)
-	}
 
 	// Snapshot agent config before session so we can restore on exit
 	configSnap := SnapshotAgentConfig(rc.Agent)
@@ -372,7 +368,14 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			proxyURL := fmt.Sprintf("http://localhost:%d", domainProxy.Port())
 			envMap["HTTPS_PROXY"] = proxyURL
 			envMap["HTTP_PROXY"] = proxyURL
+			envMap["NODE_USE_ENV_PROXY"] = "1" // node 22.18+ native proxy support
 		}
+	}
+
+	// Build envSlice AFTER proxy setup so HTTPS_PROXY etc. are included
+	var envSlice []string
+	for k, v := range envMap {
+		envSlice = append(envSlice, k+"="+v)
 	}
 
 	// Build sandbox and command
@@ -811,9 +814,6 @@ func agentCommand(agentName string, dangerouslySkip bool, shell string) (string,
 		}
 	case "cursor":
 		name = "agent"
-		if dangerouslySkip {
-			args = append(args, "--dangerously-skip-permissions")
-		}
 	case "ollama":
 		name = "ollama"
 		args = []string{"run", "llama3.2"}
