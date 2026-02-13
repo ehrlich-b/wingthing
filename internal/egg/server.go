@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"fmt"
@@ -26,7 +27,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const maxReplaySize = 10 * 1024 * 1024 // 10MB replay buffer, resets on screen clear
+const maxReplaySize = 2 * 1024 * 1024 // 2MB replay buffer — trim at safe cut points
+
+// Terminal escape sequences used as safe cut points for buffer trimming.
+var (
+	syncEnd   = []byte("\x1b[?2026l")  // end of synchronized update frame (Claude, Codex)
+	eraseLine = []byte("\x1b[2K\x1b[G") // erase line + column 1 (Cursor)
+)
 
 // Server implements the Egg gRPC service — wraps a SINGLE process.
 // Each egg is its own child process with its own socket/PID/token in ~/.wingthing/eggs/<session-id>/.
@@ -90,9 +97,28 @@ type replayBuffer struct {
 	mu       sync.Mutex
 	buf      []byte
 	trimmed  int64          // total bytes ever trimmed from front
+	written  int64          // total bytes ever written
 	notify   chan struct{}   // closed+replaced on Write to wake readers
 	advanced chan struct{}   // closed+replaced when a reader advances (unblocks writer)
 	readers  []*readerCursor
+}
+
+type replayStats struct {
+	BufSize  int
+	Written  int64
+	Trimmed  int64
+	Readers  int
+}
+
+func (r *replayBuffer) Stats() replayStats {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return replayStats{
+		BufSize: len(r.buf),
+		Written: r.written,
+		Trimmed: r.trimmed,
+		Readers: len(r.readers),
+	}
 }
 
 func newReplayBuffer() *replayBuffer {
@@ -136,6 +162,7 @@ func (r *replayBuffer) Write(p []byte) {
 	for {
 		r.mu.Lock()
 		r.buf = append(r.buf, p...)
+		r.written += int64(len(p))
 
 		if len(r.buf) <= maxReplaySize {
 			// Under limit — just wake readers and return.
@@ -148,10 +175,14 @@ func (r *replayBuffer) Write(p []byte) {
 
 		excess := len(r.buf) - maxReplaySize
 
+		// Find a safe cut point near the excess boundary.
+		// Search forward from the excess offset for the nearest frame boundary.
+		cut := findSafeCut(r.buf, excess)
+
 		if len(r.readers) == 0 {
-			// No readers — trim freely.
-			r.buf = append(r.buf[:0], r.buf[excess:]...)
-			r.trimmed += int64(excess)
+			// No readers — trim freely at the safe cut point.
+			r.buf = append(r.buf[:0], r.buf[cut:]...)
+			r.trimmed += int64(cut)
 			ch := r.notify
 			r.notify = make(chan struct{})
 			r.mu.Unlock()
@@ -168,10 +199,10 @@ func (r *replayBuffer) Write(p []byte) {
 		}
 
 		canTrim := int(minOff - r.trimmed)
-		if canTrim >= excess {
-			// Slowest reader is ahead of what we need to trim — trim and go.
-			r.buf = append(r.buf[:0], r.buf[excess:]...)
-			r.trimmed += int64(excess)
+		if canTrim >= cut {
+			// Slowest reader is ahead of our safe cut — trim and go.
+			r.buf = append(r.buf[:0], r.buf[cut:]...)
+			r.trimmed += int64(cut)
 			ch := r.notify
 			r.notify = make(chan struct{})
 			r.mu.Unlock()
@@ -229,6 +260,39 @@ func (r *replayBuffer) Bytes() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]byte(nil), r.buf...)
+}
+
+// findSafeCut searches forward from minOffset for the nearest safe cut point.
+// Returns an offset into buf where we can trim without corrupting terminal state.
+// Safe cut points (in priority order):
+//  1. End of a sync-update frame (\x1b[?2026l) — used by Claude, Codex
+//  2. Erase-line + column-reset (\x1b[2K\x1b[G]) — used by Cursor
+//  3. CRLF boundary — last resort for plain-text agents
+//  4. minOffset itself — if nothing better found within search window
+func findSafeCut(buf []byte, minOffset int) int {
+	// Search up to 64KB past minOffset for a safe boundary.
+	searchEnd := minOffset + 64*1024
+	if searchEnd > len(buf) {
+		searchEnd = len(buf)
+	}
+	window := buf[minOffset:searchEnd]
+
+	// Try sync-frame end first (Claude, Codex).
+	if idx := bytes.Index(window, syncEnd); idx >= 0 {
+		return minOffset + idx + len(syncEnd)
+	}
+
+	// Try erase-line + column-reset (Cursor).
+	if idx := bytes.Index(window, eraseLine); idx >= 0 {
+		return minOffset + idx
+	}
+
+	// Fall back to nearest CRLF.
+	if idx := bytes.Index(window, []byte("\r\n")); idx >= 0 {
+		return minOffset + idx + 2
+	}
+
+	return minOffset
 }
 
 // NewServer creates a new per-session egg server.
@@ -531,7 +595,7 @@ func (s *Server) cleanup() {
 func (s *Server) readPTY(sess *Session) {
 	var debugFile *os.File
 	if sess.debug {
-		path := filepath.Join(os.TempDir(), "wt-pty-"+sess.ID+".bin")
+		path := "/tmp/wt-pty-" + sess.Agent + "-" + sess.ID + ".bin"
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
 			log.Printf("egg: debug: cannot open %s: %v", path, err)
@@ -591,6 +655,25 @@ func (s *Server) Resize(ctx context.Context, req *pb.ResizeRequest) (*pb.ResizeR
 		Rows: uint16(req.Rows),
 	})
 	return &pb.ResizeResponse{}, nil
+}
+
+func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
+	s.mu.RLock()
+	sess := s.session
+	s.mu.RUnlock()
+	if sess == nil {
+		return nil, status.Error(codes.NotFound, "no session")
+	}
+	st := sess.replay.Stats()
+	return &pb.StatusResponse{
+		SessionId:     sess.ID,
+		Agent:         sess.Agent,
+		BufferBytes:   int64(st.BufSize),
+		TotalWritten:  st.Written,
+		TotalTrimmed:  st.Trimmed,
+		Readers:       int32(st.Readers),
+		UptimeSeconds: int64(time.Since(sess.StartedAt).Seconds()),
+	}, nil
 }
 
 // Session implements the bidirectional PTY I/O stream.

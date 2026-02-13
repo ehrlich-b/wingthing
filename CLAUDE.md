@@ -167,6 +167,10 @@ Use `make serve` in a separate terminal (or via Bash `run_in_background`). It bu
 
 **NEVER use `&` in Bash commands.** Use the Bash tool's `run_in_background` parameter instead. Appending `&` causes the process to die immediately and produces garbage output. If you need a background process: `run_in_background: true` on the Bash tool call, then check output via `Read` on the output file or `TaskOutput`.
 
+### Testing wing changes
+
+After `make check`, restart the wing daemon with the local build: `./wt stop && ./wt start --debug`. This uses `os.Executable()` throughout, so the daemon and all egg child processes use the same local binary — no need to install to PATH first.
+
 ## CLI Commands
 
 | Command | What it does |

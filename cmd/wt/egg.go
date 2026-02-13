@@ -241,7 +241,31 @@ func eggListCmd() *cobra.Command {
 					os.Remove(filepath.Join(eggsDir, sessionID))
 					continue
 				}
-				fmt.Printf("  %s  pid=%d\n", sessionID, pid)
+
+				line := fmt.Sprintf("  %s  pid=%d", sessionID, pid)
+
+				// Try gRPC status for live debug info
+				sockPath := filepath.Join(eggsDir, sessionID, "egg.sock")
+				tokenPath := filepath.Join(eggsDir, sessionID, "egg.token")
+				ec, dialErr := egg.Dial(sockPath, tokenPath)
+				if dialErr == nil {
+					ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Second)
+					st, stErr := ec.Status(ctx)
+					cancel()
+					ec.Close()
+					if stErr == nil {
+						line += fmt.Sprintf("  agent=%s  buf=%s  written=%s  trimmed=%s  readers=%d  uptime=%s",
+							st.Agent,
+							humanBytes(st.BufferBytes),
+							humanBytes(st.TotalWritten),
+							humanBytes(st.TotalTrimmed),
+							st.Readers,
+							humanDuration(time.Duration(st.UptimeSeconds)*time.Second),
+						)
+					}
+				}
+
+				fmt.Println(line)
 				found = true
 			}
 			if !found {
@@ -250,6 +274,27 @@ func eggListCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func humanBytes(b int64) string {
+	switch {
+	case b >= 1024*1024:
+		return fmt.Sprintf("%.1fMB", float64(b)/(1024*1024))
+	case b >= 1024:
+		return fmt.Sprintf("%.1fKB", float64(b)/1024)
+	default:
+		return fmt.Sprintf("%dB", b)
+	}
+}
+
+func humanDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
 // eggSpawn starts an agent session in a per-session egg and attaches the terminal.

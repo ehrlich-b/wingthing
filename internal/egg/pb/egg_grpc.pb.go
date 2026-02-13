@@ -22,6 +22,7 @@ const (
 	Egg_Kill_FullMethodName    = "/egg.Egg/Kill"
 	Egg_Resize_FullMethodName  = "/egg.Egg/Resize"
 	Egg_Session_FullMethodName = "/egg.Egg/Session"
+	Egg_Status_FullMethodName  = "/egg.Egg/Status"
 )
 
 // EggClient is the client API for Egg service.
@@ -31,6 +32,7 @@ type EggClient interface {
 	Kill(ctx context.Context, in *KillRequest, opts ...grpc.CallOption) (*KillResponse, error)
 	Resize(ctx context.Context, in *ResizeRequest, opts ...grpc.CallOption) (*ResizeResponse, error)
 	Session(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SessionMsg, SessionMsg], error)
+	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
 }
 
 type eggClient struct {
@@ -74,6 +76,16 @@ func (c *eggClient) Session(ctx context.Context, opts ...grpc.CallOption) (grpc.
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Egg_SessionClient = grpc.BidiStreamingClient[SessionMsg, SessionMsg]
 
+func (c *eggClient) Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StatusResponse)
+	err := c.cc.Invoke(ctx, Egg_Status_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // EggServer is the server API for Egg service.
 // All implementations must embed UnimplementedEggServer
 // for forward compatibility.
@@ -81,6 +93,7 @@ type EggServer interface {
 	Kill(context.Context, *KillRequest) (*KillResponse, error)
 	Resize(context.Context, *ResizeRequest) (*ResizeResponse, error)
 	Session(grpc.BidiStreamingServer[SessionMsg, SessionMsg]) error
+	Status(context.Context, *StatusRequest) (*StatusResponse, error)
 	mustEmbedUnimplementedEggServer()
 }
 
@@ -99,6 +112,9 @@ func (UnimplementedEggServer) Resize(context.Context, *ResizeRequest) (*ResizeRe
 }
 func (UnimplementedEggServer) Session(grpc.BidiStreamingServer[SessionMsg, SessionMsg]) error {
 	return status.Error(codes.Unimplemented, "method Session not implemented")
+}
+func (UnimplementedEggServer) Status(context.Context, *StatusRequest) (*StatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
 }
 func (UnimplementedEggServer) mustEmbedUnimplementedEggServer() {}
 func (UnimplementedEggServer) testEmbeddedByValue()             {}
@@ -164,6 +180,24 @@ func _Egg_Session_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Egg_SessionServer = grpc.BidiStreamingServer[SessionMsg, SessionMsg]
 
+func _Egg_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EggServer).Status(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Egg_Status_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EggServer).Status(ctx, req.(*StatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Egg_ServiceDesc is the grpc.ServiceDesc for Egg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -178,6 +212,10 @@ var Egg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Resize",
 			Handler:    _Egg_Resize_Handler,
+		},
+		{
+			MethodName: "Status",
+			Handler:    _Egg_Status_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -291,6 +291,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		log.Printf("websocket accept: %v", err)
 		return
 	}
+	conn.SetReadLimit(512 * 1024) // 512KB — replay chunks can be large
 	defer conn.CloseNow()
 
 	ctx := r.Context()

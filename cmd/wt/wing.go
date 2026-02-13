@@ -79,6 +79,39 @@ func gzipData(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// sendReplayChunked splits replay data into chunks, compresses and encrypts each
+// independently, and sends as multiple pty.output messages. Each chunk is a complete
+// gzip stream so the browser can decompress them individually.
+const replayChunkSize = 128 * 1024 // 128KB raw → compresses well under WS limit
+
+func sendReplayChunked(sessionID string, raw []byte, gcm cipher.AEAD, write ws.PTYWriteFunc) {
+	sent := 0
+	chunks := 0
+	totalCompressed := 0
+	for sent < len(raw) {
+		end := sent + replayChunkSize
+		if end > len(raw) {
+			end = len(raw)
+		}
+		chunk := raw[sent:end]
+		compressed, gzErr := gzipData(chunk)
+		if gzErr != nil {
+			compressed = chunk
+		}
+		isCompressed := gzErr == nil
+		encrypted, encErr := auth.Encrypt(gcm, compressed)
+		if encErr != nil {
+			log.Printf("pty session %s: replay chunk encrypt error: %v", sessionID, encErr)
+			return
+		}
+		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed})
+		totalCompressed += len(compressed)
+		sent = end
+		chunks++
+	}
+	log.Printf("pty session %s: replayed %d bytes (gzip %d, %d chunks)", sessionID, len(raw), totalCompressed, chunks)
+}
+
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
 // Returns group directories (sorted by project count) followed by individual repos (sorted by mtime).
 func discoverProjects(dir string, maxDepth int) []ws.WingProject {
@@ -1131,22 +1164,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					continue
 				}
 
-				// 5. Read replay (first message) and send to browser
+				// 5. Read replay (first message) and send to browser in chunks
 				if newGCM != nil {
 					replayMsg, rErr := newStream.Recv()
 					if rErr == nil {
 						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
-							compressed, gzErr := gzipData(replay.Output)
-							if gzErr != nil {
-								compressed = replay.Output
-							}
-							isCompressed := gzErr == nil
-							if encrypted, encErr := auth.Encrypt(newGCM, compressed); encErr != nil {
-								log.Printf("pty session %s: replay encrypt error: %v", sessionID, encErr)
-							} else {
-								write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed})
-								log.Printf("pty session %s: replayed %d bytes (gzip %d)", sessionID, len(replay.Output), len(compressed))
-							}
+							sendReplayChunked(sessionID, replay.Output, newGCM, write)
 						}
 					}
 				}
@@ -1410,27 +1433,12 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					continue
 				}
 
-				// 5. Read replay (first message) and send to browser
+				// 5. Read replay (first message) and send to browser in chunks
 				if newGCM != nil {
 					replayMsg, rErr := newStream.Recv()
 					if rErr == nil {
 						if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
-							compressed, gzErr := gzipData(replay.Output)
-							if gzErr != nil {
-								compressed = replay.Output
-							}
-							isCompressed := gzErr == nil
-							if encrypted, encErr := auth.Encrypt(newGCM, compressed); encErr != nil {
-								log.Printf("pty session %s: replay encrypt error: %v", start.SessionID, encErr)
-							} else {
-								write(ws.PTYOutput{
-									Type:       ws.TypePTYOutput,
-									SessionID:  start.SessionID,
-									Data:       encrypted,
-									Compressed: isCompressed,
-								})
-								log.Printf("pty session %s: replayed %d bytes (gzip %d)", start.SessionID, len(replay.Output), len(compressed))
-							}
+							sendReplayChunked(start.SessionID, replay.Output, newGCM, write)
 						}
 					}
 				}

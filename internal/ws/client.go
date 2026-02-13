@@ -114,6 +114,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 	if dialErr != nil {
 		return false, fmt.Errorf("dial: %w", dialErr)
 	}
+	conn.SetReadLimit(512 * 1024) // 512KB — match relay limit
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()

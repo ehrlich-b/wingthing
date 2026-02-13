@@ -6,6 +6,18 @@ service Egg {
     rpc Kill(KillRequest) returns (KillResponse);
     rpc Resize(ResizeRequest) returns (ResizeResponse);
     rpc Session(stream SessionMsg) returns (stream SessionMsg);
+    rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+message StatusRequest {}
+message StatusResponse {
+    string session_id = 1;
+    string agent = 2;
+    int64 buffer_bytes = 3;
+    int64 total_written = 4;
+    int64 total_trimmed = 5;
+    int32 readers = 6;
+    int64 uptime_seconds = 7;
 }
 
 message KillRequest { string session_id = 1; }

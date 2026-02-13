@@ -21,6 +21,134 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type StatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusRequest) Reset() {
+	*x = StatusRequest{}
+	mi := &file_egg_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusRequest) ProtoMessage() {}
+
+func (x *StatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_egg_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
+func (*StatusRequest) Descriptor() ([]byte, []int) {
+	return file_egg_proto_rawDescGZIP(), []int{0}
+}
+
+type StatusResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Agent         string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`
+	BufferBytes   int64                  `protobuf:"varint,3,opt,name=buffer_bytes,json=bufferBytes,proto3" json:"buffer_bytes,omitempty"`
+	TotalWritten  int64                  `protobuf:"varint,4,opt,name=total_written,json=totalWritten,proto3" json:"total_written,omitempty"`
+	TotalTrimmed  int64                  `protobuf:"varint,5,opt,name=total_trimmed,json=totalTrimmed,proto3" json:"total_trimmed,omitempty"`
+	Readers       int32                  `protobuf:"varint,6,opt,name=readers,proto3" json:"readers,omitempty"`
+	UptimeSeconds int64                  `protobuf:"varint,7,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusResponse) Reset() {
+	*x = StatusResponse{}
+	mi := &file_egg_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusResponse) ProtoMessage() {}
+
+func (x *StatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_egg_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
+func (*StatusResponse) Descriptor() ([]byte, []int) {
+	return file_egg_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *StatusResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *StatusResponse) GetAgent() string {
+	if x != nil {
+		return x.Agent
+	}
+	return ""
+}
+
+func (x *StatusResponse) GetBufferBytes() int64 {
+	if x != nil {
+		return x.BufferBytes
+	}
+	return 0
+}
+
+func (x *StatusResponse) GetTotalWritten() int64 {
+	if x != nil {
+		return x.TotalWritten
+	}
+	return 0
+}
+
+func (x *StatusResponse) GetTotalTrimmed() int64 {
+	if x != nil {
+		return x.TotalTrimmed
+	}
+	return 0
+}
+
+func (x *StatusResponse) GetReaders() int32 {
+	if x != nil {
+		return x.Readers
+	}
+	return 0
+}
+
+func (x *StatusResponse) GetUptimeSeconds() int64 {
+	if x != nil {
+		return x.UptimeSeconds
+	}
+	return 0
+}
+
 type KillRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -30,7 +158,7 @@ type KillRequest struct {
 
 func (x *KillRequest) Reset() {
 	*x = KillRequest{}
-	mi := &file_egg_proto_msgTypes[0]
+	mi := &file_egg_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -42,7 +170,7 @@ func (x *KillRequest) String() string {
 func (*KillRequest) ProtoMessage() {}
 
 func (x *KillRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[0]
+	mi := &file_egg_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -55,7 +183,7 @@ func (x *KillRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KillRequest.ProtoReflect.Descriptor instead.
 func (*KillRequest) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{0}
+	return file_egg_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *KillRequest) GetSessionId() string {
@@ -73,7 +201,7 @@ type KillResponse struct {
 
 func (x *KillResponse) Reset() {
 	*x = KillResponse{}
-	mi := &file_egg_proto_msgTypes[1]
+	mi := &file_egg_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -85,7 +213,7 @@ func (x *KillResponse) String() string {
 func (*KillResponse) ProtoMessage() {}
 
 func (x *KillResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[1]
+	mi := &file_egg_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -98,7 +226,7 @@ func (x *KillResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KillResponse.ProtoReflect.Descriptor instead.
 func (*KillResponse) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{1}
+	return file_egg_proto_rawDescGZIP(), []int{3}
 }
 
 type ResizeRequest struct {
@@ -112,7 +240,7 @@ type ResizeRequest struct {
 
 func (x *ResizeRequest) Reset() {
 	*x = ResizeRequest{}
-	mi := &file_egg_proto_msgTypes[2]
+	mi := &file_egg_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -124,7 +252,7 @@ func (x *ResizeRequest) String() string {
 func (*ResizeRequest) ProtoMessage() {}
 
 func (x *ResizeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[2]
+	mi := &file_egg_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -137,7 +265,7 @@ func (x *ResizeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResizeRequest.ProtoReflect.Descriptor instead.
 func (*ResizeRequest) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{2}
+	return file_egg_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ResizeRequest) GetSessionId() string {
@@ -169,7 +297,7 @@ type ResizeResponse struct {
 
 func (x *ResizeResponse) Reset() {
 	*x = ResizeResponse{}
-	mi := &file_egg_proto_msgTypes[3]
+	mi := &file_egg_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -181,7 +309,7 @@ func (x *ResizeResponse) String() string {
 func (*ResizeResponse) ProtoMessage() {}
 
 func (x *ResizeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[3]
+	mi := &file_egg_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -194,7 +322,7 @@ func (x *ResizeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResizeResponse.ProtoReflect.Descriptor instead.
 func (*ResizeResponse) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{3}
+	return file_egg_proto_rawDescGZIP(), []int{5}
 }
 
 type SessionMsg struct {
@@ -215,7 +343,7 @@ type SessionMsg struct {
 
 func (x *SessionMsg) Reset() {
 	*x = SessionMsg{}
-	mi := &file_egg_proto_msgTypes[4]
+	mi := &file_egg_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -227,7 +355,7 @@ func (x *SessionMsg) String() string {
 func (*SessionMsg) ProtoMessage() {}
 
 func (x *SessionMsg) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[4]
+	mi := &file_egg_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -240,7 +368,7 @@ func (x *SessionMsg) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionMsg.ProtoReflect.Descriptor instead.
 func (*SessionMsg) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{4}
+	return file_egg_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *SessionMsg) GetSessionId() string {
@@ -361,7 +489,7 @@ type Resize struct {
 
 func (x *Resize) Reset() {
 	*x = Resize{}
-	mi := &file_egg_proto_msgTypes[5]
+	mi := &file_egg_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -373,7 +501,7 @@ func (x *Resize) String() string {
 func (*Resize) ProtoMessage() {}
 
 func (x *Resize) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[5]
+	mi := &file_egg_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -386,7 +514,7 @@ func (x *Resize) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resize.ProtoReflect.Descriptor instead.
 func (*Resize) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{5}
+	return file_egg_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Resize) GetRows() uint32 {
@@ -407,7 +535,17 @@ var File_egg_proto protoreflect.FileDescriptor
 
 const file_egg_proto_rawDesc = "" +
 	"\n" +
-	"\tegg.proto\x12\x03egg\",\n" +
+	"\tegg.proto\x12\x03egg\"\x0f\n" +
+	"\rStatusRequest\"\xf3\x01\n" +
+	"\x0eStatusResponse\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
+	"\x05agent\x18\x02 \x01(\tR\x05agent\x12!\n" +
+	"\fbuffer_bytes\x18\x03 \x01(\x03R\vbufferBytes\x12#\n" +
+	"\rtotal_written\x18\x04 \x01(\x03R\ftotalWritten\x12#\n" +
+	"\rtotal_trimmed\x18\x05 \x01(\x03R\ftotalTrimmed\x12\x18\n" +
+	"\areaders\x18\x06 \x01(\x05R\areaders\x12%\n" +
+	"\x0euptime_seconds\x18\a \x01(\x03R\ruptimeSeconds\",\n" +
 	"\vKillRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x0e\n" +
@@ -431,11 +569,12 @@ const file_egg_proto_rawDesc = "" +
 	"\apayload\"0\n" +
 	"\x06Resize\x12\x12\n" +
 	"\x04rows\x18\x01 \x01(\rR\x04rows\x12\x12\n" +
-	"\x04cols\x18\x02 \x01(\rR\x04cols2\x96\x01\n" +
+	"\x04cols\x18\x02 \x01(\rR\x04cols2\xc9\x01\n" +
 	"\x03Egg\x12+\n" +
 	"\x04Kill\x12\x10.egg.KillRequest\x1a\x11.egg.KillResponse\x121\n" +
 	"\x06Resize\x12\x12.egg.ResizeRequest\x1a\x13.egg.ResizeResponse\x12/\n" +
-	"\aSession\x12\x0f.egg.SessionMsg\x1a\x0f.egg.SessionMsg(\x010\x01B0Z.github.com/ehrlich-b/wingthing/internal/egg/pbb\x06proto3"
+	"\aSession\x12\x0f.egg.SessionMsg\x1a\x0f.egg.SessionMsg(\x010\x01\x121\n" +
+	"\x06Status\x12\x12.egg.StatusRequest\x1a\x13.egg.StatusResponseB0Z.github.com/ehrlich-b/wingthing/internal/egg/pbb\x06proto3"
 
 var (
 	file_egg_proto_rawDescOnce sync.Once
@@ -449,25 +588,29 @@ func file_egg_proto_rawDescGZIP() []byte {
 	return file_egg_proto_rawDescData
 }
 
-var file_egg_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_egg_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_egg_proto_goTypes = []any{
-	(*KillRequest)(nil),    // 0: egg.KillRequest
-	(*KillResponse)(nil),   // 1: egg.KillResponse
-	(*ResizeRequest)(nil),  // 2: egg.ResizeRequest
-	(*ResizeResponse)(nil), // 3: egg.ResizeResponse
-	(*SessionMsg)(nil),     // 4: egg.SessionMsg
-	(*Resize)(nil),         // 5: egg.Resize
+	(*StatusRequest)(nil),  // 0: egg.StatusRequest
+	(*StatusResponse)(nil), // 1: egg.StatusResponse
+	(*KillRequest)(nil),    // 2: egg.KillRequest
+	(*KillResponse)(nil),   // 3: egg.KillResponse
+	(*ResizeRequest)(nil),  // 4: egg.ResizeRequest
+	(*ResizeResponse)(nil), // 5: egg.ResizeResponse
+	(*SessionMsg)(nil),     // 6: egg.SessionMsg
+	(*Resize)(nil),         // 7: egg.Resize
 }
 var file_egg_proto_depIdxs = []int32{
-	5, // 0: egg.SessionMsg.resize:type_name -> egg.Resize
-	0, // 1: egg.Egg.Kill:input_type -> egg.KillRequest
-	2, // 2: egg.Egg.Resize:input_type -> egg.ResizeRequest
-	4, // 3: egg.Egg.Session:input_type -> egg.SessionMsg
-	1, // 4: egg.Egg.Kill:output_type -> egg.KillResponse
-	3, // 5: egg.Egg.Resize:output_type -> egg.ResizeResponse
-	4, // 6: egg.Egg.Session:output_type -> egg.SessionMsg
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
+	7, // 0: egg.SessionMsg.resize:type_name -> egg.Resize
+	2, // 1: egg.Egg.Kill:input_type -> egg.KillRequest
+	4, // 2: egg.Egg.Resize:input_type -> egg.ResizeRequest
+	6, // 3: egg.Egg.Session:input_type -> egg.SessionMsg
+	0, // 4: egg.Egg.Status:input_type -> egg.StatusRequest
+	3, // 5: egg.Egg.Kill:output_type -> egg.KillResponse
+	5, // 6: egg.Egg.Resize:output_type -> egg.ResizeResponse
+	6, // 7: egg.Egg.Session:output_type -> egg.SessionMsg
+	1, // 8: egg.Egg.Status:output_type -> egg.StatusResponse
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -478,7 +621,7 @@ func file_egg_proto_init() {
 	if File_egg_proto != nil {
 		return
 	}
-	file_egg_proto_msgTypes[4].OneofWrappers = []any{
+	file_egg_proto_msgTypes[6].OneofWrappers = []any{
 		(*SessionMsg_Output)(nil),
 		(*SessionMsg_Input)(nil),
 		(*SessionMsg_Resize)(nil),
@@ -492,7 +635,7 @@ func file_egg_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_egg_proto_rawDesc), len(file_egg_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

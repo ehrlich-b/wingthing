@@ -78,6 +78,11 @@ func (c *Client) AttachSession(ctx context.Context, sessionID string) (pb.Egg_Se
 	return stream, nil
 }
 
+// Status returns debug stats from the egg session.
+func (c *Client) Status(ctx context.Context) (*pb.StatusResponse, error) {
+	return c.client.Status(c.authCtx(ctx), &pb.StatusRequest{})
+}
+
 // Close closes the gRPC connection.
 func (c *Client) Close() error {
 	return c.conn.Close()
