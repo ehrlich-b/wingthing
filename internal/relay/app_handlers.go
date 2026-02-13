@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -47,6 +48,22 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 
 	wings := s.listAccessibleWings(user.ID)
 	latestVer := s.getLatestVersion()
+
+	// Resolve labels for all wings
+	var machineIDs []string
+	for _, wing := range wings {
+		machineIDs = append(machineIDs, wing.MachineID)
+	}
+	// Determine org ID for label resolution
+	resolvedOrgID := ""
+	if len(wings) > 0 && wings[0].OrgID != "" {
+		org, _ := s.Store.GetOrgBySlug(wings[0].OrgID)
+		if org != nil {
+			resolvedOrgID = org.ID
+		}
+	}
+	wingLabels := s.Store.ResolveLabels(machineIDs, user.ID, resolvedOrgID)
+
 	out := make([]map[string]any, 0, len(wings))
 	seenMachines := make(map[string]bool) // dedup by wing machine_id
 	for _, wing := range wings {
@@ -55,7 +72,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		if projects == nil {
 			projects = []ws.WingProject{}
 		}
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"id":             wing.ID,
 			"machine_id":     wing.MachineID,
 			"platform":       wing.Platform,
@@ -67,7 +84,11 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			"projects":       projects,
 			"latest_version": latestVer,
 			"egg_config":     wing.EggConfig,
-		})
+		}
+		if label, ok := wingLabels[wing.MachineID]; ok {
+			entry["wing_label"] = label
+		}
+		out = append(out, entry)
 	}
 
 	// Include peer wings from gossip (dedup by wing machine_id)
@@ -563,4 +584,244 @@ func (s *Server) handleAppDowngrade(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("user %s (%s) downgraded (personal sub canceled)", user.ID, user.DisplayName)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": tier})
+}
+
+// handleWingSessions proxies a past-sessions request to the wing via WebSocket.
+func (s *Server) handleWingSessions(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	machineID := r.PathValue("machineID")
+	wing := s.findWingByMachineID(user.ID, machineID)
+	if wing == nil {
+		writeError(w, http.StatusNotFound, "wing not found or offline")
+		return
+	}
+
+	offset := 0
+	limit := 20
+	if v := r.URL.Query().Get("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+
+	reqID := uuid.New().String()[:8]
+	ch := make(chan *ws.SessionsHistoryResults, 1)
+	s.Wings.RegisterHistoryRequest(reqID, ch)
+	defer s.Wings.UnregisterHistoryRequest(reqID)
+
+	msg := ws.SessionsHistory{
+		Type:      ws.TypeSessionsHistory,
+		RequestID: reqID,
+		Offset:    offset,
+		Limit:     limit,
+	}
+	data, _ := json.Marshal(msg)
+	writeCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
+		writeError(w, http.StatusBadGateway, "wing unreachable")
+		return
+	}
+
+	select {
+	case result := <-ch:
+		writeJSON(w, http.StatusOK, result)
+	case <-time.After(5 * time.Second):
+		writeError(w, http.StatusGatewayTimeout, "timeout")
+	case <-r.Context().Done():
+	}
+}
+
+// handleWingLabel sets or updates a label for a wing.
+func (s *Server) handleWingLabel(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	machineID := r.PathValue("machineID")
+	wing := s.findWingByMachineID(user.ID, machineID)
+	if wing == nil {
+		// Allow labeling offline wings by machineID too
+		writeError(w, http.StatusNotFound, "wing not found")
+		return
+	}
+
+	if !s.isWingOwner(user.ID, wing) {
+		writeError(w, http.StatusForbidden, "not wing owner")
+		return
+	}
+
+	var body struct {
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "bad body")
+		return
+	}
+
+	// Determine scope
+	scopeType := "user"
+	scopeID := user.ID
+	if wing.OrgID != "" {
+		org, _ := s.Store.GetOrgBySlug(wing.OrgID)
+		if org != nil {
+			scopeType = "org"
+			scopeID = org.ID
+		}
+	}
+
+	if err := s.Store.SetLabel(machineID, scopeType, scopeID, body.Label); err != nil {
+		writeError(w, http.StatusInternalServerError, "save label: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleDeleteWingLabel removes the label for a wing at current scope.
+func (s *Server) handleDeleteWingLabel(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	machineID := r.PathValue("machineID")
+	wing := s.findWingByMachineID(user.ID, machineID)
+	if wing == nil {
+		writeError(w, http.StatusNotFound, "wing not found")
+		return
+	}
+
+	if !s.isWingOwner(user.ID, wing) {
+		writeError(w, http.StatusForbidden, "not wing owner")
+		return
+	}
+
+	scopeType := "user"
+	scopeID := user.ID
+	if wing.OrgID != "" {
+		org, _ := s.Store.GetOrgBySlug(wing.OrgID)
+		if org != nil {
+			scopeType = "org"
+			scopeID = org.ID
+		}
+	}
+
+	s.Store.DeleteLabel(machineID, scopeType, scopeID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleSessionLabel sets a label for a session.
+func (s *Server) handleSessionLabel(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	sessionID := r.PathValue("id")
+	var body struct {
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "bad body")
+		return
+	}
+
+	if err := s.Store.SetLabel(sessionID, "user", user.ID, body.Label); err != nil {
+		writeError(w, http.StatusInternalServerError, "save label: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleAuditSSE streams audit data from wing to browser via SSE.
+func (s *Server) handleAuditSSE(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	machineID := r.PathValue("machineID")
+	sessionID := r.PathValue("sessionID")
+	kind := r.URL.Query().Get("kind")
+	if kind == "" {
+		kind = "pty"
+	}
+
+	wing := s.findWingByMachineID(user.ID, machineID)
+	if wing == nil {
+		writeError(w, http.StatusNotFound, "wing not found or offline")
+		return
+	}
+
+	if !s.isWingOwner(user.ID, wing) {
+		writeError(w, http.StatusForbidden, "not wing owner")
+		return
+	}
+
+	reqID := uuid.New().String()[:8]
+	ch := make(chan any, 64)
+	s.Wings.RegisterAuditRequest(reqID, ch)
+	defer s.Wings.UnregisterAuditRequest(reqID)
+
+	msg := ws.AuditRequest{
+		Type:      ws.TypeAuditRequest,
+		RequestID: reqID,
+		SessionID: sessionID,
+		Kind:      kind,
+	}
+	data, _ := json.Marshal(msg)
+	writeCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
+		writeError(w, http.StatusBadGateway, "wing unreachable")
+		return
+	}
+
+	// SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	timeout := time.After(60 * time.Second)
+	for {
+		select {
+		case msg := <-ch:
+			switch v := msg.(type) {
+			case *ws.AuditChunk:
+				fmt.Fprintf(w, "data: %s\n\n", v.Data)
+				flusher.Flush()
+			case *ws.AuditDone:
+				fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+				flusher.Flush()
+				return
+			case *ws.AuditError:
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", v.Error)
+				flusher.Flush()
+				return
+			}
+		case <-timeout:
+			fmt.Fprintf(w, "event: error\ndata: timeout\n\n")
+			flusher.Flush()
+			return
+		case <-r.Context().Done():
+			return
+		}
+	}
 }

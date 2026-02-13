@@ -61,6 +61,12 @@ type WingRegistry struct {
 	sessMu       sync.Mutex
 	sessRequests map[string]chan *ws.SessionsSync // requestID → response channel
 
+	histMu       sync.Mutex
+	histRequests map[string]chan *ws.SessionsHistoryResults // requestID → response channel
+
+	auditMu       sync.Mutex
+	auditRequests map[string]chan any // requestID → channel for AuditChunk/AuditDone/AuditError
+
 	// Dashboard subscribers: userID → list of channels
 	subMu sync.RWMutex
 	subs  map[string][]chan WingEvent
@@ -68,10 +74,12 @@ type WingRegistry struct {
 
 func NewWingRegistry() *WingRegistry {
 	return &WingRegistry{
-		wings:        make(map[string]*ConnectedWing),
-		dirRequests:  make(map[string]chan *ws.DirResults),
-		sessRequests: make(map[string]chan *ws.SessionsSync),
-		subs:         make(map[string][]chan WingEvent),
+		wings:         make(map[string]*ConnectedWing),
+		dirRequests:   make(map[string]chan *ws.DirResults),
+		sessRequests:  make(map[string]chan *ws.SessionsSync),
+		histRequests:  make(map[string]chan *ws.SessionsHistoryResults),
+		auditRequests: make(map[string]chan any),
+		subs:          make(map[string][]chan WingEvent),
 	}
 }
 
@@ -118,6 +126,54 @@ func (r *WingRegistry) ResolveSessionRequest(reqID string, results *ws.SessionsS
 	if ch != nil {
 		select {
 		case ch <- results:
+		default:
+		}
+	}
+}
+
+func (r *WingRegistry) RegisterHistoryRequest(reqID string, ch chan *ws.SessionsHistoryResults) {
+	r.histMu.Lock()
+	r.histRequests[reqID] = ch
+	r.histMu.Unlock()
+}
+
+func (r *WingRegistry) UnregisterHistoryRequest(reqID string) {
+	r.histMu.Lock()
+	delete(r.histRequests, reqID)
+	r.histMu.Unlock()
+}
+
+func (r *WingRegistry) ResolveHistoryRequest(reqID string, results *ws.SessionsHistoryResults) {
+	r.histMu.Lock()
+	ch := r.histRequests[reqID]
+	r.histMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- results:
+		default:
+		}
+	}
+}
+
+func (r *WingRegistry) RegisterAuditRequest(reqID string, ch chan any) {
+	r.auditMu.Lock()
+	r.auditRequests[reqID] = ch
+	r.auditMu.Unlock()
+}
+
+func (r *WingRegistry) UnregisterAuditRequest(reqID string) {
+	r.auditMu.Lock()
+	delete(r.auditRequests, reqID)
+	r.auditMu.Unlock()
+}
+
+func (r *WingRegistry) ResolveAuditMessage(reqID string, msg any) {
+	r.auditMu.Lock()
+	ch := r.auditRequests[reqID]
+	r.auditMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- msg:
 		default:
 		}
 	}
@@ -435,13 +491,6 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Meter bandwidth (applies backpressure via rate limiter)
-		if s.Bandwidth != nil {
-			if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
-				return
-			}
-		}
-
 		var msg ws.Envelope
 		if err := json.Unmarshal(data, &msg); err != nil {
 			continue
@@ -526,6 +575,26 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			if sync.RequestID != "" {
 				s.Wings.ResolveSessionRequest(sync.RequestID, &sync)
 			}
+
+		case ws.TypeSessionsHistoryResults:
+			var results ws.SessionsHistoryResults
+			json.Unmarshal(data, &results)
+			s.Wings.ResolveHistoryRequest(results.RequestID, &results)
+
+		case ws.TypeAuditChunk:
+			var chunk ws.AuditChunk
+			json.Unmarshal(data, &chunk)
+			s.Wings.ResolveAuditMessage(chunk.RequestID, &chunk)
+
+		case ws.TypeAuditDone:
+			var done ws.AuditDone
+			json.Unmarshal(data, &done)
+			s.Wings.ResolveAuditMessage(done.RequestID, &done)
+
+		case ws.TypeAuditError:
+			var auditErr ws.AuditError
+			json.Unmarshal(data, &auditErr)
+			s.Wings.ResolveAuditMessage(auditErr.RequestID, &auditErr)
 		}
 	}
 }

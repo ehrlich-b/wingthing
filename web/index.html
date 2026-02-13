@@ -71,6 +71,10 @@
                 </div>
                 <div id="chat-container"></div>
             </section>
+
+            <section id="wing-detail-section" style="display:none;">
+                <div id="wing-detail-content"></div>
+            </section>
         </div>
     </div>
 
@@ -80,6 +84,21 @@
         <div class="box-detail-dialog" id="detail-dialog"></div>
     </div>
 
+    <!-- Audit replay overlay -->
+    <div id="audit-overlay" style="display:none;">
+        <div id="audit-backdrop"></div>
+        <div id="audit-player">
+            <div id="audit-terminal"></div>
+            <div id="audit-controls">
+                <button id="audit-play" class="btn-sm">play</button>
+                <span id="audit-time">0:00</span>
+                <input id="audit-speed" type="range" min="1" max="8" value="1">
+                <span id="audit-speed-label">1x</span>
+                <button id="audit-close" class="btn-sm">close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Command palette overlay -->
     <div id="command-palette" style="display:none;">
         <div id="palette-backdrop"></div>
@@ -87,7 +106,7 @@
             <input id="palette-search" type="text" placeholder="type a path..." autocomplete="off" spellcheck="false">
             <div id="palette-results"></div>
             <div id="palette-footer">
-                <span id="palette-hints">tab complete &middot; shift+tab agent &middot; ` wing &middot; enter open &middot; <span id="palette-chat-link" title="start a text chat rather than a terminal">chat</span></span>
+                <span id="palette-hints">tab complete &middot; shift+tab agent &middot; ` wing &middot; enter open</span>
                 <span id="palette-status"></span>
             </div>
         </div>

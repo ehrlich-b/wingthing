@@ -942,3 +942,58 @@ func (s *RelayStore) migrate() error {
 	}
 	return nil
 }
+
+// --- Labels ---
+
+// SetLabel upserts a label for a target (wing or session).
+func (s *RelayStore) SetLabel(targetID, scopeType, scopeID, label string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO labels (target_id, scope_type, scope_id, label) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(target_id, scope_type, scope_id) DO UPDATE SET label = excluded.label`,
+		targetID, scopeType, scopeID, label,
+	)
+	return err
+}
+
+// DeleteLabel removes a label for a target at a given scope.
+func (s *RelayStore) DeleteLabel(targetID, scopeType, scopeID string) error {
+	_, err := s.db.Exec(
+		"DELETE FROM labels WHERE target_id = ? AND scope_type = ? AND scope_id = ?",
+		targetID, scopeType, scopeID,
+	)
+	return err
+}
+
+// ResolveLabel returns the best label for a target: org-scoped first, then personal.
+func (s *RelayStore) ResolveLabel(targetID, userID, orgID string) string {
+	if orgID != "" {
+		var label string
+		err := s.db.QueryRow(
+			"SELECT label FROM labels WHERE target_id = ? AND scope_type = 'org' AND scope_id = ?",
+			targetID, orgID,
+		).Scan(&label)
+		if err == nil {
+			return label
+		}
+	}
+	var label string
+	err := s.db.QueryRow(
+		"SELECT label FROM labels WHERE target_id = ? AND scope_type = 'user' AND scope_id = ?",
+		targetID, userID,
+	).Scan(&label)
+	if err == nil {
+		return label
+	}
+	return ""
+}
+
+// ResolveLabels batch-resolves labels for multiple targets.
+func (s *RelayStore) ResolveLabels(targetIDs []string, userID, orgID string) map[string]string {
+	result := make(map[string]string, len(targetIDs))
+	for _, id := range targetIDs {
+		if label := s.ResolveLabel(id, userID, orgID); label != "" {
+			result[id] = label
+		}
+	}
+	return result
+}

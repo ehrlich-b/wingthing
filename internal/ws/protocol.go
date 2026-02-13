@@ -51,6 +51,19 @@ const (
 	TypeSessionsList = "sessions.list" // relay → wing
 	TypeSessionsSync = "sessions.sync" // wing → relay
 
+	// Relay → Browser/Wing (bandwidth)
+	TypeBandwidthExceeded = "bandwidth.exceeded"
+
+	// Session history (relay proxies browser request to wing)
+	TypeSessionsHistory        = "sessions.history"         // relay → wing
+	TypeSessionsHistoryResults = "sessions.history.results" // wing → relay → browser
+
+	// Audit streaming (relay proxies browser request to wing)
+	TypeAuditRequest = "audit.request" // relay → wing
+	TypeAuditChunk   = "audit.chunk"   // wing → relay → browser
+	TypeAuditDone    = "audit.done"    // wing → relay → browser
+	TypeAuditError   = "audit.error"   // wing → relay → browser
+
 	// Relay → Wing (control)
 	TypeRegistered      = "registered"
 	TypeWingUpdate      = "wing.update"
@@ -330,12 +343,72 @@ type SessionInfo struct {
 	CWD            string `json:"cwd,omitempty"`
 	EggConfig      string `json:"egg_config,omitempty"` // YAML config snapshot
 	NeedsAttention bool   `json:"needs_attention,omitempty"`
+	Audit          bool   `json:"audit,omitempty"` // true if session has audit recording
+}
+
+// PastSessionInfo describes a dead session found on disk.
+type PastSessionInfo struct {
+	SessionID string `json:"session_id"`
+	Agent     string `json:"agent"`
+	CWD       string `json:"cwd,omitempty"`
+	StartedAt int64  `json:"started_at,omitempty"` // unix timestamp
+	Audit     bool   `json:"audit,omitempty"`      // audit.pty.gz exists
+}
+
+// SessionsHistory requests past sessions from the wing.
+type SessionsHistory struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Offset    int    `json:"offset"`
+	Limit     int    `json:"limit"`
+}
+
+// SessionsHistoryResults returns past sessions from the wing.
+type SessionsHistoryResults struct {
+	Type      string            `json:"type"`
+	RequestID string            `json:"request_id"`
+	Sessions  []PastSessionInfo `json:"sessions"`
+	Total     int               `json:"total"`
+}
+
+// AuditRequest asks the wing to stream audit data for a session.
+type AuditRequest struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	SessionID string `json:"session_id"`
+	Kind      string `json:"kind"` // "pty" or "keylog"
+}
+
+// AuditChunk carries a chunk of audit data from wing to browser.
+type AuditChunk struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Data      string `json:"data"` // base64 or raw text depending on kind
+}
+
+// AuditDone signals the end of audit streaming.
+type AuditDone struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+}
+
+// AuditError signals an error during audit streaming.
+type AuditError struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Error     string `json:"error"`
 }
 
 // EggConfigUpdate pushes a new egg config from relay to wing.
 type EggConfigUpdate struct {
 	Type string `json:"type"`
 	YAML string `json:"yaml"` // serialized egg.yaml content
+}
+
+// BandwidthExceeded is sent to browser/wing when monthly cap is hit.
+type BandwidthExceeded struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
 }
 
 // RelayRestart is sent to all connected WebSockets when the server is shutting down.

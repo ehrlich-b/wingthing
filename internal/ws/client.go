@@ -61,17 +61,19 @@ type Client struct {
 	AllowEmails []string
 	RootDir     string
 
-	OnTask            TaskHandlerWithChunks
-	OnPTY             PTYHandler
-	OnChatStart       ChatStartHandler
-	OnChatMessage     ChatMessageHandler
-	OnChatDelete      ChatDeleteHandler
-	OnDirList         DirHandler
-	OnUpdate          func(ctx context.Context)
-	OnEggConfigUpdate func(ctx context.Context, yamlStr string)
-	OnOrphanKill      func(ctx context.Context, sessionID string) // kill egg with no active goroutine
-	OnReconnect       func(ctx context.Context)                  // called after re-registration with relay
-	SessionLister     func(ctx context.Context) []SessionInfo
+	OnTask             TaskHandlerWithChunks
+	OnPTY              PTYHandler
+	OnChatStart        ChatStartHandler
+	OnChatMessage      ChatMessageHandler
+	OnChatDelete       ChatDeleteHandler
+	OnDirList          DirHandler
+	OnUpdate           func(ctx context.Context)
+	OnEggConfigUpdate  func(ctx context.Context, yamlStr string)
+	OnOrphanKill       func(ctx context.Context, sessionID string) // kill egg with no active goroutine
+	OnReconnect        func(ctx context.Context)                   // called after re-registration with relay
+	SessionLister      func(ctx context.Context) []SessionInfo
+	OnSessionsHistory  func(ctx context.Context, req SessionsHistory, write PTYWriteFunc)
+	OnAuditRequest     func(ctx context.Context, req AuditRequest, write PTYWriteFunc)
 
 	// ptySessions tracks active PTY sessions for routing input/resize
 	ptySessions   map[string]chan []byte // session_id → input channel
@@ -326,6 +328,28 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			}
 			if c.OnEggConfigUpdate != nil {
 				go c.OnEggConfigUpdate(ctx, update.YAML)
+			}
+
+		case TypeSessionsHistory:
+			var req SessionsHistory
+			if err := json.Unmarshal(data, &req); err != nil {
+				continue
+			}
+			if c.OnSessionsHistory != nil {
+				go c.OnSessionsHistory(ctx, req, func(v any) error {
+					return c.writeJSON(ctx, v)
+				})
+			}
+
+		case TypeAuditRequest:
+			var req AuditRequest
+			if err := json.Unmarshal(data, &req); err != nil {
+				continue
+			}
+			if c.OnAuditRequest != nil {
+				go c.OnAuditRequest(ctx, req, func(v any) error {
+					return c.writeJSON(ctx, v)
+				})
 			}
 
 		case TypeError:

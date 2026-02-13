@@ -113,6 +113,12 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /api/app/usage", s.handleAppUsage)
 	s.mux.HandleFunc("POST /api/app/upgrade", s.handleAppUpgrade)
 	s.mux.HandleFunc("POST /api/app/downgrade", s.handleAppDowngrade)
+	// Wing detail page API
+	s.mux.HandleFunc("GET /api/app/wings/{machineID}/sessions", s.handleWingSessions)
+	s.mux.HandleFunc("PUT /api/app/wings/{machineID}/label", s.handleWingLabel)
+	s.mux.HandleFunc("DELETE /api/app/wings/{machineID}/label", s.handleDeleteWingLabel)
+	s.mux.HandleFunc("PUT /api/app/sessions/{id}/label", s.handleSessionLabel)
+	s.mux.HandleFunc("GET /api/app/wings/{machineID}/sessions/{sessionID}/audit", s.handleAuditSSE)
 
 	// Claim page
 	s.mux.HandleFunc("GET /auth/claim", s.handleClaimPage)

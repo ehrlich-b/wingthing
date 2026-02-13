@@ -597,6 +597,14 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		killOrphanEgg(cfg, sessionID)
 	}
 
+	client.OnSessionsHistory = func(ctx context.Context, req ws.SessionsHistory, write ws.PTYWriteFunc) {
+		handleSessionsHistory(cfg, req, write)
+	}
+
+	client.OnAuditRequest = func(ctx context.Context, req ws.AuditRequest, write ws.PTYWriteFunc) {
+		handleAuditRequest(cfg, req, write)
+	}
+
 	client.OnUpdate = func(ctx context.Context) {
 		log.Println("remote update requested")
 		exe, err := os.Executable()
@@ -966,6 +974,10 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		}
 		if _, ok := wingAttention.Load(sessionID); ok {
 			info.NeedsAttention = true
+		}
+		// Check if audit recording exists
+		if _, err := os.Stat(filepath.Join(dir, "audit.pty.gz")); err == nil {
+			info.Audit = true
 		}
 		out = append(out, info)
 	}
@@ -1738,4 +1750,212 @@ func handleChatDelete(ctx context.Context, s *store.Store, del ws.ChatDelete, wr
 		SessionID: del.SessionID,
 	})
 	log.Printf("chat session %s deleted", del.SessionID)
+}
+
+// handleSessionsHistory lists dead egg sessions from disk for the past-sessions view.
+func handleSessionsHistory(cfg *config.Config, req ws.SessionsHistory, write ws.PTYWriteFunc) {
+	eggsDir := filepath.Join(cfg.Dir, "eggs")
+	entries, err := os.ReadDir(eggsDir)
+	if err != nil {
+		write(ws.SessionsHistoryResults{
+			Type:      ws.TypeSessionsHistoryResults,
+			RequestID: req.RequestID,
+		})
+		return
+	}
+
+	// Collect dead sessions (PID not alive)
+	var dead []ws.PastSessionInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sessionID := e.Name()
+		dir := filepath.Join(eggsDir, sessionID)
+
+		// Check if process is alive — skip alive sessions
+		pidData, err := os.ReadFile(filepath.Join(dir, "egg.pid"))
+		if err == nil {
+			pid, _ := strconv.Atoi(strings.TrimSpace(string(pidData)))
+			if pid > 0 {
+				proc, _ := os.FindProcess(pid)
+				if proc != nil && proc.Signal(syscall.Signal(0)) == nil {
+					continue // alive, skip
+				}
+			}
+		}
+
+		agent, cwd := readEggMeta(dir)
+		if agent == "" {
+			continue // no meta, skip
+		}
+
+		info := ws.PastSessionInfo{
+			SessionID: sessionID,
+			Agent:     agent,
+			CWD:       cwd,
+		}
+
+		// Use dir mtime as started_at
+		if stat, err := os.Stat(dir); err == nil {
+			info.StartedAt = stat.ModTime().Unix()
+		}
+
+		// Check for audit recording
+		if _, err := os.Stat(filepath.Join(dir, "audit.pty.gz")); err == nil {
+			info.Audit = true
+		}
+
+		dead = append(dead, info)
+	}
+
+	// Sort by started_at descending (newest first)
+	sort.Slice(dead, func(i, j int) bool {
+		return dead[i].StartedAt > dead[j].StartedAt
+	})
+
+	total := len(dead)
+
+	// Paginate
+	offset := req.Offset
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset > len(dead) {
+		offset = len(dead)
+	}
+	end := offset + limit
+	if end > len(dead) {
+		end = len(dead)
+	}
+	page := dead[offset:end]
+
+	write(ws.SessionsHistoryResults{
+		Type:      ws.TypeSessionsHistoryResults,
+		RequestID: req.RequestID,
+		Sessions:  page,
+		Total:     total,
+	})
+}
+
+// handleAuditRequest streams audit data (pty recording or keylog) from disk.
+func handleAuditRequest(cfg *config.Config, req ws.AuditRequest, write ws.PTYWriteFunc) {
+	dir := filepath.Join(cfg.Dir, "eggs", req.SessionID)
+
+	var filePath string
+	switch req.Kind {
+	case "keylog":
+		filePath = filepath.Join(dir, "audit.log")
+	default:
+		filePath = filepath.Join(dir, "audit.pty.gz")
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		write(ws.AuditError{
+			Type:      ws.TypeAuditError,
+			RequestID: req.RequestID,
+			Error:     "file not found: " + req.Kind,
+		})
+		return
+	}
+
+	if req.Kind == "pty" {
+		// Decompress gzip and stream as asciinema v2 NDJSON
+		gr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			write(ws.AuditError{Type: ws.TypeAuditError, RequestID: req.RequestID, Error: "decompress: " + err.Error()})
+			return
+		}
+		raw, err := io.ReadAll(gr)
+		gr.Close()
+		if err != nil {
+			write(ws.AuditError{Type: ws.TypeAuditError, RequestID: req.RequestID, Error: "read: " + err.Error()})
+			return
+		}
+
+		// Convert varint format to asciinema v2 NDJSON
+		// Format: varint delta_ms, varint data_len, raw bytes
+		var cumulativeMs int64
+		var ndjson strings.Builder
+		// Header
+		ndjson.WriteString(`{"version":2,"width":120,"height":40}`)
+		ndjson.WriteByte('\n')
+		pos := 0
+		for pos < len(raw) {
+			deltaMs, n := readVarint(raw[pos:])
+			if n <= 0 {
+				break
+			}
+			pos += n
+			dataLen, n := readVarint(raw[pos:])
+			if n <= 0 {
+				break
+			}
+			pos += n
+			if pos+int(dataLen) > len(raw) {
+				break
+			}
+			chunk := raw[pos : pos+int(dataLen)]
+			pos += int(dataLen)
+			cumulativeMs += deltaMs
+
+			// Escape for JSON
+			escaped := base64.StdEncoding.EncodeToString(chunk)
+			fmt.Fprintf(&ndjson, "[%.3f,\"o\",\"%s\"]\n", float64(cumulativeMs)/1000.0, escaped)
+		}
+
+		// Stream in ~32KB chunks
+		text := ndjson.String()
+		const chunkSize = 32 * 1024
+		for i := 0; i < len(text); i += chunkSize {
+			end := i + chunkSize
+			if end > len(text) {
+				end = len(text)
+			}
+			write(ws.AuditChunk{
+				Type:      ws.TypeAuditChunk,
+				RequestID: req.RequestID,
+				Data:      text[i:end],
+			})
+		}
+	} else {
+		// Keylog: stream raw text in chunks
+		text := string(data)
+		const chunkSize = 32 * 1024
+		for i := 0; i < len(text); i += chunkSize {
+			end := i + chunkSize
+			if end > len(text) {
+				end = len(text)
+			}
+			write(ws.AuditChunk{
+				Type:      ws.TypeAuditChunk,
+				RequestID: req.RequestID,
+				Data:      text[i:end],
+			})
+		}
+	}
+
+	write(ws.AuditDone{
+		Type:      ws.TypeAuditDone,
+		RequestID: req.RequestID,
+	})
+}
+
+// readVarint reads a varint from buf, returns (value, bytes consumed).
+func readVarint(buf []byte) (int64, int) {
+	var x int64
+	var s uint
+	for i, b := range buf {
+		if i >= 10 {
+			return 0, 0
+		}
+		if b < 0x80 {
+			return x | int64(b)<<s, i + 1
+		}
+		x |= int64(b&0x7f) << s
+		s += 7
+	}
+	return 0, 0
 }

@@ -55,6 +55,32 @@ func (s *Server) findAccessibleWing(userID string) *ConnectedWing {
 	return nil
 }
 
+// isWingOwner returns true if userID owns this wing (personal or org owner/admin).
+func (s *Server) isWingOwner(userID string, wing *ConnectedWing) bool {
+	if wing.UserID == userID {
+		return true
+	}
+	if wing.OrgID != "" {
+		org, _ := s.Store.GetOrgBySlug(wing.OrgID)
+		if org != nil {
+			role := s.Store.GetOrgMemberRole(org.ID, userID)
+			return role == "owner" || role == "admin"
+		}
+	}
+	return false
+}
+
+// findWingByMachineID finds a connected wing by machine_id that the user can access.
+func (s *Server) findWingByMachineID(userID, machineID string) *ConnectedWing {
+	all := s.Wings.All()
+	for _, w := range all {
+		if w.MachineID == machineID && s.canAccessWing(userID, w) {
+			return w
+		}
+	}
+	return nil
+}
+
 // canAccessSession returns true if userID can access this PTY session.
 func (s *Server) canAccessSession(userID string, session *PTYSession) bool {
 	if session.UserID == userID {
