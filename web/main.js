@@ -1289,6 +1289,11 @@ function renderWingDetailPage(machineId) {
             '<span class="wd-name" id="wd-name" title="click to rename">' + escapeHtml(name) + '</span>' +
             (w.wing_label ? '<button class="btn-sm wd-delete-label" id="wd-delete-label" title="remove label">x</button>' : '') +
         '</div>' +
+        (isOnline ? '<div class="wd-palette">' +
+            '<input id="wd-search" type="text" class="wd-search" placeholder="type a path to start a session..." autocomplete="off" spellcheck="false">' +
+            '<div id="wd-search-results" class="wd-search-results"></div>' +
+            '<div id="wd-search-status" class="wd-search-status"></div>' +
+        '</div>' : '') +
         '<div class="wd-info">' +
             '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(w.platform || 'unknown') + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">version</span><span class="detail-val">' + versionHtml + '</span></div>' +
@@ -1396,6 +1401,263 @@ function renderWingDetailPage(machineId) {
     if (isOnline) {
         loadWingPastSessions(machineId, 0);
     }
+
+    // Inline palette for starting sessions
+    if (isOnline) {
+        setupWingPalette(w);
+    }
+}
+
+function setupWingPalette(wing) {
+    var searchEl = document.getElementById('wd-search');
+    var resultsEl = document.getElementById('wd-search-results');
+    var statusEl = document.getElementById('wd-search-status');
+    if (!searchEl || !resultsEl || !statusEl) return;
+
+    var wpAgentIndex = 0;
+    var wpSelectedIndex = 0;
+    var wpDirCache = [];
+    var wpDirCacheDir = '';
+    var wpDirTimer = null;
+    var wpDirAbort = null;
+    var wpHomeDirCache = [];
+
+    var agents = wing.agents || ['claude'];
+    var lastAgent = getLastTermAgent();
+    var idx = agents.indexOf(lastAgent);
+    wpAgentIndex = idx >= 0 ? idx : 0;
+
+    function currentAgent() { return agents[wpAgentIndex % agents.length]; }
+
+    function renderStatus() {
+        statusEl.innerHTML = '<span class="accent">' + agentWithIcon(currentAgent()) + '</span>' +
+            (agents.length > 1 ? ' <span class="text-dim">(shift+tab to switch)</span>' : '');
+    }
+    renderStatus();
+
+    // Pre-cache home dir
+    if (wing.id) {
+        fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent('~/')).then(function(r) {
+            return r.json();
+        }).then(function(entries) {
+            if (entries && Array.isArray(entries)) {
+                wpHomeDirCache = entries.map(function(e) {
+                    return { name: e.name, path: e.path, isDir: e.is_dir };
+                });
+            }
+        }).catch(function() {});
+    }
+
+    function renderResults(filter) {
+        var wingId = wing.id || '';
+        var wingProjects = wingId
+            ? allProjects.filter(function(p) { return p.wingId === wingId; })
+            : allProjects;
+
+        var items = [];
+        var lower = filter ? filter.toLowerCase() : '';
+        var filtered = lower
+            ? wingProjects.filter(function(p) {
+                return p.name.toLowerCase().indexOf(lower) !== -1 ||
+                       p.path.toLowerCase().indexOf(lower) !== -1;
+            })
+            : wingProjects.slice();
+
+        filtered.sort(function(a, b) {
+            var ca = nestedRepoCount(a.path, wingProjects);
+            var cb = nestedRepoCount(b.path, wingProjects);
+            if (ca !== cb) return cb - ca;
+            return a.name.localeCompare(b.name);
+        });
+
+        filtered.forEach(function(p) {
+            items.push({ name: p.name, path: p.path, isDir: true });
+        });
+
+        // Include cached home dir entries
+        var seenPaths = {};
+        items.forEach(function(it) { seenPaths[it.path] = true; });
+        var homeExtras = wpHomeDirCache.filter(function(e) {
+            if (seenPaths[e.path]) return false;
+            return !lower || e.name.toLowerCase().indexOf(lower) !== -1 ||
+                   e.path.toLowerCase().indexOf(lower) !== -1;
+        });
+        homeExtras.sort(function(a, b) {
+            var ca = nestedRepoCount(a.path, wingProjects);
+            var cb = nestedRepoCount(b.path, wingProjects);
+            if (ca !== cb) return cb - ca;
+            return a.name.localeCompare(b.name);
+        });
+        homeExtras.forEach(function(e) {
+            items.push({ name: e.name, path: e.path, isDir: e.isDir });
+        });
+
+        renderItems(items);
+    }
+
+    function renderItems(items) {
+        wpSelectedIndex = 0;
+        if (items.length === 0) { resultsEl.innerHTML = ''; return; }
+
+        resultsEl.innerHTML = items.map(function(item, i) {
+            var icon = item.isDir ? '/' : '';
+            return '<div class="palette-item' + (i === 0 ? ' selected' : '') + '" data-path="' + escapeHtml(item.path) + '" data-index="' + i + '">' +
+                '<span class="palette-name">' + escapeHtml(item.name) + icon + '</span>' +
+                (item.path ? '<span class="palette-path">' + escapeHtml(shortenPath(item.path)) + '</span>' : '') +
+            '</div>';
+        }).join('');
+
+        resultsEl.querySelectorAll('.palette-item').forEach(function(item) {
+            item.addEventListener('click', function() { launch(item.dataset.path); });
+            item.addEventListener('mouseenter', function() {
+                resultsEl.querySelectorAll('.palette-item').forEach(function(el) { el.classList.remove('selected'); });
+                item.classList.add('selected');
+                wpSelectedIndex = parseInt(item.dataset.index);
+            });
+        });
+    }
+
+    function wpFilterCached(prefix) {
+        var items = wpDirCache;
+        if (prefix) {
+            items = items.filter(function(e) { return e.name.toLowerCase().indexOf(prefix) === 0; });
+        }
+        return items;
+    }
+
+    function wpDebouncedDirList(value) {
+        if (wpDirTimer) clearTimeout(wpDirTimer);
+        if (wpDirAbort) { wpDirAbort.abort(); wpDirAbort = null; }
+
+        if (!value || (value.charAt(0) !== '/' && value.charAt(0) !== '~')) {
+            wpDirCache = [];
+            wpDirCacheDir = '';
+            renderResults(value);
+            return;
+        }
+
+        var parsed = dirParent(value);
+        if (wpDirCacheDir && wpDirCacheDir === parsed.dir) {
+            renderItems(wpFilterCached(parsed.prefix));
+            return;
+        }
+        if (wpDirCache.length > 0) {
+            renderItems(wpFilterCached(parsed.prefix));
+        }
+        wpDirTimer = setTimeout(function() { wpFetchDirList(parsed.dir); }, 150);
+    }
+
+    function wpFetchDirList(dirPath) {
+        if (wpDirAbort) wpDirAbort.abort();
+        wpDirAbort = new AbortController();
+
+        fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent(dirPath), {
+            signal: wpDirAbort.signal
+        }).then(function(r) { return r.json(); }).then(function(entries) {
+            var currentParsed = dirParent(searchEl.value);
+            if (currentParsed.dir !== dirPath) return;
+
+            if (!entries || !Array.isArray(entries)) {
+                wpDirCache = [];
+                wpDirCacheDir = '';
+                renderItems([]);
+                return;
+            }
+            var items = entries.map(function(e) {
+                return { name: e.name, path: e.path, isDir: e.is_dir };
+            });
+            items.sort(function(a, b) {
+                if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+                var ca = nestedRepoCount(a.path, allProjects);
+                var cb = nestedRepoCount(b.path, allProjects);
+                if (ca !== cb) return cb - ca;
+                return a.name.localeCompare(b.name);
+            });
+            var absDirPath = dirPath;
+            if (items.length > 0 && items[0].path) {
+                absDirPath = items[0].path.replace(/\/[^\/]+$/, '');
+            }
+            var dirLabel = shortenPath(absDirPath).replace(/\/$/, '') || absDirPath;
+            items.unshift({ name: dirLabel, path: absDirPath, isDir: true });
+            wpDirCache = items;
+            wpDirCacheDir = dirPath;
+            renderItems(wpFilterCached(currentParsed.prefix));
+        }).catch(function(err) {
+            if (err && err.name === 'AbortError') return;
+        });
+    }
+
+    function navigate(dir) {
+        var items = resultsEl.querySelectorAll('.palette-item');
+        if (items.length === 0) return;
+        items[wpSelectedIndex].classList.remove('selected');
+        wpSelectedIndex = (wpSelectedIndex + dir + items.length) % items.length;
+        items[wpSelectedIndex].classList.add('selected');
+        items[wpSelectedIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    function tabComplete() {
+        var selected = resultsEl.querySelector('.palette-item.selected');
+        if (!selected) return;
+        var path = selected.dataset.path;
+        if (!path) return;
+        var short = shortenPath(path);
+        var nameEl = selected.querySelector('.palette-name');
+        var isDir = nameEl && nameEl.textContent.slice(-1) === '/';
+        if (isDir) {
+            searchEl.value = short + '/';
+            wpDebouncedDirList(searchEl.value);
+        } else {
+            searchEl.value = short;
+        }
+    }
+
+    function launch(cwd) {
+        var agent = currentAgent();
+        var validCwd = (cwd && cwd.charAt(0) === '/') ? cwd : '';
+        setLastTermAgent(agent);
+        showTerminal();
+        connectPTY(agent, validCwd, wing.id);
+    }
+
+    // Show initial results (projects list)
+    renderResults('');
+
+    searchEl.addEventListener('input', function() {
+        wpDebouncedDirList(searchEl.value);
+    });
+
+    searchEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            var selected = resultsEl.querySelector('.palette-item.selected');
+            if (selected) launch(selected.dataset.path);
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            navigate(e.key === 'ArrowDown' ? 1 : -1);
+        }
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            if (e.shiftKey) {
+                // Cycle agent
+                if (agents.length > 1) {
+                    wpAgentIndex = (wpAgentIndex + 1) % agents.length;
+                    renderStatus();
+                }
+            } else {
+                tabComplete();
+            }
+        }
+        if (e.key === '`') {
+            e.preventDefault();
+            // ` cycles agent (same as shift+tab) since wing is fixed
+            if (agents.length > 1) {
+                wpAgentIndex = (wpAgentIndex + 1) % agents.length;
+                renderStatus();
+            }
+        }
+    });
 }
 
 function loadWingPastSessions(machineId, offset) {

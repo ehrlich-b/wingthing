@@ -1045,6 +1045,44 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .wd-delete-label:hover { color: var(--red); border-color: var(--red); background: transparent; }
 
+.wd-palette {
+    margin-bottom: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.wd-search {
+    width: 100%;
+    padding: 12px 14px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    outline: none;
+}
+
+.wd-search::placeholder { color: var(--text-muted); }
+.wd-search:focus { border-bottom-color: var(--accent); }
+
+.wd-search-results {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.wd-search-results::-webkit-scrollbar { width: 4px; }
+.wd-search-results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.wd-search-status {
+    padding: 6px 14px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
 .wd-info {
     background: var(--bg-card);
     border-radius: 8px;
