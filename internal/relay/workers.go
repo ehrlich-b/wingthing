@@ -382,21 +382,32 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		LastSeen:    time.Now(),
 	}
 
-	// Validate org membership if org slug specified (only on login/single node with DB)
-	if wing.OrgID != "" && s.Store != nil {
-		org, orgErr := s.Store.GetOrgBySlug(wing.OrgID)
-		if orgErr != nil || org == nil {
-			errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org not found: " + wing.OrgID}
-			data, _ := json.Marshal(errMsg)
-			conn.Write(ctx, websocket.MessageText, data)
-			return
-		}
-		role := s.Store.GetOrgMemberRole(org.ID, userID)
-		if role != "owner" && role != "admin" {
-			errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "not authorized to register wing for org: " + wing.OrgID}
-			data, _ := json.Marshal(errMsg)
-			conn.Write(ctx, websocket.MessageText, data)
-			return
+	// Validate org membership if org slug specified
+	if wing.OrgID != "" {
+		if s.Store != nil {
+			// Login node: validate directly from DB
+			org, orgErr := s.Store.GetOrgBySlug(wing.OrgID)
+			if orgErr != nil || org == nil {
+				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org not found: " + wing.OrgID}
+				data, _ := json.Marshal(errMsg)
+				conn.Write(ctx, websocket.MessageText, data)
+				return
+			}
+			role := s.Store.GetOrgMemberRole(org.ID, userID)
+			if role != "owner" && role != "admin" {
+				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "not authorized to register wing for org: " + wing.OrgID}
+				data, _ := json.Marshal(errMsg)
+				conn.Write(ctx, websocket.MessageText, data)
+				return
+			}
+		} else if s.Config.LoginNodeAddr != "" {
+			// Edge node: proxy org check to login
+			if !s.validateOrgViaLogin(ctx, wing.OrgID, userID) {
+				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org validation failed for: " + wing.OrgID}
+				data, _ := json.Marshal(errMsg)
+				conn.Write(ctx, websocket.MessageText, data)
+				return
+			}
 		}
 	}
 
@@ -556,25 +567,91 @@ func (s *Server) SubmitTask(ctx context.Context, userID, identity, taskID string
 }
 
 func (s *Server) drainQueuedTasks(ctx context.Context, wing *ConnectedWing) {
-	if s.Store == nil {
+	if s.Store != nil {
+		// Login node: drain directly from DB
+		tasks, err := s.Store.ListPendingTasks(wing.UserID)
+		if err != nil {
+			log.Printf("drain queue error: %v", err)
+			return
+		}
+		for _, task := range tasks {
+			writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := wing.Conn.Write(writeCtx, websocket.MessageText, []byte(task.Payload))
+			cancel()
+			if err != nil {
+				log.Printf("drain to wing %s failed: %v", wing.ID, err)
+				return
+			}
+			s.Store.DequeueTask(task.ID)
+		}
 		return
 	}
-	tasks, err := s.Store.ListPendingTasks(wing.UserID)
+
+	// Edge node: fetch from login via internal API
+	if s.Config.LoginNodeAddr == "" {
+		return
+	}
+	s.drainQueuedTasksFromLogin(ctx, wing)
+}
+
+func (s *Server) drainQueuedTasksFromLogin(ctx context.Context, wing *ConnectedWing) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		s.Config.LoginNodeAddr+"/internal/tasks/drain/"+wing.UserID, nil)
 	if err != nil {
-		log.Printf("drain queue error: %v", err)
 		return
 	}
-	for _, task := range tasks {
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("drain from login failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	var payloads []json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&payloads); err != nil {
+		return
+	}
+
+	for _, payload := range payloads {
 		writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := wing.Conn.Write(writeCtx, websocket.MessageText, []byte(task.Payload))
+		err := wing.Conn.Write(writeCtx, websocket.MessageText, payload)
 		cancel()
 		if err != nil {
 			log.Printf("drain to wing %s failed: %v", wing.ID, err)
 			return
 		}
-		// Delete from queue after successful dispatch
-		s.Store.DequeueTask(task.ID)
 	}
+}
+
+// validateOrgViaLogin proxies org membership validation to the login node.
+func (s *Server) validateOrgViaLogin(ctx context.Context, orgSlug, userID string) bool {
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		s.Config.LoginNodeAddr+"/internal/org-check/"+orgSlug+"/"+userID, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false
+	}
+	return result.OK
 }
 
 // forwardChunk sends a chunk to SSE subscribers. No DB write.

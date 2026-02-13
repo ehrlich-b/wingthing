@@ -13,6 +13,8 @@ func (s *Server) registerInternalRoutes() {
 	s.mux.HandleFunc("GET /internal/entitlements", s.withInternalAuth(s.handleInternalEntitlements))
 	s.mux.HandleFunc("GET /internal/sessions/{token}", s.withInternalAuth(s.handleInternalSession))
 	s.mux.HandleFunc("POST /internal/sync", s.withInternalAuth(s.handleSync))
+	s.mux.HandleFunc("POST /internal/tasks/drain/{userID}", s.withInternalAuth(s.handleInternalDrainTasks))
+	s.mux.HandleFunc("GET /internal/org-check/{slug}/{userID}", s.withInternalAuth(s.handleInternalOrgCheck))
 }
 
 // withInternalAuth wraps a handler to only allow requests from Fly's internal network.
@@ -180,4 +182,49 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		banned = s.Bandwidth.ExceededUsers()
 	}
 	writeJSON(w, http.StatusOK, SyncResponse{Wings: others, BannedUsers: banned})
+}
+
+// handleInternalDrainTasks returns pending queued tasks for a user and deletes them.
+// Called by edge nodes when a wing connects so they can deliver offline-queued tasks.
+func (s *Server) handleInternalDrainTasks(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		writeJSON(w, http.StatusOK, []json.RawMessage{})
+		return
+	}
+
+	userID := r.PathValue("userID")
+	tasks, err := s.Store.ListPendingTasks(userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Collect payloads and dequeue
+	payloads := make([]json.RawMessage, 0, len(tasks))
+	for _, t := range tasks {
+		payloads = append(payloads, json.RawMessage(t.Payload))
+		s.Store.DequeueTask(t.ID)
+	}
+	writeJSON(w, http.StatusOK, payloads)
+}
+
+// handleInternalOrgCheck validates that a user is an owner/admin of an org.
+// Called by edge nodes during wing registration with --org.
+func (s *Server) handleInternalOrgCheck(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		writeError(w, http.StatusServiceUnavailable, "no store")
+		return
+	}
+
+	slug := r.PathValue("slug")
+	userID := r.PathValue("userID")
+
+	org, err := s.Store.GetOrgBySlug(slug)
+	if err != nil || org == nil {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": false})
+		return
+	}
+	role := s.Store.GetOrgMemberRole(org.ID, userID)
+	ok := role == "owner" || role == "admin"
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": ok})
 }

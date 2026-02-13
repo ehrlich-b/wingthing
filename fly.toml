@@ -3,6 +3,9 @@ primary_region = "ewr"
 
 [build]
 
+[deploy]
+  strategy = "bluegreen"
+
 [processes]
   login = "sh -c 'mkdir -p /data/.wingthing && HOME=/data exec ./wt serve --addr :8080'"
   edge = "./wt serve --addr :8080"

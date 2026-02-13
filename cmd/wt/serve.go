@@ -170,6 +170,7 @@ func serveCmd() *cobra.Command {
 
 			// Sync bandwidth usage to DB every 10 minutes (only if DB available)
 			if !isEdge {
+				srv.Bandwidth.SeedFromDB()
 				srv.Bandwidth.StartSync(ctx, 10*time.Minute)
 			}
 

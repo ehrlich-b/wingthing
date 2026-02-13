@@ -231,6 +231,36 @@ func (b *BandwidthMeter) AddUsage(userID string, bytes int64) {
 	b.counter(userID).Add(bytes)
 }
 
+// SeedFromDB loads current month's bandwidth totals from the DB into memory.
+// Called on login startup to avoid resetting counters to zero.
+func (b *BandwidthMeter) SeedFromDB() {
+	if b.db == nil {
+		return
+	}
+	month := currentMonth()
+	rows, err := b.db.Query(
+		`SELECT user_id, bytes_total FROM bandwidth_log WHERE month = ?`, month)
+	if err != nil {
+		log.Printf("bandwidth seed error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	n := 0
+	for rows.Next() {
+		var userID string
+		var total int64
+		if err := rows.Scan(&userID, &total); err != nil {
+			continue
+		}
+		b.counter(userID).Store(total)
+		n++
+	}
+	if n > 0 {
+		log.Printf("bandwidth: seeded %d users from DB for %s", n, month)
+	}
+}
+
 // StartSync syncs per-user bandwidth to the DB every interval. Only writes users with changes.
 func (b *BandwidthMeter) StartSync(ctx context.Context, interval time.Duration) {
 	go func() {
