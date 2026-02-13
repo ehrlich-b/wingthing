@@ -133,13 +133,26 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, len(orgs))
 	for i, o := range orgs {
-		out[i] = map[string]any{
+		entry := map[string]any{
 			"id":        o.ID,
 			"name":      o.Name,
 			"slug":      o.Slug,
 			"max_seats": o.MaxSeats,
 			"is_owner":  o.OwnerUserID == user.ID,
 		}
+		sub, _ := s.Store.GetActiveOrgSubscription(o.ID)
+		if sub != nil {
+			used, _ := s.Store.CountEntitlementsBySub(sub.ID)
+			entry["has_subscription"] = true
+			entry["plan"] = sub.Plan
+			entry["seats_total"] = sub.Seats
+			entry["seats_used"] = used
+		} else {
+			entry["has_subscription"] = false
+		}
+		memberCount, _ := s.Store.CountOrgMembers(o.ID)
+		entry["member_count"] = memberCount
+		out[i] = entry
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -161,13 +174,26 @@ func (s *Server) handleGetOrg(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not a member")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"id":        org.ID,
 		"name":      org.Name,
 		"slug":      org.Slug,
 		"max_seats": org.MaxSeats,
 		"is_owner":  org.OwnerUserID == user.ID,
-	})
+	}
+	sub, _ := s.Store.GetActiveOrgSubscription(org.ID)
+	if sub != nil {
+		used, _ := s.Store.CountEntitlementsBySub(sub.ID)
+		resp["has_subscription"] = true
+		resp["plan"] = sub.Plan
+		resp["seats_total"] = sub.Seats
+		resp["seats_used"] = used
+	} else {
+		resp["has_subscription"] = false
+	}
+	memberCount, _ := s.Store.CountOrgMembers(org.ID)
+	resp["member_count"] = memberCount
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleListOrgMembers lists members and pending invites. GET /api/orgs/{slug}/members
@@ -306,12 +332,6 @@ func (s *Server) handleOrgUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, _ := s.Store.GetActiveOrgSubscription(org.ID)
-	if existing != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "plan": existing.Plan})
-		return
-	}
-
 	var req struct {
 		Plan  string `json:"plan"`
 		Seats int    `json:"seats"`
@@ -325,6 +345,38 @@ func (s *Server) handleOrgUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Seats < 1 {
 		req.Seats = 5
+	}
+
+	existing, _ := s.Store.GetActiveOrgSubscription(org.ID)
+	if existing != nil {
+		if req.Seats <= existing.Seats {
+			writeError(w, http.StatusBadRequest, "contact support to reduce seats")
+			return
+		}
+		// Increase seats on existing subscription
+		s.Store.UpdateSubscriptionSeats(existing.ID, req.Seats)
+		s.Store.SetOrgMaxSeats(org.ID, req.Seats)
+
+		// Grant entitlements to existing members who don't have one yet
+		members, _ := s.Store.ListOrgMembers(org.ID)
+		granted := 0
+		for _, m := range members {
+			used, _ := s.Store.CountEntitlementsBySub(existing.ID)
+			if used >= req.Seats {
+				break
+			}
+			if s.Store.CreateEntitlement(&Entitlement{ID: uuid.New().String(), UserID: m.UserID, SubscriptionID: existing.ID}) == nil {
+				s.Store.UpdateUserTier(m.UserID, "pro")
+				if s.Bandwidth != nil {
+					s.Bandwidth.InvalidateUser(m.UserID)
+				}
+				granted++
+			}
+		}
+
+		log.Printf("org %s seats increased: %d -> %d, granted=%d", org.Slug, existing.Seats, req.Seats, granted)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "plan": existing.Plan, "seats": req.Seats})
+		return
 	}
 
 	subID := uuid.New().String()

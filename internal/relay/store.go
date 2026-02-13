@@ -512,7 +512,7 @@ func (s *RelayStore) CreateOrg(id, name, slug, ownerUserID string) error {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	_, err = tx.Exec(
-		"INSERT INTO orgs (id, name, slug, owner_user_id) VALUES (?, ?, ?, ?)",
+		"INSERT INTO orgs (id, name, slug, owner_user_id, max_seats) VALUES (?, ?, ?, ?, 1)",
 		id, name, slug, ownerUserID,
 	)
 	if err != nil {
@@ -729,6 +729,19 @@ func (s *RelayStore) ListPendingInvites(orgID string) ([]*OrgInvite, error) {
 func (s *RelayStore) SetOrgMaxSeats(orgID string, seats int) error {
 	_, err := s.db.Exec("UPDATE orgs SET max_seats = ? WHERE id = ?", seats, orgID)
 	return err
+}
+
+// UpdateSubscriptionSeats updates the seat count on a subscription.
+func (s *RelayStore) UpdateSubscriptionSeats(subID string, seats int) error {
+	_, err := s.db.Exec("UPDATE subscriptions SET seats = ?, updated_at = datetime('now') WHERE id = ?", seats, subID)
+	return err
+}
+
+// CountOrgMembers returns the number of members in an org.
+func (s *RelayStore) CountOrgMembers(orgID string) (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM org_members WHERE org_id = ?", orgID).Scan(&count)
+	return count, err
 }
 
 // --- Subscriptions + Entitlements ---
