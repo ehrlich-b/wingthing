@@ -1,0 +1,6 @@
+# Only your overrides — base deny rules and agent auto-drill are inherited
+
+fs:
+  - "ro:~/.ssh"       # git push/pull via SSH keys — read-only, can't modify keys
+
+network: "*"           # github, npm registry, go module proxy, fly.io deploy, etc.

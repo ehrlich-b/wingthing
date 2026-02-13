@@ -84,15 +84,27 @@ func TestSeatbeltExecBuildsCommand(t *testing.T) {
 
 func TestBuildProfileDenyWritePaths(t *testing.T) {
 	home, _ := os.UserHomeDir()
-	eggYaml := home + "/project/egg.yaml"
+	projectDir := home + "/project"
+	eggYaml := projectDir + "/egg.yaml"
 	profile := buildProfile(Config{
 		NetworkNeed: NetworkFull,
+		Mounts:      []Mount{{Source: projectDir, ReadOnly: false}},
 		DenyWrite:   []string{eggYaml},
 	})
 	// Should contain a deny file-write* with literal for the specific file
 	want := `(deny file-write* (literal "` + eggYaml + `"))`
 	if !strings.Contains(profile, want) {
 		t.Errorf("profile should deny writes to egg.yaml, got:\n%s", profile)
+	}
+	// deny-write must come AFTER mount allows so it takes precedence in SBPL
+	mountAllow := `(allow file-write* (subpath "` + projectDir + `"))`
+	mountIdx := strings.Index(profile, mountAllow)
+	denyIdx := strings.Index(profile, want)
+	if mountIdx < 0 || denyIdx < 0 {
+		t.Fatalf("profile missing expected rules:\n%s", profile)
+	}
+	if denyIdx < mountIdx {
+		t.Errorf("deny-write rule must come AFTER mount allow to take precedence in SBPL.\nmount allow at %d, deny-write at %d\nprofile:\n%s", mountIdx, denyIdx, profile)
 	}
 	// Should NOT deny reads
 	denyRead := `(deny file-read* (literal "` + eggYaml + `"))`
@@ -212,13 +224,17 @@ func TestSeatbeltWriteRestriction(t *testing.T) {
 }
 
 func TestSeatbeltDenyWriteBlocksWrite(t *testing.T) {
-	// Create a file that should be readable but not writable
+	// Create a file that should be readable but not writable.
+	// Include a writable mount for the parent dir — this is the real scenario:
+	// the project dir is rw-mounted AND egg.yaml inside it is deny-write.
+	// Without the mount, deny-write trivially works (no competing allow rule).
 	tmpDir := t.TempDir()
 	protectedFile := tmpDir + "/egg.yaml"
 	os.WriteFile(protectedFile, []byte("original content"), 0644)
 
 	sb, err := newPlatform(Config{
 		NetworkNeed: NetworkFull,
+		Mounts:      []Mount{{Source: tmpDir, ReadOnly: false}},
 		DenyWrite:   []string{protectedFile},
 	})
 	if err != nil {

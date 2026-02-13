@@ -86,11 +86,25 @@ func DefaultDenyPaths() []string {
 	}
 }
 
+// DefaultCacheDirs returns OS-standard cache directories that build tools need.
+// Go, npm, pip, cargo, etc. all write to these. No secrets live here.
+func DefaultCacheDirs() []string {
+	return []string{
+		"~/.cache/",            // XDG_CACHE_HOME default (Linux) — go-build, pip, etc.
+		"~/Library/Caches/",    // macOS app caches — go-build, npm, etc.
+		"~/go/pkg/mod/cache/",  // Go module download cache
+	}
+}
+
 // DefaultEggConfig returns the restrictive default config used when no egg.yaml exists.
 // CWD is writable, home is read-only except agent-drilled holes. Sensitive dirs are denied.
+// OS-standard cache dirs are writable so build tools (go, npm, cargo, pip) work out of the box.
 // egg.yaml itself is deny-write so agents can read but not modify their sandbox config.
 func DefaultEggConfig() *EggConfig {
 	fs := []string{"rw:./"}
+	for _, d := range DefaultCacheDirs() {
+		fs = append(fs, "rw:"+d)
+	}
 	for _, d := range DefaultDenyPaths() {
 		fs = append(fs, "deny:"+d)
 	}

@@ -53,8 +53,9 @@ func (s *seatbeltSandbox) Destroy() error {
 }
 
 // buildProfile generates a Seatbelt (.sb) profile from sandbox config.
-// Uses allow-default with specific deny rules. SBPL uses most-specific-wins,
-// so deny paths override broader allows, and mount allows override broader denies.
+// Uses allow-default with specific deny rules. SBPL gives precedence to
+// later rules, so ordering matters: deny-write rules must come after
+// mount allows to prevent the mount allow from overriding them.
 func buildProfile(cfg Config) string {
 	var sb strings.Builder
 	sb.WriteString("(version 1)\n")
@@ -97,18 +98,6 @@ func buildProfile(cfg Config) string {
 		fmt.Fprintf(&sb, "(deny file-read* file-write* (subpath %q))\n", abs)
 	}
 
-	// Deny-write paths — block writes only, reads allowed.
-	for _, d := range cfg.DenyWrite {
-		abs, err := filepath.Abs(d)
-		if err != nil {
-			continue
-		}
-		if real, err := filepath.EvalSymlinks(abs); err == nil {
-			abs = real
-		}
-		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
-	}
-
 	// Mount-based filesystem write isolation.
 	// Deny writes to $HOME, then allow mount paths via most-specific-wins.
 	// Agent config dirs use regex instead of subpath so that files like
@@ -147,6 +136,19 @@ func buildProfile(cfg Config) string {
 		}
 		fmt.Fprintf(&sb, "(allow file-write* (subpath %q))\n", tmpDir)
 		sb.WriteString("(allow file-write* (subpath \"/private/tmp\"))\n")
+	}
+
+	// Deny-write paths — block writes only, reads allowed.
+	// Emitted AFTER mount allows so they take precedence in SBPL evaluation.
+	for _, d := range cfg.DenyWrite {
+		abs, err := filepath.Abs(d)
+		if err != nil {
+			continue
+		}
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = real
+		}
+		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
 	}
 
 	return sb.String()
