@@ -114,16 +114,23 @@ func (p *DomainProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	client, _, err := hj.Hijack()
+	client, bufrw, err := hj.Hijack()
 	if err != nil {
 		target.Close()
 		return
 	}
 
-	// Bidirectional copy
+	// Send CONNECT 200 response and flush — client waits for this before TLS handshake.
+	bufrw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+	if err := bufrw.Flush(); err != nil {
+		target.Close()
+		client.Close()
+		return
+	}
+
+	// Bidirectional copy — use bufrw.Reader for client reads in case data is already buffered.
 	go func() {
-		io.Copy(target, client)
+		io.Copy(target, bufrw)
 		target.Close()
 	}()
 	go func() {
