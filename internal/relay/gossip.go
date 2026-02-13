@@ -254,7 +254,16 @@ func (s *Server) applyGossipAndNotify(events []GossipEvent) {
 	s.Peers.ApplyDelta(events)
 
 	// Notify browser subscribers
+	myNodeID := s.Config.FlyMachineID
 	for _, ev := range events {
+		// Skip self-echo: don't re-notify for events from our own node
+		if myNodeID != "" && ev.NodeID == myNodeID {
+			continue
+		}
+		// Skip events for wings we have locally (already notified by WingRegistry)
+		if s.Wings.FindByID(ev.WingID) != nil {
+			continue
+		}
 		var userID string
 		if ev.WingInfo != nil {
 			userID = ev.WingInfo.UserID
@@ -268,10 +277,15 @@ func (s *Server) applyGossipAndNotify(events []GossipEvent) {
 		if ev.Event == "offline" {
 			evType = "wing.offline"
 		}
+		// Use wing's machine ID (not Fly server machine ID) for browser display
+		wingMachineID := ev.MachineID
+		if ev.WingInfo != nil && ev.WingInfo.MachineID != "" {
+			wingMachineID = ev.WingInfo.MachineID
+		}
 		we := WingEvent{
 			Type:      evType,
 			WingID:    ev.WingID,
-			MachineID: ev.MachineID,
+			MachineID: wingMachineID,
 		}
 		if ev.WingInfo != nil {
 			we.Platform = ev.WingInfo.Platform
@@ -314,12 +328,22 @@ func (s *Server) edgeGossipPull(ctx context.Context, loginAddr string, lastSeq *
 		localEvents = []GossipEvent{}
 	}
 
+	// Re-queue helper for failure paths
+	requeue := func() {
+		if len(localEvents) > 0 {
+			s.gossipOutMu.Lock()
+			s.gossipOutbuf = append(localEvents, s.gossipOutbuf...)
+			s.gossipOutMu.Unlock()
+		}
+	}
+
 	reqBody := GossipSyncRequest{
 		Events:    localEvents,
 		LatestSeq: *lastSeq,
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
+		requeue()
 		return
 	}
 
@@ -328,22 +352,26 @@ func (s *Server) edgeGossipPull(ctx context.Context, loginAddr string, lastSeq *
 		loginAddr+"/internal/gossip/sync",
 		bytes.NewReader(body))
 	if err != nil {
+		requeue()
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		requeue()
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		requeue()
 		return
 	}
 
 	var syncResp GossipSyncResponse
 	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
+		requeue()
 		return
 	}
 

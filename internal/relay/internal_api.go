@@ -147,6 +147,11 @@ func (s *Server) handleGossipSync(w http.ResponseWriter, r *http.Request) {
 	// Apply incoming events (from edge) to our PeerDirectory + notify browser subs
 	s.applyGossipAndNotify(req.Events)
 
+	// Login node: append edge events to GossipLog so other edges can see them
+	if s.Gossip != nil && len(req.Events) > 0 {
+		s.Gossip.Append(req.Events)
+	}
+
 	// Login node: return events from GossipLog since edge's last seq
 	if s.Gossip != nil {
 		events, latestSeq := s.Gossip.Since(req.LatestSeq)
