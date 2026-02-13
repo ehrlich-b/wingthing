@@ -1,4 +1,4 @@
-.PHONY: build test check clean web serve release proto deploy jail
+.PHONY: build test check clean web serve release proto deploy deploy-edge scale status jail
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -42,6 +42,28 @@ jail: build
 
 deploy: check
 	fly deploy
+
+# Add edge nodes to a region. Usage: make deploy-edge REGIONS=nrt,lhr COUNT=1
+COUNT ?= 1
+deploy-edge:
+ifndef REGIONS
+	$(error REGIONS is required. Example: make deploy-edge REGIONS=nrt,lhr)
+endif
+	fly scale count edge=$(COUNT) --region $(REGIONS) --yes
+
+# Show all machines, regions, and process groups.
+status:
+	@echo "=== Machines ==="
+	@fly machines list
+	@echo ""
+	@echo "=== Scale ==="
+	@fly scale show
+
+# Shorthand: make scale LOGIN=1 EDGE=3
+LOGIN ?= 1
+EDGE ?= 0
+scale:
+	fly scale count login=$(LOGIN) edge=$(EDGE) --yes
 
 proto:
 	protoc -I proto --go_out=paths=source_relative:internal/egg/pb --go-grpc_out=paths=source_relative:internal/egg/pb proto/egg.proto
