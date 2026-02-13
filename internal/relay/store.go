@@ -731,6 +731,187 @@ func (s *RelayStore) SetOrgMaxSeats(orgID string, seats int) error {
 	return err
 }
 
+// --- Subscriptions + Entitlements ---
+
+type Subscription struct {
+	ID                   string
+	UserID               *string
+	OrgID                *string
+	Plan                 string
+	Status               string
+	Seats                int
+	StripeSubscriptionID *string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+type Entitlement struct {
+	ID             string
+	UserID         string
+	SubscriptionID string
+	CreatedAt      time.Time
+}
+
+// CreateSubscription inserts a new subscription.
+func (s *RelayStore) CreateSubscription(sub *Subscription) error {
+	_, err := s.db.Exec(
+		`INSERT INTO subscriptions (id, user_id, org_id, plan, status, seats, stripe_subscription_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		sub.ID, sub.UserID, sub.OrgID, sub.Plan, sub.Status, sub.Seats, sub.StripeSubscriptionID,
+	)
+	return err
+}
+
+// GetSubscriptionByID returns a subscription by ID.
+func (s *RelayStore) GetSubscriptionByID(id string) (*Subscription, error) {
+	row := s.db.QueryRow(
+		"SELECT id, user_id, org_id, plan, status, seats, stripe_subscription_id, created_at, updated_at FROM subscriptions WHERE id = ?",
+		id,
+	)
+	var sub Subscription
+	err := row.Scan(&sub.ID, &sub.UserID, &sub.OrgID, &sub.Plan, &sub.Status, &sub.Seats, &sub.StripeSubscriptionID, &sub.CreatedAt, &sub.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get subscription: %w", err)
+	}
+	return &sub, nil
+}
+
+// GetActivePersonalSubscription returns the user's active personal subscription, if any.
+func (s *RelayStore) GetActivePersonalSubscription(userID string) (*Subscription, error) {
+	row := s.db.QueryRow(
+		"SELECT id, user_id, org_id, plan, status, seats, stripe_subscription_id, created_at, updated_at FROM subscriptions WHERE user_id = ? AND org_id IS NULL AND status = 'active'",
+		userID,
+	)
+	var sub Subscription
+	err := row.Scan(&sub.ID, &sub.UserID, &sub.OrgID, &sub.Plan, &sub.Status, &sub.Seats, &sub.StripeSubscriptionID, &sub.CreatedAt, &sub.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get personal subscription: %w", err)
+	}
+	return &sub, nil
+}
+
+// GetActiveOrgSubscription returns the org's active subscription, if any.
+func (s *RelayStore) GetActiveOrgSubscription(orgID string) (*Subscription, error) {
+	row := s.db.QueryRow(
+		"SELECT id, user_id, org_id, plan, status, seats, stripe_subscription_id, created_at, updated_at FROM subscriptions WHERE org_id = ? AND status = 'active'",
+		orgID,
+	)
+	var sub Subscription
+	err := row.Scan(&sub.ID, &sub.UserID, &sub.OrgID, &sub.Plan, &sub.Status, &sub.Seats, &sub.StripeSubscriptionID, &sub.CreatedAt, &sub.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get org subscription: %w", err)
+	}
+	return &sub, nil
+}
+
+// UpdateSubscriptionStatus sets the status of a subscription.
+func (s *RelayStore) UpdateSubscriptionStatus(subID, status string) error {
+	_, err := s.db.Exec("UPDATE subscriptions SET status = ?, updated_at = datetime('now') WHERE id = ?", status, subID)
+	return err
+}
+
+// CreateEntitlement inserts a new entitlement.
+func (s *RelayStore) CreateEntitlement(ent *Entitlement) error {
+	_, err := s.db.Exec(
+		"INSERT OR IGNORE INTO entitlements (id, user_id, subscription_id) VALUES (?, ?, ?)",
+		ent.ID, ent.UserID, ent.SubscriptionID,
+	)
+	return err
+}
+
+// DeleteEntitlementByUserAndSub removes a specific entitlement.
+func (s *RelayStore) DeleteEntitlementByUserAndSub(userID, subID string) error {
+	_, err := s.db.Exec("DELETE FROM entitlements WHERE user_id = ? AND subscription_id = ?", userID, subID)
+	return err
+}
+
+// DeleteEntitlementsBySub removes all entitlements for a subscription.
+func (s *RelayStore) DeleteEntitlementsBySub(subID string) ([]string, error) {
+	rows, err := s.db.Query("SELECT user_id FROM entitlements WHERE subscription_id = ?", subID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var userIDs []string
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		userIDs = append(userIDs, uid)
+	}
+	_, err = s.db.Exec("DELETE FROM entitlements WHERE subscription_id = ?", subID)
+	return userIDs, err
+}
+
+// CountEntitlementsBySub returns the number of entitlements for a subscription.
+func (s *RelayStore) CountEntitlementsBySub(subID string) (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM entitlements WHERE subscription_id = ?", subID).Scan(&count)
+	return count, err
+}
+
+// IsUserPro returns true if the user has any active entitlement.
+func (s *RelayStore) IsUserPro(userID string) bool {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM entitlements e
+		 JOIN subscriptions s ON e.subscription_id = s.id
+		 WHERE e.user_id = ? AND s.status = 'active'`,
+		userID,
+	).Scan(&count)
+	return err == nil && count > 0
+}
+
+// BackfillProUsers creates subscription+entitlement for any user with tier='pro' who lacks an entitlement.
+func (s *RelayStore) BackfillProUsers() error {
+	rows, err := s.db.Query(
+		`SELECT id FROM social_users WHERE tier = 'pro'
+		 AND id NOT IN (SELECT e.user_id FROM entitlements e JOIN subscriptions s ON e.subscription_id = s.id WHERE s.status = 'active')`,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var userIDs []string
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return err
+		}
+		userIDs = append(userIDs, uid)
+	}
+	for _, uid := range userIDs {
+		subID := "backfill-" + uid
+		sub := &Subscription{
+			ID:     subID,
+			UserID: &uid,
+			Plan:   "pro_monthly",
+			Status: "active",
+			Seats:  1,
+		}
+		if err := s.CreateSubscription(sub); err != nil {
+			continue // already exists
+		}
+		ent := &Entitlement{
+			ID:             "backfill-ent-" + uid,
+			UserID:         uid,
+			SubscriptionID: subID,
+		}
+		s.CreateEntitlement(ent)
+	}
+	return nil
+}
+
 func (s *RelayStore) migrate() error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT PRIMARY KEY,

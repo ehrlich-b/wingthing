@@ -12,6 +12,49 @@ import (
 	"github.com/google/uuid"
 )
 
+// grantOrgEntitlement grants a pro entitlement to a user from an org's subscription,
+// if the org has an active subscription with available seats.
+func (s *Server) grantOrgEntitlement(orgID, userID string) {
+	sub, _ := s.Store.GetActiveOrgSubscription(orgID)
+	if sub == nil {
+		return
+	}
+	used, _ := s.Store.CountEntitlementsBySub(sub.ID)
+	if used >= sub.Seats {
+		return // no seats available
+	}
+	ent := &Entitlement{
+		ID:             uuid.New().String(),
+		UserID:         userID,
+		SubscriptionID: sub.ID,
+	}
+	if err := s.Store.CreateEntitlement(ent); err != nil {
+		log.Printf("grant org entitlement: %v", err)
+		return
+	}
+	s.Store.UpdateUserTier(userID, "pro")
+	if s.Bandwidth != nil {
+		s.Bandwidth.InvalidateUser(userID)
+	}
+}
+
+// revokeOrgEntitlement removes a user's entitlement from an org's subscription.
+func (s *Server) revokeOrgEntitlement(orgID, userID string) {
+	sub, _ := s.Store.GetActiveOrgSubscription(orgID)
+	if sub == nil {
+		return
+	}
+	s.Store.DeleteEntitlementByUserAndSub(userID, sub.ID)
+	tier := "free"
+	if s.Store.IsUserPro(userID) {
+		tier = "pro"
+	}
+	s.Store.UpdateUserTier(userID, tier)
+	if s.Bandwidth != nil {
+		s.Bandwidth.InvalidateUser(userID)
+	}
+}
+
 var slugRegexp = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$`)
 
 func slugify(name string) string {
@@ -253,6 +296,138 @@ func (s *Server) sendInviteEmail(to, orgName, link string) {
 	}
 }
 
+// handleOrgUpgrade creates a team subscription for an org. POST /api/orgs/{slug}/upgrade
+func (s *Server) handleOrgUpgrade(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	slug := r.PathValue("slug")
+	org, err := s.Store.GetOrgBySlug(slug)
+	if err != nil || org == nil {
+		writeError(w, http.StatusNotFound, "org not found")
+		return
+	}
+	if org.OwnerUserID != user.ID {
+		writeError(w, http.StatusForbidden, "only the org owner can upgrade")
+		return
+	}
+
+	// Check for existing sub
+	existing, _ := s.Store.GetActiveOrgSubscription(org.ID)
+	if existing != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "plan": existing.Plan})
+		return
+	}
+
+	var req struct {
+		Plan  string `json:"plan"`
+		Seats int    `json:"seats"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Plan == "" {
+		req.Plan = "team_monthly"
+	}
+	if req.Seats < 1 {
+		req.Seats = 5
+	}
+
+	subID := uuid.New().String()
+	sub := &Subscription{
+		ID:     subID,
+		OrgID:  &org.ID,
+		Plan:   req.Plan,
+		Status: "active",
+		Seats:  req.Seats,
+	}
+	if err := s.Store.CreateSubscription(sub); err != nil {
+		writeError(w, http.StatusInternalServerError, "create subscription: "+err.Error())
+		return
+	}
+
+	// Update org max_seats
+	s.Store.SetOrgMaxSeats(org.ID, req.Seats)
+
+	// Grant entitlements to existing members
+	members, _ := s.Store.ListOrgMembers(org.ID)
+	granted := 0
+	for _, m := range members {
+		if granted >= req.Seats {
+			break
+		}
+		ent := &Entitlement{
+			ID:             uuid.New().String(),
+			UserID:         m.UserID,
+			SubscriptionID: subID,
+		}
+		if err := s.Store.CreateEntitlement(ent); err == nil {
+			s.Store.UpdateUserTier(m.UserID, "pro")
+			if s.Bandwidth != nil {
+				s.Bandwidth.InvalidateUser(m.UserID)
+			}
+			granted++
+		}
+	}
+
+	log.Printf("org %s upgraded: plan=%s seats=%d members_granted=%d", org.Slug, req.Plan, req.Seats, granted)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "plan": req.Plan, "seats": req.Seats})
+}
+
+// handleOrgCancel cancels an org's subscription. POST /api/orgs/{slug}/cancel
+func (s *Server) handleOrgCancel(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	slug := r.PathValue("slug")
+	org, err := s.Store.GetOrgBySlug(slug)
+	if err != nil || org == nil {
+		writeError(w, http.StatusNotFound, "org not found")
+		return
+	}
+	if org.OwnerUserID != user.ID {
+		writeError(w, http.StatusForbidden, "only the org owner can cancel")
+		return
+	}
+
+	sub, _ := s.Store.GetActiveOrgSubscription(org.ID)
+	if sub == nil {
+		writeError(w, http.StatusBadRequest, "no active subscription")
+		return
+	}
+
+	if err := s.Store.UpdateSubscriptionStatus(sub.ID, "canceled"); err != nil {
+		writeError(w, http.StatusInternalServerError, "cancel subscription: "+err.Error())
+		return
+	}
+
+	// Remove all entitlements for this subscription
+	affectedUsers, err := s.Store.DeleteEntitlementsBySub(sub.ID)
+	if err != nil {
+		log.Printf("delete entitlements for sub %s: %v", sub.ID, err)
+	}
+
+	// Update tiers and invalidate bandwidth for affected users
+	for _, uid := range affectedUsers {
+		tier := "free"
+		if s.Store.IsUserPro(uid) {
+			tier = "pro"
+		}
+		s.Store.UpdateUserTier(uid, tier)
+		if s.Bandwidth != nil {
+			s.Bandwidth.InvalidateUser(uid)
+		}
+	}
+
+	log.Printf("org %s subscription canceled, %d users affected", org.Slug, len(affectedUsers))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // handleRemoveOrgMember removes a member. DELETE /api/orgs/{slug}/members/{userID}
 func (s *Server) handleRemoveOrgMember(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
@@ -286,6 +461,9 @@ func (s *Server) handleRemoveOrgMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Revoke org entitlement for the removed member
+	s.revokeOrgEntitlement(org.ID, targetUserID)
+
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -315,6 +493,7 @@ func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			if user.Email != nil && strings.EqualFold(*user.Email, email) {
 				s.Store.AddOrgMember(orgID, user.ID, "member")
+				s.grantOrgEntitlement(orgID, user.ID)
 				http.SetCookie(w, &http.Cookie{Name: "invite_token", Path: "/", MaxAge: -1})
 				if s.Config.AppHost != "" {
 					http.Redirect(w, r, "https://"+s.Config.AppHost+"/?invite=accepted", http.StatusSeeOther)

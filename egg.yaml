@@ -2,5 +2,6 @@
 
 fs:
   - "ro:~/.ssh"       # git push/pull via SSH keys — read-only, can't modify keys
+  - "rw:~/.fly/"      # fly deploy needs token + config
 
 network: "*"           # github, npm registry, go module proxy, fly.io deploy, etc.

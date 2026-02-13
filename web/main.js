@@ -836,6 +836,8 @@ function showAccountModal() {
 
     if (tier === 'free') {
         html += '<div class="detail-actions"><button class="btn-sm btn-accent" id="account-upgrade">give me pro</button></div>';
+    } else {
+        html += '<div class="detail-actions"><button class="btn-sm" id="account-downgrade" style="color:var(--text-dim)">cancel pro</button></div>';
     }
 
     html += '<div class="detail-actions" style="margin-top:12px"><button class="btn-sm btn-danger" id="account-logout">log out</button></div>';
@@ -855,6 +857,21 @@ function showAccountModal() {
                     upgradeBtn.textContent = 'done — you are pro';
                 })
                 .catch(function() { upgradeBtn.textContent = 'failed'; upgradeBtn.disabled = false; });
+        });
+    }
+
+    var downgradeBtn = document.getElementById('account-downgrade');
+    if (downgradeBtn) {
+        downgradeBtn.addEventListener('click', function() {
+            downgradeBtn.textContent = 'canceling...';
+            downgradeBtn.disabled = true;
+            fetch('/api/app/downgrade', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.tier) currentUser.tier = data.tier;
+                    downgradeBtn.textContent = 'done — ' + (data.tier || 'free');
+                })
+                .catch(function() { downgradeBtn.textContent = 'failed'; downgradeBtn.disabled = false; });
         });
     }
 

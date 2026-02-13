@@ -22,16 +22,16 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	tier := user.Tier
-	if tier == "" {
-		tier = "free"
+	tier := "free"
+	if s.Store.IsUserPro(user.ID) {
+		tier = "pro"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":           user.ID,
 		"display_name": user.DisplayName,
 		"provider":     user.Provider,
 		"avatar_url":   user.AvatarURL,
-		"is_pro":       user.IsPro,
+		"is_pro":       tier == "pro",
 		"tier":         tier,
 		"email":        user.Email,
 	})
@@ -435,9 +435,9 @@ func (s *Server) handleAppUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tier := user.Tier
-	if tier == "" {
-		tier = "free"
+	tier := "free"
+	if s.Store.IsUserPro(user.ID) {
+		tier = "pro"
 	}
 
 	var usageBytes int64
@@ -453,14 +453,13 @@ func (s *Server) handleAppUsage(w http.ResponseWriter, r *http.Request) {
 		out["cap_bytes"] = freeMonthlyCap
 		out["exceeded"] = usageBytes >= freeMonthlyCap
 	} else {
-		// Pro/team: show usage but no cap
 		out["cap_bytes"] = nil
 		out["exceeded"] = false
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleAppUpgrade sets the user's tier to "pro".
+// handleAppUpgrade creates a personal subscription + entitlement for the user.
 // TODO: integrate Stripe — this is a placeholder that grants pro immediately.
 func (s *Server) handleAppUpgrade(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
@@ -468,10 +467,82 @@ func (s *Server) handleAppUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	if err := s.Store.UpdateUserTier(user.ID, "pro"); err != nil {
-		writeError(w, http.StatusInternalServerError, "update tier: "+err.Error())
+
+	// Check for existing personal sub
+	existing, _ := s.Store.GetActivePersonalSubscription(user.ID)
+	if existing != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": "pro"})
 		return
 	}
+
+	subID := uuid.New().String()
+	sub := &Subscription{
+		ID:     subID,
+		UserID: &user.ID,
+		Plan:   "pro_monthly",
+		Status: "active",
+		Seats:  1,
+	}
+	if err := s.Store.CreateSubscription(sub); err != nil {
+		writeError(w, http.StatusInternalServerError, "create subscription: "+err.Error())
+		return
+	}
+	ent := &Entitlement{
+		ID:             uuid.New().String(),
+		UserID:         user.ID,
+		SubscriptionID: subID,
+	}
+	if err := s.Store.CreateEntitlement(ent); err != nil {
+		writeError(w, http.StatusInternalServerError, "create entitlement: "+err.Error())
+		return
+	}
+
+	if err := s.Store.UpdateUserTier(user.ID, "pro"); err != nil {
+		log.Printf("update tier column: %v", err)
+	}
+	if s.Bandwidth != nil {
+		s.Bandwidth.InvalidateUser(user.ID)
+	}
+
 	log.Printf("user %s (%s) upgraded to pro (no billing)", user.ID, user.DisplayName)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": "pro"})
+}
+
+// handleAppDowngrade cancels the user's personal subscription.
+func (s *Server) handleAppDowngrade(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	sub, _ := s.Store.GetActivePersonalSubscription(user.ID)
+	if sub == nil {
+		writeError(w, http.StatusBadRequest, "no active personal subscription")
+		return
+	}
+
+	if err := s.Store.UpdateSubscriptionStatus(sub.ID, "canceled"); err != nil {
+		writeError(w, http.StatusInternalServerError, "cancel subscription: "+err.Error())
+		return
+	}
+	if err := s.Store.DeleteEntitlementByUserAndSub(user.ID, sub.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete entitlement: "+err.Error())
+		return
+	}
+
+	// Derive new tier
+	tier := "free"
+	if s.Store.IsUserPro(user.ID) {
+		tier = "pro" // still pro through org
+	}
+	if err := s.Store.UpdateUserTier(user.ID, tier); err != nil {
+		log.Printf("update tier column: %v", err)
+	}
+	if s.Bandwidth != nil {
+		s.Bandwidth.InvalidateUser(user.ID)
+	}
+
+	log.Printf("user %s (%s) downgraded (personal sub canceled)", user.ID, user.DisplayName)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": tier})
 }

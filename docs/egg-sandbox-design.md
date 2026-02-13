@@ -358,6 +358,19 @@ DNS resolution goes through `/private/var/run/mDNSResponder` (Unix domain socket
 
 **NetworkFull:** no deny.
 
+## Per-Section Base Masks
+
+The egg config `base` field supports per-section inheritance control via object form. Each section (fs, env, network) can independently inherit from a different source or be cut entirely.
+
+```yaml
+base:
+  name: strict          # main parent for unmasked sections
+  fs: none              # cut fs — start empty
+  env: prod-env         # source env from prod-env.yaml's resolved chain
+```
+
+This is resolved before agent auto-drilling. Agent profiles are always applied last, so masks don't affect what the agent needs to function. See `docs/egg-inheritance-design.md` for full resolution semantics and cycle prevention rules.
+
 ## Remaining Work
 
 ### High priority

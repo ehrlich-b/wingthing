@@ -45,6 +45,10 @@ func serveCmd() *cobra.Command {
 				return fmt.Errorf("seed skills: %w", err)
 			}
 
+			if err := store.BackfillProUsers(); err != nil {
+				return fmt.Errorf("backfill pro users: %w", err)
+			}
+
 			srvCfg := relay.ServerConfig{
 				BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
 				AppHost:            os.Getenv("WT_APP_HOST"),
@@ -65,14 +69,10 @@ func serveCmd() *cobra.Command {
 			// Bandwidth: 64 KB/s sustained, 1 MB burst per user (PTY-only traffic)
 			srv.Bandwidth = relay.NewBandwidthMeter(64*1024, 1*1024*1024, store.DB())
 			srv.Bandwidth.SetTierLookup(func(userID string) string {
-				u, err := store.GetSocialUserByID(userID)
-				if err != nil || u == nil {
-					return "free"
+				if store.IsUserPro(userID) {
+					return "pro"
 				}
-				if u.Tier == "" {
-					return "free"
-				}
-				return u.Tier
+				return "free"
 			})
 			// Rate limit: 5 req/s sustained, 20 burst per IP (friends-and-family)
 			srv.RateLimit = relay.NewRateLimiter(5, 20)

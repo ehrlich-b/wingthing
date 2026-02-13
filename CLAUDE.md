@@ -99,7 +99,7 @@ No fallback — if the platform can't enforce the requested isolation, the egg f
 
 Isolation levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs), `network` (network + mounted dirs), `privileged` (no sandbox).
 
-Configure via `egg.yaml` (project-level, `~/.wingthing/egg.yaml`, or built-in defaults). The sandbox auto-injects mounts for the agent binary's install root and config dir (`~/.<agent>/`) so config authors don't need to know where agents are installed. Resource limits (CPU, memory, max FDs) only apply when explicitly configured — no defaults.
+Configure via `egg.yaml` (project-level, `~/.wingthing/egg.yaml`, or built-in defaults). The `base` field controls inheritance — it can be a string (`none`, `strict`, `<name>`) or an object with per-section masks (`base: {fs: none, env: prod-env}`) to independently control fs, env, and network inheritance sources. The sandbox auto-injects mounts for the agent binary's install root and config dir (`~/.<agent>/`) so config authors don't need to know where agents are installed. Resource limits (CPU, memory, max FDs) only apply when explicitly configured — no defaults.
 
 ### Agent network auto-drilling
 

@@ -97,6 +97,7 @@ func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request
 		if invErr == nil && user.Email != nil && strings.EqualFold(*user.Email, email) {
 			// Email matches — auto-join org
 			s.Store.AddOrgMember(orgID, user.ID, "member")
+			s.grantOrgEntitlement(orgID, user.ID)
 			// Redirect to app with success
 			if s.Config.AppHost != "" {
 				proto := "https"
