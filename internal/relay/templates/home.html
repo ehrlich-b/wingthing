@@ -78,25 +78,17 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 {{define "content"}}
 <script>
 (function(){
-    var step=1;
     document.addEventListener('keydown',function(e){
         var t=document.activeElement&&document.activeElement.tagName;
         if(t==='INPUT'||t==='TEXTAREA'||t==='SELECT')return;
         if(e.key==='.'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
             e.preventDefault();
-            var flow=document.getElementById('prompt-flow');
-            if(flow&&step===1){
-                document.getElementById('prompt-step1').style.display='none';
-                document.getElementById('prompt-step2').style.display='flex';
-                step=2;
+            if(document.getElementById('prompt-flow')){
+                window.location.href='/login';
                 return;
             }
             var h=window.location.hostname;
             window.location.href=(h==='wingthing.ai'||h==='www.wingthing.ai')?'https://app.wingthing.ai':'/app/';
-        }
-        if(e.key==='Enter'&&step===2){
-            e.preventDefault();
-            document.getElementById('prompt-step2').click();
         }
     });
 })();
@@ -108,8 +100,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <a href="https://app.wingthing.ai" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open app</span></a>
 </div>
 {{else}}<div class="prompt-flow" id="prompt-flow">
-<div class="prompt-line" id="prompt-step1"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to start</span></div>
-<a href="/auth/github" class="prompt-line prompt-hidden" id="prompt-step2"><span class="prompt-dim">continue with GitHub</span> <span class="prompt-key">[enter]</span></a>
+<div class="prompt-line"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to start</span></div>
 </div>{{end}}
 </div>
 <div class="tab-bar">
@@ -236,7 +227,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <h3>team</h3>
 <p style="font-size:20px;font-weight:700;margin:8px 0" id="team-price">$4<span style="font-size:13px;font-weight:400">/seat/mo</span></p>
 <p style="font-size:11px;color:var(--text-dim);margin-bottom:8px" id="team-note">billed yearly ($48/seat)</p>
-<p>Everything in Pro<br>Shared wings (org access)<br>Audit logging<br>Invite-by-email</p>
+<p>Each seat includes Pro<br>Shared wings (org access)<br>Audit logging<br>Invite-by-email</p>
 </div>
 </div>
 <p style="text-align:center;font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-top:12px">Self-hosting is always free. MIT licensed. <code style="background:var(--bg-card);padding:2px 6px;border-radius:3px;font-size:11px">wt serve --local</code></p>

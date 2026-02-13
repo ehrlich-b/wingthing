@@ -109,6 +109,13 @@ func (b *BandwidthMeter) userTier(userID string) string {
 	return "free"
 }
 
+func (b *BandwidthMeter) InvalidateUser(userID string) {
+	b.mu.Lock()
+	delete(b.tiers, userID)
+	delete(b.limiters, userID)
+	b.mu.Unlock()
+}
+
 func (b *BandwidthMeter) limiter(userID string) *rate.Limiter {
 	b.mu.Lock()
 	defer b.mu.Unlock()

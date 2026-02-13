@@ -88,6 +88,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("POST /api/app/wings/{wingID}/egg-config", s.handleWingEggConfig)
 	s.mux.HandleFunc("GET /api/app/usage", s.handleAppUsage)
 	s.mux.HandleFunc("POST /api/app/upgrade", s.handleAppUpgrade)
+	s.mux.HandleFunc("POST /api/app/downgrade", s.handleAppDowngrade)
 
 	// Claim page
 	s.mux.HandleFunc("GET /auth/claim", s.handleClaimPage)
@@ -124,6 +125,8 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /api/orgs/{slug}/members", s.handleListOrgMembers)
 	s.mux.HandleFunc("POST /api/orgs/{slug}/invite", s.handleOrgInvite)
 	s.mux.HandleFunc("DELETE /api/orgs/{slug}/members/{userID}", s.handleRemoveOrgMember)
+	s.mux.HandleFunc("POST /api/orgs/{slug}/upgrade", s.handleOrgUpgrade)
+	s.mux.HandleFunc("POST /api/orgs/{slug}/cancel", s.handleOrgCancel)
 	s.mux.HandleFunc("GET /invite/{token}", s.handleAcceptInvite)
 
 	s.registerStaticRoutes()
