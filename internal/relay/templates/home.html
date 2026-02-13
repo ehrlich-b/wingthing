@@ -51,15 +51,21 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 .sb-add{margin-top:6px}
 .sb-env-toggle{display:flex;align-items:center;gap:8px;font-size:12px;font-family:var(--mono);margin-bottom:8px}
 .sb-env-toggle input{accent-color:var(--action)}
+.sb-hint{font-size:11px;color:var(--text-dim);font-family:var(--mono);display:block;margin-top:2px}
+.sb-empty{font-size:11px;color:var(--text-dim);font-family:var(--mono);font-style:italic;padding:4px 0}
 .sb-res-row{display:flex;gap:12px;flex-wrap:wrap}
 .sb-res-row label{font-size:11px;font-family:var(--mono);color:var(--text-dim);display:flex;flex-direction:column;gap:3px}
 .sb-res-row input{background:var(--bg);border:1px solid var(--accent);color:var(--text);font-family:var(--mono);font-size:12px;padding:4px 8px;border-radius:3px;width:100px;outline:none}
 .sb-res-row input:focus{border-color:var(--action)}
 .sb-preview{position:relative}
 .sb-preview pre{background:var(--bg-card);border-radius:6px;padding:16px 20px;font-family:var(--mono);font-size:12px;line-height:1.7;overflow-x:auto;white-space:pre;min-height:200px;color:var(--text)}
-.sb-preview .implicit{opacity:0.45;color:var(--text-dim)}
-.sb-copy{position:absolute;top:8px;right:8px;background:var(--accent);border:none;color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:3px;cursor:pointer}
-.sb-copy:hover{color:var(--text);background:var(--action)}
+.y-base{opacity:0.4;color:var(--text-dim)}
+.y-agent{opacity:0.55;color:var(--text-dim)}
+.y-user{opacity:1;color:var(--text)}
+.sb-copy{position:absolute;top:8px;right:8px;background:var(--accent);border:none;color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:3px;cursor:pointer;min-width:130px;text-align:center}
+.sb-copy:hover:not(:disabled){color:var(--text);background:var(--action)}
+.sb-copy:disabled{opacity:0.35;cursor:default}
+.sb-tip{font-family:var(--mono);font-size:11px;color:var(--text-dim);line-height:1.6;margin-top:12px;padding:0 4px}
 @media(max-width:700px){
   .hero h1{font-size:22px}
   .how-grid{grid-template-columns:1fr}
@@ -158,12 +164,19 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <div class="sb-controls">
 
 <div class="sb-section">
-<h3>agents</h3>
+<h3>base</h3>
+<label class="sb-env-toggle"><input type="checkbox" id="sb-base" checked onchange="sbRender()"> inherit defaults</label>
+<span class="sb-hint">built-in deny rules for sensitive dirs</span>
+</div>
+
+<div class="sb-section">
+<h3>agent</h3>
 <div class="sb-pills" id="sb-agents"></div>
 </div>
 
 <div class="sb-section">
 <h3>filesystem</h3>
+<div class="sb-empty" id="sb-fs-empty">add rules to override defaults</div>
 <div class="sb-list" id="sb-fs"></div>
 <button class="sb-btn sb-add" onclick="sbAddFS()">+ add rule</button>
 </div>
@@ -193,8 +206,9 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 
 </div>
 <div class="sb-preview">
-<button class="sb-copy" onclick="sbCopy()">copy</button>
+<button class="sb-copy" id="sb-copy-btn" onclick="sbCopy()" disabled>nothing to copy yet</button>
 <pre id="sb-yaml"></pre>
+<div class="sb-tip">save as egg.yaml in your project root — wt egg claude reads it automatically<br>eggs are standalone sandboxes — no wing, no relay, no account needed</div>
 </div>
 </div>
 </div>
@@ -207,14 +221,17 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 (function(){
 var agents=['claude','codex','cursor','ollama','gemini'];
 var profiles={
-  claude:{env:['ANTHROPIC_API_KEY'],writeDirs:['~/.claude/','~/.cache/claude/'],domains:['api.anthropic.com','sentry.io','statsigapi.net']},
-  codex:{env:['OPENAI_API_KEY'],writeDirs:['~/.codex/'],domains:['api.openai.com','*.openai.com']},
-  cursor:{env:['ANTHROPIC_API_KEY','OPENAI_API_KEY'],writeDirs:['~/.cursor/'],domains:['api.anthropic.com','api.openai.com','*.cursor.sh']},
-  ollama:{env:[],writeDirs:['~/.ollama/'],domains:['localhost']},
-  gemini:{env:['GEMINI_API_KEY','GOOGLE_API_KEY'],writeDirs:['~/.gemini/'],domains:['*.googleapis.com','generativelanguage.googleapis.com']}
+  claude:{env:['ANTHROPIC_API_KEY'],writeDirs:['~/.cache/claude/'],writeRegex:['~/.claude*'],domains:['api.anthropic.com','sentry.io','statsigapi.net']},
+  codex:{env:['OPENAI_API_KEY'],writeDirs:['~/.codex/'],writeRegex:[],domains:['api.openai.com','*.openai.com']},
+  cursor:{env:['ANTHROPIC_API_KEY','OPENAI_API_KEY'],writeDirs:['~/.cursor/','~/Library/Caches/cursor-compile-cache/'],writeRegex:[],domains:['api.anthropic.com','api.openai.com','*.cursor.sh']},
+  ollama:{env:[],writeDirs:['~/.ollama/'],writeRegex:[],domains:['localhost']},
+  gemini:{env:['GEMINI_API_KEY','GOOGLE_API_KEY'],writeDirs:['~/.gemini/'],writeRegex:[],domains:['*.googleapis.com','generativelanguage.googleapis.com']}
 };
 var defaultFS=[
   {mode:'rw',path:'./'},
+  {mode:'rw',path:'~/.cache/'},
+  {mode:'rw',path:'~/Library/Caches/'},
+  {mode:'rw',path:'~/go/pkg/mod/cache/'},
   {mode:'deny',path:'~/.ssh'},
   {mode:'deny',path:'~/.gnupg'},
   {mode:'deny',path:'~/.aws'},
@@ -222,18 +239,21 @@ var defaultFS=[
   {mode:'deny',path:'~/.kube'},
   {mode:'deny',path:'~/.netrc'},
   {mode:'deny',path:'~/.bash_history'},
-  {mode:'deny',path:'~/.zsh_history'}
+  {mode:'deny',path:'~/.zsh_history'},
+  {mode:'deny-write',path:'./egg.yaml'}
 ];
+var defaultEnv=['HOME','PATH','TERM','LANG','USER'];
 var netModes=[
-  {val:'none',desc:'no network access'},
-  {val:'domains',desc:'specific domains only'},
-  {val:'*',desc:'unrestricted'}
+  {val:'default',label:'default (none)',desc:'no network access'},
+  {val:'domains',label:'domains',desc:'specific domains only'},
+  {val:'*',label:'*',desc:'unrestricted'}
 ];
 
 var state={
-  agents:{},
-  fs:defaultFS.map(function(r){return{mode:r.mode,path:r.path};}),
-  netMode:'none',
+  baseOn:true,
+  agent:'',
+  fs:[],
+  netMode:'default',
   netDomains:[],
   envAll:false,
   envAllow:[],
@@ -250,17 +270,22 @@ window.switchTab=function(tab){
   if(tab==='sb')sbRender();
 };
 
-// Init agent pills
+// Init agent pills (single-select radio behavior)
 var pillsEl=document.getElementById('sb-agents');
+var pillBtns={};
 agents.forEach(function(a){
   var b=document.createElement('button');
   b.className='sb-pill';
   b.textContent=a;
   b.onclick=function(){
-    state.agents[a]=!state.agents[a];
-    b.className=state.agents[a]?'sb-pill active':'sb-pill';
+    if(state.agent===a){state.agent='';b.className='sb-pill';}
+    else{
+      if(state.agent&&pillBtns[state.agent])pillBtns[state.agent].className='sb-pill';
+      state.agent=a;b.className='sb-pill active';
+    }
     sbRender();
   };
+  pillBtns[a]=b;
   pillsEl.appendChild(b);
 });
 
@@ -271,11 +296,11 @@ netModes.forEach(function(m){
   label.className='sb-radio';
   var inp=document.createElement('input');
   inp.type='radio';inp.name='sb-net';inp.value=m.val;
-  if(m.val==='none')inp.checked=true;
+  if(m.val==='default')inp.checked=true;
   inp.onchange=function(){state.netMode=m.val;renderNetDomains();sbRender();};
   label.appendChild(inp);
   var span=document.createElement('span');
-  span.textContent=m.val==='domains'?'domains':m.val;
+  span.textContent=m.label;
   label.appendChild(span);
   var desc=document.createElement('span');
   desc.className='desc';
@@ -296,7 +321,9 @@ function cycleMode(mode){
 }
 
 function renderFS(){
-  renderList(document.getElementById('sb-fs'),state.fs,function(el,i){
+  var el=document.getElementById('sb-fs');
+  document.getElementById('sb-fs-empty').style.display=state.fs.length?'none':'';
+  renderList(el,state.fs,function(el,i){
     var row=document.createElement('div');
     row.className='sb-list-row';
     var inp=document.createElement('input');
@@ -348,97 +375,191 @@ function renderEnv(){
   });
 }
 
-window.sbAddFS=function(){state.fs.push({mode:'rw',path:''});renderFS();};
+window.sbAddFS=function(){state.fs.push({mode:'rw',path:''});renderFS();sbRender();};
 window.sbAddDomain=function(){state.netDomains.push('');renderNetDomains();};
-window.sbAddEnv=function(){state.envAllow.push('');renderEnv();};
+window.sbAddEnv=function(){state.envAllow.push('');renderEnv();sbRender();};
 
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function rpad(s,n){while(s.length<n)s+=' ';return s;}
 
 window.sbRender=function(){
+  state.baseOn=document.getElementById('sb-base').checked;
   state.envAll=document.getElementById('sb-env-all').checked;
   state.cpu=document.getElementById('sb-cpu').value;
   state.mem=document.getElementById('sb-mem').value;
   state.fds=document.getElementById('sb-fds').value;
 
-  var lines=[];
-
-  // fs
-  var fsRules=state.fs.filter(function(r){return r.path;});
-  if(fsRules.length){
-    lines.push('fs:');
-    fsRules.forEach(function(r){lines.push('  - "'+r.mode+':'+r.path+'"');});
+  // 1. Build explicit yaml (user's egg.yaml for copy)
+  var explLines=[];
+  if(!state.baseOn)explLines.push('base: none');
+  var userFS=state.fs.filter(function(r){return r.path;});
+  if(userFS.length){
+    explLines.push('fs:');
+    userFS.forEach(function(r){explLines.push('  - "'+r.mode+':'+r.path+'"');});
   }
-
-  // network
-  if(state.netMode==='none'){
-    lines.push('network: none');
+  if(state.netMode==='domains'){
+    var ud=state.netDomains.filter(function(d){return d;});
+    if(ud.length){explLines.push('network:');ud.forEach(function(d){explLines.push('  - "'+d+'"');});}
   }else if(state.netMode==='*'){
-    lines.push('network: "*"');
-  }else{
-    var doms=state.netDomains.filter(function(d){return d;});
-    if(doms.length){
-      lines.push('network:');
-      doms.forEach(function(d){lines.push('  - "'+d+'"');});
-    }else{
-      lines.push('network: none');
-    }
+    explLines.push('network: "*"');
   }
-
-  // env
   if(state.envAll){
-    lines.push('env: "*"');
+    explLines.push('env: "*"');
   }else{
-    var allows=state.envAllow.filter(function(e){return e;});
-    if(allows.length){
-      lines.push('env:');
-      allows.forEach(function(e){lines.push('  - "'+e+'"');});
+    var ue=state.envAllow.filter(function(e){return e;});
+    if(ue.length){explLines.push('env:');ue.forEach(function(e){explLines.push('  - "'+e+'"');});}
+  }
+  if(state.cpu||state.mem||state.fds){
+    explLines.push('resources:');
+    if(state.cpu)explLines.push('  cpu: "'+state.cpu+'"');
+    if(state.mem)explLines.push('  memory: "'+state.mem+'"');
+    if(state.fds)explLines.push('  max_fds: '+state.fds);
+  }
+  window._sbExplicit=explLines.join('\n');
+  var hasExplicit=explLines.length>0;
+
+  // 2. Build rendered preview (merged config with color classes)
+  var pv=[]; // {text,cls}
+  var ap=state.agent&&profiles[state.agent]?profiles[state.agent]:null;
+
+  // Header comments when nothing configured
+  if(!hasExplicit&&!state.agent){
+    pv.push({text:'# no egg.yaml needed \u2014 these are the defaults',cls:'y-base'});
+    pv.push({text:'# add overrides below, then copy your egg.yaml',cls:'y-base'});
+    pv.push({text:'',cls:'y-base'});
+  }
+
+  // Collect user rw/ro paths for deny override
+  var userAccess={};
+  state.fs.forEach(function(r){
+    if(r.path&&(r.mode==='rw'||r.mode==='ro'))userAccess[r.path]=true;
+  });
+
+  // --- FS section ---
+  if(state.baseOn){
+    pv.push({text:rpad('fs:',32)+'# [base]',cls:'y-base'});
+    // Base rw entries first
+    defaultFS.forEach(function(r){
+      if(r.mode==='rw')pv.push({text:'  - "rw:'+r.path+'"',cls:'y-base'});
+    });
+    // Agent write dirs
+    if(ap){
+      ap.writeDirs.forEach(function(d){
+        pv.push({text:rpad('  - "rw:'+d+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
+      });
+      ap.writeRegex.forEach(function(d){
+        pv.push({text:rpad('  - "rw:'+d+'"',38)+'# ['+state.agent+'] (regex)',cls:'y-agent'});
+      });
+    }
+    // Base deny rules (skip overridden by user rw/ro)
+    defaultFS.forEach(function(r){
+      if(r.mode!=='deny'&&r.mode!=='deny-write')return;
+      if(userAccess[r.path])return;
+      pv.push({text:'  - "'+r.mode+':'+r.path+'"',cls:'y-base'});
+    });
+    // User FS rules
+    userFS.forEach(function(r){
+      pv.push({text:'  - "'+r.mode+':'+r.path+'"',cls:'y-user'});
+    });
+  }else{
+    // base: none — no defaults
+    pv.push({text:'base: none',cls:'y-user'});
+    var showFS=ap||userFS.length;
+    if(showFS){
+      pv.push({text:'fs:',cls:userFS.length?'y-user':'y-agent'});
+      if(ap){
+        ap.writeDirs.forEach(function(d){
+          pv.push({text:rpad('  - "rw:'+d+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
+        });
+        ap.writeRegex.forEach(function(d){
+          pv.push({text:rpad('  - "rw:'+d+'"',38)+'# ['+state.agent+'] (regex)',cls:'y-agent'});
+        });
+      }
+      userFS.forEach(function(r){
+        pv.push({text:'  - "'+r.mode+':'+r.path+'"',cls:'y-user'});
+      });
     }
   }
 
-  // resources
-  if(state.cpu||state.mem||state.fds){
-    lines.push('resources:');
-    if(state.cpu)lines.push('  cpu: "'+state.cpu+'"');
-    if(state.mem)lines.push('  memory: "'+state.mem+'"');
-    if(state.fds)lines.push('  max_fds: '+state.fds);
+  // --- Network section ---
+  var agentNet=ap?ap.domains:[];
+  if(state.netMode==='*'){
+    pv.push({text:'network: "*"',cls:'y-user'});
+  }else if(state.netMode==='domains'){
+    var udoms=state.netDomains.filter(function(d){return d;});
+    if(udoms.length||agentNet.length){
+      pv.push({text:'network:',cls:udoms.length?'y-user':'y-agent'});
+      agentNet.forEach(function(d){
+        pv.push({text:rpad('  - "'+d+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
+      });
+      udoms.forEach(function(d){
+        pv.push({text:'  - "'+d+'"',cls:'y-user'});
+      });
+    }
+  }else{
+    // default mode
+    if(agentNet.length){
+      pv.push({text:rpad('network:',32)+'# ['+state.agent+']',cls:'y-agent'});
+      agentNet.forEach(function(d){
+        pv.push({text:rpad('  - "'+d+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
+      });
+    }else if(state.baseOn){
+      pv.push({text:rpad('network: none',32)+'# [base]',cls:'y-base'});
+    }
   }
 
-  // Build explicit yaml (for copy)
-  window._sbExplicit=lines.join('\n');
-
-  // Implicit agent sections
-  var implicit=[];
-  var selected=agents.filter(function(a){return state.agents[a];});
-  if(selected.length){
-    selected.forEach(function(a){
-      var p=profiles[a];
-      implicit.push('');
-      implicit.push('# --- auto-drilled for '+a+' ---');
-      if(p.writeDirs.length){
-        implicit.push('# fs: '+p.writeDirs.map(function(d){return'rw:'+d;}).join(', '));
-      }
-      if(p.env.length){
-        implicit.push('# env: '+p.env.join(', '));
-      }
-      if(p.domains.length){
-        implicit.push('# network: '+p.domains.join(', '));
-      }
+  // --- Env section ---
+  var agentEnv=ap?ap.env:[];
+  var userEnv=state.envAllow.filter(function(e){return e;});
+  if(state.envAll){
+    pv.push({text:'env: "*"',cls:'y-user'});
+  }else if(agentEnv.length||userEnv.length){
+    pv.push({text:'env:',cls:userEnv.length?'y-user':'y-agent'});
+    agentEnv.forEach(function(e){
+      pv.push({text:rpad('  - "'+e+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
     });
+    userEnv.forEach(function(e){
+      pv.push({text:'  - "'+e+'"',cls:'y-user'});
+    });
+    if(state.baseOn){
+      pv.push({text:'  # '+defaultEnv.join(', '),cls:'y-base'});
+    }
+  }else if(state.baseOn){
+    pv.push({text:rpad('env: ['+defaultEnv.join(', ')+']',38)+'# [base]',cls:'y-base'});
   }
 
-  var html=esc(lines.join('\n'));
-  if(implicit.length){
-    html+='<span class="implicit">'+esc(implicit.join('\n'))+'</span>';
+  // --- Resources section ---
+  if(state.cpu||state.mem||state.fds){
+    pv.push({text:'resources:',cls:'y-user'});
+    if(state.cpu)pv.push({text:'  cpu: "'+state.cpu+'"',cls:'y-user'});
+    if(state.mem)pv.push({text:'  memory: "'+state.mem+'"',cls:'y-user'});
+    if(state.fds)pv.push({text:'  max_fds: '+state.fds,cls:'y-user'});
   }
+
+  // 3. Render HTML
+  var html=pv.map(function(line){
+    return '<span class="'+line.cls+'">'+esc(line.text)+'</span>';
+  }).join('\n');
   document.getElementById('sb-yaml').innerHTML=html;
+
+  // 4. Update copy button
+  var copyBtn=document.getElementById('sb-copy-btn');
+  if(hasExplicit){
+    copyBtn.disabled=false;
+    copyBtn.textContent='copy your egg.yaml';
+  }else{
+    copyBtn.disabled=true;
+    copyBtn.textContent='nothing to copy yet';
+  }
 };
 
 window.sbCopy=function(){
+  if(!window._sbExplicit)return;
   if(navigator.clipboard){
-    navigator.clipboard.writeText(window._sbExplicit||'').then(function(){
-      var btn=document.querySelector('.sb-copy');
-      btn.textContent='copied';
-      setTimeout(function(){btn.textContent='copy';},1500);
+    navigator.clipboard.writeText(window._sbExplicit).then(function(){
+      var btn=document.getElementById('sb-copy-btn');
+      btn.textContent='copied! paste into ./egg.yaml';
+      setTimeout(function(){btn.textContent='copy your egg.yaml';},2000);
     });
   }
 };
