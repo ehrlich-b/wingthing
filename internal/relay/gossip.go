@@ -217,12 +217,22 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 		bw = s.Bandwidth.DrainCounters()
 	}
 
+	// Re-add drained bandwidth on any failure so bytes aren't lost
+	requeue := func() {
+		if s.Bandwidth != nil {
+			for userID, n := range bw {
+				s.Bandwidth.AddUsage(userID, n)
+			}
+		}
+	}
+
 	body, err := json.Marshal(SyncRequest{
 		NodeID:    s.Config.FlyMachineID,
 		Wings:     wings,
 		Bandwidth: bw,
 	})
 	if err != nil {
+		requeue()
 		return
 	}
 
@@ -230,36 +240,38 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 	req, err := http.NewRequestWithContext(ctx, "POST",
 		loginAddr+"/internal/sync", bytes.NewReader(body))
 	if err != nil {
+		requeue()
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
+		requeue()
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		requeue()
 		return
 	}
 
 	var syncResp SyncResponse
 	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
+		requeue()
 		return
 	}
 
-	if s.Peers == nil {
-		return
+	// Success — apply response
+	if s.Peers != nil {
+		peers := make([]*PeerWing, len(syncResp.Wings))
+		for i, w := range syncResp.Wings {
+			peers[i] = syncToPeer(w)
+		}
+		added, removed := s.Peers.Replace(peers)
+		s.notifyPeerDiff(added, removed)
 	}
-
-	peers := make([]*PeerWing, len(syncResp.Wings))
-	for i, w := range syncResp.Wings {
-		peers[i] = syncToPeer(w)
-	}
-
-	added, removed := s.Peers.Replace(peers)
-	s.notifyPeerDiff(added, removed)
 
 	// Apply bandwidth exceeded list from login
 	if s.Bandwidth != nil {
