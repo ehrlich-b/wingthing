@@ -9,8 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/relay"
@@ -41,9 +39,6 @@ func serveCmd() *cobra.Command {
 			nodeRole := os.Getenv("WT_NODE_ROLE")
 			loginAddr := os.Getenv("WT_LOGIN_ADDR")
 			flyMachineID := os.Getenv("FLY_MACHINE_ID")
-			if flyMachineID == "" {
-				flyMachineID = uuid.New().String()[:8] // local dev
-			}
 			flyRegion := os.Getenv("FLY_REGION")
 
 			isEdge := nodeRole == "edge"
