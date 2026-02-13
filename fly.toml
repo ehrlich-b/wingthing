@@ -3,25 +3,39 @@ primary_region = "ewr"
 
 [build]
 
+[processes]
+  login = "sh -c 'mkdir -p /data/.wingthing && HOME=/data exec ./wt serve --addr :8080'"
+  edge = "./wt serve --addr :8080"
+
 [env]
-  HOME = "/data"
   WT_BASE_URL = "https://wingthing.ai"
 
+# Both process groups serve HTTP — Fly anycast routes to nearest healthy machine.
 [http_service]
   internal_port = 8080
   force_https = true
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
+  processes = ["login", "edge"]
 
-# Login node (ewr): has SQLite volume, handles auth/API/social
-# Set WT_NODE_ROLE=login via `fly secrets` on this machine
-# Edge nodes: set WT_NODE_ROLE=edge and WT_LOGIN_ADDR=http://[login-6pn-ip]:8080
-
-[mounts]
+# Volume only on login node (SQLite lives here).
+# Node role auto-detected: /data mounted = login, otherwise = edge.
+# Login address auto-derived from Fly internal DNS (login.process.<app>.internal).
+[[mounts]]
   source = "wt_data"
   destination = "/data"
+  processes = ["login"]
 
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
+  processes = ["login", "edge"]
+
+# Deploy:
+#   fly deploy
+#   fly scale count login=1 edge=3
+#   fly scale count edge=2 --region nrt,lhr
+#
+# One-time setup:
+#   fly secrets set WT_JWT_SECRET=<base64-secret>

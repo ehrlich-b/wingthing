@@ -40,6 +40,23 @@ func serveCmd() *cobra.Command {
 			loginAddr := os.Getenv("WT_LOGIN_ADDR")
 			flyMachineID := os.Getenv("FLY_MACHINE_ID")
 			flyRegion := os.Getenv("FLY_REGION")
+			flyApp := os.Getenv("FLY_APP_NAME")
+
+			// Auto-detect node role on Fly: volume mounted at /data → login, else edge.
+			if flyMachineID != "" && nodeRole == "" {
+				if info, err := os.Stat("/data"); err == nil && info.IsDir() {
+					nodeRole = "login"
+				} else {
+					nodeRole = "edge"
+				}
+				fmt.Printf("auto-detected node role: %s\n", nodeRole)
+			}
+
+			// Auto-derive login node address from Fly internal DNS.
+			if nodeRole == "edge" && loginAddr == "" && flyApp != "" {
+				loginAddr = "http://login.process." + flyApp + ".internal:8080"
+				fmt.Printf("auto-derived login addr: %s\n", loginAddr)
+			}
 
 			isEdge := nodeRole == "edge"
 
