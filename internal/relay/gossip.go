@@ -241,12 +241,19 @@ func (s *Server) applyGossipAndNotify(events []GossipEvent) {
 		return
 	}
 
-	// For offline events, look up userID from PeerDirectory before removal
-	offlineUsers := make(map[string]string) // wingID → userID
+	// For offline events, look up userID and machine_id from PeerDirectory before removal
+	type offlineInfo struct {
+		userID    string
+		machineID string
+	}
+	offlineLookup := make(map[string]offlineInfo) // wingID → info
 	for _, ev := range events {
 		if ev.Event == "offline" {
 			if pw := s.Peers.FindWing(ev.WingID); pw != nil && pw.WingInfo != nil {
-				offlineUsers[ev.WingID] = pw.WingInfo.UserID
+				offlineLookup[ev.WingID] = offlineInfo{
+					userID:    pw.WingInfo.UserID,
+					machineID: pw.WingInfo.MachineID,
+				}
 			}
 		}
 	}
@@ -265,22 +272,27 @@ func (s *Server) applyGossipAndNotify(events []GossipEvent) {
 			continue
 		}
 		var userID string
+		var wingMachineID string
 		if ev.WingInfo != nil {
 			userID = ev.WingInfo.UserID
-		} else if ev.Event == "offline" {
-			userID = offlineUsers[ev.WingID]
+			wingMachineID = ev.WingInfo.MachineID
 		}
-		if userID == "" {
-			continue
+		if ev.Event == "offline" {
+			if info, ok := offlineLookup[ev.WingID]; ok {
+				if userID == "" {
+					userID = info.userID
+				}
+				if wingMachineID == "" {
+					wingMachineID = info.machineID
+				}
+			}
+		}
+		if userID == "" || wingMachineID == "" {
+			continue // skip events we can't properly identify
 		}
 		evType := "wing.online"
 		if ev.Event == "offline" {
 			evType = "wing.offline"
-		}
-		// Use wing's machine ID (not Fly server machine ID) for browser display
-		wingMachineID := ev.MachineID
-		if ev.WingInfo != nil && ev.WingInfo.MachineID != "" {
-			wingMachineID = ev.WingInfo.MachineID
 		}
 		we := WingEvent{
 			Type:      evType,

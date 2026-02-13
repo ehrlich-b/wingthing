@@ -398,6 +398,7 @@ function connectAppWS() {
 }
 
 function applyWingEvent(ev) {
+    var needsFullRender = false;
     if (ev.type === 'wing.online') {
         var found = false;
         wingsData.forEach(function(w) {
@@ -414,7 +415,7 @@ function applyWingEvent(ev) {
             }
         });
         if (!found) {
-            // New wing goes to end
+            // New wing goes to end — needs full render to add DOM node
             wingsData.push({
                 id: ev.wing_id,
                 machine_id: ev.machine_id,
@@ -426,6 +427,7 @@ function applyWingEvent(ev) {
                 public_key: ev.public_key,
                 projects: ev.projects || [],
             });
+            needsFullRender = true;
         }
     } else if (ev.type === 'wing.offline') {
         wingsData.forEach(function(w) {
@@ -439,9 +441,13 @@ function applyWingEvent(ev) {
     setCachedWings(wingsData.map(function(w) {
         return { machine_id: w.machine_id, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects };
     }));
+    updateHeaderStatus();
     if (activeView === 'home') {
-        renderDashboard();
-        // Subtle dot ping on status change
+        if (needsFullRender) {
+            renderDashboard();
+        } else {
+            updateWingCardStatus(ev.machine_id);
+        }
         pingWingDot(ev.machine_id);
     }
     if (commandPalette.style.display !== 'none') {
@@ -459,6 +465,33 @@ function pingWingDot(machineId) {
         void dot.offsetWidth;
         dot.classList.add('dot-ping');
     });
+}
+
+// Update a single wing card's status dot without full re-render
+function updateWingCardStatus(machineId) {
+    var card = wingStatusEl.querySelector('.wing-box[data-machine-id="' + machineId + '"]');
+    if (!card) {
+        // Card not in DOM — need full render
+        renderDashboard();
+        return;
+    }
+    var w = wingsData.find(function(w) { return w.machine_id === machineId; });
+    if (!w) return;
+    var dot = card.querySelector('.wing-dot');
+    if (dot) {
+        dot.classList.toggle('dot-live', w.online !== false);
+        dot.classList.toggle('dot-offline', w.online === false);
+    }
+}
+
+// Update header status dot to reflect wing connectivity
+function updateHeaderStatus() {
+    var indicator = document.getElementById('wing-indicator');
+    if (!indicator) return;
+    var anyOnline = wingsData.some(function(w) { return w.online !== false; });
+    indicator.classList.toggle('dot-live', anyOnline);
+    indicator.classList.toggle('dot-offline', !anyOnline);
+    indicator.style.display = wingsData.length > 0 ? '' : 'none';
 }
 
 function rebuildAgentLists() {
@@ -562,9 +595,12 @@ async function loadHome() {
     wings.forEach(function (w) {
         if (!seen[w.machine_id]) { merged.push(w); seen[w.machine_id] = true; }
     });
-    cached.forEach(function (w) {
-        if (!seen[w.machine_id]) { merged.push(w); seen[w.machine_id] = true; }
-    });
+    // Only show cached wings if API returned nothing (relay unreachable)
+    if (wings.length === 0) {
+        cached.forEach(function (w) {
+            if (!seen[w.machine_id]) { merged.push(w); seen[w.machine_id] = true; }
+        });
+    }
     wingsData = sortWingsByOrder(merged);
 
     // Extract latest_version from any wing response
@@ -578,6 +614,7 @@ async function loadHome() {
     }));
 
     rebuildAgentLists();
+    updateHeaderStatus();
 
     // Sync terminal bell attention flags from wing
     sessionsData.forEach(function(s) {

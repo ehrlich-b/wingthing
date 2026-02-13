@@ -219,6 +219,14 @@ body {
     flex-shrink: 0;
 }
 
+#wing-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: background 0.3s ease;
+}
+
 #user-info {
     font-size: 12px;
     color: var(--text-dim);
