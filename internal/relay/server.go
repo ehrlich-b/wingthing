@@ -1,13 +1,19 @@
 package relay
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
+
+	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/ehrlich-b/wingthing/web"
 )
 
@@ -25,6 +31,10 @@ type ServerConfig struct {
 	SMTPUser           string
 	SMTPPass           string
 	SMTPFrom           string
+	NodeRole           string // "login", "edge", or "" (single node)
+	LoginNodeAddr      string // internal address of login node (for edge nodes)
+	FlyMachineID       string // from FLY_MACHINE_ID env var
+	FlyRegion          string // from FLY_REGION env var
 }
 
 type Server struct {
@@ -49,17 +59,33 @@ type Server struct {
 	// Stream subscribers: taskID → list of channels receiving output chunks
 	streamMu   sync.RWMutex
 	streamSubs map[string][]chan string
+
+	// All browser WebSocket connections (for shutdown broadcast)
+	browserMu    sync.Mutex
+	browserConns map[*websocket.Conn]struct{}
+
+	// Gossip / peer state (multi-node)
+	Peers        *PeerDirectory
+	Gossip       *GossipLog
+	gossipOutMu  sync.Mutex
+	gossipOutbuf []GossipEvent // local wing events buffered for next gossip sync
+
+	// Edge node: reverse proxy to login node + session/entitlement caches
+	loginProxy       http.Handler
+	sessionCache     *SessionCache
+	EntitlementCache *EntitlementCache
 }
 
 func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s := &Server{
-		Store:      store,
-		Config:     cfg,
-		Wings:      NewWingRegistry(),
-		PTY:        NewPTYRegistry(),
-		Chat:       NewChatRegistry(),
-		mux:        http.NewServeMux(),
-		streamSubs: make(map[string][]chan string),
+		Store:        store,
+		Config:       cfg,
+		Wings:        NewWingRegistry(),
+		PTY:          NewPTYRegistry(),
+		Chat:         NewChatRegistry(),
+		mux:          http.NewServeMux(),
+		streamSubs:   make(map[string][]chan string),
+		browserConns: make(map[*websocket.Conn]struct{}),
 	}
 
 	// API routes
@@ -130,6 +156,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /invite/{token}", s.handleAcceptInvite)
 
 	s.registerStaticRoutes()
+	s.registerInternalRoutes()
 	return s
 }
 
@@ -153,6 +180,100 @@ func stripPort(host string) string {
 
 func (s *Server) SetLocalUser(u *SocialUser) { s.localUser = u }
 
+// IsEdge returns true if this node is an edge relay (no SQLite).
+func (s *Server) IsEdge() bool { return s.Config.NodeRole == "edge" }
+
+// IsLogin returns true if this node is the login/DB node.
+func (s *Server) IsLogin() bool { return s.Config.NodeRole == "login" }
+
+// MachineID returns this node's unique machine identifier.
+func (s *Server) MachineID() string { return s.Config.FlyMachineID }
+
+// SetLoginProxy sets the reverse proxy used by edge nodes to forward requests to the login node.
+func (s *Server) SetLoginProxy(p http.Handler) { s.loginProxy = p }
+
+// SetSessionCache sets the session cache for edge nodes.
+func (s *Server) SetSessionCache(sc *SessionCache) { s.sessionCache = sc }
+
+// bufferGossipEvent adds a local wing event to the outbound gossip buffer.
+// The event is sent to the login node on the next gossip sync cycle.
+func (s *Server) bufferGossipEvent(wing *ConnectedWing, event string) {
+	if s.Gossip != nil {
+		// Login node: record directly into the log
+		s.Gossip.RecordWingEvent(s.Config.FlyMachineID, wing, event)
+		return
+	}
+
+	// Edge node: buffer for next gossip sync response
+	ev := GossipEvent{
+		NodeID:    s.Config.FlyMachineID,
+		MachineID: s.Config.FlyMachineID,
+		WingID:    wing.ID,
+		Event:     event,
+	}
+	if event == "online" {
+		ev.WingInfo = &WingInfo{
+			UserID:    wing.UserID,
+			Platform:  wing.Platform,
+			Version:   wing.Version,
+			Agents:    wing.Agents,
+			Labels:    wing.Labels,
+			Projects:  wing.Projects,
+			PublicKey: wing.PublicKey,
+			OrgID:     wing.OrgID,
+		}
+	}
+	s.gossipOutMu.Lock()
+	s.gossipOutbuf = append(s.gossipOutbuf, ev)
+	s.gossipOutMu.Unlock()
+}
+
+func (s *Server) trackBrowser(conn *websocket.Conn) {
+	s.browserMu.Lock()
+	s.browserConns[conn] = struct{}{}
+	s.browserMu.Unlock()
+}
+
+func (s *Server) untrackBrowser(conn *websocket.Conn) {
+	s.browserMu.Lock()
+	delete(s.browserConns, conn)
+	s.browserMu.Unlock()
+}
+
+// GracefulShutdown sends relay.restart to all connected WebSockets, then shuts down the HTTP server.
+func (s *Server) GracefulShutdown(httpSrv *http.Server, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	msg := ws.RelayRestart{Type: ws.TypeRelayRestart}
+	data, _ := json.Marshal(msg)
+
+	// Broadcast to all wings
+	s.Wings.BroadcastAll(ctx, data)
+
+	// Broadcast to all browser connections (app dashboard + PTY)
+	s.browserMu.Lock()
+	browsers := make([]*websocket.Conn, 0, len(s.browserConns))
+	for conn := range s.browserConns {
+		browsers = append(browsers, conn)
+	}
+	s.browserMu.Unlock()
+
+	for _, conn := range browsers {
+		writeCtx, wcancel := context.WithTimeout(ctx, 2*time.Second)
+		conn.Write(writeCtx, websocket.MessageText, data)
+		wcancel()
+	}
+
+	log.Printf("sent relay.restart to %d wings, %d browsers", len(s.Wings.All()), len(browsers))
+
+	// Close all wing connections
+	s.Wings.CloseAll()
+
+	// Graceful HTTP shutdown
+	return httpSrv.Shutdown(ctx)
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := stripPort(r.Host)
 	path := r.URL.Path
@@ -164,6 +285,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
+	}
+
+	// Edge node proxying: serve WS/static/internal locally, proxy everything else to login
+	if s.IsEdge() && s.loginProxy != nil {
+		if strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/app/") ||
+			strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/internal/") ||
+			path == "/health" {
+			s.mux.ServeHTTP(w, r)
+			return
+		}
+		s.loginProxy.ServeHTTP(w, r)
+		return
 	}
 
 	// app.wingthing.ai: SPA at root, plus API/auth/ws/assets

@@ -33,6 +33,13 @@ func (s *Server) sessionUser(r *http.Request) *SocialUser {
 	if err != nil {
 		return nil
 	}
+	// Edge node: validate session via login node
+	if s.IsEdge() && s.sessionCache != nil {
+		return s.sessionCache.Validate(c.Value, s.Config.LoginNodeAddr)
+	}
+	if s.Store == nil {
+		return nil
+	}
 	user, err := s.Store.GetSession(c.Value)
 	if err != nil {
 		return nil

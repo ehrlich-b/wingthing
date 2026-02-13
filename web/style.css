@@ -815,6 +815,16 @@ body {
     padding: 4px;
 }
 
+#reconnect-banner {
+    background: var(--action);
+    color: var(--bg);
+    text-align: center;
+    padding: 4px 0;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
 #terminal-section { position: relative; }
 #replay-overlay {
     position: absolute;

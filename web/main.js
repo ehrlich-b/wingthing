@@ -27,7 +27,9 @@ let sessionNotifications = {};
 let activeView = 'home';
 let titleFlashTimer = null;
 let appWs = null;
+let appWsBackoff = 1000;
 let latestVersion = '';
+let ptyReconnecting = false;
 
 // Chat state
 let chatWs = null;
@@ -350,18 +352,47 @@ function agentWithIcon(name) {
     return agentIcon(name) + escapeHtml(name);
 }
 
+// === Reconnect Banner ===
+
+function showReconnectBanner() {
+    var banner = document.getElementById('reconnect-banner');
+    if (banner) banner.style.display = '';
+}
+
+function hideReconnectBanner() {
+    var banner = document.getElementById('reconnect-banner');
+    if (banner) banner.style.display = 'none';
+}
+
 // === Dashboard WebSocket (real-time wing status) ===
 
 function connectAppWS() {
     if (appWs) { try { appWs.close(); } catch(e) {} }
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     appWs = new WebSocket(proto + '//' + location.host + '/ws/app');
+    appWs.onopen = function() {
+        appWsBackoff = 1000;
+        hideReconnectBanner();
+        // Re-fetch state after reconnect
+        loadHome();
+    };
     appWs.onmessage = function(e) {
-        try { applyWingEvent(JSON.parse(e.data)); } catch(err) {}
+        try {
+            var msg = JSON.parse(e.data);
+            if (msg.type === 'relay.restart') {
+                showReconnectBanner();
+                appWs = null;
+                setTimeout(connectAppWS, 500);
+                return;
+            }
+            applyWingEvent(msg);
+        } catch(err) {}
     };
     appWs.onclose = function() {
         appWs = null;
-        setTimeout(connectAppWS, 3000);
+        showReconnectBanner();
+        setTimeout(connectAppWS, appWsBackoff);
+        appWsBackoff = Math.min(appWsBackoff * 2, 10000);
     };
     appWs.onerror = function() { appWs.close(); };
 }
@@ -2445,6 +2476,17 @@ function setupPTYHandlers(ws, reattach) {
         if (ws !== ptyWs) return; // stale WebSocket
         var msg = JSON.parse(e.data);
         switch (msg.type) {
+            case 'relay.restart':
+                // Server shutting down — attempt auto-reattach if we have an active session
+                if (ptySessionId) {
+                    var sid = ptySessionId;
+                    ptyReconnecting = true;
+                    ptyStatus.textContent = 'reconnecting...';
+                    showReconnectBanner();
+                    setTimeout(function () { ptyReconnectAttach(sid); }, 1000);
+                }
+                return;
+
             case 'pty.started':
                 ptySessionId = msg.session_id;
                 headerTitle.textContent = sessionTitle(msg.agent, ptyWingId);
@@ -2528,15 +2570,26 @@ function setupPTYHandlers(ws, reattach) {
     ws.onclose = function () {
         // Ignore close from stale WebSocket (user switched sessions)
         if (ws !== ptyWs) return;
-        ptyStatus.textContent = '';
-        ptySessionId = null;
-        ptyWingId = null;
-        renderSidebar();
+        // Auto-reattach if we had an active session and aren't already reconnecting
+        if (ptySessionId && !ptyReconnecting) {
+            var sid = ptySessionId;
+            ptyReconnecting = true;
+            ptyStatus.textContent = 'reconnecting...';
+            showReconnectBanner();
+            setTimeout(function () { ptyReconnectAttach(sid); }, 1000);
+            return;
+        }
+        if (!ptyReconnecting) {
+            ptyStatus.textContent = '';
+            ptySessionId = null;
+            ptyWingId = null;
+            renderSidebar();
+        }
     };
 
     ws.onerror = function () {
         if (ws !== ptyWs) return;
-        ptyStatus.textContent = 'error';
+        if (!ptyReconnecting) ptyStatus.textContent = 'error';
     };
 }
 
@@ -2613,6 +2666,7 @@ function attachPTY(sessionId) {
 }
 
 function disconnectPTY() {
+    ptyReconnecting = false;
     if (ptyWs && ptyWs.readyState === WebSocket.OPEN && ptySessionId) {
         ptyWs.send(JSON.stringify({ type: 'pty.kill', session_id: ptySessionId }));
     }
@@ -2623,6 +2677,74 @@ function disconnectPTY() {
     ephemeralPrivKey = null;
     ptyStatus.textContent = '';
     headerTitle.textContent = '';
+}
+
+// Auto-reattach after relay restart or unexpected disconnect.
+// Retries up to 3 times with exponential backoff (1s, 2s, 4s).
+function ptyReconnectAttach(sessionId, attempt) {
+    attempt = attempt || 0;
+    if (attempt >= 3) {
+        ptyReconnecting = false;
+        ptyStatus.textContent = 'session lost';
+        headerTitle.textContent = '';
+        ptySessionId = null;
+        ptyWingId = null;
+        hideReconnectBanner();
+        renderSidebar();
+        return;
+    }
+
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = proto + '//' + location.host + '/ws/pty';
+
+    if (ptyWs) { try { ptyWs.close(); } catch(e) {} }
+
+    if (!ephemeralPrivKey) {
+        ephemeralPrivKey = x25519.utils.randomSecretKey();
+    }
+    var ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
+    var pubKeyB64 = bytesToB64(ephemeralPubKey);
+
+    ptyWs = new WebSocket(url);
+    ptyWs.onopen = function () {
+        ptyWs.send(JSON.stringify({ type: 'pty.attach', session_id: sessionId, public_key: pubKeyB64 }));
+    };
+
+    var origOnclose = null;
+    setupPTYHandlers(ptyWs, true);
+
+    // Override onclose for retry logic
+    var innerWs = ptyWs;
+    var origClose = innerWs.onclose;
+    innerWs.onclose = function () {
+        if (innerWs !== ptyWs) return;
+        var delay = 1000 * Math.pow(2, attempt);
+        setTimeout(function () { ptyReconnectAttach(sessionId, attempt + 1); }, delay);
+    };
+
+    // On successful reattach (pty.started received), clear reconnecting state
+    var origMsg = innerWs.onmessage;
+    innerWs.onmessage = function (e) {
+        if (innerWs !== ptyWs) return;
+        var msg = JSON.parse(e.data);
+        if (msg.type === 'pty.started') {
+            ptyReconnecting = false;
+            hideReconnectBanner();
+        }
+        if (msg.type === 'error') {
+            // Session not found — stop retrying
+            ptyReconnecting = false;
+            ptyStatus.textContent = 'session lost';
+            headerTitle.textContent = '';
+            ptySessionId = null;
+            ptyWingId = null;
+            hideReconnectBanner();
+            renderSidebar();
+            if (innerWs) { try { innerWs.close(); } catch(ex) {} }
+            return;
+        }
+        origMsg.call(innerWs, e);
+    };
 }
 
 // === Helpers ===

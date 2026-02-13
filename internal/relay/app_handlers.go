@@ -37,7 +37,7 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAppWings returns the user's connected wings.
+// handleAppWings returns the user's connected wings (local + peer).
 func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
@@ -47,13 +47,15 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 
 	wings := s.listAccessibleWings(user.ID)
 	latestVer := s.getLatestVersion()
-	out := make([]map[string]any, len(wings))
-	for i, wing := range wings {
+	out := make([]map[string]any, 0, len(wings))
+	seenWings := make(map[string]bool)
+	for _, wing := range wings {
+		seenWings[wing.ID] = true
 		projects := wing.Projects
 		if projects == nil {
 			projects = []ws.WingProject{}
 		}
-		out[i] = map[string]any{
+		out = append(out, map[string]any{
 			"id":             wing.ID,
 			"machine_id":     wing.MachineID,
 			"platform":       wing.Platform,
@@ -65,8 +67,39 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			"projects":       projects,
 			"latest_version": latestVer,
 			"egg_config":     wing.EggConfig,
+		})
+	}
+
+	// Include peer wings from gossip
+	if s.Peers != nil {
+		for _, pw := range s.Peers.AllWings() {
+			if seenWings[pw.WingID] {
+				continue
+			}
+			if pw.WingInfo == nil || pw.WingInfo.UserID != user.ID {
+				continue
+			}
+			var projects []ws.WingProject
+			if pw.WingInfo.Projects != nil {
+				projects = pw.WingInfo.Projects
+			} else {
+				projects = []ws.WingProject{}
+			}
+			out = append(out, map[string]any{
+				"id":             pw.WingID,
+				"machine_id":    pw.MachineID,
+				"platform":       pw.WingInfo.Platform,
+				"version":        pw.WingInfo.Version,
+				"agents":         pw.WingInfo.Agents,
+				"labels":         pw.WingInfo.Labels,
+				"public_key":     pw.WingInfo.PublicKey,
+				"projects":       projects,
+				"latest_version": latestVer,
+				"remote_node":    pw.MachineID, // indicates wing is on another node
+			})
 		}
 	}
+
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -365,6 +398,9 @@ func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
+
+	s.trackBrowser(conn)
+	defer s.untrackBrowser(conn)
 
 	ch := make(chan WingEvent, 16)
 	s.Wings.Subscribe(user.ID, ch)

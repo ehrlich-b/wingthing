@@ -264,6 +264,36 @@ func (r *WingRegistry) CountForUser(userID string) int {
 	return n
 }
 
+// BroadcastAll sends a message to every connected wing.
+func (r *WingRegistry) BroadcastAll(ctx context.Context, data []byte) {
+	r.mu.RLock()
+	wings := make([]*ConnectedWing, 0, len(r.wings))
+	for _, w := range r.wings {
+		wings = append(wings, w)
+	}
+	r.mu.RUnlock()
+
+	for _, w := range wings {
+		writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		w.Conn.Write(writeCtx, websocket.MessageText, data)
+		cancel()
+	}
+}
+
+// CloseAll closes all connected wing WebSockets.
+func (r *WingRegistry) CloseAll() {
+	r.mu.RLock()
+	wings := make([]*ConnectedWing, 0, len(r.wings))
+	for _, w := range r.wings {
+		wings = append(wings, w)
+	}
+	r.mu.RUnlock()
+
+	for _, w := range wings {
+		w.Conn.Close(websocket.StatusGoingAway, "server shutting down")
+	}
+}
+
 // handleWingWS handles the WebSocket connection from a wing.
 func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
@@ -289,13 +319,17 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			wingPublicKey = claims.PublicKey
 		}
 	}
-	if userID == "" {
+	if userID == "" && s.Store != nil {
 		var err error
 		userID, _, err = s.Store.ValidateToken(token)
 		if err != nil {
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
 		}
+	}
+	if userID == "" {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
 	}
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -348,8 +382,8 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		LastSeen:    time.Now(),
 	}
 
-	// Validate org membership if org slug specified
-	if wing.OrgID != "" {
+	// Validate org membership if org slug specified (only on login/single node with DB)
+	if wing.OrgID != "" && s.Store != nil {
 		org, orgErr := s.Store.GetOrgBySlug(wing.OrgID)
 		if orgErr != nil || org == nil {
 			errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org not found: " + wing.OrgID}
@@ -367,7 +401,11 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Wings.Add(wing)
-	defer s.Wings.Remove(wing.ID)
+	s.bufferGossipEvent(wing, "online")
+	defer func() {
+		s.Wings.Remove(wing.ID)
+		s.bufferGossipEvent(wing, "offline")
+	}()
 
 	log.Printf("wing %s connected (user=%s machine=%s agents=%v)",
 		wing.ID, userID, reg.MachineID, reg.Agents)

@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -35,18 +38,32 @@ func serveCmd() *cobra.Command {
 				return err
 			}
 
-			store, err := relay.OpenRelay(cfg.RelayDBPath())
-			if err != nil {
-				return fmt.Errorf("open relay db: %w", err)
+			nodeRole := os.Getenv("WT_NODE_ROLE")
+			loginAddr := os.Getenv("WT_LOGIN_ADDR")
+			flyMachineID := os.Getenv("FLY_MACHINE_ID")
+			if flyMachineID == "" {
+				flyMachineID = uuid.New().String()[:8] // local dev
 			}
-			defer store.Close()
+			flyRegion := os.Getenv("FLY_REGION")
 
-			if err := relay.SeedDefaultSkills(store); err != nil {
-				return fmt.Errorf("seed skills: %w", err)
-			}
+			isEdge := nodeRole == "edge"
 
-			if err := store.BackfillProUsers(); err != nil {
-				return fmt.Errorf("backfill pro users: %w", err)
+			// Edge nodes skip SQLite and DB-dependent init
+			var store *relay.RelayStore
+			if !isEdge {
+				store, err = relay.OpenRelay(cfg.RelayDBPath())
+				if err != nil {
+					return fmt.Errorf("open relay db: %w", err)
+				}
+				defer store.Close()
+
+				if err := relay.SeedDefaultSkills(store); err != nil {
+					return fmt.Errorf("seed skills: %w", err)
+				}
+
+				if err := store.BackfillProUsers(); err != nil {
+					return fmt.Errorf("backfill pro users: %w", err)
+				}
 			}
 
 			srvCfg := relay.ServerConfig{
@@ -63,25 +80,58 @@ func serveCmd() *cobra.Command {
 				SMTPUser:           os.Getenv("SMTP_USER"),
 				SMTPPass:           os.Getenv("SMTP_PASS"),
 				SMTPFrom:           os.Getenv("SMTP_FROM"),
+				NodeRole:           nodeRole,
+				LoginNodeAddr:      loginAddr,
+				FlyMachineID:       flyMachineID,
+				FlyRegion:          flyRegion,
 			}
 
 			srv := relay.NewServer(store, srvCfg)
-			// Bandwidth: 64 KB/s sustained, 1 MB burst per user (PTY-only traffic)
-			srv.Bandwidth = relay.NewBandwidthMeter(64*1024, 1*1024*1024, store.DB())
-			srv.Bandwidth.SetTierLookup(func(userID string) string {
-				if store.IsUserPro(userID) {
-					return "pro"
-				}
-				return "free"
-			})
-			// Rate limit: 5 req/s sustained, 20 burst per IP (friends-and-family)
+
+			// Rate limit: 5 req/s sustained, 20 burst per IP
 			srv.RateLimit = relay.NewRateLimiter(5, 20)
+
+			if isEdge {
+				// Edge: use entitlement cache for bandwidth metering
+				if loginAddr == "" {
+					return fmt.Errorf("WT_LOGIN_ADDR required for edge nodes")
+				}
+				srv.Peers = relay.NewPeerDirectory()
+				srv.SetLoginProxy(relay.NewLoginProxy(loginAddr))
+				srv.SetSessionCache(relay.NewSessionCache())
+				// Bandwidth metering still works on edge, just with cached tiers
+				srv.Bandwidth = relay.NewBandwidthMeter(64*1024, 1*1024*1024, nil)
+				entCache := relay.NewEntitlementCache(loginAddr)
+				srv.Bandwidth.SetTierLookup(func(userID string) string {
+					return entCache.GetTier(userID)
+				})
+				srv.EntitlementCache = entCache
+				fmt.Printf("edge node: machine=%s region=%s login=%s\n", flyMachineID, flyRegion, loginAddr)
+			} else {
+				// Login or single node: direct DB access
+				srv.Bandwidth = relay.NewBandwidthMeter(64*1024, 1*1024*1024, store.DB())
+				srv.Bandwidth.SetTierLookup(func(userID string) string {
+					if store.IsUserPro(userID) {
+						return "pro"
+					}
+					return "free"
+				})
+				if nodeRole == "login" {
+					srv.Gossip = relay.NewGossipLog()
+					srv.Peers = relay.NewPeerDirectory()
+					fmt.Printf("login node: machine=%s region=%s\n", flyMachineID, flyRegion)
+				}
+			}
+
 			if devFlag {
 				srv.DevTemplateDir = "internal/relay/templates"
 				srv.DevMode = true
 				fmt.Println("dev mode: templates reload, auto-claim login")
 			}
 			if localFlag {
+				if isEdge {
+					return fmt.Errorf("--local is not compatible with edge mode")
+				}
 				user, token, err := store.CreateLocalUser()
 				if err != nil {
 					return fmt.Errorf("setup local user: %w", err)
@@ -103,11 +153,24 @@ func serveCmd() *cobra.Command {
 				Handler: srv,
 			}
 
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			// Sync bandwidth usage to DB every 10 minutes
-			srv.Bandwidth.StartSync(ctx, 10*time.Minute)
+			// Sync bandwidth usage to DB every 10 minutes (only if DB available)
+			if !isEdge {
+				srv.Bandwidth.StartSync(ctx, 10*time.Minute)
+			}
+
+			// Start gossip subsystems
+			if srv.Gossip != nil {
+				srv.Gossip.StartCompaction(ctx, 60*time.Second)
+			}
+			if srv.Peers != nil {
+				srv.Peers.StartStaleExpiry(ctx)
+			}
+			if srv.EntitlementCache != nil {
+				srv.EntitlementCache.StartSync(ctx, 60*time.Second)
+			}
 
 			errCh := make(chan error, 1)
 			go func() {
@@ -117,8 +180,8 @@ func serveCmd() *cobra.Command {
 
 			select {
 			case <-ctx.Done():
-				fmt.Println("shutting down...")
-				return httpSrv.Close()
+				fmt.Println("graceful shutdown (sending relay.restart to all connections)...")
+				return srv.GracefulShutdown(httpSrv, 8*time.Second)
 			case err := <-errCh:
 				return err
 			}

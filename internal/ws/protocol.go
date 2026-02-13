@@ -52,10 +52,11 @@ const (
 	TypeSessionsSync = "sessions.sync" // wing → relay
 
 	// Relay → Wing (control)
-	TypeRegistered     = "registered"
-	TypeWingUpdate     = "wing.update"
+	TypeRegistered      = "registered"
+	TypeWingUpdate      = "wing.update"
 	TypeEggConfigUpdate = "egg.config_update" // relay → wing: push new egg config
-	TypeError          = "error"
+	TypeRelayRestart    = "relay.restart"     // relay → all: server shutting down, reconnect
+	TypeError           = "error"
 )
 
 // Envelope wraps every WebSocket message with a type field for routing.
@@ -335,6 +336,11 @@ type SessionInfo struct {
 type EggConfigUpdate struct {
 	Type string `json:"type"`
 	YAML string `json:"yaml"` // serialized egg.yaml content
+}
+
+// RelayRestart is sent to all connected WebSockets when the server is shutting down.
+type RelayRestart struct {
+	Type string `json:"type"`
 }
 
 // QueuedTask is a routing entry in the relay's volatile queue.

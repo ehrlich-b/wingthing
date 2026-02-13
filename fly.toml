@@ -10,9 +10,13 @@ primary_region = "ewr"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
+
+# Login node (ewr): has SQLite volume, handles auth/API/social
+# Set WT_NODE_ROLE=login via `fly secrets` on this machine
+# Edge nodes: set WT_NODE_ROLE=edge and WT_LOGIN_ADDR=http://[login-6pn-ip]:8080
 
 [mounts]
   source = "wt_data"

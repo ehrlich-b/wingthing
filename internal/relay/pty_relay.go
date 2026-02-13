@@ -185,12 +185,52 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				userID = claims.Subject
 			}
 		}
-		if userID == "" {
+		if userID == "" && s.Store != nil {
 			var err error
 			userID, _, err = s.Store.ValidateToken(token)
 			if err != nil {
 				http.Error(w, "invalid token", http.StatusUnauthorized)
 				return
+			}
+		}
+		if userID == "" {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// Cross-node routing: if target wing is on a peer node, fly-replay BEFORE WebSocket upgrade.
+	// Check wing_id query param (explicit target) or session_id (reattach to known session).
+	if s.Peers != nil && s.Config.FlyMachineID != "" {
+		targetWingID := r.URL.Query().Get("wing_id")
+		if targetWingID == "" {
+			// Check if this is a session reattach — look up the session's wing
+			if sid := r.URL.Query().Get("session_id"); sid != "" {
+				if sess := s.PTY.Get(sid); sess != nil {
+					targetWingID = sess.WingID
+				}
+			}
+		}
+		if targetWingID != "" {
+			// Wing not local? Check PeerDirectory for cross-node routing
+			if localWing := s.Wings.FindByID(targetWingID); localWing == nil {
+				if pw := s.Peers.FindWing(targetWingID); pw != nil {
+					// Anti-loop: only replay if target is a different machine
+					if pw.MachineID != s.Config.FlyMachineID {
+						w.Header().Set("fly-replay", "instance="+pw.MachineID)
+						return
+					}
+				}
+				// Wing not found anywhere — try WaitForWing with 5s timeout
+				machineID, found := WaitForWing(r.Context(), s.Wings, s.Peers, targetWingID, 5*time.Second)
+				if found && machineID != "" && machineID != s.Config.FlyMachineID {
+					w.Header().Set("fly-replay", "instance="+machineID)
+					return
+				}
+				if !found {
+					http.Error(w, `{"error":"wing not found","retry":true}`, http.StatusNotFound)
+					return
+				}
 			}
 		}
 	}
@@ -203,6 +243,9 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
+
+	s.trackBrowser(conn)
+	defer s.untrackBrowser(conn)
 
 	ctx := r.Context()
 
