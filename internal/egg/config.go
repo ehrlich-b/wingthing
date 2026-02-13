@@ -12,13 +12,60 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// NetworkField handles YAML unmarshaling of network: string | []string.
+// "none" → nil, "*" → ["*"], list → as-is.
+type NetworkField []string
+
+func (n *NetworkField) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		s := value.Value
+		if s == "none" || s == "" {
+			*n = nil
+			return nil
+		}
+		*n = NetworkField{s}
+		return nil
+	}
+	var list []string
+	if err := value.Decode(&list); err != nil {
+		return err
+	}
+	*n = NetworkField(list)
+	return nil
+}
+
+// EnvField handles YAML unmarshaling of env: string | []string.
+// "*" → ["*"], list → as-is.
+type EnvField []string
+
+func (e *EnvField) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		s := value.Value
+		if s == "*" {
+			*e = EnvField{"*"}
+			return nil
+		}
+		if s == "" {
+			*e = nil
+			return nil
+		}
+		*e = EnvField{s}
+		return nil
+	}
+	var list []string
+	if err := value.Decode(&list); err != nil {
+		return err
+	}
+	*e = EnvField(list)
+	return nil
+}
+
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
-	Isolation                  string       `yaml:"isolation"`
-	Mounts                     []string     `yaml:"mounts"`    // "~/repos:rw" or "~/repos" (default rw)
-	Deny                       []string     `yaml:"deny"`      // paths to mask
+	FS                         []string     `yaml:"fs"`
+	Network                    NetworkField `yaml:"network"`
+	Env                        EnvField     `yaml:"env"`
 	Resources                  EggResources `yaml:"resources"`
-	Env                        EggEnv       `yaml:"env"`
 	Shell                      string       `yaml:"shell"`
 	DangerouslySkipPermissions bool         `yaml:"dangerously_skip_permissions"`
 }
@@ -30,18 +77,23 @@ type EggResources struct {
 	MaxFDs uint32 `yaml:"max_fds"`
 }
 
-// EggEnv configures environment variable handling.
-type EggEnv struct {
-	AllowAll bool     `yaml:"allow_all"`
-	Allow    []string `yaml:"allow"` // explicit allowlist
+// DefaultDenyPaths returns paths that should be blocked by default in sandboxed sessions.
+func DefaultDenyPaths() []string {
+	return []string{
+		"~/.ssh", "~/.gnupg", "~/.aws", "~/.docker",
+		"~/.kube", "~/.netrc", "~/.bash_history", "~/.zsh_history",
+	}
 }
 
-// DefaultEggConfig returns the permissive default config used when no egg.yaml exists.
+// DefaultEggConfig returns the restrictive default config used when no egg.yaml exists.
+// CWD is writable, home is read-only except agent-drilled holes. Sensitive dirs are denied.
 func DefaultEggConfig() *EggConfig {
+	fs := []string{"rw:./"}
+	for _, d := range DefaultDenyPaths() {
+		fs = append(fs, "deny:"+d)
+	}
 	return &EggConfig{
-		Isolation: "network",
-		Mounts:    []string{"~:rw"},
-		Env:       EggEnv{AllowAll: true},
+		FS: fs,
 	}
 }
 
@@ -55,9 +107,6 @@ func LoadEggConfig(path string) (*EggConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse egg config: %w", err)
 	}
-	if cfg.Isolation == "" {
-		cfg.Isolation = "network"
-	}
 	return &cfg, nil
 }
 
@@ -66,9 +115,6 @@ func LoadEggConfigFromYAML(yamlStr string) (*EggConfig, error) {
 	var cfg EggConfig
 	if err := yaml.Unmarshal([]byte(yamlStr), &cfg); err != nil {
 		return nil, fmt.Errorf("parse egg config: %w", err)
-	}
-	if cfg.Isolation == "" {
-		cfg.Isolation = "network"
 	}
 	return &cfg, nil
 }
@@ -88,42 +134,65 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	return DefaultEggConfig()
 }
 
+// ParseFSRules splits fs entries into mounts and deny paths.
+// Entries are "mode:path" where mode is rw, ro, or deny.
+func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string) {
+	var mounts []sandbox.Mount
+	var deny []string
+	for _, entry := range fs {
+		mode, path, ok := strings.Cut(entry, ":")
+		if !ok {
+			// No colon — treat as rw mount
+			path = entry
+			mode = "rw"
+		}
+		expanded := expandTilde(path, home)
+		switch mode {
+		case "deny":
+			deny = append(deny, expanded)
+		case "ro":
+			mounts = append(mounts, sandbox.Mount{Source: expanded, Target: expanded, ReadOnly: true})
+		default: // "rw" or unknown
+			mounts = append(mounts, sandbox.Mount{Source: expanded, Target: expanded})
+		}
+	}
+	return mounts, deny
+}
+
 // ToSandboxConfig converts the egg config to a sandbox.Config.
 func (c *EggConfig) ToSandboxConfig() sandbox.Config {
 	home, _ := os.UserHomeDir()
-
-	var mounts []sandbox.Mount
-	for _, m := range c.Mounts {
-		source, readOnly := parseMount(m, home)
-		mounts = append(mounts, sandbox.Mount{
-			Source:   source,
-			Target:   source, // same path inside sandbox
-			ReadOnly: readOnly,
-		})
-	}
-
-	var deny []string
-	for _, d := range c.Deny {
-		deny = append(deny, expandTilde(d, home))
-	}
+	mounts, deny := ParseFSRules(c.FS, home)
+	netNeed := sandbox.NetworkNeedFromDomains([]string(c.Network))
 
 	return sandbox.Config{
-		Isolation: sandbox.ParseLevel(c.Isolation),
-		Mounts:    mounts,
-		Deny:      deny,
-		CPULimit:  c.Resources.CPUDuration(),
-		MemLimit:  c.Resources.MemBytes(),
-		MaxFDs:    c.Resources.MaxFDs,
+		Mounts:      mounts,
+		Deny:        deny,
+		NetworkNeed: netNeed,
+		Domains:     []string(c.Network),
+		CPULimit:    c.Resources.CPUDuration(),
+		MemLimit:    c.Resources.MemBytes(),
+		MaxFDs:      c.Resources.MaxFDs,
 	}
+}
+
+// IsAllEnv returns true if the env config passes all environment variables.
+func (c *EggConfig) IsAllEnv() bool {
+	for _, v := range c.Env {
+		if v == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 // BuildEnv filters the host environment based on the config.
 func (c *EggConfig) BuildEnv() []string {
-	if c.Env.AllowAll {
+	if c.IsAllEnv() {
 		return os.Environ()
 	}
 	allowed := make(map[string]bool)
-	for _, k := range c.Env.Allow {
+	for _, k := range c.Env {
 		allowed[k] = true
 	}
 	// Always pass through essentials (minimal set — agents set their own vars at runtime)
@@ -163,15 +232,17 @@ func (c *EggConfig) YAML() (string, error) {
 	return string(data), nil
 }
 
-// parseMount parses a mount string like "~/repos:rw" or "~/repos" into source path and readOnly flag.
-func parseMount(s string, home string) (string, bool) {
-	parts := strings.SplitN(s, ":", 2)
-	source := expandTilde(parts[0], home)
-	readOnly := false
-	if len(parts) == 2 && parts[1] == "ro" {
-		readOnly = true
+// NetworkSummary returns a short description of the network config for logging.
+func (c *EggConfig) NetworkSummary() string {
+	if len(c.Network) == 0 {
+		return "none"
 	}
-	return source, readOnly
+	for _, d := range c.Network {
+		if d == "*" {
+			return "*"
+		}
+	}
+	return strings.Join([]string(c.Network), ",")
 }
 
 func expandTilde(path string, home string) string {

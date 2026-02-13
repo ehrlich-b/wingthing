@@ -10,42 +10,25 @@ import (
 	"testing"
 )
 
-func TestHasNetwork(t *testing.T) {
-	tests := []struct {
-		level Level
-		want  bool
-	}{
-		{Strict, false},
-		{Standard, false},
-		{Network, true},
-		{Privileged, true},
-	}
-	for _, tt := range tests {
-		if got := hasNetwork(tt.level); got != tt.want {
-			t.Errorf("hasNetwork(%s) = %v, want %v", tt.level, got, tt.want)
-		}
-	}
-}
-
 func TestBuildProfileNetworkDeny(t *testing.T) {
-	profile := buildProfile(Config{Isolation: Standard})
+	profile := buildProfile(Config{NetworkNeed: NetworkNone})
 	if !strings.Contains(profile, "(deny network*)") {
-		t.Errorf("standard isolation profile should deny network, got:\n%s", profile)
+		t.Errorf("NetworkNone profile should deny network, got:\n%s", profile)
 	}
 }
 
 func TestBuildProfileNetworkAllow(t *testing.T) {
-	profile := buildProfile(Config{Isolation: Network})
+	profile := buildProfile(Config{NetworkNeed: NetworkFull})
 	if strings.Contains(profile, "(deny network*)") {
-		t.Errorf("network isolation profile should not deny network, got:\n%s", profile)
+		t.Errorf("NetworkFull profile should not deny network, got:\n%s", profile)
 	}
 }
 
 func TestBuildProfileDenyPaths(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	profile := buildProfile(Config{
-		Isolation: Standard,
-		Deny:      []string{home + "/.ssh", home + "/.gnupg"},
+		NetworkNeed: NetworkNone,
+		Deny:        []string{home + "/.ssh", home + "/.gnupg"},
 	})
 	if !strings.Contains(profile, home+"/.ssh") {
 		t.Errorf("profile should deny .ssh, got:\n%s", profile)
@@ -58,7 +41,7 @@ func TestBuildProfileDenyPaths(t *testing.T) {
 func TestBuildProfileMountWriteIsolation(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	profile := buildProfile(Config{
-		Isolation: Standard,
+		NetworkNeed: NetworkNone,
 		Mounts: []Mount{
 			{Source: home + "/scratch/jail", Target: home + "/scratch/jail"},
 		},
@@ -75,7 +58,7 @@ func TestBuildProfileMountWriteIsolation(t *testing.T) {
 
 func TestSeatbeltExecBuildsCommand(t *testing.T) {
 	sb := &seatbeltSandbox{
-		cfg:     Config{Isolation: Standard},
+		cfg:     Config{NetworkNeed: NetworkNone},
 		profile: "(version 1)(allow default)",
 		tmpDir:  "/tmp/test",
 	}
@@ -102,7 +85,7 @@ func TestSeatbeltExecBuildsCommand(t *testing.T) {
 // Integration tests — actually run sandboxed processes
 
 func TestSeatbeltNetworkBlocked(t *testing.T) {
-	sb, err := newPlatform(Config{Isolation: Standard})
+	sb, err := newPlatform(Config{NetworkNeed: NetworkNone})
 	if err != nil {
 		t.Fatalf("newPlatform: %v", err)
 	}
@@ -122,7 +105,7 @@ func TestSeatbeltNetworkBlocked(t *testing.T) {
 }
 
 func TestSeatbeltNetworkAllowed(t *testing.T) {
-	sb, err := newPlatform(Config{Isolation: Network})
+	sb, err := newPlatform(Config{NetworkNeed: NetworkFull})
 	if err != nil {
 		t.Fatalf("newPlatform: %v", err)
 	}
@@ -150,8 +133,8 @@ func TestSeatbeltDenyPathBlocked(t *testing.T) {
 	os.WriteFile(testFile, []byte("secret"), 0644)
 
 	sb, err := newPlatform(Config{
-		Isolation: Network,
-		Deny:      []string{tmpDir},
+		NetworkNeed: NetworkFull,
+		Deny:        []string{tmpDir},
 	})
 	if err != nil {
 		t.Fatalf("newPlatform: %v", err)
@@ -176,7 +159,7 @@ func TestSeatbeltWriteRestriction(t *testing.T) {
 	jail := t.TempDir()
 
 	sb, err := newPlatform(Config{
-		Isolation: Network,
+		NetworkNeed: NetworkFull,
 		Mounts: []Mount{
 			{Source: jail, Target: jail},
 		},

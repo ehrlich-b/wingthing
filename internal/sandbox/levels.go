@@ -65,3 +65,26 @@ func (n NetworkNeed) String() string {
 		return "unknown"
 	}
 }
+
+// NetworkNeedFromDomains derives NetworkNeed from a domain list.
+func NetworkNeedFromDomains(domains []string) NetworkNeed {
+	if len(domains) == 0 {
+		return NetworkNone
+	}
+	for _, d := range domains {
+		if d == "*" {
+			return NetworkFull
+		}
+	}
+	allLocal := true
+	for _, d := range domains {
+		if d != "localhost" && d != "127.0.0.1" && d != "::1" {
+			allLocal = false
+			break
+		}
+	}
+	if allLocal {
+		return NetworkLocal
+	}
+	return NetworkHTTPS
+}

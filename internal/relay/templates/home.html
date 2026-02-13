@@ -11,7 +11,11 @@
 .prompt-hidden{display:none}
 a.prompt-line{text-decoration:none}
 a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
-.how{padding:40px 0 20px;border-top:1px solid var(--accent)}
+.tab-bar{display:flex;gap:0;justify-content:center;font-family:var(--mono);font-size:13px;border-bottom:1px solid var(--accent);margin-bottom:0}
+.tab-bar button{background:none;border:none;color:var(--text-dim);font-family:var(--mono);font-size:13px;padding:10px 20px;cursor:pointer;border-bottom:2px solid transparent;transition:color 0.15s,border-color 0.15s}
+.tab-bar button:hover{color:var(--text)}
+.tab-bar button.active{color:var(--text);border-bottom-color:var(--action)}
+.how{padding:40px 0 20px}
 .how h2{font-size:18px;font-weight:700;text-align:center;margin-bottom:28px;letter-spacing:-0.02em}
 .how-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-bottom:32px}
 .how-card{background:var(--bg-card);border-radius:6px;padding:20px}
@@ -21,9 +25,45 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 .links{display:flex;gap:16px;align-items:center;justify-content:center;padding:20px 0}
 .links a{font-size:13px;color:var(--text-dim);text-decoration:none;font-family:var(--mono)}
 .links a:hover{color:var(--text)}
+.sb{padding:40px 0 20px}
+.sb-layout{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.sb-controls{display:flex;flex-direction:column;gap:20px}
+.sb-section{background:var(--bg-card);border-radius:6px;padding:16px}
+.sb-section h3{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:10px}
+.sb-pills{display:flex;flex-wrap:wrap;gap:6px}
+.sb-pill{background:var(--bg);border:1px solid var(--accent);color:var(--text-dim);font-family:var(--mono);font-size:12px;padding:4px 12px;border-radius:14px;cursor:pointer;transition:all 0.15s}
+.sb-pill:hover{border-color:var(--action);color:var(--text)}
+.sb-pill.active{background:var(--action);border-color:var(--action);color:#fff}
+.sb-radios{display:flex;flex-direction:column;gap:6px}
+.sb-radio{display:flex;align-items:baseline;gap:8px;cursor:pointer;font-size:12px;font-family:var(--mono)}
+.sb-radio input{accent-color:var(--action)}
+.sb-radio .desc{color:var(--text-dim);font-size:11px;margin-left:4px}
+.sb-list{display:flex;flex-direction:column;gap:6px}
+.sb-list-row{display:flex;gap:6px;align-items:center}
+.sb-list-row input[type="text"]{flex:1;background:var(--bg);border:1px solid var(--accent);color:var(--text);font-family:var(--mono);font-size:12px;padding:4px 8px;border-radius:3px;outline:none}
+.sb-list-row input[type="text"]:focus{border-color:var(--action)}
+.sb-toggle{background:var(--bg);border:1px solid var(--accent);color:var(--text-dim);font-family:var(--mono);font-size:10px;padding:2px 8px;border-radius:3px;cursor:pointer;min-width:28px;text-align:center}
+.sb-toggle.rw{color:var(--action);border-color:var(--action)}
+.sb-btn{background:none;border:1px solid var(--accent);color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:3px;cursor:pointer}
+.sb-btn:hover{border-color:var(--action);color:var(--text)}
+.sb-btn.remove{border-color:transparent;color:var(--text-dim);opacity:0.5;font-size:13px;padding:0 4px}
+.sb-btn.remove:hover{opacity:1;color:var(--action)}
+.sb-add{margin-top:6px}
+.sb-env-toggle{display:flex;align-items:center;gap:8px;font-size:12px;font-family:var(--mono);margin-bottom:8px}
+.sb-env-toggle input{accent-color:var(--action)}
+.sb-res-row{display:flex;gap:12px;flex-wrap:wrap}
+.sb-res-row label{font-size:11px;font-family:var(--mono);color:var(--text-dim);display:flex;flex-direction:column;gap:3px}
+.sb-res-row input{background:var(--bg);border:1px solid var(--accent);color:var(--text);font-family:var(--mono);font-size:12px;padding:4px 8px;border-radius:3px;width:100px;outline:none}
+.sb-res-row input:focus{border-color:var(--action)}
+.sb-preview{position:relative}
+.sb-preview pre{background:var(--bg-card);border-radius:6px;padding:16px 20px;font-family:var(--mono);font-size:12px;line-height:1.7;overflow-x:auto;white-space:pre;min-height:200px;color:var(--text)}
+.sb-preview .implicit{opacity:0.45;color:var(--text-dim)}
+.sb-copy{position:absolute;top:8px;right:8px;background:var(--accent);border:none;color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:3px;cursor:pointer}
+.sb-copy:hover{color:var(--text);background:var(--action)}
 @media(max-width:700px){
   .hero h1{font-size:22px}
   .how-grid{grid-template-columns:1fr}
+  .sb-layout{grid-template-columns:1fr}
   .install{font-size:11px;padding:12px 14px}
   .example{font-size:11px;padding:12px 14px}
 }
@@ -66,7 +106,11 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <a href="/auth/github" class="prompt-line prompt-hidden" id="prompt-step2"><span class="prompt-dim">continue with GitHub</span> <span class="prompt-key">[enter]</span></a>
 </div>{{end}}
 </div>
-<div class="how">
+<div class="tab-bar">
+<button class="active" onclick="switchTab('how')">how it works</button>
+<button onclick="switchTab('sb')">sandbox builder</button>
+</div>
+<div id="tab-how" class="how">
 <h2>how it works</h2>
 <div class="how-grid">
 <div class="how-card">
@@ -109,9 +153,301 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </div>
 </div>
 </div>
+<div id="tab-sb" class="sb" style="display:none">
+<div class="sb-layout">
+<div class="sb-controls">
+
+<div class="sb-section">
+<h3>agents</h3>
+<div class="sb-pills" id="sb-agents"></div>
+</div>
+
+<div class="sb-section">
+<h3>filesystem</h3>
+<div class="sb-list" id="sb-fs"></div>
+<button class="sb-btn sb-add" onclick="sbAddFS()">+ add rule</button>
+</div>
+
+<div class="sb-section">
+<h3>network</h3>
+<div class="sb-radios" id="sb-net-mode"></div>
+<div class="sb-list" id="sb-net-domains" style="margin-top:8px"></div>
+<button class="sb-btn sb-add" id="sb-net-add" onclick="sbAddDomain()" style="display:none">+ add domain</button>
+</div>
+
+<div class="sb-section">
+<h3>environment</h3>
+<label class="sb-env-toggle"><input type="checkbox" id="sb-env-all" onchange="sbRender()"> pass all ("*")</label>
+<div class="sb-list" id="sb-env"></div>
+<button class="sb-btn sb-add" onclick="sbAddEnv()">+ add var</button>
+</div>
+
+<div class="sb-section">
+<h3>resources</h3>
+<div class="sb-res-row">
+<label>cpu <input type="text" id="sb-cpu" placeholder="e.g. 300s" oninput="sbRender()"></label>
+<label>memory <input type="text" id="sb-mem" placeholder="e.g. 2GB" oninput="sbRender()"></label>
+<label>max_fds <input type="text" id="sb-fds" placeholder="e.g. 256" oninput="sbRender()"></label>
+</div>
+</div>
+
+</div>
+<div class="sb-preview">
+<button class="sb-copy" onclick="sbCopy()">copy</button>
+<pre id="sb-yaml"></pre>
+</div>
+</div>
+</div>
 <div class="links">
 <a href="/docs">docs</a>
 <a href="/skills">skills</a>
 <a href="https://github.com/ehrlich-b/wingthing">github</a>
 </div>
+<script>
+(function(){
+var agents=['claude','codex','cursor','ollama','gemini'];
+var profiles={
+  claude:{env:['ANTHROPIC_API_KEY'],writeDirs:['~/.claude/','~/.cache/claude/'],domains:['api.anthropic.com','sentry.io','statsigapi.net']},
+  codex:{env:['OPENAI_API_KEY'],writeDirs:['~/.codex/'],domains:['api.openai.com','*.openai.com']},
+  cursor:{env:['ANTHROPIC_API_KEY','OPENAI_API_KEY'],writeDirs:['~/.cursor/'],domains:['api.anthropic.com','api.openai.com','*.cursor.sh']},
+  ollama:{env:[],writeDirs:['~/.ollama/'],domains:['localhost']},
+  gemini:{env:['GEMINI_API_KEY','GOOGLE_API_KEY'],writeDirs:['~/.gemini/'],domains:['*.googleapis.com','generativelanguage.googleapis.com']}
+};
+var defaultFS=[
+  {mode:'rw',path:'./'},
+  {mode:'deny',path:'~/.ssh'},
+  {mode:'deny',path:'~/.gnupg'},
+  {mode:'deny',path:'~/.aws'},
+  {mode:'deny',path:'~/.docker'},
+  {mode:'deny',path:'~/.kube'},
+  {mode:'deny',path:'~/.netrc'},
+  {mode:'deny',path:'~/.bash_history'},
+  {mode:'deny',path:'~/.zsh_history'}
+];
+var netModes=[
+  {val:'none',desc:'no network access'},
+  {val:'domains',desc:'specific domains only'},
+  {val:'*',desc:'unrestricted'}
+];
+
+var state={
+  agents:{},
+  fs:defaultFS.map(function(r){return{mode:r.mode,path:r.path};}),
+  netMode:'none',
+  netDomains:[],
+  envAll:false,
+  envAllow:[],
+  cpu:'',mem:'',fds:''
+};
+
+// Tab switching
+window.switchTab=function(tab){
+  var btns=document.querySelectorAll('.tab-bar button');
+  btns[0].className=tab==='how'?'active':'';
+  btns[1].className=tab==='sb'?'active':'';
+  document.getElementById('tab-how').style.display=tab==='how'?'':'none';
+  document.getElementById('tab-sb').style.display=tab==='sb'?'':'none';
+  if(tab==='sb')sbRender();
+};
+
+// Init agent pills
+var pillsEl=document.getElementById('sb-agents');
+agents.forEach(function(a){
+  var b=document.createElement('button');
+  b.className='sb-pill';
+  b.textContent=a;
+  b.onclick=function(){
+    state.agents[a]=!state.agents[a];
+    b.className=state.agents[a]?'sb-pill active':'sb-pill';
+    sbRender();
+  };
+  pillsEl.appendChild(b);
+});
+
+// Init network mode radios
+var netEl=document.getElementById('sb-net-mode');
+netModes.forEach(function(m){
+  var label=document.createElement('label');
+  label.className='sb-radio';
+  var inp=document.createElement('input');
+  inp.type='radio';inp.name='sb-net';inp.value=m.val;
+  if(m.val==='none')inp.checked=true;
+  inp.onchange=function(){state.netMode=m.val;renderNetDomains();sbRender();};
+  label.appendChild(inp);
+  var span=document.createElement('span');
+  span.textContent=m.val==='domains'?'domains':m.val;
+  label.appendChild(span);
+  var desc=document.createElement('span');
+  desc.className='desc';
+  desc.textContent=m.desc;
+  label.appendChild(desc);
+  netEl.appendChild(label);
+});
+
+function renderList(el,arr,renderRow){
+  el.innerHTML='';
+  arr.forEach(function(_,i){renderRow(el,i);});
+}
+
+function cycleMode(mode){
+  if(mode==='rw')return'ro';
+  if(mode==='ro')return'deny';
+  return'rw';
+}
+
+function renderFS(){
+  renderList(document.getElementById('sb-fs'),state.fs,function(el,i){
+    var row=document.createElement('div');
+    row.className='sb-list-row';
+    var inp=document.createElement('input');
+    inp.type='text';inp.value=state.fs[i].path;
+    inp.oninput=function(){state.fs[i].path=inp.value;sbRender();};
+    var tog=document.createElement('button');
+    tog.className='sb-toggle'+(state.fs[i].mode==='rw'?' rw':'');
+    tog.textContent=state.fs[i].mode;
+    tog.onclick=function(){state.fs[i].mode=cycleMode(state.fs[i].mode);renderFS();sbRender();};
+    var rm=document.createElement('button');
+    rm.className='sb-btn remove';rm.textContent='x';
+    rm.onclick=function(){state.fs.splice(i,1);renderFS();sbRender();};
+    row.appendChild(inp);row.appendChild(tog);row.appendChild(rm);
+    el.appendChild(row);
+  });
+}
+
+function renderNetDomains(){
+  var show=state.netMode==='domains';
+  document.getElementById('sb-net-domains').style.display=show?'':'none';
+  document.getElementById('sb-net-add').style.display=show?'':'none';
+  if(!show)return;
+  renderList(document.getElementById('sb-net-domains'),state.netDomains,function(el,i){
+    var row=document.createElement('div');
+    row.className='sb-list-row';
+    var inp=document.createElement('input');
+    inp.type='text';inp.value=state.netDomains[i];inp.placeholder='e.g. api.anthropic.com';
+    inp.oninput=function(){state.netDomains[i]=inp.value;sbRender();};
+    var rm=document.createElement('button');
+    rm.className='sb-btn remove';rm.textContent='x';
+    rm.onclick=function(){state.netDomains.splice(i,1);renderNetDomains();sbRender();};
+    row.appendChild(inp);row.appendChild(rm);
+    el.appendChild(row);
+  });
+}
+
+function renderEnv(){
+  renderList(document.getElementById('sb-env'),state.envAllow,function(el,i){
+    var row=document.createElement('div');
+    row.className='sb-list-row';
+    var inp=document.createElement('input');
+    inp.type='text';inp.value=state.envAllow[i];
+    inp.oninput=function(){state.envAllow[i]=inp.value;sbRender();};
+    var rm=document.createElement('button');
+    rm.className='sb-btn remove';rm.textContent='x';
+    rm.onclick=function(){state.envAllow.splice(i,1);renderEnv();sbRender();};
+    row.appendChild(inp);row.appendChild(rm);
+    el.appendChild(row);
+  });
+}
+
+window.sbAddFS=function(){state.fs.push({mode:'rw',path:''});renderFS();};
+window.sbAddDomain=function(){state.netDomains.push('');renderNetDomains();};
+window.sbAddEnv=function(){state.envAllow.push('');renderEnv();};
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+window.sbRender=function(){
+  state.envAll=document.getElementById('sb-env-all').checked;
+  state.cpu=document.getElementById('sb-cpu').value;
+  state.mem=document.getElementById('sb-mem').value;
+  state.fds=document.getElementById('sb-fds').value;
+
+  var lines=[];
+
+  // fs
+  var fsRules=state.fs.filter(function(r){return r.path;});
+  if(fsRules.length){
+    lines.push('fs:');
+    fsRules.forEach(function(r){lines.push('  - "'+r.mode+':'+r.path+'"');});
+  }
+
+  // network
+  if(state.netMode==='none'){
+    lines.push('network: none');
+  }else if(state.netMode==='*'){
+    lines.push('network: "*"');
+  }else{
+    var doms=state.netDomains.filter(function(d){return d;});
+    if(doms.length){
+      lines.push('network:');
+      doms.forEach(function(d){lines.push('  - "'+d+'"');});
+    }else{
+      lines.push('network: none');
+    }
+  }
+
+  // env
+  if(state.envAll){
+    lines.push('env: "*"');
+  }else{
+    var allows=state.envAllow.filter(function(e){return e;});
+    if(allows.length){
+      lines.push('env:');
+      allows.forEach(function(e){lines.push('  - "'+e+'"');});
+    }
+  }
+
+  // resources
+  if(state.cpu||state.mem||state.fds){
+    lines.push('resources:');
+    if(state.cpu)lines.push('  cpu: "'+state.cpu+'"');
+    if(state.mem)lines.push('  memory: "'+state.mem+'"');
+    if(state.fds)lines.push('  max_fds: '+state.fds);
+  }
+
+  // Build explicit yaml (for copy)
+  window._sbExplicit=lines.join('\n');
+
+  // Implicit agent sections
+  var implicit=[];
+  var selected=agents.filter(function(a){return state.agents[a];});
+  if(selected.length){
+    selected.forEach(function(a){
+      var p=profiles[a];
+      implicit.push('');
+      implicit.push('# --- auto-drilled for '+a+' ---');
+      if(p.writeDirs.length){
+        implicit.push('# fs: '+p.writeDirs.map(function(d){return'rw:'+d;}).join(', '));
+      }
+      if(p.env.length){
+        implicit.push('# env: '+p.env.join(', '));
+      }
+      if(p.domains.length){
+        implicit.push('# network: '+p.domains.join(', '));
+      }
+    });
+  }
+
+  var html=esc(lines.join('\n'));
+  if(implicit.length){
+    html+='<span class="implicit">'+esc(implicit.join('\n'))+'</span>';
+  }
+  document.getElementById('sb-yaml').innerHTML=html;
+};
+
+window.sbCopy=function(){
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(window._sbExplicit||'').then(function(){
+      var btn=document.querySelector('.sb-copy');
+      btn.textContent='copied';
+      setTimeout(function(){btn.textContent='copy';},1500);
+    });
+  }
+};
+
+// Initial render
+renderFS();
+renderNetDomains();
+renderEnv();
+sbRender();
+})();
+</script>
 {{end}}

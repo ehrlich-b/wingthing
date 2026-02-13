@@ -31,7 +31,7 @@ func newPlatform(cfg Config) (Sandbox, error) {
 	}
 
 	profile := buildProfile(cfg)
-	log.Printf("seatbelt sandbox: created tmpdir=%s isolation=%s", dir, cfg.Isolation)
+	log.Printf("seatbelt sandbox: created tmpdir=%s network=%s", dir, cfg.NetworkNeed)
 	log.Printf("seatbelt profile:\n%s", profile)
 	return &seatbeltSandbox{cfg: cfg, profile: profile, tmpDir: dir}, nil
 }
@@ -60,14 +60,16 @@ func buildProfile(cfg Config) string {
 	sb.WriteString("(version 1)\n")
 	sb.WriteString("(allow default)\n")
 
-	// Network rules: combine isolation level with agent's NetworkNeed.
-	// If the isolation level already allows network (Network/Privileged), no deny.
-	// Otherwise, apply granular rules based on what the agent needs.
-	//
+	// Network rules based on NetworkNeed (derived from domain list).
 	// SBPL supports port filtering via (remote tcp "*:PORT") but NOT per-IP
 	// or per-domain ("host must be * or localhost"). DNS on macOS goes through
 	// /private/var/run/mDNSResponder (Unix socket), not UDP 53.
-	if !hasNetwork(cfg.Isolation) {
+	if cfg.ProxyPort > 0 {
+		// Domain-filtering proxy active: block ALL direct outbound,
+		// only allow connection to the local proxy + DNS.
+		sb.WriteString("(deny network*)\n")
+		fmt.Fprintf(&sb, "(allow network-outbound (literal \"/private/var/run/mDNSResponder\") (remote tcp \"localhost:%d\"))\n", cfg.ProxyPort)
+	} else {
 		switch cfg.NetworkNeed {
 		case NetworkNone:
 			sb.WriteString("(deny network*)\n")
@@ -78,7 +80,7 @@ func buildProfile(cfg Config) string {
 			sb.WriteString("(deny network*)\n")
 			sb.WriteString("(allow network-outbound (literal \"/private/var/run/mDNSResponder\") (remote tcp \"*:443\" \"*:80\"))\n")
 		case NetworkFull:
-			// no deny — agent needs full network
+			// no deny — full network access
 		}
 	}
 
@@ -136,11 +138,6 @@ func buildProfile(cfg Config) string {
 	}
 
 	return sb.String()
-}
-
-// hasNetwork returns whether the isolation level permits network access.
-func hasNetwork(level Level) bool {
-	return level >= Network
 }
 
 // sbplRegexEscape escapes regex metacharacters for SBPL (regex #"...") patterns.

@@ -26,14 +26,14 @@ type Mount struct {
 
 // Config holds sandbox creation parameters.
 type Config struct {
-	Isolation      Level
-	Mounts         []Mount
-	Deny           []string      // paths to mask (e.g. ~/.ssh)
-	NetworkNeed    NetworkNeed    // granular network access required by the agent
-	Timeout        time.Duration
-	CPULimit       time.Duration // RLIMIT_CPU (0 = backend default)
-	MemLimit       uint64        // RLIMIT_AS in bytes (0 = backend default)
-	MaxFDs         uint32        // RLIMIT_NOFILE (0 = backend default)
+	Mounts      []Mount
+	Deny        []string    // paths to mask (e.g. ~/.ssh)
+	NetworkNeed NetworkNeed // granular network access required by the agent
+	Domains     []string    // domain allowlist for proxy filtering
+	ProxyPort   int         // local domain-filtering proxy port (0 = no proxy)
+	CPULimit    time.Duration // RLIMIT_CPU (0 = backend default)
+	MemLimit    uint64        // RLIMIT_AS in bytes (0 = backend default)
+	MaxFDs      uint32        // RLIMIT_NOFILE (0 = backend default)
 }
 
 // EnforcementError is returned when the system cannot enforce the requested sandbox config.
@@ -62,8 +62,7 @@ func New(cfg Config) (Sandbox, error) {
 
 func newEnforcementError(cfg Config, platformErr error) *EnforcementError {
 	var gaps []string
-	switch cfg.Isolation {
-	case Strict, Standard:
+	if cfg.NetworkNeed < NetworkFull {
 		gaps = append(gaps, "network isolation")
 	}
 	gaps = append(gaps, "filesystem isolation")

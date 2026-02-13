@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestParseLevelRoundTrip(t *testing.T) {
@@ -36,8 +35,30 @@ func TestParseLevelUnknown(t *testing.T) {
 	}
 }
 
+func TestNetworkNeedFromDomains(t *testing.T) {
+	tests := []struct {
+		domains []string
+		want    NetworkNeed
+	}{
+		{nil, NetworkNone},
+		{[]string{}, NetworkNone},
+		{[]string{"*"}, NetworkFull},
+		{[]string{"localhost"}, NetworkLocal},
+		{[]string{"127.0.0.1"}, NetworkLocal},
+		{[]string{"api.anthropic.com"}, NetworkHTTPS},
+		{[]string{"api.anthropic.com", "sentry.io"}, NetworkHTTPS},
+		{[]string{"localhost", "api.anthropic.com"}, NetworkHTTPS},
+	}
+	for _, tt := range tests {
+		got := NetworkNeedFromDomains(tt.domains)
+		if got != tt.want {
+			t.Errorf("NetworkNeedFromDomains(%v) = %v, want %v", tt.domains, got, tt.want)
+		}
+	}
+}
+
 func TestNewRejectsWithoutPlatformSandbox(t *testing.T) {
-	_, err := New(Config{Isolation: Standard})
+	_, err := New(Config{NetworkNeed: NetworkNone})
 	if err == nil {
 		// Platform sandbox is available (e.g. running as root or with Apple Containers).
 		// That's fine — this test only checks the rejection path on systems without one.
@@ -53,7 +74,7 @@ func TestNewRejectsWithoutPlatformSandbox(t *testing.T) {
 }
 
 func TestFallbackExecEcho(t *testing.T) {
-	sb, err := newFallback(Config{Isolation: Standard, Timeout: 10 * time.Second})
+	sb, err := newFallback(Config{NetworkNeed: NetworkNone})
 	if err != nil {
 		t.Fatalf("newFallback error: %v", err)
 	}
@@ -76,7 +97,7 @@ func TestFallbackExecEcho(t *testing.T) {
 }
 
 func TestFallbackRestrictedEnv(t *testing.T) {
-	sb, err := newFallback(Config{Isolation: Standard})
+	sb, err := newFallback(Config{NetworkNeed: NetworkNone})
 	if err != nil {
 		t.Fatalf("newFallback error: %v", err)
 	}
@@ -102,7 +123,7 @@ func TestFallbackRestrictedEnv(t *testing.T) {
 }
 
 func TestFallbackWorkingDir(t *testing.T) {
-	sb, err := newFallback(Config{Isolation: Standard})
+	sb, err := newFallback(Config{NetworkNeed: NetworkNone})
 	if err != nil {
 		t.Fatalf("newFallback error: %v", err)
 	}
@@ -131,7 +152,7 @@ func TestFallbackWorkingDir(t *testing.T) {
 }
 
 func TestFallbackDestroy(t *testing.T) {
-	sb, err := newFallback(Config{Isolation: Standard})
+	sb, err := newFallback(Config{NetworkNeed: NetworkNone})
 	if err != nil {
 		t.Fatalf("newFallback error: %v", err)
 	}

@@ -10,45 +10,36 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestCloneFlagsStrict(t *testing.T) {
-	s := &linuxSandbox{cfg: Config{Isolation: Strict}}
+func TestCloneFlagsNoNetwork(t *testing.T) {
+	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkNone}}
 	flags := s.cloneFlags()
 	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
 	if flags != want {
-		t.Errorf("Strict cloneFlags = 0x%x, want 0x%x", flags, want)
+		t.Errorf("NetworkNone cloneFlags = 0x%x, want 0x%x", flags, want)
 	}
 }
 
-func TestCloneFlagsStandard(t *testing.T) {
-	s := &linuxSandbox{cfg: Config{Isolation: Standard}}
-	flags := s.cloneFlags()
-	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
-	if flags != want {
-		t.Errorf("Standard cloneFlags = 0x%x, want 0x%x", flags, want)
-	}
-	// Standard SHOULD have CLONE_NEWNET (no network access)
-	if flags&syscall.CLONE_NEWNET == 0 {
-		t.Error("Standard should set CLONE_NEWNET (deny network)")
-	}
-}
-
-func TestCloneFlagsNetwork(t *testing.T) {
-	s := &linuxSandbox{cfg: Config{Isolation: Network}}
+func TestCloneFlagsLocal(t *testing.T) {
+	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkLocal}}
 	flags := s.cloneFlags()
 	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
 	if flags != want {
-		t.Errorf("Network cloneFlags = 0x%x, want 0x%x", flags, want)
+		t.Errorf("NetworkLocal cloneFlags = 0x%x, want 0x%x", flags, want)
 	}
 	if flags&syscall.CLONE_NEWNET != 0 {
-		t.Error("Network should not set CLONE_NEWNET")
+		t.Error("NetworkLocal should not set CLONE_NEWNET")
 	}
 }
 
-func TestCloneFlagsPrivileged(t *testing.T) {
-	s := &linuxSandbox{cfg: Config{Isolation: Privileged}}
+func TestCloneFlagsFull(t *testing.T) {
+	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkFull}}
 	flags := s.cloneFlags()
-	if flags != 0 {
-		t.Errorf("Privileged cloneFlags = 0x%x, want 0", flags)
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
+	if flags != want {
+		t.Errorf("NetworkFull cloneFlags = 0x%x, want 0x%x", flags, want)
+	}
+	if flags&syscall.CLONE_NEWNET != 0 {
+		t.Error("NetworkFull should not set CLONE_NEWNET")
 	}
 }
 
@@ -127,7 +118,7 @@ func TestSeccompDeniedSyscallsIncluded(t *testing.T) {
 }
 
 func TestRlimitNoDefaults(t *testing.T) {
-	s := &linuxSandbox{cfg: Config{Isolation: Standard}}
+	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkNone}}
 	limits := s.rlimits()
 
 	if len(limits) != 0 {
@@ -137,10 +128,10 @@ func TestRlimitNoDefaults(t *testing.T) {
 
 func TestRlimitConfigOverrides(t *testing.T) {
 	s := &linuxSandbox{cfg: Config{
-		Isolation: Standard,
-		CPULimit:  300 * time.Second,
-		MemLimit:  2 * 1024 * 1024 * 1024, // 2GB
-		MaxFDs:    1024,
+		NetworkNeed: NetworkNone,
+		CPULimit:    300 * time.Second,
+		MemLimit:    2 * 1024 * 1024 * 1024, // 2GB
+		MaxFDs:      1024,
 	}}
 	limits := s.rlimits()
 
@@ -163,7 +154,7 @@ func TestRlimitConfigOverrides(t *testing.T) {
 
 func TestRlimitOnlyExplicit(t *testing.T) {
 	// Only CPU set — should only get CPU limit
-	s := &linuxSandbox{cfg: Config{Isolation: Standard, CPULimit: 60 * time.Second}}
+	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkNone, CPULimit: 60 * time.Second}}
 	limits := s.rlimits()
 	if len(limits) != 1 {
 		t.Fatalf("rlimits count = %d, want 1", len(limits))
@@ -175,19 +166,19 @@ func TestRlimitOnlyExplicit(t *testing.T) {
 
 func TestSysProcAttrCloneflags(t *testing.T) {
 	tests := []struct {
-		level Level
-		want  uintptr
+		need NetworkNeed
+		want uintptr
 	}{
-		{Strict, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
-		{Standard, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
-		{Network, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
-		{Privileged, 0},
+		{NetworkNone, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
+		{NetworkLocal, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
+		{NetworkHTTPS, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
+		{NetworkFull, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
 	}
 	for _, tt := range tests {
-		s := &linuxSandbox{cfg: Config{Isolation: tt.level}}
+		s := &linuxSandbox{cfg: Config{NetworkNeed: tt.need}}
 		attr := s.sysProcAttr()
 		if attr.Cloneflags != tt.want {
-			t.Errorf("level %s: Cloneflags = 0x%x, want 0x%x", tt.level, attr.Cloneflags, tt.want)
+			t.Errorf("NetworkNeed %v: Cloneflags = 0x%x, want 0x%x", tt.need, attr.Cloneflags, tt.want)
 		}
 	}
 }
@@ -203,7 +194,7 @@ func TestNetworkNeedClearsNewnet(t *testing.T) {
 		{NetworkFull, true},
 	}
 	for _, tt := range tests {
-		s := &linuxSandbox{cfg: Config{Isolation: Standard, NetworkNeed: tt.need}}
+		s := &linuxSandbox{cfg: Config{NetworkNeed: tt.need}}
 		flags := s.cloneFlags()
 		hasNewnet := flags&syscall.CLONE_NEWNET != 0
 		if tt.wantNet && hasNewnet {

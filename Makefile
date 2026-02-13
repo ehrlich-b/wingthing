@@ -1,4 +1,4 @@
-.PHONY: build test check clean web serve release proto deploy
+.PHONY: build test check clean web serve release proto deploy jail
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -36,6 +36,9 @@ release: web
 	done
 	@echo "Creating release $(CINCH_TAG)..."
 	cinch release dist/*
+
+jail: build
+	go test -tags integration -v ./internal/sandbox/ -run TestJail
 
 deploy: check
 	fly deploy

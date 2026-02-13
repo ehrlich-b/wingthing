@@ -50,7 +50,7 @@ func newPlatform(cfg Config) (Sandbox, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox tmpdir: %w", err)
 	}
-	log.Printf("linux sandbox: created tmpdir=%s isolation=%s", dir, cfg.Isolation)
+	log.Printf("linux sandbox: created tmpdir=%s network=%s", dir, cfg.NetworkNeed)
 	return &linuxSandbox{cfg: cfg, tmpDir: dir}, nil
 }
 
@@ -207,21 +207,9 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 	return attr
 }
 
-// cloneFlags returns namespace clone flags based on isolation level.
+// cloneFlags returns namespace clone flags based on NetworkNeed.
 func (s *linuxSandbox) cloneFlags() uintptr {
-	var flags uintptr
-	switch s.cfg.Isolation {
-	case Strict:
-		flags = syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET
-	case Standard:
-		flags = syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET
-	case Network:
-		flags = syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
-	case Privileged:
-		return 0
-	default:
-		flags = syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
-	}
+	flags := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
 	// Strip network namespace for agents that need network access.
 	// Linux can't do port-level filtering in userns without iptables,
 	// so HTTPS and Full both get full network. Local gets it too (localhost).

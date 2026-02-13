@@ -380,16 +380,16 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		if err != nil {
 			return fmt.Errorf("load egg config: %w", err)
 		}
-		log.Printf("egg: loaded wing config from %s (isolation=%s)", eggConfigFlag, wingEggCfg.Isolation)
+		log.Printf("egg: loaded wing config from %s (network=%s)", eggConfigFlag, wingEggCfg.NetworkSummary())
 	} else {
 		// Check ~/.wingthing/egg.yaml
 		defaultPath := filepath.Join(cfg.Dir, "egg.yaml")
 		wingEggCfg, err = egg.LoadEggConfig(defaultPath)
 		if err != nil {
 			wingEggCfg = egg.DefaultEggConfig()
-			log.Printf("egg: using default config (isolation=%s)", wingEggCfg.Isolation)
+			log.Printf("egg: using default config (network=%s)", wingEggCfg.NetworkSummary())
 		} else {
-			log.Printf("egg: loaded wing config from %s (isolation=%s)", defaultPath, wingEggCfg.Isolation)
+			log.Printf("egg: loaded wing config from %s (network=%s)", defaultPath, wingEggCfg.NetworkSummary())
 		}
 	}
 	var wingEggMu sync.Mutex
@@ -537,7 +537,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		wingEggMu.Lock()
 		wingEggCfg = newCfg
 		wingEggMu.Unlock()
-		log.Printf("egg: config updated from relay (isolation=%s)", newCfg.Isolation)
+		log.Printf("egg: config updated from relay (network=%s)", newCfg.NetworkSummary())
 	}
 
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
@@ -702,10 +702,15 @@ func executeRelayTask(ctx context.Context, cfg *config.Config, s *store.Store, t
 		for _, m := range pr.Mounts {
 			mounts = append(mounts, sandbox.Mount{Source: m, Target: m})
 		}
+		// Map isolation string to NetworkNeed for the task execution path
+		netNeed := sandbox.NetworkNone
+		level := sandbox.ParseLevel(isolation)
+		if level >= sandbox.Network {
+			netNeed = sandbox.NetworkFull
+		}
 		sb, sbErr := sandbox.New(sandbox.Config{
-			Isolation: sandbox.ParseLevel(isolation),
-			Mounts:    mounts,
-			Timeout:   pr.Timeout,
+			Mounts:      mounts,
+			NetworkNeed: netNeed,
 		})
 		if sbErr != nil {
 			s.SetTaskError(t.ID, sbErr.Error())

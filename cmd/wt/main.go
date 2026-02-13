@@ -254,10 +254,15 @@ func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.T
 		for _, m := range pr.Mounts {
 			mounts = append(mounts, sandbox.Mount{Source: m, Target: m})
 		}
+		// Map isolation string to NetworkNeed for the task execution path
+		netNeed := sandbox.NetworkNone
+		level := sandbox.ParseLevel(pr.Isolation)
+		if level >= sandbox.Network {
+			netNeed = sandbox.NetworkFull
+		}
 		sb, sbErr := sandbox.New(sandbox.Config{
-			Isolation: sandbox.ParseLevel(pr.Isolation),
-			Mounts:    mounts,
-			Timeout:   pr.Timeout,
+			Mounts:      mounts,
+			NetworkNeed: netNeed,
 		})
 		if sbErr != nil {
 			s.SetTaskError(t.ID, sbErr.Error())

@@ -50,12 +50,11 @@ func eggRunCmd() *cobra.Command {
 		sessionID  string
 		agentName  string
 		cwd        string
-		isolation  string
 		shell      string
 		rows       uint32
 		cols       uint32
-		mountsFlag []string
-		denyFlag   []string
+		fsFlag     []string
+		networkFlag []string
 		envFlag    []string
 		cpuFlag    string
 		memFlag    string
@@ -103,15 +102,14 @@ func eggRunCmd() *cobra.Command {
 			}
 
 			rc := egg.RunConfig{
-				Agent:     agentName,
-				CWD:       cwd,
-				Isolation: isolation,
-				Shell:     shell,
-				Mounts:    mountsFlag,
-				Deny:      denyFlag,
-				Env:       envMap,
-				Rows:      rows,
-				Cols:      cols,
+				Agent:   agentName,
+				CWD:     cwd,
+				Shell:   shell,
+				FS:      fsFlag,
+				Network: networkFlag,
+				Env:     envMap,
+				Rows:    rows,
+				Cols:    cols,
 				DangerouslySkipPermissions: dangerouslySkipPermissions,
 				CPULimit:  cpuLimit,
 				MemLimit:  memLimit,
@@ -146,12 +144,11 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sessionID, "session-id", "", "session ID")
 	cmd.Flags().StringVar(&agentName, "agent", "claude", "agent name")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "working directory")
-	cmd.Flags().StringVar(&isolation, "isolation", "network", "sandbox isolation level")
 	cmd.Flags().StringVar(&shell, "shell", "", "override shell")
 	cmd.Flags().Uint32Var(&rows, "rows", 24, "terminal rows")
 	cmd.Flags().Uint32Var(&cols, "cols", 80, "terminal cols")
-	cmd.Flags().StringArrayVar(&mountsFlag, "mounts", nil, "sandbox mounts (~/repos:rw)")
-	cmd.Flags().StringArrayVar(&denyFlag, "deny", nil, "paths to deny")
+	cmd.Flags().StringArrayVar(&fsFlag, "fs", nil, "filesystem rules (rw:./, deny:~/.ssh)")
+	cmd.Flags().StringArrayVar(&networkFlag, "network", nil, "network domains (api.anthropic.com, *, none)")
 	cmd.Flags().StringArrayVar(&envFlag, "env", nil, "environment variables (KEY=VAL)")
 	cmd.Flags().BoolVar(&dangerouslySkipPermissions, "dangerously-skip-permissions", false, "skip agent permission prompts")
 	cmd.Flags().StringVar(&cpuFlag, "cpu", "", "CPU time limit (e.g. 300s)")
@@ -429,7 +426,6 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		"--session-id", sessionID,
 		"--agent", agentName,
 		"--cwd", cwd,
-		"--isolation", eggCfg.Isolation,
 		"--rows", strconv.Itoa(int(rows)),
 		"--cols", strconv.Itoa(int(cols)),
 	}
@@ -439,11 +435,22 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if eggCfg.DangerouslySkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
-	for _, m := range eggCfg.Mounts {
-		args = append(args, "--mounts", m)
+	for _, entry := range eggCfg.FS {
+		// Resolve relative paths in fs entries
+		mode, path, ok := strings.Cut(entry, ":")
+		if !ok {
+			path = entry
+			mode = "rw"
+		}
+		if path == "." || path == "./" {
+			path = cwd
+		} else if !filepath.IsAbs(path) && !strings.HasPrefix(path, "~") {
+			path = filepath.Join(cwd, path)
+		}
+		args = append(args, "--fs", mode+":"+path)
 	}
-	for _, d := range eggCfg.Deny {
-		args = append(args, "--deny", d)
+	for _, d := range eggCfg.Network {
+		args = append(args, "--network", d)
 	}
 	for k, v := range eggCfg.BuildEnvMap() {
 		args = append(args, "--env", k+"="+v)

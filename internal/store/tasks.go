@@ -36,7 +36,7 @@ func (s *Store) CreateTask(t *Task) error {
 		t.Status = "pending"
 	}
 	if t.Isolation == "" {
-		t.Isolation = "standard"
+		t.Isolation = "none"
 	}
 	if t.Type == "" {
 		t.Type = "prompt"

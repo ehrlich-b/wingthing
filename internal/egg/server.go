@@ -54,7 +54,7 @@ type Session struct {
 	PID       int
 	Agent     string
 	CWD       string
-	Isolation string
+	Network   string // summary: "none", "*", or comma-separated domains
 	StartedAt time.Time
 	ptmx      *os.File
 	replay    *replayBuffer
@@ -68,15 +68,14 @@ type Session struct {
 
 // RunConfig holds everything needed to start a single egg session.
 type RunConfig struct {
-	Agent     string
-	CWD       string
-	Isolation string
-	Shell     string
-	Mounts    []string          // "~/repos:rw" format
-	Deny      []string
-	Env       map[string]string
-	Rows      uint32
-	Cols      uint32
+	Agent   string
+	CWD     string
+	Shell   string
+	FS      []string          // "rw:./", "deny:~/.ssh"
+	Network []string          // domain list
+	Env     map[string]string
+	Rows    uint32
+	Cols    uint32
 
 	DangerouslySkipPermissions bool
 	CPULimit                   time.Duration
@@ -355,21 +354,35 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		envSlice = append(envSlice, k+"="+v)
 	}
 
+	// Snapshot agent config before session so we can restore on exit
+	configSnap := SnapshotAgentConfig(rc.Agent)
+
+	// Merge domains: user config + agent profile (dedup)
+	mergedDomains := mergeDomains(rc.Network, profile.Domains)
+	netNeed := sandbox.NetworkNeedFromDomains(mergedDomains)
+
+	// Start domain-filtering proxy if we have specific domains (not "*" or empty)
+	var domainProxy *sandbox.DomainProxy
+	if netNeed == sandbox.NetworkHTTPS && len(mergedDomains) > 0 {
+		var err2 error
+		domainProxy, err2 = sandbox.StartProxy(mergedDomains)
+		if err2 != nil {
+			log.Printf("egg: warning: domain proxy failed, falling back to port-level filtering: %v", err2)
+		} else {
+			proxyURL := fmt.Sprintf("http://localhost:%d", domainProxy.Port())
+			envMap["HTTPS_PROXY"] = proxyURL
+			envMap["HTTP_PROXY"] = proxyURL
+		}
+	}
+
 	// Build sandbox and command
 	var sb sandbox.Sandbox
 	var cmd *exec.Cmd
 
-	if rc.Isolation != "" && rc.Isolation != "privileged" {
+	hasSandbox := len(rc.FS) > 0 || netNeed < sandbox.NetworkFull
+	if hasSandbox {
 		home, _ := os.UserHomeDir()
-		var mounts []sandbox.Mount
-		for _, m := range rc.Mounts {
-			source, readOnly := parseMount(m, home)
-			mounts = append(mounts, sandbox.Mount{Source: source, Target: source, ReadOnly: readOnly})
-		}
-		var deny []string
-		for _, d := range rc.Deny {
-			deny = append(deny, expandTilde(d, home))
-		}
+		mounts, deny := ParseFSRules(rc.FS, home)
 
 		// Auto-inject agent binary install root so sandbox can find it.
 		if home != "" && len(mounts) > 0 {
@@ -396,19 +409,17 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			}
 		}
 
-		// Set network need from agent profile, but only when isolation
-		// denies network (Strict/Standard). When isolation allows network,
-		// the profile doesn't need to override anything.
-		netNeed := sandbox.NetworkNone
-		if sandbox.ParseLevel(rc.Isolation) < sandbox.Network {
-			netNeed = profile.Network
+		proxyPort := 0
+		if domainProxy != nil {
+			proxyPort = domainProxy.Port()
 		}
 
 		sbCfg := sandbox.Config{
-			Isolation:   sandbox.ParseLevel(rc.Isolation),
 			Mounts:      mounts,
 			Deny:        deny,
 			NetworkNeed: netNeed,
+			Domains:     mergedDomains,
+			ProxyPort:   proxyPort,
 			CPULimit:    rc.CPULimit,
 			MemLimit:    rc.MemLimit,
 			MaxFDs:      rc.MaxFDs,
@@ -458,12 +469,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	}
 
 	sessionID := filepath.Base(s.dir)
+	networkSummary := networkSummaryFromDomains(mergedDomains)
 	sess := &Session{
 		ID:        sessionID,
 		PID:       cmd.Process.Pid,
 		Agent:     rc.Agent,
 		CWD:       rc.CWD,
-		Isolation: rc.Isolation,
+		Network:   networkSummary,
 		StartedAt: time.Now(),
 		ptmx:      ptmx,
 		replay:    newReplayBuffer(),
@@ -477,7 +489,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	s.session = sess
 	s.mu.Unlock()
 
-	log.Printf("egg: session %s agent=%s pid=%d isolation=%s", sessionID, rc.Agent, cmd.Process.Pid, rc.Isolation)
+	log.Printf("egg: session %s agent=%s pid=%d network=%s fs=%d", sessionID, rc.Agent, cmd.Process.Pid, networkSummary, len(rc.FS))
 
 	// Read PTY output (with first-byte timing)
 	go s.readPTY(sess)
@@ -513,7 +525,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 
 	// Write session metadata so the wing can read it on reclaim
 	metaPath := filepath.Join(s.dir, "egg.meta")
-	metaContent := fmt.Sprintf("agent=%s\ncwd=%s\nisolation=%s\n", rc.Agent, rc.CWD, rc.Isolation)
+	metaContent := fmt.Sprintf("agent=%s\ncwd=%s\nnetwork=%s\n", rc.Agent, rc.CWD, networkSummary)
 	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
 	}
@@ -543,6 +555,10 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		log.Printf("egg: session %s exited with code %d", sessionID, exitCode)
 
 		ptmx.Close()
+		configSnap.Restore()
+		if domainProxy != nil {
+			domainProxy.Close()
+		}
 		if sess.sb != nil {
 			sess.sb.Destroy()
 		}
@@ -945,6 +961,38 @@ func (s *Server) startupWatchdog(sess *Session) {
 		}
 		log.Printf("egg: WATCHDOG: lsof (first 50 lines):\n%s", strings.Join(lines, "\n"))
 	}
+}
+
+// mergeDomains deduplicates and merges two domain lists.
+func mergeDomains(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	var out []string
+	for _, d := range a {
+		if !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	for _, d := range b {
+		if !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// networkSummaryFromDomains returns a short description of the network config.
+func networkSummaryFromDomains(domains []string) string {
+	if len(domains) == 0 {
+		return "none"
+	}
+	for _, d := range domains {
+		if d == "*" {
+			return "*"
+		}
+	}
+	return strings.Join(domains, ",")
 }
 
 func installRoot(binDir, home string) string {
