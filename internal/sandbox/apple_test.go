@@ -6,9 +6,18 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
+
+func sandboxExecAvailable(t *testing.T) {
+	t.Helper()
+	cmd := exec.Command("sandbox-exec", "-p", "(version 1)(allow default)", "/bin/echo", "ok")
+	if err := cmd.Run(); err != nil {
+		t.Skip("sandbox-exec unavailable (nested sandbox or SIP): ", err)
+	}
+}
 
 func TestBuildProfileNetworkDeny(t *testing.T) {
 	profile := buildProfile(Config{NetworkNeed: NetworkNone})
@@ -116,6 +125,7 @@ func TestBuildProfileDenyWritePaths(t *testing.T) {
 // Integration tests — actually run sandboxed processes
 
 func TestSeatbeltNetworkBlocked(t *testing.T) {
+	sandboxExecAvailable(t)
 	sb, err := newPlatform(Config{NetworkNeed: NetworkNone})
 	if err != nil {
 		t.Fatalf("newPlatform: %v", err)
@@ -136,6 +146,7 @@ func TestSeatbeltNetworkBlocked(t *testing.T) {
 }
 
 func TestSeatbeltNetworkAllowed(t *testing.T) {
+	sandboxExecAvailable(t)
 	sb, err := newPlatform(Config{NetworkNeed: NetworkFull})
 	if err != nil {
 		t.Fatalf("newPlatform: %v", err)
@@ -158,6 +169,7 @@ func TestSeatbeltNetworkAllowed(t *testing.T) {
 }
 
 func TestSeatbeltDenyPathBlocked(t *testing.T) {
+	sandboxExecAvailable(t)
 	// Create a temp file, deny access to its directory
 	tmpDir := t.TempDir()
 	testFile := tmpDir + "/secret.txt"
@@ -186,6 +198,7 @@ func TestSeatbeltDenyPathBlocked(t *testing.T) {
 }
 
 func TestSeatbeltWriteRestriction(t *testing.T) {
+	sandboxExecAvailable(t)
 	home, _ := os.UserHomeDir()
 	jail := t.TempDir()
 
@@ -224,6 +237,7 @@ func TestSeatbeltWriteRestriction(t *testing.T) {
 }
 
 func TestSeatbeltDenyWriteBlocksWrite(t *testing.T) {
+	sandboxExecAvailable(t)
 	// Create a file that should be readable but not writable.
 	// Include a writable mount for the parent dir — this is the real scenario:
 	// the project dir is rw-mounted AND egg.yaml inside it is deny-write.
