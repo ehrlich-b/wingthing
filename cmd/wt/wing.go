@@ -253,6 +253,7 @@ func wingStartCmd() *cobra.Command {
 	var labelsFlag string
 	var convFlag string
 	var foregroundFlag bool
+	var debugFlag bool
 	var eggConfigFlag string
 
 	cmd := &cobra.Command{
@@ -262,7 +263,7 @@ func wingStartCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Foreground mode: run directly
 			if foregroundFlag {
-				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag)
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, debugFlag)
 			}
 
 			// Daemon mode (default): re-exec detached, write PID file, return
@@ -289,6 +290,9 @@ func wingStartCmd() *cobra.Command {
 			}
 			if eggConfigFlag != "" {
 				childArgs = append(childArgs, "--egg-config", eggConfigFlag)
+			}
+			if debugFlag {
+				childArgs = append(childArgs, "--debug")
 			}
 
 			rotateLog(wingLogPath())
@@ -324,12 +328,13 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&labelsFlag, "labels", "", "comma-separated wing labels (e.g. gpu,cuda,research)")
 	cmd.Flags().StringVar(&convFlag, "conv", "auto", "conversation mode: auto (daily rolling), new (fresh), or a named thread")
 	cmd.Flags().BoolVar(&foregroundFlag, "foreground", false, "run in foreground instead of daemonizing")
+	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp/wt-pty-<session>.bin for each egg")
 	cmd.Flags().StringVar(&eggConfigFlag, "egg-config", "", "path to egg.yaml for wing-level sandbox defaults")
 
 	return cmd
 }
 
-func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag string) error {
+func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag string, debug bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -467,7 +472,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		currentEggCfg := wingEggCfg
 		wingEggMu.Unlock()
 		eggCfg := egg.DiscoverEggConfig(start.CWD, currentEggCfg)
-		handlePTYSession(ctx, cfg, start, write, input, eggCfg)
+		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debug)
 	}
 
 	client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
@@ -1242,7 +1247,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug bool) {
 	// Set up E2E encryption — required, no plaintext fallback
 	var mu sync.Mutex
 	var gcm cipher.AEAD
@@ -1268,7 +1273,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 	}
 
 	// Spawn a per-session egg
-	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD)
+	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug)
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := readEggCrashInfo(eggDir)

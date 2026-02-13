@@ -53,10 +53,10 @@ type Session struct {
 	replay    *replayBuffer
 	sb        sandbox.Sandbox
 	cmd       *exec.Cmd
-	subs      map[string]chan []byte // stream subscribers
 	mu        sync.Mutex
 	done      chan struct{} // closed when process exits
 	exitCode  int
+	debug     bool
 }
 
 // RunConfig holds everything needed to start a single egg session.
@@ -75,32 +75,156 @@ type RunConfig struct {
 	CPULimit                   time.Duration
 	MemLimit                   uint64
 	MaxFDs                     uint32
+	Debug                      bool
 }
 
-// replayBuffer captures PTY output and resets on screen-clear sequences.
-// On reattach the entire buffer is replayed, starting from the last clear.
+// replayBuffer is an append-only (bounded) log of PTY output.
+// Readers use cursor-based reads (ReadAfter) instead of subscriber channels,
+// guaranteeing every byte arrives in exact PTY order with no drops.
+// readerCursor tracks an active reader's position in the buffer.
+type readerCursor struct {
+	offset int64
+}
+
 type replayBuffer struct {
-	mu  sync.Mutex
-	buf []byte
+	mu       sync.Mutex
+	buf      []byte
+	trimmed  int64          // total bytes ever trimmed from front
+	notify   chan struct{}   // closed+replaced on Write to wake readers
+	advanced chan struct{}   // closed+replaced when a reader advances (unblocks writer)
+	readers  []*readerCursor
 }
 
 func newReplayBuffer() *replayBuffer {
-	return &replayBuffer{buf: make([]byte, 0, 64*1024)}
-}
-
-func (r *replayBuffer) Write(p []byte) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.buf = append(r.buf, p...)
-
-	// Cap at maxReplaySize by trimming from the front
-	if len(r.buf) > maxReplaySize {
-		excess := len(r.buf) - maxReplaySize
-		r.buf = append(r.buf[:0], r.buf[excess:]...)
+	return &replayBuffer{
+		buf:      make([]byte, 0, 64*1024),
+		notify:   make(chan struct{}),
+		advanced: make(chan struct{}),
 	}
 }
 
+// Register adds a reader at the given absolute offset. Returns a cursor
+// that must be passed to ReadAfter and eventually Unregister.
+func (r *replayBuffer) Register(offset int64) *readerCursor {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c := &readerCursor{offset: offset}
+	r.readers = append(r.readers, c)
+	return c
+}
+
+// Unregister removes a reader. May unblock a backpressured writer.
+func (r *replayBuffer) Unregister(c *readerCursor) {
+	r.mu.Lock()
+	for i, rc := range r.readers {
+		if rc == c {
+			r.readers = append(r.readers[:i], r.readers[i+1:]...)
+			break
+		}
+	}
+	// Unblock writer — no reader holding back trim anymore.
+	ch := r.advanced
+	r.advanced = make(chan struct{})
+	r.mu.Unlock()
+	close(ch)
+}
+
+// Write appends PTY data. If the buffer is full and a reader is behind,
+// blocks until the reader catches up (backpressure on the terminal).
+// When no reader is attached, trims from front as a ring buffer.
+func (r *replayBuffer) Write(p []byte) {
+	for {
+		r.mu.Lock()
+		r.buf = append(r.buf, p...)
+
+		if len(r.buf) <= maxReplaySize {
+			// Under limit — just wake readers and return.
+			ch := r.notify
+			r.notify = make(chan struct{})
+			r.mu.Unlock()
+			close(ch)
+			return
+		}
+
+		excess := len(r.buf) - maxReplaySize
+
+		if len(r.readers) == 0 {
+			// No readers — trim freely.
+			r.buf = append(r.buf[:0], r.buf[excess:]...)
+			r.trimmed += int64(excess)
+			ch := r.notify
+			r.notify = make(chan struct{})
+			r.mu.Unlock()
+			close(ch)
+			return
+		}
+
+		// Find slowest reader.
+		minOff := r.readers[0].offset
+		for _, rc := range r.readers[1:] {
+			if rc.offset < minOff {
+				minOff = rc.offset
+			}
+		}
+
+		canTrim := int(minOff - r.trimmed)
+		if canTrim >= excess {
+			// Slowest reader is ahead of what we need to trim — trim and go.
+			r.buf = append(r.buf[:0], r.buf[excess:]...)
+			r.trimmed += int64(excess)
+			ch := r.notify
+			r.notify = make(chan struct{})
+			r.mu.Unlock()
+			close(ch)
+			return
+		}
+
+		// Reader is behind — can't trim enough. Undo append, wait for reader to advance.
+		r.buf = r.buf[:len(r.buf)-len(p)]
+		waitCh := r.advanced
+		// Still wake readers so they can consume and advance.
+		ch := r.notify
+		r.notify = make(chan struct{})
+		r.mu.Unlock()
+		close(ch)
+
+		<-waitCh // block until a reader advances or disconnects
+	}
+}
+
+// Snapshot returns a copy of the entire buffer and the absolute end offset.
+func (r *replayBuffer) Snapshot() ([]byte, int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := make([]byte, len(r.buf))
+	copy(cp, r.buf)
+	return cp, r.trimmed + int64(len(r.buf))
+}
+
+// ReadAfter returns data after the cursor's current offset and advances the cursor.
+// If no new data, returns nil data and a wait channel for use in select.
+func (r *replayBuffer) ReadAfter(c *readerCursor) (data []byte, wait <-chan struct{}) {
+	r.mu.Lock()
+	relOff := c.offset - r.trimmed
+	if relOff < 0 {
+		relOff = 0
+	}
+	if int(relOff) >= len(r.buf) {
+		w := r.notify
+		r.mu.Unlock()
+		return nil, w
+	}
+	cp := make([]byte, len(r.buf)-int(relOff))
+	copy(cp, r.buf[int(relOff):])
+	c.offset = r.trimmed + int64(len(r.buf))
+	ch := r.advanced
+	r.advanced = make(chan struct{})
+	r.mu.Unlock()
+	close(ch) // signal writer that cursor advanced (may unblock backpressure)
+	return cp, nil
+}
+
+// Bytes returns a copy of the current buffer.
 func (r *replayBuffer) Bytes() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -281,8 +405,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		replay:    newReplayBuffer(),
 		sb:        sb,
 		cmd:       cmd,
-		subs:      make(map[string]chan []byte),
 		done:      make(chan struct{}),
+		debug:     rc.Debug,
 	}
 
 	s.mu.Lock()
@@ -405,6 +529,19 @@ func (s *Server) cleanup() {
 }
 
 func (s *Server) readPTY(sess *Session) {
+	var debugFile *os.File
+	if sess.debug {
+		path := filepath.Join(os.TempDir(), "wt-pty-"+sess.ID+".bin")
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			log.Printf("egg: debug: cannot open %s: %v", path, err)
+		} else {
+			debugFile = f
+			defer debugFile.Close()
+			log.Printf("egg: debug: writing raw PTY output to %s", path)
+		}
+	}
+
 	buf := make([]byte, 4096)
 	firstByte := true
 	for {
@@ -416,16 +553,10 @@ func (s *Server) readPTY(sess *Session) {
 			}
 			data := make([]byte, n)
 			copy(data, buf[:n])
-
-			sess.mu.Lock()
 			sess.replay.Write(data)
-			for _, ch := range sess.subs {
-				select {
-				case ch <- data:
-				default: // subscriber slow — drop from live stream, replay buffer still has it
-				}
+			if debugFile != nil {
+				debugFile.Write(data)
 			}
-			sess.mu.Unlock()
 		}
 		if err != nil {
 			return
@@ -477,54 +608,52 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 	}
 
 	sessionID := msg.SessionId
-	subID := fmt.Sprintf("%p", stream)
-	outputCh := make(chan []byte, 256)
+	var startOffset int64
 
-	// Atomic: register subscriber + snapshot replay under same lock.
-	// readPTY also holds sess.mu when writing to replay + broadcasting,
-	// so the snapshot is consistent with the subscriber's start point:
-	// replay contains everything BEFORE this point, outputCh gets everything AFTER.
-	var buffered []byte
-	sess.mu.Lock()
-	sess.subs[subID] = outputCh
 	if msg.GetAttach() {
-		buffered = sess.replay.Bytes()
-	}
-	sess.mu.Unlock()
-
-	defer func() {
-		sess.mu.Lock()
-		delete(sess.subs, subID)
-		close(outputCh)
-		sess.mu.Unlock()
-	}()
-
-	// Send replay before draining live output — sequential, no gap, no duplicates.
-	// Always send (even empty) so caller's first Recv() is always the replay message.
-	if msg.GetAttach() {
+		// Full replay as first message, then cursor starts after snapshot.
+		snapshot, snapEnd := sess.replay.Snapshot()
 		if err := stream.Send(&pb.SessionMsg{
 			SessionId: sessionID,
-			Payload:   &pb.SessionMsg_Output{Output: buffered},
+			Payload:   &pb.SessionMsg_Output{Output: snapshot},
 		}); err != nil {
 			return err
 		}
+		startOffset = snapEnd
+	} else {
+		// Non-attach (initial session): start cursor at current position.
+		_, startOffset = sess.replay.Snapshot()
 	}
 
-	// Send output and exit_code
+	// Register cursor so the buffer knows our position (enables backpressure).
+	cursor := sess.replay.Register(startOffset)
+	defer sess.replay.Unregister(cursor)
+
+	// Output goroutine: cursor-based reads from the replay buffer.
+	// Every byte arrives in exact PTY order — no channel, no drops.
 	go func() {
 		for {
-			select {
-			case data, ok := <-outputCh:
-				if !ok {
-					return
-				}
+			data, wait := sess.replay.ReadAfter(cursor)
+			if data != nil {
 				if err := stream.Send(&pb.SessionMsg{
 					SessionId: sessionID,
 					Payload:   &pb.SessionMsg_Output{Output: data},
 				}); err != nil {
 					return
 				}
+				continue
+			}
+			// No new data — wait for buffer write, process exit, or client disconnect.
+			select {
+			case <-wait:
 			case <-sess.done:
+				// Drain any remaining data after process exit.
+				if data, _ := sess.replay.ReadAfter(cursor); data != nil {
+					stream.Send(&pb.SessionMsg{
+						SessionId: sessionID,
+						Payload:   &pb.SessionMsg_Output{Output: data},
+					})
+				}
 				sess.mu.Lock()
 				code := sess.exitCode
 				sess.mu.Unlock()
@@ -533,11 +662,13 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 					Payload:   &pb.SessionMsg_ExitCode{ExitCode: int32(code)},
 				})
 				return
+			case <-stream.Context().Done():
+				return
 			}
 		}
 	}()
 
-	// Read input from client
+	// Read input from client.
 	for {
 		msg, err := stream.Recv()
 		if err != nil {

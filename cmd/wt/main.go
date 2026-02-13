@@ -74,7 +74,8 @@ func main() {
 }
 
 func startCmd() *cobra.Command {
-	return &cobra.Command{
+	var debugFlag bool
+	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the wing daemon (alias for wt wing start)",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -82,12 +83,18 @@ func startCmd() *cobra.Command {
 			if exeErr != nil {
 				return exeErr
 			}
-			child := exec.Command(exe, "wing", "start")
+			childArgs := []string{"wing", "start"}
+			if debugFlag {
+				childArgs = append(childArgs, "--debug")
+			}
+			child := exec.Command(exe, childArgs...)
 			child.Stdout = os.Stdout
 			child.Stderr = os.Stderr
 			return child.Run()
 		},
 	}
+	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp/wt-pty-<session>.bin for each egg")
+	return cmd
 }
 
 func stopCmd() *cobra.Command {

@@ -60,6 +60,7 @@ func eggRunCmd() *cobra.Command {
 		cpuFlag    string
 		memFlag    string
 		maxFDsFlag uint32
+		debugFlag  bool
 		dangerouslySkipPermissions bool
 	)
 
@@ -115,6 +116,7 @@ func eggRunCmd() *cobra.Command {
 				CPULimit:  cpuLimit,
 				MemLimit:  memLimit,
 				MaxFDs:    maxFDsFlag,
+				Debug:     debugFlag,
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -155,6 +157,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cpuFlag, "cpu", "", "CPU time limit (e.g. 300s)")
 	cmd.Flags().StringVar(&memFlag, "memory", "", "memory limit (e.g. 2GB)")
 	cmd.Flags().Uint32Var(&maxFDsFlag, "max-fds", 0, "max open file descriptors")
+	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp")
 	cmd.MarkFlagRequired("session-id")
 
 	return cmd
@@ -286,7 +289,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 	sessionID := uuid.New().String()[:8]
 
 	// Spawn egg as child process
-	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd)
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false)
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
@@ -366,7 +369,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 }
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
-func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string) (*egg.Client, error) {
+func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug bool) (*egg.Client, error) {
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create egg dir: %w", err)
@@ -408,6 +411,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if eggCfg.Resources.MaxFDs > 0 {
 		args = append(args, "--max-fds", strconv.Itoa(int(eggCfg.Resources.MaxFDs)))
+	}
+	if debug {
+		args = append(args, "--debug")
 	}
 
 	logPath := filepath.Join(dir, "egg.log")
