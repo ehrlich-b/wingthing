@@ -80,7 +80,7 @@ func TestCreateOrgLimit(t *testing.T) {
 	}
 }
 
-func TestCreateOrgSlugCollision(t *testing.T) {
+func TestCreateOrgDuplicateNameAllowed(t *testing.T) {
 	_, ts, client, _ := testServerWithSession(t)
 
 	resp, err := client.Post(ts.URL+"/api/orgs", "application/json",
@@ -93,15 +93,15 @@ func TestCreateOrgSlugCollision(t *testing.T) {
 		t.Fatalf("first create: status = %d, want 201", resp.StatusCode)
 	}
 
-	// Same name again — slug collision
+	// Same name again — should succeed (slugs are not unique)
 	resp, err = client.Post(ts.URL+"/api/orgs", "application/json",
 		strings.NewReader(`{"name":"my team"}`))
 	if err != nil {
 		t.Fatalf("POST /api/orgs (dup): %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusConflict {
-		t.Errorf("duplicate slug: status = %d, want 409", resp.StatusCode)
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("duplicate name: status = %d, want 201", resp.StatusCode)
 	}
 }
 

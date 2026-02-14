@@ -1385,6 +1385,36 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     color: var(--text-dim);
 }
 
+.ac-plan-toggle {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.ac-plan-opt {
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 4px 10px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.ac-plan-opt:first-child { border-right: 1px solid var(--border); }
+
+.ac-plan-opt.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+.ac-plan-opt:hover:not(.active) {
+    background: var(--bg-hover);
+}
+
 .ac-member-label {
     font-size: 11px;
     color: var(--text-dim);

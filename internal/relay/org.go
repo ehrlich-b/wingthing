@@ -105,13 +105,6 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check uniqueness
-	existing, _ := s.Store.GetOrgBySlug(slug)
-	if existing != nil {
-		writeError(w, http.StatusConflict, "slug already taken")
-		return
-	}
-
 	id := uuid.New().String()
 	if err := s.Store.CreateOrg(id, req.Name, slug, user.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -170,8 +163,8 @@ func (s *Server) handleGetOrg(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	slug := r.PathValue("slug")
-	org, err := s.Store.GetOrgBySlug(slug)
+	orgID := r.PathValue("orgID")
+	org, err := s.Store.GetOrgByID(orgID)
 	if err != nil || org == nil {
 		writeError(w, http.StatusNotFound, "org not found")
 		return
@@ -209,8 +202,8 @@ func (s *Server) handleListOrgMembers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	slug := r.PathValue("slug")
-	org, err := s.Store.GetOrgBySlug(slug)
+	orgID := r.PathValue("orgID")
+	org, err := s.Store.GetOrgByID(orgID)
 	if err != nil || org == nil {
 		writeError(w, http.StatusNotFound, "org not found")
 		return
@@ -271,8 +264,8 @@ func (s *Server) handleOrgInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	slug := r.PathValue("slug")
-	org, err := s.Store.GetOrgBySlug(slug)
+	orgID := r.PathValue("orgID")
+	org, err := s.Store.GetOrgByID(orgID)
 	if err != nil || org == nil {
 		writeError(w, http.StatusNotFound, "org not found")
 		return
@@ -347,8 +340,8 @@ func (s *Server) handleOrgUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	slug := r.PathValue("slug")
-	org, err := s.Store.GetOrgBySlug(slug)
+	orgID := r.PathValue("orgID")
+	org, err := s.Store.GetOrgByID(orgID)
 	if err != nil || org == nil {
 		writeError(w, http.StatusNotFound, "org not found")
 		return
@@ -439,8 +432,8 @@ func (s *Server) handleOrgCancel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	slug := r.PathValue("slug")
-	org, err := s.Store.GetOrgBySlug(slug)
+	orgID := r.PathValue("orgID")
+	org, err := s.Store.GetOrgByID(orgID)
 	if err != nil || org == nil {
 		writeError(w, http.StatusNotFound, "org not found")
 		return
@@ -480,10 +473,10 @@ func (s *Server) handleRemoveOrgMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	slug := r.PathValue("slug")
+	orgID := r.PathValue("orgID")
 	targetUserID := r.PathValue("userID")
 
-	org, err := s.Store.GetOrgBySlug(slug)
+	org, err := s.Store.GetOrgByID(orgID)
 	if err != nil || org == nil {
 		writeError(w, http.StatusNotFound, "org not found")
 		return
@@ -517,8 +510,8 @@ func (s *Server) handleDeleteOrg(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	slug := r.PathValue("slug")
-	org, err := s.Store.GetOrgBySlug(slug)
+	orgID := r.PathValue("orgID")
+	org, err := s.Store.GetOrgByID(orgID)
 	if err != nil || org == nil {
 		writeError(w, http.StatusNotFound, "org not found")
 		return
@@ -630,16 +623,11 @@ func (s *Server) handleConsumeInvite(w http.ResponseWriter, r *http.Request) {
 	s.grantOrgEntitlement(orgID, user.ID)
 	http.SetCookie(w, &http.Cookie{Name: "invite_token", Path: "/", MaxAge: -1})
 
-	org, _ := s.Store.GetOrgByID(orgID)
-	slug := ""
-	if org != nil {
-		slug = org.Slug
-	}
 	appURL := "/"
 	if s.Config.AppHost != "" {
 		appURL = "https://" + s.Config.AppHost + "/"
 	}
-	http.Redirect(w, r, appURL+"#account/"+slug, http.StatusSeeOther)
+	http.Redirect(w, r, appURL+"#account/"+orgID, http.StatusSeeOther)
 }
 
 func (s *Server) renderInviteStatusPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {
@@ -678,14 +666,14 @@ func (s *Server) renderInviteStatusPage(w http.ResponseWriter, inv *OrgInvite, o
 		inv.CreatedAt.Format("Jan 2, 2006"),
 		statusClass(inv.ClaimedAt),
 		escapeHTML(status),
-		escapeHTML(org.Slug),
+		escapeHTML(org.ID),
 	)
 
 	if inv.ClaimedAt == nil {
 		fmt.Fprintf(w, `
 <form method="POST" action="/api/orgs/%s/invites/%s/revoke" onsubmit="return confirm('Revoke this invite?')">
 <button type="submit" class="btn btn-revoke">revoke</button>
-</form>`, escapeHTML(org.Slug), escapeHTML(inv.Token))
+</form>`, escapeHTML(org.ID), escapeHTML(inv.Token))
 	}
 
 	fmt.Fprint(w, `
@@ -794,8 +782,8 @@ func (s *Server) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	slug := r.PathValue("slug")
-	org, err := s.Store.GetOrgBySlug(slug)
+	orgID := r.PathValue("orgID")
+	org, err := s.Store.GetOrgByID(orgID)
 	if err != nil || org == nil {
 		writeError(w, http.StatusNotFound, "org not found")
 		return
@@ -818,7 +806,7 @@ func (s *Server) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 		if s.Config.AppHost != "" {
 			appURL = "https://" + s.Config.AppHost + "/"
 		}
-		http.Redirect(w, r, appURL+"#account/"+slug, http.StatusSeeOther)
+		http.Redirect(w, r, appURL+"#account/"+org.ID, http.StatusSeeOther)
 		return
 	}
 
