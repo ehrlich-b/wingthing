@@ -12,11 +12,9 @@ open app.wingthing.ai      # start sessions from any browser
 
 ## How it works
 
-`wt egg` spawns an agent inside an OS-level sandbox. The sandbox is the permission boundary - agents run with `--dangerously-skip-permissions` because they can't escape the sandbox anyway.
+`wt egg` spawns an agent inside an OS-level sandbox. macOS uses Seatbelt (`sandbox-exec`). Linux uses user namespaces and seccomp. No containers, no VMs.
 
-macOS uses Seatbelt (`sandbox-exec`). Linux uses user namespaces and seccomp. No containers, no VMs.
-
-Each session gets its own process and sandbox. Detach and reattach without losing state.
+Every session runs in its own sandboxed process. Detach and reattach without losing state.
 
 ```
 wt egg claude              # Claude Code
@@ -26,23 +24,22 @@ wt egg list                # active sessions
 wt egg stop <id>           # kill one
 ```
 
-### Configuration
+### Sandbox
 
-Drop an `egg.yaml` in your project or `~/.wingthing/egg.yaml`:
+Out of the box, the sandbox is opinionated: CWD is writable, home is read-only, sensitive directories (`~/.ssh`, `~/.gnupg`, `~/.aws`, etc.) are denied, network is off, and only essential env vars are passed through. The agent's binary and config directory are auto-mounted - you don't declare those.
+
+Drop an `egg.yaml` in your project to customize. Configs are additive - you only declare what you're changing from the defaults.
 
 ```yaml
-isolation: network
+# egg.yaml - add SSH access and network on top of defaults
 fs:
-  - "rw:~/repos"
-  - "ro:~/docs"
-deny:
-  - "~/.ssh"
-  - "~/.gnupg"
+  - "ro:~/.ssh"       # overrides the default deny for ~/.ssh
+network: "*"           # open network
+env:
+  - SSH_AUTH_SOCK      # pass SSH agent socket
 ```
 
-Four isolation levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs), `network` (full network + mounts), `privileged` (no sandbox).
-
-The sandbox auto-discovers where agent binaries and configs live. You don't mount those yourself.
+Use `base: none` for a blank slate if you want full control. Use the [sandbox builder](https://wingthing.ai) on the homepage to generate configs visually.
 
 ## Remote access
 
