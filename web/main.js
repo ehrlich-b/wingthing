@@ -411,6 +411,8 @@ function applyWingEvent(ev) {
                 w.version = ev.version || w.version;
                 w.public_key = ev.public_key || w.public_key;
                 w.projects = ev.projects || w.projects;
+                if (ev.pinned !== undefined) w.pinned = ev.pinned;
+                if (ev.pinned_count !== undefined) w.pinned_count = ev.pinned_count;
                 found = true;
             }
         });
@@ -427,6 +429,8 @@ function applyWingEvent(ev) {
                 labels: ev.labels || [],
                 public_key: ev.public_key,
                 projects: ev.projects || [],
+                pinned: ev.pinned || false,
+                pinned_count: ev.pinned_count || 0,
             });
             needsFullRender = true;
         }
@@ -1526,8 +1530,8 @@ function renderWingDetailPage(wingId) {
                 (!isOnline ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
             '</div>' +
         '</div>' +
-        (isOnline && !(w.pinned && !tunnelAuthTokens[wingId]) ? '<div class="wd-palette">' +
-            '<input id="wd-search" type="text" class="wd-search" placeholder="start a session..." autocomplete="off" spellcheck="false">' +
+        (isOnline ? '<div class="wd-palette">' +
+            '<input id="wd-search" type="text" class="wd-search" placeholder="' + (w.pinned && !tunnelAuthTokens[wingId] ? 'start a session (passkey auth on first browse)...' : 'start a session...') + '" autocomplete="off" spellcheck="false">' +
             '<div id="wd-search-results" class="wd-search-results"></div>' +
             '<div id="wd-search-status" class="wd-search-status"></div>' +
         '</div>' : '') +
@@ -1625,15 +1629,16 @@ function renderWingDetailPage(wingId) {
     wireActiveSessionRows();
 
     // Fetch past sessions (skip if pinned and not yet authenticated)
-    if (isOnline && !(w.pinned && !tunnelAuthTokens[wingId])) {
+    var pinnedLocked = w.pinned && !tunnelAuthTokens[wingId];
+    if (isOnline && !pinnedLocked) {
         loadWingPastSessions(wingId, 0);
-    } else if (w.pinned && !tunnelAuthTokens[wingId]) {
+    } else if (pinnedLocked) {
         var pastEl = document.getElementById('wd-past-sessions');
-        if (pastEl) pastEl.innerHTML = '<span class="text-dim">this wing requires passkey authentication</span>';
+        if (pastEl) pastEl.innerHTML = '<span class="text-dim">authenticate to view session history</span>';
     }
 
-    // Inline palette (skip if pinned and not yet authenticated)
-    if (isOnline && !(w.pinned && !tunnelAuthTokens[wingId])) {
+    // Inline palette — always show for online wings, passkey auth triggers on first dir request
+    if (isOnline) {
         setupWingPalette(w);
     }
 }
@@ -1727,8 +1732,8 @@ function setupWingPalette(wing) {
     }
     renderStatus();
 
-    // Pre-cache home dir
-    if (wing.wing_id) {
+    // Pre-cache home dir (skip pinned — passkey triggers on first real request)
+    if (wing.wing_id && !wing.pinned) {
         sendTunnelRequest(wing.wing_id, { type: 'dir.list', path: '~/' }).then(function(data) {
             var entries = data.entries || [];
             if (Array.isArray(entries)) {
@@ -2557,9 +2562,9 @@ function showPalette() {
     paletteSearch.value = '';
     paletteSearch.focus();
     updatePaletteState();
-    // Pre-cache home dir entries in background
+    // Pre-cache home dir entries in background (skip pinned — would trigger passkey)
     var wing = currentPaletteWing();
-    if (wing && homeDirCache.length === 0) {
+    if (wing && homeDirCache.length === 0 && !wing.pinned) {
         sendTunnelRequest(wing.wing_id, { type: 'dir.list', path: '~/' }).then(function(data) {
             var entries = data.entries || [];
             if (Array.isArray(entries)) {
