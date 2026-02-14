@@ -935,12 +935,19 @@ func reapDeadEggs(cfg *config.Config) {
 }
 
 // cleanEggDir removes the files in an egg session directory, then the directory itself.
+// If audit files exist, preserves egg.meta and audit data (only removes runtime files).
 func cleanEggDir(dir string) {
 	os.Remove(filepath.Join(dir, "egg.sock"))
 	os.Remove(filepath.Join(dir, "egg.token"))
 	os.Remove(filepath.Join(dir, "egg.pid"))
-	os.Remove(filepath.Join(dir, "egg.meta"))
 	os.Remove(filepath.Join(dir, "egg.log"))
+	// Keep egg.meta and dir if audit recordings exist
+	_, hasPty := os.Stat(filepath.Join(dir, "audit.pty.gz"))
+	_, hasLog := os.Stat(filepath.Join(dir, "audit.log"))
+	if hasPty == nil || hasLog == nil {
+		return
+	}
+	os.Remove(filepath.Join(dir, "egg.meta"))
 	os.Remove(dir)
 }
 
