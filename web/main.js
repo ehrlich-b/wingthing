@@ -1394,7 +1394,7 @@ function renderWingDetailPage(wingId) {
     if (updateBtn) {
         updateBtn.addEventListener('click', function() {
             updateBtn.innerHTML = 'updating...';
-            fetch('/api/app/wings/' + w.id + '/update', { method: 'POST' })
+            fetch('/api/app/wings/' + encodeURIComponent(w.wing_id) + '/update', { method: 'POST' })
                 .then(function() {
                     w.updating_at = Date.now();
                     renderWingDetailPage(wingId);
@@ -1525,8 +1525,8 @@ function setupWingPalette(wing) {
     renderStatus();
 
     // Pre-cache home dir
-    if (wing.id) {
-        fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent('~/')).then(function(r) {
+    if (wing.wing_id) {
+        fetch('/api/app/wings/' + encodeURIComponent(wing.wing_id) + '/ls?path=' + encodeURIComponent('~/')).then(function(r) {
             return r.json();
         }).then(function(entries) {
             if (entries && Array.isArray(entries)) {
@@ -1640,7 +1640,7 @@ function setupWingPalette(wing) {
         if (wpDirAbort) wpDirAbort.abort();
         wpDirAbort = new AbortController();
 
-        fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent(dirPath), {
+        fetch('/api/app/wings/' + encodeURIComponent(wing.wing_id) + '/ls?path=' + encodeURIComponent(dirPath), {
             signal: wpDirAbort.signal
         }).then(function(r) { return r.json(); }).then(function(entries) {
             var currentParsed = dirParent(searchEl.value);
@@ -2394,7 +2394,7 @@ function showPalette() {
     // Pre-cache home dir entries in background
     var wing = currentPaletteWing();
     if (wing && homeDirCache.length === 0) {
-        fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent('~/')).then(function(r) {
+        fetch('/api/app/wings/' + encodeURIComponent(wing.wing_id) + '/ls?path=' + encodeURIComponent('~/')).then(function(r) {
             return r.json();
         }).then(function(entries) {
             if (entries && Array.isArray(entries)) {
@@ -2623,7 +2623,7 @@ function fetchDirList(dirPath) {
     dirListAbort = new AbortController();
     dirListPending = true;
 
-    fetch('/api/app/wings/' + wing.id + '/ls?path=' + encodeURIComponent(dirPath), {
+    fetch('/api/app/wings/' + encodeURIComponent(wing.wing_id) + '/ls?path=' + encodeURIComponent(dirPath), {
         signal: dirListAbort.signal
     }).then(function(r) { return r.json(); }).then(function(entries) {
         dirListPending = false;
