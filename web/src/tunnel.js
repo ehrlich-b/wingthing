@@ -42,6 +42,24 @@ async function tunnelDecrypt(key, encoded) {
     return new TextDecoder().decode(plaintext);
 }
 
+// --- Auth Token Persistence ---
+
+var AUTH_TOKENS_KEY = 'wt_auth_tokens';
+
+function saveTunnelAuthTokens() {
+    try { localStorage.setItem(AUTH_TOKENS_KEY, JSON.stringify(S.tunnelAuthTokens)); } catch (e) {}
+}
+
+export function loadTunnelAuthTokens() {
+    try {
+        var raw = localStorage.getItem(AUTH_TOKENS_KEY);
+        if (raw) {
+            var tokens = JSON.parse(raw);
+            for (var k in tokens) { S.tunnelAuthTokens[k] = tokens[k]; }
+        }
+    } catch (e) {}
+}
+
 // --- Ephemeral Connection Pool ---
 //
 // Opens a WS per wing on demand, batches concurrent requests over it,
@@ -223,10 +241,11 @@ export async function sendTunnelRequest(wingId, innerMsg) {
         var decrypted = await tunnelDecrypt(key, msg.payload);
         var result = JSON.parse(decrypted);
 
-        if (result.error === 'passkey_required' && result.challenge) {
-            var authToken = await handleTunnelPasskey(wingId, wing.public_key, result.challenge);
+        if (result.error === 'passkey_required') {
+            var authToken = await handleTunnelPasskey(wingId, wing.public_key);
             if (authToken) {
                 S.tunnelAuthTokens[wingId] = authToken;
+                saveTunnelAuthTokens();
                 innerMsg.auth_token = authToken;
                 return sendTunnelRequest(wingId, innerMsg);
             }
@@ -282,11 +301,12 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
     });
 }
 
-async function handleTunnelPasskey(wingId, wingPubKey, challenge) {
+async function handleTunnelPasskey(wingId, wingPubKey) {
     try {
+        var challenge = crypto.getRandomValues(new Uint8Array(32));
         var credential = await navigator.credentials.get({
             publicKey: {
-                challenge: b64urlToBytes(challenge),
+                challenge: challenge,
                 rpId: location.hostname,
                 userVerification: 'preferred',
                 timeout: 60000

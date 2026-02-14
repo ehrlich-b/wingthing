@@ -415,7 +415,7 @@ func TestSyncProtocolRoundTrip(t *testing.T) {
 	// Simulate edge sync: POST /internal/sync
 	edgeWings := []SyncWing{
 		{WingID: "edge-conn-1", NodeID: "edge-machine-1", Info: WingInfo{
-			UserID: "user1", WingID: "wing-001", Hostname: "laptop",
+			UserID: "user1", WingID: "wing-001",
 		}},
 	}
 	syncReq := SyncRequest{

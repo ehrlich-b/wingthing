@@ -49,7 +49,7 @@ export function showPalette() {
     DOM.paletteSearch.focus();
     updatePaletteState();
     var wing = currentPaletteWing();
-    if (wing && homeDirCache.length === 0 && !wing.pinned) {
+    if (wing && homeDirCache.length === 0) {
         sendTunnelRequest(wing.wing_id, { type: 'dir.list', path: '~/' }).then(function(data) {
             var entries = data.entries || [];
             if (Array.isArray(entries)) {

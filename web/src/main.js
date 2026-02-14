@@ -9,9 +9,11 @@ import { loadHome } from './data.js';
 import { closeAuditOverlay } from './audit.js';
 import { hideDetailModal, showSessionInfo, renderSidebar, renderDashboard } from './render.js';
 import { initNotifyListeners } from './notify.js';
+import { loadTunnelAuthTokens } from './tunnel.js';
 
 async function init() {
     initDOM();
+    loadTunnelAuthTokens();
 
     try {
         var resp = await fetch('/api/app/me');

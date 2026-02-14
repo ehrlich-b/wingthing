@@ -132,35 +132,44 @@ export async function loadHome() {
     });
 
     setCachedWings(S.wingsData.map(function (w) {
-        return { wing_id: w.wing_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, wing_label: w.wing_label };
+        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
     }));
 
     rebuildAgentLists();
     updateHeaderStatus();
 
-    // Sweep-poll online wings for projects via E2E tunnel
+    // Sweep-poll online wings for metadata via E2E tunnel (wing.info)
     S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; })
         .forEach(function(w) {
-            sendTunnelRequest(w.wing_id, { type: 'projects.list' })
+            sendTunnelRequest(w.wing_id, { type: 'wing.info' })
                 .then(function(data) {
+                    w.hostname = data.hostname || w.hostname;
+                    w.platform = data.platform || w.platform;
+                    w.version = data.version || w.version;
+                    w.agents = data.agents || [];
                     w.projects = data.projects || [];
+                    w.pinned = data.pinned || false;
+                    w.pinned_count = data.pinned_count || 0;
+                    delete w.tunnel_error;
                     rebuildAgentLists();
                     if (S.activeView === 'home') renderDashboard();
                     if (S.activeView === 'wing-detail' && S.currentWingId === w.wing_id)
                         renderWingDetailPage(w.wing_id);
                 })
                 .catch(function(e) {
-                    w.projects = [];
-                    if (e.message && e.message.indexOf('not_authorized') !== -1) {
-                        w.tunnel_error = 'not_authorized';
-                        if (S.activeView === 'home') renderDashboard();
-                        if (S.activeView === 'wing-detail' && S.currentWingId === w.wing_id)
-                            renderWingDetailPage(w.wing_id);
+                    if (e.message && e.message.indexOf('not_allowed') !== -1) {
+                        w.tunnel_error = 'not_allowed';
+                    } else if (e.message && e.message.indexOf('passkey_required') !== -1) {
+                        w.tunnel_error = 'passkey_required';
                     }
+                    if (S.activeView === 'home') renderDashboard();
+                    if (S.activeView === 'wing-detail' && S.currentWingId === w.wing_id)
+                        renderWingDetailPage(w.wing_id);
                 });
         });
 
-    var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && !w.pinned; });
+    // Fetch sessions from all online wings (tunnel auth handles access)
+    var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; });
     var sessionPromises = onlineWings.map(function(w) { return fetchWingSessions(w.wing_id); });
     var results = await Promise.all(sessionPromises);
     var allSessions = [];

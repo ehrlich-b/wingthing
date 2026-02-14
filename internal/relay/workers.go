@@ -39,19 +39,11 @@ type ConnectedWing struct {
 }
 
 // WingEvent is sent to dashboard subscribers when a wing connects or disconnects.
+// Minimal: just a signal with wing_id + public_key. Metadata flows through E2E tunnel.
 type WingEvent struct {
-	Type        string           `json:"type"`       // "wing.online" or "wing.offline"
-	ConnID      string           `json:"conn_id"`
-	WingID      string           `json:"wing_id"`
-	Hostname    string           `json:"hostname,omitempty"`
-	Platform    string           `json:"platform,omitempty"`
-	Version     string           `json:"version,omitempty"`
-	Agents      []string         `json:"agents,omitempty"`
-	Labels      []string         `json:"labels,omitempty"`
-	PublicKey   string           `json:"public_key,omitempty"`
-	Projects    []ws.WingProject `json:"projects,omitempty"`
-	Pinned      bool             `json:"pinned,omitempty"`
-	PinnedCount int              `json:"pinned_count,omitempty"`
+	Type      string `json:"type"`                 // "wing.online" or "wing.offline"
+	WingID    string `json:"wing_id"`
+	PublicKey string `json:"public_key,omitempty"`
 }
 
 // WingRegistry tracks all connected wings.
@@ -141,17 +133,9 @@ func (r *WingRegistry) Add(w *ConnectedWing) {
 	r.wings[w.ID] = w
 	r.mu.Unlock()
 	ev := WingEvent{
-		Type:        "wing.online",
-		ConnID:      w.ID,
-		WingID:      w.WingID,
-		Hostname:    w.Hostname,
-		Platform:    w.Platform,
-		Version:     w.Version,
-		Agents:      w.Agents,
-		Labels:      w.Labels,
-		PublicKey:    w.PublicKey,
-		Pinned:      w.Pinned,
-		PinnedCount: w.PinnedCount,
+		Type:      "wing.online",
+		WingID:    w.WingID,
+		PublicKey: w.PublicKey,
 	}
 	r.notify(w.UserID, ev)
 	if r.OnWingEvent != nil {
@@ -167,7 +151,6 @@ func (r *WingRegistry) Remove(id string) {
 	if w != nil {
 		ev := WingEvent{
 			Type:   "wing.offline",
-			ConnID: w.ID,
 			WingID: w.WingID,
 		}
 		r.notify(w.UserID, ev)
@@ -189,17 +172,9 @@ func (r *WingRegistry) UpdateConfig(id string, pinned bool, pinnedCount int) {
 	r.mu.Unlock()
 	if w != nil {
 		ev := WingEvent{
-			Type:        "wing.online",
-			ConnID:      w.ID,
-			WingID:      w.WingID,
-			Hostname:    w.Hostname,
-			Platform:    w.Platform,
-			Version:     w.Version,
-			Agents:      w.Agents,
-			Labels:      w.Labels,
-			PublicKey:    w.PublicKey,
-			Pinned:      pinned,
-			PinnedCount: pinnedCount,
+			Type:      "wing.online",
+			WingID:    w.WingID,
+			PublicKey: w.PublicKey,
 		}
 		r.notify(w.UserID, ev)
 		if r.OnWingEvent != nil {

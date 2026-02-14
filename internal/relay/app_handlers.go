@@ -11,8 +11,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
-
-	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 // tokenUser authenticates a request via Bearer token (CLI device auth).
@@ -120,21 +118,10 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	for _, wing := range wings {
 		seenWings[wing.WingID] = true
 		entry := map[string]any{
-			"id":             wing.ID,
 			"wing_id":        wing.WingID,
-			"hostname":       wing.Hostname,
-			"platform":       wing.Platform,
-			"version":        wing.Version,
-			"agents":         wing.Agents,
-			"labels":         wing.Labels,
 			"public_key":     wing.PublicKey,
-			"last_seen":      wing.LastSeen,
-			"projects":       []ws.WingProject{},
 			"latest_version": latestVer,
-			"egg_config":     wing.EggConfig,
 			"org_id":         wing.OrgID,
-			"pinned":         wing.Pinned,
-			"pinned_count":   wing.PinnedCount,
 		}
 		if label, ok := wingLabels[wing.WingID]; ok {
 			entry["wing_label"] = label
@@ -163,20 +150,11 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			}
 			seenWings[peerWingID] = true
 			out = append(out, map[string]any{
-				"id":             pw.WingID,
-				"wing_id":       peerWingID,
-				"hostname":       pw.WingInfo.Hostname,
-				"platform":       pw.WingInfo.Platform,
-				"version":        pw.WingInfo.Version,
-				"agents":         pw.WingInfo.Agents,
-				"labels":         pw.WingInfo.Labels,
+				"wing_id":        peerWingID,
 				"public_key":     pw.WingInfo.PublicKey,
-				"projects":       []ws.WingProject{},
 				"latest_version": latestVer,
-				"remote_node":    pw.MachineID,
 				"org_id":         pw.WingInfo.OrgID,
-				"pinned":         pw.WingInfo.Pinned,
-				"pinned_count":   pw.WingInfo.PinnedCount,
+				"remote_node":    pw.MachineID,
 			})
 		}
 	}

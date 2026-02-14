@@ -463,14 +463,8 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 	ephemeralCount := len(allowedKeys) - pinnedCount
 
-	// Build passkey auth cache with configurable TTL
-	authTTL := time.Hour
-	if wingCfg.AuthTTL != "" {
-		if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil && d > 0 {
-			authTTL = d
-		}
-	}
-	passkeyCache := auth.NewAuthCache(authTTL)
+	// Boot-scoped passkey auth cache — tokens live until wing process dies
+	passkeyCache := auth.NewAuthCache()
 
 	// Load wing-level egg config (with base chain resolution)
 	var wingEggCfg *egg.EggConfig
@@ -2049,24 +2043,39 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		return
 	}
 
-	// Auth check for pinned wings
+	// Two-state auth check for pinned wings
 	if wingCfg.Pinned && inner.Type != "passkey.auth" && inner.Type != "pins.add" {
-		authorized := false
+		// Step 1: Is sender in the allow list?
+		inList := false
 		if req.SenderUserID != "" {
 			for _, ak := range allowedKeys {
 				if ak.UserID != "" && ak.UserID == req.SenderUserID {
-					authorized = true
+					inList = true
 					break
 				}
 			}
 		}
-		if !authorized && inner.AuthToken != "" {
-			_, authorized = passkeyCache.Check(inner.AuthToken)
-		}
-		if !authorized {
+
+		if !inList {
+			// Not in allow list at all — locked
 			tunnelRespond(gcm, req.RequestID, map[string]any{
-				"error":   "not_authorized",
-				"version": version,
+				"error": "not_allowed",
+			}, write)
+			return
+		}
+
+		// Step 2: In the list — check auth token
+		authorized := false
+		if inner.AuthToken != "" {
+			if _, ok := passkeyCache.Check(inner.AuthToken); ok {
+				authorized = true
+			}
+		}
+
+		if !authorized {
+			// In list but not yet authenticated — passkey challenge
+			tunnelRespond(gcm, req.RequestID, map[string]any{
+				"error": "passkey_required",
 			}, write)
 			return
 		}
@@ -2079,8 +2088,16 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		entries := getDirEntries(inner.Path, resolvedRoot)
 		tunnelRespond(gcm, req.RequestID, map[string]any{"entries": entries}, write)
 
-	case "projects.list":
-		tunnelRespond(gcm, req.RequestID, map[string]any{"projects": client.Projects, "version": version}, write)
+	case "wing.info":
+		tunnelRespond(gcm, req.RequestID, map[string]any{
+			"hostname":     client.Hostname,
+			"platform":     client.Platform,
+			"version":      version,
+			"agents":       client.Agents,
+			"projects":     client.Projects,
+			"pinned":       wingCfg.Pinned,
+			"pinned_count": len(wingCfg.AllowKeys),
+		}, write)
 
 	case "sessions.list":
 		sessions := listAliveEggSessions(cfg)

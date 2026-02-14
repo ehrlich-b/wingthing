@@ -58,35 +58,17 @@ function applyWingEvent(ev) {
         S.wingsData.forEach(function(w) {
             if (w.wing_id === ev.wing_id) {
                 w.online = true;
-                if (w.updating_at && ev.version && ev.version !== w.version) {
-                    delete w.updating_at;
-                }
-                w.id = ev.wing_id;
-                w.hostname = ev.hostname || w.hostname;
-                w.agents = ev.agents || w.agents;
-                w.labels = ev.labels || w.labels;
-                w.platform = ev.platform || w.platform;
-                w.version = ev.version || w.version;
                 w.public_key = ev.public_key || w.public_key;
-                if (ev.pinned !== undefined) w.pinned = ev.pinned;
-                if (ev.pinned_count !== undefined) w.pinned_count = ev.pinned_count;
                 found = true;
             }
         });
         if (!found) {
             S.wingsData.push({
-                id: ev.wing_id,
                 wing_id: ev.wing_id,
-                hostname: ev.hostname || '',
-                platform: ev.platform || '',
-                version: ev.version || '',
                 online: true,
-                agents: ev.agents || [],
-                labels: ev.labels || [],
                 public_key: ev.public_key,
                 projects: [],
-                pinned: ev.pinned || false,
-                pinned_count: ev.pinned_count || 0,
+                agents: [],
             });
             needsFullRender = true;
         }
@@ -101,7 +83,7 @@ function applyWingEvent(ev) {
 
     rebuildAgentLists();
     setCachedWings(S.wingsData.map(function(w) {
-        return { wing_id: w.wing_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, wing_label: w.wing_label };
+        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
     }));
     updateHeaderStatus();
     if (S.activeView === 'home') {
@@ -118,12 +100,22 @@ function applyWingEvent(ev) {
         updatePaletteState(true);
     }
 
+    // On wing.online: tunnel-fetch metadata + sessions
     var evWing = S.wingsData.find(function(w) { return w.wing_id === ev.wing_id; });
-    // Tunnel-fetch projects on wing.online
     if (ev.type === 'wing.online' && evWing && evWing.public_key) {
-        sendTunnelRequest(ev.wing_id, { type: 'projects.list' })
+        sendTunnelRequest(ev.wing_id, { type: 'wing.info' })
             .then(function(data) {
+                evWing.hostname = data.hostname || evWing.hostname;
+                evWing.platform = data.platform || evWing.platform;
+                evWing.version = data.version || evWing.version;
+                evWing.agents = data.agents || [];
                 evWing.projects = data.projects || [];
+                evWing.pinned = data.pinned || false;
+                evWing.pinned_count = data.pinned_count || 0;
+                if (evWing.updating_at && data.version && data.version !== evWing._prev_version) {
+                    delete evWing.updating_at;
+                }
+                evWing._prev_version = data.version;
                 delete evWing.tunnel_error;
                 rebuildAgentLists();
                 if (S.activeView === 'home') renderDashboard();
@@ -131,16 +123,16 @@ function applyWingEvent(ev) {
                     renderWingDetailPage(ev.wing_id);
             })
             .catch(function(e) {
-                evWing.projects = [];
-                if (e.message && e.message.indexOf('not_authorized') !== -1) {
-                    evWing.tunnel_error = 'not_authorized';
-                    if (S.activeView === 'home') renderDashboard();
-                    if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
-                        renderWingDetailPage(ev.wing_id);
+                if (e.message && e.message.indexOf('not_allowed') !== -1) {
+                    evWing.tunnel_error = 'not_allowed';
+                } else if (e.message && e.message.indexOf('passkey_required') !== -1) {
+                    evWing.tunnel_error = 'passkey_required';
                 }
+                if (S.activeView === 'home') renderDashboard();
+                if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
+                    renderWingDetailPage(ev.wing_id);
             });
-    }
-    if (ev.type === 'wing.online' && ev.wing_id && !(evWing && evWing.pinned)) {
+
         setTimeout(function() { fetchWingSessions(ev.wing_id).then(function(sessions) {
             if (sessions.length > 0) {
                 var otherSessions = S.sessionsData.filter(function(s) {

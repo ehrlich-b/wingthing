@@ -12,7 +12,6 @@ import (
 	"errors"
 	"math/big"
 	"sync"
-	"time"
 
 	goecdh "crypto/ecdh"
 )
@@ -100,47 +99,29 @@ func SHA256Sum(data []byte) [32]byte {
 	return sha256.Sum256(data)
 }
 
-// AuthCache caches passkey auth tokens in memory with a TTL.
+// AuthCache caches passkey auth tokens in memory. Tokens live until the
+// process dies (boot-scoped). Wing restart revokes all sessions.
 type AuthCache struct {
 	mu     sync.Mutex
-	tokens map[string]authEntry
-	ttl    time.Duration
+	tokens map[string][]byte // token → pubKey
 }
 
-type authEntry struct {
-	PubKey    []byte
-	ExpiresAt time.Time
-}
-
-// NewAuthCache creates a new in-memory auth cache with the given TTL.
-func NewAuthCache(ttl time.Duration) *AuthCache {
-	if ttl <= 0 {
-		ttl = time.Hour
-	}
-	return &AuthCache{tokens: make(map[string]authEntry), ttl: ttl}
+// NewAuthCache creates a new boot-scoped in-memory auth cache.
+func NewAuthCache() *AuthCache {
+	return &AuthCache{tokens: make(map[string][]byte)}
 }
 
 // Put stores a token with the given public key.
 func (c *AuthCache) Put(token string, pubKey []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.tokens[token] = authEntry{PubKey: pubKey, ExpiresAt: time.Now().Add(c.ttl)}
+	c.tokens[token] = pubKey
 }
 
-// Check returns the public key for a valid (non-expired) token.
+// Check returns the public key for a valid token.
 func (c *AuthCache) Check(token string) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// Evict expired on each check
-	now := time.Now()
-	for k, v := range c.tokens {
-		if now.After(v.ExpiresAt) {
-			delete(c.tokens, k)
-		}
-	}
-	entry, ok := c.tokens[token]
-	if !ok || now.After(entry.ExpiresAt) {
-		return nil, false
-	}
-	return entry.PubKey, true
+	pk, ok := c.tokens[token]
+	return pk, ok
 }
