@@ -220,10 +220,11 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if targetWingID != "" {
-			// Wing not local? Check by connection ID first, then persistent wing_id
+			// Wing not local? Check by connection ID first, then persistent wing_id.
+			// No access check here — the wing handles authz via E2E tunnel.
 			localWing := s.Wings.FindByID(targetWingID)
 			if localWing == nil {
-				localWing = s.findWingByWingID(userID, targetWingID)
+				localWing = s.findAnyWingByWingID(targetWingID)
 			}
 			if localWing == nil {
 				// Check peers by connection ID, then persistent wing_id
@@ -468,7 +469,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &req); err != nil {
 				continue
 			}
-			wing := s.findWingByWingID(userID, req.WingID)
+			wing := s.findAnyWingByWingID(req.WingID)
 			if wing == nil {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "wing not found"})
 				conn.Write(ctx, websocket.MessageText, errMsg)

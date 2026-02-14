@@ -115,6 +115,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// Relay: worker WebSocket
 	s.mux.HandleFunc("GET /ws/wing", s.handleWingWS)
 	s.mux.HandleFunc("GET /ws/pty", s.handlePTYWS)
+	s.mux.HandleFunc("GET /ws/relay", s.handlePTYWS)
 
 	// App dashboard API (cookie auth)
 	s.mux.HandleFunc("GET /api/app/me", s.handleAppMe)

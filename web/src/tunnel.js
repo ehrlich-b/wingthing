@@ -75,7 +75,7 @@ var pool = {
 
 function poolWsUrl(wingId) {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return proto + '//' + location.host + '/ws/pty?wing_id=' + encodeURIComponent(wingId);
+    return proto + '//' + location.host + '/ws/relay?wing_id=' + encodeURIComponent(wingId);
 }
 
 // Get or open a connection for wingId. Returns promise that resolves with conn.

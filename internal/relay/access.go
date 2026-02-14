@@ -102,6 +102,18 @@ func (s *Server) findWingByWingID(userID, wingID string) *ConnectedWing {
 	return nil
 }
 
+// findAnyWingByWingID finds a connected wing by wing_id without access check.
+// Used for routing and tunnel dispatch — the wing itself handles authz via E2E tunnel.
+func (s *Server) findAnyWingByWingID(wingID string) *ConnectedWing {
+	all := s.Wings.All()
+	for _, w := range all {
+		if w.WingID == wingID {
+			return w
+		}
+	}
+	return nil
+}
+
 // canAccessSession returns true if userID can access this PTY session.
 func (s *Server) canAccessSession(userID string, session *PTYSession) bool {
 	if session.UserID == userID {
