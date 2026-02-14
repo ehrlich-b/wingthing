@@ -206,7 +206,7 @@ export function tunnelCloseWing(wingId) {
 
 // --- Public API ---
 
-export async function sendTunnelRequest(wingId, innerMsg) {
+export async function sendTunnelRequest(wingId, innerMsg, opts) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
 
@@ -242,12 +242,14 @@ export async function sendTunnelRequest(wingId, innerMsg) {
         var result = JSON.parse(decrypted);
 
         if (result.error === 'passkey_required') {
-            var authToken = await handleTunnelPasskey(wingId, wing.public_key);
-            if (authToken) {
-                S.tunnelAuthTokens[wingId] = authToken;
-                saveTunnelAuthTokens();
-                innerMsg.auth_token = authToken;
-                return sendTunnelRequest(wingId, innerMsg);
+            if (!(opts && opts.skipPasskey)) {
+                var authToken = await handleTunnelPasskey(wingId, wing.public_key);
+                if (authToken) {
+                    S.tunnelAuthTokens[wingId] = authToken;
+                    saveTunnelAuthTokens();
+                    innerMsg.auth_token = authToken;
+                    return sendTunnelRequest(wingId, innerMsg);
+                }
             }
             var err = new Error('passkey_required');
             err.metadata = result;

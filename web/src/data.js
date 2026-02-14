@@ -87,7 +87,7 @@ export function setCachedWingSessions(wingId, sessions) {
 
 export async function probeWing(w) {
     try {
-        var data = await sendTunnelRequest(w.wing_id, { type: 'wing.info' });
+        var data = await sendTunnelRequest(w.wing_id, { type: 'wing.info' }, { skipPasskey: true });
         w.hostname = data.hostname || w.hostname;
         w.platform = data.platform || w.platform;
         w.version = data.version || w.version;
