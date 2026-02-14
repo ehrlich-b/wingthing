@@ -101,7 +101,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			}
 			wingMachineID := pw.WingInfo.MachineID
 			if wingMachineID == "" {
-				wingMachineID = pw.WingID // fallback
+				continue // skip peers without a machine_id
 			}
 			if seenMachines[wingMachineID] {
 				continue

@@ -584,12 +584,11 @@ async function loadHome() {
     wings.forEach(function (w) { w.online = true; });
     var apiMachines = {};
     wings.forEach(function(w) { apiMachines[w.machine_id] = true; });
-    // Preserve known wings that aren't in this API response (rollout, reconnecting)
-    var cached = getCachedWings();
-    cached.forEach(function(cw) {
-        if (!apiMachines[cw.machine_id]) {
-            cw.online = false;
-            wings.push(cw);
+    // Preserve in-memory wings that were online but aren't in this API response (rollout)
+    wingsData.forEach(function(ew) {
+        if (ew.online !== false && !apiMachines[ew.machine_id]) {
+            ew.online = false;
+            wings.push(ew);
         }
     });
     wingsData = sortWingsByOrder(wings);
