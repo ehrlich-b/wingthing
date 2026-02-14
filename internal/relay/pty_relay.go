@@ -316,12 +316,14 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 					wing = s.findAnyWingByWingID(start.WingID)
 				}
 				if wing != nil && !s.canAccessWing(userID, wing) {
+					log.Printf("pty.start: wing %s found but access denied for user %s (wing owner %s)", start.WingID, userID, wing.UserID)
 					wing = nil
 				}
 			} else {
 				wing = s.findAccessibleWing(userID)
 			}
 			if wing == nil {
+				log.Printf("pty.start: no wing found for wing_id=%s user=%s (local wings: %d)", start.WingID, userID, len(s.Wings.All()))
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "no wing connected"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
