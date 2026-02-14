@@ -2,7 +2,6 @@ package relay
 
 import (
 	"net/http"
-	"strings"
 )
 
 // canAccessWing returns true if userID can use this wing.
@@ -16,18 +15,6 @@ func (s *Server) canAccessWing(userID string, wing *ConnectedWing) bool {
 	if wing.OrgID != "" && s.Store != nil {
 		if s.Store.IsOrgMember(wing.OrgID, userID) {
 			return true
-		}
-	}
-
-	// Allow list: check email
-	if len(wing.AllowEmails) > 0 && s.Store != nil {
-		user, _ := s.Store.GetUserByID(userID)
-		if user != nil && user.Email != nil {
-			for _, e := range wing.AllowEmails {
-				if strings.EqualFold(e, *user.Email) {
-					return true
-				}
-			}
 		}
 	}
 

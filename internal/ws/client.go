@@ -59,7 +59,6 @@ type Client struct {
 	Identities  []string
 	Projects    []WingProject
 	OrgSlug     string
-	AllowEmails []string
 	RootDir     string
 
 	OnTask             TaskHandlerWithChunks
@@ -148,7 +147,6 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		Identities:  c.Identities,
 		Projects:    c.Projects,
 		OrgSlug:     c.OrgSlug,
-		AllowEmails: c.AllowEmails,
 		RootDir:     c.RootDir,
 	}
 	if err := c.writeJSON(ctx, reg); err != nil {

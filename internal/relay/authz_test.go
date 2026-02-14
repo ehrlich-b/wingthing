@@ -365,57 +365,6 @@ func TestAuthzPersonalWingNotifications(t *testing.T) {
 	}
 }
 
-// --- Allow-list wing tests ---
-
-func TestAuthzAllowListWing(t *testing.T) {
-	store := testStore(t)
-	s := NewServer(store, ServerConfig{})
-
-	store.CreateUser("owner-1")
-	store.CreateUser("allowed-1")
-	store.CreateUser("denied-1")
-
-	// Set email on the allowed user
-	store.DB().Exec("UPDATE users SET email = ? WHERE id = ?", "allowed@example.com", "allowed-1")
-
-	wing := &ConnectedWing{
-		ID:          "conn-1",
-		UserID:      "owner-1",
-		WingID:      "wing-1",
-		AllowEmails: []string{"allowed@example.com"},
-	}
-	s.Wings.Add(wing)
-
-	t.Run("allowed email can access", func(t *testing.T) {
-		if !s.canAccessWing("allowed-1", wing) {
-			t.Error("allowed user should have access")
-		}
-	})
-
-	t.Run("denied user cannot access", func(t *testing.T) {
-		if s.canAccessWing("denied-1", wing) {
-			t.Error("denied user should not have access")
-		}
-	})
-
-	sess := &PTYSession{ID: "sess-allow", WingID: wing.ID, UserID: "owner-1", Status: "active"}
-	s.PTY.Add(sess)
-
-	t.Run("allowed user can access PTY through gateway", func(t *testing.T) {
-		session, _ := s.getAuthorizedPTY("allowed-1", "sess-allow")
-		if session == nil {
-			t.Error("allowed user should access PTY session")
-		}
-	})
-
-	t.Run("denied user cannot access PTY through gateway", func(t *testing.T) {
-		session, _ := s.getAuthorizedPTY("denied-1", "sess-allow")
-		if session != nil {
-			t.Error("denied user should not access PTY session")
-		}
-	})
-}
-
 // --- Redirect safety tests ---
 
 func TestSafeRedirect(t *testing.T) {

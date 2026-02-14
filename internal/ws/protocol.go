@@ -64,6 +64,10 @@ const (
 	TypeAuditDone    = "audit.done"    // wing → relay → browser
 	TypeAuditError   = "audit.error"   // wing → relay → browser
 
+	// Passkey challenge-response (wing ↔ browser, relay is passthrough)
+	TypePasskeyChallenge = "passkey.challenge"
+	TypePasskeyResponse  = "passkey.response"
+
 	// Relay → Wing (control)
 	TypeRegistered      = "registered"
 	TypeWingUpdate      = "wing.update"
@@ -97,7 +101,6 @@ type WingRegister struct {
 	Identities  []string      `json:"identities"`
 	Projects    []WingProject `json:"projects,omitempty"`
 	OrgSlug     string        `json:"org_slug,omitempty"`
-	AllowEmails []string      `json:"allow_emails,omitempty"`
 	RootDir     string        `json:"root_dir,omitempty"`
 }
 
@@ -151,14 +154,16 @@ type ErrorMsg struct {
 
 // PTYStart requests a new interactive terminal session on the wing.
 type PTYStart struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Agent     string `json:"agent"` // "claude", "codex", "ollama"
-	Cols      int    `json:"cols"`
-	Rows      int    `json:"rows"`
-	PublicKey string `json:"public_key,omitempty"` // browser's ephemeral X25519 (base64)
-	CWD       string `json:"cwd,omitempty"`        // working directory for the agent
-	WingID    string `json:"wing_id,omitempty"`   // target wing (picks first if empty)
+	Type                string `json:"type"`
+	SessionID           string `json:"session_id"`
+	Agent               string `json:"agent"` // "claude", "codex", "ollama"
+	Cols                int    `json:"cols"`
+	Rows                int    `json:"rows"`
+	PublicKey           string `json:"public_key,omitempty"`            // browser's ephemeral X25519 (base64)
+	CWD                 string `json:"cwd,omitempty"`                   // working directory for the agent
+	WingID              string `json:"wing_id,omitempty"`               // target wing (picks first if empty)
+	PasskeyCredentialID string `json:"passkey_credential_id,omitempty"` // base64url credential ID
+	AuthToken           string `json:"auth_token,omitempty"`            // cached passkey auth token
 }
 
 // PTYStarted confirms the PTY session is running.
@@ -168,6 +173,24 @@ type PTYStarted struct {
 	Agent     string `json:"agent"`
 	PublicKey string `json:"public_key,omitempty"` // wing's X25519 (base64)
 	CWD       string `json:"cwd,omitempty"`        // resolved working directory
+	AuthToken string `json:"auth_token,omitempty"` // passkey auth token (valid 1hr)
+}
+
+// PasskeyChallenge is sent from wing to browser requesting passkey verification.
+type PasskeyChallenge struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Challenge string `json:"challenge"` // base64url random 32 bytes
+}
+
+// PasskeyResponse is sent from browser to wing with the passkey assertion.
+type PasskeyResponse struct {
+	Type              string `json:"type"`
+	SessionID         string `json:"session_id"`
+	CredentialID      string `json:"credential_id"`      // base64url
+	AuthenticatorData string `json:"authenticator_data"` // base64
+	ClientDataJSON    string `json:"client_data_json"`   // base64
+	Signature         string `json:"signature"`          // base64 (ASN.1 DER)
 }
 
 // PTYOutput carries raw terminal bytes from wing to browser.

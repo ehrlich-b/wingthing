@@ -434,6 +434,17 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("pty session %s: kill requested (user=%s)", kill.SessionID, userID)
 
+		case ws.TypePasskeyResponse:
+			var resp ws.PasskeyResponse
+			if err := json.Unmarshal(data, &resp); err != nil {
+				continue
+			}
+			_, wing := s.getAuthorizedPTY(userID, resp.SessionID)
+			if wing == nil {
+				continue
+			}
+			wing.Conn.Write(ctx, websocket.MessageText, data)
+
 		case ws.TypeChatStart:
 			var start ws.ChatStart
 			if err := json.Unmarshal(data, &start); err != nil {

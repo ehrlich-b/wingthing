@@ -286,6 +286,9 @@ func wingCmd() *cobra.Command {
 	cmd.AddCommand(wingStartCmd())
 	cmd.AddCommand(wingStopCmd())
 	cmd.AddCommand(wingStatusCmd())
+	cmd.AddCommand(wingPinCmd())
+	cmd.AddCommand(wingPinsCmd())
+	cmd.AddCommand(wingUnpinCmd())
 
 	return cmd
 }
@@ -298,7 +301,7 @@ func wingStartCmd() *cobra.Command {
 	var debugFlag bool
 	var eggConfigFlag string
 	var orgFlag string
-	var allowFlag string
+	var allowFlags []string
 	var rootFlag string
 	var auditFlag bool
 
@@ -309,7 +312,7 @@ func wingStartCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Foreground mode: run directly
 			if foregroundFlag {
-				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlag, rootFlag, debugFlag, auditFlag)
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, rootFlag, debugFlag, auditFlag)
 			}
 
 			// Daemon mode (default): re-exec detached, write PID file, return
@@ -340,8 +343,8 @@ func wingStartCmd() *cobra.Command {
 			if orgFlag != "" {
 				childArgs = append(childArgs, "--org", orgFlag)
 			}
-			if allowFlag != "" {
-				childArgs = append(childArgs, "--allow", allowFlag)
+			for _, ak := range allowFlags {
+				childArgs = append(childArgs, "--allow", ak)
 			}
 			if rootFlag != "" {
 				childArgs = append(childArgs, "--root", rootFlag)
@@ -390,18 +393,68 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp/wt-pty-<session>.bin for each egg")
 	cmd.Flags().StringVar(&eggConfigFlag, "egg-config", "", "path to egg.yaml for wing-level sandbox defaults")
 	cmd.Flags().StringVar(&orgFlag, "org", "", "org name or ID — share this wing with org members")
-	cmd.Flags().StringVar(&allowFlag, "allow", "", "comma-separated email allow list for wing access")
+	cmd.Flags().StringSliceVar(&allowFlags, "allow", nil, "ephemeral passkey public key(s) for this session")
 	cmd.Flags().StringVar(&rootFlag, "root", "", "constrain wing to this directory tree")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
 
 	return cmd
 }
 
-func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlag, rootFlag string, debug, audit bool) error {
+func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, rootFlag string, debug, audit bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
+
+	// Load wing.yaml
+	wingCfg, err := config.LoadWingConfig(cfg.Dir)
+	if err != nil {
+		log.Printf("wing: load wing.yaml: %v (continuing with defaults)", err)
+		wingCfg = &config.WingConfig{}
+	}
+
+	// Merge wing.yaml with CLI flags (CLI extends yaml)
+	if roostFlag == "" && wingCfg.Roost != "" {
+		roostFlag = wingCfg.Roost
+	}
+	if orgFlag == "" && wingCfg.Org != "" {
+		orgFlag = wingCfg.Org
+	} else if orgFlag != "" && wingCfg.Org != "" && orgFlag != wingCfg.Org {
+		return fmt.Errorf("org conflict: --org %q vs wing.yaml %q", orgFlag, wingCfg.Org)
+	}
+	if rootFlag == "" && wingCfg.Root != "" {
+		rootFlag = wingCfg.Root
+	}
+	if eggConfigFlag == "" && wingCfg.EggConfig != "" {
+		eggConfigFlag = wingCfg.EggConfig
+	}
+	if convFlag == "auto" && wingCfg.Conv != "" {
+		convFlag = wingCfg.Conv
+	}
+	if wingCfg.Audit {
+		audit = true
+	}
+	if wingCfg.Debug {
+		debug = true
+	}
+	if labelsFlag == "" && len(wingCfg.Labels) > 0 {
+		labelsFlag = strings.Join(wingCfg.Labels, ",")
+	}
+
+	// Build allowed passkey keys: pinned (from wing.yaml) + ephemeral (from --allow)
+	var allowedKeys []config.AllowKey
+	allowedKeys = append(allowedKeys, wingCfg.AllowKeys...)
+	pinnedCount := len(allowedKeys)
+	for _, k := range allowFlags {
+		k = strings.TrimSpace(k)
+		if k != "" {
+			allowedKeys = append(allowedKeys, config.AllowKey{Key: k})
+		}
+	}
+	ephemeralCount := len(allowedKeys) - pinnedCount
+
+	// Build passkey auth cache
+	passkeyCache := auth.NewAuthCache()
 
 	// Load wing-level egg config (with base chain resolution)
 	var wingEggCfg *egg.EggConfig
@@ -508,22 +561,14 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		fmt.Printf("    %s → %s\n", p.Name, p.Path)
 	}
 	fmt.Printf("  conv: %s\n", convFlag)
+	if len(allowedKeys) > 0 {
+		fmt.Printf("  passkey pinning enabled: %d pinned + %d ephemeral keys\n", pinnedCount, ephemeralCount)
+	}
 	fmt.Println()
 	fmt.Println("open https://app.wingthing.ai to start a terminal")
 
 	// Reap dead egg directories on startup
 	reapDeadEggs(cfg)
-
-	// Parse allow emails
-	var allowEmails []string
-	if allowFlag != "" {
-		for _, e := range strings.Split(allowFlag, ",") {
-			e = strings.TrimSpace(e)
-			if e != "" {
-				allowEmails = append(allowEmails, e)
-			}
-		}
-	}
 
 	// Resolve root dir to absolute path
 	resolvedRoot := rootFlag
@@ -546,7 +591,6 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		Labels:      labels,
 		Projects:    projects,
 		OrgSlug:     orgFlag,
-		AllowEmails: allowEmails,
 		RootDir:     resolvedRoot,
 	}
 
@@ -569,7 +613,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		if audit {
 			eggCfg.Audit = true
 		}
-		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debug)
+		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debug, allowedKeys, passkeyCache)
 	}
 
 	client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
@@ -711,6 +755,146 @@ func wingStatusCmd() *cobra.Command {
 					fmt.Println("  egg sessions: none")
 				}
 			}
+			return nil
+		},
+	}
+}
+
+func wingPinCmd() *cobra.Command {
+	var labelFlag string
+	cmd := &cobra.Command{
+		Use:   "pin <base64-public-key>",
+		Short: "Pin a passkey public key for wing access",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			keyB64 := args[0]
+
+			// Validate: decode and check length + curve point
+			raw, err := base64.StdEncoding.DecodeString(keyB64)
+			if err != nil {
+				return fmt.Errorf("invalid base64: %w", err)
+			}
+			if len(raw) != 64 {
+				return fmt.Errorf("invalid key: expected 64 bytes (P-256 X||Y), got %d", len(raw))
+			}
+			if !auth.IsValidP256Point(raw) {
+				return fmt.Errorf("invalid key: not a valid P-256 curve point")
+			}
+
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			wingCfg, err := config.LoadWingConfig(cfg.Dir)
+			if err != nil {
+				return err
+			}
+
+			// Deduplicate
+			for _, ak := range wingCfg.AllowKeys {
+				if ak.Key == keyB64 {
+					fmt.Printf("key already pinned (label: %s)\n", ak.Label)
+					return nil
+				}
+			}
+
+			// Auto-label if not provided
+			label := labelFlag
+			if label == "" {
+				h := fmt.Sprintf("%x", auth.SHA256Sum(raw))
+				label = "key:" + h[:8]
+			}
+
+			wingCfg.AllowKeys = append(wingCfg.AllowKeys, config.AllowKey{Key: keyB64, Label: label})
+			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
+				return err
+			}
+			fmt.Printf("pinned key %s... (label: %s)\n", keyB64[:12], label)
+			fmt.Println("restart wing for changes to take effect")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&labelFlag, "label", "", "human-readable label for this key")
+	return cmd
+}
+
+func wingPinsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pins",
+		Short: "List pinned passkey public keys",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			wingCfg, err := config.LoadWingConfig(cfg.Dir)
+			if err != nil {
+				return err
+			}
+			if len(wingCfg.AllowKeys) == 0 {
+				fmt.Println("no pinned keys")
+				return nil
+			}
+			for _, ak := range wingCfg.AllowKeys {
+				prefix := ak.Key
+				if len(prefix) > 16 {
+					prefix = prefix[:16] + "..."
+				}
+				fmt.Printf("  %s  %s\n", ak.Label, prefix)
+			}
+			return nil
+		},
+	}
+}
+
+func wingUnpinCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unpin <key-prefix-or-label>",
+		Short: "Remove a pinned passkey public key",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			query := args[0]
+
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			wingCfg, err := config.LoadWingConfig(cfg.Dir)
+			if err != nil {
+				return err
+			}
+
+			// Find matches by label or key prefix
+			var matches []int
+			for i, ak := range wingCfg.AllowKeys {
+				if ak.Label == query || strings.HasPrefix(ak.Key, query) {
+					matches = append(matches, i)
+				}
+			}
+
+			if len(matches) == 0 {
+				return fmt.Errorf("no matching key found for %q", query)
+			}
+			if len(matches) > 1 {
+				fmt.Println("ambiguous match:")
+				for _, i := range matches {
+					ak := wingCfg.AllowKeys[i]
+					prefix := ak.Key
+					if len(prefix) > 16 {
+						prefix = prefix[:16] + "..."
+					}
+					fmt.Printf("  %s  %s\n", ak.Label, prefix)
+				}
+				return fmt.Errorf("specify a more precise key prefix or label")
+			}
+
+			removed := wingCfg.AllowKeys[matches[0]]
+			wingCfg.AllowKeys = append(wingCfg.AllowKeys[:matches[0]], wingCfg.AllowKeys[matches[0]+1:]...)
+			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
+				return err
+			}
+			fmt.Printf("unpinned key (label: %s)\n", removed.Label)
+			fmt.Println("restart wing for changes to take effect")
 			return nil
 		},
 	}
@@ -1373,7 +1557,115 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug bool) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug bool, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache) {
+	// Passkey verification — if allowed keys are configured, require auth
+	if len(allowedKeys) > 0 {
+		// Check cached auth token first
+		if start.AuthToken != "" {
+			if _, ok := passkeyCache.Check(start.AuthToken); ok {
+				log.Printf("pty session %s: passkey auth via cached token", start.SessionID)
+				goto authDone
+			}
+		}
+
+		// Need passkey credential ID to proceed
+		if start.PasskeyCredentialID == "" {
+			log.Printf("pty session %s: passkey required but no credential provided", start.SessionID)
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "passkey required"})
+			return
+		}
+
+		// Check credential ID matches an allowed key
+		credIDBytes, decErr := base64.RawURLEncoding.DecodeString(start.PasskeyCredentialID)
+		if decErr != nil {
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid credential ID"})
+			return
+		}
+		_ = credIDBytes // credential ID is opaque — we verify by public key match during assertion
+
+		// Generate and send challenge
+		challenge, chalErr := auth.GenerateChallenge()
+		if chalErr != nil {
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "challenge generation failed"})
+			return
+		}
+
+		write(ws.PasskeyChallenge{
+			Type:      ws.TypePasskeyChallenge,
+			SessionID: start.SessionID,
+			Challenge: base64.RawURLEncoding.EncodeToString(challenge),
+		})
+		log.Printf("pty session %s: passkey challenge sent, waiting for response", start.SessionID)
+
+		// Wait for passkey response on input channel (60s timeout)
+		timer := time.NewTimer(60 * time.Second)
+		defer timer.Stop()
+		var passkeyVerified bool
+		for !passkeyVerified {
+			select {
+			case data, ok := <-input:
+				if !ok {
+					return
+				}
+				var env ws.Envelope
+				if err := json.Unmarshal(data, &env); err != nil {
+					continue
+				}
+				if env.Type != ws.TypePasskeyResponse {
+					continue // ignore non-passkey messages during auth
+				}
+				var resp ws.PasskeyResponse
+				if err := json.Unmarshal(data, &resp); err != nil {
+					write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey response"})
+					return
+				}
+
+				// Decode assertion fields
+				authData, _ := base64.StdEncoding.DecodeString(resp.AuthenticatorData)
+				clientJSON, _ := base64.StdEncoding.DecodeString(resp.ClientDataJSON)
+				sig, _ := base64.StdEncoding.DecodeString(resp.Signature)
+
+				// Try each allowed key
+				var matched bool
+				for _, ak := range allowedKeys {
+					rawKey, decErr := base64.StdEncoding.DecodeString(ak.Key)
+					if decErr != nil || len(rawKey) != 64 {
+						continue
+					}
+					if err := auth.VerifyPasskeyAssertion(rawKey, challenge, authData, clientJSON, sig); err == nil {
+						matched = true
+						label := ak.Label
+						if label == "" {
+							label = ak.Key[:8] + "..."
+						}
+						log.Printf("pty session %s: passkey verified (key: %s)", start.SessionID, label)
+
+						// Issue auth token for subsequent sessions
+						token, tokErr := auth.GenerateAuthToken()
+						if tokErr == nil {
+							passkeyCache.Put(token, rawKey)
+							start.AuthToken = token // will be included in PTYStarted
+						}
+						break
+					}
+				}
+				if !matched {
+					write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey signature"})
+					return
+				}
+				passkeyVerified = true
+
+			case <-timer.C:
+				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "passkey authentication timed out"})
+				return
+
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+authDone:
+
 	// Set up E2E encryption — required, no plaintext fallback
 	var mu sync.Mutex
 	var gcm cipher.AEAD
@@ -1418,6 +1710,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 		Agent:     start.Agent,
 		PublicKey: wingPubKeyB64,
 		CWD:       start.CWD,
+		AuthToken: start.AuthToken,
 	})
 
 	// Attach to egg session stream

@@ -31,7 +31,6 @@ type ConnectedWing struct {
 	Projects    []ws.WingProject
 	EggConfig   string // serialized YAML of wing's egg config
 	OrgID       string   // org slug this wing serves (from --org flag)
-	AllowEmails []string // explicit email allow list (from --allow flag)
 	RootDir     string   // root directory constraint (from --root flag)
 	Conn        *websocket.Conn
 	LastSeen    time.Time
@@ -422,7 +421,6 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		Identities:  reg.Identities,
 		Projects:    reg.Projects,
 		OrgID:       reg.OrgSlug,
-		AllowEmails: reg.AllowEmails,
 		RootDir:     reg.RootDir,
 		Conn:        conn,
 		LastSeen:    time.Now(),
@@ -497,7 +495,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		case ws.TypeWingHeartbeat:
 			s.Wings.Touch(wing.ID)
 
-		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited:
+		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge:
 			// Extract session_id and forward to browser
 			var partial struct {
 				SessionID string `json:"session_id"`

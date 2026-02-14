@@ -1094,3 +1094,68 @@ func (s *RelayStore) ResolveLabels(targetIDs []string, userID, orgID string) map
 	}
 	return result
 }
+
+// --- Passkey Credentials ---
+
+// PasskeyCredential represents a stored WebAuthn credential.
+type PasskeyCredential struct {
+	ID           string
+	UserID       string
+	CredentialID []byte
+	PublicKey    []byte // raw P-256: 64 bytes (X||Y)
+	SignCount    int
+	Label        string
+	CreatedAt    time.Time
+}
+
+// CreatePasskeyCredential stores a new passkey credential.
+func (s *RelayStore) CreatePasskeyCredential(id, userID string, credentialID, publicKey []byte, label string) error {
+	_, err := s.db.Exec(
+		"INSERT INTO passkey_credentials (id, user_id, credential_id, public_key, label) VALUES (?, ?, ?, ?, ?)",
+		id, userID, credentialID, publicKey, label,
+	)
+	if err != nil {
+		return fmt.Errorf("create passkey credential: %w", err)
+	}
+	return nil
+}
+
+// ListPasskeyCredentials returns all passkey credentials for a user.
+func (s *RelayStore) ListPasskeyCredentials(userID string) ([]*PasskeyCredential, error) {
+	rows, err := s.db.Query(
+		"SELECT id, user_id, credential_id, public_key, sign_count, label, created_at FROM passkey_credentials WHERE user_id = ? ORDER BY created_at",
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list passkey credentials: %w", err)
+	}
+	defer rows.Close()
+	var result []*PasskeyCredential
+	for rows.Next() {
+		var c PasskeyCredential
+		if err := rows.Scan(&c.ID, &c.UserID, &c.CredentialID, &c.PublicKey, &c.SignCount, &c.Label, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, &c)
+	}
+	return result, nil
+}
+
+// DeletePasskeyCredential removes a passkey credential by ID, scoped to user.
+func (s *RelayStore) DeletePasskeyCredential(id, userID string) error {
+	res, err := s.db.Exec("DELETE FROM passkey_credentials WHERE id = ? AND user_id = ?", id, userID)
+	if err != nil {
+		return fmt.Errorf("delete passkey credential: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("passkey credential not found")
+	}
+	return nil
+}
+
+// UpdatePasskeySignCount increments the sign count for a credential.
+func (s *RelayStore) UpdatePasskeySignCount(id string, count int) error {
+	_, err := s.db.Exec("UPDATE passkey_credentials SET sign_count = ? WHERE id = ?", count, id)
+	return err
+}

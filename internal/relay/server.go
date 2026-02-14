@@ -131,6 +131,12 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("PUT /api/app/sessions/{id}/label", s.handleSessionLabel)
 	s.mux.HandleFunc("GET /api/app/wings/{wingID}/sessions/{sessionID}/audit", s.handleAuditSSE)
 
+	// Passkey management (cookie auth)
+	s.mux.HandleFunc("POST /api/app/passkey/register/begin", s.handlePasskeyRegisterBegin)
+	s.mux.HandleFunc("POST /api/app/passkey/register/finish", s.handlePasskeyRegisterFinish)
+	s.mux.HandleFunc("GET /api/app/passkey", s.handlePasskeyList)
+	s.mux.HandleFunc("DELETE /api/app/passkey/{id}", s.handlePasskeyDelete)
+
 	// Claim page
 	s.mux.HandleFunc("GET /auth/claim", s.handleClaimPage)
 
