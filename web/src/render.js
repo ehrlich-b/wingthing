@@ -953,7 +953,7 @@ export function renderWingDetailPage(wingId) {
         '<div class="wd-header">' +
             '<a class="wd-back" id="wd-back">back</a>' +
         '</div>' +
-        (isLocked ? '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> This wing is locked.<br><code>wt wing pin --email ' + escapeHtml(userEmail) + '</code></div>' : '') +
+        (isLocked ? '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> This wing is locked. Ask the owner to add you:<br><code>wt wing pin --email ' + escapeHtml(userEmail) + '</code></div>' : '') +
         (updateAvailable ? '<div class="wd-update-banner" id="wd-update">' +
             escapeHtml(S.latestVersion) + ' available (you have ' + escapeHtml(ver) + ') <span class="wd-update-action">update now</span>' +
         '</div>' : '') +

@@ -151,8 +151,11 @@ export async function loadHome() {
                 })
                 .catch(function(e) {
                     w.projects = [];
-                    if (e.message && e.message.indexOf('locked') !== -1) {
-                        w.tunnel_error = e.message;
+                    if (e.message && e.message.indexOf('not_authorized') !== -1) {
+                        w.tunnel_error = 'not_authorized';
+                        if (S.activeView === 'home') renderDashboard();
+                        if (S.activeView === 'wing-detail' && S.currentWingId === w.wing_id)
+                            renderWingDetailPage(w.wing_id);
                     }
                 });
         });

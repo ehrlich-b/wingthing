@@ -132,8 +132,11 @@ function applyWingEvent(ev) {
             })
             .catch(function(e) {
                 evWing.projects = [];
-                if (e.message && e.message.indexOf('locked') !== -1) {
-                    evWing.tunnel_error = e.message;
+                if (e.message && e.message.indexOf('not_authorized') !== -1) {
+                    evWing.tunnel_error = 'not_authorized';
+                    if (S.activeView === 'home') renderDashboard();
+                    if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
+                        renderWingDetailPage(ev.wing_id);
                 }
             });
     }

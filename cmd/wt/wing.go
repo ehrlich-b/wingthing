@@ -2049,15 +2049,8 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		return
 	}
 
-	// Passkey auth check for pinned wings
+	// Auth check for pinned wings
 	if wingCfg.Pinned && inner.Type != "passkey.auth" && inner.Type != "pins.add" {
-		if len(allowedKeys) == 0 {
-			tunnelRespond(gcm, req.RequestID, map[string]string{
-				"error": "wing is locked with no authorized users — add yourself with: wt wing pin --email <your-email>",
-			}, write)
-			return
-		}
-		// Fast path: relay-provided user_id matches a pin → authorized
 		authorized := false
 		if req.SenderUserID != "" {
 			for _, ak := range allowedKeys {
@@ -2067,24 +2060,15 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 				}
 			}
 		}
+		if !authorized && inner.AuthToken != "" {
+			_, authorized = passkeyCache.Check(inner.AuthToken)
+		}
 		if !authorized {
-			// Slow path: require passkey auth token
-			if inner.AuthToken == "" {
-				challenge, _ := auth.GenerateChallenge()
-				tunnelRespond(gcm, req.RequestID, map[string]any{
-					"error":     "passkey_required",
-					"challenge": base64.RawURLEncoding.EncodeToString(challenge),
-				}, write)
-				return
-			}
-			if _, ok := passkeyCache.Check(inner.AuthToken); !ok {
-				challenge, _ := auth.GenerateChallenge()
-				tunnelRespond(gcm, req.RequestID, map[string]any{
-					"error":     "passkey_required",
-					"challenge": base64.RawURLEncoding.EncodeToString(challenge),
-				}, write)
-				return
-			}
+			tunnelRespond(gcm, req.RequestID, map[string]any{
+				"error":   "not_authorized",
+				"version": version,
+			}, write)
+			return
 		}
 	}
 
@@ -2096,7 +2080,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		tunnelRespond(gcm, req.RequestID, map[string]any{"entries": entries}, write)
 
 	case "projects.list":
-		tunnelRespond(gcm, req.RequestID, map[string]any{"projects": client.Projects}, write)
+		tunnelRespond(gcm, req.RequestID, map[string]any{"projects": client.Projects, "version": version}, write)
 
 	case "sessions.list":
 		sessions := listAliveEggSessions(cfg)
