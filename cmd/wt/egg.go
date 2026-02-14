@@ -134,12 +134,7 @@ func eggRunCmd() *cobra.Command {
 			err = srv.RunSession(ctx, rc)
 
 			// Clean up session directory on exit
-			os.Remove(filepath.Join(dir, "egg.sock"))
-			os.Remove(filepath.Join(dir, "egg.token"))
-			os.Remove(filepath.Join(dir, "egg.pid"))
-			os.Remove(filepath.Join(dir, "egg.meta"))
-			os.Remove(filepath.Join(dir, "egg.log"))
-			os.Remove(dir)
+			cleanEggDir(dir)
 
 			return err
 		},
@@ -236,12 +231,7 @@ func eggListCmd() *cobra.Command {
 				}
 				if err := proc.Signal(syscall.Signal(0)); err != nil {
 					// Dead — clean up
-					os.Remove(filepath.Join(eggsDir, sessionID, "egg.sock"))
-					os.Remove(filepath.Join(eggsDir, sessionID, "egg.token"))
-					os.Remove(filepath.Join(eggsDir, sessionID, "egg.pid"))
-					os.Remove(filepath.Join(eggsDir, sessionID, "egg.meta"))
-					os.Remove(filepath.Join(eggsDir, sessionID, "egg.log"))
-					os.Remove(filepath.Join(eggsDir, sessionID))
+					cleanEggDir(filepath.Join(eggsDir, sessionID))
 					continue
 				}
 
