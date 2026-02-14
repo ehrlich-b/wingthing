@@ -2,8 +2,8 @@ package relay
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
-	"strings"
 )
 
 // registerInternalRoutes adds internal API endpoints used for node-to-node communication.
@@ -13,7 +13,6 @@ func (s *Server) registerInternalRoutes() {
 	s.mux.HandleFunc("GET /internal/entitlements", s.withInternalAuth(s.handleInternalEntitlements))
 	s.mux.HandleFunc("GET /internal/sessions/{token}", s.withInternalAuth(s.handleInternalSession))
 	s.mux.HandleFunc("POST /internal/sync", s.withInternalAuth(s.handleSync))
-	s.mux.HandleFunc("POST /internal/tasks/drain/{userID}", s.withInternalAuth(s.handleInternalDrainTasks))
 	s.mux.HandleFunc("GET /internal/org-check/{slug}/{userID}", s.withInternalAuth(s.handleInternalOrgCheck))
 }
 
@@ -39,14 +38,36 @@ func (s *Server) withInternalAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func isPrivateIP(ip string) bool {
-	return strings.HasPrefix(ip, "10.") ||
-		strings.HasPrefix(ip, "172.16.") || strings.HasPrefix(ip, "172.17.") ||
-		strings.HasPrefix(ip, "172.18.") || strings.HasPrefix(ip, "172.19.") ||
-		strings.HasPrefix(ip, "172.2") || strings.HasPrefix(ip, "172.3") ||
-		strings.HasPrefix(ip, "192.168.") ||
-		strings.HasPrefix(ip, "fdaa:") ||
-		ip == "127.0.0.1" || ip == "::1"
+// privateCIDRs are the RFC 1918 / RFC 4193 private address ranges
+// plus loopback and Fly.io's 6PN (fdaa::/16).
+var privateCIDRs []*net.IPNet
+
+func init() {
+	for _, cidr := range []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"::1/128",
+		"fc00::/7",  // IPv6 ULA
+		"fdaa::/16", // Fly.io 6PN
+	} {
+		_, network, _ := net.ParseCIDR(cidr)
+		privateCIDRs = append(privateCIDRs, network)
+	}
+}
+
+func isPrivateIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	for _, network := range privateCIDRs {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleInternalStatus returns node info and connected wing IDs.
@@ -182,30 +203,6 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		banned = s.Bandwidth.ExceededUsers()
 	}
 	writeJSON(w, http.StatusOK, SyncResponse{Wings: others, BannedUsers: banned})
-}
-
-// handleInternalDrainTasks returns pending queued tasks for a user and deletes them.
-// Called by edge nodes when a wing connects so they can deliver offline-queued tasks.
-func (s *Server) handleInternalDrainTasks(w http.ResponseWriter, r *http.Request) {
-	if s.Store == nil {
-		writeJSON(w, http.StatusOK, []json.RawMessage{})
-		return
-	}
-
-	userID := r.PathValue("userID")
-	tasks, err := s.Store.ListPendingTasks(userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Collect payloads and dequeue
-	payloads := make([]json.RawMessage, 0, len(tasks))
-	for _, t := range tasks {
-		payloads = append(payloads, json.RawMessage(t.Payload))
-		s.Store.DequeueTask(t.ID)
-	}
-	writeJSON(w, http.StatusOK, payloads)
 }
 
 // handleInternalOrgCheck validates that a user is an owner/admin of an org.

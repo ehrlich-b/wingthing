@@ -94,7 +94,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		out = append(out, entry)
 	}
 
-	// Include peer wings from gossip (dedup by wing_id)
+	// Include peer wings from cluster sync (dedup by wing_id)
 	if s.Peers != nil {
 		for _, pw := range s.Peers.AllWings() {
 			if pw.WingInfo == nil || pw.WingInfo.UserID != user.ID {
@@ -635,6 +635,38 @@ func (s *Server) handleWingSessions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// wingLabelScope resolves the owner and scope for a wing label operation.
+// Checks both local wings and peer wings (for cross-node labeling on login).
+// Returns (orgID, isOwner). Empty orgID means personal scope.
+func (s *Server) wingLabelScope(userID, wingID string) (orgID string, isOwner bool) {
+	// Check local wings first
+	if wing := s.findWingByWingID(userID, wingID); wing != nil {
+		if !s.isWingOwner(userID, wing) {
+			return "", false
+		}
+		return wing.OrgID, true
+	}
+	// Check peer wings (wing connected to a different node)
+	if s.Peers != nil {
+		if pw := s.Peers.FindByWingID(wingID); pw != nil && pw.WingInfo != nil {
+			if pw.WingInfo.UserID == userID {
+				return pw.WingInfo.OrgID, true
+			}
+			// Check org ownership for peer wings
+			if pw.WingInfo.OrgID != "" && s.Store != nil {
+				org, _ := s.Store.GetOrgBySlug(pw.WingInfo.OrgID)
+				if org != nil {
+					role := s.Store.GetOrgMemberRole(org.ID, userID)
+					if role == "owner" || role == "admin" {
+						return pw.WingInfo.OrgID, true
+					}
+				}
+			}
+		}
+	}
+	return "", false
+}
+
 // handleWingLabel sets or updates a label for a wing.
 func (s *Server) handleWingLabel(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
@@ -644,15 +676,9 @@ func (s *Server) handleWingLabel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wingID := r.PathValue("wingID")
-	wing := s.findWingByWingID(user.ID, wingID)
-	if wing == nil {
-		// Allow labeling offline wings by wingID too
+	orgID, isOwner := s.wingLabelScope(user.ID, wingID)
+	if !isOwner {
 		writeError(w, http.StatusNotFound, "wing not found")
-		return
-	}
-
-	if !s.isWingOwner(user.ID, wing) {
-		writeError(w, http.StatusForbidden, "not wing owner")
 		return
 	}
 
@@ -667,8 +693,8 @@ func (s *Server) handleWingLabel(w http.ResponseWriter, r *http.Request) {
 	// Determine scope
 	scopeType := "user"
 	scopeID := user.ID
-	if wing.OrgID != "" {
-		org, _ := s.Store.GetOrgBySlug(wing.OrgID)
+	if orgID != "" {
+		org, _ := s.Store.GetOrgBySlug(orgID)
 		if org != nil {
 			scopeType = "org"
 			scopeID = org.ID
@@ -691,21 +717,16 @@ func (s *Server) handleDeleteWingLabel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wingID := r.PathValue("wingID")
-	wing := s.findWingByWingID(user.ID, wingID)
-	if wing == nil {
+	orgID, isOwner := s.wingLabelScope(user.ID, wingID)
+	if !isOwner {
 		writeError(w, http.StatusNotFound, "wing not found")
-		return
-	}
-
-	if !s.isWingOwner(user.ID, wing) {
-		writeError(w, http.StatusForbidden, "not wing owner")
 		return
 	}
 
 	scopeType := "user"
 	scopeID := user.ID
-	if wing.OrgID != "" {
-		org, _ := s.Store.GetOrgBySlug(wing.OrgID)
+	if orgID != "" {
+		org, _ := s.Store.GetOrgBySlug(orgID)
 		if org != nil {
 			scopeType = "org"
 			scopeID = org.ID

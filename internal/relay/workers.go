@@ -3,7 +3,6 @@ package relay
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -245,32 +244,6 @@ func (r *WingRegistry) Remove(id string) {
 	}
 }
 
-func (r *WingRegistry) FindForUser(userID string) *ConnectedWing {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, w := range r.wings {
-		if w.UserID == userID {
-			return w
-		}
-	}
-	return nil
-}
-
-func (r *WingRegistry) FindByIdentity(identity string) *ConnectedWing {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, w := range r.wings {
-		for _, id := range w.Identities {
-			if id == identity {
-				return w
-			}
-		}
-		if w.UserID == identity {
-			return w
-		}
-	}
-	return nil
-}
 
 func (r *WingRegistry) FindByID(wingID string) *ConnectedWing {
 	r.mu.RLock()
@@ -484,9 +457,6 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	ackData, _ := json.Marshal(ack)
 	conn.Write(ctx, websocket.MessageText, ackData)
 
-	// Drain any queued tasks for this user
-	go s.drainQueuedTasks(ctx, wing)
-
 	// Read loop — forward messages, never inspect content
 	for {
 		_, data, err := conn.Read(ctx)
@@ -503,21 +473,6 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		switch msg.Type {
 		case ws.TypeWingHeartbeat:
 			s.Wings.Touch(wing.ID)
-
-		case ws.TypeTaskChunk:
-			var chunk ws.TaskChunk
-			json.Unmarshal(data, &chunk)
-			s.forwardChunk(chunk)
-
-		case ws.TypeTaskDone:
-			var done ws.TaskDone
-			json.Unmarshal(data, &done)
-			s.forwardDone(done)
-
-		case ws.TypeTaskError:
-			var errMsg ws.TaskErrorMsg
-			json.Unmarshal(data, &errMsg)
-			s.forwardError(errMsg)
 
 		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited:
 			// Extract session_id and forward to browser
@@ -603,105 +558,6 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// SubmitTask routes a task to a connected wing or queues it for offline delivery.
-// The relay only sees the task ID and routing info — never the content.
-func (s *Server) SubmitTask(ctx context.Context, userID, identity, taskID string, payload []byte) error {
-	if identity == "" {
-		identity = userID
-	}
-
-	// Find a wing
-	wing := s.Wings.FindByIdentity(identity)
-	if wing == nil {
-		wing = s.Wings.FindForUser(userID)
-	}
-
-	if wing != nil {
-		// Wing online — forward directly, no DB write
-		writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		if err := wing.Conn.Write(writeCtx, websocket.MessageText, payload); err != nil {
-			log.Printf("dispatch to wing %s failed: %v", wing.ID, err)
-			return fmt.Errorf("dispatch failed: %w", err)
-		}
-		return nil
-	}
-
-	// Wing offline — queue for later delivery
-	qt := &ws.QueuedTask{
-		ID:        taskID,
-		UserID:    userID,
-		Identity:  identity,
-		Payload:   string(payload),
-		Status:    "pending",
-		CreatedAt: time.Now().UTC(),
-	}
-	return s.Store.EnqueueTask(qt)
-}
-
-func (s *Server) drainQueuedTasks(ctx context.Context, wing *ConnectedWing) {
-	if s.Store != nil {
-		// Login node: drain directly from DB
-		tasks, err := s.Store.ListPendingTasks(wing.UserID)
-		if err != nil {
-			log.Printf("drain queue error: %v", err)
-			return
-		}
-		for _, task := range tasks {
-			writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := wing.Conn.Write(writeCtx, websocket.MessageText, []byte(task.Payload))
-			cancel()
-			if err != nil {
-				log.Printf("drain to wing %s failed: %v", wing.ID, err)
-				return
-			}
-			s.Store.DequeueTask(task.ID)
-		}
-		return
-	}
-
-	// Edge node: fetch from login via internal API
-	if s.Config.LoginNodeAddr == "" {
-		return
-	}
-	s.drainQueuedTasksFromLogin(ctx, wing)
-}
-
-func (s *Server) drainQueuedTasksFromLogin(ctx context.Context, wing *ConnectedWing) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		s.Config.LoginNodeAddr+"/internal/tasks/drain/"+wing.UserID, nil)
-	if err != nil {
-		return
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("drain from login failed: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return
-	}
-
-	var payloads []json.RawMessage
-	if err := json.NewDecoder(resp.Body).Decode(&payloads); err != nil {
-		return
-	}
-
-	for _, payload := range payloads {
-		writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := wing.Conn.Write(writeCtx, websocket.MessageText, payload)
-		cancel()
-		if err != nil {
-			log.Printf("drain to wing %s failed: %v", wing.ID, err)
-			return
-		}
-	}
-}
-
 // validateOrgViaLogin proxies org membership validation to the login node.
 func (s *Server) validateOrgViaLogin(ctx context.Context, orgSlug, userID string) bool {
 	client := &http.Client{Timeout: 3 * time.Second}
@@ -725,39 +581,4 @@ func (s *Server) validateOrgViaLogin(ctx context.Context, orgSlug, userID string
 		return false
 	}
 	return result.OK
-}
-
-// forwardChunk sends a chunk to SSE subscribers. No DB write.
-func (s *Server) forwardChunk(chunk ws.TaskChunk) {
-	s.streamMu.RLock()
-	subs := s.streamSubs[chunk.TaskID]
-	s.streamMu.RUnlock()
-	for _, ch := range subs {
-		select {
-		case ch <- chunk.Text:
-		default:
-		}
-	}
-}
-
-// forwardDone notifies SSE subscribers that the task completed. No DB write.
-func (s *Server) forwardDone(done ws.TaskDone) {
-	s.streamMu.Lock()
-	subs := s.streamSubs[done.TaskID]
-	delete(s.streamSubs, done.TaskID)
-	s.streamMu.Unlock()
-	for _, ch := range subs {
-		close(ch)
-	}
-}
-
-// forwardError notifies SSE subscribers that the task failed. No DB write.
-func (s *Server) forwardError(errMsg ws.TaskErrorMsg) {
-	s.streamMu.Lock()
-	subs := s.streamSubs[errMsg.TaskID]
-	delete(s.streamSubs, errMsg.TaskID)
-	s.streamMu.Unlock()
-	for _, ch := range subs {
-		close(ch)
-	}
 }

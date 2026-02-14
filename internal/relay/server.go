@@ -56,10 +56,6 @@ type Server struct {
 	latestVersionAt time.Time
 	latestVersionMu sync.RWMutex
 
-	// Stream subscribers: taskID → list of channels receiving output chunks
-	streamMu   sync.RWMutex
-	streamSubs map[string][]chan string
-
 	// All browser WebSocket connections (for shutdown broadcast)
 	browserMu    sync.Mutex
 	browserConns map[*websocket.Conn]struct{}
@@ -82,7 +78,6 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 		PTY:          NewPTYRegistry(),
 		Chat:         NewChatRegistry(),
 		mux:          http.NewServeMux(),
-		streamSubs:   make(map[string][]chan string),
 		browserConns: make(map[*websocket.Conn]struct{}),
 	}
 
@@ -95,10 +90,8 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /api/skills", s.handleListSkills)
 	s.mux.HandleFunc("GET /api/skills/{name}", s.handleGetSkill)
 	s.mux.HandleFunc("GET /api/skills/{name}/raw", s.handleGetSkillRaw)
-	// Relay: worker WebSocket + task API
+	// Relay: worker WebSocket
 	s.mux.HandleFunc("GET /ws/wing", s.handleWingWS)
-	s.mux.HandleFunc("POST /api/tasks", s.handleSubmitTask)
-	s.mux.HandleFunc("GET /api/tasks/{id}/stream", s.handleTaskStream)
 	s.mux.HandleFunc("GET /ws/pty", s.handlePTYWS)
 
 	// App dashboard API (cookie auth)
