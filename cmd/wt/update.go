@@ -125,12 +125,19 @@ func updateCmd() *cobra.Command {
 				proc.Signal(syscall.SIGTERM)
 				os.Remove(wingPidPath())
 
-				// Read saved args from last start, fall back to bare "wing start"
+				// Read saved args from last start, fall back to bare "wing start".
+				// Strip --foreground since we want it to daemonize and return.
 				startArgs := []string{"wing", "start"}
 				if saved, err := os.ReadFile(wingArgsPath()); err == nil {
 					lines := strings.Split(strings.TrimSpace(string(saved)), "\n")
-					if len(lines) > 0 {
-						startArgs = lines
+					var filtered []string
+					for _, l := range lines {
+						if l != "--foreground" {
+							filtered = append(filtered, l)
+						}
+					}
+					if len(filtered) > 0 {
+						startArgs = filtered
 					}
 				}
 

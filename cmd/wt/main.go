@@ -39,10 +39,11 @@ func main() {
 	}
 
 	root := &cobra.Command{
-		Use:     "wt",
-		Short:   "wingthing — local-first AI task runner",
-		Long:    "Orchestrates LLM agents on your behalf. Manages context, memory, and task timelines.",
-		Version: version,
+		Use:          "wt",
+		Short:        "wingthing — local-first AI task runner",
+		Long:         "Orchestrates LLM agents on your behalf. Manages context, memory, and task timelines.",
+		Version:      version,
+		SilenceUsage: true,
 	}
 
 	root.AddCommand(
