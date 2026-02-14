@@ -83,6 +83,18 @@ func (p *PeerDirectory) AllWings() []*PeerWing {
 	return result
 }
 
+// FindByMachineID looks up a peer wing by its hostname (wing machine_id).
+func (p *PeerDirectory) FindByMachineID(machineID string) *PeerWing {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for _, w := range p.wings {
+		if w.WingInfo != nil && w.WingInfo.MachineID == machineID {
+			return w
+		}
+	}
+	return nil
+}
+
 // CountForUser returns the number of peer wings for a given user.
 func (p *PeerDirectory) CountForUser(userID string) int {
 	p.mu.RLock()

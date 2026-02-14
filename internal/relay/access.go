@@ -1,6 +1,9 @@
 package relay
 
-import "strings"
+import (
+	"net/http"
+	"strings"
+)
 
 // canAccessWing returns true if userID can use this wing.
 func (s *Server) canAccessWing(userID string, wing *ConnectedWing) bool {
@@ -9,8 +12,8 @@ func (s *Server) canAccessWing(userID string, wing *ConnectedWing) bool {
 		return true
 	}
 
-	// Org mode: check membership
-	if wing.OrgID != "" {
+	// Org mode: check membership (requires store, edge nodes may not have it)
+	if wing.OrgID != "" && s.Store != nil {
 		org, _ := s.Store.GetOrgBySlug(wing.OrgID)
 		if org != nil && s.Store.IsOrgMember(org.ID, userID) {
 			return true
@@ -18,7 +21,7 @@ func (s *Server) canAccessWing(userID string, wing *ConnectedWing) bool {
 	}
 
 	// Allow list: check email
-	if len(wing.AllowEmails) > 0 {
+	if len(wing.AllowEmails) > 0 && s.Store != nil {
 		user, _ := s.Store.GetUserByID(userID)
 		if user != nil && user.Email != nil {
 			for _, e := range wing.AllowEmails {
@@ -60,12 +63,47 @@ func (s *Server) isWingOwner(userID string, wing *ConnectedWing) bool {
 	if wing.UserID == userID {
 		return true
 	}
-	if wing.OrgID != "" {
+	if wing.OrgID != "" && s.Store != nil {
 		org, _ := s.Store.GetOrgBySlug(wing.OrgID)
 		if org != nil {
 			role := s.Store.GetOrgMemberRole(org.ID, userID)
 			return role == "owner" || role == "admin"
 		}
+	}
+	return false
+}
+
+// replayToWingEdge checks if a wing (by wingID) is on a remote edge node.
+// If so, sets fly-replay header and returns true. Caller should return immediately.
+func (s *Server) replayToWingEdge(w http.ResponseWriter, wingID string) bool {
+	if s.Peers == nil || s.Config.FlyMachineID == "" {
+		return false
+	}
+	if s.Wings.FindByID(wingID) != nil {
+		return false
+	}
+	pw := s.Peers.FindWing(wingID)
+	if pw != nil && pw.MachineID != s.Config.FlyMachineID {
+		w.Header().Set("fly-replay", "instance="+pw.MachineID)
+		return true
+	}
+	return false
+}
+
+// replayToWingEdgeByMachineID checks if a wing (by hostname) is on a remote edge.
+func (s *Server) replayToWingEdgeByMachineID(w http.ResponseWriter, machineID string) bool {
+	if s.Peers == nil || s.Config.FlyMachineID == "" {
+		return false
+	}
+	for _, wing := range s.Wings.All() {
+		if wing.MachineID == machineID {
+			return false
+		}
+	}
+	pw := s.Peers.FindByMachineID(machineID)
+	if pw != nil && pw.MachineID != s.Config.FlyMachineID {
+		w.Header().Set("fly-replay", "instance="+pw.MachineID)
+		return true
 	}
 	return false
 }

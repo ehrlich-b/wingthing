@@ -84,6 +84,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			"projects":       projects,
 			"latest_version": latestVer,
 			"egg_config":     wing.EggConfig,
+			"org_id":         wing.OrgID,
 		}
 		if label, ok := wingLabels[wing.MachineID]; ok {
 			entry["wing_label"] = label
@@ -190,103 +191,26 @@ func (s *Server) fetchLatestVersion() {
 	log.Printf("latest release version: %s", ver)
 }
 
-// handleAppSessions returns the user's active PTY and chat sessions.
-// On each call, requests a fresh session list from connected wings to ensure accuracy.
-func (s *Server) handleAppSessions(w http.ResponseWriter, r *http.Request) {
-	user := s.sessionUser(r)
-	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
+// requestSessionSyncForWing asks a single wing for its session list and waits for the response.
+func (s *Server) requestSessionSyncForWing(ctx context.Context, wing *ConnectedWing) {
+	reqID := uuid.New().String()[:8]
+	ch := make(chan *ws.SessionsSync, 1)
+	s.Wings.RegisterSessionRequest(reqID, ch)
+	defer s.Wings.UnregisterSessionRequest(reqID)
+
+	msg := ws.SessionsList{Type: ws.TypeSessionsList, RequestID: reqID}
+	data, _ := json.Marshal(msg)
+	writeCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	err := wing.Conn.Write(writeCtx, websocket.MessageText, data)
+	cancel()
+	if err != nil {
 		return
 	}
 
-	// Request fresh session list from all accessible wings
-	s.requestSessionSync(r.Context(), user.ID)
-
-	var out []map[string]any
-
-	ptySessions := s.listAccessiblePTYSessions(user.ID)
-	for _, sess := range ptySessions {
-		status := sess.Status
-		if status == "" {
-			status = "active"
-		}
-		entry := map[string]any{
-			"id":      sess.ID,
-			"wing_id": sess.WingID,
-			"agent":   sess.Agent,
-			"status":  status,
-			"kind":    "terminal",
-		}
-		if sess.CWD != "" {
-			entry["cwd"] = sess.CWD
-		}
-		if sess.EggConfig != "" {
-			entry["egg_config"] = sess.EggConfig
-		}
-		if sess.NeedsAttention {
-			entry["needs_attention"] = true
-		}
-		out = append(out, entry)
-	}
-
-	chatSessions := s.listAccessibleChatSessions(user.ID)
-	for _, sess := range chatSessions {
-		out = append(out, map[string]any{
-			"id":      sess.ID,
-			"wing_id": sess.WingID,
-			"agent":   sess.Agent,
-			"status":  sess.Status,
-			"kind":    "chat",
-		})
-	}
-
-	if out == nil {
-		out = make([]map[string]any, 0)
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-// requestSessionSync asks all connected wings for the user to send their session list,
-// waits up to 2s for responses, and updates the PTYRegistry.
-func (s *Server) requestSessionSync(ctx context.Context, userID string) {
-	wings := s.listAccessibleWings(userID)
-	if len(wings) == 0 {
-		return
-	}
-
-	type pending struct {
-		reqID string
-		ch    chan *ws.SessionsSync
-	}
-	var reqs []pending
-
-	for _, wing := range wings {
-		reqID := uuid.New().String()[:8]
-		ch := make(chan *ws.SessionsSync, 1)
-		s.Wings.RegisterSessionRequest(reqID, ch)
-
-		msg := ws.SessionsList{Type: ws.TypeSessionsList, RequestID: reqID}
-		data, _ := json.Marshal(msg)
-		writeCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		err := wing.Conn.Write(writeCtx, websocket.MessageText, data)
-		cancel()
-		if err != nil {
-			s.Wings.UnregisterSessionRequest(reqID)
-			continue
-		}
-		reqs = append(reqs, pending{reqID: reqID, ch: ch})
-	}
-
-	// Wait for all responses (up to 500ms)
-	deadline := time.After(500 * time.Millisecond)
-	for _, req := range reqs {
-		select {
-		case <-req.ch:
-			// SyncFromWing already called in handleWingWS when sessions.sync arrived
-		case <-deadline:
-		case <-ctx.Done():
-		}
-		s.Wings.UnregisterSessionRequest(req.reqID)
+	select {
+	case <-ch:
+	case <-time.After(500 * time.Millisecond):
+	case <-ctx.Done():
 	}
 }
 
@@ -353,6 +277,9 @@ func (s *Server) handleWingUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wingID := r.PathValue("wingID")
+	if s.replayToWingEdge(w, wingID) {
+		return
+	}
 	wing := s.Wings.FindByID(wingID)
 	if wing == nil || !s.canAccessWing(user.ID, wing) {
 		writeError(w, http.StatusNotFound, "wing not found")
@@ -380,6 +307,9 @@ func (s *Server) handleWingEggConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wingID := r.PathValue("wingID")
+	if s.replayToWingEdge(w, wingID) {
+		return
+	}
 	wing := s.Wings.FindByID(wingID)
 	if wing == nil || !s.canAccessWing(user.ID, wing) {
 		writeError(w, http.StatusNotFound, "wing not found")
@@ -458,6 +388,9 @@ func (s *Server) handleWingLS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wingID := r.PathValue("wingID")
+	if s.replayToWingEdge(w, wingID) {
+		return
+	}
 	path := r.URL.Query().Get("path")
 
 	wing := s.Wings.FindByID(wingID)
@@ -595,12 +528,66 @@ func (s *Server) handleWingSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	machineID := r.PathValue("machineID")
+	if s.replayToWingEdgeByMachineID(w, machineID) {
+		return
+	}
 	wing := s.findWingByMachineID(user.ID, machineID)
 	if wing == nil {
 		writeError(w, http.StatusNotFound, "wing not found or offline")
 		return
 	}
 
+	// ?active=true returns live sessions from the wing's PTY/chat registries
+	if r.URL.Query().Get("active") == "true" {
+		s.requestSessionSyncForWing(r.Context(), wing)
+
+		var out []map[string]any
+		for _, sess := range s.listAccessiblePTYSessions(user.ID) {
+			if sess.WingID != wing.ID {
+				continue
+			}
+			status := sess.Status
+			if status == "" {
+				status = "active"
+			}
+			entry := map[string]any{
+				"id":      sess.ID,
+				"wing_id": sess.WingID,
+				"agent":   sess.Agent,
+				"status":  status,
+				"kind":    "terminal",
+			}
+			if sess.CWD != "" {
+				entry["cwd"] = sess.CWD
+			}
+			if sess.EggConfig != "" {
+				entry["egg_config"] = sess.EggConfig
+			}
+			if sess.NeedsAttention {
+				entry["needs_attention"] = true
+			}
+			out = append(out, entry)
+		}
+		for _, sess := range s.listAccessibleChatSessions(user.ID) {
+			if sess.WingID != wing.ID {
+				continue
+			}
+			out = append(out, map[string]any{
+				"id":      sess.ID,
+				"wing_id": sess.WingID,
+				"agent":   sess.Agent,
+				"status":  sess.Status,
+				"kind":    "chat",
+			})
+		}
+		if out == nil {
+			out = make([]map[string]any, 0)
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	// Default: past session history from wing's disk
 	offset := 0
 	limit := 20
 	if v := r.URL.Query().Get("offset"); v != "" {
@@ -752,6 +739,9 @@ func (s *Server) handleAuditSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	machineID := r.PathValue("machineID")
+	if s.replayToWingEdgeByMachineID(w, machineID) {
+		return
+	}
 	sessionID := r.PathValue("sessionID")
 	kind := r.URL.Query().Get("kind")
 	if kind == "" {

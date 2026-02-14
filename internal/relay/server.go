@@ -104,7 +104,6 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// App dashboard API (cookie auth)
 	s.mux.HandleFunc("GET /api/app/me", s.handleAppMe)
 	s.mux.HandleFunc("GET /api/app/wings", s.handleAppWings)
-	s.mux.HandleFunc("GET /api/app/sessions", s.handleAppSessions)
 	s.mux.HandleFunc("DELETE /api/app/sessions/{id}", s.handleDeleteSession)
 	s.mux.HandleFunc("GET /api/app/wings/{wingID}/ls", s.handleWingLS)
 	s.mux.HandleFunc("GET /ws/app", s.handleAppWS)
@@ -263,7 +262,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.IsEdge() && s.loginProxy != nil {
 		if strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/app/") ||
 			strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/internal/") ||
-			path == "/health" {
+			path == "/health" ||
+			(strings.HasPrefix(path, "/api/app/wings/") && !strings.HasSuffix(path, "/label")) {
 			s.mux.ServeHTTP(w, r)
 			return
 		}
