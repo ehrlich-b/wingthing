@@ -168,7 +168,9 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("DELETE /api/orgs/{slug}/members/{userID}", s.handleRemoveOrgMember)
 	s.mux.HandleFunc("POST /api/orgs/{slug}/upgrade", s.handleOrgUpgrade)
 	s.mux.HandleFunc("POST /api/orgs/{slug}/cancel", s.handleOrgCancel)
+	s.mux.HandleFunc("POST /api/orgs/{slug}/invites/{token}/revoke", s.handleRevokeInvite)
 	s.mux.HandleFunc("GET /invite/{token}", s.handleAcceptInvite)
+	s.mux.HandleFunc("POST /invite/{token}", s.handleConsumeInvite)
 
 	s.registerStaticRoutes()
 	s.registerInternalRoutes()

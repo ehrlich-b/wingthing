@@ -8,6 +8,7 @@ import (
 	"net/smtp"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -509,7 +510,7 @@ func (s *Server) handleRemoveOrgMember(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handleAcceptInvite stores invite token and redirects to login. GET /invite/{token}
+// handleAcceptInvite shows invite info and accept button. GET /invite/{token}
 func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if token == "" {
@@ -517,42 +518,280 @@ func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store token in cookie so login flow can pick it up
-	http.SetCookie(w, &http.Cookie{
-		Name:     "invite_token",
-		Value:    token,
-		Path:     "/",
-		Domain:   s.cookieDomain(),
-		MaxAge:   3600,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	inv, _ := s.Store.GetInviteByToken(token)
+	if inv == nil {
+		http.Error(w, "invite not found", http.StatusNotFound)
+		return
+	}
+	org, _ := s.Store.GetOrgByID(inv.OrgID)
+	if org == nil {
+		http.Error(w, "org not found", http.StatusNotFound)
+		return
+	}
 
-	// If already logged in, try to consume immediately
 	user := s.sessionUser(r)
+
+	// If logged in and user is admin/owner of the invite's org, show admin status page
 	if user != nil {
-		email, orgID, invRole, err := s.Store.ConsumeOrgInvite(token)
-		if err == nil {
-			if user.Email != nil && strings.EqualFold(*user.Email, email) {
-				s.Store.AddOrgMember(orgID, user.ID, invRole)
-				s.grantOrgEntitlement(orgID, user.ID)
-				http.SetCookie(w, &http.Cookie{Name: "invite_token", Path: "/", MaxAge: -1})
-				if s.Config.AppHost != "" {
-					http.Redirect(w, r, "https://"+s.Config.AppHost+"/?invite=accepted", http.StatusSeeOther)
-				} else {
-					http.Redirect(w, r, "/?invite=accepted", http.StatusSeeOther)
-				}
+		role := s.Store.GetOrgMemberRole(org.ID, user.ID)
+		if role == "owner" || role == "admin" {
+			// Don't show admin page if the invite is actually for this user's email
+			isForMe := user.Email != nil && strings.EqualFold(*user.Email, inv.Email)
+			if !isForMe {
+				s.renderInviteStatusPage(w, inv, org)
 				return
 			}
-			userEmail := ""
-			if user.Email != nil {
-				userEmail = *user.Email
-			}
-			http.Error(w, "This invite was sent to "+email+", but you are logged in as "+userEmail, http.StatusForbidden)
-			return
 		}
 	}
 
-	// Not logged in — redirect to login
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	// Not logged in — store token in cookie, show login prompt
+	if user == nil {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "invite_token",
+			Value:    token,
+			Path:     "/",
+			Domain:   s.cookieDomain(),
+			MaxAge:   3600,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+		s.renderInviteLoginPage(w, inv, org)
+		return
+	}
+
+	// Logged in — show accept button (or already-redeemed status)
+	if inv.ClaimedAt != nil {
+		s.renderInviteStatusPage(w, inv, org)
+		return
+	}
+
+	// Check email match
+	if user.Email == nil || !strings.EqualFold(*user.Email, inv.Email) {
+		userEmail := ""
+		if user.Email != nil {
+			userEmail = *user.Email
+		}
+		s.renderInviteErrorPage(w, inv.Email, userEmail)
+		return
+	}
+
+	s.renderInviteAcceptPage(w, inv, org)
+}
+
+// handleConsumeInvite processes the accept. POST /invite/{token}
+func (s *Server) handleConsumeInvite(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	user := s.sessionUser(r)
+	if user == nil {
+		http.Redirect(w, r, "/invite/"+token, http.StatusSeeOther)
+		return
+	}
+
+	email, orgID, invRole, err := s.Store.ConsumeOrgInvite(token)
+	if err != nil {
+		http.Error(w, "invite already used or expired", http.StatusBadRequest)
+		return
+	}
+	if user.Email == nil || !strings.EqualFold(*user.Email, email) {
+		http.Error(w, "email mismatch", http.StatusForbidden)
+		return
+	}
+
+	s.Store.AddOrgMember(orgID, user.ID, invRole)
+	s.grantOrgEntitlement(orgID, user.ID)
+	http.SetCookie(w, &http.Cookie{Name: "invite_token", Path: "/", MaxAge: -1})
+
+	org, _ := s.Store.GetOrgByID(orgID)
+	slug := ""
+	if org != nil {
+		slug = org.Slug
+	}
+	appURL := "/"
+	if s.Config.AppHost != "" {
+		appURL = "https://" + s.Config.AppHost + "/"
+	}
+	http.Redirect(w, r, appURL+"#account/"+slug, http.StatusSeeOther)
+}
+
+func (s *Server) renderInviteStatusPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {
+	status := "pending"
+	if inv.ClaimedAt != nil {
+		status = "redeemed on " + inv.ClaimedAt.Format("Jan 2, 2006")
+	}
+
+	inviterName := inv.InvitedBy
+	if u, _ := s.Store.GetUserByID(inv.InvitedBy); u != nil {
+		inviterName = u.DisplayName
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>invite — %s</title>
+<style>%s</style>
+</head><body>
+<div class="card">
+<h2>invite to %s</h2>
+<div class="row"><span class="key">email</span><span class="val">%s</span></div>
+<div class="row"><span class="key">role</span><span class="val">%s</span></div>
+<div class="row"><span class="key">invited by</span><span class="val">%s</span></div>
+<div class="row"><span class="key">created</span><span class="val">%s</span></div>
+<div class="row"><span class="key">status</span><span class="val %s">%s</span></div>
+<div class="actions">
+<a href="/app/#account/%s" class="btn btn-back">back to org</a>`,
+		escapeHTML(org.Name),
+		invitePageStyle,
+		escapeHTML(org.Name),
+		escapeHTML(inv.Email),
+		escapeHTML(inv.Role),
+		escapeHTML(inviterName),
+		inv.CreatedAt.Format("Jan 2, 2006"),
+		statusClass(inv.ClaimedAt),
+		escapeHTML(status),
+		escapeHTML(org.Slug),
+	)
+
+	if inv.ClaimedAt == nil {
+		fmt.Fprintf(w, `
+<form method="POST" action="/api/orgs/%s/invites/%s/revoke" onsubmit="return confirm('Revoke this invite?')">
+<button type="submit" class="btn btn-revoke">revoke</button>
+</form>`, escapeHTML(org.Slug), escapeHTML(inv.Token))
+	}
+
+	fmt.Fprint(w, `
+</div>
+</div>
+</body></html>`)
+}
+
+func statusClass(claimedAt *time.Time) string {
+	if claimedAt != nil {
+		return "status-redeemed"
+	}
+	return "status-pending"
+}
+
+func escapeHTML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, `"`, "&quot;")
+	return s
+}
+
+const invitePageStyle = `
+body{font-family:'SF Mono','Fira Code',monospace;background:#1a1a2e;color:#eee;margin:0;display:flex;justify-content:center;padding:40px 16px}
+.card{background:#16213e;border-radius:8px;padding:20px 28px;max-width:440px;width:100%}
+h2{font-size:18px;margin:0 0 16px}
+p{font-size:14px;color:#888;margin:8px 0}
+.row{display:flex;gap:10px;padding:6px 0;font-size:14px}
+.key{color:#888;min-width:80px;flex-shrink:0}
+.val{word-break:break-all}
+.status-pending{color:#f1c40f}
+.status-redeemed{color:#2ecc71}
+.actions{margin-top:16px;border-top:1px solid #0f3460;padding-top:12px;display:flex;gap:8px}
+.btn{font-family:inherit;font-size:13px;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;font-weight:600;text-decoration:none;display:inline-block}
+.btn-accept{background:#e94560;color:#fff}
+.btn-accept:hover{background:#ff6b81}
+.btn-login{background:#e94560;color:#fff}
+.btn-login:hover{background:#ff6b81}
+.btn-back{background:#0f3460;color:#eee}
+.btn-back:hover{background:#1e2a4a}
+.btn-revoke{background:transparent;color:#e74c3c;border:1px solid #e74c3c}
+.btn-revoke:hover{background:#e74c3c;color:#fff}
+.error{color:#e74c3c;font-size:14px;margin:8px 0}
+`
+
+func (s *Server) renderInviteAcceptPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>join %s — wingthing</title><style>%s</style></head><body>
+<div class="card">
+<h2>join %s</h2>
+<p>you've been invited to join <strong>%s</strong> as <strong>%s</strong></p>
+<div class="actions">
+<form method="POST" action="/invite/%s"><button type="submit" class="btn btn-accept">accept invite</button></form>
+</div>
+</div>
+</body></html>`,
+		escapeHTML(org.Name), invitePageStyle,
+		escapeHTML(org.Name), escapeHTML(org.Name),
+		escapeHTML(inv.Role), escapeHTML(inv.Token))
+}
+
+func (s *Server) renderInviteLoginPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>join %s — wingthing</title><style>%s</style></head><body>
+<div class="card">
+<h2>join %s</h2>
+<p>you've been invited to join <strong>%s</strong> as <strong>%s</strong></p>
+<p>log in to accept this invite</p>
+<div class="actions">
+<a href="/login?next=%s" class="btn btn-login">log in</a>
+</div>
+</div>
+</body></html>`,
+		escapeHTML(org.Name), invitePageStyle,
+		escapeHTML(org.Name), escapeHTML(org.Name),
+		escapeHTML(inv.Role),
+		"/invite/"+escapeHTML(inv.Token))
+}
+
+func (s *Server) renderInviteErrorPage(w http.ResponseWriter, inviteEmail, userEmail string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>invite — wingthing</title><style>%s</style></head><body>
+<div class="card">
+<h2>email mismatch</h2>
+<p class="error">this invite was sent to <strong>%s</strong>, but you are logged in as <strong>%s</strong></p>
+<p>log out and log in with the correct account to accept</p>
+<div class="actions">
+<form method="POST" action="/auth/logout"><button type="submit" class="btn btn-back">log out</button></form>
+</div>
+</div>
+</body></html>`, invitePageStyle, escapeHTML(inviteEmail), escapeHTML(userEmail))
+}
+
+// handleRevokeInvite revokes a pending invite. POST /api/orgs/{slug}/invites/{token}/revoke
+func (s *Server) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	slug := r.PathValue("slug")
+	org, err := s.Store.GetOrgBySlug(slug)
+	if err != nil || org == nil {
+		writeError(w, http.StatusNotFound, "org not found")
+		return
+	}
+	role := s.Store.GetOrgMemberRole(org.ID, user.ID)
+	if role != "owner" && role != "admin" {
+		writeError(w, http.StatusForbidden, "only owners and admins can revoke invites")
+		return
+	}
+
+	token := r.PathValue("token")
+	if err := s.Store.RevokeOrgInvite(token); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// If this was a form POST (from the invite status page), redirect back
+	if r.Header.Get("Content-Type") != "application/json" {
+		appURL := "/"
+		if s.Config.AppHost != "" {
+			appURL = "https://" + s.Config.AppHost + "/"
+		}
+		http.Redirect(w, r, appURL+"#account/"+slug, http.StatusSeeOther)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

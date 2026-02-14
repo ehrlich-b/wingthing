@@ -97,35 +97,10 @@ func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request
 	}
 	s.setSessionCookie(w, token)
 
-	// Check for pending org invite token in session
+	// Check for pending org invite token — redirect to invite page for explicit accept
 	if c, err := r.Cookie("invite_token"); err == nil && c.Value != "" {
-		http.SetCookie(w, &http.Cookie{Name: "invite_token", Path: "/", MaxAge: -1})
-		email, orgID, invRole, invErr := s.Store.ConsumeOrgInvite(c.Value)
-		if invErr == nil && user.Email != nil && strings.EqualFold(*user.Email, email) {
-			// Email matches — auto-join org
-			s.Store.AddOrgMember(orgID, user.ID, invRole)
-			s.grantOrgEntitlement(orgID, user.ID)
-			// Redirect to app with success
-			if s.Config.AppHost != "" {
-				proto := "https"
-				if strings.HasPrefix(s.Config.BaseURL, "http://") {
-					proto = "http"
-				}
-				http.Redirect(w, r, proto+"://"+s.Config.AppHost+"/?invite=accepted", http.StatusSeeOther)
-				return
-			}
-			http.Redirect(w, r, "/?invite=accepted", http.StatusSeeOther)
-			return
-		}
-		// Email mismatch or no email on user — show error
-		if invErr == nil && (user.Email == nil || !strings.EqualFold(*user.Email, email)) {
-			userEmail := ""
-			if user.Email != nil {
-				userEmail = *user.Email
-			}
-			http.Error(w, fmt.Sprintf("This invite was sent to %s, but you logged in as %s", email, userEmail), http.StatusForbidden)
-			return
-		}
+		http.Redirect(w, r, "/invite/"+c.Value, http.StatusSeeOther)
+		return
 	}
 
 	// Respect ?next= redirect (stored in oauth_next cookie during OAuth flow)

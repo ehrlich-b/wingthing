@@ -1370,6 +1370,67 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .ac-org-detail.open { display: block; }
 
+.ac-form-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 10px;
+}
+
+.ac-input-sm { flex: none; width: 60px; }
+.ac-input-select { flex: none; width: 90px; }
+
+.ac-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.ac-member-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 12px 0 4px;
+}
+
+.ac-member-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    font-size: 13px;
+}
+
+.ac-member-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.ac-member-actions .btn-sm {
+    font-size: 11px;
+    padding: 2px 8px;
+}
+
+.ac-role-badge {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.ac-members-container {
+    margin-top: 10px;
+}
+
+.ac-cancel-row {
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+.ac-cancel-row .btn-sm {
+    color: var(--text-dim);
+}
+
 /* === Audit Overlay === */
 
 #audit-overlay {

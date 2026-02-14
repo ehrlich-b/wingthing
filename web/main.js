@@ -1121,12 +1121,12 @@ function renderOrgDetail(org) {
 
     if (!org.has_subscription) {
         html += '<div class="detail-row"><span class="detail-val text-dim">no active plan</span></div>' +
-            '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
-                '<input type="number" class="ac-input" id="org-seats-input-' + escapeHtml(org.slug) + '" min="1" value="1" style="width:60px">' +
-                '<span class="text-dim" style="font-size:12px">seats</span>' +
+            '<div class="ac-form-row">' +
+                '<input type="number" class="ac-input ac-input-sm" id="org-seats-input-' + escapeHtml(org.slug) + '" min="1" value="1">' +
+                '<span class="ac-hint">seats</span>' +
                 '<button class="btn-sm btn-accent org-give-seats-btn" data-slug="' + escapeHtml(org.slug) + '">give me seats</button>' +
             '</div>' +
-            '<div class="text-dim" style="font-size:11px;margin-top:4px">1 seat includes you. each additional seat adds one team member.</div>';
+            '<div class="ac-hint" style="margin-top:4px">1 seat includes you. each additional seat adds one team member.</div>';
         return html;
     }
 
@@ -1135,16 +1135,16 @@ function renderOrgDetail(org) {
         '<div class="detail-row"><span class="detail-key">seats</span><span class="detail-val">' + (org.seats_used || 0) + '/' + (org.seats_total || 0) + ' used</span></div>';
 
     // Add seats
-    html += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
-        '<input type="number" class="ac-input" id="org-add-seats-input-' + escapeHtml(org.slug) + '" min="' + ((org.seats_total || 0) + 1) + '" value="' + ((org.seats_total || 0) + 1) + '" style="width:60px">' +
-        '<span class="text-dim" style="font-size:12px">new total</span>' +
+    html += '<div class="ac-form-row">' +
+        '<input type="number" class="ac-input ac-input-sm" id="org-add-seats-input-' + escapeHtml(org.slug) + '" min="' + ((org.seats_total || 0) + 1) + '" value="' + ((org.seats_total || 0) + 1) + '">' +
+        '<span class="ac-hint">new total</span>' +
         '<button class="btn-sm btn-accent org-add-seats-btn" data-slug="' + escapeHtml(org.slug) + '">add seats</button>' +
     '</div>';
 
     // Invite
-    html += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
+    html += '<div class="ac-form-row">' +
         '<input type="email" class="ac-input" id="org-invite-email-' + escapeHtml(org.slug) + '" placeholder="email">' +
-        '<select class="ac-input" id="org-invite-role-' + escapeHtml(org.slug) + '" style="flex:none;width:90px">' +
+        '<select class="ac-input ac-input-select" id="org-invite-role-' + escapeHtml(org.slug) + '">' +
             '<option value="member">member</option>' +
             '<option value="admin">admin</option>' +
         '</select>' +
@@ -1152,10 +1152,10 @@ function renderOrgDetail(org) {
     '</div>';
 
     // Members placeholder
-    html += '<div id="org-members-list-' + escapeHtml(org.slug) + '" style="margin-top:8px"><span class="text-dim">loading members...</span></div>';
+    html += '<div id="org-members-list-' + escapeHtml(org.slug) + '" class="ac-members-container"><span class="text-dim">loading members...</span></div>';
 
     // Cancel
-    html += '<div class="detail-actions" style="margin-top:12px"><button class="btn-sm org-cancel-btn" data-slug="' + escapeHtml(org.slug) + '" style="color:var(--text-dim)">cancel subscription</button></div>';
+    html += '<div class="ac-cancel-row"><button class="btn-sm org-cancel-btn" data-slug="' + escapeHtml(org.slug) + '">cancel subscription</button></div>';
 
     return html;
 }
@@ -1320,27 +1320,35 @@ function loadOrgMembers(org, containerId) {
     fetch('/api/orgs/' + org.slug + '/members')
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            var html = '<div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">members</div>';
+            var html = '<div class="ac-member-label">members</div>';
             var members = data.members || [];
             for (var i = 0; i < members.length; i++) {
                 var m = members[i];
                 var display = m.email || m.display_name || m.user_id;
-                html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0">' +
-                    '<span>' + escapeHtml(display) + ' <span class="text-dim">(' + escapeHtml(m.role) + ')</span></span>';
+                html += '<div class="ac-member-row">' +
+                    '<span>' + escapeHtml(display) + ' <span class="ac-role-badge">' + escapeHtml(m.role) + '</span></span>' +
+                    '<span class="ac-member-actions">';
                 if (m.role !== 'owner' && org.is_owner) {
-                    html += '<button class="btn-sm btn-danger org-remove-member" data-uid="' + escapeHtml(m.user_id) + '" data-slug="' + escapeHtml(org.slug) + '" style="font-size:11px;padding:1px 6px">remove</button>';
+                    html += '<button class="btn-sm btn-danger org-remove-member" data-uid="' + escapeHtml(m.user_id) + '" data-slug="' + escapeHtml(org.slug) + '">remove</button>';
                 }
-                html += '</div>';
+                html += '</span></div>';
             }
             var invites = data.invites || [];
+            if (invites.length > 0) {
+                html += '<div class="ac-member-label">pending invites</div>';
+            }
             for (var j = 0; j < invites.length; j++) {
                 var inv = invites[j];
-                html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0">' +
-                    '<span class="text-dim">' + escapeHtml(inv.email) + ' (pending' + (inv.role && inv.role !== 'member' ? ', ' + inv.role : '') + ')</span>';
+                html += '<div class="ac-member-row">' +
+                    '<span class="text-dim">' + escapeHtml(inv.email) + (inv.role && inv.role !== 'member' ? ' <span class="ac-role-badge">' + escapeHtml(inv.role) + '</span>' : '') + '</span>' +
+                    '<span class="ac-member-actions">';
                 if (inv.link) {
-                    html += '<button class="btn-sm org-copy-link" data-link="' + escapeHtml(inv.link) + '" style="font-size:11px;padding:1px 6px">copy link</button>';
+                    html += '<button class="btn-sm org-copy-link" data-link="' + escapeHtml(inv.link) + '">copy</button>';
+                    // Extract token from link for revoke
+                    var token = inv.link.split('/invite/')[1] || '';
+                    html += '<button class="btn-sm btn-danger org-revoke-invite" data-slug="' + escapeHtml(org.slug) + '" data-token="' + escapeHtml(token) + '">revoke</button>';
                 }
-                html += '</div>';
+                html += '</span></div>';
             }
             list.innerHTML = html;
 
@@ -1354,6 +1362,31 @@ function loadOrgMembers(org, containerId) {
                         self.textContent = 'copied';
                         setTimeout(function() { self.textContent = 'copy link'; }, 2000);
                     });
+                });
+            });
+
+            // Wire revoke buttons
+            list.querySelectorAll('.org-revoke-invite').forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    var self = this;
+                    if (!self.dataset.confirmed) {
+                        self.textContent = 'sure?';
+                        self.dataset.confirmed = '1';
+                        setTimeout(function() { self.textContent = 'revoke'; delete self.dataset.confirmed; }, 3000);
+                        return;
+                    }
+                    var slug = self.getAttribute('data-slug');
+                    var token = self.getAttribute('data-token');
+                    self.textContent = '...';
+                    self.disabled = true;
+                    fetch('/api/orgs/' + slug + '/invites/' + token + '/revoke', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    })
+                    .then(function(r) { return r.json(); })
+                    .then(function() { loadOrgMembers(org, containerId); })
+                    .catch(function() { self.textContent = 'failed'; self.disabled = false; });
                 });
             });
 

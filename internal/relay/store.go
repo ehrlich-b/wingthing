@@ -709,6 +709,29 @@ func (s *RelayStore) ConsumeOrgInvite(token string) (string, string, string, err
 	return email, orgID, role, nil
 }
 
+// GetInviteByToken returns an invite by its token (claimed or not).
+func (s *RelayStore) GetInviteByToken(token string) (*OrgInvite, error) {
+	row := s.db.QueryRow(
+		"SELECT id, org_id, email, token, invited_by, role, created_at, claimed_at FROM org_invites WHERE token = ?",
+		token,
+	)
+	var inv OrgInvite
+	err := row.Scan(&inv.ID, &inv.OrgID, &inv.Email, &inv.Token, &inv.InvitedBy, &inv.Role, &inv.CreatedAt, &inv.ClaimedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get invite by token: %w", err)
+	}
+	return &inv, nil
+}
+
+// RevokeOrgInvite deletes a pending invite by token.
+func (s *RelayStore) RevokeOrgInvite(token string) error {
+	_, err := s.db.Exec("DELETE FROM org_invites WHERE token = ? AND claimed_at IS NULL", token)
+	return err
+}
+
 // ListPendingInvites returns unclaimed invites for an org.
 func (s *RelayStore) ListPendingInvites(orgID string) ([]*OrgInvite, error) {
 	rows, err := s.db.Query(
