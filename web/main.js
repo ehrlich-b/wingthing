@@ -565,9 +565,17 @@ async function fetchWingSessions(machineId) {
     return [];
 }
 
-// mergeWingSessions replaces sessionsData with live data. No cache preservation.
+// mergeWingSessions replaces sessionsData with live data, deduped by session id.
 function mergeWingSessions(allSessions) {
-    sessionsData = sortSessionsByOrder(allSessions);
+    var seen = {};
+    var deduped = [];
+    allSessions.forEach(function(s) {
+        if (!seen[s.id]) {
+            seen[s.id] = true;
+            deduped.push(s);
+        }
+    });
+    sessionsData = sortSessionsByOrder(deduped);
     setEggOrder(sessionsData.map(function(s) { return s.id; }));
 }
 
@@ -584,9 +592,9 @@ async function loadHome() {
     wings.forEach(function (w) { w.online = true; });
     var apiMachines = {};
     wings.forEach(function(w) { apiMachines[w.machine_id] = true; });
-    // Preserve in-memory wings that were online but aren't in this API response (rollout)
+    // Preserve in-memory wings not in API response (rollout/reconnecting) as offline
     wingsData.forEach(function(ew) {
-        if (ew.online !== false && !apiMachines[ew.machine_id]) {
+        if (!apiMachines[ew.machine_id]) {
             ew.online = false;
             wings.push(ew);
         }
