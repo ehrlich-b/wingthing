@@ -1228,6 +1228,7 @@ function wireOrgCards(orgs) {
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
+                    accountExpandSlug = org.id;
                     loadAccountOrgs();
                 })
                 .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
@@ -1252,6 +1253,7 @@ function wireOrgCards(orgs) {
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
+                    accountExpandSlug = org.id;
                     loadAccountOrgs();
                 })
                 .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
