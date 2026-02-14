@@ -2,7 +2,7 @@
 
 ## Design Goal
 
-The relay server (currently hosted on Fly.io) should **never be able to read terminal session content**. It functions as a dumb pipe — routing encrypted bytes between browsers and wings without the ability to inspect, log, or tamper with the data. This document describes how that goal is achieved, what the current limitations are, and what the attack surface looks like if the relay infrastructure is compromised.
+The relay server (currently hosted on Fly.io) should **never be able to read wing data**. It functions as a dumb pipe — routing encrypted bytes between browsers and wings without the ability to inspect, log, or tamper with the data. This covers terminal I/O (PTY sessions) and all wing management data (directory listings, session history, audit recordings, egg configs, passkey assertions) via the encrypted tunnel protocol. This document describes how that goal is achieved, what the current limitations are, and what the attack surface looks like if the relay infrastructure is compromised.
 
 ## Architecture Overview
 
@@ -22,7 +22,14 @@ The relay sits between the browser and the wing. All three connections use TLS, 
 
 ## E2E Encryption: How It Works
 
-### Key Exchange
+### Two Key Types, Two HKDF Domains
+
+| Key | Lifecycle | HKDF info | Purpose |
+|-----|-----------|-----------|---------|
+| PTY session key | Per-session ephemeral X25519 | `"wt-pty"` | Terminal I/O encryption |
+| Tunnel key | Persistent identity X25519 | `"wt-tunnel"` | All non-PTY wing data (dir listings, sessions, audit, egg config, passkey auth) |
+
+### PTY Key Exchange
 
 Every PTY session performs an ephemeral X25519 ECDH key exchange directly between the browser and the wing. The relay forwards the public keys but never possesses either private key.
 
@@ -44,6 +51,20 @@ cipher = AES-256-GCM(aes_key)
 ```
 
 Both sides independently compute the same AES-256-GCM key. The relay never has access to either private key, so it cannot derive the shared secret.
+
+### Tunnel Key Exchange
+
+The tunnel uses the browser's persistent identity key (stored in sessionStorage, ephemeral per tab for PFS) and the wing's persistent X25519 key. Same ECDH + HKDF pattern, different info string:
+
+```
+shared_secret = X25519(browser_identity_priv, wing_pub)
+aes_key = HKDF-SHA256(shared_secret, salt=zeros(32), info="wt-tunnel")
+cipher = AES-256-GCM(aes_key)
+```
+
+Tunnel messages (`tunnel.req` / `tunnel.res` / `tunnel.stream`) carry encrypted inner payloads. The relay routes by `wing_id` and `request_id` but cannot read the payload. Inner message types: `dir.list`, `sessions.list`, `sessions.history`, `audit.request`, `egg.config_update`, `pty.kill`, `wing.update`, `pins.list`, `passkey.auth`.
+
+Passkey auth tokens (from Touch ID verification on pinned wings) are shared between PTY and tunnel sessions. Configurable TTL via `auth_ttl` in wing.yaml. Wing restart revokes all sessions (in-memory token cache).
 
 ### Encryption in Practice
 
@@ -74,13 +95,11 @@ This means even if a previous session key were compromised, the attacker cannot 
 ## What the Relay Can See
 
 ### CAN see (even with E2E active):
-- **Routing metadata**: user ID, wing ID, session ID, agent name, working directory (CWD)
+- **Routing metadata**: user ID, wing ID, session ID, agent name
 - **Session lifecycle**: when sessions start, attach, detach, exit
 - **Message timing and sizes**: number of messages, approximate byte counts
-- **Control messages**: `pty.resize` (terminal dimensions), `pty.kill`
+- **Control messages**: `pty.resize` (terminal dimensions)
 - **Wing registration data**: machine ID, available agents, project names/paths, labels
-- **Directory listings**: `dir.list` / `dir.results` are not encrypted (filesystem paths only, no file contents)
-- **Chat messages**: chat sessions (NLUX) are **not** E2E encrypted — the relay sees full chat content
 
 ### CANNOT see (with E2E active):
 - **Terminal content**: all `pty.output` and `pty.input` data fields are encrypted
@@ -88,6 +107,10 @@ This means even if a previous session key were compromised, the attacker cannot 
 - **Agent output**: what Claude/Codex/Ollama writes back
 - **File contents**: anything displayed in the terminal (cat, vim, etc.)
 - **Credentials**: API keys, passwords, tokens typed or displayed in the terminal
+- **Directory listings**: encrypted via tunnel (`dir.list` inner type)
+- **Session history and audit recordings**: encrypted via tunnel
+- **Egg config updates**: encrypted via tunnel
+- **Passkey assertions**: encrypted via tunnel
 
 ## "Fly Account Compromised" Threat Model
 
@@ -137,7 +160,7 @@ If an attacker gains full control of the Fly.io deployment (SSH access, deploy c
 ### 1. Wing-side key pinning (CRITICAL — mitigates fake-wing MITM and compromised relay)
 The wing is the trust anchor — it's the machine you physically control. By default, a wing accepts any session from a user with a valid JWT (relay-validated). But wings can **pin** which browser public keys / user identities they respond to.
 
-**How it works**: The wing maintains an allowlist of trusted public keys at `~/.wingthing/pinned_keys`. When a `pty.start` or `dir.list` arrives, the wing checks the sender's public key against the allowlist. If pinning is enabled and the key isn't recognized, the wing refuses — no PTY session, no directory listings, no response at all.
+**How it works**: The wing maintains an allowlist of trusted public keys at `~/.wingthing/pinned_keys`. When a `pty.start` or `tunnel.req` arrives, the wing checks the sender's public key against the allowlist. If pinning is enabled and the key isn't recognized, the wing refuses — no PTY session, no tunnel responses, nothing at all. Pinned wings require passkey verification (Touch ID) before responding. Auth is deferred to the first actual tunnel request (e.g., browsing files triggers it). Dashboard shows lock icon + "pinned" badge for pinned wings.
 
 **Why this matters**: If Fly is compromised and an attacker forges a JWT to inject a new browser identity into your account, the wing blocks it. The attacker can talk to the relay all day, but the wing won't feed them back anything. This is the same model as Tailscale — the node (wing) controls who it accepts connections from.
 
@@ -148,41 +171,31 @@ Since `app.wingthing.ai` serves the JavaScript from the same infrastructure, a c
 
 **Mitigation path**: Subresource Integrity (SRI) hashes in the HTML, published in a separate channel. Or a native/desktop app that doesn't depend on relay-served code.
 
-### 3. Chat sessions are not E2E encrypted
-Only PTY (terminal) sessions use E2E. Chat sessions via NLUX send plaintext through the relay. The relay can read all chat messages.
-
-**Mitigation path**: Extend E2E to chat sessions using the same X25519 + AES-GCM pattern.
-
-### 4. Metadata is not encrypted
+### 3. Metadata is not encrypted
 Session metadata (who connects when, from where, to which project, with which agent) is visible to the relay. This is inherent to routing — the relay needs to know where to send data.
 
-### 5. Static zero salt in HKDF
+### 4. Static zero salt in HKDF
 The HKDF derivation uses a 32-byte zero salt. While HKDF is designed to be secure with a zero salt, using a random salt (sent alongside the public key) would add defense in depth.
 
-### 6. Directory listings are plaintext
-The `dir.list`/`dir.results` API sends filesystem paths through the relay unencrypted. An attacker sees directory names and file names, though not file contents.
-
-### 7. Ring buffer stores plaintext on wing
+### 5. Ring buffer stores plaintext on wing
 The wing keeps a plaintext ring buffer of recent terminal output for session reattach replay. This is necessary for the feature but means the wing's memory contains cleartext terminal history. If the wing machine itself is compromised, this is accessible.
 
 ## Recommendations (Priority Order)
 
-1. **Wing-side key pinning** — The wing controls who it responds to. Open by default (accepts any JWT-validated session), but `wt wing pin <fingerprint>` locks the wing to specific browser public keys. If the relay is compromised and an attacker injects a new identity, the wing refuses to serve them. This is the primary defense against a compromised relay — the attacker can forge JWTs and talk to the relay, but the wing won't respond to unknown keys. Display fingerprints in `wt wing status` and the web UI for out-of-band verification.
-2. **E2E for chat** — Extend the same X25519 + AES-256-GCM encryption to chat sessions
-3. **Signed web assets** — Publish SRI hashes out-of-band, or build a native client. With wing-side pinning, this is less critical (compromised client can only phish, not breach the wing), but still eliminates the phishing vector entirely.
-4. **Rotate JWT signing secret** — Support secret rotation to limit blast radius of database compromise
-5. **Audit logging** — Tamper-evident log of wing registrations and session starts, stored separately from the relay
+1. **Signed web assets** — Publish SRI hashes out-of-band, or build a native client. With wing-side pinning, this is less critical (compromised client can only phish, not breach the wing), but still eliminates the phishing vector entirely.
+2. **Rotate JWT signing secret** — Support secret rotation to limit blast radius of database compromise
+3. **Audit logging** — Tamper-evident log of wing registrations and session starts, stored separately from the relay
 
 ## Summary
 
 | Layer | Protected? | Notes |
 |-------|-----------|-------|
-| Terminal I/O | Yes (E2E) | X25519 + AES-256-GCM, relay sees only ciphertext |
-| Chat messages | No | Plaintext through relay |
-| Session metadata | No | Needed for routing |
-| Directory listings | No | Paths only, no file contents |
-| Wing auth | Partial → Strong | JWT forgeable if DB compromised, but wing-side pinning blocks unknown keys |
+| Terminal I/O | Yes (E2E) | X25519 + AES-256-GCM via PTY key (`wt-pty`), relay sees only ciphertext |
+| Wing data (dir listings, sessions, audit, egg config) | Yes (E2E) | Encrypted via tunnel key (`wt-tunnel`), relay forwards opaque blobs |
+| Passkey auth | Yes (E2E) | Assertions encrypted in tunnel, relay cannot see Touch ID responses |
+| Session metadata | No | Needed for routing (user ID, wing ID, session ID) |
+| Wing auth | Partial -> Strong | JWT forgeable if DB compromised, but wing-side pinning + passkey blocks unknown keys |
 | Web client integrity | Partial | Served from relay — compromised relay can phish, but pinned wings reject fake sessions |
 | Wing machine access | Yes | Relay has no shell/SSH access to wings |
 
-The E2E encryption for terminal sessions is **real and meaningful** against passive observation and honest-but-curious relay operators. Wing-side key pinning extends this protection against an active attacker who compromises the relay — the wing refuses to respond to unknown public keys, so a forged JWT alone isn't enough to intercept traffic. A compromised relay can serve a modified web client, but with pinning enabled this is reduced to a phishing attack: the attacker can capture keystrokes typed into a fake terminal, but cannot connect to the real wing or read its existing sessions. The combination of E2E encryption + wing-side pinning means a full relay compromise yields metadata and phishing opportunities, but not access to terminal content or the wing itself.
+The E2E encryption covers **all wing data** — terminal I/O via per-session PTY keys, and all management data (directory listings, session history, audit recordings, egg configs, passkey assertions) via the persistent tunnel key. The relay is a dumb forwarder that cannot read any of it. Wing-side key pinning extends this protection against an active attacker who compromises the relay — the wing refuses to respond to unknown public keys, so a forged JWT alone isn't enough to intercept traffic. Pinned wings additionally require passkey verification (Touch ID), with auth deferred to first actual tunnel request. A compromised relay can serve a modified web client, but with pinning enabled this is reduced to a phishing attack: the attacker can capture keystrokes typed into a fake terminal, but cannot connect to the real wing or read its existing sessions. The combination of E2E encryption + wing-side pinning + passkey auth means a full relay compromise yields metadata and phishing opportunities, but not access to terminal content, wing data, or the wing itself.

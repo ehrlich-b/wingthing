@@ -3283,6 +3283,19 @@ async function e2eDecrypt(encoded) {
 }
 
 // === Tunnel (encrypted wing communication) ===
+//
+// All wing data flows through E2E encrypted tunnel messages. The relay is a
+// dumb pipe -- it routes tunnel.req/res/stream by wing_id but cannot read
+// payloads. Uses persistent identity X25519 keys with HKDF info "wt-tunnel"
+// (vs "wt-pty" for terminal sessions). Browser identity key lives in
+// sessionStorage (ephemeral per tab, provides PFS).
+//
+// Inner message types: dir.list, sessions.list, sessions.history,
+// audit.request, egg.config_update, pty.kill, wing.update, pins.list,
+// passkey.auth
+//
+// Pinned wings require passkey (Touch ID) verification. Auth is deferred to
+// the first tunnel request. Tokens are shared between PTY and tunnel sessions.
 
 async function deriveE2ETunnelKey(wingPublicKeyB64) {
     if (tunnelKeys[wingPublicKeyB64]) return tunnelKeys[wingPublicKeyB64];

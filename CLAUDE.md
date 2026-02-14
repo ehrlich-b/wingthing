@@ -2,7 +2,7 @@
 
 ## What This Is
 
-`wt` runs AI agents sandboxed on your machine, accessible from anywhere. The primary use case is `wt egg <agent>` (sandboxed agent sessions) and `wt wing` (remote access via relay). Skills and task execution are secondary features.
+`wt` runs AI agents sandboxed on your machine, accessible from anywhere. The primary use case is `wt egg <agent>` (sandboxed agent sessions) and `wt wing` (remote access via relay). Skills are a secondary feature.
 
 - `wt egg claude` -- run Claude Code in a per-session sandbox with PTY persistence
 - `wt wing -d` -- connect your machine to the relay, access from app.wingthing.ai
@@ -27,11 +27,32 @@ If you find yourself reaching for an external tool and wingthing _should_ handle
 ## Architecture
 
 - `wt egg <agent>` -- spawns a per-session child process (`wt egg run`) with its own sandbox, PTY, and gRPC socket at `~/.wingthing/eggs/<session-id>/`
-- `wt wing` -- WebSocket client that connects outbound to the relay, accepts remote PTY/task/chat requests, spawns eggs for each session
-- `wt serve` -- relay server (web UI + WebSocket relay + skill registry), HTTP + SQLite
+- `wt wing` -- WebSocket client that connects outbound to the relay, handles PTY sessions and encrypted tunnel requests, spawns eggs for each session
+- `wt serve` -- relay server (web UI + WebSocket relay + skill registry), HTTP + SQLite. The relay is a dumb pipe for wing data -- it forwards encrypted blobs without reading them.
 - `wt run` -- direct agent invocation for prompts and skills (the old `wt [prompt]`)
 - Agents are pluggable (claude, ollama, gemini, codex, cursor). `wt` calls them as child processes.
 - All commands use direct store access via `store.Open(cfg.DBPath())`.
+
+### Encrypted Tunnel Protocol
+
+All wing data (directory listings, session history, audit recordings, egg configs, passkey assertions) flows through an E2E encrypted tunnel. The relay cannot read any of it.
+
+| Message | Direction | Description |
+|---------|-----------|-------------|
+| `tunnel.req` | browser -> relay -> wing | Encrypted request: `{type, wing_id, request_id, sender_pub, payload}` |
+| `tunnel.res` | wing -> relay -> browser | Encrypted response: `{type, request_id, payload}` |
+| `tunnel.stream` | wing -> relay -> browser | Encrypted streaming: `{type, request_id, payload, done}` |
+
+Inner message types (inside encrypted payload): `dir.list`, `sessions.list`, `sessions.history`, `audit.request`, `egg.config_update`, `pty.kill`, `wing.update`, `pins.list`, `passkey.auth`
+
+### Two Key Types, Two HKDF Domains
+
+| Key | Lifecycle | HKDF info | Purpose |
+|-----|-----------|-----------|---------|
+| PTY session key | Per-session ephemeral X25519 | `"wt-pty"` | Terminal I/O encryption |
+| Tunnel key | Persistent identity X25519 | `"wt-tunnel"` | All non-PTY wing data |
+
+Browser identity key is stored in sessionStorage (ephemeral per tab, provides PFS). Passkey auth tokens are shared between PTY and tunnel, with configurable TTL via `auth_ttl` in wing.yaml. Wing restart revokes all sessions (in-memory cache).
 
 ## Provider System
 
@@ -122,16 +143,16 @@ When `isolation` is `strict` or `standard` (no network), the sandbox automatical
 | `internal/egg` | Per-session egg server (gRPC, PTY, sandbox lifecycle), client, config |
 | `internal/egg/pb` | Protobuf-generated gRPC types (Kill, Resize, Session) |
 | `internal/sandbox` | Seatbelt (macOS) and namespace (Linux) sandbox implementations |
-| `internal/ws` | WebSocket protocol (wing<->relay messages), client with auto-reconnect |
-| `internal/auth` | ECDH key exchange, AES-GCM E2E encryption, device auth, token store |
+| `internal/ws` | WebSocket protocol (wing<->relay messages, tunnel.req/res/stream types), client with auto-reconnect |
+| `internal/auth` | ECDH key exchange, AES-GCM E2E encryption (PTY + tunnel HKDF domains), device auth, passkey verification, token store |
 | `internal/agent` | LLM agent adapters (claude, ollama, gemini, codex, cursor) |
-| `internal/relay` | Relay server: web UI, WebSocket handler, wing registry, skill registry |
+| `internal/relay` | Relay server: web UI, WebSocket handler, wing registry, skill registry. Dumb forwarder for encrypted wing data (tunnel, PTY). |
 | `internal/orchestrator` | Prompt assembly, config resolution, budget management |
 | `internal/embedding` | Embedder interface, OpenAI/Ollama adapters, cosine/blend utilities |
 | `internal/skill` | Skill loading, template interpolation |
 | `internal/memory` | Memory loading, layered retrieval |
 | `internal/config` | Config loading, `~/.wingthing/` paths, defaults |
-| `internal/store` | SQLite store -- tasks, thread, agents, logs, chat sessions |
+| `internal/store` | SQLite store -- tasks, thread, agents, logs |
 
 ## Build
 
@@ -178,7 +199,7 @@ After `make check`, restart the wing daemon with the local build: `./wt stop && 
 | `wt egg <agent>` | Run agent in sandboxed session (claude, codex, ollama) |
 | `wt egg list` | List active egg sessions |
 | `wt egg stop <id>` | Stop an egg session |
-| `wt wing` | Connect to relay, accept remote tasks |
+| `wt wing` | Connect to relay, serve encrypted tunnel + PTY sessions |
 | `wt wing -d` | Start wing as background daemon |
 | `wt wing stop` | Stop wing daemon |
 | `wt wing status` | Check wing daemon and active sessions |
