@@ -804,6 +804,10 @@ func wingAllowCmd() *cobra.Command {
 
 			// --all: fetch org members from relay and add all
 			if allFlag {
+				orgSlug := wingCfg.Org
+				if orgSlug == "" {
+					return fmt.Errorf("no org configured — set org in wing.yaml or use --org on wt wing")
+				}
 				roostURL := cfg.RoostURL
 				if roostURL == "" {
 					roostURL = "https://wingthing.ai"
@@ -813,7 +817,39 @@ func wingAllowCmd() *cobra.Command {
 				if err != nil || !ts.IsValid(tok) {
 					return fmt.Errorf("not logged in — run: wt login")
 				}
-				req, _ := http.NewRequest("GET", strings.TrimRight(roostURL, "/")+"/api/app/org/members", nil)
+				base := strings.TrimRight(roostURL, "/")
+
+				// Resolve org slug to ID via GET /api/orgs
+				orgsReq, _ := http.NewRequest("GET", base+"/api/orgs", nil)
+				orgsReq.Header.Set("Authorization", "Bearer "+tok.Token)
+				orgsResp, err := http.DefaultClient.Do(orgsReq)
+				if err != nil {
+					return fmt.Errorf("fetch orgs: %w", err)
+				}
+				defer orgsResp.Body.Close()
+				if orgsResp.StatusCode != 200 {
+					return fmt.Errorf("fetch orgs: HTTP %d", orgsResp.StatusCode)
+				}
+				var orgs []struct {
+					ID   string `json:"id"`
+					Slug string `json:"slug"`
+				}
+				if err := json.NewDecoder(orgsResp.Body).Decode(&orgs); err != nil {
+					return fmt.Errorf("parse orgs: %w", err)
+				}
+				var orgID string
+				for _, o := range orgs {
+					if o.Slug == orgSlug || o.ID == orgSlug {
+						orgID = o.ID
+						break
+					}
+				}
+				if orgID == "" {
+					return fmt.Errorf("org %q not found — check wing.yaml org setting", orgSlug)
+				}
+
+				// Fetch members via GET /api/orgs/{id}/members
+				req, _ := http.NewRequest("GET", base+"/api/orgs/"+orgID+"/members", nil)
 				req.Header.Set("Authorization", "Bearer "+tok.Token)
 				resp, err := http.DefaultClient.Do(req)
 				if err != nil {
@@ -823,14 +859,17 @@ func wingAllowCmd() *cobra.Command {
 				if resp.StatusCode != 200 {
 					return fmt.Errorf("fetch org members: HTTP %d", resp.StatusCode)
 				}
-				var members []struct {
-					UserID      string `json:"user_id"`
-					Email       string `json:"email"`
-					DisplayName string `json:"display_name"`
+				var membersResp struct {
+					Members []struct {
+						UserID      string `json:"user_id"`
+						Email       string `json:"email"`
+						DisplayName string `json:"display_name"`
+					} `json:"members"`
 				}
-				if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
+				if err := json.NewDecoder(resp.Body).Decode(&membersResp); err != nil {
 					return fmt.Errorf("parse org members: %w", err)
 				}
+				members := membersResp.Members
 				added := 0
 				for _, m := range members {
 					// Deduplicate by user_id
@@ -2125,7 +2164,11 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		if !authorized {
 			// In list but not yet authenticated — passkey challenge
 			tunnelRespond(gcm, req.RequestID, map[string]any{
-				"error": "passkey_required",
+				"error":    "passkey_required",
+				"hostname": client.Hostname,
+				"platform": client.Platform,
+				"version":  version,
+				"locked":   true,
 			}, write)
 			return
 		}

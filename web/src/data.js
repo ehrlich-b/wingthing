@@ -83,6 +83,37 @@ export function setCachedWingSessions(wingId, sessions) {
     try { localStorage.setItem(WING_SESSIONS_PREFIX + wingId, JSON.stringify(sessions)); } catch (e) {}
 }
 
+// Tunnel probe — populates wing metadata or sets tunnel_error
+
+export async function probeWing(w) {
+    try {
+        var data = await sendTunnelRequest(w.wing_id, { type: 'wing.info' });
+        w.hostname = data.hostname || w.hostname;
+        w.platform = data.platform || w.platform;
+        w.version = data.version || w.version;
+        w.agents = data.agents || [];
+        w.projects = data.projects || [];
+        w.locked = data.locked || false;
+        w.allowed_count = data.allowed_count || 0;
+        delete w.tunnel_error;
+    } catch (e) {
+        var msg = e.message || '';
+        if (msg.indexOf('not_allowed') !== -1) {
+            w.tunnel_error = 'not_allowed';
+        } else if (msg.indexOf('passkey_required') !== -1) {
+            w.tunnel_error = 'passkey_required';
+            if (e.metadata) {
+                w.hostname = e.metadata.hostname || w.hostname;
+                w.platform = e.metadata.platform || w.platform;
+                w.version = e.metadata.version || w.version;
+                w.locked = true;
+            }
+        } else {
+            w.tunnel_error = 'unreachable';
+        }
+    }
+}
+
 // Data loading
 
 export async function fetchWingSessions(wingId) {
@@ -131,42 +162,18 @@ export async function loadHome() {
         if (w.latest_version) S.latestVersion = w.latest_version;
     });
 
-    setCachedWings(S.wingsData.map(function (w) {
+    // Probe ALL online wings before rendering
+    var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; });
+    await Promise.all(onlineWings.map(probeWing));
+
+    setCachedWings(S.wingsData.filter(function(w) {
+        return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
+    }).map(function(w) {
         return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
     }));
 
     rebuildAgentLists();
     updateHeaderStatus();
-
-    // Sweep-poll online wings for metadata via E2E tunnel (wing.info)
-    S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; })
-        .forEach(function(w) {
-            sendTunnelRequest(w.wing_id, { type: 'wing.info' })
-                .then(function(data) {
-                    w.hostname = data.hostname || w.hostname;
-                    w.platform = data.platform || w.platform;
-                    w.version = data.version || w.version;
-                    w.agents = data.agents || [];
-                    w.projects = data.projects || [];
-                    w.locked = data.locked || false;
-                    w.allowed_count = data.allowed_count || 0;
-                    delete w.tunnel_error;
-                    rebuildAgentLists();
-                    if (S.activeView === 'home') renderDashboard();
-                    if (S.activeView === 'wing-detail' && S.currentWingId === w.wing_id)
-                        renderWingDetailPage(w.wing_id);
-                })
-                .catch(function(e) {
-                    if (e.message && e.message.indexOf('not_allowed') !== -1) {
-                        w.tunnel_error = 'not_allowed';
-                    } else if (e.message && e.message.indexOf('passkey_required') !== -1) {
-                        w.tunnel_error = 'passkey_required';
-                    }
-                    if (S.activeView === 'home') renderDashboard();
-                    if (S.activeView === 'wing-detail' && S.currentWingId === w.wing_id)
-                        renderWingDetailPage(w.wing_id);
-                });
-        });
 
     // Fetch sessions from all online wings (tunnel auth handles access)
     var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; });

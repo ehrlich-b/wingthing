@@ -249,7 +249,9 @@ export async function sendTunnelRequest(wingId, innerMsg) {
                 innerMsg.auth_token = authToken;
                 return sendTunnelRequest(wingId, innerMsg);
             }
-            throw new Error('passkey authentication failed');
+            var err = new Error('passkey_required');
+            err.metadata = result;
+            throw err;
         }
 
         if (result.error) throw new Error(result.error);

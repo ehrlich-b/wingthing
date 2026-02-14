@@ -1717,7 +1717,9 @@ export function showSessionInfo() {
 }
 
 export function renderDashboard() {
-    var visibleWings = S.wingsData.filter(function(w) { return w.tunnel_error !== 'not_allowed'; });
+    var visibleWings = S.wingsData.filter(function(w) {
+        return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
+    });
     if (visibleWings.length > 0) {
         var wingHtml = '<h3 class="section-label">wings</h3><div class="wing-grid">';
         wingHtml += visibleWings.map(function(w) {

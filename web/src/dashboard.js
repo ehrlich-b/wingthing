@@ -1,9 +1,9 @@
 import { S, DOM } from './state.js';
 import { wingDisplayName } from './helpers.js';
 import { renderDashboard, renderSidebar, renderWingDetailPage } from './render.js';
-import { setCachedWings, fetchWingSessions, mergeWingSessions, loadHome } from './data.js';
+import { setCachedWings, fetchWingSessions, mergeWingSessions, loadHome, probeWing } from './data.js';
 import { updatePaletteState } from './palette.js';
-import { sendTunnelRequest, tunnelCloseWing } from './tunnel.js';
+import { tunnelCloseWing } from './tunnel.js';
 
 var reconnectBannerTimer = null;
 
@@ -81,57 +81,23 @@ function applyWingEvent(ev) {
         tunnelCloseWing(ev.wing_id);
     }
 
-    rebuildAgentLists();
-    setCachedWings(S.wingsData.map(function(w) {
+    setCachedWings(S.wingsData.filter(function(w) {
+        return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
+    }).map(function(w) {
         return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
     }));
     updateHeaderStatus();
-    if (S.activeView === 'home') {
-        if (needsFullRender) {
-            renderDashboard();
-        } else {
-            updateWingCardStatus(ev.wing_id);
-        }
-        pingWingDot(ev.wing_id);
-    } else if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id) {
-        renderWingDetailPage(S.currentWingId);
-    }
-    if (DOM.commandPalette.style.display !== 'none') {
-        updatePaletteState(true);
-    }
 
-    // On wing.online: tunnel-fetch metadata + sessions
+    // wing.online: probe first, then render
     var evWing = S.wingsData.find(function(w) { return w.wing_id === ev.wing_id; });
     if (ev.type === 'wing.online' && evWing && evWing.public_key) {
-        sendTunnelRequest(ev.wing_id, { type: 'wing.info' })
-            .then(function(data) {
-                evWing.hostname = data.hostname || evWing.hostname;
-                evWing.platform = data.platform || evWing.platform;
-                evWing.version = data.version || evWing.version;
-                evWing.agents = data.agents || [];
-                evWing.projects = data.projects || [];
-                evWing.locked = data.locked || false;
-                evWing.allowed_count = data.allowed_count || 0;
-                if (evWing.updating_at && data.version && data.version !== evWing._prev_version) {
-                    delete evWing.updating_at;
-                }
-                evWing._prev_version = data.version;
-                delete evWing.tunnel_error;
-                rebuildAgentLists();
-                if (S.activeView === 'home') renderDashboard();
-                if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
-                    renderWingDetailPage(ev.wing_id);
-            })
-            .catch(function(e) {
-                if (e.message && e.message.indexOf('not_allowed') !== -1) {
-                    evWing.tunnel_error = 'not_allowed';
-                } else if (e.message && e.message.indexOf('passkey_required') !== -1) {
-                    evWing.tunnel_error = 'passkey_required';
-                }
-                if (S.activeView === 'home') renderDashboard();
-                if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
-                    renderWingDetailPage(ev.wing_id);
-            });
+        probeWing(evWing).then(function() {
+            rebuildAgentLists();
+            if (S.activeView === 'home') renderDashboard();
+            if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
+                renderWingDetailPage(ev.wing_id);
+            if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
+        });
 
         setTimeout(function() { fetchWingSessions(ev.wing_id).then(function(sessions) {
             if (sessions.length > 0) {
@@ -143,6 +109,20 @@ function applyWingEvent(ev) {
                 if (S.activeView === 'home') renderDashboard();
             }
         }).catch(function() {}); }, 2000);
+    } else {
+        // wing.offline or other: render immediately
+        rebuildAgentLists();
+        if (S.activeView === 'home') {
+            if (needsFullRender) {
+                renderDashboard();
+            } else {
+                updateWingCardStatus(ev.wing_id);
+            }
+            pingWingDot(ev.wing_id);
+        } else if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id) {
+            renderWingDetailPage(S.currentWingId);
+        }
+        if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
     }
 }
 
