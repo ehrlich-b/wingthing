@@ -131,8 +131,10 @@ func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request
 	// Respect ?next= redirect (stored in oauth_next cookie during OAuth flow)
 	if c, err := r.Cookie("oauth_next"); err == nil && c.Value != "" {
 		http.SetCookie(w, &http.Cookie{Name: "oauth_next", Path: "/auth", MaxAge: -1})
-		http.Redirect(w, r, c.Value, http.StatusSeeOther)
-		return
+		if isSafeRedirect(c.Value) {
+			http.Redirect(w, r, c.Value, http.StatusSeeOther)
+			return
+		}
 	}
 	// Default: send to app dashboard if AppHost is configured, otherwise /
 	if s.Config.AppHost != "" {

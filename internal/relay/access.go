@@ -131,6 +131,36 @@ func (s *Server) canAccessSession(userID string, session *PTYSession) bool {
 	return s.canAccessWing(userID, wing)
 }
 
+// getAuthorizedPTY is the single gateway for all session-scoped PTY operations.
+// Returns (session, wing) only if the user has access. Callers must not use
+// raw PTY.Get + FindByID — this function IS the authz boundary.
+func (s *Server) getAuthorizedPTY(userID, sessionID string) (*PTYSession, *ConnectedWing) {
+	session := s.PTY.Get(sessionID)
+	if session == nil || !s.canAccessSession(userID, session) {
+		return nil, nil
+	}
+	wing := s.Wings.FindByID(session.WingID)
+	return session, wing
+}
+
+// getAuthorizedChat is the single gateway for all session-scoped chat operations.
+// Returns (session, wing) only if the user has access. Callers must not use
+// raw Chat.Get + FindByID — this function IS the authz boundary.
+func (s *Server) getAuthorizedChat(userID, sessionID string) (*ChatSession, *ConnectedWing) {
+	cs := s.Chat.Get(sessionID)
+	if cs == nil {
+		return nil, nil
+	}
+	if cs.UserID != userID {
+		wing := s.Wings.FindByID(cs.WingID)
+		if wing == nil || !s.canAccessWing(userID, wing) {
+			return nil, nil
+		}
+	}
+	wing := s.Wings.FindByID(cs.WingID)
+	return cs, wing
+}
+
 // listAccessiblePTYSessions returns all PTY sessions the user can access.
 func (s *Server) listAccessiblePTYSessions(userID string) []*PTYSession {
 	all := s.PTY.All()

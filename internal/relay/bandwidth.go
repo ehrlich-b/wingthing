@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -391,18 +392,16 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 }
 
 func clientIP(r *http.Request) string {
+	// Prefer Fly-Client-IP — set by Fly's proxy, not spoofable by clients
+	if fci := r.Header.Get("Fly-Client-IP"); fci != "" {
+		return strings.TrimSpace(fci)
+	}
 	// Check X-Forwarded-For (fly.io, cloudflare, etc.)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// First IP is the client
-		if i := len(xff); i > 0 {
-			parts := xff
-			for j := 0; j < len(parts); j++ {
-				if parts[j] == ',' {
-					return parts[:j]
-				}
-			}
-			return parts
+		if i := strings.IndexByte(xff, ','); i != -1 {
+			return strings.TrimSpace(xff[:i])
 		}
+		return strings.TrimSpace(xff)
 	}
 	// Fall back to RemoteAddr
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)

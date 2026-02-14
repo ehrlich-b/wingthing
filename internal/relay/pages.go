@@ -217,12 +217,28 @@ func (s *Server) handleSkillDetailPage(w http.ResponseWriter, r *http.Request) {
 	s.template(skillDetailTmpl, "base.html", "skill_detail.html").ExecuteTemplate(w, "base", data)
 }
 
+// isSafeRedirect returns true if dest is a relative path (no open redirect).
+func isSafeRedirect(dest string) bool {
+	if dest == "" {
+		return false
+	}
+	// Block protocol-relative (//evil.com) and absolute URLs
+	if strings.HasPrefix(dest, "//") || strings.Contains(dest, "://") {
+		return false
+	}
+	// Must start with /
+	return strings.HasPrefix(dest, "/")
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.LocalMode {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 	next := r.URL.Query().Get("next")
+	if next != "" && !isSafeRedirect(next) {
+		next = ""
+	}
 	// Already logged in — skip login page and go to next (or home)
 	if user := s.sessionUser(r); user != nil {
 		dest := "/"

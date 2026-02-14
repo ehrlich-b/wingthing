@@ -556,8 +556,11 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
 		// Clamp CWD to root if configured
-		if resolvedRoot != "" && !strings.HasPrefix(start.CWD, resolvedRoot) {
-			start.CWD = resolvedRoot
+		if resolvedRoot != "" {
+			cleaned := filepath.Clean(start.CWD)
+			if cleaned != resolvedRoot && !strings.HasPrefix(cleaned, resolvedRoot+string(filepath.Separator)) {
+				start.CWD = resolvedRoot
+			}
 		}
 		wingEggMu.Lock()
 		currentEggCfg := wingEggCfg
@@ -588,8 +591,11 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 			if p == "" {
 				p = resolvedRoot
 			}
-			abs, _ := filepath.Abs(p)
-			if !strings.HasPrefix(abs, resolvedRoot) {
+			abs := filepath.Clean(p)
+			if a, err := filepath.Abs(abs); err == nil {
+				abs = a
+			}
+			if abs != resolvedRoot && !strings.HasPrefix(abs, resolvedRoot+string(filepath.Separator)) {
 				req.Path = resolvedRoot
 			}
 		}

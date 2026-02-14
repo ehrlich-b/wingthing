@@ -71,6 +71,11 @@ type WingRegistry struct {
 	// Dashboard subscribers: userID → list of channels
 	subMu sync.RWMutex
 	subs  map[string][]chan WingEvent
+
+	// OnWingEvent is called after Add/Remove with the wing and event.
+	// The Server uses this to notify org members (the registry itself
+	// only knows about the wing owner).
+	OnWingEvent func(wing *ConnectedWing, ev WingEvent)
 }
 
 func NewWingRegistry() *WingRegistry {
@@ -216,7 +221,7 @@ func (r *WingRegistry) Add(w *ConnectedWing) {
 	r.mu.Lock()
 	r.wings[w.ID] = w
 	r.mu.Unlock()
-	r.notify(w.UserID, WingEvent{
+	ev := WingEvent{
 		Type:      "wing.online",
 		ConnID:    w.ID,
 		WingID:    w.WingID,
@@ -227,7 +232,11 @@ func (r *WingRegistry) Add(w *ConnectedWing) {
 		Labels:    w.Labels,
 		PublicKey: w.PublicKey,
 		Projects:  w.Projects,
-	})
+	}
+	r.notify(w.UserID, ev)
+	if r.OnWingEvent != nil {
+		r.OnWingEvent(w, ev)
+	}
 }
 
 func (r *WingRegistry) Remove(id string) {
@@ -236,11 +245,15 @@ func (r *WingRegistry) Remove(id string) {
 	delete(r.wings, id)
 	r.mu.Unlock()
 	if w != nil {
-		r.notify(w.UserID, WingEvent{
-			Type:      "wing.offline",
-			ConnID:    w.ID,
-			WingID:    w.WingID,
-		})
+		ev := WingEvent{
+			Type:   "wing.offline",
+			ConnID: w.ID,
+			WingID: w.WingID,
+		}
+		r.notify(w.UserID, ev)
+		if r.OnWingEvent != nil {
+			r.OnWingEvent(w, ev)
+		}
 	}
 }
 

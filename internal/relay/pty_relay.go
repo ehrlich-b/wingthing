@@ -331,8 +331,8 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			session := s.PTY.Get(attach.SessionID)
-			if session == nil || !s.canAccessSession(userID, session) {
+			session, wing := s.getAuthorizedPTY(userID, attach.SessionID)
+			if session == nil {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "session not found"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
@@ -349,11 +349,9 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			session.Status = "active"
 			session.mu.Unlock()
 
-
 			ownedSessions = append(ownedSessions, attach.SessionID)
 
 			// Forward pty.attach to wing so it can replay buffer and re-key
-			wing := s.Wings.FindByID(session.WingID)
 			if wing != nil {
 				fwd, _ := json.Marshal(attach)
 				wing.Conn.Write(ctx, websocket.MessageText, fwd)
@@ -366,11 +364,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &input); err != nil {
 				continue
 			}
-			session := s.PTY.Get(input.SessionID)
-			if session == nil {
-				continue
-			}
-			wing := s.Wings.FindByID(session.WingID)
+			_, wing := s.getAuthorizedPTY(userID, input.SessionID)
 			if wing == nil {
 				continue
 			}
@@ -381,11 +375,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &resize); err != nil {
 				continue
 			}
-			session := s.PTY.Get(resize.SessionID)
-			if session == nil {
-				continue
-			}
-			wing := s.Wings.FindByID(session.WingID)
+			_, wing := s.getAuthorizedPTY(userID, resize.SessionID)
 			if wing == nil {
 				continue
 			}
@@ -396,15 +386,14 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &ack); err != nil {
 				continue
 			}
-			session := s.PTY.Get(ack.SessionID)
-			if session == nil || !s.canAccessSession(userID, session) {
+			session, wing := s.getAuthorizedPTY(userID, ack.SessionID)
+			if session == nil {
 				continue
 			}
 			session.mu.Lock()
 			session.NeedsAttention = false
 			session.mu.Unlock()
 			// Forward to wing so it clears wingAttention
-			wing := s.Wings.FindByID(session.WingID)
 			if wing != nil {
 				wing.Conn.Write(ctx, websocket.MessageText, data)
 			}
@@ -414,8 +403,8 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &det); err != nil {
 				continue
 			}
-			session := s.PTY.Get(det.SessionID)
-			if session == nil || !s.canAccessSession(userID, session) {
+			session, _ := s.getAuthorizedPTY(userID, det.SessionID)
+			if session == nil {
 				continue
 			}
 			session.mu.Lock()
@@ -423,7 +412,6 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				session.Status = "detached"
 				session.BrowserConn = nil
 				log.Printf("pty session %s: explicit detach (user=%s)", det.SessionID, userID)
-
 			}
 			session.mu.Unlock()
 
@@ -432,12 +420,11 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &kill); err != nil {
 				continue
 			}
-			session := s.PTY.Get(kill.SessionID)
-			if session == nil || !s.canAccessSession(userID, session) {
+			session, wing := s.getAuthorizedPTY(userID, kill.SessionID)
+			if session == nil {
 				continue
 			}
 			// Forward kill to wing so it terminates the PTY process
-			wing := s.Wings.FindByID(session.WingID)
 			if wing != nil {
 				fwd, _ := json.Marshal(kill)
 				wing.Conn.Write(ctx, websocket.MessageText, fwd)
@@ -485,11 +472,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &msg); err != nil {
 				continue
 			}
-			cs := s.Chat.Get(msg.SessionID)
-			if cs == nil {
-				continue
-			}
-			wing := s.Wings.FindByID(cs.WingID)
+			_, wing := s.getAuthorizedChat(userID, msg.SessionID)
 			if wing == nil {
 				continue
 			}
@@ -500,23 +483,15 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &del); err != nil {
 				continue
 			}
-			cs := s.Chat.Get(del.SessionID)
-			if cs == nil {
-				continue
-			}
-			// Check access: owner or org member
-			if cs.UserID != userID {
-				cWing := s.Wings.FindByID(cs.WingID)
-				if cWing == nil || !s.canAccessWing(userID, cWing) {
-					continue
-				}
-			}
-			wing := s.Wings.FindByID(cs.WingID)
+			_, wing := s.getAuthorizedChat(userID, del.SessionID)
 			if wing != nil {
 				fwd, _ := json.Marshal(del)
 				wing.Conn.Write(ctx, websocket.MessageText, fwd)
 			} else {
-				s.Chat.Remove(del.SessionID)
+				// No wing (offline or unauthorized) — if we have the session, remove it
+				if cs := s.Chat.Get(del.SessionID); cs != nil && cs.UserID == userID {
+					s.Chat.Remove(del.SessionID)
+				}
 			}
 			log.Printf("chat session %s: delete requested (user=%s)", del.SessionID, userID)
 		}
