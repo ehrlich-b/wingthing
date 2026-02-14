@@ -58,6 +58,8 @@ type Session struct {
 	CWD            string
 	Network        string // summary: "none", "*", or comma-separated domains
 	RenderedConfig string // effective egg config as YAML (after merge/resolve)
+	Cols           uint32
+	Rows           uint32
 	StartedAt      time.Time
 	ptmx           *os.File
 	replay         *replayBuffer
@@ -493,6 +495,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		Network:        networkSummary,
 		RenderedConfig: rc.RenderedConfig,
 		StartedAt:      time.Now(),
+		Cols:           rc.Cols,
+		Rows:           rc.Rows,
 		ptmx:           ptmx,
 		replay:         newReplayBuffer(),
 		sb:             sb,
@@ -667,6 +671,8 @@ func (s *Server) readPTY(sess *Session) {
 		} else {
 			gw := gzip.NewWriter(f)
 			gw.Write([]byte("WTA2")) // V2 header
+			writeVarint(gw, uint64(sess.Cols))
+			writeVarint(gw, uint64(sess.Rows))
 			sess.auditMu.Lock()
 			sess.auditWriter = gw
 			sess.auditStart = sess.StartedAt

@@ -1924,18 +1924,25 @@ func handleAuditRequest(cfg *config.Config, req ws.AuditRequest, write ws.PTYWri
 		}
 
 		// Convert varint format to asciinema v2 NDJSON
-		// V2 format: "WTA2" header, then varint delta_ms, varint frame_type, varint data_len, raw bytes
+		// V2 format: "WTA2" header + cols(varint) + rows(varint), then frames with frame_type
 		// V1 format: varint delta_ms, varint data_len, raw bytes (no header)
 		isV2 := len(raw) >= 4 && string(raw[:4]) == "WTA2"
-		var cumulativeMs int64
-		var ndjson strings.Builder
-		// Header
-		fmt.Fprintf(&ndjson, `{"version":2,"width":%d,"height":%d}`, cols, rows)
-		ndjson.WriteByte('\n')
 		pos := 0
 		if isV2 {
-			pos = 4 // skip WTA2 header
+			pos = 4 // skip WTA2 magic
+			if v, n := readVarint(raw[pos:]); n > 0 {
+				cols = int(v)
+				pos += n
+			}
+			if v, n := readVarint(raw[pos:]); n > 0 {
+				rows = int(v)
+				pos += n
+			}
 		}
+		var cumulativeMs int64
+		var ndjson strings.Builder
+		fmt.Fprintf(&ndjson, `{"version":2,"width":%d,"height":%d}`, cols, rows)
+		ndjson.WriteByte('\n')
 		for pos < len(raw) {
 			deltaMs, n := readVarint(raw[pos:])
 			if n <= 0 {
