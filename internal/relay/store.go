@@ -586,13 +586,16 @@ func (s *RelayStore) GetOrgByID(id string) (*Org, error) {
 // It tries ID first, then slug. If multiple orgs match the slug, it returns
 // an error listing the ambiguous matches.
 func (s *RelayStore) ResolveOrg(ref, userID string) (*Org, error) {
-	// Try by ID first
+	// Try by ID first — but only if the user is a member
 	org, err := s.GetOrgByID(ref)
 	if err != nil {
 		return nil, err
 	}
 	if org != nil {
-		return org, nil
+		if s.IsOrgMember(org.ID, userID) {
+			return org, nil
+		}
+		return nil, nil // org exists but user is not a member
 	}
 
 	// Try by slug — find all orgs with this slug that the user belongs to

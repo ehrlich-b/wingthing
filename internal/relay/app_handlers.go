@@ -15,6 +15,58 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
+// tokenUser authenticates a request via Bearer token (CLI device auth).
+func (s *Server) tokenUser(r *http.Request) *User {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return nil
+	}
+	token := strings.TrimPrefix(auth, "Bearer ")
+	if s.Store == nil {
+		return nil
+	}
+	userID, _, err := s.Store.ValidateToken(token)
+	if err != nil {
+		return nil
+	}
+	user, err := s.Store.GetUserByID(userID)
+	if err != nil {
+		return nil
+	}
+	return user
+}
+
+// handleResolveEmail resolves an email to a user ID.
+// GET /api/app/resolve-email?email=...
+func (s *Server) handleResolveEmail(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		user = s.tokenUser(r)
+	}
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	email := r.URL.Query().Get("email")
+	if email == "" {
+		writeError(w, http.StatusBadRequest, "email required")
+		return
+	}
+	if s.Store == nil {
+		writeError(w, http.StatusInternalServerError, "no store")
+		return
+	}
+	target, err := s.Store.GetUserByEmail(email)
+	if err != nil || target == nil {
+		writeError(w, http.StatusNotFound, "no user found with email: "+email)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"user_id":      target.ID,
+		"display_name": target.DisplayName,
+	})
+}
+
 // handleAppMe returns the current user's info or 401.
 func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)

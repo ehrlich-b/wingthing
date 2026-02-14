@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -613,7 +614,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
 		// Block PTY when wing is locked with no authorized users
 		if wingCfg.Pinned && len(allowedKeys) == 0 {
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "wing is locked with no authorized users — add yourself with: wt wing pin --user-id <your-user-id>"})
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "wing is locked with no authorized users — add yourself with: wt wing pin --email <your-email>"})
 			return
 		}
 		// Clamp CWD to root if configured
@@ -734,17 +735,46 @@ func wingStatusCmd() *cobra.Command {
 	}
 }
 
+// resolveEmail calls the relay API to look up a user by email. Returns (userID, displayName, error).
+func resolveEmail(cfg *config.Config, email string) (string, string, error) {
+	roostURL := cfg.RoostURL
+	if roostURL == "" {
+		roostURL = "https://wingthing.ai"
+	}
+	ts := auth.NewTokenStore(cfg.Dir)
+	tok, err := ts.Load()
+	if err != nil || !ts.IsValid(tok) {
+		return "", "", fmt.Errorf("not logged in — run: wt login")
+	}
+	req, _ := http.NewRequest("GET", strings.TrimRight(roostURL, "/")+"/api/app/resolve-email?email="+email, nil)
+	req.Header.Set("Authorization", "Bearer "+tok.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve email: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", "", fmt.Errorf("no user found with email: %s", email)
+	}
+	var result struct {
+		UserID      string `json:"user_id"`
+		DisplayName string `json:"display_name"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result.UserID, result.DisplayName, nil
+}
+
 func wingPinCmd() *cobra.Command {
 	var userIDFlag string
+	var emailFlag string
 	cmd := &cobra.Command{
 		Use:   "pin [base64-public-key]",
-		Short: "Pin a user for wing access (by user_id, optionally with passkey)",
+		Short: "Pin a user for wing access (by email, user-id, or passkey)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var keyB64 string
 			if len(args) > 0 {
 				keyB64 = args[0]
-				// Validate: decode and check length + curve point
 				raw, err := base64.StdEncoding.DecodeString(keyB64)
 				if err != nil {
 					return fmt.Errorf("invalid base64: %w", err)
@@ -757,14 +787,26 @@ func wingPinCmd() *cobra.Command {
 				}
 			}
 
-			if keyB64 == "" && userIDFlag == "" {
-				return fmt.Errorf("must provide a public key or --user-id")
-			}
-
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
+
+			// Resolve email to user ID
+			var resolvedEmail string
+			if emailFlag != "" {
+				uid, _, resolveErr := resolveEmail(cfg, emailFlag)
+				if resolveErr != nil {
+					return resolveErr
+				}
+				userIDFlag = uid
+				resolvedEmail = emailFlag
+			}
+
+			if keyB64 == "" && userIDFlag == "" {
+				return fmt.Errorf("must provide --email, --user-id, or a public key")
+			}
+
 			wingCfg, err := config.LoadWingConfig(cfg.Dir)
 			if err != nil {
 				return err
@@ -773,29 +815,41 @@ func wingPinCmd() *cobra.Command {
 			// Deduplicate by key or user_id
 			for _, ak := range wingCfg.AllowKeys {
 				if keyB64 != "" && ak.Key == keyB64 {
-					fmt.Printf("key already pinned (user_id: %s)\n", ak.UserID)
+					display := ak.Email
+					if display == "" {
+						display = ak.UserID
+					}
+					fmt.Printf("already pinned: %s\n", display)
 					return nil
 				}
 				if userIDFlag != "" && ak.UserID == userIDFlag {
-					fmt.Printf("user already pinned (user_id: %s)\n", ak.UserID)
+					display := ak.Email
+					if display == "" {
+						display = ak.UserID
+					}
+					fmt.Printf("already pinned: %s\n", display)
 					return nil
 				}
 			}
 
-			wingCfg.AllowKeys = append(wingCfg.AllowKeys, config.AllowKey{Key: keyB64, UserID: userIDFlag})
+			wingCfg.AllowKeys = append(wingCfg.AllowKeys, config.AllowKey{Key: keyB64, UserID: userIDFlag, Email: resolvedEmail})
 			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 				return err
 			}
-			if userIDFlag != "" {
-				fmt.Printf("pinned user %s\n", userIDFlag)
-			} else {
-				fmt.Printf("pinned key %s...\n", keyB64[:12])
+			display := resolvedEmail
+			if display == "" {
+				display = userIDFlag
 			}
+			if display == "" {
+				display = keyB64[:12] + "..."
+			}
+			fmt.Printf("pinned %s\n", display)
 			signalDaemon(syscall.SIGHUP)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&userIDFlag, "user-id", "", "relay user ID to pin")
+	cmd.Flags().StringVar(&emailFlag, "email", "", "user email to pin (resolves via relay)")
 	return cmd
 }
 
@@ -1999,7 +2053,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	if wingCfg.Pinned && inner.Type != "passkey.auth" && inner.Type != "pins.add" {
 		if len(allowedKeys) == 0 {
 			tunnelRespond(gcm, req.RequestID, map[string]string{
-				"error": "wing is locked with no authorized users — add yourself with: wt wing pin --user-id <your-user-id>",
+				"error": "wing is locked with no authorized users — add yourself with: wt wing pin --email <your-email>",
 			}, write)
 			return
 		}
