@@ -29,8 +29,8 @@ func TestBuildManifest(t *testing.T) {
 		t.Fatalf("build manifest: %v", err)
 	}
 
-	if m.MachineID != "mac-01" {
-		t.Errorf("machine_id = %q, want mac-01", m.MachineID)
+	if m.WingID != "mac-01" {
+		t.Errorf("wing_id = %q, want mac-01", m.WingID)
 	}
 	if len(m.Files) != 2 {
 		t.Fatalf("got %d files, want 2", len(m.Files))
@@ -50,8 +50,8 @@ func TestBuildManifest(t *testing.T) {
 	if id.SHA256 != hex.EncodeToString(expectedHash[:]) {
 		t.Errorf("hash mismatch for identity.md")
 	}
-	if id.MachineID != "mac-01" {
-		t.Errorf("file machine_id = %q, want mac-01", id.MachineID)
+	if id.WingID != "mac-01" {
+		t.Errorf("file wing_id = %q, want mac-01", id.WingID)
 	}
 	if id.Size != int64(len("# Identity\nI am a test.")) {
 		t.Errorf("size = %d, want %d", id.Size, len("# Identity\nI am a test."))
@@ -60,7 +60,7 @@ func TestBuildManifest(t *testing.T) {
 
 func TestDiffManifests(t *testing.T) {
 	local := &Manifest{
-		MachineID: "mac",
+		WingID: "mac",
 		Files: []FileEntry{
 			{Path: "shared.md", SHA256: "aaa"},
 			{Path: "local-only.md", SHA256: "bbb"},
@@ -68,7 +68,7 @@ func TestDiffManifests(t *testing.T) {
 		},
 	}
 	remote := &Manifest{
-		MachineID: "wsl",
+		WingID: "wsl",
 		Files: []FileEntry{
 			{Path: "shared.md", SHA256: "aaa"},         // same hash, no diff
 			{Path: "remote-only.md", SHA256: "ddd"},     // add
@@ -114,7 +114,7 @@ func TestApplyDiffs(t *testing.T) {
 
 	eng := &Engine{
 		MemoryDir: dir,
-		MachineID: "mac-01",
+		WingID: "mac-01",
 	}
 
 	diffs := []FileDiff{
@@ -160,7 +160,7 @@ func TestConflictLogging(t *testing.T) {
 
 	eng := &Engine{
 		MemoryDir: dir,
-		MachineID: "mac-01",
+		WingID: "mac-01",
 	}
 
 	diffs := []FileDiff{
@@ -234,7 +234,7 @@ func TestExportImportThreadEntries(t *testing.T) {
 	s2 := openTestStore(t)
 
 	taskID := "task-001"
-	machineID := "mac-01"
+	wingID := "mac-01"
 
 	// Create a task in s1 so FK constraint is satisfied
 	now := time.Now().UTC().Truncate(time.Second)
@@ -247,19 +247,19 @@ func TestExportImportThreadEntries(t *testing.T) {
 	ts2 := time.Date(2026, 2, 1, 11, 0, 0, 0, time.UTC)
 
 	s1.AppendThreadAt(&store.ThreadEntry{
-		TaskID: &taskID, MachineID: machineID, Summary: "first entry",
+		TaskID: &taskID, WingID: wingID, Summary: "first entry",
 	}, ts1)
 	s1.AppendThreadAt(&store.ThreadEntry{
-		TaskID: &taskID, MachineID: machineID, Summary: "second entry",
+		TaskID: &taskID, WingID: wingID, Summary: "second entry",
 	}, ts2)
 
 	// Also add an entry from a different machine that should NOT be exported
-	otherMachine := "wsl-01"
+	otherWing := "wsl-01"
 	s1.AppendThreadAt(&store.ThreadEntry{
-		TaskID: &taskID, MachineID: otherMachine, Summary: "other machine",
+		TaskID: &taskID, WingID: otherWing, Summary: "other wing",
 	}, ts1)
 
-	eng1 := &Engine{Store: s1, MachineID: machineID}
+	eng1 := &Engine{Store: s1, WingID: wingID}
 
 	// Export since before the entries
 	exported, err := eng1.ExportThreadEntries(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -275,7 +275,7 @@ func TestExportImportThreadEntries(t *testing.T) {
 		ID: taskID, Type: "prompt", What: "test", RunAt: now, Agent: "claude",
 	})
 
-	eng2 := &Engine{Store: s2, MachineID: "wsl-01"}
+	eng2 := &Engine{Store: s2, WingID: "wsl-01"}
 
 	// Import into s2
 	if err := eng2.ImportThreadEntries(exported); err != nil {
@@ -306,11 +306,11 @@ func TestExportImportThreadEntries(t *testing.T) {
 
 func TestManifestJSON(t *testing.T) {
 	m := &Manifest{
-		MachineID: "mac-01",
+		WingID: "mac-01",
 		CreatedAt: 1707300000,
 		Files: []FileEntry{
-			{Path: "identity.md", SHA256: "abc123", Size: 42, ModTime: 1707300000, MachineID: "mac-01"},
-			{Path: "goals.md", SHA256: "def456", Size: 18, ModTime: 1707300100, MachineID: "mac-01"},
+			{Path: "identity.md", SHA256: "abc123", Size: 42, ModTime: 1707300000, WingID: "mac-01"},
+			{Path: "goals.md", SHA256: "def456", Size: 18, ModTime: 1707300100, WingID: "mac-01"},
 		},
 	}
 
@@ -324,8 +324,8 @@ func TestManifestJSON(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
-	if parsed.MachineID != m.MachineID {
-		t.Errorf("machine_id = %q, want %q", parsed.MachineID, m.MachineID)
+	if parsed.WingID != m.WingID {
+		t.Errorf("wing_id = %q, want %q", parsed.WingID, m.WingID)
 	}
 	if parsed.CreatedAt != m.CreatedAt {
 		t.Errorf("created_at = %d, want %d", parsed.CreatedAt, m.CreatedAt)

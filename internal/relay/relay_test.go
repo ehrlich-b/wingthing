@@ -147,7 +147,7 @@ func TestAuthDeviceFlow(t *testing.T) {
 
 	// 1. Request device code (dev mode auto-claims)
 	resp, err := http.Post(ts.URL+"/auth/device", "application/json",
-		strings.NewReader(`{"machine_id":"mac1","public_key":"dGVzdGtleQ=="}`))
+		strings.NewReader(`{"wing_id":"mac1","public_key":"dGVzdGtleQ=="}`))
 	if err != nil {
 		t.Fatalf("POST /auth/device: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestAuthDeviceFlowNonDevMode(t *testing.T) {
 
 	// Without dev mode, poll should return authorization_pending
 	resp, err := http.Post(ts.URL+"/auth/device", "application/json",
-		strings.NewReader(`{"machine_id":"mac1"}`))
+		strings.NewReader(`{"wing_id":"mac1"}`))
 	if err != nil {
 		t.Fatalf("POST /auth/device: %v", err)
 	}

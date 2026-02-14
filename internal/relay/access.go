@@ -90,17 +90,17 @@ func (s *Server) replayToWingEdge(w http.ResponseWriter, wingID string) bool {
 	return false
 }
 
-// replayToWingEdgeByMachineID checks if a wing (by hostname) is on a remote edge.
-func (s *Server) replayToWingEdgeByMachineID(w http.ResponseWriter, machineID string) bool {
+// replayToWingEdgeByWingID checks if a wing (by wing ID) is on a remote edge.
+func (s *Server) replayToWingEdgeByWingID(w http.ResponseWriter, wingID string) bool {
 	if s.Peers == nil || s.Config.FlyMachineID == "" {
 		return false
 	}
 	for _, wing := range s.Wings.All() {
-		if wing.MachineID == machineID {
+		if wing.WingID == wingID {
 			return false
 		}
 	}
-	pw := s.Peers.FindByMachineID(machineID)
+	pw := s.Peers.FindByWingID(wingID)
 	if pw != nil && pw.MachineID != s.Config.FlyMachineID {
 		w.Header().Set("fly-replay", "instance="+pw.MachineID)
 		return true
@@ -108,11 +108,11 @@ func (s *Server) replayToWingEdgeByMachineID(w http.ResponseWriter, machineID st
 	return false
 }
 
-// findWingByMachineID finds a connected wing by machine_id that the user can access.
-func (s *Server) findWingByMachineID(userID, machineID string) *ConnectedWing {
+// findWingByWingID finds a connected wing by wing_id that the user can access.
+func (s *Server) findWingByWingID(userID, wingID string) *ConnectedWing {
 	all := s.Wings.All()
 	for _, w := range all {
-		if w.MachineID == machineID && s.canAccessWing(userID, w) {
+		if w.WingID == wingID && s.canAccessWing(userID, w) {
 			return w
 		}
 	}

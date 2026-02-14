@@ -12,9 +12,9 @@ func TestSumTokensByDateRange(t *testing.T) {
 	tokens100 := 100
 	tokens250 := 250
 
-	s.AppendThreadAt(&ThreadEntry{MachineID: "test", Summary: "a", TokensUsed: &tokens100}, day.Add(2*time.Hour))
-	s.AppendThreadAt(&ThreadEntry{MachineID: "test", Summary: "b", TokensUsed: &tokens250}, day.Add(4*time.Hour))
-	s.AppendThreadAt(&ThreadEntry{MachineID: "test", Summary: "c"}, day.Add(6*time.Hour)) // nil tokens
+	s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "a", TokensUsed: &tokens100}, day.Add(2*time.Hour))
+	s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "b", TokensUsed: &tokens250}, day.Add(4*time.Hour))
+	s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "c"}, day.Add(6*time.Hour)) // nil tokens
 
 	start := day
 	end := day.AddDate(0, 0, 1)
@@ -49,8 +49,8 @@ func TestSumTokensByDateRangeRespectsRange(t *testing.T) {
 	tokens100 := 100
 	tokens200 := 200
 
-	s.AppendThreadAt(&ThreadEntry{MachineID: "test", Summary: "day1", TokensUsed: &tokens100}, day1)
-	s.AppendThreadAt(&ThreadEntry{MachineID: "test", Summary: "day2", TokensUsed: &tokens200}, day2)
+	s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "day1", TokensUsed: &tokens100}, day1)
+	s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "day2", TokensUsed: &tokens200}, day2)
 
 	start := time.Date(2026, 2, 5, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 2, 6, 0, 0, 0, 0, time.UTC)

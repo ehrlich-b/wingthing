@@ -24,15 +24,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MachineID string `json:"machine_id"`
+		WingID    string `json:"wing_id"`
 		PublicKey string `json:"public_key,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if req.MachineID == "" {
-		writeError(w, http.StatusBadRequest, "machine_id is required")
+	if req.WingID == "" {
+		writeError(w, http.StatusBadRequest, "wing_id is required")
 		return
 	}
 
@@ -40,7 +40,7 @@ func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 	userCode := generateUserCode(6)
 	expiresAt := time.Now().Add(deviceCodeExpiry)
 
-	if err := s.Store.CreateDeviceCodeWithKey(deviceCode, userCode, req.MachineID, req.PublicKey, expiresAt); err != nil {
+	if err := s.Store.CreateDeviceCodeWithKey(deviceCode, userCode, req.WingID, req.PublicKey, expiresAt); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

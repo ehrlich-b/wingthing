@@ -104,7 +104,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// App dashboard API (cookie auth)
 	s.mux.HandleFunc("GET /api/app/me", s.handleAppMe)
 	s.mux.HandleFunc("GET /api/app/wings", s.handleAppWings)
-	s.mux.HandleFunc("DELETE /api/app/sessions/{id}", s.handleDeleteSession)
+	s.mux.HandleFunc("DELETE /api/app/wings/{wingID}/sessions/{id}", s.handleDeleteSession)
 	s.mux.HandleFunc("GET /api/app/wings/{wingID}/ls", s.handleWingLS)
 	s.mux.HandleFunc("GET /ws/app", s.handleAppWS)
 	s.mux.HandleFunc("POST /api/app/wings/{wingID}/update", s.handleWingUpdate)
@@ -113,11 +113,11 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("POST /api/app/upgrade", s.handleAppUpgrade)
 	s.mux.HandleFunc("POST /api/app/downgrade", s.handleAppDowngrade)
 	// Wing detail page API
-	s.mux.HandleFunc("GET /api/app/wings/{machineID}/sessions", s.handleWingSessions)
-	s.mux.HandleFunc("PUT /api/app/wings/{machineID}/label", s.handleWingLabel)
-	s.mux.HandleFunc("DELETE /api/app/wings/{machineID}/label", s.handleDeleteWingLabel)
+	s.mux.HandleFunc("GET /api/app/wings/{wingID}/sessions", s.handleWingSessions)
+	s.mux.HandleFunc("PUT /api/app/wings/{wingID}/label", s.handleWingLabel)
+	s.mux.HandleFunc("DELETE /api/app/wings/{wingID}/label", s.handleDeleteWingLabel)
 	s.mux.HandleFunc("PUT /api/app/sessions/{id}/label", s.handleSessionLabel)
-	s.mux.HandleFunc("GET /api/app/wings/{machineID}/sessions/{sessionID}/audit", s.handleAuditSSE)
+	s.mux.HandleFunc("GET /api/app/wings/{wingID}/sessions/{sessionID}/audit", s.handleAuditSSE)
 
 	// Claim page
 	s.mux.HandleFunc("GET /auth/claim", s.handleClaimPage)

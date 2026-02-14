@@ -32,8 +32,8 @@ let ptyReconnecting = false;
 let ptyBandwidthExceeded = false;
 
 // Wing detail state
-let currentWingMachineId = null;
-let wingPastSessions = {};  // machineId → {sessions:[], offset:0, hasMore:true}
+let currentWingId = null;
+let wingPastSessions = {};  // wingId → {sessions:[], offset:0, hasMore:true}
 
 // Chat state
 let chatWs = null;
@@ -122,7 +122,11 @@ async function init() {
         if (chatSessionId) {
             var cached = getCachedSessions().filter(function (s) { return s.id !== chatSessionId; });
             setCachedSessions(cached);
-            fetch('/api/app/sessions/' + chatSessionId, { method: 'DELETE' });
+            var chatSess = sessionsData.find(function(s) { return s.id === chatSessionId; });
+            var cWing = chatSess && wingsData.find(function(w) { return w.id === chatSess.wing_id; });
+            if (cWing) {
+                fetch('/api/app/wings/' + encodeURIComponent(cWing.wing_id) + '/sessions/' + chatSessionId, { method: 'DELETE' });
+            }
             destroyChat();
             showHome();
         }
@@ -233,7 +237,7 @@ async function init() {
         history.replaceState({ view: 'home' }, '', location.pathname);
         switchToSession(deepSessionId);
     }
-    // Deep link: #w/<machineId> opens wing detail page
+    // Deep link: #w/<wingId> opens wing detail page
     var wingMatch = location.hash.match(/^#w\/(.+)$/);
     if (wingMatch) {
         navigateToWingDetail(wingMatch[1]);
@@ -283,13 +287,13 @@ function sortWingsByOrder(wings) {
     var known = [];
     var unknown = [];
     wings.forEach(function(w) {
-        if (orderMap.hasOwnProperty(w.machine_id)) {
+        if (orderMap.hasOwnProperty(w.wing_id)) {
             known.push(w);
         } else {
             unknown.push(w);
         }
     });
-    known.sort(function(a, b) { return orderMap[a.machine_id] - orderMap[b.machine_id]; });
+    known.sort(function(a, b) { return orderMap[a.wing_id] - orderMap[b.wing_id]; });
     return known.concat(unknown);
 }
 function getEggOrder() {
@@ -424,7 +428,7 @@ function applyWingEvent(ev) {
     if (ev.type === 'wing.online') {
         var found = false;
         wingsData.forEach(function(w) {
-            if (w.machine_id === ev.machine_id) {
+            if (w.wing_id === ev.wing_id) {
                 w.online = true;
                 // Only clear updating flag if version actually changed
                 if (w.updating_at && ev.version && ev.version !== w.version) {
@@ -445,7 +449,7 @@ function applyWingEvent(ev) {
             // New wing goes to end — needs full render to add DOM node
             wingsData.push({
                 id: ev.wing_id,
-                machine_id: ev.machine_id,
+                wing_id: ev.wing_id,
                 hostname: ev.hostname || '',
                 platform: ev.platform || '',
                 version: ev.version || '',
@@ -459,7 +463,7 @@ function applyWingEvent(ev) {
         }
     } else if (ev.type === 'wing.offline') {
         wingsData.forEach(function(w) {
-            if (w.machine_id === ev.machine_id) {
+            if (w.wing_id === ev.wing_id) {
                 w.online = false;
             }
         });
@@ -467,26 +471,26 @@ function applyWingEvent(ev) {
 
     rebuildAgentLists();
     setCachedWings(wingsData.map(function(w) {
-        return { machine_id: w.machine_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects, wing_label: w.wing_label };
+        return { wing_id: w.wing_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects, wing_label: w.wing_label };
     }));
     updateHeaderStatus();
     if (activeView === 'home') {
         if (needsFullRender) {
             renderDashboard();
         } else {
-            updateWingCardStatus(ev.machine_id);
+            updateWingCardStatus(ev.wing_id);
         }
-        pingWingDot(ev.machine_id);
-    } else if (activeView === 'wing-detail' && currentWingMachineId === ev.machine_id) {
-        renderWingDetailPage(currentWingMachineId);
+        pingWingDot(ev.wing_id);
+    } else if (activeView === 'wing-detail' && currentWingId === ev.wing_id) {
+        renderWingDetailPage(currentWingId);
     }
     if (commandPalette.style.display !== 'none') {
         updatePaletteState(true);
     }
 
     // Wing just came online — immediately fetch its sessions
-    if (ev.type === 'wing.online' && ev.machine_id) {
-        fetchWingSessions(ev.machine_id).then(function(sessions) {
+    if (ev.type === 'wing.online' && ev.wing_id) {
+        fetchWingSessions(ev.wing_id).then(function(sessions) {
             if (sessions.length > 0) {
                 // Add new wing's sessions to existing sessions from other wings
                 var otherSessions = sessionsData.filter(function(s) {
@@ -500,9 +504,9 @@ function applyWingEvent(ev) {
     }
 }
 
-function pingWingDot(machineId) {
+function pingWingDot(wingId) {
     requestAnimationFrame(function() {
-        var card = wingStatusEl.querySelector('.wing-box[data-machine-id="' + machineId + '"]');
+        var card = wingStatusEl.querySelector('.wing-box[data-wing-id="' + wingId + '"]');
         if (!card) return;
         var dot = card.querySelector('.wing-dot');
         if (!dot) return;
@@ -513,14 +517,14 @@ function pingWingDot(machineId) {
 }
 
 // Update a single wing card's status dot without full re-render
-function updateWingCardStatus(machineId) {
-    var card = wingStatusEl.querySelector('.wing-box[data-machine-id="' + machineId + '"]');
+function updateWingCardStatus(wingId) {
+    var card = wingStatusEl.querySelector('.wing-box[data-wing-id="' + wingId + '"]');
     if (!card) {
         // Card not in DOM — need full render
         renderDashboard();
         return;
     }
-    var w = wingsData.find(function(w) { return w.machine_id === machineId; });
+    var w = wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!w) return;
     var dot = card.querySelector('.wing-dot');
     if (dot) {
@@ -549,17 +553,17 @@ function rebuildAgentLists() {
             if (!seenAgents[a]) { seenAgents[a] = true; availableAgents.push({ agent: a, wingId: w.id }); }
         });
         (w.projects || []).forEach(function(p) {
-            allProjects.push({ name: p.name, path: p.path, wingId: w.id, machine: w.machine_id });
+            allProjects.push({ name: p.name, path: p.path, wingId: w.id, wingId: w.wing_id });
         });
     });
 }
 
 // === Data Loading ===
 
-// fetchWingSessions fetches active sessions for a single wing by machine_id.
-async function fetchWingSessions(machineId) {
+// fetchWingSessions fetches active sessions for a single wing by wing_id.
+async function fetchWingSessions(wingId) {
     try {
-        var resp = await fetch('/api/app/wings/' + encodeURIComponent(machineId) + '/sessions?active=true');
+        var resp = await fetch('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions?active=true');
         if (resp.ok) return await resp.json() || [];
     } catch (e) {}
     return [];
@@ -590,11 +594,11 @@ async function loadHome() {
 
     // Merge: API wings are online, cached wings not in API become offline
     wings.forEach(function (w) { w.online = true; });
-    var apiMachines = {};
-    wings.forEach(function(w) { apiMachines[w.machine_id] = true; });
+    var apiWings = {};
+    wings.forEach(function(w) { apiWings[w.wing_id] = true; });
     // Preserve in-memory wings not in API response (rollout/reconnecting) as offline
     wingsData.forEach(function(ew) {
-        if (!apiMachines[ew.machine_id]) {
+        if (!apiWings[ew.wing_id]) {
             ew.online = false;
             wings.push(ew);
         }
@@ -608,15 +612,15 @@ async function loadHome() {
 
     // Cache for next load (only essential fields)
     setCachedWings(wingsData.map(function (w) {
-        return { machine_id: w.machine_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects, wing_label: w.wing_label };
+        return { wing_id: w.wing_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects, wing_label: w.wing_label };
     }));
 
     rebuildAgentLists();
     updateHeaderStatus();
 
     // Fetch sessions per-wing for all online wings
-    var onlineWings = wingsData.filter(function(w) { return w.online !== false && w.machine_id; });
-    var sessionPromises = onlineWings.map(function(w) { return fetchWingSessions(w.machine_id); });
+    var onlineWings = wingsData.filter(function(w) { return w.online !== false && w.wing_id; });
+    var sessionPromises = onlineWings.map(function(w) { return fetchWingSessions(w.wing_id); });
     var results = await Promise.all(sessionPromises);
     var allSessions = [];
     results.forEach(function(r) { allSessions = allSessions.concat(r); });
@@ -633,7 +637,7 @@ async function loadHome() {
 
     renderSidebar();
     if (activeView === 'home') renderDashboard();
-    if (activeView === 'wing-detail' && currentWingMachineId) renderWingDetailPage(currentWingMachineId);
+    if (activeView === 'wing-detail' && currentWingId) renderWingDetailPage(currentWingId);
 
     // Refresh palette if open (wing may have come online)
     if (commandPalette.style.display !== 'none') {
@@ -651,16 +655,16 @@ function projectName(cwd) {
 
 function wingDisplayName(wing) {
     if (!wing) return '';
-    return wing.wing_label || wing.hostname || wing.machine_id.substring(0, 8);
+    return wing.wing_label || wing.hostname || wing.wing_id.substring(0, 8);
 }
-function wingMachineName(wingId) {
+function wingNameById(wingId) {
     var wing = wingsData.find(function(w) { return w.id === wingId; });
     return wing ? wingDisplayName(wing) : '';
 }
 
 function sessionTitle(agent, wingId) {
-    var machine = wingMachineName(wingId);
-    if (machine) return machine + ' \u00b7 ' + agent;
+    var name = wingNameById(wingId);
+    if (name) return name + ' \u00b7 ' + agent;
     return agent || '';
 }
 
@@ -712,7 +716,7 @@ function setupWingDrag() {
             dragSrc = card;
             card.classList.add('dragging');
             e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', card.dataset.machineId);
+            e.dataTransfer.setData('text/plain', card.dataset.wingId);
         });
         card.addEventListener('dragend', function() {
             card.classList.remove('dragging');
@@ -788,16 +792,16 @@ function setupWingDrag() {
 function saveWingOrder() {
     var order = [];
     wingStatusEl.querySelectorAll('.wing-box').forEach(function(card) {
-        if (card.dataset.machineId) order.push(card.dataset.machineId);
+        if (card.dataset.wingId) order.push(card.dataset.wingId);
     });
     setWingOrder(order);
     // Sync wingsData to match DOM order
-    var byMachine = {};
-    wingsData.forEach(function(w) { byMachine[w.machine_id] = w; });
+    var byWing = {};
+    wingsData.forEach(function(w) { byWing[w.wing_id] = w; });
     var reordered = [];
-    order.forEach(function(mid) { if (byMachine[mid]) reordered.push(byMachine[mid]); });
+    order.forEach(function(mid) { if (byWing[mid]) reordered.push(byWing[mid]); });
     // Add any not in order (shouldn't happen, but defensive)
-    wingsData.forEach(function(w) { if (order.indexOf(w.machine_id) === -1) reordered.push(w); });
+    wingsData.forEach(function(w) { if (order.indexOf(w.wing_id) === -1) reordered.push(w); });
     wingsData = reordered;
 }
 
@@ -1199,9 +1203,9 @@ function hideDetailModal() {
     detailDialog.innerHTML = '';
 }
 
-function navigateToWingDetail(machineId, pushHistory) {
+function navigateToWingDetail(wingId, pushHistory) {
     activeView = 'wing-detail';
-    currentWingMachineId = machineId;
+    currentWingId = wingId;
     homeSection.style.display = 'none';
     terminalSection.style.display = 'none';
     chatSection.style.display = 'none';
@@ -1210,9 +1214,9 @@ function navigateToWingDetail(machineId, pushHistory) {
     destroyChat();
     headerTitle.textContent = '';
     ptyStatus.textContent = '';
-    renderWingDetailPage(machineId);
+    renderWingDetailPage(wingId);
     if (pushHistory !== false) {
-        history.pushState({ view: 'wing-detail', machineId: machineId }, '', '#w/' + machineId);
+        history.pushState({ view: 'wing-detail', wingId: wingId }, '', '#w/' + wingId);
     }
 }
 
@@ -1227,16 +1231,16 @@ function semverCompare(a, b) {
     return 0;
 }
 
-function renderWingDetailPage(machineId) {
+function renderWingDetailPage(wingId) {
     // Skip full re-render if search input is focused (preserves cursor)
     var searchEl = document.getElementById('wd-search');
     if (searchEl && document.activeElement === searchEl) {
         // Just update active sessions in place
-        updateWingDetailSessions(machineId);
+        updateWingDetailSessions(wingId);
         return;
     }
 
-    var w = wingsData.find(function(w) { return w.machine_id === machineId; });
+    var w = wingsData.find(function(w) { return w.wing_id === wingId; });
 
     // Check if wing is in the process of updating (60s grace period)
     var isUpdating = w && w.updating_at && (Date.now() - w.updating_at < 60000);
@@ -1253,8 +1257,8 @@ function renderWingDetailPage(machineId) {
         document.getElementById('wd-back').addEventListener('click', function() { showHome(); });
         if (isUpdating) {
             setTimeout(function() {
-                if (activeView === 'wing-detail' && currentWingMachineId === machineId) {
-                    renderWingDetailPage(machineId);
+                if (activeView === 'wing-detail' && currentWingId === wingId) {
+                    renderWingDetailPage(wingId);
                 }
             }, 3000);
         }
@@ -1342,7 +1346,7 @@ function renderWingDetailPage(machineId) {
     // Inline rename
     var nameEl = document.getElementById('wd-name');
     nameEl.addEventListener('click', function() {
-        var current = w.wing_label || w.hostname || w.machine_id.substring(0, 8);
+        var current = w.wing_label || w.hostname || w.wing_id.substring(0, 8);
         var input = document.createElement('input');
         input.type = 'text';
         input.className = 'wd-name-input';
@@ -1353,22 +1357,22 @@ function renderWingDetailPage(machineId) {
         function save() {
             var val = input.value.trim();
             if (val && val !== current) {
-                fetch('/api/app/wings/' + encodeURIComponent(machineId) + '/label', {
+                fetch('/api/app/wings/' + encodeURIComponent(wingId) + '/label', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ label: val })
                 }).then(function() {
                     w.wing_label = val;
-                    renderWingDetailPage(machineId);
+                    renderWingDetailPage(wingId);
                 });
             } else {
-                renderWingDetailPage(machineId);
+                renderWingDetailPage(wingId);
             }
         }
         input.addEventListener('blur', save);
         input.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-            if (e.key === 'Escape') { e.preventDefault(); renderWingDetailPage(machineId); }
+            if (e.key === 'Escape') { e.preventDefault(); renderWingDetailPage(wingId); }
         });
     });
 
@@ -1377,10 +1381,10 @@ function renderWingDetailPage(machineId) {
     if (delLabelBtn) {
         delLabelBtn.addEventListener('click', function(e) {
             e.stopPropagation();
-            fetch('/api/app/wings/' + encodeURIComponent(machineId) + '/label', { method: 'DELETE' })
+            fetch('/api/app/wings/' + encodeURIComponent(wingId) + '/label', { method: 'DELETE' })
                 .then(function() {
                     delete w.wing_label;
-                    renderWingDetailPage(machineId);
+                    renderWingDetailPage(wingId);
                 });
         });
     }
@@ -1393,7 +1397,7 @@ function renderWingDetailPage(machineId) {
             fetch('/api/app/wings/' + w.id + '/update', { method: 'POST' })
                 .then(function() {
                     w.updating_at = Date.now();
-                    renderWingDetailPage(machineId);
+                    renderWingDetailPage(wingId);
                 })
                 .catch(function() { updateBtn.innerHTML = 'update failed'; });
         });
@@ -1403,9 +1407,9 @@ function renderWingDetailPage(machineId) {
     var dismissBtn = document.getElementById('wd-dismiss');
     if (dismissBtn) {
         dismissBtn.addEventListener('click', function() {
-            wingsData = wingsData.filter(function(ww) { return ww.machine_id !== machineId; });
+            wingsData = wingsData.filter(function(ww) { return ww.wing_id !== wingId; });
             setCachedWings(wingsData.map(function(ww) {
-                return { machine_id: ww.machine_id, hostname: ww.hostname, platform: ww.platform, version: ww.version, agents: ww.agents, labels: ww.labels, projects: ww.projects, online: ww.online, wing_label: ww.wing_label };
+                return { wing_id: ww.wing_id, hostname: ww.hostname, platform: ww.platform, version: ww.version, agents: ww.agents, labels: ww.labels, projects: ww.projects, online: ww.online, wing_label: ww.wing_label };
             }));
             showHome();
         });
@@ -1416,7 +1420,7 @@ function renderWingDetailPage(machineId) {
 
     // Fetch past sessions
     if (isOnline) {
-        loadWingPastSessions(machineId, 0);
+        loadWingPastSessions(wingId, 0);
     }
 
     // Inline palette
@@ -1454,8 +1458,8 @@ function wireActiveSessionRows() {
     });
 }
 
-function updateWingDetailSessions(machineId) {
-    var w = wingsData.find(function(w) { return w.machine_id === machineId; });
+function updateWingDetailSessions(wingId) {
+    var w = wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!w) return;
     var container = document.getElementById('wd-active-sessions');
     var activeSessions = sessionsData.filter(function(s) { return s.wing_id === w.id; });
@@ -1717,20 +1721,20 @@ function setupWingPalette(wing) {
     });
 }
 
-function loadWingPastSessions(machineId, offset) {
+function loadWingPastSessions(wingId, offset) {
     var limit = 20;
     var container = document.getElementById('wd-past-sessions');
     if (!container) return;
 
     // Show cached data immediately
     if (offset === 0) {
-        var cached = getCachedWingSessions(machineId);
+        var cached = getCachedWingSessions(wingId);
         if (cached && cached.length > 0) {
-            renderPastSessions(container, machineId, cached, true);
+            renderPastSessions(container, wingId, cached, true);
         }
     }
 
-    fetch('/api/app/wings/' + encodeURIComponent(machineId) + '/sessions?offset=' + offset + '&limit=' + limit)
+    fetch('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions?offset=' + offset + '&limit=' + limit)
         .then(function(r) {
             if (!r.ok) throw new Error('fetch failed');
             return r.json();
@@ -1738,22 +1742,22 @@ function loadWingPastSessions(machineId, offset) {
         .then(function(data) {
             var sessions = data.sessions || [];
             if (offset === 0) {
-                wingPastSessions[machineId] = { sessions: sessions, offset: offset, hasMore: sessions.length >= limit };
-                setCachedWingSessions(machineId, sessions);
+                wingPastSessions[wingId] = { sessions: sessions, offset: offset, hasMore: sessions.length >= limit };
+                setCachedWingSessions(wingId, sessions);
             } else {
-                var existing = wingPastSessions[machineId] || { sessions: [], offset: 0, hasMore: true };
+                var existing = wingPastSessions[wingId] || { sessions: [], offset: 0, hasMore: true };
                 existing.sessions = existing.sessions.concat(sessions);
                 existing.offset = offset;
                 existing.hasMore = sessions.length >= limit;
-                wingPastSessions[machineId] = existing;
+                wingPastSessions[wingId] = existing;
             }
-            if (container && currentWingMachineId === machineId) {
-                renderPastSessions(container, machineId, wingPastSessions[machineId].sessions, wingPastSessions[machineId].hasMore);
+            if (container && currentWingId === wingId) {
+                renderPastSessions(container, wingId, wingPastSessions[wingId].sessions, wingPastSessions[wingId].hasMore);
             }
         })
         .catch(function() {
-            if (container && currentWingMachineId === machineId && offset === 0) {
-                var cached = getCachedWingSessions(machineId);
+            if (container && currentWingId === wingId && offset === 0) {
+                var cached = getCachedWingSessions(wingId);
                 if (!cached || cached.length === 0) {
                     container.innerHTML = '<span class="text-dim">could not reach wing - it may be reconnecting</span>';
                 }
@@ -1761,7 +1765,7 @@ function loadWingPastSessions(machineId, offset) {
         });
 }
 
-function renderPastSessions(container, machineId, sessions, hasMore) {
+function renderPastSessions(container, wingId, sessions, hasMore) {
     if (!sessions || sessions.length === 0) {
         container.innerHTML = '<span class="text-dim">no audited sessions</span>';
         return;
@@ -1790,25 +1794,25 @@ function renderPastSessions(container, machineId, sessions, hasMore) {
     var loadMoreBtn = document.getElementById('wd-load-more');
     if (loadMoreBtn) {
         loadMoreBtn.addEventListener('click', function() {
-            var state = wingPastSessions[machineId] || { sessions: [], offset: 0 };
-            loadWingPastSessions(machineId, state.sessions.length);
+            var state = wingPastSessions[wingId] || { sessions: [], offset: 0 };
+            loadWingPastSessions(wingId, state.sessions.length);
         });
     }
 
     // Wire replay buttons
     container.querySelectorAll('.wd-replay-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
-            openAuditReplay(machineId, btn.dataset.sid);
+            openAuditReplay(wingId, btn.dataset.sid);
         });
     });
 }
 
-function getCachedWingSessions(machineId) {
-    try { var raw = localStorage.getItem(WING_SESSIONS_PREFIX + machineId); return raw ? JSON.parse(raw) : null; }
+function getCachedWingSessions(wingId) {
+    try { var raw = localStorage.getItem(WING_SESSIONS_PREFIX + wingId); return raw ? JSON.parse(raw) : null; }
     catch (e) { return null; }
 }
-function setCachedWingSessions(machineId, sessions) {
-    try { localStorage.setItem(WING_SESSIONS_PREFIX + machineId, JSON.stringify(sessions)); } catch (e) {}
+function setCachedWingSessions(wingId, sessions) {
+    try { localStorage.setItem(WING_SESSIONS_PREFIX + wingId, JSON.stringify(sessions)); } catch (e) {}
 }
 
 function formatRelativeTime(ms) {
@@ -1821,7 +1825,7 @@ function formatRelativeTime(ms) {
 
 // === Audit Replay ===
 
-function openAuditReplay(machineId, sessionId) {
+function openAuditReplay(wingId, sessionId) {
     var overlay = document.getElementById('audit-overlay');
     var termEl = document.getElementById('audit-terminal');
     var playBtn = document.getElementById('audit-play');
@@ -1846,7 +1850,7 @@ function openAuditReplay(machineId, sessionId) {
     var speed = 1;
 
     // Fetch audit data via SSE
-    var es = new EventSource('/api/app/wings/' + encodeURIComponent(machineId) + '/sessions/' + encodeURIComponent(sessionId) + '/audit?kind=pty');
+    var es = new EventSource('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + encodeURIComponent(sessionId) + '/audit?kind=pty');
     es.addEventListener('chunk', function(e) {
         // Each chunk is NDJSON lines
         e.data.split('\n').forEach(function(line) {
@@ -2015,7 +2019,7 @@ function showSessionInfo() {
     var w = ptyWingId ? wingsData.find(function(w) { return w.id === ptyWingId; }) : null;
     if (!s && !w) return;
 
-    var machineName = w ? wingDisplayName(w) : 'unknown';
+    var wingName = w ? wingDisplayName(w) : 'unknown';
     var agent = s ? (s.agent || '?') : '?';
     var cwdDisplay = s && s.cwd ? shortenPath(s.cwd) : '~';
 
@@ -2040,13 +2044,13 @@ function showSessionInfo() {
     var e2eStatus = e2eKey ? 'active' : 'none';
 
     detailDialog.innerHTML =
-        '<h3><span class="detail-connection-dot ' + dotClass + '"></span>' + escapeHtml(machineName) + ' &middot; ' + escapeHtml(agent) + '</h3>' +
+        '<h3><span class="detail-connection-dot ' + dotClass + '"></span>' + escapeHtml(wingName) + ' &middot; ' + escapeHtml(agent) + '</h3>' +
         '<div class="detail-row"><span class="detail-key">session</span><span class="detail-val text-dim">' + escapeHtml(ptySessionId || '') + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">cwd</span><span class="detail-val text-dim">' + escapeHtml(cwdDisplay) + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">e2e</span><span class="detail-val">' + e2eStatus + '</span></div>' +
         configSummary +
         '<div class="detail-row" style="margin-top:12px"><span class="detail-key" style="font-weight:600">wing</span></div>' +
-        '<div class="detail-row"><span class="detail-key">machine</span><span class="detail-val">' + escapeHtml(machineName) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">wing</span><span class="detail-val">' + escapeHtml(wingName) + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">version</span><span class="detail-val">' + escapeHtml(wingVersion) + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(wingPlatform) + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + escapeHtml(wingAgents) + '</span></div>';
@@ -2073,7 +2077,7 @@ function renderDashboard() {
             var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
-            return '<div class="wing-box" draggable="true" data-machine-id="' + escapeHtml(w.machine_id || '') + '">' +
+            return '<div class="wing-box" draggable="true" data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
                     '<span class="wing-name">' + escapeHtml(name) + '</span>' +
@@ -2094,7 +2098,7 @@ function renderDashboard() {
         wingStatusEl.querySelectorAll('.wing-box').forEach(function(box) {
             box.addEventListener('click', function(e) {
                 if (e.target.closest('.box-menu-btn')) return;
-                var mid = box.dataset.machineId;
+                var mid = box.dataset.wingId;
                 navigateToWingDetail(mid);
             });
             box.style.cursor = 'pointer';
@@ -2671,7 +2675,7 @@ function showHome(pushHistory) {
     terminalSection.style.display = 'none';
     chatSection.style.display = 'none';
     wingDetailSection.style.display = 'none';
-    currentWingMachineId = null;
+    currentWingId = null;
     headerTitle.textContent = '';
     ptyStatus.textContent = '';
     // Mark detaching session as yellow immediately (don't wait for poll)
@@ -2740,6 +2744,13 @@ window._openChat = function (sessionId, agent) {
 };
 
 window._deleteSession = function (sessionId) {
+    // Find wing wing_id for fly-replay routing
+    var sess = sessionsData.find(function(s) { return s.id === sessionId; });
+    var wingId = '';
+    if (sess) {
+        var wing = wingsData.find(function(w) { return w.id === sess.wing_id; });
+        if (wing) wingId = wing.wing_id;
+    }
     var cached = getCachedSessions().filter(function (s) { return s.id !== sessionId; });
     setCachedSessions(cached);
     // Remove from sessionsData and egg order immediately to prevent stale order
@@ -2749,7 +2760,8 @@ window._deleteSession = function (sessionId) {
     delete sessionNotifications[sessionId];
     if (activeView === 'home') renderDashboard();
     renderSidebar();
-    fetch('/api/app/sessions/' + sessionId, { method: 'DELETE' }).then(function () {
+    var url = '/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + sessionId;
+    fetch(url, { method: 'DELETE' }).then(function () {
         loadHome();
     });
 };
@@ -3503,8 +3515,8 @@ window.addEventListener('popstate', function(e) {
         showHome(false);
     } else if (state.view === 'terminal' && state.sessionId) {
         switchToSession(state.sessionId, false);
-    } else if (state.view === 'wing-detail' && state.machineId) {
-        navigateToWingDetail(state.machineId, false);
+    } else if (state.view === 'wing-detail' && state.wingId) {
+        navigateToWingDetail(state.wingId, false);
     }
 });
 

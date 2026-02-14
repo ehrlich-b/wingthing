@@ -9,8 +9,8 @@ import (
 )
 
 // MergeThreadEntries merges remote thread entries into the local store.
-// Deduplicates by (task_id, machine_id, timestamp) triple.
-// Entries without task_id use (machine_id, timestamp, summary) for dedup.
+// Deduplicates by (task_id, wing_id, timestamp) triple.
+// Entries without task_id use (wing_id, timestamp, summary) for dedup.
 // Returns count of entries imported.
 func (e *Engine) MergeThreadEntries(remote []*store.ThreadEntry) (int, error) {
 	// Sort remote entries by timestamp for consistent ordering.
@@ -28,9 +28,9 @@ func (e *Engine) MergeThreadEntries(remote []*store.ThreadEntry) (int, error) {
 		var err error
 
 		if entry.TaskID != nil {
-			exists, err = e.Store.ThreadEntryExists(entry.TaskID, entry.MachineID, entry.Timestamp)
+			exists, err = e.Store.ThreadEntryExists(entry.TaskID, entry.WingID, entry.Timestamp)
 		} else {
-			exists, err = e.Store.ThreadEntryExistsBySummary(entry.MachineID, entry.Timestamp, entry.Summary)
+			exists, err = e.Store.ThreadEntryExistsBySummary(entry.WingID, entry.Timestamp, entry.Summary)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("check dedup for entry %q: %w", entry.Summary, err))

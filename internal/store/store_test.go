@@ -191,7 +191,7 @@ func TestAppendAndListThread(t *testing.T) {
 	s := openTestStore(t)
 
 	entry := &ThreadEntry{
-		MachineID: "test-machine",
+		WingID: "test-machine",
 		Summary:   "did a thing",
 	}
 	if err := s.AppendThread(entry); err != nil {
@@ -218,7 +218,7 @@ func TestListRecentThread(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		s.AppendThread(&ThreadEntry{
-			MachineID: "test",
+			WingID: "test",
 			Summary:   fmt.Sprintf("entry %d", i),
 		})
 	}
@@ -239,8 +239,8 @@ func TestDeleteThreadOlderThan(t *testing.T) {
 	cutoff := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	recent := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
 
-	s.AppendThreadAt(&ThreadEntry{MachineID: "test", Summary: "old"}, old)
-	s.AppendThreadAt(&ThreadEntry{MachineID: "test", Summary: "new"}, recent)
+	s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "old"}, old)
+	s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "new"}, recent)
 
 	deleted, err := s.DeleteThreadOlderThan(cutoff)
 	if err != nil {

@@ -11,8 +11,8 @@ func TestEnvelopeRouting(t *testing.T) {
 		msg  any
 		want string
 	}{
-		{"register", WingRegister{Type: TypeWingRegister, MachineID: "m1"}, TypeWingRegister},
-		{"heartbeat", WingHeartbeat{Type: TypeWingHeartbeat, MachineID: "m1"}, TypeWingHeartbeat},
+		{"register", WingRegister{Type: TypeWingRegister, WingID: "m1"}, TypeWingRegister},
+		{"heartbeat", WingHeartbeat{Type: TypeWingHeartbeat, WingID: "m1"}, TypeWingHeartbeat},
 		{"submit", TaskSubmit{Type: TypeTaskSubmit, TaskID: "t1", Prompt: "hi"}, TypeTaskSubmit},
 		{"chunk", TaskChunk{Type: TypeTaskChunk, TaskID: "t1", Text: "hello"}, TypeTaskChunk},
 		{"done", TaskDone{Type: TypeTaskDone, TaskID: "t1"}, TypeTaskDone},
@@ -71,7 +71,7 @@ func TestTaskSubmitRoundTrip(t *testing.T) {
 func TestWingRegisterFields(t *testing.T) {
 	reg := WingRegister{
 		Type:       TypeWingRegister,
-		MachineID:  "mac-A1B2",
+		WingID:  "mac-A1B2",
 		Agents:     []string{"claude", "ollama"},
 		Skills:     []string{"compress", "scorer"},
 		Labels:     []string{"gpu", "home"},

@@ -527,7 +527,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	client := &ws.Client{
 		RoostURL:    wsURL,
 		Token:       tok.Token,
-		MachineID:   cfg.MachineID,
+		WingID:      cfg.WingID,
 		Hostname:    cfg.Hostname,
 		Platform:    runtime.GOOS,
 		Version:     version,
@@ -824,7 +824,7 @@ func executeRelayTask(ctx context.Context, cfg *config.Config, s *store.Store, t
 	if totalTok > 0 {
 		s.AppendThread(&store.ThreadEntry{
 			TaskID:     &t.ID,
-			MachineID:  cfg.MachineID,
+			WingID:  cfg.WingID,
 			Agent:      &agentName,
 			UserInput:  &t.What,
 			Summary:    truncate(output, 200),

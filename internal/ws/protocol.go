@@ -87,7 +87,7 @@ type WingProject struct {
 // WingRegister is sent by the wing on connect.
 type WingRegister struct {
 	Type        string        `json:"type"`
-	MachineID   string        `json:"machine_id"`
+	WingID   string        `json:"wing_id"`
 	Hostname    string        `json:"hostname,omitempty"`
 	Platform    string        `json:"platform,omitempty"` // runtime.GOOS (e.g. "darwin", "linux")
 	Version     string        `json:"version,omitempty"`  // build version (e.g. "v0.7.35")
@@ -104,7 +104,7 @@ type WingRegister struct {
 // WingHeartbeat is sent by the wing every 30s.
 type WingHeartbeat struct {
 	Type      string `json:"type"`
-	MachineID string `json:"machine_id"`
+	WingID string `json:"wing_id"`
 }
 
 // TaskSubmit is sent from the relay to a wing to execute a task.

@@ -185,12 +185,12 @@ func TestEncryptedEngineThreadEntries(t *testing.T) {
 	entries := []*store.ThreadEntry{
 		{
 			TaskID:    &taskID,
-			MachineID: "mac-01",
+			WingID: "mac-01",
 			Summary:   "deployed to staging",
 			UserInput: &userInput,
 		},
 		{
-			MachineID: "mac-01",
+			WingID: "mac-01",
 			Summary:   "ran tests",
 			UserInput: nil,
 		},

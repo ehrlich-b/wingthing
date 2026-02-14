@@ -50,9 +50,9 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	latestVer := s.getLatestVersion()
 
 	// Resolve labels for all wings
-	var machineIDs []string
+	var wingIDs []string
 	for _, wing := range wings {
-		machineIDs = append(machineIDs, wing.MachineID)
+		wingIDs = append(wingIDs, wing.WingID)
 	}
 	// Determine org ID for label resolution
 	resolvedOrgID := ""
@@ -62,19 +62,19 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			resolvedOrgID = org.ID
 		}
 	}
-	wingLabels := s.Store.ResolveLabels(machineIDs, user.ID, resolvedOrgID)
+	wingLabels := s.Store.ResolveLabels(wingIDs, user.ID, resolvedOrgID)
 
 	out := make([]map[string]any, 0, len(wings))
-	seenMachines := make(map[string]bool) // dedup by wing machine_id
+	seenWings := make(map[string]bool) // dedup by wing_id
 	for _, wing := range wings {
-		seenMachines[wing.MachineID] = true
+		seenWings[wing.WingID] = true
 		projects := wing.Projects
 		if projects == nil {
 			projects = []ws.WingProject{}
 		}
 		entry := map[string]any{
 			"id":             wing.ID,
-			"machine_id":     wing.MachineID,
+			"wing_id":     wing.WingID,
 			"hostname":       wing.Hostname,
 			"platform":       wing.Platform,
 			"version":        wing.Version,
@@ -87,26 +87,26 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			"egg_config":     wing.EggConfig,
 			"org_id":         wing.OrgID,
 		}
-		if label, ok := wingLabels[wing.MachineID]; ok {
+		if label, ok := wingLabels[wing.WingID]; ok {
 			entry["wing_label"] = label
 		}
 		out = append(out, entry)
 	}
 
-	// Include peer wings from gossip (dedup by wing machine_id)
+	// Include peer wings from gossip (dedup by wing_id)
 	if s.Peers != nil {
 		for _, pw := range s.Peers.AllWings() {
 			if pw.WingInfo == nil || pw.WingInfo.UserID != user.ID {
 				continue
 			}
-			wingMachineID := pw.WingInfo.MachineID
-			if wingMachineID == "" {
-				continue // skip peers without a machine_id
+			peerWingID := pw.WingInfo.WingID
+			if peerWingID == "" {
+				continue // skip peers without a wing_id
 			}
-			if seenMachines[wingMachineID] {
+			if seenWings[peerWingID] {
 				continue
 			}
-			seenMachines[wingMachineID] = true
+			seenWings[peerWingID] = true
 			var projects []ws.WingProject
 			if pw.WingInfo.Projects != nil {
 				projects = pw.WingInfo.Projects
@@ -115,7 +115,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, map[string]any{
 				"id":             pw.WingID,
-				"machine_id":     wingMachineID,
+				"wing_id":     peerWingID,
 				"hostname":       pw.WingInfo.Hostname,
 				"platform":       pw.WingInfo.Platform,
 				"version":        pw.WingInfo.Version,
@@ -217,6 +217,7 @@ func (s *Server) requestSessionSyncForWing(ctx context.Context, wing *ConnectedW
 }
 
 // handleDeleteSession kills or removes a PTY or chat session.
+// Route: DELETE /api/app/wings/{wingID}/sessions/{id}
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
@@ -224,19 +225,26 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	wingID := r.PathValue("wingID")
+	if s.replayToWingEdgeByWingID(w, wingID) {
+		return
+	}
 	sessionID := r.PathValue("id")
+
+	wing := s.findWingByWingID(user.ID, wingID)
+	if wing == nil {
+		writeError(w, http.StatusNotFound, "wing not found or offline")
+		return
+	}
 
 	// Try PTY first
 	ptySession := s.PTY.Get(sessionID)
-	if ptySession != nil && s.canAccessSession(user.ID, ptySession) {
-		wing := s.Wings.FindByID(ptySession.WingID)
-		if wing != nil {
-			kill := ws.PTYKill{Type: ws.TypePTYKill, SessionID: sessionID}
-			data, _ := json.Marshal(kill)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			wing.Conn.Write(ctx, websocket.MessageText, data)
-			cancel()
-		}
+	if ptySession != nil && ptySession.WingID == wing.ID {
+		kill := ws.PTYKill{Type: ws.TypePTYKill, SessionID: sessionID}
+		data, _ := json.Marshal(kill)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		wing.Conn.Write(ctx, websocket.MessageText, data)
+		cancel()
 		s.PTY.Remove(sessionID)
 		log.Printf("pty session %s: deleted via API (user=%s)", sessionID, user.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -245,29 +253,28 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	// Try chat
 	chatSession := s.Chat.Get(sessionID)
-	if chatSession != nil {
-		canAccess := chatSession.UserID == user.ID
-		if !canAccess {
-			cWing := s.Wings.FindByID(chatSession.WingID)
-			canAccess = cWing != nil && s.canAccessWing(user.ID, cWing)
-		}
-		if canAccess {
-			wing := s.Wings.FindByID(chatSession.WingID)
-			if wing != nil {
-				del := ws.ChatDelete{Type: ws.TypeChatDelete, SessionID: sessionID}
-				data, _ := json.Marshal(del)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				wing.Conn.Write(ctx, websocket.MessageText, data)
-				cancel()
-			}
-			s.Chat.Remove(sessionID)
-			log.Printf("chat session %s: deleted via API (user=%s)", sessionID, user.ID)
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-			return
-		}
+	if chatSession != nil && chatSession.WingID == wing.ID {
+		del := ws.ChatDelete{Type: ws.TypeChatDelete, SessionID: sessionID}
+		data, _ := json.Marshal(del)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		wing.Conn.Write(ctx, websocket.MessageText, data)
+		cancel()
+		s.Chat.Remove(sessionID)
+		log.Printf("chat session %s: deleted via API (user=%s)", sessionID, user.ID)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
 	}
 
-	writeError(w, http.StatusNotFound, "session not found")
+	// Session not in local registry — send kill directly to the wing anyway
+	// (the wing owns the egg process, it can kill it even if the relay lost track)
+	kill := ws.PTYKill{Type: ws.TypePTYKill, SessionID: sessionID}
+	data, _ := json.Marshal(kill)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	wing.Conn.Write(ctx, websocket.MessageText, data)
+	cancel()
+	s.PTY.Remove(sessionID)
+	log.Printf("session %s: force-deleted via wing %s (user=%s)", sessionID, wing.ID, user.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleWingUpdate sends a wing.update command to a connected wing.
@@ -529,11 +536,11 @@ func (s *Server) handleWingSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	machineID := r.PathValue("machineID")
-	if s.replayToWingEdgeByMachineID(w, machineID) {
+	wingID := r.PathValue("wingID")
+	if s.replayToWingEdgeByWingID(w, wingID) {
 		return
 	}
-	wing := s.findWingByMachineID(user.ID, machineID)
+	wing := s.findWingByWingID(user.ID, wingID)
 	if wing == nil {
 		writeError(w, http.StatusNotFound, "wing not found or offline")
 		return
@@ -635,10 +642,10 @@ func (s *Server) handleWingLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	machineID := r.PathValue("machineID")
-	wing := s.findWingByMachineID(user.ID, machineID)
+	wingID := r.PathValue("wingID")
+	wing := s.findWingByWingID(user.ID, wingID)
 	if wing == nil {
-		// Allow labeling offline wings by machineID too
+		// Allow labeling offline wings by wingID too
 		writeError(w, http.StatusNotFound, "wing not found")
 		return
 	}
@@ -667,7 +674,7 @@ func (s *Server) handleWingLabel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.Store.SetLabel(machineID, scopeType, scopeID, body.Label); err != nil {
+	if err := s.Store.SetLabel(wingID, scopeType, scopeID, body.Label); err != nil {
 		writeError(w, http.StatusInternalServerError, "save label: "+err.Error())
 		return
 	}
@@ -682,8 +689,8 @@ func (s *Server) handleDeleteWingLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	machineID := r.PathValue("machineID")
-	wing := s.findWingByMachineID(user.ID, machineID)
+	wingID := r.PathValue("wingID")
+	wing := s.findWingByWingID(user.ID, wingID)
 	if wing == nil {
 		writeError(w, http.StatusNotFound, "wing not found")
 		return
@@ -704,7 +711,7 @@ func (s *Server) handleDeleteWingLabel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.Store.DeleteLabel(machineID, scopeType, scopeID)
+	s.Store.DeleteLabel(wingID, scopeType, scopeID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -740,8 +747,8 @@ func (s *Server) handleAuditSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	machineID := r.PathValue("machineID")
-	if s.replayToWingEdgeByMachineID(w, machineID) {
+	wingID := r.PathValue("wingID")
+	if s.replayToWingEdgeByWingID(w, wingID) {
 		return
 	}
 	sessionID := r.PathValue("sessionID")
@@ -750,7 +757,7 @@ func (s *Server) handleAuditSSE(w http.ResponseWriter, r *http.Request) {
 		kind = "pty"
 	}
 
-	wing := s.findWingByMachineID(user.ID, machineID)
+	wing := s.findWingByWingID(user.ID, wingID)
 	if wing == nil {
 		writeError(w, http.StatusNotFound, "wing not found or offline")
 		return

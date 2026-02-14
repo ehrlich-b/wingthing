@@ -83,12 +83,12 @@ func (p *PeerDirectory) AllWings() []*PeerWing {
 	return result
 }
 
-// FindByMachineID looks up a peer wing by its hostname (wing machine_id).
-func (p *PeerDirectory) FindByMachineID(machineID string) *PeerWing {
+// FindByWingID looks up a peer wing by its persistent wing ID.
+func (p *PeerDirectory) FindByWingID(wingID string) *PeerWing {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	for _, w := range p.wings {
-		if w.WingInfo != nil && w.WingInfo.MachineID == machineID {
+		if w.WingInfo != nil && w.WingInfo.WingID == wingID {
 			return w
 		}
 	}

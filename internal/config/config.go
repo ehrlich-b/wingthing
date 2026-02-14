@@ -11,13 +11,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var uuidRegex = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var wingIDRegex = regexp.MustCompile(`^[0-9a-f]{20,32}$`)
 
 type Config struct {
 	Dir               string            `yaml:"-"`
 	DefaultAgent      string            `yaml:"default_agent"`
 	DefaultEmbedder   string            `yaml:"default_embedder"`
-	MachineID         string            `yaml:"machine_id"`
+	WingID         string            `yaml:"wing_id"`
 	Hostname          string            `yaml:"-"` // os.Hostname(), not persisted
 	PollInterval      string            `yaml:"poll_interval"`
 	DefaultMaxRetries int               `yaml:"max_retries"`
@@ -46,7 +46,7 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
 	if err != nil {
 		if os.IsNotExist(err) {
-			cfg.MachineID = defaultMachineID(dir)
+			cfg.WingID = defaultWingID(dir)
 			cfg.Hostname = defaultHostname()
 			cfg.setStandardVars()
 			return cfg, nil
@@ -61,25 +61,23 @@ func Load() (*Config, error) {
 	if cfg.Vars == nil {
 		cfg.Vars = make(map[string]string)
 	}
-	// If config.yaml has a valid UUID machine_id, use it (manual override).
-	// Otherwise generate/read from file.
-	if !uuidRegex.MatchString(cfg.MachineID) {
-		cfg.MachineID = defaultMachineID(dir)
+	if !wingIDRegex.MatchString(cfg.WingID) {
+		cfg.WingID = defaultWingID(dir)
 	}
 	cfg.Hostname = defaultHostname()
 	cfg.setStandardVars()
 	return cfg, nil
 }
 
-func defaultMachineID(dir string) string {
-	idPath := filepath.Join(dir, "machine-id")
+func defaultWingID(dir string) string {
+	idPath := filepath.Join(dir, "wing-id")
 	if data, err := os.ReadFile(idPath); err == nil {
 		id := strings.TrimSpace(string(data))
-		if uuidRegex.MatchString(id) {
+		if wingIDRegex.MatchString(id) {
 			return id
 		}
 	}
-	id := uuid.New().String()
+	id := strings.ReplaceAll(uuid.New().String(), "-", "")[:24]
 	os.MkdirAll(dir, 0755)
 	os.WriteFile(idPath, []byte(id+"\n"), 0644)
 	return id

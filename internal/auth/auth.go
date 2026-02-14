@@ -31,8 +31,8 @@ type TokenResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
-func RequestDeviceCode(baseURL, machineID string, publicKey ...string) (*DeviceCodeResponse, error) {
-	req := map[string]string{"machine_id": machineID}
+func RequestDeviceCode(baseURL, wingID string, publicKey ...string) (*DeviceCodeResponse, error) {
+	req := map[string]string{"wing_id": wingID}
 	if len(publicKey) > 0 && publicKey[0] != "" {
 		req["public_key"] = publicKey[0]
 	}

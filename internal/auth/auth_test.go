@@ -23,8 +23,8 @@ func TestRequestDeviceCode(t *testing.T) {
 
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["machine_id"] != "test-machine" {
-			t.Errorf("unexpected machine_id: %s", body["machine_id"])
+		if body["wing_id"] != "test-machine" {
+			t.Errorf("unexpected wing_id: %s", body["wing_id"])
 		}
 
 		json.NewEncoder(w).Encode(DeviceCodeResponse{

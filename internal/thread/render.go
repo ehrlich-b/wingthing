@@ -9,17 +9,17 @@ import (
 )
 
 // Render renders thread entries to markdown.
-// When entries come from multiple machines, the machine origin is shown in the header.
+// When entries come from multiple wings, the wing origin is shown in the header.
 func Render(entries []*store.ThreadEntry) string {
 	if len(entries) == 0 {
 		return ""
 	}
 
-	machines := make(map[string]bool)
+	wings := make(map[string]bool)
 	for _, e := range entries {
-		machines[e.MachineID] = true
+		wings[e.WingID] = true
 	}
-	multiMachine := len(machines) > 1
+	multiWing := len(wings) > 1
 
 	var b strings.Builder
 	for i, e := range entries {
@@ -35,8 +35,8 @@ func Render(entries []*store.ThreadEntry) string {
 			agent = *e.Agent
 		}
 		ts := e.Timestamp.Format("15:04")
-		if multiMachine {
-			fmt.Fprintf(&b, "## %s — %s [%s, %s, %s]\n", ts, e.Summary, agent, skill, e.MachineID)
+		if multiWing {
+			fmt.Fprintf(&b, "## %s — %s [%s, %s, %s]\n", ts, e.Summary, agent, skill, e.WingID)
 		} else {
 			fmt.Fprintf(&b, "## %s — %s [%s, %s]\n", ts, e.Summary, agent, skill)
 		}

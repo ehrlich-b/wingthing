@@ -327,7 +327,7 @@ func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.T
 	if totalTok > 0 {
 		s.AppendThread(&store.ThreadEntry{
 			TaskID:     &t.ID,
-			MachineID:  cfg.MachineID,
+			WingID:  cfg.WingID,
 			Agent:      &agentName,
 			UserInput:  &t.What,
 			Summary:    truncate(output, 200),
@@ -982,7 +982,7 @@ func loginCmd() *cobra.Command {
 				return fmt.Errorf("keypair: %w", err)
 			}
 
-			dcr, err := auth.RequestDeviceCode(cfg.RoostURL, cfg.MachineID, pubKeyB64)
+			dcr, err := auth.RequestDeviceCode(cfg.RoostURL, cfg.WingID, pubKeyB64)
 			if err != nil {
 				return err
 			}
@@ -1009,7 +1009,7 @@ func loginCmd() *cobra.Command {
 				Token:     tr.Token,
 				ExpiresAt: tr.ExpiresAt,
 				IssuedAt:  time.Now().Unix(),
-				DeviceID:  cfg.MachineID,
+				DeviceID:  cfg.WingID,
 				PublicKey: pubKeyB64,
 			}
 			if err := ts.Save(token); err != nil {

@@ -13,12 +13,12 @@ import (
 
 type Engine struct {
 	MemoryDir string
-	MachineID string
+	WingID string
 	Store     *store.Store
 }
 
 func (e *Engine) BuildLocalManifest() (*Manifest, error) {
-	return BuildManifest(e.MemoryDir, e.MachineID)
+	return BuildManifest(e.MemoryDir, e.WingID)
 }
 
 func (e *Engine) ApplyDiffs(diffs []FileDiff, getContent func(path string) ([]byte, error)) error {
@@ -73,9 +73,9 @@ const timeFmt = "2006-01-02T15:04:05Z"
 
 func (e *Engine) ExportThreadEntries(since time.Time) ([]*store.ThreadEntry, error) {
 	rows, err := e.Store.DB().Query(
-		`SELECT id, task_id, timestamp, machine_id, agent, skill, user_input, summary, tokens_used
-		FROM thread_entries WHERE timestamp >= ? AND machine_id = ? ORDER BY timestamp`,
-		since.UTC().Format(timeFmt), e.MachineID)
+		`SELECT id, task_id, timestamp, wing_id, agent, skill, user_input, summary, tokens_used
+		FROM thread_entries WHERE timestamp >= ? AND wing_id = ? ORDER BY timestamp`,
+		since.UTC().Format(timeFmt), e.WingID)
 	if err != nil {
 		return nil, fmt.Errorf("export thread entries: %w", err)
 	}
@@ -85,7 +85,7 @@ func (e *Engine) ExportThreadEntries(since time.Time) ([]*store.ThreadEntry, err
 	for rows.Next() {
 		entry := &store.ThreadEntry{}
 		var ts string
-		if err := rows.Scan(&entry.ID, &entry.TaskID, &ts, &entry.MachineID,
+		if err := rows.Scan(&entry.ID, &entry.TaskID, &ts, &entry.WingID,
 			&entry.Agent, &entry.Skill, &entry.UserInput, &entry.Summary, &entry.TokensUsed); err != nil {
 			return nil, fmt.Errorf("scan thread entry: %w", err)
 		}
@@ -97,12 +97,12 @@ func (e *Engine) ExportThreadEntries(since time.Time) ([]*store.ThreadEntry, err
 
 func (e *Engine) ImportThreadEntries(entries []*store.ThreadEntry) error {
 	for _, entry := range entries {
-		// Skip duplicates: check if entry with same task_id + machine_id + timestamp already exists
+		// Skip duplicates: check if entry with same task_id + wing_id + timestamp already exists
 		var count int
 		if entry.TaskID != nil {
 			err := e.Store.DB().QueryRow(
-				`SELECT COUNT(*) FROM thread_entries WHERE task_id = ? AND machine_id = ? AND timestamp = ?`,
-				entry.TaskID, entry.MachineID, entry.Timestamp.UTC().Format(timeFmt)).Scan(&count)
+				`SELECT COUNT(*) FROM thread_entries WHERE task_id = ? AND wing_id = ? AND timestamp = ?`,
+				entry.TaskID, entry.WingID, entry.Timestamp.UTC().Format(timeFmt)).Scan(&count)
 			if err != nil {
 				return fmt.Errorf("check duplicate: %w", err)
 			}

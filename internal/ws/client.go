@@ -48,7 +48,7 @@ type ChatDeleteHandler func(ctx context.Context, del ChatDelete, write PTYWriteF
 type Client struct {
 	RoostURL  string // e.g. "wss://ws.wingthing.ai/ws/wing"
 	Token     string // device auth token
-	MachineID string
+	WingID string
 	Hostname  string // display name (os.Hostname)
 	Platform  string // runtime.GOOS
 	Version   string // build version
@@ -138,7 +138,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 	// Send registration
 	reg := WingRegister{
 		Type:        TypeWingRegister,
-		MachineID:   c.MachineID,
+		WingID:   c.WingID,
 		Hostname:    c.Hostname,
 		Platform:    c.Platform,
 		Version:     c.Version,
@@ -399,7 +399,7 @@ func (c *Client) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			hb := WingHeartbeat{Type: TypeWingHeartbeat, MachineID: c.MachineID}
+			hb := WingHeartbeat{Type: TypeWingHeartbeat, WingID: c.WingID}
 			if err := c.writeJSON(ctx, hb); err != nil {
 				return
 			}

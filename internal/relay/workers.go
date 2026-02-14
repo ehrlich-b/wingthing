@@ -20,7 +20,7 @@ import (
 type ConnectedWing struct {
 	ID          string
 	UserID      string
-	MachineID   string
+	WingID      string
 	Hostname    string // display name from os.Hostname()
 	Platform    string // runtime.GOOS from wing
 	Version     string // build version from wing
@@ -41,8 +41,8 @@ type ConnectedWing struct {
 // WingEvent is sent to dashboard subscribers when a wing connects or disconnects.
 type WingEvent struct {
 	Type      string           `json:"type"`       // "wing.online" or "wing.offline"
+	ConnID    string           `json:"conn_id"`
 	WingID    string           `json:"wing_id"`
-	MachineID string           `json:"machine_id"`
 	Hostname  string           `json:"hostname,omitempty"`
 	Platform  string           `json:"platform,omitempty"`
 	Version   string           `json:"version,omitempty"`
@@ -219,8 +219,8 @@ func (r *WingRegistry) Add(w *ConnectedWing) {
 	r.mu.Unlock()
 	r.notify(w.UserID, WingEvent{
 		Type:      "wing.online",
-		WingID:    w.ID,
-		MachineID: w.MachineID,
+		ConnID:    w.ID,
+		WingID:    w.WingID,
 		Hostname:  w.Hostname,
 		Platform:  w.Platform,
 		Version:   w.Version,
@@ -239,8 +239,8 @@ func (r *WingRegistry) Remove(id string) {
 	if w != nil {
 		r.notify(w.UserID, WingEvent{
 			Type:      "wing.offline",
-			WingID:    w.ID,
-			MachineID: w.MachineID,
+			ConnID:    w.ID,
+			WingID:    w.WingID,
 		})
 	}
 }
@@ -425,7 +425,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	wing := &ConnectedWing{
 		ID:          uuid.New().String(),
 		UserID:      userID,
-		MachineID:   reg.MachineID,
+		WingID:      reg.WingID,
 		Hostname:    reg.Hostname,
 		Platform:    reg.Platform,
 		Version:     reg.Version,
@@ -476,8 +476,8 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		s.Wings.Remove(wing.ID)
 	}()
 
-	log.Printf("wing %s connected (user=%s machine=%s agents=%v)",
-		wing.ID, userID, reg.MachineID, reg.Agents)
+	log.Printf("wing %s connected (user=%s wing=%s agents=%v)",
+		wing.ID, userID, reg.WingID, reg.Agents)
 
 	// Send ack
 	ack := ws.RegisteredMsg{Type: ws.TypeRegistered, WingID: wing.ID}

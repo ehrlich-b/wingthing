@@ -16,7 +16,7 @@ func sampleEntries() []*store.ThreadEntry {
 		{
 			ID:        1,
 			Timestamp: ts,
-			MachineID: "mac",
+			WingID: "mac",
 			Agent:     strPtr("claude"),
 			Skill:     strPtr("jira-briefing"),
 			UserInput: nil,
@@ -25,7 +25,7 @@ func sampleEntries() []*store.ThreadEntry {
 		{
 			ID:        2,
 			Timestamp: ts.Add(73 * time.Minute),
-			MachineID: "mac",
+			WingID: "mac",
 			Agent:     strPtr("claude"),
 			Skill:     nil,
 			UserInput: strPtr("has sarah reviewed my PR yet?"),
@@ -34,7 +34,7 @@ func sampleEntries() []*store.ThreadEntry {
 		{
 			ID:        3,
 			Timestamp: ts.Add(105 * time.Minute),
-			MachineID: "mac",
+			WingID: "mac",
 			Agent:     strPtr("claude"),
 			Skill:     strPtr("scheduled"),
 			UserInput: nil,
@@ -81,7 +81,7 @@ func TestRenderNoUserInput(t *testing.T) {
 		{
 			ID:        1,
 			Timestamp: time.Date(2026, 2, 6, 10, 0, 0, 0, time.UTC),
-			MachineID: "mac",
+			WingID: "mac",
 			Agent:     strPtr("claude"),
 			Skill:     strPtr("cron-check"),
 			Summary:   "All systems healthy",
@@ -101,7 +101,7 @@ func TestRenderNoSkill(t *testing.T) {
 		{
 			ID:        1,
 			Timestamp: time.Date(2026, 2, 6, 14, 0, 0, 0, time.UTC),
-			MachineID: "mac",
+			WingID: "mac",
 			Agent:     strPtr("claude"),
 			Skill:     nil,
 			UserInput: strPtr("what time is it"),
@@ -188,13 +188,13 @@ func TestRenderDay(t *testing.T) {
 	ts2 := time.Date(2026, 2, 6, 9, 15, 0, 0, time.UTC)
 
 	s.AppendThreadAt(&store.ThreadEntry{
-		MachineID: "mac",
+		WingID: "mac",
 		Agent:     strPtr("claude"),
 		Skill:     strPtr("jira"),
 		Summary:   "Morning briefing",
 	}, ts1)
 	s.AppendThreadAt(&store.ThreadEntry{
-		MachineID: "mac",
+		WingID: "mac",
 		Agent:     strPtr("claude"),
 		UserInput: strPtr("check PR"),
 		Summary:   "PR is approved",
@@ -225,55 +225,55 @@ func TestRenderDayEmpty(t *testing.T) {
 	}
 }
 
-func TestRender_SingleMachine(t *testing.T) {
+func TestRender_SingleWing(t *testing.T) {
 	entries := []*store.ThreadEntry{
 		{
 			ID: 1, Timestamp: time.Date(2026, 2, 6, 8, 0, 0, 0, time.UTC),
-			MachineID: "mac", Agent: strPtr("claude"), Skill: strPtr("jira"),
+			WingID: "mac", Agent: strPtr("claude"), Skill: strPtr("jira"),
 			Summary: "Morning briefing",
 		},
 		{
 			ID: 2, Timestamp: time.Date(2026, 2, 6, 9, 0, 0, 0, time.UTC),
-			MachineID: "mac", Agent: strPtr("claude"), Summary: "PR review",
+			WingID: "mac", Agent: strPtr("claude"), Summary: "PR review",
 		},
 	}
 	got := Render(entries)
-	// Single machine — should NOT show machine_id
+	// Single machine — should NOT show wing_id
 	if strings.Contains(got, "mac]") {
-		t.Errorf("single machine should not show machine_id in:\n%s", got)
+		t.Errorf("single wing should not show wing_id in:\n%s", got)
 	}
 	if !strings.Contains(got, "[claude, jira]") {
 		t.Errorf("missing expected header format in:\n%s", got)
 	}
 }
 
-func TestRender_MultiMachine(t *testing.T) {
+func TestRender_MultiWing(t *testing.T) {
 	entries := []*store.ThreadEntry{
 		{
 			ID: 1, Timestamp: time.Date(2026, 2, 6, 8, 0, 0, 0, time.UTC),
-			MachineID: "mac", Agent: strPtr("claude"), Skill: strPtr("jira"),
+			WingID: "mac", Agent: strPtr("claude"), Skill: strPtr("jira"),
 			Summary: "Morning briefing",
 		},
 		{
 			ID: 2, Timestamp: time.Date(2026, 2, 6, 8, 30, 0, 0, time.UTC),
-			MachineID: "wsl", Agent: strPtr("claude"), Skill: strPtr("build"),
+			WingID: "wsl", Agent: strPtr("claude"), Skill: strPtr("build"),
 			Summary: "GPU compile job",
 		},
 		{
 			ID: 3, Timestamp: time.Date(2026, 2, 6, 9, 0, 0, 0, time.UTC),
-			MachineID: "mac", Agent: strPtr("claude"), Summary: "PR review",
+			WingID: "mac", Agent: strPtr("claude"), Summary: "PR review",
 		},
 	}
 	got := Render(entries)
-	// Multi machine — should show machine_id for all entries
+	// Multi wing — should show wing_id for all entries
 	if !strings.Contains(got, "[claude, jira, mac]") {
-		t.Errorf("missing mac machine_id in header:\n%s", got)
+		t.Errorf("missing mac wing_id in header:\n%s", got)
 	}
 	if !strings.Contains(got, "[claude, build, wsl]") {
-		t.Errorf("missing wsl machine_id in header:\n%s", got)
+		t.Errorf("missing wsl wing_id in header:\n%s", got)
 	}
 	if !strings.Contains(got, "[claude, ad-hoc, mac]") {
-		t.Errorf("missing ad-hoc with machine_id in header:\n%s", got)
+		t.Errorf("missing ad-hoc with wing_id in header:\n%s", got)
 	}
 }
 

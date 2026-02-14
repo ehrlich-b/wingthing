@@ -15,18 +15,18 @@ type FileEntry struct {
 	SHA256    string `json:"sha256"`
 	Size      int64  `json:"size"`
 	ModTime   int64  `json:"mod_time"`
-	MachineID string `json:"machine_id"`
+	WingID string `json:"wing_id"`
 }
 
 type Manifest struct {
-	MachineID string      `json:"machine_id"`
+	WingID string      `json:"wing_id"`
 	Files     []FileEntry `json:"files"`
 	CreatedAt int64       `json:"created_at"`
 }
 
-func BuildManifest(dir string, machineID string) (*Manifest, error) {
+func BuildManifest(dir string, wingID string) (*Manifest, error) {
 	m := &Manifest{
-		MachineID: machineID,
+		WingID: wingID,
 		CreatedAt: time.Now().UTC().Unix(),
 	}
 
@@ -62,7 +62,7 @@ func BuildManifest(dir string, machineID string) (*Manifest, error) {
 			SHA256:    hex.EncodeToString(hash[:]),
 			Size:      info.Size(),
 			ModTime:   info.ModTime().UTC().Unix(),
-			MachineID: machineID,
+			WingID: wingID,
 		})
 		return nil
 	})

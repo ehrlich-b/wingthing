@@ -18,7 +18,7 @@ func createTestTask(t *testing.T, s *store.Store, id string) {
 
 func TestMergeThreadEntries_BasicMerge(t *testing.T) {
 	s := openTestStore(t)
-	eng := &Engine{Store: s, MachineID: "mac"}
+	eng := &Engine{Store: s, WingID: "mac"}
 
 	ts1 := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
 	ts2 := time.Date(2026, 2, 1, 11, 0, 0, 0, time.UTC)
@@ -27,13 +27,13 @@ func TestMergeThreadEntries_BasicMerge(t *testing.T) {
 
 	// Insert a local entry from mac
 	s.AppendThreadAt(&store.ThreadEntry{
-		TaskID: &taskID, MachineID: "mac", Summary: "local work",
+		TaskID: &taskID, WingID: "mac", Summary: "local work",
 	}, ts1)
 
 	// Merge remote entries from wsl
 	remote := []*store.ThreadEntry{
-		{TaskID: &taskID, MachineID: "wsl", Summary: "remote work A", Timestamp: ts1},
-		{TaskID: &taskID, MachineID: "wsl", Summary: "remote work B", Timestamp: ts2},
+		{TaskID: &taskID, WingID: "wsl", Summary: "remote work A", Timestamp: ts1},
+		{TaskID: &taskID, WingID: "wsl", Summary: "remote work B", Timestamp: ts2},
 	}
 
 	imported, err := eng.MergeThreadEntries(remote)
@@ -56,14 +56,14 @@ func TestMergeThreadEntries_BasicMerge(t *testing.T) {
 
 func TestMergeThreadEntries_Dedup(t *testing.T) {
 	s := openTestStore(t)
-	eng := &Engine{Store: s, MachineID: "mac"}
+	eng := &Engine{Store: s, WingID: "mac"}
 
 	ts := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
 	taskID := "task-001"
 	createTestTask(t, s, taskID)
 
 	remote := []*store.ThreadEntry{
-		{TaskID: &taskID, MachineID: "wsl", Summary: "remote work", Timestamp: ts},
+		{TaskID: &taskID, WingID: "wsl", Summary: "remote work", Timestamp: ts},
 	}
 
 	// First merge
@@ -95,12 +95,12 @@ func TestMergeThreadEntries_Dedup(t *testing.T) {
 
 func TestMergeThreadEntries_NilTaskID(t *testing.T) {
 	s := openTestStore(t)
-	eng := &Engine{Store: s, MachineID: "mac"}
+	eng := &Engine{Store: s, WingID: "mac"}
 
 	ts := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
 
 	remote := []*store.ThreadEntry{
-		{MachineID: "wsl", Summary: "ad-hoc task", Timestamp: ts, Agent: strPtr("claude")},
+		{WingID: "wsl", Summary: "ad-hoc task", Timestamp: ts, Agent: strPtr("claude")},
 	}
 
 	// First merge
@@ -123,7 +123,7 @@ func TestMergeThreadEntries_NilTaskID(t *testing.T) {
 
 	// Different summary at same timestamp — should import
 	remote2 := []*store.ThreadEntry{
-		{MachineID: "wsl", Summary: "different ad-hoc", Timestamp: ts, Agent: strPtr("claude")},
+		{WingID: "wsl", Summary: "different ad-hoc", Timestamp: ts, Agent: strPtr("claude")},
 	}
 	imported, err = eng.MergeThreadEntries(remote2)
 	if err != nil {
@@ -144,7 +144,7 @@ func TestMergeThreadEntries_NilTaskID(t *testing.T) {
 
 func TestMergeThreadEntries_Ordering(t *testing.T) {
 	s := openTestStore(t)
-	eng := &Engine{Store: s, MachineID: "mac"}
+	eng := &Engine{Store: s, WingID: "mac"}
 
 	ts1 := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
 	ts2 := time.Date(2026, 2, 1, 11, 0, 0, 0, time.UTC)
@@ -152,13 +152,13 @@ func TestMergeThreadEntries_Ordering(t *testing.T) {
 
 	// Insert a local entry in the middle
 	s.AppendThreadAt(&store.ThreadEntry{
-		MachineID: "mac", Summary: "local middle", Agent: strPtr("claude"),
+		WingID: "mac", Summary: "local middle", Agent: strPtr("claude"),
 	}, ts2)
 
 	// Merge remote entries before and after
 	remote := []*store.ThreadEntry{
-		{MachineID: "wsl", Summary: "remote early", Timestamp: ts1, Agent: strPtr("claude")},
-		{MachineID: "wsl", Summary: "remote late", Timestamp: ts3, Agent: strPtr("claude")},
+		{WingID: "wsl", Summary: "remote early", Timestamp: ts1, Agent: strPtr("claude")},
+		{WingID: "wsl", Summary: "remote late", Timestamp: ts3, Agent: strPtr("claude")},
 	}
 
 	_, err := eng.MergeThreadEntries(remote)
@@ -188,7 +188,7 @@ func TestMergeThreadEntries_Ordering(t *testing.T) {
 
 func TestMergeThreadEntries_EmptyRemote(t *testing.T) {
 	s := openTestStore(t)
-	eng := &Engine{Store: s, MachineID: "mac"}
+	eng := &Engine{Store: s, WingID: "mac"}
 
 	imported, err := eng.MergeThreadEntries(nil)
 	if err != nil {

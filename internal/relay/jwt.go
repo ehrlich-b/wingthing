@@ -15,7 +15,7 @@ const jwtSecretKey = "jwt_secret"
 type WingClaims struct {
 	jwt.RegisteredClaims
 	PublicKey string `json:"pub,omitempty"`
-	MachineID string `json:"machine,omitempty"`
+	WingID string `json:"wing,omitempty"`
 }
 
 // GenerateOrLoadSecret returns the JWT signing secret.
@@ -46,7 +46,7 @@ func GenerateOrLoadSecret(store *RelayStore, envSecret string) ([]byte, error) {
 }
 
 // IssueWingJWT creates a signed JWT for a wing connection.
-func IssueWingJWT(secret []byte, userID, publicKey, machineID string) (string, time.Time, error) {
+func IssueWingJWT(secret []byte, userID, publicKey, wingID string) (string, time.Time, error) {
 	exp := time.Now().Add(365 * 24 * time.Hour)
 	claims := WingClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -55,7 +55,7 @@ func IssueWingJWT(secret []byte, userID, publicKey, machineID string) (string, t
 			ExpiresAt: jwt.NewNumericDate(exp),
 		},
 		PublicKey: publicKey,
-		MachineID: machineID,
+		WingID:    wingID,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

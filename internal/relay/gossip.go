@@ -14,7 +14,7 @@ import (
 // WingInfo contains summary info about a wing for cluster sync.
 type WingInfo struct {
 	UserID    string           `json:"user_id"`
-	MachineID string           `json:"machine_id,omitempty"`
+	WingID    string           `json:"wing_id,omitempty"`
 	Hostname  string           `json:"hostname,omitempty"`
 	Platform  string           `json:"platform,omitempty"`
 	Version   string           `json:"version,omitempty"`
@@ -109,7 +109,7 @@ func connectedToSync(nodeID string, w *ConnectedWing) SyncWing {
 		NodeID: nodeID,
 		Info: WingInfo{
 			UserID:    w.UserID,
-			MachineID: w.MachineID,
+			WingID:    w.WingID,
 			Hostname:  w.Hostname,
 			Platform:  w.Platform,
 			Version:   w.Version,
@@ -139,8 +139,8 @@ func (s *Server) notifyPeerDiff(added, removed []*PeerWing) {
 		if w.WingInfo != nil {
 			s.Wings.notify(w.WingInfo.UserID, WingEvent{
 				Type:      "wing.online",
-				WingID:    w.WingID,
-				MachineID: w.WingInfo.MachineID,
+				ConnID:    w.WingID,
+				WingID:    w.WingInfo.WingID,
 				Hostname:  w.WingInfo.Hostname,
 				Platform:  w.WingInfo.Platform,
 				Version:   w.WingInfo.Version,
@@ -155,8 +155,8 @@ func (s *Server) notifyPeerDiff(added, removed []*PeerWing) {
 		if w.WingInfo != nil {
 			s.Wings.notify(w.WingInfo.UserID, WingEvent{
 				Type:      "wing.offline",
-				WingID:    w.WingID,
-				MachineID: w.WingInfo.MachineID,
+				ConnID:    w.WingID,
+				WingID:    w.WingInfo.WingID,
 			})
 		}
 	}
