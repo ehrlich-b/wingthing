@@ -957,6 +957,18 @@ func (s *RelayStore) IsUserPro(userID string) bool {
 	return err == nil && count > 0
 }
 
+// HasPersonalSubscription returns true if the user has an active personal (non-org) subscription.
+func (s *RelayStore) HasPersonalSubscription(userID string) bool {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM entitlements e
+		 JOIN subscriptions s ON e.subscription_id = s.id
+		 WHERE e.user_id = ? AND s.status = 'active' AND s.org_id IS NULL`,
+		userID,
+	).Scan(&count)
+	return err == nil && count > 0
+}
+
 func (s *RelayStore) BackfillProUsers() error {
 	rows, err := s.db.Query(
 		`SELECT id FROM users WHERE tier = 'pro'

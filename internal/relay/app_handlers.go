@@ -23,17 +23,20 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tier := "free"
-	if s.Store.IsUserPro(user.ID) {
+	isPro := s.Store.IsUserPro(user.ID)
+	if isPro {
 		tier = "pro"
 	}
+	hasPersonalSub := s.Store.HasPersonalSubscription(user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":           user.ID,
-		"display_name": user.DisplayName,
-		"provider":     user.Provider,
-		"avatar_url":   user.AvatarURL,
-		"is_pro":       tier == "pro",
-		"tier":         tier,
-		"email":        user.Email,
+		"id":               user.ID,
+		"display_name":     user.DisplayName,
+		"provider":         user.Provider,
+		"avatar_url":       user.AvatarURL,
+		"is_pro":           tier == "pro",
+		"tier":             tier,
+		"email":            user.Email,
+		"personal_pro":     hasPersonalSub,
 	})
 }
 

@@ -257,8 +257,10 @@ export function renderAccountPage() {
 
     if (tier === 'free') {
         html += '<button class="btn-sm btn-accent" id="account-upgrade">give me pro</button>';
-    } else {
+    } else if (S.currentUser.personal_pro) {
         html += '<button class="btn-sm" id="account-downgrade" style="color:var(--text-dim)">cancel pro</button>';
+    } else {
+        html += '<span class="text-dim" style="font-size:12px">pro via org</span>';
     }
     html += '<button class="btn-sm btn-danger" id="account-logout">log out</button>';
     html += '</div>';
@@ -521,6 +523,7 @@ function renderOrgDetail(org) {
 
     if (!org.is_owner) {
         html += '<div class="detail-row"><span class="detail-val text-dim">you are a member of this org</span></div>';
+        html += '<div class="ac-cancel-row"><button class="btn-sm btn-danger org-leave-btn" data-oid="' + oid + '">leave org</button></div>';
         return html;
     }
 
@@ -604,6 +607,35 @@ function wireOrgCards(orgs) {
     });
 
     orgs.forEach(function(org) {
+        var leaveBtn = document.querySelector('.org-leave-btn[data-oid="' + org.id + '"]');
+        if (leaveBtn) {
+            var leaveConfirmed = false;
+            leaveBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var btn = this;
+                if (!leaveConfirmed) {
+                    btn.textContent = 'you may lose pro — confirm?';
+                    btn.classList.add('btn-armed');
+                    leaveConfirmed = true;
+                    setTimeout(function() { btn.textContent = 'leave org'; btn.classList.remove('btn-armed'); leaveConfirmed = false; }, 4000);
+                    return;
+                }
+                btn.textContent = 'leaving...';
+                btn.disabled = true;
+                fetch('/api/orgs/' + org.id + '/members/' + S.currentUser.id, { method: 'DELETE' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.error) { btn.textContent = 'failed'; btn.disabled = false; leaveConfirmed = false; return; }
+                    loadAccountOrgs();
+                    // Refresh user tier in case entitlement was revoked
+                    fetch('/api/app/me').then(function(r) { return r.json(); }).then(function(u) {
+                        S.currentUser = u;
+                    });
+                })
+                .catch(function() { btn.textContent = 'failed'; btn.disabled = false; leaveConfirmed = false; });
+            });
+        }
+
         if (!org.is_owner) return;
 
         var giveBtn = document.querySelector('.org-give-seats-btn[data-oid="' + org.id + '"]');
