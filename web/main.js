@@ -477,7 +477,11 @@ function applyWingEvent(ev) {
     if (ev.type === 'wing.online' && ev.machine_id) {
         fetchWingSessions(ev.machine_id).then(function(sessions) {
             if (sessions.length > 0) {
-                mergeWingSessions(sessions);
+                // Add new wing's sessions to existing sessions from other wings
+                var otherSessions = sessionsData.filter(function(s) {
+                    return s.wing_id !== sessions[0].wing_id;
+                });
+                mergeWingSessions(otherSessions.concat(sessions));
                 renderSidebar();
                 if (activeView === 'home') renderDashboard();
             }
@@ -550,40 +554,10 @@ async function fetchWingSessions(machineId) {
     return [];
 }
 
-// mergeWingSessions merges fetched sessions into sessionsData, preserving order.
+// mergeWingSessions replaces sessionsData with live data. No cache preservation.
 function mergeWingSessions(allSessions) {
-    if (allSessions.length > 0) {
-        var liveSessionMap = {};
-        allSessions.forEach(function(s) { liveSessionMap[s.id] = s; });
-        var cachedSessions = getCachedSessions();
-        var cachedSessionMap = {};
-        cachedSessions.forEach(function(s) { cachedSessionMap[s.id] = s; });
-        var seenSess = {};
-        var mergedSessions = [];
-        sessionsData.forEach(function(existing) {
-            if (liveSessionMap[existing.id]) {
-                mergedSessions.push(liveSessionMap[existing.id]);
-            } else if (cachedSessionMap[existing.id]) {
-                cachedSessionMap[existing.id].status = 'detached';
-                mergedSessions.push(cachedSessionMap[existing.id]);
-            }
-            seenSess[existing.id] = true;
-        });
-        allSessions.forEach(function(s) {
-            if (!seenSess[s.id]) { mergedSessions.push(s); seenSess[s.id] = true; }
-        });
-        sessionsData = sortSessionsByOrder(mergedSessions);
-        setEggOrder(sessionsData.map(function(s) { return s.id; }));
-        setCachedSessions(sessionsData);
-    } else {
-        var cachedSessions = getCachedSessions();
-        if (cachedSessions.length > 0) {
-            cachedSessions.forEach(function(s) { s.status = 'detached'; });
-            sessionsData = sortSessionsByOrder(cachedSessions);
-        } else {
-            sessionsData = [];
-        }
-    }
+    sessionsData = sortSessionsByOrder(allSessions);
+    setEggOrder(sessionsData.map(function(s) { return s.id; }));
 }
 
 async function loadHome() {
@@ -595,44 +569,9 @@ async function loadHome() {
         wings = [];
     }
 
-    // Merge live wings with cached wings (stable by machine_id, preserve existing order)
-    var cached = getCachedWings();
-    var liveMap = {};
-    wings.forEach(function (w) {
-        w.online = true;
-        liveMap[w.machine_id] = w;
-    });
-    var cachedMap = {};
-    cached.forEach(function (w) {
-        w.online = false;
-        cachedMap[w.machine_id] = w;
-    });
-    // Start from existing wingsData order, update in place
-    var seen = {};
-    var merged = [];
-    wingsData.forEach(function (existing) {
-        var mid = existing.machine_id;
-        if (liveMap[mid]) {
-            merged.push(liveMap[mid]);
-        } else if (cachedMap[mid]) {
-            merged.push(cachedMap[mid]);
-        } else {
-            existing.online = false;
-            merged.push(existing);
-        }
-        seen[mid] = true;
-    });
-    // Append any new wings not in current order
-    wings.forEach(function (w) {
-        if (!seen[w.machine_id]) { merged.push(w); seen[w.machine_id] = true; }
-    });
-    // Only show cached wings if API returned nothing (relay unreachable)
-    if (wings.length === 0) {
-        cached.forEach(function (w) {
-            if (!seen[w.machine_id]) { merged.push(w); seen[w.machine_id] = true; }
-        });
-    }
-    wingsData = sortWingsByOrder(merged);
+    // API response is the truth — no stale preservation
+    wings.forEach(function (w) { w.online = true; });
+    wingsData = sortWingsByOrder(wings);
 
     // Extract latest_version from any wing response
     wingsData.forEach(function(w) {
