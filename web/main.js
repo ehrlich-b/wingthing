@@ -2711,6 +2711,8 @@ function launchChat(agent) {
 
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
+    var chatWing = onlineWings()[0];
+    if (chatWing) url += '?wing_id=' + encodeURIComponent(chatWing.id);
     chatWs = new WebSocket(url);
     chatWs.onopen = function () {
         chatStatus.textContent = 'starting chat...';
@@ -2725,6 +2727,8 @@ function resumeChat(sessionId, agent) {
 
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
+    var chatSess = sessionsData.find(function(s) { return s.id === sessionId; });
+    if (chatSess && chatSess.wing_id) url += '?wing_id=' + encodeURIComponent(chatSess.wing_id);
     chatWs = new WebSocket(url);
     chatWs.onopen = function () {
         chatStatus.textContent = 'loading history...';
@@ -3299,6 +3303,7 @@ function connectPTY(agent, cwd, wingId) {
 
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
+    if (ptyWingId) url += '?wing_id=' + encodeURIComponent(ptyWingId);
 
     headerTitle.textContent = 'connecting...';
     ptyStatus.textContent = '';
@@ -3339,6 +3344,10 @@ function attachPTY(sessionId) {
     headerTitle.textContent = sess ? sessionTitle(sess.agent || '?', sess.wing_id) : 'reconnecting...';
     ptyStatus.textContent = '';
 
+    // Add wing_id for cross-edge fly-replay routing
+    if (ptyWingId) url += '?wing_id=' + encodeURIComponent(ptyWingId);
+    else if (sessionId) url += '?session_id=' + encodeURIComponent(sessionId);
+
     ptyWs = new WebSocket(url);
     ptyWs.onopen = function () {
         ptyWs.send(JSON.stringify({ type: 'pty.attach', session_id: sessionId, public_key: identityPubKey }));
@@ -3378,6 +3387,8 @@ function ptyReconnectAttach(sessionId, attempt) {
 
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
+    if (ptyWingId) url += '?wing_id=' + encodeURIComponent(ptyWingId);
+    else url += '?session_id=' + encodeURIComponent(sessionId);
 
     if (ptyWs) { try { ptyWs.close(); } catch(e) {} }
 
