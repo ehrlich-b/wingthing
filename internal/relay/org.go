@@ -122,6 +122,9 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
+		user = s.tokenUser(r)
+	}
+	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
@@ -198,6 +201,9 @@ func (s *Server) handleGetOrg(w http.ResponseWriter, r *http.Request) {
 // handleListOrgMembers lists members and pending invites. GET /api/orgs/{slug}/members
 func (s *Server) handleListOrgMembers(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
+	if user == nil {
+		user = s.tokenUser(r)
+	}
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
