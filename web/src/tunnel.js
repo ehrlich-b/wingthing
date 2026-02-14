@@ -46,7 +46,7 @@ async function tunnelDecrypt(key, encoded) {
 
 var AUTH_TOKENS_KEY = 'wt_auth_tokens';
 
-function saveTunnelAuthTokens() {
+export function saveTunnelAuthTokens() {
     try { localStorage.setItem(AUTH_TOKENS_KEY, JSON.stringify(S.tunnelAuthTokens)); } catch (e) {}
 }
 

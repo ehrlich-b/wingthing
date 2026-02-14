@@ -81,17 +81,17 @@ function applyWingEvent(ev) {
         tunnelCloseWing(ev.wing_id);
     }
 
-    setCachedWings(S.wingsData.filter(function(w) {
-        return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
-    }).map(function(w) {
-        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
-    }));
     updateHeaderStatus();
 
     // wing.online: probe first, then render
     var evWing = S.wingsData.find(function(w) { return w.wing_id === ev.wing_id; });
     if (ev.type === 'wing.online' && evWing && evWing.public_key) {
         probeWing(evWing).then(function() {
+            setCachedWings(S.wingsData.filter(function(w) {
+                return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
+            }).map(function(w) {
+                return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
+            }));
             rebuildAgentLists();
             if (S.activeView === 'home') renderDashboard();
             if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
@@ -99,7 +99,7 @@ function applyWingEvent(ev) {
             if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
 
             if (!evWing.tunnel_error) {
-                setTimeout(function() { fetchWingSessions(ev.wing_id).then(function(sessions) {
+                fetchWingSessions(ev.wing_id).then(function(sessions) {
                     if (sessions.length > 0) {
                         var otherSessions = S.sessionsData.filter(function(s) {
                             return s.wing_id !== sessions[0].wing_id;
@@ -108,10 +108,15 @@ function applyWingEvent(ev) {
                         renderSidebar();
                         if (S.activeView === 'home') renderDashboard();
                     }
-                }).catch(function() {}); }, 2000);
+                }).catch(function() {});
             }
         });
     } else {
+        setCachedWings(S.wingsData.filter(function(w) {
+            return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
+        }).map(function(w) {
+            return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
+        }));
         // wing.offline or other: render immediately
         rebuildAgentLists();
         if (S.activeView === 'home') {

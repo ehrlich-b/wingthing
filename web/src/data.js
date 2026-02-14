@@ -3,7 +3,7 @@ import { renderSidebar, renderDashboard } from './render.js';
 import { renderWingDetailPage } from './render.js';
 import { rebuildAgentLists, updateHeaderStatus } from './dashboard.js';
 import { updatePaletteState } from './palette.js';
-import { sendTunnelRequest } from './tunnel.js';
+import { sendTunnelRequest, saveTunnelAuthTokens } from './tunnel.js';
 import { setNotification, clearNotification } from './notify.js';
 
 // localStorage CRUD
@@ -100,6 +100,8 @@ export async function probeWing(w) {
         var msg = e.message || '';
         if (msg.indexOf('not_allowed') !== -1) {
             w.tunnel_error = 'not_allowed';
+            delete S.tunnelAuthTokens[w.wing_id];
+            saveTunnelAuthTokens();
         } else if (msg.indexOf('passkey_required') !== -1) {
             w.tunnel_error = 'passkey_required';
             if (e.metadata) {

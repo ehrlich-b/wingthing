@@ -5,7 +5,7 @@ import { sendTunnelRequest } from './tunnel.js';
 import { switchToSession } from './nav.js';
 import { showHome, navigateToWingDetail } from './nav.js';
 import { connectPTY } from './pty.js';
-import { setLastTermAgent, getLastTermAgent, setWingOrder, setEggOrder, getCachedWingSessions, setCachedWingSessions, probeWing } from './data.js';
+import { setLastTermAgent, getLastTermAgent, setWingOrder, setEggOrder, getCachedWingSessions, setCachedWingSessions, probeWing, fetchWingSessions, mergeWingSessions } from './data.js';
 import { rebuildAgentLists } from './dashboard.js';
 import { openAuditReplay, openAuditKeylog } from './audit.js';
 import { showTerminal } from './nav.js';
@@ -1755,7 +1755,7 @@ export function renderDashboard() {
                 var mid = box.dataset.wingId;
                 var w = S.wingsData.find(function(w) { return w.wing_id === mid; });
                 if (w && (w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed')) {
-                    // Passkey auth on dashboard — don't navigate until success
+                    // Passkey auth on dashboard — unlock in-place, don't navigate
                     var badge = box.querySelector('.wing-pinned-badge');
                     if (badge) badge.textContent = 'authenticating...';
                     sendTunnelRequest(mid, { type: 'wing.info' })
@@ -1769,7 +1769,18 @@ export function renderDashboard() {
                             w.allowed_count = data.allowed_count || 0;
                             delete w.tunnel_error;
                             rebuildAgentLists();
-                            navigateToWingDetail(mid);
+                            renderDashboard();
+                            // Immediately fetch sessions from this wing
+                            fetchWingSessions(mid).then(function(sessions) {
+                                if (sessions.length > 0) {
+                                    var otherSessions = S.sessionsData.filter(function(s) {
+                                        return s.wing_id !== sessions[0].wing_id;
+                                    });
+                                    mergeWingSessions(otherSessions.concat(sessions));
+                                    renderSidebar();
+                                    renderDashboard();
+                                }
+                            });
                         })
                         .catch(function() {
                             w.tunnel_error = 'passkey_failed';
