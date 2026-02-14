@@ -804,7 +804,7 @@ func (s *Server) handleAuditSSE(w http.ResponseWriter, r *http.Request) {
 		case msg := <-ch:
 			switch v := msg.(type) {
 			case *ws.AuditChunk:
-				fmt.Fprintf(w, "data: %s\n\n", v.Data)
+				fmt.Fprintf(w, "event: chunk\ndata: %s\n\n", v.Data)
 				flusher.Flush()
 			case *ws.AuditDone:
 				fmt.Fprintf(w, "event: done\ndata: {}\n\n")
