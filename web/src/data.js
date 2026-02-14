@@ -122,7 +122,7 @@ export async function fetchWingSessions(wingId) {
     try {
         var result = await sendTunnelRequest(wingId, { type: 'sessions.list' });
         return (result.sessions || []).map(function(s) {
-            return { id: s.session_id, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit };
+            return { id: s.session_id, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit };
         });
     } catch (e) { return []; }
 }

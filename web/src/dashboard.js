@@ -176,10 +176,10 @@ export function rebuildAgentLists() {
     S.wingsData.forEach(function(w) {
         if (w.online === false) return;
         (w.agents || []).forEach(function(a) {
-            if (!seenAgents[a]) { seenAgents[a] = true; S.availableAgents.push({ agent: a, wingId: w.id }); }
+            if (!seenAgents[a]) { seenAgents[a] = true; S.availableAgents.push({ agent: a, wingId: w.wing_id }); }
         });
         (w.projects || []).forEach(function(p) {
-            S.allProjects.push({ name: p.name, path: p.path, wingId: w.id });
+            S.allProjects.push({ name: p.name, path: p.path, wingId: w.wing_id });
         });
     });
 }

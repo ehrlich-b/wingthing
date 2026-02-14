@@ -11,10 +11,12 @@ import (
 
 // WingInfo contains the minimal info the relay needs for access control and routing.
 type WingInfo struct {
-	UserID    string `json:"user_id"`
-	WingID    string `json:"wing_id,omitempty"`
-	PublicKey string `json:"public_key,omitempty"`
-	OrgID     string `json:"org_id,omitempty"`
+	UserID       string `json:"user_id"`
+	WingID       string `json:"wing_id,omitempty"`
+	PublicKey    string `json:"public_key,omitempty"`
+	OrgID        string `json:"org_id,omitempty"`
+	Locked       bool   `json:"locked,omitempty"`
+	AllowedCount int    `json:"allowed_count,omitempty"`
 }
 
 // SyncWing is a wing entry in the cluster sync protocol.
@@ -100,10 +102,12 @@ func connectedToSync(nodeID string, w *ConnectedWing) SyncWing {
 		WingID: w.ID,
 		NodeID: nodeID,
 		Info: WingInfo{
-			UserID:    w.UserID,
-			WingID:    w.WingID,
-			PublicKey: w.PublicKey,
-			OrgID:    w.OrgID,
+			UserID:       w.UserID,
+			WingID:       w.WingID,
+			PublicKey:    w.PublicKey,
+			OrgID:        w.OrgID,
+			Locked:       w.Locked,
+			AllowedCount: w.AllowedCount,
 		},
 	}
 }
@@ -120,8 +124,17 @@ func syncToPeer(w SyncWing) *PeerWing {
 }
 
 // notifyPeerDiff sends browser events for peer wing changes.
-func (s *Server) notifyPeerDiff(added, removed []*PeerWing) {
+func (s *Server) notifyPeerDiff(added, removed, changed []*PeerWing) {
 	for _, w := range added {
+		if w.WingInfo != nil {
+			s.Wings.notify(w.WingInfo.UserID, WingEvent{
+				Type:      "wing.online",
+				WingID:    w.WingInfo.WingID,
+				PublicKey: w.WingInfo.PublicKey,
+			})
+		}
+	}
+	for _, w := range changed {
 		if w.WingInfo != nil {
 			s.Wings.notify(w.WingInfo.UserID, WingEvent{
 				Type:      "wing.online",
@@ -150,8 +163,8 @@ func (s *Server) rebuildPeersFromCluster() {
 	for i, w := range all {
 		peers[i] = syncToPeer(w)
 	}
-	added, removed := s.Peers.Replace(peers)
-	s.notifyPeerDiff(added, removed)
+	added, removed, changed := s.Peers.Replace(peers)
+	s.notifyPeerDiff(added, removed, changed)
 }
 
 // StartClusterExpiry periodically expires dead edge nodes on the login node.
@@ -250,8 +263,8 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 		for i, w := range syncResp.Wings {
 			peers[i] = syncToPeer(w)
 		}
-		added, removed := s.Peers.Replace(peers)
-		s.notifyPeerDiff(added, removed)
+		added, removed, changed := s.Peers.Replace(peers)
+		s.notifyPeerDiff(added, removed, changed)
 	}
 
 	// Apply bandwidth exceeded list from login

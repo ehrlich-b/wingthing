@@ -125,7 +125,7 @@ function renderPaletteStatus() {
 
 function renderPaletteResults(filter) {
     var wing = currentPaletteWing();
-    var wingId = wing ? wing.id : '';
+    var wingId = wing ? wing.wing_id : '';
     var wingProjects = wingId
         ? S.allProjects.filter(function(p) { return p.wingId === wingId; })
         : S.allProjects;
@@ -316,7 +316,7 @@ export function launchFromPalette(cwd) {
     if (onlineWings().length === 0) return;
     var wing = currentPaletteWing();
     if (!wing) return;
-    var wingId = wing.id;
+    var wingId = wing.wing_id;
     var agent = currentPaletteAgent();
     var validCwd = (cwd && cwd.charAt(0) === '/') ? cwd : '';
     hidePalette();

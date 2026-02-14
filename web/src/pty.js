@@ -9,7 +9,7 @@ import { loadHome } from './data.js';
 import { showHome } from './nav.js';
 
 function sessionTitle(agent, wingId) {
-    var wing = S.wingsData.find(function(w) { return w.id === wingId; });
+    var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     var name = '';
     if (wing) name = wing.wing_label || wing.hostname || wing.wing_id.substring(0, 8);
     if (name) return name + ' \u00b7 ' + agent;
@@ -265,7 +265,7 @@ export function connectPTY(agent, cwd, wingId) {
 
     S.term.clear();
 
-    S.ptyWingId = wingId || (onlineWings()[0] || {}).id || null;
+    S.ptyWingId = wingId || (onlineWings()[0] || {}).wing_id || null;
 
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';

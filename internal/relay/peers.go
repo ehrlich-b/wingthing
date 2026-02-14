@@ -29,7 +29,7 @@ func NewPeerDirectory() *PeerDirectory {
 }
 
 // Replace swaps the entire wing set and returns the diff.
-func (p *PeerDirectory) Replace(wings []*PeerWing) (added, removed []*PeerWing) {
+func (p *PeerDirectory) Replace(wings []*PeerWing) (added, removed, changed []*PeerWing) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -44,8 +44,12 @@ func (p *PeerDirectory) Replace(wings []*PeerWing) (added, removed []*PeerWing) 
 		}
 	}
 	for id, w := range newMap {
-		if _, ok := p.wings[id]; !ok {
+		old, exists := p.wings[id]
+		if !exists {
 			added = append(added, w)
+		} else if old.WingInfo != nil && w.WingInfo != nil &&
+			(old.WingInfo.Locked != w.WingInfo.Locked || old.WingInfo.AllowedCount != w.WingInfo.AllowedCount) {
+			changed = append(changed, w)
 		}
 	}
 

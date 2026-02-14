@@ -91,7 +91,7 @@ export function deleteSession(sessionId) {
     var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
     var wingId = '';
     if (sess) {
-        var wing = S.wingsData.find(function(w) { return w.id === sess.wing_id; });
+        var wing = S.wingsData.find(function(w) { return w.wing_id === sess.wing_id; });
         if (wing) wingId = wing.wing_id;
     }
     var cached = getCachedSessions().filter(function (s) { return s.id !== sessionId; });

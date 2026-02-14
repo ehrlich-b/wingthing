@@ -11,7 +11,7 @@ import { openAuditReplay, openAuditKeylog } from './audit.js';
 import { showTerminal } from './nav.js';
 
 function wingNameById(wingId) {
-    var wing = S.wingsData.find(function(w) { return w.id === wingId; });
+    var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     return wing ? wingDisplayName(wing) : '';
 }
 
@@ -938,7 +938,7 @@ export function renderWingDetailPage(wingId) {
 
     var scopeHtml = w.org_id ? escapeHtml(w.org_id) : 'personal';
 
-    var activeSessions = S.sessionsData.filter(function(s) { return s.wing_id === w.id; });
+    var activeSessions = S.sessionsData.filter(function(s) { return s.wing_id === w.wing_id; });
     var activeHtml = '';
     if (activeSessions.length > 0) {
         activeHtml = '<div class="wd-section"><h3 class="section-label">active sessions</h3><div class="wd-sessions" id="wd-active-sessions">';
@@ -971,7 +971,7 @@ export function renderWingDetailPage(wingId) {
             '<div class="wd-hero-top">' +
                 '<span class="session-dot ' + (isOnline ? 'live' : 'offline') + '"></span>' +
                 '<span class="wd-name" id="wd-name" title="click to rename">' + escapeHtml(name) + '</span>' +
-                (w.locked ? '<span class="wd-pinned-badge" title="passkey required">&#x1f512; locked</span>' : '') +
+                (w.locked && !S.tunnelAuthTokens[wingId] ? '<span class="wd-pinned-badge" title="passkey required">&#x1f512; locked</span>' : '') +
                 (w.wing_label ? '<a class="wd-clear-label" id="wd-delete-label" title="clear name">x</a>' : '') +
                 (!isOnline ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
             '</div>' +
@@ -1173,7 +1173,7 @@ function updateWingDetailSessions(wingId) {
     var w = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!w) return;
     var container = document.getElementById('wd-active-sessions');
-    var activeSessions = S.sessionsData.filter(function(s) { return s.wing_id === w.id; });
+    var activeSessions = S.sessionsData.filter(function(s) { return s.wing_id === w.wing_id; });
     if (container) {
         container.innerHTML = renderActiveSessionRows(activeSessions);
         wireActiveSessionRows();
@@ -1219,7 +1219,7 @@ function setupWingPalette(wing) {
     }
 
     function renderResults(filter) {
-        var wingId = wing.id || '';
+        var wingId = wing.wing_id || '';
         var wingProjects = wingId
             ? S.allProjects.filter(function(p) { return p.wingId === wingId; })
             : S.allProjects;
@@ -1380,7 +1380,7 @@ function setupWingPalette(wing) {
         var validCwd = (cwd && cwd.charAt(0) === '/') ? cwd : '';
         setLastTermAgent(agent);
         showTerminal();
-        connectPTY(agent, validCwd, wing.id);
+        connectPTY(agent, validCwd, wing.wing_id);
     }
 
     renderResults('');
@@ -1619,7 +1619,7 @@ export function showEggDetail(sessionId) {
     var kind = s.kind || 'terminal';
     var wingName = '';
     if (s.wing_id) {
-        var wing = S.wingsData.find(function(w) { return w.id === s.wing_id; });
+        var wing = S.wingsData.find(function(w) { return w.wing_id === s.wing_id; });
         if (wing) wingName = wingDisplayName(wing);
     }
     var cwdDisplay = s.cwd ? shortenPath(s.cwd) : '~';
@@ -1677,7 +1677,7 @@ export function showEggDetail(sessionId) {
 
 export function showSessionInfo() {
     var s = S.sessionsData.find(function(s) { return s.id === S.ptySessionId; });
-    var w = S.ptyWingId ? S.wingsData.find(function(w) { return w.id === S.ptyWingId; }) : null;
+    var w = S.ptyWingId ? S.wingsData.find(function(w) { return w.wing_id === S.ptyWingId; }) : null;
     if (!s && !w) return;
 
     var wingName = w ? wingDisplayName(w) : 'unknown';
@@ -1729,9 +1729,10 @@ export function renderDashboard() {
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
             var isCardPasskey = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
-            var lockedBadge = w.locked ? '<span class="wing-pinned-badge">locked</span>' : '';
+            var hasAuth = !!S.tunnelAuthTokens[w.wing_id];
+            var lockedBadge = (w.locked && !hasAuth) ? '<span class="wing-pinned-badge">locked</span>' : '';
             var authBadge = isCardPasskey ? '<span class="wing-pinned-badge">authenticate</span>' : '';
-            var lockIcon = (w.locked || isCardPasskey) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
+            var lockIcon = ((w.locked && !hasAuth) || isCardPasskey) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
             return '<div class="wing-box" draggable="true" data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
@@ -1740,7 +1741,7 @@ export function renderDashboard() {
                 '<span class="wing-agents">' + (w.agents || []).map(function(a) { return agentIcon(a) || escapeHtml(a); }).join(' ') + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
-                    (isCardPasskey ? authBadge : (w.locked ? lockedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>'))) +
+                    (isCardPasskey ? authBadge : ((w.locked && !hasAuth) ? lockedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>'))) +
                 '</div>' +
             '</div>';
         }).join('');
@@ -1825,7 +1826,7 @@ export function renderDashboard() {
 
         var wingName = '';
         if (s.wing_id) {
-            var wing = S.wingsData.find(function(w) { return w.id === s.wing_id; });
+            var wing = S.wingsData.find(function(w) { return w.wing_id === s.wing_id; });
             if (wing) wingName = wingDisplayName(wing);
         }
 

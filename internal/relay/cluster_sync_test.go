@@ -121,7 +121,7 @@ func TestPeerDirectoryReplace(t *testing.T) {
 		{WingID: "conn-a", MachineID: "m1", WingInfo: &WingInfo{UserID: "u1", WingID: "wing-a"}},
 		{WingID: "conn-b", MachineID: "m2", WingInfo: &WingInfo{UserID: "u2", WingID: "wing-b"}},
 	}
-	added, removed := pd.Replace(initial)
+	added, removed, _ := pd.Replace(initial)
 	if len(added) != 2 {
 		t.Errorf("initial replace: added = %d, want 2", len(added))
 	}
@@ -134,7 +134,7 @@ func TestPeerDirectoryReplace(t *testing.T) {
 		{WingID: "conn-a", MachineID: "m1", WingInfo: &WingInfo{UserID: "u1", WingID: "wing-a"}},
 		{WingID: "conn-c", MachineID: "m3", WingInfo: &WingInfo{UserID: "u3", WingID: "wing-c"}},
 	}
-	added, removed = pd.Replace(updated)
+	added, removed, _ = pd.Replace(updated)
 	if len(added) != 1 || added[0].WingID != "conn-c" {
 		t.Errorf("update replace: added = %v, want [conn-c]", added)
 	}

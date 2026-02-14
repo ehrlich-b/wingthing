@@ -186,8 +186,8 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		for i, sw := range all {
 			peers[i] = syncToPeer(sw)
 		}
-		added, removed := s.Peers.Replace(peers)
-		s.notifyPeerDiff(added, removed)
+		added, removed, changed := s.Peers.Replace(peers)
+		s.notifyPeerDiff(added, removed, changed)
 	}
 
 	// Add login's own local wings to response
