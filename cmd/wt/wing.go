@@ -2058,7 +2058,7 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 	}
 
 	if kind != "pty" {
-		// Keylog: stream raw text in chunks
+		// Keylog: stream text wrapped in JSON chunks
 		text := string(data)
 		const chunkSize = 32 * 1024
 		for i := 0; i < len(text); i += chunkSize {
@@ -2066,9 +2066,11 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 			if end > len(text) {
 				end = len(text)
 			}
-			tunnelStreamChunk(gcm, requestID, []byte(text[i:end]), false, write)
+			chunk := map[string]string{"data": text[i:end]}
+			chunkJSON, _ := json.Marshal(chunk)
+			tunnelStreamChunk(gcm, requestID, chunkJSON, false, write)
 		}
-		tunnelStreamChunk(gcm, requestID, nil, true, write)
+		tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
 		return
 	}
 
@@ -2164,17 +2166,18 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 		}
 	}
 
-	// Stream in ~32KB chunks
+	// Stream NDJSON lines as JSON-wrapped chunks
 	text := ndjson.String()
-	const chunkSize = 32 * 1024
-	for i := 0; i < len(text); i += chunkSize {
-		end := i + chunkSize
-		if end > len(text) {
-			end = len(text)
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
-		tunnelStreamChunk(gcm, requestID, []byte(text[i:end]), false, write)
+		// Parse each NDJSON line and send as a chunk the browser can JSON.parse
+		tunnelStreamChunk(gcm, requestID, []byte(line), false, write)
 	}
-	tunnelStreamChunk(gcm, requestID, nil, true, write)
+	tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
 }
 
 // readVarint reads a varint from buf, returns (value, bytes consumed).

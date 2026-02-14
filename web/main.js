@@ -34,7 +34,7 @@ let currentWingId = null;
 let wingPastSessions = {};  // wingId → {sessions:[], offset:0, hasMore:true}
 
 // Tunnel state
-let tunnelWs = null;
+let tunnelWsMap = {};    // wingId → WebSocket
 let tunnelPending = {};  // requestID → { resolve, reject, onStream? }
 let tunnelKeys = {};     // wingPubKey → CryptoKey (AES-GCM)
 let tunnelAuthTokens = {}; // wing_id → auth_token (passkey)
@@ -440,6 +440,12 @@ function applyWingEvent(ev) {
                 w.online = false;
             }
         });
+        // Close stale tunnel WS for this wing
+        var staleWs = tunnelWsMap[ev.wing_id];
+        if (staleWs) {
+            delete tunnelWsMap[ev.wing_id];
+            try { staleWs.close(); } catch(e) {}
+        }
     }
 
     rebuildAgentLists();
@@ -464,9 +470,9 @@ function applyWingEvent(ev) {
     // Wing just came online — immediately fetch its sessions (skip pinned)
     var evWing = wingsData.find(function(w) { return w.wing_id === ev.wing_id; });
     if (ev.type === 'wing.online' && ev.wing_id && !(evWing && evWing.pinned)) {
-        fetchWingSessions(ev.wing_id).then(function(sessions) {
+        // Small delay to let fly-replay routing propagate after wing registration
+        setTimeout(function() { fetchWingSessions(ev.wing_id).then(function(sessions) {
             if (sessions.length > 0) {
-                // Add new wing's sessions to existing sessions from other wings
                 var otherSessions = sessionsData.filter(function(s) {
                     return s.wing_id !== sessions[0].wing_id;
                 });
@@ -474,7 +480,7 @@ function applyWingEvent(ev) {
                 renderSidebar();
                 if (activeView === 'home') renderDashboard();
             }
-        });
+        }).catch(function() {}); }, 2000);
     }
 }
 
@@ -3334,21 +3340,43 @@ async function tunnelDecrypt(key, encoded) {
     return new TextDecoder().decode(plaintext);
 }
 
-function ensureTunnelWs() {
-    if (tunnelWs && tunnelWs.readyState === WebSocket.OPEN) return Promise.resolve();
-    if (tunnelWs && tunnelWs.readyState === WebSocket.CONNECTING) {
+function ensureTunnelWs(wingId, _retry) {
+    _retry = _retry || 0;
+    var ws = tunnelWsMap[wingId];
+    if (ws && ws.readyState === WebSocket.OPEN) return Promise.resolve();
+    if (ws && ws.readyState === WebSocket.CONNECTING) {
         return new Promise(function(resolve) {
-            var orig = tunnelWs.onopen;
-            tunnelWs.onopen = function() { if (orig) orig(); resolve(); };
+            var orig = ws.onopen;
+            ws.onopen = function() { if (orig) orig(); resolve(); };
         });
     }
     return new Promise(function(resolve, reject) {
         var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        tunnelWs = new WebSocket(proto + '//' + location.host + '/ws/pty');
-        tunnelWs.onopen = resolve;
-        tunnelWs.onerror = function() { reject(new Error('tunnel ws failed')); };
-        tunnelWs.onclose = function() { tunnelWs = null; };
-        tunnelWs.onmessage = function(e) {
+        ws = new WebSocket(proto + '//' + location.host + '/ws/pty?wing_id=' + encodeURIComponent(wingId));
+        tunnelWsMap[wingId] = ws;
+        ws.onopen = resolve;
+        ws.onerror = function() {
+            if (tunnelWsMap[wingId] === ws) delete tunnelWsMap[wingId];
+            if (_retry < 2) {
+                setTimeout(function() {
+                    ensureTunnelWs(wingId, _retry + 1).then(resolve).catch(reject);
+                }, 1000 * (_retry + 1));
+            } else {
+                reject(new Error('tunnel ws failed'));
+            }
+        };
+        ws.onclose = function() {
+            if (tunnelWsMap[wingId] === ws) delete tunnelWsMap[wingId];
+            // Reject any pending requests on this WS
+            Object.keys(tunnelPending).forEach(function(rid) {
+                var p = tunnelPending[rid];
+                if (p) {
+                    delete tunnelPending[rid];
+                    p.reject(new Error('tunnel ws closed'));
+                }
+            });
+        };
+        ws.onmessage = function(e) {
             var msg = JSON.parse(e.data);
             if (msg.type === 'tunnel.res') {
                 var p = tunnelPending[msg.request_id];
@@ -3365,8 +3393,6 @@ function ensureTunnelWs() {
                         p.resolve(msg);
                     }
                 }
-            } else if (msg.type === 'error') {
-                console.error('tunnel relay error:', msg.message);
             }
         };
     });
@@ -3386,11 +3412,11 @@ async function sendTunnelRequest(wingId, innerMsg) {
     var requestId = crypto.randomUUID();
     var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
 
-    await ensureTunnelWs();
+    await ensureTunnelWs(wingId);
 
     return new Promise(function(resolve, reject) {
         tunnelPending[requestId] = { resolve: resolve, reject: reject };
-        tunnelWs.send(JSON.stringify({
+        tunnelWsMap[wingId].send(JSON.stringify({
             type: 'tunnel.req',
             wing_id: wingId,
             request_id: requestId,
@@ -3437,7 +3463,7 @@ async function sendTunnelStream(wingId, innerMsg, onChunk) {
     var requestId = crypto.randomUUID();
     var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
 
-    await ensureTunnelWs();
+    await ensureTunnelWs(wingId);
 
     return new Promise(function(resolve, reject) {
         tunnelPending[requestId] = {
@@ -3451,7 +3477,7 @@ async function sendTunnelStream(wingId, innerMsg, onChunk) {
                 } catch (e) { console.error('tunnel stream decrypt error:', e); }
             }
         };
-        tunnelWs.send(JSON.stringify({
+        tunnelWsMap[wingId].send(JSON.stringify({
             type: 'tunnel.req',
             wing_id: wingId,
             request_id: requestId,
@@ -3489,7 +3515,7 @@ async function handleTunnelPasskey(wingId, wingPubKey, challenge) {
         };
         var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
 
-        await ensureTunnelWs();
+        await ensureTunnelWs(wingId);
 
         return new Promise(function(resolve, reject) {
             tunnelPending[requestId] = {
@@ -3502,7 +3528,7 @@ async function handleTunnelPasskey(wingId, wingPubKey, challenge) {
                 },
                 reject: function() { resolve(null); }
             };
-            tunnelWs.send(JSON.stringify({
+            tunnelWsMap[wingId].send(JSON.stringify({
                 type: 'tunnel.req',
                 wing_id: wingId,
                 request_id: requestId,

@@ -212,9 +212,18 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if targetWingID != "" {
-			// Wing not local? Check PeerDirectory for cross-node routing
-			if localWing := s.Wings.FindByID(targetWingID); localWing == nil {
-				if pw := s.Peers.FindWing(targetWingID); pw != nil {
+			// Wing not local? Check by connection ID first, then persistent wing_id
+			localWing := s.Wings.FindByID(targetWingID)
+			if localWing == nil {
+				localWing = s.findWingByWingID(userID, targetWingID)
+			}
+			if localWing == nil {
+				// Check peers by connection ID, then persistent wing_id
+				pw := s.Peers.FindWing(targetWingID)
+				if pw == nil {
+					pw = s.Peers.FindByWingID(targetWingID)
+				}
+				if pw != nil {
 					// Anti-loop: only replay if target is a different machine
 					if pw.MachineID != s.Config.FlyMachineID {
 						w.Header().Set("fly-replay", "instance="+pw.MachineID)
