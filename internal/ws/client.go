@@ -49,6 +49,7 @@ type Client struct {
 	RoostURL  string // e.g. "wss://ws.wingthing.ai/ws/wing"
 	Token     string // device auth token
 	MachineID string
+	Hostname  string // display name (os.Hostname)
 	Platform  string // runtime.GOOS
 	Version   string // build version
 
@@ -138,6 +139,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 	reg := WingRegister{
 		Type:        TypeWingRegister,
 		MachineID:   c.MachineID,
+		Hostname:    c.Hostname,
 		Platform:    c.Platform,
 		Version:     c.Version,
 		Agents:      c.Agents,

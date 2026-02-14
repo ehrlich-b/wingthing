@@ -422,6 +422,7 @@ function applyWingEvent(ev) {
             if (w.machine_id === ev.machine_id) {
                 w.online = true;
                 w.id = ev.wing_id;
+                w.hostname = ev.hostname || w.hostname;
                 w.agents = ev.agents || w.agents;
                 w.labels = ev.labels || w.labels;
                 w.platform = ev.platform || w.platform;
@@ -436,6 +437,7 @@ function applyWingEvent(ev) {
             wingsData.push({
                 id: ev.wing_id,
                 machine_id: ev.machine_id,
+                hostname: ev.hostname || '',
                 platform: ev.platform || '',
                 version: ev.version || '',
                 online: true,
@@ -456,7 +458,7 @@ function applyWingEvent(ev) {
 
     rebuildAgentLists();
     setCachedWings(wingsData.map(function(w) {
-        return { machine_id: w.machine_id, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects, wing_label: w.wing_label };
+        return { machine_id: w.machine_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects, wing_label: w.wing_label };
     }));
     updateHeaderStatus();
     if (activeView === 'home') {
@@ -580,7 +582,7 @@ async function loadHome() {
 
     // Cache for next load (only essential fields)
     setCachedWings(wingsData.map(function (w) {
-        return { machine_id: w.machine_id, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects, wing_label: w.wing_label };
+        return { machine_id: w.machine_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects, wing_label: w.wing_label };
     }));
 
     rebuildAgentLists();
@@ -621,9 +623,13 @@ function projectName(cwd) {
     return parts[parts.length - 1] || '~';
 }
 
+function wingDisplayName(wing) {
+    if (!wing) return '';
+    return wing.wing_label || wing.hostname || wing.machine_id.substring(0, 8);
+}
 function wingMachineName(wingId) {
     var wing = wingsData.find(function(w) { return w.id === wingId; });
-    return wing ? (wing.machine_id || wing.id.substring(0, 8)) : '';
+    return wing ? wingDisplayName(wing) : '';
 }
 
 function sessionTitle(agent, wingId) {
@@ -1211,7 +1217,7 @@ function renderWingDetailPage(machineId) {
         return;
     }
 
-    var name = w.wing_label || w.machine_id || w.id.substring(0, 8);
+    var name = wingDisplayName(w);
     var isOnline = w.online !== false;
     var ver = w.version || '';
     var updateAvailable = latestVersion && ver && semverCompare(latestVersion, ver) > 0;
@@ -1292,7 +1298,7 @@ function renderWingDetailPage(machineId) {
     // Inline rename
     var nameEl = document.getElementById('wd-name');
     nameEl.addEventListener('click', function() {
-        var current = w.wing_label || w.machine_id || '';
+        var current = w.wing_label || w.hostname || w.machine_id.substring(0, 8);
         var input = document.createElement('input');
         input.type = 'text';
         input.className = 'wd-name-input';
@@ -1352,7 +1358,7 @@ function renderWingDetailPage(machineId) {
         dismissBtn.addEventListener('click', function() {
             wingsData = wingsData.filter(function(ww) { return ww.machine_id !== machineId; });
             setCachedWings(wingsData.map(function(ww) {
-                return { machine_id: ww.machine_id, platform: ww.platform, version: ww.version, agents: ww.agents, labels: ww.labels, projects: ww.projects, online: ww.online, wing_label: ww.wing_label };
+                return { machine_id: ww.machine_id, hostname: ww.hostname, platform: ww.platform, version: ww.version, agents: ww.agents, labels: ww.labels, projects: ww.projects, online: ww.online, wing_label: ww.wing_label };
             }));
             showHome();
         });
@@ -1897,7 +1903,7 @@ function showEggDetail(sessionId) {
     var wingName = '';
     if (s.wing_id) {
         var wing = wingsData.find(function(w) { return w.id === s.wing_id; });
-        if (wing) wingName = wing.machine_id || '';
+        if (wing) wingName = wingDisplayName(wing);
     }
     var cwdDisplay = s.cwd ? shortenPath(s.cwd) : '~';
 
@@ -1962,7 +1968,7 @@ function showSessionInfo() {
     var w = ptyWingId ? wingsData.find(function(w) { return w.id === ptyWingId; }) : null;
     if (!s && !w) return;
 
-    var machineName = w ? (w.machine_id || w.id.substring(0, 8)) : 'unknown';
+    var machineName = w ? wingDisplayName(w) : 'unknown';
     var agent = s ? (s.agent || '?') : '?';
     var cwdDisplay = s && s.cwd ? shortenPath(s.cwd) : '~';
 
@@ -2016,7 +2022,7 @@ function renderDashboard() {
     if (wingsData.length > 0) {
         var wingHtml = '<h3 class="section-label">wings</h3><div class="wing-grid">';
         wingHtml += wingsData.map(function(w) {
-            var name = w.wing_label || w.machine_id || w.id.substring(0, 8);
+            var name = wingDisplayName(w);
             var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
@@ -2085,7 +2091,7 @@ function renderDashboard() {
         var wingName = '';
         if (s.wing_id) {
             var wing = wingsData.find(function(w) { return w.id === s.wing_id; });
-            if (wing) wingName = wing.machine_id || '';
+            if (wing) wingName = wingDisplayName(wing);
         }
 
         return '<div class="egg-box" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
@@ -2268,7 +2274,7 @@ function cyclePaletteWing() {
 
 function renderPaletteStatus() {
     var wing = currentPaletteWing();
-    var wingName = wing ? (wing.machine_id || wing.id.substring(0, 8)) : '?';
+    var wingName = wing ? wingDisplayName(wing) : '?';
     var agent = currentPaletteAgent();
     paletteStatus.innerHTML = '<span class="accent">' + escapeHtml(wingName) + '</span> &middot; ' +
         'terminal &middot; <span class="accent">' + agentWithIcon(agent) + '</span>';

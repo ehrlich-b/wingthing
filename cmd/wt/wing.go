@@ -523,6 +523,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		RoostURL:    wsURL,
 		Token:       tok.Token,
 		MachineID:   cfg.MachineID,
+		Hostname:    cfg.Hostname,
 		Platform:    runtime.GOOS,
 		Version:     version,
 		Agents:      agents,

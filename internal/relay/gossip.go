@@ -15,6 +15,7 @@ import (
 type WingInfo struct {
 	UserID    string           `json:"user_id"`
 	MachineID string           `json:"machine_id,omitempty"`
+	Hostname  string           `json:"hostname,omitempty"`
 	Platform  string           `json:"platform,omitempty"`
 	Version   string           `json:"version,omitempty"`
 	Agents    []string         `json:"agents,omitempty"`
@@ -109,6 +110,7 @@ func connectedToSync(nodeID string, w *ConnectedWing) SyncWing {
 		Info: WingInfo{
 			UserID:    w.UserID,
 			MachineID: w.MachineID,
+			Hostname:  w.Hostname,
 			Platform:  w.Platform,
 			Version:   w.Version,
 			Agents:    w.Agents,
@@ -139,6 +141,7 @@ func (s *Server) notifyPeerDiff(added, removed []*PeerWing) {
 				Type:      "wing.online",
 				WingID:    w.WingID,
 				MachineID: w.WingInfo.MachineID,
+				Hostname:  w.WingInfo.Hostname,
 				Platform:  w.WingInfo.Platform,
 				Version:   w.WingInfo.Version,
 				Agents:    w.WingInfo.Agents,

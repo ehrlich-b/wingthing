@@ -4,16 +4,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
+
+var uuidRegex = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 type Config struct {
 	Dir               string            `yaml:"-"`
 	DefaultAgent      string            `yaml:"default_agent"`
 	DefaultEmbedder   string            `yaml:"default_embedder"`
 	MachineID         string            `yaml:"machine_id"`
+	Hostname          string            `yaml:"-"` // os.Hostname(), not persisted
 	PollInterval      string            `yaml:"poll_interval"`
 	DefaultMaxRetries int               `yaml:"max_retries"`
 	RoostURL          string            `yaml:"roost_url"`
@@ -41,7 +46,8 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
 	if err != nil {
 		if os.IsNotExist(err) {
-			cfg.MachineID = defaultMachineID()
+			cfg.MachineID = defaultMachineID(dir)
+			cfg.Hostname = defaultHostname()
 			cfg.setStandardVars()
 			return cfg, nil
 		}
@@ -55,14 +61,31 @@ func Load() (*Config, error) {
 	if cfg.Vars == nil {
 		cfg.Vars = make(map[string]string)
 	}
-	if cfg.MachineID == "" {
-		cfg.MachineID = defaultMachineID()
+	// If config.yaml has a valid UUID machine_id, use it (manual override).
+	// Otherwise generate/read from file.
+	if !uuidRegex.MatchString(cfg.MachineID) {
+		cfg.MachineID = defaultMachineID(dir)
 	}
+	cfg.Hostname = defaultHostname()
 	cfg.setStandardVars()
 	return cfg, nil
 }
 
-func defaultMachineID() string {
+func defaultMachineID(dir string) string {
+	idPath := filepath.Join(dir, "machine-id")
+	if data, err := os.ReadFile(idPath); err == nil {
+		id := strings.TrimSpace(string(data))
+		if uuidRegex.MatchString(id) {
+			return id
+		}
+	}
+	id := uuid.New().String()
+	os.MkdirAll(dir, 0755)
+	os.WriteFile(idPath, []byte(id+"\n"), 0644)
+	return id
+}
+
+func defaultHostname() string {
 	if h, err := os.Hostname(); err == nil && h != "" {
 		return h
 	}

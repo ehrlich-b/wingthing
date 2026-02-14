@@ -75,6 +75,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		entry := map[string]any{
 			"id":             wing.ID,
 			"machine_id":     wing.MachineID,
+			"hostname":       wing.Hostname,
 			"platform":       wing.Platform,
 			"version":        wing.Version,
 			"agents":         wing.Agents,
@@ -115,6 +116,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			out = append(out, map[string]any{
 				"id":             pw.WingID,
 				"machine_id":     wingMachineID,
+				"hostname":       pw.WingInfo.Hostname,
 				"platform":       pw.WingInfo.Platform,
 				"version":        pw.WingInfo.Version,
 				"agents":         pw.WingInfo.Agents,
