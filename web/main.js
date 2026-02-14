@@ -371,12 +371,17 @@ function agentWithIcon(name) {
 
 // === Reconnect Banner ===
 
+var reconnectBannerTimer = null;
 function showReconnectBanner() {
-    var banner = document.getElementById('reconnect-banner');
-    if (banner) banner.style.display = '';
+    if (reconnectBannerTimer) return; // already pending
+    reconnectBannerTimer = setTimeout(function() {
+        var banner = document.getElementById('reconnect-banner');
+        if (banner) banner.style.display = '';
+    }, 2000);
 }
 
 function hideReconnectBanner() {
+    if (reconnectBannerTimer) { clearTimeout(reconnectBannerTimer); reconnectBannerTimer = null; }
     var banner = document.getElementById('reconnect-banner');
     if (banner) banner.style.display = 'none';
 }
@@ -571,8 +576,18 @@ async function loadHome() {
         wings = [];
     }
 
-    // API response is the truth — no stale preservation
+    // Merge: API wings are online, cached wings not in API become offline
     wings.forEach(function (w) { w.online = true; });
+    var apiMachines = {};
+    wings.forEach(function(w) { apiMachines[w.machine_id] = true; });
+    // Preserve known wings that aren't in this API response (rollout, reconnecting)
+    var cached = getCachedWings();
+    cached.forEach(function(cw) {
+        if (!apiMachines[cw.machine_id]) {
+            cw.online = false;
+            wings.push(cw);
+        }
+    });
     wingsData = sortWingsByOrder(wings);
 
     // Extract latest_version from any wing response
