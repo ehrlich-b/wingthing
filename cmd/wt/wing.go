@@ -237,6 +237,15 @@ func rotateLog(path string) {
 	os.Rename(path, path+".1")
 }
 
+func wingArgsPath() string {
+	cfg, _ := config.Load()
+	if cfg != nil {
+		return filepath.Join(cfg.Dir, "wing.args")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".wingthing", "wing.args")
+}
+
 func wingLogPath() string {
 	cfg, _ := config.Load()
 	if cfg != nil {
@@ -365,6 +374,7 @@ func wingStartCmd() *cobra.Command {
 			logFile.Close()
 
 			os.WriteFile(wingPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644)
+			os.WriteFile(wingArgsPath(), []byte(strings.Join(childArgs, "\n")), 0644)
 			fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 			fmt.Printf("  log: %s\n", wingLogPath())
 			fmt.Println()
@@ -662,6 +672,7 @@ func wingStopCmd() *cobra.Command {
 				return fmt.Errorf("kill pid %d: %w", pid, err)
 			}
 			os.Remove(wingPidPath())
+			os.Remove(wingArgsPath())
 			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
 			return nil
 		},

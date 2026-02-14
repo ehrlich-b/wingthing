@@ -125,8 +125,16 @@ func updateCmd() *cobra.Command {
 				proc.Signal(syscall.SIGTERM)
 				os.Remove(wingPidPath())
 
-				// Re-launch daemon with new binary
-				child := exec.Command(exe, "wing", "start")
+				// Read saved args from last start, fall back to bare "wing start"
+				startArgs := []string{"wing", "start"}
+				if saved, err := os.ReadFile(wingArgsPath()); err == nil {
+					lines := strings.Split(strings.TrimSpace(string(saved)), "\n")
+					if len(lines) > 0 {
+						startArgs = lines
+					}
+				}
+
+				child := exec.Command(exe, startArgs...)
 				child.Stdout = os.Stdout
 				child.Stderr = os.Stderr
 				if err := child.Run(); err != nil {

@@ -131,6 +131,7 @@ func stopCmd() *cobra.Command {
 				return fmt.Errorf("kill pid %d: %w", pid, err)
 			}
 			os.Remove(wingPidPath())
+			os.Remove(wingArgsPath())
 			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
 			return nil
 		},
