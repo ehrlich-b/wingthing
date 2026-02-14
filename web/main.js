@@ -1866,14 +1866,22 @@ function openAuditReplay(wingId, sessionId) {
     var timeEl = document.getElementById('audit-time');
     var speedInput = document.getElementById('audit-speed');
     var speedLabel = document.getElementById('audit-speed-label');
+    var downloadBtn = document.getElementById('audit-download');
     var closeBtn = document.getElementById('audit-close');
 
     overlay.style.display = '';
     termEl.innerHTML = '';
 
+    // Show speed controls (may have been hidden by keylog)
+    speedInput.style.display = '';
+    speedLabel.style.display = '';
+    timeEl.style.display = '';
+    downloadBtn.style.display = 'none';
+
     var auditCols = 120, auditRows = 40;
     var auditTerm = null;
     var auditFit = null;
+    var ndjsonHeader = '';
 
     var frames = [];
     var playing = false;
@@ -1892,7 +1900,6 @@ function openAuditReplay(wingId, sessionId) {
     // Fetch audit data via SSE
     var es = new EventSource('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + encodeURIComponent(sessionId) + '/audit?kind=pty');
     es.addEventListener('chunk', function(e) {
-        // Each SSE event is one NDJSON line
         if (!e.data) return;
         try {
             var parsed = JSON.parse(e.data);
@@ -1901,6 +1908,7 @@ function openAuditReplay(wingId, sessionId) {
             } else if (parsed.width) {
                 auditCols = parsed.width;
                 auditRows = parsed.height;
+                ndjsonHeader = e.data;
             }
         } catch (ex) {}
     });
@@ -1909,6 +1917,7 @@ function openAuditReplay(wingId, sessionId) {
         if (frames.length > 0) {
             playBtn.textContent = 'play';
             playBtn.disabled = false;
+            downloadBtn.style.display = '';
         } else {
             playBtn.textContent = 'no data';
             playBtn.disabled = true;
@@ -1940,10 +1949,20 @@ function openAuditReplay(wingId, sessionId) {
         }
         if (!auditTerm) initTerm();
         var f = frames[frameIndex];
-        // f = [timestamp_secs, "o", data_base64]
-        var data = f[2];
-        try { data = decodeBase64UTF8(data); } catch (e) { /* already plain text */ }
-        auditTerm.write(data);
+        if (f[1] === 'r') {
+            // Resize event: f[2] = "COLSxROWS"
+            var parts = f[2].split('x');
+            var newCols = parseInt(parts[0]);
+            var newRows = parseInt(parts[1]);
+            if (newCols > 0 && newRows > 0) {
+                auditTerm.resize(newCols, newRows);
+            }
+        } else {
+            // Output event: f[2] = base64 data
+            var data = f[2];
+            try { data = decodeBase64UTF8(data); } catch (e) { /* already plain text */ }
+            auditTerm.write(data);
+        }
         frameIndex++;
         var elapsed = f[0];
         timeEl.textContent = formatAuditTime(elapsed);
@@ -1966,7 +1985,7 @@ function openAuditReplay(wingId, sessionId) {
         } else {
             if (frameIndex >= frames.length) {
                 frameIndex = 0;
-                auditTerm.reset();
+                if (auditTerm) auditTerm.reset();
             }
             playing = true;
             playBtn.textContent = 'pause';
@@ -1979,11 +1998,25 @@ function openAuditReplay(wingId, sessionId) {
         speedLabel.textContent = speed + 'x';
     };
 
+    downloadBtn.onclick = function() {
+        var text = (ndjsonHeader || '{"version":2,"width":' + auditCols + ',"height":' + auditRows + '}') + '\n';
+        for (var i = 0; i < frames.length; i++) {
+            text += JSON.stringify(frames[i]) + '\n';
+        }
+        var blob = new Blob([text], { type: 'text/plain' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'audit-' + sessionId + '.cast';
+        a.click();
+        URL.revokeObjectURL(a.href);
+    };
+
     closeBtn.onclick = function() {
         playing = false;
         clearTimeout(playTimer);
         es.close();
         if (auditTerm) auditTerm.dispose();
+        downloadBtn.style.display = 'none';
         overlay.style.display = 'none';
     };
 
@@ -1996,13 +2029,19 @@ function openAuditKeylog(wingId, sessionId) {
     var termEl = document.getElementById('audit-terminal');
     var playBtn = document.getElementById('audit-play');
     var timeEl = document.getElementById('audit-time');
+    var speedInput = document.getElementById('audit-speed');
+    var speedLabel = document.getElementById('audit-speed-label');
+    var downloadBtn = document.getElementById('audit-download');
     var closeBtn = document.getElementById('audit-close');
 
     overlay.style.display = '';
     termEl.innerHTML = '<pre class="audit-keylog" style="color:#ccc;font-size:13px;padding:12px;overflow:auto;height:100%;margin:0;white-space:pre-wrap;"></pre>';
     var pre = termEl.querySelector('pre');
     playBtn.style.display = 'none';
-    timeEl.textContent = 'keylog';
+    speedInput.style.display = 'none';
+    speedLabel.style.display = 'none';
+    timeEl.style.display = 'none';
+    downloadBtn.style.display = 'none';
 
     var es = new EventSource('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + encodeURIComponent(sessionId) + '/audit?kind=keylog');
     es.addEventListener('chunk', function(e) {
@@ -2010,15 +2049,32 @@ function openAuditKeylog(wingId, sessionId) {
     });
     es.addEventListener('done', function() {
         es.close();
-        if (!pre.textContent) pre.textContent = 'no keylog data';
+        if (!pre.textContent) {
+            pre.textContent = 'no keylog data';
+        } else {
+            downloadBtn.style.display = '';
+        }
     });
     es.addEventListener('error', function() { es.close(); });
     es.onerror = function() { es.close(); };
 
+    downloadBtn.onclick = function() {
+        var blob = new Blob([pre.textContent], { type: 'text/plain' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'keylog-' + sessionId + '.log';
+        a.click();
+        URL.revokeObjectURL(a.href);
+    };
+
     closeBtn.onclick = function() {
         es.close();
+        downloadBtn.style.display = 'none';
         overlay.style.display = 'none';
         playBtn.style.display = '';
+        speedInput.style.display = '';
+        speedLabel.style.display = '';
+        timeEl.style.display = '';
     };
     document.getElementById('audit-backdrop').onclick = closeBtn.onclick;
 }

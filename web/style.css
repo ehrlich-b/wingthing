@@ -1245,25 +1245,24 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 #audit-player {
     position: relative;
-    width: 90%;
-    max-width: 900px;
-    height: 70vh;
+    width: 100%;
+    height: 100%;
     display: flex;
     flex-direction: column;
     background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
     overflow: hidden;
 }
 
 #audit-terminal {
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 #audit-terminal .xterm {
-    height: 100%;
     padding: 4px;
 }
 

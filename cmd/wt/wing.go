@@ -1917,19 +1917,34 @@ func handleAuditRequest(cfg *config.Config, req ws.AuditRequest, write ws.PTYWri
 		}
 
 		// Convert varint format to asciinema v2 NDJSON
-		// Format: varint delta_ms, varint data_len, raw bytes
+		// V2 format: "WTA2" header, then varint delta_ms, varint frame_type, varint data_len, raw bytes
+		// V1 format: varint delta_ms, varint data_len, raw bytes (no header)
+		isV2 := len(raw) >= 4 && string(raw[:4]) == "WTA2"
 		var cumulativeMs int64
 		var ndjson strings.Builder
 		// Header
 		fmt.Fprintf(&ndjson, `{"version":2,"width":%d,"height":%d}`, cols, rows)
 		ndjson.WriteByte('\n')
 		pos := 0
+		if isV2 {
+			pos = 4 // skip WTA2 header
+		}
 		for pos < len(raw) {
 			deltaMs, n := readVarint(raw[pos:])
 			if n <= 0 {
 				break
 			}
 			pos += n
+
+			var frameType int64
+			if isV2 {
+				frameType, n = readVarint(raw[pos:])
+				if n <= 0 {
+					break
+				}
+				pos += n
+			}
+
 			dataLen, n := readVarint(raw[pos:])
 			if n <= 0 {
 				break
@@ -1942,9 +1957,21 @@ func handleAuditRequest(cfg *config.Config, req ws.AuditRequest, write ws.PTYWri
 			pos += int(dataLen)
 			cumulativeMs += deltaMs
 
-			// Escape for JSON
-			escaped := base64.StdEncoding.EncodeToString(chunk)
-			fmt.Fprintf(&ndjson, "[%.3f,\"o\",\"%s\"]\n", float64(cumulativeMs)/1000.0, escaped)
+			if frameType == 1 {
+				// Resize event: data = cols(varint) + rows(varint)
+				rCols, cn := readVarint(chunk)
+				if cn <= 0 {
+					continue
+				}
+				rRows, rn := readVarint(chunk[cn:])
+				if rn <= 0 {
+					continue
+				}
+				fmt.Fprintf(&ndjson, "[%.3f,\"r\",\"%dx%d\"]\n", float64(cumulativeMs)/1000.0, rCols, rRows)
+			} else {
+				escaped := base64.StdEncoding.EncodeToString(chunk)
+				fmt.Fprintf(&ndjson, "[%.3f,\"o\",\"%s\"]\n", float64(cumulativeMs)/1000.0, escaped)
+			}
 		}
 
 		// Stream in ~32KB chunks

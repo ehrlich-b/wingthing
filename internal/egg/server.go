@@ -69,6 +69,10 @@ type Session struct {
 	debug          bool
 	audit          bool
 	auditor        *inputAuditor // nil when audit disabled
+	auditWriter    *gzip.Writer  // nil when audit disabled or after PTY exit
+	auditStart     time.Time     // start time for audit timestamps
+	auditLastMS    uint64        // last frame timestamp for delta encoding
+	auditMu        sync.Mutex   // protects auditWriter/auditLastMS
 }
 
 // RunConfig holds everything needed to start a single egg session.
@@ -654,19 +658,26 @@ func (s *Server) readPTY(sess *Session) {
 		}
 	}
 
-	// PTY stream audit: gzipped varint delta format for replay
-	var ptyWriter *gzip.Writer
-	var ptyFile *os.File
-	var lastMS uint64
+	// PTY stream audit: gzipped V2 varint delta format for replay
 	if sess.audit {
 		path := filepath.Join(s.dir, "audit.pty.gz")
 		f, err := os.Create(path)
 		if err != nil {
 			log.Printf("egg: audit pty recording failed: %v", err)
 		} else {
-			ptyFile = f
-			ptyWriter = gzip.NewWriter(f)
-			defer func() { ptyWriter.Close(); ptyFile.Close() }()
+			gw := gzip.NewWriter(f)
+			gw.Write([]byte("WTA2")) // V2 header
+			sess.auditMu.Lock()
+			sess.auditWriter = gw
+			sess.auditStart = sess.StartedAt
+			sess.auditMu.Unlock()
+			defer func() {
+				sess.auditMu.Lock()
+				sess.auditWriter = nil
+				sess.auditMu.Unlock()
+				gw.Close()
+				f.Close()
+			}()
 		}
 	}
 
@@ -685,14 +696,7 @@ func (s *Server) readPTY(sess *Session) {
 			if debugFile != nil {
 				debugFile.Write(data)
 			}
-			if ptyWriter != nil {
-				ms := uint64(time.Since(sess.StartedAt).Milliseconds())
-				delta := ms - lastMS
-				lastMS = ms
-				writeVarint(ptyWriter, delta)
-				writeVarint(ptyWriter, uint64(n))
-				ptyWriter.Write(data)
-			}
+			sess.writeAuditFrame(0, data)
 		}
 		if err != nil {
 			// Close auditor on PTY exit
@@ -702,6 +706,30 @@ func (s *Server) readPTY(sess *Session) {
 			return
 		}
 	}
+}
+
+// writeAuditFrame writes a V2 audit frame (delta_ms, frame_type, data_len, data).
+func (sess *Session) writeAuditFrame(frameType uint64, data []byte) {
+	sess.auditMu.Lock()
+	defer sess.auditMu.Unlock()
+	if sess.auditWriter == nil {
+		return
+	}
+	ms := uint64(time.Since(sess.auditStart).Milliseconds())
+	delta := ms - sess.auditLastMS
+	sess.auditLastMS = ms
+	writeVarint(sess.auditWriter, delta)
+	writeVarint(sess.auditWriter, frameType)
+	writeVarint(sess.auditWriter, uint64(len(data)))
+	sess.auditWriter.Write(data)
+}
+
+// writeAuditResize writes a resize event to the audit stream.
+func (sess *Session) writeAuditResize(cols, rows uint32) {
+	var buf [20]byte
+	n := binary.PutUvarint(buf[:], uint64(cols))
+	n += binary.PutUvarint(buf[n:], uint64(rows))
+	sess.writeAuditFrame(1, buf[:n])
 }
 
 // writeVarint writes a protobuf-style unsigned varint.
@@ -856,6 +884,8 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 				Cols: uint16(p.Resize.Cols),
 				Rows: uint16(p.Resize.Rows),
 			})
+			sess.writeAuditResize(p.Resize.Cols, p.Resize.Rows)
+			s.updateMetaDimensions(p.Resize.Cols, p.Resize.Rows)
 		case *pb.SessionMsg_Detach:
 			if p.Detach {
 				return nil
@@ -942,6 +972,24 @@ func (s *Server) checkToken(ctx context.Context) error {
 		return status.Error(codes.Unauthenticated, "invalid token")
 	}
 	return nil
+}
+
+// updateMetaDimensions rewrites egg.meta with updated cols/rows values.
+func (s *Server) updateMetaDimensions(cols, rows uint32) {
+	metaPath := filepath.Join(s.dir, "egg.meta")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "cols=") {
+			lines[i] = fmt.Sprintf("cols=%d", cols)
+		} else if strings.HasPrefix(line, "rows=") {
+			lines[i] = fmt.Sprintf("rows=%d", rows)
+		}
+	}
+	os.WriteFile(metaPath, []byte(strings.Join(lines, "\n")), 0644)
 }
 
 // installRoot returns the top-level directory under home for a binary path.
