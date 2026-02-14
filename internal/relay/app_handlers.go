@@ -94,8 +94,14 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	// Include peer wings from cluster sync (dedup by wing_id)
 	if s.Peers != nil {
 		for _, pw := range s.Peers.AllWings() {
-			if pw.WingInfo == nil || pw.WingInfo.UserID != user.ID {
+			if pw.WingInfo == nil {
 				continue
+			}
+			// Check access: owner OR org member
+			if pw.WingInfo.UserID != user.ID {
+				if pw.WingInfo.OrgID == "" || s.Store == nil || !s.Store.IsOrgMember(pw.WingInfo.OrgID, user.ID) {
+					continue
+				}
 			}
 			peerWingID := pw.WingInfo.WingID
 			if peerWingID == "" {
@@ -113,7 +119,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, map[string]any{
 				"id":             pw.WingID,
-				"wing_id":     peerWingID,
+				"wing_id":       peerWingID,
 				"hostname":       pw.WingInfo.Hostname,
 				"platform":       pw.WingInfo.Platform,
 				"version":        pw.WingInfo.Version,
@@ -122,7 +128,8 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 				"public_key":     pw.WingInfo.PublicKey,
 				"projects":       projects,
 				"latest_version": latestVer,
-				"remote_node":    pw.MachineID, // Fly machine hosting this wing
+				"remote_node":    pw.MachineID,
+				"org_id":         pw.WingInfo.OrgID,
 			})
 		}
 	}
