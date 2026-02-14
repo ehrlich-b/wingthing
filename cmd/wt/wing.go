@@ -1770,6 +1770,12 @@ type tunnelInner struct {
 	Offset    int    `json:"offset,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	AuthToken string `json:"auth_token,omitempty"`
+
+	// Passkey assertion fields (for type "passkey.auth")
+	CredentialID      string `json:"credential_id,omitempty"`
+	AuthenticatorData string `json:"authenticator_data,omitempty"`
+	ClientDataJSON    string `json:"client_data_json,omitempty"`
+	Signature         string `json:"signature,omitempty"`
 }
 
 // pastSessionInfo is the local version of PastSessionInfo for tunnel responses.
@@ -1834,13 +1840,21 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	}
 
 	// Passkey auth check for pinned wings
-	if len(allowedKeys) > 0 && wingCfg.Pinned {
+	if len(allowedKeys) > 0 && wingCfg.Pinned && inner.Type != "passkey.auth" {
 		if inner.AuthToken == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "passkey required"}, write)
+			challenge, _ := auth.GenerateChallenge()
+			tunnelRespond(gcm, req.RequestID, map[string]any{
+				"error":     "passkey_required",
+				"challenge": base64.RawURLEncoding.EncodeToString(challenge),
+			}, write)
 			return
 		}
 		if _, ok := passkeyCache.Check(inner.AuthToken); !ok {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid auth token"}, write)
+			challenge, _ := auth.GenerateChallenge()
+			tunnelRespond(gcm, req.RequestID, map[string]any{
+				"error":     "passkey_required",
+				"challenge": base64.RawURLEncoding.EncodeToString(challenge),
+			}, write)
 			return
 		}
 	}
@@ -1900,6 +1914,44 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			return
 		}
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+
+	case "passkey.auth":
+		if !wingCfg.Pinned || len(allowedKeys) == 0 {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "wing is not pinned"}, write)
+			return
+		}
+		credID, _ := base64.RawURLEncoding.DecodeString(inner.CredentialID)
+		authData, _ := base64.StdEncoding.DecodeString(inner.AuthenticatorData)
+		cdJSON, _ := base64.StdEncoding.DecodeString(inner.ClientDataJSON)
+		sig, _ := base64.StdEncoding.DecodeString(inner.Signature)
+
+		// Extract challenge from clientDataJSON to find matching one
+		var cd struct{ Challenge string `json:"challenge"` }
+		json.Unmarshal(cdJSON, &cd)
+		challenge, _ := base64.RawURLEncoding.DecodeString(cd.Challenge)
+
+		// Try each allowed key
+		var verified bool
+		var matchedKey []byte
+		for _, ak := range allowedKeys {
+			keyBytes, err := base64.StdEncoding.DecodeString(ak.Key)
+			if err != nil {
+				continue
+			}
+			if err := auth.VerifyPasskeyAssertion(keyBytes, challenge, authData, cdJSON, sig); err == nil {
+				verified = true
+				matchedKey = keyBytes
+				break
+			}
+		}
+		_ = credID // credential_id used for client-side key lookup, not needed server-side
+		if !verified {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "passkey verification failed"}, write)
+			return
+		}
+		token, _ := auth.GenerateAuthToken()
+		passkeyCache.Put(token, matchedKey)
+		tunnelRespond(gcm, req.RequestID, map[string]string{"auth_token": token}, write)
 
 	case "pins.list":
 		type pinInfo struct {

@@ -3,8 +3,6 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import '@xterm/xterm/css/xterm.css';
 import { x25519 } from '@noble/curves/ed25519.js';
-import { createAiChat } from '@nlux/core';
-import '@nlux/themes/nova.css';
 
 // === State ===
 let ptyWs = null;
@@ -35,12 +33,11 @@ let ptyBandwidthExceeded = false;
 let currentWingId = null;
 let wingPastSessions = {};  // wingId → {sessions:[], offset:0, hasMore:true}
 
-// Chat state
-let chatWs = null;
-let chatSessionId = null;
-let chatObserver = null;
-let chatInstance = null;
-let pendingHistory = null;
+// Tunnel state
+let tunnelWs = null;
+let tunnelPending = {};  // requestID → { resolve, reject, onStream? }
+let tunnelKeys = {};     // wingPubKey → CryptoKey (AES-GCM)
+let tunnelAuthTokens = {}; // wing_id → auth_token (passkey)
 
 // DOM refs
 const detailOverlay = document.getElementById('detail-overlay');
@@ -60,9 +57,6 @@ const terminalSection = document.getElementById('terminal-section');
 const terminalContainer = document.getElementById('terminal-container');
 const ptyStatus = document.getElementById('pty-status');
 const chatSection = document.getElementById('chat-section');
-const chatContainer = document.getElementById('chat-container');
-const chatStatus = document.getElementById('chat-status');
-const chatDeleteBtn = document.getElementById('chat-delete-btn');
 const wingDetailSection = document.getElementById('wing-detail-section');
 const wingDetailContent = document.getElementById('wing-detail-content');
 const accountSection = document.getElementById('account-section');
@@ -81,7 +75,6 @@ const paletteHints = document.getElementById('palette-hints');
 var CACHE_KEY = 'wt_sessions';
 var WINGS_CACHE_KEY = 'wt_wings';
 var LAST_TERM_KEY = 'wt_last_term_agent';
-var LAST_CHAT_KEY = 'wt_last_chat_agent';
 var TERM_BUF_PREFIX = 'wt_termbuf_';
 var WING_ORDER_KEY = 'wt_wing_order';
 var EGG_ORDER_KEY = 'wt_egg_order';
@@ -118,20 +111,6 @@ async function init() {
     userInfo.style.cursor = 'pointer';
     headerTitle.addEventListener('click', function() {
         if (ptySessionId) showSessionInfo();
-    });
-
-    chatDeleteBtn.addEventListener('click', function () {
-        if (chatSessionId) {
-            var cached = getCachedSessions().filter(function (s) { return s.id !== chatSessionId; });
-            setCachedSessions(cached);
-            var chatSess = sessionsData.find(function(s) { return s.id === chatSessionId; });
-            var cWing = chatSess && wingsData.find(function(w) { return w.id === chatSess.wing_id; });
-            if (cWing) {
-                fetch('/api/app/wings/' + encodeURIComponent(cWing.wing_id) + '/sessions/' + chatSessionId, { method: 'DELETE' });
-            }
-            destroyChat();
-            showHome();
-        }
     });
 
     // Modifier keys
@@ -212,17 +191,6 @@ async function init() {
         }
     });
 
-    // Chat link in palette footer (hidden for now)
-    var chatLink = document.getElementById('palette-chat-link');
-    if (chatLink) {
-        chatLink.addEventListener('click', function(e) {
-            e.preventDefault();
-            var agent = currentPaletteAgent();
-            hidePalette();
-            launchChat(agent);
-        });
-    }
-
     window.addEventListener('resize', function () {
         if (term && fitAddon) fitAddon.fit();
     });
@@ -258,12 +226,6 @@ function getLastTermAgent() {
 }
 function setLastTermAgent(agent) {
     try { localStorage.setItem(LAST_TERM_KEY, agent); } catch (e) {}
-}
-function getLastChatAgent() {
-    try { return localStorage.getItem(LAST_CHAT_KEY) || 'claude'; } catch (e) { return 'claude'; }
-}
-function setLastChatAgent(agent) {
-    try { localStorage.setItem(LAST_CHAT_KEY, agent); } catch (e) {}
 }
 function getCachedSessions() {
     try { var raw = localStorage.getItem(CACHE_KEY); return raw ? JSON.parse(raw) : []; }
@@ -334,13 +296,13 @@ var IDENTITY_PRIVKEY_KEY = 'wt_identity_privkey';
 
 function getOrCreateIdentityKey() {
     try {
-        var storedPub = localStorage.getItem(IDENTITY_PUBKEY_KEY);
-        var storedPriv = localStorage.getItem(IDENTITY_PRIVKEY_KEY);
+        var storedPub = sessionStorage.getItem(IDENTITY_PUBKEY_KEY);
+        var storedPriv = sessionStorage.getItem(IDENTITY_PRIVKEY_KEY);
         if (storedPub && storedPriv) return { pub: storedPub, priv: b64ToBytes(storedPriv) };
         var priv = x25519.utils.randomSecretKey();
-        localStorage.setItem(IDENTITY_PRIVKEY_KEY, bytesToB64(priv));
+        sessionStorage.setItem(IDENTITY_PRIVKEY_KEY, bytesToB64(priv));
         var pub = bytesToB64(x25519.getPublicKey(priv));
-        localStorage.setItem(IDENTITY_PUBKEY_KEY, pub);
+        sessionStorage.setItem(IDENTITY_PUBKEY_KEY, pub);
         return { pub: pub, priv: priv };
     } catch (e) { return { pub: '', priv: null }; }
 }
@@ -495,8 +457,9 @@ function applyWingEvent(ev) {
         updatePaletteState(true);
     }
 
-    // Wing just came online — immediately fetch its sessions
-    if (ev.type === 'wing.online' && ev.wing_id) {
+    // Wing just came online — immediately fetch its sessions (skip pinned)
+    var evWing = wingsData.find(function(w) { return w.wing_id === ev.wing_id; });
+    if (ev.type === 'wing.online' && ev.wing_id && !(evWing && evWing.pinned)) {
         fetchWingSessions(ev.wing_id).then(function(sessions) {
             if (sessions.length > 0) {
                 // Add new wing's sessions to existing sessions from other wings
@@ -570,10 +533,11 @@ function rebuildAgentLists() {
 // fetchWingSessions fetches active sessions for a single wing by wing_id.
 async function fetchWingSessions(wingId) {
     try {
-        var resp = await fetch('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions?active=true');
-        if (resp.ok) return await resp.json() || [];
-    } catch (e) {}
-    return [];
+        var result = await sendTunnelRequest(wingId, { type: 'sessions.list' });
+        return (result.sessions || []).map(function(s) {
+            return { id: s.session_id, wing_id: (wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit };
+        });
+    } catch (e) { return []; }
 }
 
 // mergeWingSessions replaces sessionsData with live data, deduped by session id.
@@ -625,8 +589,8 @@ async function loadHome() {
     rebuildAgentLists();
     updateHeaderStatus();
 
-    // Fetch sessions per-wing for all online wings
-    var onlineWings = wingsData.filter(function(w) { return w.online !== false && w.wing_id; });
+    // Fetch sessions per-wing for all online non-pinned wings
+    var onlineWings = wingsData.filter(function(w) { return w.online !== false && w.wing_id && !w.pinned; });
     var sessionPromises = onlineWings.map(function(w) { return fetchWingSessions(w.wing_id); });
     var results = await Promise.all(sessionPromises);
     var allSessions = [];
@@ -679,15 +643,13 @@ function renderSidebar() {
     var tabs = sessionsData.filter(function(s) { return (s.kind || 'terminal') !== 'chat'; }).map(function(s) {
         var name = projectName(s.cwd);
         var letter = name.charAt(0).toUpperCase();
-        var isActive = (activeView === 'terminal' && s.id === ptySessionId) ||
-                       (activeView === 'chat' && s.id === chatSessionId);
+        var isActive = (activeView === 'terminal' && s.id === ptySessionId);
         var needsAttention = sessionNotifications[s.id];
         var dotClass = s.status === 'active' ? 'dot-live' : 'dot-detached';
         if (needsAttention) dotClass = 'dot-attention';
-        var kind = s.kind || 'terminal';
         return '<button class="session-tab' + (isActive ? ' active' : '') + '" ' +
             'title="' + escapeHtml(name + ' \u00b7 ' + (s.agent || '?')) + '" ' +
-            'data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+            'data-sid="' + s.id + '">' +
             '<span class="tab-letter">' + escapeHtml(letter) + '</span>' +
             '<span class="tab-dot ' + dotClass + '"></span>' +
         '</button>';
@@ -697,16 +659,8 @@ function renderSidebar() {
     sessionTabs.querySelectorAll('.session-tab').forEach(function(tab) {
         tab.addEventListener('click', function() {
             var sid = tab.dataset.sid;
-            var kind = tab.dataset.kind;
-            var agent = tab.dataset.agent;
-            // Don't reconnect if already viewing this session
-            if (kind === 'chat' && sid === chatSessionId && activeView === 'chat') return;
-            if (kind !== 'chat' && sid === ptySessionId && activeView === 'terminal') return;
-            if (kind === 'chat') {
-                window._openChat(sid, agent);
-            } else {
-                switchToSession(sid);
-            }
+            if (sid === ptySessionId && activeView === 'terminal') return;
+            switchToSession(sid);
         });
     });
 }
@@ -924,7 +878,6 @@ function navigateToAccount(pushHistory, orgSlug) {
     wingDetailSection.style.display = 'none';
     accountSection.style.display = '';
     detachPTY();
-    destroyChat();
     headerTitle.textContent = '';
     ptyStatus.textContent = '';
     renderAccountPage();
@@ -1464,7 +1417,6 @@ function navigateToWingDetail(wingId, pushHistory) {
     wingDetailSection.style.display = '';
     accountSection.style.display = 'none';
     detachPTY();
-    destroyChat();
     headerTitle.textContent = '';
     ptyStatus.textContent = '';
     renderWingDetailPage(wingId);
@@ -1569,11 +1521,12 @@ function renderWingDetailPage(wingId) {
             '<div class="wd-hero-top">' +
                 '<span class="session-dot ' + (isOnline ? 'live' : 'offline') + '"></span>' +
                 '<span class="wd-name" id="wd-name" title="click to rename">' + escapeHtml(name) + '</span>' +
+                (w.pinned ? '<span class="wd-pinned-badge" title="passkey required">&#x1f512; pinned</span>' : '') +
                 (w.wing_label ? '<a class="wd-clear-label" id="wd-delete-label" title="clear name">x</a>' : '') +
                 (!isOnline ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
             '</div>' +
         '</div>' +
-        (isOnline ? '<div class="wd-palette">' +
+        (isOnline && !(w.pinned && !tunnelAuthTokens[wingId]) ? '<div class="wd-palette">' +
             '<input id="wd-search" type="text" class="wd-search" placeholder="start a session..." autocomplete="off" spellcheck="false">' +
             '<div id="wd-search-results" class="wd-search-results"></div>' +
             '<div id="wd-search-status" class="wd-search-status"></div>' +
@@ -1647,7 +1600,7 @@ function renderWingDetailPage(wingId) {
     if (updateBtn) {
         updateBtn.addEventListener('click', function() {
             updateBtn.innerHTML = 'updating...';
-            fetch('/api/app/wings/' + encodeURIComponent(w.wing_id) + '/update', { method: 'POST' })
+            sendTunnelRequest(w.wing_id, { type: 'wing.update' })
                 .then(function() {
                     w.updating_at = Date.now();
                     renderWingDetailPage(wingId);
@@ -1671,13 +1624,16 @@ function renderWingDetailPage(wingId) {
     // Active session rows
     wireActiveSessionRows();
 
-    // Fetch past sessions
-    if (isOnline) {
+    // Fetch past sessions (skip if pinned and not yet authenticated)
+    if (isOnline && !(w.pinned && !tunnelAuthTokens[wingId])) {
         loadWingPastSessions(wingId, 0);
+    } else if (w.pinned && !tunnelAuthTokens[wingId]) {
+        var pastEl = document.getElementById('wd-past-sessions');
+        if (pastEl) pastEl.innerHTML = '<span class="text-dim">this wing requires passkey authentication</span>';
     }
 
-    // Inline palette
-    if (isOnline) {
+    // Inline palette (skip if pinned and not yet authenticated)
+    if (isOnline && !(w.pinned && !tunnelAuthTokens[wingId])) {
         setupWingPalette(w);
     }
 }
@@ -1702,13 +1658,7 @@ function wireActiveSessionRows() {
         row.addEventListener('click', function(e) {
             if (e.target.classList.contains('wd-kill-btn')) return;
             var sid = row.dataset.sid;
-            var kind = row.dataset.kind;
-            var agent = row.dataset.agent;
-            if (kind === 'chat') {
-                window._openChat(sid, agent);
-            } else {
-                switchToSession(sid);
-            }
+            switchToSession(sid);
         });
     });
     wingDetailContent.querySelectorAll('.wd-kill-btn').forEach(function(btn) {
@@ -1719,12 +1669,12 @@ function wireActiveSessionRows() {
                 var wingId = currentWingId;
                 btn.disabled = true;
                 btn.textContent = '...';
-                fetch('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + encodeURIComponent(sid), { method: 'DELETE' })
+                sendTunnelRequest(wingId, { type: 'pty.kill', session_id: sid })
                     .then(function() {
                         sessionsData = sessionsData.filter(function(s) { return s.id !== sid; });
                         updateWingDetailSessions(wingId);
                         loadWingPastSessions(wingId, 0);
-                    });
+                    }).catch(function() {});
             } else {
                 btn.dataset.confirming = '1';
                 btn.textContent = 'sure?';
@@ -1779,10 +1729,9 @@ function setupWingPalette(wing) {
 
     // Pre-cache home dir
     if (wing.wing_id) {
-        fetch('/api/app/wings/' + encodeURIComponent(wing.wing_id) + '/ls?path=' + encodeURIComponent('~/')).then(function(r) {
-            return r.json();
-        }).then(function(entries) {
-            if (entries && Array.isArray(entries)) {
+        sendTunnelRequest(wing.wing_id, { type: 'dir.list', path: '~/' }).then(function(data) {
+            var entries = data.entries || [];
+            if (Array.isArray(entries)) {
                 wpHomeDirCache = entries.map(function(e) {
                     return { name: e.name, path: e.path, isDir: e.is_dir };
                 });
@@ -1890,12 +1839,8 @@ function setupWingPalette(wing) {
     }
 
     function wpFetchDirList(dirPath) {
-        if (wpDirAbort) wpDirAbort.abort();
-        wpDirAbort = new AbortController();
-
-        fetch('/api/app/wings/' + encodeURIComponent(wing.wing_id) + '/ls?path=' + encodeURIComponent(dirPath), {
-            signal: wpDirAbort.signal
-        }).then(function(r) { return r.json(); }).then(function(entries) {
+        sendTunnelRequest(wing.wing_id, { type: 'dir.list', path: dirPath }).then(function(data) {
+            var entries = data.entries || [];
             var currentParsed = dirParent(searchEl.value);
             if (currentParsed.dir !== dirPath) return;
 
@@ -1924,9 +1869,7 @@ function setupWingPalette(wing) {
             wpDirCache = items;
             wpDirCacheDir = dirPath;
             renderItems(wpFilterCached(currentParsed.prefix));
-        }).catch(function(err) {
-            if (err && err.name === 'AbortError') return;
-        });
+        }).catch(function() {});
     }
 
     function navigate(dir) {
@@ -2015,11 +1958,7 @@ function loadWingPastSessions(wingId, offset) {
         }
     }
 
-    fetch('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions?offset=' + offset + '&limit=' + limit)
-        .then(function(r) {
-            if (!r.ok) throw new Error('fetch failed');
-            return r.json();
-        })
+    sendTunnelRequest(wingId, { type: 'sessions.history', offset: offset, limit: limit })
         .then(function(data) {
             var sessions = data.sessions || [];
             if (offset === 0) {
@@ -2150,23 +2089,21 @@ function openAuditReplay(wingId, sessionId) {
         auditTerm.open(termEl);
     }
 
-    // Fetch audit data via SSE
-    var es = new EventSource('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + encodeURIComponent(sessionId) + '/audit?kind=pty');
-    es.addEventListener('chunk', function(e) {
-        if (!e.data) return;
-        try {
-            var parsed = JSON.parse(e.data);
-            if (Array.isArray(parsed)) {
-                frames.push(parsed);
-            } else if (parsed.width) {
-                auditCols = parsed.width;
-                auditRows = parsed.height;
-                ndjsonHeader = e.data;
-            }
-        } catch (ex) {}
-    });
-    es.addEventListener('done', function() {
-        es.close();
+    // Fetch audit data via tunnel stream
+    playBtn.textContent = 'loading...';
+    playBtn.disabled = true;
+
+    var auditStreamDone = false;
+    sendTunnelStream(wingId, { type: 'audit.request', session_id: sessionId, kind: 'pty' }, function(chunk) {
+        if (Array.isArray(chunk)) {
+            frames.push(chunk);
+        } else if (chunk.width) {
+            auditCols = chunk.width;
+            auditRows = chunk.height;
+            ndjsonHeader = JSON.stringify(chunk);
+        }
+    }).then(function() {
+        auditStreamDone = true;
         if (frames.length > 0) {
             playBtn.textContent = 'play';
             playBtn.disabled = false;
@@ -2175,17 +2112,10 @@ function openAuditReplay(wingId, sessionId) {
             playBtn.textContent = 'no data';
             playBtn.disabled = true;
         }
+    }).catch(function() {
+        auditStreamDone = true;
+        playBtn.textContent = 'error';
     });
-    es.addEventListener('error', function(e) {
-        if (e.data) {
-            playBtn.textContent = 'error';
-        }
-        es.close();
-    });
-    es.onerror = function() { es.close(); };
-
-    playBtn.textContent = 'loading...';
-    playBtn.disabled = true;
 
     function decodeBase64UTF8(b64) {
         var bin = atob(b64);
@@ -2267,7 +2197,6 @@ function openAuditReplay(wingId, sessionId) {
     closeBtn.onclick = function() {
         playing = false;
         clearTimeout(playTimer);
-        es.close();
         if (auditTerm) auditTerm.dispose();
         downloadBtn.style.display = 'none';
         overlay.style.display = 'none';
@@ -2296,20 +2225,18 @@ function openAuditKeylog(wingId, sessionId) {
     timeEl.style.display = 'none';
     downloadBtn.style.display = 'none';
 
-    var es = new EventSource('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + encodeURIComponent(sessionId) + '/audit?kind=keylog');
-    es.addEventListener('chunk', function(e) {
-        if (e.data) pre.textContent += e.data + '\n';
-    });
-    es.addEventListener('done', function() {
-        es.close();
+    sendTunnelStream(wingId, { type: 'audit.request', session_id: sessionId, kind: 'keylog' }, function(chunk) {
+        if (chunk.data) pre.textContent += chunk.data + '\n';
+        else if (typeof chunk === 'string') pre.textContent += chunk + '\n';
+    }).then(function() {
         if (!pre.textContent) {
             pre.textContent = 'no keylog data';
         } else {
             downloadBtn.style.display = '';
         }
+    }).catch(function() {
+        if (!pre.textContent) pre.textContent = 'error loading keylog';
     });
-    es.addEventListener('error', function() { es.close(); });
-    es.onerror = function() { es.close(); };
 
     downloadBtn.onclick = function() {
         var blob = new Blob([pre.textContent], { type: 'text/plain' });
@@ -2321,7 +2248,6 @@ function openAuditKeylog(wingId, sessionId) {
     };
 
     closeBtn.onclick = function() {
-        es.close();
         downloadBtn.style.display = 'none';
         overlay.style.display = 'none';
         playBtn.style.display = '';
@@ -2386,11 +2312,7 @@ function showEggDetail(sessionId) {
 
     document.getElementById('detail-egg-connect').addEventListener('click', function() {
         hideDetailModal();
-        if (kind === 'chat') {
-            window._openChat(sessionId, s.agent || 'claude');
-        } else {
-            switchToSession(sessionId);
-        }
+        switchToSession(sessionId);
     });
 
     var delBtn = document.getElementById('detail-egg-delete');
@@ -2469,15 +2391,17 @@ function renderDashboard() {
             var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
+            var pinnedBadge = w.pinned ? '<span class="wing-pinned-badge">pinned</span>' : '';
+            var lockIcon = w.pinned ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
             return '<div class="wing-box" draggable="true" data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
-                    '<span class="wing-name">' + escapeHtml(name) + '</span>' +
+                    '<span class="wing-name">' + escapeHtml(name) + lockIcon + '</span>' +
                 '</div>' +
                 '<span class="wing-agents">' + (w.agents || []).map(function(a) { return agentIcon(a) || escapeHtml(a); }).join(' ') + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
-                    (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>') +
+                    (w.pinned ? pinnedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>')) +
                 '</div>' +
             '</div>';
         }).join('');
@@ -2523,13 +2447,9 @@ function renderDashboard() {
         if (needsAttention) dotClass = 'attention';
 
         var previewHtml = '';
-        if (kind === 'chat') {
-            previewHtml = '<div class="chat-icon">T</div>';
-        } else {
-            var thumbUrl = '';
-            try { thumbUrl = localStorage.getItem(TERM_THUMB_PREFIX + s.id) || ''; } catch(e) {}
-            if (thumbUrl) previewHtml = '<img src="' + thumbUrl + '" alt="">';
-        }
+        var thumbUrl = '';
+        try { thumbUrl = localStorage.getItem(TERM_THUMB_PREFIX + s.id) || ''; } catch(e) {}
+        if (thumbUrl) previewHtml = '<img src="' + thumbUrl + '" alt="">';
 
         var wingName = '';
         if (s.wing_id) {
@@ -2556,13 +2476,7 @@ function renderDashboard() {
         card.addEventListener('click', function(e) {
             if (e.target.closest('.box-menu-btn, .egg-delete')) return;
             var sid = card.dataset.sid;
-            var kind = card.dataset.kind;
-            var agent = card.dataset.agent;
-            if (kind === 'chat') {
-                window._openChat(sid, agent);
-            } else {
-                switchToSession(sid);
-            }
+            switchToSession(sid);
         });
     });
 
@@ -2603,7 +2517,6 @@ var paletteWingIndex = 0;
 var paletteAgentIndex = 0;
 var paletteSelectedIndex = 0;
 var dirListTimer = null;
-var dirListAbort = null;
 var dirListPending = false; // true while waiting for remote dir results
 var dirListCache = [];      // last server results (full entries)
 var dirListCacheDir = '';    // the directory those results are for
@@ -2647,10 +2560,9 @@ function showPalette() {
     // Pre-cache home dir entries in background
     var wing = currentPaletteWing();
     if (wing && homeDirCache.length === 0) {
-        fetch('/api/app/wings/' + encodeURIComponent(wing.wing_id) + '/ls?path=' + encodeURIComponent('~/')).then(function(r) {
-            return r.json();
-        }).then(function(entries) {
-            if (entries && Array.isArray(entries)) {
+        sendTunnelRequest(wing.wing_id, { type: 'dir.list', path: '~/' }).then(function(data) {
+            var entries = data.entries || [];
+            if (Array.isArray(entries)) {
                 homeDirCache = entries.map(function(e) {
                     return { name: e.name, path: e.path, isDir: e.is_dir };
                 });
@@ -2697,7 +2609,6 @@ function updatePaletteState(isOpen) {
 function hidePalette() {
     commandPalette.style.display = 'none';
     if (dirListTimer) { clearTimeout(dirListTimer); dirListTimer = null; }
-    if (dirListAbort) { dirListAbort.abort(); dirListAbort = null; }
     dirListPending = false;
     dirListCache = [];
     dirListCacheDir = '';
@@ -2836,9 +2747,6 @@ function filterCachedItems(prefix) {
 function debouncedDirList(value) {
     if (dirListTimer) clearTimeout(dirListTimer);
 
-    // Abort any in-flight fetch immediately on new input
-    if (dirListAbort) { dirListAbort.abort(); dirListAbort = null; }
-
     // If not a path, filter projects locally
     if (!value || (value.charAt(0) !== '/' && value.charAt(0) !== '~')) {
         dirListPending = false;
@@ -2872,14 +2780,17 @@ function fetchDirList(dirPath) {
     var wing = currentPaletteWing();
     if (!wing) { dirListPending = false; return; }
 
-    if (dirListAbort) dirListAbort.abort();
-    dirListAbort = new AbortController();
+    var fetchId = crypto.randomUUID();
+    dirListQuery = fetchId;
     dirListPending = true;
 
-    fetch('/api/app/wings/' + encodeURIComponent(wing.wing_id) + '/ls?path=' + encodeURIComponent(dirPath), {
-        signal: dirListAbort.signal
-    }).then(function(r) { return r.json(); }).then(function(entries) {
+    sendTunnelRequest(wing.wing_id, { type: 'dir.list', path: dirPath }).then(function(data) {
         dirListPending = false;
+
+        // Stale check: if a newer request was fired, discard
+        if (dirListQuery !== fetchId) return;
+
+        var entries = data.entries || [];
 
         // Stale check: if user changed to a different directory, discard
         var currentParsed = dirParent(paletteSearch.value);
@@ -2917,8 +2828,7 @@ function fetchDirList(dirPath) {
 
         // Filter for current prefix
         renderPaletteItems(filterCachedItems(currentParsed.prefix));
-    }).catch(function(err) {
-        if (err && err.name === 'AbortError') return;
+    }).catch(function() {
         dirListPending = false;
     });
 }
@@ -3078,7 +2988,6 @@ function showHome(pushHistory) {
         var s = sessionsData.find(function(s) { return s.id === detachingId; });
         if (s) s.status = 'detached';
     }
-    destroyChat();
     renderSidebar();
     renderDashboard();
     if (pushHistory !== false) {
@@ -3093,20 +3002,10 @@ function showTerminal() {
     chatSection.style.display = 'none';
     wingDetailSection.style.display = 'none';
     accountSection.style.display = 'none';
-    destroyChat();
     if (term && fitAddon) {
         fitAddon.fit();
         term.focus();
     }
-}
-
-function showChat() {
-    activeView = 'chat';
-    homeSection.style.display = 'none';
-    terminalSection.style.display = 'none';
-    chatSection.style.display = '';
-    wingDetailSection.style.display = 'none';
-    accountSection.style.display = 'none';
 }
 
 function switchToSession(sessionId, pushHistory) {
@@ -3132,12 +3031,6 @@ function detachPTY() {
 
 }
 
-// Expose for inline onclick
-window._openChat = function (sessionId, agent) {
-    showChat();
-    resumeChat(sessionId, agent);
-};
-
 window._deleteSession = function (sessionId) {
     // Find wing wing_id for fly-replay routing
     var sess = sessionsData.find(function(s) { return s.id === sessionId; });
@@ -3155,134 +3048,12 @@ window._deleteSession = function (sessionId) {
     delete sessionNotifications[sessionId];
     if (activeView === 'home') renderDashboard();
     renderSidebar();
-    var url = '/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + sessionId;
-    fetch(url, { method: 'DELETE' }).then(function () {
-        loadHome();
-    });
-};
-
-// === Chat (NLUX) ===
-
-function launchChat(agent) {
-    setLastChatAgent(agent);
-    showChat();
-    chatStatus.textContent = 'connecting...';
-    chatDeleteBtn.style.display = 'none';
-
-    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    var url = proto + '//' + location.host + '/ws/pty';
-    var chatWing = onlineWings()[0];
-    if (chatWing) url += '?wing_id=' + encodeURIComponent(chatWing.id);
-    chatWs = new WebSocket(url);
-    chatWs.onopen = function () {
-        chatStatus.textContent = 'starting chat...';
-        chatWs.send(JSON.stringify({ type: 'chat.start', agent: agent }));
-    };
-    setupChatHandlers(chatWs, agent, null);
-}
-
-function resumeChat(sessionId, agent) {
-    chatStatus.textContent = 'loading...';
-    chatDeleteBtn.style.display = 'none';
-
-    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    var url = proto + '//' + location.host + '/ws/pty';
-    var chatSess = sessionsData.find(function(s) { return s.id === sessionId; });
-    if (chatSess && chatSess.wing_id) url += '?wing_id=' + encodeURIComponent(chatSess.wing_id);
-    chatWs = new WebSocket(url);
-    chatWs.onopen = function () {
-        chatStatus.textContent = 'loading history...';
-        chatWs.send(JSON.stringify({ type: 'chat.start', session_id: sessionId, agent: agent }));
-    };
-    setupChatHandlers(chatWs, agent, sessionId);
-}
-
-function setupChatHandlers(ws, agent, resumeSessionId) {
-    pendingHistory = null;
-    ws.onmessage = function (e) {
-        var msg = JSON.parse(e.data);
-        switch (msg.type) {
-            case 'chat.history':
-                pendingHistory = (msg.messages || []).map(function (m) {
-                    return { role: m.role, message: m.content };
-                });
-                break;
-            case 'chat.started':
-                chatSessionId = msg.session_id;
-                chatStatus.textContent = msg.agent + ' chat';
-                chatDeleteBtn.style.display = '';
-                mountNlux(agent, pendingHistory);
-                pendingHistory = null;
-                renderSidebar();
-                break;
-            case 'chat.chunk':
-                if (chatObserver) chatObserver.next(msg.text);
-                break;
-            case 'chat.done':
-                if (chatObserver) { chatObserver.complete(); chatObserver = null; }
-                chatContainer.classList.remove('thinking');
-                break;
-            case 'bandwidth.exceeded':
-                chatStatus.textContent = 'bandwidth exceeded';
-                chatContainer.classList.remove('thinking');
-                if (chatObserver) { chatObserver.error(new Error('Bandwidth limit exceeded. Upgrade to pro for higher limits.')); chatObserver = null; }
-                break;
-            case 'error':
-                chatStatus.textContent = msg.message;
-                chatContainer.classList.remove('thinking');
-                if (chatObserver) { chatObserver.error(new Error(msg.message)); chatObserver = null; }
-                break;
-        }
-    };
-    ws.onclose = function () { chatStatus.textContent = 'disconnected'; chatObserver = null; };
-    ws.onerror = function () { chatStatus.textContent = 'connection error'; };
-}
-
-function mountNlux(agent, initialMessages) {
-    if (chatInstance) { chatInstance.unmount(); chatInstance = null; }
-    chatContainer.innerHTML = '';
-
-    var adapter = {
-        streamText: function (message, observer) {
-            chatObserver = observer;
-            chatContainer.classList.add('thinking');
-            if (chatWs && chatWs.readyState === WebSocket.OPEN && chatSessionId) {
-                chatWs.send(JSON.stringify({ type: 'chat.message', session_id: chatSessionId, content: message }));
-            } else {
-                chatContainer.classList.remove('thinking');
-                observer.error(new Error('not connected'));
-            }
-        }
-    };
-
-    var chat = createAiChat()
-        .withAdapter(adapter)
-        .withDisplayOptions({ colorScheme: 'dark', height: '100%', width: '100%' })
-        .withConversationOptions({ historyPayloadSize: 0, layout: 'bubbles' })
-        .withComposerOptions({ placeholder: 'message ' + agent + '...', autoFocus: true })
-        .withPersonaOptions({
-            assistant: {
-                name: agent,
-                avatar: 'https://ui-avatars.com/api/?name=' + agent.charAt(0).toUpperCase() + '&background=e94560&color=fff&size=32',
-            },
-        })
-        .withMessageOptions({ waitTimeBeforeStreamCompletion: 'never' });
-
-    if (initialMessages && initialMessages.length > 0) {
-        chat = chat.withInitialConversation(initialMessages);
+    if (wingId) {
+        sendTunnelRequest(wingId, { type: 'pty.kill', session_id: sessionId })
+            .then(function() { loadHome(); })
+            .catch(function() { loadHome(); });
     }
-
-    chat.mount(chatContainer);
-    chatInstance = chat;
-}
-
-function destroyChat() {
-    if (chatInstance) { chatInstance.unmount(); chatInstance = null; }
-    if (chatWs) { chatWs.close(); chatWs = null; }
-    chatSessionId = null;
-    chatObserver = null;
-    chatContainer.innerHTML = '';
-}
+};
 
 // === Terminal (xterm.js) ===
 
@@ -3455,6 +3226,16 @@ function bytesToB64(bytes) {
     return btoa(binary);
 }
 
+function b64urlToBytes(b64url) {
+    var b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    return b64ToBytes(b64);
+}
+
+function bytesToB64url(bytes) {
+    return bytesToB64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 async function deriveE2EKey(wingPublicKeyB64) {
     if (!identityKey.priv) return null;
     var wingPubBytes = b64ToBytes(wingPublicKeyB64);
@@ -3494,6 +3275,233 @@ async function e2eDecrypt(encoded) {
     var ciphertext = data.slice(12);
     var plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, e2eKey, ciphertext);
     return new Uint8Array(plaintext);
+}
+
+// === Tunnel (encrypted wing communication) ===
+
+async function deriveE2ETunnelKey(wingPublicKeyB64) {
+    if (tunnelKeys[wingPublicKeyB64]) return tunnelKeys[wingPublicKeyB64];
+    if (!identityKey.priv) return null;
+    var wingPubBytes = b64ToBytes(wingPublicKeyB64);
+    var shared = x25519.getSharedSecret(identityKey.priv, wingPubBytes);
+    var salt = new Uint8Array(32);
+    var keyMaterial = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
+    var enc = new TextEncoder();
+    var key = await crypto.subtle.deriveKey(
+        { name: 'HKDF', hash: 'SHA-256', salt: salt, info: enc.encode('wt-tunnel') },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+    );
+    tunnelKeys[wingPublicKeyB64] = key;
+    return key;
+}
+
+async function tunnelEncrypt(key, plaintext) {
+    var enc = new TextEncoder();
+    var iv = crypto.getRandomValues(new Uint8Array(12));
+    var ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, enc.encode(plaintext));
+    var result = new Uint8Array(iv.length + ciphertext.byteLength);
+    result.set(iv);
+    result.set(new Uint8Array(ciphertext), iv.length);
+    return bytesToB64(result);
+}
+
+async function tunnelDecrypt(key, encoded) {
+    var data = b64ToBytes(encoded);
+    var iv = data.slice(0, 12);
+    var ciphertext = data.slice(12);
+    var plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ciphertext);
+    return new TextDecoder().decode(plaintext);
+}
+
+function ensureTunnelWs() {
+    if (tunnelWs && tunnelWs.readyState === WebSocket.OPEN) return Promise.resolve();
+    if (tunnelWs && tunnelWs.readyState === WebSocket.CONNECTING) {
+        return new Promise(function(resolve) {
+            var orig = tunnelWs.onopen;
+            tunnelWs.onopen = function() { if (orig) orig(); resolve(); };
+        });
+    }
+    return new Promise(function(resolve, reject) {
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        tunnelWs = new WebSocket(proto + '//' + location.host + '/ws/pty');
+        tunnelWs.onopen = resolve;
+        tunnelWs.onerror = function() { reject(new Error('tunnel ws failed')); };
+        tunnelWs.onclose = function() { tunnelWs = null; };
+        tunnelWs.onmessage = function(e) {
+            var msg = JSON.parse(e.data);
+            if (msg.type === 'tunnel.res') {
+                var p = tunnelPending[msg.request_id];
+                if (p) {
+                    delete tunnelPending[msg.request_id];
+                    p.resolve(msg);
+                }
+            } else if (msg.type === 'tunnel.stream') {
+                var p = tunnelPending[msg.request_id];
+                if (p && p.onStream) {
+                    p.onStream(msg);
+                    if (msg.done) {
+                        delete tunnelPending[msg.request_id];
+                        p.resolve(msg);
+                    }
+                }
+            } else if (msg.type === 'error') {
+                console.error('tunnel relay error:', msg.message);
+            }
+        };
+    });
+}
+
+async function sendTunnelRequest(wingId, innerMsg) {
+    var wing = wingsData.find(function(w) { return w.wing_id === wingId; });
+    if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
+
+    var key = await deriveE2ETunnelKey(wing.public_key);
+    if (!key) throw new Error('could not derive tunnel key');
+
+    // Attach cached auth token if available
+    var token = tunnelAuthTokens[wingId];
+    if (token) innerMsg.auth_token = token;
+
+    var requestId = crypto.randomUUID();
+    var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
+
+    await ensureTunnelWs();
+
+    return new Promise(function(resolve, reject) {
+        tunnelPending[requestId] = { resolve: resolve, reject: reject };
+        tunnelWs.send(JSON.stringify({
+            type: 'tunnel.req',
+            wing_id: wingId,
+            request_id: requestId,
+            sender_pub: identityPubKey,
+            payload: payload
+        }));
+        // Timeout after 30s
+        setTimeout(function() {
+            if (tunnelPending[requestId]) {
+                delete tunnelPending[requestId];
+                reject(new Error('tunnel request timeout'));
+            }
+        }, 30000);
+    }).then(async function(msg) {
+        var decrypted = await tunnelDecrypt(key, msg.payload);
+        var result = JSON.parse(decrypted);
+
+        // Handle passkey challenge
+        if (result.error === 'passkey_required' && result.challenge) {
+            var authToken = await handleTunnelPasskey(wingId, wing.public_key, result.challenge);
+            if (authToken) {
+                tunnelAuthTokens[wingId] = authToken;
+                innerMsg.auth_token = authToken;
+                return sendTunnelRequest(wingId, innerMsg);
+            }
+            throw new Error('passkey authentication failed');
+        }
+
+        if (result.error) throw new Error(result.error);
+        return result;
+    });
+}
+
+async function sendTunnelStream(wingId, innerMsg, onChunk) {
+    var wing = wingsData.find(function(w) { return w.wing_id === wingId; });
+    if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
+
+    var key = await deriveE2ETunnelKey(wing.public_key);
+    if (!key) throw new Error('could not derive tunnel key');
+
+    var token = tunnelAuthTokens[wingId];
+    if (token) innerMsg.auth_token = token;
+
+    var requestId = crypto.randomUUID();
+    var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
+
+    await ensureTunnelWs();
+
+    return new Promise(function(resolve, reject) {
+        tunnelPending[requestId] = {
+            resolve: resolve,
+            reject: reject,
+            onStream: async function(msg) {
+                try {
+                    var decrypted = await tunnelDecrypt(key, msg.payload);
+                    var chunk = JSON.parse(decrypted);
+                    onChunk(chunk);
+                } catch (e) { console.error('tunnel stream decrypt error:', e); }
+            }
+        };
+        tunnelWs.send(JSON.stringify({
+            type: 'tunnel.req',
+            wing_id: wingId,
+            request_id: requestId,
+            sender_pub: identityPubKey,
+            payload: payload
+        }));
+        setTimeout(function() {
+            if (tunnelPending[requestId]) {
+                delete tunnelPending[requestId];
+                reject(new Error('tunnel stream timeout'));
+            }
+        }, 120000); // 2min for streams
+    });
+}
+
+async function handleTunnelPasskey(wingId, wingPubKey, challenge) {
+    try {
+        var credential = await navigator.credentials.get({
+            publicKey: {
+                challenge: b64urlToBytes(challenge),
+                rpId: location.hostname,
+                userVerification: 'preferred',
+                timeout: 60000
+            }
+        });
+
+        var key = await deriveE2ETunnelKey(wingPubKey);
+        var requestId = crypto.randomUUID();
+        var innerMsg = {
+            type: 'passkey.auth',
+            credential_id: bytesToB64url(new Uint8Array(credential.rawId)),
+            authenticator_data: bytesToB64(new Uint8Array(credential.response.authenticatorData)),
+            client_data_json: bytesToB64(new Uint8Array(credential.response.clientDataJSON)),
+            signature: bytesToB64(new Uint8Array(credential.response.signature))
+        };
+        var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
+
+        await ensureTunnelWs();
+
+        return new Promise(function(resolve, reject) {
+            tunnelPending[requestId] = {
+                resolve: async function(msg) {
+                    try {
+                        var decrypted = await tunnelDecrypt(key, msg.payload);
+                        var result = JSON.parse(decrypted);
+                        resolve(result.auth_token || null);
+                    } catch (e) { resolve(null); }
+                },
+                reject: function() { resolve(null); }
+            };
+            tunnelWs.send(JSON.stringify({
+                type: 'tunnel.req',
+                wing_id: wingId,
+                request_id: requestId,
+                sender_pub: identityPubKey,
+                payload: payload
+            }));
+            setTimeout(function() {
+                if (tunnelPending[requestId]) {
+                    delete tunnelPending[requestId];
+                    resolve(null);
+                }
+            }, 60000);
+        });
+    } catch (e) {
+        console.error('passkey auth failed:', e);
+        return null;
+    }
 }
 
 // === PTY WebSocket ===
