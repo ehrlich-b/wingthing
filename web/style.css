@@ -998,24 +998,57 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 #wing-detail-content {
     max-width: 640px;
+    margin: 0 auto;
+}
+
+.wd-page {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
 }
 
 .wd-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 16px;
+    margin-bottom: 4px;
 }
 
 .wd-back {
-    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    text-decoration: none;
+}
+.wd-back:hover { color: var(--text); }
+
+.wd-update-banner {
+    background: var(--accent);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.wd-update-banner:hover { background: #5a9cf5; }
+.wd-update-action { text-decoration: underline; margin-left: 4px; }
+.wd-update-banner.wd-update-sent { background: var(--bg-card); color: var(--text-dim); cursor: default; }
+
+.wd-hero {
+    margin-bottom: 16px;
+}
+
+.wd-hero-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .wd-name {
-    font-size: 17px;
+    font-size: 20px;
     font-weight: 600;
     cursor: pointer;
-    padding: 2px 6px;
+    padding: 1px 4px;
+    margin: -1px -4px;
     border-radius: 4px;
     transition: background 0.15s;
 }
@@ -1025,28 +1058,44 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 
 .wd-name-input {
-    font-size: 17px;
+    font-size: 20px;
     font-weight: 600;
     font-family: var(--font);
     background: var(--bg-card);
     border: 1px solid var(--accent);
     border-radius: 4px;
     color: var(--text);
-    padding: 2px 6px;
+    padding: 1px 4px;
     outline: none;
 }
 
-.wd-delete-label {
+.wd-clear-label {
     font-size: 11px;
-    padding: 2px 6px;
-    background: transparent;
     color: var(--text-muted);
-    border: 1px solid var(--text-muted);
+    cursor: pointer;
+    text-decoration: none;
+    opacity: 0.5;
 }
-.wd-delete-label:hover { color: var(--red); border-color: var(--red); background: transparent; }
+.wd-clear-label:hover { color: var(--red); opacity: 1; }
+
+.wd-dismiss-link {
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    text-decoration: none;
+    margin-left: auto;
+}
+.wd-dismiss-link:hover { color: var(--red); }
+
+.wd-info {
+    background: var(--bg-card);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 20px;
+}
 
 .wd-palette {
-    margin-bottom: 16px;
+    margin-bottom: 20px;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -1083,21 +1132,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     color: var(--text-dim);
 }
 
-.wd-info {
-    background: var(--bg-card);
-    border-radius: 8px;
-    padding: 14px 16px;
-    margin-bottom: 16px;
-}
-
 .wd-section {
-    margin-bottom: 16px;
+    margin-bottom: 20px;
 }
 
 .wd-sessions {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
 }
 
 .wd-session-row {
@@ -1138,7 +1180,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     padding: 8px 12px;
     background: var(--bg-card);
     border-radius: 6px;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
 }
 
 .wd-past-name {
@@ -1160,12 +1202,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .wd-load-more {
     margin-top: 8px;
-}
-
-.wd-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 16px;
 }
 
 /* === Audit Overlay === */

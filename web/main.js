@@ -18,7 +18,6 @@ let ctrlActive = false;
 let altActive = false;
 let currentUser = null;
 let e2eKey = null;
-let ephemeralPrivKey = null;
 let availableAgents = [];
 let allProjects = [];
 let wingsData = [];
@@ -324,17 +323,19 @@ var IDENTITY_PRIVKEY_KEY = 'wt_identity_privkey';
 
 function getOrCreateIdentityKey() {
     try {
-        var stored = localStorage.getItem(IDENTITY_PUBKEY_KEY);
-        if (stored) return stored;
+        var storedPub = localStorage.getItem(IDENTITY_PUBKEY_KEY);
+        var storedPriv = localStorage.getItem(IDENTITY_PRIVKEY_KEY);
+        if (storedPub && storedPriv) return { pub: storedPub, priv: b64ToBytes(storedPriv) };
         var priv = x25519.utils.randomSecretKey();
         localStorage.setItem(IDENTITY_PRIVKEY_KEY, bytesToB64(priv));
         var pub = bytesToB64(x25519.getPublicKey(priv));
         localStorage.setItem(IDENTITY_PUBKEY_KEY, pub);
-        return pub;
-    } catch (e) { return ''; }
+        return { pub: pub, priv: priv };
+    } catch (e) { return { pub: '', priv: null }; }
 }
 
-var identityPubKey = getOrCreateIdentityKey();
+var identityKey = getOrCreateIdentityKey();
+var identityPubKey = identityKey.pub;
 
 // === Copyable helper ===
 
@@ -915,11 +916,13 @@ function showAccountModal() {
     var email = currentUser.email || '';
     var provider = currentUser.provider || '';
 
+    var pubKeyShort = identityPubKey ? identityPubKey.substring(0, 16) + '...' : 'none';
     var html = '<h3>account</h3>' +
         '<div class="detail-row"><span class="detail-key">name</span><span class="detail-val">' + escapeHtml(currentUser.display_name || '') + '</span></div>' +
         (email ? '<div class="detail-row"><span class="detail-key">email</span><span class="detail-val">' + escapeHtml(email) + '</span></div>' : '') +
         '<div class="detail-row"><span class="detail-key">login</span><span class="detail-val">' + escapeHtml(provider) + '</span></div>' +
-        '<div class="detail-row"><span class="detail-key">tier</span><span class="detail-val">' + escapeHtml(tier) + '</span></div>';
+        '<div class="detail-row"><span class="detail-key">tier</span><span class="detail-val">' + escapeHtml(tier) + '</span></div>' +
+        '<div class="detail-row"><span class="detail-key">browser key</span><span class="detail-val copyable" data-copy="' + escapeHtml(identityPubKey) + '">' + escapeHtml(pubKeyShort) + '</span></div>';
 
     if (tier === 'free') {
         html += '<div class="detail-actions"><button class="btn-sm btn-accent" id="account-upgrade">give me pro</button></div>';
@@ -1222,27 +1225,40 @@ function navigateToWingDetail(machineId, pushHistory) {
     }
 }
 
+function semverCompare(a, b) {
+    var pa = (a || '').match(/^v?(\d+)\.(\d+)\.(\d+)/);
+    var pb = (b || '').match(/^v?(\d+)\.(\d+)\.(\d+)/);
+    if (!pa || !pb) return 0;
+    for (var i = 1; i <= 3; i++) {
+        var diff = parseInt(pa[i]) - parseInt(pb[i]);
+        if (diff !== 0) return diff;
+    }
+    return 0;
+}
+
 function renderWingDetailPage(machineId) {
+    // Skip full re-render if search input is focused (preserves cursor)
+    var searchEl = document.getElementById('wd-search');
+    if (searchEl && document.activeElement === searchEl) {
+        // Just update active sessions in place
+        updateWingDetailSessions(machineId);
+        return;
+    }
+
     var w = wingsData.find(function(w) { return w.machine_id === machineId; });
     if (!w) {
-        wingDetailContent.innerHTML = '<div class="wd-header"><button class="btn-sm wd-back" id="wd-back">back</button><span class="text-dim">wing not found</span></div>';
+        wingDetailContent.innerHTML = '<div class="wd-page"><div class="wd-header"><a class="wd-back" id="wd-back">back</a><span class="text-dim">wing not found</span></div></div>';
         document.getElementById('wd-back').addEventListener('click', function() { showHome(); });
         return;
     }
 
     var name = w.wing_label || w.machine_id || w.id.substring(0, 8);
     var isOnline = w.online !== false;
-    var dotClass = isOnline ? 'live' : 'offline';
-
-    // Version with update hint
-    var versionHtml = escapeHtml(w.version || 'unknown');
-    var updateAvailable = latestVersion && w.version && w.version !== latestVersion;
-    if (updateAvailable) {
-        versionHtml += '<span class="detail-update-hint">(update available)</span>';
-    }
+    var ver = w.version || '';
+    var updateAvailable = latestVersion && ver && semverCompare(latestVersion, ver) > 0;
 
     // Public key
-    var pubKeyHtml;
+    var pubKeyHtml = '';
     if (w.public_key) {
         var pubKeyShort = w.public_key.substring(0, 16) + '...';
         pubKeyHtml = '<span class="detail-val text-dim copyable" data-copy="' + escapeHtml(w.public_key) + '">' + escapeHtml(pubKeyShort) + '</span>';
@@ -1263,55 +1279,55 @@ function renderWingDetailPage(machineId) {
     }
     if (!projList) projList = '<span class="text-dim">none</span>';
 
-    // Active sessions for this wing
+    // Scope
+    var scopeHtml = w.org_id ? escapeHtml(w.org_id) : 'personal';
+
+    // Active sessions
     var activeSessions = sessionsData.filter(function(s) { return s.wing_id === w.id; });
     var activeHtml = '';
     if (activeSessions.length > 0) {
-        activeHtml = '<div class="wd-section"><h3 class="section-label">active sessions</h3><div class="wd-sessions">';
-        activeHtml += activeSessions.map(function(s) {
-            var sName = projectName(s.cwd);
-            var sDot = s.status === 'active' ? 'live' : 'detached';
-            var kind = s.kind || 'terminal';
-            var auditBadge = s.audit ? '<span class="wd-audit-badge">audit</span>' : '';
-            return '<div class="wd-session-row" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
-                '<span class="session-dot ' + sDot + '"></span>' +
-                '<span class="wd-session-name">' + escapeHtml(sName) + ' \u00b7 ' + agentWithIcon(s.agent || '?') + '</span>' +
-                auditBadge +
-            '</div>';
-        }).join('');
+        activeHtml = '<div class="wd-section"><h3 class="section-label">active sessions</h3><div class="wd-sessions" id="wd-active-sessions">';
+        activeHtml += renderActiveSessionRows(activeSessions);
         activeHtml += '</div></div>';
     }
 
     var html =
+        '<div class="wd-page">' +
         '<div class="wd-header">' +
-            '<button class="btn-sm wd-back" id="wd-back">back</button>' +
-            '<span class="detail-connection-dot ' + dotClass + '"></span>' +
-            '<span class="wd-name" id="wd-name" title="click to rename">' + escapeHtml(name) + '</span>' +
-            (w.wing_label ? '<button class="btn-sm wd-delete-label" id="wd-delete-label" title="remove label">x</button>' : '') +
+            '<a class="wd-back" id="wd-back">back</a>' +
+        '</div>' +
+        (updateAvailable ? '<div class="wd-update-banner" id="wd-update">' +
+            escapeHtml(latestVersion) + ' available (you have ' + escapeHtml(ver) + ') <span class="wd-update-action">update now</span>' +
+        '</div>' : '') +
+        '<div class="wd-hero">' +
+            '<div class="wd-hero-top">' +
+                '<span class="session-dot ' + (isOnline ? 'live' : 'offline') + '"></span>' +
+                '<span class="wd-name" id="wd-name" title="click to rename">' + escapeHtml(name) + '</span>' +
+                (w.wing_label ? '<a class="wd-clear-label" id="wd-delete-label" title="clear name">x</a>' : '') +
+                (!isOnline ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
+            '</div>' +
         '</div>' +
         (isOnline ? '<div class="wd-palette">' +
-            '<input id="wd-search" type="text" class="wd-search" placeholder="type a path to start a session..." autocomplete="off" spellcheck="false">' +
+            '<input id="wd-search" type="text" class="wd-search" placeholder="start a session..." autocomplete="off" spellcheck="false">' +
             '<div id="wd-search-results" class="wd-search-results"></div>' +
             '<div id="wd-search-status" class="wd-search-status"></div>' +
         '</div>' : '') +
+        activeHtml +
+        '<div class="wd-section"><h3 class="section-label">session history</h3><div id="wd-past-sessions"><span class="text-dim">' + (isOnline ? 'loading...' : 'wing offline') + '</span></div></div>' +
         '<div class="wd-info">' +
+            '<div class="detail-row"><span class="detail-key">scope</span><span class="detail-val">' + scopeHtml + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(w.platform || 'unknown') + '</span></div>' +
-            '<div class="detail-row"><span class="detail-key">version</span><span class="detail-val">' + versionHtml + '</span></div>' +
+            '<div class="detail-row"><span class="detail-key">version</span><span class="detail-val">' + escapeHtml(ver || 'unknown') + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + escapeHtml((w.agents || []).join(', ') || 'none') + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">public key</span>' + pubKeyHtml + '</div>' +
             '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>' +
         '</div>' +
-        activeHtml +
-        '<div class="wd-section"><h3 class="section-label">past sessions</h3><div id="wd-past-sessions"><span class="text-dim">' + (isOnline ? 'loading...' : 'wing offline') + '</span></div></div>' +
-        '<div class="wd-actions">' +
-            (isOnline && updateAvailable ? '<button class="btn-sm btn-accent" id="wd-update">update wing</button>' : '') +
-            (!isOnline ? '<button class="btn-sm btn-danger" id="wd-dismiss">dismiss</button>' : '') +
         '</div>';
 
     wingDetailContent.innerHTML = html;
     setupCopyable(wingDetailContent);
 
-    // Back button
+    // Back
     document.getElementById('wd-back').addEventListener('click', function() { showHome(); });
 
     // Inline rename
@@ -1350,7 +1366,8 @@ function renderWingDetailPage(machineId) {
     // Delete label
     var delLabelBtn = document.getElementById('wd-delete-label');
     if (delLabelBtn) {
-        delLabelBtn.addEventListener('click', function() {
+        delLabelBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
             fetch('/api/app/wings/' + encodeURIComponent(machineId) + '/label', { method: 'DELETE' })
                 .then(function() {
                     delete w.wing_label;
@@ -1359,19 +1376,18 @@ function renderWingDetailPage(machineId) {
         });
     }
 
-    // Update button
+    // Update banner
     var updateBtn = document.getElementById('wd-update');
     if (updateBtn) {
         updateBtn.addEventListener('click', function() {
-            updateBtn.textContent = 'updating...';
-            updateBtn.disabled = true;
+            updateBtn.innerHTML = 'updating...';
             fetch('/api/app/wings/' + w.id + '/update', { method: 'POST' })
-                .then(function() { updateBtn.textContent = 'sent'; })
-                .catch(function() { updateBtn.textContent = 'failed'; updateBtn.disabled = false; });
+                .then(function() { updateBtn.innerHTML = 'update sent - wing will restart'; updateBtn.classList.add('wd-update-sent'); })
+                .catch(function() { updateBtn.innerHTML = 'update failed'; });
         });
     }
 
-    // Dismiss button
+    // Dismiss link
     var dismissBtn = document.getElementById('wd-dismiss');
     if (dismissBtn) {
         dismissBtn.addEventListener('click', function() {
@@ -1383,7 +1399,35 @@ function renderWingDetailPage(machineId) {
         });
     }
 
-    // Active session rows → connect
+    // Active session rows
+    wireActiveSessionRows();
+
+    // Fetch past sessions
+    if (isOnline) {
+        loadWingPastSessions(machineId, 0);
+    }
+
+    // Inline palette
+    if (isOnline) {
+        setupWingPalette(w);
+    }
+}
+
+function renderActiveSessionRows(sessions) {
+    return sessions.map(function(s) {
+        var sName = projectName(s.cwd);
+        var sDot = s.status === 'active' ? 'live' : 'detached';
+        var kind = s.kind || 'terminal';
+        var auditBadge = s.audit ? '<span class="wd-audit-badge">audit</span>' : '';
+        return '<div class="wd-session-row" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+            '<span class="session-dot ' + sDot + '"></span>' +
+            '<span class="wd-session-name">' + escapeHtml(sName) + ' \u00b7 ' + agentWithIcon(s.agent || '?') + '</span>' +
+            auditBadge +
+        '</div>';
+    }).join('');
+}
+
+function wireActiveSessionRows() {
     wingDetailContent.querySelectorAll('.wd-session-row').forEach(function(row) {
         row.addEventListener('click', function() {
             var sid = row.dataset.sid;
@@ -1396,15 +1440,16 @@ function renderWingDetailPage(machineId) {
             }
         });
     });
+}
 
-    // Fetch past sessions
-    if (isOnline) {
-        loadWingPastSessions(machineId, 0);
-    }
-
-    // Inline palette for starting sessions
-    if (isOnline) {
-        setupWingPalette(w);
+function updateWingDetailSessions(machineId) {
+    var w = wingsData.find(function(w) { return w.machine_id === machineId; });
+    if (!w) return;
+    var container = document.getElementById('wd-active-sessions');
+    var activeSessions = sessionsData.filter(function(s) { return s.wing_id === w.id; });
+    if (container) {
+        container.innerHTML = renderActiveSessionRows(activeSessions);
+        wireActiveSessionRows();
     }
 }
 
@@ -1698,7 +1743,7 @@ function loadWingPastSessions(machineId, offset) {
             if (container && currentWingMachineId === machineId && offset === 0) {
                 var cached = getCachedWingSessions(machineId);
                 if (!cached || cached.length === 0) {
-                    container.innerHTML = '<span class="text-dim">failed to load</span>';
+                    container.innerHTML = '<span class="text-dim">could not reach wing - it may be reconnecting</span>';
                 }
             }
         });
@@ -1706,7 +1751,7 @@ function loadWingPastSessions(machineId, offset) {
 
 function renderPastSessions(container, machineId, sessions, hasMore) {
     if (!sessions || sessions.length === 0) {
-        container.innerHTML = '<span class="text-dim">no past sessions</span>';
+        container.innerHTML = '<span class="text-dim">no audited sessions</span>';
         return;
     }
     var html = sessions.map(function(s) {
@@ -2673,7 +2718,7 @@ function detachPTY() {
     ptySessionId = null;
     ptyWingId = null;
     e2eKey = null;
-    ephemeralPrivKey = null;
+
 }
 
 // Expose for inline onclick
@@ -2988,9 +3033,9 @@ function bytesToB64(bytes) {
 }
 
 async function deriveE2EKey(wingPublicKeyB64) {
-    if (!ephemeralPrivKey) return null;
+    if (!identityKey.priv) return null;
     var wingPubBytes = b64ToBytes(wingPublicKeyB64);
-    var shared = x25519.getSharedSecret(ephemeralPrivKey, wingPubBytes);
+    var shared = x25519.getSharedSecret(identityKey.priv, wingPubBytes);
     var salt = new Uint8Array(32);
     var keyMaterial = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
     var enc = new TextEncoder();
@@ -3210,7 +3255,7 @@ function setupPTYHandlers(ws, reattach) {
                 clearNotification(msg.session_id);
                 ptySessionId = null;
                 e2eKey = null;
-                ephemeralPrivKey = null;
+            
                 if (msg.error) {
                     ptyStatus.textContent = 'crashed';
                     term.writeln('\r\n\x1b[31;1m--- egg crashed ---\x1b[0m');
@@ -3240,7 +3285,7 @@ function setupPTYHandlers(ws, reattach) {
                 ptySessionId = null;
                 ptyWingId = null;
                 e2eKey = null;
-                ephemeralPrivKey = null;
+            
                 renderSidebar();
                 loadHome();
                 break;
@@ -3299,9 +3344,6 @@ function connectPTY(agent, cwd, wingId) {
     headerTitle.textContent = 'connecting...';
     ptyStatus.textContent = '';
 
-    ephemeralPrivKey = x25519.utils.randomSecretKey();
-    var ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
-    var pubKeyB64 = bytesToB64(ephemeralPubKey);
     e2eKey = null;
 
     ptyWs = new WebSocket(url);
@@ -3312,7 +3354,7 @@ function connectPTY(agent, cwd, wingId) {
             agent: agent,
             cols: term.cols,
             rows: term.rows,
-            public_key: pubKeyB64,
+            public_key: identityPubKey,
         };
         if (cwd) startMsg.cwd = cwd;
         if (wingId) startMsg.wing_id = wingId;
@@ -3338,18 +3380,9 @@ function attachPTY(sessionId) {
     headerTitle.textContent = sess ? sessionTitle(sess.agent || '?', sess.wing_id) : 'reconnecting...';
     ptyStatus.textContent = '';
 
-    // Reuse existing key if we have one - avoids decrypt failures from
-    // in-flight frames encrypted with the old key during re-key window
-    if (!ephemeralPrivKey) {
-        ephemeralPrivKey = x25519.utils.randomSecretKey();
-    }
-    var ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
-    var pubKeyB64 = bytesToB64(ephemeralPubKey);
-    // Keep existing e2eKey - wing will derive the same shared secret from same public key
-
     ptyWs = new WebSocket(url);
     ptyWs.onopen = function () {
-        ptyWs.send(JSON.stringify({ type: 'pty.attach', session_id: sessionId, public_key: pubKeyB64 }));
+        ptyWs.send(JSON.stringify({ type: 'pty.attach', session_id: sessionId, public_key: identityPubKey }));
     };
 
     setupPTYHandlers(ptyWs, true);
@@ -3364,7 +3397,7 @@ function disconnectPTY() {
     ptySessionId = null;
     ptyWingId = null;
     e2eKey = null;
-    ephemeralPrivKey = null;
+
     ptyStatus.textContent = '';
     headerTitle.textContent = '';
 }
@@ -3389,15 +3422,9 @@ function ptyReconnectAttach(sessionId, attempt) {
 
     if (ptyWs) { try { ptyWs.close(); } catch(e) {} }
 
-    if (!ephemeralPrivKey) {
-        ephemeralPrivKey = x25519.utils.randomSecretKey();
-    }
-    var ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
-    var pubKeyB64 = bytesToB64(ephemeralPubKey);
-
     ptyWs = new WebSocket(url);
     ptyWs.onopen = function () {
-        ptyWs.send(JSON.stringify({ type: 'pty.attach', session_id: sessionId, public_key: pubKeyB64 }));
+        ptyWs.send(JSON.stringify({ type: 'pty.attach', session_id: sessionId, public_key: identityPubKey }));
     };
 
     var origOnclose = null;
