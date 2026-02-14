@@ -97,18 +97,20 @@ function applyWingEvent(ev) {
             if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
                 renderWingDetailPage(ev.wing_id);
             if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
-        });
 
-        setTimeout(function() { fetchWingSessions(ev.wing_id).then(function(sessions) {
-            if (sessions.length > 0) {
-                var otherSessions = S.sessionsData.filter(function(s) {
-                    return s.wing_id !== sessions[0].wing_id;
-                });
-                mergeWingSessions(otherSessions.concat(sessions));
-                renderSidebar();
-                if (S.activeView === 'home') renderDashboard();
+            if (!evWing.tunnel_error) {
+                setTimeout(function() { fetchWingSessions(ev.wing_id).then(function(sessions) {
+                    if (sessions.length > 0) {
+                        var otherSessions = S.sessionsData.filter(function(s) {
+                            return s.wing_id !== sessions[0].wing_id;
+                        });
+                        mergeWingSessions(otherSessions.concat(sessions));
+                        renderSidebar();
+                        if (S.activeView === 'home') renderDashboard();
+                    }
+                }).catch(function() {}); }, 2000);
             }
-        }).catch(function() {}); }, 2000);
+        });
     } else {
         // wing.offline or other: render immediately
         rebuildAgentLists();

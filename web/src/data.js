@@ -175,8 +175,8 @@ export async function loadHome() {
     rebuildAgentLists();
     updateHeaderStatus();
 
-    // Fetch sessions from all online wings (tunnel auth handles access)
-    var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; });
+    // Fetch sessions from probed wings (skip passkey_required/not_allowed/unreachable)
+    var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key && !w.tunnel_error; });
     var sessionPromises = onlineWings.map(function(w) { return fetchWingSessions(w.wing_id); });
     var results = await Promise.all(sessionPromises);
     var allSessions = [];
