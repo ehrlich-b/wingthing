@@ -223,7 +223,7 @@ async function init() {
 
     initTerminal();
     loadHome();
-    setInterval(loadHome, 10000);
+    setInterval(loadHome, 30000);
     connectAppWS();
 
     // Deep link: #s/<sessionId> auto-attaches to session
@@ -472,6 +472,17 @@ function applyWingEvent(ev) {
     if (commandPalette.style.display !== 'none') {
         updatePaletteState(true);
     }
+
+    // Wing just came online — immediately fetch its sessions
+    if (ev.type === 'wing.online' && ev.machine_id) {
+        fetchWingSessions(ev.machine_id).then(function(sessions) {
+            if (sessions.length > 0) {
+                mergeWingSessions(sessions);
+                renderSidebar();
+                if (activeView === 'home') renderDashboard();
+            }
+        });
+    }
 }
 
 function pingWingDot(machineId) {
@@ -530,30 +541,23 @@ function rebuildAgentLists() {
 
 // === Data Loading ===
 
-async function loadHome() {
-    var sessions = [];
-    var wings = [];
+// fetchWingSessions fetches active sessions for a single wing by machine_id.
+async function fetchWingSessions(machineId) {
     try {
-        var [sessResp, wingsResp] = await Promise.all([
-            fetch('/api/app/sessions'),
-            fetch('/api/app/wings'),
-        ]);
-        if (sessResp.ok) sessions = await sessResp.json() || [];
-        if (wingsResp.ok) wings = await wingsResp.json() || [];
-    } catch (e) {
-        // Relay unreachable — render from cache
-        sessions = [];
-        wings = [];
-    }
+        var resp = await fetch('/api/app/wings/' + encodeURIComponent(machineId) + '/sessions?active=true');
+        if (resp.ok) return await resp.json() || [];
+    } catch (e) {}
+    return [];
+}
 
-    // Merge live sessions with cache (preserve existing order)
-    if (sessions.length > 0) {
+// mergeWingSessions merges fetched sessions into sessionsData, preserving order.
+function mergeWingSessions(allSessions) {
+    if (allSessions.length > 0) {
         var liveSessionMap = {};
-        sessions.forEach(function(s) { liveSessionMap[s.id] = s; });
+        allSessions.forEach(function(s) { liveSessionMap[s.id] = s; });
         var cachedSessions = getCachedSessions();
         var cachedSessionMap = {};
         cachedSessions.forEach(function(s) { cachedSessionMap[s.id] = s; });
-        // Preserve existing sessionsData order, update in place
         var seenSess = {};
         var mergedSessions = [];
         sessionsData.forEach(function(existing) {
@@ -565,15 +569,13 @@ async function loadHome() {
             }
             seenSess[existing.id] = true;
         });
-        // Append new sessions not in current order
-        sessions.forEach(function(s) {
+        allSessions.forEach(function(s) {
             if (!seenSess[s.id]) { mergedSessions.push(s); seenSess[s.id] = true; }
         });
         sessionsData = sortSessionsByOrder(mergedSessions);
         setEggOrder(sessionsData.map(function(s) { return s.id; }));
         setCachedSessions(sessionsData);
     } else {
-        // API empty (relay restarted, wing hasn't reclaimed yet) — keep cached
         var cachedSessions = getCachedSessions();
         if (cachedSessions.length > 0) {
             cachedSessions.forEach(function(s) { s.status = 'detached'; });
@@ -581,6 +583,16 @@ async function loadHome() {
         } else {
             sessionsData = [];
         }
+    }
+}
+
+async function loadHome() {
+    var wings = [];
+    try {
+        var wingsResp = await fetch('/api/app/wings');
+        if (wingsResp.ok) wings = await wingsResp.json() || [];
+    } catch (e) {
+        wings = [];
     }
 
     // Merge live wings with cached wings (stable by machine_id, preserve existing order)
@@ -634,6 +646,14 @@ async function loadHome() {
 
     rebuildAgentLists();
     updateHeaderStatus();
+
+    // Fetch sessions per-wing for all online wings
+    var onlineWings = wingsData.filter(function(w) { return w.online !== false && w.machine_id; });
+    var sessionPromises = onlineWings.map(function(w) { return fetchWingSessions(w.machine_id); });
+    var results = await Promise.all(sessionPromises);
+    var allSessions = [];
+    results.forEach(function(r) { allSessions = allSessions.concat(r); });
+    mergeWingSessions(allSessions);
 
     // Sync terminal bell attention flags from wing
     sessionsData.forEach(function(s) {
