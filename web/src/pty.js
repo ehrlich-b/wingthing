@@ -288,6 +288,7 @@ export function connectPTY(agent, cwd, wingId) {
         };
         if (cwd) startMsg.cwd = cwd;
         if (wingId) startMsg.wing_id = wingId;
+        if (wingId && S.tunnelAuthTokens[wingId]) startMsg.auth_token = S.tunnelAuthTokens[wingId];
         S.ptyWs.send(JSON.stringify(startMsg));
     };
 
