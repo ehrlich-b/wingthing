@@ -14,7 +14,9 @@ import (
 )
 
 // DeriveSharedKey performs X25519 ECDH + HKDF to produce an AES-256-GCM key.
-func DeriveSharedKey(privateKey *ecdh.PrivateKey, peerPublicKeyB64 string) (cipher.AEAD, error) {
+// The info parameter differentiates key domains (e.g. "wt-pty" for PTY sessions,
+// "wt-tunnel" for the encrypted tunnel).
+func DeriveSharedKey(privateKey *ecdh.PrivateKey, peerPublicKeyB64, info string) (cipher.AEAD, error) {
 	peerPubBytes, err := base64.StdEncoding.DecodeString(peerPublicKeyB64)
 	if err != nil {
 		return nil, fmt.Errorf("decode peer public key: %w", err)
@@ -29,9 +31,8 @@ func DeriveSharedKey(privateKey *ecdh.PrivateKey, peerPublicKeyB64 string) (ciph
 		return nil, fmt.Errorf("ecdh: %w", err)
 	}
 
-	// HKDF-SHA256, salt = 32 zero bytes, info = "wt-pty"
 	salt := make([]byte, 32)
-	kdf := hkdf.New(sha256.New, shared, salt, []byte("wt-pty"))
+	kdf := hkdf.New(sha256.New, shared, salt, []byte(info))
 	aesKey := make([]byte, 32)
 	if _, err := io.ReadFull(kdf, aesKey); err != nil {
 		return nil, fmt.Errorf("hkdf: %w", err)

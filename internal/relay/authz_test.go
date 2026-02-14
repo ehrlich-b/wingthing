@@ -139,55 +139,6 @@ func TestAuthzPTYGateway(t *testing.T) {
 	})
 }
 
-// --- Chat session authz tests (the wall) ---
-
-func TestAuthzChatGateway(t *testing.T) {
-	s, wing, ownerID, memberID, outsiderID := setupAuthzServer(t)
-
-	cs := &ChatSession{
-		ID:     "chat-1",
-		WingID: wing.ID,
-		UserID: ownerID,
-		Agent:  "claude",
-		Status: "active",
-	}
-	s.Chat.Add(cs)
-
-	tests := []struct {
-		name       string
-		userID     string
-		wantAccess bool
-	}{
-		{"owner can access own chat", ownerID, true},
-		{"org member can access org chat", memberID, true},
-		{"outsider cannot access org chat", outsiderID, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			chat, w := s.getAuthorizedChat(tt.userID, "chat-1")
-			if tt.wantAccess {
-				if chat == nil {
-					t.Error("getAuthorizedChat returned nil, want access")
-				}
-				if w == nil {
-					t.Error("getAuthorizedChat returned nil wing, want access")
-				}
-			} else {
-				if chat != nil {
-					t.Error("getAuthorizedChat returned session, want nil (no access)")
-				}
-			}
-		})
-	}
-
-	t.Run("nonexistent chat returns nil", func(t *testing.T) {
-		chat, _ := s.getAuthorizedChat(ownerID, "no-such-chat")
-		if chat != nil {
-			t.Error("expected nil for nonexistent chat")
-		}
-	})
-}
-
 // --- Personal wing isolation tests ---
 
 func TestAuthzPersonalWingIsolation(t *testing.T) {
@@ -224,16 +175,6 @@ func TestAuthzPersonalWingIsolation(t *testing.T) {
 		session, _ := s.getAuthorizedPTY("user-b", "sess-a")
 		if session != nil {
 			t.Error("user B should not access user A's PTY session")
-		}
-	})
-
-	chatA := &ChatSession{ID: "chat-a", WingID: wingA.ID, UserID: "user-a", Status: "active"}
-	s.Chat.Add(chatA)
-
-	t.Run("other user cannot access personal chat session", func(t *testing.T) {
-		chat, _ := s.getAuthorizedChat("user-b", "chat-a")
-		if chat != nil {
-			t.Error("user B should not access user A's chat session")
 		}
 	})
 }
@@ -421,8 +362,6 @@ func TestAuthzSessionOperationsMatrix(t *testing.T) {
 
 	sess := &PTYSession{ID: "matrix-pty", WingID: wing.ID, UserID: ownerID, Status: "active"}
 	s.PTY.Add(sess)
-	cs := &ChatSession{ID: "matrix-chat", WingID: wing.ID, UserID: ownerID, Status: "active"}
-	s.Chat.Add(cs)
 
 	actors := []struct {
 		name   string
@@ -442,18 +381,6 @@ func TestAuthzSessionOperationsMatrix(t *testing.T) {
 			}
 			if !actor.allow && session != nil {
 				t.Errorf("%s should NOT have PTY access", actor.name)
-			}
-		})
-	}
-
-	for _, actor := range actors {
-		t.Run("chat/"+actor.name, func(t *testing.T) {
-			chat, _ := s.getAuthorizedChat(actor.userID, "matrix-chat")
-			if actor.allow && chat == nil {
-				t.Errorf("%s should have chat access", actor.name)
-			}
-			if !actor.allow && chat != nil {
-				t.Errorf("%s should NOT have chat access", actor.name)
 			}
 		})
 	}

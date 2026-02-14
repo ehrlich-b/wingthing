@@ -1,10 +1,8 @@
 package relay
 
 import (
-	"compress/gzip"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -72,7 +70,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		}
 		entry := map[string]any{
 			"id":             wing.ID,
-			"wing_id":     wing.WingID,
+			"wing_id":        wing.WingID,
 			"hostname":       wing.Hostname,
 			"platform":       wing.Platform,
 			"version":        wing.Version,
@@ -84,6 +82,8 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			"latest_version": latestVer,
 			"egg_config":     wing.EggConfig,
 			"org_id":         wing.OrgID,
+			"pinned":         wing.Pinned,
+			"pinned_count":   wing.PinnedCount,
 		}
 		if label, ok := wingLabels[wing.WingID]; ok {
 			entry["wing_label"] = label
@@ -198,160 +198,6 @@ func (s *Server) fetchLatestVersion() {
 	log.Printf("latest release version: %s", ver)
 }
 
-// requestSessionSyncForWing asks a single wing for its session list and waits for the response.
-func (s *Server) requestSessionSyncForWing(ctx context.Context, wing *ConnectedWing) {
-	reqID := uuid.New().String()[:8]
-	ch := make(chan *ws.SessionsSync, 1)
-	s.Wings.RegisterSessionRequest(reqID, ch)
-	defer s.Wings.UnregisterSessionRequest(reqID)
-
-	msg := ws.SessionsList{Type: ws.TypeSessionsList, RequestID: reqID}
-	data, _ := json.Marshal(msg)
-	writeCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	err := wing.Conn.Write(writeCtx, websocket.MessageText, data)
-	cancel()
-	if err != nil {
-		return
-	}
-
-	select {
-	case <-ch:
-	case <-time.After(500 * time.Millisecond):
-	case <-ctx.Done():
-	}
-}
-
-// handleDeleteSession kills or removes a PTY or chat session.
-// Route: DELETE /api/app/wings/{wingID}/sessions/{id}
-func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
-	user := s.sessionUser(r)
-	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
-		return
-	}
-
-	wingID := r.PathValue("wingID")
-	if s.replayToWingEdgeByWingID(w, wingID) {
-		return
-	}
-	sessionID := r.PathValue("id")
-
-	wing := s.findWingByWingID(user.ID, wingID)
-	if wing == nil {
-		writeError(w, http.StatusNotFound, "wing not found or offline")
-		return
-	}
-
-	// Try PTY first
-	ptySession := s.PTY.Get(sessionID)
-	if ptySession != nil && ptySession.WingID == wing.ID {
-		kill := ws.PTYKill{Type: ws.TypePTYKill, SessionID: sessionID}
-		data, _ := json.Marshal(kill)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		wing.Conn.Write(ctx, websocket.MessageText, data)
-		cancel()
-		s.PTY.Remove(sessionID)
-		log.Printf("pty session %s: deleted via API (user=%s)", sessionID, user.ID)
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-		return
-	}
-
-	// Try chat
-	chatSession := s.Chat.Get(sessionID)
-	if chatSession != nil && chatSession.WingID == wing.ID {
-		del := ws.ChatDelete{Type: ws.TypeChatDelete, SessionID: sessionID}
-		data, _ := json.Marshal(del)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		wing.Conn.Write(ctx, websocket.MessageText, data)
-		cancel()
-		s.Chat.Remove(sessionID)
-		log.Printf("chat session %s: deleted via API (user=%s)", sessionID, user.ID)
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-		return
-	}
-
-	// Session not in local registry — send kill directly to the wing anyway
-	// (the wing owns the egg process, it can kill it even if the relay lost track)
-	kill := ws.PTYKill{Type: ws.TypePTYKill, SessionID: sessionID}
-	data, _ := json.Marshal(kill)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	wing.Conn.Write(ctx, websocket.MessageText, data)
-	cancel()
-	s.PTY.Remove(sessionID)
-	log.Printf("session %s: force-deleted via wing %s (user=%s)", sessionID, wing.ID, user.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-// handleWingUpdate sends a wing.update command to a connected wing.
-func (s *Server) handleWingUpdate(w http.ResponseWriter, r *http.Request) {
-	user := s.sessionUser(r)
-	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
-		return
-	}
-
-	wingID := r.PathValue("wingID")
-	if s.replayToWingEdgeByWingID(w, wingID) {
-		return
-	}
-	wing := s.findWingByWingID(user.ID, wingID)
-	if wing == nil {
-		writeError(w, http.StatusNotFound, "wing not found")
-		return
-	}
-
-	msg := ws.WingUpdate{Type: ws.TypeWingUpdate}
-	data, _ := json.Marshal(msg)
-	writeCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
-		writeError(w, http.StatusBadGateway, "wing unreachable")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-// handleWingEggConfig pushes a new egg config to a connected wing.
-func (s *Server) handleWingEggConfig(w http.ResponseWriter, r *http.Request) {
-	user := s.sessionUser(r)
-	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
-		return
-	}
-
-	wingID := r.PathValue("wingID")
-	if s.replayToWingEdgeByWingID(w, wingID) {
-		return
-	}
-	wing := s.findWingByWingID(user.ID, wingID)
-	if wing == nil {
-		writeError(w, http.StatusNotFound, "wing not found")
-		return
-	}
-
-	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
-		return
-	}
-	yamlStr := string(body)
-
-	// Push to wing via WebSocket
-	msg := ws.EggConfigUpdate{Type: ws.TypeEggConfigUpdate, YAML: yamlStr}
-	data, _ := json.Marshal(msg)
-	writeCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
-		writeError(w, http.StatusBadGateway, "wing unreachable")
-		return
-	}
-
-	// Update cached config on the ConnectedWing
-	wing.EggConfig = yamlStr
-
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
 
 // handleAppWS is a dashboard WebSocket that pushes wing.online/wing.offline events.
 func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
@@ -390,49 +236,6 @@ func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		}
-	}
-}
-
-// handleWingLS proxies a directory listing request to a connected wing.
-func (s *Server) handleWingLS(w http.ResponseWriter, r *http.Request) {
-	user := s.sessionUser(r)
-	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
-		return
-	}
-
-	wingID := r.PathValue("wingID")
-	if s.replayToWingEdgeByWingID(w, wingID) {
-		return
-	}
-	path := r.URL.Query().Get("path")
-
-	wing := s.findWingByWingID(user.ID, wingID)
-	if wing == nil {
-		writeError(w, http.StatusNotFound, "wing not found")
-		return
-	}
-
-	reqID := uuid.New().String()[:8]
-	ch := make(chan *ws.DirResults, 1)
-	s.Wings.RegisterDirRequest(reqID, ch)
-	defer s.Wings.UnregisterDirRequest(reqID)
-
-	msg := ws.DirList{Type: ws.TypeDirList, RequestID: reqID, Path: path}
-	data, _ := json.Marshal(msg)
-	writeCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
-		writeError(w, http.StatusBadGateway, "wing unreachable")
-		return
-	}
-
-	select {
-	case result := <-ch:
-		writeJSON(w, http.StatusOK, result.Entries)
-	case <-time.After(3 * time.Second):
-		writeError(w, http.StatusGatewayTimeout, "timeout")
-	case <-r.Context().Done():
 	}
 }
 
@@ -531,112 +334,6 @@ func (s *Server) handleAppDowngrade(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("user %s (%s) downgraded (personal sub canceled)", user.ID, user.DisplayName)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": tier})
-}
-
-// handleWingSessions proxies a past-sessions request to the wing via WebSocket.
-func (s *Server) handleWingSessions(w http.ResponseWriter, r *http.Request) {
-	user := s.sessionUser(r)
-	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
-		return
-	}
-
-	wingID := r.PathValue("wingID")
-	if s.replayToWingEdgeByWingID(w, wingID) {
-		return
-	}
-	wing := s.findWingByWingID(user.ID, wingID)
-	if wing == nil {
-		writeError(w, http.StatusNotFound, "wing not found or offline")
-		return
-	}
-
-	// ?active=true returns live sessions from the wing's PTY/chat registries
-	if r.URL.Query().Get("active") == "true" {
-		s.requestSessionSyncForWing(r.Context(), wing)
-
-		var out []map[string]any
-		for _, sess := range s.listAccessiblePTYSessions(user.ID) {
-			if sess.WingID != wing.ID {
-				continue
-			}
-			status := sess.Status
-			if status == "" {
-				status = "active"
-			}
-			entry := map[string]any{
-				"id":      sess.ID,
-				"wing_id": sess.WingID,
-				"agent":   sess.Agent,
-				"status":  status,
-				"kind":    "terminal",
-			}
-			if sess.CWD != "" {
-				entry["cwd"] = sess.CWD
-			}
-			if sess.EggConfig != "" {
-				entry["egg_config"] = sess.EggConfig
-			}
-			if sess.NeedsAttention {
-				entry["needs_attention"] = true
-			}
-			out = append(out, entry)
-		}
-		for _, sess := range s.listAccessibleChatSessions(user.ID) {
-			if sess.WingID != wing.ID {
-				continue
-			}
-			out = append(out, map[string]any{
-				"id":      sess.ID,
-				"wing_id": sess.WingID,
-				"agent":   sess.Agent,
-				"status":  sess.Status,
-				"kind":    "chat",
-			})
-		}
-		if out == nil {
-			out = make([]map[string]any, 0)
-		}
-		writeJSON(w, http.StatusOK, out)
-		return
-	}
-
-	// Default: past session history from wing's disk
-	offset := 0
-	limit := 20
-	if v := r.URL.Query().Get("offset"); v != "" {
-		fmt.Sscanf(v, "%d", &offset)
-	}
-	if v := r.URL.Query().Get("limit"); v != "" {
-		fmt.Sscanf(v, "%d", &limit)
-	}
-
-	reqID := uuid.New().String()[:8]
-	ch := make(chan *ws.SessionsHistoryResults, 1)
-	s.Wings.RegisterHistoryRequest(reqID, ch)
-	defer s.Wings.UnregisterHistoryRequest(reqID)
-
-	msg := ws.SessionsHistory{
-		Type:      ws.TypeSessionsHistory,
-		RequestID: reqID,
-		Offset:    offset,
-		Limit:     limit,
-	}
-	data, _ := json.Marshal(msg)
-	writeCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
-		writeError(w, http.StatusBadGateway, "wing unreachable")
-		return
-	}
-
-	select {
-	case result := <-ch:
-		writeJSON(w, http.StatusOK, result)
-	case <-time.After(5 * time.Second):
-		writeError(w, http.StatusGatewayTimeout, "timeout")
-	case <-r.Context().Done():
-	}
 }
 
 // wingLabelScope resolves the owner and scope for a wing label operation.
@@ -756,124 +453,3 @@ func (s *Server) handleSessionLabel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handleAuditSSE streams audit data from wing to browser via SSE.
-func (s *Server) handleAuditSSE(w http.ResponseWriter, r *http.Request) {
-	user := s.sessionUser(r)
-	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
-		return
-	}
-
-	wingID := r.PathValue("wingID")
-	if s.replayToWingEdgeByWingID(w, wingID) {
-		return
-	}
-	sessionID := r.PathValue("sessionID")
-	kind := r.URL.Query().Get("kind")
-	if kind == "" {
-		kind = "pty"
-	}
-
-	wing := s.findWingByWingID(user.ID, wingID)
-	if wing == nil {
-		writeError(w, http.StatusNotFound, "wing not found or offline")
-		return
-	}
-
-	if !s.isWingOwner(user.ID, wing) {
-		writeError(w, http.StatusForbidden, "not wing owner")
-		return
-	}
-
-	reqID := uuid.New().String()[:8]
-	ch := make(chan any, 64)
-	s.Wings.RegisterAuditRequest(reqID, ch)
-	defer s.Wings.UnregisterAuditRequest(reqID)
-
-	msg := ws.AuditRequest{
-		Type:      ws.TypeAuditRequest,
-		RequestID: reqID,
-		SessionID: sessionID,
-		Kind:      kind,
-	}
-	data, _ := json.Marshal(msg)
-	writeCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	if err := wing.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
-		writeError(w, http.StatusBadGateway, "wing unreachable")
-		return
-	}
-
-	// SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming not supported")
-		return
-	}
-
-	// Gzip if client supports it
-	var out io.Writer = w
-	useGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
-	if useGzip {
-		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzip.NewWriter(w)
-		defer gz.Close()
-		out = gz
-	}
-
-	var totalBytes int64
-	timeout := time.After(60 * time.Second)
-	for {
-		select {
-		case msg := <-ch:
-			switch v := msg.(type) {
-			case *ws.AuditChunk:
-				lines := strings.Split(strings.TrimRight(v.Data, "\n"), "\n")
-				for _, line := range lines {
-					if line == "" {
-						continue
-					}
-					n, _ := fmt.Fprintf(out, "event: chunk\ndata: %s\n\n", line)
-					totalBytes += int64(n)
-				}
-				if gz, ok := out.(*gzip.Writer); ok {
-					gz.Flush()
-				}
-				flusher.Flush()
-			case *ws.AuditDone:
-				fmt.Fprintf(out, "event: done\ndata: {}\n\n")
-				if gz, ok := out.(*gzip.Writer); ok {
-					gz.Flush()
-				}
-				flusher.Flush()
-				if s.Bandwidth != nil && totalBytes > 0 {
-					s.Bandwidth.Wait(r.Context(), user.ID, int(totalBytes))
-				}
-				return
-			case *ws.AuditError:
-				fmt.Fprintf(out, "event: error\ndata: %s\n\n", v.Error)
-				if gz, ok := out.(*gzip.Writer); ok {
-					gz.Flush()
-				}
-				flusher.Flush()
-				return
-			}
-		case <-timeout:
-			fmt.Fprintf(out, "event: error\ndata: timeout\n\n")
-			if gz, ok := out.(*gzip.Writer); ok {
-				gz.Flush()
-			}
-			flusher.Flush()
-			return
-		case <-r.Context().Done():
-			if s.Bandwidth != nil && totalBytes > 0 {
-				s.Bandwidth.Wait(r.Context(), user.ID, int(totalBytes))
-			}
-			return
-		}
-	}
-}

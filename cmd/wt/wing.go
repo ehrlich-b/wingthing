@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/cipher"
+	"crypto/ecdh"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -22,22 +23,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
-	"github.com/ehrlich-b/wingthing/internal/memory"
-	"github.com/ehrlich-b/wingthing/internal/orchestrator"
-	"github.com/ehrlich-b/wingthing/internal/sandbox"
-	"github.com/ehrlich-b/wingthing/internal/skill"
-	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
 )
 
 // wingAttention tracks sessions that have triggered a terminal bell (need user attention).
 var wingAttention sync.Map // sessionID → bool
+
+// tunnelKeys caches derived AES-GCM keys per sender public key.
+var tunnelKeys sync.Map // senderPub string → cipher.AEAD
 
 // readEggMeta reads agent/cwd from an egg's meta file.
 func readEggMeta(dir string) (agent, cwd string) {
@@ -453,8 +451,14 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 	ephemeralCount := len(allowedKeys) - pinnedCount
 
-	// Build passkey auth cache
-	passkeyCache := auth.NewAuthCache()
+	// Build passkey auth cache with configurable TTL
+	authTTL := time.Hour
+	if wingCfg.AuthTTL != "" {
+		if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil && d > 0 {
+			authTTL = d
+		}
+	}
+	passkeyCache := auth.NewAuthCache(authTTL)
 
 	// Load wing-level egg config (with base chain resolution)
 	var wingEggCfg *egg.EggConfig
@@ -496,13 +500,6 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	if err != nil || !ts.IsValid(tok) {
 		return fmt.Errorf("not logged in — run: wt login")
 	}
-
-	// Open local store for task execution
-	s, err := store.Open(cfg.DBPath())
-	if err != nil {
-		return fmt.Errorf("open db: %w", err)
-	}
-	defer s.Close()
 
 	// Detect available agents
 	var agents []string
@@ -579,6 +576,12 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		}
 	}
 
+	// Load wing private key for tunnel E2E encryption
+	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
+	if privKeyErr != nil {
+		return fmt.Errorf("load private key: %w", privKeyErr)
+	}
+
 	client := &ws.Client{
 		RoostURL:    wsURL,
 		Token:       tok.Token,
@@ -592,10 +595,8 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		Projects:    projects,
 		OrgSlug:     orgFlag,
 		RootDir:     resolvedRoot,
-	}
-
-	client.OnTask = func(ctx context.Context, task ws.TaskSubmit, send ws.ChunkSender) (string, error) {
-		return executeRelayTask(ctx, cfg, s, task, send)
+		Pinned:      wingCfg.Pinned,
+		PinnedCount: len(wingCfg.AllowKeys),
 	}
 
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
@@ -616,77 +617,16 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debug, allowedKeys, passkeyCache)
 	}
 
-	client.OnChatStart = func(ctx context.Context, start ws.ChatStart, write ws.PTYWriteFunc) {
-		handleChatStart(ctx, s, start, write)
-	}
-
-	client.OnChatMessage = func(ctx context.Context, msg ws.ChatMessage, write ws.PTYWriteFunc) {
-		handleChatMessage(ctx, cfg, s, msg, write)
-	}
-
-	client.OnChatDelete = func(ctx context.Context, del ws.ChatDelete, write ws.PTYWriteFunc) {
-		handleChatDelete(ctx, s, del, write)
-	}
-
-	client.OnDirList = func(ctx context.Context, req ws.DirList, write ws.PTYWriteFunc) {
-		// Constrain dir listing to root if configured
-		if resolvedRoot != "" {
-			p := req.Path
-			if p == "" {
-				p = resolvedRoot
-			}
-			abs := filepath.Clean(p)
-			if a, err := filepath.Abs(abs); err == nil {
-				abs = a
-			}
-			if abs != resolvedRoot && !strings.HasPrefix(abs, resolvedRoot+string(filepath.Separator)) {
-				req.Path = resolvedRoot
-			}
-		}
-		handleDirList(ctx, req, write)
+	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
+		handleTunnelRequest(ctx, cfg, wingCfg, req, write, allowedKeys, passkeyCache, privKey, resolvedRoot, &wingEggMu, &wingEggCfg, audit, debug)
 	}
 
 	client.SessionLister = func(ctx context.Context) []ws.SessionInfo {
 		return listAliveEggSessions(cfg)
 	}
 
-	client.OnEggConfigUpdate = func(ctx context.Context, yamlStr string) {
-		newCfg, err := egg.LoadEggConfigFromYAML(yamlStr)
-		if err != nil {
-			log.Printf("egg: bad config update: %v", err)
-			return
-		}
-		wingEggMu.Lock()
-		wingEggCfg = newCfg
-		wingEggMu.Unlock()
-		log.Printf("egg: config updated from relay (network=%s)", newCfg.NetworkSummary())
-	}
-
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
 		killOrphanEgg(cfg, sessionID)
-	}
-
-	client.OnSessionsHistory = func(ctx context.Context, req ws.SessionsHistory, write ws.PTYWriteFunc) {
-		handleSessionsHistory(cfg, req, write)
-	}
-
-	client.OnAuditRequest = func(ctx context.Context, req ws.AuditRequest, write ws.PTYWriteFunc) {
-		handleAuditRequest(cfg, req, write)
-	}
-
-	client.OnUpdate = func(ctx context.Context) {
-		log.Println("remote update requested")
-		exe, err := os.Executable()
-		if err != nil {
-			log.Printf("update: find executable: %v", err)
-			return
-		}
-		c := exec.Command(exe, "update")
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-		if err := c.Run(); err != nil {
-			log.Printf("update: %v", err)
-		}
 	}
 
 	ctx, cancel := context.WithCancel(cmd.Context())
@@ -900,145 +840,8 @@ func wingUnpinCmd() *cobra.Command {
 	}
 }
 
-// executeRelayTask runs a task received from the relay using the local agent + sandbox.
-func executeRelayTask(ctx context.Context, cfg *config.Config, s *store.Store, task ws.TaskSubmit, send ws.ChunkSender) (string, error) {
-	fmt.Printf("executing task %s", task.TaskID)
-	if task.Skill != "" {
-		fmt.Printf(" (skill: %s)", task.Skill)
-	}
-	fmt.Println()
-
-	// Create a local task record
-	t := &store.Task{
-		ID:    task.TaskID,
-		RunAt: timeNow(),
-	}
-
-	if task.Skill != "" {
-		t.What = task.Skill
-		t.Type = "skill"
-		// Check skill exists and is enabled
-		state, stErr := skill.LoadState(cfg.Dir)
-		if stErr == nil && !state.IsEnabled(task.Skill) {
-			return "", fmt.Errorf("skill %q is disabled", task.Skill)
-		}
-	} else {
-		t.What = task.Prompt
-		t.Type = "prompt"
-	}
-	if task.Agent != "" {
-		t.Agent = task.Agent
-	}
-
-	s.CreateTask(t)
-	s.UpdateTaskStatus(t.ID, "running")
-
-	agents := map[string]agent.Agent{
-		"claude": newAgent("claude"),
-		"ollama": newAgent("ollama"),
-		"gemini": newAgent("gemini"),
-		"codex":  newAgent("codex"),
-		"cursor": newAgent("cursor"),
-	}
-	mem := memory.New(cfg.MemoryDir())
-
-	builder := &orchestrator.Builder{
-		Store:  s,
-		Memory: mem,
-		Config: cfg,
-		Agents: agents,
-	}
-
-	pr, err := builder.Build(ctx, t.ID)
-	if err != nil {
-		s.SetTaskError(t.ID, err.Error())
-		return "", fmt.Errorf("build prompt: %w", err)
-	}
-
-	agentName := pr.Agent
-	a := agents[agentName]
-
-	var runOpts agent.RunOpts
-	if t.Type == "skill" {
-		runOpts.SystemPrompt = `CRITICAL: You are a non-interactive data processor executing a skill. The prompt is a strict specification. Output ONLY what it specifies, EXACTLY in the format it specifies. NO conversational text. NO explanations. NO questions. NO markdown formatting unless specified. NO preamble or commentary.`
-		runOpts.ReplaceSystemPrompt = true
-	}
-
-	isolation := task.Isolation
-	if isolation == "" {
-		isolation = pr.Isolation
-	}
-	if isolation != "privileged" {
-		var mounts []sandbox.Mount
-		for _, m := range pr.Mounts {
-			mounts = append(mounts, sandbox.Mount{Source: m, Target: m})
-		}
-		// Map isolation string to NetworkNeed for the task execution path
-		netNeed := sandbox.NetworkNone
-		level := sandbox.ParseLevel(isolation)
-		if level >= sandbox.Network {
-			netNeed = sandbox.NetworkFull
-		}
-		sb, sbErr := sandbox.New(sandbox.Config{
-			Mounts:      mounts,
-			NetworkNeed: netNeed,
-		})
-		if sbErr != nil {
-			s.SetTaskError(t.ID, sbErr.Error())
-			return "", fmt.Errorf("create sandbox: %w", sbErr)
-		}
-		defer sb.Destroy()
-		runOpts.CmdFactory = func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
-			return sb.Exec(ctx, name, args)
-		}
-	}
-
-	stream, err := a.Run(ctx, pr.Prompt, runOpts)
-	if err != nil {
-		s.SetTaskError(t.ID, err.Error())
-		return "", fmt.Errorf("run agent: %w", err)
-	}
-
-	// Stream output back to relay
-	for {
-		chunk, ok := stream.Next()
-		if !ok {
-			break
-		}
-		fmt.Print(chunk.Text) // local echo
-		send(task.TaskID, chunk.Text)
-	}
-	fmt.Println()
-
-	if err := stream.Err(); err != nil {
-		s.SetTaskError(t.ID, err.Error())
-		return "", fmt.Errorf("agent error: %w", err)
-	}
-
-	output := stream.Text()
-	s.SetTaskOutput(t.ID, output)
-	s.UpdateTaskStatus(t.ID, "done")
-
-	// Record in thread
-	inputTok, outputTok := stream.Tokens()
-	totalTok := inputTok + outputTok
-	if totalTok > 0 {
-		s.AppendThread(&store.ThreadEntry{
-			TaskID:     &t.ID,
-			WingID:  cfg.WingID,
-			Agent:      &agentName,
-			UserInput:  &t.What,
-			Summary:    truncate(output, 200),
-			TokensUsed: &totalTok,
-		})
-	}
-
-	fmt.Printf("task %s done (%d tokens)\n", task.TaskID, totalTok)
-	return output, nil
-}
-
-func handleDirList(_ context.Context, req ws.DirList, write ws.PTYWriteFunc) {
-	path := req.Path
+// getDirEntries returns directory entries for the given path, suitable for cwd selection.
+func getDirEntries(path, resolvedRoot string) []ws.DirEntry {
 	if path == "" {
 		home, _ := os.UserHomeDir()
 		path = home
@@ -1046,6 +849,20 @@ func handleDirList(_ context.Context, req ws.DirList, write ws.PTYWriteFunc) {
 	if strings.HasPrefix(path, "~") {
 		home, _ := os.UserHomeDir()
 		path = home + path[1:]
+	}
+
+	// Constrain to root if configured
+	if resolvedRoot != "" {
+		if path == "" {
+			path = resolvedRoot
+		}
+		abs := filepath.Clean(path)
+		if a, err := filepath.Abs(abs); err == nil {
+			abs = a
+		}
+		if abs != resolvedRoot && !strings.HasPrefix(abs, resolvedRoot+string(filepath.Separator)) {
+			path = resolvedRoot
+		}
 	}
 
 	// Try path as a directory first; if it doesn't exist, treat the last
@@ -1057,15 +874,14 @@ func handleDirList(_ context.Context, req ws.DirList, write ws.PTYWriteFunc) {
 		path = filepath.Dir(path)
 		entries, err = os.ReadDir(path)
 		if err != nil {
-			write(ws.DirResults{Type: ws.TypeDirResults, RequestID: req.RequestID})
-			return
+			return nil
 		}
 	}
 
 	var results []ws.DirEntry
 	for _, e := range entries {
 		if !e.IsDir() {
-			continue // dirs only — this is for cwd selection
+			continue // dirs only -- this is for cwd selection
 		}
 		if strings.HasPrefix(e.Name(), ".") {
 			continue // skip hidden dirs
@@ -1080,11 +896,7 @@ func handleDirList(_ context.Context, req ws.DirList, write ws.PTYWriteFunc) {
 			Path:  full,
 		})
 	}
-	write(ws.DirResults{Type: ws.TypeDirResults, RequestID: req.RequestID, Entries: results})
-}
-
-func timeNow() time.Time {
-	return time.Now().UTC()
+	return results
 }
 
 // reapDeadEggs removes egg directories for dead processes on startup.
@@ -1430,7 +1242,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				// 2. Derive new key
 				var newGCM cipher.AEAD
 				if attach.PublicKey != "" {
-					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
+					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 					if deriveErr != nil {
 						log.Printf("pty session %s: reattach derive key failed: %v", sessionID, deriveErr)
 					} else {
@@ -1680,7 +1492,7 @@ authDone:
 	}
 	wingPubKeyB64 = base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
 	if start.PublicKey != "" {
-		derived, deriveErr := auth.DeriveSharedKey(privKey, start.PublicKey)
+		derived, deriveErr := auth.DeriveSharedKey(privKey, start.PublicKey, "wt-pty")
 		if deriveErr != nil {
 			log.Printf("pty session %s: FATAL: derive shared key: %v", start.SessionID, deriveErr)
 			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E key exchange failed"})
@@ -1803,7 +1615,7 @@ authDone:
 				// 2. Derive new key
 				var newGCM cipher.AEAD
 				if attach.PublicKey != "" {
-					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey)
+					derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 					if deriveErr != nil {
 						log.Printf("pty session %s: reattach derive key failed: %v", start.SessionID, deriveErr)
 					} else {
@@ -1948,150 +1760,172 @@ authDone:
 	<-sessionCtx.Done()
 }
 
-// handleChatStart creates a new chat session or resumes an existing one.
-func handleChatStart(ctx context.Context, s *store.Store, start ws.ChatStart, write ws.PTYWriteFunc) {
-	sessionID := start.SessionID
+// tunnelInner is the decrypted JSON payload inside a tunnel request.
+type tunnelInner struct {
+	Type      string `json:"type"`
+	Path      string `json:"path,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	YAML      string `json:"yaml,omitempty"`
+	Offset    int    `json:"offset,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	AuthToken string `json:"auth_token,omitempty"`
+}
 
-	// Resume: load history from local DB
-	if sessionID != "" {
-		existing, err := s.GetChatSession(sessionID)
-		if err == nil && existing != nil {
-			// Send history
-			msgs, _ := s.ListChatMessages(sessionID)
-			var entries []ws.ChatHistoryEntry
-			for _, m := range msgs {
-				entries = append(entries, ws.ChatHistoryEntry{Role: m.Role, Content: m.Content})
-			}
-			write(ws.ChatHistoryMsg{
-				Type:      ws.TypeChatHistory,
-				SessionID: sessionID,
-				Messages:  entries,
-			})
-			write(ws.ChatStarted{
-				Type:      ws.TypeChatStarted,
-				SessionID: sessionID,
-				Agent:     existing.Agent,
-			})
-			log.Printf("chat session %s resumed (%d messages)", sessionID, len(entries))
+// pastSessionInfo is the local version of PastSessionInfo for tunnel responses.
+type pastSessionInfo struct {
+	SessionID string `json:"session_id"`
+	Agent     string `json:"agent"`
+	CWD       string `json:"cwd,omitempty"`
+	StartedAt int64  `json:"started_at,omitempty"`
+	Audit     bool   `json:"audit,omitempty"`
+}
+
+// tunnelRespond encrypts a JSON response and sends it as a tunnel.res message.
+func tunnelRespond(gcm cipher.AEAD, requestID string, result any, write ws.PTYWriteFunc) {
+	data, _ := json.Marshal(result)
+	encrypted, err := auth.Encrypt(gcm, data)
+	if err != nil {
+		return
+	}
+	write(ws.TunnelResponse{Type: ws.TypeTunnelResponse, RequestID: requestID, Payload: encrypted})
+}
+
+// tunnelStreamChunk encrypts a streaming chunk and sends it as a tunnel.stream message.
+func tunnelStreamChunk(gcm cipher.AEAD, requestID string, chunk []byte, done bool, write ws.PTYWriteFunc) {
+	encrypted, err := auth.Encrypt(gcm, chunk)
+	if err != nil {
+		return
+	}
+	write(ws.TunnelStream{Type: ws.TypeTunnelStream, RequestID: requestID, Payload: encrypted, Done: done})
+}
+
+// handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
+func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, req ws.TunnelRequest, write ws.PTYWriteFunc,
+	allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, privKey *ecdh.PrivateKey, resolvedRoot string,
+	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool) {
+
+	// Derive or retrieve cached AES-GCM key for this sender
+	var gcm cipher.AEAD
+	if cached, ok := tunnelKeys.Load(req.SenderPub); ok {
+		gcm = cached.(cipher.AEAD)
+	} else {
+		derived, err := auth.DeriveSharedKey(privKey, req.SenderPub, "wt-tunnel")
+		if err != nil {
+			log.Printf("tunnel: derive key failed: %v", err)
+			return
+		}
+		gcm = derived
+		tunnelKeys.Store(req.SenderPub, gcm)
+	}
+
+	// Decrypt the payload
+	plaintext, err := auth.Decrypt(gcm, req.Payload)
+	if err != nil {
+		log.Printf("tunnel %s: decrypt failed: %v", req.RequestID, err)
+		return
+	}
+
+	// Parse inner message
+	var inner tunnelInner
+	if err := json.Unmarshal(plaintext, &inner); err != nil {
+		log.Printf("tunnel %s: bad inner JSON: %v", req.RequestID, err)
+		return
+	}
+
+	// Passkey auth check for pinned wings
+	if len(allowedKeys) > 0 && wingCfg.Pinned {
+		if inner.AuthToken == "" {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "passkey required"}, write)
+			return
+		}
+		if _, ok := passkeyCache.Check(inner.AuthToken); !ok {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid auth token"}, write)
 			return
 		}
 	}
 
-	// New session
-	if err := s.CreateChatSession(start.SessionID, start.Agent); err != nil {
-		log.Printf("chat: create session: %v", err)
-		return
-	}
+	switch inner.Type {
+	case "dir.list":
+		entries := getDirEntries(inner.Path, resolvedRoot)
+		tunnelRespond(gcm, req.RequestID, map[string]any{"entries": entries}, write)
 
-	write(ws.ChatStarted{
-		Type:      ws.TypeChatStarted,
-		SessionID: start.SessionID,
-		Agent:     start.Agent,
-	})
-	log.Printf("chat session %s created (agent=%s)", start.SessionID, start.Agent)
-}
+	case "sessions.list":
+		sessions := listAliveEggSessions(cfg)
+		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
 
-// handleChatMessage processes a user message: stores it, calls the agent, streams the response.
-func handleChatMessage(ctx context.Context, cfg *config.Config, s *store.Store, msg ws.ChatMessage, write ws.PTYWriteFunc) {
-	// Store user message
-	if err := s.AppendChatMessage(msg.SessionID, "user", msg.Content); err != nil {
-		log.Printf("chat: store user message: %v", err)
-		return
-	}
+	case "sessions.history":
+		sessions, total := getSessionsHistory(cfg, inner.Offset, inner.Limit)
+		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions, "total": total}, write)
 
-	// Load conversation history
-	messages, err := s.ListChatMessages(msg.SessionID)
-	if err != nil {
-		log.Printf("chat: load history: %v", err)
-		return
-	}
+	case "audit.request":
+		streamAuditData(cfg, inner.SessionID, inner.Kind, gcm, req.RequestID, write)
 
-	// Build prompt with conversation history
-	var promptBuilder strings.Builder
-	if len(messages) > 1 {
-		promptBuilder.WriteString("Previous conversation:\n\n")
-		for _, m := range messages[:len(messages)-1] {
-			if m.Role == "user" {
-				promptBuilder.WriteString("User: " + m.Content + "\n\n")
-			} else {
-				promptBuilder.WriteString("Assistant: " + m.Content + "\n\n")
-			}
+	case "egg.config_update":
+		if inner.YAML == "" {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing yaml"}, write)
+			return
 		}
-		promptBuilder.WriteString("Now respond to the user's latest message:\n\n")
-	}
-	promptBuilder.WriteString(msg.Content)
-
-	// Resolve agent
-	session, _ := s.GetChatSession(msg.SessionID)
-	agentName := "claude"
-	if session != nil && session.Agent != "" {
-		agentName = session.Agent
-	}
-
-	a := newAgent(agentName)
-	stream, err := a.Run(ctx, promptBuilder.String(), agent.RunOpts{})
-	if err != nil {
-		log.Printf("chat session %s: agent error: %v", msg.SessionID, err)
-		write(ws.ChatDone{
-			Type:      ws.TypeChatDone,
-			SessionID: msg.SessionID,
-			Content:   "Error: " + err.Error(),
-		})
-		return
-	}
-
-	// Stream chunks back
-	for {
-		chunk, ok := stream.Next()
-		if !ok {
-			break
+		newCfg, err := egg.LoadEggConfigFromYAML(inner.YAML)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
 		}
-		write(ws.ChatChunk{
-			Type:      ws.TypeChatChunk,
-			SessionID: msg.SessionID,
-			Text:      chunk.Text,
-		})
+		wingEggMu.Lock()
+		*wingEggCfg = newCfg
+		wingEggMu.Unlock()
+		log.Printf("egg: config updated from tunnel (network=%s)", newCfg.NetworkSummary())
+		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+
+	case "pty.kill":
+		if inner.SessionID == "" {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing session_id"}, write)
+			return
+		}
+		killOrphanEgg(cfg, inner.SessionID)
+		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+
+	case "wing.update":
+		log.Println("tunnel: remote update requested")
+		exe, exeErr := os.Executable()
+		if exeErr != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": exeErr.Error()}, write)
+			return
+		}
+		c := exec.Command(exe, "update")
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		if err := c.Run(); err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+
+	case "pins.list":
+		type pinInfo struct {
+			Key   string `json:"key"`
+			Label string `json:"label"`
+		}
+		var pins []pinInfo
+		for _, ak := range allowedKeys {
+			pins = append(pins, pinInfo{Key: ak.Key, Label: ak.Label})
+		}
+		tunnelRespond(gcm, req.RequestID, map[string]any{"pins": pins}, write)
+
+	default:
+		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "unknown type: " + inner.Type}, write)
 	}
-
-	fullResponse := stream.Text()
-
-	// Store assistant response
-	s.AppendChatMessage(msg.SessionID, "assistant", fullResponse)
-
-	write(ws.ChatDone{
-		Type:      ws.TypeChatDone,
-		SessionID: msg.SessionID,
-		Content:   fullResponse,
-	})
-	log.Printf("chat session %s: response complete (%d chars)", msg.SessionID, len(fullResponse))
 }
 
-// handleChatDelete removes a chat session from the local DB.
-func handleChatDelete(ctx context.Context, s *store.Store, del ws.ChatDelete, write ws.PTYWriteFunc) {
-	if err := s.DeleteChatSession(del.SessionID); err != nil {
-		log.Printf("chat: delete session %s: %v", del.SessionID, err)
-	}
-	write(ws.ChatDeleted{
-		Type:      ws.TypeChatDeleted,
-		SessionID: del.SessionID,
-	})
-	log.Printf("chat session %s deleted", del.SessionID)
-}
-
-// handleSessionsHistory lists dead egg sessions from disk for the past-sessions view.
-func handleSessionsHistory(cfg *config.Config, req ws.SessionsHistory, write ws.PTYWriteFunc) {
+// getSessionsHistory returns dead egg sessions from disk, paginated.
+func getSessionsHistory(cfg *config.Config, offset, limit int) ([]pastSessionInfo, int) {
 	eggsDir := filepath.Join(cfg.Dir, "eggs")
 	entries, err := os.ReadDir(eggsDir)
 	if err != nil {
-		write(ws.SessionsHistoryResults{
-			Type:      ws.TypeSessionsHistoryResults,
-			RequestID: req.RequestID,
-		})
-		return
+		return nil, 0
 	}
 
-	// Collect dead sessions (PID not alive)
-	var dead []ws.PastSessionInfo
+	var dead []pastSessionInfo
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -2099,56 +1933,47 @@ func handleSessionsHistory(cfg *config.Config, req ws.SessionsHistory, write ws.
 		sessionID := e.Name()
 		dir := filepath.Join(eggsDir, sessionID)
 
-		// Check if process is alive — skip alive sessions
+		// Check if process is alive -- skip alive sessions
 		pidData, err := os.ReadFile(filepath.Join(dir, "egg.pid"))
 		if err == nil {
 			pid, _ := strconv.Atoi(strings.TrimSpace(string(pidData)))
 			if pid > 0 {
 				proc, _ := os.FindProcess(pid)
 				if proc != nil && proc.Signal(syscall.Signal(0)) == nil {
-					continue // alive, skip
+					continue
 				}
 			}
 		}
 
-		agent, cwd := readEggMeta(dir)
+		agentName, cwd := readEggMeta(dir)
 		hasAudit := false
 		if _, err := os.Stat(filepath.Join(dir, "audit.pty.gz")); err == nil {
 			hasAudit = true
 		}
-		if agent == "" && !hasAudit {
-			continue // no meta and no audit, skip
+		if agentName == "" && !hasAudit {
+			continue
 		}
-		if agent == "" {
-			agent = "unknown"
+		if agentName == "" {
+			agentName = "unknown"
 		}
 
-		info := ws.PastSessionInfo{
+		info := pastSessionInfo{
 			SessionID: sessionID,
-			Agent:     agent,
+			Agent:     agentName,
 			CWD:       cwd,
+			Audit:     hasAudit,
 		}
-
-		// Use dir mtime as started_at
 		if stat, err := os.Stat(dir); err == nil {
 			info.StartedAt = stat.ModTime().Unix()
 		}
-
-		info.Audit = hasAudit
-
 		dead = append(dead, info)
 	}
 
-	// Sort by started_at descending (newest first)
 	sort.Slice(dead, func(i, j int) bool {
 		return dead[i].StartedAt > dead[j].StartedAt
 	})
 
 	total := len(dead)
-
-	// Paginate
-	offset := req.Offset
-	limit := req.Limit
 	if limit <= 0 {
 		limit = 20
 	}
@@ -2159,22 +1984,15 @@ func handleSessionsHistory(cfg *config.Config, req ws.SessionsHistory, write ws.
 	if end > len(dead) {
 		end = len(dead)
 	}
-	page := dead[offset:end]
-
-	write(ws.SessionsHistoryResults{
-		Type:      ws.TypeSessionsHistoryResults,
-		RequestID: req.RequestID,
-		Sessions:  page,
-		Total:     total,
-	})
+	return dead[offset:end], total
 }
 
-// handleAuditRequest streams audit data (pty recording or keylog) from disk.
-func handleAuditRequest(cfg *config.Config, req ws.AuditRequest, write ws.PTYWriteFunc) {
-	dir := filepath.Join(cfg.Dir, "eggs", req.SessionID)
+// streamAuditData reads audit data from disk and streams encrypted chunks via tunnel.stream.
+func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD, requestID string, write ws.PTYWriteFunc) {
+	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 
 	var filePath string
-	switch req.Kind {
+	switch kind {
 	case "keylog":
 		filePath = filepath.Join(dir, "audit.log")
 	default:
@@ -2183,125 +2001,11 @@ func handleAuditRequest(cfg *config.Config, req ws.AuditRequest, write ws.PTYWri
 
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		write(ws.AuditError{
-			Type:      ws.TypeAuditError,
-			RequestID: req.RequestID,
-			Error:     "file not found: " + req.Kind,
-		})
+		tunnelRespond(gcm, requestID, map[string]string{"error": "file not found: " + kind}, write)
 		return
 	}
 
-	if req.Kind == "pty" {
-		// Decompress gzip and stream as asciinema v2 NDJSON
-		gr, err := gzip.NewReader(bytes.NewReader(data))
-		if err != nil {
-			write(ws.AuditError{Type: ws.TypeAuditError, RequestID: req.RequestID, Error: "decompress: " + err.Error()})
-			return
-		}
-		raw, err := io.ReadAll(gr)
-		gr.Close()
-		if err != nil {
-			write(ws.AuditError{Type: ws.TypeAuditError, RequestID: req.RequestID, Error: "read: " + err.Error()})
-			return
-		}
-
-		// Read terminal dimensions from egg.meta
-		cols, rows := 120, 40
-		if meta, err := os.ReadFile(filepath.Join(dir, "egg.meta")); err == nil {
-			for _, line := range strings.Split(string(meta), "\n") {
-				if strings.HasPrefix(line, "cols=") {
-					if v, err := strconv.Atoi(strings.TrimPrefix(line, "cols=")); err == nil && v > 0 {
-						cols = v
-					}
-				}
-				if strings.HasPrefix(line, "rows=") {
-					if v, err := strconv.Atoi(strings.TrimPrefix(line, "rows=")); err == nil && v > 0 {
-						rows = v
-					}
-				}
-			}
-		}
-
-		// Convert varint format to asciinema v2 NDJSON
-		// V2 format: "WTA2" header + cols(varint) + rows(varint), then frames with frame_type
-		// V1 format: varint delta_ms, varint data_len, raw bytes (no header)
-		isV2 := len(raw) >= 4 && string(raw[:4]) == "WTA2"
-		pos := 0
-		if isV2 {
-			pos = 4 // skip WTA2 magic
-			if v, n := readVarint(raw[pos:]); n > 0 {
-				cols = int(v)
-				pos += n
-			}
-			if v, n := readVarint(raw[pos:]); n > 0 {
-				rows = int(v)
-				pos += n
-			}
-		}
-		var cumulativeMs int64
-		var ndjson strings.Builder
-		fmt.Fprintf(&ndjson, `{"version":2,"width":%d,"height":%d}`, cols, rows)
-		ndjson.WriteByte('\n')
-		for pos < len(raw) {
-			deltaMs, n := readVarint(raw[pos:])
-			if n <= 0 {
-				break
-			}
-			pos += n
-
-			var frameType int64
-			if isV2 {
-				frameType, n = readVarint(raw[pos:])
-				if n <= 0 {
-					break
-				}
-				pos += n
-			}
-
-			dataLen, n := readVarint(raw[pos:])
-			if n <= 0 {
-				break
-			}
-			pos += n
-			if pos+int(dataLen) > len(raw) {
-				break
-			}
-			chunk := raw[pos : pos+int(dataLen)]
-			pos += int(dataLen)
-			cumulativeMs += deltaMs
-
-			if frameType == 1 {
-				// Resize event: data = cols(varint) + rows(varint)
-				rCols, cn := readVarint(chunk)
-				if cn <= 0 {
-					continue
-				}
-				rRows, rn := readVarint(chunk[cn:])
-				if rn <= 0 {
-					continue
-				}
-				fmt.Fprintf(&ndjson, "[%.3f,\"r\",\"%dx%d\"]\n", float64(cumulativeMs)/1000.0, rCols, rRows)
-			} else {
-				escaped := base64.StdEncoding.EncodeToString(chunk)
-				fmt.Fprintf(&ndjson, "[%.3f,\"o\",\"%s\"]\n", float64(cumulativeMs)/1000.0, escaped)
-			}
-		}
-
-		// Stream in ~32KB chunks
-		text := ndjson.String()
-		const chunkSize = 32 * 1024
-		for i := 0; i < len(text); i += chunkSize {
-			end := i + chunkSize
-			if end > len(text) {
-				end = len(text)
-			}
-			write(ws.AuditChunk{
-				Type:      ws.TypeAuditChunk,
-				RequestID: req.RequestID,
-				Data:      text[i:end],
-			})
-		}
-	} else {
+	if kind != "pty" {
 		// Keylog: stream raw text in chunks
 		text := string(data)
 		const chunkSize = 32 * 1024
@@ -2310,18 +2014,115 @@ func handleAuditRequest(cfg *config.Config, req ws.AuditRequest, write ws.PTYWri
 			if end > len(text) {
 				end = len(text)
 			}
-			write(ws.AuditChunk{
-				Type:      ws.TypeAuditChunk,
-				RequestID: req.RequestID,
-				Data:      text[i:end],
-			})
+			tunnelStreamChunk(gcm, requestID, []byte(text[i:end]), false, write)
+		}
+		tunnelStreamChunk(gcm, requestID, nil, true, write)
+		return
+	}
+
+	// Decompress gzip and stream as asciinema v2 NDJSON
+	gr, gzErr := gzip.NewReader(bytes.NewReader(data))
+	if gzErr != nil {
+		tunnelRespond(gcm, requestID, map[string]string{"error": "decompress: " + gzErr.Error()}, write)
+		return
+	}
+	raw, readErr := io.ReadAll(gr)
+	gr.Close()
+	if readErr != nil {
+		tunnelRespond(gcm, requestID, map[string]string{"error": "read: " + readErr.Error()}, write)
+		return
+	}
+
+	// Read terminal dimensions from egg.meta
+	cols, rows := 120, 40
+	if meta, metaErr := os.ReadFile(filepath.Join(dir, "egg.meta")); metaErr == nil {
+		for _, line := range strings.Split(string(meta), "\n") {
+			if strings.HasPrefix(line, "cols=") {
+				if v, pErr := strconv.Atoi(strings.TrimPrefix(line, "cols=")); pErr == nil && v > 0 {
+					cols = v
+				}
+			}
+			if strings.HasPrefix(line, "rows=") {
+				if v, pErr := strconv.Atoi(strings.TrimPrefix(line, "rows=")); pErr == nil && v > 0 {
+					rows = v
+				}
+			}
 		}
 	}
 
-	write(ws.AuditDone{
-		Type:      ws.TypeAuditDone,
-		RequestID: req.RequestID,
-	})
+	// Convert varint format to asciinema v2 NDJSON
+	isV2 := len(raw) >= 4 && string(raw[:4]) == "WTA2"
+	pos := 0
+	if isV2 {
+		pos = 4
+		if v, n := readVarint(raw[pos:]); n > 0 {
+			cols = int(v)
+			pos += n
+		}
+		if v, n := readVarint(raw[pos:]); n > 0 {
+			rows = int(v)
+			pos += n
+		}
+	}
+	var cumulativeMs int64
+	var ndjson strings.Builder
+	fmt.Fprintf(&ndjson, `{"version":2,"width":%d,"height":%d}`, cols, rows)
+	ndjson.WriteByte('\n')
+	for pos < len(raw) {
+		deltaMs, n := readVarint(raw[pos:])
+		if n <= 0 {
+			break
+		}
+		pos += n
+
+		var frameType int64
+		if isV2 {
+			frameType, n = readVarint(raw[pos:])
+			if n <= 0 {
+				break
+			}
+			pos += n
+		}
+
+		dataLen, n := readVarint(raw[pos:])
+		if n <= 0 {
+			break
+		}
+		pos += n
+		if pos+int(dataLen) > len(raw) {
+			break
+		}
+		chunk := raw[pos : pos+int(dataLen)]
+		pos += int(dataLen)
+		cumulativeMs += deltaMs
+
+		if frameType == 1 {
+			rCols, cn := readVarint(chunk)
+			if cn <= 0 {
+				continue
+			}
+			rRows, rn := readVarint(chunk[cn:])
+			if rn <= 0 {
+				continue
+			}
+			fmt.Fprintf(&ndjson, "[%.3f,\"r\",\"%dx%d\"]\n", float64(cumulativeMs)/1000.0, rCols, rRows)
+		} else {
+			escaped := base64.StdEncoding.EncodeToString(chunk)
+			fmt.Fprintf(&ndjson, "[%.3f,\"o\",\"%s\"]\n", float64(cumulativeMs)/1000.0, escaped)
+		}
+	}
+
+	// Stream in ~32KB chunks
+	text := ndjson.String()
+	const chunkSize = 32 * 1024
+	for i := 0; i < len(text); i += chunkSize {
+		end := i + chunkSize
+		if end > len(text) {
+			end = len(text)
+		}
+		tunnelStreamChunk(gcm, requestID, []byte(text[i:end]), false, write)
+	}
+	tunnelStreamChunk(gcm, requestID, nil, true, write)
 }
 
 // readVarint reads a varint from buf, returns (value, bytes consumed).

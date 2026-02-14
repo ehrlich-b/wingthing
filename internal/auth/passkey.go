@@ -104,6 +104,7 @@ func SHA256Sum(data []byte) [32]byte {
 type AuthCache struct {
 	mu     sync.Mutex
 	tokens map[string]authEntry
+	ttl    time.Duration
 }
 
 type authEntry struct {
@@ -111,16 +112,19 @@ type authEntry struct {
 	ExpiresAt time.Time
 }
 
-// NewAuthCache creates a new in-memory auth cache.
-func NewAuthCache() *AuthCache {
-	return &AuthCache{tokens: make(map[string]authEntry)}
+// NewAuthCache creates a new in-memory auth cache with the given TTL.
+func NewAuthCache(ttl time.Duration) *AuthCache {
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	return &AuthCache{tokens: make(map[string]authEntry), ttl: ttl}
 }
 
-// Put stores a token with the given public key and 1-hour TTL.
+// Put stores a token with the given public key.
 func (c *AuthCache) Put(token string, pubKey []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.tokens[token] = authEntry{PubKey: pubKey, ExpiresAt: time.Now().Add(time.Hour)}
+	c.tokens[token] = authEntry{PubKey: pubKey, ExpiresAt: time.Now().Add(c.ttl)}
 }
 
 // Check returns the public key for a valid (non-expired) token.

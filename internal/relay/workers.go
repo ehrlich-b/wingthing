@@ -32,22 +32,26 @@ type ConnectedWing struct {
 	EggConfig   string // serialized YAML of wing's egg config
 	OrgID       string   // org slug this wing serves (from --org flag)
 	RootDir     string   // root directory constraint (from --root flag)
+	Pinned      bool
+	PinnedCount int
 	Conn        *websocket.Conn
 	LastSeen    time.Time
 }
 
 // WingEvent is sent to dashboard subscribers when a wing connects or disconnects.
 type WingEvent struct {
-	Type      string           `json:"type"`       // "wing.online" or "wing.offline"
-	ConnID    string           `json:"conn_id"`
-	WingID    string           `json:"wing_id"`
-	Hostname  string           `json:"hostname,omitempty"`
-	Platform  string           `json:"platform,omitempty"`
-	Version   string           `json:"version,omitempty"`
-	Agents    []string         `json:"agents,omitempty"`
-	Labels    []string         `json:"labels,omitempty"`
-	PublicKey string           `json:"public_key,omitempty"`
-	Projects  []ws.WingProject `json:"projects,omitempty"`
+	Type        string           `json:"type"`       // "wing.online" or "wing.offline"
+	ConnID      string           `json:"conn_id"`
+	WingID      string           `json:"wing_id"`
+	Hostname    string           `json:"hostname,omitempty"`
+	Platform    string           `json:"platform,omitempty"`
+	Version     string           `json:"version,omitempty"`
+	Agents      []string         `json:"agents,omitempty"`
+	Labels      []string         `json:"labels,omitempty"`
+	PublicKey   string           `json:"public_key,omitempty"`
+	Projects    []ws.WingProject `json:"projects,omitempty"`
+	Pinned      bool             `json:"pinned,omitempty"`
+	PinnedCount int              `json:"pinned_count,omitempty"`
 }
 
 // WingRegistry tracks all connected wings.
@@ -55,17 +59,8 @@ type WingRegistry struct {
 	mu    sync.RWMutex
 	wings map[string]*ConnectedWing // wingID → wing
 
-	dirMu       sync.Mutex
-	dirRequests map[string]chan *ws.DirResults
-
 	sessMu       sync.Mutex
 	sessRequests map[string]chan *ws.SessionsSync // requestID → response channel
-
-	histMu       sync.Mutex
-	histRequests map[string]chan *ws.SessionsHistoryResults // requestID → response channel
-
-	auditMu       sync.Mutex
-	auditRequests map[string]chan any // requestID → channel for AuditChunk/AuditDone/AuditError
 
 	// Dashboard subscribers: userID → list of channels
 	subMu sync.RWMutex
@@ -79,36 +74,9 @@ type WingRegistry struct {
 
 func NewWingRegistry() *WingRegistry {
 	return &WingRegistry{
-		wings:         make(map[string]*ConnectedWing),
-		dirRequests:   make(map[string]chan *ws.DirResults),
-		sessRequests:  make(map[string]chan *ws.SessionsSync),
-		histRequests:  make(map[string]chan *ws.SessionsHistoryResults),
-		auditRequests: make(map[string]chan any),
-		subs:          make(map[string][]chan WingEvent),
-	}
-}
-
-func (r *WingRegistry) RegisterDirRequest(reqID string, ch chan *ws.DirResults) {
-	r.dirMu.Lock()
-	r.dirRequests[reqID] = ch
-	r.dirMu.Unlock()
-}
-
-func (r *WingRegistry) UnregisterDirRequest(reqID string) {
-	r.dirMu.Lock()
-	delete(r.dirRequests, reqID)
-	r.dirMu.Unlock()
-}
-
-func (r *WingRegistry) ResolveDirRequest(reqID string, results *ws.DirResults) {
-	r.dirMu.Lock()
-	ch := r.dirRequests[reqID]
-	r.dirMu.Unlock()
-	if ch != nil {
-		select {
-		case ch <- results:
-		default:
-		}
+		wings:        make(map[string]*ConnectedWing),
+		sessRequests: make(map[string]chan *ws.SessionsSync),
+		subs:         make(map[string][]chan WingEvent),
 	}
 }
 
@@ -131,54 +99,6 @@ func (r *WingRegistry) ResolveSessionRequest(reqID string, results *ws.SessionsS
 	if ch != nil {
 		select {
 		case ch <- results:
-		default:
-		}
-	}
-}
-
-func (r *WingRegistry) RegisterHistoryRequest(reqID string, ch chan *ws.SessionsHistoryResults) {
-	r.histMu.Lock()
-	r.histRequests[reqID] = ch
-	r.histMu.Unlock()
-}
-
-func (r *WingRegistry) UnregisterHistoryRequest(reqID string) {
-	r.histMu.Lock()
-	delete(r.histRequests, reqID)
-	r.histMu.Unlock()
-}
-
-func (r *WingRegistry) ResolveHistoryRequest(reqID string, results *ws.SessionsHistoryResults) {
-	r.histMu.Lock()
-	ch := r.histRequests[reqID]
-	r.histMu.Unlock()
-	if ch != nil {
-		select {
-		case ch <- results:
-		default:
-		}
-	}
-}
-
-func (r *WingRegistry) RegisterAuditRequest(reqID string, ch chan any) {
-	r.auditMu.Lock()
-	r.auditRequests[reqID] = ch
-	r.auditMu.Unlock()
-}
-
-func (r *WingRegistry) UnregisterAuditRequest(reqID string) {
-	r.auditMu.Lock()
-	delete(r.auditRequests, reqID)
-	r.auditMu.Unlock()
-}
-
-func (r *WingRegistry) ResolveAuditMessage(reqID string, msg any) {
-	r.auditMu.Lock()
-	ch := r.auditRequests[reqID]
-	r.auditMu.Unlock()
-	if ch != nil {
-		select {
-		case ch <- msg:
 		default:
 		}
 	}
@@ -221,16 +141,18 @@ func (r *WingRegistry) Add(w *ConnectedWing) {
 	r.wings[w.ID] = w
 	r.mu.Unlock()
 	ev := WingEvent{
-		Type:      "wing.online",
-		ConnID:    w.ID,
-		WingID:    w.WingID,
-		Hostname:  w.Hostname,
-		Platform:  w.Platform,
-		Version:   w.Version,
-		Agents:    w.Agents,
-		Labels:    w.Labels,
-		PublicKey: w.PublicKey,
-		Projects:  w.Projects,
+		Type:        "wing.online",
+		ConnID:      w.ID,
+		WingID:      w.WingID,
+		Hostname:    w.Hostname,
+		Platform:    w.Platform,
+		Version:     w.Version,
+		Agents:      w.Agents,
+		Labels:      w.Labels,
+		PublicKey:    w.PublicKey,
+		Projects:    w.Projects,
+		Pinned:      w.Pinned,
+		PinnedCount: w.PinnedCount,
 	}
 	r.notify(w.UserID, ev)
 	if r.OnWingEvent != nil {
@@ -422,6 +344,8 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		Projects:    reg.Projects,
 		OrgID:       reg.OrgSlug,
 		RootDir:     reg.RootDir,
+		Pinned:      reg.Pinned,
+		PinnedCount: reg.PinnedCount,
 		Conn:        conn,
 		LastSeen:    time.Now(),
 	}
@@ -503,12 +427,15 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			json.Unmarshal(data, &partial)
 			s.forwardPTYToBrowser(partial.SessionID, data)
 
-		case ws.TypeChatStarted, ws.TypeChatChunk, ws.TypeChatDone, ws.TypeChatHistory, ws.TypeChatDeleted:
-			var partial struct {
-				SessionID string `json:"session_id"`
-			}
-			json.Unmarshal(data, &partial)
-			s.forwardChatToBrowser(partial.SessionID, data)
+		case ws.TypeTunnelResponse:
+			var resp ws.TunnelResponse
+			json.Unmarshal(data, &resp)
+			s.forwardTunnelToBrowser(resp.RequestID, data, true)
+
+		case ws.TypeTunnelStream:
+			var stream ws.TunnelStream
+			json.Unmarshal(data, &stream)
+			s.forwardTunnelToBrowser(stream.RequestID, data, stream.Done)
 
 		case ws.TypePTYReclaim:
 			var reclaim ws.PTYReclaim
@@ -542,11 +469,6 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				log.Printf("pty session %s restored from wing %s (agent=%s)", reclaim.SessionID, wing.ID, reclaim.Agent)
 			}
 
-		case ws.TypeDirResults:
-			var results ws.DirResults
-			json.Unmarshal(data, &results)
-			s.Wings.ResolveDirRequest(results.RequestID, &results)
-
 		case ws.TypeSessionsSync:
 			var sync ws.SessionsSync
 			json.Unmarshal(data, &sync)
@@ -556,25 +478,6 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				s.Wings.ResolveSessionRequest(sync.RequestID, &sync)
 			}
 
-		case ws.TypeSessionsHistoryResults:
-			var results ws.SessionsHistoryResults
-			json.Unmarshal(data, &results)
-			s.Wings.ResolveHistoryRequest(results.RequestID, &results)
-
-		case ws.TypeAuditChunk:
-			var chunk ws.AuditChunk
-			json.Unmarshal(data, &chunk)
-			s.Wings.ResolveAuditMessage(chunk.RequestID, &chunk)
-
-		case ws.TypeAuditDone:
-			var done ws.AuditDone
-			json.Unmarshal(data, &done)
-			s.Wings.ResolveAuditMessage(done.RequestID, &done)
-
-		case ws.TypeAuditError:
-			var auditErr ws.AuditError
-			json.Unmarshal(data, &auditErr)
-			s.Wings.ResolveAuditMessage(auditErr.RequestID, &auditErr)
 		}
 	}
 }
@@ -604,4 +507,20 @@ func (s *Server) validateOrgViaLogin(ctx context.Context, orgRef, userID string)
 		return "", false
 	}
 	return result.OrgID, result.OK
+}
+
+// forwardTunnelToBrowser routes an encrypted tunnel response from wing to the originating browser.
+func (s *Server) forwardTunnelToBrowser(requestID string, data []byte, done bool) {
+	s.tunnelMu.Lock()
+	bc := s.tunnelRequests[requestID]
+	if done {
+		delete(s.tunnelRequests, requestID)
+	}
+	s.tunnelMu.Unlock()
+	if bc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	bc.Write(ctx, websocket.MessageText, data)
 }

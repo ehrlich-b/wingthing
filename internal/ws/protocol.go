@@ -1,48 +1,27 @@
 package ws
 
-import (
-	"context"
-	"time"
-)
-
 // Message types for the relay WebSocket protocol.
 const (
 	// Wing → Relay
 	TypeWingRegister  = "wing.register"
 	TypeWingHeartbeat = "wing.heartbeat"
-	TypeTaskChunk     = "task.chunk"
-	TypeTaskDone      = "task.done"
-	TypeTaskError     = "task.error"
 
-	// Relay → Wing
-	TypeTaskSubmit = "task.submit"
-	TypeTaskCancel = "task.cancel"
-
-	// PTY (bidirectional)
-	TypePTYStart   = "pty.start"   // browser → relay → wing
-	TypePTYStarted = "pty.started" // wing → relay → browser
-	TypePTYOutput  = "pty.output"  // wing → relay → browser
-	TypePTYInput   = "pty.input"   // browser → relay → wing
-	TypePTYResize  = "pty.resize"  // browser → relay → wing
-	TypePTYExited  = "pty.exited"  // wing → relay → browser
-	TypePTYAttach  = "pty.attach"  // browser → relay → wing (reattach)
-	TypePTYKill    = "pty.kill"    // browser → relay → wing (terminate session)
+	// PTY (bidirectional, already E2E encrypted)
+	TypePTYStart        = "pty.start"         // browser → relay → wing
+	TypePTYStarted      = "pty.started"       // wing → relay → browser
+	TypePTYOutput       = "pty.output"        // wing → relay → browser
+	TypePTYInput        = "pty.input"         // browser → relay → wing
+	TypePTYResize       = "pty.resize"        // browser → relay → wing
+	TypePTYExited       = "pty.exited"        // wing → relay → browser
+	TypePTYAttach       = "pty.attach"        // browser → relay → wing (reattach)
+	TypePTYKill         = "pty.kill"          // browser → relay → wing (terminate session)
 	TypePTYDetach       = "pty.detach"        // browser → relay (explicit detach before disconnect)
 	TypePTYAttentionAck = "pty.attention_ack" // browser → relay → wing (notification seen)
 
-	// Chat (bidirectional through relay)
-	TypeChatStart   = "chat.start"   // browser → relay → wing
-	TypeChatStarted = "chat.started" // wing → relay → browser
-	TypeChatMessage = "chat.message" // browser → relay → wing
-	TypeChatChunk   = "chat.chunk"   // wing → relay → browser
-	TypeChatDone    = "chat.done"    // wing → relay → browser
-	TypeChatHistory = "chat.history" // wing → relay → browser
-	TypeChatDelete  = "chat.delete"  // browser → relay → wing
-	TypeChatDeleted = "chat.deleted" // wing → relay → browser
-
-	// Directory listing (bidirectional through relay)
-	TypeDirList    = "dir.list"    // browser → relay → wing
-	TypeDirResults = "dir.results" // wing → relay → browser
+	// Encrypted tunnel (browser ↔ wing, relay is opaque forwarder)
+	TypeTunnelRequest  = "tunnel.req"    // browser → relay → wing
+	TypeTunnelResponse = "tunnel.res"    // wing → relay → browser
+	TypeTunnelStream   = "tunnel.stream" // wing → relay → browser (streaming)
 
 	// Wing → Relay (session reclaim after wing restart)
 	TypePTYReclaim = "pty.reclaim"
@@ -54,26 +33,14 @@ const (
 	// Relay → Browser/Wing (bandwidth)
 	TypeBandwidthExceeded = "bandwidth.exceeded"
 
-	// Session history (relay proxies browser request to wing)
-	TypeSessionsHistory        = "sessions.history"         // relay → wing
-	TypeSessionsHistoryResults = "sessions.history.results" // wing → relay → browser
-
-	// Audit streaming (relay proxies browser request to wing)
-	TypeAuditRequest = "audit.request" // relay → wing
-	TypeAuditChunk   = "audit.chunk"   // wing → relay → browser
-	TypeAuditDone    = "audit.done"    // wing → relay → browser
-	TypeAuditError   = "audit.error"   // wing → relay → browser
-
 	// Passkey challenge-response (wing ↔ browser, relay is passthrough)
 	TypePasskeyChallenge = "passkey.challenge"
 	TypePasskeyResponse  = "passkey.response"
 
 	// Relay → Wing (control)
-	TypeRegistered      = "registered"
-	TypeWingUpdate      = "wing.update"
-	TypeEggConfigUpdate = "egg.config_update" // relay → wing: push new egg config
-	TypeRelayRestart    = "relay.restart"     // relay → all: server shutting down, reconnect
-	TypeError           = "error"
+	TypeRegistered   = "registered"
+	TypeRelayRestart = "relay.restart" // relay → all: server shutting down, reconnect
+	TypeError        = "error"
 )
 
 // Envelope wraps every WebSocket message with a type field for routing.
@@ -91,7 +58,7 @@ type WingProject struct {
 // WingRegister is sent by the wing on connect.
 type WingRegister struct {
 	Type        string        `json:"type"`
-	WingID   string        `json:"wing_id"`
+	WingID      string        `json:"wing_id"`
 	Hostname    string        `json:"hostname,omitempty"`
 	Platform    string        `json:"platform,omitempty"` // runtime.GOOS (e.g. "darwin", "linux")
 	Version     string        `json:"version,omitempty"`  // build version (e.g. "v0.7.35")
@@ -102,42 +69,14 @@ type WingRegister struct {
 	Projects    []WingProject `json:"projects,omitempty"`
 	OrgSlug     string        `json:"org_slug,omitempty"`
 	RootDir     string        `json:"root_dir,omitempty"`
+	Pinned      bool          `json:"pinned"`                // explicit pinned flag from wing.yaml
+	PinnedCount int           `json:"pinned_count,omitempty"` // number of pinned keys
 }
 
 // WingHeartbeat is sent by the wing every 30s.
 type WingHeartbeat struct {
-	Type      string `json:"type"`
+	Type   string `json:"type"`
 	WingID string `json:"wing_id"`
-}
-
-// TaskSubmit is sent from the relay to a wing to execute a task.
-type TaskSubmit struct {
-	Type      string `json:"type"`
-	TaskID    string `json:"task_id"`
-	Prompt    string `json:"prompt"`
-	Skill     string `json:"skill,omitempty"`
-	Agent     string `json:"agent,omitempty"`
-	Isolation string `json:"isolation,omitempty"`
-}
-
-// TaskChunk is streamed from the wing back to the relay during execution.
-type TaskChunk struct {
-	Type   string `json:"type"`
-	TaskID string `json:"task_id"`
-	Text   string `json:"text"`
-}
-
-// TaskDone is sent by the wing when a task completes successfully.
-type TaskDone struct {
-	Type   string `json:"type"`
-	TaskID string `json:"task_id"`
-}
-
-// TaskErrorMsg is sent by the wing when a task fails.
-type TaskErrorMsg struct {
-	Type   string `json:"type"`
-	TaskID string `json:"task_id"`
-	Error  string `json:"error"`
 }
 
 // RegisteredMsg is the relay's acknowledgment of a successful wing registration.
@@ -173,7 +112,7 @@ type PTYStarted struct {
 	Agent     string `json:"agent"`
 	PublicKey string `json:"public_key,omitempty"` // wing's X25519 (base64)
 	CWD       string `json:"cwd,omitempty"`        // resolved working directory
-	AuthToken string `json:"auth_token,omitempty"` // passkey auth token (valid 1hr)
+	AuthToken string `json:"auth_token,omitempty"` // passkey auth token
 }
 
 // PasskeyChallenge is sent from wing to browser requesting passkey verification.
@@ -197,7 +136,7 @@ type PasskeyResponse struct {
 type PTYOutput struct {
 	Type       string `json:"type"`
 	SessionID  string `json:"session_id"`
-	Data       string `json:"data"`                  // base64-encoded
+	Data       string `json:"data"`                 // base64-encoded
 	Compressed bool   `json:"compressed,omitempty"` // gzip before encrypt
 }
 
@@ -249,90 +188,29 @@ type PTYAttentionAck struct {
 	SessionID string `json:"session_id"`
 }
 
-// ChatStart requests a new or resumed chat session.
-type ChatStart struct {
+// TunnelRequest is an encrypted request from browser to wing via relay.
+type TunnelRequest struct {
 	Type      string `json:"type"`
-	SessionID string `json:"session_id,omitempty"` // empty = new, set = resume
-	Agent     string `json:"agent"`
+	WingID    string `json:"wing_id"`
+	RequestID string `json:"request_id"`
+	SenderPub string `json:"sender_pub,omitempty"` // browser X25519 identity pubkey
+	Payload   string `json:"payload"`              // base64(AES-GCM encrypted)
 }
 
-// ChatStarted confirms the chat session is ready.
-type ChatStarted struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Agent     string `json:"agent"`
-}
-
-// ChatMessage carries a user message to the wing.
-type ChatMessage struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Content   string `json:"content"`
-}
-
-// ChatChunk carries a streaming response chunk from wing to browser.
-type ChatChunk struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Text      string `json:"text"`
-}
-
-// ChatDone signals the assistant response is complete.
-type ChatDone struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Content   string `json:"content"` // full assistant response
-}
-
-// ChatHistoryMsg carries conversation history for a resumed session.
-type ChatHistoryMsg struct {
-	Type      string             `json:"type"`
-	SessionID string             `json:"session_id"`
-	Messages  []ChatHistoryEntry `json:"messages"`
-}
-
-// ChatHistoryEntry is a single message in the history payload.
-type ChatHistoryEntry struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// ChatDelete requests deletion of a chat session.
-type ChatDelete struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-}
-
-// ChatDeleted confirms a chat session was deleted.
-type ChatDeleted struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-}
-
-// DirList requests a directory listing from the wing.
-type DirList struct {
+// TunnelResponse is an encrypted response from wing to browser via relay.
+type TunnelResponse struct {
 	Type      string `json:"type"`
 	RequestID string `json:"request_id"`
-	Path      string `json:"path"`
-	WingID    string `json:"wing_id,omitempty"`
+	Payload   string `json:"payload"` // base64(AES-GCM encrypted)
 }
 
-// DirResults returns directory entries from the wing.
-type DirResults struct {
-	Type      string     `json:"type"`
-	RequestID string     `json:"request_id"`
-	Entries   []DirEntry `json:"entries"`
+// TunnelStream is an encrypted streaming chunk from wing to browser via relay.
+type TunnelStream struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Payload   string `json:"payload"` // base64(AES-GCM encrypted)
+	Done      bool   `json:"done"`
 }
-
-// DirEntry is a single entry in a directory listing.
-type DirEntry struct {
-	Name  string `json:"name"`
-	IsDir bool   `json:"is_dir"`
-	Path  string `json:"path"`
-}
-
-// DirHandler is called when the wing receives a dir.list request.
-type DirHandler func(ctx context.Context, req DirList, write PTYWriteFunc)
 
 // PTYReclaim is sent by the wing after reconnect to reclaim a surviving egg session.
 type PTYReclaim struct {
@@ -340,11 +218,6 @@ type PTYReclaim struct {
 	SessionID string `json:"session_id"`
 	Agent     string `json:"agent,omitempty"`
 	CWD       string `json:"cwd,omitempty"`
-}
-
-// WingUpdate tells the wing to self-update to the latest release.
-type WingUpdate struct {
-	Type string `json:"type"`
 }
 
 // SessionsList requests the wing's current session list.
@@ -370,64 +243,15 @@ type SessionInfo struct {
 	Audit          bool   `json:"audit,omitempty"` // true if session has audit recording
 }
 
-// PastSessionInfo describes a dead session found on disk.
-type PastSessionInfo struct {
-	SessionID string `json:"session_id"`
-	Agent     string `json:"agent"`
-	CWD       string `json:"cwd,omitempty"`
-	StartedAt int64  `json:"started_at,omitempty"` // unix timestamp
-	Audit     bool   `json:"audit,omitempty"`      // audit.pty.gz exists
+// DirEntry is a single entry in a directory listing.
+type DirEntry struct {
+	Name  string `json:"name"`
+	IsDir bool   `json:"is_dir"`
+	Path  string `json:"path"`
 }
 
-// SessionsHistory requests past sessions from the wing.
-type SessionsHistory struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-	Offset    int    `json:"offset"`
-	Limit     int    `json:"limit"`
-}
-
-// SessionsHistoryResults returns past sessions from the wing.
-type SessionsHistoryResults struct {
-	Type      string            `json:"type"`
-	RequestID string            `json:"request_id"`
-	Sessions  []PastSessionInfo `json:"sessions"`
-	Total     int               `json:"total"`
-}
-
-// AuditRequest asks the wing to stream audit data for a session.
-type AuditRequest struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-	SessionID string `json:"session_id"`
-	Kind      string `json:"kind"` // "pty" or "keylog"
-}
-
-// AuditChunk carries a chunk of audit data from wing to browser.
-type AuditChunk struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-	Data      string `json:"data"` // base64 or raw text depending on kind
-}
-
-// AuditDone signals the end of audit streaming.
-type AuditDone struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-}
-
-// AuditError signals an error during audit streaming.
-type AuditError struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-	Error     string `json:"error"`
-}
-
-// EggConfigUpdate pushes a new egg config from relay to wing.
-type EggConfigUpdate struct {
-	Type string `json:"type"`
-	YAML string `json:"yaml"` // serialized egg.yaml content
-}
+// PTYWriteFunc sends a message back to the relay over the wing's WebSocket.
+type PTYWriteFunc func(v any) error
 
 // BandwidthExceeded is sent to browser/wing when monthly cap is hit.
 type BandwidthExceeded struct {
@@ -438,16 +262,4 @@ type BandwidthExceeded struct {
 // RelayRestart is sent to all connected WebSockets when the server is shutting down.
 type RelayRestart struct {
 	Type string `json:"type"`
-}
-
-// QueuedTask is a routing entry in the relay's volatile queue.
-// The relay stores only an opaque payload — it never inspects task content.
-type QueuedTask struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Identity  string    `json:"identity"`
-	Payload   string    `json:"-"`         // opaque JSON forwarded to wing
-	WingID    string    `json:"wing_id,omitempty"`
-	Status    string    `json:"status"`    // pending, dispatched
-	CreatedAt time.Time `json:"created_at"`
 }

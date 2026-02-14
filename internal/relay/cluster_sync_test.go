@@ -721,8 +721,6 @@ func TestEdgeProxyRouting(t *testing.T) {
 		"/assets/main.js",
 		"/internal/status",
 		"/health",
-		"/api/app/wings/xyz/sessions",
-		"/api/app/wings/xyz/ls",
 	}
 	for _, path := range localPaths {
 		proxyHit = false

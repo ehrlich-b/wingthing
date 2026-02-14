@@ -445,66 +445,21 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 			wing.Conn.Write(ctx, websocket.MessageText, data)
 
-		case ws.TypeChatStart:
-			var start ws.ChatStart
-			if err := json.Unmarshal(data, &start); err != nil {
+		case ws.TypeTunnelRequest:
+			var req ws.TunnelRequest
+			if err := json.Unmarshal(data, &req); err != nil {
 				continue
 			}
-
-			wing := s.findAccessibleWing(userID)
+			wing := s.findWingByWingID(userID, req.WingID)
 			if wing == nil {
-				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "no wing connected"})
+				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "wing not found"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
 			}
-
-			sessionID := start.SessionID
-			if sessionID == "" {
-				sessionID = uuid.New().String()[:8]
-				start.SessionID = sessionID
-			}
-			cs := &ChatSession{
-				ID:          sessionID,
-				WingID:      wing.ID,
-				UserID:      userID,
-				Agent:       start.Agent,
-				Status:      "active",
-				BrowserConn: conn,
-			}
-			s.Chat.Add(cs)
-
-			fwd, _ := json.Marshal(start)
-			wing.Conn.Write(ctx, websocket.MessageText, fwd)
-
-			log.Printf("chat session %s started (user=%s wing=%s agent=%s)", sessionID, userID, wing.ID, start.Agent)
-
-		case ws.TypeChatMessage:
-			var msg ws.ChatMessage
-			if err := json.Unmarshal(data, &msg); err != nil {
-				continue
-			}
-			_, wing := s.getAuthorizedChat(userID, msg.SessionID)
-			if wing == nil {
-				continue
-			}
+			s.tunnelMu.Lock()
+			s.tunnelRequests[req.RequestID] = conn
+			s.tunnelMu.Unlock()
 			wing.Conn.Write(ctx, websocket.MessageText, data)
-
-		case ws.TypeChatDelete:
-			var del ws.ChatDelete
-			if err := json.Unmarshal(data, &del); err != nil {
-				continue
-			}
-			_, wing := s.getAuthorizedChat(userID, del.SessionID)
-			if wing != nil {
-				fwd, _ := json.Marshal(del)
-				wing.Conn.Write(ctx, websocket.MessageText, fwd)
-			} else {
-				// No wing (offline or unauthorized) — if we have the session, remove it
-				if cs := s.Chat.Get(del.SessionID); cs != nil && cs.UserID == userID {
-					s.Chat.Remove(del.SessionID)
-				}
-			}
-			log.Printf("chat session %s: delete requested (user=%s)", del.SessionID, userID)
 		}
 	}
 }

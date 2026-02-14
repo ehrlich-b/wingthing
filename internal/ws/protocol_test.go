@@ -13,10 +13,9 @@ func TestEnvelopeRouting(t *testing.T) {
 	}{
 		{"register", WingRegister{Type: TypeWingRegister, WingID: "m1"}, TypeWingRegister},
 		{"heartbeat", WingHeartbeat{Type: TypeWingHeartbeat, WingID: "m1"}, TypeWingHeartbeat},
-		{"submit", TaskSubmit{Type: TypeTaskSubmit, TaskID: "t1", Prompt: "hi"}, TypeTaskSubmit},
-		{"chunk", TaskChunk{Type: TypeTaskChunk, TaskID: "t1", Text: "hello"}, TypeTaskChunk},
-		{"done", TaskDone{Type: TypeTaskDone, TaskID: "t1"}, TypeTaskDone},
-		{"error", TaskErrorMsg{Type: TypeTaskError, TaskID: "t1", Error: "oops"}, TypeTaskError},
+		{"tunnel_req", TunnelRequest{Type: TypeTunnelRequest, WingID: "w1", RequestID: "r1"}, TypeTunnelRequest},
+		{"tunnel_res", TunnelResponse{Type: TypeTunnelResponse, RequestID: "r1"}, TypeTunnelResponse},
+		{"tunnel_stream", TunnelStream{Type: TypeTunnelStream, RequestID: "r1"}, TypeTunnelStream},
 	}
 
 	for _, tt := range tests {
@@ -31,40 +30,6 @@ func TestEnvelopeRouting(t *testing.T) {
 		if env.Type != tt.want {
 			t.Errorf("%s: type = %q, want %q", tt.name, env.Type, tt.want)
 		}
-	}
-}
-
-func TestTaskSubmitRoundTrip(t *testing.T) {
-	orig := TaskSubmit{
-		Type:      TypeTaskSubmit,
-		TaskID:    "rt-20260209-001",
-		Prompt:    "summarize my git log",
-		Skill:     "compress",
-		Agent:     "ollama",
-		Isolation: "standard",
-	}
-
-	data, err := json.Marshal(orig)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-
-	var decoded TaskSubmit
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	if decoded.TaskID != orig.TaskID {
-		t.Errorf("task_id = %q, want %q", decoded.TaskID, orig.TaskID)
-	}
-	if decoded.Prompt != orig.Prompt {
-		t.Errorf("prompt = %q, want %q", decoded.Prompt, orig.Prompt)
-	}
-	if decoded.Skill != orig.Skill {
-		t.Errorf("skill = %q, want %q", decoded.Skill, orig.Skill)
-	}
-	if decoded.Agent != orig.Agent {
-		t.Errorf("agent = %q, want %q", decoded.Agent, orig.Agent)
 	}
 }
 

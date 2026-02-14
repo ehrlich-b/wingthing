@@ -17,17 +17,8 @@ const (
 	maxReconnectDelay = 10 * time.Second
 )
 
-// TaskHandler is called when the wing receives a task to execute.
-type TaskHandler func(ctx context.Context, task TaskSubmit) (output string, err error)
-
-// ChunkSender sends a text chunk back to the relay for a running task.
-type ChunkSender func(taskID, text string)
-
-// TaskHandlerWithChunks is called when the wing receives a task, with a chunk sender for streaming.
-type TaskHandlerWithChunks func(ctx context.Context, task TaskSubmit, send ChunkSender) (output string, err error)
-
-// PTYWriteFunc sends a message back to the relay over the wing's WebSocket.
-type PTYWriteFunc func(v any) error
+// TunnelHandler is called when the wing receives an encrypted tunnel request.
+type TunnelHandler func(ctx context.Context, req TunnelRequest, write PTYWriteFunc)
 
 // PTYHandler is called when the wing receives a pty.start request.
 // It should spawn the agent in a PTY and manage I/O. The write function
@@ -35,45 +26,31 @@ type PTYWriteFunc func(v any) error
 // receives raw JSON messages (pty.input and pty.resize) from the browser.
 type PTYHandler func(ctx context.Context, start PTYStart, write PTYWriteFunc, input <-chan []byte)
 
-// ChatStartHandler is called when the wing receives a chat.start request.
-type ChatStartHandler func(ctx context.Context, start ChatStart, write PTYWriteFunc)
-
-// ChatMessageHandler is called when the wing receives a chat.message.
-type ChatMessageHandler func(ctx context.Context, msg ChatMessage, write PTYWriteFunc)
-
-// ChatDeleteHandler is called when the wing receives a chat.delete.
-type ChatDeleteHandler func(ctx context.Context, del ChatDelete, write PTYWriteFunc)
-
 // Client is an outbound WebSocket client that connects a wing to the roost.
 type Client struct {
-	RoostURL  string // e.g. "wss://ws.wingthing.ai/ws/wing"
-	Token     string // device auth token
-	WingID string
-	Hostname  string // display name (os.Hostname)
-	Platform  string // runtime.GOOS
-	Version   string // build version
+	RoostURL string // e.g. "wss://ws.wingthing.ai/ws/wing"
+	Token    string // device auth token
+	WingID   string
+	Hostname string // display name (os.Hostname)
+	Platform string // runtime.GOOS
+	Version  string // build version
 
-	Agents      []string
-	Skills      []string
-	Labels      []string
-	Identities  []string
-	Projects    []WingProject
-	OrgSlug     string
-	RootDir     string
+	Agents     []string
+	Skills     []string
+	Labels     []string
+	Identities []string
+	Projects   []WingProject
+	OrgSlug    string
+	RootDir    string
 
-	OnTask             TaskHandlerWithChunks
-	OnPTY              PTYHandler
-	OnChatStart        ChatStartHandler
-	OnChatMessage      ChatMessageHandler
-	OnChatDelete       ChatDeleteHandler
-	OnDirList          DirHandler
-	OnUpdate           func(ctx context.Context)
-	OnEggConfigUpdate  func(ctx context.Context, yamlStr string)
-	OnOrphanKill       func(ctx context.Context, sessionID string) // kill egg with no active goroutine
-	OnReconnect        func(ctx context.Context)                   // called after re-registration with relay
-	SessionLister      func(ctx context.Context) []SessionInfo
-	OnSessionsHistory  func(ctx context.Context, req SessionsHistory, write PTYWriteFunc)
-	OnAuditRequest     func(ctx context.Context, req AuditRequest, write PTYWriteFunc)
+	Pinned      bool
+	PinnedCount int
+
+	OnPTY         PTYHandler
+	OnTunnel      TunnelHandler
+	OnOrphanKill  func(ctx context.Context, sessionID string) // kill egg with no active goroutine
+	OnReconnect   func(ctx context.Context)                   // called after re-registration with relay
+	SessionLister func(ctx context.Context) []SessionInfo
 
 	// ptySessions tracks active PTY sessions for routing input/resize
 	ptySessions   map[string]chan []byte // session_id → input channel
@@ -137,7 +114,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 	// Send registration
 	reg := WingRegister{
 		Type:        TypeWingRegister,
-		WingID:   c.WingID,
+		WingID:      c.WingID,
 		Hostname:    c.Hostname,
 		Platform:    c.Platform,
 		Version:     c.Version,
@@ -148,6 +125,8 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		Projects:    c.Projects,
 		OrgSlug:     c.OrgSlug,
 		RootDir:     c.RootDir,
+		Pinned:      c.Pinned,
+		PinnedCount: c.PinnedCount,
 	}
 	if err := c.writeJSON(ctx, reg); err != nil {
 		return connected, fmt.Errorf("register: %w", err)
@@ -179,14 +158,6 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			if c.OnReconnect != nil {
 				go c.OnReconnect(ctx)
 			}
-
-		case TypeTaskSubmit:
-			var task TaskSubmit
-			if err := json.Unmarshal(data, &task); err != nil {
-				log.Printf("bad task: %v", err)
-				continue
-			}
-			go c.handleTask(ctx, task)
 
 		case TypePTYStart:
 			var start PTYStart
@@ -248,54 +219,6 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				}
 			}
 
-		case TypeChatStart:
-			var start ChatStart
-			if err := json.Unmarshal(data, &start); err != nil {
-				log.Printf("bad chat.start: %v", err)
-				continue
-			}
-			if c.OnChatStart != nil {
-				go c.OnChatStart(ctx, start, func(v any) error {
-					return c.writeJSON(ctx, v)
-				})
-			}
-
-		case TypeChatMessage:
-			var msg ChatMessage
-			if err := json.Unmarshal(data, &msg); err != nil {
-				log.Printf("bad chat.message: %v", err)
-				continue
-			}
-			if c.OnChatMessage != nil {
-				go c.OnChatMessage(ctx, msg, func(v any) error {
-					return c.writeJSON(ctx, v)
-				})
-			}
-
-		case TypeChatDelete:
-			var del ChatDelete
-			if err := json.Unmarshal(data, &del); err != nil {
-				log.Printf("bad chat.delete: %v", err)
-				continue
-			}
-			if c.OnChatDelete != nil {
-				go c.OnChatDelete(ctx, del, func(v any) error {
-					return c.writeJSON(ctx, v)
-				})
-			}
-
-		case TypeDirList:
-			var req DirList
-			if err := json.Unmarshal(data, &req); err != nil {
-				log.Printf("bad dir.list: %v", err)
-				continue
-			}
-			if c.OnDirList != nil {
-				go c.OnDirList(ctx, req, func(v any) error {
-					return c.writeJSON(ctx, v)
-				})
-			}
-
 		case TypeSessionsList:
 			var req SessionsList
 			if err := json.Unmarshal(data, &req); err != nil {
@@ -316,38 +239,14 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				})
 			}()
 
-		case TypeWingUpdate:
-			if c.OnUpdate != nil {
-				go c.OnUpdate(ctx)
-			}
-
-		case TypeEggConfigUpdate:
-			var update EggConfigUpdate
-			if err := json.Unmarshal(data, &update); err != nil {
-				continue
-			}
-			if c.OnEggConfigUpdate != nil {
-				go c.OnEggConfigUpdate(ctx, update.YAML)
-			}
-
-		case TypeSessionsHistory:
-			var req SessionsHistory
+		case TypeTunnelRequest:
+			var req TunnelRequest
 			if err := json.Unmarshal(data, &req); err != nil {
+				log.Printf("bad tunnel.req: %v", err)
 				continue
 			}
-			if c.OnSessionsHistory != nil {
-				go c.OnSessionsHistory(ctx, req, func(v any) error {
-					return c.writeJSON(ctx, v)
-				})
-			}
-
-		case TypeAuditRequest:
-			var req AuditRequest
-			if err := json.Unmarshal(data, &req); err != nil {
-				continue
-			}
-			if c.OnAuditRequest != nil {
-				go c.OnAuditRequest(ctx, req, func(v any) error {
+			if c.OnTunnel != nil {
+				go c.OnTunnel(ctx, req, func(v any) error {
 					return c.writeJSON(ctx, v)
 				})
 			}
@@ -361,32 +260,6 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			log.Printf("unknown message type: %s", env.Type)
 		}
 	}
-}
-
-func (c *Client) handleTask(ctx context.Context, task TaskSubmit) {
-	if c.OnTask == nil {
-		c.sendError(ctx, task.TaskID, "wing has no task handler")
-		return
-	}
-
-	sender := func(taskID, text string) {
-		chunk := TaskChunk{Type: TypeTaskChunk, TaskID: taskID, Text: text}
-		c.writeJSON(ctx, chunk)
-	}
-
-	_, err := c.OnTask(ctx, task, sender)
-	if err != nil {
-		c.sendError(ctx, task.TaskID, err.Error())
-		return
-	}
-
-	done := TaskDone{Type: TypeTaskDone, TaskID: task.TaskID}
-	c.writeJSON(ctx, done)
-}
-
-func (c *Client) sendError(ctx context.Context, taskID, msg string) {
-	errMsg := TaskErrorMsg{Type: TypeTaskError, TaskID: taskID, Error: msg}
-	c.writeJSON(ctx, errMsg)
 }
 
 func (c *Client) heartbeatLoop(ctx context.Context) {

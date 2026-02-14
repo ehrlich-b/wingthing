@@ -46,7 +46,6 @@ type Server struct {
 	localUser      *User
 	Wings          *WingRegistry
 	PTY            *PTYRegistry
-	Chat           *ChatRegistry
 	Bandwidth      *BandwidthMeter
 	RateLimit      *RateLimiter
 	mux            *http.ServeMux
@@ -59,6 +58,10 @@ type Server struct {
 	// All browser WebSocket connections (for shutdown broadcast)
 	browserMu    sync.Mutex
 	browserConns map[*websocket.Conn]struct{}
+
+	// Tunnel request tracking (requestID → browser WebSocket)
+	tunnelMu       sync.Mutex
+	tunnelRequests map[string]*websocket.Conn
 
 	// Cluster sync (multi-node)
 	Peers   *PeerDirectory
@@ -74,11 +77,11 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s := &Server{
 		Store:        store,
 		Config:       cfg,
-		Wings:        NewWingRegistry(),
-		PTY:          NewPTYRegistry(),
-		Chat:         NewChatRegistry(),
-		mux:          http.NewServeMux(),
-		browserConns: make(map[*websocket.Conn]struct{}),
+		Wings:          NewWingRegistry(),
+		PTY:            NewPTYRegistry(),
+		mux:            http.NewServeMux(),
+		browserConns:   make(map[*websocket.Conn]struct{}),
+		tunnelRequests: make(map[string]*websocket.Conn),
 	}
 
 	// Notify org members when an org wing connects/disconnects.
@@ -116,20 +119,14 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// App dashboard API (cookie auth)
 	s.mux.HandleFunc("GET /api/app/me", s.handleAppMe)
 	s.mux.HandleFunc("GET /api/app/wings", s.handleAppWings)
-	s.mux.HandleFunc("DELETE /api/app/wings/{wingID}/sessions/{id}", s.handleDeleteSession)
-	s.mux.HandleFunc("GET /api/app/wings/{wingID}/ls", s.handleWingLS)
 	s.mux.HandleFunc("GET /ws/app", s.handleAppWS)
-	s.mux.HandleFunc("POST /api/app/wings/{wingID}/update", s.handleWingUpdate)
-	s.mux.HandleFunc("POST /api/app/wings/{wingID}/egg-config", s.handleWingEggConfig)
 	s.mux.HandleFunc("GET /api/app/usage", s.handleAppUsage)
 	s.mux.HandleFunc("POST /api/app/upgrade", s.handleAppUpgrade)
 	s.mux.HandleFunc("POST /api/app/downgrade", s.handleAppDowngrade)
 	// Wing detail page API
-	s.mux.HandleFunc("GET /api/app/wings/{wingID}/sessions", s.handleWingSessions)
 	s.mux.HandleFunc("PUT /api/app/wings/{wingID}/label", s.handleWingLabel)
 	s.mux.HandleFunc("DELETE /api/app/wings/{wingID}/label", s.handleDeleteWingLabel)
 	s.mux.HandleFunc("PUT /api/app/sessions/{id}/label", s.handleSessionLabel)
-	s.mux.HandleFunc("GET /api/app/wings/{wingID}/sessions/{sessionID}/audit", s.handleAuditSSE)
 
 	// Passkey management (cookie auth)
 	s.mux.HandleFunc("POST /api/app/passkey/register/begin", s.handlePasskeyRegisterBegin)
@@ -283,8 +280,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.IsEdge() && s.loginProxy != nil {
 		if strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/app/") ||
 			strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/internal/") ||
-			path == "/health" ||
-			(strings.HasPrefix(path, "/api/app/wings/") && !strings.HasSuffix(path, "/label")) {
+			path == "/health" {
 			s.mux.ServeHTTP(w, r)
 			return
 		}

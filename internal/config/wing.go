@@ -19,6 +19,8 @@ type WingConfig struct {
 	Conv      string     `yaml:"conv,omitempty"`
 	Audit     bool       `yaml:"audit,omitempty"`
 	Debug     bool       `yaml:"debug,omitempty"`
+	Pinned    bool       `yaml:"pinned,omitempty"`     // explicit pin mode toggle
+	AuthTTL   string     `yaml:"auth_ttl,omitempty"`   // passkey auth token duration (default "1h")
 	AllowKeys []AllowKey `yaml:"allow_keys,omitempty"`
 }
 
