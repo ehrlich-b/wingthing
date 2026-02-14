@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -286,11 +287,11 @@ func (s *Server) handleWingUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wingID := r.PathValue("wingID")
-	if s.replayToWingEdge(w, wingID) {
+	if s.replayToWingEdgeByWingID(w, wingID) {
 		return
 	}
-	wing := s.Wings.FindByID(wingID)
-	if wing == nil || !s.canAccessWing(user.ID, wing) {
+	wing := s.findWingByWingID(user.ID, wingID)
+	if wing == nil {
 		writeError(w, http.StatusNotFound, "wing not found")
 		return
 	}
@@ -316,11 +317,11 @@ func (s *Server) handleWingEggConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wingID := r.PathValue("wingID")
-	if s.replayToWingEdge(w, wingID) {
+	if s.replayToWingEdgeByWingID(w, wingID) {
 		return
 	}
-	wing := s.Wings.FindByID(wingID)
-	if wing == nil || !s.canAccessWing(user.ID, wing) {
+	wing := s.findWingByWingID(user.ID, wingID)
+	if wing == nil {
 		writeError(w, http.StatusNotFound, "wing not found")
 		return
 	}
@@ -397,13 +398,13 @@ func (s *Server) handleWingLS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wingID := r.PathValue("wingID")
-	if s.replayToWingEdge(w, wingID) {
+	if s.replayToWingEdgeByWingID(w, wingID) {
 		return
 	}
 	path := r.URL.Query().Get("path")
 
-	wing := s.Wings.FindByID(wingID)
-	if wing == nil || !s.canAccessWing(user.ID, wing) {
+	wing := s.findWingByWingID(user.ID, wingID)
+	if wing == nil {
 		writeError(w, http.StatusNotFound, "wing not found")
 		return
 	}
@@ -798,28 +799,64 @@ func (s *Server) handleAuditSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Gzip if client supports it
+	var out io.Writer = w
+	useGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+	if useGzip {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		out = gz
+	}
+
+	var totalBytes int64
 	timeout := time.After(60 * time.Second)
 	for {
 		select {
 		case msg := <-ch:
 			switch v := msg.(type) {
 			case *ws.AuditChunk:
-				fmt.Fprintf(w, "event: chunk\ndata: %s\n\n", v.Data)
+				lines := strings.Split(strings.TrimRight(v.Data, "\n"), "\n")
+				for _, line := range lines {
+					if line == "" {
+						continue
+					}
+					n, _ := fmt.Fprintf(out, "event: chunk\ndata: %s\n\n", line)
+					totalBytes += int64(n)
+				}
+				if gz, ok := out.(*gzip.Writer); ok {
+					gz.Flush()
+				}
 				flusher.Flush()
 			case *ws.AuditDone:
-				fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+				fmt.Fprintf(out, "event: done\ndata: {}\n\n")
+				if gz, ok := out.(*gzip.Writer); ok {
+					gz.Flush()
+				}
 				flusher.Flush()
+				if s.Bandwidth != nil && totalBytes > 0 {
+					s.Bandwidth.Wait(r.Context(), user.ID, int(totalBytes))
+				}
 				return
 			case *ws.AuditError:
-				fmt.Fprintf(w, "event: error\ndata: %s\n\n", v.Error)
+				fmt.Fprintf(out, "event: error\ndata: %s\n\n", v.Error)
+				if gz, ok := out.(*gzip.Writer); ok {
+					gz.Flush()
+				}
 				flusher.Flush()
 				return
 			}
 		case <-timeout:
-			fmt.Fprintf(w, "event: error\ndata: timeout\n\n")
+			fmt.Fprintf(out, "event: error\ndata: timeout\n\n")
+			if gz, ok := out.(*gzip.Writer); ok {
+				gz.Flush()
+			}
 			flusher.Flush()
 			return
 		case <-r.Context().Done():
+			if s.Bandwidth != nil && totalBytes > 0 {
+				s.Bandwidth.Wait(r.Context(), user.ID, int(totalBytes))
+			}
 			return
 		}
 	}

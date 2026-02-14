@@ -1163,6 +1163,27 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     white-space: nowrap;
 }
 
+.wd-kill-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+}
+.wd-session-row:hover .wd-kill-btn { opacity: 1; }
+.wd-kill-btn:hover { color: var(--red); border-color: var(--red); }
+.wd-kill-btn.confirming {
+    opacity: 1;
+    color: var(--red);
+    border-color: var(--red);
+    font-size: 11px;
+}
+
 .wd-audit-badge {
     font-size: 10px;
     color: var(--yellow);

@@ -1439,13 +1439,15 @@ function renderActiveSessionRows(sessions) {
             '<span class="session-dot ' + sDot + '"></span>' +
             '<span class="wd-session-name">' + escapeHtml(sName) + ' \u00b7 ' + agentWithIcon(s.agent || '?') + '</span>' +
             auditBadge +
+            '<button class="wd-kill-btn" data-sid="' + s.id + '" title="kill session">x</button>' +
         '</div>';
     }).join('');
 }
 
 function wireActiveSessionRows() {
     wingDetailContent.querySelectorAll('.wd-session-row').forEach(function(row) {
-        row.addEventListener('click', function() {
+        row.addEventListener('click', function(e) {
+            if (e.target.classList.contains('wd-kill-btn')) return;
             var sid = row.dataset.sid;
             var kind = row.dataset.kind;
             var agent = row.dataset.agent;
@@ -1453,6 +1455,32 @@ function wireActiveSessionRows() {
                 window._openChat(sid, agent);
             } else {
                 switchToSession(sid);
+            }
+        });
+    });
+    wingDetailContent.querySelectorAll('.wd-kill-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (btn.dataset.confirming) {
+                var sid = btn.dataset.sid;
+                var wingId = currentWingId;
+                btn.disabled = true;
+                btn.textContent = '...';
+                fetch('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + encodeURIComponent(sid), { method: 'DELETE' })
+                    .then(function() {
+                        sessionsData = sessionsData.filter(function(s) { return s.id !== sid; });
+                        updateWingDetailSessions(wingId);
+                        loadWingPastSessions(wingId, 0);
+                    });
+            } else {
+                btn.dataset.confirming = '1';
+                btn.textContent = 'sure?';
+                btn.classList.add('confirming');
+                setTimeout(function() {
+                    delete btn.dataset.confirming;
+                    btn.textContent = 'x';
+                    btn.classList.remove('confirming');
+                }, 3000);
             }
         });
     });
@@ -1852,14 +1880,12 @@ function openAuditReplay(wingId, sessionId) {
     // Fetch audit data via SSE
     var es = new EventSource('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + encodeURIComponent(sessionId) + '/audit?kind=pty');
     es.addEventListener('chunk', function(e) {
-        // Each chunk is NDJSON lines
-        e.data.split('\n').forEach(function(line) {
-            if (!line) return;
-            try {
-                var frame = JSON.parse(line);
-                frames.push(frame);
-            } catch (ex) {}
-        });
+        // Each SSE event is one NDJSON line
+        if (!e.data) return;
+        try {
+            var frame = JSON.parse(e.data);
+            if (Array.isArray(frame)) frames.push(frame);
+        } catch (ex) {}
     });
     es.addEventListener('done', function() {
         es.close();
