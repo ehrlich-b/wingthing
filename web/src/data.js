@@ -148,8 +148,8 @@ export async function loadHome() {
                     w.version = data.version || w.version;
                     w.agents = data.agents || [];
                     w.projects = data.projects || [];
-                    w.pinned = data.pinned || false;
-                    w.pinned_count = data.pinned_count || 0;
+                    w.locked = data.locked || false;
+                    w.allowed_count = data.allowed_count || 0;
                     delete w.tunnel_error;
                     rebuildAgentLists();
                     if (S.activeView === 'home') renderDashboard();

@@ -32,8 +32,8 @@ type ConnectedWing struct {
 	EggConfig   string // serialized YAML of wing's egg config
 	OrgID       string   // org slug this wing serves (from --org flag)
 	RootDir     string   // root directory constraint (from --root flag)
-	Pinned      bool
-	PinnedCount int
+	Locked       bool
+	AllowedCount int
 	Conn        *websocket.Conn
 	LastSeen    time.Time
 }
@@ -161,13 +161,13 @@ func (r *WingRegistry) Remove(id string) {
 }
 
 
-// UpdateConfig updates a wing's pinned state and notifies subscribers.
-func (r *WingRegistry) UpdateConfig(id string, pinned bool, pinnedCount int) {
+// UpdateConfig updates a wing's lock state and notifies subscribers.
+func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int) {
 	r.mu.Lock()
 	w := r.wings[id]
 	if w != nil {
-		w.Pinned = pinned
-		w.PinnedCount = pinnedCount
+		w.Locked = locked
+		w.AllowedCount = allowedCount
 	}
 	r.mu.Unlock()
 	if w != nil {
@@ -348,8 +348,8 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		Projects:    nil, // projects flow through E2E tunnel only
 		OrgID:       reg.OrgSlug,
 		RootDir:     reg.RootDir,
-		Pinned:      reg.Pinned,
-		PinnedCount: reg.PinnedCount,
+		Locked:       reg.Locked,
+		AllowedCount: reg.AllowedCount,
 		Conn:        conn,
 		LastSeen:    time.Now(),
 	}
@@ -426,7 +426,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		case ws.TypeWingConfig:
 			var cfg ws.WingConfig
 			json.Unmarshal(data, &cfg)
-			s.Wings.UpdateConfig(wing.ID, cfg.Pinned, cfg.PinnedCount)
+			s.Wings.UpdateConfig(wing.ID, cfg.Locked, cfg.AllowedCount)
 
 		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge:
 			// Extract session_id and forward to browser

@@ -43,8 +43,8 @@ type Client struct {
 	OrgSlug    string
 	RootDir    string
 
-	Pinned      bool
-	PinnedCount int
+	Locked       bool
+	AllowedCount int
 
 	OnPTY         PTYHandler
 	OnTunnel      TunnelHandler
@@ -124,9 +124,9 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		Identities:  c.Identities,
 		Projects:    nil,
 		OrgSlug:     c.OrgSlug,
-		RootDir:     c.RootDir,
-		Pinned:      c.Pinned,
-		PinnedCount: c.PinnedCount,
+		RootDir:      c.RootDir,
+		Locked:       c.Locked,
+		AllowedCount: c.AllowedCount,
 	}
 	if err := c.writeJSON(ctx, reg); err != nil {
 		return connected, fmt.Errorf("register: %w", err)
@@ -289,13 +289,13 @@ func (c *Client) heartbeatLoop(ctx context.Context) {
 	}
 }
 
-// SendConfig pushes the wing's current pinned state to the relay.
+// SendConfig pushes the wing's current lock state to the relay.
 func (c *Client) SendConfig(ctx context.Context) error {
 	return c.writeJSON(ctx, WingConfig{
-		Type:        TypeWingConfig,
-		WingID:      c.WingID,
-		Pinned:      c.Pinned,
-		PinnedCount: c.PinnedCount,
+		Type:         TypeWingConfig,
+		WingID:       c.WingID,
+		Locked:       c.Locked,
+		AllowedCount: c.AllowedCount,
 	})
 }
 

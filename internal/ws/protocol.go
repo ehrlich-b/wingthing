@@ -46,12 +46,12 @@ const (
 	TypeError        = "error"
 )
 
-// WingConfig is sent by the wing when pinned state changes (e.g. lock/unlock, pin/unpin).
+// WingConfig is sent by the wing when lock state changes (e.g. lock/unlock, allow/revoke).
 type WingConfig struct {
-	Type        string `json:"type"`
-	WingID      string `json:"wing_id"`
-	Pinned      bool   `json:"pinned"`
-	PinnedCount int    `json:"pinned_count"`
+	Type         string `json:"type"`
+	WingID       string `json:"wing_id"`
+	Locked       bool   `json:"locked"`
+	AllowedCount int    `json:"allowed_count"`
 }
 
 // Envelope wraps every WebSocket message with a type field for routing.
@@ -80,8 +80,8 @@ type WingRegister struct {
 	Projects    []WingProject `json:"projects,omitempty"`
 	OrgSlug     string        `json:"org_slug,omitempty"`
 	RootDir     string        `json:"root_dir,omitempty"`
-	Pinned      bool          `json:"pinned"`                // explicit pinned flag from wing.yaml
-	PinnedCount int           `json:"pinned_count,omitempty"` // number of pinned keys
+	Locked       bool          `json:"locked"`                 // explicit locked flag from wing.yaml
+	AllowedCount int           `json:"allowed_count,omitempty"` // number of allowed keys
 }
 
 // WingHeartbeat is sent by the wing every 30s.

@@ -19,12 +19,14 @@ type WingConfig struct {
 	Conv      string     `yaml:"conv,omitempty"`
 	Audit     bool       `yaml:"audit,omitempty"`
 	Debug     bool       `yaml:"debug,omitempty"`
-	Pinned    bool       `yaml:"pinned,omitempty"`     // explicit pin mode toggle
+	Locked    bool       `yaml:"locked,omitempty"`     // explicit lock mode toggle
 	AuthTTL   string     `yaml:"auth_ttl,omitempty"`   // passkey auth token duration (default "1h")
 	AllowKeys []AllowKey `yaml:"allow_keys,omitempty"`
+
+	PinnedCompat bool `yaml:"pinned,omitempty"` // backwards compat: old "pinned" key
 }
 
-// AllowKey is a pinned user for wing access control.
+// AllowKey is an allowed user for wing access control.
 type AllowKey struct {
 	Key    string `yaml:"key,omitempty"`     // base64 raw P-256 public key (optional)
 	UserID string `yaml:"user_id,omitempty"` // relay user ID
@@ -52,6 +54,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	if cfg.PinnedCompat && !cfg.Locked {
+		cfg.Locked = true
 	}
 	return cfg, nil
 }

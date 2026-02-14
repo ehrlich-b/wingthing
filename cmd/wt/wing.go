@@ -294,9 +294,8 @@ func wingCmd() *cobra.Command {
 	cmd.AddCommand(wingStartCmd())
 	cmd.AddCommand(wingStopCmd())
 	cmd.AddCommand(wingStatusCmd())
-	cmd.AddCommand(wingPinCmd())
-	cmd.AddCommand(wingPinsCmd())
-	cmd.AddCommand(wingUnpinCmd())
+	cmd.AddCommand(wingAllowCmd())
+	cmd.AddCommand(wingRevokeCmd())
 	cmd.AddCommand(wingLockCmd())
 	cmd.AddCommand(wingUnlockCmd())
 
@@ -565,7 +564,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 	fmt.Printf("  conv: %s\n", convFlag)
 	if len(allowedKeys) > 0 {
-		fmt.Printf("  passkey pinning enabled: %d pinned + %d ephemeral keys\n", pinnedCount, ephemeralCount)
+		fmt.Printf("  access control enabled: %d pinned + %d ephemeral keys\n", pinnedCount, ephemeralCount)
 	}
 	fmt.Println()
 	fmt.Println("open https://app.wingthing.ai to start a terminal")
@@ -601,14 +600,14 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		Projects:    projects,
 		OrgSlug:     orgFlag,
 		RootDir:     resolvedRoot,
-		Pinned:      wingCfg.Pinned,
-		PinnedCount: len(wingCfg.AllowKeys),
+		Locked:       wingCfg.Locked,
+		AllowedCount: len(wingCfg.AllowKeys),
 	}
 
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
 		// Block PTY when wing is locked with no authorized users
-		if wingCfg.Pinned && len(allowedKeys) == 0 {
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "wing is locked with no authorized users — add yourself with: wt wing pin --email <your-email>"})
+		if wingCfg.Locked && len(allowedKeys) == 0 {
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "wing is locked with no authorized users — add yourself with: wt wing allow --email <your-email>"})
 			return
 		}
 		// Clamp CWD to root if configured
@@ -659,13 +658,13 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 					log.Printf("reload failed: %v", err)
 					continue
 				}
-				wingCfg.Pinned = newCfg.Pinned
+				wingCfg.Locked = newCfg.Locked
 				wingCfg.AllowKeys = newCfg.AllowKeys
 				allowedKeys = append([]config.AllowKey{}, newCfg.AllowKeys...)
-				client.Pinned = newCfg.Pinned
-				client.PinnedCount = len(newCfg.AllowKeys)
+				client.Locked = newCfg.Locked
+				client.AllowedCount = len(newCfg.AllowKeys)
 				client.SendConfig(ctx)
-				log.Printf("config reloaded: pinned=%v pins=%d", newCfg.Pinned, len(newCfg.AllowKeys))
+				log.Printf("config reloaded: locked=%v allowed=%d", newCfg.Locked, len(newCfg.AllowKeys))
 				continue
 			}
 			log.Println("wing shutting down...")
@@ -758,14 +757,111 @@ func resolveEmail(cfg *config.Config, email string) (string, string, error) {
 	return result.UserID, result.DisplayName, nil
 }
 
-func wingPinCmd() *cobra.Command {
+func wingAllowCmd() *cobra.Command {
 	var userIDFlag string
 	var emailFlag string
+	var allFlag bool
 	cmd := &cobra.Command{
-		Use:   "pin [base64-public-key]",
-		Short: "Pin a user for wing access (by email, user-id, or passkey)",
+		Use:   "allow [base64-public-key]",
+		Short: "Allow a user or list allowlist (no args)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			wingCfg, err := config.LoadWingConfig(cfg.Dir)
+			if err != nil {
+				return err
+			}
+
+			// No args and no flags: list allowlist
+			if len(args) == 0 && userIDFlag == "" && emailFlag == "" && !allFlag {
+				if len(wingCfg.AllowKeys) == 0 {
+					fmt.Println("no allowed users")
+					return nil
+				}
+				for _, ak := range wingCfg.AllowKeys {
+					display := ak.Email
+					if display == "" {
+						display = ak.UserID
+					}
+					if display == "" {
+						display = "(key-only)"
+					}
+					keyInfo := ""
+					if ak.Key != "" {
+						prefix := ak.Key
+						if len(prefix) > 16 {
+							prefix = prefix[:16] + "..."
+						}
+						keyInfo = "  key:" + prefix
+					}
+					fmt.Printf("  %s%s\n", display, keyInfo)
+				}
+				return nil
+			}
+
+			// --all: fetch org members from relay and add all
+			if allFlag {
+				roostURL := cfg.RoostURL
+				if roostURL == "" {
+					roostURL = "https://wingthing.ai"
+				}
+				ts := auth.NewTokenStore(cfg.Dir)
+				tok, err := ts.Load()
+				if err != nil || !ts.IsValid(tok) {
+					return fmt.Errorf("not logged in — run: wt login")
+				}
+				req, _ := http.NewRequest("GET", strings.TrimRight(roostURL, "/")+"/api/app/org/members", nil)
+				req.Header.Set("Authorization", "Bearer "+tok.Token)
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					return fmt.Errorf("fetch org members: %w", err)
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != 200 {
+					return fmt.Errorf("fetch org members: HTTP %d", resp.StatusCode)
+				}
+				var members []struct {
+					UserID      string `json:"user_id"`
+					Email       string `json:"email"`
+					DisplayName string `json:"display_name"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
+					return fmt.Errorf("parse org members: %w", err)
+				}
+				added := 0
+				for _, m := range members {
+					// Deduplicate by user_id
+					dup := false
+					for _, ak := range wingCfg.AllowKeys {
+						if ak.UserID == m.UserID {
+							dup = true
+							break
+						}
+					}
+					if dup {
+						fmt.Printf("already allowed: %s\n", m.Email)
+						continue
+					}
+					wingCfg.AllowKeys = append(wingCfg.AllowKeys, config.AllowKey{UserID: m.UserID, Email: m.Email})
+					fmt.Printf("allowed %s\n", m.Email)
+					added++
+				}
+				if added > 0 {
+					if !wingCfg.Locked {
+						wingCfg.Locked = true
+					}
+					if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
+						return err
+					}
+					signalDaemon(syscall.SIGHUP)
+				}
+				fmt.Printf("added %d members\n", added)
+				return nil
+			}
+
 			var keyB64 string
 			if len(args) > 0 {
 				keyB64 = args[0]
@@ -779,11 +875,6 @@ func wingPinCmd() *cobra.Command {
 				if !auth.IsValidP256Point(raw) {
 					return fmt.Errorf("invalid key: not a valid P-256 curve point")
 				}
-			}
-
-			cfg, err := config.Load()
-			if err != nil {
-				return err
 			}
 
 			// Resolve email to user ID
@@ -801,11 +892,6 @@ func wingPinCmd() *cobra.Command {
 				return fmt.Errorf("must provide --email, --user-id, or a public key")
 			}
 
-			wingCfg, err := config.LoadWingConfig(cfg.Dir)
-			if err != nil {
-				return err
-			}
-
 			// Deduplicate by key or user_id
 			for _, ak := range wingCfg.AllowKeys {
 				if keyB64 != "" && ak.Key == keyB64 {
@@ -813,7 +899,7 @@ func wingPinCmd() *cobra.Command {
 					if display == "" {
 						display = ak.UserID
 					}
-					fmt.Printf("already pinned: %s\n", display)
+					fmt.Printf("already allowed: %s\n", display)
 					return nil
 				}
 				if userIDFlag != "" && ak.UserID == userIDFlag {
@@ -821,12 +907,15 @@ func wingPinCmd() *cobra.Command {
 					if display == "" {
 						display = ak.UserID
 					}
-					fmt.Printf("already pinned: %s\n", display)
+					fmt.Printf("already allowed: %s\n", display)
 					return nil
 				}
 			}
 
 			wingCfg.AllowKeys = append(wingCfg.AllowKeys, config.AllowKey{Key: keyB64, UserID: userIDFlag, Email: resolvedEmail})
+			if !wingCfg.Locked {
+				wingCfg.Locked = true
+			}
 			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 				return err
 			}
@@ -837,60 +926,21 @@ func wingPinCmd() *cobra.Command {
 			if display == "" {
 				display = keyB64[:12] + "..."
 			}
-			fmt.Printf("pinned %s\n", display)
+			fmt.Printf("allowed %s\n", display)
 			signalDaemon(syscall.SIGHUP)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&userIDFlag, "user-id", "", "relay user ID to pin")
-	cmd.Flags().StringVar(&emailFlag, "email", "", "user email to pin (resolves via relay)")
+	cmd.Flags().StringVar(&userIDFlag, "user-id", "", "relay user ID to allow")
+	cmd.Flags().StringVar(&emailFlag, "email", "", "user email to allow (resolves via relay)")
+	cmd.Flags().BoolVar(&allFlag, "all", false, "allow all org members from relay")
 	return cmd
 }
 
-func wingPinsCmd() *cobra.Command {
+func wingRevokeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "pins",
-		Short: "List pinned users",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			wingCfg, err := config.LoadWingConfig(cfg.Dir)
-			if err != nil {
-				return err
-			}
-			if len(wingCfg.AllowKeys) == 0 {
-				fmt.Println("no pinned users")
-				return nil
-			}
-			for _, ak := range wingCfg.AllowKeys {
-				display := ak.Email
-				if display == "" {
-					display = ak.UserID
-				}
-				if display == "" {
-					display = "(key-only)"
-				}
-				keyInfo := ""
-				if ak.Key != "" {
-					prefix := ak.Key
-					if len(prefix) > 16 {
-						prefix = prefix[:16] + "..."
-					}
-					keyInfo = "  key:" + prefix
-				}
-				fmt.Printf("  %s%s\n", display, keyInfo)
-			}
-			return nil
-		},
-	}
-}
-
-func wingUnpinCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "unpin <user-id-or-key-prefix>",
-		Short: "Remove a pinned user",
+		Use:   "revoke <user-id-or-email>",
+		Short: "Remove from allowlist",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
@@ -913,7 +963,7 @@ func wingUnpinCmd() *cobra.Command {
 			}
 
 			if len(matches) == 0 {
-				return fmt.Errorf("no matching pin found for %q", query)
+				return fmt.Errorf("no matching entry found for %q", query)
 			}
 			if len(matches) > 1 {
 				fmt.Println("ambiguous match:")
@@ -943,7 +993,7 @@ func wingUnpinCmd() *cobra.Command {
 			if display == "" {
 				display = removed.Key[:12] + "..."
 			}
-			fmt.Printf("unpinned: %s\n", display)
+			fmt.Printf("revoked: %s\n", display)
 			signalDaemon(syscall.SIGHUP)
 			return nil
 		},
@@ -962,7 +1012,7 @@ func signalDaemon(sig os.Signal) {
 func wingLockCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "lock",
-		Short: "Enable access control (pinned mode)",
+		Short: "Enable access control",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -972,11 +1022,11 @@ func wingLockCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if wingCfg.Pinned {
+			if wingCfg.Locked {
 				fmt.Println("wing is already locked")
 				return nil
 			}
-			wingCfg.Pinned = true
+			wingCfg.Locked = true
 			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 				return err
 			}
@@ -1000,11 +1050,11 @@ func wingUnlockCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !wingCfg.Pinned {
+			if !wingCfg.Locked {
 				fmt.Println("wing is already unlocked")
 				return nil
 			}
-			wingCfg.Pinned = false
+			wingCfg.Locked = false
 			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 				return err
 			}
@@ -1956,8 +2006,8 @@ type tunnelInner struct {
 	Offset    int    `json:"offset,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	AuthToken string `json:"auth_token,omitempty"`
-	Key       string `json:"key,omitempty"` // passkey public key for pins.add
-	PinUserID string `json:"pin_user_id,omitempty"` // target user_id for pins.remove
+	Key         string `json:"key,omitempty"` // passkey public key for allow.add
+	AllowUserID string `json:"allow_user_id,omitempty"` // target user_id for allow.remove
 
 	// Passkey assertion fields (for type "passkey.auth")
 	CredentialID      string `json:"credential_id,omitempty"`
@@ -2043,8 +2093,8 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		return
 	}
 
-	// Two-state auth check for pinned wings
-	if wingCfg.Pinned && inner.Type != "passkey.auth" && inner.Type != "pins.add" {
+	// Two-state auth check for locked wings
+	if wingCfg.Locked && inner.Type != "passkey.auth" && inner.Type != "allow.add" {
 		// Step 1: Is sender in the allow list?
 		inList := false
 		if req.SenderUserID != "" {
@@ -2095,8 +2145,8 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			"version":      version,
 			"agents":       client.Agents,
 			"projects":     client.Projects,
-			"pinned":       wingCfg.Pinned,
-			"pinned_count": len(wingCfg.AllowKeys),
+			"locked":        wingCfg.Locked,
+			"allowed_count": len(wingCfg.AllowKeys),
 		}, write)
 
 	case "sessions.list":
@@ -2186,8 +2236,8 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "passkey.auth":
-		if !wingCfg.Pinned || len(allowedKeys) == 0 {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "wing is not pinned"}, write)
+		if !wingCfg.Locked || len(allowedKeys) == 0 {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "wing is not locked"}, write)
 			return
 		}
 		credID, _ := base64.RawURLEncoding.DecodeString(inner.CredentialID)
@@ -2223,19 +2273,19 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		passkeyCache.Put(token, matchedKey)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"auth_token": token}, write)
 
-	case "pins.list":
-		type pinInfo struct {
+	case "allow.list":
+		type allowInfo struct {
 			Key    string `json:"key"`
 			UserID string `json:"user_id,omitempty"`
 			Email  string `json:"email,omitempty"`
 		}
-		var pins []pinInfo
+		var allowed []allowInfo
 		for _, ak := range allowedKeys {
-			pins = append(pins, pinInfo{Key: ak.Key, UserID: ak.UserID, Email: ak.Email})
+			allowed = append(allowed, allowInfo{Key: ak.Key, UserID: ak.UserID, Email: ak.Email})
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]any{"pins": pins}, write)
+		tunnelRespond(gcm, req.RequestID, map[string]any{"allowed": allowed}, write)
 
-	case "pins.add":
+	case "allow.add":
 		if req.SenderUserID == "" {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "no user identity"}, write)
 			return
@@ -2243,7 +2293,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		// Check duplicate by user_id
 		for _, ak := range allowedKeys {
 			if ak.UserID == req.SenderUserID {
-				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "already pinned"}, write)
+				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "already allowed"}, write)
 				return
 			}
 		}
@@ -2255,34 +2305,34 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 				return
 			}
 		}
-		newPin := config.AllowKey{
+		newEntry := config.AllowKey{
 			Key:    inner.Key,
 			UserID: req.SenderUserID,
 			Email:  req.SenderEmail,
 		}
-		wingCfg.AllowKeys = append(wingCfg.AllowKeys, newPin)
-		if !wingCfg.Pinned {
-			wingCfg.Pinned = true
+		wingCfg.AllowKeys = append(wingCfg.AllowKeys, newEntry)
+		if !wingCfg.Locked {
+			wingCfg.Locked = true
 		}
 		config.SaveWingConfig(cfg.Dir, wingCfg)
-		allowedKeys = append(allowedKeys, newPin)
+		allowedKeys = append(allowedKeys, newEntry)
 		*allowedKeysPtr = allowedKeys
-		client.Pinned = wingCfg.Pinned
-		client.PinnedCount = len(wingCfg.AllowKeys)
+		client.Locked = wingCfg.Locked
+		client.AllowedCount = len(wingCfg.AllowKeys)
 		client.SendConfig(ctx)
-		log.Printf("pin added: user=%s email=%s has_passkey=%v", req.SenderUserID, req.SenderEmail, inner.Key != "")
+		log.Printf("allowed: user=%s email=%s has_passkey=%v", req.SenderUserID, req.SenderEmail, inner.Key != "")
 		tunnelRespond(gcm, req.RequestID, map[string]any{
 			"ok": "true", "email": req.SenderEmail, "user_id": req.SenderUserID,
 			"has_passkey": inner.Key != "",
 		}, write)
 
-	case "pins.remove":
+	case "allow.remove":
 		if req.SenderUserID == "" {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "no user identity"}, write)
 			return
 		}
-		// Find pin to remove: by key or user_id
-		target := inner.PinUserID
+		// Find entry to remove: by key or user_id
+		target := inner.AllowUserID
 		if target == "" && inner.Key != "" {
 			for _, ak := range allowedKeys {
 				if ak.Key == inner.Key {
@@ -2292,10 +2342,10 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 		}
 		if target == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing pin_user_id or key"}, write)
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing allow_user_id or key"}, write)
 			return
 		}
-		// Only wing owner or the pin's own user can remove
+		// Only wing owner or the entry's own user can remove
 		isOwner := req.SenderOrgRole == "owner" || req.SenderOrgRole == "admin"
 		if !isOwner && req.SenderUserID != target {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
@@ -2310,17 +2360,17 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 		}
 		if !found {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "pin not found"}, write)
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "entry not found"}, write)
 			return
 		}
 		config.SaveWingConfig(cfg.Dir, wingCfg)
 		// Rebuild allowedKeys from config
 		allowedKeys = append([]config.AllowKey{}, wingCfg.AllowKeys...)
 		*allowedKeysPtr = allowedKeys
-		client.Pinned = wingCfg.Pinned
-		client.PinnedCount = len(wingCfg.AllowKeys)
+		client.Locked = wingCfg.Locked
+		client.AllowedCount = len(wingCfg.AllowKeys)
 		client.SendConfig(ctx)
-		log.Printf("pin removed: target=%s by=%s", target, req.SenderUserID)
+		log.Printf("revoked: target=%s by=%s", target, req.SenderUserID)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	default:

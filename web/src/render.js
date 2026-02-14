@@ -952,7 +952,7 @@ export function renderWingDetailPage(wingId) {
 
     var lockBanner = '';
     if (isNotAllowed) {
-        lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> This wing is locked. Ask the owner to add you:<br><code>wt wing pin --email ' + escapeHtml(userEmail) + '</code></div>';
+        lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> This wing is locked. Ask the owner to add you:<br><code>wt wing allow --email ' + escapeHtml(userEmail) + '</code></div>';
     } else if (isPasskeyNeeded) {
         lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> Authenticate to access this wing<br><button class="btn-sm btn-accent" id="wd-auth-btn">authenticate</button></div>';
     }
@@ -970,13 +970,13 @@ export function renderWingDetailPage(wingId) {
             '<div class="wd-hero-top">' +
                 '<span class="session-dot ' + (isOnline ? 'live' : 'offline') + '"></span>' +
                 '<span class="wd-name" id="wd-name" title="click to rename">' + escapeHtml(name) + '</span>' +
-                (w.pinned ? '<span class="wd-pinned-badge" title="passkey required">&#x1f512; pinned</span>' : '') +
+                (w.locked ? '<span class="wd-pinned-badge" title="passkey required">&#x1f512; locked</span>' : '') +
                 (w.wing_label ? '<a class="wd-clear-label" id="wd-delete-label" title="clear name">x</a>' : '') +
                 (!isOnline ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
             '</div>' +
         '</div>' +
         (isOnline && !isLocked ? '<div class="wd-palette">' +
-            '<input id="wd-search" type="text" class="wd-search" placeholder="' + (w.pinned && !S.tunnelAuthTokens[wingId] ? 'start a session (passkey auth on first browse)...' : 'start a session...') + '" autocomplete="off" spellcheck="false">' +
+            '<input id="wd-search" type="text" class="wd-search" placeholder="' + (w.locked && !S.tunnelAuthTokens[wingId] ? 'start a session (passkey auth on first browse)...' : 'start a session...') + '" autocomplete="off" spellcheck="false">' +
             '<div id="wd-search-results" class="wd-search-results"></div>' +
             '<div id="wd-search-status" class="wd-search-status"></div>' +
         '</div>' : '') +
@@ -991,9 +991,9 @@ export function renderWingDetailPage(wingId) {
             (isLocked ? '' : '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>') +
         '</div>' +
         (isOnline ? '<div class="wd-section"><h3 class="section-label">access control</h3>' +
-            '<div id="wd-pins"><span class="text-dim">loading...</span></div>' +
-            '<div class="wd-pin-actions">' +
-                '<button class="btn-sm btn-accent" id="wd-pin-me">pin me</button>' +
+            '<div id="wd-allowlist"><span class="text-dim">loading...</span></div>' +
+            '<div class="wd-allow-actions">' +
+                '<button class="btn-sm btn-accent" id="wd-allow-me">allow me</button>' +
             '</div>' +
         '</div>' : '') +
         '</div>';
@@ -1016,8 +1016,8 @@ export function renderWingDetailPage(wingId) {
                     w.version = data.version || w.version;
                     w.agents = data.agents || [];
                     w.projects = data.projects || [];
-                    w.pinned = data.pinned || false;
-                    w.pinned_count = data.pinned_count || 0;
+                    w.locked = data.locked || false;
+                    w.allowed_count = data.allowed_count || 0;
                     delete w.tunnel_error;
                     renderWingDetailPage(wingId);
                 })
@@ -1113,7 +1113,7 @@ export function renderWingDetailPage(wingId) {
         setupWingPalette(w);
     }
     if (isOnline) {
-        loadWingPins(w);
+        loadWingAllowlist(w);
     }
 }
 
@@ -1419,57 +1419,57 @@ function setupWingPalette(wing) {
     });
 }
 
-function loadWingPins(wing) {
-    var container = document.getElementById('wd-pins');
-    var pinBtn = document.getElementById('wd-pin-me');
+function loadWingAllowlist(wing) {
+    var container = document.getElementById('wd-allowlist');
+    var allowBtn = document.getElementById('wd-allow-me');
     if (!container) return;
 
-    sendTunnelRequest(wing.wing_id, { type: 'pins.list' }).then(function(data) {
-        var pins = data.pins || [];
-        if (pins.length === 0) {
-            container.innerHTML = '<span class="text-dim">no pinned users — anyone with wing access can connect</span>';
+    sendTunnelRequest(wing.wing_id, { type: 'allow.list' }).then(function(data) {
+        var allowed = data.allowed || [];
+        if (allowed.length === 0) {
+            container.innerHTML = '<span class="text-dim">no allowed users — anyone with wing access can connect</span>';
         } else {
-            var html = pins.map(function(p) {
+            var html = allowed.map(function(p) {
                 var display = p.email || p.user_id || '(key-only)';
                 var keyShort = p.key ? p.key.substring(0, 12) + '...' : 'none';
-                return '<div class="wd-pin-row">' +
-                    '<span class="wd-pin-email">' + escapeHtml(display) + '</span>' +
-                    '<span class="wd-pin-key text-dim">pk: ' + escapeHtml(keyShort) + '</span>' +
-                    '<button class="btn-sm btn-danger wd-pin-remove" data-pin-uid="' + escapeHtml(p.user_id || '') + '" data-pin-key="' + escapeHtml(p.key || '') + '">remove</button>' +
+                return '<div class="wd-allow-row">' +
+                    '<span class="wd-allow-email">' + escapeHtml(display) + '</span>' +
+                    '<span class="wd-allow-key text-dim">pk: ' + escapeHtml(keyShort) + '</span>' +
+                    '<button class="btn-sm btn-danger wd-allow-remove" data-allow-uid="' + escapeHtml(p.user_id || '') + '" data-allow-key="' + escapeHtml(p.key || '') + '">remove</button>' +
                 '</div>';
             }).join('');
             container.innerHTML = html;
 
-            // Check if current user is already pinned
+            // Check if current user is already allowed
             var myId = S.currentUser.id || '';
-            var alreadyPinned = pins.some(function(p) { return p.user_id === myId; });
-            if (pinBtn && alreadyPinned) {
-                pinBtn.textContent = 'pinned';
-                pinBtn.disabled = true;
+            var alreadyAllowed = allowed.some(function(p) { return p.user_id === myId; });
+            if (allowBtn && alreadyAllowed) {
+                allowBtn.textContent = 'allowed';
+                allowBtn.disabled = true;
             }
 
             // Wire remove buttons
-            container.querySelectorAll('.wd-pin-remove').forEach(function(btn) {
+            container.querySelectorAll('.wd-allow-remove').forEach(function(btn) {
                 btn.addEventListener('click', function() {
-                    var uid = btn.getAttribute('data-pin-uid');
-                    var key = btn.getAttribute('data-pin-key');
+                    var uid = btn.getAttribute('data-allow-uid');
+                    var key = btn.getAttribute('data-allow-key');
                     btn.textContent = '...';
                     btn.disabled = true;
-                    sendTunnelRequest(wing.wing_id, { type: 'pins.remove', pin_user_id: uid, key: key })
-                        .then(function() { loadWingPins(wing); })
+                    sendTunnelRequest(wing.wing_id, { type: 'allow.remove', allow_user_id: uid, key: key })
+                        .then(function() { loadWingAllowlist(wing); })
                         .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
                 });
             });
         }
     }).catch(function() {
-        container.innerHTML = '<span class="text-dim">could not load pins</span>';
+        container.innerHTML = '<span class="text-dim">could not load allowlist</span>';
     });
 
-    // Wire "Pin me" button
-    if (pinBtn) {
-        pinBtn.addEventListener('click', function() {
-            pinBtn.textContent = 'pinning...';
-            pinBtn.disabled = true;
+    // Wire "Allow me" button
+    if (allowBtn) {
+        allowBtn.addEventListener('click', function() {
+            allowBtn.textContent = 'adding...';
+            allowBtn.disabled = true;
 
             // Try to create a passkey
             var rpId = location.hostname;
@@ -1496,30 +1496,30 @@ function loadWingPins(wing) {
                 // Extract raw P-256 public key from COSE in attestation
                 var pubKeyBytes = new Uint8Array(cred.response.getPublicKey());
                 var keyB64 = btoa(String.fromCharCode.apply(null, pubKeyBytes));
-                return sendTunnelRequest(wing.wing_id, { type: 'pins.add', key: keyB64 });
+                return sendTunnelRequest(wing.wing_id, { type: 'allow.add', key: keyB64 });
             }).then(function(resp) {
                 if (resp.error) {
-                    pinBtn.textContent = resp.error;
-                    pinBtn.disabled = false;
+                    allowBtn.textContent = resp.error;
+                    allowBtn.disabled = false;
                     return;
                 }
-                pinBtn.textContent = 'pinned';
-                loadWingPins(wing);
+                allowBtn.textContent = 'allowed';
+                loadWingAllowlist(wing);
             }).catch(function() {
-                // Passkey creation failed — pin by user ID only
-                sendTunnelRequest(wing.wing_id, { type: 'pins.add' })
+                // Passkey creation failed — allow by user ID only
+                sendTunnelRequest(wing.wing_id, { type: 'allow.add' })
                     .then(function(resp) {
                         if (resp.error) {
-                            pinBtn.textContent = resp.error;
-                            pinBtn.disabled = false;
+                            allowBtn.textContent = resp.error;
+                            allowBtn.disabled = false;
                             return;
                         }
-                        pinBtn.textContent = 'pinned (no passkey)';
-                        loadWingPins(wing);
+                        allowBtn.textContent = 'allowed (no passkey)';
+                        loadWingAllowlist(wing);
                     })
                     .catch(function() {
-                        pinBtn.textContent = 'failed';
-                        pinBtn.disabled = false;
+                        allowBtn.textContent = 'failed';
+                        allowBtn.disabled = false;
                     });
             });
         });
@@ -1717,19 +1717,18 @@ export function showSessionInfo() {
 }
 
 export function renderDashboard() {
-    if (S.wingsData.length > 0) {
+    var visibleWings = S.wingsData.filter(function(w) { return w.tunnel_error !== 'not_allowed'; });
+    if (visibleWings.length > 0) {
         var wingHtml = '<h3 class="section-label">wings</h3><div class="wing-grid">';
-        wingHtml += S.wingsData.map(function(w) {
+        wingHtml += visibleWings.map(function(w) {
             var name = wingDisplayName(w);
             var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
-            var isCardLocked = w.tunnel_error === 'not_allowed';
             var isCardPasskey = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
-            var pinnedBadge = w.pinned ? '<span class="wing-pinned-badge">pinned</span>' : '';
-            var lockedBadge = isCardLocked ? '<span class="wing-pinned-badge">locked</span>' : '';
+            var lockedBadge = w.locked ? '<span class="wing-pinned-badge">locked</span>' : '';
             var authBadge = isCardPasskey ? '<span class="wing-pinned-badge">authenticate</span>' : '';
-            var lockIcon = (w.pinned || isCardLocked || isCardPasskey) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
+            var lockIcon = (w.locked || isCardPasskey) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
             return '<div class="wing-box" draggable="true" data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
@@ -1738,7 +1737,7 @@ export function renderDashboard() {
                 '<span class="wing-agents">' + (w.agents || []).map(function(a) { return agentIcon(a) || escapeHtml(a); }).join(' ') + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
-                    (isCardLocked ? lockedBadge : (isCardPasskey ? authBadge : (w.pinned ? pinnedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>')))) +
+                    (isCardPasskey ? authBadge : (w.locked ? lockedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>'))) +
                 '</div>' +
             '</div>';
         }).join('');
@@ -1760,7 +1759,7 @@ export function renderDashboard() {
     }
 
     var hasSessions = S.sessionsData.length > 0;
-    var hasWings = S.wingsData.length > 0;
+    var hasWings = visibleWings.length > 0;
     DOM.emptyState.style.display = hasSessions ? 'none' : '';
     var noWingsEl = document.getElementById('empty-no-wings');
     var noSessionsEl = document.getElementById('empty-no-sessions');

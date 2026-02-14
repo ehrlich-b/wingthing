@@ -110,8 +110,8 @@ function applyWingEvent(ev) {
                 evWing.version = data.version || evWing.version;
                 evWing.agents = data.agents || [];
                 evWing.projects = data.projects || [];
-                evWing.pinned = data.pinned || false;
-                evWing.pinned_count = data.pinned_count || 0;
+                evWing.locked = data.locked || false;
+                evWing.allowed_count = data.allowed_count || 0;
                 if (evWing.updating_at && data.version && data.version !== evWing._prev_version) {
                     delete evWing.updating_at;
                 }
