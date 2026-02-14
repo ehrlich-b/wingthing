@@ -5,7 +5,8 @@ import { sendTunnelRequest } from './tunnel.js';
 import { switchToSession } from './nav.js';
 import { showHome, navigateToWingDetail } from './nav.js';
 import { connectPTY } from './pty.js';
-import { setLastTermAgent, getLastTermAgent, setWingOrder, setEggOrder, getCachedWingSessions, setCachedWingSessions } from './data.js';
+import { setLastTermAgent, getLastTermAgent, setWingOrder, setEggOrder, getCachedWingSessions, setCachedWingSessions, probeWing } from './data.js';
+import { rebuildAgentLists } from './dashboard.js';
 import { openAuditReplay, openAuditKeylog } from './audit.js';
 import { showTerminal } from './nav.js';
 
@@ -1752,6 +1753,30 @@ export function renderDashboard() {
             box.addEventListener('click', function(e) {
                 if (e.target.closest('.box-menu-btn')) return;
                 var mid = box.dataset.wingId;
+                var w = S.wingsData.find(function(w) { return w.wing_id === mid; });
+                if (w && (w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed')) {
+                    // Passkey auth on dashboard — don't navigate until success
+                    var badge = box.querySelector('.wing-pinned-badge');
+                    if (badge) badge.textContent = 'authenticating...';
+                    sendTunnelRequest(mid, { type: 'wing.info' })
+                        .then(function(data) {
+                            w.hostname = data.hostname || w.hostname;
+                            w.platform = data.platform || w.platform;
+                            w.version = data.version || w.version;
+                            w.agents = data.agents || [];
+                            w.projects = data.projects || [];
+                            w.locked = data.locked || false;
+                            w.allowed_count = data.allowed_count || 0;
+                            delete w.tunnel_error;
+                            rebuildAgentLists();
+                            navigateToWingDetail(mid);
+                        })
+                        .catch(function() {
+                            w.tunnel_error = 'passkey_failed';
+                            if (badge) badge.textContent = 'authenticate';
+                        });
+                    return;
+                }
                 navigateToWingDetail(mid);
             });
             box.style.cursor = 'pointer';
