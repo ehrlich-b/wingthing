@@ -132,11 +132,30 @@ export async function loadHome() {
     });
 
     setCachedWings(S.wingsData.map(function (w) {
-        return { wing_id: w.wing_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects, wing_label: w.wing_label };
+        return { wing_id: w.wing_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, wing_label: w.wing_label };
     }));
 
     rebuildAgentLists();
     updateHeaderStatus();
+
+    // Sweep-poll online wings for projects via E2E tunnel
+    S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; })
+        .forEach(function(w) {
+            sendTunnelRequest(w.wing_id, { type: 'projects.list' })
+                .then(function(data) {
+                    w.projects = data.projects || [];
+                    rebuildAgentLists();
+                    if (S.activeView === 'home') renderDashboard();
+                    if (S.activeView === 'wing-detail' && S.currentWingId === w.wing_id)
+                        renderWingDetailPage(w.wing_id);
+                })
+                .catch(function(e) {
+                    w.projects = [];
+                    if (e.message && e.message.indexOf('locked') !== -1) {
+                        w.tunnel_error = e.message;
+                    }
+                });
+        });
 
     var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && !w.pinned; });
     var sessionPromises = onlineWings.map(function(w) { return fetchWingSessions(w.wing_id); });

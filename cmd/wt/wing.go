@@ -2095,6 +2095,9 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		entries := getDirEntries(inner.Path, resolvedRoot)
 		tunnelRespond(gcm, req.RequestID, map[string]any{"entries": entries}, write)
 
+	case "projects.list":
+		tunnelRespond(gcm, req.RequestID, map[string]any{"projects": client.Projects}, write)
+
 	case "sessions.list":
 		sessions := listAliveEggSessions(cfg)
 		if isMemberFiltered(req) {

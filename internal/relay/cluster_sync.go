@@ -117,7 +117,7 @@ func connectedToSync(nodeID string, w *ConnectedWing) SyncWing {
 			Version:     w.Version,
 			Agents:      w.Agents,
 			Labels:      w.Labels,
-			Projects:    w.Projects,
+			Projects:    nil, // projects flow through E2E tunnel only
 			PublicKey:    w.PublicKey,
 			OrgID:       w.OrgID,
 			Pinned:      w.Pinned,
@@ -151,7 +151,6 @@ func (s *Server) notifyPeerDiff(added, removed []*PeerWing) {
 				Agents:      w.WingInfo.Agents,
 				Labels:      w.WingInfo.Labels,
 				PublicKey:    w.WingInfo.PublicKey,
-				Projects:    w.WingInfo.Projects,
 				Pinned:      w.WingInfo.Pinned,
 				PinnedCount: w.WingInfo.PinnedCount,
 			})

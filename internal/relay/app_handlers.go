@@ -119,10 +119,6 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	seenWings := make(map[string]bool) // dedup by wing_id
 	for _, wing := range wings {
 		seenWings[wing.WingID] = true
-		projects := wing.Projects
-		if projects == nil {
-			projects = []ws.WingProject{}
-		}
 		entry := map[string]any{
 			"id":             wing.ID,
 			"wing_id":        wing.WingID,
@@ -133,7 +129,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			"labels":         wing.Labels,
 			"public_key":     wing.PublicKey,
 			"last_seen":      wing.LastSeen,
-			"projects":       projects,
+			"projects":       []ws.WingProject{},
 			"latest_version": latestVer,
 			"egg_config":     wing.EggConfig,
 			"org_id":         wing.OrgID,
@@ -166,12 +162,6 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			seenWings[peerWingID] = true
-			var projects []ws.WingProject
-			if pw.WingInfo.Projects != nil {
-				projects = pw.WingInfo.Projects
-			} else {
-				projects = []ws.WingProject{}
-			}
 			out = append(out, map[string]any{
 				"id":             pw.WingID,
 				"wing_id":       peerWingID,
@@ -181,10 +171,12 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 				"agents":         pw.WingInfo.Agents,
 				"labels":         pw.WingInfo.Labels,
 				"public_key":     pw.WingInfo.PublicKey,
-				"projects":       projects,
+				"projects":       []ws.WingProject{},
 				"latest_version": latestVer,
 				"remote_node":    pw.MachineID,
 				"org_id":         pw.WingInfo.OrgID,
+				"pinned":         pw.WingInfo.Pinned,
+				"pinned_count":   pw.WingInfo.PinnedCount,
 			})
 		}
 	}

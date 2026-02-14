@@ -945,11 +945,15 @@ export function renderWingDetailPage(wingId) {
         activeHtml += '</div></div>';
     }
 
+    var isLocked = !!w.tunnel_error;
+    var userEmail = (S.currentUser && S.currentUser.email) || 'your@email.com';
+
     var html =
         '<div class="wd-page">' +
         '<div class="wd-header">' +
             '<a class="wd-back" id="wd-back">back</a>' +
         '</div>' +
+        (isLocked ? '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> This wing is locked.<br><code>wt wing pin --email ' + escapeHtml(userEmail) + '</code></div>' : '') +
         (updateAvailable ? '<div class="wd-update-banner" id="wd-update">' +
             escapeHtml(S.latestVersion) + ' available (you have ' + escapeHtml(ver) + ') <span class="wd-update-action">update now</span>' +
         '</div>' : '') +
@@ -962,20 +966,20 @@ export function renderWingDetailPage(wingId) {
                 (!isOnline ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
             '</div>' +
         '</div>' +
-        (isOnline ? '<div class="wd-palette">' +
+        (isOnline && !isLocked ? '<div class="wd-palette">' +
             '<input id="wd-search" type="text" class="wd-search" placeholder="' + (w.pinned && !S.tunnelAuthTokens[wingId] ? 'start a session (passkey auth on first browse)...' : 'start a session...') + '" autocomplete="off" spellcheck="false">' +
             '<div id="wd-search-results" class="wd-search-results"></div>' +
             '<div id="wd-search-status" class="wd-search-status"></div>' +
         '</div>' : '') +
-        activeHtml +
-        '<div class="wd-section"><h3 class="section-label">session history</h3><div id="wd-past-sessions"><span class="text-dim">' + (isOnline ? 'loading...' : 'wing offline') + '</span></div></div>' +
+        (isLocked ? '' : activeHtml) +
+        (isLocked ? '' : '<div class="wd-section"><h3 class="section-label">session history</h3><div id="wd-past-sessions"><span class="text-dim">' + (isOnline ? 'loading...' : 'wing offline') + '</span></div></div>') +
         '<div class="wd-info">' +
             '<div class="detail-row"><span class="detail-key">scope</span><span class="detail-val">' + scopeHtml + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(w.platform || 'unknown') + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">version</span><span class="detail-val">' + escapeHtml(ver || 'unknown') + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + escapeHtml((w.agents || []).join(', ') || 'none') + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">public key</span>' + pubKeyHtml + '</div>' +
-            '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>' +
+            (isLocked ? '' : '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>') +
         '</div>' +
         (isOnline ? '<div class="wd-section"><h3 class="section-label">access control</h3>' +
             '<div id="wd-pins"><span class="text-dim">loading...</span></div>' +
@@ -1052,7 +1056,7 @@ export function renderWingDetailPage(wingId) {
         dismissBtn.addEventListener('click', function() {
             S.wingsData = S.wingsData.filter(function(ww) { return ww.wing_id !== wingId; });
             setCachedWings(S.wingsData.map(function(ww) {
-                return { wing_id: ww.wing_id, hostname: ww.hostname, platform: ww.platform, version: ww.version, agents: ww.agents, labels: ww.labels, projects: ww.projects, online: ww.online, wing_label: ww.wing_label };
+                return { wing_id: ww.wing_id, hostname: ww.hostname, platform: ww.platform, version: ww.version, agents: ww.agents, labels: ww.labels, online: ww.online, wing_label: ww.wing_label };
             }));
             showHome();
         });
@@ -1061,15 +1065,17 @@ export function renderWingDetailPage(wingId) {
     wireActiveSessionRows();
 
     var pinnedLocked = w.pinned && !S.tunnelAuthTokens[wingId];
-    if (isOnline && !pinnedLocked) {
+    if (isOnline && !pinnedLocked && !isLocked) {
         loadWingPastSessions(wingId, 0);
-    } else if (pinnedLocked) {
+    } else if (pinnedLocked || isLocked) {
         var pastEl = document.getElementById('wd-past-sessions');
         if (pastEl) pastEl.innerHTML = '<span class="text-dim">authenticate to view session history</span>';
     }
 
-    if (isOnline) {
+    if (isOnline && !isLocked) {
         setupWingPalette(w);
+    }
+    if (isOnline) {
         loadWingPins(w);
     }
 }
@@ -1681,8 +1687,10 @@ export function renderDashboard() {
             var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
+            var isCardLocked = !!w.tunnel_error;
             var pinnedBadge = w.pinned ? '<span class="wing-pinned-badge">pinned</span>' : '';
-            var lockIcon = w.pinned ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
+            var lockedBadge = isCardLocked ? '<span class="wing-pinned-badge">locked</span>' : '';
+            var lockIcon = (w.pinned || isCardLocked) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
             return '<div class="wing-box" draggable="true" data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
@@ -1691,7 +1699,7 @@ export function renderDashboard() {
                 '<span class="wing-agents">' + (w.agents || []).map(function(a) { return agentIcon(a) || escapeHtml(a); }).join(' ') + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
-                    (w.pinned ? pinnedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>')) +
+                    (isCardLocked ? lockedBadge : (w.pinned ? pinnedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>'))) +
                 '</div>' +
             '</div>';
         }).join('');

@@ -68,7 +68,6 @@ function applyWingEvent(ev) {
                 w.platform = ev.platform || w.platform;
                 w.version = ev.version || w.version;
                 w.public_key = ev.public_key || w.public_key;
-                w.projects = ev.projects || w.projects;
                 if (ev.pinned !== undefined) w.pinned = ev.pinned;
                 if (ev.pinned_count !== undefined) w.pinned_count = ev.pinned_count;
                 found = true;
@@ -85,7 +84,7 @@ function applyWingEvent(ev) {
                 agents: ev.agents || [],
                 labels: ev.labels || [],
                 public_key: ev.public_key,
-                projects: ev.projects || [],
+                projects: [],
                 pinned: ev.pinned || false,
                 pinned_count: ev.pinned_count || 0,
             });
@@ -102,7 +101,7 @@ function applyWingEvent(ev) {
 
     rebuildAgentLists();
     setCachedWings(S.wingsData.map(function(w) {
-        return { wing_id: w.wing_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, projects: w.projects, wing_label: w.wing_label };
+        return { wing_id: w.wing_id, hostname: w.hostname, id: w.id, platform: w.platform, version: w.version, agents: w.agents, labels: w.labels, wing_label: w.wing_label };
     }));
     updateHeaderStatus();
     if (S.activeView === 'home') {
@@ -120,6 +119,24 @@ function applyWingEvent(ev) {
     }
 
     var evWing = S.wingsData.find(function(w) { return w.wing_id === ev.wing_id; });
+    // Tunnel-fetch projects on wing.online
+    if (ev.type === 'wing.online' && evWing && evWing.public_key) {
+        sendTunnelRequest(ev.wing_id, { type: 'projects.list' })
+            .then(function(data) {
+                evWing.projects = data.projects || [];
+                delete evWing.tunnel_error;
+                rebuildAgentLists();
+                if (S.activeView === 'home') renderDashboard();
+                if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
+                    renderWingDetailPage(ev.wing_id);
+            })
+            .catch(function(e) {
+                evWing.projects = [];
+                if (e.message && e.message.indexOf('locked') !== -1) {
+                    evWing.tunnel_error = e.message;
+                }
+            });
+    }
     if (ev.type === 'wing.online' && ev.wing_id && !(evWing && evWing.pinned)) {
         setTimeout(function() { fetchWingSessions(ev.wing_id).then(function(sessions) {
             if (sessions.length > 0) {

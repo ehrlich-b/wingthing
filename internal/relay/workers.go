@@ -150,7 +150,6 @@ func (r *WingRegistry) Add(w *ConnectedWing) {
 		Agents:      w.Agents,
 		Labels:      w.Labels,
 		PublicKey:    w.PublicKey,
-		Projects:    w.Projects,
 		Pinned:      w.Pinned,
 		PinnedCount: w.PinnedCount,
 	}
@@ -199,7 +198,6 @@ func (r *WingRegistry) UpdateConfig(id string, pinned bool, pinnedCount int) {
 			Agents:      w.Agents,
 			Labels:      w.Labels,
 			PublicKey:    w.PublicKey,
-			Projects:    w.Projects,
 			Pinned:      pinned,
 			PinnedCount: pinnedCount,
 		}
@@ -372,7 +370,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		Skills:      reg.Skills,
 		Labels:      reg.Labels,
 		Identities:  reg.Identities,
-		Projects:    reg.Projects,
+		Projects:    nil, // projects flow through E2E tunnel only
 		OrgID:       reg.OrgSlug,
 		RootDir:     reg.RootDir,
 		Pinned:      reg.Pinned,

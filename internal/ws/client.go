@@ -111,7 +111,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 	}
 	c.ptySessionsMu.Unlock()
 
-	// Send registration
+	// Send registration — projects flow through E2E tunnel only, never through relay
 	reg := WingRegister{
 		Type:        TypeWingRegister,
 		WingID:      c.WingID,
@@ -122,7 +122,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		Skills:      c.Skills,
 		Labels:      c.Labels,
 		Identities:  c.Identities,
-		Projects:    c.Projects,
+		Projects:    nil,
 		OrgSlug:     c.OrgSlug,
 		RootDir:     c.RootDir,
 		Pinned:      c.Pinned,
