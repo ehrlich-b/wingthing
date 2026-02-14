@@ -312,6 +312,9 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			var wing *ConnectedWing
 			if start.WingID != "" {
 				wing = s.Wings.FindByID(start.WingID)
+				if wing == nil {
+					wing = s.findAnyWingByWingID(start.WingID)
+				}
 				if wing != nil && !s.canAccessWing(userID, wing) {
 					wing = nil
 				}

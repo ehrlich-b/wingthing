@@ -54,6 +54,27 @@ Inner message types (inside encrypted payload): `dir.list`, `sessions.list`, `se
 
 Browser identity key is stored in sessionStorage (ephemeral per tab, provides PFS). Passkey auth tokens are shared between PTY and tunnel, with configurable TTL via `auth_ttl` in wing.yaml. Wing restart revokes all sessions (in-memory cache).
 
+### Wing ID Scheme (IMPORTANT — two different IDs)
+
+Wings have TWO identifiers. Confusing them breaks session routing.
+
+| ID | Field | Format | Lifecycle | Example |
+|----|-------|--------|-----------|---------|
+| **Machine ID** (`wing_id` / `WingID`) | `ConnectedWing.WingID`, API `wing_id` | 24-char hex (MongoDB-style) | Persistent, stored in `~/.wingthing/wing.yaml` | `1ae20a6b28854276b1514d14` |
+| **Connection ID** (`id` / `ID`) | `ConnectedWing.ID`, registry map key | UUID prefix or random | Ephemeral, assigned on WebSocket connect | `a1b2c3d4` |
+
+**The API (`/api/app/wings`) returns `wing_id` (machine ID).** The frontend uses `wing_id` everywhere. The `wings` map in `WingRegistry` is keyed by connection ID (`ConnectedWing.ID`).
+
+**Lookup patterns:**
+- `WingRegistry.FindByID(id)` — looks up by **connection ID** (map key)
+- `findAnyWingByWingID(wingID)` — linear scan of all wings matching **machine ID** (`ConnectedWing.WingID`)
+- `PeerDirectory.FindWing(id)` — looks up peer by **connection ID**
+- `PeerDirectory.FindByWingID(wingID)` — looks up peer by **machine ID**
+
+**Fly-replay routing:** The PTY WebSocket handler receives `?wing_id=<machine_id>` from the browser. Before upgrading the WebSocket, it checks local wings and peers, issuing `fly-replay` to route to the correct Fly machine. After upgrade, `pty.start` messages also contain `wing_id` (machine ID) — the handler must look up by machine ID (via `findAnyWingByWingID`), not just connection ID.
+
+**Rule: when the frontend sends a wing identifier, it's always the machine ID (`wing_id`). Always use `findAnyWingByWingID()` (or try both lookups) to resolve it to a `ConnectedWing`.**
+
 ## Provider System
 
 ### Agents (brains)
