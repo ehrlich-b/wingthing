@@ -107,14 +107,14 @@ async function init() {
     } catch (e) { loginRedirect(); return; }
 
     // Mark initial page load as home so back button works
-    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && location.hash !== '#account') {
+    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account')) {
         history.replaceState({ view: 'home' }, '', location.pathname);
     }
 
     // Event handlers
     homeBtn.addEventListener('click', showHome);
     newSessionBtn.addEventListener('click', showPalette);
-    userInfo.addEventListener('click', navigateToAccount);
+    userInfo.addEventListener('click', function() { navigateToAccount(); });
     userInfo.style.cursor = 'pointer';
     headerTitle.addEventListener('click', function() {
         if (ptySessionId) showSessionInfo();
@@ -244,9 +244,10 @@ async function init() {
     if (wingMatch) {
         navigateToWingDetail(wingMatch[1]);
     }
-    // Deep link: #account opens account page
-    if (location.hash === '#account') {
-        navigateToAccount();
+    // Deep link: #account or #account/slug opens account page
+    var accountMatch = location.hash.match(/^#account(?:\/(.+))?$/);
+    if (accountMatch) {
+        navigateToAccount(true, accountMatch[1] || null);
     }
 }
 
@@ -911,9 +912,12 @@ function saveEggOrder() {
     sessionsData = reordered;
 }
 
-function navigateToAccount(pushHistory) {
+var accountExpandSlug = null;
+
+function navigateToAccount(pushHistory, orgSlug) {
     if (!currentUser) return;
     activeView = 'account';
+    accountExpandSlug = orgSlug || null;
     homeSection.style.display = 'none';
     terminalSection.style.display = 'none';
     chatSection.style.display = 'none';
@@ -925,7 +929,8 @@ function navigateToAccount(pushHistory) {
     ptyStatus.textContent = '';
     renderAccountPage();
     if (pushHistory !== false) {
-        history.pushState({ view: 'account' }, '', '#account');
+        var hash = orgSlug ? '#account/' + orgSlug : '#account';
+        history.pushState({ view: 'account', orgSlug: orgSlug || null }, '', hash);
     }
 }
 
@@ -1080,6 +1085,11 @@ function loadAccountOrgs() {
             }
             listEl.innerHTML = html;
             wireOrgCards(orgs);
+            // Auto-expand org from deep link
+            if (accountExpandSlug) {
+                expandOrgCard(accountExpandSlug, orgs, false);
+                accountExpandSlug = null;
+            }
         })
         .catch(function() {
             listEl.innerHTML = '<span class="text-dim">failed to load orgs</span>';
@@ -1150,25 +1160,34 @@ function renderOrgDetail(org) {
     return html;
 }
 
+function expandOrgCard(slug, orgs, updateHash) {
+    var detail = document.getElementById('ac-org-detail-' + slug);
+    if (!detail) return;
+    var wasOpen = detail.classList.contains('open');
+    // Close all
+    document.querySelectorAll('.ac-org-detail').forEach(function(d) { d.classList.remove('open'); });
+    if (!wasOpen) {
+        detail.classList.add('open');
+        // Load members if org has subscription
+        var org = orgs.find(function(o) { return o.slug === slug; });
+        if (org && org.has_subscription && org.is_owner) {
+            loadOrgMembers(org, 'org-members-list-' + slug);
+        }
+        if (updateHash) {
+            history.replaceState({ view: 'account', orgSlug: slug }, '', '#account/' + slug);
+        }
+    } else if (updateHash) {
+        history.replaceState({ view: 'account', orgSlug: null }, '', '#account');
+    }
+}
+
 function wireOrgCards(orgs) {
     // Accordion toggle
     var headers = document.querySelectorAll('.ac-org-header');
     headers.forEach(function(header) {
         header.addEventListener('click', function() {
             var slug = this.getAttribute('data-slug');
-            var detail = document.getElementById('ac-org-detail-' + slug);
-            if (!detail) return;
-            var wasOpen = detail.classList.contains('open');
-            // Close all
-            document.querySelectorAll('.ac-org-detail').forEach(function(d) { d.classList.remove('open'); });
-            if (!wasOpen) {
-                detail.classList.add('open');
-                // Load members if org has subscription
-                var org = orgs.find(function(o) { return o.slug === slug; });
-                if (org && org.has_subscription && org.is_owner) {
-                    loadOrgMembers(org, 'org-members-list-' + slug);
-                }
-            }
+            expandOrgCard(slug, orgs, true);
         });
     });
 
@@ -3822,7 +3841,7 @@ window.addEventListener('popstate', function(e) {
     } else if (state.view === 'wing-detail' && state.wingId) {
         navigateToWingDetail(state.wingId, false);
     } else if (state.view === 'account') {
-        navigateToAccount(false);
+        navigateToAccount(false, state.orgSlug || null);
     }
 });
 
