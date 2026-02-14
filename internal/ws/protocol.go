@@ -103,6 +103,7 @@ type PTYStart struct {
 	WingID              string `json:"wing_id,omitempty"`               // target wing (picks first if empty)
 	PasskeyCredentialID string `json:"passkey_credential_id,omitempty"` // base64url credential ID
 	AuthToken           string `json:"auth_token,omitempty"`            // cached passkey auth token
+	UserID              string `json:"user_id,omitempty"`               // relay-injected creator user ID
 }
 
 // PTYStarted confirms the PTY session is running.
@@ -190,11 +191,14 @@ type PTYAttentionAck struct {
 
 // TunnelRequest is an encrypted request from browser to wing via relay.
 type TunnelRequest struct {
-	Type      string `json:"type"`
-	WingID    string `json:"wing_id"`
-	RequestID string `json:"request_id"`
-	SenderPub string `json:"sender_pub,omitempty"` // browser X25519 identity pubkey
-	Payload   string `json:"payload"`              // base64(AES-GCM encrypted)
+	Type          string `json:"type"`
+	WingID        string `json:"wing_id"`
+	RequestID     string `json:"request_id"`
+	SenderPub     string `json:"sender_pub,omitempty"`      // browser X25519 identity pubkey
+	Payload       string `json:"payload"`                   // base64(AES-GCM encrypted)
+	SenderUserID  string `json:"sender_user_id,omitempty"`  // relay-injected user ID
+	SenderOrgRole string `json:"sender_org_role,omitempty"` // relay-injected: "owner", "admin", "member", ""
+	SenderEmail   string `json:"sender_email,omitempty"`    // relay-injected user email
 }
 
 // TunnelResponse is an encrypted response from wing to browser via relay.
@@ -241,6 +245,7 @@ type SessionInfo struct {
 	EggConfig      string `json:"egg_config,omitempty"` // YAML config snapshot
 	NeedsAttention bool   `json:"needs_attention,omitempty"`
 	Audit          bool   `json:"audit,omitempty"` // true if session has audit recording
+	UserID         string `json:"user_id,omitempty"`
 }
 
 // DirEntry is a single entry in a directory listing.

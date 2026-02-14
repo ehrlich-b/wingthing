@@ -137,10 +137,14 @@ func (r *PTYRegistry) SyncFromWing(wingID, userID string, sessions []ws.SessionI
 		if existing, exists := r.sessions[s.SessionID]; exists {
 			existing.NeedsAttention = s.NeedsAttention
 		} else {
+			sessUserID := s.UserID
+			if sessUserID == "" {
+				sessUserID = userID // fallback: wing owner
+			}
 			r.sessions[s.SessionID] = &PTYSession{
 				ID:             s.SessionID,
 				WingID:         wingID,
-				UserID:         userID,
+				UserID:         sessUserID,
 				Agent:          s.Agent,
 				CWD:            s.CWD,
 				EggConfig:      s.EggConfig,
@@ -164,8 +168,12 @@ func (r *PTYRegistry) SyncFromWing(wingID, userID string, sessions []ws.SessionI
 func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 	// Auth
 	var userID string
+	var userEmail string
 	if u := s.sessionUser(r); u != nil {
 		userID = u.ID
+		if u.Email != nil {
+			userEmail = *u.Email
+		}
 	}
 	if userID == "" {
 		token := r.URL.Query().Get("token")
@@ -317,6 +325,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 
 			sessionID := uuid.New().String()[:8]
 			start.SessionID = sessionID
+			start.UserID = userID
 			session := &PTYSession{
 				ID:          sessionID,
 				WingID:      wing.ID,
@@ -465,10 +474,19 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
 			}
+			// Inject user identity into tunnel request envelope
+			req.SenderUserID = userID
+			req.SenderEmail = userEmail
+			if wing.UserID == userID {
+				req.SenderOrgRole = "owner"
+			} else if wing.OrgID != "" && s.Store != nil {
+				req.SenderOrgRole = s.Store.GetOrgMemberRole(wing.OrgID, userID)
+			}
 			s.tunnelMu.Lock()
 			s.tunnelRequests[req.RequestID] = conn
 			s.tunnelMu.Unlock()
-			wing.Conn.Write(ctx, websocket.MessageText, data)
+			fwdTunnel, _ := json.Marshal(req)
+			wing.Conn.Write(ctx, websocket.MessageText, fwdTunnel)
 		}
 	}
 }

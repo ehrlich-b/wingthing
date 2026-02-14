@@ -250,6 +250,7 @@ export function renderAccountPage() {
             (email ? '<div class="detail-row"><span class="detail-key">email</span><span class="detail-val">' + escapeHtml(email) + '</span></div>' : '') +
             '<div class="detail-row"><span class="detail-key">login</span><span class="detail-val">' + escapeHtml(provider) + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">tier</span><span class="detail-val">' + escapeHtml(tier) + '</span></div>' +
+            (S.currentUser.id ? '<div class="detail-row"><span class="detail-key">user id</span><span class="detail-val copyable" data-copy="' + escapeHtml(S.currentUser.id) + '">' + escapeHtml(S.currentUser.id) + '</span></div>' : '') +
             '<div class="detail-row"><span class="detail-key">browser key</span><span class="detail-val copyable" data-copy="' + escapeHtml(identityPubKey) + '">' + escapeHtml(pubKeyShort) + '</span></div>' +
         '</div>' +
         '<div class="ac-actions">';
@@ -837,6 +838,12 @@ export function renderWingDetailPage(wingId) {
             '<div class="detail-row"><span class="detail-key">public key</span>' + pubKeyHtml + '</div>' +
             '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>' +
         '</div>' +
+        (isOnline ? '<div class="wd-section"><h3 class="section-label">access control</h3>' +
+            '<div id="wd-pins"><span class="text-dim">loading...</span></div>' +
+            '<div class="wd-pin-actions">' +
+                '<button class="btn-sm btn-accent" id="wd-pin-me">pin me</button>' +
+            '</div>' +
+        '</div>' : '') +
         '</div>';
 
     DOM.wingDetailContent.innerHTML = html;
@@ -924,6 +931,7 @@ export function renderWingDetailPage(wingId) {
 
     if (isOnline) {
         setupWingPalette(w);
+        loadWingPins(w);
     }
 }
 
@@ -1227,6 +1235,113 @@ function setupWingPalette(wing) {
             }
         }
     });
+}
+
+function loadWingPins(wing) {
+    var container = document.getElementById('wd-pins');
+    var pinBtn = document.getElementById('wd-pin-me');
+    if (!container) return;
+
+    sendTunnelRequest(wing.wing_id, { type: 'pins.list' }).then(function(data) {
+        var pins = data.pins || [];
+        if (pins.length === 0) {
+            container.innerHTML = '<span class="text-dim">no pinned users — anyone with wing access can connect</span>';
+        } else {
+            var html = pins.map(function(p) {
+                var display = p.email || p.user_id || '(key-only)';
+                var keyShort = p.key ? p.key.substring(0, 12) + '...' : 'none';
+                return '<div class="wd-pin-row">' +
+                    '<span class="wd-pin-email">' + escapeHtml(display) + '</span>' +
+                    '<span class="wd-pin-key text-dim">pk: ' + escapeHtml(keyShort) + '</span>' +
+                    '<button class="btn-sm btn-danger wd-pin-remove" data-pin-uid="' + escapeHtml(p.user_id || '') + '" data-pin-key="' + escapeHtml(p.key || '') + '">remove</button>' +
+                '</div>';
+            }).join('');
+            container.innerHTML = html;
+
+            // Check if current user is already pinned
+            var myId = S.currentUser.id || '';
+            var alreadyPinned = pins.some(function(p) { return p.user_id === myId; });
+            if (pinBtn && alreadyPinned) {
+                pinBtn.textContent = 'pinned';
+                pinBtn.disabled = true;
+            }
+
+            // Wire remove buttons
+            container.querySelectorAll('.wd-pin-remove').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var uid = btn.getAttribute('data-pin-uid');
+                    var key = btn.getAttribute('data-pin-key');
+                    btn.textContent = '...';
+                    btn.disabled = true;
+                    sendTunnelRequest(wing.wing_id, { type: 'pins.remove', pin_user_id: uid, key: key })
+                        .then(function() { loadWingPins(wing); })
+                        .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+                });
+            });
+        }
+    }).catch(function() {
+        container.innerHTML = '<span class="text-dim">could not load pins</span>';
+    });
+
+    // Wire "Pin me" button
+    if (pinBtn) {
+        pinBtn.addEventListener('click', function() {
+            pinBtn.textContent = 'pinning...';
+            pinBtn.disabled = true;
+
+            // Try to create a passkey
+            var rpId = location.hostname;
+            var userId = S.currentUser.id || 'anonymous';
+            var userName = S.currentUser.email || S.currentUser.display_name || userId;
+
+            var challenge = new Uint8Array(32);
+            crypto.getRandomValues(challenge);
+
+            navigator.credentials.create({
+                publicKey: {
+                    challenge: challenge,
+                    rp: { name: 'wingthing', id: rpId },
+                    user: {
+                        id: new TextEncoder().encode(userId),
+                        name: userName,
+                        displayName: userName
+                    },
+                    pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
+                    authenticatorSelection: { userVerification: 'preferred' },
+                    timeout: 60000
+                }
+            }).then(function(cred) {
+                // Extract raw P-256 public key from COSE in attestation
+                var pubKeyBytes = new Uint8Array(cred.response.getPublicKey());
+                var keyB64 = btoa(String.fromCharCode.apply(null, pubKeyBytes));
+                return sendTunnelRequest(wing.wing_id, { type: 'pins.add', key: keyB64 });
+            }).then(function(resp) {
+                if (resp.error) {
+                    pinBtn.textContent = resp.error;
+                    pinBtn.disabled = false;
+                    return;
+                }
+                pinBtn.textContent = 'pinned';
+                loadWingPins(wing);
+            }).catch(function() {
+                // Passkey creation failed — pin by user ID only
+                sendTunnelRequest(wing.wing_id, { type: 'pins.add' })
+                    .then(function(resp) {
+                        if (resp.error) {
+                            pinBtn.textContent = resp.error;
+                            pinBtn.disabled = false;
+                            return;
+                        }
+                        pinBtn.textContent = 'pinned (no passkey)';
+                        loadWingPins(wing);
+                    })
+                    .catch(function() {
+                        pinBtn.textContent = 'failed';
+                        pinBtn.disabled = false;
+                    });
+            });
+        });
+    }
 }
 
 function loadWingPastSessions(wingId, offset) {

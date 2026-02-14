@@ -37,6 +37,15 @@ var wingAttention sync.Map // sessionID → bool
 // tunnelKeys caches derived AES-GCM keys per sender public key.
 var tunnelKeys sync.Map // senderPub string → cipher.AEAD
 
+// readEggOwner reads the creator user ID from an egg's owner file.
+func readEggOwner(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "egg.owner"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 // readEggMeta reads agent/cwd from an egg's meta file.
 func readEggMeta(dir string) (agent, cwd string) {
 	data, err := os.ReadFile(filepath.Join(dir, "egg.meta"))
@@ -618,7 +627,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
-		handleTunnelRequest(ctx, cfg, wingCfg, req, write, allowedKeys, passkeyCache, privKey, resolvedRoot, &wingEggMu, &wingEggCfg, audit, debug)
+		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, resolvedRoot, &wingEggMu, &wingEggCfg, audit, debug)
 	}
 
 	client.SessionLister = func(ctx context.Context) []ws.SessionInfo {
@@ -701,24 +710,30 @@ func wingStatusCmd() *cobra.Command {
 }
 
 func wingPinCmd() *cobra.Command {
-	var labelFlag string
+	var userIDFlag string
 	cmd := &cobra.Command{
-		Use:   "pin <base64-public-key>",
-		Short: "Pin a passkey public key for wing access",
-		Args:  cobra.ExactArgs(1),
+		Use:   "pin [base64-public-key]",
+		Short: "Pin a user for wing access (by user_id, optionally with passkey)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			keyB64 := args[0]
+			var keyB64 string
+			if len(args) > 0 {
+				keyB64 = args[0]
+				// Validate: decode and check length + curve point
+				raw, err := base64.StdEncoding.DecodeString(keyB64)
+				if err != nil {
+					return fmt.Errorf("invalid base64: %w", err)
+				}
+				if len(raw) != 64 {
+					return fmt.Errorf("invalid key: expected 64 bytes (P-256 X||Y), got %d", len(raw))
+				}
+				if !auth.IsValidP256Point(raw) {
+					return fmt.Errorf("invalid key: not a valid P-256 curve point")
+				}
+			}
 
-			// Validate: decode and check length + curve point
-			raw, err := base64.StdEncoding.DecodeString(keyB64)
-			if err != nil {
-				return fmt.Errorf("invalid base64: %w", err)
-			}
-			if len(raw) != 64 {
-				return fmt.Errorf("invalid key: expected 64 bytes (P-256 X||Y), got %d", len(raw))
-			}
-			if !auth.IsValidP256Point(raw) {
-				return fmt.Errorf("invalid key: not a valid P-256 curve point")
+			if keyB64 == "" && userIDFlag == "" {
+				return fmt.Errorf("must provide a public key or --user-id")
 			}
 
 			cfg, err := config.Load()
@@ -730,38 +745,39 @@ func wingPinCmd() *cobra.Command {
 				return err
 			}
 
-			// Deduplicate
+			// Deduplicate by key or user_id
 			for _, ak := range wingCfg.AllowKeys {
-				if ak.Key == keyB64 {
-					fmt.Printf("key already pinned (label: %s)\n", ak.Label)
+				if keyB64 != "" && ak.Key == keyB64 {
+					fmt.Printf("key already pinned (user_id: %s)\n", ak.UserID)
+					return nil
+				}
+				if userIDFlag != "" && ak.UserID == userIDFlag {
+					fmt.Printf("user already pinned (user_id: %s)\n", ak.UserID)
 					return nil
 				}
 			}
 
-			// Auto-label if not provided
-			label := labelFlag
-			if label == "" {
-				h := fmt.Sprintf("%x", auth.SHA256Sum(raw))
-				label = "key:" + h[:8]
-			}
-
-			wingCfg.AllowKeys = append(wingCfg.AllowKeys, config.AllowKey{Key: keyB64, Label: label})
+			wingCfg.AllowKeys = append(wingCfg.AllowKeys, config.AllowKey{Key: keyB64, UserID: userIDFlag})
 			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 				return err
 			}
-			fmt.Printf("pinned key %s... (label: %s)\n", keyB64[:12], label)
+			if userIDFlag != "" {
+				fmt.Printf("pinned user %s\n", userIDFlag)
+			} else {
+				fmt.Printf("pinned key %s...\n", keyB64[:12])
+			}
 			fmt.Println("restart wing for changes to take effect")
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&labelFlag, "label", "", "human-readable label for this key")
+	cmd.Flags().StringVar(&userIDFlag, "user-id", "", "relay user ID to pin")
 	return cmd
 }
 
 func wingPinsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "pins",
-		Short: "List pinned passkey public keys",
+		Short: "List pinned users",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -772,15 +788,26 @@ func wingPinsCmd() *cobra.Command {
 				return err
 			}
 			if len(wingCfg.AllowKeys) == 0 {
-				fmt.Println("no pinned keys")
+				fmt.Println("no pinned users")
 				return nil
 			}
 			for _, ak := range wingCfg.AllowKeys {
-				prefix := ak.Key
-				if len(prefix) > 16 {
-					prefix = prefix[:16] + "..."
+				display := ak.Email
+				if display == "" {
+					display = ak.UserID
 				}
-				fmt.Printf("  %s  %s\n", ak.Label, prefix)
+				if display == "" {
+					display = "(key-only)"
+				}
+				keyInfo := ""
+				if ak.Key != "" {
+					prefix := ak.Key
+					if len(prefix) > 16 {
+						prefix = prefix[:16] + "..."
+					}
+					keyInfo = "  key:" + prefix
+				}
+				fmt.Printf("  %s%s\n", display, keyInfo)
 			}
 			return nil
 		},
@@ -789,8 +816,8 @@ func wingPinsCmd() *cobra.Command {
 
 func wingUnpinCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "unpin <key-prefix-or-label>",
-		Short: "Remove a pinned passkey public key",
+		Use:   "unpin <user-id-or-key-prefix>",
+		Short: "Remove a pinned user",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
@@ -804,28 +831,31 @@ func wingUnpinCmd() *cobra.Command {
 				return err
 			}
 
-			// Find matches by label or key prefix
+			// Find matches by user_id, email, or key prefix
 			var matches []int
 			for i, ak := range wingCfg.AllowKeys {
-				if ak.Label == query || strings.HasPrefix(ak.Key, query) {
+				if ak.UserID == query || ak.Email == query || strings.HasPrefix(ak.Key, query) {
 					matches = append(matches, i)
 				}
 			}
 
 			if len(matches) == 0 {
-				return fmt.Errorf("no matching key found for %q", query)
+				return fmt.Errorf("no matching pin found for %q", query)
 			}
 			if len(matches) > 1 {
 				fmt.Println("ambiguous match:")
 				for _, i := range matches {
 					ak := wingCfg.AllowKeys[i]
-					prefix := ak.Key
-					if len(prefix) > 16 {
-						prefix = prefix[:16] + "..."
+					display := ak.Email
+					if display == "" {
+						display = ak.UserID
 					}
-					fmt.Printf("  %s  %s\n", ak.Label, prefix)
+					if display == "" {
+						display = "(key-only)"
+					}
+					fmt.Printf("  %s\n", display)
 				}
-				return fmt.Errorf("specify a more precise key prefix or label")
+				return fmt.Errorf("specify a more precise user_id or key prefix")
 			}
 
 			removed := wingCfg.AllowKeys[matches[0]]
@@ -833,7 +863,14 @@ func wingUnpinCmd() *cobra.Command {
 			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 				return err
 			}
-			fmt.Printf("unpinned key (label: %s)\n", removed.Label)
+			display := removed.Email
+			if display == "" {
+				display = removed.UserID
+			}
+			if display == "" {
+				display = removed.Key[:12] + "..."
+			}
+			fmt.Printf("unpinned: %s\n", display)
 			fmt.Println("restart wing for changes to take effect")
 			return nil
 		},
@@ -937,19 +974,20 @@ func reapDeadEggs(cfg *config.Config) {
 }
 
 // cleanEggDir removes the files in an egg session directory, then the directory itself.
-// If audit files exist, preserves egg.meta and audit data (only removes runtime files).
+// If audit files exist, preserves egg.meta, egg.owner, and audit data (only removes runtime files).
 func cleanEggDir(dir string) {
 	os.Remove(filepath.Join(dir, "egg.sock"))
 	os.Remove(filepath.Join(dir, "egg.token"))
 	os.Remove(filepath.Join(dir, "egg.pid"))
 	os.Remove(filepath.Join(dir, "egg.log"))
-	// Keep egg.meta and dir if audit recordings exist
+	// Keep egg.meta, egg.owner, and dir if audit recordings exist
 	_, hasPty := os.Stat(filepath.Join(dir, "audit.pty.gz"))
 	_, hasLog := os.Stat(filepath.Join(dir, "audit.log"))
 	if hasPty == nil || hasLog == nil {
 		return
 	}
 	os.Remove(filepath.Join(dir, "egg.meta"))
+	os.Remove(filepath.Join(dir, "egg.owner"))
 	os.Remove(dir)
 }
 
@@ -1000,6 +1038,7 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 			SessionID: sessionID,
 			Agent:     agent,
 			CWD:       sessionCWD,
+			UserID:    readEggOwner(dir),
 		}
 		if _, ok := wingAttention.Load(sessionID); ok {
 			info.NeedsAttention = true
@@ -1446,11 +1485,14 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					}
 					if err := auth.VerifyPasskeyAssertion(rawKey, challenge, authData, clientJSON, sig); err == nil {
 						matched = true
-						label := ak.Label
-						if label == "" {
-							label = ak.Key[:8] + "..."
+						display := ak.Email
+						if display == "" {
+							display = ak.UserID
 						}
-						log.Printf("pty session %s: passkey verified (key: %s)", start.SessionID, label)
+						if display == "" {
+							display = ak.Key[:8] + "..."
+						}
+						log.Printf("pty session %s: passkey verified (%s)", start.SessionID, display)
 
 						// Issue auth token for subsequent sessions
 						token, tokErr := auth.GenerateAuthToken()
@@ -1513,7 +1555,13 @@ authDone:
 	}
 	defer ec.Close()
 
-	log.Printf("pty session %s: egg spawned", start.SessionID)
+	log.Printf("pty session %s: spawned (user=%s agent=%s)", start.SessionID, start.UserID, start.Agent)
+
+	// Persist session creator
+	if start.UserID != "" {
+		ownerPath := filepath.Join(cfg.Dir, "eggs", start.SessionID, "egg.owner")
+		os.WriteFile(ownerPath, []byte(start.UserID), 0644)
+	}
 
 	// Notify browser
 	write(ws.PTYStarted{
@@ -1770,6 +1818,8 @@ type tunnelInner struct {
 	Offset    int    `json:"offset,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	AuthToken string `json:"auth_token,omitempty"`
+	Key       string `json:"key,omitempty"` // passkey public key for pins.add
+	PinUserID string `json:"pin_user_id,omitempty"` // target user_id for pins.remove
 
 	// Passkey assertion fields (for type "passkey.auth")
 	CredentialID      string `json:"credential_id,omitempty"`
@@ -1785,6 +1835,7 @@ type pastSessionInfo struct {
 	CWD       string `json:"cwd,omitempty"`
 	StartedAt int64  `json:"started_at,omitempty"`
 	Audit     bool   `json:"audit,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
 }
 
 // tunnelRespond encrypts a JSON response and sends it as a tunnel.res message.
@@ -1806,10 +1857,25 @@ func tunnelStreamChunk(gcm cipher.AEAD, requestID string, chunk []byte, done boo
 	write(ws.TunnelStream{Type: ws.TypeTunnelStream, RequestID: requestID, Payload: encrypted, Done: done})
 }
 
+// isMemberFiltered returns true if the tunnel request is from an org member (not owner/admin).
+func isMemberFiltered(req ws.TunnelRequest) bool {
+	return req.SenderOrgRole == "member" && req.SenderUserID != ""
+}
+
+// canSeeSession returns true if the request sender can view a session with the given owner.
+func canSeeSession(req ws.TunnelRequest, sessionUserID string) bool {
+	if !isMemberFiltered(req) {
+		return true
+	}
+	return sessionUserID == "" || sessionUserID == req.SenderUserID
+}
+
 // handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
 func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, req ws.TunnelRequest, write ws.PTYWriteFunc,
-	allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, privKey *ecdh.PrivateKey, resolvedRoot string,
+	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, privKey *ecdh.PrivateKey, resolvedRoot string,
 	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool) {
+
+	allowedKeys := *allowedKeysPtr
 
 	// Derive or retrieve cached AES-GCM key for this sender
 	var gcm cipher.AEAD
@@ -1840,24 +1906,39 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	}
 
 	// Passkey auth check for pinned wings
-	if len(allowedKeys) > 0 && wingCfg.Pinned && inner.Type != "passkey.auth" {
-		if inner.AuthToken == "" {
-			challenge, _ := auth.GenerateChallenge()
-			tunnelRespond(gcm, req.RequestID, map[string]any{
-				"error":     "passkey_required",
-				"challenge": base64.RawURLEncoding.EncodeToString(challenge),
-			}, write)
-			return
+	if len(allowedKeys) > 0 && wingCfg.Pinned && inner.Type != "passkey.auth" && inner.Type != "pins.add" {
+		// Fast path: relay-provided user_id matches a pin → authorized
+		authorized := false
+		if req.SenderUserID != "" {
+			for _, ak := range allowedKeys {
+				if ak.UserID != "" && ak.UserID == req.SenderUserID {
+					authorized = true
+					break
+				}
+			}
 		}
-		if _, ok := passkeyCache.Check(inner.AuthToken); !ok {
-			challenge, _ := auth.GenerateChallenge()
-			tunnelRespond(gcm, req.RequestID, map[string]any{
-				"error":     "passkey_required",
-				"challenge": base64.RawURLEncoding.EncodeToString(challenge),
-			}, write)
-			return
+		if !authorized {
+			// Slow path: require passkey auth token
+			if inner.AuthToken == "" {
+				challenge, _ := auth.GenerateChallenge()
+				tunnelRespond(gcm, req.RequestID, map[string]any{
+					"error":     "passkey_required",
+					"challenge": base64.RawURLEncoding.EncodeToString(challenge),
+				}, write)
+				return
+			}
+			if _, ok := passkeyCache.Check(inner.AuthToken); !ok {
+				challenge, _ := auth.GenerateChallenge()
+				tunnelRespond(gcm, req.RequestID, map[string]any{
+					"error":     "passkey_required",
+					"challenge": base64.RawURLEncoding.EncodeToString(challenge),
+				}, write)
+				return
+			}
 		}
 	}
+
+	log.Printf("tunnel %s: %s (user=%s role=%s)", req.RequestID, inner.Type, req.SenderUserID, req.SenderOrgRole)
 
 	switch inner.Type {
 	case "dir.list":
@@ -1866,13 +1947,40 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	case "sessions.list":
 		sessions := listAliveEggSessions(cfg)
+		if isMemberFiltered(req) {
+			var filtered []ws.SessionInfo
+			for _, s := range sessions {
+				if canSeeSession(req, s.UserID) {
+					filtered = append(filtered, s)
+				}
+			}
+			sessions = filtered
+		}
 		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
 
 	case "sessions.history":
 		sessions, total := getSessionsHistory(cfg, inner.Offset, inner.Limit)
+		if isMemberFiltered(req) {
+			var filtered []pastSessionInfo
+			for _, s := range sessions {
+				if canSeeSession(req, s.UserID) {
+					filtered = append(filtered, s)
+				}
+			}
+			sessions = filtered
+			total = len(filtered)
+		}
 		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions, "total": total}, write)
 
 	case "audit.request":
+		if inner.SessionID != "" && isMemberFiltered(req) {
+			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", inner.SessionID))
+			if !canSeeSession(req, owner) {
+				log.Printf("tunnel %s: denied audit (user=%s session_owner=%s)", req.RequestID, req.SenderUserID, owner)
+				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
+				return
+			}
+		}
 		streamAuditData(cfg, inner.SessionID, inner.Kind, gcm, req.RequestID, write)
 
 	case "egg.config_update":
@@ -1895,6 +2003,14 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		if inner.SessionID == "" {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing session_id"}, write)
 			return
+		}
+		if isMemberFiltered(req) {
+			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", inner.SessionID))
+			if !canSeeSession(req, owner) {
+				log.Printf("tunnel %s: denied kill (user=%s session_owner=%s)", req.RequestID, req.SenderUserID, owner)
+				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
+				return
+			}
 		}
 		killOrphanEgg(cfg, inner.SessionID)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
@@ -1955,14 +2071,97 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	case "pins.list":
 		type pinInfo struct {
-			Key   string `json:"key"`
-			Label string `json:"label"`
+			Key    string `json:"key"`
+			UserID string `json:"user_id,omitempty"`
+			Email  string `json:"email,omitempty"`
 		}
 		var pins []pinInfo
 		for _, ak := range allowedKeys {
-			pins = append(pins, pinInfo{Key: ak.Key, Label: ak.Label})
+			pins = append(pins, pinInfo{Key: ak.Key, UserID: ak.UserID, Email: ak.Email})
 		}
 		tunnelRespond(gcm, req.RequestID, map[string]any{"pins": pins}, write)
+
+	case "pins.add":
+		if req.SenderUserID == "" {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "no user identity"}, write)
+			return
+		}
+		// Check duplicate by user_id
+		for _, ak := range allowedKeys {
+			if ak.UserID == req.SenderUserID {
+				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "already pinned"}, write)
+				return
+			}
+		}
+		// Validate key if provided
+		if inner.Key != "" {
+			keyBytes, decErr := base64.StdEncoding.DecodeString(inner.Key)
+			if decErr != nil || len(keyBytes) != 65 {
+				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid key"}, write)
+				return
+			}
+		}
+		newPin := config.AllowKey{
+			Key:    inner.Key,
+			UserID: req.SenderUserID,
+			Email:  req.SenderEmail,
+		}
+		wingCfg.AllowKeys = append(wingCfg.AllowKeys, newPin)
+		if !wingCfg.Pinned {
+			wingCfg.Pinned = true
+		}
+		config.SaveWingConfig(cfg.Dir, wingCfg)
+		allowedKeys = append(allowedKeys, newPin)
+		*allowedKeysPtr = allowedKeys
+		log.Printf("pin added: user=%s email=%s has_passkey=%v", req.SenderUserID, req.SenderEmail, inner.Key != "")
+		tunnelRespond(gcm, req.RequestID, map[string]any{
+			"ok": "true", "email": req.SenderEmail, "user_id": req.SenderUserID,
+			"has_passkey": inner.Key != "",
+		}, write)
+
+	case "pins.remove":
+		if req.SenderUserID == "" {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "no user identity"}, write)
+			return
+		}
+		// Find pin to remove: by key or user_id
+		target := inner.PinUserID
+		if target == "" && inner.Key != "" {
+			for _, ak := range allowedKeys {
+				if ak.Key == inner.Key {
+					target = ak.UserID
+					break
+				}
+			}
+		}
+		if target == "" {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing pin_user_id or key"}, write)
+			return
+		}
+		// Only wing owner or the pin's own user can remove
+		isOwner := req.SenderOrgRole == "owner" || req.SenderOrgRole == "admin"
+		if !isOwner && req.SenderUserID != target {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
+			return
+		}
+		found := false
+		for i, ak := range wingCfg.AllowKeys {
+			if ak.UserID == target || (inner.Key != "" && ak.Key == inner.Key) {
+				wingCfg.AllowKeys = append(wingCfg.AllowKeys[:i], wingCfg.AllowKeys[i+1:]...)
+				found = true
+				break
+			}
+		}
+		if !found {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "pin not found"}, write)
+			return
+		}
+		config.SaveWingConfig(cfg.Dir, wingCfg)
+		// Rebuild allowedKeys from config
+		allowedKeys = append([]config.AllowKey{}, wingCfg.AllowKeys...)
+		*allowedKeysPtr = allowedKeys
+		log.Printf("pin removed: target=%s by=%s", target, req.SenderUserID)
+		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	default:
 		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "unknown type: " + inner.Type}, write)
@@ -2014,6 +2213,7 @@ func getSessionsHistory(cfg *config.Config, offset, limit int) ([]pastSessionInf
 			Agent:     agentName,
 			CWD:       cwd,
 			Audit:     hasAudit,
+			UserID:    readEggOwner(dir),
 		}
 		if stat, err := os.Stat(dir); err == nil {
 			info.StartedAt = stat.ModTime().Unix()

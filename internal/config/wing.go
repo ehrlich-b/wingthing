@@ -24,10 +24,11 @@ type WingConfig struct {
 	AllowKeys []AllowKey `yaml:"allow_keys,omitempty"`
 }
 
-// AllowKey is a pinned passkey public key for wing access control.
+// AllowKey is a pinned user for wing access control.
 type AllowKey struct {
-	Key   string `yaml:"key"`   // base64 raw P-256 public key (64 bytes: X||Y)
-	Label string `yaml:"label"` // human-readable label, e.g. "bryan@slide.tech"
+	Key    string `yaml:"key,omitempty"`     // base64 raw P-256 public key (optional)
+	UserID string `yaml:"user_id,omitempty"` // relay user ID
+	Email  string `yaml:"email,omitempty"`   // auto-set from relay, for display
 }
 
 // LoadWingConfig reads wing.yaml from dir. If the file doesn't exist,
