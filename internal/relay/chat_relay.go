@@ -104,10 +104,29 @@ func (s *Server) forwardChatToBrowser(sessionID string, data []byte) {
 
 	session.mu.Lock()
 	bc := session.BrowserConn
+	userID := session.UserID
 	session.mu.Unlock()
 
 	if bc == nil {
 		return
+	}
+
+	// Meter outbound bandwidth (relay → browser is what costs on Fly)
+	if s.Bandwidth != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
+			msg, _ := json.Marshal(ws.BandwidthExceeded{
+				Type:    ws.TypeBandwidthExceeded,
+				Message: "Monthly bandwidth limit exceeded. Upgrade to pro for higher limits.",
+			})
+			bc.Write(ctx, websocket.MessageText, msg)
+			session.mu.Lock()
+			session.BrowserConn = nil
+			session.mu.Unlock()
+			bc.Close(websocket.StatusNormalClosure, "bandwidth exceeded")
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

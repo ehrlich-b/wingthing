@@ -26,15 +26,16 @@ wt egg stop <id>           # kill one
 
 ### Sandbox
 
-Out of the box, the sandbox is opinionated: CWD is writable, home is read-only, sensitive directories (`~/.ssh`, `~/.gnupg`, `~/.aws`, etc.) are denied, network is off, and only essential env vars are passed through. The agent's binary and config directory are auto-mounted - you don't declare those.
+Out of the box, the sandbox is opinionated: CWD is writable, home is read-only, sensitive directories (`~/.ssh`, `~/.gnupg`, `~/.aws`, etc.) are denied, and only essential env vars are passed through. Network is blocked except for exactly what your agent needs - Claude gets `api.anthropic.com`, Ollama gets `localhost`, Gemini gets `*.googleapis.com`, etc. A local [CONNECT proxy](https://en.wikipedia.org/wiki/HTTP_tunnel) enforces domain-level filtering so agents can only reach their own API, not the entire internet. You don't configure any of this - agent binaries, config directories, network rules, and env vars are all auto-detected.
 
 Drop an `egg.yaml` in your project to customize. Configs are additive - you only declare what you're changing from the defaults.
 
 ```yaml
-# egg.yaml - add SSH access and network on top of defaults
+# egg.yaml - add SSH access and extra network on top of defaults
 fs:
   - "ro:~/.ssh"       # overrides the default deny for ~/.ssh
-network: "*"           # open network
+network:
+  - "github.com"      # add a domain on top of agent defaults
 env:
   - SSH_AUTH_SOCK      # pass SSH agent socket
 ```

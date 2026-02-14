@@ -279,13 +279,6 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Meter bandwidth (applies backpressure via rate limiter)
-		if s.Bandwidth != nil {
-			if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
-				return
-			}
-		}
-
 		var env ws.Envelope
 		if err := json.Unmarshal(data, &env); err != nil {
 			continue
@@ -556,11 +549,32 @@ func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
 
 	session.mu.Lock()
 	bc := session.BrowserConn
+	userID := session.UserID
 	session.mu.Unlock()
 
 	if bc == nil {
 		// Session detached — drop the data (wing has ring buffer for replay)
 		return
+	}
+
+	// Meter outbound bandwidth (relay → browser is what costs on Fly)
+	if s.Bandwidth != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.Bandwidth.Wait(ctx, userID, len(data)); err != nil {
+			msg, _ := json.Marshal(ws.BandwidthExceeded{
+				Type:    ws.TypeBandwidthExceeded,
+				Message: "Monthly bandwidth limit exceeded. Upgrade to pro for higher limits.",
+			})
+			bc.Write(ctx, websocket.MessageText, msg)
+			// Detach browser so subsequent forwards are dropped (send once)
+			session.mu.Lock()
+			session.BrowserConn = nil
+			session.Status = "detached"
+			session.mu.Unlock()
+			bc.Close(websocket.StatusNormalClosure, "bandwidth exceeded")
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

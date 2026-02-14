@@ -4,7 +4,7 @@ primary_region = "ewr"
 [build]
 
 [deploy]
-  strategy = "bluegreen"
+  strategy = "rolling"
 
 [processes]
   login = "sh -c 'mkdir -p /data/.wingthing && HOME=/data exec ./wt serve --addr :8080'"
@@ -21,6 +21,13 @@ primary_region = "ewr"
   auto_start_machines = true
   min_machines_running = 1
   processes = ["login", "edge"]
+
+  [[http_service.checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "5s"
+    method = "GET"
+    path = "/health"
 
 # Volume only on login node (SQLite lives here).
 # Node role auto-detected: /data mounted = login, otherwise = edge.
