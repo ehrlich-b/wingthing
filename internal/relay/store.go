@@ -532,6 +532,22 @@ func (s *RelayStore) CreateOrg(id, name, slug, ownerUserID string) error {
 	return tx.Commit()
 }
 
+// DeleteOrg removes an org and all its members and invites.
+func (s *RelayStore) DeleteOrg(orgID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	tx.Exec("DELETE FROM org_invites WHERE org_id = ?", orgID)
+	tx.Exec("DELETE FROM org_members WHERE org_id = ?", orgID)
+	_, err = tx.Exec("DELETE FROM orgs WHERE id = ?", orgID)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("delete org: %w", err)
+	}
+	return tx.Commit()
+}
+
 // GetOrgBySlug returns an org by slug.
 func (s *RelayStore) GetOrgBySlug(slug string) (*Org, error) {
 	row := s.db.QueryRow(

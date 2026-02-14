@@ -1126,7 +1126,8 @@ function renderOrgDetail(org) {
                 '<span class="ac-hint">seats</span>' +
                 '<button class="btn-sm btn-accent org-give-seats-btn" data-slug="' + escapeHtml(org.slug) + '">give me seats</button>' +
             '</div>' +
-            '<div class="ac-hint" style="margin-top:4px">1 seat includes you. each additional seat adds one team member.</div>';
+            '<div class="ac-hint" style="margin-top:4px">1 seat includes you. each additional seat adds one team member.</div>' +
+            '<div class="ac-cancel-row"><button class="btn-sm org-delete-btn" data-slug="' + escapeHtml(org.slug) + '">delete org</button></div>';
         return html;
     }
 
@@ -1290,11 +1291,12 @@ function wireOrgCards(orgs) {
                 cancelClicks++;
                 if (cancelClicks === 1) {
                     btn.textContent = 'are you sure?';
-                    btn.style.color = 'var(--red)';
+                    btn.classList.add('btn-warn');
                     return;
                 }
                 if (cancelClicks === 2) {
                     btn.textContent = 'click again to confirm';
+                    btn.classList.remove('btn-warn');
                     btn.classList.add('btn-armed');
                     return;
                 }
@@ -1308,6 +1310,32 @@ function wireOrgCards(orgs) {
                     loadAccountOrgs();
                 })
                 .catch(function() { btn.textContent = 'failed'; btn.disabled = false; cancelClicks = 0; });
+            });
+        }
+
+        // Delete org — 2-click confirmation
+        var deleteBtn = document.querySelector('.org-delete-btn[data-slug="' + org.slug + '"]');
+        if (deleteBtn) {
+            var deleteConfirmed = false;
+            deleteBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var btn = this;
+                if (!deleteConfirmed) {
+                    btn.textContent = 'click again to delete';
+                    btn.classList.add('btn-armed');
+                    deleteConfirmed = true;
+                    setTimeout(function() { btn.textContent = 'delete org'; btn.classList.remove('btn-armed'); deleteConfirmed = false; }, 4000);
+                    return;
+                }
+                btn.textContent = 'deleting...';
+                btn.disabled = true;
+                fetch('/api/orgs/' + org.slug, { method: 'DELETE' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.error) { btn.textContent = 'failed'; btn.disabled = false; deleteConfirmed = false; return; }
+                    loadAccountOrgs();
+                })
+                .catch(function() { btn.textContent = 'failed'; btn.disabled = false; deleteConfirmed = false; });
             });
         }
     });

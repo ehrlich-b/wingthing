@@ -510,6 +510,35 @@ func (s *Server) handleRemoveOrgMember(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleDeleteOrg deletes an org. Only the owner can delete, and only if no active subscription.
+func (s *Server) handleDeleteOrg(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	slug := r.PathValue("slug")
+	org, err := s.Store.GetOrgBySlug(slug)
+	if err != nil || org == nil {
+		writeError(w, http.StatusNotFound, "org not found")
+		return
+	}
+	if org.OwnerUserID != user.ID {
+		writeError(w, http.StatusForbidden, "only the org owner can delete")
+		return
+	}
+	sub, _ := s.Store.GetActiveOrgSubscription(org.ID)
+	if sub != nil {
+		writeError(w, http.StatusBadRequest, "cancel the subscription first")
+		return
+	}
+	if err := s.Store.DeleteOrg(org.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // handleAcceptInvite shows invite info and accept button. GET /invite/{token}
 func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")

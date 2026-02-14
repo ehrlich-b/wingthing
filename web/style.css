@@ -1427,8 +1427,35 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     border-top: 1px solid var(--border);
 }
 
+.ac-cancel-row {
+    display: flex;
+    gap: 8px;
+}
+
 .ac-cancel-row .btn-sm {
     color: var(--text-dim);
+}
+
+.ac-cancel-row .btn-sm.btn-warn {
+    color: var(--red);
+    background: transparent;
+    border: 1px solid var(--red);
+}
+
+.ac-cancel-row .btn-sm.btn-warn:hover {
+    background: var(--red);
+    color: #fff;
+}
+
+.ac-cancel-row .btn-sm.btn-armed {
+    background: #8b0000;
+    color: #fff;
+    border: 1px solid #8b0000;
+}
+
+.ac-cancel-row .btn-sm.btn-armed:hover {
+    background: #a00;
+    border-color: #a00;
 }
 
 /* === Audit Overlay === */
