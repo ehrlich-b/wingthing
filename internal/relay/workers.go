@@ -179,6 +179,37 @@ func (r *WingRegistry) Remove(id string) {
 }
 
 
+// UpdateConfig updates a wing's pinned state and notifies subscribers.
+func (r *WingRegistry) UpdateConfig(id string, pinned bool, pinnedCount int) {
+	r.mu.Lock()
+	w := r.wings[id]
+	if w != nil {
+		w.Pinned = pinned
+		w.PinnedCount = pinnedCount
+	}
+	r.mu.Unlock()
+	if w != nil {
+		ev := WingEvent{
+			Type:        "wing.online",
+			ConnID:      w.ID,
+			WingID:      w.WingID,
+			Hostname:    w.Hostname,
+			Platform:    w.Platform,
+			Version:     w.Version,
+			Agents:      w.Agents,
+			Labels:      w.Labels,
+			PublicKey:    w.PublicKey,
+			Projects:    w.Projects,
+			Pinned:      pinned,
+			PinnedCount: pinnedCount,
+		}
+		r.notify(w.UserID, ev)
+		if r.OnWingEvent != nil {
+			r.OnWingEvent(w, ev)
+		}
+	}
+}
+
 func (r *WingRegistry) FindByID(wingID string) *ConnectedWing {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -418,6 +449,11 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		switch msg.Type {
 		case ws.TypeWingHeartbeat:
 			s.Wings.Touch(wing.ID)
+
+		case ws.TypeWingConfig:
+			var cfg ws.WingConfig
+			json.Unmarshal(data, &cfg)
+			s.Wings.UpdateConfig(wing.ID, cfg.Pinned, cfg.PinnedCount)
 
 		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge:
 			// Extract session_id and forward to browser

@@ -37,11 +37,22 @@ const (
 	TypePasskeyChallenge = "passkey.challenge"
 	TypePasskeyResponse  = "passkey.response"
 
+	// Wing → Relay (config change)
+	TypeWingConfig = "wing.config"
+
 	// Relay → Wing (control)
 	TypeRegistered   = "registered"
 	TypeRelayRestart = "relay.restart" // relay → all: server shutting down, reconnect
 	TypeError        = "error"
 )
+
+// WingConfig is sent by the wing when pinned state changes (e.g. lock/unlock, pin/unpin).
+type WingConfig struct {
+	Type        string `json:"type"`
+	WingID      string `json:"wing_id"`
+	Pinned      bool   `json:"pinned"`
+	PinnedCount int    `json:"pinned_count"`
+}
 
 // Envelope wraps every WebSocket message with a type field for routing.
 type Envelope struct {

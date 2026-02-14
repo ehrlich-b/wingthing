@@ -13,16 +13,18 @@ import (
 
 // WingInfo contains summary info about a wing for cluster sync.
 type WingInfo struct {
-	UserID    string           `json:"user_id"`
-	WingID    string           `json:"wing_id,omitempty"`
-	Hostname  string           `json:"hostname,omitempty"`
-	Platform  string           `json:"platform,omitempty"`
-	Version   string           `json:"version,omitempty"`
-	Agents    []string         `json:"agents,omitempty"`
-	Labels    []string         `json:"labels,omitempty"`
-	Projects  []ws.WingProject `json:"projects,omitempty"`
-	PublicKey string           `json:"public_key,omitempty"`
-	OrgID     string           `json:"org_id,omitempty"`
+	UserID      string           `json:"user_id"`
+	WingID      string           `json:"wing_id,omitempty"`
+	Hostname    string           `json:"hostname,omitempty"`
+	Platform    string           `json:"platform,omitempty"`
+	Version     string           `json:"version,omitempty"`
+	Agents      []string         `json:"agents,omitempty"`
+	Labels      []string         `json:"labels,omitempty"`
+	Projects    []ws.WingProject `json:"projects,omitempty"`
+	PublicKey   string           `json:"public_key,omitempty"`
+	OrgID       string           `json:"org_id,omitempty"`
+	Pinned      bool             `json:"pinned,omitempty"`
+	PinnedCount int              `json:"pinned_count,omitempty"`
 }
 
 // SyncWing is a wing entry in the cluster sync protocol.
@@ -108,16 +110,18 @@ func connectedToSync(nodeID string, w *ConnectedWing) SyncWing {
 		WingID: w.ID,
 		NodeID: nodeID,
 		Info: WingInfo{
-			UserID:    w.UserID,
-			WingID:    w.WingID,
-			Hostname:  w.Hostname,
-			Platform:  w.Platform,
-			Version:   w.Version,
-			Agents:    w.Agents,
-			Labels:    w.Labels,
-			Projects:  w.Projects,
-			PublicKey: w.PublicKey,
-			OrgID:     w.OrgID,
+			UserID:      w.UserID,
+			WingID:      w.WingID,
+			Hostname:    w.Hostname,
+			Platform:    w.Platform,
+			Version:     w.Version,
+			Agents:      w.Agents,
+			Labels:      w.Labels,
+			Projects:    w.Projects,
+			PublicKey:    w.PublicKey,
+			OrgID:       w.OrgID,
+			Pinned:      w.Pinned,
+			PinnedCount: w.PinnedCount,
 		},
 	}
 }
@@ -138,16 +142,18 @@ func (s *Server) notifyPeerDiff(added, removed []*PeerWing) {
 	for _, w := range added {
 		if w.WingInfo != nil {
 			s.Wings.notify(w.WingInfo.UserID, WingEvent{
-				Type:      "wing.online",
-				ConnID:    w.WingID,
-				WingID:    w.WingInfo.WingID,
-				Hostname:  w.WingInfo.Hostname,
-				Platform:  w.WingInfo.Platform,
-				Version:   w.WingInfo.Version,
-				Agents:    w.WingInfo.Agents,
-				Labels:    w.WingInfo.Labels,
-				PublicKey: w.WingInfo.PublicKey,
-				Projects:  w.WingInfo.Projects,
+				Type:        "wing.online",
+				ConnID:      w.WingID,
+				WingID:      w.WingInfo.WingID,
+				Hostname:    w.WingInfo.Hostname,
+				Platform:    w.WingInfo.Platform,
+				Version:     w.WingInfo.Version,
+				Agents:      w.WingInfo.Agents,
+				Labels:      w.WingInfo.Labels,
+				PublicKey:    w.WingInfo.PublicKey,
+				Projects:    w.WingInfo.Projects,
+				Pinned:      w.WingInfo.Pinned,
+				PinnedCount: w.WingInfo.PinnedCount,
 			})
 		}
 	}

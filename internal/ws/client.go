@@ -289,6 +289,16 @@ func (c *Client) heartbeatLoop(ctx context.Context) {
 	}
 }
 
+// SendConfig pushes the wing's current pinned state to the relay.
+func (c *Client) SendConfig(ctx context.Context) error {
+	return c.writeJSON(ctx, WingConfig{
+		Type:        TypeWingConfig,
+		WingID:      c.WingID,
+		Pinned:      c.Pinned,
+		PinnedCount: c.PinnedCount,
+	})
+}
+
 // SendReclaim sends a pty.reclaim message to the relay for a surviving session.
 func (c *Client) SendReclaim(ctx context.Context, sessionID, agent, cwd string) error {
 	return c.writeJSON(ctx, PTYReclaim{Type: TypePTYReclaim, SessionID: sessionID, Agent: agent, CWD: cwd})

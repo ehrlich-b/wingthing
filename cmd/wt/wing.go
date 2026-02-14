@@ -296,6 +296,8 @@ func wingCmd() *cobra.Command {
 	cmd.AddCommand(wingPinCmd())
 	cmd.AddCommand(wingPinsCmd())
 	cmd.AddCommand(wingUnpinCmd())
+	cmd.AddCommand(wingLockCmd())
+	cmd.AddCommand(wingUnlockCmd())
 
 	return cmd
 }
@@ -627,7 +629,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
-		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, resolvedRoot, &wingEggMu, &wingEggCfg, audit, debug)
+		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, resolvedRoot, &wingEggMu, &wingEggCfg, audit, debug, client)
 	}
 
 	client.SessionLister = func(ctx context.Context) []ws.SessionInfo {
@@ -647,11 +649,29 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	go func() {
-		<-sigCh
-		log.Println("wing shutting down...")
-		cancel()
+		for sig := range sigCh {
+			if sig == syscall.SIGHUP {
+				log.Println("SIGHUP: reloading wing config")
+				newCfg, err := config.LoadWingConfig(cfg.Dir)
+				if err != nil {
+					log.Printf("reload failed: %v", err)
+					continue
+				}
+				wingCfg.Pinned = newCfg.Pinned
+				wingCfg.AllowKeys = newCfg.AllowKeys
+				allowedKeys = append([]config.AllowKey{}, newCfg.AllowKeys...)
+				client.Pinned = newCfg.Pinned
+				client.PinnedCount = len(newCfg.AllowKeys)
+				client.SendConfig(ctx)
+				log.Printf("config reloaded: pinned=%v pins=%d", newCfg.Pinned, len(newCfg.AllowKeys))
+				continue
+			}
+			log.Println("wing shutting down...")
+			cancel()
+			return
+		}
 	}()
 
 	return client.Run(ctx)
@@ -766,7 +786,7 @@ func wingPinCmd() *cobra.Command {
 			} else {
 				fmt.Printf("pinned key %s...\n", keyB64[:12])
 			}
-			fmt.Println("restart wing for changes to take effect")
+			signalDaemon(syscall.SIGHUP)
 			return nil
 		},
 	}
@@ -871,7 +891,72 @@ func wingUnpinCmd() *cobra.Command {
 				display = removed.Key[:12] + "..."
 			}
 			fmt.Printf("unpinned: %s\n", display)
-			fmt.Println("restart wing for changes to take effect")
+			signalDaemon(syscall.SIGHUP)
+			return nil
+		},
+	}
+}
+
+func signalDaemon(sig os.Signal) {
+	pid, err := readPid()
+	if err != nil {
+		return
+	}
+	proc, _ := os.FindProcess(pid)
+	proc.Signal(sig)
+}
+
+func wingLockCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "lock",
+		Short: "Enable access control (pinned mode)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			wingCfg, err := config.LoadWingConfig(cfg.Dir)
+			if err != nil {
+				return err
+			}
+			if wingCfg.Pinned {
+				fmt.Println("wing is already locked")
+				return nil
+			}
+			wingCfg.Pinned = true
+			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
+				return err
+			}
+			signalDaemon(syscall.SIGHUP)
+			fmt.Println("wing locked")
+			return nil
+		},
+	}
+}
+
+func wingUnlockCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unlock",
+		Short: "Disable access control",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			wingCfg, err := config.LoadWingConfig(cfg.Dir)
+			if err != nil {
+				return err
+			}
+			if !wingCfg.Pinned {
+				fmt.Println("wing is already unlocked")
+				return nil
+			}
+			wingCfg.Pinned = false
+			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
+				return err
+			}
+			signalDaemon(syscall.SIGHUP)
+			fmt.Println("wing unlocked")
 			return nil
 		},
 	}
@@ -1873,7 +1958,7 @@ func canSeeSession(req ws.TunnelRequest, sessionUserID string) bool {
 // handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
 func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, req ws.TunnelRequest, write ws.PTYWriteFunc,
 	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, privKey *ecdh.PrivateKey, resolvedRoot string,
-	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool) {
+	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool, client *ws.Client) {
 
 	allowedKeys := *allowedKeysPtr
 
@@ -2113,6 +2198,9 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		config.SaveWingConfig(cfg.Dir, wingCfg)
 		allowedKeys = append(allowedKeys, newPin)
 		*allowedKeysPtr = allowedKeys
+		client.Pinned = wingCfg.Pinned
+		client.PinnedCount = len(wingCfg.AllowKeys)
+		client.SendConfig(ctx)
 		log.Printf("pin added: user=%s email=%s has_passkey=%v", req.SenderUserID, req.SenderEmail, inner.Key != "")
 		tunnelRespond(gcm, req.RequestID, map[string]any{
 			"ok": "true", "email": req.SenderEmail, "user_id": req.SenderUserID,
@@ -2160,6 +2248,9 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		// Rebuild allowedKeys from config
 		allowedKeys = append([]config.AllowKey{}, wingCfg.AllowKeys...)
 		*allowedKeysPtr = allowedKeys
+		client.Pinned = wingCfg.Pinned
+		client.PinnedCount = len(wingCfg.AllowKeys)
+		client.SendConfig(ctx)
 		log.Printf("pin removed: target=%s by=%s", target, req.SenderUserID)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
