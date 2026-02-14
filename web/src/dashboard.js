@@ -3,7 +3,7 @@ import { wingDisplayName } from './helpers.js';
 import { renderDashboard, renderSidebar, renderWingDetailPage } from './render.js';
 import { setCachedWings, fetchWingSessions, mergeWingSessions, loadHome } from './data.js';
 import { updatePaletteState } from './palette.js';
-import { sendTunnelRequest } from './tunnel.js';
+import { sendTunnelRequest, tunnelCloseWing } from './tunnel.js';
 
 var reconnectBannerTimer = null;
 
@@ -97,11 +97,7 @@ function applyWingEvent(ev) {
                 w.online = false;
             }
         });
-        var staleWs = S.tunnelWsMap[ev.wing_id];
-        if (staleWs) {
-            delete S.tunnelWsMap[ev.wing_id];
-            try { staleWs.close(); } catch(e) {}
-        }
+        tunnelCloseWing(ev.wing_id);
     }
 
     rebuildAgentLists();

@@ -3,6 +3,8 @@ import { b64ToBytes, bytesToB64, b64urlToBytes, bytesToB64url } from './helpers.
 import { S } from './state.js';
 import { identityKey, identityPubKey } from './crypto.js';
 
+// --- Crypto (unchanged) ---
+
 async function deriveE2ETunnelKey(wingPublicKeyB64) {
     if (S.tunnelKeys[wingPublicKeyB64]) return S.tunnelKeys[wingPublicKeyB64];
     if (!identityKey.priv) return null;
@@ -40,55 +42,151 @@ async function tunnelDecrypt(key, encoded) {
     return new TextDecoder().decode(plaintext);
 }
 
-function ensureTunnelWs(wingId, _retry) {
-    _retry = _retry || 0;
-    var ws = S.tunnelWsMap[wingId];
-    if (ws && ws.readyState === WebSocket.OPEN) return Promise.resolve();
-    if (ws && ws.readyState === WebSocket.CONNECTING) {
-        return new Promise(function(resolve) {
-            var orig = ws.onopen;
-            ws.onopen = function() { if (orig) orig(); resolve(); };
+// --- Ephemeral Connection Pool ---
+//
+// Opens a WS per wing on demand, batches concurrent requests over it,
+// closes after idle. Limits total concurrent WS connections.
+
+var pool = {
+    maxOpen: 4,
+    idleMs: 3000,
+    conns: {},       // wingId → { ws, pending: Map<rid, handler>, idleTimer }
+    openCount: 0,
+    waitQueue: []    // [{ wingId, doSend: fn(conn), resolve, reject }]
+};
+
+function poolWsUrl(wingId) {
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return proto + '//' + location.host + '/ws/pty?wing_id=' + encodeURIComponent(wingId);
+}
+
+// Get or open a connection for wingId. Returns promise that resolves with conn.
+function acquireConn(wingId) {
+    var conn = pool.conns[wingId];
+    if (conn && conn.ws.readyState === WebSocket.OPEN) {
+        // Reuse — cancel idle timer
+        if (conn.idleTimer) { clearTimeout(conn.idleTimer); conn.idleTimer = null; }
+        return Promise.resolve(conn);
+    }
+    if (conn && conn.ws.readyState === WebSocket.CONNECTING) {
+        // Wait for it to open
+        return new Promise(function(resolve, reject) {
+            conn._waiters = conn._waiters || [];
+            conn._waiters.push({ resolve: resolve, reject: reject });
         });
     }
+    // Need a new connection
+    if (pool.openCount < pool.maxOpen) {
+        return openConn(wingId);
+    }
+    // At capacity — queue
     return new Promise(function(resolve, reject) {
-        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(proto + '//' + location.host + '/ws/pty?wing_id=' + encodeURIComponent(wingId));
-        S.tunnelWsMap[wingId] = ws;
-        ws.onopen = resolve;
+        pool.waitQueue.push({ wingId: wingId, resolve: resolve, reject: reject });
+    });
+}
+
+function openConn(wingId) {
+    pool.openCount++;
+    var ws = new WebSocket(poolWsUrl(wingId));
+    var conn = { ws: ws, pending: {}, idleTimer: null, _waiters: [] };
+    pool.conns[wingId] = conn;
+
+    return new Promise(function(resolve, reject) {
+        ws.onopen = function() {
+            resolve(conn);
+            // Wake anyone waiting for this wing
+            var waiters = conn._waiters || [];
+            conn._waiters = [];
+            waiters.forEach(function(w) { w.resolve(conn); });
+        };
         ws.onerror = function() {
-            if (S.tunnelWsMap[wingId] === ws) delete S.tunnelWsMap[wingId];
-            if (_retry < 2) {
-                setTimeout(function() {
-                    ensureTunnelWs(wingId, _retry + 1).then(resolve).catch(reject);
-                }, 1000 * (_retry + 1));
-            } else {
-                reject(new Error('tunnel ws failed'));
-            }
+            // Reject all waiters
+            var waiters = conn._waiters || [];
+            conn._waiters = [];
+            var err = new Error('tunnel ws failed');
+            waiters.forEach(function(w) { w.reject(err); });
+            reject(err);
+            cleanupConn(wingId, conn);
         };
         ws.onclose = function() {
-            if (S.tunnelWsMap[wingId] === ws) delete S.tunnelWsMap[wingId];
+            // Reject any still-pending requests on this conn
+            var pendingIds = Object.keys(conn.pending);
+            pendingIds.forEach(function(rid) {
+                var h = conn.pending[rid];
+                delete conn.pending[rid];
+                if (h.reject) h.reject(new Error('tunnel ws closed'));
+            });
+            cleanupConn(wingId, conn);
         };
         ws.onmessage = function(e) {
             var msg = JSON.parse(e.data);
             if (msg.type === 'tunnel.res') {
-                var p = S.tunnelPending[msg.request_id];
-                if (p) {
-                    delete S.tunnelPending[msg.request_id];
-                    p.resolve(msg);
+                var h = conn.pending[msg.request_id];
+                if (h) {
+                    delete conn.pending[msg.request_id];
+                    h.resolve(msg);
+                    checkIdle(wingId, conn);
                 }
             } else if (msg.type === 'tunnel.stream') {
-                var p = S.tunnelPending[msg.request_id];
-                if (p && p.onStream) {
-                    p.onStream(msg);
+                var h = conn.pending[msg.request_id];
+                if (h && h.onStream) {
+                    h.onStream(msg);
                     if (msg.done) {
-                        delete S.tunnelPending[msg.request_id];
-                        p.resolve(msg);
+                        delete conn.pending[msg.request_id];
+                        h.resolve(msg);
+                        checkIdle(wingId, conn);
                     }
                 }
             }
         };
     });
 }
+
+function cleanupConn(wingId, conn) {
+    if (pool.conns[wingId] === conn) {
+        delete pool.conns[wingId];
+        pool.openCount--;
+        if (conn.idleTimer) { clearTimeout(conn.idleTimer); conn.idleTimer = null; }
+    }
+    drainQueue();
+}
+
+function checkIdle(wingId, conn) {
+    if (Object.keys(conn.pending).length > 0) return;
+    // No pending requests — start idle timer
+    if (conn.idleTimer) clearTimeout(conn.idleTimer);
+    conn.idleTimer = setTimeout(function() {
+        if (pool.conns[wingId] === conn && Object.keys(conn.pending).length === 0) {
+            try { conn.ws.close(); } catch(e) {}
+            cleanupConn(wingId, conn);
+        }
+    }, pool.idleMs);
+}
+
+function drainQueue() {
+    while (pool.waitQueue.length > 0 && pool.openCount < pool.maxOpen) {
+        var next = pool.waitQueue.shift();
+        // Check if a conn already exists for this wing (another queued item may have opened it)
+        var existing = pool.conns[next.wingId];
+        if (existing && existing.ws.readyState === WebSocket.OPEN) {
+            if (existing.idleTimer) { clearTimeout(existing.idleTimer); existing.idleTimer = null; }
+            next.resolve(existing);
+        } else {
+            openConn(next.wingId).then(next.resolve).catch(next.reject);
+        }
+    }
+}
+
+// Close all connections for a specific wing (called on wing.offline)
+export function tunnelCloseWing(wingId) {
+    var conn = pool.conns[wingId];
+    if (conn) {
+        try { conn.ws.close(); } catch(e) {}
+        // cleanupConn will be called by onclose handler
+    }
+}
+
+// --- Public API ---
 
 export async function sendTunnelRequest(wingId, innerMsg) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
@@ -103,11 +201,11 @@ export async function sendTunnelRequest(wingId, innerMsg) {
     var requestId = crypto.randomUUID();
     var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
 
-    await ensureTunnelWs(wingId);
+    var conn = await acquireConn(wingId);
 
     return new Promise(function(resolve, reject) {
-        S.tunnelPending[requestId] = { resolve: resolve, reject: reject };
-        S.tunnelWsMap[wingId].send(JSON.stringify({
+        conn.pending[requestId] = { resolve: resolve, reject: reject };
+        conn.ws.send(JSON.stringify({
             type: 'tunnel.req',
             wing_id: wingId,
             request_id: requestId,
@@ -115,9 +213,10 @@ export async function sendTunnelRequest(wingId, innerMsg) {
             payload: payload
         }));
         setTimeout(function() {
-            if (S.tunnelPending[requestId]) {
-                delete S.tunnelPending[requestId];
+            if (conn.pending[requestId]) {
+                delete conn.pending[requestId];
                 reject(new Error('tunnel request timeout'));
+                checkIdle(wingId, conn);
             }
         }, 30000);
     }).then(async function(msg) {
@@ -152,10 +251,10 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
     var requestId = crypto.randomUUID();
     var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
 
-    await ensureTunnelWs(wingId);
+    var conn = await acquireConn(wingId);
 
     return new Promise(function(resolve, reject) {
-        S.tunnelPending[requestId] = {
+        conn.pending[requestId] = {
             resolve: resolve,
             reject: reject,
             onStream: async function(msg) {
@@ -166,7 +265,7 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
                 } catch (e) { console.error('tunnel stream decrypt error:', e); }
             }
         };
-        S.tunnelWsMap[wingId].send(JSON.stringify({
+        conn.ws.send(JSON.stringify({
             type: 'tunnel.req',
             wing_id: wingId,
             request_id: requestId,
@@ -174,9 +273,10 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
             payload: payload
         }));
         setTimeout(function() {
-            if (S.tunnelPending[requestId]) {
-                delete S.tunnelPending[requestId];
+            if (conn.pending[requestId]) {
+                delete conn.pending[requestId];
                 reject(new Error('tunnel stream timeout'));
+                checkIdle(wingId, conn);
             }
         }, 120000);
     });
@@ -204,20 +304,21 @@ async function handleTunnelPasskey(wingId, wingPubKey, challenge) {
         };
         var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
 
-        await ensureTunnelWs(wingId);
+        var conn = await acquireConn(wingId);
 
         return new Promise(function(resolve, reject) {
-            S.tunnelPending[requestId] = {
+            conn.pending[requestId] = {
                 resolve: async function(msg) {
                     try {
                         var decrypted = await tunnelDecrypt(key, msg.payload);
                         var result = JSON.parse(decrypted);
                         resolve(result.auth_token || null);
                     } catch (e) { resolve(null); }
+                    checkIdle(wingId, conn);
                 },
-                reject: function() { resolve(null); }
+                reject: function() { resolve(null); checkIdle(wingId, conn); }
             };
-            S.tunnelWsMap[wingId].send(JSON.stringify({
+            conn.ws.send(JSON.stringify({
                 type: 'tunnel.req',
                 wing_id: wingId,
                 request_id: requestId,
@@ -225,9 +326,10 @@ async function handleTunnelPasskey(wingId, wingPubKey, challenge) {
                 payload: payload
             }));
             setTimeout(function() {
-                if (S.tunnelPending[requestId]) {
-                    delete S.tunnelPending[requestId];
+                if (conn.pending[requestId]) {
+                    delete conn.pending[requestId];
                     resolve(null);
+                    checkIdle(wingId, conn);
                 }
             }, 60000);
         });

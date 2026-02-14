@@ -35,8 +35,6 @@ export var S = {
     ptyBandwidthExceeded: false,
     currentWingId: null,
     wingPastSessions: {},
-    tunnelWsMap: {},
-    tunnelPending: {},
     tunnelKeys: {},
     tunnelAuthTokens: {},
     accountExpandSlug: null,
