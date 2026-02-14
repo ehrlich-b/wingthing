@@ -1297,6 +1297,24 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     background: rgba(233, 69, 96, 0.1);
 }
 
+.ac-passkey-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+}
+.ac-passkey-row:last-child { border-bottom: none; }
+.ac-passkey-label {
+    font-size: 13px;
+    color: var(--text);
+}
+.ac-passkey-meta {
+    flex: 1;
+    font-size: 11px;
+    text-align: right;
+}
+
 .ac-create-form {
     background: var(--bg-card);
     border-radius: 8px;

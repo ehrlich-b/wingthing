@@ -263,6 +263,15 @@ export function renderAccountPage() {
     html += '<button class="btn-sm btn-danger" id="account-logout">log out</button>';
     html += '</div>';
 
+    // Passkeys section
+    html += '<div class="ac-section">' +
+        '<div class="ac-section-header">' +
+            '<h3>passkeys</h3>' +
+            '<button class="ac-create-btn" id="ac-passkey-add" title="register passkey">+</button>' +
+        '</div>' +
+        '<div id="ac-passkey-list"><span class="text-dim">loading...</span></div>' +
+    '</div>';
+
     // Org section
     html += '<div class="ac-section">' +
         '<div class="ac-section-header">' +
@@ -364,6 +373,104 @@ export function renderAccountPage() {
     });
 
     loadAccountOrgs();
+    loadAccountPasskeys();
+
+    document.getElementById('ac-passkey-add').addEventListener('click', function() {
+        var btn = this;
+        btn.disabled = true;
+        btn.textContent = '...';
+        fetch('/api/app/passkey/register/begin', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(options) {
+                options.publicKey.challenge = Uint8Array.from(atob(options.publicKey.challenge.replace(/-/g,'+').replace(/_/g,'/')), function(c) { return c.charCodeAt(0); });
+                options.publicKey.user.id = Uint8Array.from(atob(options.publicKey.user.id.replace(/-/g,'+').replace(/_/g,'/')), function(c) { return c.charCodeAt(0); });
+                if (options.publicKey.excludeCredentials) {
+                    options.publicKey.excludeCredentials = options.publicKey.excludeCredentials.map(function(c) {
+                        c.id = Uint8Array.from(atob(c.id.replace(/-/g,'+').replace(/_/g,'/')), function(ch) { return ch.charCodeAt(0); });
+                        return c;
+                    });
+                }
+                return navigator.credentials.create(options);
+            })
+            .then(function(cred) {
+                function toB64url(buf) {
+                    return btoa(String.fromCharCode.apply(null, new Uint8Array(buf)))
+                        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+                }
+                var body = {
+                    id: cred.id,
+                    rawId: toB64url(cred.rawId),
+                    type: cred.type,
+                    response: {
+                        attestationObject: toB64url(cred.response.attestationObject),
+                        clientDataJSON: toB64url(cred.response.clientDataJSON)
+                    }
+                };
+                return fetch('/api/app/passkey/register/finish', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.error) throw new Error(data.error);
+                btn.textContent = '+';
+                btn.disabled = false;
+                loadAccountPasskeys();
+            })
+            .catch(function(e) {
+                console.error('passkey registration failed:', e);
+                btn.textContent = '+';
+                btn.disabled = false;
+            });
+    });
+}
+
+function loadAccountPasskeys() {
+    var listEl = document.getElementById('ac-passkey-list');
+    if (!listEl) return;
+
+    fetch('/api/app/passkey')
+        .then(function(r) { return r.json(); })
+        .then(function(creds) {
+            if (!creds || creds.length === 0) {
+                listEl.innerHTML = '<span class="text-dim">no passkeys registered</span>';
+                return;
+            }
+            listEl.innerHTML = creds.map(function(c) {
+                var keyShort = c.public_key ? c.public_key.substring(0, 16) + '...' : '';
+                var created = c.created_at ? formatRelativeTime(new Date(c.created_at)) : '';
+                return '<div class="ac-passkey-row">' +
+                    '<span class="ac-passkey-label">' + escapeHtml(c.label || 'passkey') + '</span>' +
+                    '<span class="ac-passkey-meta text-dim">' + escapeHtml(keyShort) + (created ? ' &middot; ' + created : '') + '</span>' +
+                    '<button class="btn-sm btn-danger ac-passkey-del" data-id="' + escapeHtml(c.id) + '">remove</button>' +
+                '</div>';
+            }).join('');
+
+            listEl.querySelectorAll('.ac-passkey-del').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var id = this.getAttribute('data-id');
+                    if (this.classList.contains('btn-armed')) {
+                        this.textContent = '...';
+                        fetch('/api/app/passkey/' + id, { method: 'DELETE' })
+                            .then(function() { loadAccountPasskeys(); })
+                            .catch(function() { loadAccountPasskeys(); });
+                    } else {
+                        this.classList.add('btn-armed');
+                        this.textContent = 'confirm';
+                        var el = this;
+                        setTimeout(function() {
+                            el.classList.remove('btn-armed');
+                            el.textContent = 'remove';
+                        }, 3000);
+                    }
+                });
+            });
+        })
+        .catch(function() {
+            listEl.innerHTML = '<span class="text-dim">failed to load</span>';
+        });
 }
 
 function loadAccountOrgs() {
