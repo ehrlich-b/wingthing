@@ -1899,12 +1899,29 @@ func handleAuditRequest(cfg *config.Config, req ws.AuditRequest, write ws.PTYWri
 			return
 		}
 
+		// Read terminal dimensions from egg.meta
+		cols, rows := 120, 40
+		if meta, err := os.ReadFile(filepath.Join(dir, "egg.meta")); err == nil {
+			for _, line := range strings.Split(string(meta), "\n") {
+				if strings.HasPrefix(line, "cols=") {
+					if v, err := strconv.Atoi(strings.TrimPrefix(line, "cols=")); err == nil && v > 0 {
+						cols = v
+					}
+				}
+				if strings.HasPrefix(line, "rows=") {
+					if v, err := strconv.Atoi(strings.TrimPrefix(line, "rows=")); err == nil && v > 0 {
+						rows = v
+					}
+				}
+			}
+		}
+
 		// Convert varint format to asciinema v2 NDJSON
 		// Format: varint delta_ms, varint data_len, raw bytes
 		var cumulativeMs int64
 		var ndjson strings.Builder
 		// Header
-		ndjson.WriteString(`{"version":2,"width":120,"height":40}`)
+		fmt.Fprintf(&ndjson, `{"version":2,"width":%d,"height":%d}`, cols, rows)
 		ndjson.WriteByte('\n')
 		pos := 0
 		for pos < len(raw) {

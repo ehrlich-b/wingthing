@@ -550,7 +550,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 
 	// Write session metadata so the wing can read it on reclaim
 	metaPath := filepath.Join(s.dir, "egg.meta")
-	metaContent := fmt.Sprintf("agent=%s\ncwd=%s\nnetwork=%s\n", rc.Agent, rc.CWD, networkSummary)
+	metaContent := fmt.Sprintf("agent=%s\ncwd=%s\nnetwork=%s\ncols=%d\nrows=%d\n", rc.Agent, rc.CWD, networkSummary, rc.Cols, rc.Rows)
 	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
 	}
@@ -629,8 +629,15 @@ func (s *Server) shutdown() {
 
 func (s *Server) cleanup() {
 	os.Remove(filepath.Join(s.dir, "egg.sock"))
-	os.Remove(filepath.Join(s.dir, "egg.pid"))
 	os.Remove(filepath.Join(s.dir, "egg.token"))
+	s.mu.RLock()
+	sess := s.session
+	s.mu.RUnlock()
+	if sess == nil || !sess.audit {
+		// Non-audit: remove the entire session directory
+		os.RemoveAll(s.dir)
+	}
+	// Audit sessions keep egg.meta, egg.pid, audit.pty.gz, audit.log
 }
 
 func (s *Server) readPTY(sess *Session) {

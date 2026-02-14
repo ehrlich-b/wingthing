@@ -1803,7 +1803,8 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
         var startStr = s.started_at ? formatRelativeTime(s.started_at * 1000) : '';
         var auditBadge = s.audit ? '<span class="wd-audit-badge">audit</span>' : '';
         var auditBtns = s.audit
-            ? '<button class="btn-sm wd-replay-btn" data-sid="' + escapeHtml(s.session_id) + '">replay</button>'
+            ? '<button class="btn-sm wd-replay-btn" data-sid="' + escapeHtml(s.session_id) + '">replay</button>' +
+              '<button class="btn-sm wd-keylog-btn" data-sid="' + escapeHtml(s.session_id) + '">keylog</button>'
             : '';
         return '<div class="wd-past-row">' +
             '<span class="wd-past-name">' + escapeHtml(name) + ' \u00b7 ' + escapeHtml(s.agent || '?') + '</span>' +
@@ -1831,6 +1832,11 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
     container.querySelectorAll('.wd-replay-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
             openAuditReplay(wingId, btn.dataset.sid);
+        });
+    });
+    container.querySelectorAll('.wd-keylog-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            openAuditKeylog(wingId, btn.dataset.sid);
         });
     });
 }
@@ -1865,11 +1871,9 @@ function openAuditReplay(wingId, sessionId) {
     overlay.style.display = '';
     termEl.innerHTML = '';
 
-    var auditTerm = new Terminal({ fontSize: 14, theme: { background: '#0d0d1a' }, convertEol: true });
-    var auditFit = new FitAddon();
-    auditTerm.loadAddon(auditFit);
-    auditTerm.open(termEl);
-    auditFit.fit();
+    var auditCols = 120, auditRows = 40;
+    var auditTerm = null;
+    var auditFit = null;
 
     var frames = [];
     var playing = false;
@@ -1877,14 +1881,27 @@ function openAuditReplay(wingId, sessionId) {
     var frameIndex = 0;
     var speed = 1;
 
+    function initTerm() {
+        if (auditTerm) return;
+        auditTerm = new Terminal({ fontSize: 14, cols: auditCols, rows: auditRows, theme: { background: '#0d0d1a' }, convertEol: false });
+        auditFit = new FitAddon();
+        auditTerm.loadAddon(auditFit);
+        auditTerm.open(termEl);
+    }
+
     // Fetch audit data via SSE
     var es = new EventSource('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + encodeURIComponent(sessionId) + '/audit?kind=pty');
     es.addEventListener('chunk', function(e) {
         // Each SSE event is one NDJSON line
         if (!e.data) return;
         try {
-            var frame = JSON.parse(e.data);
-            if (Array.isArray(frame)) frames.push(frame);
+            var parsed = JSON.parse(e.data);
+            if (Array.isArray(parsed)) {
+                frames.push(parsed);
+            } else if (parsed.width) {
+                auditCols = parsed.width;
+                auditRows = parsed.height;
+            }
         } catch (ex) {}
     });
     es.addEventListener('done', function() {
@@ -1908,16 +1925,24 @@ function openAuditReplay(wingId, sessionId) {
     playBtn.textContent = 'loading...';
     playBtn.disabled = true;
 
+    function decodeBase64UTF8(b64) {
+        var bin = atob(b64);
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new TextDecoder().decode(bytes);
+    }
+
     function playFrame() {
         if (frameIndex >= frames.length) {
             playing = false;
             playBtn.textContent = 'replay';
             return;
         }
+        if (!auditTerm) initTerm();
         var f = frames[frameIndex];
         // f = [timestamp_secs, "o", data_base64]
         var data = f[2];
-        try { data = atob(data); } catch (e) { /* already plain text */ }
+        try { data = decodeBase64UTF8(data); } catch (e) { /* already plain text */ }
         auditTerm.write(data);
         frameIndex++;
         var elapsed = f[0];
@@ -1958,11 +1983,43 @@ function openAuditReplay(wingId, sessionId) {
         playing = false;
         clearTimeout(playTimer);
         es.close();
-        auditTerm.dispose();
+        if (auditTerm) auditTerm.dispose();
         overlay.style.display = 'none';
     };
 
     // Close on backdrop click
+    document.getElementById('audit-backdrop').onclick = closeBtn.onclick;
+}
+
+function openAuditKeylog(wingId, sessionId) {
+    var overlay = document.getElementById('audit-overlay');
+    var termEl = document.getElementById('audit-terminal');
+    var playBtn = document.getElementById('audit-play');
+    var timeEl = document.getElementById('audit-time');
+    var closeBtn = document.getElementById('audit-close');
+
+    overlay.style.display = '';
+    termEl.innerHTML = '<pre class="audit-keylog" style="color:#ccc;font-size:13px;padding:12px;overflow:auto;height:100%;margin:0;white-space:pre-wrap;"></pre>';
+    var pre = termEl.querySelector('pre');
+    playBtn.style.display = 'none';
+    timeEl.textContent = 'keylog';
+
+    var es = new EventSource('/api/app/wings/' + encodeURIComponent(wingId) + '/sessions/' + encodeURIComponent(sessionId) + '/audit?kind=keylog');
+    es.addEventListener('chunk', function(e) {
+        if (e.data) pre.textContent += e.data + '\n';
+    });
+    es.addEventListener('done', function() {
+        es.close();
+        if (!pre.textContent) pre.textContent = 'no keylog data';
+    });
+    es.addEventListener('error', function() { es.close(); });
+    es.onerror = function() { es.close(); };
+
+    closeBtn.onclick = function() {
+        es.close();
+        overlay.style.display = 'none';
+        playBtn.style.display = '';
+    };
     document.getElementById('audit-backdrop').onclick = closeBtn.onclick;
 }
 
