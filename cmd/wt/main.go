@@ -75,6 +75,7 @@ func main() {
 
 func startCmd() *cobra.Command {
 	var debugFlag bool
+	var auditFlag bool
 	var orgFlag string
 	var allowFlag string
 	var rootFlag string
@@ -99,6 +100,9 @@ func startCmd() *cobra.Command {
 			if debugFlag {
 				childArgs = append(childArgs, "--debug")
 			}
+			if auditFlag {
+				childArgs = append(childArgs, "--audit")
+			}
 			child := exec.Command(exe, childArgs...)
 			child.Stdout = os.Stdout
 			child.Stderr = os.Stderr
@@ -109,6 +113,7 @@ func startCmd() *cobra.Command {
 	cmd.Flags().StringVar(&orgFlag, "org", "", "org slug — share this wing with org members")
 	cmd.Flags().StringVar(&allowFlag, "allow", "", "comma-separated email allow list for wing access")
 	cmd.Flags().StringVar(&rootFlag, "root", "", "constrain wing to this directory tree")
+	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
 	return cmd
 }
 

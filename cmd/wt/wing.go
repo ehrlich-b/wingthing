@@ -291,6 +291,7 @@ func wingStartCmd() *cobra.Command {
 	var orgFlag string
 	var allowFlag string
 	var rootFlag string
+	var auditFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -299,7 +300,7 @@ func wingStartCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Foreground mode: run directly
 			if foregroundFlag {
-				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlag, rootFlag, debugFlag)
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlag, rootFlag, debugFlag, auditFlag)
 			}
 
 			// Daemon mode (default): re-exec detached, write PID file, return
@@ -338,6 +339,9 @@ func wingStartCmd() *cobra.Command {
 			}
 			if debugFlag {
 				childArgs = append(childArgs, "--debug")
+			}
+			if auditFlag {
+				childArgs = append(childArgs, "--audit")
 			}
 
 			rotateLog(wingLogPath())
@@ -378,11 +382,12 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&orgFlag, "org", "", "org slug — share this wing with org members")
 	cmd.Flags().StringVar(&allowFlag, "allow", "", "comma-separated email allow list for wing access")
 	cmd.Flags().StringVar(&rootFlag, "root", "", "constrain wing to this directory tree")
+	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
 
 	return cmd
 }
 
-func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlag, rootFlag string, debug bool) error {
+func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlag, rootFlag string, debug, audit bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -548,6 +553,9 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		currentEggCfg := wingEggCfg
 		wingEggMu.Unlock()
 		eggCfg := egg.DiscoverEggConfig(start.CWD, currentEggCfg)
+		if audit {
+			eggCfg.Audit = true
+		}
 		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debug)
 	}
 
