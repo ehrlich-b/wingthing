@@ -65,6 +65,8 @@ const chatStatus = document.getElementById('chat-status');
 const chatDeleteBtn = document.getElementById('chat-delete-btn');
 const wingDetailSection = document.getElementById('wing-detail-section');
 const wingDetailContent = document.getElementById('wing-detail-content');
+const accountSection = document.getElementById('account-section');
+const accountContent = document.getElementById('account-content');
 
 // Palette refs
 const commandPalette = document.getElementById('command-palette');
@@ -105,14 +107,14 @@ async function init() {
     } catch (e) { loginRedirect(); return; }
 
     // Mark initial page load as home so back button works
-    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/')) {
+    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && location.hash !== '#account') {
         history.replaceState({ view: 'home' }, '', location.pathname);
     }
 
     // Event handlers
     homeBtn.addEventListener('click', showHome);
     newSessionBtn.addEventListener('click', showPalette);
-    userInfo.addEventListener('click', showAccountModal);
+    userInfo.addEventListener('click', navigateToAccount);
     userInfo.style.cursor = 'pointer';
     headerTitle.addEventListener('click', function() {
         if (ptySessionId) showSessionInfo();
@@ -241,6 +243,10 @@ async function init() {
     var wingMatch = location.hash.match(/^#w\/(.+)$/);
     if (wingMatch) {
         navigateToWingDetail(wingMatch[1]);
+    }
+    // Deep link: #account opens account page
+    if (location.hash === '#account') {
+        navigateToAccount();
     }
 }
 
@@ -905,35 +911,70 @@ function saveEggOrder() {
     sessionsData = reordered;
 }
 
-function showAccountModal() {
+function navigateToAccount(pushHistory) {
     if (!currentUser) return;
+    activeView = 'account';
+    homeSection.style.display = 'none';
+    terminalSection.style.display = 'none';
+    chatSection.style.display = 'none';
+    wingDetailSection.style.display = 'none';
+    accountSection.style.display = '';
+    detachPTY();
+    destroyChat();
+    headerTitle.textContent = '';
+    ptyStatus.textContent = '';
+    renderAccountPage();
+    if (pushHistory !== false) {
+        history.pushState({ view: 'account' }, '', '#account');
+    }
+}
+
+function renderAccountPage() {
     var tier = currentUser.tier || 'free';
     var email = currentUser.email || '';
     var provider = currentUser.provider || '';
-
     var pubKeyShort = identityPubKey ? identityPubKey.substring(0, 16) + '...' : 'none';
-    var html = '<h3>account</h3>' +
-        '<div class="detail-row"><span class="detail-key">name</span><span class="detail-val">' + escapeHtml(currentUser.display_name || '') + '</span></div>' +
-        (email ? '<div class="detail-row"><span class="detail-key">email</span><span class="detail-val">' + escapeHtml(email) + '</span></div>' : '') +
-        '<div class="detail-row"><span class="detail-key">login</span><span class="detail-val">' + escapeHtml(provider) + '</span></div>' +
-        '<div class="detail-row"><span class="detail-key">tier</span><span class="detail-val">' + escapeHtml(tier) + '</span></div>' +
-        '<div class="detail-row"><span class="detail-key">browser key</span><span class="detail-val copyable" data-copy="' + escapeHtml(identityPubKey) + '">' + escapeHtml(pubKeyShort) + '</span></div>';
+
+    var html = '<div class="ac-page">' +
+        '<div class="wd-header"><a class="wd-back" id="ac-back">back</a></div>' +
+        '<div class="ac-hero">' + escapeHtml(currentUser.display_name || 'user') + '</div>' +
+        '<div class="wd-info">' +
+            (email ? '<div class="detail-row"><span class="detail-key">email</span><span class="detail-val">' + escapeHtml(email) + '</span></div>' : '') +
+            '<div class="detail-row"><span class="detail-key">login</span><span class="detail-val">' + escapeHtml(provider) + '</span></div>' +
+            '<div class="detail-row"><span class="detail-key">tier</span><span class="detail-val">' + escapeHtml(tier) + '</span></div>' +
+            '<div class="detail-row"><span class="detail-key">browser key</span><span class="detail-val copyable" data-copy="' + escapeHtml(identityPubKey) + '">' + escapeHtml(pubKeyShort) + '</span></div>' +
+        '</div>' +
+        '<div class="ac-actions">';
 
     if (tier === 'free') {
-        html += '<div class="detail-actions"><button class="btn-sm btn-accent" id="account-upgrade">give me pro</button></div>';
+        html += '<button class="btn-sm btn-accent" id="account-upgrade">give me pro</button>';
     } else {
-        html += '<div class="detail-actions"><button class="btn-sm" id="account-downgrade" style="color:var(--text-dim)">cancel pro</button></div>';
+        html += '<button class="btn-sm" id="account-downgrade" style="color:var(--text-dim)">cancel pro</button>';
     }
+    html += '<button class="btn-sm btn-danger" id="account-logout">log out</button>';
+    html += '</div>';
 
-    html += '<div class="detail-actions" style="margin-top:12px"><button class="btn-sm btn-danger" id="account-logout">log out</button></div>';
+    // Org section
+    html += '<div class="ac-section">' +
+        '<div class="ac-section-header">' +
+            '<h3>organizations</h3>' +
+            '<button class="ac-create-btn" id="ac-create-toggle" title="create org">+</button>' +
+        '</div>' +
+        '<div id="ac-create-form" class="ac-create-form" style="display:none;">' +
+            '<input type="text" class="ac-input" id="ac-create-name" placeholder="team name">' +
+            '<button class="btn-sm btn-accent" id="ac-create-btn">create</button>' +
+        '</div>' +
+        '<div id="ac-create-error" class="ac-error" style="display:none;"></div>' +
+        '<div id="ac-org-list" class="ac-org-list"><span class="text-dim">loading...</span></div>' +
+    '</div>';
 
-    // Org section placeholder — filled async
-    html += '<div id="account-org-section" style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">' +
-        '<span class="text-dim">loading orgs...</span></div>';
+    html += '</div>';
+    accountContent.innerHTML = html;
 
-    detailDialog.innerHTML = html;
-    detailOverlay.classList.add('open');
+    // Wire back
+    document.getElementById('ac-back').addEventListener('click', function() { showHome(); });
 
+    // Wire upgrade/downgrade
     var upgradeBtn = document.getElementById('account-upgrade');
     if (upgradeBtn) {
         upgradeBtn.addEventListener('click', function() {
@@ -948,7 +989,6 @@ function showAccountModal() {
                 .catch(function() { upgradeBtn.textContent = 'failed'; upgradeBtn.disabled = false; });
         });
     }
-
     var downgradeBtn = document.getElementById('account-downgrade');
     if (downgradeBtn) {
         downgradeBtn.addEventListener('click', function() {
@@ -964,51 +1004,32 @@ function showAccountModal() {
         });
     }
 
-    var logoutBtn = document.getElementById('account-logout');
-    if (logoutBtn) {
-        logoutBtn.addEventListener('click', function() {
-            fetch('/auth/logout', { method: 'POST' }).then(function() {
-                window.location.href = '/';
-            });
+    // Wire logout
+    document.getElementById('account-logout').addEventListener('click', function() {
+        fetch('/auth/logout', { method: 'POST' }).then(function() {
+            window.location.href = '/';
         });
-    }
+    });
 
-    // Load org section async
-    loadAccountOrgSection();
-}
+    // Wire create org toggle
+    var createForm = document.getElementById('ac-create-form');
+    document.getElementById('ac-create-toggle').addEventListener('click', function() {
+        createForm.style.display = createForm.style.display === 'none' ? '' : 'none';
+        if (createForm.style.display !== 'none') {
+            document.getElementById('ac-create-name').focus();
+        }
+    });
 
-function loadAccountOrgSection() {
-    var container = document.getElementById('account-org-section');
-    if (!container) return;
-
-    fetch('/api/orgs')
-        .then(function(r) { return r.json(); })
-        .then(function(orgs) {
-            if (!orgs || orgs.length === 0) {
-                renderNoOrg(container);
-            } else {
-                renderOrg(container, orgs[0]);
-            }
-        })
-        .catch(function() {
-            container.innerHTML = '<span class="text-dim">failed to load orgs</span>';
-        });
-}
-
-function renderNoOrg(container) {
-    container.innerHTML =
-        '<h3 style="margin:0 0 8px">org</h3>' +
-        '<div style="display:flex;gap:8px;align-items:center">' +
-            '<input type="text" id="org-create-name" placeholder="team name" style="flex:1;padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:4px">' +
-            '<button class="btn-sm btn-accent" id="org-create-btn">create</button>' +
-        '</div>';
-
-    document.getElementById('org-create-btn').addEventListener('click', function() {
+    // Wire create org
+    document.getElementById('ac-create-btn').addEventListener('click', function() {
         var btn = this;
-        var name = document.getElementById('org-create-name').value.trim();
+        var nameInput = document.getElementById('ac-create-name');
+        var errEl = document.getElementById('ac-create-error');
+        var name = nameInput.value.trim();
         if (!name) return;
         btn.textContent = 'creating...';
         btn.disabled = true;
+        errEl.style.display = 'none';
         fetch('/api/orgs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1016,145 +1037,237 @@ function renderNoOrg(container) {
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
-            btn.textContent = 'done';
-            loadAccountOrgSection();
+            if (data.error) {
+                errEl.textContent = data.error;
+                errEl.style.display = '';
+                btn.textContent = 'create';
+                btn.disabled = false;
+                return;
+            }
+            nameInput.value = '';
+            createForm.style.display = 'none';
+            errEl.style.display = 'none';
+            btn.textContent = 'create';
+            btn.disabled = false;
+            loadAccountOrgs();
         })
-        .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+        .catch(function() {
+            btn.textContent = 'create';
+            btn.disabled = false;
+            errEl.textContent = 'request failed';
+            errEl.style.display = '';
+        });
     });
+
+    // Load orgs
+    loadAccountOrgs();
 }
 
-function renderOrg(container, org) {
-    var html = '<h3 style="margin:0 0 8px">' + escapeHtml(org.name) + '</h3>';
+function loadAccountOrgs() {
+    var listEl = document.getElementById('ac-org-list');
+    if (!listEl) return;
+
+    fetch('/api/orgs')
+        .then(function(r) { return r.json(); })
+        .then(function(orgs) {
+            if (!orgs || orgs.length === 0) {
+                listEl.innerHTML = '<span class="text-dim">no organizations yet</span>';
+                return;
+            }
+            var html = '';
+            for (var i = 0; i < orgs.length; i++) {
+                html += renderOrgCard(orgs[i]);
+            }
+            listEl.innerHTML = html;
+            wireOrgCards(orgs);
+        })
+        .catch(function() {
+            listEl.innerHTML = '<span class="text-dim">failed to load orgs</span>';
+        });
+}
+
+function renderOrgCard(org) {
+    var roleLabel = org.is_owner ? 'owner' : 'member';
+    var memberCount = org.member_count || 0;
+    return '<div class="ac-org-card" data-slug="' + escapeHtml(org.slug) + '">' +
+        '<div class="ac-org-header" data-slug="' + escapeHtml(org.slug) + '">' +
+            '<span class="ac-org-name">' + escapeHtml(org.name) + '</span>' +
+            '<span class="ac-org-role">' + roleLabel + '</span>' +
+            '<span class="ac-org-count">' + memberCount + (memberCount === 1 ? ' member' : ' members') + '</span>' +
+        '</div>' +
+        '<div class="ac-org-detail" id="ac-org-detail-' + escapeHtml(org.slug) + '">' +
+            renderOrgDetail(org) +
+        '</div>' +
+    '</div>';
+}
+
+function renderOrgDetail(org) {
+    var html = '';
 
     if (!org.is_owner) {
-        html += '<div class="detail-row"><span class="detail-val text-dim">member</span></div>';
-        container.innerHTML = html;
-        return;
+        html += '<div class="detail-row"><span class="detail-val text-dim">you are a member of this org</span></div>';
+        return html;
     }
 
     if (!org.has_subscription) {
-        // No subscription — show "give me seats"
         html += '<div class="detail-row"><span class="detail-val text-dim">no active plan</span></div>' +
             '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
-                '<input type="number" id="org-seats-input" min="1" value="1" style="width:60px;padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:4px">' +
+                '<input type="number" class="ac-input" id="org-seats-input-' + escapeHtml(org.slug) + '" min="1" value="1" style="width:60px">' +
                 '<span class="text-dim" style="font-size:12px">seats</span>' +
-                '<button class="btn-sm btn-accent" id="org-give-seats-btn">give me seats</button>' +
+                '<button class="btn-sm btn-accent org-give-seats-btn" data-slug="' + escapeHtml(org.slug) + '">give me seats</button>' +
             '</div>' +
             '<div class="text-dim" style="font-size:11px;margin-top:4px">1 seat includes you. each additional seat adds one team member.</div>';
-        container.innerHTML = html;
-
-        document.getElementById('org-give-seats-btn').addEventListener('click', function() {
-            var btn = this;
-            var seats = parseInt(document.getElementById('org-seats-input').value) || 1;
-            btn.textContent = 'working...';
-            btn.disabled = true;
-            fetch('/api/orgs/' + org.slug + '/upgrade', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ seats: seats })
-            })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
-                btn.textContent = 'done';
-                loadAccountOrgSection();
-            })
-            .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
-        });
-        return;
+        return html;
     }
 
-    // Has subscription — show seat usage, add seats, invite, members, cancel
+    // Has subscription
     html += '<div class="detail-row"><span class="detail-key">plan</span><span class="detail-val">' + escapeHtml(org.plan || 'team') + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">seats</span><span class="detail-val">' + (org.seats_used || 0) + '/' + (org.seats_total || 0) + ' used</span></div>';
 
     // Add seats
     html += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
-        '<input type="number" id="org-add-seats-input" min="' + ((org.seats_total || 0) + 1) + '" value="' + ((org.seats_total || 0) + 1) + '" style="width:60px;padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:4px">' +
+        '<input type="number" class="ac-input" id="org-add-seats-input-' + escapeHtml(org.slug) + '" min="' + ((org.seats_total || 0) + 1) + '" value="' + ((org.seats_total || 0) + 1) + '" style="width:60px">' +
         '<span class="text-dim" style="font-size:12px">new total</span>' +
-        '<button class="btn-sm btn-accent" id="org-add-seats-btn">add seats</button>' +
+        '<button class="btn-sm btn-accent org-add-seats-btn" data-slug="' + escapeHtml(org.slug) + '">add seats</button>' +
     '</div>';
 
     // Invite
     html += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
-        '<input type="email" id="org-invite-email" placeholder="email" style="flex:1;padding:4px 8px;background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:4px">' +
-        '<button class="btn-sm btn-accent" id="org-invite-btn">invite</button>' +
+        '<input type="email" class="ac-input" id="org-invite-email-' + escapeHtml(org.slug) + '" placeholder="email">' +
+        '<button class="btn-sm btn-accent org-invite-btn" data-slug="' + escapeHtml(org.slug) + '">invite</button>' +
     '</div>';
 
     // Members placeholder
-    html += '<div id="org-members-list" style="margin-top:8px"><span class="text-dim">loading members...</span></div>';
+    html += '<div id="org-members-list-' + escapeHtml(org.slug) + '" style="margin-top:8px"><span class="text-dim">loading members...</span></div>';
 
     // Cancel
-    html += '<div class="detail-actions" style="margin-top:12px"><button class="btn-sm" id="org-cancel-btn" style="color:var(--text-dim)">cancel subscription</button></div>';
+    html += '<div class="detail-actions" style="margin-top:12px"><button class="btn-sm org-cancel-btn" data-slug="' + escapeHtml(org.slug) + '" style="color:var(--text-dim)">cancel subscription</button></div>';
 
-    container.innerHTML = html;
-
-    // Wire add seats
-    document.getElementById('org-add-seats-btn').addEventListener('click', function() {
-        var btn = this;
-        var seats = parseInt(document.getElementById('org-add-seats-input').value);
-        if (!seats || seats <= (org.seats_total || 0)) return;
-        btn.textContent = 'working...';
-        btn.disabled = true;
-        fetch('/api/orgs/' + org.slug + '/upgrade', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ seats: seats })
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
-            btn.textContent = 'done';
-            loadAccountOrgSection();
-        })
-        .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
-    });
-
-    // Wire invite
-    document.getElementById('org-invite-btn').addEventListener('click', function() {
-        var btn = this;
-        var emailInput = document.getElementById('org-invite-email');
-        var invEmail = emailInput.value.trim();
-        if (!invEmail) return;
-        btn.textContent = 'working...';
-        btn.disabled = true;
-        fetch('/api/orgs/' + org.slug + '/invite', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ emails: [invEmail] })
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
-            btn.textContent = 'invited';
-            emailInput.value = '';
-            loadOrgMembers(org);
-        })
-        .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
-    });
-
-    // Wire cancel
-    document.getElementById('org-cancel-btn').addEventListener('click', function() {
-        var btn = this;
-        btn.textContent = 'canceling...';
-        btn.disabled = true;
-        fetch('/api/orgs/' + org.slug + '/cancel', { method: 'POST' })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
-            btn.textContent = 'done';
-            loadAccountOrgSection();
-        })
-        .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
-    });
-
-    // Load members
-    loadOrgMembers(org);
+    return html;
 }
 
-function loadOrgMembers(org) {
-    var list = document.getElementById('org-members-list');
+function wireOrgCards(orgs) {
+    // Accordion toggle
+    var headers = document.querySelectorAll('.ac-org-header');
+    headers.forEach(function(header) {
+        header.addEventListener('click', function() {
+            var slug = this.getAttribute('data-slug');
+            var detail = document.getElementById('ac-org-detail-' + slug);
+            if (!detail) return;
+            var wasOpen = detail.classList.contains('open');
+            // Close all
+            document.querySelectorAll('.ac-org-detail').forEach(function(d) { d.classList.remove('open'); });
+            if (!wasOpen) {
+                detail.classList.add('open');
+                // Load members if org has subscription
+                var org = orgs.find(function(o) { return o.slug === slug; });
+                if (org && org.has_subscription && org.is_owner) {
+                    loadOrgMembers(org, 'org-members-list-' + slug);
+                }
+            }
+        });
+    });
+
+    // Wire management buttons for each org
+    orgs.forEach(function(org) {
+        if (!org.is_owner) return;
+
+        // Give seats (no subscription)
+        var giveBtn = document.querySelector('.org-give-seats-btn[data-slug="' + org.slug + '"]');
+        if (giveBtn) {
+            giveBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var btn = this;
+                var seats = parseInt(document.getElementById('org-seats-input-' + org.slug).value) || 1;
+                btn.textContent = 'working...';
+                btn.disabled = true;
+                fetch('/api/orgs/' + org.slug + '/upgrade', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ seats: seats })
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
+                    loadAccountOrgs();
+                })
+                .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+            });
+        }
+
+        // Add seats (has subscription)
+        var addBtn = document.querySelector('.org-add-seats-btn[data-slug="' + org.slug + '"]');
+        if (addBtn) {
+            addBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var btn = this;
+                var seats = parseInt(document.getElementById('org-add-seats-input-' + org.slug).value);
+                if (!seats || seats <= (org.seats_total || 0)) return;
+                btn.textContent = 'working...';
+                btn.disabled = true;
+                fetch('/api/orgs/' + org.slug + '/upgrade', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ seats: seats })
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
+                    loadAccountOrgs();
+                })
+                .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+            });
+        }
+
+        // Invite
+        var inviteBtn = document.querySelector('.org-invite-btn[data-slug="' + org.slug + '"]');
+        if (inviteBtn) {
+            inviteBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var btn = this;
+                var emailInput = document.getElementById('org-invite-email-' + org.slug);
+                var invEmail = emailInput.value.trim();
+                if (!invEmail) return;
+                btn.textContent = 'working...';
+                btn.disabled = true;
+                fetch('/api/orgs/' + org.slug + '/invite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ emails: [invEmail] })
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
+                    btn.textContent = 'invited';
+                    emailInput.value = '';
+                    loadOrgMembers(org, 'org-members-list-' + org.slug);
+                })
+                .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+            });
+        }
+
+        // Cancel subscription
+        var cancelBtn = document.querySelector('.org-cancel-btn[data-slug="' + org.slug + '"]');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var btn = this;
+                btn.textContent = 'canceling...';
+                btn.disabled = true;
+                fetch('/api/orgs/' + org.slug + '/cancel', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
+                    loadAccountOrgs();
+                })
+                .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+            });
+        }
+    });
+}
+
+function loadOrgMembers(org, containerId) {
+    var list = document.getElementById(containerId);
     if (!list) return;
 
     fetch('/api/orgs/' + org.slug + '/members')
@@ -1168,7 +1281,7 @@ function loadOrgMembers(org) {
                 html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0">' +
                     '<span>' + escapeHtml(display) + ' <span class="text-dim">(' + escapeHtml(m.role) + ')</span></span>';
                 if (m.role !== 'owner' && org.is_owner) {
-                    html += '<button class="btn-sm btn-danger org-remove-member" data-uid="' + escapeHtml(m.user_id) + '" style="font-size:11px;padding:1px 6px">remove</button>';
+                    html += '<button class="btn-sm btn-danger org-remove-member" data-uid="' + escapeHtml(m.user_id) + '" data-slug="' + escapeHtml(org.slug) + '" style="font-size:11px;padding:1px 6px">remove</button>';
                 }
                 html += '</div>';
             }
@@ -1181,14 +1294,15 @@ function loadOrgMembers(org) {
             // Wire remove buttons
             var removeBtns = list.querySelectorAll('.org-remove-member');
             removeBtns.forEach(function(btn) {
-                btn.addEventListener('click', function() {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
                     var uid = this.getAttribute('data-uid');
                     this.textContent = '...';
                     this.disabled = true;
                     var self = this;
                     fetch('/api/orgs/' + org.slug + '/members/' + uid, { method: 'DELETE' })
                     .then(function(r) { return r.json(); })
-                    .then(function() { loadOrgMembers(org); })
+                    .then(function() { loadOrgMembers(org, containerId); })
                     .catch(function() { self.textContent = 'failed'; self.disabled = false; });
                 });
             });
@@ -1210,6 +1324,7 @@ function navigateToWingDetail(wingId, pushHistory) {
     terminalSection.style.display = 'none';
     chatSection.style.display = 'none';
     wingDetailSection.style.display = '';
+    accountSection.style.display = 'none';
     detachPTY();
     destroyChat();
     headerTitle.textContent = '';
@@ -2814,6 +2929,7 @@ function showHome(pushHistory) {
     terminalSection.style.display = 'none';
     chatSection.style.display = 'none';
     wingDetailSection.style.display = 'none';
+    accountSection.style.display = 'none';
     currentWingId = null;
     headerTitle.textContent = '';
     ptyStatus.textContent = '';
@@ -2838,6 +2954,7 @@ function showTerminal() {
     terminalSection.style.display = '';
     chatSection.style.display = 'none';
     wingDetailSection.style.display = 'none';
+    accountSection.style.display = 'none';
     destroyChat();
     if (term && fitAddon) {
         fitAddon.fit();
@@ -2851,6 +2968,7 @@ function showChat() {
     terminalSection.style.display = 'none';
     chatSection.style.display = '';
     wingDetailSection.style.display = 'none';
+    accountSection.style.display = 'none';
 }
 
 function switchToSession(sessionId, pushHistory) {
@@ -3656,6 +3774,8 @@ window.addEventListener('popstate', function(e) {
         switchToSession(state.sessionId, false);
     } else if (state.view === 'wing-detail' && state.wingId) {
         navigateToWingDetail(state.wingId, false);
+    } else if (state.view === 'account') {
+        navigateToAccount(false);
     }
 });
 

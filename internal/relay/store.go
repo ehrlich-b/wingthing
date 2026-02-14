@@ -738,6 +738,13 @@ func (s *RelayStore) UpdateSubscriptionSeats(subID string, seats int) error {
 	return err
 }
 
+// CountOrgsOwnedByUser returns the number of orgs a user has created.
+func (s *RelayStore) CountOrgsOwnedByUser(userID string) (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM orgs WHERE owner_user_id = ?", userID).Scan(&count)
+	return count, err
+}
+
 // CountOrgMembers returns the number of members in an org.
 func (s *RelayStore) CountOrgMembers(orgID string) (int, error) {
 	var count int

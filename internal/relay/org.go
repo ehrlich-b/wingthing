@@ -90,6 +90,11 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	owned, _ := s.Store.CountOrgsOwnedByUser(user.ID)
+	if owned >= 5 {
+		writeError(w, http.StatusForbidden, "you can create up to 5 organizations")
+		return
+	}
 	slug := req.Slug
 	if slug == "" {
 		slug = slugify(req.Name)
