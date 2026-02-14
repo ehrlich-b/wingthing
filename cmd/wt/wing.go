@@ -861,9 +861,10 @@ func wingAllowCmd() *cobra.Command {
 				}
 				var membersResp struct {
 					Members []struct {
-						UserID      string `json:"user_id"`
-						Email       string `json:"email"`
-						DisplayName string `json:"display_name"`
+						UserID          string `json:"user_id"`
+						Email           string `json:"email"`
+						DisplayName     string `json:"display_name"`
+						PasskeyPubKey   string `json:"passkey_public_key"`
 					} `json:"members"`
 				}
 				if err := json.NewDecoder(resp.Body).Decode(&membersResp); err != nil {
@@ -871,24 +872,32 @@ func wingAllowCmd() *cobra.Command {
 				}
 				members := membersResp.Members
 				added := 0
+				updated := 0
 				for _, m := range members {
 					// Deduplicate by user_id
-					dup := false
-					for _, ak := range wingCfg.AllowKeys {
+					dupIdx := -1
+					for i, ak := range wingCfg.AllowKeys {
 						if ak.UserID == m.UserID {
-							dup = true
+							dupIdx = i
 							break
 						}
 					}
-					if dup {
-						fmt.Printf("already allowed: %s\n", m.Email)
+					if dupIdx >= 0 {
+						// Update passkey public key if we have one now and didn't before
+						if m.PasskeyPubKey != "" && wingCfg.AllowKeys[dupIdx].Key != m.PasskeyPubKey {
+							wingCfg.AllowKeys[dupIdx].Key = m.PasskeyPubKey
+							fmt.Printf("updated key: %s\n", m.Email)
+							updated++
+						} else {
+							fmt.Printf("already allowed: %s\n", m.Email)
+						}
 						continue
 					}
-					wingCfg.AllowKeys = append(wingCfg.AllowKeys, config.AllowKey{UserID: m.UserID, Email: m.Email})
+					wingCfg.AllowKeys = append(wingCfg.AllowKeys, config.AllowKey{Key: m.PasskeyPubKey, UserID: m.UserID, Email: m.Email})
 					fmt.Printf("allowed %s\n", m.Email)
 					added++
 				}
-				if added > 0 {
+				if added > 0 || updated > 0 {
 					if !wingCfg.Locked {
 						wingCfg.Locked = true
 					}
@@ -897,7 +906,7 @@ func wingAllowCmd() *cobra.Command {
 					}
 					signalDaemon(syscall.SIGHUP)
 				}
-				fmt.Printf("added %d members\n", added)
+				fmt.Printf("added %d members, updated %d keys\n", added, updated)
 				return nil
 			}
 
@@ -977,12 +986,12 @@ func wingAllowCmd() *cobra.Command {
 }
 
 func wingRevokeCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "revoke <user-id-or-email>",
+	cmd := &cobra.Command{
+		Use:   "revoke [user-id-or-email]",
 		Short: "Remove from allowlist",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			query := args[0]
+			revokeAll, _ := cmd.Flags().GetBool("all")
 
 			cfg, err := config.Load()
 			if err != nil {
@@ -992,6 +1001,26 @@ func wingRevokeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			if revokeAll {
+				count := len(wingCfg.AllowKeys)
+				if count == 0 {
+					fmt.Println("allowlist is already empty")
+					return nil
+				}
+				wingCfg.AllowKeys = nil
+				if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
+					return err
+				}
+				fmt.Printf("revoked all %d entries\n", count)
+				signalDaemon(syscall.SIGHUP)
+				return nil
+			}
+
+			if len(args) == 0 {
+				return fmt.Errorf("specify a user-id or email, or use --all")
+			}
+			query := args[0]
 
 			// Find matches by user_id, email, or key prefix
 			var matches []int
@@ -1037,6 +1066,8 @@ func wingRevokeCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Bool("all", false, "Revoke all entries from the allowlist")
+	return cmd
 }
 
 func signalDaemon(sig os.Signal) {

@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -237,6 +238,11 @@ func (s *Server) handleListOrgMembers(w http.ResponseWriter, r *http.Request) {
 			entry["display_name"] = u.DisplayName
 			entry["email"] = u.Email
 			entry["avatar_url"] = u.AvatarURL
+		}
+		// Include first passkey public key for wing allowlist
+		creds, _ := s.Store.ListPasskeyCredentials(m.UserID)
+		if len(creds) > 0 {
+			entry["passkey_public_key"] = base64.StdEncoding.EncodeToString(creds[0].PublicKey)
 		}
 		memberList = append(memberList, entry)
 	}
