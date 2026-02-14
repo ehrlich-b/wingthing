@@ -1,0 +1,1 @@
+ALTER TABLE org_invites ADD COLUMN role TEXT NOT NULL DEFAULT 'member';

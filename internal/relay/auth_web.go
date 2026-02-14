@@ -100,10 +100,10 @@ func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request
 	// Check for pending org invite token in session
 	if c, err := r.Cookie("invite_token"); err == nil && c.Value != "" {
 		http.SetCookie(w, &http.Cookie{Name: "invite_token", Path: "/", MaxAge: -1})
-		email, orgID, invErr := s.Store.ConsumeOrgInvite(c.Value)
+		email, orgID, invRole, invErr := s.Store.ConsumeOrgInvite(c.Value)
 		if invErr == nil && user.Email != nil && strings.EqualFold(*user.Email, email) {
 			// Email matches — auto-join org
-			s.Store.AddOrgMember(orgID, user.ID, "member")
+			s.Store.AddOrgMember(orgID, user.ID, invRole)
 			s.grantOrgEntitlement(orgID, user.ID)
 			// Redirect to app with success
 			if s.Config.AppHost != "" {

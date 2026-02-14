@@ -1134,6 +1134,10 @@ function renderOrgDetail(org) {
     // Invite
     html += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
         '<input type="email" class="ac-input" id="org-invite-email-' + escapeHtml(org.slug) + '" placeholder="email">' +
+        '<select class="ac-input" id="org-invite-role-' + escapeHtml(org.slug) + '" style="flex:none;width:90px">' +
+            '<option value="member">member</option>' +
+            '<option value="admin">admin</option>' +
+        '</select>' +
         '<button class="btn-sm btn-accent org-invite-btn" data-slug="' + escapeHtml(org.slug) + '">invite</button>' +
     '</div>';
 
@@ -1226,41 +1230,65 @@ function wireOrgCards(orgs) {
                 e.stopPropagation();
                 var btn = this;
                 var emailInput = document.getElementById('org-invite-email-' + org.slug);
+                var roleSelect = document.getElementById('org-invite-role-' + org.slug);
                 var invEmail = emailInput.value.trim();
                 if (!invEmail) return;
+                var invRole = roleSelect ? roleSelect.value : 'member';
                 btn.textContent = 'working...';
                 btn.disabled = true;
                 fetch('/api/orgs/' + org.slug + '/invite', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ emails: [invEmail] })
+                    body: JSON.stringify({ emails: [invEmail], role: invRole })
                 })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
-                    btn.textContent = 'invited';
+                    btn.textContent = 'invite';
+                    btn.disabled = false;
                     emailInput.value = '';
+                    // Show copy-link for the newly created invite
+                    if (data.invited && data.invited.length > 0 && data.invited[0].link) {
+                        var link = data.invited[0].link;
+                        navigator.clipboard.writeText(link).then(function() {
+                            btn.textContent = 'copied link';
+                            setTimeout(function() { btn.textContent = 'invite'; }, 2000);
+                        });
+                    }
                     loadOrgMembers(org, 'org-members-list-' + org.slug);
                 })
                 .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
             });
         }
 
-        // Cancel subscription
+        // Cancel subscription — 3-click confirmation
         var cancelBtn = document.querySelector('.org-cancel-btn[data-slug="' + org.slug + '"]');
         if (cancelBtn) {
+            var cancelClicks = 0;
             cancelBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 var btn = this;
+                cancelClicks++;
+                if (cancelClicks === 1) {
+                    btn.textContent = 'are you sure?';
+                    btn.style.color = 'var(--red)';
+                    return;
+                }
+                if (cancelClicks === 2) {
+                    btn.textContent = 'click again to confirm';
+                    btn.classList.add('btn-armed');
+                    return;
+                }
+                // 3rd click — execute
                 btn.textContent = 'canceling...';
                 btn.disabled = true;
                 fetch('/api/orgs/' + org.slug + '/cancel', { method: 'POST' })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
-                    if (data.error) { btn.textContent = 'failed'; btn.disabled = false; return; }
+                    if (data.error) { btn.textContent = 'failed'; btn.disabled = false; cancelClicks = 0; return; }
                     loadAccountOrgs();
                 })
-                .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+                .catch(function() { btn.textContent = 'failed'; btn.disabled = false; cancelClicks = 0; });
             });
         }
     });
@@ -1287,9 +1315,28 @@ function loadOrgMembers(org, containerId) {
             }
             var invites = data.invites || [];
             for (var j = 0; j < invites.length; j++) {
-                html += '<div style="padding:2px 0"><span class="text-dim">' + escapeHtml(invites[j].email) + ' (pending)</span></div>';
+                var inv = invites[j];
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0">' +
+                    '<span class="text-dim">' + escapeHtml(inv.email) + ' (pending' + (inv.role && inv.role !== 'member' ? ', ' + inv.role : '') + ')</span>';
+                if (inv.link) {
+                    html += '<button class="btn-sm org-copy-link" data-link="' + escapeHtml(inv.link) + '" style="font-size:11px;padding:1px 6px">copy link</button>';
+                }
+                html += '</div>';
             }
             list.innerHTML = html;
+
+            // Wire copy-link buttons
+            list.querySelectorAll('.org-copy-link').forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    var link = this.getAttribute('data-link');
+                    var self = this;
+                    navigator.clipboard.writeText(link).then(function() {
+                        self.textContent = 'copied';
+                        setTimeout(function() { self.textContent = 'copy link'; }, 2000);
+                    });
+                });
+            });
 
             // Wire remove buttons
             var removeBtns = list.querySelectorAll('.org-remove-member');

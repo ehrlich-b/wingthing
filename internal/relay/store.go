@@ -389,6 +389,7 @@ type OrgInvite struct {
 	Email     string
 	Token     string
 	InvitedBy string
+	Role      string
 	CreatedAt time.Time
 	ClaimedAt *time.Time
 }
@@ -665,10 +666,13 @@ func (s *RelayStore) GetOrgMemberRole(orgID, userID string) string {
 }
 
 // CreateOrgInvite creates a pending invite.
-func (s *RelayStore) CreateOrgInvite(id, orgID, email, token, invitedBy string) error {
+func (s *RelayStore) CreateOrgInvite(id, orgID, email, token, invitedBy, role string) error {
+	if role == "" {
+		role = "member"
+	}
 	_, err := s.db.Exec(
-		"INSERT INTO org_invites (id, org_id, email, token, invited_by) VALUES (?, ?, ?, ?, ?)",
-		id, orgID, email, token, invitedBy,
+		"INSERT INTO org_invites (id, org_id, email, token, invited_by, role) VALUES (?, ?, ?, ?, ?, ?)",
+		id, orgID, email, token, invitedBy, role,
 	)
 	if err != nil {
 		return fmt.Errorf("create org invite: %w", err)
@@ -676,20 +680,20 @@ func (s *RelayStore) CreateOrgInvite(id, orgID, email, token, invitedBy string) 
 	return nil
 }
 
-// ConsumeOrgInvite validates a token, marks it claimed, returns the invite info.
-func (s *RelayStore) ConsumeOrgInvite(token string) (string, string, error) {
+// ConsumeOrgInvite validates a token, marks it claimed, returns email, orgID, and role.
+func (s *RelayStore) ConsumeOrgInvite(token string) (string, string, string, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return "", "", fmt.Errorf("begin tx: %w", err)
+		return "", "", "", fmt.Errorf("begin tx: %w", err)
 	}
-	var email, orgID string
+	var email, orgID, role string
 	err = tx.QueryRow(
-		"SELECT email, org_id FROM org_invites WHERE token = ? AND claimed_at IS NULL",
+		"SELECT email, org_id, role FROM org_invites WHERE token = ? AND claimed_at IS NULL",
 		token,
-	).Scan(&email, &orgID)
+	).Scan(&email, &orgID, &role)
 	if err != nil {
 		tx.Rollback()
-		return "", "", fmt.Errorf("invalid or already claimed invite")
+		return "", "", "", fmt.Errorf("invalid or already claimed invite")
 	}
 	_, err = tx.Exec(
 		"UPDATE org_invites SET claimed_at = datetime('now') WHERE token = ?",
@@ -697,18 +701,18 @@ func (s *RelayStore) ConsumeOrgInvite(token string) (string, string, error) {
 	)
 	if err != nil {
 		tx.Rollback()
-		return "", "", fmt.Errorf("consume invite: %w", err)
+		return "", "", "", fmt.Errorf("consume invite: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return email, orgID, nil
+	return email, orgID, role, nil
 }
 
 // ListPendingInvites returns unclaimed invites for an org.
 func (s *RelayStore) ListPendingInvites(orgID string) ([]*OrgInvite, error) {
 	rows, err := s.db.Query(
-		"SELECT id, org_id, email, token, invited_by, created_at FROM org_invites WHERE org_id = ? AND claimed_at IS NULL ORDER BY created_at",
+		"SELECT id, org_id, email, token, invited_by, role, created_at FROM org_invites WHERE org_id = ? AND claimed_at IS NULL ORDER BY created_at",
 		orgID,
 	)
 	if err != nil {
@@ -718,7 +722,7 @@ func (s *RelayStore) ListPendingInvites(orgID string) ([]*OrgInvite, error) {
 	var result []*OrgInvite
 	for rows.Next() {
 		var inv OrgInvite
-		if err := rows.Scan(&inv.ID, &inv.OrgID, &inv.Email, &inv.Token, &inv.InvitedBy, &inv.CreatedAt); err != nil {
+		if err := rows.Scan(&inv.ID, &inv.OrgID, &inv.Email, &inv.Token, &inv.InvitedBy, &inv.Role, &inv.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, &inv)

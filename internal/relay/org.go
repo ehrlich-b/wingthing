@@ -214,7 +214,8 @@ func (s *Server) handleListOrgMembers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "org not found")
 		return
 	}
-	if !s.Store.IsOrgMember(org.ID, user.ID) {
+	role := s.Store.GetOrgMemberRole(org.ID, user.ID)
+	if role == "" {
 		writeError(w, http.StatusForbidden, "not a member")
 		return
 	}
@@ -242,12 +243,18 @@ func (s *Server) handleListOrgMembers(w http.ResponseWriter, r *http.Request) {
 
 	invites, _ := s.Store.ListPendingInvites(org.ID)
 	var inviteList []map[string]any
+	isOwnerOrAdmin := role == "owner" || role == "admin"
 	for _, inv := range invites {
-		inviteList = append(inviteList, map[string]any{
+		entry := map[string]any{
 			"email":      inv.Email,
 			"invited_by": inv.InvitedBy,
+			"role":       inv.Role,
 			"created_at": inv.CreatedAt,
-		})
+		}
+		if isOwnerOrAdmin {
+			entry["link"] = s.Config.BaseURL + "/invite/" + inv.Token
+		}
+		inviteList = append(inviteList, entry)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -278,13 +285,26 @@ func (s *Server) handleOrgInvite(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Emails []string `json:"emails"`
+		Role   string   `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	inviteRole := req.Role
+	if inviteRole == "" {
+		inviteRole = "member"
+	}
+	if inviteRole != "member" && inviteRole != "admin" {
+		writeError(w, http.StatusBadRequest, "role must be member or admin")
+		return
+	}
 
-	var created []string
+	type inviteResult struct {
+		Email string `json:"email"`
+		Link  string `json:"link"`
+	}
+	var created []inviteResult
 	for _, email := range req.Emails {
 		email = strings.TrimSpace(strings.ToLower(email))
 		if email == "" {
@@ -292,15 +312,15 @@ func (s *Server) handleOrgInvite(w http.ResponseWriter, r *http.Request) {
 		}
 		token := generateToken()
 		id := uuid.New().String()
-		if err := s.Store.CreateOrgInvite(id, org.ID, email, token, user.ID); err != nil {
+		if err := s.Store.CreateOrgInvite(id, org.ID, email, token, user.ID, inviteRole); err != nil {
 			continue // skip dupes
 		}
+		link := s.Config.BaseURL + "/invite/" + token
 		// Send invite email if SMTP configured
 		if s.Config.SMTPHost != "" {
-			link := s.Config.BaseURL + "/invite/" + token
 			s.sendInviteEmail(email, org.Name, link)
 		}
-		created = append(created, email)
+		created = append(created, inviteResult{Email: email, Link: link})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"invited": created})
@@ -511,10 +531,10 @@ func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 	// If already logged in, try to consume immediately
 	user := s.sessionUser(r)
 	if user != nil {
-		email, orgID, err := s.Store.ConsumeOrgInvite(token)
+		email, orgID, invRole, err := s.Store.ConsumeOrgInvite(token)
 		if err == nil {
 			if user.Email != nil && strings.EqualFold(*user.Email, email) {
-				s.Store.AddOrgMember(orgID, user.ID, "member")
+				s.Store.AddOrgMember(orgID, user.ID, invRole)
 				s.grantOrgEntitlement(orgID, user.ID)
 				http.SetCookie(w, &http.Cookie{Name: "invite_token", Path: "/", MaxAge: -1})
 				if s.Config.AppHost != "" {
