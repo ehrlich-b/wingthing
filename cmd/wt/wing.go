@@ -611,6 +611,11 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
+		// Block PTY when wing is locked with no authorized users
+		if wingCfg.Pinned && len(allowedKeys) == 0 {
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "wing is locked with no authorized users — add yourself with: wt wing pin --user-id <your-user-id>"})
+			return
+		}
 		// Clamp CWD to root if configured
 		if resolvedRoot != "" {
 			cleaned := filepath.Clean(start.CWD)
@@ -1991,7 +1996,13 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	}
 
 	// Passkey auth check for pinned wings
-	if len(allowedKeys) > 0 && wingCfg.Pinned && inner.Type != "passkey.auth" && inner.Type != "pins.add" {
+	if wingCfg.Pinned && inner.Type != "passkey.auth" && inner.Type != "pins.add" {
+		if len(allowedKeys) == 0 {
+			tunnelRespond(gcm, req.RequestID, map[string]string{
+				"error": "wing is locked with no authorized users — add yourself with: wt wing pin --user-id <your-user-id>",
+			}, write)
+			return
+		}
 		// Fast path: relay-provided user_id matches a pin → authorized
 		authorized := false
 		if req.SenderUserID != "" {
