@@ -1795,8 +1795,15 @@ func handleSessionsHistory(cfg *config.Config, req ws.SessionsHistory, write ws.
 		}
 
 		agent, cwd := readEggMeta(dir)
+		hasAudit := false
+		if _, err := os.Stat(filepath.Join(dir, "audit.pty.gz")); err == nil {
+			hasAudit = true
+		}
+		if agent == "" && !hasAudit {
+			continue // no meta and no audit, skip
+		}
 		if agent == "" {
-			continue // no meta, skip
+			agent = "unknown"
 		}
 
 		info := ws.PastSessionInfo{
@@ -1810,10 +1817,7 @@ func handleSessionsHistory(cfg *config.Config, req ws.SessionsHistory, write ws.
 			info.StartedAt = stat.ModTime().Unix()
 		}
 
-		// Check for audit recording
-		if _, err := os.Stat(filepath.Join(dir, "audit.pty.gz")); err == nil {
-			info.Audit = true
-		}
+		info.Audit = hasAudit
 
 		dead = append(dead, info)
 	}

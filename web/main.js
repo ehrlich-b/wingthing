@@ -553,7 +553,7 @@ function rebuildAgentLists() {
             if (!seenAgents[a]) { seenAgents[a] = true; availableAgents.push({ agent: a, wingId: w.id }); }
         });
         (w.projects || []).forEach(function(p) {
-            allProjects.push({ name: p.name, path: p.path, wingId: w.id, wingId: w.wing_id });
+            allProjects.push({ name: p.name, path: p.path, wingId: w.id });
         });
     });
 }
