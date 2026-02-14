@@ -37,7 +37,7 @@ func setupAuthzServer(t *testing.T) (*Server, *ConnectedWing, string, string, st
 		UserID:   ownerID,
 		WingID:   "wing-stable-1",
 		Hostname: "test-host",
-		OrgID:    "test-org",
+		OrgID:    "org-1",
 	}
 	s.Wings.Add(wing)
 
@@ -264,7 +264,7 @@ func TestAuthzOrgWingNotifications(t *testing.T) {
 		UserID:   "owner-1",
 		WingID:   "wing-1",
 		Hostname: "host",
-		OrgID:    "test-org",
+		OrgID:    "org-1",
 	}
 	s.Wings.Add(wing)
 

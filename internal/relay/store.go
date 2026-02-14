@@ -582,6 +582,53 @@ func (s *RelayStore) GetOrgByID(id string) (*Org, error) {
 	return &o, nil
 }
 
+// ResolveOrg resolves an org reference (ID or slug) for a specific user.
+// It tries ID first, then slug. If multiple orgs match the slug, it returns
+// an error listing the ambiguous matches.
+func (s *RelayStore) ResolveOrg(ref, userID string) (*Org, error) {
+	// Try by ID first
+	org, err := s.GetOrgByID(ref)
+	if err != nil {
+		return nil, err
+	}
+	if org != nil {
+		return org, nil
+	}
+
+	// Try by slug — find all orgs with this slug that the user belongs to
+	rows, err := s.db.Query(
+		`SELECT o.id, o.name, o.slug, o.owner_user_id, o.max_seats, o.created_at
+		 FROM orgs o JOIN org_members m ON o.id = m.org_id
+		 WHERE o.slug = ? AND m.user_id = ?`, ref, userID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve org: %w", err)
+	}
+	defer rows.Close()
+
+	var matches []*Org
+	for rows.Next() {
+		var o Org
+		if err := rows.Scan(&o.ID, &o.Name, &o.Slug, &o.OwnerUserID, &o.MaxSeats, &o.CreatedAt); err != nil {
+			return nil, fmt.Errorf("resolve org scan: %w", err)
+		}
+		matches = append(matches, &o)
+	}
+
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+
+	// Ambiguous — build helpful error
+	msg := fmt.Sprintf("ambiguous org %q, did you mean:", ref)
+	for _, m := range matches {
+		msg += fmt.Sprintf("\n  %s: %s", m.Name, m.ID)
+	}
+	return nil, fmt.Errorf("%s", msg)
+}
+
 // ListOrgsForUser returns all orgs a user belongs to.
 func (s *RelayStore) ListOrgsForUser(userID string) ([]*Org, error) {
 	rows, err := s.db.Query(

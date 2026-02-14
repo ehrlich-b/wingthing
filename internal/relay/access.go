@@ -14,8 +14,7 @@ func (s *Server) canAccessWing(userID string, wing *ConnectedWing) bool {
 
 	// Org mode: check membership (requires store, edge nodes may not have it)
 	if wing.OrgID != "" && s.Store != nil {
-		org, _ := s.Store.GetOrgBySlug(wing.OrgID)
-		if org != nil && s.Store.IsOrgMember(org.ID, userID) {
+		if s.Store.IsOrgMember(wing.OrgID, userID) {
 			return true
 		}
 	}
@@ -64,11 +63,8 @@ func (s *Server) isWingOwner(userID string, wing *ConnectedWing) bool {
 		return true
 	}
 	if wing.OrgID != "" && s.Store != nil {
-		org, _ := s.Store.GetOrgBySlug(wing.OrgID)
-		if org != nil {
-			role := s.Store.GetOrgMemberRole(org.ID, userID)
-			return role == "owner" || role == "admin"
-		}
+		role := s.Store.GetOrgMemberRole(wing.OrgID, userID)
+		return role == "owner" || role == "admin"
 	}
 	return false
 }

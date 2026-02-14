@@ -87,7 +87,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 		if wing.OrgID == "" || s.Store == nil {
 			return
 		}
-		org, _ := s.Store.GetOrgBySlug(wing.OrgID)
+		org, _ := s.Store.GetOrgByID(wing.OrgID)
 		if org == nil {
 			return
 		}

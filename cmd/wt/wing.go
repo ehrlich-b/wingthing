@@ -389,7 +389,7 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&foregroundFlag, "foreground", false, "run in foreground instead of daemonizing")
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp/wt-pty-<session>.bin for each egg")
 	cmd.Flags().StringVar(&eggConfigFlag, "egg-config", "", "path to egg.yaml for wing-level sandbox defaults")
-	cmd.Flags().StringVar(&orgFlag, "org", "", "org slug — share this wing with org members")
+	cmd.Flags().StringVar(&orgFlag, "org", "", "org name or ID — share this wing with org members")
 	cmd.Flags().StringVar(&allowFlag, "allow", "", "comma-separated email allow list for wing access")
 	cmd.Flags().StringVar(&rootFlag, "root", "", "constrain wing to this directory tree")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")

@@ -428,32 +428,42 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		LastSeen:    time.Now(),
 	}
 
-	// Validate org membership if org slug specified
+	// Validate org membership if org specified (accepts slug or ID)
 	if wing.OrgID != "" {
 		if s.Store != nil {
-			// Login node: validate directly from DB
-			org, orgErr := s.Store.GetOrgBySlug(wing.OrgID)
-			if orgErr != nil || org == nil {
+			// Login node: resolve org reference (tries ID then slug)
+			org, orgErr := s.Store.ResolveOrg(wing.OrgID, userID)
+			if orgErr != nil {
+				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: orgErr.Error()}
+				data, _ := json.Marshal(errMsg)
+				conn.Write(ctx, websocket.MessageText, data)
+				return
+			}
+			if org == nil {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org not found: " + wing.OrgID}
 				data, _ := json.Marshal(errMsg)
 				conn.Write(ctx, websocket.MessageText, data)
 				return
 			}
+			// Store the resolved org ID (not the slug)
+			wing.OrgID = org.ID
 			role := s.Store.GetOrgMemberRole(org.ID, userID)
 			if role != "owner" && role != "admin" {
-				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "not authorized to register wing for org: " + wing.OrgID}
+				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "not authorized to register wing for org: " + org.Name}
 				data, _ := json.Marshal(errMsg)
 				conn.Write(ctx, websocket.MessageText, data)
 				return
 			}
 		} else if s.Config.LoginNodeAddr != "" {
 			// Edge node: proxy org check to login
-			if !s.validateOrgViaLogin(ctx, wing.OrgID, userID) {
+			resolvedID, ok := s.validateOrgViaLogin(ctx, wing.OrgID, userID)
+			if !ok {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org validation failed for: " + wing.OrgID}
 				data, _ := json.Marshal(errMsg)
 				conn.Write(ctx, websocket.MessageText, data)
 				return
 			}
+			wing.OrgID = resolvedID
 		}
 	}
 
@@ -572,26 +582,28 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // validateOrgViaLogin proxies org membership validation to the login node.
-func (s *Server) validateOrgViaLogin(ctx context.Context, orgSlug, userID string) bool {
+// Returns (resolvedOrgID, ok). The resolved ID is always a UUID.
+func (s *Server) validateOrgViaLogin(ctx context.Context, orgRef, userID string) (string, bool) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		s.Config.LoginNodeAddr+"/internal/org-check/"+orgSlug+"/"+userID, nil)
+		s.Config.LoginNodeAddr+"/internal/org-check/"+orgRef+"/"+userID, nil)
 	if err != nil {
-		return false
+		return "", false
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false
+		return "", false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false
+		return "", false
 	}
 	var result struct {
-		OK bool `json:"ok"`
+		OK    bool   `json:"ok"`
+		OrgID string `json:"org_id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return false
+		return "", false
 	}
-	return result.OK
+	return result.OrgID, result.OK
 }

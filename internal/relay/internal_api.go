@@ -213,15 +213,15 @@ func (s *Server) handleInternalOrgCheck(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	slug := r.PathValue("slug")
+	ref := r.PathValue("slug")
 	userID := r.PathValue("userID")
 
-	org, err := s.Store.GetOrgBySlug(slug)
+	org, err := s.Store.ResolveOrg(ref, userID)
 	if err != nil || org == nil {
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": false})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false})
 		return
 	}
 	role := s.Store.GetOrgMemberRole(org.ID, userID)
 	ok := role == "owner" || role == "admin"
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": ok})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "org_id": org.ID})
 }

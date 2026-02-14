@@ -58,10 +58,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	// Determine org ID for label resolution
 	resolvedOrgID := ""
 	if len(wings) > 0 && wings[0].OrgID != "" {
-		org, _ := s.Store.GetOrgBySlug(wings[0].OrgID)
-		if org != nil {
-			resolvedOrgID = org.ID
-		}
+		resolvedOrgID = wings[0].OrgID
 	}
 	wingLabels := s.Store.ResolveLabels(wingIDs, user.ID, resolvedOrgID)
 
@@ -654,12 +651,9 @@ func (s *Server) wingLabelScope(userID, wingID string) (orgID string, isOwner bo
 			}
 			// Check org ownership for peer wings
 			if pw.WingInfo.OrgID != "" && s.Store != nil {
-				org, _ := s.Store.GetOrgBySlug(pw.WingInfo.OrgID)
-				if org != nil {
-					role := s.Store.GetOrgMemberRole(org.ID, userID)
-					if role == "owner" || role == "admin" {
-						return pw.WingInfo.OrgID, true
-					}
+				role := s.Store.GetOrgMemberRole(pw.WingInfo.OrgID, userID)
+				if role == "owner" || role == "admin" {
+					return pw.WingInfo.OrgID, true
 				}
 			}
 		}
@@ -694,11 +688,8 @@ func (s *Server) handleWingLabel(w http.ResponseWriter, r *http.Request) {
 	scopeType := "user"
 	scopeID := user.ID
 	if orgID != "" {
-		org, _ := s.Store.GetOrgBySlug(orgID)
-		if org != nil {
-			scopeType = "org"
-			scopeID = org.ID
-		}
+		scopeType = "org"
+		scopeID = orgID
 	}
 
 	if err := s.Store.SetLabel(wingID, scopeType, scopeID, body.Label); err != nil {
@@ -726,11 +717,8 @@ func (s *Server) handleDeleteWingLabel(w http.ResponseWriter, r *http.Request) {
 	scopeType := "user"
 	scopeID := user.ID
 	if orgID != "" {
-		org, _ := s.Store.GetOrgBySlug(orgID)
-		if org != nil {
-			scopeType = "org"
-			scopeID = org.ID
-		}
+		scopeType = "org"
+		scopeID = orgID
 	}
 
 	s.Store.DeleteLabel(wingID, scopeType, scopeID)
