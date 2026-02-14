@@ -219,19 +219,21 @@ func (s *Server) handlePasskeyList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type credJSON struct {
-		ID        string `json:"id"`
-		PublicKey string `json:"public_key"`
-		Label     string `json:"label"`
-		CreatedAt string `json:"created_at"`
+		ID           string `json:"id"`
+		CredentialID string `json:"credential_id"`
+		PublicKey    string `json:"public_key"`
+		Label        string `json:"label"`
+		CreatedAt    string `json:"created_at"`
 	}
 
 	var result []credJSON
 	for _, c := range creds {
 		result = append(result, credJSON{
-			ID:        c.ID,
-			PublicKey: base64.StdEncoding.EncodeToString(c.PublicKey),
-			Label:     c.Label,
-			CreatedAt: c.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:           c.ID,
+			CredentialID: base64.RawURLEncoding.EncodeToString(c.CredentialID),
+			PublicKey:    base64.StdEncoding.EncodeToString(c.PublicKey),
+			Label:        c.Label,
+			CreatedAt:    c.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}
 

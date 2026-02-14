@@ -307,15 +307,31 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
 
 async function handleTunnelPasskey(wingId, wingPubKey) {
     try {
+        // Fetch user's registered credential IDs so password managers (LastPass etc) trigger
+        var allowCredentials = [];
+        try {
+            var resp = await fetch('/api/app/passkey');
+            if (resp.ok) {
+                var creds = await resp.json();
+                allowCredentials = creds.filter(function(c) { return c.credential_id; }).map(function(c) {
+                    return { type: 'public-key', id: b64urlToBytes(c.credential_id) };
+                });
+            }
+        } catch (e) {}
+
         var challenge = crypto.getRandomValues(new Uint8Array(32));
-        var credential = await navigator.credentials.get({
+        var getOpts = {
             publicKey: {
                 challenge: challenge,
                 rpId: location.hostname,
                 userVerification: 'preferred',
                 timeout: 60000
             }
-        });
+        };
+        if (allowCredentials.length > 0) {
+            getOpts.publicKey.allowCredentials = allowCredentials;
+        }
+        var credential = await navigator.credentials.get(getOpts);
 
         var key = await deriveE2ETunnelKey(wingPubKey);
         var requestId = crypto.randomUUID();
