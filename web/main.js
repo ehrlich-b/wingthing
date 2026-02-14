@@ -426,6 +426,10 @@ function applyWingEvent(ev) {
         wingsData.forEach(function(w) {
             if (w.machine_id === ev.machine_id) {
                 w.online = true;
+                // Only clear updating flag if version actually changed
+                if (w.updating_at && ev.version && ev.version !== w.version) {
+                    delete w.updating_at;
+                }
                 w.id = ev.wing_id;
                 w.hostname = ev.hostname || w.hostname;
                 w.agents = ev.agents || w.agents;
@@ -1226,16 +1230,34 @@ function renderWingDetailPage(machineId) {
     }
 
     var w = wingsData.find(function(w) { return w.machine_id === machineId; });
-    if (!w) {
-        wingDetailContent.innerHTML = '<div class="wd-page"><div class="wd-header"><a class="wd-back" id="wd-back">back</a><span class="text-dim">wing not found</span></div></div>';
+
+    // Check if wing is in the process of updating (60s grace period)
+    var isUpdating = w && w.updating_at && (Date.now() - w.updating_at < 60000);
+    if (!isUpdating && w && w.updating_at) {
+        // Grace period expired — clear stale flag
+        delete w.updating_at;
+    }
+
+    if (!w || isUpdating) {
+        var msg = isUpdating
+            ? '<span class="text-dim">updating... wing will reconnect shortly</span>'
+            : '<span class="text-dim">wing not found</span>';
+        wingDetailContent.innerHTML = '<div class="wd-page"><div class="wd-header"><a class="wd-back" id="wd-back">back</a>' + msg + '</div></div>';
         document.getElementById('wd-back').addEventListener('click', function() { showHome(); });
+        if (isUpdating) {
+            setTimeout(function() {
+                if (activeView === 'wing-detail' && currentWingMachineId === machineId) {
+                    renderWingDetailPage(machineId);
+                }
+            }, 3000);
+        }
         return;
     }
 
     var name = wingDisplayName(w);
     var isOnline = w.online !== false;
     var ver = w.version || '';
-    var updateAvailable = latestVersion && ver && semverCompare(latestVersion, ver) > 0;
+    var updateAvailable = !w.updating_at && latestVersion && ver && semverCompare(latestVersion, ver) > 0;
 
     // Public key
     var pubKeyHtml = '';
@@ -1362,7 +1384,10 @@ function renderWingDetailPage(machineId) {
         updateBtn.addEventListener('click', function() {
             updateBtn.innerHTML = 'updating...';
             fetch('/api/app/wings/' + w.id + '/update', { method: 'POST' })
-                .then(function() { updateBtn.innerHTML = 'update sent - wing will restart'; updateBtn.classList.add('wd-update-sent'); })
+                .then(function() {
+                    w.updating_at = Date.now();
+                    renderWingDetailPage(machineId);
+                })
                 .catch(function() { updateBtn.innerHTML = 'update failed'; });
         });
     }
