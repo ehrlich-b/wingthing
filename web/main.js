@@ -1123,11 +1123,11 @@ function renderOrgDetail(org) {
     if (!org.has_subscription) {
         html += '<div class="detail-row"><span class="detail-val text-dim">no active plan</span></div>' +
             '<div class="ac-form-row">' +
-                '<input type="number" class="ac-input ac-input-sm" id="org-seats-input-' + oid + '" min="1" value="1">' +
+                '<input type="number" class="ac-input ac-input-sm" id="org-seats-input-' + oid + '" min="1" value="5">' +
                 '<span class="ac-hint">seats</span>' +
                 '<div class="ac-plan-toggle" id="org-plan-toggle-' + oid + '">' +
-                    '<button class="ac-plan-opt" data-plan="team_yearly">yearly</button>' +
-                    '<button class="ac-plan-opt active" data-plan="team_monthly">monthly</button>' +
+                    '<button class="ac-plan-opt active" data-plan="team_yearly">yearly</button>' +
+                    '<button class="ac-plan-opt" data-plan="team_monthly">monthly</button>' +
                 '</div>' +
                 '<button class="btn-sm btn-accent org-give-seats-btn" data-oid="' + oid + '">give me seats</button>' +
             '</div>' +
