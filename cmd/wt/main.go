@@ -80,6 +80,7 @@ func startCmd() *cobra.Command {
 	var orgFlag string
 	var allowFlags []string
 	var rootFlag string
+	var localFlag bool
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the wing daemon (alias for wt wing start)",
@@ -104,6 +105,9 @@ func startCmd() *cobra.Command {
 			if auditFlag {
 				childArgs = append(childArgs, "--audit")
 			}
+			if localFlag {
+				childArgs = append(childArgs, "--local")
+			}
 			child := exec.Command(exe, childArgs...)
 			child.Stdout = os.Stdout
 			child.Stderr = os.Stderr
@@ -115,6 +119,7 @@ func startCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&allowFlags, "allow", nil, "ephemeral passkey public key(s) for this session")
 	cmd.Flags().StringVar(&rootFlag, "root", "", "constrain wing to this directory tree")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
+	cmd.Flags().BoolVar(&localFlag, "local", false, "connect to localhost:8080 (for self-hosted wt serve)")
 	return cmd
 }
 

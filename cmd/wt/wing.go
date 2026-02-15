@@ -315,6 +315,7 @@ func wingStartCmd() *cobra.Command {
 	var allowFlags []string
 	var rootFlag string
 	var auditFlag bool
+	var localFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -323,7 +324,7 @@ func wingStartCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Foreground mode: run directly
 			if foregroundFlag {
-				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, rootFlag, debugFlag, auditFlag)
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, rootFlag, debugFlag, auditFlag, localFlag)
 			}
 
 			// Daemon mode (default): re-exec detached, write PID file, return
@@ -366,6 +367,9 @@ func wingStartCmd() *cobra.Command {
 			if auditFlag {
 				childArgs = append(childArgs, "--audit")
 			}
+			if localFlag {
+				childArgs = append(childArgs, "--local")
+			}
 
 			rotateLog(wingLogPath())
 			logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -392,7 +396,11 @@ func wingStartCmd() *cobra.Command {
 			fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 			fmt.Printf("  log: %s\n", wingLogPath())
 			fmt.Println()
-			fmt.Println("open https://app.wingthing.ai to start a terminal")
+			if localFlag {
+				fmt.Println("open http://localhost:8080 to start a terminal")
+			} else {
+				fmt.Println("open https://app.wingthing.ai to start a terminal")
+			}
 			return nil
 		},
 	}
@@ -407,11 +415,12 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&allowFlags, "allow", nil, "ephemeral passkey public key(s) for this session")
 	cmd.Flags().StringVar(&rootFlag, "root", "", "constrain wing to this directory tree")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
+	cmd.Flags().BoolVar(&localFlag, "local", false, "connect to localhost:8080 (for self-hosted wt serve)")
 
 	return cmd
 }
 
-func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, rootFlag string, debug, audit bool) error {
+func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, rootFlag string, debug, audit, local bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -496,6 +505,9 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 
 	// Resolve roost URL
 	roostURL := roostFlag
+	if local && roostURL == "" {
+		roostURL = "http://localhost:8080"
+	}
 	if roostURL == "" {
 		roostURL = cfg.RoostURL
 	}
@@ -511,6 +523,9 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	ts := auth.NewTokenStore(cfg.Dir)
 	tok, err := ts.Load()
 	if err != nil || !ts.IsValid(tok) {
+		if local {
+			return fmt.Errorf("no device token — run: wt serve --local")
+		}
 		return fmt.Errorf("not logged in — run: wt login")
 	}
 
@@ -575,7 +590,11 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		fmt.Printf("  access control enabled: %d pinned + %d ephemeral keys\n", pinnedCount, ephemeralCount)
 	}
 	fmt.Println()
-	fmt.Println("open https://app.wingthing.ai to start a terminal")
+	if local || strings.Contains(roostURL, "localhost") {
+		fmt.Println("open http://localhost:8080 to start a terminal")
+	} else {
+		fmt.Println("open https://app.wingthing.ai to start a terminal")
+	}
 
 	// Reap dead egg directories on startup
 	reapDeadEggs(cfg)

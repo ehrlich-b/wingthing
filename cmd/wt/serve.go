@@ -139,6 +139,13 @@ func serveCmd() *cobra.Command {
 				srv.DevMode = true
 				fmt.Println("dev mode: templates reload, auto-claim login")
 			}
+			// Auto-enable local mode when no auth providers are configured
+			if !localFlag && !isEdge && srvCfg.GitHubClientID == "" &&
+				srvCfg.GoogleClientID == "" && srvCfg.SMTPHost == "" {
+				localFlag = true
+				fmt.Println("no auth providers configured — enabling local mode")
+			}
+
 			if localFlag {
 				if isEdge {
 					return fmt.Errorf("--local is not compatible with edge mode")
@@ -156,7 +163,7 @@ func serveCmd() *cobra.Command {
 					Token:    token,
 					DeviceID: "local",
 				})
-				fmt.Println("local mode: auth bypassed, device token written")
+				fmt.Println("local mode: single-user, no login required")
 			}
 
 			httpSrv := &http.Server{
@@ -186,6 +193,11 @@ func serveCmd() *cobra.Command {
 			errCh := make(chan error, 1)
 			go func() {
 				fmt.Printf("wt serve listening on %s\n", addrFlag)
+				if localFlag {
+					fmt.Println()
+					fmt.Println("next: wt start --local")
+					fmt.Println("then: open http://localhost:8080")
+				}
 				errCh <- httpSrv.ListenAndServe()
 			}()
 
