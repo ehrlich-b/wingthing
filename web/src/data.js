@@ -93,13 +93,24 @@ export function saveWingCache() {
     setCachedWings(S.wingsData.filter(function(w) {
         return w.tunnel_error !== 'not_allowed';
     }).map(function(w) {
-        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform };
+        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform, agents: w.agents };
     }));
 }
 
 // Tunnel probe — populates wing metadata or sets tunnel_error
+// Deduplicate: if a probe is already in-flight for this wing, return the same promise
 
-export async function probeWing(w) {
+var _probeInflight = {};
+
+export function probeWing(w) {
+    if (_probeInflight[w.wing_id]) return _probeInflight[w.wing_id];
+    _probeInflight[w.wing_id] = _probeWingInner(w).finally(function() {
+        delete _probeInflight[w.wing_id];
+    });
+    return _probeInflight[w.wing_id];
+}
+
+async function _probeWingInner(w) {
     try {
         var data = await sendTunnelRequest(w.wing_id, { type: 'wing.info' }, { skipPasskey: true });
         w.hostname = data.hostname || w.hostname;
@@ -176,7 +187,15 @@ export function mergeWingSessions(wingId, remoteSessions) {
     saveSessionCache();
 }
 
+var _loadHomeLock = false;
+
 export async function loadHome() {
+    if (_loadHomeLock) return;
+    _loadHomeLock = true;
+    try { await _loadHomeInner(); } finally { _loadHomeLock = false; }
+}
+
+async function _loadHomeInner() {
     // Step 1: Hydrate wings from cache if empty (online=undefined for gray dots)
     if (S.wingsData.length === 0) {
         var cached = getCachedWings();
@@ -238,7 +257,7 @@ export async function loadHome() {
                     wing_label: c.wing_label,
                     hostname: c.hostname,
                     platform: c.platform,
-                    agents: [],
+                    agents: c.agents || [],
                     projects: [],
                 });
                 added = true;

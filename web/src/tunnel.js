@@ -204,9 +204,24 @@ export function tunnelCloseWing(wingId) {
     }
 }
 
+// --- Rate Limiter (token bucket: 5 req/sec, burst 5) ---
+
+var _bucket = { tokens: 5, max: 5, rate: 5, last: Date.now() };
+
+function acquireToken() {
+    var now = Date.now();
+    _bucket.tokens = Math.min(_bucket.max, _bucket.tokens + (now - _bucket.last) / 1000 * _bucket.rate);
+    _bucket.last = now;
+    if (_bucket.tokens >= 1) { _bucket.tokens--; return Promise.resolve(); }
+    var waitMs = (1 - _bucket.tokens) / _bucket.rate * 1000;
+    _bucket.tokens = 0;
+    return new Promise(function(resolve) { setTimeout(resolve, waitMs); });
+}
+
 // --- Public API ---
 
 export async function sendTunnelRequest(wingId, innerMsg, opts) {
+    await acquireToken();
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
 
