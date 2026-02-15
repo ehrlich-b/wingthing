@@ -240,8 +240,9 @@ func (s *Server) handleWingLocate(w http.ResponseWriter, r *http.Request) {
 // handleWingSync receives the full wing list from an edge for reconciliation.
 func (s *Server) handleWingSync(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MachineID string `json:"machine_id"`
-		Wings     []struct {
+		MachineID  string `json:"machine_id"`
+		SnapshotAt int64  `json:"snapshot_at"`
+		Wings      []struct {
 			WingID       string `json:"wing_id"`
 			UserID       string `json:"user_id"`
 			OrgID        string `json:"org_id"`
@@ -264,7 +265,9 @@ func (s *Server) handleWingSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.WingMap != nil {
+		wingIDs := make(map[string]bool, len(req.Wings))
 		for _, rw := range req.Wings {
+			wingIDs[rw.WingID] = true
 			s.WingMap.Register(rw.WingID, WingLocation{
 				MachineID:    req.MachineID,
 				UserID:       rw.UserID,
@@ -274,7 +277,8 @@ func (s *Server) handleWingSync(w http.ResponseWriter, r *http.Request) {
 				AllowedCount: rw.AllowedCount,
 			})
 		}
-		s.WingMap.Reconcile(req.MachineID)
+		snapshotAt := time.Unix(req.SnapshotAt, 0)
+		s.WingMap.ReconcileFull(req.MachineID, wingIDs, snapshotAt)
 	}
 
 	var banned []string

@@ -18,6 +18,7 @@ type WingLocation struct {
 	PublicKey    string
 	Locked       bool
 	AllowedCount int
+	RegisteredAt time.Time
 }
 
 // WingMap is the global registry of all wings, stored on the login node.
@@ -35,6 +36,7 @@ func NewWingMap() *WingMap {
 }
 
 func (m *WingMap) Register(wingID string, loc WingLocation) {
+	loc.RegisteredAt = time.Now()
 	m.mu.Lock()
 	m.wings[wingID] = loc
 	m.edges[loc.MachineID] = time.Now()
@@ -54,16 +56,17 @@ func (m *WingMap) Locate(wingID string) (WingLocation, bool) {
 	return loc, ok
 }
 
-// Reconcile updates the edge heartbeat timestamp. Wing additions come from
-// Register calls in handleWingSync; removals come from Deregister (on
-// wing.offline) or EdgeIDs expiry (edge crash → 30s no-sync). We don't
-// delete wings here because the sync snapshot races with registerWingWithLogin:
-// a wing can connect and register between when the edge computes its wing list
-// and when the sync arrives at login, causing Reconcile to nuke a fresh entry.
-func (m *WingMap) Reconcile(machineID string) {
+// ReconcileFull replaces wing state for a machine using the edge's authoritative snapshot.
+// Wings registered AFTER snapshotAt are preserved (arrived via real-time event after snapshot).
+func (m *WingMap) ReconcileFull(machineID string, activeWings map[string]bool, snapshotAt time.Time) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.edges[machineID] = time.Now()
-	m.mu.Unlock()
+	for wid, loc := range m.wings {
+		if loc.MachineID == machineID && !activeWings[wid] && !loc.RegisteredAt.After(snapshotAt) {
+			delete(m.wings, wid)
+		}
+	}
 }
 
 // EdgeIDs returns all known edge machine IDs, expiring dead edges (30s timeout).
@@ -204,6 +207,7 @@ func (s *Server) StartEdgeSync(ctx context.Context, loginAddr string, interval t
 }
 
 func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
+	snapshotAt := time.Now()
 	local := s.Wings.All()
 	type syncWing struct {
 		WingID       string `json:"wing_id"`
@@ -238,9 +242,10 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 	}
 
 	body, err := json.Marshal(map[string]any{
-		"machine_id": s.Config.FlyMachineID,
-		"wings":      wings,
-		"bandwidth":  bw,
+		"machine_id":  s.Config.FlyMachineID,
+		"snapshot_at": snapshotAt.Unix(),
+		"wings":       wings,
+		"bandwidth":   bw,
 	})
 	if err != nil {
 		requeue()

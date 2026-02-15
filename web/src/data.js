@@ -166,40 +166,49 @@ export async function loadHome() {
         if (w.latest_version) S.latestVersion = w.latest_version;
     });
 
-    // Probe ALL online wings before rendering
-    var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; });
-    await Promise.all(onlineWings.map(probeWing));
-
-    setCachedWings(S.wingsData.filter(function(w) {
-        return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
-    }).map(function(w) {
-        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
-    }));
-
+    // Render immediately with basic wing data before probing
     rebuildAgentLists();
     updateHeaderStatus();
-
-    // Fetch sessions from probed wings (skip passkey_required/not_allowed/unreachable)
-    var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key && !w.tunnel_error; });
-    var sessionPromises = onlineWings.map(function(w) { return fetchWingSessions(w.wing_id); });
-    var results = await Promise.all(sessionPromises);
-    var allSessions = [];
-    results.forEach(function(r) { allSessions = allSessions.concat(r); });
-    mergeWingSessions(allSessions);
-
-    S.sessionsData.forEach(function(s) {
-        if (s.needs_attention && s.id !== S.ptySessionId) {
-            setNotification(s.id);
-        } else if (!s.needs_attention && S.sessionNotifications[s.id]) {
-            clearNotification(s.id);
-        }
-    });
-
     renderSidebar();
     if (S.activeView === 'home') renderDashboard();
     if (S.activeView === 'wing-detail' && S.currentWingId) renderWingDetailPage(S.currentWingId);
 
-    if (DOM.commandPalette.style.display !== 'none') {
-        updatePaletteState(true);
-    }
+    // Probe online wings in background, re-render as probes complete
+    var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; });
+    onlineWings.forEach(function(w) {
+        probeWing(w).then(function() {
+            setCachedWings(S.wingsData.filter(function(w) {
+                return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
+            }).map(function(w) {
+                return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
+            }));
+            rebuildAgentLists();
+            renderSidebar();
+            if (S.activeView === 'home') renderDashboard();
+            if (S.activeView === 'wing-detail' && S.currentWingId) renderWingDetailPage(S.currentWingId);
+            if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
+
+            if (!w.tunnel_error) {
+                fetchWingSessions(w.wing_id).then(function(sessions) {
+                    if (sessions.length > 0) {
+                        var otherSessions = S.sessionsData.filter(function(s) {
+                            return s.wing_id !== sessions[0].wing_id;
+                        });
+                        mergeWingSessions(otherSessions.concat(sessions));
+
+                        S.sessionsData.forEach(function(s) {
+                            if (s.needs_attention && s.id !== S.ptySessionId) {
+                                setNotification(s.id);
+                            } else if (!s.needs_attention && S.sessionNotifications[s.id]) {
+                                clearNotification(s.id);
+                            }
+                        });
+
+                        renderSidebar();
+                        if (S.activeView === 'home') renderDashboard();
+                    }
+                }).catch(function() {});
+            }
+        });
+    });
 }

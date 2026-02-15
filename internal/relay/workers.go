@@ -526,16 +526,12 @@ func (s *Server) validateOrgViaLogin(ctx context.Context, orgRef, userID string)
 // Edge: register/deregister with login wingMap, forward event to login.
 // Login/single-node: update wingMap, deliver locally, broadcast to edges.
 func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
-	// Edge: register/deregister with login (synchronous so WingMap is updated
+	// Edge: register with login (synchronous so WingMap is updated
 	// before browsers are notified), then forward event.
+	// wing.offline: NO deregister. The 5s sync handles cleanup.
 	if s.IsEdge() && s.Config.LoginNodeAddr != "" {
-		switch eventType {
-		case "wing.online", "wing.config":
+		if eventType == "wing.online" || eventType == "wing.config" {
 			s.registerWingWithLogin(wing)
-		case "wing.offline":
-			if s.findAnyWingByWingID(wing.WingID) == nil {
-				s.deregisterWingWithLogin(wing.WingID)
-			}
 		}
 		go s.forwardWingEvent(eventType, wing)
 		return

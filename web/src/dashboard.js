@@ -103,17 +103,34 @@ function applyWingEvent(ev) {
             }
         });
         tunnelCloseWing(ev.wing_id);
-        // Clear sessions from offline wing
-        S.sessionsData = S.sessionsData.filter(function(s) { return s.wing_id !== ev.wing_id; });
+        // DON'T clear sessions — wing might reconnect momentarily
     } else if (ev.type === 'session.attention' && ev.session_id) {
         setNotification(ev.session_id);
         renderSidebar();
         return;
     }
 
+    // Render immediately with current wing data
+    setCachedWings(S.wingsData.filter(function(w) {
+        return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
+    }).map(function(w) {
+        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
+    }));
+    rebuildAgentLists();
     updateHeaderStatus();
+    if (S.activeView === 'home') {
+        if (needsFullRender) {
+            renderDashboard();
+        } else {
+            updateWingCardStatus(ev.wing_id);
+        }
+        pingWingDot(ev.wing_id);
+    } else if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id) {
+        renderWingDetailPage(S.currentWingId);
+    }
+    if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
 
-    // wing.online: probe first, then render
+    // Probe in background, re-render when done
     var evWing = S.wingsData.find(function(w) { return w.wing_id === ev.wing_id; });
     if ((ev.type === 'wing.online' || ev.type === 'wing.config') && evWing && evWing.public_key) {
         tunnelCloseWing(ev.wing_id);
@@ -142,25 +159,6 @@ function applyWingEvent(ev) {
                 }).catch(function() {});
             }
         });
-    } else {
-        setCachedWings(S.wingsData.filter(function(w) {
-            return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
-        }).map(function(w) {
-            return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
-        }));
-        // wing.offline or other: render immediately
-        rebuildAgentLists();
-        if (S.activeView === 'home') {
-            if (needsFullRender) {
-                renderDashboard();
-            } else {
-                updateWingCardStatus(ev.wing_id);
-            }
-            pingWingDot(ev.wing_id);
-        } else if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id) {
-            renderWingDetailPage(S.currentWingId);
-        }
-        if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
     }
 }
 
