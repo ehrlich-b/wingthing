@@ -67,10 +67,12 @@ export function loadTunnelAuthTokens() {
 
 var pool = {
     maxOpen: 4,
+    maxQueue: 8,
     idleMs: 3000,
     conns: {},       // wingId → { ws, pending: Map<rid, handler>, idleTimer }
     openCount: 0,
-    waitQueue: []    // [{ wingId, doSend: fn(conn), resolve, reject }]
+    waitQueue: [],   // [{ wingId, doSend: fn(conn), resolve, reject }]
+    backoff: {},     // wingId → { until: timestamp, delay: ms }
 };
 
 function poolWsUrl(wingId) {
@@ -93,11 +95,19 @@ function acquireConn(wingId) {
             conn._waiters.push({ resolve: resolve, reject: reject });
         });
     }
+    // Per-wing backoff after failure
+    var bo = pool.backoff[wingId];
+    if (bo && Date.now() < bo.until) {
+        return Promise.reject(new Error('tunnel ws backoff'));
+    }
     // Need a new connection
     if (pool.openCount < pool.maxOpen) {
         return openConn(wingId);
     }
-    // At capacity — queue
+    // At capacity — queue (with cap)
+    if (pool.waitQueue.length >= pool.maxQueue) {
+        return Promise.reject(new Error('tunnel queue full'));
+    }
     return new Promise(function(resolve, reject) {
         pool.waitQueue.push({ wingId: wingId, resolve: resolve, reject: reject });
     });
@@ -111,6 +121,8 @@ function openConn(wingId) {
 
     return new Promise(function(resolve, reject) {
         ws.onopen = function() {
+            // Connection succeeded — clear backoff
+            delete pool.backoff[wingId];
             resolve(conn);
             // Wake anyone waiting for this wing
             var waiters = conn._waiters || [];
@@ -118,6 +130,10 @@ function openConn(wingId) {
             waiters.forEach(function(w) { w.resolve(conn); });
         };
         ws.onerror = function() {
+            // Connection failed — set exponential backoff
+            var prev = pool.backoff[wingId];
+            var delay = prev ? Math.min(prev.delay * 2, 10000) : 1000;
+            pool.backoff[wingId] = { until: Date.now() + delay, delay: delay };
             // Reject all waiters
             var waiters = conn._waiters || [];
             conn._waiters = [];

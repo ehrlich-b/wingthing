@@ -94,7 +94,6 @@ function applyWingEvent(ev) {
                 needsFullRender = true;
             } else if (ev.public_key) {
                 // No cached name — probe first, add only after we get metadata
-                tunnelCloseWing(ev.wing_id);
                 probeWing(newWing).then(function() {
                     if (newWing.tunnel_error === 'not_allowed') return;
                     if (!wingDisplayName(newWing)) return;
@@ -166,7 +165,6 @@ function applyWingEvent(ev) {
     // Probe in background, re-render when done
     var evWing = S.wingsData.find(function(w) { return w.wing_id === ev.wing_id; });
     if ((ev.type === 'wing.online' || ev.type === 'wing.config') && evWing && evWing.public_key) {
-        tunnelCloseWing(ev.wing_id);
         probeWing(evWing).then(function() {
             saveWingCache();
             rebuildAgentLists();
