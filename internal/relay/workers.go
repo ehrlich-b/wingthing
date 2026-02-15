@@ -208,6 +208,18 @@ func (r *WingRegistry) FindByID(wingID string) *ConnectedWing {
 	return r.wings[wingID]
 }
 
+// FindByWingID searches for a wing by its persistent machine ID (WingID field).
+func (r *WingRegistry) FindByWingID(wingID string) *ConnectedWing {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, w := range r.wings {
+		if w.WingID == wingID {
+			return w
+		}
+	}
+	return nil
+}
+
 func (r *WingRegistry) Touch(wingID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

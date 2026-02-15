@@ -102,6 +102,8 @@ export async function probeWing(w) {
             w.tunnel_error = 'not_allowed';
             delete S.tunnelAuthTokens[w.wing_id];
             saveTunnelAuthTokens();
+            // Clear sessions from revoked wing
+            S.sessionsData = S.sessionsData.filter(function(s) { return s.wing_id !== w.wing_id; });
         } else if (msg.indexOf('passkey_required') !== -1) {
             w.tunnel_error = 'passkey_required';
             if (e.metadata) {

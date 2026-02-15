@@ -118,12 +118,20 @@ func (p *PeerDirectory) UpdateCh() <-chan struct{} {
 }
 
 // WaitForWing waits for a wing to appear locally or via sync.
+// wingID can be either a connection ID or a persistent machine ID (wing_id).
 func WaitForWing(ctx context.Context, local *WingRegistry, peers *PeerDirectory, wingID string, timeout time.Duration) (machineID string, found bool) {
+	// Check both connection ID and machine ID
 	if w := local.FindByID(wingID); w != nil {
+		return "", true
+	}
+	if w := local.FindByWingID(wingID); w != nil {
 		return "", true
 	}
 	if peers != nil {
 		if pw := peers.FindWing(wingID); pw != nil {
+			return pw.MachineID, true
+		}
+		if pw := peers.FindByWingID(wingID); pw != nil {
 			return pw.MachineID, true
 		}
 	}
@@ -148,8 +156,14 @@ func WaitForWing(ctx context.Context, local *WingRegistry, peers *PeerDirectory,
 			if w := local.FindByID(wingID); w != nil {
 				return "", true
 			}
+			if w := local.FindByWingID(wingID); w != nil {
+				return "", true
+			}
 		case <-peerCh:
 			if pw := peers.FindWing(wingID); pw != nil {
+				return pw.MachineID, true
+			}
+			if pw := peers.FindByWingID(wingID); pw != nil {
 				return pw.MachineID, true
 			}
 		}

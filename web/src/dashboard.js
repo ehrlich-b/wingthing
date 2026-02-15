@@ -103,6 +103,8 @@ function applyWingEvent(ev) {
             }
         });
         tunnelCloseWing(ev.wing_id);
+        // Clear sessions from offline wing
+        S.sessionsData = S.sessionsData.filter(function(s) { return s.wing_id !== ev.wing_id; });
     } else if (ev.type === 'session.attention' && ev.session_id) {
         setNotification(ev.session_id);
         renderSidebar();

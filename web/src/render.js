@@ -15,8 +15,18 @@ function wingNameById(wingId) {
     return wing ? wingDisplayName(wing) : '';
 }
 
+function isWingAccessible(wingId) {
+    if (!wingId) return false;
+    var w = S.wingsData.find(function(ww) { return ww.wing_id === wingId; });
+    return w && w.online !== false && !w.tunnel_error;
+}
+
 export function renderSidebar() {
-    var tabs = S.sessionsData.filter(function(s) { return (s.kind || 'terminal') !== 'chat'; }).map(function(s) {
+    var tabs = S.sessionsData.filter(function(s) {
+        if ((s.kind || 'terminal') === 'chat') return false;
+        if (s.id === S.ptySessionId) return true;
+        return isWingAccessible(s.wing_id);
+    }).map(function(s) {
         var name = projectName(s.cwd);
         var letter = name.charAt(0).toUpperCase();
         var isActive = (S.activeView === 'terminal' && s.id === S.ptySessionId);
@@ -1800,7 +1810,11 @@ export function renderDashboard() {
         DOM.wingStatusEl.innerHTML = '';
     }
 
-    var hasSessions = S.sessionsData.length > 0;
+    var visibleSessions = S.sessionsData.filter(function(s) {
+        if (s.id === S.ptySessionId) return true;
+        return isWingAccessible(s.wing_id);
+    });
+    var hasSessions = visibleSessions.length > 0;
     var hasWings = visibleWings.length > 0;
     DOM.emptyState.style.display = hasSessions ? 'none' : '';
     var noWingsEl = document.getElementById('empty-no-wings');
@@ -1814,7 +1828,7 @@ export function renderDashboard() {
     }
 
     var eggHtml = '<h3 class="section-label">eggs</h3><div class="egg-grid">';
-    eggHtml += S.sessionsData.map(function(s) {
+    eggHtml += visibleSessions.map(function(s) {
         var name = projectName(s.cwd);
         var isActive = s.status === 'active';
         var kind = s.kind || 'terminal';
