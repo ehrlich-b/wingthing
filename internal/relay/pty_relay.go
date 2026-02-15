@@ -309,7 +309,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			wing := s.findAnyWingByWingID(req.WingID)
-			if wing == nil {
+			if wing == nil || !s.canAccessWing(userID, wing, userOrgIDs) {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "wing not found"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue

@@ -632,7 +632,13 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		if auditLive.Load() {
 			eggCfg.Audit = true
 		}
-		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debugLive.Load(), allowedKeys, passkeyCache)
+		authTTL := time.Hour // default 1h
+		if wingCfg.AuthTTL != "" {
+			if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil {
+				authTTL = d
+			}
+		}
+		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debugLive.Load(), allowedKeys, passkeyCache, authTTL)
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
@@ -1877,12 +1883,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug bool, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug bool, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
 	// Passkey verification — if allowed keys are configured, require auth
 	if len(allowedKeys) > 0 {
 		// Check cached auth token first
 		if start.AuthToken != "" {
-			if _, ok := passkeyCache.Check(start.AuthToken); ok {
+			if _, ok := passkeyCache.Check(start.AuthToken, authTTL); ok {
 				log.Printf("pty session %s: passkey auth via cached token", start.SessionID)
 				goto authDone
 			}
@@ -2329,8 +2335,13 @@ func tunnelStreamChunk(gcm cipher.AEAD, requestID string, chunk []byte, done boo
 }
 
 // isMemberFiltered returns true if the tunnel request is from an org member (not owner/admin).
+// Empty/unknown roles are treated as "member" (least privilege) when a user ID is present.
 func isMemberFiltered(req ws.TunnelRequest) bool {
-	return req.SenderOrgRole == "member" && req.SenderUserID != ""
+	if req.SenderUserID == "" {
+		return false
+	}
+	role := req.SenderOrgRole
+	return role == "member" || role == ""
 }
 
 // canSeeSession returns true if the request sender can view a session with the given owner.
@@ -2398,9 +2409,15 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 
 		// Step 2: In the list — check auth token
+		authTTL := time.Hour // default 1h
+		if wingCfg.AuthTTL != "" {
+			if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil {
+				authTTL = d
+			}
+		}
 		authorized := false
 		if inner.AuthToken != "" {
-			if _, ok := passkeyCache.Check(inner.AuthToken); ok {
+			if _, ok := passkeyCache.Check(inner.AuthToken, authTTL); ok {
 				authorized = true
 			}
 		}

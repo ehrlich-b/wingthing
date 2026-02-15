@@ -840,13 +840,30 @@ body {
 }
 
 #reconnect-banner {
-    background: var(--action);
-    color: var(--bg);
+    background: var(--accent);
+    color: #fff;
     text-align: center;
-    padding: 4px 0;
+    padding: 4px 8px;
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+#reconnect-btn {
+    background: rgba(255,255,255,0.2);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.4);
+    padding: 2px 10px;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+#reconnect-btn:hover {
+    background: rgba(255,255,255,0.3);
 }
 
 #terminal-section { position: relative; }

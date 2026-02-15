@@ -21,11 +21,13 @@ The bar: someone new (e.g. your boss) can use a wing without confusion or broken
 - [ ] Architecture overview: relay is a dumb pipe, wing owns all data, E2E encryption
 
 ### UX Polish
-- [ ] Session ID in URL on session start — shareable, resumable, bookmarkable
-- [ ] Close window / end shell from window — no zombie sessions
-- [ ] Auto-reconnect UI without navigate-away — session survives deploy but user has to refresh
-- [ ] Never notify about an event I can't see — locked wing notifications are confusing
-- [ ] Ctrl-V on Windows — right-click paste works but Ctrl-V does nothing, blocks Windows users
+- [x] Session ID in URL on session start
+- [x] Close / end session from terminal header
+- [x] Ctrl-V paste + Ctrl-C copy on Windows
+- [ ] Auto-reconnect UI without navigate-away
+- [ ] Never notify about events I can't see (locked wings)
+- [ ] Image paste into terminal — intercept paste, upload via PTY, buffer output, loading bar
+- [ ] Latency pass — audit round-trip times, find low-hanging optimizations
 
 ### Self-Hosting First Class
 - [ ] Local user mode: not "pro" but "local" — all features unlocked, no tier restrictions
@@ -48,6 +50,11 @@ The bar: someone new (e.g. your boss) can use a wing without confusion or broken
 
 ### Performance
 - [ ] WebSocket direct to Fly — bypass Cloudflare for ws:// traffic (ws.wingthing.ai)
+
+### Security
+- [ ] Tunnel passkey replay protection — `passkey.auth.begin`/`finish` protocol with server-generated nonce
+- [ ] Internal API trust boundary — mTLS or signed service tokens for node-to-node calls
+- [ ] Invite consume transaction ordering — race condition in `internal/relay/org.go`
 
 ---
 

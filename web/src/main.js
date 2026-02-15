@@ -3,7 +3,7 @@ import { S, DOM, initDOM } from './state.js';
 import { loginRedirect } from './helpers.js';
 import { initTerminal, sendPTYInput } from './terminal.js';
 import { showHome, showTerminal, switchToSession, navigateToWingDetail, navigateToAccount } from './nav.js';
-import { disconnectPTY } from './pty.js';
+import { disconnectPTY, retryReconnect } from './pty.js';
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
 import { connectAppWS } from './dashboard.js';
 import { loadHome } from './data.js';
@@ -52,6 +52,14 @@ async function init() {
             }, 3000);
         }
     });
+
+    // Reconnect button
+    var reconnectBtn = document.getElementById('reconnect-btn');
+    if (reconnectBtn) {
+        reconnectBtn.addEventListener('click', function() {
+            retryReconnect();
+        });
+    }
 
     // Modifier keys (mobile)
     document.querySelectorAll('.mod-key').forEach(function (btn) {

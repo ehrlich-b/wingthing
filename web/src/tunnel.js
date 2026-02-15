@@ -47,12 +47,17 @@ async function tunnelDecrypt(key, encoded) {
 var AUTH_TOKENS_KEY = 'wt_auth_tokens';
 
 export function saveTunnelAuthTokens() {
-    try { localStorage.setItem(AUTH_TOKENS_KEY, JSON.stringify(S.tunnelAuthTokens)); } catch (e) {}
+    try { sessionStorage.setItem(AUTH_TOKENS_KEY, JSON.stringify(S.tunnelAuthTokens)); } catch (e) {}
 }
 
 export function loadTunnelAuthTokens() {
     try {
-        var raw = localStorage.getItem(AUTH_TOKENS_KEY);
+        var raw = sessionStorage.getItem(AUTH_TOKENS_KEY);
+        // Migrate from localStorage if present
+        if (!raw) {
+            raw = localStorage.getItem(AUTH_TOKENS_KEY);
+            if (raw) { localStorage.removeItem(AUTH_TOKENS_KEY); }
+        }
         if (raw) {
             var tokens = JSON.parse(raw);
             for (var k in tokens) { S.tunnelAuthTokens[k] = tokens[k]; }

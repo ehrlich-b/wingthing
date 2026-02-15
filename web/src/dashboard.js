@@ -8,12 +8,18 @@ import { setNotification } from './notify.js';
 
 var reconnectBannerTimer = null;
 
-export function showReconnectBanner() {
-    if (reconnectBannerTimer) return;
+export function showReconnectBanner(text, showRetry) {
+    if (reconnectBannerTimer) { clearTimeout(reconnectBannerTimer); reconnectBannerTimer = null; }
     reconnectBannerTimer = setTimeout(function() {
         var banner = document.getElementById('reconnect-banner');
-        if (banner) banner.style.display = '';
-    }, 2000);
+        if (banner) {
+            banner.style.display = '';
+            var textEl = document.getElementById('reconnect-text');
+            var btn = document.getElementById('reconnect-btn');
+            if (textEl) textEl.textContent = text || 'reconnecting...';
+            if (btn) btn.style.display = showRetry ? '' : 'none';
+        }
+    }, showRetry ? 0 : 2000);
 }
 
 export function hideReconnectBanner() {

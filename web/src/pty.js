@@ -136,6 +136,10 @@ function setupPTYHandlers(ws, reattach) {
                 return;
 
             case 'pty.started':
+                if (reattach && S.ptySessionId && msg.session_id !== S.ptySessionId) {
+                    console.warn('pty.started for wrong session:', msg.session_id, 'expected:', S.ptySessionId);
+                    break;
+                }
                 S.ptySessionId = msg.session_id;
                 DOM.headerTitle.textContent = sessionTitle(msg.agent, S.ptyWingId);
                 DOM.sessionCloseBtn.style.display = '';
@@ -177,6 +181,10 @@ function setupPTYHandlers(ws, reattach) {
                 break;
 
             case 'pty.output':
+                if (msg.session_id && S.ptySessionId && msg.session_id !== S.ptySessionId) {
+                    console.warn('pty.output for wrong session:', msg.session_id, 'expected:', S.ptySessionId);
+                    break;
+                }
                 if (!keyReady || !replayDone) {
                     pendingOutput.push({ data: msg.data, compressed: !!msg.compressed });
                 } else {
@@ -354,18 +362,20 @@ export function disconnectPTY() {
     DOM.sessionCloseBtn.style.display = 'none';
 }
 
+var MAX_RECONNECT_ATTEMPTS = 10;
+
 function ptyReconnectAttach(sessionId, attempt) {
     attempt = attempt || 0;
-    if (attempt >= 3) {
+    if (attempt >= MAX_RECONNECT_ATTEMPTS) {
         S.ptyReconnecting = false;
         DOM.ptyStatus.textContent = 'session lost';
-        DOM.headerTitle.textContent = '';
-        S.ptySessionId = null;
-        S.ptyWingId = null;
-        hideReconnectBanner();
-        renderSidebar();
+        showReconnectBanner('connection lost', true);
         return;
     }
+
+    var attemptText = 'reconnecting (' + (attempt + 1) + '/' + MAX_RECONNECT_ATTEMPTS + ')...';
+    DOM.ptyStatus.textContent = attemptText;
+    showReconnectBanner(attemptText);
 
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
@@ -385,10 +395,9 @@ function ptyReconnectAttach(sessionId, attempt) {
     setupPTYHandlers(S.ptyWs, true);
 
     var innerWs = S.ptyWs;
-    var origClose = innerWs.onclose;
     innerWs.onclose = function () {
         if (innerWs !== S.ptyWs) return;
-        var delay = 1000 * Math.pow(2, attempt);
+        var delay = Math.min(1000 * Math.pow(2, attempt), 30000);
         setTimeout(function () { ptyReconnectAttach(sessionId, attempt + 1); }, delay);
     };
 
@@ -403,14 +412,16 @@ function ptyReconnectAttach(sessionId, attempt) {
         if (msg.type === 'error') {
             S.ptyReconnecting = false;
             DOM.ptyStatus.textContent = 'session lost';
-            DOM.headerTitle.textContent = '';
-            S.ptySessionId = null;
-            S.ptyWingId = null;
-            hideReconnectBanner();
-            renderSidebar();
+            showReconnectBanner('connection lost', true);
             if (innerWs) { try { innerWs.close(); } catch(ex) {} }
             return;
         }
         origMsg.call(innerWs, e);
     };
+}
+
+export function retryReconnect() {
+    if (!S.ptySessionId) return;
+    S.ptyReconnecting = true;
+    ptyReconnectAttach(S.ptySessionId, 0);
 }
