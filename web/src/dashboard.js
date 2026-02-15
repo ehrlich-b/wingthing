@@ -1,7 +1,7 @@
 import { S, DOM } from './state.js';
 import { wingDisplayName } from './helpers.js';
 import { renderDashboard, renderSidebar, renderWingDetailPage } from './render.js';
-import { setCachedWings, getCachedWings, fetchWingSessions, mergeWingSessions, loadHome, probeWing } from './data.js';
+import { getCachedWings, fetchWingSessions, mergeWingSessions, loadHome, probeWing, saveWingCache } from './data.js';
 import { updatePaletteState } from './palette.js';
 import { tunnelCloseWing } from './tunnel.js';
 import { setNotification } from './notify.js';
@@ -77,7 +77,7 @@ function applyWingEvent(ev) {
             // Hydrate from cache so label survives reconnect
             var cached = getCachedWings();
             var c = cached.find(function(cw) { return cw.wing_id === ev.wing_id; });
-            S.wingsData.push({
+            var newWing = {
                 wing_id: ev.wing_id,
                 online: true,
                 public_key: ev.public_key,
@@ -88,8 +88,39 @@ function applyWingEvent(ev) {
                 platform: c ? c.platform : undefined,
                 projects: [],
                 agents: [],
-            });
-            needsFullRender = true;
+            };
+            if (wingDisplayName(newWing)) {
+                S.wingsData.push(newWing);
+                needsFullRender = true;
+            } else if (ev.public_key) {
+                // No cached name — probe first, add only after we get metadata
+                tunnelCloseWing(ev.wing_id);
+                probeWing(newWing).then(function() {
+                    if (newWing.tunnel_error === 'not_allowed') return;
+                    if (!wingDisplayName(newWing)) return;
+                    S.wingsData.push(newWing);
+                    saveWingCache();
+                    rebuildAgentLists();
+                    updateHeaderStatus();
+                    if (S.activeView === 'home') renderDashboard();
+                    if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
+                        renderWingDetailPage(ev.wing_id);
+                    if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
+                    if (!newWing.tunnel_error) {
+                        fetchWingSessions(ev.wing_id).then(function(sessions) {
+                            if (sessions.length > 0) {
+                                var otherSessions = S.sessionsData.filter(function(s) {
+                                    return s.wing_id !== sessions[0].wing_id;
+                                });
+                                mergeWingSessions(otherSessions.concat(sessions));
+                                renderSidebar();
+                                if (S.activeView === 'home') renderDashboard();
+                            }
+                        }).catch(function() {});
+                    }
+                });
+                return;
+            }
         }
     } else if (ev.type === 'wing.config') {
         S.wingsData.forEach(function(w) {
@@ -117,11 +148,7 @@ function applyWingEvent(ev) {
     }
 
     // Render immediately with current wing data
-    setCachedWings(S.wingsData.filter(function(w) {
-        return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
-    }).map(function(w) {
-        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform };
-    }));
+    saveWingCache();
     rebuildAgentLists();
     updateHeaderStatus();
     if (S.activeView === 'home') {
@@ -141,11 +168,7 @@ function applyWingEvent(ev) {
     if ((ev.type === 'wing.online' || ev.type === 'wing.config') && evWing && evWing.public_key) {
         tunnelCloseWing(ev.wing_id);
         probeWing(evWing).then(function() {
-            setCachedWings(S.wingsData.filter(function(w) {
-                return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
-            }).map(function(w) {
-                return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform };
-            }));
+            saveWingCache();
             rebuildAgentLists();
             if (S.activeView === 'home') renderDashboard();
             if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
@@ -190,8 +213,9 @@ export function updateWingCardStatus(wingId) {
     if (!w) return;
     var dot = card.querySelector('.wing-dot');
     if (dot) {
-        dot.classList.toggle('dot-live', w.online !== false);
-        dot.classList.toggle('dot-offline', w.online === false);
+        var isLive = w.online !== false && !w.tunnel_error;
+        dot.classList.toggle('dot-live', isLive);
+        dot.classList.toggle('dot-offline', !isLive);
     }
 }
 

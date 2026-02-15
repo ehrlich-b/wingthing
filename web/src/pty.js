@@ -7,11 +7,11 @@ import { showReconnectBanner, hideReconnectBanner } from './dashboard.js';
 import { renderSidebar } from './render.js';
 import { loadHome } from './data.js';
 import { showHome } from './nav.js';
+import { wingDisplayName } from './helpers.js';
 
 function sessionTitle(agent, wingId) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
-    var name = '';
-    if (wing) name = wing.wing_label || wing.hostname || wing.wing_id.substring(0, 8);
+    var name = wing ? wingDisplayName(wing) : '';
     if (name) return name + ' \u00b7 ' + agent;
     return agent || '';
 }

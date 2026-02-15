@@ -983,7 +983,7 @@ export function renderWingDetailPage(wingId) {
                 '<span class="wd-name" id="wd-name" title="click to rename">' + escapeHtml(name) + '</span>' +
                 (w.locked && !S.tunnelAuthTokens[wingId] ? '<span class="wd-pinned-badge" title="passkey required">&#x1f512; locked</span>' : '') +
                 (w.wing_label ? '<a class="wd-clear-label" id="wd-delete-label" title="clear name">x</a>' : '') +
-                (!isOnline ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
+                (!isOnline || w.tunnel_error === 'unreachable' ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
             '</div>' +
         '</div>' +
         (isOnline && !isLocked ? '<div class="wd-palette">' +
@@ -1048,7 +1048,7 @@ export function renderWingDetailPage(wingId) {
 
     var nameEl = document.getElementById('wd-name');
     nameEl.addEventListener('click', function() {
-        var current = w.wing_label || w.hostname || w.wing_id.substring(0, 8);
+        var current = w.wing_label || w.hostname || '';
         var input = document.createElement('input');
         input.type = 'text';
         input.className = 'wd-name-input';
@@ -1107,9 +1107,7 @@ export function renderWingDetailPage(wingId) {
     if (dismissBtn) {
         dismissBtn.addEventListener('click', function() {
             S.wingsData = S.wingsData.filter(function(ww) { return ww.wing_id !== wingId; });
-            setCachedWings(S.wingsData.map(function(ww) {
-                return { wing_id: ww.wing_id, public_key: ww.public_key, wing_label: ww.wing_label, hostname: ww.hostname, platform: ww.platform };
-            }));
+            saveWingCache();
             showHome();
         });
     }
@@ -1732,13 +1730,13 @@ export function showSessionInfo() {
 
 export function renderDashboard() {
     var visibleWings = S.wingsData.filter(function(w) {
-        return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
+        return w.tunnel_error !== 'not_allowed' && wingDisplayName(w);
     });
     if (visibleWings.length > 0) {
         var wingHtml = '<h3 class="section-label">wings</h3><div class="wing-grid">';
         wingHtml += visibleWings.map(function(w) {
             var name = wingDisplayName(w);
-            var dotClass = w.online !== false ? 'dot-live' : 'dot-offline';
+            var dotClass = (w.online !== false && !w.tunnel_error) ? 'dot-live' : 'dot-offline';
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
             var isCardPasskey = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
@@ -1899,5 +1897,4 @@ export function renderDashboard() {
     setupEggDrag();
 }
 
-// Need setCachedWings for dismiss button
-import { setCachedWings } from './data.js';
+import { saveWingCache } from './data.js';
