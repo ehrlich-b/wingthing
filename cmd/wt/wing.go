@@ -704,7 +704,13 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 
 	// Reclaim surviving egg sessions on every (re)connect
 	client.OnReconnect = func(rctx context.Context) {
-		reclaimEggSessions(rctx, cfg, client)
+		authTTL := time.Hour
+		if wingCfg.AuthTTL != "" {
+			if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil {
+				authTTL = d
+			}
+		}
+		reclaimEggSessions(rctx, cfg, client, allowedKeys, passkeyCache, authTTL)
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -1680,7 +1686,7 @@ func readEggCrashInfo(dir string) string {
 // reclaimEggSessions discovers surviving egg sessions and re-registers their
 // input routing goroutines. The relay no longer tracks sessions — browser
 // discovers them via E2E tunnel and reattaches directly via wing_id.
-func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Client) {
+func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Client, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
 	// Small delay to let registration complete
 	time.Sleep(500 * time.Millisecond)
 
@@ -1740,13 +1746,13 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		go func(sid string, ec *egg.Client, dir string) {
 			defer cleanup()
 			defer ec.Close()
-			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input)
+			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, allowedKeys, passkeyCache, authTTL)
 		}(sessionID, ec, dir)
 	}
 }
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
-func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte) {
+func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
 	var mu sync.Mutex
 	var gcm cipher.AEAD
 	var activeStream pb.Egg_SessionClient
@@ -1833,6 +1839,89 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					continue
 				}
 				wingAttention.Delete(sessionID)
+
+				// Passkey auth gate — same check as handlePTYSession
+				var attachAuthToken string
+				if len(allowedKeys) > 0 {
+					tokenOK := false
+					if attach.AuthToken != "" {
+						if _, ok := passkeyCache.Check(attach.AuthToken, authTTL); ok {
+							tokenOK = true
+							log.Printf("pty session %s: reattach passkey auth via cached token", sessionID)
+						}
+					}
+					if !tokenOK {
+						challenge, chalErr := auth.GenerateChallenge()
+						if chalErr != nil {
+							log.Printf("pty session %s: reattach challenge generation failed: %v", sessionID, chalErr)
+							continue
+						}
+						write(ws.PasskeyChallenge{
+							Type:      ws.TypePasskeyChallenge,
+							SessionID: sessionID,
+							Challenge: base64.RawURLEncoding.EncodeToString(challenge),
+						})
+						log.Printf("pty session %s: reattach passkey challenge sent", sessionID)
+
+						timer := time.NewTimer(60 * time.Second)
+						verified := false
+						for !verified {
+							select {
+							case authData, ok := <-input:
+								if !ok {
+									timer.Stop()
+									return
+								}
+								var authEnv ws.Envelope
+								if err := json.Unmarshal(authData, &authEnv); err != nil {
+									continue
+								}
+								if authEnv.Type != ws.TypePasskeyResponse {
+									continue
+								}
+								var resp ws.PasskeyResponse
+								if err := json.Unmarshal(authData, &resp); err != nil {
+									continue
+								}
+								ad, _ := base64.StdEncoding.DecodeString(resp.AuthenticatorData)
+								cj, _ := base64.StdEncoding.DecodeString(resp.ClientDataJSON)
+								sig, _ := base64.StdEncoding.DecodeString(resp.Signature)
+								var matched bool
+								for _, ak := range allowedKeys {
+									rawKey, decErr := base64.StdEncoding.DecodeString(ak.Key)
+									if decErr != nil || len(rawKey) != 64 {
+										continue
+									}
+									if err := auth.VerifyPasskeyAssertion(rawKey, challenge, ad, cj, sig); err == nil {
+										matched = true
+										token, tokErr := auth.GenerateAuthToken()
+										if tokErr == nil {
+											passkeyCache.Put(token, rawKey)
+											attachAuthToken = token
+										}
+										log.Printf("pty session %s: reattach passkey verified", sessionID)
+										break
+									}
+								}
+								if !matched {
+									write(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey"})
+									continue
+								}
+								verified = true
+							case <-timer.C:
+								log.Printf("pty session %s: reattach passkey timed out", sessionID)
+								write(ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out"})
+								timer.Stop()
+								continue
+							case <-ctx.Done():
+								timer.Stop()
+								return
+							}
+						}
+						timer.Stop()
+					}
+				}
+
 				// 1. Invalidate key — old output goroutine stops sending
 				mu.Lock()
 				gcm = nil
@@ -1854,7 +1943,13 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				}
 
 				// 3. Send pty.started so browser can derive key
-				write(ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, PublicKey: wingPubKeyB64})
+				{
+					started := ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, PublicKey: wingPubKeyB64}
+					if attachAuthToken != "" {
+						started.AuthToken = attachAuthToken
+					}
+					write(started)
+				}
 
 				// 4. New egg subscriber — replay first (atomic), then live frames
 				newStreamCtx, newSCancel := context.WithCancel(ctx)
