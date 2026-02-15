@@ -75,7 +75,31 @@ func hasNamespaceCapability() bool {
 	if val, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone"); err == nil {
 		return strings.TrimSpace(string(val)) == "1"
 	}
+	// Sysctl missing (e.g. WSL2, non-Debian kernels) — probe by actually
+	// trying to create a user namespace. This is the only reliable check.
+	if probeUserNamespace() {
+		return true
+	}
 	return false
+}
+
+// probeUserNamespace spawns a trivial child in a new user namespace to test support.
+func probeUserNamespace() bool {
+	cmd := exec.Command("true")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUSER,
+		UidMappings: []syscall.SysProcIDMap{{
+			ContainerID: os.Getuid(),
+			HostID:      os.Getuid(),
+			Size:        1,
+		}},
+		GidMappings: []syscall.SysProcIDMap{{
+			ContainerID: os.Getgid(),
+			HostID:      os.Getgid(),
+			Size:        1,
+		}},
+	}
+	return cmd.Run() == nil
 }
 
 func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
