@@ -1108,7 +1108,7 @@ export function renderWingDetailPage(wingId) {
         dismissBtn.addEventListener('click', function() {
             S.wingsData = S.wingsData.filter(function(ww) { return ww.wing_id !== wingId; });
             setCachedWings(S.wingsData.map(function(ww) {
-                return { wing_id: ww.wing_id, public_key: ww.public_key, wing_label: ww.wing_label };
+                return { wing_id: ww.wing_id, public_key: ww.public_key, wing_label: ww.wing_label, hostname: ww.hostname, platform: ww.platform };
             }));
             showHome();
         });

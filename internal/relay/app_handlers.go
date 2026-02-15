@@ -101,18 +101,6 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	wings := s.listAccessibleWings(user.ID)
 	latestVer := s.getLatestVersion()
 
-	// Resolve labels for all wings
-	var wingIDs []string
-	for _, wing := range wings {
-		wingIDs = append(wingIDs, wing.WingID)
-	}
-	// Determine org ID for label resolution
-	resolvedOrgID := ""
-	if len(wings) > 0 && wings[0].OrgID != "" {
-		resolvedOrgID = wings[0].OrgID
-	}
-	wingLabels := s.Store.ResolveLabels(wingIDs, user.ID, resolvedOrgID)
-
 	out := make([]map[string]any, 0, len(wings))
 	seenWings := make(map[string]bool) // dedup by wing_id
 	for _, wing := range wings {
@@ -122,9 +110,6 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 			"public_key":     wing.PublicKey,
 			"latest_version": latestVer,
 			"org_id":         wing.OrgID,
-		}
-		if label, ok := wingLabels[wing.WingID]; ok {
-			entry["wing_label"] = label
 		}
 		out = append(out, entry)
 	}
@@ -152,6 +137,25 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 				entry["remote_node"] = loc.MachineID
 			}
 			out = append(out, entry)
+		}
+	}
+
+	// Resolve labels for all wings (local + remote)
+	if s.Store != nil {
+		var allWingIDs []string
+		resolvedOrgID := ""
+		for _, entry := range out {
+			allWingIDs = append(allWingIDs, entry["wing_id"].(string))
+			if oid, _ := entry["org_id"].(string); oid != "" && resolvedOrgID == "" {
+				resolvedOrgID = oid
+			}
+		}
+		wingLabels := s.Store.ResolveLabels(allWingIDs, user.ID, resolvedOrgID)
+		for _, entry := range out {
+			wid := entry["wing_id"].(string)
+			if label, ok := wingLabels[wid]; ok {
+				entry["wing_label"] = label
+			}
 		}
 	}
 

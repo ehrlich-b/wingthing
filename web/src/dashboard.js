@@ -1,7 +1,7 @@
 import { S, DOM } from './state.js';
 import { wingDisplayName } from './helpers.js';
 import { renderDashboard, renderSidebar, renderWingDetailPage } from './render.js';
-import { setCachedWings, fetchWingSessions, mergeWingSessions, loadHome, probeWing } from './data.js';
+import { setCachedWings, getCachedWings, fetchWingSessions, mergeWingSessions, loadHome, probeWing } from './data.js';
 import { updatePaletteState } from './palette.js';
 import { tunnelCloseWing } from './tunnel.js';
 import { setNotification } from './notify.js';
@@ -74,12 +74,18 @@ function applyWingEvent(ev) {
             }
         });
         if (!found) {
+            // Hydrate from cache so label survives reconnect
+            var cached = getCachedWings();
+            var c = cached.find(function(cw) { return cw.wing_id === ev.wing_id; });
             S.wingsData.push({
                 wing_id: ev.wing_id,
                 online: true,
                 public_key: ev.public_key,
                 locked: ev.locked,
                 allowed_count: ev.allowed_count || 0,
+                wing_label: c ? c.wing_label : undefined,
+                hostname: c ? c.hostname : undefined,
+                platform: c ? c.platform : undefined,
                 projects: [],
                 agents: [],
             });
@@ -114,7 +120,7 @@ function applyWingEvent(ev) {
     setCachedWings(S.wingsData.filter(function(w) {
         return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
     }).map(function(w) {
-        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
+        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform };
     }));
     rebuildAgentLists();
     updateHeaderStatus();
@@ -138,7 +144,7 @@ function applyWingEvent(ev) {
             setCachedWings(S.wingsData.filter(function(w) {
                 return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
             }).map(function(w) {
-                return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
+                return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform };
             }));
             rebuildAgentLists();
             if (S.activeView === 'home') renderDashboard();

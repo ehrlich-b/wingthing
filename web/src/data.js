@@ -152,6 +152,26 @@ export async function loadHome() {
     }
 
     wings.forEach(function (w) { w.online = true; });
+
+    // Hydrate from cache and previous state so labels/hostnames survive refresh
+    var cached = getCachedWings();
+    var cacheMap = {};
+    cached.forEach(function(c) { cacheMap[c.wing_id] = c; });
+    var prevMap = {};
+    S.wingsData.forEach(function(w) { prevMap[w.wing_id] = w; });
+    wings.forEach(function(w) {
+        var prev = prevMap[w.wing_id];
+        var c = cacheMap[w.wing_id];
+        if (!w.wing_label && prev && prev.wing_label) w.wing_label = prev.wing_label;
+        if (!w.wing_label && c && c.wing_label) w.wing_label = c.wing_label;
+        if (!w.hostname && prev) {
+            w.hostname = prev.hostname;
+            w.platform = prev.platform || w.platform;
+            w.agents = prev.agents || w.agents;
+            w.projects = prev.projects || w.projects;
+        }
+    });
+
     var apiWings = {};
     wings.forEach(function(w) { apiWings[w.wing_id] = true; });
     S.wingsData.forEach(function(ew) {
@@ -180,7 +200,7 @@ export async function loadHome() {
             setCachedWings(S.wingsData.filter(function(w) {
                 return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';
             }).map(function(w) {
-                return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label };
+                return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform };
             }));
             rebuildAgentLists();
             renderSidebar();
