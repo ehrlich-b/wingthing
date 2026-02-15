@@ -242,34 +242,23 @@ async function _loadHomeInner() {
 
     // Add new wings from API not already in roster
     var added = false;
-    var pendingProbe = [];
     var cache = getCachedWings();
     var cacheMap = {};
     cache.forEach(function(c) { cacheMap[c.wing_id] = c; });
     apiWings.forEach(function(aw) {
         if (!rosterIds[aw.wing_id]) {
             var c = cacheMap[aw.wing_id];
-            if (c && (c.hostname || c.wing_label)) {
-                S.wingsData.push({
-                    wing_id: aw.wing_id,
-                    online: true,
-                    public_key: aw.public_key,
-                    wing_label: c.wing_label,
-                    hostname: c.hostname,
-                    platform: c.platform,
-                    agents: c.agents || [],
-                    projects: [],
-                });
-                added = true;
-            } else {
-                pendingProbe.push({
-                    wing_id: aw.wing_id,
-                    online: true,
-                    public_key: aw.public_key,
-                    agents: [],
-                    projects: [],
-                });
-            }
+            S.wingsData.push({
+                wing_id: aw.wing_id,
+                online: true,
+                public_key: aw.public_key,
+                wing_label: c ? c.wing_label : undefined,
+                hostname: c ? c.hostname : undefined,
+                platform: c ? c.platform : undefined,
+                agents: (c && c.agents) || [],
+                projects: [],
+            });
+            added = true;
         }
     });
     if (added) S.wingsData = sortWingsByOrder(S.wingsData);
@@ -286,19 +275,12 @@ async function _loadHomeInner() {
     if (S.activeView === 'home') renderDashboard();
     if (S.activeView === 'wing-detail' && S.currentWingId) renderWingDetailPage(S.currentWingId);
 
-    // Step 6: Probe all online wings + pending new wings in parallel
+    // Step 6: Probe all online wings in parallel
     var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; });
-    await Promise.all(onlineWings.concat(pendingProbe).map(function(w) { return probeWing(w); }));
+    await Promise.all(onlineWings.map(function(w) { return probeWing(w); }));
 
-    // Add pending wings that got metadata from probe
-    var addedPending = false;
-    pendingProbe.forEach(function(pw) {
-        if (pw.tunnel_error !== 'not_allowed' && (pw.hostname || pw.wing_label)) {
-            S.wingsData.push(pw);
-            addedPending = true;
-        }
-    });
-    if (addedPending) S.wingsData = sortWingsByOrder(S.wingsData);
+    // Remove wings that were denied access
+    S.wingsData = S.wingsData.filter(function(w) { return w.tunnel_error !== 'not_allowed'; });
 
     // Step 7: Save cache, render once after all probes
     saveWingCache();

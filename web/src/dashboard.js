@@ -89,34 +89,9 @@ function applyWingEvent(ev) {
                 projects: [],
                 agents: [],
             };
-            if (wingDisplayName(newWing)) {
-                S.wingsData.push(newWing);
-                needsFullRender = true;
-            } else if (ev.public_key) {
-                // No cached name — probe first, add only after we get metadata
-                probeWing(newWing).then(function() {
-                    if (newWing.tunnel_error === 'not_allowed') return;
-                    if (!wingDisplayName(newWing)) return;
-                    S.wingsData.push(newWing);
-                    saveWingCache();
-                    rebuildAgentLists();
-                    updateHeaderStatus();
-                    if (S.activeView === 'home') renderDashboard();
-                    if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id)
-                        renderWingDetailPage(ev.wing_id);
-                    if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
-                    if (!newWing.tunnel_error) {
-                        fetchWingSessions(ev.wing_id).then(function(sessions) {
-                            if (sessions) {
-                                mergeWingSessions(ev.wing_id, sessions);
-                                renderSidebar();
-                                if (S.activeView === 'home') renderDashboard();
-                            }
-                        }).catch(function() {});
-                    }
-                });
-                return;
-            }
+            // Add to wingsData immediately so sendTunnelRequest can find it
+            S.wingsData.push(newWing);
+            needsFullRender = true;
         }
     } else if (ev.type === 'wing.config') {
         S.wingsData.forEach(function(w) {
