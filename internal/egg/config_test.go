@@ -14,9 +14,12 @@ func TestDefaultEggConfig(t *testing.T) {
 	if len(cfg.FS) == 0 {
 		t.Fatal("default config should have FS rules")
 	}
-	// Should have rw:./ and deny paths
-	if cfg.FS[0] != "rw:./" {
-		t.Errorf("first FS rule = %q, want rw:./", cfg.FS[0])
+	// Should have ro:/ then rw:./ and deny paths
+	if cfg.FS[0] != "ro:/" {
+		t.Errorf("first FS rule = %q, want ro:/", cfg.FS[0])
+	}
+	if cfg.FS[1] != "rw:./" {
+		t.Errorf("second FS rule = %q, want rw:./", cfg.FS[1])
 	}
 	// Should include deny-write:./egg.yaml
 	found := false

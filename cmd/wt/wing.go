@@ -313,7 +313,7 @@ func wingStartCmd() *cobra.Command {
 	var eggConfigFlag string
 	var orgFlag string
 	var allowFlags []string
-	var rootFlag string
+	var pathsFlag string
 	var auditFlag bool
 	var localFlag bool
 
@@ -324,7 +324,7 @@ func wingStartCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Foreground mode: run directly
 			if foregroundFlag {
-				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, rootFlag, debugFlag, auditFlag, localFlag)
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag)
 			}
 
 			// Daemon mode (default): re-exec detached, write PID file, return
@@ -358,8 +358,8 @@ func wingStartCmd() *cobra.Command {
 			for _, ak := range allowFlags {
 				childArgs = append(childArgs, "--allow", ak)
 			}
-			if rootFlag != "" {
-				childArgs = append(childArgs, "--root", rootFlag)
+			if pathsFlag != "" {
+				childArgs = append(childArgs, "--paths", pathsFlag)
 			}
 			if debugFlag {
 				childArgs = append(childArgs, "--debug")
@@ -413,14 +413,14 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&eggConfigFlag, "egg-config", "", "path to egg.yaml for wing-level sandbox defaults")
 	cmd.Flags().StringVar(&orgFlag, "org", "", "org name or ID — share this wing with org members")
 	cmd.Flags().StringSliceVar(&allowFlags, "allow", nil, "ephemeral passkey public key(s) for this session")
-	cmd.Flags().StringVar(&rootFlag, "root", "", "constrain wing to this directory tree")
+	cmd.Flags().StringVar(&pathsFlag, "paths", "", "comma-separated directories the wing can browse (default: ~/)")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "connect to localhost:8080 (for self-hosted wt serve)")
 
 	return cmd
 }
 
-func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, rootFlag string, debug, audit, local bool) error {
+func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -442,8 +442,18 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	} else if orgFlag != "" && wingCfg.Org != "" && orgFlag != wingCfg.Org {
 		return fmt.Errorf("org conflict: --org %q vs wing.yaml %q", orgFlag, wingCfg.Org)
 	}
-	if rootFlag == "" && wingCfg.Root != "" {
-		rootFlag = wingCfg.Root
+	// Merge paths: CLI extends yaml (same pattern as labels)
+	var cliPaths []string
+	if pathsFlag != "" {
+		for _, p := range strings.Split(pathsFlag, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				cliPaths = append(cliPaths, p)
+			}
+		}
+	}
+	if len(cliPaths) == 0 && len(wingCfg.Paths) > 0 {
+		cliPaths = wingCfg.Paths
 	}
 	if eggConfigFlag == "" && wingCfg.EggConfig != "" {
 		eggConfigFlag = wingCfg.EggConfig
@@ -558,18 +568,40 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		labels = strings.Split(labelsFlag, ",")
 	}
 
-	// Scan for git projects in home dir and CWD
+	// Resolve paths to absolute
 	home, _ := os.UserHomeDir()
-	cwd, _ := os.Getwd()
-	projects := discoverProjects(home, 3)
-	if cwd != home {
-		// Merge CWD projects (may overlap, dedup by path)
-		seen := make(map[string]bool, len(projects))
-		for _, p := range projects {
-			seen[p.Path] = true
+	var resolvedPaths []string
+	for _, p := range cliPaths {
+		if strings.HasPrefix(p, "~/") {
+			p = filepath.Join(home, p[2:])
+		} else if p == "~" {
+			p = home
 		}
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		resolvedPaths = append(resolvedPaths, p)
+	}
+	if len(resolvedPaths) == 0 {
+		resolvedPaths = []string{home}
+	}
+
+	// Scan for git projects in each path
+	cwd, _ := os.Getwd()
+	seen := make(map[string]bool)
+	var projects []ws.WingProject
+	for _, sp := range resolvedPaths {
+		for _, p := range discoverProjects(sp, 3) {
+			if !seen[p.Path] {
+				seen[p.Path] = true
+				projects = append(projects, p)
+			}
+		}
+	}
+	if cwd != "" {
 		for _, p := range discoverProjects(cwd, 2) {
 			if !seen[p.Path] {
+				seen[p.Path] = true
 				projects = append(projects, p)
 			}
 		}
@@ -581,6 +613,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	if len(labels) > 0 {
 		fmt.Printf("  labels: %v\n", labels)
 	}
+	fmt.Printf("  paths: %v\n", resolvedPaths)
 	fmt.Printf("  projects: %d found\n", len(projects))
 	for _, p := range projects {
 		fmt.Printf("    %s → %s\n", p.Name, p.Path)
@@ -598,15 +631,6 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 
 	// Reap dead egg directories on startup
 	reapDeadEggs(cfg)
-
-	// Resolve root dir to absolute path
-	resolvedRoot := rootFlag
-	if resolvedRoot != "" {
-		abs, absErr := filepath.Abs(resolvedRoot)
-		if absErr == nil {
-			resolvedRoot = abs
-		}
-	}
 
 	// Load wing private key for tunnel E2E encryption
 	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
@@ -626,7 +650,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		Labels:      labels,
 		Projects:    projects,
 		OrgSlug:     orgFlag,
-		RootDir:     resolvedRoot,
+		RootDir:     resolvedPaths[0],
 		Locked:       wingCfg.Locked,
 		AllowedCount: len(wingCfg.AllowKeys),
 	}
@@ -637,11 +661,18 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "wing is locked with no authorized users — add yourself with: wt wing allow --email <your-email>"})
 			return
 		}
-		// Clamp CWD to root if configured
-		if resolvedRoot != "" {
+		// Clamp CWD to paths if configured
+		if len(resolvedPaths) > 0 {
 			cleaned := filepath.Clean(start.CWD)
-			if cleaned != resolvedRoot && !strings.HasPrefix(cleaned, resolvedRoot+string(filepath.Separator)) {
-				start.CWD = resolvedRoot
+			underAny := false
+			for _, rp := range resolvedPaths {
+				if cleaned == rp || strings.HasPrefix(cleaned, rp+string(filepath.Separator)) {
+					underAny = true
+					break
+				}
+			}
+			if !underAny {
+				start.CWD = resolvedPaths[0]
 			}
 		}
 		wingEggMu.Lock()
@@ -661,7 +692,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
-		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, resolvedRoot, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client)
+		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, resolvedPaths, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client)
 	}
 
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
@@ -705,15 +736,25 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 				wingCfg.Labels = newCfg.Labels
 				client.Labels = newCfg.Labels
 
-				// Hot-reload root
-				if newCfg.Root != "" {
-					if abs, err := filepath.Abs(newCfg.Root); err == nil {
-						resolvedRoot = abs
+				// Hot-reload paths
+				wingCfg.Paths = newCfg.Paths
+				if len(newCfg.Paths) > 0 {
+					resolvedPaths = nil
+					for _, p := range newCfg.Paths {
+						if strings.HasPrefix(p, "~/") {
+							p = filepath.Join(home, p[2:])
+						} else if p == "~" {
+							p = home
+						}
+						if abs, err := filepath.Abs(p); err == nil {
+							p = abs
+						}
+						resolvedPaths = append(resolvedPaths, p)
 					}
 				} else {
-					resolvedRoot = ""
+					resolvedPaths = []string{home}
 				}
-				client.RootDir = resolvedRoot
+				client.RootDir = resolvedPaths[0]
 
 				// Hot-reload egg config (if path changed)
 				oldEggConfig := wingCfg.EggConfig
@@ -1239,7 +1280,7 @@ func wingConfigCmd() *cobra.Command {
 			}
 			fmt.Printf("roost:      %s\n", roost)
 			fmt.Printf("org:        %s\n", wingCfg.Org)
-			fmt.Printf("root:       %s\n", wingCfg.Root)
+			fmt.Printf("paths:      %s\n", strings.Join(wingCfg.Paths, ", "))
 			fmt.Printf("labels:     %s\n", strings.Join(wingCfg.Labels, ", "))
 			fmt.Printf("egg_config: %s\n", wingCfg.EggConfig)
 			fmt.Printf("conv:       %s\n", wingCfg.Conv)
@@ -1335,7 +1376,26 @@ func wingConfigSetCmd() *cobra.Command {
 						return fmt.Errorf("auth_ttl: invalid duration %q", value)
 					}
 					wingCfg.AuthTTL = value
+				case "paths":
+					var paths []string
+					for _, p := range strings.Split(value, ",") {
+						p = strings.TrimSpace(p)
+						if p == "" {
+							continue
+						}
+						info, err := os.Stat(p)
+						if err != nil {
+							return fmt.Errorf("paths: %s does not exist", p)
+						}
+						if !info.IsDir() {
+							return fmt.Errorf("paths: %s is not a directory", p)
+						}
+						paths = append(paths, p)
+					}
+					wingCfg.Paths = paths
+					wingCfg.Root = "" // clear legacy
 				case "root":
+					// compat alias: sets paths to single entry
 					if value != "" {
 						info, err := os.Stat(value)
 						if err != nil {
@@ -1344,8 +1404,11 @@ func wingConfigSetCmd() *cobra.Command {
 						if !info.IsDir() {
 							return fmt.Errorf("root: %s is not a directory", value)
 						}
+						wingCfg.Paths = []string{value}
+					} else {
+						wingCfg.Paths = nil
 					}
-					wingCfg.Root = value
+					wingCfg.Root = "" // clear legacy
 				case "org":
 					wingCfg.Org = value
 				default:
@@ -1372,7 +1435,7 @@ func wingConfigSetCmd() *cobra.Command {
 }
 
 // getDirEntries returns directory entries for the given path, suitable for cwd selection.
-func getDirEntries(path, resolvedRoot string) []ws.DirEntry {
+func getDirEntries(path string, resolvedPaths []string) []ws.DirEntry {
 	if path == "" {
 		home, _ := os.UserHomeDir()
 		path = home
@@ -1382,17 +1445,24 @@ func getDirEntries(path, resolvedRoot string) []ws.DirEntry {
 		path = home + path[1:]
 	}
 
-	// Constrain to root if configured
-	if resolvedRoot != "" {
+	// Constrain to resolved paths if configured
+	if len(resolvedPaths) > 0 {
 		if path == "" {
-			path = resolvedRoot
+			path = resolvedPaths[0]
 		}
 		abs := filepath.Clean(path)
 		if a, err := filepath.Abs(abs); err == nil {
 			abs = a
 		}
-		if abs != resolvedRoot && !strings.HasPrefix(abs, resolvedRoot+string(filepath.Separator)) {
-			path = resolvedRoot
+		underAny := false
+		for _, rp := range resolvedPaths {
+			if abs == rp || strings.HasPrefix(abs, rp+string(filepath.Separator)) {
+				underAny = true
+				break
+			}
+		}
+		if !underAny {
+			path = resolvedPaths[0]
 		}
 	}
 
@@ -2373,7 +2443,7 @@ func canSeeSession(req ws.TunnelRequest, sessionUserID string) bool {
 
 // handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
 func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, req ws.TunnelRequest, write ws.PTYWriteFunc,
-	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, privKey *ecdh.PrivateKey, resolvedRoot string,
+	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, privKey *ecdh.PrivateKey, resolvedPaths []string,
 	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool, client *ws.Client) {
 
 	allowedKeys := *allowedKeysPtr
@@ -2458,7 +2528,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	switch inner.Type {
 	case "dir.list":
-		entries := getDirEntries(inner.Path, resolvedRoot)
+		entries := getDirEntries(inner.Path, resolvedPaths)
 		tunnelRespond(gcm, req.RequestID, map[string]any{"entries": entries}, write)
 
 	case "wing.info":

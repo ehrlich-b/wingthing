@@ -24,7 +24,9 @@ The bar: someone new (e.g. your boss) can use a wing without confusion or broken
 - [x] Session ID in URL on session start
 - [x] Close / end session from terminal header
 - [x] Ctrl-V paste + Ctrl-C copy on Windows
-- [ ] Auto-reconnect UI without navigate-away
+- [x] Auto-reconnect UI without navigate-away
+- [x] Fix cursor ghost typing — re-inject cursor hide after replay buffer trim (Claude)
+- [ ] Fix cursor preamble for other agents (codex, cursor, ollama) — same pattern, lower priority
 - [ ] Never notify about events I can't see (locked wings)
 - [ ] Image paste into terminal — intercept paste, upload via PTY, buffer output, loading bar
 - [ ] Latency pass — audit round-trip times, find low-hanging optimizations

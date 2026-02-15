@@ -102,7 +102,16 @@ func buildProfile(cfg Config) string {
 	// Deny writes to $HOME, then allow mount paths via most-specific-wins.
 	// Agent config dirs use regex instead of subpath so that files like
 	// ~/.claude.json (adjacent to ~/.claude/) are also writable.
-	if len(cfg.Mounts) > 0 {
+	// Note: ro:/ is implicit — (allow default) already grants read access
+	// to the entire filesystem. Only writable mounts trigger write isolation.
+	hasWritableMounts := false
+	for _, m := range cfg.Mounts {
+		if !m.ReadOnly {
+			hasWritableMounts = true
+			break
+		}
+	}
+	if hasWritableMounts {
 		home, _ := os.UserHomeDir()
 		if real, err := filepath.EvalSymlinks(home); err == nil {
 			home = real

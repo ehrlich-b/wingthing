@@ -79,7 +79,7 @@ func startCmd() *cobra.Command {
 	var auditFlag bool
 	var orgFlag string
 	var allowFlags []string
-	var rootFlag string
+	var pathsFlag string
 	var localFlag bool
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -96,8 +96,8 @@ func startCmd() *cobra.Command {
 			for _, ak := range allowFlags {
 				childArgs = append(childArgs, "--allow", ak)
 			}
-			if rootFlag != "" {
-				childArgs = append(childArgs, "--root", rootFlag)
+			if pathsFlag != "" {
+				childArgs = append(childArgs, "--paths", pathsFlag)
 			}
 			if debugFlag {
 				childArgs = append(childArgs, "--debug")
@@ -117,7 +117,7 @@ func startCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp/wt-pty-<session>.bin for each egg")
 	cmd.Flags().StringVar(&orgFlag, "org", "", "org name or ID — share this wing with org members")
 	cmd.Flags().StringSliceVar(&allowFlags, "allow", nil, "ephemeral passkey public key(s) for this session")
-	cmd.Flags().StringVar(&rootFlag, "root", "", "constrain wing to this directory tree")
+	cmd.Flags().StringVar(&pathsFlag, "paths", "", "comma-separated directories the wing can browse (default: ~/)")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "connect to localhost:8080 (for self-hosted wt serve)")
 	return cmd

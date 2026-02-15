@@ -13,7 +13,8 @@ type WingConfig struct {
 	WingID    string     `yaml:"wing_id"`
 	Roost     string     `yaml:"roost,omitempty"`
 	Org       string     `yaml:"org,omitempty"`
-	Root      string     `yaml:"root,omitempty"`
+	Paths     []string   `yaml:"paths,omitempty"`
+	Root      string     `yaml:"root,omitempty"` // compat: folded into Paths on load
 	Labels    []string   `yaml:"labels,omitempty"`
 	EggConfig string     `yaml:"egg_config,omitempty"`
 	Conv      string     `yaml:"conv,omitempty"`
@@ -57,6 +58,10 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	}
 	if cfg.PinnedCompat && !cfg.Locked {
 		cfg.Locked = true
+	}
+	// Migrate legacy root -> paths
+	if cfg.Root != "" && len(cfg.Paths) == 0 {
+		cfg.Paths = []string{cfg.Root}
 	}
 	return cfg, nil
 }

@@ -106,6 +106,8 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 	var cmd *exec.Cmd
 
 	// Collect writable mount paths for write isolation.
+	// Note: ro:/ is implicit — Linux namespaces don't restrict reads.
+	// Only writable mounts matter for write isolation logic.
 	var writablePaths []string
 	for _, m := range s.cfg.Mounts {
 		if !m.ReadOnly {

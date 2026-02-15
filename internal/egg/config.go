@@ -139,7 +139,7 @@ func DefaultCacheDirs() []string {
 // OS-standard cache dirs are writable so build tools (go, npm, cargo, pip) work out of the box.
 // egg.yaml itself is deny-write so agents can read but not modify their sandbox config.
 func DefaultEggConfig() *EggConfig {
-	fs := []string{"rw:./"}
+	fs := []string{"ro:/", "rw:./"}
 	for _, d := range DefaultCacheDirs() {
 		fs = append(fs, "rw:"+d)
 	}

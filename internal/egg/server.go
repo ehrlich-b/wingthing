@@ -106,13 +106,14 @@ type readerCursor struct {
 }
 
 type replayBuffer struct {
-	mu       sync.Mutex
-	buf      []byte
-	trimmed  int64          // total bytes ever trimmed from front
-	written  int64          // total bytes ever written
-	notify   chan struct{}   // closed+replaced on Write to wake readers
-	advanced chan struct{}   // closed+replaced when a reader advances (unblocks writer)
-	readers  []*readerCursor
+	mu            sync.Mutex
+	buf           []byte
+	trimmed       int64          // total bytes ever trimmed from front
+	written       int64          // total bytes ever written
+	notify        chan struct{}   // closed+replaced on Write to wake readers
+	advanced      chan struct{}   // closed+replaced when a reader advances (unblocks writer)
+	readers       []*readerCursor
+	trimPreamble  []byte         // mode sequences to re-inject after trim
 }
 
 type replayStats struct {
@@ -133,11 +134,12 @@ func (r *replayBuffer) Stats() replayStats {
 	}
 }
 
-func newReplayBuffer() *replayBuffer {
+func newReplayBuffer(agent string) *replayBuffer {
 	return &replayBuffer{
-		buf:      make([]byte, 0, 64*1024),
-		notify:   make(chan struct{}),
-		advanced: make(chan struct{}),
+		buf:          make([]byte, 0, 64*1024),
+		notify:       make(chan struct{}),
+		advanced:     make(chan struct{}),
+		trimPreamble: agentPreamble(agent),
 	}
 }
 
@@ -191,10 +193,15 @@ func (r *replayBuffer) Write(p []byte) {
 		// Search forward from the excess offset for the nearest frame boundary.
 		cut := findSafeCut(r.buf, excess)
 
+		// Re-inject agent's mode preamble so replays start with correct
+		// terminal state (e.g. cursor hidden for Claude).
+		preamble := r.trimPreamble
+
 		if len(r.readers) == 0 {
 			// No readers — trim freely at the safe cut point.
-			r.buf = append(r.buf[:0], r.buf[cut:]...)
-			r.trimmed += int64(cut)
+			remaining := append(preamble, r.buf[cut:]...)
+			r.buf = append(r.buf[:0], remaining...)
+			r.trimmed += int64(cut) - int64(len(preamble))
 			ch := r.notify
 			r.notify = make(chan struct{})
 			r.mu.Unlock()
@@ -213,8 +220,9 @@ func (r *replayBuffer) Write(p []byte) {
 		canTrim := int(minOff - r.trimmed)
 		if canTrim >= cut {
 			// Slowest reader is ahead of our safe cut — trim and go.
-			r.buf = append(r.buf[:0], r.buf[cut:]...)
-			r.trimmed += int64(cut)
+			remaining := append(preamble, r.buf[cut:]...)
+			r.buf = append(r.buf[:0], remaining...)
+			r.trimmed += int64(cut) - int64(len(preamble))
 			ch := r.notify
 			r.notify = make(chan struct{})
 			r.mu.Unlock()
@@ -272,6 +280,20 @@ func (r *replayBuffer) Bytes() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]byte(nil), r.buf...)
+}
+
+// agentPreamble returns the terminal mode sequences an agent sets at startup.
+// Re-injected after replay buffer trims so reconnecting clients get correct state.
+// If the agent is actively outputting, recent data overrides these anyway.
+func agentPreamble(agent string) []byte {
+	switch agent {
+	case "claude":
+		// Claude hides the real cursor and draws its own with reverse video.
+		// Also enables bracketed paste and synchronized updates.
+		return []byte("\x1b[?2004h\x1b[?25l\x1b[?2026h")
+	default:
+		return nil
+	}
 }
 
 // findSafeCut searches forward from minOffset for the nearest safe cut point.
@@ -498,7 +520,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		Cols:           rc.Cols,
 		Rows:           rc.Rows,
 		ptmx:           ptmx,
-		replay:         newReplayBuffer(),
+		replay:         newReplayBuffer(rc.Agent),
 		sb:             sb,
 		cmd:            cmd,
 		done:           make(chan struct{}),
