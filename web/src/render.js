@@ -1,7 +1,7 @@
 import { S, DOM, TERM_THUMB_PREFIX } from './state.js';
 import { escapeHtml, wingDisplayName, shortenPath, projectName, formatRelativeTime, semverCompare, nestedRepoCount, agentIcon, agentWithIcon, dirParent, setupCopyable } from './helpers.js';
 import { identityPubKey } from './crypto.js';
-import { sendTunnelRequest } from './tunnel.js';
+import { sendTunnelRequest, tunnelCloseWing } from './tunnel.js';
 import { switchToSession } from './nav.js';
 import { showHome, navigateToWingDetail } from './nav.js';
 import { connectPTY } from './pty.js';
@@ -1011,16 +1011,19 @@ export function renderWingDetailPage(wingId) {
             authBtn.disabled = true;
             delete w.tunnel_error;
             sendTunnelRequest(w.wing_id, { type: 'wing.info' })
-                .then(function(data) {
-                    w.hostname = data.hostname || w.hostname;
-                    w.platform = data.platform || w.platform;
-                    w.version = data.version || w.version;
-                    w.agents = data.agents || [];
-                    w.projects = data.projects || [];
-                    w.locked = data.locked || false;
-                    w.allowed_count = data.allowed_count || 0;
-                    delete w.tunnel_error;
+                .then(function() {
+                    tunnelCloseWing(w.wing_id);
+                    return probeWing(w);
+                })
+                .then(function() {
                     renderWingDetailPage(wingId);
+                    fetchWingSessions(w.wing_id).then(function(sessions) {
+                        if (sessions.length > 0) {
+                            var other = S.sessionsData.filter(function(s) { return s.wing_id !== w.wing_id; });
+                            mergeWingSessions(other.concat(sessions));
+                            renderSidebar();
+                        }
+                    });
                 })
                 .catch(function(e) {
                     if (e.message && e.message.indexOf('not_allowed') !== -1) {
@@ -1208,7 +1211,7 @@ function setupWingPalette(wing) {
     renderStatus();
 
     if (wing.wing_id) {
-        sendTunnelRequest(wing.wing_id, { type: 'dir.list', path: '~/' }).then(function(data) {
+        sendTunnelRequest(wing.wing_id, { type: 'dir.list', path: '~/' }, { skipPasskey: true }).then(function(data) {
             var entries = data.entries || [];
             if (Array.isArray(entries)) {
                 wpHomeDirCache = entries.map(function(e) {
@@ -1425,7 +1428,7 @@ function loadWingAllowlist(wing) {
     var allowBtn = document.getElementById('wd-allow-me');
     if (!container) return;
 
-    sendTunnelRequest(wing.wing_id, { type: 'allow.list' }).then(function(data) {
+    sendTunnelRequest(wing.wing_id, { type: 'allow.list' }, { skipPasskey: true }).then(function(data) {
         var allowed = data.allowed || [];
         if (allowed.length === 0) {
             container.innerHTML = '<span class="text-dim">no allowed users — anyone with wing access can connect</span>';
@@ -1539,7 +1542,7 @@ function loadWingPastSessions(wingId, offset) {
         }
     }
 
-    sendTunnelRequest(wingId, { type: 'sessions.history', offset: offset, limit: limit })
+    sendTunnelRequest(wingId, { type: 'sessions.history', offset: offset, limit: limit }, { skipPasskey: true })
         .then(function(data) {
             var sessions = data.sessions || [];
             if (offset === 0) {

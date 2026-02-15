@@ -120,7 +120,7 @@ export async function probeWing(w) {
 
 export async function fetchWingSessions(wingId) {
     try {
-        var result = await sendTunnelRequest(wingId, { type: 'sessions.list' });
+        var result = await sendTunnelRequest(wingId, { type: 'sessions.list' }, { skipPasskey: true });
         return (result.sessions || []).map(function(s) {
             return { id: s.session_id, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit };
         });

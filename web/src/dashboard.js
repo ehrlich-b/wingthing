@@ -60,6 +60,11 @@ function applyWingEvent(ev) {
             if (w.wing_id === ev.wing_id) {
                 w.online = true;
                 w.public_key = ev.public_key || w.public_key;
+                if (ev.locked !== undefined) {
+                    w.locked = ev.locked;
+                    w.allowed_count = ev.allowed_count || 0;
+                    if (!ev.locked) delete w.tunnel_error;
+                }
                 found = true;
             }
         });
@@ -68,6 +73,8 @@ function applyWingEvent(ev) {
                 wing_id: ev.wing_id,
                 online: true,
                 public_key: ev.public_key,
+                locked: ev.locked,
+                allowed_count: ev.allowed_count || 0,
                 projects: [],
                 agents: [],
             });
@@ -91,6 +98,7 @@ function applyWingEvent(ev) {
     // wing.online: probe first, then render
     var evWing = S.wingsData.find(function(w) { return w.wing_id === ev.wing_id; });
     if (ev.type === 'wing.online' && evWing && evWing.public_key) {
+        tunnelCloseWing(ev.wing_id);
         probeWing(evWing).then(function() {
             setCachedWings(S.wingsData.filter(function(w) {
                 return w.tunnel_error !== 'not_allowed' && w.tunnel_error !== 'unreachable';

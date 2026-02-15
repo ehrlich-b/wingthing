@@ -30,10 +30,12 @@ type ConnectedWing struct {
 
 // WingEvent is sent to dashboard subscribers for wing/session lifecycle events.
 type WingEvent struct {
-	Type      string `json:"type"`                  // "wing.online", "wing.offline", "session.attention"
-	WingID    string `json:"wing_id"`
-	PublicKey string `json:"public_key,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
+	Type         string `json:"type"`                    // "wing.online", "wing.offline", "session.attention"
+	WingID       string `json:"wing_id"`
+	PublicKey    string `json:"public_key,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
+	Locked       *bool  `json:"locked,omitempty"`
+	AllowedCount *int   `json:"allowed_count,omitempty"`
 }
 
 // WingRegistry tracks all connected wings.
@@ -94,10 +96,14 @@ func (r *WingRegistry) Add(w *ConnectedWing) {
 	r.mu.Lock()
 	r.wings[w.ID] = w
 	r.mu.Unlock()
+	locked := w.Locked
+	allowedCount := w.AllowedCount
 	ev := WingEvent{
-		Type:      "wing.online",
-		WingID:    w.WingID,
-		PublicKey: w.PublicKey,
+		Type:         "wing.online",
+		WingID:       w.WingID,
+		PublicKey:    w.PublicKey,
+		Locked:       &locked,
+		AllowedCount: &allowedCount,
 	}
 	r.notify(w.UserID, ev)
 	if r.OnWingEvent != nil {
@@ -133,10 +139,14 @@ func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int) {
 	}
 	r.mu.Unlock()
 	if w != nil {
+		locked := w.Locked
+		allowedCount := w.AllowedCount
 		ev := WingEvent{
-			Type:      "wing.online",
-			WingID:    w.WingID,
-			PublicKey: w.PublicKey,
+			Type:         "wing.online",
+			WingID:       w.WingID,
+			PublicKey:    w.PublicKey,
+			Locked:       &locked,
+			AllowedCount: &allowedCount,
 		}
 		r.notify(w.UserID, ev)
 		if r.OnWingEvent != nil {
