@@ -511,6 +511,7 @@ func (s *Server) handleRemoveOrgMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.revokeOrgEntitlement(org.ID, targetUserID)
+	s.refreshUserOrgSubs(targetUserID)
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -633,6 +634,7 @@ func (s *Server) handleConsumeInvite(w http.ResponseWriter, r *http.Request) {
 
 	s.Store.AddOrgMember(orgID, user.ID, invRole)
 	s.grantOrgEntitlement(orgID, user.ID)
+	s.refreshUserOrgSubs(user.ID)
 	http.SetCookie(w, &http.Cookie{Name: "invite_token", Path: "/", MaxAge: -1})
 
 	appURL := "/"
@@ -640,6 +642,23 @@ func (s *Server) handleConsumeInvite(w http.ResponseWriter, r *http.Request) {
 		appURL = "https://" + s.Config.AppHost + "/"
 	}
 	http.Redirect(w, r, appURL+"#account/"+orgID, http.StatusSeeOther)
+}
+
+// refreshUserOrgSubs updates a user's org subscriptions in the WingRegistry
+// and sends org.changed so the browser re-fetches its wing list.
+// Only does work if the user has active subscribers.
+func (s *Server) refreshUserOrgSubs(userID string) {
+	if s.Store == nil {
+		return
+	}
+	var orgIDs []string
+	orgs, _ := s.Store.ListOrgsForUser(userID)
+	for _, org := range orgs {
+		orgIDs = append(orgIDs, org.ID)
+	}
+	if s.Wings.UpdateUserOrgs(userID, orgIDs) {
+		s.Wings.notify(userID, WingEvent{Type: "org.changed"})
+	}
 }
 
 func (s *Server) renderInviteStatusPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {

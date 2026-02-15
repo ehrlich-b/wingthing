@@ -84,25 +84,6 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 		tunnelRequests: make(map[string]*websocket.Conn),
 	}
 
-	// Notify org members when an org wing connects/disconnects.
-	// The registry only knows the owner; this callback resolves org membership.
-	s.Wings.OnWingEvent = func(wing *ConnectedWing, ev WingEvent) {
-		if wing.OrgID == "" || s.Store == nil {
-			return
-		}
-		org, _ := s.Store.GetOrgByID(wing.OrgID)
-		if org == nil {
-			return
-		}
-		members, _ := s.Store.ListOrgMembers(org.ID)
-		for _, m := range members {
-			if m.UserID == wing.UserID {
-				continue // owner already notified by the registry
-			}
-			s.Wings.notify(m.UserID, ev)
-		}
-	}
-
 	// API routes
 	s.mux.HandleFunc("POST /auth/device", s.handleAuthDevice)
 	s.mux.HandleFunc("POST /auth/token", s.handleAuthToken)

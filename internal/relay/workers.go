@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
@@ -38,31 +39,36 @@ type WingEvent struct {
 	AllowedCount *int   `json:"allowed_count,omitempty"`
 }
 
+// eventSub is a dashboard subscriber with its org memberships.
+type eventSub struct {
+	userID string
+	orgIDs []string
+	ch     chan WingEvent
+}
+
 // WingRegistry tracks all connected wings.
 type WingRegistry struct {
 	mu    sync.RWMutex
 	wings map[string]*ConnectedWing // wingID → wing
 
-	// Dashboard subscribers: userID → list of channels
+	// Dashboard subscribers: userID → list of subs
 	subMu sync.RWMutex
-	subs  map[string][]chan WingEvent
-
-	// OnWingEvent is called after Add/Remove with the wing and event.
-	// The Server uses this to notify org members (the registry itself
-	// only knows about the wing owner).
-	OnWingEvent func(wing *ConnectedWing, ev WingEvent)
+	subs  map[string][]*eventSub
 }
 
 func NewWingRegistry() *WingRegistry {
 	return &WingRegistry{
 		wings: make(map[string]*ConnectedWing),
-		subs:  make(map[string][]chan WingEvent),
+		subs:  make(map[string][]*eventSub),
 	}
 }
 
-func (r *WingRegistry) Subscribe(userID string, ch chan WingEvent) {
+// Subscribe registers a dashboard subscriber with its org memberships.
+// Events are delivered if the subscriber's userID matches the wing owner
+// OR if the wing's orgID appears in the subscriber's orgIDs.
+func (r *WingRegistry) Subscribe(userID string, orgIDs []string, ch chan WingEvent) {
 	r.subMu.Lock()
-	r.subs[userID] = append(r.subs[userID], ch)
+	r.subs[userID] = append(r.subs[userID], &eventSub{userID: userID, orgIDs: orgIDs, ch: ch})
 	r.subMu.Unlock()
 }
 
@@ -70,8 +76,8 @@ func (r *WingRegistry) Unsubscribe(userID string, ch chan WingEvent) {
 	r.subMu.Lock()
 	defer r.subMu.Unlock()
 	list := r.subs[userID]
-	for i, c := range list {
-		if c == ch {
+	for i, s := range list {
+		if s.ch == ch {
 			r.subs[userID] = append(list[:i], list[i+1:]...)
 			break
 		}
@@ -81,13 +87,62 @@ func (r *WingRegistry) Unsubscribe(userID string, ch chan WingEvent) {
 	}
 }
 
+// notify sends an event to all subscribers of a specific userID.
 func (r *WingRegistry) notify(userID string, ev WingEvent) {
 	r.subMu.RLock()
 	defer r.subMu.RUnlock()
-	for _, ch := range r.subs[userID] {
+	for _, s := range r.subs[userID] {
 		select {
-		case ch <- ev:
+		case s.ch <- ev:
 		default:
+		}
+	}
+}
+
+// UpdateUserOrgs updates the org list for all active subscribers of a user.
+// Returns true if the user had any active subscribers (i.e., was worth updating).
+func (r *WingRegistry) UpdateUserOrgs(userID string, orgIDs []string) bool {
+	r.subMu.Lock()
+	defer r.subMu.Unlock()
+	subs := r.subs[userID]
+	if len(subs) == 0 {
+		return false
+	}
+	for _, s := range subs {
+		s.orgIDs = orgIDs
+	}
+	return true
+}
+
+// notifyWing sends an event to the wing owner and any org members subscribed.
+func (r *WingRegistry) notifyWing(ownerID, orgID string, ev WingEvent) {
+	r.subMu.RLock()
+	defer r.subMu.RUnlock()
+	// Notify owner
+	for _, s := range r.subs[ownerID] {
+		select {
+		case s.ch <- ev:
+		default:
+		}
+	}
+	// Notify org members (skip owner, already notified)
+	if orgID == "" {
+		return
+	}
+	for uid, subs := range r.subs {
+		if uid == ownerID {
+			continue
+		}
+		for _, s := range subs {
+			for _, oid := range s.orgIDs {
+				if oid == orgID {
+					select {
+					case s.ch <- ev:
+					default:
+					}
+					break
+				}
+			}
 		}
 	}
 }
@@ -105,10 +160,7 @@ func (r *WingRegistry) Add(w *ConnectedWing) {
 		Locked:       &locked,
 		AllowedCount: &allowedCount,
 	}
-	r.notify(w.UserID, ev)
-	if r.OnWingEvent != nil {
-		r.OnWingEvent(w, ev)
-	}
+	r.notifyWing(w.UserID, w.OrgID, ev)
 }
 
 func (r *WingRegistry) Remove(id string) {
@@ -121,13 +173,9 @@ func (r *WingRegistry) Remove(id string) {
 			Type:   "wing.offline",
 			WingID: w.WingID,
 		}
-		r.notify(w.UserID, ev)
-		if r.OnWingEvent != nil {
-			r.OnWingEvent(w, ev)
-		}
+		r.notifyWing(w.UserID, w.OrgID, ev)
 	}
 }
-
 
 // UpdateConfig updates a wing's lock state and notifies subscribers.
 func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int) {
@@ -142,16 +190,13 @@ func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int) {
 		locked := w.Locked
 		allowedCount := w.AllowedCount
 		ev := WingEvent{
-			Type:         "wing.online",
+			Type:         "wing.config",
 			WingID:       w.WingID,
 			PublicKey:    w.PublicKey,
 			Locked:       &locked,
 			AllowedCount: &allowedCount,
 		}
-		r.notify(w.UserID, ev)
-		if r.OnWingEvent != nil {
-			r.OnWingEvent(w, ev)
-		}
+		r.notifyWing(w.UserID, w.OrgID, ev)
 	}
 }
 
@@ -389,6 +434,10 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			var cfg ws.WingConfig
 			json.Unmarshal(data, &cfg)
 			s.Wings.UpdateConfig(wing.ID, cfg.Locked, cfg.AllowedCount)
+			// Edge: forward config event to login for cluster-wide propagation
+			if s.Config.LoginNodeAddr != "" {
+				go s.forwardWingEvent(wing, cfg.Locked, cfg.AllowedCount)
+			}
 
 		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge:
 			// Extract session_id and forward to browser
@@ -416,10 +465,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				WingID:    wing.WingID,
 				SessionID: attn.SessionID,
 			}
-			s.Wings.notify(wing.UserID, ev)
-			if s.Wings.OnWingEvent != nil {
-				s.Wings.OnWingEvent(wing, ev)
-			}
+			s.Wings.notifyWing(wing.UserID, wing.OrgID, ev)
 
 		}
 	}
@@ -450,6 +496,30 @@ func (s *Server) validateOrgViaLogin(ctx context.Context, orgRef, userID string)
 		return "", false
 	}
 	return result.OrgID, result.OK
+}
+
+// forwardWingEvent POSTs a wing config event to the login node for cluster-wide propagation.
+func (s *Server) forwardWingEvent(wing *ConnectedWing, locked bool, allowedCount int) {
+	body, _ := json.Marshal(map[string]any{
+		"type":          "wing.config",
+		"wing_id":       wing.WingID,
+		"user_id":       wing.UserID,
+		"org_id":        wing.OrgID,
+		"public_key":    wing.PublicKey,
+		"locked":        locked,
+		"allowed_count": allowedCount,
+	})
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, _ := http.NewRequest("POST", s.Config.LoginNodeAddr+"/internal/wing-event", bytes.NewReader(body))
+	if req == nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
 }
 
 // forwardTunnelToBrowser routes an encrypted tunnel response from wing to the originating browser.

@@ -127,28 +127,39 @@ func syncToPeer(w SyncWing) *PeerWing {
 func (s *Server) notifyPeerDiff(added, removed, changed []*PeerWing) {
 	for _, w := range added {
 		if w.WingInfo != nil {
-			s.Wings.notify(w.WingInfo.UserID, WingEvent{
-				Type:      "wing.online",
-				WingID:    w.WingInfo.WingID,
-				PublicKey: w.WingInfo.PublicKey,
-			})
+			locked := w.WingInfo.Locked
+			allowedCount := w.WingInfo.AllowedCount
+			ev := WingEvent{
+				Type:         "wing.online",
+				WingID:       w.WingInfo.WingID,
+				PublicKey:    w.WingInfo.PublicKey,
+				Locked:       &locked,
+				AllowedCount: &allowedCount,
+			}
+			s.Wings.notifyWing(w.WingInfo.UserID, w.WingInfo.OrgID, ev)
 		}
 	}
 	for _, w := range changed {
 		if w.WingInfo != nil {
-			s.Wings.notify(w.WingInfo.UserID, WingEvent{
-				Type:      "wing.online",
-				WingID:    w.WingInfo.WingID,
-				PublicKey: w.WingInfo.PublicKey,
-			})
+			locked := w.WingInfo.Locked
+			allowedCount := w.WingInfo.AllowedCount
+			ev := WingEvent{
+				Type:         "wing.config",
+				WingID:       w.WingInfo.WingID,
+				PublicKey:    w.WingInfo.PublicKey,
+				Locked:       &locked,
+				AllowedCount: &allowedCount,
+			}
+			s.Wings.notifyWing(w.WingInfo.UserID, w.WingInfo.OrgID, ev)
 		}
 	}
 	for _, w := range removed {
 		if w.WingInfo != nil {
-			s.Wings.notify(w.WingInfo.UserID, WingEvent{
+			ev := WingEvent{
 				Type:   "wing.offline",
 				WingID: w.WingInfo.WingID,
-			})
+			}
+			s.Wings.notifyWing(w.WingInfo.UserID, w.WingInfo.OrgID, ev)
 		}
 	}
 }

@@ -34,10 +34,15 @@ export function connectAppWS() {
     S.appWs.onmessage = function(e) {
         try {
             var msg = JSON.parse(e.data);
+            console.log('[app-ws] event:', msg.type, 'wing_id:', msg.wing_id, 'locked:', msg.locked, 'allowed_count:', msg.allowed_count, msg);
             if (msg.type === 'relay.restart') {
-                showReconnectBanner();
                 S.appWs = null;
                 setTimeout(connectAppWS, 500);
+                return;
+            }
+            if (msg.type === 'org.changed') {
+                // Org membership changed — reconnect WS to pick up new org subscriptions
+                S.appWs.close();
                 return;
             }
             applyWingEvent(msg);
@@ -80,6 +85,17 @@ function applyWingEvent(ev) {
             });
             needsFullRender = true;
         }
+    } else if (ev.type === 'wing.config') {
+        S.wingsData.forEach(function(w) {
+            if (w.wing_id === ev.wing_id) {
+                if (ev.locked !== undefined) {
+                    w.locked = ev.locked;
+                    w.allowed_count = ev.allowed_count || 0;
+                    if (!ev.locked) delete w.tunnel_error;
+                }
+                if (ev.public_key) w.public_key = ev.public_key;
+            }
+        });
     } else if (ev.type === 'wing.offline') {
         S.wingsData.forEach(function(w) {
             if (w.wing_id === ev.wing_id) {
@@ -97,7 +113,7 @@ function applyWingEvent(ev) {
 
     // wing.online: probe first, then render
     var evWing = S.wingsData.find(function(w) { return w.wing_id === ev.wing_id; });
-    if (ev.type === 'wing.online' && evWing && evWing.public_key) {
+    if ((ev.type === 'wing.online' || ev.type === 'wing.config') && evWing && evWing.public_key) {
         tunnelCloseWing(ev.wing_id);
         probeWing(evWing).then(function() {
             setCachedWings(S.wingsData.filter(function(w) {

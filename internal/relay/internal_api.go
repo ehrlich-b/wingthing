@@ -14,6 +14,7 @@ func (s *Server) registerInternalRoutes() {
 	s.mux.HandleFunc("GET /internal/sessions/{token}", s.withInternalAuth(s.handleInternalSession))
 	s.mux.HandleFunc("POST /internal/sync", s.withInternalAuth(s.handleSync))
 	s.mux.HandleFunc("GET /internal/org-check/{slug}/{userID}", s.withInternalAuth(s.handleInternalOrgCheck))
+	s.mux.HandleFunc("POST /internal/wing-event", s.withInternalAuth(s.handleInternalWingEvent))
 }
 
 // withInternalAuth wraps a handler to only allow requests from Fly's internal network.
@@ -224,4 +225,37 @@ func (s *Server) handleInternalOrgCheck(w http.ResponseWriter, r *http.Request) 
 	role := s.Store.GetOrgMemberRole(org.ID, userID)
 	ok := role == "owner" || role == "admin"
 	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "org_id": org.ID})
+}
+
+// handleInternalWingEvent receives a wing config event from an edge node and
+// broadcasts it to the owner and org members connected to this (login) node.
+func (s *Server) handleInternalWingEvent(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Type         string `json:"type"`
+		WingID       string `json:"wing_id"`
+		UserID       string `json:"user_id"`
+		OrgID        string `json:"org_id"`
+		PublicKey    string `json:"public_key"`
+		Locked       bool   `json:"locked"`
+		AllowedCount int    `json:"allowed_count"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	locked := req.Locked
+	allowedCount := req.AllowedCount
+	ev := WingEvent{
+		Type:         req.Type,
+		WingID:       req.WingID,
+		PublicKey:    req.PublicKey,
+		Locked:       &locked,
+		AllowedCount: &allowedCount,
+	}
+
+	// Notify owner + org members via pub/sub
+	s.Wings.notifyWing(req.UserID, req.OrgID, ev)
+
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 }

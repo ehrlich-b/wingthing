@@ -135,9 +135,9 @@ func TestAuthzOrgWingNotifications(t *testing.T) {
 	ownerCh := make(chan WingEvent, 4)
 	memberCh := make(chan WingEvent, 4)
 	outsiderCh := make(chan WingEvent, 4)
-	s.Wings.Subscribe("owner-1", ownerCh)
-	s.Wings.Subscribe("member-1", memberCh)
-	s.Wings.Subscribe("outsider-1", outsiderCh)
+	s.Wings.Subscribe("owner-1", []string{"org-1"}, ownerCh)
+	s.Wings.Subscribe("member-1", []string{"org-1"}, memberCh)
+	s.Wings.Subscribe("outsider-1", nil, outsiderCh)
 
 	wing := &ConnectedWing{
 		ID:     "conn-1",
@@ -218,8 +218,8 @@ func TestAuthzPersonalWingNotifications(t *testing.T) {
 
 	aCh := make(chan WingEvent, 4)
 	bCh := make(chan WingEvent, 4)
-	s.Wings.Subscribe("user-a", aCh)
-	s.Wings.Subscribe("user-b", bCh)
+	s.Wings.Subscribe("user-a", nil, aCh)
+	s.Wings.Subscribe("user-b", nil, bCh)
 
 	wing := &ConnectedWing{
 		ID:     "conn-a",

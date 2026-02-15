@@ -243,8 +243,17 @@ func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
 	s.trackBrowser(conn)
 	defer s.untrackBrowser(conn)
 
+	// Resolve org memberships at subscribe time for pub/sub delivery
+	var orgIDs []string
+	if s.Store != nil {
+		orgs, _ := s.Store.ListOrgsForUser(user.ID)
+		for _, org := range orgs {
+			orgIDs = append(orgIDs, org.ID)
+		}
+	}
+
 	ch := make(chan WingEvent, 16)
-	s.Wings.Subscribe(user.ID, ch)
+	s.Wings.Subscribe(user.ID, orgIDs, ch)
 	defer s.Wings.Unsubscribe(user.ID, ch)
 
 	ctx := conn.CloseRead(r.Context())
