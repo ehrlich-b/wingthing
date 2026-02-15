@@ -530,7 +530,7 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 	// before browsers are notified), then forward event.
 	if s.IsEdge() && s.Config.LoginNodeAddr != "" {
 		switch eventType {
-		case "wing.online":
+		case "wing.online", "wing.config":
 			s.registerWingWithLogin(wing)
 		case "wing.offline":
 			s.deregisterWingWithLogin(wing.WingID)

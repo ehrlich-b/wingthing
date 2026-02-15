@@ -264,9 +264,7 @@ func (s *Server) handleWingSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.WingMap != nil {
-		wingIDs := make([]string, len(req.Wings))
-		for i, rw := range req.Wings {
-			wingIDs[i] = rw.WingID
+		for _, rw := range req.Wings {
 			s.WingMap.Register(rw.WingID, WingLocation{
 				MachineID:    req.MachineID,
 				UserID:       rw.UserID,
@@ -276,7 +274,7 @@ func (s *Server) handleWingSync(w http.ResponseWriter, r *http.Request) {
 				AllowedCount: rw.AllowedCount,
 			})
 		}
-		s.WingMap.Reconcile(req.MachineID, wingIDs)
+		s.WingMap.Reconcile(req.MachineID)
 	}
 
 	var banned []string

@@ -53,21 +53,16 @@ func (m *WingMap) Locate(wingID string) (WingLocation, bool) {
 	return loc, ok
 }
 
-// Reconcile replaces all wings for a given machine, removing any that are no longer reported.
-func (m *WingMap) Reconcile(machineID string, wingIDs []string) {
+// Reconcile updates the edge heartbeat timestamp. Wing additions come from
+// Register calls in handleWingSync; removals come from Deregister (on
+// wing.offline) or EdgeIDs expiry (edge crash → 30s no-sync). We don't
+// delete wings here because the sync snapshot races with registerWingWithLogin:
+// a wing can connect and register between when the edge computes its wing list
+// and when the sync arrives at login, causing Reconcile to nuke a fresh entry.
+func (m *WingMap) Reconcile(machineID string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.edges[machineID] = time.Now()
-
-	wanted := make(map[string]bool, len(wingIDs))
-	for _, id := range wingIDs {
-		wanted[id] = true
-	}
-	for id, loc := range m.wings {
-		if loc.MachineID == machineID && !wanted[id] {
-			delete(m.wings, id)
-		}
-	}
+	m.mu.Unlock()
 }
 
 // EdgeIDs returns all known edge machine IDs, expiring dead edges (30s timeout).
