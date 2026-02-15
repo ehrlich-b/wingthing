@@ -38,6 +38,7 @@ type ServerConfig struct {
 	FlyMachineID       string // from FLY_MACHINE_ID env var
 	FlyRegion          string // from FLY_REGION env var
 	FlyAppName         string // from FLY_APP_NAME env var
+	HeroVideo          string // path to hero video file on disk (not embedded)
 }
 
 type Server struct {
@@ -125,6 +126,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 
 	// Static files
 	s.mux.HandleFunc("GET /install.sh", s.handleInstallScript)
+	s.mux.HandleFunc("GET /hero.mp4", s.handleHeroVideo)
 
 	// Web pages
 	s.mux.HandleFunc("GET /{$}", s.handleHome)

@@ -9,6 +9,8 @@
 .prompt-dim{color:var(--text-dim)}
 .prompt-key{color:var(--text);font-weight:700;background:var(--bg-card);padding:2px 8px;border-radius:3px}
 .prompt-hidden{display:none}
+.hero-video{margin:24px auto 0;max-width:800px}
+.hero-video video{width:100%;border-radius:8px;border:1px solid var(--accent)}
 a.prompt-line{text-decoration:none}
 a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 .tab-bar{display:flex;gap:0;justify-content:center;font-family:var(--mono);font-size:13px;border-bottom:1px solid var(--accent);margin-bottom:0}
@@ -102,6 +104,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 {{else}}<div class="prompt-flow" id="prompt-flow">
 <div class="prompt-line"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to start</span></div>
 </div>{{end}}
+{{if .HeroVideo}}<div class="hero-video"><video src="/hero.mp4" autoplay muted loop playsinline></video></div>{{end}}
 </div>
 <div class="tab-bar">
 <button class="active" onclick="switchTab('how')">how it works</button>

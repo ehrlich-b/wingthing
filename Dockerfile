@@ -17,5 +17,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates sqlite
 WORKDIR /app
 COPY --from=build /app/wt .
+COPY hero.mp4 .
+ENV WT_HERO_VIDEO=/app/hero.mp4
 EXPOSE 8080
 CMD ["sh", "-c", "mkdir -p /data/.wingthing && exec ./wt serve --addr :8080"]

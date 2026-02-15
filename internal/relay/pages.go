@@ -87,6 +87,7 @@ func (s *Server) template(cached *template.Template, files ...string) *template.
 type pageData struct {
 	User      *User
 	LocalMode bool
+	HeroVideo bool
 }
 
 type loginPageData struct {
@@ -99,8 +100,17 @@ type loginPageData struct {
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
-	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, HeroVideo: s.Config.HeroVideo != ""}
 	s.template(homeTmpl, "base.html", "home.html").ExecuteTemplate(w, "base", data)
+}
+
+func (s *Server) handleHeroVideo(w http.ResponseWriter, r *http.Request) {
+	if s.Config.HeroVideo == "" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	http.ServeFile(w, r, s.Config.HeroVideo)
 }
 
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {

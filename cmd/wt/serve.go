@@ -97,6 +97,7 @@ func serveCmd() *cobra.Command {
 				FlyMachineID:       flyMachineID,
 				FlyRegion:          flyRegion,
 				FlyAppName:         flyApp,
+				HeroVideo:          os.Getenv("WT_HERO_VIDEO"),
 			}
 
 			srv := relay.NewServer(store, srvCfg)
