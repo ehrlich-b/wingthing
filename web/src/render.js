@@ -1005,7 +1005,7 @@ export function renderWingDetailPage(wingId) {
             '<div class="detail-row"><span class="detail-key">scope</span><span class="detail-val">' + scopeHtml + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(w.platform || 'unknown') + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">version</span><span class="detail-val">' + escapeHtml(ver || 'unknown') + '</span></div>' +
-            '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + escapeHtml((w.agents || []).join(', ') || 'none') + '</span></div>' +
+            (isLocked ? '' : '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + escapeHtml((w.agents || []).join(', ') || 'none') + '</span></div>') +
             '<div class="detail-row"><span class="detail-key">public key</span>' + pubKeyHtml + '</div>' +
             (isLocked ? '' : '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>') +
         '</div>' +
@@ -1757,7 +1757,7 @@ export function renderDashboard() {
                     '<span class="wing-dot ' + dotClass + '"></span>' +
                     '<span class="wing-name">' + escapeHtml(name) + lockIcon + '</span>' +
                 '</div>' +
-                '<span class="wing-agents">' + (w.agents || []).map(function(a) { return agentIcon(a) || escapeHtml(a); }).join(' ') + '</span>' +
+                '<span class="wing-agents">' + (((w.locked && !hasAuth) || isCardPasskey) ? '' : (w.agents || []).map(function(a) { return agentIcon(a) || escapeHtml(a); }).join(' ')) + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
                     (isCardPasskey ? authBadge : ((w.locked && !hasAuth) ? lockedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>'))) +

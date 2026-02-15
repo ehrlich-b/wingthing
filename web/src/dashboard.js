@@ -232,6 +232,7 @@ export function rebuildAgentLists() {
     var seenAgents = {};
     S.wingsData.forEach(function(w) {
         if (w.online === false) return;
+        if (w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed' || (w.locked && !S.tunnelAuthTokens[w.wing_id])) return;
         (w.agents || []).forEach(function(a) {
             if (!seenAgents[a]) { seenAgents[a] = true; S.availableAgents.push({ agent: a, wingId: w.wing_id }); }
         });
