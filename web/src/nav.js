@@ -4,7 +4,7 @@ import { detachPTY, connectPTY, attachPTY } from './pty.js';
 import { clearTermBuffer } from './terminal.js';
 import { clearNotification } from './notify.js';
 import { sendTunnelRequest } from './tunnel.js';
-import { loadHome, getCachedSessions, setCachedSessions, setEggOrder } from './data.js';
+import { loadHome, saveSessionCache, setEggOrder } from './data.js';
 
 export function showHome(pushHistory) {
     S.activeView = 'home';
@@ -43,6 +43,8 @@ export function showTerminal() {
 }
 
 export function switchToSession(sessionId, pushHistory) {
+    var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
+    if (sess && !sess.swept) return;
     detachPTY();
     showTerminal();
     attachPTY(sessionId);
@@ -94,10 +96,9 @@ export function deleteSession(sessionId) {
         var wing = S.wingsData.find(function(w) { return w.wing_id === sess.wing_id; });
         if (wing) wingId = wing.wing_id;
     }
-    var cached = getCachedSessions().filter(function (s) { return s.id !== sessionId; });
-    setCachedSessions(cached);
     S.sessionsData = S.sessionsData.filter(function(s) { return s.id !== sessionId; });
     setEggOrder(S.sessionsData.map(function(s) { return s.id; }));
+    saveSessionCache();
     clearTermBuffer(sessionId);
     delete S.sessionNotifications[sessionId];
     if (S.activeView === 'home') renderDashboard();

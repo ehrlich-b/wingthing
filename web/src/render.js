@@ -21,18 +21,24 @@ function isWingAccessible(wingId) {
     return w && w.online !== false && !w.tunnel_error;
 }
 
+function isWingVisible(wingId) {
+    if (!wingId) return false;
+    var w = S.wingsData.find(function(ww) { return ww.wing_id === wingId; });
+    return w && w.tunnel_error !== 'not_allowed';
+}
+
 export function renderSidebar() {
     var tabs = S.sessionsData.filter(function(s) {
         if ((s.kind || 'terminal') === 'chat') return false;
         if (s.id === S.ptySessionId) return true;
-        return isWingAccessible(s.wing_id);
+        return isWingVisible(s.wing_id);
     }).map(function(s) {
         var name = projectName(s.cwd);
         var letter = name.charAt(0).toUpperCase();
         var isActive = (S.activeView === 'terminal' && s.id === S.ptySessionId);
         var needsAttention = S.sessionNotifications[s.id];
-        var dotClass = s.status === 'active' ? 'dot-live' : 'dot-detached';
-        if (needsAttention) dotClass = 'dot-attention';
+        var dotClass = s.status === 'active' ? 'dot-live' : (s.swept ? 'dot-detached' : '');
+        if (s.swept && needsAttention) dotClass = 'dot-attention';
         return '<button class="session-tab' + (isActive ? ' active' : '') + '" ' +
             'title="' + escapeHtml(name + ' \u00b7 ' + (s.agent || '?')) + '" ' +
             'data-sid="' + s.id + '">' +
@@ -46,6 +52,8 @@ export function renderSidebar() {
         tab.addEventListener('click', function() {
             var sid = tab.dataset.sid;
             if (sid === S.ptySessionId && S.activeView === 'terminal') return;
+            var s = S.sessionsData.find(function(ss) { return ss.id === sid; });
+            if (s && !s.swept) return;
             switchToSession(sid);
         });
     });
@@ -1736,7 +1744,7 @@ export function renderDashboard() {
         var wingHtml = '<h3 class="section-label">wings</h3><div class="wing-grid">';
         wingHtml += visibleWings.map(function(w) {
             var name = wingDisplayName(w);
-            var dotClass = (w.online !== false && !w.tunnel_error) ? 'dot-live' : 'dot-offline';
+            var dotClass = (w.online === undefined) ? '' : (w.online === true ? 'dot-live' : 'dot-offline');
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
             var isCardPasskey = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
@@ -1784,11 +1792,8 @@ export function renderDashboard() {
                             renderDashboard();
                             // Immediately fetch sessions from this wing
                             fetchWingSessions(mid).then(function(sessions) {
-                                if (sessions.length > 0) {
-                                    var otherSessions = S.sessionsData.filter(function(s) {
-                                        return s.wing_id !== sessions[0].wing_id;
-                                    });
-                                    mergeWingSessions(otherSessions.concat(sessions));
+                                if (sessions) {
+                                    mergeWingSessions(mid, sessions);
                                     renderSidebar();
                                     renderDashboard();
                                 }
@@ -1810,7 +1815,7 @@ export function renderDashboard() {
 
     var visibleSessions = S.sessionsData.filter(function(s) {
         if (s.id === S.ptySessionId) return true;
-        return isWingAccessible(s.wing_id);
+        return isWingVisible(s.wing_id);
     });
     var hasSessions = visibleSessions.length > 0;
     var hasWings = visibleWings.length > 0;
@@ -1831,8 +1836,8 @@ export function renderDashboard() {
         var isActive = s.status === 'active';
         var kind = s.kind || 'terminal';
         var needsAttention = S.sessionNotifications[s.id];
-        var dotClass = isActive ? 'live' : 'detached';
-        if (needsAttention) dotClass = 'attention';
+        var dotClass = isActive ? 'live' : (s.swept ? 'detached' : 'offline');
+        if (s.swept && needsAttention) dotClass = 'attention';
 
         var previewHtml = '';
         var thumbUrl = '';
@@ -1864,6 +1869,12 @@ export function renderDashboard() {
         card.addEventListener('click', function(e) {
             if (e.target.closest('.box-menu-btn, .egg-delete')) return;
             var sid = card.dataset.sid;
+            var s = S.sessionsData.find(function(ss) { return ss.id === sid; });
+            if (s && !s.swept) {
+                var label = card.querySelector('.egg-label');
+                if (label) { var orig = label.textContent; label.textContent = 'wing offline'; setTimeout(function() { label.textContent = orig; }, 1500); }
+                return;
+            }
             switchToSession(sid);
         });
     });

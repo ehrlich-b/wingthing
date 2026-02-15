@@ -83,6 +83,12 @@ export function setCachedWingSessions(wingId, sessions) {
     try { localStorage.setItem(WING_SESSIONS_PREFIX + wingId, JSON.stringify(sessions)); } catch (e) {}
 }
 
+export function saveSessionCache() {
+    setCachedSessions(S.sessionsData.map(function(s) {
+        return { id: s.id, wing_id: s.wing_id, agent: s.agent, cwd: s.cwd, audit: s.audit };
+    }));
+}
+
 export function saveWingCache() {
     setCachedWings(S.wingsData.filter(function(w) {
         return w.tunnel_error !== 'not_allowed';
@@ -112,6 +118,7 @@ export async function probeWing(w) {
             saveTunnelAuthTokens();
             // Clear sessions from revoked wing
             S.sessionsData = S.sessionsData.filter(function(s) { return s.wing_id !== w.wing_id; });
+            saveSessionCache();
         } else if (msg.indexOf('passkey_required') !== -1) {
             w.tunnel_error = 'passkey_required';
             if (e.metadata) {
@@ -134,38 +141,72 @@ export async function fetchWingSessions(wingId) {
         return (result.sessions || []).map(function(s) {
             return { id: s.session_id, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit };
         });
-    } catch (e) { return []; }
+    } catch (e) { return null; }
 }
 
-export function mergeWingSessions(allSessions) {
-    var seen = {};
-    var deduped = [];
-    allSessions.forEach(function(s) {
-        if (!seen[s.id]) {
-            seen[s.id] = true;
-            deduped.push(s);
+export function mergeWingSessions(wingId, remoteSessions) {
+    var remoteMap = {};
+    remoteSessions.forEach(function(s) { remoteMap[s.id] = s; });
+    var kept = [];
+    S.sessionsData.forEach(function(s) {
+        if (s.wing_id === wingId) {
+            var remote = remoteMap[s.id];
+            if (remote) {
+                s.agent = remote.agent;
+                s.cwd = remote.cwd;
+                s.needs_attention = remote.needs_attention;
+                s.audit = remote.audit;
+                s.swept = true;
+                kept.push(s);
+                delete remoteMap[s.id];
+            }
+            // Wing says gone — drop it
+        } else {
+            kept.push(s);
         }
     });
-    S.sessionsData = sortSessionsByOrder(deduped);
+    // Append new sessions from remote
+    Object.keys(remoteMap).forEach(function(id) {
+        var s = remoteMap[id];
+        s.swept = true;
+        kept.push(s);
+    });
+    S.sessionsData = sortSessionsByOrder(kept);
     setEggOrder(S.sessionsData.map(function(s) { return s.id; }));
+    saveSessionCache();
 }
 
 export async function loadHome() {
-    // Step 1: If wingsData is empty, hydrate from cache (all offline)
+    // Step 1: Hydrate wings from cache if empty (online=undefined for gray dots)
     if (S.wingsData.length === 0) {
         var cached = getCachedWings();
-        cached.forEach(function(c) { c.online = false; });
         S.wingsData = sortWingsByOrder(cached);
     }
 
-    // Step 2: Fetch online wings from API
+    // Step 1b: Hydrate sessions from cache if empty
+    if (S.sessionsData.length === 0) {
+        var cachedSessions = getCachedSessions();
+        if (cachedSessions.length > 0) {
+            cachedSessions.forEach(function(s) { s.status = 'detached'; });
+            S.sessionsData = sortSessionsByOrder(cachedSessions);
+        }
+    }
+
+    // Step 2: Render NOW (gray dots, instant from cache)
+    rebuildAgentLists();
+    updateHeaderStatus();
+    renderSidebar();
+    if (S.activeView === 'home') renderDashboard();
+    if (S.activeView === 'wing-detail' && S.currentWingId) renderWingDetailPage(S.currentWingId);
+
+    // Step 3: Fetch online wings from API
     var apiWings = [];
     try {
         var wingsResp = await fetch('/api/app/wings');
         if (wingsResp.ok) apiWings = await wingsResp.json() || [];
     } catch (e) {}
 
-    // Step 3: In-place merge
+    // Step 4: In-place merge (sets online = true → green, false → yellow)
     var apiMap = {};
     apiWings.forEach(function(aw) { apiMap[aw.wing_id] = aw; });
     var rosterIds = {};
@@ -218,7 +259,7 @@ export async function loadHome() {
         if (w.latest_version) S.latestVersion = w.latest_version;
     });
 
-    // Step 4: Save cache, render once
+    // Step 5: Save cache, render (green/yellow dots)
     saveWingCache();
     rebuildAgentLists();
     updateHeaderStatus();
@@ -226,7 +267,7 @@ export async function loadHome() {
     if (S.activeView === 'home') renderDashboard();
     if (S.activeView === 'wing-detail' && S.currentWingId) renderWingDetailPage(S.currentWingId);
 
-    // Step 5: Probe all online wings + pending new wings in parallel
+    // Step 6: Probe all online wings + pending new wings in parallel
     var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; });
     await Promise.all(onlineWings.concat(pendingProbe).map(function(w) { return probeWing(w); }));
 
@@ -240,7 +281,7 @@ export async function loadHome() {
     });
     if (addedPending) S.wingsData = sortWingsByOrder(S.wingsData);
 
-    // Step 6: Save cache, render once after all probes
+    // Step 7: Save cache, render once after all probes
     saveWingCache();
     rebuildAgentLists();
     renderSidebar();
@@ -248,30 +289,27 @@ export async function loadHome() {
     if (S.activeView === 'wing-detail' && S.currentWingId) renderWingDetailPage(S.currentWingId);
     if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
 
-    // Step 7: Fetch sessions from accessible wings in parallel
+    // Step 8: Fetch sessions from accessible wings in parallel
     var accessibleWings = onlineWings.filter(function(w) { return !w.tunnel_error; });
-    var allNewSessions = await Promise.all(accessibleWings.map(function(w) {
-        return fetchWingSessions(w.wing_id);
+    var allResults = await Promise.all(accessibleWings.map(function(w) {
+        return fetchWingSessions(w.wing_id).then(function(sessions) {
+            return { wing_id: w.wing_id, sessions: sessions };
+        });
     }));
 
-    // Step 8: Merge sessions, render once
-    var flat = [];
-    allNewSessions.forEach(function(arr) { flat = flat.concat(arr); });
-    if (flat.length > 0) {
-        var fetchedWingIds = {};
-        accessibleWings.forEach(function(w) { fetchedWingIds[w.wing_id] = true; });
-        var kept = S.sessionsData.filter(function(s) { return !fetchedWingIds[s.wing_id]; });
-        mergeWingSessions(kept.concat(flat));
+    // Step 9: Per-wing merge, notifications, render once
+    allResults.forEach(function(r) {
+        if (r.sessions !== null) mergeWingSessions(r.wing_id, r.sessions);
+    });
 
-        S.sessionsData.forEach(function(s) {
-            if (s.needs_attention && s.id !== S.ptySessionId) {
-                setNotification(s.id);
-            } else if (!s.needs_attention && S.sessionNotifications[s.id]) {
-                clearNotification(s.id);
-            }
-        });
+    S.sessionsData.forEach(function(s) {
+        if (s.needs_attention && s.id !== S.ptySessionId) {
+            setNotification(s.id);
+        } else if (!s.needs_attention && S.sessionNotifications[s.id]) {
+            clearNotification(s.id);
+        }
+    });
 
-        renderSidebar();
-        if (S.activeView === 'home') renderDashboard();
-    }
+    renderSidebar();
+    if (S.activeView === 'home') renderDashboard();
 }

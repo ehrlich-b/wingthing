@@ -108,11 +108,8 @@ function applyWingEvent(ev) {
                     if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
                     if (!newWing.tunnel_error) {
                         fetchWingSessions(ev.wing_id).then(function(sessions) {
-                            if (sessions.length > 0) {
-                                var otherSessions = S.sessionsData.filter(function(s) {
-                                    return s.wing_id !== sessions[0].wing_id;
-                                });
-                                mergeWingSessions(otherSessions.concat(sessions));
+                            if (sessions) {
+                                mergeWingSessions(ev.wing_id, sessions);
                                 renderSidebar();
                                 if (S.activeView === 'home') renderDashboard();
                             }
@@ -138,6 +135,9 @@ function applyWingEvent(ev) {
             if (w.wing_id === ev.wing_id) {
                 w.online = false;
             }
+        });
+        S.sessionsData.forEach(function(s) {
+            if (s.wing_id === ev.wing_id) s.swept = false;
         });
         tunnelCloseWing(ev.wing_id);
         // DON'T clear sessions — wing might reconnect momentarily
@@ -177,11 +177,8 @@ function applyWingEvent(ev) {
 
             if (!evWing.tunnel_error) {
                 fetchWingSessions(ev.wing_id).then(function(sessions) {
-                    if (sessions.length > 0) {
-                        var otherSessions = S.sessionsData.filter(function(s) {
-                            return s.wing_id !== sessions[0].wing_id;
-                        });
-                        mergeWingSessions(otherSessions.concat(sessions));
+                    if (sessions) {
+                        mergeWingSessions(ev.wing_id, sessions);
                         renderSidebar();
                         if (S.activeView === 'home') renderDashboard();
                     }
@@ -213,16 +210,19 @@ export function updateWingCardStatus(wingId) {
     if (!w) return;
     var dot = card.querySelector('.wing-dot');
     if (dot) {
-        var isLive = w.online !== false && !w.tunnel_error;
-        dot.classList.toggle('dot-live', isLive);
-        dot.classList.toggle('dot-offline', !isLive);
+        if (w.online === undefined) {
+            dot.classList.remove('dot-live', 'dot-offline');
+        } else {
+            dot.classList.toggle('dot-live', w.online === true);
+            dot.classList.toggle('dot-offline', w.online !== true);
+        }
     }
 }
 
 export function updateHeaderStatus() {
     var indicator = document.getElementById('wing-indicator');
     if (!indicator) return;
-    var anyOnline = S.wingsData.some(function(w) { return w.online !== false; });
+    var anyOnline = S.wingsData.some(function(w) { return w.online === true; });
     indicator.classList.toggle('dot-live', anyOnline);
     indicator.classList.toggle('dot-offline', !anyOnline);
     indicator.style.display = S.wingsData.length > 0 ? '' : 'none';
