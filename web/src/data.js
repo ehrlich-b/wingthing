@@ -93,7 +93,7 @@ export function saveWingCache() {
     setCachedWings(S.wingsData.filter(function(w) {
         return w.tunnel_error !== 'not_allowed';
     }).map(function(w) {
-        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform, agents: w.agents };
+        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform, agents: w.agents, locked: w.locked || false };
     }));
 }
 
