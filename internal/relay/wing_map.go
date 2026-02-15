@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -157,7 +158,11 @@ func (s *Server) registerWingWithLogin(wing *ConnectedWing) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("registerWingWithLogin %s: %v", wing.WingID, err)
 		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("registerWingWithLogin %s: status %d", wing.WingID, resp.StatusCode)
 	}
 	resp.Body.Close()
 }
@@ -173,7 +178,11 @@ func (s *Server) deregisterWingWithLogin(wingID string) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("deregisterWingWithLogin %s: %v", wingID, err)
 		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("deregisterWingWithLogin %s: status %d", wingID, resp.StatusCode)
 	}
 	resp.Body.Close()
 }

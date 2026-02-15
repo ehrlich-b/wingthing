@@ -533,7 +533,9 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 		case "wing.online", "wing.config":
 			s.registerWingWithLogin(wing)
 		case "wing.offline":
-			s.deregisterWingWithLogin(wing.WingID)
+			if s.findAnyWingByWingID(wing.WingID) == nil {
+				s.deregisterWingWithLogin(wing.WingID)
+			}
 		}
 		go s.forwardWingEvent(eventType, wing)
 		return
@@ -552,7 +554,9 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 				AllowedCount: wing.AllowedCount,
 			})
 		case "wing.offline":
-			s.WingMap.Deregister(wing.WingID)
+			if s.findAnyWingByWingID(wing.WingID) == nil {
+				s.WingMap.Deregister(wing.WingID)
+			}
 		}
 	}
 
