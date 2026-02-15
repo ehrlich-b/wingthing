@@ -411,7 +411,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	log.Printf("wing %s connected (user=%s wing=%s)", wing.ID, userID, reg.WingID)
+	log.Printf("wing %s connected (user=%s wing=%s machine=%s role=%s total_wings=%d)", wing.ID, userID, reg.WingID, s.Config.FlyMachineID, s.Config.NodeRole, len(s.Wings.All()))
 
 	// Send ack
 	ack := ws.RegisteredMsg{Type: ws.TypeRegistered, WingID: wing.ID}
@@ -422,7 +422,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
-			log.Printf("wing %s disconnected: %v", wing.ID, err)
+			log.Printf("wing %s disconnected (wing=%s machine=%s): %v", wing.ID, wing.WingID, s.Config.FlyMachineID, err)
 			return
 		}
 

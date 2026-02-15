@@ -111,9 +111,10 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 
 	// Cross-node routing: if target wing is on another machine, fly-replay BEFORE WebSocket upgrade.
 	// Retries for up to 5s to handle wing reconnection after deploy.
+	targetWingID := r.URL.Query().Get("wing_id")
 	if s.Config.FlyMachineID != "" {
-		targetWingID := r.URL.Query().Get("wing_id")
 		if targetWingID != "" && s.findAnyWingByWingID(targetWingID) == nil {
+			log.Printf("[pty-route] wing %s not local on %s (%s), searching cluster...", targetWingID, s.Config.FlyMachineID, s.Config.NodeRole)
 			var machineID string
 			var found bool
 			for range 10 {
@@ -133,14 +134,22 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if !found {
+				log.Printf("[pty-route] FAIL wing %s not found anywhere after 5s retries (machine=%s role=%s local_wings=%s)",
+					targetWingID, s.Config.FlyMachineID, s.Config.NodeRole, s.wingRegistrySummary())
 				http.Error(w, `{"error":"wing not found","retry":true}`, http.StatusNotFound)
 				return
 			}
 			if machineID != s.Config.FlyMachineID {
+				log.Printf("[pty-route] fly-replay wing %s → machine %s (from %s)", targetWingID, machineID, s.Config.FlyMachineID)
 				w.Header().Set("fly-replay", "instance="+machineID)
 				return
 			}
+			log.Printf("[pty-route] wing %s resolved to THIS machine %s", targetWingID, s.Config.FlyMachineID)
+		} else if targetWingID != "" {
+			log.Printf("[pty-route] wing %s found locally on %s (%s), upgrading", targetWingID, s.Config.FlyMachineID, s.Config.NodeRole)
 		}
+	} else if targetWingID != "" {
+		log.Printf("[pty-route] no FlyMachineID set, skipping cross-node routing for wing %s", targetWingID)
 	}
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -212,6 +221,8 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				wing = s.findAccessibleWing(userID)
 			}
 			if wing == nil {
+				log.Printf("[pty-start] NO WING FOUND: requested=%s query=%s user=%s machine=%s role=%s local_wings=%s",
+					wingID, queryWingID, userID, s.Config.FlyMachineID, s.Config.NodeRole, s.wingRegistrySummary())
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "no wing connected"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue

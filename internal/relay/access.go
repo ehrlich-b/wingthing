@@ -1,5 +1,19 @@
 package relay
 
+import "fmt"
+
+// wingRegistrySummary returns a compact debug string of all connected wings.
+func (s *Server) wingRegistrySummary() string {
+	all := s.Wings.All()
+	if len(all) == 0 {
+		return "[empty]"
+	}
+	result := fmt.Sprintf("[%d wings:", len(all))
+	for _, w := range all {
+		result += fmt.Sprintf(" %s(conn=%s,user=%s)", w.WingID, w.ID[:8], w.UserID[:8])
+	}
+	return result + "]"
+}
 
 // canAccessWing returns true if userID can use this wing.
 func (s *Server) canAccessWing(userID string, wing *ConnectedWing) bool {

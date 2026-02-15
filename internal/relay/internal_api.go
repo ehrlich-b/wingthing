@@ -21,6 +21,7 @@ func (s *Server) registerInternalRoutes() {
 	s.mux.HandleFunc("GET /internal/org-check/{slug}/{userID}", s.withInternalAuth(s.handleInternalOrgCheck))
 	s.mux.HandleFunc("POST /internal/wing-event", s.withInternalAuth(s.handleInternalWingEvent))
 	s.mux.HandleFunc("GET /internal/user-orgs/{userID}", s.withInternalAuth(s.handleInternalUserOrgs))
+	s.mux.HandleFunc("GET /internal/wings-debug", s.withInternalAuth(s.handleWingsDebug))
 }
 
 // withInternalAuth wraps a handler to only allow requests from Fly's internal network.
@@ -82,7 +83,7 @@ func (s *Server) handleInternalStatus(w http.ResponseWriter, r *http.Request) {
 	wings := s.Wings.All()
 	wingIDs := make([]string, len(wings))
 	for i, w := range wings {
-		wingIDs[i] = w.ID
+		wingIDs[i] = w.WingID
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"machine_id": s.Config.FlyMachineID,
@@ -90,6 +91,58 @@ func (s *Server) handleInternalStatus(w http.ResponseWriter, r *http.Request) {
 		"role":       s.Config.NodeRole,
 		"wings":      wingIDs,
 	})
+}
+
+// handleWingsDebug returns full diagnostic info about connected wings and WingMap state.
+func (s *Server) handleWingsDebug(w http.ResponseWriter, r *http.Request) {
+	local := s.Wings.All()
+	type wingInfo struct {
+		ConnID   string `json:"conn_id"`
+		WingID   string `json:"wing_id"`
+		UserID   string `json:"user_id"`
+		OrgID    string `json:"org_id,omitempty"`
+		LastSeen string `json:"last_seen"`
+	}
+	localWings := make([]wingInfo, len(local))
+	for i, lw := range local {
+		localWings[i] = wingInfo{
+			ConnID:   lw.ID,
+			WingID:   lw.WingID,
+			UserID:   lw.UserID,
+			OrgID:    lw.OrgID,
+			LastSeen: lw.LastSeen.Format(time.RFC3339),
+		}
+	}
+
+	result := map[string]any{
+		"machine_id":  s.Config.FlyMachineID,
+		"region":      s.Config.FlyRegion,
+		"role":        s.Config.NodeRole,
+		"local_wings": localWings,
+	}
+
+	if s.WingMap != nil {
+		type mapEntry struct {
+			WingID    string `json:"wing_id"`
+			MachineID string `json:"machine_id"`
+			UserID    string `json:"user_id"`
+			OrgID     string `json:"org_id,omitempty"`
+		}
+		allMap := s.WingMap.All()
+		mapEntries := make([]mapEntry, 0, len(allMap))
+		for wid, loc := range allMap {
+			mapEntries = append(mapEntries, mapEntry{
+				WingID:    wid,
+				MachineID: loc.MachineID,
+				UserID:    loc.UserID,
+				OrgID:     loc.OrgID,
+			})
+		}
+		result["wing_map"] = mapEntries
+		result["edge_ids"] = s.WingMap.EdgeIDs()
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 // EntitlementEntry is a user's entitlement info for edge node caching.
