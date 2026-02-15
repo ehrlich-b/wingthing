@@ -916,7 +916,14 @@ func wingAllowCmd() *cobra.Command {
 				members := membersResp.Members
 				added := 0
 				updated := 0
+				skipped := 0
 				for _, m := range members {
+					// Skip members without a registered passkey
+					if m.PasskeyPubKey == "" {
+						fmt.Printf("skipped %s (no passkey)\n", m.Email)
+						skipped++
+						continue
+					}
 					// Deduplicate by user_id
 					dupIdx := -1
 					for i, ak := range wingCfg.AllowKeys {
@@ -927,7 +934,7 @@ func wingAllowCmd() *cobra.Command {
 					}
 					if dupIdx >= 0 {
 						// Update passkey public key if we have one now and didn't before
-						if m.PasskeyPubKey != "" && wingCfg.AllowKeys[dupIdx].Key != m.PasskeyPubKey {
+						if wingCfg.AllowKeys[dupIdx].Key != m.PasskeyPubKey {
 							wingCfg.AllowKeys[dupIdx].Key = m.PasskeyPubKey
 							fmt.Printf("updated key: %s\n", m.Email)
 							updated++
@@ -948,6 +955,9 @@ func wingAllowCmd() *cobra.Command {
 						return err
 					}
 					signalDaemon(syscall.SIGHUP)
+				}
+				if skipped > 0 {
+					fmt.Printf("skipped %d members without passkeys\n", skipped)
 				}
 				fmt.Printf("added %d members, updated %d keys\n", added, updated)
 				return nil
