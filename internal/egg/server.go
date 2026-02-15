@@ -114,6 +114,8 @@ type replayBuffer struct {
 	advanced      chan struct{}   // closed+replaced when a reader advances (unblocks writer)
 	readers       []*readerCursor
 	trimPreamble  []byte         // mode sequences to re-inject after trim
+	cursorRow     int            // last known absolute cursor row (1-based)
+	cursorCol     int            // last known absolute cursor col (1-based)
 }
 
 type replayStats struct {
@@ -175,6 +177,8 @@ func (r *replayBuffer) Unregister(c *readerCursor) {
 func (r *replayBuffer) Write(p []byte) {
 	for {
 		r.mu.Lock()
+		// Track cursor position from incoming data before appending.
+		trackCursorPos(p, &r.cursorRow, &r.cursorCol)
 		r.buf = append(r.buf, p...)
 		r.written += int64(len(p))
 
@@ -193,9 +197,9 @@ func (r *replayBuffer) Write(p []byte) {
 		// Search forward from the excess offset for the nearest frame boundary.
 		cut := findSafeCut(r.buf, excess)
 
-		// Re-inject agent's mode preamble so replays start with correct
-		// terminal state (e.g. cursor hidden for Claude).
-		preamble := r.trimPreamble
+		// Re-inject agent's mode preamble + cursor position so replays
+		// start with correct terminal state after trim.
+		preamble := r.buildTrimPreamble()
 
 		if len(r.readers) == 0 {
 			// No readers — trim freely at the safe cut point.
@@ -288,11 +292,76 @@ func (r *replayBuffer) Bytes() []byte {
 func agentPreamble(agent string) []byte {
 	switch agent {
 	case "claude":
-		// Claude hides the real cursor and draws its own with reverse video.
-		// Also enables bracketed paste and synchronized updates.
-		return []byte("\x1b[?2004h\x1b[?25l\x1b[?2026h")
+		// Bracketed paste and synchronized updates. Cursor position is
+		// tracked separately and injected at trim time.
+		return []byte("\x1b[?2004h\x1b[?2026h")
 	default:
 		return nil
+	}
+}
+
+// buildTrimPreamble returns the full preamble to inject after a trim:
+// static mode sequences + last known cursor position.
+func (r *replayBuffer) buildTrimPreamble() []byte {
+	if len(r.trimPreamble) == 0 && r.cursorRow == 0 {
+		return nil
+	}
+	var out []byte
+	out = append(out, r.trimPreamble...)
+	if r.cursorRow > 0 {
+		out = append(out, []byte(fmt.Sprintf("\x1b[%d;%dH", r.cursorRow, r.cursorCol))...)
+	}
+	return out
+}
+
+// trackCursorPos scans PTY output for absolute cursor position sequences
+// (CSI row;col H) and updates the tracked position. TUI apps like Claude
+// use absolute positioning extensively, so this captures the cursor location
+// accurately without needing to track relative movements.
+func trackCursorPos(data []byte, row *int, col *int) {
+	for i := 0; i < len(data); i++ {
+		if data[i] != '\x1b' {
+			continue
+		}
+		i++
+		if i >= len(data) || data[i] != '[' {
+			continue
+		}
+		i++
+		// Parse CSI parameters: digits and semicolons until final byte.
+		start := i
+		for i < len(data) && ((data[i] >= '0' && data[i] <= '9') || data[i] == ';') {
+			i++
+		}
+		if i >= len(data) {
+			break
+		}
+		final := data[i]
+		if final != 'H' && final != 'f' {
+			continue
+		}
+		// CUP — Cursor Position: ESC [ row ; col H
+		params := data[start : i]
+		r, c := 1, 1
+		semi := bytes.IndexByte(params, ';')
+		if semi >= 0 {
+			if semi > 0 {
+				if v, err := strconv.Atoi(string(params[:semi])); err == nil {
+					r = v
+				}
+			}
+			if semi+1 < len(params) {
+				if v, err := strconv.Atoi(string(params[semi+1:])); err == nil {
+					c = v
+				}
+			}
+		} else if len(params) > 0 {
+			if v, err := strconv.Atoi(string(params)); err == nil {
+				r = v
+			}
+		}
+		*row = r
+		*col = c
 	}
 }
 
