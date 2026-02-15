@@ -160,13 +160,14 @@ export async function loadHome() {
     var prevMap = {};
     S.wingsData.forEach(function(w) { prevMap[w.wing_id] = w; });
     wings.forEach(function(w) {
+        // Hydrate from previous in-memory state first, then localStorage cache
         var prev = prevMap[w.wing_id];
         var c = cacheMap[w.wing_id];
-        if (!w.wing_label && prev && prev.wing_label) w.wing_label = prev.wing_label;
-        if (!w.wing_label && c && c.wing_label) w.wing_label = c.wing_label;
-        if (!w.hostname && prev) {
-            w.hostname = prev.hostname;
-            w.platform = prev.platform || w.platform;
+        var src = prev || c || {};
+        if (!w.wing_label && src.wing_label) w.wing_label = src.wing_label;
+        if (!w.hostname && src.hostname) w.hostname = src.hostname;
+        if (!w.platform && src.platform) w.platform = src.platform;
+        if (prev) {
             w.agents = prev.agents || w.agents;
             w.projects = prev.projects || w.projects;
         }

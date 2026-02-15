@@ -140,25 +140,6 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve labels for all wings (local + remote)
-	if s.Store != nil {
-		var allWingIDs []string
-		resolvedOrgID := ""
-		for _, entry := range out {
-			allWingIDs = append(allWingIDs, entry["wing_id"].(string))
-			if oid, _ := entry["org_id"].(string); oid != "" && resolvedOrgID == "" {
-				resolvedOrgID = oid
-			}
-		}
-		wingLabels := s.Store.ResolveLabels(allWingIDs, user.ID, resolvedOrgID)
-		for _, entry := range out {
-			wid := entry["wing_id"].(string)
-			if label, ok := wingLabels[wid]; ok {
-				entry["wing_label"] = label
-			}
-		}
-	}
-
 	writeJSON(w, http.StatusOK, out)
 }
 

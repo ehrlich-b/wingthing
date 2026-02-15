@@ -29,6 +29,7 @@ If you find yourself reaching for an external tool and wingthing _should_ handle
 - `wt egg <agent>` -- spawns a per-session child process (`wt egg run`) with its own sandbox, PTY, and gRPC socket at `~/.wingthing/eggs/<session-id>/`
 - `wt wing` -- WebSocket client that connects outbound to the relay, handles PTY sessions and encrypted tunnel requests, spawns eggs for each session
 - `wt serve` -- relay server (web UI + WebSocket relay + skill registry), HTTP + SQLite. The relay is a dumb pipe for wing data -- it forwards encrypted blobs without reading them.
+- **The relay knows NOTHING about wings except their IDs and public keys.** `GET /api/app/wings` returns a list of wing UUIDs. All wing metadata (hostname, platform, agents, projects, labels) comes from the wing itself via encrypted tunnel requests (`wing.info`). The frontend must cache this metadata in localStorage and show cached data on page load while probing wings in the background.
 - `wt run` -- direct agent invocation for prompts and skills (the old `wt [prompt]`)
 - Agents are pluggable (claude, ollama, gemini, codex, cursor). `wt` calls them as child processes.
 - All commands use direct store access via `store.Open(cfg.DBPath())`.
