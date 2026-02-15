@@ -39,6 +39,7 @@ const (
 	// Relay → Wing (control)
 	TypeRegistered   = "registered"
 	TypeRelayRestart = "relay.restart" // relay → all: server shutting down, reconnect
+	TypeWingOffline  = "wing.offline"  // relay → PTY browsers: wing disconnected
 	TypeError        = "error"
 )
 

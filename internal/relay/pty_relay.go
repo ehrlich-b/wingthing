@@ -20,6 +20,7 @@ import (
 type PTYRoute struct {
 	BrowserConn *websocket.Conn
 	UserID      string // bandwidth metering only
+	WingID      string // machine ID for offline notification
 	mu          sync.Mutex
 }
 
@@ -63,6 +64,24 @@ func (r *PTYRoutes) ClearBrowser(conn *websocket.Conn) {
 			route.BrowserConn = nil
 		}
 		route.mu.Unlock()
+	}
+}
+
+// NotifyWingOffline sends a wing.offline message to all PTY browsers connected to the given wing.
+func (r *PTYRoutes) NotifyWingOffline(wingID string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	msg := []byte(`{"type":"wing.offline"}`)
+	for _, route := range r.routes {
+		route.mu.Lock()
+		bc := route.BrowserConn
+		wid := route.WingID
+		route.mu.Unlock()
+		if wid == wingID && bc != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			bc.Write(ctx, websocket.MessageText, msg)
+			cancel()
+		}
 	}
 }
 
@@ -234,7 +253,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			start.SessionID = sessionID
 			start.UserID = userID
 
-			s.PTY.Set(sessionID, &PTYRoute{BrowserConn: conn, UserID: userID})
+			s.PTY.Set(sessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID})
 
 			fwd, _ := json.Marshal(start)
 			wing.Conn.Write(ctx, websocket.MessageText, fwd)
@@ -263,7 +282,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			s.PTY.Set(attach.SessionID, &PTYRoute{BrowserConn: conn, UserID: userID})
+			s.PTY.Set(attach.SessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID})
 
 			fwd, _ := json.Marshal(attach)
 			wing.Conn.Write(ctx, websocket.MessageText, fwd)

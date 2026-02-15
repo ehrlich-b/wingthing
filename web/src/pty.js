@@ -7,7 +7,8 @@ import { showReconnectBanner, hideReconnectBanner } from './dashboard.js';
 import { renderSidebar } from './render.js';
 import { loadHome } from './data.js';
 import { showHome } from './nav.js';
-import { wingDisplayName } from './helpers.js';
+import { wingDisplayName, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
+import { saveTunnelAuthTokens } from './tunnel.js';
 
 function sessionTitle(agent, wingId) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
@@ -40,6 +41,58 @@ function hideReplayOverlay() {
         overlay.classList.add('fade-out');
         setTimeout(function () { overlay.style.display = 'none'; }, 200);
     }, 80);
+}
+
+function showPasskeyOverlay() {
+    var overlay = document.getElementById('passkey-overlay');
+    if (overlay) overlay.style.display = '';
+}
+
+function hidePasskeyOverlay() {
+    var overlay = document.getElementById('passkey-overlay');
+    if (overlay) overlay.style.display = 'none';
+}
+
+export async function handlePTYPasskey() {
+    var msg = S.pendingPasskeyChallenge;
+    if (!msg || !S.ptyWs) return;
+    S.pendingPasskeyChallenge = null;
+
+    var allowCredentials = [];
+    try {
+        var resp = await fetch('/api/app/passkey');
+        if (resp.ok) {
+            var creds = await resp.json();
+            allowCredentials = creds.filter(function(c) { return c.credential_id; }).map(function(c) {
+                return { type: 'public-key', id: b64urlToBytes(c.credential_id) };
+            });
+        }
+    } catch (e) {}
+
+    var challenge = b64urlToBytes(msg.challenge);
+    var opts = {
+        publicKey: {
+            challenge: challenge,
+            rpId: location.hostname,
+            userVerification: 'preferred',
+            timeout: 60000
+        }
+    };
+    if (allowCredentials.length > 0) opts.publicKey.allowCredentials = allowCredentials;
+
+    try {
+        var credential = await navigator.credentials.get(opts);
+        S.ptyWs.send(JSON.stringify({
+            type: 'passkey.response',
+            session_id: msg.session_id,
+            credential_id: bytesToB64url(new Uint8Array(credential.rawId)),
+            authenticator_data: bytesToB64(new Uint8Array(credential.response.authenticatorData)),
+            client_data_json: bytesToB64(new Uint8Array(credential.response.clientDataJSON)),
+            signature: bytesToB64(new Uint8Array(credential.response.signature))
+        }));
+    } catch (e) {
+        showPasskeyOverlay();
+    }
 }
 
 function setupPTYHandlers(ws, reattach) {
@@ -135,6 +188,21 @@ function setupPTYHandlers(ws, reattach) {
                 }
                 return;
 
+            case 'wing.offline':
+                if (S.ptySessionId) {
+                    var sid = S.ptySessionId;
+                    S.ptyReconnecting = true;
+                    DOM.ptyStatus.textContent = 'wing restarting...';
+                    showReconnectBanner('wing restarting...');
+                    setTimeout(function () { ptyReconnectAttach(sid); }, 1000);
+                }
+                return;
+
+            case 'passkey.challenge':
+                S.pendingPasskeyChallenge = msg;
+                showPasskeyOverlay();
+                return;
+
             case 'pty.started':
                 if (reattach && S.ptySessionId && msg.session_id !== S.ptySessionId) {
                     console.warn('pty.started for wrong session:', msg.session_id, 'expected:', S.ptySessionId);
@@ -143,6 +211,11 @@ function setupPTYHandlers(ws, reattach) {
                 S.ptySessionId = msg.session_id;
                 DOM.headerTitle.textContent = sessionTitle(msg.agent, S.ptyWingId);
                 DOM.sessionCloseBtn.style.display = '';
+                hidePasskeyOverlay();
+                if (msg.auth_token && S.ptyWingId) {
+                    S.tunnelAuthTokens[S.ptyWingId] = msg.auth_token;
+                    saveTunnelAuthTokens();
+                }
                 if (!reattach) {
                     history.pushState({ view: 'terminal', sessionId: msg.session_id }, '', '#s/' + msg.session_id);
                 }

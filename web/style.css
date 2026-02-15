@@ -899,6 +899,34 @@ body {
     font-family: var(--mono);
 }
 
+#passkey-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(26, 26, 46, 0.9);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-passkey {
+    background: var(--bg-card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    font-family: var(--font);
+    font-size: 14px;
+    padding: 12px 24px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.15s;
+}
+
+.btn-passkey:hover {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+}
+
 #modifier-keys {
     display: none;
     gap: 4px;

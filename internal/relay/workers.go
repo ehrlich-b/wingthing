@@ -537,6 +537,11 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 		return
 	}
 
+	// Notify PTY browsers when a wing goes offline
+	if eventType == "wing.offline" {
+		s.PTY.NotifyWingOffline(wing.WingID)
+	}
+
 	// Login or single-node: update wingMap
 	if s.WingMap != nil {
 		switch eventType {

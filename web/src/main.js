@@ -3,7 +3,7 @@ import { S, DOM, initDOM } from './state.js';
 import { loginRedirect } from './helpers.js';
 import { initTerminal, sendPTYInput } from './terminal.js';
 import { showHome, showTerminal, switchToSession, navigateToWingDetail, navigateToAccount } from './nav.js';
-import { disconnectPTY, retryReconnect } from './pty.js';
+import { disconnectPTY, retryReconnect, attachPTY, handlePTYPasskey } from './pty.js';
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
 import { connectAppWS } from './dashboard.js';
 import { loadHome } from './data.js';
@@ -58,6 +58,16 @@ async function init() {
     if (reconnectBtn) {
         reconnectBtn.addEventListener('click', function() {
             retryReconnect();
+        });
+    }
+
+    // Passkey button
+    var passkeyBtn = document.getElementById('passkey-btn');
+    if (passkeyBtn) {
+        passkeyBtn.addEventListener('click', function() {
+            var overlay = document.getElementById('passkey-overlay');
+            if (overlay) overlay.style.display = 'none';
+            handlePTYPasskey();
         });
     }
 
@@ -160,8 +170,9 @@ async function init() {
     var hashMatch = location.hash.match(/^#s\/(.+)$/);
     if (hashMatch) {
         var deepSessionId = hashMatch[1];
-        history.replaceState({ view: 'home' }, '', location.pathname);
-        switchToSession(deepSessionId);
+        history.replaceState({ view: 'terminal', sessionId: deepSessionId }, '', '#s/' + deepSessionId);
+        showTerminal();
+        attachPTY(deepSessionId);
     }
     var wingMatch = location.hash.match(/^#w\/(.+)$/);
     if (wingMatch) {
