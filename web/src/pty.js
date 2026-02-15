@@ -314,7 +314,10 @@ export function attachPTY(sessionId) {
 
     S.ptyWs = new WebSocket(url);
     S.ptyWs.onopen = function () {
-        S.ptyWs.send(JSON.stringify({ type: 'pty.attach', session_id: sessionId, public_key: identityPubKey }));
+        var msg = { type: 'pty.attach', session_id: sessionId, public_key: identityPubKey };
+        if (S.ptyWingId) msg.wing_id = S.ptyWingId;
+        if (S.ptyWingId && S.tunnelAuthTokens[S.ptyWingId]) msg.auth_token = S.tunnelAuthTokens[S.ptyWingId];
+        S.ptyWs.send(JSON.stringify(msg));
     };
 
     setupPTYHandlers(S.ptyWs, true);
@@ -369,7 +372,10 @@ function ptyReconnectAttach(sessionId, attempt) {
 
     S.ptyWs = new WebSocket(url);
     S.ptyWs.onopen = function () {
-        S.ptyWs.send(JSON.stringify({ type: 'pty.attach', session_id: sessionId, public_key: identityPubKey }));
+        var msg = { type: 'pty.attach', session_id: sessionId, public_key: identityPubKey };
+        if (S.ptyWingId) msg.wing_id = S.ptyWingId;
+        if (S.ptyWingId && S.tunnelAuthTokens[S.ptyWingId]) msg.auth_token = S.tunnelAuthTokens[S.ptyWingId];
+        S.ptyWs.send(JSON.stringify(msg));
     };
 
     setupPTYHandlers(S.ptyWs, true);

@@ -114,39 +114,5 @@ func (s *Server) findAnyWingByWingID(wingID string) *ConnectedWing {
 	return nil
 }
 
-// canAccessSession returns true if userID can access this PTY session.
-func (s *Server) canAccessSession(userID string, session *PTYSession) bool {
-	if session.UserID == userID {
-		return true
-	}
-	wing := s.Wings.FindByID(session.WingID)
-	if wing == nil {
-		return false
-	}
-	return s.canAccessWing(userID, wing)
-}
 
-// getAuthorizedPTY is the single gateway for all session-scoped PTY operations.
-// Returns (session, wing) only if the user has access. Callers must not use
-// raw PTY.Get + FindByID — this function IS the authz boundary.
-func (s *Server) getAuthorizedPTY(userID, sessionID string) (*PTYSession, *ConnectedWing) {
-	session := s.PTY.Get(sessionID)
-	if session == nil || !s.canAccessSession(userID, session) {
-		return nil, nil
-	}
-	wing := s.Wings.FindByID(session.WingID)
-	return session, wing
-}
-
-// listAccessiblePTYSessions returns all PTY sessions the user can access.
-func (s *Server) listAccessiblePTYSessions(userID string) []*PTYSession {
-	all := s.PTY.All()
-	var result []*PTYSession
-	for _, sess := range all {
-		if s.canAccessSession(userID, sess) {
-			result = append(result, sess)
-		}
-	}
-	return result
-}
 

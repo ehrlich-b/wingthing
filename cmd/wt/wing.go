@@ -631,10 +631,6 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, resolvedRoot, &wingEggMu, &wingEggCfg, audit, debug, client)
 	}
 
-	client.SessionLister = func(ctx context.Context) []ws.SessionInfo {
-		return listAliveEggSessions(cfg)
-	}
-
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
 		killOrphanEgg(cfg, sessionID)
 	}
@@ -1371,7 +1367,9 @@ func readEggCrashInfo(dir string) string {
 	return fmt.Sprintf("egg crashed: %s", strings.TrimSpace(excerpt))
 }
 
-// reclaimEggSessions discovers surviving egg sessions and sends pty.reclaim to the relay.
+// reclaimEggSessions discovers surviving egg sessions and re-registers their
+// input routing goroutines. The relay no longer tracks sessions — browser
+// discovers them via E2E tunnel and reattaches directly via wing_id.
 func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Client) {
 	// Small delay to let registration complete
 	time.Sleep(500 * time.Millisecond)
@@ -1406,20 +1404,17 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 			continue
 		}
 
-		// Read metadata from egg's meta file
-		agent, cwd := readEggMeta(dir)
-
 		// If a goroutine is already handling this session (survived the
-		// reconnect), just tell the relay about it — don't create a
-		// duplicate subscriber or goroutine, which would cause decrypt
-		// errors (old goroutine encrypts with old key, browser has new key).
+		// reconnect), skip — don't create a duplicate subscriber or
+		// goroutine, which would cause decrypt errors.
 		if wsClient.HasPTYSession(sessionID) {
-			log.Printf("egg: session %s already tracked, sending reclaim only", sessionID)
-			wsClient.SendReclaim(ctx, sessionID, agent, cwd)
+			log.Printf("egg: session %s already tracked, skipping", sessionID)
 			continue
 		}
 
-		// Alive — dial and reclaim
+		agent, _ := readEggMeta(dir)
+
+		// Alive — dial and set up input routing
 		sockPath := filepath.Join(dir, "egg.sock")
 		tokenPath := filepath.Join(dir, "egg.token")
 		ec, dialErr := egg.Dial(sockPath, tokenPath)
@@ -1429,7 +1424,6 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		}
 
 		log.Printf("egg: reclaiming session %s (pid %d agent=%s)", sessionID, pid, agent)
-		wsClient.SendReclaim(ctx, sessionID, agent, cwd)
 
 		// Set up input routing for this session
 		write, input, cleanup := wsClient.RegisterPTYSession(ctx, sessionID)
@@ -1488,6 +1482,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if hasBell(p.Output) {
 					if lastHadBell {
 						wingAttention.Store(sessionID, true)
+						write(ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: sessionID})
 					}
 					lastHadBell = true
 				} else {
@@ -1592,6 +1587,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							if hasBell(p.Output) {
 								if lastHadBell {
 									wingAttention.Store(sessionID, true)
+						write(ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: sessionID})
 								}
 								lastHadBell = true
 							} else {
@@ -1863,6 +1859,7 @@ authDone:
 				if hasBell(p.Output) {
 					if lastHadBell {
 						wingAttention.Store(start.SessionID, true)
+					write(ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: start.SessionID})
 					}
 					lastHadBell = true
 				} else {
@@ -1979,6 +1976,7 @@ authDone:
 							if hasBell(p.Output) {
 								if lastHadBell {
 									wingAttention.Store(start.SessionID, true)
+					write(ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: start.SessionID})
 								}
 								lastHadBell = true
 							} else {

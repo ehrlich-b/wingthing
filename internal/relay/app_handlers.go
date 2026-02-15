@@ -454,27 +454,4 @@ func (s *Server) handleDeleteWingLabel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handleSessionLabel sets a label for a session.
-func (s *Server) handleSessionLabel(w http.ResponseWriter, r *http.Request) {
-	user := s.sessionUser(r)
-	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
-		return
-	}
-
-	sessionID := r.PathValue("id")
-	var body struct {
-		Label string `json:"label"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "bad body")
-		return
-	}
-
-	if err := s.Store.SetLabel(sessionID, "user", user.ID, body.Label); err != nil {
-		writeError(w, http.StatusInternalServerError, "save label: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
 

@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 // --- ClusterState tests ---
@@ -193,16 +191,10 @@ func TestPeerDirectoryCountForUser(t *testing.T) {
 
 func TestConnectedToSync(t *testing.T) {
 	wing := &ConnectedWing{
-		ID:       "conn-uuid-123",
-		UserID:   "user-1",
-		WingID:   "stable-wing-abc",
-		Hostname: "macbook",
-		Platform: "darwin",
-		Version:  "0.31.0",
-		Agents:   []string{"claude", "ollama"},
-		Labels:   []string{"dev"},
-		Projects: []ws.WingProject{{Name: "myproject", Path: "/home/user/myproject"}},
-		OrgID:    "myorg",
+		ID:     "conn-uuid-123",
+		UserID: "user-1",
+		WingID: "stable-wing-abc",
+		OrgID:  "myorg",
 	}
 
 	sw := connectedToSync("machine-42", wing)

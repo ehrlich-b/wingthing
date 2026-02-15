@@ -9,9 +9,8 @@ import (
 //   - orgMember: a member of the wing's org
 //   - outsider: a random user with no relationship
 //
-// Every session-scoped operation must be tested against all three actors.
-// If a new operation is added without updating this test, the test should
-// be extended — this is the safety net.
+// Session-level authz is now handled by the wing via E2E tunnel.
+// Only wing-level access control is enforced at the relay.
 
 func setupAuthzServer(t *testing.T) (*Server, *ConnectedWing, string, string, string) {
 	t.Helper()
@@ -33,11 +32,10 @@ func setupAuthzServer(t *testing.T) (*Server, *ConnectedWing, string, string, st
 
 	// Connect an org wing owned by owner
 	wing := &ConnectedWing{
-		ID:       "conn-1",
-		UserID:   ownerID,
-		WingID:   "wing-stable-1",
-		Hostname: "test-host",
-		OrgID:    "org-1",
+		ID:     "conn-1",
+		UserID: ownerID,
+		WingID: "wing-stable-1",
+		OrgID:  "org-1",
 	}
 	s.Wings.Add(wing)
 
@@ -90,55 +88,6 @@ func TestAuthzListWings(t *testing.T) {
 	}
 }
 
-// --- PTY session authz tests (the wall) ---
-
-func TestAuthzPTYGateway(t *testing.T) {
-	s, wing, ownerID, memberID, outsiderID := setupAuthzServer(t)
-
-	session := &PTYSession{
-		ID:     "sess-1",
-		WingID: wing.ID,
-		UserID: ownerID,
-		Agent:  "claude",
-		Status: "active",
-	}
-	s.PTY.Add(session)
-
-	tests := []struct {
-		name       string
-		userID     string
-		wantAccess bool
-	}{
-		{"owner can access own session", ownerID, true},
-		{"org member can access org session", memberID, true},
-		{"outsider cannot access org session", outsiderID, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sess, w := s.getAuthorizedPTY(tt.userID, "sess-1")
-			if tt.wantAccess {
-				if sess == nil {
-					t.Error("getAuthorizedPTY returned nil session, want access")
-				}
-				if w == nil {
-					t.Error("getAuthorizedPTY returned nil wing, want access")
-				}
-			} else {
-				if sess != nil {
-					t.Error("getAuthorizedPTY returned session, want nil (no access)")
-				}
-			}
-		})
-	}
-
-	t.Run("nonexistent session returns nil", func(t *testing.T) {
-		sess, _ := s.getAuthorizedPTY(ownerID, "no-such-session")
-		if sess != nil {
-			t.Error("expected nil for nonexistent session")
-		}
-	})
-}
-
 // --- Personal wing isolation tests ---
 
 func TestAuthzPersonalWingIsolation(t *testing.T) {
@@ -167,16 +116,6 @@ func TestAuthzPersonalWingIsolation(t *testing.T) {
 			t.Errorf("user B sees %d wings, want 0", len(wings))
 		}
 	})
-
-	sess := &PTYSession{ID: "sess-a", WingID: wingA.ID, UserID: "user-a", Status: "active"}
-	s.PTY.Add(sess)
-
-	t.Run("other user cannot access personal PTY session", func(t *testing.T) {
-		session, _ := s.getAuthorizedPTY("user-b", "sess-a")
-		if session != nil {
-			t.Error("user B should not access user A's PTY session")
-		}
-	})
 }
 
 // --- Wing event notification tests ---
@@ -201,11 +140,10 @@ func TestAuthzOrgWingNotifications(t *testing.T) {
 	s.Wings.Subscribe("outsider-1", outsiderCh)
 
 	wing := &ConnectedWing{
-		ID:       "conn-1",
-		UserID:   "owner-1",
-		WingID:   "wing-1",
-		Hostname: "host",
-		OrgID:    "org-1",
+		ID:     "conn-1",
+		UserID: "owner-1",
+		WingID: "wing-1",
+		OrgID:  "org-1",
 	}
 	s.Wings.Add(wing)
 
@@ -284,10 +222,9 @@ func TestAuthzPersonalWingNotifications(t *testing.T) {
 	s.Wings.Subscribe("user-b", bCh)
 
 	wing := &ConnectedWing{
-		ID:       "conn-a",
-		UserID:   "user-a",
-		WingID:   "wing-a",
-		Hostname: "host-a",
+		ID:     "conn-a",
+		UserID: "user-a",
+		WingID: "wing-a",
 	}
 	s.Wings.Add(wing)
 
@@ -350,46 +287,6 @@ func TestAuthzWingOwnership(t *testing.T) {
 			got := s.isWingOwner(tt.userID, wing)
 			if got != tt.isOwner {
 				t.Errorf("isWingOwner(%s) = %v, want %v", tt.userID, got, tt.isOwner)
-			}
-		})
-	}
-}
-
-// --- Comprehensive: all session-scoped operations matrix ---
-
-func TestAuthzSessionOperationsMatrix(t *testing.T) {
-	s, wing, ownerID, memberID, outsiderID := setupAuthzServer(t)
-
-	sess := &PTYSession{ID: "matrix-pty", WingID: wing.ID, UserID: ownerID, Status: "active"}
-	s.PTY.Add(sess)
-
-	actors := []struct {
-		name   string
-		userID string
-		allow  bool
-	}{
-		{"owner", ownerID, true},
-		{"org-member", memberID, true},
-		{"outsider", outsiderID, false},
-	}
-
-	for _, actor := range actors {
-		t.Run("pty/"+actor.name, func(t *testing.T) {
-			session, _ := s.getAuthorizedPTY(actor.userID, "matrix-pty")
-			if actor.allow && session == nil {
-				t.Errorf("%s should have PTY access", actor.name)
-			}
-			if !actor.allow && session != nil {
-				t.Errorf("%s should NOT have PTY access", actor.name)
-			}
-		})
-	}
-
-	for _, actor := range actors {
-		t.Run("canAccessSession/"+actor.name, func(t *testing.T) {
-			got := s.canAccessSession(actor.userID, sess)
-			if got != actor.allow {
-				t.Errorf("canAccessSession(%s) = %v, want %v", actor.name, got, actor.allow)
 			}
 		})
 	}

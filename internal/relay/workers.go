@@ -17,42 +17,29 @@ import (
 
 // ConnectedWing represents a wing connected via WebSocket.
 type ConnectedWing struct {
-	ID          string
-	UserID      string
-	WingID      string
-	Hostname    string // display name from os.Hostname()
-	Platform    string // runtime.GOOS from wing
-	Version     string // build version from wing
-	PublicKey   string
-	Agents      []string
-	Skills      []string
-	Labels      []string
-	Identities  []string
-	Projects    []ws.WingProject
-	EggConfig   string // serialized YAML of wing's egg config
-	OrgID       string   // org slug this wing serves (from --org flag)
-	RootDir     string   // root directory constraint (from --root flag)
+	ID           string
+	UserID       string
+	WingID       string
+	PublicKey    string
+	OrgID        string // org ID this wing serves
 	Locked       bool
 	AllowedCount int
-	Conn        *websocket.Conn
-	LastSeen    time.Time
+	Conn         *websocket.Conn
+	LastSeen     time.Time
 }
 
-// WingEvent is sent to dashboard subscribers when a wing connects or disconnects.
-// Minimal: just a signal with wing_id + public_key. Metadata flows through E2E tunnel.
+// WingEvent is sent to dashboard subscribers for wing/session lifecycle events.
 type WingEvent struct {
-	Type      string `json:"type"`                 // "wing.online" or "wing.offline"
+	Type      string `json:"type"`                  // "wing.online", "wing.offline", "session.attention"
 	WingID    string `json:"wing_id"`
 	PublicKey string `json:"public_key,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // WingRegistry tracks all connected wings.
 type WingRegistry struct {
 	mu    sync.RWMutex
 	wings map[string]*ConnectedWing // wingID → wing
-
-	sessMu       sync.Mutex
-	sessRequests map[string]chan *ws.SessionsSync // requestID → response channel
 
 	// Dashboard subscribers: userID → list of channels
 	subMu sync.RWMutex
@@ -66,33 +53,8 @@ type WingRegistry struct {
 
 func NewWingRegistry() *WingRegistry {
 	return &WingRegistry{
-		wings:        make(map[string]*ConnectedWing),
-		sessRequests: make(map[string]chan *ws.SessionsSync),
-		subs:         make(map[string][]chan WingEvent),
-	}
-}
-
-func (r *WingRegistry) RegisterSessionRequest(reqID string, ch chan *ws.SessionsSync) {
-	r.sessMu.Lock()
-	r.sessRequests[reqID] = ch
-	r.sessMu.Unlock()
-}
-
-func (r *WingRegistry) UnregisterSessionRequest(reqID string) {
-	r.sessMu.Lock()
-	delete(r.sessRequests, reqID)
-	r.sessMu.Unlock()
-}
-
-func (r *WingRegistry) ResolveSessionRequest(reqID string, results *ws.SessionsSync) {
-	r.sessMu.Lock()
-	ch := r.sessRequests[reqID]
-	r.sessMu.Unlock()
-	if ch != nil {
-		select {
-		case ch <- results:
-		default:
-		}
+		wings: make(map[string]*ConnectedWing),
+		subs:  make(map[string][]chan WingEvent),
 	}
 }
 
@@ -334,24 +296,15 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wing := &ConnectedWing{
-		ID:          uuid.New().String(),
-		UserID:      userID,
-		WingID:      reg.WingID,
-		Hostname:    reg.Hostname,
-		Platform:    reg.Platform,
-		Version:     reg.Version,
+		ID:           uuid.New().String(),
+		UserID:       userID,
+		WingID:       reg.WingID,
 		PublicKey:    wingPublicKey,
-		Agents:      reg.Agents,
-		Skills:      reg.Skills,
-		Labels:      reg.Labels,
-		Identities:  reg.Identities,
-		Projects:    nil, // projects flow through E2E tunnel only
-		OrgID:       reg.OrgSlug,
-		RootDir:     reg.RootDir,
+		OrgID:        reg.OrgSlug,
 		Locked:       reg.Locked,
 		AllowedCount: reg.AllowedCount,
-		Conn:        conn,
-		LastSeen:    time.Now(),
+		Conn:         conn,
+		LastSeen:     time.Now(),
 	}
 
 	// Validate org membership if org specified (accepts slug or ID)
@@ -398,8 +351,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		s.Wings.Remove(wing.ID)
 	}()
 
-	log.Printf("wing %s connected (user=%s wing=%s agents=%v)",
-		wing.ID, userID, reg.WingID, reg.Agents)
+	log.Printf("wing %s connected (user=%s wing=%s)", wing.ID, userID, reg.WingID)
 
 	// Send ack
 	ack := ws.RegisteredMsg{Type: ws.TypeRegistered, WingID: wing.ID}
@@ -446,45 +398,17 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			json.Unmarshal(data, &stream)
 			s.forwardTunnelToBrowser(stream.RequestID, data, stream.Done)
 
-		case ws.TypePTYReclaim:
-			var reclaim ws.PTYReclaim
-			json.Unmarshal(data, &reclaim)
-
-			// If session was recently deleted, kill it on the wing instead of reclaiming
-			if s.PTY.IsTombstoned(reclaim.SessionID) {
-				kill := ws.PTYKill{Type: ws.TypePTYKill, SessionID: reclaim.SessionID}
-				killData, _ := json.Marshal(kill)
-				wing.Conn.Write(ctx, websocket.MessageText, killData)
-				log.Printf("pty session %s: tombstoned, sending kill to wing %s", reclaim.SessionID, wing.ID)
-				break
+		case ws.TypeSessionAttention:
+			var attn ws.SessionAttention
+			json.Unmarshal(data, &attn)
+			ev := WingEvent{
+				Type:      "session.attention",
+				WingID:    wing.WingID,
+				SessionID: attn.SessionID,
 			}
-
-			session := s.PTY.Get(reclaim.SessionID)
-			if session != nil {
-				session.mu.Lock()
-				session.WingID = wing.ID
-				session.mu.Unlock()
-				log.Printf("pty session %s reclaimed by wing %s", reclaim.SessionID, wing.ID)
-			} else {
-				// Session unknown (relay restarted) — recreate from wing's egg data
-				s.PTY.Add(&PTYSession{
-					ID:     reclaim.SessionID,
-					WingID: wing.ID,
-					UserID: wing.UserID,
-					Agent:  reclaim.Agent,
-					CWD:    reclaim.CWD,
-					Status: "detached",
-				})
-				log.Printf("pty session %s restored from wing %s (agent=%s)", reclaim.SessionID, wing.ID, reclaim.Agent)
-			}
-
-		case ws.TypeSessionsSync:
-			var sync ws.SessionsSync
-			json.Unmarshal(data, &sync)
-			// Only remove stale sessions on explicit requests, not heartbeats
-			s.PTY.SyncFromWing(wing.ID, wing.UserID, sync.Sessions, sync.RequestID != "")
-			if sync.RequestID != "" {
-				s.Wings.ResolveSessionRequest(sync.RequestID, &sync)
+			s.Wings.notify(wing.UserID, ev)
+			if s.Wings.OnWingEvent != nil {
+				s.Wings.OnWingEvent(wing, ev)
 			}
 
 		}

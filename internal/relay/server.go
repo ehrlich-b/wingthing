@@ -45,7 +45,7 @@ type Server struct {
 	LocalMode      bool   // if set, bypass auth — single-user, zero-config
 	localUser      *User
 	Wings          *WingRegistry
-	PTY            *PTYRegistry
+	PTY            *PTYRoutes
 	Bandwidth      *BandwidthMeter
 	RateLimit      *RateLimiter
 	mux            *http.ServeMux
@@ -78,7 +78,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 		Store:        store,
 		Config:       cfg,
 		Wings:          NewWingRegistry(),
-		PTY:            NewPTYRegistry(),
+		PTY:            NewPTYRoutes(),
 		mux:            http.NewServeMux(),
 		browserConns:   make(map[*websocket.Conn]struct{}),
 		tunnelRequests: make(map[string]*websocket.Conn),
@@ -127,7 +127,6 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// Wing detail page API
 	s.mux.HandleFunc("PUT /api/app/wings/{wingID}/label", s.handleWingLabel)
 	s.mux.HandleFunc("DELETE /api/app/wings/{wingID}/label", s.handleDeleteWingLabel)
-	s.mux.HandleFunc("PUT /api/app/sessions/{id}/label", s.handleSessionLabel)
 
 	// CLI API (Bearer token auth)
 	s.mux.HandleFunc("GET /api/app/resolve-email", s.handleResolveEmail)

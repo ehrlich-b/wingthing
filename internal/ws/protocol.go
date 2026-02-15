@@ -23,12 +23,8 @@ const (
 	TypeTunnelResponse = "tunnel.res"    // wing → relay → browser
 	TypeTunnelStream   = "tunnel.stream" // wing → relay → browser (streaming)
 
-	// Wing → Relay (session reclaim after wing restart)
-	TypePTYReclaim = "pty.reclaim"
-
-	// Session sync (relay requests, wing responds; also sent on heartbeat)
-	TypeSessionsList = "sessions.list" // relay → wing
-	TypeSessionsSync = "sessions.sync" // wing → relay
+	// Wing → Relay (session attention broadcast)
+	TypeSessionAttention = "session.attention"
 
 	// Relay → Browser/Wing (bandwidth)
 	TypeBandwidthExceeded = "bandwidth.exceeded"
@@ -179,7 +175,9 @@ type PTYExited struct {
 type PTYAttach struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
-	PublicKey string `json:"public_key,omitempty"` // new browser ephemeral key
+	PublicKey string `json:"public_key,omitempty"`  // new browser ephemeral key
+	WingID    string `json:"wing_id,omitempty"`     // target wing (for relay routing)
+	AuthToken string `json:"auth_token,omitempty"`  // cached passkey auth token
 }
 
 // PTYKill requests termination of a PTY session.
@@ -227,28 +225,13 @@ type TunnelStream struct {
 	Done      bool   `json:"done"`
 }
 
-// PTYReclaim is sent by the wing after reconnect to reclaim a surviving egg session.
-type PTYReclaim struct {
+// SessionAttention is sent by the wing when a session needs user attention (bell detected).
+type SessionAttention struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
-	Agent     string `json:"agent,omitempty"`
-	CWD       string `json:"cwd,omitempty"`
 }
 
-// SessionsList requests the wing's current session list.
-type SessionsList struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-}
-
-// SessionsSync carries the wing's current session list.
-type SessionsSync struct {
-	Type      string        `json:"type"`
-	RequestID string        `json:"request_id,omitempty"` // set when responding to sessions.list
-	Sessions  []SessionInfo `json:"sessions"`
-}
-
-// SessionInfo describes one active session on a wing.
+// SessionInfo describes one active session on a wing (used in tunnel sessions.list responses).
 type SessionInfo struct {
 	SessionID      string `json:"session_id"`
 	Agent          string `json:"agent"`

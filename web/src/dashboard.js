@@ -4,6 +4,7 @@ import { renderDashboard, renderSidebar, renderWingDetailPage } from './render.j
 import { setCachedWings, fetchWingSessions, mergeWingSessions, loadHome, probeWing } from './data.js';
 import { updatePaletteState } from './palette.js';
 import { tunnelCloseWing } from './tunnel.js';
+import { setNotification } from './notify.js';
 
 var reconnectBannerTimer = null;
 
@@ -79,6 +80,10 @@ function applyWingEvent(ev) {
             }
         });
         tunnelCloseWing(ev.wing_id);
+    } else if (ev.type === 'session.attention' && ev.session_id) {
+        setNotification(ev.session_id);
+        renderSidebar();
+        return;
     }
 
     updateHeaderStatus();
