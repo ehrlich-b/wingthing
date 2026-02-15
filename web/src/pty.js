@@ -178,6 +178,12 @@ function setupPTYHandlers(ws, reattach) {
                     }
                 });
                 S.fitAddon.fit();
+                // Always send resize on session load — fitAddon.fit() only triggers
+                // onResize when dimensions change, but the remote PTY may have stale
+                // dimensions from a different machine/window.
+                if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN && S.ptySessionId) {
+                    S.ptyWs.send(JSON.stringify({ type: 'pty.resize', session_id: S.ptySessionId, cols: S.term.cols, rows: S.term.rows }));
+                }
                 break;
 
             case 'pty.output':
