@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -298,6 +299,7 @@ func wingCmd() *cobra.Command {
 	cmd.AddCommand(wingRevokeCmd())
 	cmd.AddCommand(wingLockCmd())
 	cmd.AddCommand(wingUnlockCmd())
+	cmd.AddCommand(wingConfigCmd())
 
 	return cmd
 }
@@ -449,6 +451,12 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	if labelsFlag == "" && len(wingCfg.Labels) > 0 {
 		labelsFlag = strings.Join(wingCfg.Labels, ",")
 	}
+
+	// Hot-reloadable flags — new sessions read .Load(), SIGHUP updates .Store()
+	var auditLive atomic.Bool
+	auditLive.Store(audit)
+	var debugLive atomic.Bool
+	debugLive.Store(debug)
 
 	// Build allowed passkey keys: pinned (from wing.yaml) + ephemeral (from --allow)
 	var allowedKeys []config.AllowKey
@@ -621,14 +629,14 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		currentEggCfg := wingEggCfg
 		wingEggMu.Unlock()
 		eggCfg := egg.DiscoverEggConfig(start.CWD, currentEggCfg)
-		if audit {
+		if auditLive.Load() {
 			eggCfg.Audit = true
 		}
-		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debug, allowedKeys, passkeyCache)
+		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debugLive.Load(), allowedKeys, passkeyCache)
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
-		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, resolvedRoot, &wingEggMu, &wingEggCfg, audit, debug, client)
+		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, resolvedRoot, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client)
 	}
 
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
@@ -659,8 +667,47 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 				allowedKeys = append([]config.AllowKey{}, newCfg.AllowKeys...)
 				client.Locked = newCfg.Locked
 				client.AllowedCount = len(newCfg.AllowKeys)
+
+				// Hot-reload audit + debug (atomic, read at session start)
+				auditLive.Store(newCfg.Audit)
+				debugLive.Store(newCfg.Debug)
+
+				// Hot-reload conv, auth_ttl
+				wingCfg.Conv = newCfg.Conv
+				wingCfg.AuthTTL = newCfg.AuthTTL
+
+				// Hot-reload labels
+				wingCfg.Labels = newCfg.Labels
+				client.Labels = newCfg.Labels
+
+				// Hot-reload root
+				if newCfg.Root != "" {
+					if abs, err := filepath.Abs(newCfg.Root); err == nil {
+						resolvedRoot = abs
+					}
+				} else {
+					resolvedRoot = ""
+				}
+				client.RootDir = resolvedRoot
+
+				// Hot-reload egg config (if path changed)
+				oldEggConfig := wingCfg.EggConfig
+				wingCfg.EggConfig = newCfg.EggConfig
+				if newCfg.EggConfig != oldEggConfig {
+					eggPath := newCfg.EggConfig
+					if eggPath == "" {
+						eggPath = filepath.Join(cfg.Dir, "egg.yaml")
+					}
+					if newEggCfg, eggErr := egg.ResolveEggConfig(eggPath); eggErr == nil {
+						wingEggMu.Lock()
+						wingEggCfg = newEggCfg
+						wingEggMu.Unlock()
+						log.Printf("egg config reloaded from %s", eggPath)
+					}
+				}
+
 				client.SendConfig(ctx)
-				log.Printf("config reloaded: locked=%v allowed=%d", newCfg.Locked, len(newCfg.AllowKeys))
+				log.Printf("config reloaded: locked=%v allowed=%d audit=%v debug=%v", newCfg.Locked, len(newCfg.AllowKeys), newCfg.Audit, newCfg.Debug)
 				continue
 			}
 			log.Println("wing shutting down...")
@@ -1126,6 +1173,164 @@ func wingUnlockCmd() *cobra.Command {
 			}
 			signalDaemon(syscall.SIGHUP)
 			fmt.Println("wing unlocked")
+			return nil
+		},
+	}
+}
+
+func wingConfigCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "View or set wing configuration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			wingCfg, err := config.LoadWingConfig(cfg.Dir)
+			if err != nil {
+				return err
+			}
+
+			daemonStatus := "(daemon stopped)"
+			if _, err := readPid(); err == nil {
+				daemonStatus = "(daemon running)"
+			}
+
+			fmt.Printf("wing_id:    %s\n", wingCfg.WingID)
+			roost := wingCfg.Roost
+			if roost == "" {
+				roost = "wss://ws.wingthing.ai"
+			}
+			fmt.Printf("roost:      %s\n", roost)
+			fmt.Printf("org:        %s\n", wingCfg.Org)
+			fmt.Printf("root:       %s\n", wingCfg.Root)
+			fmt.Printf("labels:     %s\n", strings.Join(wingCfg.Labels, ", "))
+			fmt.Printf("egg_config: %s\n", wingCfg.EggConfig)
+			fmt.Printf("conv:       %s\n", wingCfg.Conv)
+			fmt.Printf("audit:      %v\n", wingCfg.Audit)
+			fmt.Printf("debug:      %v\n", wingCfg.Debug)
+			fmt.Printf("locked:     %v\n", wingCfg.Locked)
+			authTTL := wingCfg.AuthTTL
+			if authTTL == "" {
+				authTTL = "1h"
+			}
+			fmt.Printf("auth_ttl:   %s\n", authTTL)
+			fmt.Printf("allow_keys: %d configured\n", len(wingCfg.AllowKeys))
+			fmt.Println()
+			fmt.Println(daemonStatus)
+			return nil
+		},
+	}
+	cmd.AddCommand(wingConfigSetCmd())
+	return cmd
+}
+
+func wingConfigSetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set key=value [key=value ...]",
+		Short: "Set wing configuration values",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			wingCfg, err := config.LoadWingConfig(cfg.Dir)
+			if err != nil {
+				return err
+			}
+
+			restartFields := map[string]bool{"org": true}
+			immutableFields := map[string]bool{"wing_id": true, "roost": true, "allow_keys": true}
+
+			var changedRestart []string
+
+			for _, arg := range args {
+				key, value, ok := strings.Cut(arg, "=")
+				if !ok {
+					return fmt.Errorf("invalid argument %q — use key=value format", arg)
+				}
+				key = strings.TrimSpace(key)
+				value = strings.TrimSpace(value)
+
+				if immutableFields[key] {
+					return fmt.Errorf("%s cannot be changed via config set", key)
+				}
+
+				switch key {
+				case "audit":
+					b, err := strconv.ParseBool(value)
+					if err != nil {
+						return fmt.Errorf("audit: expected true or false")
+					}
+					wingCfg.Audit = b
+				case "debug":
+					b, err := strconv.ParseBool(value)
+					if err != nil {
+						return fmt.Errorf("debug: expected true or false")
+					}
+					wingCfg.Debug = b
+				case "locked":
+					b, err := strconv.ParseBool(value)
+					if err != nil {
+						return fmt.Errorf("locked: expected true or false")
+					}
+					wingCfg.Locked = b
+				case "labels":
+					var labels []string
+					for _, l := range strings.Split(value, ",") {
+						l = strings.TrimSpace(l)
+						if l != "" {
+							labels = append(labels, l)
+						}
+					}
+					wingCfg.Labels = labels
+				case "conv":
+					wingCfg.Conv = value
+				case "egg_config":
+					if value != "" {
+						if _, err := os.Stat(value); err != nil {
+							return fmt.Errorf("egg_config: %s does not exist", value)
+						}
+					}
+					wingCfg.EggConfig = value
+				case "auth_ttl":
+					if _, err := time.ParseDuration(value); err != nil {
+						return fmt.Errorf("auth_ttl: invalid duration %q", value)
+					}
+					wingCfg.AuthTTL = value
+				case "root":
+					if value != "" {
+						info, err := os.Stat(value)
+						if err != nil {
+							return fmt.Errorf("root: %s does not exist", value)
+						}
+						if !info.IsDir() {
+							return fmt.Errorf("root: %s is not a directory", value)
+						}
+					}
+					wingCfg.Root = value
+				case "org":
+					wingCfg.Org = value
+				default:
+					return fmt.Errorf("unknown config key: %s", key)
+				}
+
+				if restartFields[key] {
+					changedRestart = append(changedRestart, key)
+				}
+			}
+
+			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
+				return err
+			}
+
+			signalDaemon(syscall.SIGHUP)
+
+			for _, key := range changedRestart {
+				fmt.Printf("%s: will take effect next restart\n", key)
+			}
 			return nil
 		},
 	}
