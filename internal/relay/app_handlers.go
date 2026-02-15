@@ -129,33 +129,29 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		out = append(out, entry)
 	}
 
-	// Include peer wings from cluster sync (dedup by wing_id)
-	if s.Peers != nil {
-		for _, pw := range s.Peers.AllWings() {
-			if pw.WingInfo == nil {
+	// Include wings from other nodes via wingMap (login only, edges proxy this)
+	if s.WingMap != nil {
+		for wingID, loc := range s.WingMap.All() {
+			if seenWings[wingID] {
 				continue
 			}
 			// Check access: owner OR org member
-			if pw.WingInfo.UserID != user.ID {
-				if pw.WingInfo.OrgID == "" || s.Store == nil || !s.Store.IsOrgMember(pw.WingInfo.OrgID, user.ID) {
+			if loc.UserID != user.ID {
+				if loc.OrgID == "" || s.Store == nil || !s.Store.IsOrgMember(loc.OrgID, user.ID) {
 					continue
 				}
 			}
-			peerWingID := pw.WingInfo.WingID
-			if peerWingID == "" {
-				continue // skip peers without a wing_id
-			}
-			if seenWings[peerWingID] {
-				continue
-			}
-			seenWings[peerWingID] = true
-			out = append(out, map[string]any{
-				"wing_id":        peerWingID,
-				"public_key":     pw.WingInfo.PublicKey,
+			seenWings[wingID] = true
+			entry := map[string]any{
+				"wing_id":        wingID,
+				"public_key":     loc.PublicKey,
 				"latest_version": latestVer,
-				"org_id":         pw.WingInfo.OrgID,
-				"remote_node":    pw.MachineID,
-			})
+				"org_id":         loc.OrgID,
+			}
+			if loc.MachineID != s.Config.FlyMachineID {
+				entry["remote_node"] = loc.MachineID
+			}
+			out = append(out, entry)
 		}
 	}
 
@@ -383,17 +379,16 @@ func (s *Server) wingLabelScope(userID, wingID string) (orgID string, isOwner bo
 		}
 		return wing.OrgID, true
 	}
-	// Check peer wings (wing connected to a different node)
-	if s.Peers != nil {
-		if pw := s.Peers.FindByWingID(wingID); pw != nil && pw.WingInfo != nil {
-			if pw.WingInfo.UserID == userID {
-				return pw.WingInfo.OrgID, true
+	// Check wings on other nodes via wingMap
+	if s.WingMap != nil {
+		if loc, found := s.WingMap.Locate(wingID); found {
+			if loc.UserID == userID {
+				return loc.OrgID, true
 			}
-			// Check org ownership for peer wings
-			if pw.WingInfo.OrgID != "" && s.Store != nil {
-				role := s.Store.GetOrgMemberRole(pw.WingInfo.OrgID, userID)
+			if loc.OrgID != "" && s.Store != nil {
+				role := s.Store.GetOrgMemberRole(loc.OrgID, userID)
 				if role == "owner" || role == "admin" {
-					return pw.WingInfo.OrgID, true
+					return loc.OrgID, true
 				}
 			}
 		}

@@ -1,8 +1,5 @@
 package relay
 
-import (
-	"net/http"
-)
 
 // canAccessWing returns true if userID can use this wing.
 func (s *Server) canAccessWing(userID string, wing *ConnectedWing) bool {
@@ -52,41 +49,6 @@ func (s *Server) isWingOwner(userID string, wing *ConnectedWing) bool {
 	if wing.OrgID != "" && s.Store != nil {
 		role := s.Store.GetOrgMemberRole(wing.OrgID, userID)
 		return role == "owner" || role == "admin"
-	}
-	return false
-}
-
-// replayToWingEdge checks if a wing (by wingID) is on a remote edge node.
-// If so, sets fly-replay header and returns true. Caller should return immediately.
-func (s *Server) replayToWingEdge(w http.ResponseWriter, wingID string) bool {
-	if s.Peers == nil || s.Config.FlyMachineID == "" {
-		return false
-	}
-	if s.Wings.FindByID(wingID) != nil {
-		return false
-	}
-	pw := s.Peers.FindWing(wingID)
-	if pw != nil && pw.MachineID != s.Config.FlyMachineID {
-		w.Header().Set("fly-replay", "instance="+pw.MachineID)
-		return true
-	}
-	return false
-}
-
-// replayToWingEdgeByWingID checks if a wing (by wing ID) is on a remote edge.
-func (s *Server) replayToWingEdgeByWingID(w http.ResponseWriter, wingID string) bool {
-	if s.Peers == nil || s.Config.FlyMachineID == "" {
-		return false
-	}
-	for _, wing := range s.Wings.All() {
-		if wing.WingID == wingID {
-			return false
-		}
-	}
-	pw := s.Peers.FindByWingID(wingID)
-	if pw != nil && pw.MachineID != s.Config.FlyMachineID {
-		w.Header().Set("fly-replay", "instance="+pw.MachineID)
-		return true
 	}
 	return false
 }

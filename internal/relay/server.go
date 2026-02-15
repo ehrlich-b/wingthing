@@ -66,9 +66,8 @@ type Server struct {
 	tunnelMu       sync.Mutex
 	tunnelRequests map[string]*websocket.Conn
 
-	// Cluster sync (multi-node)
-	Peers   *PeerDirectory
-	Cluster *ClusterState
+	// Cluster routing (multi-node)
+	WingMap *WingMap
 
 	// Edge node: reverse proxy to login node + session/entitlement caches
 	loginProxy       http.Handler
@@ -340,10 +339,10 @@ func (s *Server) serveAppIndex(w http.ResponseWriter, r *http.Request) {
 // broadcastToEdges POSTs a JSON payload to all known edge nodes.
 // Fire-and-forget goroutines, 3s timeout per edge.
 func (s *Server) broadcastToEdges(payload []byte) {
-	if s.Cluster == nil || s.Config.FlyAppName == "" {
+	if s.WingMap == nil || s.Config.FlyAppName == "" {
 		return
 	}
-	for _, mid := range s.Cluster.NodeIDs() {
+	for _, mid := range s.WingMap.EdgeIDs() {
 		go func(machineID string) {
 			url := fmt.Sprintf("http://%s.vm.%s.internal:8080/internal/wing-event", machineID, s.Config.FlyAppName)
 			client := &http.Client{Timeout: 3 * time.Second}

@@ -208,18 +208,6 @@ func (r *WingRegistry) FindByID(wingID string) *ConnectedWing {
 	return r.wings[wingID]
 }
 
-// FindByWingID searches for a wing by its persistent machine ID (WingID field).
-func (r *WingRegistry) FindByWingID(wingID string) *ConnectedWing {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, w := range r.wings {
-		if w.WingID == wingID {
-			return w
-		}
-	}
-	return nil
-}
-
 func (r *WingRegistry) Touch(wingID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -491,7 +479,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				go s.forwardPayloadToLogin(payload)
 			} else {
 				s.Wings.notifyWing(wing.UserID, wing.OrgID, ev)
-				if s.IsLogin() && s.Cluster != nil {
+				if s.IsLogin() && s.WingMap != nil {
 					payload, _ := json.Marshal(map[string]any{
 						"type":       "session.attention",
 						"wing_id":    wing.WingID,
@@ -535,16 +523,39 @@ func (s *Server) validateOrgViaLogin(ctx context.Context, orgRef, userID string)
 }
 
 // dispatchWingEvent routes a wing lifecycle event through the correct path.
-// Edge: forward to login (no local delivery — login echoes back).
-// Login/single-node: deliver locally and broadcast to edges.
+// Edge: register/deregister with login wingMap, forward event to login.
+// Login/single-node: update wingMap, deliver locally, broadcast to edges.
 func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
-	// Edge: forward to login, don't notify locally
+	// Edge: register/deregister with login, forward event
 	if s.IsEdge() && s.Config.LoginNodeAddr != "" {
+		switch eventType {
+		case "wing.online":
+			go s.registerWingWithLogin(wing)
+		case "wing.offline":
+			go s.deregisterWingWithLogin(wing.WingID)
+		}
 		go s.forwardWingEvent(eventType, wing)
 		return
 	}
 
-	// Login or single-node: deliver locally
+	// Login or single-node: update wingMap
+	if s.WingMap != nil {
+		switch eventType {
+		case "wing.online", "wing.config":
+			s.WingMap.Register(wing.WingID, WingLocation{
+				MachineID:    s.Config.FlyMachineID,
+				UserID:       wing.UserID,
+				OrgID:        wing.OrgID,
+				PublicKey:    wing.PublicKey,
+				Locked:       wing.Locked,
+				AllowedCount: wing.AllowedCount,
+			})
+		case "wing.offline":
+			s.WingMap.Deregister(wing.WingID)
+		}
+	}
+
+	// Deliver locally
 	var ev WingEvent
 	if eventType == "wing.offline" {
 		ev = WingEvent{Type: eventType, WingID: wing.WingID}
@@ -561,8 +572,8 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 	}
 	s.Wings.notifyWing(wing.UserID, wing.OrgID, ev)
 
-	// Login with cluster: broadcast to all edges
-	if s.IsLogin() && s.Cluster != nil {
+	// Login: broadcast to all edges
+	if s.IsLogin() && s.WingMap != nil {
 		payload, _ := json.Marshal(map[string]any{
 			"type":          eventType,
 			"wing_id":       wing.WingID,

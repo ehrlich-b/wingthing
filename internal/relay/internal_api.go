@@ -14,7 +14,10 @@ func (s *Server) registerInternalRoutes() {
 	s.mux.HandleFunc("GET /internal/status", s.withInternalAuth(s.handleInternalStatus))
 	s.mux.HandleFunc("GET /internal/entitlements", s.withInternalAuth(s.handleInternalEntitlements))
 	s.mux.HandleFunc("GET /internal/sessions/{token}", s.withInternalAuth(s.handleInternalSession))
-	s.mux.HandleFunc("POST /internal/sync", s.withInternalAuth(s.handleSync))
+	s.mux.HandleFunc("POST /internal/wing-register", s.withInternalAuth(s.handleWingRegister))
+	s.mux.HandleFunc("POST /internal/wing-deregister", s.withInternalAuth(s.handleWingDeregister))
+	s.mux.HandleFunc("GET /internal/wing-locate/{wingID}", s.withInternalAuth(s.handleWingLocate))
+	s.mux.HandleFunc("POST /internal/wing-sync", s.withInternalAuth(s.handleWingSync))
 	s.mux.HandleFunc("GET /internal/org-check/{slug}/{userID}", s.withInternalAuth(s.handleInternalOrgCheck))
 	s.mux.HandleFunc("POST /internal/wing-event", s.withInternalAuth(s.handleInternalWingEvent))
 	s.mux.HandleFunc("GET /internal/user-orgs/{userID}", s.withInternalAuth(s.handleInternalUserOrgs))
@@ -172,52 +175,118 @@ func (s *Server) handleInternalSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSync handles the full-state cluster sync protocol.
-// Edges POST their full wing list, login responds with all other wings.
-func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
-	var req SyncRequest
+// handleWingRegister adds a wing to the global wingMap (login only).
+func (s *Server) handleWingRegister(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		WingID       string `json:"wing_id"`
+		MachineID    string `json:"machine_id"`
+		UserID       string `json:"user_id"`
+		OrgID        string `json:"org_id"`
+		PublicKey    string `json:"public_key"`
+		Locked       bool   `json:"locked"`
+		AllowedCount int    `json:"allowed_count"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.WingMap != nil {
+		s.WingMap.Register(req.WingID, WingLocation{
+			MachineID:    req.MachineID,
+			UserID:       req.UserID,
+			OrgID:        req.OrgID,
+			PublicKey:    req.PublicKey,
+			Locked:       req.Locked,
+			AllowedCount: req.AllowedCount,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
+// handleWingDeregister removes a wing from the global wingMap (login only).
+func (s *Server) handleWingDeregister(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		WingID string `json:"wing_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.WingMap != nil {
+		s.WingMap.Deregister(req.WingID)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
+// handleWingLocate returns the machine hosting a given wing.
+func (s *Server) handleWingLocate(w http.ResponseWriter, r *http.Request) {
+	wingID := r.PathValue("wingID")
+	// Check local wings
+	if s.findAnyWingByWingID(wingID) != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"machine_id": s.Config.FlyMachineID, "found": true})
+		return
+	}
+	// Check wingMap
+	if s.WingMap != nil {
+		loc, found := s.WingMap.Locate(wingID)
+		if found {
+			writeJSON(w, http.StatusOK, map[string]any{"machine_id": loc.MachineID, "found": true})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"found": false})
+}
+
+// handleWingSync receives the full wing list from an edge for reconciliation.
+func (s *Server) handleWingSync(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MachineID string `json:"machine_id"`
+		Wings     []struct {
+			WingID       string `json:"wing_id"`
+			UserID       string `json:"user_id"`
+			OrgID        string `json:"org_id"`
+			PublicKey    string `json:"public_key"`
+			Locked       bool   `json:"locked"`
+			AllowedCount int    `json:"allowed_count"`
+		} `json:"wings"`
+		Bandwidth map[string]int64 `json:"bandwidth,omitempty"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	if s.Cluster == nil {
-		writeJSON(w, http.StatusOK, SyncResponse{Wings: []SyncWing{}})
-		return
-	}
-
-	// Absorb edge bandwidth usage into login's meter for DB persistence
+	// Absorb edge bandwidth usage
 	if s.Bandwidth != nil && len(req.Bandwidth) > 0 {
 		for userID, bytes := range req.Bandwidth {
 			s.Bandwidth.AddUsage(userID, bytes)
 		}
 	}
 
-	others, all := s.Cluster.Sync(req.NodeID, req.Wings)
-
-	// Update login's PeerDirectory from full cluster state
-	if s.Peers != nil {
-		peers := make([]*PeerWing, len(all))
-		for i, sw := range all {
-			peers[i] = syncToPeer(sw)
+	if s.WingMap != nil {
+		wingIDs := make([]string, len(req.Wings))
+		for i, rw := range req.Wings {
+			wingIDs[i] = rw.WingID
+			s.WingMap.Register(rw.WingID, WingLocation{
+				MachineID:    req.MachineID,
+				UserID:       rw.UserID,
+				OrgID:        rw.OrgID,
+				PublicKey:    rw.PublicKey,
+				Locked:       rw.Locked,
+				AllowedCount: rw.AllowedCount,
+			})
 		}
-		added, removed, changed := s.Peers.Replace(peers)
-		s.notifyPeerDiff(added, removed, changed)
+		s.WingMap.Reconcile(req.MachineID, wingIDs)
 	}
 
-	// Add login's own local wings to response
-	for _, w := range s.Wings.All() {
-		others = append(others, connectedToSync(s.Config.FlyMachineID, w))
-	}
-
-	if others == nil {
-		others = []SyncWing{}
-	}
 	var banned []string
 	if s.Bandwidth != nil {
 		banned = s.Bandwidth.ExceededUsers()
 	}
-	writeJSON(w, http.StatusOK, SyncResponse{Wings: others, BannedUsers: banned})
+	if banned == nil {
+		banned = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"banned_users": banned})
 }
 
 // handleInternalOrgCheck validates that a user is an owner/admin of an org.
@@ -297,7 +366,7 @@ func (s *Server) handleInternalWingEvent(w http.ResponseWriter, r *http.Request)
 	s.Wings.notifyWing(req.UserID, req.OrgID, ev)
 
 	// Login: re-broadcast to all edges
-	if s.IsLogin() && s.Cluster != nil {
+	if s.IsLogin() && s.WingMap != nil {
 		go s.broadcastToEdges(body)
 	}
 

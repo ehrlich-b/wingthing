@@ -109,38 +109,18 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Cross-node routing: if target wing is on a peer node, fly-replay BEFORE WebSocket upgrade.
-	if s.Peers != nil && s.Config.FlyMachineID != "" {
+	// Cross-node routing: if target wing is on another machine, fly-replay BEFORE WebSocket upgrade.
+	if s.Config.FlyMachineID != "" {
 		targetWingID := r.URL.Query().Get("wing_id")
-		if targetWingID != "" {
-			// Wing not local? Check by connection ID first, then persistent wing_id.
-			localWing := s.Wings.FindByID(targetWingID)
-			if localWing == nil {
-				localWing = s.findAnyWingByWingID(targetWingID)
+		if targetWingID != "" && s.findAnyWingByWingID(targetWingID) == nil {
+			machineID, found := s.locateWing(targetWingID)
+			if !found {
+				http.Error(w, `{"error":"wing not found","retry":true}`, http.StatusNotFound)
+				return
 			}
-			if localWing == nil {
-				// Check peers by connection ID, then persistent wing_id
-				pw := s.Peers.FindWing(targetWingID)
-				if pw == nil {
-					pw = s.Peers.FindByWingID(targetWingID)
-				}
-				if pw != nil {
-					// Anti-loop: only replay if target is a different machine
-					if pw.MachineID != s.Config.FlyMachineID {
-						w.Header().Set("fly-replay", "instance="+pw.MachineID)
-						return
-					}
-				}
-				// Wing not found anywhere — try WaitForWing with 5s timeout
-				machineID, found := WaitForWing(r.Context(), s.Wings, s.Peers, targetWingID, 5*time.Second)
-				if found && machineID != "" && machineID != s.Config.FlyMachineID {
-					w.Header().Set("fly-replay", "instance="+machineID)
-					return
-				}
-				if !found {
-					http.Error(w, `{"error":"wing not found","retry":true}`, http.StatusNotFound)
-					return
-				}
+			if machineID != s.Config.FlyMachineID {
+				w.Header().Set("fly-replay", "instance="+machineID)
+				return
 			}
 		}
 	}

@@ -660,7 +660,7 @@ func (s *Server) refreshUserOrgSubs(userID string) {
 		s.Wings.notify(userID, WingEvent{Type: "org.changed"})
 	}
 	// Broadcast org.changed to edges so they update their subscribers
-	if s.IsLogin() && s.Cluster != nil {
+	if s.IsLogin() && s.WingMap != nil {
 		payload, _ := json.Marshal(map[string]any{
 			"type":    "org.changed",
 			"user_id": userID,

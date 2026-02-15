@@ -109,7 +109,6 @@ func serveCmd() *cobra.Command {
 				if loginAddr == "" {
 					return fmt.Errorf("WT_LOGIN_ADDR required for edge nodes")
 				}
-				srv.Peers = relay.NewPeerDirectory()
 				srv.SetLoginProxy(relay.NewLoginProxy(loginAddr))
 				srv.SetSessionCache(relay.NewSessionCache())
 				// Bandwidth metering still works on edge, just with cached tiers
@@ -130,8 +129,7 @@ func serveCmd() *cobra.Command {
 					return "free"
 				})
 				if nodeRole == "login" {
-					srv.Cluster = relay.NewClusterState()
-					srv.Peers = relay.NewPeerDirectory()
+					srv.WingMap = relay.NewWingMap()
 					fmt.Printf("login node: machine=%s region=%s\n", flyMachineID, flyRegion)
 				}
 			}
@@ -175,13 +173,10 @@ func serveCmd() *cobra.Command {
 				srv.Bandwidth.StartSync(ctx, 10*time.Minute)
 			}
 
-			// Start cluster sync
-			if srv.Cluster != nil {
-				srv.StartClusterExpiry(ctx)
-			}
+			// Start edge reconcile loop
 			if isEdge && loginAddr != "" {
-				srv.StartEdgeSync(ctx, loginAddr, 1*time.Second)
-				fmt.Println("edge sync started (1s interval)")
+				srv.StartEdgeSync(ctx, loginAddr, 5*time.Second)
+				fmt.Println("edge sync started (5s interval)")
 			}
 			if srv.EntitlementCache != nil {
 				srv.EntitlementCache.StartSync(ctx, 60*time.Second)
