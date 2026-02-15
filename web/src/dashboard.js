@@ -36,8 +36,8 @@ export function connectAppWS() {
             var msg = JSON.parse(e.data);
             console.log('[app-ws] event:', msg.type, 'wing_id:', msg.wing_id, 'locked:', msg.locked, 'allowed_count:', msg.allowed_count, msg);
             if (msg.type === 'relay.restart') {
-                S.appWs = null;
-                setTimeout(connectAppWS, 500);
+                S.appWsBackoff = 500;
+                S.appWs.close();
                 return;
             }
             if (msg.type === 'org.changed') {

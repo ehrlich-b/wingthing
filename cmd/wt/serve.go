@@ -177,6 +177,7 @@ func serveCmd() *cobra.Command {
 			if isEdge && loginAddr != "" {
 				srv.StartEdgeSync(ctx, loginAddr, 5*time.Second)
 				fmt.Println("edge sync started (5s interval)")
+				srv.GetSessionCache().StartOrgSync(ctx, loginAddr, 5*time.Minute)
 			}
 			if srv.EntitlementCache != nil {
 				srv.EntitlementCache.StartSync(ctx, 60*time.Second)

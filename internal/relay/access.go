@@ -16,16 +16,27 @@ func (s *Server) wingRegistrySummary() string {
 }
 
 // canAccessWing returns true if userID can use this wing.
-func (s *Server) canAccessWing(userID string, wing *ConnectedWing) bool {
+// userOrgIDs are the user's org memberships from their session (works on edge nodes without DB).
+func (s *Server) canAccessWing(userID string, wing *ConnectedWing, userOrgIDs ...[]string) bool {
 	// Owner always has access
 	if wing.UserID == userID {
 		return true
 	}
 
-	// Org mode: check membership (requires store, edge nodes may not have it)
-	if wing.OrgID != "" && s.Store != nil {
-		if s.Store.IsOrgMember(wing.OrgID, userID) {
-			return true
+	if wing.OrgID != "" {
+		// Check via session org IDs (works on edge nodes)
+		if len(userOrgIDs) > 0 {
+			for _, oid := range userOrgIDs[0] {
+				if oid == wing.OrgID {
+					return true
+				}
+			}
+		}
+		// Check via store (login node)
+		if s.Store != nil {
+			if s.Store.IsOrgMember(wing.OrgID, userID) {
+				return true
+			}
 		}
 	}
 

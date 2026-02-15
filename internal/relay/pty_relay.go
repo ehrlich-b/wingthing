@@ -71,8 +71,10 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 	// Auth
 	var userID string
 	var userEmail string
+	var userOrgIDs []string
 	if u := s.sessionUser(r); u != nil {
 		userID = u.ID
+		userOrgIDs = u.OrgIDs
 		if u.Email != nil {
 			userEmail = *u.Email
 		}
@@ -214,15 +216,15 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				if wing == nil {
 					wing = s.findAnyWingByWingID(wingID)
 				}
-				if wing != nil && !s.canAccessWing(userID, wing) {
+				if wing != nil && !s.canAccessWing(userID, wing, userOrgIDs) {
 					wing = nil
 				}
 			} else {
 				wing = s.findAccessibleWing(userID)
 			}
 			if wing == nil {
-				log.Printf("[pty-start] NO WING FOUND: requested=%s query=%s user=%s machine=%s role=%s local_wings=%s",
-					wingID, queryWingID, userID, s.Config.FlyMachineID, s.Config.NodeRole, s.wingRegistrySummary())
+				log.Printf("[pty-start] NO WING FOUND: requested=%s query=%s user=%s userOrgs=%v machine=%s role=%s local_wings=%s",
+					wingID, queryWingID, userID, userOrgIDs, s.Config.FlyMachineID, s.Config.NodeRole, s.wingRegistrySummary())
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "no wing connected"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
@@ -255,7 +257,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if wing == nil {
 				wing = s.findAnyWingByWingID(wingID)
 			}
-			if wing == nil || !s.canAccessWing(userID, wing) {
+			if wing == nil || !s.canAccessWing(userID, wing, userOrgIDs) {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "wing not found"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue

@@ -1,8 +1,11 @@
 package relay
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -74,4 +77,70 @@ func (sc *SessionCache) Validate(token, loginAddr string) *User {
 	sc.mu.Unlock()
 
 	return user
+}
+
+// UpdateUserOrgs updates the cached org IDs for all sessions belonging to userID.
+func (sc *SessionCache) UpdateUserOrgs(userID string, orgIDs []string) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	for _, entry := range sc.entries {
+		if entry.user != nil && entry.user.ID == userID {
+			entry.user.OrgIDs = orgIDs
+		}
+	}
+}
+
+// ActiveUserIDs returns the deduplicated user IDs of all valid cached sessions.
+func (sc *SessionCache) ActiveUserIDs() []string {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	seen := make(map[string]bool)
+	var ids []string
+	for _, entry := range sc.entries {
+		if entry.user != nil && !seen[entry.user.ID] && time.Since(entry.fetchedAt) < 5*time.Minute {
+			seen[entry.user.ID] = true
+			ids = append(ids, entry.user.ID)
+		}
+	}
+	return ids
+}
+
+// StartOrgSync periodically bulk-refreshes org memberships for all cached sessions.
+func (sc *SessionCache) StartOrgSync(ctx context.Context, loginAddr string, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sc.syncOrgs(loginAddr)
+			}
+		}
+	}()
+}
+
+func (sc *SessionCache) syncOrgs(loginAddr string) {
+	userIDs := sc.ActiveUserIDs()
+	if len(userIDs) == 0 {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{"user_ids": userIDs})
+	resp, err := sc.client.Post(loginAddr+"/internal/user-orgs-bulk", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	var result map[string][]string // user_id → org_ids
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return
+	}
+	for uid, orgIDs := range result {
+		sc.UpdateUserOrgs(uid, orgIDs)
+	}
+	log.Printf("session cache: synced org memberships for %d users", len(result))
 }

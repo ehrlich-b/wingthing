@@ -202,6 +202,8 @@ func (s *Server) SetLoginProxy(p http.Handler) { s.loginProxy = p }
 // SetSessionCache sets the session cache for edge nodes.
 func (s *Server) SetSessionCache(sc *SessionCache) { s.sessionCache = sc }
 
+// GetSessionCache returns the session cache (edge nodes only).
+func (s *Server) GetSessionCache() *SessionCache { return s.sessionCache }
 
 func (s *Server) trackBrowser(conn *websocket.Conn) {
 	s.browserMu.Lock()

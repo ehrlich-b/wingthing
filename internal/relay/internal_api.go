@@ -22,6 +22,7 @@ func (s *Server) registerInternalRoutes() {
 	s.mux.HandleFunc("POST /internal/wing-event", s.withInternalAuth(s.handleInternalWingEvent))
 	s.mux.HandleFunc("GET /internal/user-orgs/{userID}", s.withInternalAuth(s.handleInternalUserOrgs))
 	s.mux.HandleFunc("GET /internal/wings-debug", s.withInternalAuth(s.handleWingsDebug))
+	s.mux.HandleFunc("POST /internal/user-orgs-bulk", s.withInternalAuth(s.handleInternalUserOrgsBulk))
 }
 
 // withInternalAuth wraps a handler to only allow requests from Fly's internal network.
@@ -389,7 +390,7 @@ func (s *Server) handleInternalWingEvent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// org.changed: update subscriber org memberships
+	// org.changed: update subscriber org memberships + session cache
 	if req.Type == "org.changed" {
 		if s.IsEdge() && s.Config.LoginNodeAddr != "" {
 			go s.refreshRemoteUserOrgs(req.UserID)
@@ -443,6 +444,31 @@ func (s *Server) handleInternalUserOrgs(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"org_ids": orgIDs})
 }
 
+// handleInternalUserOrgsBulk returns org IDs for multiple users (login node only).
+func (s *Server) handleInternalUserOrgsBulk(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		writeError(w, http.StatusServiceUnavailable, "no store")
+		return
+	}
+	var req struct {
+		UserIDs []string `json:"user_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result := make(map[string][]string, len(req.UserIDs))
+	for _, uid := range req.UserIDs {
+		orgs, _ := s.Store.ListOrgsForUser(uid)
+		orgIDs := make([]string, 0, len(orgs))
+		for _, org := range orgs {
+			orgIDs = append(orgIDs, org.ID)
+		}
+		result[uid] = orgIDs
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 // refreshRemoteUserOrgs fetches a user's org IDs from the login node and
 // updates local subscriber org memberships.
 func (s *Server) refreshRemoteUserOrgs(userID string) {
@@ -463,5 +489,9 @@ func (s *Server) refreshRemoteUserOrgs(userID string) {
 	}
 	if s.Wings.UpdateUserOrgs(userID, result.OrgIDs) {
 		s.Wings.notify(userID, WingEvent{Type: "org.changed"})
+	}
+	// Also update session cache so canAccessWing works on edge
+	if s.sessionCache != nil {
+		s.sessionCache.UpdateUserOrgs(userID, result.OrgIDs)
 	}
 }
