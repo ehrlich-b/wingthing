@@ -33,6 +33,14 @@ export function initTerminal() {
             showHome();
             return false;
         }
+        // Let browser handle Ctrl+V/Cmd+V paste
+        if (e.type === 'keydown' && (e.ctrlKey || e.metaKey) && e.key === 'v') {
+            return false;
+        }
+        // Let browser handle Ctrl+C/Cmd+C copy when text is selected
+        if (e.type === 'keydown' && (e.ctrlKey || e.metaKey) && e.key === 'c' && S.term.hasSelection()) {
+            return false;
+        }
         return true;
     });
 

@@ -212,6 +212,21 @@ body {
     flex-shrink: 0;
 }
 
+#session-close-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+#session-close-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
 #header-right {
     display: flex;
     align-items: center;

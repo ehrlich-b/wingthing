@@ -3,6 +3,7 @@ import { S, DOM, initDOM } from './state.js';
 import { loginRedirect } from './helpers.js';
 import { initTerminal, sendPTYInput } from './terminal.js';
 import { showHome, showTerminal, switchToSession, navigateToWingDetail, navigateToAccount } from './nav.js';
+import { disconnectPTY } from './pty.js';
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
 import { connectAppWS } from './dashboard.js';
 import { loadHome } from './data.js';
@@ -33,6 +34,23 @@ async function init() {
     DOM.userInfo.style.cursor = 'pointer';
     DOM.headerTitle.addEventListener('click', function() {
         if (S.ptySessionId) showSessionInfo();
+    });
+    DOM.sessionCloseBtn.addEventListener('click', function() {
+        if (DOM.sessionCloseBtn.dataset.confirm) {
+            delete DOM.sessionCloseBtn.dataset.confirm;
+            DOM.sessionCloseBtn.textContent = 'x';
+            disconnectPTY();
+            showHome();
+        } else {
+            DOM.sessionCloseBtn.dataset.confirm = '1';
+            DOM.sessionCloseBtn.textContent = 'end session?';
+            setTimeout(function() {
+                if (DOM.sessionCloseBtn.dataset.confirm) {
+                    delete DOM.sessionCloseBtn.dataset.confirm;
+                    DOM.sessionCloseBtn.textContent = 'x';
+                }
+            }, 3000);
+        }
     });
 
     // Modifier keys (mobile)

@@ -59,6 +59,7 @@ export function initDOM() {
     DOM.terminalSection = document.getElementById('terminal-section');
     DOM.terminalContainer = document.getElementById('terminal-container');
     DOM.ptyStatus = document.getElementById('pty-status');
+    DOM.sessionCloseBtn = document.getElementById('session-close-btn');
     DOM.chatSection = document.getElementById('chat-section');
     DOM.wingDetailSection = document.getElementById('wing-detail-section');
     DOM.wingDetailContent = document.getElementById('wing-detail-content');

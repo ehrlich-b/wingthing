@@ -8,19 +8,18 @@ primary_region = "ewr"
 
 [processes]
   login = "sh -c 'mkdir -p /data/.wingthing && HOME=/data exec ./wt serve --addr :8080'"
-  edge = "./wt serve --addr :8080"
+  # edge = "./wt serve --addr :8080"
 
 [env]
   WT_BASE_URL = "https://wingthing.ai"
 
-# Both process groups serve HTTP — Fly anycast routes to nearest healthy machine.
 [http_service]
   internal_port = 8080
   force_https = true
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
-  processes = ["login", "edge"]
+  processes = ["login"]
 
   [[http_service.checks]]
     interval = "10s"
@@ -38,11 +37,11 @@ primary_region = "ewr"
   processes = ["login"]
 
 [[vm]]
-  size = "shared-cpu-1x"
+  size = "shared-cpu-2x"
   memory = "512mb"
-  processes = ["login", "edge"]
+  processes = ["login"]
 
-# Deploy:
+# Horizontal scaling — uncomment edge process above, then:
 #   fly deploy
 #   fly scale count login=1 edge=3
 #   fly scale count edge=2 --region nrt,lhr
