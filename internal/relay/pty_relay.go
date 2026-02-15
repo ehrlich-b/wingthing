@@ -110,10 +110,28 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cross-node routing: if target wing is on another machine, fly-replay BEFORE WebSocket upgrade.
+	// Retries for up to 5s to handle wing reconnection after deploy.
 	if s.Config.FlyMachineID != "" {
 		targetWingID := r.URL.Query().Get("wing_id")
 		if targetWingID != "" && s.findAnyWingByWingID(targetWingID) == nil {
-			machineID, found := s.locateWing(targetWingID)
+			var machineID string
+			var found bool
+			for range 10 {
+				if s.findAnyWingByWingID(targetWingID) != nil {
+					found = true
+					machineID = s.Config.FlyMachineID
+					break
+				}
+				machineID, found = s.locateWing(targetWingID)
+				if found {
+					break
+				}
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(500 * time.Millisecond):
+				}
+			}
 			if !found {
 				http.Error(w, `{"error":"wing not found","retry":true}`, http.StatusNotFound)
 				return
