@@ -51,15 +51,17 @@ type WingRegistry struct {
 	mu    sync.RWMutex
 	wings map[string]*ConnectedWing // wingID → wing
 
-	// Dashboard subscribers: userID → list of subs
-	subMu sync.RWMutex
-	subs  map[string][]*eventSub
+	// Dashboard subscribers: dual-indexed by userID and orgID for O(1) lookups
+	subMu   sync.RWMutex
+	subs    map[string][]*eventSub // userID → subs
+	orgSubs map[string][]*eventSub // orgID → subs
 }
 
 func NewWingRegistry() *WingRegistry {
 	return &WingRegistry{
-		wings: make(map[string]*ConnectedWing),
-		subs:  make(map[string][]*eventSub),
+		wings:   make(map[string]*ConnectedWing),
+		subs:    make(map[string][]*eventSub),
+		orgSubs: make(map[string][]*eventSub),
 	}
 }
 
@@ -68,7 +70,11 @@ func NewWingRegistry() *WingRegistry {
 // OR if the wing's orgID appears in the subscriber's orgIDs.
 func (r *WingRegistry) Subscribe(userID string, orgIDs []string, ch chan WingEvent) {
 	r.subMu.Lock()
-	r.subs[userID] = append(r.subs[userID], &eventSub{userID: userID, orgIDs: orgIDs, ch: ch})
+	sub := &eventSub{userID: userID, orgIDs: orgIDs, ch: ch}
+	r.subs[userID] = append(r.subs[userID], sub)
+	for _, oid := range orgIDs {
+		r.orgSubs[oid] = append(r.orgSubs[oid], sub)
+	}
 	r.subMu.Unlock()
 }
 
@@ -78,6 +84,19 @@ func (r *WingRegistry) Unsubscribe(userID string, ch chan WingEvent) {
 	list := r.subs[userID]
 	for i, s := range list {
 		if s.ch == ch {
+			// Remove from orgSubs
+			for _, oid := range s.orgIDs {
+				oList := r.orgSubs[oid]
+				for j, os := range oList {
+					if os.ch == ch {
+						r.orgSubs[oid] = append(oList[:j], oList[j+1:]...)
+						break
+					}
+				}
+				if len(r.orgSubs[oid]) == 0 {
+					delete(r.orgSubs, oid)
+				}
+			}
 			r.subs[userID] = append(list[:i], list[i+1:]...)
 			break
 		}
@@ -109,7 +128,24 @@ func (r *WingRegistry) UpdateUserOrgs(userID string, orgIDs []string) bool {
 		return false
 	}
 	for _, s := range subs {
+		// Remove from old orgSubs
+		for _, oid := range s.orgIDs {
+			oList := r.orgSubs[oid]
+			for j, os := range oList {
+				if os == s {
+					r.orgSubs[oid] = append(oList[:j], oList[j+1:]...)
+					break
+				}
+			}
+			if len(r.orgSubs[oid]) == 0 {
+				delete(r.orgSubs, oid)
+			}
+		}
+		// Update and add to new orgSubs
 		s.orgIDs = orgIDs
+		for _, oid := range orgIDs {
+			r.orgSubs[oid] = append(r.orgSubs[oid], s)
+		}
 	}
 	return true
 }
@@ -125,24 +161,17 @@ func (r *WingRegistry) notifyWing(ownerID, orgID string, ev WingEvent) {
 		default:
 		}
 	}
-	// Notify org members (skip owner, already notified)
+	// Notify org members via orgSubs index (skip owner, already notified)
 	if orgID == "" {
 		return
 	}
-	for uid, subs := range r.subs {
-		if uid == ownerID {
+	for _, s := range r.orgSubs[orgID] {
+		if s.userID == ownerID {
 			continue
 		}
-		for _, s := range subs {
-			for _, oid := range s.orgIDs {
-				if oid == orgID {
-					select {
-					case s.ch <- ev:
-					default:
-					}
-					break
-				}
-			}
+		select {
+		case s.ch <- ev:
+		default:
 		}
 	}
 }
@@ -151,34 +180,18 @@ func (r *WingRegistry) Add(w *ConnectedWing) {
 	r.mu.Lock()
 	r.wings[w.ID] = w
 	r.mu.Unlock()
-	locked := w.Locked
-	allowedCount := w.AllowedCount
-	ev := WingEvent{
-		Type:         "wing.online",
-		WingID:       w.WingID,
-		PublicKey:    w.PublicKey,
-		Locked:       &locked,
-		AllowedCount: &allowedCount,
-	}
-	r.notifyWing(w.UserID, w.OrgID, ev)
 }
 
-func (r *WingRegistry) Remove(id string) {
+func (r *WingRegistry) Remove(id string) *ConnectedWing {
 	r.mu.Lock()
 	w := r.wings[id]
 	delete(r.wings, id)
 	r.mu.Unlock()
-	if w != nil {
-		ev := WingEvent{
-			Type:   "wing.offline",
-			WingID: w.WingID,
-		}
-		r.notifyWing(w.UserID, w.OrgID, ev)
-	}
+	return w
 }
 
-// UpdateConfig updates a wing's lock state and notifies subscribers.
-func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int) {
+// UpdateConfig updates a wing's lock state. Returns the wing for event dispatch.
+func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int) *ConnectedWing {
 	r.mu.Lock()
 	w := r.wings[id]
 	if w != nil {
@@ -186,18 +199,7 @@ func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int) {
 		w.AllowedCount = allowedCount
 	}
 	r.mu.Unlock()
-	if w != nil {
-		locked := w.Locked
-		allowedCount := w.AllowedCount
-		ev := WingEvent{
-			Type:         "wing.config",
-			WingID:       w.WingID,
-			PublicKey:    w.PublicKey,
-			Locked:       &locked,
-			AllowedCount: &allowedCount,
-		}
-		r.notifyWing(w.UserID, w.OrgID, ev)
-	}
+	return w
 }
 
 func (r *WingRegistry) FindByID(wingID string) *ConnectedWing {
@@ -402,8 +404,11 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Wings.Add(wing)
+	s.dispatchWingEvent("wing.online", wing)
 	defer func() {
-		s.Wings.Remove(wing.ID)
+		if w := s.Wings.Remove(wing.ID); w != nil {
+			s.dispatchWingEvent("wing.offline", w)
+		}
 	}()
 
 	log.Printf("wing %s connected (user=%s wing=%s)", wing.ID, userID, reg.WingID)
@@ -433,10 +438,8 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		case ws.TypeWingConfig:
 			var cfg ws.WingConfig
 			json.Unmarshal(data, &cfg)
-			s.Wings.UpdateConfig(wing.ID, cfg.Locked, cfg.AllowedCount)
-			// Edge: forward config event to login for cluster-wide propagation
-			if s.Config.LoginNodeAddr != "" {
-				go s.forwardWingEvent(wing, cfg.Locked, cfg.AllowedCount)
+			if w := s.Wings.UpdateConfig(wing.ID, cfg.Locked, cfg.AllowedCount); w != nil {
+				s.dispatchWingEvent("wing.config", w)
 			}
 
 		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge:
@@ -465,7 +468,28 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				WingID:    wing.WingID,
 				SessionID: attn.SessionID,
 			}
-			s.Wings.notifyWing(wing.UserID, wing.OrgID, ev)
+			if s.IsEdge() && s.Config.LoginNodeAddr != "" {
+				payload, _ := json.Marshal(map[string]any{
+					"type":       "session.attention",
+					"wing_id":    wing.WingID,
+					"user_id":    wing.UserID,
+					"org_id":     wing.OrgID,
+					"session_id": attn.SessionID,
+				})
+				go s.forwardPayloadToLogin(payload)
+			} else {
+				s.Wings.notifyWing(wing.UserID, wing.OrgID, ev)
+				if s.IsLogin() && s.Cluster != nil {
+					payload, _ := json.Marshal(map[string]any{
+						"type":       "session.attention",
+						"wing_id":    wing.WingID,
+						"user_id":    wing.UserID,
+						"org_id":     wing.OrgID,
+						"session_id": attn.SessionID,
+					})
+					go s.broadcastToEdges(payload)
+				}
+			}
 
 		}
 	}
@@ -498,19 +522,66 @@ func (s *Server) validateOrgViaLogin(ctx context.Context, orgRef, userID string)
 	return result.OrgID, result.OK
 }
 
-// forwardWingEvent POSTs a wing config event to the login node for cluster-wide propagation.
-func (s *Server) forwardWingEvent(wing *ConnectedWing, locked bool, allowedCount int) {
-	body, _ := json.Marshal(map[string]any{
-		"type":          "wing.config",
+// dispatchWingEvent routes a wing lifecycle event through the correct path.
+// Edge: forward to login (no local delivery — login echoes back).
+// Login/single-node: deliver locally and broadcast to edges.
+func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
+	// Edge: forward to login, don't notify locally
+	if s.IsEdge() && s.Config.LoginNodeAddr != "" {
+		go s.forwardWingEvent(eventType, wing)
+		return
+	}
+
+	// Login or single-node: deliver locally
+	var ev WingEvent
+	if eventType == "wing.offline" {
+		ev = WingEvent{Type: eventType, WingID: wing.WingID}
+	} else {
+		locked := wing.Locked
+		allowedCount := wing.AllowedCount
+		ev = WingEvent{
+			Type:         eventType,
+			WingID:       wing.WingID,
+			PublicKey:    wing.PublicKey,
+			Locked:       &locked,
+			AllowedCount: &allowedCount,
+		}
+	}
+	s.Wings.notifyWing(wing.UserID, wing.OrgID, ev)
+
+	// Login with cluster: broadcast to all edges
+	if s.IsLogin() && s.Cluster != nil {
+		payload, _ := json.Marshal(map[string]any{
+			"type":          eventType,
+			"wing_id":       wing.WingID,
+			"user_id":       wing.UserID,
+			"org_id":        wing.OrgID,
+			"public_key":    wing.PublicKey,
+			"locked":        wing.Locked,
+			"allowed_count": wing.AllowedCount,
+		})
+		go s.broadcastToEdges(payload)
+	}
+}
+
+// forwardWingEvent POSTs a wing event to the login node for cluster-wide propagation.
+func (s *Server) forwardWingEvent(eventType string, wing *ConnectedWing) {
+	payload, _ := json.Marshal(map[string]any{
+		"type":          eventType,
 		"wing_id":       wing.WingID,
 		"user_id":       wing.UserID,
 		"org_id":        wing.OrgID,
 		"public_key":    wing.PublicKey,
-		"locked":        locked,
-		"allowed_count": allowedCount,
+		"locked":        wing.Locked,
+		"allowed_count": wing.AllowedCount,
 	})
+	s.forwardPayloadToLogin(payload)
+}
+
+// forwardPayloadToLogin POSTs a raw JSON payload to the login node's wing-event endpoint.
+func (s *Server) forwardPayloadToLogin(payload []byte) {
 	client := &http.Client{Timeout: 3 * time.Second}
-	req, _ := http.NewRequest("POST", s.Config.LoginNodeAddr+"/internal/wing-event", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", s.Config.LoginNodeAddr+"/internal/wing-event", bytes.NewReader(payload))
 	if req == nil {
 		return
 	}

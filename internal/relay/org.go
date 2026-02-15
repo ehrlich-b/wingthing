@@ -659,6 +659,14 @@ func (s *Server) refreshUserOrgSubs(userID string) {
 	if s.Wings.UpdateUserOrgs(userID, orgIDs) {
 		s.Wings.notify(userID, WingEvent{Type: "org.changed"})
 	}
+	// Broadcast org.changed to edges so they update their subscribers
+	if s.IsLogin() && s.Cluster != nil {
+		payload, _ := json.Marshal(map[string]any{
+			"type":    "org.changed",
+			"user_id": userID,
+		})
+		go s.broadcastToEdges(payload)
+	}
 }
 
 func (s *Server) renderInviteStatusPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {

@@ -362,6 +362,7 @@ type User struct {
 	Tier        string // "free", "pro", "team"
 	IsPro       bool
 	CreatedAt   time.Time
+	OrgIDs      []string // transient: populated by session cache on edge nodes
 }
 
 // Org represents an organization that can share wings among members.

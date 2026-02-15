@@ -96,6 +96,7 @@ func serveCmd() *cobra.Command {
 				LoginNodeAddr:      loginAddr,
 				FlyMachineID:       flyMachineID,
 				FlyRegion:          flyRegion,
+				FlyAppName:         flyApp,
 			}
 
 			srv := relay.NewServer(store, srvCfg)

@@ -66,6 +66,7 @@ func (sc *SessionCache) Validate(token, loginAddr string) *User {
 	user := &User{
 		ID:          sv.UserID,
 		DisplayName: sv.DisplayName,
+		OrgIDs:      sv.OrgIDs,
 	}
 
 	sc.mu.Lock()

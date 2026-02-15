@@ -2,8 +2,10 @@ package relay
 
 import (
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
+	"time"
 )
 
 // registerInternalRoutes adds internal API endpoints used for node-to-node communication.
@@ -15,6 +17,7 @@ func (s *Server) registerInternalRoutes() {
 	s.mux.HandleFunc("POST /internal/sync", s.withInternalAuth(s.handleSync))
 	s.mux.HandleFunc("GET /internal/org-check/{slug}/{userID}", s.withInternalAuth(s.handleInternalOrgCheck))
 	s.mux.HandleFunc("POST /internal/wing-event", s.withInternalAuth(s.handleInternalWingEvent))
+	s.mux.HandleFunc("GET /internal/user-orgs/{userID}", s.withInternalAuth(s.handleInternalUserOrgs))
 }
 
 // withInternalAuth wraps a handler to only allow requests from Fly's internal network.
@@ -127,9 +130,10 @@ func (s *Server) handleInternalEntitlements(w http.ResponseWriter, r *http.Reque
 
 // SessionValidation is the response from the session validation endpoint.
 type SessionValidation struct {
-	UserID      string `json:"user_id"`
-	DisplayName string `json:"display_name"`
-	Tier        string `json:"tier"`
+	UserID      string   `json:"user_id"`
+	DisplayName string   `json:"display_name"`
+	Tier        string   `json:"tier"`
+	OrgIDs      []string `json:"org_ids"`
 }
 
 // handleInternalSession validates a session token and returns user info (login node only).
@@ -151,10 +155,20 @@ func (s *Server) handleInternalSession(w http.ResponseWriter, r *http.Request) {
 		tier = "pro"
 	}
 
+	var orgIDs []string
+	orgs, _ := s.Store.ListOrgsForUser(user.ID)
+	for _, org := range orgs {
+		orgIDs = append(orgIDs, org.ID)
+	}
+	if orgIDs == nil {
+		orgIDs = []string{}
+	}
+
 	writeJSON(w, http.StatusOK, SessionValidation{
 		UserID:      user.ID,
 		DisplayName: user.DisplayName,
 		Tier:        tier,
+		OrgIDs:      orgIDs,
 	})
 }
 
@@ -227,9 +241,15 @@ func (s *Server) handleInternalOrgCheck(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "org_id": org.ID})
 }
 
-// handleInternalWingEvent receives a wing config event from an edge node and
-// broadcasts it to the owner and org members connected to this (login) node.
+// handleInternalWingEvent receives a wing event from another node.
+// Edge → login: login delivers locally and re-broadcasts to all edges.
+// Login → edge: edge delivers locally to its subscribers.
 func (s *Server) handleInternalWingEvent(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8192))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var req struct {
 		Type         string `json:"type"`
 		WingID       string `json:"wing_id"`
@@ -238,24 +258,86 @@ func (s *Server) handleInternalWingEvent(w http.ResponseWriter, r *http.Request)
 		PublicKey    string `json:"public_key"`
 		Locked       bool   `json:"locked"`
 		AllowedCount int    `json:"allowed_count"`
+		SessionID    string `json:"session_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	locked := req.Locked
-	allowedCount := req.AllowedCount
-	ev := WingEvent{
-		Type:         req.Type,
-		WingID:       req.WingID,
-		PublicKey:    req.PublicKey,
-		Locked:       &locked,
-		AllowedCount: &allowedCount,
+	// org.changed: update subscriber org memberships
+	if req.Type == "org.changed" {
+		if s.IsEdge() && s.Config.LoginNodeAddr != "" {
+			go s.refreshRemoteUserOrgs(req.UserID)
+		} else {
+			s.Wings.notify(req.UserID, WingEvent{Type: "org.changed"})
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+		return
 	}
 
-	// Notify owner + org members via pub/sub
+	// Wing lifecycle event: deliver to local subscribers
+	var ev WingEvent
+	switch req.Type {
+	case "wing.offline":
+		ev = WingEvent{Type: req.Type, WingID: req.WingID}
+	case "session.attention":
+		ev = WingEvent{Type: req.Type, WingID: req.WingID, SessionID: req.SessionID}
+	default:
+		locked := req.Locked
+		allowedCount := req.AllowedCount
+		ev = WingEvent{
+			Type:         req.Type,
+			WingID:       req.WingID,
+			PublicKey:    req.PublicKey,
+			Locked:       &locked,
+			AllowedCount: &allowedCount,
+		}
+	}
 	s.Wings.notifyWing(req.UserID, req.OrgID, ev)
 
+	// Login: re-broadcast to all edges
+	if s.IsLogin() && s.Cluster != nil {
+		go s.broadcastToEdges(body)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
+// handleInternalUserOrgs returns the org IDs for a user (login node only).
+func (s *Server) handleInternalUserOrgs(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		writeError(w, http.StatusServiceUnavailable, "no store")
+		return
+	}
+	userID := r.PathValue("userID")
+	orgs, _ := s.Store.ListOrgsForUser(userID)
+	orgIDs := make([]string, 0, len(orgs))
+	for _, org := range orgs {
+		orgIDs = append(orgIDs, org.ID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"org_ids": orgIDs})
+}
+
+// refreshRemoteUserOrgs fetches a user's org IDs from the login node and
+// updates local subscriber org memberships.
+func (s *Server) refreshRemoteUserOrgs(userID string) {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(s.Config.LoginNodeAddr + "/internal/user-orgs/" + userID)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	var result struct {
+		OrgIDs []string `json:"org_ids"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return
+	}
+	if s.Wings.UpdateUserOrgs(userID, result.OrgIDs) {
+		s.Wings.notify(userID, WingEvent{Type: "org.changed"})
+	}
 }

@@ -1,8 +1,10 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -35,6 +37,7 @@ type ServerConfig struct {
 	LoginNodeAddr      string // internal address of login node (for edge nodes)
 	FlyMachineID       string // from FLY_MACHINE_ID env var
 	FlyRegion          string // from FLY_REGION env var
+	FlyAppName         string // from FLY_APP_NAME env var
 }
 
 type Server struct {
@@ -332,4 +335,28 @@ func (s *Server) serveAppIndex(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	stat, _ := f.Stat()
 	http.ServeContent(w, r, "index.html", stat.ModTime(), f.(io.ReadSeeker))
+}
+
+// broadcastToEdges POSTs a JSON payload to all known edge nodes.
+// Fire-and-forget goroutines, 3s timeout per edge.
+func (s *Server) broadcastToEdges(payload []byte) {
+	if s.Cluster == nil || s.Config.FlyAppName == "" {
+		return
+	}
+	for _, mid := range s.Cluster.NodeIDs() {
+		go func(machineID string) {
+			url := fmt.Sprintf("http://%s.vm.%s.internal:8080/internal/wing-event", machineID, s.Config.FlyAppName)
+			client := &http.Client{Timeout: 3 * time.Second}
+			req, _ := http.NewRequest("POST", url, bytes.NewReader(payload))
+			if req == nil {
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			if err != nil {
+				return
+			}
+			resp.Body.Close()
+		}(mid)
+	}
 }

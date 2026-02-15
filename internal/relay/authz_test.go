@@ -146,6 +146,7 @@ func TestAuthzOrgWingNotifications(t *testing.T) {
 		OrgID:  "org-1",
 	}
 	s.Wings.Add(wing)
+	s.dispatchWingEvent("wing.online", wing)
 
 	// Owner should get notification
 	select {
@@ -176,7 +177,9 @@ func TestAuthzOrgWingNotifications(t *testing.T) {
 	}
 
 	// Disconnect wing
-	s.Wings.Remove(wing.ID)
+	if w := s.Wings.Remove(wing.ID); w != nil {
+		s.dispatchWingEvent("wing.offline", w)
+	}
 
 	// Owner should get offline
 	select {
@@ -227,6 +230,7 @@ func TestAuthzPersonalWingNotifications(t *testing.T) {
 		WingID: "wing-a",
 	}
 	s.Wings.Add(wing)
+	s.dispatchWingEvent("wing.online", wing)
 
 	select {
 	case <-aCh:

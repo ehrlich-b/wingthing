@@ -88,6 +88,18 @@ func (c *ClusterState) All() []SyncWing {
 	return all
 }
 
+// NodeIDs returns all known edge machine IDs, expiring dead nodes first.
+func (c *ClusterState) NodeIDs() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.expireLocked(time.Now())
+	ids := make([]string, 0, len(c.nodes))
+	for id := range c.nodes {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (c *ClusterState) expireLocked(now time.Time) {
 	for nid, e := range c.nodes {
 		if now.Sub(e.lastSync) > 10*time.Second {

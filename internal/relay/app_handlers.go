@@ -250,6 +250,8 @@ func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
 		for _, org := range orgs {
 			orgIDs = append(orgIDs, org.ID)
 		}
+	} else if len(user.OrgIDs) > 0 {
+		orgIDs = user.OrgIDs
 	}
 
 	ch := make(chan WingEvent, 16)
