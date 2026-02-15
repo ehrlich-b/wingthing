@@ -345,6 +345,9 @@ func (s *Server) broadcastToEdges(payload []byte) {
 		return
 	}
 	for _, mid := range s.WingMap.EdgeIDs() {
+		if mid == s.Config.FlyMachineID {
+			continue // never broadcast to self — causes infinite loop
+		}
 		go func(machineID string) {
 			url := fmt.Sprintf("http://%s.vm.%s.internal:8080/internal/wing-event", machineID, s.Config.FlyAppName)
 			client := &http.Client{Timeout: 3 * time.Second}
