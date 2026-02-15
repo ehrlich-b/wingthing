@@ -15,7 +15,7 @@ export function initTerminal() {
         theme: {
             background: '#1a1a2e',
             foreground: '#eee',
-            cursor: '#e94560',
+            cursor: '#ffffff',
             selectionBackground: '#0f3460',
         },
         allowProposedApi: true,
