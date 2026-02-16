@@ -4,7 +4,7 @@
 
 Sandboxed AI agents on your machine, accessible from anywhere over an encrypted, passkey-protected relay that can't read your data.
 
-<video src="https://github.com/ehrlich-b/wingthing/raw/main/hero.mp4" width="100%"></video>
+https://github.com/ehrlich-b/wingthing/raw/main/hero.mp4
 
 ```
 wt egg claude              # sandboxed Claude Code session
