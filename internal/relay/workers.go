@@ -496,12 +496,16 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 					go s.broadcastToEdges(payload)
 				}
 			}
-			// Push notification via ntfy (nonce-deduped, fire-and-forget)
+			// Push notification via ntfy — only if no browser is watching this session.
 			if attn.Nonce != "" {
-				clickURL := ntfyClickURL(attn.SessionID)
-				s.trySendNtfy(attn.Nonce, wing.UserID, func(c *ntfy.Client) {
-					c.SendAttention(attn.SessionID, attn.Agent, attn.CWD, clickURL)
-				})
+				if s.PTY.Get(attn.SessionID) != nil {
+					log.Printf("ntfy: skipping attention for session %s (browser attached)", attn.SessionID)
+				} else {
+					clickURL := ntfyClickURL(attn.SessionID)
+					s.trySendNtfy(attn.Nonce, wing.UserID, func(c *ntfy.Client) {
+						c.SendAttention(attn.SessionID, attn.Agent, attn.CWD, clickURL)
+					})
+				}
 			}
 
 		}
@@ -661,6 +665,7 @@ func (s *Server) trySendNtfy(nonce, userID string, send func(c *ntfy.Client)) {
 	// Nonce dedup: never refire the same nonce
 	if nonce != "" {
 		if _, loaded := ntfySentNonces.LoadOrStore(nonce, true); loaded {
+			log.Printf("ntfy: skipping duplicate nonce=%s", nonce)
 			return
 		}
 	}
@@ -668,6 +673,7 @@ func (s *Server) trySendNtfy(nonce, userID string, send func(c *ntfy.Client)) {
 	if err != nil || cfg.Topic == "" {
 		return
 	}
+	log.Printf("ntfy: sending push for user=%s nonce=%s", userID, nonce)
 	c := ntfy.New(cfg.Topic, cfg.Token, cfg.Events)
 	go send(c)
 }
