@@ -65,6 +65,34 @@ export function initTerminal() {
     S.term.onBell(function() {
         if (S.ptySessionId) setNotification(S.ptySessionId);
     });
+
+    // Touch scrolling — xterm.js v6 uses VS Code's SmoothScrollableElement which
+    // only handles wheel events. Touch events need manual translation to scrollLines.
+    var touchStartY = null;
+    var touchAccum = 0;
+    DOM.terminalContainer.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 1) {
+            touchStartY = e.touches[0].clientY;
+            touchAccum = 0;
+        }
+    }, { passive: true });
+    DOM.terminalContainer.addEventListener('touchmove', function(e) {
+        if (touchStartY === null || !S.term || e.touches.length !== 1) return;
+        var deltaY = touchStartY - e.touches[0].clientY;
+        touchStartY = e.touches[0].clientY;
+        var lineHeight = DOM.terminalContainer.clientHeight / S.term.rows;
+        touchAccum += deltaY;
+        var lines = Math.trunc(touchAccum / lineHeight);
+        if (lines !== 0) {
+            S.term.scrollLines(lines);
+            touchAccum -= lines * lineHeight;
+            e.preventDefault();
+        }
+    }, { passive: false });
+    DOM.terminalContainer.addEventListener('touchend', function() {
+        touchStartY = null;
+        touchAccum = 0;
+    }, { passive: true });
 }
 
 export function saveTermBuffer() {

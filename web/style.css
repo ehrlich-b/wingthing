@@ -25,15 +25,23 @@ body {
     color: var(--text);
     font-size: 17px;
     line-height: 1.5;
-    height: 100vh;
+    height: 100dvh;
     overflow: hidden;
+}
+
+@supports not (height: 100dvh) {
+    body { height: 100vh; }
 }
 
 /* === Layout === */
 
 #app {
     display: flex;
-    height: 100vh;
+    height: 100dvh;
+}
+
+@supports not (height: 100dvh) {
+    #app { height: 100vh; }
 }
 
 #sidebar {
@@ -954,9 +962,11 @@ body {
     touch-action: manipulation;
 }
 
-.mod-key:hover {
-    color: var(--text);
-    border-color: var(--accent);
+@media (hover: hover) {
+    .mod-key:hover {
+        color: var(--text);
+        border-color: var(--accent);
+    }
 }
 
 .mod-key.active {
