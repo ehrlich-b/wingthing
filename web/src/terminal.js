@@ -96,12 +96,18 @@ export function initTerminal() {
             syncing = false;
         }, { passive: true });
 
+        // scrollTo with behavior:'instant' cancels iOS momentum scrolling
+        // and forces the position. Plain scrollTop assignment gets eaten.
+        function proxyScrollTo(top) {
+            proxy.scrollTo({ top: top, behavior: 'instant' });
+        }
+
         // xterm scroll -> proxy (keyboard scroll, new output, etc.)
         S.term.onScroll(function() {
             if (syncing) return;
             syncing = true;
             syncProxyHeight();
-            proxy.scrollTop = S.term.buffer.active.viewportY * lineHeight();
+            proxyScrollTo(S.term.buffer.active.viewportY * lineHeight());
             syncing = false;
         });
 
@@ -111,22 +117,22 @@ export function initTerminal() {
             syncProxyHeight();
             // If at bottom, keep proxy at bottom
             if (S.term.buffer.active.viewportY === S.term.buffer.active.baseY) {
-                proxy.scrollTop = proxy.scrollHeight;
+                proxyScrollTo(proxy.scrollHeight);
             }
         });
 
         syncProxyHeight();
-        proxy.scrollTop = proxy.scrollHeight;
+        proxyScrollTo(proxy.scrollHeight);
 
         // Expose scrollToBottom for use after session attach/restore.
         // Double-rAF ensures xterm has finished layout before we measure.
         S.touchProxyScrollToBottom = function() {
             syncProxyHeight();
-            proxy.scrollTop = proxy.scrollHeight;
+            proxyScrollTo(proxy.scrollHeight);
             requestAnimationFrame(function() {
                 requestAnimationFrame(function() {
                     syncProxyHeight();
-                    proxy.scrollTop = proxy.scrollHeight;
+                    proxyScrollTo(proxy.scrollHeight);
                 });
             });
         };
