@@ -9,11 +9,12 @@
 .prompt-dim{color:var(--text-dim)}
 .prompt-key{color:var(--text);font-weight:700;background:var(--bg-card);padding:2px 8px;border-radius:3px}
 .prompt-hidden{display:none}
-.hero-video{margin:24px auto 0;max-width:800px;position:relative}
-.hero-video video{width:100%;border-radius:8px;border:1px solid var(--accent);display:block}
-.hero-fs{position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,0.6);border:none;color:#fff;font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity 0.15s}
+.hero-video{margin:24px auto 0;max-width:800px;position:relative;cursor:pointer}
+.hero-video video{width:100%;border-radius:8px;border:1px solid var(--accent);display:block;pointer-events:none}
+.hero-fs{position:absolute;bottom:12px;right:12px;background:rgba(0,0,0,0.5);border:none;color:#fff;width:36px;height:36px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.15s;padding:0}
+.hero-fs svg{width:18px;height:18px}
 .hero-video:hover .hero-fs{opacity:1}
-.hero-fs:hover{background:rgba(255,255,255,0.2)}
+@media(hover:none){.hero-fs{opacity:0.7}}
 a.prompt-line{text-decoration:none}
 a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 .tab-bar{display:flex;gap:0;justify-content:center;font-family:var(--mono);font-size:13px;border-bottom:1px solid var(--accent);margin-bottom:0}
@@ -109,7 +110,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 {{else}}<div class="prompt-flow" id="prompt-flow">
 <div class="prompt-line"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to start</span></div>
 </div>{{end}}
-{{if .HeroVideo}}<div class="hero-video"><video id="hero-vid" src="/hero.mp4" autoplay muted loop playsinline></video><button class="hero-fs" onclick="(function(){var v=document.getElementById('hero-vid');if(v.requestFullscreen)v.requestFullscreen();else if(v.webkitRequestFullscreen)v.webkitRequestFullscreen()})()">fullscreen</button></div>{{end}}
+{{if .HeroVideo}}<div class="hero-video" onclick="(function(){var v=document.getElementById('hero-vid');if(v.requestFullscreen)v.requestFullscreen();else if(v.webkitRequestFullscreen)v.webkitRequestFullscreen()})()"><video id="hero-vid" src="/hero.mp4" autoplay muted loop playsinline></video><button class="hero-fs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button></div>{{end}}
 </div>
 <div class="tab-bar">
 <button class="active" onclick="switchTab('how')">how it works</button>
