@@ -1656,12 +1656,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 /* === Mobile === */
 
 @media (max-width: 600px) {
-    #sidebar { width: 40px; }
-    #home-btn { width: 30px; height: 30px; font-size: 14px; }
-    #new-session-btn { width: 30px; height: 30px; font-size: 16px; }
-    .session-tab { width: 30px; height: 34px; }
-    .tab-letter { font-size: 12px; }
-    .tab-dot { width: 5px; height: 5px; }
+    #sidebar { display: none; }
     #main { padding: 0 8px; }
     #main-header { padding: 4px 0; }
     #modifier-keys { display: flex; flex-wrap: wrap; }

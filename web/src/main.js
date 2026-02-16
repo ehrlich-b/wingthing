@@ -86,6 +86,10 @@ async function init() {
                 sendPTYInput('\x1b');
             } else if (key === 'tab') {
                 sendPTYInput('\t');
+            } else if (key === 'top') {
+                if (S.term) S.term.scrollToTop();
+            } else if (key === 'btm') {
+                if (S.term) S.term.scrollToBottom();
             }
             var seq = btn.dataset.seq;
             if (seq === '\u2191') sendPTYInput('\x1b[A');

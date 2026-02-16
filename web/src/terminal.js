@@ -78,6 +78,9 @@ export function initTerminal() {
         DOM.terminalContainer.style.position = 'relative';
         DOM.terminalContainer.appendChild(proxy);
 
+        // Taps on the proxy should focus the terminal for keyboard input
+        proxy.addEventListener('click', function() { if (S.term) S.term.focus(); });
+
         var syncing = false;
         function lineHeight() { return DOM.terminalContainer.clientHeight / S.term.rows; }
         function totalLines() { return S.term.buffer.active.length; }
