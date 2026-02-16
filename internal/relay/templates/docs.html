@@ -102,32 +102,34 @@
 <span class="prompt">$ </span><span class="cmd">wt wing config set org=myteam</span><span class="comment">     # set a value</span><br>
 <span class="prompt">$ </span><span class="cmd">wt wing config set audit=true</span><span class="comment">     # enable session audit recording</span>
 </div>
-<p>Changes take effect immediately - the daemon picks them up via SIGHUP. No restart needed.</p>
+<p>The daemon picks up changes via SIGHUP. See the reload column for what requires a restart.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">config fields</h3>
 <table class="docs-table">
-<tr><th>field</th><th>effect</th></tr>
-<tr><td>org</td><td>organization slug - share this wing with org members</td></tr>
-<tr><td>paths</td><td>project directories to expose (default: CWD). Also settable via <code>wt start --paths ~/repos,~/projects</code></td></tr>
-<tr><td>labels</td><td>freeform tags shown in the web UI (e.g. "gpu", "linux", "work")</td></tr>
-<tr><td>locked</td><td>enable passkey access control. See <a href="#access-control">access control</a></td></tr>
-<tr><td>auth_ttl</td><td>passkey nonce lifetime. Default <code>0</code> (boot-scoped - valid until wing restarts). Set to e.g. <code>1h</code> to force re-authentication periodically</td></tr>
-<tr><td>egg_config</td><td>path to default <code>egg.yaml</code> for sessions on this wing</td></tr>
-<tr><td>audit</td><td>record session terminal output for replay</td></tr>
-<tr><td>debug</td><td>verbose daemon logging</td></tr>
-<tr><td>conv</td><td>conversation context file path</td></tr>
+<tr><th>field</th><th>effect</th><th>reload</th></tr>
+<tr><td>org</td><td>organization slug - share this wing with org members</td><td>restart</td></tr>
+<tr><td>paths</td><td>project directories to expose (default: CWD). Also settable via <code>wt start --paths ~/repos,~/projects</code></td><td>live</td></tr>
+<tr><td>labels</td><td>freeform tags shown in the web UI (e.g. "gpu", "linux", "work")</td><td>live</td></tr>
+<tr><td>locked</td><td>enable passkey access control. See <a href="#access-control">access control</a></td><td>live</td></tr>
+<tr><td>auth_ttl</td><td>passkey nonce lifetime. Default <code>0</code> (boot-scoped - valid until wing restarts). Set to e.g. <code>1h</code> to force re-authentication periodically</td><td>live</td></tr>
+<tr><td>egg_config</td><td>path to default <code>egg.yaml</code> for sessions on this wing</td><td>live</td></tr>
+<tr><td>audit</td><td>record session terminal output for replay</td><td>live</td></tr>
+<tr><td>debug</td><td>verbose daemon logging</td><td>live</td></tr>
+<tr><td>conv</td><td>conversation context file path</td><td>live</td></tr>
 </table>
 </div>
 
 <div class="docs-section" id="access-control">
 <h2>access control</h2>
-<p>By default, anyone with your account credentials can start sessions on your wing. Locking it adds a second factor - browsers must prove they hold a passkey registered on your account before the wing will start or reattach a session.</p>
+<p>By default, anyone with your account credentials can start sessions on your wing. Locking it adds a second factor using <a href="https://passkeys.dev">passkeys</a> - the same WebAuthn standard behind "Sign in with Face ID" and "Sign in with Windows Hello."</p>
+<p>A passkey is a cryptographic credential stored in your password manager (1Password, LastPass, iCloud Keychain, Bitwarden) or your OS (Touch ID, Windows Hello, Android biometrics). Most people already have one and don't know it.</p>
+<p>When your wing is locked, browsers must prove they hold a passkey on the allowlist before the wing will start or reattach a session. The relay can't fake this - the cryptographic challenge-response happens directly between your browser and your wing.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">lock your wing</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt wing lock</span>
 </div>
-<p>Once locked, new sessions require passkey verification. The browser shows an "authenticate with passkey" button - click it, tap your key, and the session starts. The wing issues a nonce that's valid for the rest of the boot. Restarting the wing invalidates all nonces. Set <code>auth_ttl</code> if you want periodic re-authentication on top of that.</p>
+<p>Once locked, the browser shows an "authenticate with passkey" button when you open a session. Click it, verify with your fingerprint or password manager, and the session starts. The wing issues a nonce that's valid for the rest of the boot - you won't be prompted again until the wing restarts. Set <code>auth_ttl</code> if you want periodic re-authentication on top of that.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">manage the allowlist</h3>
 <p>When locked, only passkeys on the allowlist can access the wing:</p>
@@ -208,11 +210,11 @@ dangerously_skip_permissions: true
 <p>Open <a href="http://localhost:8080">localhost:8080</a>. You're logged in automatically.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">connect a wing</h3>
-<p>In another terminal, point a wing at your local roost:</p>
+<p>In another terminal:</p>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">wt wing start --roost http://localhost:8080 --foreground</span>
+<span class="prompt">$ </span><span class="cmd">wt start --local</span>
 </div>
-<p>In local mode the device token is written automatically - no <code>wt login</code> needed.</p>
+<p>This connects to <code>localhost:8080</code> and skips login - the device token is written automatically. Use <code>--roost http://host:port</code> if your roost is on a different machine.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">docker</h3>
 <div class="docs-code">
@@ -258,12 +260,16 @@ dangerously_skip_permissions: true
 <p>Each terminal session gets a fresh X25519 key pair on both sides. The browser and wing do a Diffie-Hellman exchange, derive an AES-GCM key via HKDF, and encrypt everything from that point. The roost sees ciphertext.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">two encryption domains</h3>
+<p>Both channels use ephemeral X25519 keys. Nothing persists across tabs or sessions.</p>
 <table class="docs-table">
-<tr><th>channel</th><th>key type</th><th>lifetime</th><th>what it carries</th></tr>
-<tr><td>PTY sessions</td><td>ephemeral X25519</td><td>per-session, re-derived on reattach</td><td>terminal I/O (keystrokes, output)</td></tr>
-<tr><td>tunnel</td><td>persistent X25519</td><td>per browser tab</td><td>everything else: file listings, session history, config updates, audit data</td></tr>
+<tr><th>channel</th><th>key lifetime</th><th>what it carries</th></tr>
+<tr><td>PTY</td><td>per-session, re-derived on reattach</td><td>terminal I/O (keystrokes, output)</td></tr>
+<tr><td>tunnel</td><td>per browser tab (sessionStorage)</td><td>file listings, session history, config updates, audit data</td></tr>
 </table>
-<p>The browser's identity key lives in sessionStorage. Close the tab and the key is gone - previous sessions can't be decrypted.</p>
+<p>Close the tab and both keys are gone. Previous sessions can't be decrypted, even by the wing.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">passkey auth</h3>
+<p>Encryption keeps the relay from reading your data. Passkeys control who can start sessions in the first place. When your wing is locked, the browser sends a WebAuthn assertion directly to the wing inside the encrypted channel. The relay forwards the blob but can't read or forge it. The wing verifies the signature against its local allowlist and issues a boot-scoped nonce for subsequent requests.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what the roost stores</h3>
 <p>User accounts, OAuth tokens, org membership, device auth tokens, bandwidth counters. That's it. No terminal data, no file contents, no session recordings. If you self-host, the SQLite database contains only auth state.</p>
