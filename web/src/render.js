@@ -38,7 +38,7 @@ export function renderSidebar() {
         var isActive = (S.activeView === 'terminal' && s.id === S.ptySessionId);
         var needsAttention = S.sessionNotifications[s.id];
         var dotClass = s.status === 'active' ? 'dot-live' : (s.swept ? 'dot-detached' : '');
-        if (s.swept && needsAttention) dotClass = 'dot-attention';
+        if (needsAttention) dotClass = 'dot-attention';
         return '<button class="session-tab' + (isActive ? ' active' : '') + '" ' +
             'title="' + escapeHtml(name + ' \u00b7 ' + (s.agent || '?')) + '" ' +
             'data-sid="' + s.id + '">' +
@@ -2061,7 +2061,7 @@ export function renderDashboard() {
         var kind = s.kind || 'terminal';
         var needsAttention = S.sessionNotifications[s.id];
         var dotClass = isActive ? 'live' : (s.swept ? 'detached' : 'offline');
-        if (s.swept && needsAttention) dotClass = 'attention';
+        if (needsAttention) dotClass = 'attention';
 
         var previewHtml = '';
         var thumbUrl = '';

@@ -496,16 +496,12 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 					go s.broadcastToEdges(payload)
 				}
 			}
-			// Push notification via ntfy — only if no browser is watching this session.
+			// Push notification via ntfy (nonce-deduped)
 			if attn.Nonce != "" {
-				if s.PTY.Get(attn.SessionID) != nil {
-					log.Printf("ntfy: skipping attention for session %s (browser attached)", attn.SessionID)
-				} else {
-					clickURL := ntfyClickURL(attn.SessionID)
-					s.trySendNtfy(attn.Nonce, wing.UserID, func(c *ntfy.Client) {
-						c.SendAttention(attn.SessionID, attn.Agent, attn.CWD, clickURL)
-					})
-				}
+				clickURL := ntfyClickURL(attn.SessionID)
+				s.trySendNtfy(attn.Nonce, wing.UserID, func(c *ntfy.Client) {
+					c.SendAttention(attn.SessionID, attn.Agent, attn.CWD, clickURL)
+				})
 			}
 
 		}

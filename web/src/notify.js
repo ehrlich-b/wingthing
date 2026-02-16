@@ -27,6 +27,8 @@ function isViewingSession(sessionId) {
 export function setNotification(sessionId) {
     if (!sessionId) return;
 
+    // If actively viewing this session, just ack — we're already looking at it.
+    // Other tabs get the event via their own dashboard WebSocket and show the dot.
     if (isViewingSession(sessionId)) {
         sendAttentionAck(sessionId);
         return;
