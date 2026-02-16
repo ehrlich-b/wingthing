@@ -989,8 +989,15 @@ body {
     touch-action: manipulation;
 }
 
+/* Override global button:hover for mod-keys — on touch devices the
+   :hover state sticks after tap, causing buttons to stay highlighted. */
+.mod-key:hover {
+    background: var(--bg-card);
+    color: var(--text-dim);
+}
 @media (hover: hover) {
     .mod-key:hover {
+        background: var(--bg-card);
         color: var(--text);
         border-color: var(--accent);
     }

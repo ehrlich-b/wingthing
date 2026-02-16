@@ -85,12 +85,18 @@ async function init() {
     function hideTypeOverlay() {
         typeOverlay.style.display = 'none';
         typeInput.value = '';
-        if (S.term) S.term.focus();
+        // Don't focus xterm here — on mobile that re-triggers the keyboard
+        // and causes another resize cycle. The terminal stays usable via
+        // the type overlay; desktop users click the terminal to focus.
     }
 
     function submitTypeInput() {
         var text = typeInput.value;
-        if (text) sendPTYInput(text + '\r');
+        if (text) {
+            sendPTYInput(text + '\r');
+            if (S.term) S.term.scrollToBottom();
+            if (S.touchProxyScrollToBottom) S.touchProxyScrollToBottom();
+        }
         hideTypeOverlay();
     }
 
@@ -188,42 +194,44 @@ async function init() {
         }
     });
 
-    window.addEventListener('resize', function () {
-        if (S.term && S.fitAddon) {
-            var wasAtBottom = S.term.buffer.active.viewportY >= S.term.buffer.active.baseY;
-            S.fitAddon.fit();
-            if (wasAtBottom) S.term.scrollToBottom();
+    // fit() changes rows/cols which triggers xterm reflow. The reflow can
+    // reset the viewport to top. Instead of rAF hacks, use xterm's onResize
+    // event which fires after reflow completes. Set a flag before fit(),
+    // scroll to bottom in the handler.
+    S.scrollAfterResize = false;
+    S.term.onResize(function() {
+        if (S.scrollAfterResize) {
+            S.scrollAfterResize = false;
+            S.term.scrollToBottom();
+            if (S.touchProxyScrollToBottom) S.touchProxyScrollToBottom();
         }
     });
+
+    function fitAndKeepScroll() {
+        if (!S.term || !S.fitAddon) return;
+        if (S.term.buffer.active.viewportY >= S.term.buffer.active.baseY) {
+            S.scrollAfterResize = true;
+        }
+        S.fitAddon.fit();
+    }
+
+    window.addEventListener('resize', fitAndKeepScroll);
 
     // Resize app to visual viewport when mobile keyboard appears/disappears.
     // Setting height directly on #app overrides the CSS 100dvh and forces
     // the flex layout to fit within the visible area above the keyboard.
-    // IMPORTANT: Don't call fitAddon.fit() when the keyboard appears — that
-    // changes the terminal row count and causes xterm to reflow all content,
-    // which is the source of the scroll-jump jank. Only refit when the
-    // viewport returns to full height (keyboard dismissed) or on a real
-    // orientation/window resize (handled by the separate resize listener).
+    // Don't call fit() when the keyboard appears — that changes the row count
+    // and triggers a reflow. Only refit when viewport returns to full height.
     if (window.visualViewport) {
         var appEl = document.getElementById('app');
         var fullHeight = window.visualViewport.height;
         function syncViewport() {
             var vh = window.visualViewport.height;
             appEl.style.height = vh + 'px';
-            // iOS scrolls the page when focusing an input — force it back
             window.scrollTo(0, 0);
-            // Only refit terminal when keyboard is dismissed (back to full height)
             if (vh >= fullHeight) {
                 fullHeight = vh;
-                if (S.term && S.fitAddon) {
-                    var wasAtBottom = S.term.buffer.active.viewportY >= S.term.buffer.active.baseY;
-                    S.fitAddon.fit();
-                    if (wasAtBottom) S.term.scrollToBottom();
-                }
-            }
-            if (S.touchProxyScrollToBottom && S.term &&
-                S.term.buffer.active.viewportY === S.term.buffer.active.baseY) {
-                S.touchProxyScrollToBottom();
+                fitAndKeepScroll();
             }
         }
         window.visualViewport.addEventListener('resize', syncViewport);

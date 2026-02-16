@@ -76,8 +76,17 @@ export function initTerminal() {
         DOM.terminalContainer.style.position = 'relative';
         DOM.terminalContainer.appendChild(proxy);
 
-        // Don't focus xterm on proxy tap — the type overlay handles text input
-        // on mobile and focusing xterm's hidden textarea causes scroll fighting.
+        // Tapping the terminal on mobile opens the type overlay instead of
+        // focusing xterm's hidden textarea (which causes scroll fighting and
+        // iOS autocapitalize issues).
+        proxy.addEventListener('click', function() {
+            var typeOverlay = document.getElementById('type-overlay');
+            var typeInput = document.getElementById('type-input');
+            if (typeOverlay && typeOverlay.style.display === 'none') {
+                typeOverlay.style.display = 'flex';
+                if (typeInput) { typeInput.value = ''; typeInput.focus(); }
+            }
+        });
 
         var syncing = false;
         function lineHeight() { return DOM.terminalContainer.clientHeight / S.term.rows; }
