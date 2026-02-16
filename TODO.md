@@ -56,6 +56,7 @@ The bar: someone new (e.g. your boss) can use a wing without confusion or broken
 - [ ] WebSocket direct to Fly — bypass Cloudflare for ws:// traffic (ws.wingthing.ai)
 
 ### Security
+- [ ] Encrypt pty.resize — cols/rows sent as plaintext, should go through E2E like pty.input
 - [ ] Tunnel passkey replay protection — `passkey.auth.begin`/`finish` protocol with server-generated nonce
 - [ ] Internal API trust boundary — mTLS or signed service tokens for node-to-node calls
 - [ ] Invite consume transaction ordering — race condition in `internal/relay/org.go`

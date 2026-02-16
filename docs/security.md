@@ -129,8 +129,7 @@ The allowlist lives in `wing.yaml` on your machine. The roost stores passkey pub
 - Routing metadata: user ID, wing ID, session ID, agent name
 - Session lifecycle: when sessions start, attach, detach, exit
 - Message timing and sizes
-- Control messages: `pty.resize` (terminal dimensions)
-- Wing registration data: machine ID, available agents, project paths, labels
+- Wing registration: machine ID, org membership, lock status. Agents, projects, labels, and hostname all travel through the encrypted tunnel (`wing.info`) - the roost never sees them
 
 **CANNOT see** (with E2E active):
 - Terminal content (keystrokes in, agent output out)
@@ -172,25 +171,20 @@ A modified web client is reduced to a phishing attack. It can capture what you t
 ### Web app served from roost
 The roost serves the JavaScript that runs in your browser. A compromised roost can serve modified JS that bypasses E2E. This is the fundamental limitation of any web-based E2E system (same as WhatsApp Web, ProtonMail, etc.). On a locked wing, this is reduced to phishing - the modified client can't connect to your wing.
 
-Mitigation: SRI hashes published out-of-band, or a native client that doesn't depend on roost-served code.
-
 ### Metadata is not encrypted
 Session metadata (who connects when, to which project, with which agent) is visible to the roost. Routing requires it.
 
 ### Static zero salt in HKDF
 The HKDF derivation uses a 32-byte zero salt. HKDF is designed to be secure with a zero salt, but a random salt sent alongside the public key would add defense in depth.
 
+### pty.resize is not encrypted
+Terminal dimensions (cols, rows) are sent as plaintext control messages. The roost can see your terminal size. Low-risk but inconsistent with the rest of the PTY channel being encrypted. On the fix list.
+
 ### Ring buffer stores plaintext on wing
 The wing keeps a plaintext ring buffer of recent terminal output for session reattach replay. If the wing machine itself is compromised, this is accessible.
 
 ### Unlocked wings trust the roost for identity
 An unlocked wing accepts any session from a JWT-validated user. If the roost is compromised and the attacker forges a JWT, the wing has no second factor to reject it. Lock your wing to add passkey verification on top.
-
-## Recommendations
-
-1. **Signed web assets** - publish SRI hashes out-of-band or build a native client. On locked wings a compromised client can only phish, but this eliminates that vector too.
-2. **Rotate JWT signing secret** - support secret rotation to limit blast radius of database compromise.
-3. **Audit logging** - tamper-evident log of wing registrations and session starts, stored separately from the roost.
 
 ## Reference
 
