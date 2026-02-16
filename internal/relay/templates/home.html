@@ -269,7 +269,7 @@ document.addEventListener('DOMContentLoaded',function(){
 (function(){
 var agents=['claude','codex','cursor','ollama','gemini'];
 var profiles={
-  claude:{env:['ANTHROPIC_API_KEY'],writeDirs:['~/.cache/claude/'],writeRegex:['~/.claude*'],domains:['api.anthropic.com','sentry.io','statsigapi.net']},
+  claude:{env:['ANTHROPIC_API_KEY'],writeDirs:['~/.cache/claude/'],writeRegex:['~/.claude*'],domains:['*.anthropic.com','sentry.io','statsigapi.net']},
   codex:{env:['OPENAI_API_KEY'],writeDirs:['~/.codex/'],writeRegex:[],domains:['api.openai.com','*.openai.com']},
   cursor:{env:['ANTHROPIC_API_KEY','OPENAI_API_KEY'],writeDirs:['~/.cursor/','~/Library/Caches/cursor-compile-cache/'],writeRegex:[],domains:['api.anthropic.com','api.openai.com','*.cursor.sh']},
   ollama:{env:[],writeDirs:['~/.ollama/'],writeRegex:[],domains:['localhost']},

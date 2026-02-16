@@ -12,7 +12,7 @@ type AgentProfile struct {
 
 var agentProfiles = map[string]AgentProfile{
 	"claude": {
-		Domains:    []string{"api.anthropic.com", "sentry.io", "statsigapi.net"},
+		Domains:    []string{"*.anthropic.com", "sentry.io", "statsigapi.net"},
 		EnvVars:    []string{"ANTHROPIC_API_KEY"},
 		WriteDirs:  []string{".cache/claude"},
 		WriteRegex: []string{".claude"},
