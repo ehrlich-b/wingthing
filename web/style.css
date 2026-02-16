@@ -832,11 +832,17 @@ body {
     min-height: 0;
     border-radius: 4px;
     overflow: hidden;
+    touch-action: none;
 }
 
 #terminal-container .xterm {
     height: 100%;
     padding: 4px;
+}
+
+#terminal-container .xterm-helper-textarea {
+    caret-color: transparent;
+    opacity: 0;
 }
 
 #reconnect-banner {
