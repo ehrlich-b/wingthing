@@ -46,7 +46,6 @@
 <a href="#architecture">architecture</a>
 <a href="#security">security</a>
 <a href="#sandbox-limits">sandbox limits</a>
-<a href="#disclaimer">disclaimer</a>
 </nav>
 <div class="docs-body">
 <h1>documentation</h1>
@@ -256,17 +255,10 @@ dangerously_skip_permissions: true
 <p>The roost is a dumb pipe. It forwards encrypted blobs between browsers and wings without reading them. All session data, terminal output, file listings, and audit recordings are end-to-end encrypted. The roost knows wing IDs and connection state - nothing else.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">how the pieces connect</h3>
-<p>Your wing opens an outbound WebSocket to the roost and holds it open. When you open a terminal in the browser, the browser connects to the roost over a second WebSocket. The roost matches them by wing ID and forwards messages both ways.</p>
-<p>Each terminal session gets a fresh X25519 key pair on both sides. The browser and wing do a Diffie-Hellman exchange, derive an AES-GCM key via HKDF, and encrypt everything from that point. The roost sees ciphertext.</p>
+<p>Your wing opens an outbound WebSocket to the roost and holds it open. When you open a terminal in the browser, the browser connects to the roost over a second WebSocket. The roost matches them by wing ID and forwards messages both ways. All traffic is encrypted end-to-end.</p>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">two encryption domains</h3>
-<p>Both channels use ephemeral X25519 keys. Nothing persists across tabs or sessions.</p>
-<table class="docs-table">
-<tr><th>channel</th><th>key lifetime</th><th>what it carries</th></tr>
-<tr><td>PTY</td><td>per-session, re-derived on reattach</td><td>terminal I/O (keystrokes, output)</td></tr>
-<tr><td>tunnel</td><td>per browser tab (sessionStorage)</td><td>file listings, session history, config updates, audit data</td></tr>
-</table>
-<p>Close the tab and both keys are gone. Previous sessions can't be decrypted, even by the wing.</p>
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">encryption</h3>
+<p>Every connection between your browser and your wing gets a fresh X25519 key pair on both sides. The two do a Diffie-Hellman exchange, derive an AES-GCM key via HKDF, and encrypt everything from that point. Terminal I/O, file listings, session history, audit data - all ciphertext as far as the roost is concerned. Keys live in sessionStorage and vanish when you close the tab. Previous sessions can't be decrypted, even by the wing.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">passkey auth</h3>
 <p>Encryption keeps the relay from reading your data. Passkeys control who can start sessions in the first place. When your wing is locked, the browser sends a WebAuthn assertion directly to the wing inside the encrypted channel. The relay forwards the blob but can't read or forge it. The wing verifies the signature against its local allowlist and issues a boot-scoped nonce for subsequent requests.</p>
@@ -277,12 +269,16 @@ dangerously_skip_permissions: true
 
 <div class="docs-section" id="security">
 <h2>security</h2>
-<p>Three layers of protection:</p>
-<ul>
-<li><strong>Sandbox:</strong> Egg sessions run inside a platform-native sandbox - Seatbelt (macOS) or user namespaces + seccomp (Linux). Create an <code>egg.yaml</code> to lock down what the agent can reach, then let it run unattended. See <a href="#egg-configuration">egg configuration</a>.</li>
-<li><strong>E2E encryption:</strong> PTY traffic between your browser and your wing is encrypted end-to-end using X25519 key exchange and AES-GCM. The roost never sees plaintext terminal data. Keys are re-derived on every reattach.</li>
-<li><strong>Outbound-only connections:</strong> Wings connect outbound to the roost - no inbound ports, no static IP, works behind any NAT or firewall. Nothing listens on your machine.</li>
-</ul>
+<p>Three security domains, each solving a different problem.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">the egg: protecting you from the agent</h3>
+<p>Agents run inside a platform-native sandbox - Seatbelt on macOS, user namespaces + seccomp on Linux. The sandbox controls filesystem access, network reach, and system calls. Configure it with <code>egg.yaml</code>; see <a href="#egg-configuration">egg configuration</a>.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">the wing: protecting you from the roost</h3>
+<p>All traffic between your browser and your wing is E2E encrypted (X25519 + AES-GCM). The roost forwards ciphertext and can't read it. Wings connect outbound only - no inbound ports, no static IP, works behind any NAT or firewall. Lock your wing and sessions require a <a href="#access-control">passkey</a> on top of encryption - the roost can't start sessions on your behalf even if it wanted to.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">the roost: controlling access</h3>
+<p>The roost handles login (OAuth, device auth) and routes connections to the right wing. When a wing is locked, the roost stores passkey credential IDs so it can hand them to the wing during <code>wt wing allow</code> - but the WebAuthn verification happens on the wing, not the roost. See <a href="#access-control">access control</a>.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what the sandbox enforces</h3>
 <table class="docs-table">
@@ -302,8 +298,8 @@ dangerously_skip_permissions: true
 <h2>sandbox limits</h2>
 <p>The sandbox is not a container runtime. Known gaps:</p>
 <ul>
-<li><strong>Linux domain filtering is cooperative.</strong> The CONNECT proxy is enforced via <code>HTTPS_PROXY</code> env var. Well-behaved tools (curl, Node.js, Go net/http) respect it, but a determined agent could bypass it. On macOS, Seatbelt forces all traffic through the proxy at the OS level.</li>
-<li><strong>Agent credentials are readable.</strong> API keys and config files are mounted into the sandbox. The agent needs them to work.</li>
+<li><strong>Linux domain filtering is cooperative.</strong> The CONNECT proxy is set via <code>HTTPS_PROXY</code>. Agent harnesses that respect proxy env vars (Claude Code, Codex, most Node.js and Go tooling) route through it automatically. An agent that spawns raw sockets can skip it. On macOS, Seatbelt forces all traffic through the proxy at the OS level. If your agent's harness doesn't respect <code>HTTPS_PROXY</code>, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a>.</li>
+<li><strong>Agent credentials are readable.</strong> API keys and config files are mounted into the sandbox. The agent can read them, but domain filtering means the only place it can send them is the agent's own API.</li>
 <li><strong>HOME is readable.</strong> The agent reads your codebase. Add <code>"deny:~/.secrets"</code> to the <code>fs</code> list to hide sensitive directories.</li>
 <li><strong>Agent config is writable.</strong> <code>~/.claude/</code> and similar directories must be writable for the agent to function.</li>
 <li><strong>Resource limits are Linux-only.</strong> macOS agents can consume unbounded CPU and memory.</li>
@@ -311,11 +307,6 @@ dangerously_skip_permissions: true
 <p>These are on the roadmap. If any of these are blocking you, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a> - it helps us prioritize. If you need hard isolation today, run wingthing inside a VM or container.</p>
 </div>
 
-<div class="docs-section" id="disclaimer">
-<h2>disclaimer</h2>
-<p>wingthing is provided "as is" with no warranty. The sandbox reduces risk when configured but does not eliminate it. You are responsible for what runs on your machine. See the full <a href="/terms">terms of service</a> and <a href="/privacy">privacy policy</a>.</p>
-<p>If you find a security issue, please report it to <a href="mailto:security@wingthing.ai">security@wingthing.ai</a>.</p>
-</div>
 
 </div>
 </div>

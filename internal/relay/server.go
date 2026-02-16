@@ -137,6 +137,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /docs", s.handleDocs)
 	s.mux.HandleFunc("GET /terms", s.handleTerms)
 	s.mux.HandleFunc("GET /privacy", s.handlePrivacy)
+	s.mux.HandleFunc("GET /abuse", s.handleAbuse)
 	s.mux.HandleFunc("GET /self-host", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/docs", http.StatusMovedPermanently)
 	})
@@ -301,7 +302,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Default host: full site with caching
-	if r.Method == "GET" && (path == "/" || path == "/skills" || path == "/login" || path == "/docs" || path == "/terms" || path == "/privacy") {
+	if r.Method == "GET" && (path == "/" || path == "/skills" || path == "/login" || path == "/docs" || path == "/terms" || path == "/privacy" || path == "/abuse") {
 		if r.URL.RawQuery != "" {
 			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
 		} else {

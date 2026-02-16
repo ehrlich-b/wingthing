@@ -21,7 +21,7 @@
 <h2>1. what we collect</h2>
 <p>When you use the hosted service at wingthing.ai, we collect:</p>
 <ul>
-<li><strong>Account information:</strong> If you authenticate via GitHub OAuth or magic link, we store your username and email address to identify your account and your wings.</li>
+<li><strong>Account information:</strong> If you authenticate via GitHub, Google, or magic link, we store your username and email address to identify your account and your wings.</li>
 <li><strong>Device tokens:</strong> When you run <code>wt login</code>, a device token is generated and stored on the server to authenticate your wing's WebSocket connection.</li>
 <li><strong>Session metadata:</strong> Session IDs, agent type (e.g. "claude", "ollama"), and connection timestamps. We need this to route WebSocket connections.</li>
 </ul>
@@ -52,6 +52,7 @@
 <h2>6. third-party services</h2>
 <ul>
 <li><strong>GitHub OAuth:</strong> If you authenticate via GitHub, GitHub's privacy policy applies to the authentication flow. We receive only your username and email.</li>
+<li><strong>Google OAuth:</strong> If you authenticate via Google, Google's privacy policy applies to the authentication flow. We receive only your name and email. We do not request access to your Google Drive, Gmail, or any other Google services.</li>
 <li><strong>Fly.io:</strong> The hosted roost runs on Fly.io infrastructure. Fly.io's privacy policy governs their handling of network-level data.</li>
 </ul>
 
