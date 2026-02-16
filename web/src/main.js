@@ -100,15 +100,18 @@ async function init() {
         hideTypeOverlay();
     }
 
-    // Prevent touchstart on send button from blurring the input — on iOS,
-    // blur dismisses the keyboard, layout shifts, and the click misses.
-    typeSend.addEventListener('touchstart', function(e) {
+    // Use touchend + click with a guard to prevent double-fire.
+    // touchstart preventDefault breaks click on iOS, so don't do that.
+    // touchend fires reliably before any layout shift.
+    var lastSendTime = 0;
+    function handleSend(e) {
         e.preventDefault();
-    });
-    typeSend.addEventListener('click', function(e) {
-        e.preventDefault();
+        if (Date.now() - lastSendTime < 500) return;
+        lastSendTime = Date.now();
         submitTypeInput();
-    });
+    }
+    typeSend.addEventListener('touchend', handleSend);
+    typeSend.addEventListener('click', handleSend);
 
     typeInput.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
@@ -200,15 +203,30 @@ async function init() {
         }
     });
 
+    var scrollHoldInterval = null;
+    function forceScrollToBottom() {
+        if (S.term) S.term.scrollToBottom();
+        if (S.touchProxyScrollToBottom) S.touchProxyScrollToBottom();
+    }
+
     function fitAndKeepScroll() {
         if (!S.term || !S.fitAddon) return;
         var wasAtBottom = S.term.buffer.active.viewportY >= S.term.buffer.active.baseY;
         S.fitAddon.fit();
         if (wasAtBottom) {
-            S.term.scrollToBottom();
-            // On mobile the touch proxy controls visible scroll position.
-            // Its double-rAF ensures the scroll sticks after async reflow.
-            if (S.touchProxyScrollToBottom) S.touchProxyScrollToBottom();
+            forceScrollToBottom();
+            // Brute force: xterm reflows async at unpredictable times after
+            // fit(). Hammer scroll-to-bottom every 50ms for 1s to win the race.
+            if (scrollHoldInterval) clearInterval(scrollHoldInterval);
+            var start = Date.now();
+            scrollHoldInterval = setInterval(function() {
+                if (Date.now() - start > 1000) {
+                    clearInterval(scrollHoldInterval);
+                    scrollHoldInterval = null;
+                    return;
+                }
+                forceScrollToBottom();
+            }, 50);
         }
     }
 
