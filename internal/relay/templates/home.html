@@ -121,15 +121,15 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <div class="how-grid">
 <div class="how-card">
 <h3>wing</h3>
-<p>Session manager running on your machine. <code>wt login</code>, <code>wt start</code>, you're online. One machine = one wing, always on.</p>
+<p>Runs on your machine. <code>wt login</code>, <code>wt start</code>, and it holds an encrypted connection to the relay so your eggs are reachable. One wing per machine.</p>
 </div>
 <div class="how-card">
 <h3>roost</h3>
-<p>The encrypted relay. Wings connect outbound, no port forwarding, no static IP. Use ours or <a href="/docs#self-hosting">host your own</a>.</p>
+<p>The relay. Wings connect outbound to it, so you don't need to open ports or have a static IP. Use ours or <a href="/docs#self-hosting">host your own</a>.</p>
 </div>
 <div class="how-card">
 <h3>egg</h3>
-<p>Sandboxed agent session that stays running after you disconnect. Claude Code, Codex, Cursor, Gemini, and more.</p>
+<p>A sandbox per agent session. The agent inside keeps running after you disconnect. Claude Code, Codex, Cursor, Gemini.</p>
 </div>
 </div>
 <div class="how-grid">
@@ -147,15 +147,15 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </div>
 <div class="how-card">
 <h3>self-hostable</h3>
-<p>Don't trust us? <code>wt serve --local</code> and you're running your own roost. Same binary, same features.</p>
+<p><code>wt serve</code> runs the roost on your machine. No account needed, no dependency on us.</p>
 </div>
 <div class="how-card">
 <h3>any agent</h3>
-<p>Same interface, any backend. <code>wt egg claude</code> for the hard stuff, <code>wt egg ollama</code> for free. Support new agents next day.</p>
+<p><code>wt egg claude</code>, <code>wt egg ollama</code>, <code>wt egg gemini</code>. Switch the agent, keep your sandbox config.</p>
 </div>
 <div class="how-card">
 <h3>passkey auth</h3>
-<p>Phishing-resistant WebAuthn. Works with 1Password, iCloud Keychain, Touch ID, Windows Hello. Verification happens on your machine, not the server.</p>
+<p>WebAuthn passkeys. 1Password, iCloud Keychain, Touch ID, Windows Hello. The roost never sees your credential.</p>
 </div>
 </div>
 </div>
