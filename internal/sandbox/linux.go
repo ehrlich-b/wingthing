@@ -146,6 +146,17 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		for _, p := range writablePaths {
 			wrapArgs = append(wrapArgs, "--writable", p)
 		}
+		// UseRegex mounts need overlayfs on HOME (Linux can't do prefix-based
+		// write permissions with bind mounts — new file creation and renames
+		// in the RO parent directory fail with EROFS).
+		for _, m := range s.cfg.Mounts {
+			if m.UseRegex && home != "" {
+				rel, err := filepath.Rel(home, m.Source)
+				if err == nil && !strings.HasPrefix(rel, "..") {
+					wrapArgs = append(wrapArgs, "--overlay-prefix", rel)
+				}
+			}
+		}
 		wrapArgs = append(wrapArgs, "--")
 		wrapArgs = append(wrapArgs, name)
 		wrapArgs = append(wrapArgs, args...)

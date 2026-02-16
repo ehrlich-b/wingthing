@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -19,20 +20,21 @@ import (
 
 // DenyInit is called early in main when the binary is re-exec'd as a sandbox
 // wrapper. It runs as root (UID 0) inside the user namespace so it can:
-//   1. Mount tmpfs over denied paths to hide their contents
-//   2. Apply write isolation: make HOME read-only, then bind writable sub-mounts
-//   3. Install seccomp filter to prevent agent from undoing isolation
+//  1. Mount tmpfs over denied paths to hide their contents
+//  2. Apply write isolation: make HOME read-only, then bind writable sub-mounts
+//  3. Install seccomp filter to prevent agent from undoing isolation
 //
 // After setup, it spawns the agent in a nested user namespace (CLONE_NEWUSER
 // for UID drop) + PID namespace (CLONE_NEWPID for PID isolation). The wrapper
 // itself is NOT in a PID namespace — this keeps host /proc valid so Go can
 // write uid_map for the nested CLONE_NEWUSER without remounting /proc.
 //
-// Args format: --uid UID --gid GID [--log PATH] [--deny PATH...] [--home PATH] [--writable PATH...] -- CMD ARGS...
+// Args format: --uid UID --gid GID [--log PATH] [--deny PATH...] [--home PATH] [--writable PATH...] [--overlay-prefix PREFIX...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
 	var denyWritePaths []string
 	var writablePaths []string
+	var overlayPrefixes []string
 	var home string
 	var logPath string
 	var uid, gid int
@@ -53,6 +55,9 @@ func DenyInit(args []string) {
 				i++
 			case "--writable":
 				writablePaths = append(writablePaths, args[i+1])
+				i++
+			case "--overlay-prefix":
+				overlayPrefixes = append(overlayPrefixes, args[i+1])
 				i++
 			case "--home":
 				home = args[i+1]
@@ -85,55 +90,20 @@ func DenyInit(args []string) {
 	// Write isolation: make HOME read-only, then punch writable holes.
 	// Must happen BEFORE deny mounts so deny tmpfs overlays take precedence.
 	// Skip if HOME itself is in the writable list (user wants full HOME rw).
+	//
+	// When overlay prefixes are present (e.g. ".claude"), use overlayfs on HOME
+	// instead of simple bind-mount+RO. Overlayfs provides a copy-on-write layer
+	// so new files can be created and renames work (needed for atomic writes).
+	// Prefix-matching files are persisted back to the real HOME on exit.
+	var overlayPersistFn func()
+	tmpDir := filepath.Dir(logPath)
 	if home != "" && len(writablePaths) > 0 && !containsPath(writablePaths, home) {
-		// Bind-mount HOME to itself so we can remount it
-		if err := unix.Mount(home, home, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			log.Printf("_deny_init: bind HOME %s: %v (write isolation skipped)", home, err)
-		} else {
-			// Bind-mount each writable path BEFORE remounting HOME read-only.
-			// These are independent mount points that survive the parent remount-ro.
-			for _, p := range writablePaths {
-				if err := os.MkdirAll(p, 0755); err != nil {
-					log.Printf("_deny_init: mkdir writable %s: %v", p, err)
-					continue
-				}
-				if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
-					log.Printf("_deny_init: bind writable %s: %v", p, err)
-				}
-			}
-			// Also bind-mount files adjacent to writable dirs that share the
-			// same prefix. This is the Linux equivalent of macOS regex rules:
-			// e.g., writable ~/.claude also makes ~/.claude.json writable.
-			for _, p := range writablePaths {
-				dir := filepath.Dir(p)
-				base := filepath.Base(p)
-				entries, err := os.ReadDir(dir)
-				if err != nil {
-					continue
-				}
-				for _, e := range entries {
-					name := e.Name()
-					if name == base || !strings.HasPrefix(name, base) {
-						continue
-					}
-					if e.IsDir() {
-						continue // only handle files; dirs should be explicit writable paths
-					}
-					fp := filepath.Join(dir, name)
-					if err := unix.Mount(fp, fp, "", unix.MS_BIND, ""); err != nil {
-						log.Printf("_deny_init: bind writable file %s: %v", fp, err)
-					} else {
-						log.Printf("_deny_init: bind writable file %s (prefix match)", fp)
-					}
-				}
-			}
-			// Remount HOME read-only. Child bind-mounts at writable paths are
-			// separate mount points and stay read-write.
-			if err := unix.Mount("", home, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, ""); err != nil {
-				log.Printf("_deny_init: remount HOME ro: %v", err)
-			} else {
-				log.Printf("_deny_init: write isolation: HOME=%s ro, %d writable paths", home, len(writablePaths))
-			}
+		if len(overlayPrefixes) > 0 {
+			overlayPersistFn = setupOverlayHome(home, writablePaths, overlayPrefixes, tmpDir)
+		}
+		if overlayPersistFn == nil {
+			// No overlay needed or overlay failed — fall back to bind-mount approach.
+			setupReadonlyHome(home, writablePaths)
 		}
 	}
 
@@ -220,13 +190,229 @@ func DenyInit(args []string) {
 	}()
 
 	if err := cmd.Wait(); err != nil {
+		if overlayPersistFn != nil {
+			overlayPersistFn()
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
 		log.Printf("_deny_init: wait: %v", err)
 		os.Exit(1)
 	}
+	if overlayPersistFn != nil {
+		overlayPersistFn()
+	}
 	os.Exit(0)
+}
+
+// setupOverlayHome mounts overlayfs on HOME so that new file creation and
+// renames work for prefix-matching paths (e.g. .claude.json temp files).
+// Writable dirs are bind-mounted through the overlay from real HOME so their
+// writes persist immediately. On process exit, prefix-matching files from the
+// overlay upper dir are copied back to real HOME.
+// Returns a persist function, or nil if overlay setup failed.
+func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir string) func() {
+	// Save a reference to the real HOME before mounting overlay on top.
+	realHome := filepath.Join(tmpDir, "real-home")
+	if err := os.MkdirAll(realHome, 0755); err != nil {
+		log.Printf("_deny_init: mkdir real-home: %v", err)
+		return nil
+	}
+	if err := unix.Mount(home, realHome, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		log.Printf("_deny_init: bind real-home: %v", err)
+		return nil
+	}
+
+	// Create overlay upper (COW layer) and work dirs.
+	upperDir := filepath.Join(tmpDir, "overlay-upper")
+	workDir := filepath.Join(tmpDir, "overlay-work")
+	if err := os.MkdirAll(upperDir, 0755); err != nil {
+		log.Printf("_deny_init: mkdir overlay-upper: %v", err)
+		return nil
+	}
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		log.Printf("_deny_init: mkdir overlay-work: %v", err)
+		return nil
+	}
+
+	// Mount overlayfs on HOME. Lower layer is the real HOME (via saved ref).
+	// Upper layer is the tmpdir COW — writes go here, real HOME is untouched.
+	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", realHome, upperDir, workDir)
+	if err := unix.Mount("overlay", home, "overlay", 0, opts); err != nil {
+		log.Printf("_deny_init: overlay HOME: %v (falling back to bind-mount)", err)
+		return nil
+	}
+	log.Printf("_deny_init: overlay HOME=%s upper=%s", home, upperDir)
+
+	// Bind-mount writable dirs FROM real HOME through the overlay so their
+	// writes persist immediately to the real filesystem (not just the COW layer).
+	// If ANY bind-mount fails, tear down the overlay — running with ephemeral
+	// auth state is worse than the old bind-mount approach (it can invalidate
+	// OAuth tokens on the server side when the session ends).
+	bindFailed := false
+	for _, p := range writablePaths {
+		if !strings.HasPrefix(p, home+string(filepath.Separator)) {
+			continue
+		}
+		rel, err := filepath.Rel(home, p)
+		if err != nil {
+			continue
+		}
+		realPath := filepath.Join(realHome, rel)
+		// Ensure mount target exists in the overlay merged view.
+		if err := os.MkdirAll(p, 0755); err != nil {
+			log.Printf("_deny_init: mkdir writable %s: %v", p, err)
+			bindFailed = true
+			break
+		}
+		if err := unix.Mount(realPath, p, "", unix.MS_BIND, ""); err != nil {
+			log.Printf("_deny_init: bind writable %s: %v (aborting overlay)", p, err)
+			bindFailed = true
+			break
+		}
+		log.Printf("_deny_init: bind writable %s (persistent via %s)", p, realPath)
+	}
+	if bindFailed {
+		// Tear down the overlay — unmount and fall back to setupReadonlyHome.
+		unix.Unmount(home, 0)
+		log.Printf("_deny_init: overlay aborted, falling back to bind-mount")
+		return nil
+	}
+
+	// Return function that persists prefix-matching files from overlay upper
+	// back to real HOME. Called after the agent process exits.
+	return func() {
+		entries, err := os.ReadDir(upperDir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			name := e.Name()
+			matched := false
+			for _, prefix := range prefixes {
+				if strings.HasPrefix(name, prefix) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			if e.IsDir() {
+				// Persist directory contents if they ended up in the overlay
+				// upper (shouldn't happen with working bind-mounts, but be safe).
+				persistDir(filepath.Join(upperDir, name), filepath.Join(realHome, name))
+				continue
+			}
+			src := filepath.Join(upperDir, name)
+			dst := filepath.Join(realHome, name)
+			if err := copyFile(src, dst); err != nil {
+				log.Printf("_deny_init: persist %s: %v", name, err)
+			} else {
+				log.Printf("_deny_init: persisted %s from overlay", name)
+			}
+		}
+	}
+}
+
+// setupReadonlyHome is the original write isolation approach: bind-mount HOME,
+// punch writable holes for specific paths + prefix-matching files, then
+// remount HOME read-only. Works for overwriting existing files but cannot
+// handle new file creation or renames in HOME.
+func setupReadonlyHome(home string, writablePaths []string) {
+	if err := unix.Mount(home, home, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		log.Printf("_deny_init: bind HOME %s: %v (write isolation skipped)", home, err)
+		return
+	}
+
+	// Bind-mount each writable path BEFORE remounting HOME read-only.
+	for _, p := range writablePaths {
+		if err := os.MkdirAll(p, 0755); err != nil {
+			log.Printf("_deny_init: mkdir writable %s: %v", p, err)
+			continue
+		}
+		if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
+			log.Printf("_deny_init: bind writable %s: %v", p, err)
+		}
+	}
+
+	// Bind-mount files adjacent to writable dirs that share the same prefix.
+	// e.g., writable ~/.claude also makes ~/.claude.json writable.
+	for _, p := range writablePaths {
+		dir := filepath.Dir(p)
+		base := filepath.Base(p)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if name == base || !strings.HasPrefix(name, base) {
+				continue
+			}
+			if e.IsDir() {
+				continue
+			}
+			fp := filepath.Join(dir, name)
+			if err := unix.Mount(fp, fp, "", unix.MS_BIND, ""); err != nil {
+				log.Printf("_deny_init: bind writable file %s: %v", fp, err)
+			} else {
+				log.Printf("_deny_init: bind writable file %s (prefix match)", fp)
+			}
+		}
+	}
+
+	// Remount HOME read-only. Child bind-mounts stay read-write.
+	if err := unix.Mount("", home, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, ""); err != nil {
+		log.Printf("_deny_init: remount HOME ro: %v", err)
+	} else {
+		log.Printf("_deny_init: write isolation: HOME=%s ro, %d writable paths", home, len(writablePaths))
+	}
+}
+
+// persistDir recursively copies directory contents from overlay upper to real HOME.
+func persistDir(src, dst string) {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return
+	}
+	os.MkdirAll(dst, 0755)
+	for _, e := range entries {
+		s := filepath.Join(src, e.Name())
+		d := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			persistDir(s, d)
+			continue
+		}
+		if err := copyFile(s, d); err != nil {
+			log.Printf("_deny_init: persist %s: %v", d, err)
+		} else {
+			log.Printf("_deny_init: persisted %s from overlay", d)
+		}
+	}
+}
+
+// copyFile copies src to dst, preserving permissions.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }
 
 // installSeccomp installs a BPF seccomp filter that denies dangerous syscalls
