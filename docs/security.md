@@ -186,6 +186,16 @@ The wing keeps a plaintext ring buffer of recent terminal output for session rea
 ### Unlocked wings trust the roost for identity
 An unlocked wing accepts any session from a JWT-validated user. If the roost is compromised and the attacker forges a JWT, the wing has no second factor to reject it. Lock your wing to add passkey verification on top.
 
+### CONNECT proxy, not SNI filtering
+
+The egg routes agent traffic through a local HTTP CONNECT proxy (`internal/sandbox/proxy.go`). It checks the domain in the CONNECT request against the `egg.yaml` allowlist. Anything not on the list gets a 403.
+
+It's not airtight. The proxy ignores ports, so any port on an allowed domain is reachable. The tunnel is opaque after the 200 - the agent could speak non-TLS through it. Domain fronting is theoretically possible if an allowed domain shares CDN infrastructure (though the major CDNs killed this years ago). Wildcards like `*.anthropic.com` allow any subdomain.
+
+We looked at SNI filtering (inspecting the TLS ClientHello) and skipped it. It adds real complexity - ClientHello parsing, ECH, QUIC - and the bypasses above don't matter much. API endpoints only listen on 443. Raw TCP to them does nothing. The allowed domains are run by the agent providers.
+
+None of these matter as much as the obvious one: the agent can exfiltrate data through its own API, and no proxy design prevents that. The CONNECT filter covers everything else.
+
 ## Reference
 
 | What | Protected? | How |
