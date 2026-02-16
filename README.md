@@ -2,7 +2,9 @@
 
 [![cinch](https://cinch.sh/badge/github.com/ehrlich-b/wingthing.svg)](https://cinch.sh/jobs/github.com/ehrlich-b/wingthing)
 
-Sandboxed AI agents on your machine, accessible from anywhere.
+Sandboxed AI agents on your machine, accessible from anywhere over an encrypted, passkey-protected relay that can't read your data.
+
+<video src="https://github.com/ehrlich-b/wingthing/raw/main/hero.mp4" width="100%"></video>
 
 ```
 wt egg claude              # sandboxed Claude Code session
@@ -10,28 +12,22 @@ wt start                   # connect your machine to the relay
 open app.wingthing.ai      # start sessions from any browser
 ```
 
-## How it works
+## Three security domains
 
-`wt egg` spawns an agent inside an OS-level sandbox. macOS uses Seatbelt (`sandbox-exec`). Linux uses user namespaces and seccomp. No containers, no VMs.
+**The egg** protects you from the agent. Each session runs inside an OS-level sandbox - Seatbelt on macOS, user namespaces + seccomp on Linux. Filesystem access, network reach, and system calls are all controlled. No containers, no VMs.
 
-Every session runs in its own sandboxed process. Detach and reattach without losing state.
+**The wing** protects you from the relay. All traffic between your browser and your machine is E2E encrypted (X25519 + AES-GCM). The relay forwards ciphertext and can't read it. Wings connect outbound only - no open ports, no static IP, works behind any NAT or firewall. Lock your wing and sessions require a passkey on top of encryption - the relay can't start sessions on your behalf even if it wanted to.
 
-```
-wt egg claude              # Claude Code
-wt egg codex               # Codex
-wt egg ollama              # local inference, free, offline
-wt egg list                # active sessions
-wt egg stop <id>           # kill one
-```
+**The roost** controls access. It handles login and routes connections to the right wing. It never sees terminal data, file contents, or session recordings.
 
-### Sandbox
+## Sandbox
 
-Out of the box, the sandbox is opinionated: CWD is writable, home is read-only, sensitive directories (`~/.ssh`, `~/.gnupg`, `~/.aws`, etc.) are denied, and only essential env vars are passed through. Network is blocked except for exactly what your agent needs - Claude gets `api.anthropic.com`, Ollama gets `localhost`, Gemini gets `*.googleapis.com`, etc. A local [CONNECT proxy](https://en.wikipedia.org/wiki/HTTP_tunnel) enforces domain-level filtering so agents can only reach their own API, not the entire internet. You don't configure any of this - agent binaries, config directories, network rules, and env vars are all auto-detected.
+Out of the box, the sandbox is opinionated: CWD is writable, home is read-only, sensitive directories (`~/.ssh`, `~/.gnupg`, `~/.aws`, etc.) are denied, and only essential env vars are passed through. A local [CONNECT proxy](https://en.wikipedia.org/wiki/HTTP_tunnel) enforces domain-level filtering - agents can only reach their own API, not the entire internet. Claude gets `api.anthropic.com`, Ollama gets `localhost`, Gemini gets `*.googleapis.com`. Agent binaries, config directories, network rules, and env vars are all auto-detected.
 
 Drop an `egg.yaml` in your project to customize. Configs are additive - you only declare what you're changing from the defaults.
 
 ```yaml
-# egg.yaml - add SSH access and extra network on top of defaults
+# egg.yaml
 fs:
   - "ro:~/.ssh"       # overrides the default deny for ~/.ssh
 network:
@@ -40,26 +36,18 @@ env:
   - SSH_AUTH_SOCK      # pass SSH agent socket
 ```
 
-Use `base: none` for a blank slate if you want full control. Use the [sandbox builder](https://wingthing.ai) on the homepage to generate configs visually.
+Use `base: none` for a blank slate. Use the [sandbox builder](https://wingthing.ai) on the homepage to generate configs visually.
 
 ## Remote access
 
-`wt wing` opens an outbound WebSocket to the relay. No port forwarding, no static IP, works behind NAT.
-
 ```
-wt login                   # authenticate with GitHub
+wt login                   # authenticate with GitHub or Google
 wt start                   # background daemon
 wt status                  # check it
 wt stop                    # stop it
 ```
 
-```
-browser (xterm.js) <-> relay (dumb pipe) <-> your machine
-```
-
-The relay never sees your data. Sessions are end-to-end encrypted (ECDH + AES-GCM). The relay forwards opaque bytes.
-
-Open `app.wingthing.ai` to browse your connected wings, start sessions, and view session history.
+Open [app.wingthing.ai](https://app.wingthing.ai) to browse your wings, start sessions, and view history. Lock your wing with `wt wing lock` to require passkey auth before sessions start.
 
 ## Agents
 
@@ -70,8 +58,8 @@ Open `app.wingthing.ai` to browse your connected wings, start sessions, and view
 | Claude Code | `claude` |
 | Codex | `codex` |
 | Cursor Agent | `agent` |
-| Ollama | `ollama` |
 | Gemini | `gemini` |
+| Ollama | `ollama` |
 
 ## Install
 
@@ -90,12 +78,19 @@ Update with `wt update`.
 
 ## Self-hosting
 
-Single binary, SQLite, no external deps.
+Single binary, SQLite, no external deps. `--local` runs single-user mode with no login page.
 
 ```bash
-wt serve --addr :8080
-wt wing --relay http://localhost:8080
+wt serve --local           # start the relay
+wt start --local           # connect a wing (separate terminal)
+open localhost:8080         # start sessions
 ```
+
+For multi-user, set up GitHub/Google OAuth and run `wt serve` without `--local`. See the [docs](https://wingthing.ai/docs#self-hosting).
+
+## Docs
+
+[wingthing.ai/docs](https://wingthing.ai/docs)
 
 ## License
 
