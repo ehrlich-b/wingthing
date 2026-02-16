@@ -16,11 +16,12 @@ import (
 )
 
 // Tier rate/cap constants.
+// All tiers share the same sustained rate (3 Mbit/s) — this is a reasonable
+// ceiling for compressed terminal PTY, not a paid differentiator.
+// The only paid gate is the monthly cap: free = 1 GiB, pro/team = unlimited.
 const (
-	freeRate     = 125_000     // 1 Mbit/s
-	proRate      = 375_000     // 3 Mbit/s
+	SustainedRate  = 375_000     // 3 Mbit/s — all tiers
 	freeMonthlyCap int64 = 1 << 30 // 1 GiB
-	defaultBurst = 1 * 1024 * 1024 // 1 MB
 )
 
 // TierLookup returns a user's tier string ("free", "pro", "team").
@@ -166,22 +167,7 @@ func (b *BandwidthMeter) limiter(userID string) *rate.Limiter {
 	defer b.mu.Unlock()
 	lim, ok := b.limiters[userID]
 	if !ok {
-		// Tier-aware rate: pro/team get 3 Mbit/s, free gets 1 Mbit/s
-		r := b.rateVal
-		if b.tierFn != nil {
-			tier := b.tiers[userID]
-			if tier == "" {
-				// lookup and cache
-				tier = b.tierFn(userID)
-				b.tiers[userID] = tier
-			}
-			if tier == "pro" || tier == "team" {
-				r = rate.Limit(proRate)
-			} else {
-				r = rate.Limit(freeRate)
-			}
-		}
-		lim = rate.NewLimiter(r, b.burst)
+		lim = rate.NewLimiter(b.rateVal, b.burst)
 		b.limiters[userID] = lim
 	}
 	return lim

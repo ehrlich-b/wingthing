@@ -12,6 +12,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/relay"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -113,7 +114,7 @@ func serveCmd() *cobra.Command {
 				srv.SetLoginProxy(relay.NewLoginProxy(loginAddr))
 				srv.SetSessionCache(relay.NewSessionCache())
 				// Bandwidth metering still works on edge, just with cached tiers
-				srv.Bandwidth = relay.NewBandwidthMeter(64*1024, 1*1024*1024, nil)
+				srv.Bandwidth = relay.NewBandwidthMeter(relay.SustainedRate, 1*1024*1024, nil)
 				entCache := relay.NewEntitlementCache(loginAddr)
 				srv.Bandwidth.SetTierLookup(func(userID string) string {
 					return entCache.GetTier(userID)
@@ -122,7 +123,7 @@ func serveCmd() *cobra.Command {
 				fmt.Printf("edge node: machine=%s region=%s login=%s\n", flyMachineID, flyRegion, loginAddr)
 			} else {
 				// Login or single node: direct DB access
-				srv.Bandwidth = relay.NewBandwidthMeter(64*1024, 1*1024*1024, store.DB())
+				srv.Bandwidth = relay.NewBandwidthMeter(relay.SustainedRate, 1*1024*1024, store.DB())
 				srv.Bandwidth.SetTierLookup(func(userID string) string {
 					if store.IsUserPro(userID) {
 						return "pro"
@@ -157,6 +158,14 @@ func serveCmd() *cobra.Command {
 				}
 				srv.LocalMode = true
 				srv.SetLocalUser(user)
+
+				// Grant pro tier — self-hosted has no bandwidth cap
+				if !store.IsUserPro(user.ID) {
+					subID := uuid.New().String()
+					store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &user.ID, Plan: "local", Status: "active", Seats: 1})
+					store.CreateEntitlement(&relay.Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID})
+					store.UpdateUserTier(user.ID, "pro")
+				}
 
 				// Write device token so `wt wing` can connect without `wt login`
 				ts := auth.NewTokenStore(cfg.Dir)

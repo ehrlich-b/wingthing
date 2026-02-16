@@ -30,14 +30,14 @@ The bar: someone new (e.g. your boss) can use a wing without confusion or broken
 - [x] Passkey challenge UI — button prompt (no auto WebAuthn popup)
 - [x] Wing offline reconnect — browser shows banner + auto-reattach
 - [ ] Fix cursor preamble for other agents (codex, cursor, ollama) — same pattern, lower priority
-- [ ] Fix notifications — multiple tabs all fire, only one clears; also never notify about locked wings
+- [x] Fix notifications — multi-tab dedup via BroadcastChannel, nonce-based ntfy dedup, isViewingSession suppression
 - [ ] Latency pass — audit round-trip times, find low-hanging optimizations
 
 ### Self-Hosting First Class
 - [x] `wt serve` should work standalone with zero config for single-user self-hosted
-- [ ] Local user mode: not "pro" but "local" — all features unlocked, no tier restrictions
+- [x] Local user mode: auto-grant pro tier, no bandwidth cap for self-hosted
 - [ ] Hide orgs UI in self-hosted mode — orgs are a hosted-relay concept
-- [ ] Throughput speed limits configurable, no speed caps by default for self-hosted
+- [x] Uniform 3 Mbit/s rate for all tiers, only monthly cap differentiates free vs pro
 
 ---
 
