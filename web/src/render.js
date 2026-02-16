@@ -163,8 +163,9 @@ export function setupEggDrag() {
     var cards = grid.querySelectorAll('.egg-box');
     var dragSrc = null;
 
+    var isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     cards.forEach(function(card) {
-        card.setAttribute('draggable', 'true');
+        if (!isTouch) card.setAttribute('draggable', 'true');
         card.addEventListener('dragstart', function(e) {
             dragSrc = card;
             card.classList.add('dragging');
@@ -1763,7 +1764,8 @@ export function renderDashboard() {
             var lockedBadge = (w.locked && !hasAuth) ? '<span class="wing-pinned-badge">locked</span>' : '';
             var authBadge = isCardPasskey ? '<span class="wing-pinned-badge">authenticate</span>' : '';
             var lockIcon = ((w.locked && !hasAuth) || isCardPasskey) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
-            return '<div class="wing-box" draggable="true" data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
+            var draggable = ('ontouchstart' in window || navigator.maxTouchPoints > 0) ? '' : ' draggable="true"';
+            return '<div class="wing-box"' + draggable + ' data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
                     '<span class="wing-name">' + escapeHtml(name) + lockIcon + '</span>' +
