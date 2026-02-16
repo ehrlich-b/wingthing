@@ -118,7 +118,12 @@ export function initTerminal() {
         });
 
         syncProxyHeight();
+        proxy.scrollTop = proxy.scrollHeight;
     }
+
+    // Tell mobile keyboards to show a standard text layout
+    var textarea = DOM.terminalContainer.querySelector('.xterm-helper-textarea');
+    if (textarea) textarea.setAttribute('inputmode', 'text');
 }
 
 export function saveTermBuffer() {

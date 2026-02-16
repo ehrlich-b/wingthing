@@ -8,6 +8,7 @@ import { loadHome, saveSessionCache, setEggOrder } from './data.js';
 
 export function showHome(pushHistory) {
     S.activeView = 'home';
+    document.getElementById('app').classList.remove('in-terminal');
     DOM.homeSection.style.display = '';
     DOM.terminalSection.style.display = 'none';
     DOM.chatSection.style.display = 'none';
@@ -31,6 +32,7 @@ export function showHome(pushHistory) {
 
 export function showTerminal() {
     S.activeView = 'terminal';
+    document.getElementById('app').classList.add('in-terminal');
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = '';
     DOM.chatSection.style.display = 'none';

@@ -155,6 +155,13 @@ async function init() {
         if (S.term && S.fitAddon) S.fitAddon.fit();
     });
 
+    // Refit terminal when mobile keyboard appears/disappears
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', function() {
+            if (S.term && S.fitAddon) S.fitAddon.fit();
+        });
+    }
+
     // Detail modal close
     DOM.detailBackdrop.addEventListener('click', hideDetailModal);
     document.addEventListener('keydown', function(e) {

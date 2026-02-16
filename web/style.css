@@ -1656,7 +1656,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 /* === Mobile === */
 
 @media (max-width: 600px) {
-    #sidebar { display: none; }
+    .in-terminal #sidebar { display: none; }
     #main { padding: 0 8px; }
     #main-header { padding: 4px 0; }
     #modifier-keys { display: flex; flex-wrap: wrap; }
