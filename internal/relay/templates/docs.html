@@ -144,7 +144,7 @@
 <span class="prompt">$ </span><span class="cmd">wt wing unlock</span>
 </div>
 <p>Removes the passkey requirement. Sessions start without a second factor.</p>
-<p>All access control state lives in <code>wing.yaml</code> on your machine. The roost never stores your passkey data or allowlist.</p>
+<p>The allowlist lives in <code>wing.yaml</code> on your machine. The roost stores your passkey's public key and credential ID so it can hand them to your wing during <code>wt wing allow</code>. The security model assumes the roost is not compromised at the time you add a key - after that, verification happens entirely on the wing.</p>
 </div>
 
 <div class="docs-section" id="organizations">
