@@ -35,16 +35,11 @@
 </ul>
 
 <h2>3. how we use your data</h2>
-<p>We use account and session metadata to:</p>
-<ul>
-<li>Authenticate your connection to the roost</li>
-<li>Route WebSocket messages between your browser and your wing</li>
-<li>Display your active sessions in the web interface</li>
-</ul>
+<p>Account data authenticates your WebSocket connection to the roost. Session metadata (IDs, timestamps) routes messages between your browser and wing. Session content - what you type, what the agent says, your files - never reaches the roost. That data travels E2E encrypted and lives on your machine.</p>
 <p>We do not sell, rent, or share your data with third parties. We do not use your data for advertising, analytics, or model training.</p>
 
 <h2>4. data storage</h2>
-<p>The hosted relay stores data in SQLite on a single Fly.io machine. Account metadata is stored for the duration of your account. Session metadata is ephemeral and does not persist across server restarts.</p>
+<p>The roost database contains accounts (emails, usernames), org membership, device auth tokens, and passkey public keys and credential IDs used for <code>wt wing allow</code>. No terminal data, no files, no session content. If the database leaked, an attacker would get emails and passkey public keys - but public keys can't be used to impersonate you, and locked wings verify passkey signatures locally.</p>
 
 <h2>5. self-hosted instances</h2>
 <p>If you self-host wingthing, your data never touches our servers. You control everything. This privacy policy applies only to the hosted service at wingthing.ai.</p>
