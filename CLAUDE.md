@@ -5,7 +5,7 @@
 `wt` runs AI agents sandboxed on your machine, accessible from anywhere. The primary use case is `wt egg <agent>` (sandboxed agent sessions) and `wt wing` (remote access via relay). Skills are a secondary feature.
 
 - `wt egg claude` -- run Claude Code in a per-session sandbox with PTY persistence
-- `wt wing -d` -- connect your machine to the relay, access from app.wingthing.ai
+- `wt start` -- connect your machine to the relay, access from app.wingthing.ai
 - `wt serve` -- relay server (web UI, WebSocket relay, skill registry), HTTP + SQLite
 
 ## Design Philosophy
@@ -222,10 +222,10 @@ After `make check`, restart the wing daemon with the local build: `./wt stop && 
 | `wt egg list` | List active egg sessions |
 | `wt egg stop <id>` | Stop an egg session |
 | `wt wing` | Connect to relay, serve encrypted tunnel + PTY sessions |
-| `wt wing -d` | Start wing as background daemon |
+| `wt wing start` | Start wing as background daemon |
 | `wt wing stop` | Stop wing daemon |
 | `wt wing status` | Check wing daemon and active sessions |
-| `wt start` / `wt stop` | Aliases for `wt wing -d` / `wt wing stop` |
+| `wt start` / `wt stop` | Aliases for `wt wing start` / `wt wing stop` |
 | `wt login` / `wt logout` | Device auth with relay server |
 | `wt run [prompt]` | Run a prompt or skill directly |
 | `wt run --skill [name]` | Run a named skill |
