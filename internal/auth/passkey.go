@@ -106,8 +106,9 @@ type authEntry struct {
 	createdAt time.Time
 }
 
-// AuthCache caches passkey auth tokens in memory. Tokens live until the
-// process dies (boot-scoped) or until auth_ttl expires. Wing restart revokes all sessions.
+// AuthCache caches passkey auth tokens in memory. Boot-scoped: tokens are
+// valid until the wing process dies. Restart revokes everything. An optional
+// TTL can further limit token lifetime (0 means no expiry).
 type AuthCache struct {
 	mu     sync.Mutex
 	tokens map[string]authEntry // token → entry
@@ -126,7 +127,7 @@ func (c *AuthCache) Put(token string, pubKey []byte) {
 }
 
 // Check returns the public key for a valid token. If ttl > 0, expired tokens
-// are rejected and removed from the cache.
+// are rejected and removed from the cache. If ttl is 0, tokens never expire.
 func (c *AuthCache) Check(token string, ttl time.Duration) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

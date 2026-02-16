@@ -16,9 +16,9 @@ tested — edge nodes are one uncomment away in fly.toml.
 The bar: someone new (e.g. your boss) can use a wing without confusion or broken UX.
 
 ### Docs
-- [ ] Update docs for orgs, passkeys, wing config, allow/revoke, lock/unlock
-- [ ] Self-hosting guide: `wt serve` on your own box, what you get, how sandbox works
-- [ ] Architecture overview: relay is a dumb pipe, wing owns all data, E2E encryption
+- [x] Update docs for orgs, passkeys, wing config, allow/revoke, lock/unlock
+- [x] Self-hosting guide: `wt serve` on your own box, what you get, how sandbox works
+- [x] Architecture overview: relay is a dumb pipe, wing owns all data, E2E encryption
 
 ### UX Polish
 - [x] Session ID in URL on session start
@@ -26,16 +26,18 @@ The bar: someone new (e.g. your boss) can use a wing without confusion or broken
 - [x] Ctrl-V paste + Ctrl-C copy on Windows
 - [x] Auto-reconnect UI without navigate-away
 - [x] Fix cursor ghost typing — re-inject cursor hide after replay buffer trim (Claude)
+- [x] Deep link reattach — `#s/<sessionId>` works on refresh
+- [x] Passkey challenge UI — button prompt (no auto WebAuthn popup)
+- [x] Wing offline reconnect — browser shows banner + auto-reattach
 - [ ] Fix cursor preamble for other agents (codex, cursor, ollama) — same pattern, lower priority
-- [ ] Never notify about events I can't see (locked wings)
-- [ ] Image paste into terminal — intercept paste, upload via PTY, buffer output, loading bar
+- [ ] Fix notifications — multiple tabs all fire, only one clears; also never notify about locked wings
 - [ ] Latency pass — audit round-trip times, find low-hanging optimizations
 
 ### Self-Hosting First Class
+- [x] `wt serve` should work standalone with zero config for single-user self-hosted
 - [ ] Local user mode: not "pro" but "local" — all features unlocked, no tier restrictions
 - [ ] Hide orgs UI in self-hosted mode — orgs are a hosted-relay concept
 - [ ] Throughput speed limits configurable, no speed caps by default for self-hosted
-- [ ] `wt serve` should work standalone with zero config for single-user self-hosted
 
 ---
 
@@ -62,6 +64,7 @@ The bar: someone new (e.g. your boss) can use a wing without confusion or broken
 
 ## Backlog
 
+- [ ] Image paste into terminal — intercept paste, upload via PTY, buffer output, loading bar
 - [ ] Offline web app — PWA with cached wing data, works without network
 - [ ] Break down render.js further — it's getting large
 - [ ] Facilitate worktrees — dev workflow for parallel feature branches

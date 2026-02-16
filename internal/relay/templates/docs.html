@@ -37,9 +37,13 @@
 <a href="#overview">overview</a>
 <a href="#installation">installation</a>
 <a href="#wing-setup">wing setup</a>
+<a href="#wing-configuration">wing configuration</a>
+<a href="#access-control">access control</a>
+<a href="#organizations">organizations</a>
 <a href="#egg-configuration">egg configuration</a>
 <a href="#self-hosting">self-hosting</a>
 <a href="#roost-configuration">roost configuration</a>
+<a href="#architecture">architecture</a>
 <a href="#security">security</a>
 <a href="#sandbox-limits">sandbox limits</a>
 <a href="#disclaimer">disclaimer</a>
@@ -90,6 +94,73 @@
 </div>
 </div>
 
+<div class="docs-section" id="wing-configuration">
+<h2>wing configuration</h2>
+<p>Wing settings live in <code>~/.wingthing/wing.yaml</code>. You can edit the file directly or use the CLI:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt wing config</span><span class="comment">                    # view current config</span><br>
+<span class="prompt">$ </span><span class="cmd">wt wing config set org=myteam</span><span class="comment">     # set a value</span><br>
+<span class="prompt">$ </span><span class="cmd">wt wing config set audit=true</span><span class="comment">     # enable session audit recording</span>
+</div>
+<p>Changes take effect immediately - the daemon picks them up via SIGHUP. No restart needed.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">config fields</h3>
+<table class="docs-table">
+<tr><th>field</th><th>effect</th></tr>
+<tr><td>org</td><td>organization slug - share this wing with org members</td></tr>
+<tr><td>paths</td><td>project directories to expose (default: CWD). Also settable via <code>wt start --paths ~/repos,~/projects</code></td></tr>
+<tr><td>labels</td><td>freeform tags shown in the web UI (e.g. "gpu", "linux", "work")</td></tr>
+<tr><td>locked</td><td>enable passkey access control. See <a href="#access-control">access control</a></td></tr>
+<tr><td>auth_ttl</td><td>passkey nonce lifetime. Default <code>0</code> (boot-scoped - valid until wing restarts). Set to e.g. <code>1h</code> to force re-authentication periodically</td></tr>
+<tr><td>egg_config</td><td>path to default <code>egg.yaml</code> for sessions on this wing</td></tr>
+<tr><td>audit</td><td>record session terminal output for replay</td></tr>
+<tr><td>debug</td><td>verbose daemon logging</td></tr>
+<tr><td>conv</td><td>conversation context file path</td></tr>
+</table>
+</div>
+
+<div class="docs-section" id="access-control">
+<h2>access control</h2>
+<p>By default, anyone with your account credentials can start sessions on your wing. Locking it adds a second factor - browsers must prove they hold a passkey registered on your account before the wing will start or reattach a session.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">lock your wing</h3>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt wing lock</span>
+</div>
+<p>Once locked, new sessions require passkey verification. The browser shows an "authenticate with passkey" button - click it, tap your key, and the session starts. The wing issues a nonce that's valid for the rest of the boot. Restarting the wing invalidates all nonces. Set <code>auth_ttl</code> if you want periodic re-authentication on top of that.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">manage the allowlist</h3>
+<p>When locked, only passkeys on the allowlist can access the wing:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt wing allow</span><span class="comment">                     # list allowed users</span><br>
+<span class="prompt">$ </span><span class="cmd">wt wing allow --email user@co.com</span><span class="comment"> # allow a specific user</span><br>
+<span class="prompt">$ </span><span class="cmd">wt wing allow --all</span><span class="comment">               # allow all org members</span><br>
+<span class="prompt">$ </span><span class="cmd">wt wing revoke user@co.com</span><span class="comment">        # remove from allowlist</span><br>
+<span class="prompt">$ </span><span class="cmd">wt wing revoke --all</span><span class="comment">              # clear the allowlist</span>
+</div>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">unlock</h3>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt wing unlock</span>
+</div>
+<p>Removes the passkey requirement. Sessions start without a second factor.</p>
+<p>All access control state lives in <code>wing.yaml</code> on your machine. The roost never stores your passkey data or allowlist.</p>
+</div>
+
+<div class="docs-section" id="organizations">
+<h2>organizations</h2>
+<p>Orgs let a team share wings. Create one from the web UI (account page), then invite members by email. Members see all wings in the org.</p>
+<p>To attach a wing to an org:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt wing config set org=myteam</span>
+</div>
+<p>Or pass it at start time:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt start --org myteam</span>
+</div>
+<p>Org wings show up for all org members in the web UI. Combine with <code>wt wing lock</code> to require passkey auth - org membership gets you visibility, but the wing owner controls who can actually start sessions.</p>
+</div>
+
 <div class="docs-section" id="egg-configuration">
 <h2>egg configuration</h2>
 <p>Without an <code>egg.yaml</code>, the sandbox applies opinionated defaults: CWD is writable, home is read-only, sensitive directories (<code>~/.ssh</code>, <code>~/.gnupg</code>, <code>~/.aws</code>, etc.) are denied, and only essential env vars pass through. Network is blocked except for exactly what your agent needs - each agent has a profile declaring its API domains, env vars, and config directories. Claude gets <code>api.anthropic.com</code>, Ollama gets <code>localhost</code>, etc. You don't configure any of this.</p>
@@ -116,8 +187,7 @@ dangerously_skip_permissions: true
 <tr><td>env</td><td>extra env vars to pass through (agent-required vars are auto-injected)</td></tr>
 <tr><td>dangerously_skip_permissions</td><td>let the agent run without asking - the sandbox is the permission boundary</td></tr>
 <tr><td>base</td><td>inherit from another config. <code>none</code> for blank slate, or a path to another egg.yaml</td></tr>
-<tr><td>deny</td><td>paths hidden from the agent. SBPL on macOS, tmpfs overlays on Linux</td></tr>
-<tr><td>cpu *</td><td>CPU time limit in seconds. Linux only, ignored on macOS</td></tr>
+<tr><td>cpu *</td><td>CPU time limit as a duration string, e.g. <code>300s</code> or <code>5m</code>. Linux only, ignored on macOS</td></tr>
 <tr><td>memory *</td><td>memory limit, e.g. <code>4G</code>. Linux only, ignored on macOS</td></tr>
 <tr><td>max_fds *</td><td>max open file descriptors. Linux only, ignored on macOS</td></tr>
 </table>
@@ -161,7 +231,7 @@ dangerously_skip_permissions: true
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">./wt serve --addr :8080</span>
 </div>
-<p>Then connect wings with <code>wt login --roost https://my-roost.example.com</code>.</p>
+<p>Then connect wings with <code>wt login --roost https://my-roost.example.com</code> and <code>wt start --roost https://my-roost.example.com</code>. Or set <code>roost_url</code> in <code>~/.wingthing/config.yaml</code> to avoid passing it every time.</p>
 </div>
 
 <div class="docs-section" id="roost-configuration">
@@ -176,7 +246,27 @@ dangerously_skip_permissions: true
 <tr><td>WT_APP_HOST</td><td>hostname for app subdomain (e.g. app.example.com)</td></tr>
 <tr><td>WT_WS_HOST</td><td>hostname for WebSocket subdomain (e.g. ws.example.com)</td></tr>
 </table>
-<p>Without OAuth env vars, use <code>--local</code> for single-user mode. Without <code>--local</code> or OAuth, the server boots read-only.</p>
+<p>Without OAuth env vars, the server auto-enables local mode (single-user, no login page). Pass <code>--local</code> explicitly to force it.</p>
+</div>
+
+<div class="docs-section" id="architecture">
+<h2>architecture</h2>
+<p>The roost is a dumb pipe. It forwards encrypted blobs between browsers and wings without reading them. All session data, terminal output, file listings, and audit recordings are end-to-end encrypted. The roost knows wing IDs and connection state - nothing else.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">how the pieces connect</h3>
+<p>Your wing opens an outbound WebSocket to the roost and holds it open. When you open a terminal in the browser, the browser connects to the roost over a second WebSocket. The roost matches them by wing ID and forwards messages both ways.</p>
+<p>Each terminal session gets a fresh X25519 key pair on both sides. The browser and wing do a Diffie-Hellman exchange, derive an AES-GCM key via HKDF, and encrypt everything from that point. The roost sees ciphertext.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">two encryption domains</h3>
+<table class="docs-table">
+<tr><th>channel</th><th>key type</th><th>lifetime</th><th>what it carries</th></tr>
+<tr><td>PTY sessions</td><td>ephemeral X25519</td><td>per-session, re-derived on reattach</td><td>terminal I/O (keystrokes, output)</td></tr>
+<tr><td>tunnel</td><td>persistent X25519</td><td>per browser tab</td><td>everything else: file listings, session history, config updates, audit data</td></tr>
+</table>
+<p>The browser's identity key lives in sessionStorage. Close the tab and the key is gone - previous sessions can't be decrypted.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what the roost stores</h3>
+<p>User accounts, OAuth tokens, org membership, device auth tokens, bandwidth counters. That's it. No terminal data, no file contents, no session recordings. If you self-host, the SQLite database contains only auth state.</p>
 </div>
 
 <div class="docs-section" id="security">
@@ -208,7 +298,7 @@ dangerously_skip_permissions: true
 <ul>
 <li><strong>Linux domain filtering is cooperative.</strong> The CONNECT proxy is enforced via <code>HTTPS_PROXY</code> env var. Well-behaved tools (curl, Node.js, Go net/http) respect it, but a determined agent could bypass it. On macOS, Seatbelt forces all traffic through the proxy at the OS level.</li>
 <li><strong>Agent credentials are readable.</strong> API keys and config files are mounted into the sandbox. The agent needs them to work.</li>
-<li><strong>HOME is readable.</strong> The agent reads your codebase. Put sensitive directories in the <code>deny</code> list.</li>
+<li><strong>HOME is readable.</strong> The agent reads your codebase. Add <code>"deny:~/.secrets"</code> to the <code>fs</code> list to hide sensitive directories.</li>
 <li><strong>Agent config is writable.</strong> <code>~/.claude/</code> and similar directories must be writable for the agent to function.</li>
 <li><strong>Resource limits are Linux-only.</strong> macOS agents can consume unbounded CPU and memory.</li>
 </ul>

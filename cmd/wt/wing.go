@@ -682,7 +682,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		if auditLive.Load() {
 			eggCfg.Audit = true
 		}
-		authTTL := time.Hour // default 1h
+		var authTTL time.Duration // default 0 = boot-scoped, no expiry
 		if wingCfg.AuthTTL != "" {
 			if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil {
 				authTTL = d
@@ -704,7 +704,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 
 	// Reclaim surviving egg sessions on every (re)connect
 	client.OnReconnect = func(rctx context.Context) {
-		authTTL := time.Hour
+		var authTTL time.Duration // default 0 = boot-scoped, no expiry
 		if wingCfg.AuthTTL != "" {
 			if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil {
 				authTTL = d
@@ -1295,7 +1295,7 @@ func wingConfigCmd() *cobra.Command {
 			fmt.Printf("locked:     %v\n", wingCfg.Locked)
 			authTTL := wingCfg.AuthTTL
 			if authTTL == "" {
-				authTTL = "1h"
+				authTTL = "0"
 			}
 			fmt.Printf("auth_ttl:   %s\n", authTTL)
 			fmt.Printf("allow_keys: %d configured\n", len(wingCfg.AllowKeys))
@@ -2593,7 +2593,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 
 		// Step 2: In the list — check auth token
-		authTTL := time.Hour // default 1h
+		var authTTL time.Duration // default 0 = boot-scoped, no expiry
 		if wingCfg.AuthTTL != "" {
 			if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil {
 				authTTL = d

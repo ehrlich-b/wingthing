@@ -78,6 +78,7 @@ func startCmd() *cobra.Command {
 	var debugFlag bool
 	var auditFlag bool
 	var orgFlag string
+	var roostFlag string
 	var allowFlags []string
 	var pathsFlag string
 	var localFlag bool
@@ -90,6 +91,9 @@ func startCmd() *cobra.Command {
 				return exeErr
 			}
 			childArgs := []string{"wing", "start"}
+			if roostFlag != "" {
+				childArgs = append(childArgs, "--roost", roostFlag)
+			}
 			if orgFlag != "" {
 				childArgs = append(childArgs, "--org", orgFlag)
 			}
@@ -114,6 +118,7 @@ func startCmd() *cobra.Command {
 			return child.Run()
 		},
 	}
+	cmd.Flags().StringVar(&roostFlag, "roost", "", "roost server URL (default: config or wingthing.ai)")
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp/wt-pty-<session>.bin for each egg")
 	cmd.Flags().StringVar(&orgFlag, "org", "", "org name or ID — share this wing with org members")
 	cmd.Flags().StringSliceVar(&allowFlags, "allow", nil, "ephemeral passkey public key(s) for this session")
@@ -959,13 +964,18 @@ func initCmd() *cobra.Command {
 }
 
 func loginCmd() *cobra.Command {
-	return &cobra.Command{
+	var roostFlag string
+	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate this device with the roost",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
+			}
+
+			if roostFlag != "" {
+				cfg.RoostURL = roostFlag
 			}
 
 			ts := auth.NewTokenStore(cfg.Dir)
@@ -1027,6 +1037,8 @@ func loginCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&roostFlag, "roost", "", "roost URL (default: config or wingthing.ai)")
+	return cmd
 }
 
 func logoutCmd() *cobra.Command {
