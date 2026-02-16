@@ -72,7 +72,12 @@ export function initTerminal() {
     if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
         var proxy = document.createElement('div');
         var spacer = document.createElement('div');
-        proxy.style.cssText = 'position:absolute;inset:0;overflow-y:auto;z-index:1;-webkit-overflow-scrolling:touch';
+        proxy.style.cssText = 'position:absolute;inset:0;overflow-y:auto;z-index:1;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none';
+        // Hide webkit scrollbar on proxy + xterm's own scrollbar (proxy replaces it)
+        var proxyStyle = document.createElement('style');
+        proxyStyle.textContent = '#terminal-container > div:last-child::-webkit-scrollbar{display:none}' +
+            '#terminal-container .scrollbar{display:none!important}';
+        document.head.appendChild(proxyStyle);
         spacer.style.cssText = 'width:1px;pointer-events:none';
         proxy.appendChild(spacer);
         DOM.terminalContainer.style.position = 'relative';
@@ -119,6 +124,12 @@ export function initTerminal() {
 
         syncProxyHeight();
         proxy.scrollTop = proxy.scrollHeight;
+
+        // Expose scrollToBottom for use after session attach/restore
+        S.touchProxyScrollToBottom = function() {
+            syncProxyHeight();
+            proxy.scrollTop = proxy.scrollHeight;
+        };
     }
 
     // Tell mobile keyboards to show a standard text layout

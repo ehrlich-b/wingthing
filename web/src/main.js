@@ -155,11 +155,18 @@ async function init() {
         if (S.term && S.fitAddon) S.fitAddon.fit();
     });
 
-    // Refit terminal when mobile keyboard appears/disappears
+    // Resize app to visual viewport when mobile keyboard appears/disappears
     if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', function() {
+        function syncViewport() {
+            document.documentElement.style.height = window.visualViewport.height + 'px';
             if (S.term && S.fitAddon) S.fitAddon.fit();
-        });
+            if (S.touchProxyScrollToBottom && S.term &&
+                S.term.buffer.active.viewportY === S.term.buffer.active.baseY) {
+                S.touchProxyScrollToBottom();
+            }
+        }
+        window.visualViewport.addEventListener('resize', syncViewport);
+        window.visualViewport.addEventListener('scroll', syncViewport);
     }
 
     // Detail modal close

@@ -41,6 +41,8 @@ function hideReplayOverlay() {
         overlay.classList.add('fade-out');
         setTimeout(function () { overlay.style.display = 'none'; }, 200);
     }, 80);
+    // Scroll touch proxy to bottom after session content loads
+    if (S.touchProxyScrollToBottom) S.touchProxyScrollToBottom();
 }
 
 function showPasskeyOverlay() {
