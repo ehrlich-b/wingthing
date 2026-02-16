@@ -53,12 +53,6 @@ export function initTerminal() {
                 if (code >= 0 && code <= 31) { sendPTYInput(String.fromCharCode(code)); return; }
             }
         }
-        if (S.altActive) {
-            S.altActive = false;
-            document.querySelector('[data-key="alt"]').classList.remove('active');
-            sendPTYInput('\x1b' + data);
-            return;
-        }
         sendPTYInput(data);
     });
 
@@ -82,8 +76,8 @@ export function initTerminal() {
         DOM.terminalContainer.style.position = 'relative';
         DOM.terminalContainer.appendChild(proxy);
 
-        // Taps on the proxy should focus the terminal for keyboard input
-        proxy.addEventListener('click', function() { if (S.term) S.term.focus(); });
+        // Don't focus xterm on proxy tap — the type overlay handles text input
+        // on mobile and focusing xterm's hidden textarea causes scroll fighting.
 
         var syncing = false;
         function lineHeight() { return DOM.terminalContainer.clientHeight / S.term.rows; }
@@ -138,14 +132,12 @@ export function initTerminal() {
         };
     }
 
-    // Override xterm's default textarea attributes for mobile. xterm sets
-    // autocapitalize=off and autocorrect=off which causes iOS to stay in
-    // symbol mode after typing a period instead of returning to letters.
+    // Set inputmode so mobile keyboards show the text layout (not url/email).
+    // Don't set autocapitalize/autocorrect — they cause random capitalization
+    // on iOS. The type overlay handles proper text input instead.
     var textarea = DOM.terminalContainer.querySelector('.xterm-helper-textarea');
     if (textarea) {
         textarea.setAttribute('inputmode', 'text');
-        textarea.setAttribute('autocapitalize', 'sentences');
-        textarea.setAttribute('autocorrect', 'on');
     }
 }
 

@@ -71,6 +71,45 @@ async function init() {
         });
     }
 
+    // Type overlay (mobile text input)
+    var typeOverlay = document.getElementById('type-overlay');
+    var typeInput = document.getElementById('type-input');
+    var typeSend = document.getElementById('type-send');
+
+    function showTypeOverlay() {
+        typeOverlay.style.display = 'flex';
+        typeInput.value = '';
+        typeInput.focus();
+    }
+
+    function hideTypeOverlay() {
+        typeOverlay.style.display = 'none';
+        typeInput.value = '';
+        if (S.term) S.term.focus();
+    }
+
+    function submitTypeInput() {
+        var text = typeInput.value;
+        if (text) sendPTYInput(text + '\r');
+        hideTypeOverlay();
+    }
+
+    typeSend.addEventListener('click', function(e) {
+        e.preventDefault();
+        submitTypeInput();
+    });
+
+    typeInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            submitTypeInput();
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            hideTypeOverlay();
+        }
+    });
+
     // Modifier keys (mobile)
     document.querySelectorAll('.mod-key').forEach(function (btn) {
         btn.addEventListener('click', function (e) {
@@ -79,13 +118,11 @@ async function init() {
             if (key === 'ctrl') {
                 S.ctrlActive = !S.ctrlActive;
                 btn.classList.toggle('active', S.ctrlActive);
-            } else if (key === 'alt') {
-                S.altActive = !S.altActive;
-                btn.classList.toggle('active', S.altActive);
+            } else if (key === 'type') {
+                showTypeOverlay();
+                return;
             } else if (key === 'esc') {
                 sendPTYInput('\x1b');
-            } else if (key === 'tab') {
-                sendPTYInput('\t');
             } else if (key === 'top') {
                 if (S.term) S.term.scrollToTop();
             } else if (key === 'btm') {
@@ -152,7 +189,11 @@ async function init() {
     });
 
     window.addEventListener('resize', function () {
-        if (S.term && S.fitAddon) S.fitAddon.fit();
+        if (S.term && S.fitAddon) {
+            var wasAtBottom = S.term.buffer.active.viewportY >= S.term.buffer.active.baseY;
+            S.fitAddon.fit();
+            if (wasAtBottom) S.term.scrollToBottom();
+        }
     });
 
     // Resize app to visual viewport when mobile keyboard appears/disappears.
@@ -164,7 +205,11 @@ async function init() {
             appEl.style.height = window.visualViewport.height + 'px';
             // iOS scrolls the page when focusing an input — force it back
             window.scrollTo(0, 0);
-            if (S.term && S.fitAddon) S.fitAddon.fit();
+            if (S.term && S.fitAddon) {
+                var wasAtBottom = S.term.buffer.active.viewportY >= S.term.buffer.active.baseY;
+                S.fitAddon.fit();
+                if (wasAtBottom) S.term.scrollToBottom();
+            }
             if (S.touchProxyScrollToBottom && S.term &&
                 S.term.buffer.active.viewportY === S.term.buffer.active.baseY) {
                 S.touchProxyScrollToBottom();

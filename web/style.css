@@ -940,6 +940,34 @@ body {
     background: var(--bg-hover);
 }
 
+#type-overlay {
+    display: flex;
+    gap: 6px;
+    padding: 6px 4px;
+    background: rgba(22, 33, 62, 0.95);
+    flex-shrink: 0;
+}
+
+#type-input {
+    flex: 1;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 15px;
+    outline: none;
+}
+
+#type-input:focus { border-color: var(--accent); }
+
+#type-send {
+    padding: 8px 14px;
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
 #modifier-keys {
     display: none;
     gap: 4px;

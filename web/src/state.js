@@ -18,7 +18,6 @@ export var S = {
     serializeAddon: null,
     saveBufferTimer: null,
     ctrlActive: false,
-    altActive: false,
     currentUser: null,
     e2eKey: null,
     availableAgents: [],
