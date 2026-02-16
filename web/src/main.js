@@ -240,13 +240,18 @@ async function init() {
     if (window.visualViewport) {
         var appEl = document.getElementById('app');
         var fullHeight = window.visualViewport.height;
+        var fitTimer = null;
         function syncViewport() {
             var vh = window.visualViewport.height;
             appEl.style.height = vh + 'px';
             window.scrollTo(0, 0);
             if (vh >= fullHeight) {
                 fullHeight = vh;
-                fitAndKeepScroll();
+                // Debounce fit() — keyboard dismiss fires many resize events
+                // as the viewport animates to full height. Each fit() reflows
+                // xterm and resets scroll to top. Only fit once it settles.
+                clearTimeout(fitTimer);
+                fitTimer = setTimeout(fitAndKeepScroll, 150);
             }
         }
         window.visualViewport.addEventListener('resize', syncViewport);
