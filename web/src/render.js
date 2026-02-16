@@ -200,14 +200,25 @@ export function setupEggDrag() {
         });
     });
 
-    // Touch drag (mobile)
+    // Touch drag (mobile) — requires long press (400ms) to start dragging.
+    // Short taps pass through to the click handler for opening sessions.
     var touchSrc = null;
+    var touchTimer = null;
 
     cards.forEach(function(card) {
         card.addEventListener('touchstart', function(e) {
-            if (e.target.closest('.egg-delete')) return;
-            touchSrc = card;
-            card.classList.add('dragging');
+            if (e.target.closest('.egg-delete, .box-menu-btn')) return;
+            touchTimer = setTimeout(function() {
+                touchSrc = card;
+                card.classList.add('dragging');
+            }, 400);
+        }, { passive: true });
+        card.addEventListener('touchmove', function() {
+            // Finger moved before long press — cancel drag
+            if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
+        }, { passive: true });
+        card.addEventListener('touchend', function() {
+            if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
         }, { passive: true });
     });
 
