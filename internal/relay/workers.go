@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -13,8 +14,13 @@ import (
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 
+	"github.com/ehrlich-b/wingthing/internal/ntfy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
+
+// ntfySentNonces tracks nonces already sent via ntfy (dedup).
+// Same nonce = same attention episode → skip. Cleared on session end.
+var ntfySentNonces sync.Map // nonce → bool
 
 // ConnectedWing represents a wing connected via WebSocket.
 type ConnectedWing struct {
@@ -490,6 +496,13 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 					go s.broadcastToEdges(payload)
 				}
 			}
+			// Push notification via ntfy (nonce-deduped, fire-and-forget)
+			if attn.Nonce != "" {
+				clickURL := ntfyClickURL(attn.SessionID)
+				s.trySendNtfy(attn.Nonce, wing.UserID, func(c *ntfy.Client) {
+					c.SendAttention(attn.SessionID, attn.Agent, attn.CWD, clickURL)
+				})
+			}
 
 		}
 	}
@@ -636,4 +649,30 @@ func (s *Server) forwardTunnelToBrowser(requestID string, data []byte, done bool
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	bc.Write(ctx, websocket.MessageText, data)
+}
+
+// trySendNtfy deduplicates by nonce and sends an ntfy push notification.
+// Same nonce = same attention episode → skip. Empty nonce always sends.
+// Fire-and-forget: errors are logged, never returned.
+func (s *Server) trySendNtfy(nonce, userID string, send func(c *ntfy.Client)) {
+	if s.Store == nil {
+		return
+	}
+	// Nonce dedup: never refire the same nonce
+	if nonce != "" {
+		if _, loaded := ntfySentNonces.LoadOrStore(nonce, true); loaded {
+			return
+		}
+	}
+	cfg, err := s.Store.GetNtfyConfig(userID)
+	if err != nil || cfg.Topic == "" {
+		return
+	}
+	c := ntfy.New(cfg.Topic, cfg.Token, cfg.Events)
+	go send(c)
+}
+
+// ntfyClickURL builds the click URL for a session notification.
+func ntfyClickURL(sessionID string) string {
+	return fmt.Sprintf("https://app.wingthing.ai/#s/%s", sessionID)
 }

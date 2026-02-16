@@ -1575,6 +1575,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     font-size: 11px;
     color: var(--text-muted);
 }
+.ac-ntfy-step {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
 
 .ac-members-container {
     margin-top: 10px;

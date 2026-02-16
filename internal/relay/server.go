@@ -115,6 +115,12 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// CLI API (Bearer token auth)
 	s.mux.HandleFunc("GET /api/app/resolve-email", s.handleResolveEmail)
 
+	// ntfy push notifications (cookie auth)
+	s.mux.HandleFunc("GET /api/app/ntfy", s.handleNtfyGet)
+	s.mux.HandleFunc("POST /api/app/ntfy", s.handleNtfySet)
+	s.mux.HandleFunc("POST /api/app/ntfy/test", s.handleNtfyTest)
+	s.mux.HandleFunc("POST /api/app/ntfy/generate", s.handleNtfyGenerate)
+
 	// Passkey management (cookie auth)
 	s.mux.HandleFunc("POST /api/app/passkey/register/begin", s.handlePasskeyRegisterBegin)
 	s.mux.HandleFunc("POST /api/app/passkey/register/finish", s.handlePasskeyRegisterFinish)

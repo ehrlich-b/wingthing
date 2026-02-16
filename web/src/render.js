@@ -305,6 +305,14 @@ export function renderAccountPage() {
         '<div id="ac-passkey-list"><span class="text-dim">loading...</span></div>' +
     '</div>';
 
+    // ntfy push notifications section
+    html += '<div class="ac-section">' +
+        '<div class="ac-section-header">' +
+            '<h3>push notifications</h3>' +
+        '</div>' +
+        '<div id="ac-ntfy-content"><span class="text-dim">loading...</span></div>' +
+    '</div>';
+
     // Org section
     html += '<div class="ac-section">' +
         '<div class="ac-section-header">' +
@@ -407,6 +415,7 @@ export function renderAccountPage() {
 
     loadAccountOrgs();
     loadAccountPasskeys();
+    loadNtfyConfig();
 
     document.getElementById('ac-passkey-add').addEventListener('click', function() {
         var btn = this;
@@ -504,6 +513,199 @@ function loadAccountPasskeys() {
         .catch(function() {
             listEl.innerHTML = '<span class="text-dim">failed to load</span>';
         });
+}
+
+function loadNtfyConfig() {
+    var el = document.getElementById('ac-ntfy-content');
+    if (!el) return;
+
+    fetch('/api/app/ntfy')
+        .then(function(r) { return r.json(); })
+        .then(function(cfg) {
+            if (cfg.enabled) {
+                // Configured: just show status + disable. Topic is never shown again.
+                el.innerHTML =
+                    '<div style="display:flex;align-items:center;gap:12px;">' +
+                        '<span style="color:var(--text);">enabled</span>' +
+                        '<button class="btn-sm btn-danger" id="ac-ntfy-disable">disable</button>' +
+                        '<button class="btn-sm" id="ac-ntfy-test">send test</button>' +
+                    '</div>';
+                document.getElementById('ac-ntfy-disable').addEventListener('click', function() {
+                    var btn = this;
+                    if (btn.classList.contains('btn-armed')) {
+                        btn.textContent = '...';
+                        fetch('/api/app/ntfy', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ topic: '', token: '', events: '' })
+                        }).then(function() { loadNtfyConfig(); });
+                    } else {
+                        btn.classList.add('btn-armed');
+                        btn.textContent = 'confirm';
+                        setTimeout(function() {
+                            btn.classList.remove('btn-armed');
+                            btn.textContent = 'disable';
+                        }, 3000);
+                    }
+                });
+                document.getElementById('ac-ntfy-test').addEventListener('click', function() {
+                    var btn = this;
+                    btn.textContent = '...';
+                    btn.disabled = true;
+                    fetch('/api/app/ntfy/test', { method: 'POST' })
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            btn.textContent = data.ok ? 'sent!' : 'failed';
+                            setTimeout(function() { btn.textContent = 'send test'; btn.disabled = false; }, 2000);
+                        })
+                        .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+                });
+            } else {
+                // Not configured: one-line explainer + enable button
+                el.innerHTML =
+                    '<div style="display:flex;align-items:center;gap:12px;">' +
+                        '<span class="text-dim">get notified on your phone when agents need you</span>' +
+                        '<button class="btn-sm btn-accent" id="ac-ntfy-enable">enable</button>' +
+                    '</div>';
+                document.getElementById('ac-ntfy-enable').addEventListener('click', function() {
+                    ntfyWizardStep1(el);
+                });
+            }
+        })
+        .catch(function() {
+            el.innerHTML = '<span class="text-dim">failed to load</span>';
+        });
+}
+
+// --- ntfy setup wizard ---
+// Step 1: Install the ntfy app on your phone
+function ntfyWizardStep1(container) {
+    container.innerHTML =
+        '<div class="ac-ntfy-wizard">' +
+            '<div class="ac-ntfy-step">step 1 of 3</div>' +
+            '<div style="margin:8px 0 12px;">install the <strong>ntfy</strong> app on your phone</div>' +
+            '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
+                '<a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" class="btn-sm btn-accent">android</a>' +
+                '<a href="https://apps.apple.com/us/app/ntfy/id1625396347" target="_blank" class="btn-sm btn-accent">iOS</a>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;">' +
+                '<button class="btn-sm btn-accent" id="ac-ntfy-next1">done, next</button>' +
+                '<button class="btn-sm" id="ac-ntfy-cancel1">cancel</button>' +
+            '</div>' +
+        '</div>';
+    document.getElementById('ac-ntfy-next1').addEventListener('click', function() {
+        ntfyWizardStep2(container);
+    });
+    document.getElementById('ac-ntfy-cancel1').addEventListener('click', function() {
+        loadNtfyConfig();
+    });
+}
+
+// Step 2: Generate your topic (or bring your own reserved topic)
+function ntfyWizardStep2(container) {
+    container.innerHTML =
+        '<div class="ac-ntfy-wizard">' +
+            '<div class="ac-ntfy-step">step 2 of 3</div>' +
+            '<div style="margin:8px 0 4px;">generate a private notification channel</div>' +
+            '<div class="text-dim" style="font-size:11px;margin-bottom:12px;">' +
+                'this creates a random topic name on ntfy.sh — the name is the secret, so don\'t share it. ' +
+                'if you have a <a href="https://ntfy.sh/#pricing" target="_blank" style="color:var(--accent)">paid ntfy account</a> with a reserved topic, you can enter it instead.' +
+            '</div>' +
+            '<div id="ac-ntfy-topic-area">' +
+                '<button class="btn-sm btn-accent" id="ac-ntfy-gen">generate topic</button>' +
+            '</div>' +
+            '<div id="ac-ntfy-reserved" style="margin-top:8px;">' +
+                '<button class="btn-sm" id="ac-ntfy-show-reserved" style="font-size:11px;color:var(--text-dim);">or enter a reserved topic</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;margin-top:12px;">' +
+                '<button class="btn-sm" id="ac-ntfy-cancel2">cancel</button>' +
+            '</div>' +
+        '</div>';
+
+    document.getElementById('ac-ntfy-gen').addEventListener('click', function() {
+        var btn = this;
+        btn.textContent = 'generating...';
+        btn.disabled = true;
+        fetch('/api/app/ntfy/generate', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                // Save immediately and go to step 3
+                return fetch('/api/app/ntfy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topic: data.topic, token: '', events: 'attention,exit' })
+                }).then(function() { return data.topic; });
+            })
+            .then(function(topic) {
+                ntfyWizardStep3(container, topic);
+            })
+            .catch(function() { btn.textContent = 'failed — try again'; btn.disabled = false; });
+    });
+
+    document.getElementById('ac-ntfy-show-reserved').addEventListener('click', function() {
+        var area = document.getElementById('ac-ntfy-reserved');
+        area.innerHTML =
+            '<div style="margin-top:4px;">' +
+                '<input type="text" class="ac-input" id="ac-ntfy-custom-topic" placeholder="your reserved topic" style="width:220px;">' +
+                '<input type="password" class="ac-input" id="ac-ntfy-custom-token" placeholder="access token" style="width:220px;margin-top:4px;">' +
+                '<button class="btn-sm btn-accent" id="ac-ntfy-custom-save" style="margin-top:4px;">save</button>' +
+            '</div>';
+        document.getElementById('ac-ntfy-custom-save').addEventListener('click', function() {
+            var topic = document.getElementById('ac-ntfy-custom-topic').value.trim();
+            var token = document.getElementById('ac-ntfy-custom-token').value.trim();
+            if (!topic) return;
+            var btn = this;
+            btn.textContent = 'saving...';
+            btn.disabled = true;
+            fetch('/api/app/ntfy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ topic: topic, token: token, events: 'attention,exit' })
+            })
+            .then(function() { ntfyWizardStep3(container, topic); })
+            .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+        });
+    });
+
+    document.getElementById('ac-ntfy-cancel2').addEventListener('click', function() {
+        loadNtfyConfig();
+    });
+}
+
+// Step 3: Subscribe to the topic in the ntfy app — this is the only time we show the topic
+function ntfyWizardStep3(container, topic) {
+    container.innerHTML =
+        '<div class="ac-ntfy-wizard">' +
+            '<div class="ac-ntfy-step">step 3 of 3</div>' +
+            '<div style="margin:8px 0 4px;">subscribe to this topic in the ntfy app</div>' +
+            '<div style="margin:8px 0;padding:8px 12px;background:var(--bg-dim);border-radius:4px;font-family:monospace;font-size:13px;user-select:all;cursor:text;">' +
+                escapeHtml(topic) +
+            '</div>' +
+            '<div class="text-dim" style="font-size:11px;margin-bottom:12px;">' +
+                'open ntfy on your phone, tap <strong>+</strong>, paste this topic, and subscribe. ' +
+                'this is the only time we\'ll show it — if you lose it, disable and set up again.' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;">' +
+                '<button class="btn-sm btn-accent" id="ac-ntfy-done">done</button>' +
+                '<button class="btn-sm" id="ac-ntfy-test3">send test notification</button>' +
+            '</div>' +
+        '</div>';
+
+    document.getElementById('ac-ntfy-done').addEventListener('click', function() {
+        loadNtfyConfig();
+    });
+    document.getElementById('ac-ntfy-test3').addEventListener('click', function() {
+        var btn = this;
+        btn.textContent = '...';
+        btn.disabled = true;
+        fetch('/api/app/ntfy/test', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.textContent = data.ok ? 'sent!' : 'failed';
+                setTimeout(function() { btn.textContent = 'send test notification'; btn.disabled = false; }, 2000);
+            })
+            .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
+    });
 }
 
 function loadAccountOrgs() {

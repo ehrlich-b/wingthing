@@ -230,6 +230,9 @@ type TunnelStream struct {
 type SessionAttention struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
+	Agent     string `json:"agent,omitempty"`
+	CWD       string `json:"cwd,omitempty"`
+	Nonce     string `json:"nonce,omitempty"` // dedup key: same nonce = same attention episode
 }
 
 // SessionInfo describes one active session on a wing (used in tunnel sessions.list responses).

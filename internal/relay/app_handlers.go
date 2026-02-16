@@ -11,6 +11,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
+
+	"github.com/ehrlich-b/wingthing/internal/ntfy"
 )
 
 // tokenUser authenticates a request via Bearer token (CLI device auth).
@@ -445,4 +447,99 @@ func (s *Server) handleDeleteWingLabel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// --- ntfy Push Notifications ---
 
+// GET /api/app/ntfy — returns current ntfy config (topic masked).
+func (s *Server) handleNtfyGet(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	cfg, err := s.Store.GetNtfyConfig(user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load config")
+		return
+	}
+	// Mask topic: show first 5 chars + last word, mask middle
+	maskedTopic := cfg.Topic
+	if len(cfg.Topic) > 10 {
+		parts := strings.Split(cfg.Topic, "-")
+		if len(parts) >= 3 {
+			masked := make([]string, len(parts))
+			masked[0] = parts[0]
+			for i := 1; i < len(parts)-1; i++ {
+				masked[i] = "****"
+			}
+			masked[len(parts)-1] = parts[len(parts)-1]
+			maskedTopic = strings.Join(masked, "-")
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"topic":     maskedTopic,
+		"has_token": cfg.Token != "",
+		"events":    cfg.Events,
+		"enabled":   cfg.Topic != "",
+	})
+}
+
+// POST /api/app/ntfy — sets ntfy config.
+func (s *Server) handleNtfySet(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	var req struct {
+		Topic  string `json:"topic"`
+		Token  string `json:"token"`
+		Events string `json:"events"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Events == "" {
+		req.Events = "attention,exit"
+	}
+	if err := s.Store.SetNtfyConfig(user.ID, NtfyConfig{
+		Topic:  req.Topic,
+		Token:  req.Token,
+		Events: req.Events,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save config")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// POST /api/app/ntfy/test — sends a test notification.
+func (s *Server) handleNtfyTest(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	cfg, err := s.Store.GetNtfyConfig(user.ID)
+	if err != nil || cfg.Topic == "" {
+		writeError(w, http.StatusBadRequest, "ntfy not configured")
+		return
+	}
+	c := ntfy.New(cfg.Topic, cfg.Token, cfg.Events)
+	if err := c.SendTest(); err != nil {
+		writeError(w, http.StatusBadGateway, "ntfy send failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// POST /api/app/ntfy/generate — generates a BIP39 topic.
+func (s *Server) handleNtfyGenerate(w http.ResponseWriter, r *http.Request) {
+	user := s.sessionUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	topic := ntfy.GenerateTopic()
+	writeJSON(w, http.StatusOK, map[string]any{"topic": topic})
+}

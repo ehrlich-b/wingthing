@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 
+	"github.com/ehrlich-b/wingthing/internal/ntfy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -21,6 +22,8 @@ type PTYRoute struct {
 	BrowserConn *websocket.Conn
 	UserID      string // bandwidth metering only
 	WingID      string // machine ID for offline notification
+	Agent       string // agent name for ntfy notifications
+	CWD         string // working directory for ntfy notifications
 	mu          sync.Mutex
 }
 
@@ -253,7 +256,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			start.SessionID = sessionID
 			start.UserID = userID
 
-			s.PTY.Set(sessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID})
+			s.PTY.Set(sessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID, Agent: start.Agent, CWD: start.CWD})
 
 			fwd, _ := json.Marshal(start)
 			wing.Conn.Write(ctx, websocket.MessageText, fwd)
@@ -357,11 +360,14 @@ func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
 		return
 	}
 
-	// Handle pty.exited: clean up route
+	// Handle pty.exited: clean up route + send ntfy exit notification
 	var env ws.Envelope
 	if err := json.Unmarshal(data, &env); err == nil && env.Type == ws.TypePTYExited {
 		route.mu.Lock()
 		bc := route.BrowserConn
+		userID := route.UserID
+		agent := route.Agent
+		cwd := route.CWD
 		route.mu.Unlock()
 
 		if bc != nil {
@@ -369,6 +375,16 @@ func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
 			defer cancel()
 			bc.Write(ctx, websocket.MessageText, data)
 		}
+
+		// Send ntfy exit notification (sessionID as nonce — one exit per session)
+		var exited ws.PTYExited
+		if err := json.Unmarshal(data, &exited); err == nil {
+			clickURL := ntfyClickURL(sessionID)
+			s.trySendNtfy("exit:"+sessionID, userID, func(c *ntfy.Client) {
+				c.SendExit(sessionID, agent, cwd, exited.ExitCode, clickURL)
+			})
+		}
+
 		s.PTY.Remove(sessionID)
 		return
 	}

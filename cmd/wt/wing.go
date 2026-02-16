@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/cipher"
 	"crypto/ecdh"
+	crand "crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -35,6 +36,47 @@ import (
 
 // wingAttention tracks sessions that have triggered a terminal bell (need user attention).
 var wingAttention sync.Map // sessionID → bool
+
+// wingAttentionCooldown tracks last attention send time per session (30s throttle).
+var wingAttentionCooldown sync.Map // sessionID → time.Time
+
+// wingAttentionNonce tracks the current attention nonce per session.
+// Same nonce = same attention episode. Cleared when user responds.
+var wingAttentionNonce sync.Map // sessionID → string
+
+const attentionCooldown = 30 * time.Second
+
+// checkAndSendAttention fires session.attention if the cooldown has elapsed.
+// Returns true if the attention was sent.
+func checkAndSendAttention(sessionID, agent, cwd string, write ws.PTYWriteFunc) bool {
+	now := time.Now()
+	if v, ok := wingAttentionCooldown.Load(sessionID); ok {
+		if now.Sub(v.(time.Time)) < attentionCooldown {
+			return false
+		}
+	}
+	wingAttention.Store(sessionID, true)
+	wingAttentionCooldown.Store(sessionID, now)
+	// Reuse nonce for the same attention episode; relay deduplicates by nonce.
+	nonce, _ := wingAttentionNonce.LoadOrStore(sessionID, generateAttentionNonce())
+	write(ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: sessionID, Agent: agent, CWD: cwd, Nonce: nonce.(string)})
+	return true
+}
+
+// clearAttentionCooldown resets attention state for a session (user responded).
+// Resets cooldown to NOW so 30s must pass before a new notification can fire.
+func clearAttentionCooldown(sessionID string) {
+	wingAttention.Delete(sessionID)
+	wingAttentionNonce.Delete(sessionID)
+	wingAttentionCooldown.Store(sessionID, time.Now()) // 30s grace period after ack
+}
+
+// generateAttentionNonce returns a random 8-byte hex nonce.
+func generateAttentionNonce() string {
+	b := make([]byte, 8)
+	crand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
 
 // tunnelKeys caches derived AES-GCM keys per sender public key.
 var tunnelKeys sync.Map // senderPub string → cipher.AEAD
@@ -1753,6 +1795,7 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
 func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
+	reclaimAgent, reclaimCWD := readEggMeta(eggDir)
 	var mu sync.Mutex
 	var gcm cipher.AEAD
 	var activeStream pb.Egg_SessionClient
@@ -1797,8 +1840,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				// the agent is persistently pinging for attention.
 				if hasBell(p.Output) {
 					if lastHadBell {
-						wingAttention.Store(sessionID, true)
-						write(ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: sessionID})
+						checkAndSendAttention(sessionID, reclaimAgent, reclaimCWD, write)
 					}
 					lastHadBell = true
 				} else {
@@ -1818,7 +1860,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 			case *pb.SessionMsg_ExitCode:
 				log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
 				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
-				wingAttention.Delete(sessionID)
+				clearAttentionCooldown(sessionID)
 				sessionCancel()
 				return
 			}
@@ -1838,7 +1880,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if err := json.Unmarshal(data, &attach); err != nil {
 					continue
 				}
-				wingAttention.Delete(sessionID)
+				clearAttentionCooldown(sessionID)
 
 				// Passkey auth gate — same check as handlePTYSession
 				var attachAuthToken string
@@ -1991,8 +2033,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 						case *pb.SessionMsg_Output:
 							if hasBell(p.Output) {
 								if lastHadBell {
-									wingAttention.Store(sessionID, true)
-						write(ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: sessionID})
+									checkAndSendAttention(sessionID, reclaimAgent, reclaimCWD, write)
 								}
 								lastHadBell = true
 							} else {
@@ -2012,7 +2053,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 						case *pb.SessionMsg_ExitCode:
 							log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
 							write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
-							wingAttention.Delete(sessionID)
+							clearAttentionCooldown(sessionID)
 							sessionCancel()
 							return
 						}
@@ -2020,7 +2061,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				}()
 
 			case ws.TypePTYInput:
-				wingAttention.Delete(sessionID)
+				clearAttentionCooldown(sessionID)
 				var msg ws.PTYInput
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
@@ -2040,7 +2081,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Input{Input: decoded}})
 
 			case ws.TypePTYAttentionAck:
-				wingAttention.Delete(sessionID)
+				clearAttentionCooldown(sessionID)
 
 			case ws.TypePTYResize:
 				var msg ws.PTYResize
@@ -2263,8 +2304,7 @@ authDone:
 			case *pb.SessionMsg_Output:
 				if hasBell(p.Output) {
 					if lastHadBell {
-						wingAttention.Store(start.SessionID, true)
-					write(ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: start.SessionID})
+						checkAndSendAttention(start.SessionID, start.Agent, start.CWD, write)
 					}
 					lastHadBell = true
 				} else {
@@ -2291,7 +2331,7 @@ authDone:
 			case *pb.SessionMsg_ExitCode:
 				log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
 				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
-				wingAttention.Delete(start.SessionID)
+				clearAttentionCooldown(start.SessionID)
 				sessionCancel()
 				return
 			}
@@ -2311,7 +2351,7 @@ authDone:
 				if err := json.Unmarshal(data, &attach); err != nil {
 					continue
 				}
-				wingAttention.Delete(start.SessionID)
+				clearAttentionCooldown(start.SessionID)
 				// 1. Invalidate key — old output goroutine stops sending
 				mu.Lock()
 				gcm = nil
@@ -2380,8 +2420,7 @@ authDone:
 						case *pb.SessionMsg_Output:
 							if hasBell(p.Output) {
 								if lastHadBell {
-									wingAttention.Store(start.SessionID, true)
-					write(ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: start.SessionID})
+									checkAndSendAttention(start.SessionID, start.Agent, start.CWD, write)
 								}
 								lastHadBell = true
 							} else {
@@ -2405,7 +2444,7 @@ authDone:
 						case *pb.SessionMsg_ExitCode:
 							log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
 							write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
-							wingAttention.Delete(start.SessionID)
+							clearAttentionCooldown(start.SessionID)
 							sessionCancel()
 							return
 						}
@@ -2413,7 +2452,7 @@ authDone:
 				}()
 
 			case ws.TypePTYInput:
-				wingAttention.Delete(start.SessionID)
+				clearAttentionCooldown(start.SessionID)
 				var msg ws.PTYInput
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
@@ -2437,7 +2476,7 @@ authDone:
 				})
 
 			case ws.TypePTYAttentionAck:
-				wingAttention.Delete(start.SessionID)
+				clearAttentionCooldown(start.SessionID)
 
 			case ws.TypePTYResize:
 				var msg ws.PTYResize

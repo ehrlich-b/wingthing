@@ -1175,3 +1175,30 @@ func (s *RelayStore) UpdatePasskeySignCount(id string, count int) error {
 	_, err := s.db.Exec("UPDATE passkey_credentials SET sign_count = ? WHERE id = ?", count, id)
 	return err
 }
+
+// --- ntfy Config ---
+
+// NtfyConfig holds a user's push notification settings.
+type NtfyConfig struct {
+	Topic  string
+	Token  string
+	Events string // comma-separated: "attention,exit"
+}
+
+// GetNtfyConfig returns the ntfy config for a user.
+func (s *RelayStore) GetNtfyConfig(userID string) (NtfyConfig, error) {
+	var cfg NtfyConfig
+	err := s.db.QueryRow(
+		"SELECT ntfy_topic, ntfy_token, ntfy_events FROM users WHERE id = ?", userID,
+	).Scan(&cfg.Topic, &cfg.Token, &cfg.Events)
+	return cfg, err
+}
+
+// SetNtfyConfig updates the ntfy config for a user.
+func (s *RelayStore) SetNtfyConfig(userID string, cfg NtfyConfig) error {
+	_, err := s.db.Exec(
+		"UPDATE users SET ntfy_topic = ?, ntfy_token = ?, ntfy_events = ? WHERE id = ?",
+		cfg.Topic, cfg.Token, cfg.Events, userID,
+	)
+	return err
+}

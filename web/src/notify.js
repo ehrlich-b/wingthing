@@ -1,6 +1,9 @@
 import { S, DOM } from './state.js';
 import { renderSidebar } from './render.js';
 import { renderDashboard } from './render.js';
+import { switchToSession } from './nav.js';
+
+var notifyChannel = null;
 
 export function checkForNotification(text) {
     var tail = text.slice(-300);
@@ -35,14 +38,17 @@ export function setNotification(sessionId) {
     renderSidebar();
     if (S.activeView === 'home') renderDashboard();
 
+    // Broadcast to other tabs so they update UI without firing their own OS notification.
+    if (notifyChannel) {
+        notifyChannel.postMessage({ type: 'notify', sessionId: sessionId });
+    }
+
     if (document.hidden && 'Notification' in window) {
         if (Notification.permission === 'granted') {
-            new Notification('wingthing', { body: 'A session needs your attention' });
+            fireOSNotification(sessionId);
         } else if (Notification.permission === 'default') {
             Notification.requestPermission().then(function(p) {
-                if (p === 'granted') {
-                    new Notification('wingthing', { body: 'A session needs your attention' });
-                }
+                if (p === 'granted') fireOSNotification(sessionId);
             });
         }
     }
@@ -61,6 +67,14 @@ export function setNotification(sessionId) {
     }
 }
 
+function fireOSNotification(sessionId) {
+    var n = new Notification('wingthing', { body: 'A session needs your attention' });
+    n.onclick = function() {
+        window.focus();
+        switchToSession(sessionId);
+    };
+}
+
 export function clearNotification(sessionId) {
     if (!sessionId || !S.sessionNotifications[sessionId]) return;
     delete S.sessionNotifications[sessionId];
@@ -69,6 +83,9 @@ export function clearNotification(sessionId) {
     if (S.activeView === 'home') renderDashboard();
     if (!Object.keys(S.sessionNotifications).length) {
         document.title = 'wingthing';
+    }
+    if (notifyChannel) {
+        notifyChannel.postMessage({ type: 'clear', sessionId: sessionId });
     }
 }
 
@@ -80,4 +97,29 @@ export function initNotifyListeners() {
             }
         }
     });
+
+    // Multi-tab dedup: only the tab that receives the WebSocket event fires the OS notification.
+    // Other tabs just update their UI state.
+    if ('BroadcastChannel' in window) {
+        notifyChannel = new BroadcastChannel('wt-notifications');
+        notifyChannel.onmessage = function(ev) {
+            var d = ev.data;
+            if (d.type === 'notify') {
+                if (!S.sessionNotifications[d.sessionId]) {
+                    S.sessionNotifications[d.sessionId] = true;
+                    renderSidebar();
+                    if (S.activeView === 'home') renderDashboard();
+                }
+            } else if (d.type === 'clear') {
+                if (S.sessionNotifications[d.sessionId]) {
+                    delete S.sessionNotifications[d.sessionId];
+                    renderSidebar();
+                    if (S.activeView === 'home') renderDashboard();
+                    if (!Object.keys(S.sessionNotifications).length) {
+                        document.title = 'wingthing';
+                    }
+                }
+            }
+        };
+    }
 }
