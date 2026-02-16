@@ -66,58 +66,56 @@ export function initTerminal() {
         if (S.ptySessionId) setNotification(S.ptySessionId);
     });
 
-    // Touch scrolling — xterm.js v6 uses VS Code's SmoothScrollableElement which
-    // only handles wheel events. Touch events need manual translation to scrollLines.
-    var touchLastY = null;
-    var touchAccum = 0;
-    var touchVelocity = 0;
-    var touchLastTime = 0;
-    var momentumFrame = null;
-    DOM.terminalContainer.addEventListener('touchstart', function(e) {
-        if (momentumFrame) { cancelAnimationFrame(momentumFrame); momentumFrame = null; }
-        if (e.touches.length === 1) {
-            touchLastY = e.touches[0].clientY;
-            touchAccum = 0;
-            touchVelocity = 0;
-            touchLastTime = e.timeStamp;
+    // Touch scroll proxy — xterm.js v6 replaced native scrolling with a custom JS
+    // scrollbar that only handles wheel events. On touch devices we overlay a transparent
+    // native-scrollable div so the browser handles momentum, overscroll, etc. for free.
+    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+        var proxy = document.createElement('div');
+        var spacer = document.createElement('div');
+        proxy.style.cssText = 'position:absolute;inset:0;overflow-y:auto;z-index:1;-webkit-overflow-scrolling:touch';
+        spacer.style.cssText = 'width:1px;pointer-events:none';
+        proxy.appendChild(spacer);
+        DOM.terminalContainer.style.position = 'relative';
+        DOM.terminalContainer.appendChild(proxy);
+
+        var syncing = false;
+        function lineHeight() { return DOM.terminalContainer.clientHeight / S.term.rows; }
+        function totalLines() { return S.term.buffer.active.length; }
+
+        function syncProxyHeight() {
+            spacer.style.height = (totalLines() * lineHeight()) + 'px';
         }
-    }, { passive: true });
-    DOM.terminalContainer.addEventListener('touchmove', function(e) {
-        if (touchLastY === null || !S.term || e.touches.length !== 1) return;
-        var y = e.touches[0].clientY;
-        var deltaY = touchLastY - y;
-        var dt = e.timeStamp - touchLastTime;
-        if (dt > 0) touchVelocity = 0.6 * touchVelocity + 0.4 * (deltaY / dt);
-        touchLastY = y;
-        touchLastTime = e.timeStamp;
-        var lineHeight = DOM.terminalContainer.clientHeight / S.term.rows;
-        touchAccum += deltaY;
-        var lines = Math.trunc(touchAccum / lineHeight);
-        if (lines !== 0) {
-            S.term.scrollLines(lines);
-            touchAccum -= lines * lineHeight;
-            e.preventDefault();
-        }
-    }, { passive: false });
-    DOM.terminalContainer.addEventListener('touchend', function() {
-        if (!S.term || Math.abs(touchVelocity) < 0.15) { touchLastY = null; return; }
-        var lineHeight = DOM.terminalContainer.clientHeight / S.term.rows;
-        var vel = touchVelocity * 16; // px per frame at ~60fps
-        touchLastY = null;
-        touchAccum = 0;
-        function momentum() {
-            vel *= 0.95;
-            if (Math.abs(vel) < 0.5) return;
-            touchAccum += vel;
-            var lines = Math.trunc(touchAccum / lineHeight);
-            if (lines !== 0) {
-                S.term.scrollLines(lines);
-                touchAccum -= lines * lineHeight;
+
+        // Proxy scroll -> xterm
+        proxy.addEventListener('scroll', function() {
+            if (syncing || !S.term) return;
+            syncing = true;
+            var line = Math.round(proxy.scrollTop / lineHeight());
+            S.term.scrollToLine(line);
+            syncing = false;
+        }, { passive: true });
+
+        // xterm scroll -> proxy (keyboard scroll, new output, etc.)
+        S.term.onScroll(function() {
+            if (syncing) return;
+            syncing = true;
+            syncProxyHeight();
+            proxy.scrollTop = S.term.buffer.active.viewportY * lineHeight();
+            syncing = false;
+        });
+
+        // Update spacer on resize/new output
+        S.term.onResize(function() { syncProxyHeight(); });
+        S.term.onWriteParsed(function() {
+            syncProxyHeight();
+            // If at bottom, keep proxy at bottom
+            if (S.term.buffer.active.viewportY === S.term.buffer.active.baseY) {
+                proxy.scrollTop = proxy.scrollHeight;
             }
-            momentumFrame = requestAnimationFrame(momentum);
-        }
-        momentumFrame = requestAnimationFrame(momentum);
-    }, { passive: true });
+        });
+
+        syncProxyHeight();
+    }
 }
 
 export function saveTermBuffer() {

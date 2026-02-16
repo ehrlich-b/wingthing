@@ -840,7 +840,6 @@ body {
     min-height: 0;
     border-radius: 4px;
     overflow: hidden;
-    touch-action: none;
 }
 
 #terminal-container .xterm {
