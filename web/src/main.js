@@ -155,10 +155,15 @@ async function init() {
         if (S.term && S.fitAddon) S.fitAddon.fit();
     });
 
-    // Resize app to visual viewport when mobile keyboard appears/disappears
+    // Resize app to visual viewport when mobile keyboard appears/disappears.
+    // Setting height directly on #app overrides the CSS 100dvh and forces
+    // the flex layout to fit within the visible area above the keyboard.
     if (window.visualViewport) {
+        var appEl = document.getElementById('app');
         function syncViewport() {
-            document.documentElement.style.height = window.visualViewport.height + 'px';
+            appEl.style.height = window.visualViewport.height + 'px';
+            // iOS scrolls the page when focusing an input — force it back
+            window.scrollTo(0, 0);
             if (S.term && S.fitAddon) S.fitAddon.fit();
             if (S.touchProxyScrollToBottom && S.term &&
                 S.term.buffer.active.viewportY === S.term.buffer.active.baseY) {

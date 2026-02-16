@@ -73,10 +73,9 @@ export function initTerminal() {
         var proxy = document.createElement('div');
         var spacer = document.createElement('div');
         proxy.style.cssText = 'position:absolute;inset:0;overflow-y:auto;z-index:1;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none';
-        // Hide webkit scrollbar on proxy + xterm's own scrollbar (proxy replaces it)
+        // Hide native scrollbar on the proxy overlay (keep xterm's own scrollbar visible)
         var proxyStyle = document.createElement('style');
-        proxyStyle.textContent = '#terminal-container > div:last-child::-webkit-scrollbar{display:none}' +
-            '#terminal-container .scrollbar{display:none!important}';
+        proxyStyle.textContent = '#terminal-container > div:last-child::-webkit-scrollbar{display:none}';
         document.head.appendChild(proxyStyle);
         spacer.style.cssText = 'width:1px;pointer-events:none';
         proxy.appendChild(spacer);
@@ -125,16 +124,29 @@ export function initTerminal() {
         syncProxyHeight();
         proxy.scrollTop = proxy.scrollHeight;
 
-        // Expose scrollToBottom for use after session attach/restore
+        // Expose scrollToBottom for use after session attach/restore.
+        // Double-rAF ensures xterm has finished layout before we measure.
         S.touchProxyScrollToBottom = function() {
             syncProxyHeight();
             proxy.scrollTop = proxy.scrollHeight;
+            requestAnimationFrame(function() {
+                requestAnimationFrame(function() {
+                    syncProxyHeight();
+                    proxy.scrollTop = proxy.scrollHeight;
+                });
+            });
         };
     }
 
-    // Tell mobile keyboards to show a standard text layout
+    // Override xterm's default textarea attributes for mobile. xterm sets
+    // autocapitalize=off and autocorrect=off which causes iOS to stay in
+    // symbol mode after typing a period instead of returning to letters.
     var textarea = DOM.terminalContainer.querySelector('.xterm-helper-textarea');
-    if (textarea) textarea.setAttribute('inputmode', 'text');
+    if (textarea) {
+        textarea.setAttribute('inputmode', 'text');
+        textarea.setAttribute('autocapitalize', 'sentences');
+        textarea.setAttribute('autocorrect', 'on');
+    }
 }
 
 export function saveTermBuffer() {
