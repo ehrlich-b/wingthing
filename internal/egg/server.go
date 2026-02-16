@@ -292,9 +292,10 @@ func (r *replayBuffer) Bytes() []byte {
 func agentPreamble(agent string) []byte {
 	switch agent {
 	case "claude":
-		// Bracketed paste and synchronized updates. Cursor position is
+		// Hide hardware cursor (Claude renders its own in the TUI),
+		// bracketed paste, and synchronized updates. Cursor position is
 		// tracked separately and injected at trim time.
-		return []byte("\x1b[?2004h\x1b[?2026h")
+		return []byte("\x1b[?25l\x1b[?2004h\x1b[?2026h")
 	default:
 		return nil
 	}
