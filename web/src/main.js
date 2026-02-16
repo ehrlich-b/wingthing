@@ -199,16 +199,27 @@ async function init() {
     // Resize app to visual viewport when mobile keyboard appears/disappears.
     // Setting height directly on #app overrides the CSS 100dvh and forces
     // the flex layout to fit within the visible area above the keyboard.
+    // IMPORTANT: Don't call fitAddon.fit() when the keyboard appears — that
+    // changes the terminal row count and causes xterm to reflow all content,
+    // which is the source of the scroll-jump jank. Only refit when the
+    // viewport returns to full height (keyboard dismissed) or on a real
+    // orientation/window resize (handled by the separate resize listener).
     if (window.visualViewport) {
         var appEl = document.getElementById('app');
+        var fullHeight = window.visualViewport.height;
         function syncViewport() {
-            appEl.style.height = window.visualViewport.height + 'px';
+            var vh = window.visualViewport.height;
+            appEl.style.height = vh + 'px';
             // iOS scrolls the page when focusing an input — force it back
             window.scrollTo(0, 0);
-            if (S.term && S.fitAddon) {
-                var wasAtBottom = S.term.buffer.active.viewportY >= S.term.buffer.active.baseY;
-                S.fitAddon.fit();
-                if (wasAtBottom) S.term.scrollToBottom();
+            // Only refit terminal when keyboard is dismissed (back to full height)
+            if (vh >= fullHeight) {
+                fullHeight = vh;
+                if (S.term && S.fitAddon) {
+                    var wasAtBottom = S.term.buffer.active.viewportY >= S.term.buffer.active.baseY;
+                    S.fitAddon.fit();
+                    if (wasAtBottom) S.term.scrollToBottom();
+                }
             }
             if (S.touchProxyScrollToBottom && S.term &&
                 S.term.buffer.active.viewportY === S.term.buffer.active.baseY) {
