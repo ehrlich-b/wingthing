@@ -64,11 +64,16 @@ func checkAndSendAttention(sessionID, agent, cwd string, write ws.PTYWriteFunc) 
 }
 
 // clearAttentionCooldown resets attention state for a session (user responded).
-// Resets cooldown to NOW so 30s must pass before a new notification can fire.
+// Only applies the 30s grace period if there was an active notification — routine
+// typing (no active attention) clears the cooldown entirely so the next bell fires.
 func clearAttentionCooldown(sessionID string) {
-	wingAttention.Delete(sessionID)
+	_, hadAttention := wingAttention.LoadAndDelete(sessionID)
 	wingAttentionNonce.Delete(sessionID)
-	wingAttentionCooldown.Store(sessionID, time.Now()) // 30s grace period after ack
+	if hadAttention {
+		wingAttentionCooldown.Store(sessionID, time.Now()) // 30s grace after ack
+	} else {
+		wingAttentionCooldown.Delete(sessionID)
+	}
 }
 
 // generateAttentionNonce returns a random 8-byte hex nonce.

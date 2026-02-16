@@ -615,7 +615,7 @@ function ntfyWizardStep2(container) {
                 '<button class="btn-sm btn-accent" id="ac-ntfy-gen">generate topic</button>' +
             '</div>' +
             '<div id="ac-ntfy-reserved" style="margin-top:8px;">' +
-                '<button class="btn-sm" id="ac-ntfy-show-reserved" style="font-size:11px;color:var(--text-dim);">or enter a reserved topic</button>' +
+                '<span id="ac-ntfy-show-reserved" style="font-size:11px;color:var(--text-dim);cursor:pointer;text-decoration:underline;">or enter a reserved topic</span>' +
             '</div>' +
             '<div style="display:flex;gap:8px;margin-top:12px;">' +
                 '<button class="btn-sm" id="ac-ntfy-cancel2">cancel</button>' +
@@ -642,13 +642,16 @@ function ntfyWizardStep2(container) {
             .catch(function() { btn.textContent = 'failed — try again'; btn.disabled = false; });
     });
 
-    document.getElementById('ac-ntfy-show-reserved').addEventListener('click', function() {
+    function expandReservedTopic() {
         var area = document.getElementById('ac-ntfy-reserved');
         area.innerHTML =
             '<div style="margin-top:4px;">' +
                 '<input type="text" class="ac-input" id="ac-ntfy-custom-topic" placeholder="your reserved topic" style="width:220px;">' +
                 '<input type="password" class="ac-input" id="ac-ntfy-custom-token" placeholder="access token" style="width:220px;margin-top:4px;">' +
-                '<button class="btn-sm btn-accent" id="ac-ntfy-custom-save" style="margin-top:4px;">save</button>' +
+                '<div style="display:flex;gap:8px;margin-top:4px;">' +
+                    '<button class="btn-sm btn-accent" id="ac-ntfy-custom-save">save</button>' +
+                    '<button class="btn-sm" id="ac-ntfy-custom-cancel">cancel</button>' +
+                '</div>' +
             '</div>';
         document.getElementById('ac-ntfy-custom-save').addEventListener('click', function() {
             var topic = document.getElementById('ac-ntfy-custom-topic').value.trim();
@@ -665,7 +668,13 @@ function ntfyWizardStep2(container) {
             .then(function() { ntfyWizardStep3(container, topic); })
             .catch(function() { btn.textContent = 'failed'; btn.disabled = false; });
         });
-    });
+        document.getElementById('ac-ntfy-custom-cancel').addEventListener('click', function() {
+            area.innerHTML =
+                '<span id="ac-ntfy-show-reserved" style="font-size:11px;color:var(--text-dim);cursor:pointer;text-decoration:underline;">or enter a reserved topic</span>';
+            document.getElementById('ac-ntfy-show-reserved').addEventListener('click', expandReservedTopic);
+        });
+    }
+    document.getElementById('ac-ntfy-show-reserved').addEventListener('click', expandReservedTopic);
 
     document.getElementById('ac-ntfy-cancel2').addEventListener('click', function() {
         loadNtfyConfig();

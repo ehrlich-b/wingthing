@@ -1,7 +1,6 @@
 import { S, DOM } from './state.js';
 import { renderSidebar } from './render.js';
 import { renderDashboard } from './render.js';
-import { switchToSession } from './nav.js';
 
 var notifyChannel = null;
 
@@ -71,7 +70,8 @@ function fireOSNotification(sessionId) {
     var n = new Notification('wingthing', { body: 'A session needs your attention' });
     n.onclick = function() {
         window.focus();
-        switchToSession(sessionId);
+        // Lazy import to avoid circular dependency (nav.js imports from notify.js)
+        import('./nav.js').then(function(mod) { mod.switchToSession(sessionId); });
     };
 }
 
