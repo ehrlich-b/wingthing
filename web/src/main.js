@@ -194,18 +194,7 @@ async function init() {
         }
     });
 
-    // fit() changes rows/cols which triggers xterm reflow. The reflow can
-    // reset the viewport to top. Instead of rAF hacks, use xterm's onResize
-    // event which fires after reflow completes. Set a flag before fit(),
-    // scroll to bottom in the handler.
     S.scrollAfterResize = false;
-    S.term.onResize(function() {
-        if (S.scrollAfterResize) {
-            S.scrollAfterResize = false;
-            S.term.scrollToBottom();
-            if (S.touchProxyScrollToBottom) S.touchProxyScrollToBottom();
-        }
-    });
 
     function fitAndKeepScroll() {
         if (!S.term || !S.fitAddon) return;
@@ -248,6 +237,18 @@ async function init() {
     });
 
     initTerminal();
+
+    // Register onResize after initTerminal() so S.term exists.
+    // fit() triggers xterm reflow which can reset viewport to top.
+    // Use xterm's onResize (fires after reflow) to scroll back down.
+    S.term.onResize(function() {
+        if (S.scrollAfterResize) {
+            S.scrollAfterResize = false;
+            S.term.scrollToBottom();
+            if (S.touchProxyScrollToBottom) S.touchProxyScrollToBottom();
+        }
+    });
+
     initNotifyListeners();
     loadHome();
     setInterval(loadHome, 30000);
