@@ -65,6 +65,48 @@ The bar: someone new (e.g. your boss) can use a wing without confusion or broken
 
 ## Backlog
 
+### PTY: UTF-8 boundary safety in replay buffer trim and chunking
+
+Replay buffer trimming and replay chunking are not UTF-8 aware. Multi-byte
+sequences (emoji, box-drawing chars, CJK) that straddle a cut/chunk boundary
+get split, producing permanent xterm rendering corruption (garbled status lines,
+misplaced characters, mojibake).
+
+**Where it happens:**
+
+1. **`findSafeCut()` in `internal/egg/server.go` (~line 369)**
+   Searches for safe trim points (sync frames, CRLF) but never checks if the
+   chosen offset lands mid-UTF-8 sequence. The fallback returns `minOffset`
+   raw, which can land anywhere. A 4-byte emoji split at byte 2 = broken
+   decoder state in xterm.
+
+2. **`sendReplayChunked()` in `cmd/wt/wing.go` (~line 138)**
+   Splits replay data at fixed 128KB byte boundaries. Same problem — chunk
+   boundary can bisect a multi-byte character. Each chunk is gzipped
+   independently, so the halves never recombine. Only affects the web relay
+   path (browser reattach), not local egg sessions.
+
+3. **Browser gzip decompression in `web/src/pty.js` (~line 105)**
+   If a corrupted chunk fails to decompress, the error handler silently drops
+   it (`catch → null`). No logging, no user feedback — just a gap in the
+   replay stream.
+
+**Fix approach (when ready):**
+- Add `isUTF8Boundary(buf, offset)` helper — check if byte at offset is a
+  valid UTF-8 start byte (high bits 0xxxxxxx or 11xxxxxx, not 10xxxxxx)
+- In `findSafeCut()`: after finding a cut point, walk backward (max 3 bytes)
+  until on a UTF-8 boundary
+- In `sendReplayChunked()`: same — adjust chunk end backward to nearest
+  UTF-8 boundary before slicing
+- Low risk per-fix, but touching the trim path is dangerous in aggregate —
+  defer until we can test replay trim thoroughly
+
+**Severity:** Cosmetic jank, not data loss. Observed as garbled Claude Code
+status line after pasting unusual UTF-8 into an egg session. Self-heals on
+full screen redraw but annoying.
+
+---
+
 - [ ] Image paste into terminal — intercept paste, upload via PTY, buffer output, loading bar
 - [ ] Offline web app — PWA with cached wing data, works without network
 - [ ] Break down render.js further — it's getting large
