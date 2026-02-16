@@ -68,18 +68,28 @@ export function initTerminal() {
 
     // Touch scrolling — xterm.js v6 uses VS Code's SmoothScrollableElement which
     // only handles wheel events. Touch events need manual translation to scrollLines.
-    var touchStartY = null;
+    var touchLastY = null;
     var touchAccum = 0;
+    var touchVelocity = 0;
+    var touchLastTime = 0;
+    var momentumFrame = null;
     DOM.terminalContainer.addEventListener('touchstart', function(e) {
+        if (momentumFrame) { cancelAnimationFrame(momentumFrame); momentumFrame = null; }
         if (e.touches.length === 1) {
-            touchStartY = e.touches[0].clientY;
+            touchLastY = e.touches[0].clientY;
             touchAccum = 0;
+            touchVelocity = 0;
+            touchLastTime = e.timeStamp;
         }
     }, { passive: true });
     DOM.terminalContainer.addEventListener('touchmove', function(e) {
-        if (touchStartY === null || !S.term || e.touches.length !== 1) return;
-        var deltaY = touchStartY - e.touches[0].clientY;
-        touchStartY = e.touches[0].clientY;
+        if (touchLastY === null || !S.term || e.touches.length !== 1) return;
+        var y = e.touches[0].clientY;
+        var deltaY = touchLastY - y;
+        var dt = e.timeStamp - touchLastTime;
+        if (dt > 0) touchVelocity = 0.6 * touchVelocity + 0.4 * (deltaY / dt);
+        touchLastY = y;
+        touchLastTime = e.timeStamp;
         var lineHeight = DOM.terminalContainer.clientHeight / S.term.rows;
         touchAccum += deltaY;
         var lines = Math.trunc(touchAccum / lineHeight);
@@ -90,8 +100,23 @@ export function initTerminal() {
         }
     }, { passive: false });
     DOM.terminalContainer.addEventListener('touchend', function() {
-        touchStartY = null;
+        if (!S.term || Math.abs(touchVelocity) < 0.15) { touchLastY = null; return; }
+        var lineHeight = DOM.terminalContainer.clientHeight / S.term.rows;
+        var vel = touchVelocity * 16; // px per frame at ~60fps
+        touchLastY = null;
         touchAccum = 0;
+        function momentum() {
+            vel *= 0.95;
+            if (Math.abs(vel) < 0.5) return;
+            touchAccum += vel;
+            var lines = Math.trunc(touchAccum / lineHeight);
+            if (lines !== 0) {
+                S.term.scrollLines(lines);
+                touchAccum -= lines * lineHeight;
+            }
+            momentumFrame = requestAnimationFrame(momentum);
+        }
+        momentumFrame = requestAnimationFrame(momentum);
     }, { passive: true });
 }
 
