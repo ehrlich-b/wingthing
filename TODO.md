@@ -5,15 +5,36 @@
 ## Where We Are
 
 Wings are live. PTY relay works end-to-end. E2E encryption, passkey auth, org support,
-per-process egg sandbox, `wt wing config` with live SIGHUP reload. Social feed running
-at wt.ai/social. Single Fly node (shared-cpu-2x, 512MB), horizontal scaling built and
-tested — edge nodes are one uncomment away in fly.toml.
+per-process egg sandbox, folder-based ACLs (per-path member lists), `wt wing config`
+with live SIGHUP reload. Single Fly node (shared-cpu-2x, 512MB), horizontal scaling
+built and tested — edge nodes are one uncomment away in fly.toml.
+
+More features for org mode at the top of the list.
+
+---
+
+## Org Mode — Priority
+
+Folder ACLs, sandbox, OAuth, orgs, audit logging all exist. What's missing:
+
+- [x] Admin session management — admins can view and disconnect active sessions
+  - `sessions.list` already returns all sessions to admins (no filter)
+  - Kill button (X) with confirmation already on every active session row
+  - Added: replay + keylog buttons on live sessions (same as past sessions)
+- [x] Kick revoked users in real time — terminate active sessions on ACL change
+  - `paths.remove_member` and `paths.set` now trigger `killSessionsViolatingACLs`
+  - Scans alive sessions, kills any whose CWD is no longer accessible to the owner
+  - Creator email persisted in `egg.owner` for post-hoc ACL matching
+- [x] Audit log access during active sessions — partial replay of live sessions
+  - Replay + keylog buttons on active session rows in web UI
+  - Egg gzip writer flushes every 100 frames to make data readable mid-session
+  - `streamAuditData` tolerates incomplete gzip (partial data instead of error)
 
 ---
 
 ## MVP — Demo-Ready
 
-The bar: someone new (e.g. your boss) can use a wing without confusion or broken UX.
+The bar: someone new can use a wing without confusion or broken UX.
 
 ### Docs
 - [x] Update docs for orgs, passkeys, wing config, allow/revoke, lock/unlock
@@ -47,7 +68,6 @@ The bar: someone new (e.g. your boss) can use a wing without confusion or broken
 - [ ] Native shell — use a wing without any agent installed (plain bash/zsh PTY)
 - [ ] Egg reattach on CLI — resume existing sessions from terminal (`wt egg attach <id>`)
 - [ ] PTY watch mode — multiple concurrent consumers of same PTY (pair programming, monitoring)
-- [ ] Kick revoked users in real time — don't wait for next session, terminate active sessions on revoke/org removal
 
 ### Revenue
 - [ ] Turn on Stripe — paid tier for hosted relay (self-hosted is always free/unlimited)
@@ -71,6 +91,12 @@ On reconnect, paint the current screen (50 lines) instead of replaying megabytes
 Eliminates `findSafeCut`, `trackCursorPos`, `agentPreamble` hacks. Makes wingthing
 "tailscale + tmux on the web" — nobody else has remote access + VTE + web terminal together.
 See `docs/vt_design.md` for full design.
+
+### Roost: Combined Relay + Wing Mode
+Single command (`wt roost`) that runs relay and wing in one process. Eliminates the
+two-process dance for self-hosted / on-prem deployments: one systemd unit, one log
+stream, no `wt login` race condition, no `--local` flag confusion. `wt serve` stays
+pure relay for cloud/multi-node. See `docs/roost_design.md` for full design.
 
 ### P2P: WebRTC Direct Connection for Same-LAN Wings
 Bypass the relay entirely when browser and wing are on the same network.
@@ -250,5 +276,11 @@ tunnel protocol, passkey auth with allow/revoke, org support, seatbelt + namespa
 with agent auto-drilling, `wt wing config` with live SIGHUP reload, horizontal scaling
 (login + edge nodes with fly-replay routing), codex + cursor adapters, audit logging,
 session replay, wing lock/unlock, project discovery, directory browsing.
+
+### Folder ACLs (v0.48)
+Per-path member lists in wing.yaml, enforce on PTY start and tunnel requests,
+web UI for path management. Three-tier enforcement: PTY start (CWD clamp + egg.yaml
+requirement for members), tunnel requests (filtered dir/session/audit responses),
+admin-only path management (paths.list/set/add_member/remove_member).
 
 </details>
