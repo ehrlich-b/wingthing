@@ -65,6 +65,7 @@ func main() {
 		doctorCmd(),
 		serveCmd(),
 		wingCmd(),
+		roostCmd(),
 		eggCmd(),
 		updateCmd(),
 	)
@@ -141,8 +142,11 @@ func stopCmd() *cobra.Command {
 			if err := proc.Signal(syscall.SIGTERM); err != nil {
 				return fmt.Errorf("kill pid %d: %w", pid, err)
 			}
+			// Clean up both wing and roost pid/args files
 			os.Remove(wingPidPath())
 			os.Remove(wingArgsPath())
+			os.Remove(roostPidPath())
+			os.Remove(roostArgsPath())
 			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
 			return nil
 		},

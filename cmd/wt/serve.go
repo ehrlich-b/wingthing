@@ -30,7 +30,7 @@ func serveCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "relay",
-		Aliases: []string{"serve", "roost"},
+		Aliases: []string{"serve"},
 		Short:   "Start the relay server (web UI + WebSocket relay)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()

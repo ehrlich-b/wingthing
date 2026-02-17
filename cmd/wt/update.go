@@ -117,18 +117,38 @@ func updateCmd() *cobra.Command {
 
 			fmt.Printf("updated to %s\n", rel.TagName)
 
-			// Restart wing daemon if running (egg survives, wing picks up new binary)
-			wingPid, pidErr := readPid()
+			// Restart daemon if running (egg survives, daemon picks up new binary).
+			// Try wing.pid first, then roost.pid to determine which daemon to restart.
+			isRoost := false
+			daemonPid, pidErr := readPidFrom(wingPidPath())
+			if pidErr != nil {
+				daemonPid, pidErr = readPidFrom(roostPidPath())
+				if pidErr == nil {
+					isRoost = true
+				}
+			}
 			if pidErr == nil {
-				fmt.Printf("restarting wing daemon (pid %d)...\n", wingPid)
-				proc, _ := os.FindProcess(wingPid)
+				kind := "wing"
+				if isRoost {
+					kind = "roost"
+				}
+				fmt.Printf("restarting %s daemon (pid %d)...\n", kind, daemonPid)
+				proc, _ := os.FindProcess(daemonPid)
 				proc.Signal(syscall.SIGTERM)
-				os.Remove(wingPidPath())
 
-				// Read saved args from last start, fall back to bare "wing start".
-				// Strip --foreground since we want it to daemonize and return.
-				startArgs := []string{"wing", "start"}
-				if saved, err := os.ReadFile(wingArgsPath()); err == nil {
+				// Read saved args from last start. Strip --foreground since we want it to daemonize.
+				var startArgs []string
+				var argsPath string
+				if isRoost {
+					startArgs = []string{"roost", "start"}
+					argsPath = roostArgsPath()
+					os.Remove(roostPidPath())
+				} else {
+					startArgs = []string{"wing", "start"}
+					argsPath = wingArgsPath()
+					os.Remove(wingPidPath())
+				}
+				if saved, err := os.ReadFile(argsPath); err == nil {
 					lines := strings.Split(strings.TrimSpace(string(saved)), "\n")
 					var filtered []string
 					for _, l := range lines {
@@ -145,8 +165,8 @@ func updateCmd() *cobra.Command {
 				child.Stdout = os.Stdout
 				child.Stderr = os.Stderr
 				if err := child.Run(); err != nil {
-					fmt.Printf("warning: failed to restart wing: %v\n", err)
-					fmt.Println("run 'wt start' manually to restart")
+					fmt.Printf("warning: failed to restart %s: %v\n", kind, err)
+					fmt.Printf("run 'wt %s start' manually to restart\n", kind)
 				}
 			}
 

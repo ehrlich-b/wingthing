@@ -94,7 +94,40 @@ func readEggOwner(dir string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)
+	return lines[0]
+}
+
+// readEggOwnerEmail reads the creator email from an egg's owner file (line 2).
+func readEggOwnerEmail(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "egg.owner"))
+	if err != nil {
+		return ""
+	}
+	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)
+	if len(lines) < 2 {
+		return ""
+	}
+	return lines[1]
+}
+
+// killSessionsViolatingACLs checks active sessions and kills any that no longer
+// have access under the current path ACLs.
+func killSessionsViolatingACLs(cfg *config.Config, paths config.PathList, home string) {
+	sessions := listAliveEggSessions(cfg)
+	for _, s := range sessions {
+		dir := filepath.Join(cfg.Dir, "eggs", s.SessionID)
+		email := readEggOwnerEmail(dir)
+		if email == "" {
+			continue // pre-ACL session or admin — leave it
+		}
+		// Re-check if this user still has access to the session's CWD
+		userPaths := resolvePathStrings(paths.PathsForUser(email, "member"), home)
+		if len(userPaths) == 0 || !isUnderPaths(s.CWD, userPaths) {
+			log.Printf("ACL revoke: killing session %s (user=%s cwd=%s)", s.SessionID, email, s.CWD)
+			killOrphanEgg(cfg, s.SessionID)
+		}
+	}
 }
 
 // readEggMeta reads agent/cwd from an egg's meta file.
@@ -372,8 +405,36 @@ func wingLogPath() string {
 	return filepath.Join(home, ".wingthing", "wing.log")
 }
 
-func readPid() (int, error) {
-	data, err := os.ReadFile(wingPidPath())
+func roostPidPath() string {
+	cfg, _ := config.Load()
+	if cfg != nil {
+		return filepath.Join(cfg.Dir, "roost.pid")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".wingthing", "roost.pid")
+}
+
+func roostArgsPath() string {
+	cfg, _ := config.Load()
+	if cfg != nil {
+		return filepath.Join(cfg.Dir, "roost.args")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".wingthing", "roost.args")
+}
+
+func roostLogPath() string {
+	cfg, _ := config.Load()
+	if cfg != nil {
+		return filepath.Join(cfg.Dir, "roost.log")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".wingthing", "roost.log")
+}
+
+// readPidFrom reads a PID from a specific file and checks the process is alive.
+func readPidFrom(path string) (int, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
@@ -381,16 +442,23 @@ func readPid() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// Check if process is alive
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return 0, err
 	}
 	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		os.Remove(wingPidPath())
+		os.Remove(path)
 		return 0, fmt.Errorf("stale pid")
 	}
 	return pid, nil
+}
+
+// readPid tries wing.pid first, then roost.pid. Returns the first live daemon PID.
+func readPid() (int, error) {
+	if pid, err := readPidFrom(wingPidPath()); err == nil {
+		return pid, nil
+	}
+	return readPidFrom(roostPidPath())
 }
 
 func wingCmd() *cobra.Command {
@@ -534,6 +602,16 @@ func wingStartCmd() *cobra.Command {
 }
 
 func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local bool) error {
+	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	sighupCh := make(chan os.Signal, 1)
+	signal.Notify(sighupCh, syscall.SIGHUP)
+
+	return runWingWithContext(ctx, sighupCh, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debug, audit, local)
+}
+
+func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -803,9 +881,6 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		killOrphanEgg(cfg, sessionID)
 	}
 
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
 	// Reclaim surviving egg sessions on every (re)connect
 	client.OnReconnect = func(rctx context.Context) {
 		var authTTL time.Duration // default 0 = boot-scoped, no expiry
@@ -817,63 +892,66 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		reclaimEggSessions(rctx, cfg, client, allowedKeys, passkeyCache, authTTL)
 	}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	// SIGHUP reload goroutine — caller owns SIGTERM/SIGINT via ctx cancellation
 	go func() {
-		for sig := range sigCh {
-			if sig == syscall.SIGHUP {
-				log.Println("SIGHUP: reloading wing config")
-				newCfg, err := config.LoadWingConfig(cfg.Dir)
-				if err != nil {
-					log.Printf("reload failed: %v", err)
-					continue
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case sig, ok := <-sighupCh:
+				if !ok {
+					return
 				}
-				wingCfg.Locked = newCfg.Locked
-				wingCfg.AllowKeys = newCfg.AllowKeys
-				allowedKeys = append([]config.AllowKey{}, newCfg.AllowKeys...)
-				client.Locked = newCfg.Locked
-				client.AllowedCount = len(newCfg.AllowKeys)
-
-				// Hot-reload audit + debug (atomic, read at session start)
-				auditLive.Store(newCfg.Audit)
-				debugLive.Store(newCfg.Debug)
-
-				// Hot-reload conv, auth_ttl
-				wingCfg.Conv = newCfg.Conv
-				wingCfg.AuthTTL = newCfg.AuthTTL
-
-				// Hot-reload labels
-				wingCfg.Labels = newCfg.Labels
-				client.Labels = newCfg.Labels
-
-				// Hot-reload paths
-				wingCfg.Paths = newCfg.Paths
-				resolvedPaths = resolvePathStrings(newCfg.Paths.Strings(), home)
-				client.RootDir = resolvedPaths[0]
-
-				// Hot-reload egg config (if path changed)
-				oldEggConfig := wingCfg.EggConfig
-				wingCfg.EggConfig = newCfg.EggConfig
-				if newCfg.EggConfig != oldEggConfig {
-					eggPath := newCfg.EggConfig
-					if eggPath == "" {
-						eggPath = filepath.Join(cfg.Dir, "egg.yaml")
+				if sig == syscall.SIGHUP {
+					log.Println("SIGHUP: reloading wing config")
+					newCfg, err := config.LoadWingConfig(cfg.Dir)
+					if err != nil {
+						log.Printf("reload failed: %v", err)
+						continue
 					}
-					if newEggCfg, eggErr := egg.ResolveEggConfig(eggPath); eggErr == nil {
-						wingEggMu.Lock()
-						wingEggCfg = newEggCfg
-						wingEggMu.Unlock()
-						log.Printf("egg config reloaded from %s", eggPath)
+					wingCfg.Locked = newCfg.Locked
+					wingCfg.AllowKeys = newCfg.AllowKeys
+					allowedKeys = append([]config.AllowKey{}, newCfg.AllowKeys...)
+					client.Locked = newCfg.Locked
+					client.AllowedCount = len(newCfg.AllowKeys)
+
+					// Hot-reload audit + debug (atomic, read at session start)
+					auditLive.Store(newCfg.Audit)
+					debugLive.Store(newCfg.Debug)
+
+					// Hot-reload conv, auth_ttl
+					wingCfg.Conv = newCfg.Conv
+					wingCfg.AuthTTL = newCfg.AuthTTL
+
+					// Hot-reload labels
+					wingCfg.Labels = newCfg.Labels
+					client.Labels = newCfg.Labels
+
+					// Hot-reload paths
+					wingCfg.Paths = newCfg.Paths
+					resolvedPaths = resolvePathStrings(newCfg.Paths.Strings(), home)
+					client.RootDir = resolvedPaths[0]
+
+					// Hot-reload egg config (if path changed)
+					oldEggConfig := wingCfg.EggConfig
+					wingCfg.EggConfig = newCfg.EggConfig
+					if newCfg.EggConfig != oldEggConfig {
+						eggPath := newCfg.EggConfig
+						if eggPath == "" {
+							eggPath = filepath.Join(cfg.Dir, "egg.yaml")
+						}
+						if newEggCfg, eggErr := egg.ResolveEggConfig(eggPath); eggErr == nil {
+							wingEggMu.Lock()
+							wingEggCfg = newEggCfg
+							wingEggMu.Unlock()
+							log.Printf("egg config reloaded from %s", eggPath)
+						}
 					}
+
+					client.SendConfig(ctx)
+					log.Printf("config reloaded: locked=%v allowed=%d audit=%v debug=%v", newCfg.Locked, len(newCfg.AllowKeys), newCfg.Audit, newCfg.Debug)
 				}
-
-				client.SendConfig(ctx)
-				log.Printf("config reloaded: locked=%v allowed=%d audit=%v debug=%v", newCfg.Locked, len(newCfg.AllowKeys), newCfg.Audit, newCfg.Debug)
-				continue
 			}
-			log.Println("wing shutting down...")
-			cancel()
-			return
 		}
 	}()
 
@@ -2307,7 +2385,11 @@ authDone:
 	// Persist session creator
 	if start.UserID != "" {
 		ownerPath := filepath.Join(cfg.Dir, "eggs", start.SessionID, "egg.owner")
-		os.WriteFile(ownerPath, []byte(start.UserID), 0644)
+		ownerData := start.UserID
+		if start.Email != "" {
+			ownerData += "\n" + start.Email
+		}
+		os.WriteFile(ownerPath, []byte(ownerData), 0644)
 	}
 
 	// Notify browser
@@ -3003,6 +3085,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		wingCfg.Root = ""
 		config.SaveWingConfig(cfg.Dir, wingCfg)
 		log.Printf("paths.set: %d entries by %s", len(wingCfg.Paths), req.SenderUserID)
+		go killSessionsViolatingACLs(cfg, wingCfg.Paths, home)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "paths.add_member":
@@ -3070,6 +3153,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		config.SaveWingConfig(cfg.Dir, wingCfg)
 		log.Printf("paths.remove_member: %s from %s by %s", inner.Email, inner.Path, req.SenderUserID)
+		go killSessionsViolatingACLs(cfg, wingCfg.Paths, home)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	default:
@@ -3184,6 +3268,7 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 	}
 
 	// Decompress gzip and stream as asciinema v2 NDJSON
+	// Tolerate incomplete gzip from live sessions (writer still open)
 	gr, gzErr := gzip.NewReader(bytes.NewReader(data))
 	if gzErr != nil {
 		tunnelRespond(gcm, requestID, map[string]string{"error": "decompress: " + gzErr.Error()}, write)
@@ -3191,7 +3276,7 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 	}
 	raw, readErr := io.ReadAll(gr)
 	gr.Close()
-	if readErr != nil {
+	if readErr != nil && len(raw) == 0 {
 		tunnelRespond(gcm, requestID, map[string]string{"error": "read: " + readErr.Error()}, write)
 		return
 	}

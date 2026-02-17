@@ -116,6 +116,14 @@ SIGHUP on the roost process reloads wing config only (labels, paths, egg config,
 | Separate wing on a remote machine | `wt start` (connects to a remote relay) |
 | Local dev: relay only, no wing | `wt serve` |
 
+## Security Model
+
+**E2E encryption is unchanged.** The relay and wing are co-located in one process but remain logically separate. The relay component is still a dumb pipe — it forwards encrypted blobs. The wing goroutine terminates E2E encryption exactly as it does when running as a separate process. No encryption layer is removed or weakened.
+
+**Self-hosted trust boundary.** In a self-hosted roost deployment, the operator controls both the relay and wing. The E2E encryption protects against network observers (the HTTPS boundary at port 443), not against the machine operator — who already has access to everything. This is the correct trust model for on-prem.
+
+**P2P future.** When P2P (WebRTC) arrives, browsers on the same network connect directly to the wing, bypassing the relay. In roost mode the wing IS the roost — P2P connections go straight to it. No special casing needed; a roost is just a wing that happens to also serve HTTP.
+
 ## Open Questions
 
 1. **`wt roost` vs `wt serve --wing`**: The new command approach is cleaner and matches the vocabulary. The flag approach avoids adding a command. Decision: new command, `wt serve` stays pure relay.
