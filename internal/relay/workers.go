@@ -390,8 +390,8 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			// Store the resolved org ID (not the slug)
 			wing.OrgID = org.ID
 			role := s.Store.GetOrgMemberRole(org.ID, userID)
-			if role != "owner" && role != "admin" {
-				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "not authorized to register wing for org: " + org.Name}
+			if role == "" {
+				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "not a member of org: " + org.Name}
 				data, _ := json.Marshal(errMsg)
 				conn.Write(ctx, websocket.MessageText, data)
 				return
