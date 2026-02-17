@@ -63,6 +63,22 @@ The bar: someone new (e.g. your boss) can use a wing without confusion or broken
 
 ---
 
+## Next Targets — Prove the Concept
+
+### VTE: Server-Side Virtual Terminal Emulator
+Replace the 2MB replay buffer with a real terminal state machine (`charmbracelet/x/vt`).
+On reconnect, paint the current screen (50 lines) instead of replaying megabytes of raw bytes.
+Eliminates `findSafeCut`, `trackCursorPos`, `agentPreamble` hacks. Makes wingthing
+"tailscale + tmux on the web" — nobody else has remote access + VTE + web terminal together.
+See `docs/vt_design.md` for full design.
+
+### P2P: WebRTC Direct Connection for Same-LAN Wings
+Bypass the relay entirely when browser and wing are on the same network.
+WebRTC data channels for PTY I/O, encrypted tunnel stays E2E.
+See `docs/webrtc-p2p-design.md` for full design.
+
+---
+
 ## Backlog
 
 ### PTY: UTF-8 boundary safety in replay buffer trim and chunking
@@ -109,13 +125,94 @@ full screen redraw but annoying.
 
 - [ ] Image paste into terminal — intercept paste, upload via PTY, buffer output, loading bar
 - [ ] Offline web app — PWA with cached wing data, works without network
-- [ ] Break down render.js further — it's getting large
 - [ ] Facilitate worktrees — dev workflow for parallel feature branches
 - [ ] GUI streaming — H.264 over WebSocket for graphical agent windows (Cursor, etc.)
 - [ ] Wing-to-wing communication — wings coordinate via shared thread
 - [ ] Context sync — teleport CLAUDE.md, memory files to wings on connect
 - [ ] Cinch CI — GitHub release pipeline, badges
 - [ ] Wing self-update — `wt update` pulls latest release by GOOS/GOARCH
+
+---
+
+## Code Cleanup — Review Findings
+
+Findings from deep code review. Bug fixes for unchecked errors in passkey auth,
+PID file writes, gzip log rotation, tunnel type assertion safety, and tunnel
+retry depth limit are already landed. Below is what remains.
+
+### Go: Split wing.go (3,140 lines)
+
+The single biggest structural issue. `cmd/wt/wing.go` is a god file containing
+PTY session handling, tunnel dispatch, egg management, audit streaming, passkey
+verification, attention state, project discovery, and log rotation.
+
+**Split into:**
+- `cmd/wt/pty.go` — `handlePTYSession`, PTY output goroutine, replay chunking
+- `cmd/wt/tunnel.go` — `handleTunnelRequest`, tunnel inner dispatch, tunnel key cache
+- `cmd/wt/audit.go` — audit streaming, audit recording playback
+- `cmd/wt/wingutil.go` — attention state, project discovery, log rotation, egg cleanup
+
+**Also:**
+- [ ] Extract PTY output goroutine into shared helper — identical ~50-line
+  encrypt-and-forward block is copy-pasted 4x across initial connect and
+  reattach paths
+- [ ] Collapse 3 attention `sync.Map`s (`wingAttention`, `wingAttentionCooldown`,
+  `wingAttentionNonce`) into one map to a struct
+- [ ] Refactor 10-13 parameter function signatures into config/context structs:
+  `runWingForeground` (11 params), `handleTunnelRequest` (13 params),
+  `handlePTYSession` (10 params)
+- [ ] Remove `goto authDone` in PTY passkey auth — restructure into early-return
+  or extracted function
+
+### Go: Relay race conditions
+
+- [ ] `bandwidth.go` month-boundary race — two goroutines calling `counter()`
+  at month rollover both reset `b.counters`, second nuke first's data. Fix:
+  double-check under lock after acquiring it
+- [ ] `workers.go` `WingRegistry.UpdateConfig()` returns mutable `*ConnectedWing`
+  pointer from inside the lock — callers can race on fields. Return a copy or
+  use accessor methods
+- [ ] PTY route orphan cleanup — sessions register on `pty.start`, unregister
+  only on `pty.exited`. Crashed wings leave zombie entries forever. Add a sweep
+  goroutine with TTL
+- [ ] `ntfySentNonces` global `sync.Map` grows unbounded — entries never deleted.
+  Add TTL or clear on session end
+
+### JS: Split render.js (2,135 lines)
+
+Same god-file problem on the frontend. Contains wing rendering, session tabs,
+account management, org settings, audit display.
+
+- [ ] Split into `renderWings.js`, `renderSessions.js`, `renderAccount.js`,
+  `renderOrg.js`, `renderAudit.js`
+- [ ] Fix event listener leaks in sidebar re-renders — `renderSidebar()` calls
+  `addEventListener` on every tab without removing old listeners, so after N
+  re-renders each tab has N click handlers. Use event delegation on the
+  container instead
+- [ ] Investigate `nav.js:49` session switching guard — `if (sess && !sess.swept) return`
+  appears to bail when the session IS valid (preventing switch to active sessions).
+  Either inverted logic or compensated elsewhere — needs investigation
+
+### JS: Async correctness
+
+- [ ] `data.js` `probeWing()` dedup — `_probeInflight` is deleted in `.finally()`
+  before callers resolve, creating a race window for duplicate probes
+- [ ] `bytesToB64()` in `helpers.js` uses O(n²) string concatenation in a loop
+  on every encrypt/decrypt — use `String.fromCharCode.apply(null, bytes)` or
+  typed array approach
+- [ ] `terminal.js` `saveTermBuffer()` fires every 500ms serializing up to 200KB
+  to localStorage with no quota checking. 100 sessions = 20MB. Add cleanup on
+  session deletion and consider debouncing
+
+### Tests
+
+- [ ] Add tests for `internal/config/` (0% coverage) — config loading, wing ID
+  generation, var resolution, missing config fallback
+- [ ] Add tests for agent adapters — `claude.go` (145 lines, 0%), `codex.go`
+  (119 lines, 0%), `cursor.go` (81 lines, 0%). At minimum test stream parsing
+- [ ] Remove compile-time interface checks from runtime test functions
+  (`var _ Agent = (*Gemini)(nil)` in gemini_test.go, ollama_test.go) — these
+  don't execute at runtime
 
 ---
 

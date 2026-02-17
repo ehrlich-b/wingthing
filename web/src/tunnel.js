@@ -241,7 +241,8 @@ function acquireToken() {
 
 // --- Public API ---
 
-export async function sendTunnelRequest(wingId, innerMsg, opts) {
+export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
+    if ((_depth || 0) >= 3) throw new Error('passkey retry limit exceeded');
     await acquireToken();
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
@@ -284,7 +285,7 @@ export async function sendTunnelRequest(wingId, innerMsg, opts) {
                     S.tunnelAuthTokens[wingId] = authToken;
                     saveTunnelAuthTokens();
                     innerMsg.auth_token = authToken;
-                    return sendTunnelRequest(wingId, innerMsg);
+                    return sendTunnelRequest(wingId, innerMsg, opts, (_depth || 0) + 1);
                 }
             }
             var err = new Error('passkey_required');

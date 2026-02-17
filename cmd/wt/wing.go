@@ -79,7 +79,9 @@ func clearAttentionCooldown(sessionID string) {
 // generateAttentionNonce returns a random 8-byte hex nonce.
 func generateAttentionNonce() string {
 	b := make([]byte, 8)
-	crand.Read(b)
+	if _, err := crand.Read(b); err != nil {
+		log.Printf("generateAttentionNonce: crypto/rand failed: %v", err)
+	}
 	return fmt.Sprintf("%x", b)
 }
 
@@ -282,9 +284,15 @@ func rotateLog(path string) {
 	if data, err := os.ReadFile(path + ".1"); err == nil {
 		if gz, err := os.Create(path + ".2.gz"); err == nil {
 			w := gzip.NewWriter(gz)
-			w.Write(data)
-			w.Close()
-			gz.Close()
+			if _, werr := w.Write(data); werr != nil {
+				log.Printf("rotateLog: gzip write failed: %v", werr)
+			}
+			if err := w.Close(); err != nil {
+				log.Printf("rotateLog: gzip close failed: %v", err)
+			}
+			if err := gz.Close(); err != nil {
+				log.Printf("rotateLog: file close failed: %v", err)
+			}
 			os.Remove(path + ".1")
 		}
 	}
@@ -438,8 +446,12 @@ func wingStartCmd() *cobra.Command {
 			}
 			logFile.Close()
 
-			os.WriteFile(wingPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644)
-			os.WriteFile(wingArgsPath(), []byte(strings.Join(childArgs, "\n")), 0644)
+			if err := os.WriteFile(wingPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644); err != nil {
+				log.Printf("warning: failed to write PID file: %v", err)
+			}
+			if err := os.WriteFile(wingArgsPath(), []byte(strings.Join(childArgs, "\n")), 0644); err != nil {
+				log.Printf("warning: failed to write args file: %v", err)
+			}
 			fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 			fmt.Printf("  log: %s\n", wingLogPath())
 			fmt.Println()
@@ -2590,8 +2602,9 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	// Derive or retrieve cached AES-GCM key for this sender
 	var gcm cipher.AEAD
 	if cached, ok := tunnelKeys.Load(req.SenderPub); ok {
-		gcm = cached.(cipher.AEAD)
-	} else {
+		gcm, _ = cached.(cipher.AEAD)
+	}
+	if gcm == nil {
 		derived, err := auth.DeriveSharedKey(privKey, req.SenderPub, "wt-tunnel")
 		if err != nil {
 			log.Printf("tunnel: derive key failed: %v", err)
@@ -2773,14 +2786,33 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			return
 		}
 		credID, _ := base64.RawURLEncoding.DecodeString(inner.CredentialID)
-		authData, _ := base64.StdEncoding.DecodeString(inner.AuthenticatorData)
-		cdJSON, _ := base64.StdEncoding.DecodeString(inner.ClientDataJSON)
-		sig, _ := base64.StdEncoding.DecodeString(inner.Signature)
+		authData, err := base64.StdEncoding.DecodeString(inner.AuthenticatorData)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid authenticator data"}, write)
+			return
+		}
+		cdJSON, err := base64.StdEncoding.DecodeString(inner.ClientDataJSON)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid client data"}, write)
+			return
+		}
+		sig, err := base64.StdEncoding.DecodeString(inner.Signature)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid signature encoding"}, write)
+			return
+		}
 
 		// Extract challenge from clientDataJSON to find matching one
 		var cd struct{ Challenge string `json:"challenge"` }
-		json.Unmarshal(cdJSON, &cd)
-		challenge, _ := base64.RawURLEncoding.DecodeString(cd.Challenge)
+		if err := json.Unmarshal(cdJSON, &cd); err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "malformed client data JSON"}, write)
+			return
+		}
+		challenge, err := base64.RawURLEncoding.DecodeString(cd.Challenge)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid challenge encoding"}, write)
+			return
+		}
 
 		// Try each allowed key
 		var verified bool
