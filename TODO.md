@@ -6,29 +6,11 @@
 
 Wings are live. PTY relay works end-to-end. E2E encryption, passkey auth, org support,
 per-process egg sandbox, folder-based ACLs (per-path member lists), `wt wing config`
-with live SIGHUP reload. Single Fly node (shared-cpu-2x, 512MB), horizontal scaling
-built and tested — edge nodes are one uncomment away in fly.toml.
+with live SIGHUP reload, `wt roost` for single-process self-hosted mode. Single Fly
+node (shared-cpu-2x, 512MB), horizontal scaling built and tested — edge nodes are one
+uncomment away in fly.toml.
 
-More features for org mode at the top of the list.
-
----
-
-## Org Mode — Priority
-
-Folder ACLs, sandbox, OAuth, orgs, audit logging all exist. What's missing:
-
-- [x] Admin session management — admins can view and disconnect active sessions
-  - `sessions.list` already returns all sessions to admins (no filter)
-  - Kill button (X) with confirmation already on every active session row
-  - Added: replay + keylog buttons on live sessions (same as past sessions)
-- [x] Kick revoked users in real time — terminate active sessions on ACL change
-  - `paths.remove_member` and `paths.set` now trigger `killSessionsViolatingACLs`
-  - Scans alive sessions, kills any whose CWD is no longer accessible to the owner
-  - Creator email persisted in `egg.owner` for post-hoc ACL matching
-- [x] Audit log access during active sessions — partial replay of live sessions
-  - Replay + keylog buttons on active session rows in web UI
-  - Egg gzip writer flushes every 100 frames to make data readable mid-session
-  - `streamAuditData` tolerates incomplete gzip (partial data instead of error)
+Org mode features are complete. Next up: VTE for proper reconnect, then P2P.
 
 ---
 
@@ -92,12 +74,6 @@ Eliminates `findSafeCut`, `trackCursorPos`, `agentPreamble` hacks. Makes wingthi
 "tailscale + tmux on the web" — nobody else has remote access + VTE + web terminal together.
 See `docs/vt_design.md` for full design.
 
-### Roost: Combined Relay + Wing Mode
-Single command (`wt roost`) that runs relay and wing in one process. Eliminates the
-two-process dance for self-hosted / on-prem deployments: one systemd unit, one log
-stream, no `wt login` race condition, no `--local` flag confusion. `wt serve` stays
-pure relay for cloud/multi-node. See `docs/roost_design.md` for full design.
-
 ### P2P: WebRTC Direct Connection for Same-LAN Wings
 Bypass the relay entirely when browser and wing are on the same network.
 WebRTC data channels for PTY I/O, encrypted tunnel stays E2E.
@@ -156,7 +132,6 @@ full screen redraw but annoying.
 - [ ] Wing-to-wing communication — wings coordinate via shared thread
 - [ ] Context sync — teleport CLAUDE.md, memory files to wings on connect
 - [ ] Cinch CI — GitHub release pipeline, badges
-- [ ] Wing self-update — `wt update` pulls latest release by GOOS/GOARCH
 
 ---
 
@@ -282,5 +257,16 @@ Per-path member lists in wing.yaml, enforce on PTY start and tunnel requests,
 web UI for path management. Three-tier enforcement: PTY start (CWD clamp + egg.yaml
 requirement for members), tunnel requests (filtered dir/session/audit responses),
 admin-only path management (paths.list/set/add_member/remove_member).
+
+### Org Mode Completion (v0.55)
+Admin session management (view/disconnect/replay live sessions), real-time kick on
+ACL revocation (`killSessionsViolatingACLs`), mid-session audit replay (gzip flush
+every 100 frames, `streamAuditData` tolerates incomplete gzip).
+
+### Roost: Combined Relay + Wing Mode (v0.56)
+`wt roost` runs relay and wing in a single process. Daemon mode with `roost.pid`,
+foreground mode for systemd. Unified PID lookup (`readPid` checks both `wing.pid`
+and `roost.pid`), `wt update` auto-restarts the correct daemon type. Signal handling
+refactored: `runWingWithContext` takes caller-owned context + SIGHUP channel.
 
 </details>
