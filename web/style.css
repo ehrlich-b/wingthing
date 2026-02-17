@@ -1336,6 +1336,57 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     margin-top: 8px;
 }
 
+.wd-path-row {
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border-radius: 6px;
+    margin-bottom: 4px;
+}
+
+.wd-path-name {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.wd-path-members {
+    margin-top: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    font-size: 12px;
+}
+
+.wd-path-member {
+    background: var(--border);
+    padding: 2px 6px;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.wd-path-rm-member {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 10px;
+    padding: 0 2px;
+}
+
+.wd-path-rm-member:hover { color: var(--red); }
+
+.wd-path-email-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    width: 160px;
+}
+
 /* === Account Page === */
 
 #account-section {

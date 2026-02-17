@@ -255,6 +255,12 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			sessionID := uuid.New().String()[:8]
 			start.SessionID = sessionID
 			start.UserID = userID
+			start.Email = userEmail
+			if wing.UserID == userID {
+				start.OrgRole = "owner"
+			} else if wing.OrgID != "" && s.Store != nil {
+				start.OrgRole = s.Store.GetOrgMemberRole(wing.OrgID, userID)
+			}
 
 			s.PTY.Set(sessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID, Agent: start.Agent, CWD: start.CWD})
 

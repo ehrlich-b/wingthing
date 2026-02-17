@@ -170,6 +170,59 @@ func sendReplayChunked(sessionID string, raw []byte, gcm cipher.AEAD, write ws.P
 	log.Printf("pty session %s: replayed %d bytes (gzip %d, %d chunks)", sessionID, len(raw), totalCompressed, chunks)
 }
 
+// resolvePathStrings resolves ~/ prefixes and makes paths absolute.
+// Returns at least [home] if input is empty.
+func resolvePathStrings(paths []string, home string) []string {
+	var out []string
+	for _, p := range paths {
+		if strings.HasPrefix(p, "~/") {
+			p = filepath.Join(home, p[2:])
+		} else if p == "~" {
+			p = home
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		out = []string{home}
+	}
+	return out
+}
+
+// pathsForRequest returns resolved paths filtered by the request sender's ACLs.
+func pathsForRequest(pathList config.PathList, email, orgRole, home string) []string {
+	return resolvePathStrings(pathList.PathsForUser(email, orgRole), home)
+}
+
+// filterProjectsByPaths returns only projects whose paths are under one of the resolved paths.
+func filterProjectsByPaths(projects []ws.WingProject, resolvedPaths []string) []ws.WingProject {
+	var out []ws.WingProject
+	for _, p := range projects {
+		if isUnderPaths(p.Path, resolvedPaths) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// isUnderPaths returns true if path is equal to or under one of the resolved paths.
+func isUnderPaths(path string, resolvedPaths []string) bool {
+	cleaned := filepath.Clean(path)
+	for _, rp := range resolvedPaths {
+		if cleaned == rp || strings.HasPrefix(cleaned, rp+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// isMemberRole returns true if the org role is "member" or empty (not owner/admin).
+func isMemberRole(orgRole string) bool {
+	return orgRole == "member" || orgRole == ""
+}
+
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
 // Returns group directories (sorted by project count) followed by individual repos (sorted by mtime).
 func discoverProjects(dir string, maxDepth int) []ws.WingProject {
@@ -513,7 +566,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 		}
 	}
 	if len(cliPaths) == 0 && len(wingCfg.Paths) > 0 {
-		cliPaths = wingCfg.Paths
+		cliPaths = wingCfg.Paths.Strings()
 	}
 	if eggConfigFlag == "" && wingCfg.EggConfig != "" {
 		eggConfigFlag = wingCfg.EggConfig
@@ -630,21 +683,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 
 	// Resolve paths to absolute
 	home, _ := os.UserHomeDir()
-	var resolvedPaths []string
-	for _, p := range cliPaths {
-		if strings.HasPrefix(p, "~/") {
-			p = filepath.Join(home, p[2:])
-		} else if p == "~" {
-			p = home
-		}
-		if abs, err := filepath.Abs(p); err == nil {
-			p = abs
-		}
-		resolvedPaths = append(resolvedPaths, p)
-	}
-	if len(resolvedPaths) == 0 {
-		resolvedPaths = []string{home}
-	}
+	resolvedPaths := resolvePathStrings(cliPaths, home)
 
 	// Scan for git projects in each path
 	cwd, _ := os.Getwd()
@@ -721,18 +760,23 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "wing is locked with no authorized users — add yourself with: wt wing allow --email <your-email>"})
 			return
 		}
-		// Clamp CWD to paths if configured
-		if len(resolvedPaths) > 0 {
-			cleaned := filepath.Clean(start.CWD)
-			underAny := false
-			for _, rp := range resolvedPaths {
-				if cleaned == rp || strings.HasPrefix(cleaned, rp+string(filepath.Separator)) {
-					underAny = true
-					break
-				}
+		// Per-user path ACLs: members only see their tagged folders
+		userPaths := pathsForRequest(wingCfg.Paths, start.Email, start.OrgRole, home)
+		if isMemberRole(start.OrgRole) && len(userPaths) == 0 {
+			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no accessible folders on this machine"})
+			return
+		}
+		// Clamp CWD to user-accessible paths
+		if len(userPaths) > 0 {
+			if !isUnderPaths(start.CWD, userPaths) {
+				start.CWD = userPaths[0]
 			}
-			if !underAny {
-				start.CWD = resolvedPaths[0]
+		}
+		// Members require egg.yaml in CWD (sandbox jail)
+		if isMemberRole(start.OrgRole) && len(wingCfg.Paths) > 0 {
+			if _, err := os.Stat(filepath.Join(start.CWD, "egg.yaml")); os.IsNotExist(err) {
+				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no egg.yaml in " + start.CWD + " — ask the wing owner to add a sandbox config"})
+				return
 			}
 		}
 		wingEggMu.Lock()
@@ -752,7 +796,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
-		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, resolvedPaths, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client)
+		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, home, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client)
 	}
 
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
@@ -804,22 +848,7 @@ func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggC
 
 				// Hot-reload paths
 				wingCfg.Paths = newCfg.Paths
-				if len(newCfg.Paths) > 0 {
-					resolvedPaths = nil
-					for _, p := range newCfg.Paths {
-						if strings.HasPrefix(p, "~/") {
-							p = filepath.Join(home, p[2:])
-						} else if p == "~" {
-							p = home
-						}
-						if abs, err := filepath.Abs(p); err == nil {
-							p = abs
-						}
-						resolvedPaths = append(resolvedPaths, p)
-					}
-				} else {
-					resolvedPaths = []string{home}
-				}
+				resolvedPaths = resolvePathStrings(newCfg.Paths.Strings(), home)
 				client.RootDir = resolvedPaths[0]
 
 				// Hot-reload egg config (if path changed)
@@ -1346,7 +1375,7 @@ func wingConfigCmd() *cobra.Command {
 			}
 			fmt.Printf("roost:      %s\n", roost)
 			fmt.Printf("org:        %s\n", wingCfg.Org)
-			fmt.Printf("paths:      %s\n", strings.Join(wingCfg.Paths, ", "))
+			fmt.Printf("paths:      %s\n", strings.Join(wingCfg.Paths.Strings(), ", "))
 			fmt.Printf("labels:     %s\n", strings.Join(wingCfg.Labels, ", "))
 			fmt.Printf("egg_config: %s\n", wingCfg.EggConfig)
 			fmt.Printf("conv:       %s\n", wingCfg.Conv)
@@ -1443,7 +1472,7 @@ func wingConfigSetCmd() *cobra.Command {
 					}
 					wingCfg.AuthTTL = value
 				case "paths":
-					var paths []string
+					var paths config.PathList
 					for _, p := range strings.Split(value, ",") {
 						p = strings.TrimSpace(p)
 						if p == "" {
@@ -1456,7 +1485,7 @@ func wingConfigSetCmd() *cobra.Command {
 						if !info.IsDir() {
 							return fmt.Errorf("paths: %s is not a directory", p)
 						}
-						paths = append(paths, p)
+						paths = append(paths, config.PathEntry{Path: p})
 					}
 					wingCfg.Paths = paths
 					wingCfg.Root = "" // clear legacy
@@ -1470,7 +1499,7 @@ func wingConfigSetCmd() *cobra.Command {
 						if !info.IsDir() {
 							return fmt.Errorf("root: %s is not a directory", value)
 						}
-						wingCfg.Paths = []string{value}
+						wingCfg.Paths = config.PathList{{Path: value}}
 					} else {
 						wingCfg.Paths = nil
 					}
@@ -2539,6 +2568,11 @@ type tunnelInner struct {
 	Key         string `json:"key,omitempty"` // passkey public key for allow.add
 	AllowUserID string `json:"allow_user_id,omitempty"` // target user_id for allow.remove
 
+	// Path ACL fields (for paths.set / paths.add_member / paths.remove_member)
+	Paths   []config.PathEntry `json:"paths,omitempty"`   // for paths.set (bulk replace)
+	Members []string           `json:"members,omitempty"` // for paths.set on a single path
+	Email   string             `json:"email,omitempty"`   // for paths.add_member / paths.remove_member
+
 	// Passkey assertion fields (for type "passkey.auth")
 	CredentialID      string `json:"credential_id,omitempty"`
 	AuthenticatorData string `json:"authenticator_data,omitempty"`
@@ -2595,7 +2629,7 @@ func canSeeSession(req ws.TunnelRequest, sessionUserID string) bool {
 
 // handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
 func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, req ws.TunnelRequest, write ws.PTYWriteFunc,
-	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, privKey *ecdh.PrivateKey, resolvedPaths []string,
+	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, privKey *ecdh.PrivateKey, home string,
 	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool, client *ws.Client) {
 
 	allowedKeys := *allowedKeysPtr
@@ -2681,16 +2715,22 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	switch inner.Type {
 	case "dir.list":
-		entries := getDirEntries(inner.Path, resolvedPaths)
+		userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
+		entries := getDirEntries(inner.Path, userPaths)
 		tunnelRespond(gcm, req.RequestID, map[string]any{"entries": entries}, write)
 
 	case "wing.info":
+		projects := client.Projects
+		if isMemberFiltered(req) {
+			userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
+			projects = filterProjectsByPaths(projects, userPaths)
+		}
 		tunnelRespond(gcm, req.RequestID, map[string]any{
 			"hostname":     client.Hostname,
 			"platform":     client.Platform,
 			"version":      version,
 			"agents":       client.Agents,
-			"projects":     client.Projects,
+			"projects":     projects,
 			"locked":        wingCfg.Locked,
 			"allowed_count": len(wingCfg.AllowKeys),
 		}, write)
@@ -2698,9 +2738,10 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	case "sessions.list":
 		sessions := listAliveEggSessions(cfg)
 		if isMemberFiltered(req) {
+			userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
 			var filtered []ws.SessionInfo
 			for _, s := range sessions {
-				if canSeeSession(req, s.UserID) {
+				if canSeeSession(req, s.UserID) && (len(userPaths) == 0 || isUnderPaths(s.CWD, userPaths)) {
 					filtered = append(filtered, s)
 				}
 			}
@@ -2711,9 +2752,10 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	case "sessions.history":
 		sessions, total := getSessionsHistory(cfg, inner.Offset, inner.Limit)
 		if isMemberFiltered(req) {
+			userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
 			var filtered []pastSessionInfo
 			for _, s := range sessions {
-				if canSeeSession(req, s.UserID) {
+				if canSeeSession(req, s.UserID) && (len(userPaths) == 0 || isUnderPaths(s.CWD, userPaths)) {
 					filtered = append(filtered, s)
 				}
 			}
@@ -2936,6 +2978,98 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		client.AllowedCount = len(wingCfg.AllowKeys)
 		client.SendConfig(ctx)
 		log.Printf("revoked: target=%s by=%s", target, req.SenderUserID)
+		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+
+	case "paths.list":
+		if !isMemberFiltered(req) {
+			// Admin/owner: return full PathList with members
+			tunnelRespond(gcm, req.RequestID, map[string]any{"paths": wingCfg.Paths}, write)
+		} else {
+			// Member: return only their accessible paths, no member lists
+			userPaths := wingCfg.Paths.PathsForUser(req.SenderEmail, req.SenderOrgRole)
+			tunnelRespond(gcm, req.RequestID, map[string]any{"paths": userPaths}, write)
+		}
+
+	case "paths.set":
+		if isMemberFiltered(req) {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			return
+		}
+		if inner.Paths == nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing paths"}, write)
+			return
+		}
+		wingCfg.Paths = config.PathList(inner.Paths)
+		wingCfg.Root = ""
+		config.SaveWingConfig(cfg.Dir, wingCfg)
+		log.Printf("paths.set: %d entries by %s", len(wingCfg.Paths), req.SenderUserID)
+		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+
+	case "paths.add_member":
+		if isMemberFiltered(req) {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			return
+		}
+		if inner.Path == "" || inner.Email == "" {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing path or email"}, write)
+			return
+		}
+		found := false
+		emailLower := strings.ToLower(inner.Email)
+		for i, e := range wingCfg.Paths {
+			if e.Path == inner.Path {
+				// Check duplicate
+				dup := false
+				for _, m := range e.Members {
+					if strings.ToLower(m) == emailLower {
+						dup = true
+						break
+					}
+				}
+				if !dup {
+					wingCfg.Paths[i].Members = append(wingCfg.Paths[i].Members, inner.Email)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "path not found"}, write)
+			return
+		}
+		config.SaveWingConfig(cfg.Dir, wingCfg)
+		log.Printf("paths.add_member: %s to %s by %s", inner.Email, inner.Path, req.SenderUserID)
+		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+
+	case "paths.remove_member":
+		if isMemberFiltered(req) {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			return
+		}
+		if inner.Path == "" || inner.Email == "" {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing path or email"}, write)
+			return
+		}
+		found := false
+		emailLower := strings.ToLower(inner.Email)
+		for i, e := range wingCfg.Paths {
+			if e.Path == inner.Path {
+				for j, m := range e.Members {
+					if strings.ToLower(m) == emailLower {
+						wingCfg.Paths[i].Members = append(e.Members[:j], e.Members[j+1:]...)
+						found = true
+						break
+					}
+				}
+				break
+			}
+		}
+		if !found {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "path or member not found"}, write)
+			return
+		}
+		config.SaveWingConfig(cfg.Dir, wingCfg)
+		log.Printf("paths.remove_member: %s from %s by %s", inner.Email, inner.Path, req.SenderUserID)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	default:

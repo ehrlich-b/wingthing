@@ -1238,6 +1238,9 @@ export function renderWingDetailPage(wingId) {
                 '<button class="btn-sm btn-accent" id="wd-allow-me">allow me</button>' +
             '</div>' +
         '</div>' : '') +
+        (isOnline && !isLocked ? '<div class="wd-section"><h3 class="section-label">folder access</h3>' +
+            '<div id="wd-paths"><span class="text-dim">loading...</span></div>' +
+        '</div>' : '') +
         '</div>';
 
     DOM.wingDetailContent.innerHTML = html;
@@ -1357,6 +1360,9 @@ export function renderWingDetailPage(wingId) {
     }
     if (isOnline) {
         loadWingAllowlist(w);
+    }
+    if (isOnline && !isLocked) {
+        loadWingPaths(w);
     }
 }
 
@@ -1767,6 +1773,99 @@ function loadWingAllowlist(wing) {
             });
         });
     }
+}
+
+function loadWingPaths(wing) {
+    var container = document.getElementById('wd-paths');
+    if (!container) return;
+
+    sendTunnelRequest(wing.wing_id, { type: 'paths.list' }).then(function(data) {
+        var paths = data.paths || [];
+        // Admin: paths is array of {path, members}; Member: array of strings
+        var isAdmin = paths.length > 0 && typeof paths[0] === 'object';
+
+        if (paths.length === 0) {
+            container.innerHTML = '<span class="text-dim">' +
+                (isAdmin ? 'no paths configured — wing exposes ~/' : 'no folders assigned to you on this wing') +
+                '</span>';
+            return;
+        }
+
+        if (!isAdmin) {
+            // Member view: read-only list of accessible paths
+            var html = paths.map(function(p) {
+                return '<div class="wd-path-row"><span class="wd-path-name">' + escapeHtml(p) + '</span></div>';
+            }).join('');
+            container.innerHTML = html;
+            return;
+        }
+
+        // Admin view: paths with member management
+        var html = paths.map(function(entry, idx) {
+            var p = entry.path || '';
+            var members = entry.members || [];
+            var memberHtml = '';
+            if (members.length > 0) {
+                memberHtml = members.map(function(m) {
+                    return '<span class="wd-path-member">' + escapeHtml(m) +
+                        ' <button class="wd-path-rm-member" data-path="' + escapeHtml(p) + '" data-email="' + escapeHtml(m) + '">x</button></span>';
+                }).join('');
+            } else {
+                memberHtml = '<span class="text-dim">all users</span>';
+            }
+            return '<div class="wd-path-row">' +
+                '<div class="wd-path-name">' + escapeHtml(p) + '</div>' +
+                '<div class="wd-path-members">' + memberHtml +
+                    ' <button class="btn-sm wd-path-add-member" data-path="' + escapeHtml(p) + '">+ member</button>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+        container.innerHTML = html;
+
+        // Wire remove member buttons
+        container.querySelectorAll('.wd-path-rm-member').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var path = btn.getAttribute('data-path');
+                var email = btn.getAttribute('data-email');
+                btn.textContent = '...';
+                btn.disabled = true;
+                sendTunnelRequest(wing.wing_id, { type: 'paths.remove_member', path: path, email: email })
+                    .then(function() { loadWingPaths(wing); })
+                    .catch(function() { btn.textContent = 'err'; btn.disabled = false; });
+            });
+        });
+
+        // Wire add member buttons
+        container.querySelectorAll('.wd-path-add-member').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var path = btn.getAttribute('data-path');
+                var input = document.createElement('input');
+                input.type = 'email';
+                input.className = 'wd-path-email-input';
+                input.placeholder = 'email@example.com';
+                btn.replaceWith(input);
+                input.focus();
+                var submitted = false;
+                function submit() {
+                    if (submitted) return;
+                    submitted = true;
+                    var email = input.value.trim();
+                    if (!email) { loadWingPaths(wing); return; }
+                    input.disabled = true;
+                    sendTunnelRequest(wing.wing_id, { type: 'paths.add_member', path: path, email: email })
+                        .then(function() { loadWingPaths(wing); })
+                        .catch(function() { submitted = false; input.disabled = false; input.value = 'failed'; });
+                }
+                input.addEventListener('blur', submit);
+                input.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+                    if (e.key === 'Escape') { e.preventDefault(); submitted = true; loadWingPaths(wing); }
+                });
+            });
+        });
+    }).catch(function() {
+        container.innerHTML = '<span class="text-dim">could not load paths</span>';
+    });
 }
 
 function loadWingPastSessions(wingId, offset) {

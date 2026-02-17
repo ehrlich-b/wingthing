@@ -13,7 +13,7 @@ type WingConfig struct {
 	WingID    string     `yaml:"wing_id"`
 	Roost     string     `yaml:"roost,omitempty"`
 	Org       string     `yaml:"org,omitempty"`
-	Paths     []string   `yaml:"paths,omitempty"`
+	Paths     PathList   `yaml:"paths,omitempty"`
 	Root      string     `yaml:"root,omitempty"` // compat: folded into Paths on load
 	Labels    []string   `yaml:"labels,omitempty"`
 	EggConfig string     `yaml:"egg_config,omitempty"`
@@ -32,6 +32,91 @@ type AllowKey struct {
 	Key    string `yaml:"key,omitempty"`     // base64 raw P-256 public key (optional)
 	UserID string `yaml:"user_id,omitempty"` // relay user ID
 	Email  string `yaml:"email,omitempty"`   // auto-set from relay, for display
+}
+
+// PathEntry is a directory path with optional per-folder member ACLs.
+// When Members is nil/empty, the path is visible to all authenticated users (legacy behavior).
+// When Members is set, only those emails + owner/admin can access the path.
+type PathEntry struct {
+	Path    string   `yaml:"path" json:"path"`
+	Members []string `yaml:"members,omitempty" json:"members,omitempty"`
+}
+
+// PathList is a list of PathEntry values that supports mixed YAML formats:
+// plain strings ("~/repos") and mappings ({path: ~/repos, members: [...]}).
+type PathList []PathEntry
+
+// UnmarshalYAML handles both scalar strings and mapping nodes in a YAML sequence.
+func (pl *PathList) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.SequenceNode {
+		return &yaml.TypeError{Errors: []string{"expected sequence"}}
+	}
+	var result PathList
+	for _, item := range value.Content {
+		switch item.Kind {
+		case yaml.ScalarNode:
+			result = append(result, PathEntry{Path: item.Value})
+		case yaml.MappingNode:
+			var entry PathEntry
+			if err := item.Decode(&entry); err != nil {
+				return err
+			}
+			result = append(result, entry)
+		}
+	}
+	*pl = result
+	return nil
+}
+
+// MarshalYAML serializes PathList: entries without members become plain strings (backwards compat).
+func (pl PathList) MarshalYAML() (any, error) {
+	var nodes []*yaml.Node
+	for _, e := range pl {
+		if len(e.Members) == 0 {
+			nodes = append(nodes, &yaml.Node{Kind: yaml.ScalarNode, Value: e.Path})
+		} else {
+			var n yaml.Node
+			if err := n.Encode(e); err != nil {
+				return nil, err
+			}
+			nodes = append(nodes, &n)
+		}
+	}
+	return &yaml.Node{Kind: yaml.SequenceNode, Content: nodes}, nil
+}
+
+// Strings returns just the path strings (drop-in for existing callers that need []string).
+func (pl PathList) Strings() []string {
+	out := make([]string, len(pl))
+	for i, e := range pl {
+		out[i] = e.Path
+	}
+	return out
+}
+
+// PathsForUser returns paths accessible to the given email/orgRole.
+// Owner/admin get all paths. Members get only entries where their email is in Members
+// (case-insensitive) or where Members is empty/nil (legacy open entries).
+func (pl PathList) PathsForUser(email, orgRole string) []string {
+	if orgRole == "owner" || orgRole == "admin" {
+		return pl.Strings()
+	}
+	emailLower := strings.ToLower(email)
+	var out []string
+	for _, e := range pl {
+		if len(e.Members) == 0 {
+			// Legacy entry: visible to all
+			out = append(out, e.Path)
+			continue
+		}
+		for _, m := range e.Members {
+			if strings.ToLower(m) == emailLower {
+				out = append(out, e.Path)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // LoadWingConfig reads wing.yaml from dir. If the file doesn't exist,
@@ -61,7 +146,7 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	}
 	// Migrate legacy root -> paths
 	if cfg.Root != "" && len(cfg.Paths) == 0 {
-		cfg.Paths = []string{cfg.Root}
+		cfg.Paths = PathList{{Path: cfg.Root}}
 	}
 	return cfg, nil
 }
