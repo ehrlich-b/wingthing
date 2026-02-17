@@ -156,7 +156,7 @@ func (s *Server) handleAuthClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if dc == nil || dc.Claimed {
-		s.renderClaimPage(w, userCode, "", "Invalid or expired code")
+		s.renderClaimPage(w, userCode, "Invalid or expired code")
 		return
 	}
 
@@ -167,14 +167,14 @@ func (s *Server) handleAuthClaim(w http.ResponseWriter, r *http.Request) {
 
 	s.Store.AppendAudit(user.ID, "device_claimed", strPtr(fmt.Sprintf("code=%s user_code=%s", dc.Code, userCode)))
 
-	s.renderClaimPage(w, userCode, user.ID, "")
+	http.Redirect(w, r, s.appURL(), http.StatusSeeOther)
 }
 
 // handleClaimPage handles GET /auth/claim — shows the approve page.
 func (s *Server) handleClaimPage(w http.ResponseWriter, r *http.Request) {
 	userCode := r.URL.Query().Get("code")
 	if userCode == "" {
-		s.renderClaimPage(w, "", "", "No device code provided")
+		s.renderClaimPage(w, "", "No device code provided")
 		return
 	}
 
@@ -187,32 +187,31 @@ func (s *Server) handleClaimPage(w http.ResponseWriter, r *http.Request) {
 
 	dc, err := s.Store.GetDeviceCodeByUserCode(strings.ToUpper(userCode))
 	if err != nil || dc == nil {
-		s.renderClaimPage(w, userCode, "", "Invalid or expired code")
+		s.renderClaimPage(w, userCode, "Invalid or expired code")
 		return
 	}
 	if dc.Claimed {
-		s.renderClaimPage(w, userCode, "", "")
+		http.Redirect(w, r, s.appURL(), http.StatusSeeOther)
 		return
 	}
 
-	s.renderClaimPage(w, userCode, "", "")
+	s.renderClaimPage(w, userCode, "")
 }
 
-func (s *Server) renderClaimPage(w http.ResponseWriter, userCode, claimedBy, errMsg string) {
-	appURL := "/app/"
+func (s *Server) appURL() string {
 	if s.Config.AppHost != "" {
-		appURL = "https://" + s.Config.AppHost + "/"
+		return "https://" + s.Config.AppHost + "/"
 	}
+	return "/app/"
+}
+
+func (s *Server) renderClaimPage(w http.ResponseWriter, userCode, errMsg string) {
 	data := struct {
 		UserCode string
-		Claimed  bool
 		Error    string
-		AppURL   string
 	}{
 		UserCode: userCode,
-		Claimed:  claimedBy != "",
 		Error:    errMsg,
-		AppURL:   appURL,
 	}
 
 	t := s.template(claimTmpl, "claim.html")

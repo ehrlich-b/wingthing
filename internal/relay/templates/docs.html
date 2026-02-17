@@ -34,6 +34,7 @@
 {{define "content"}}
 <div class="docs-layout">
 <nav class="docs-nav">
+<a href="#quickstart">quickstart</a>
 <a href="#overview">overview</a>
 <a href="#installation">installation</a>
 <a href="#wing-setup">wing setup</a>
@@ -50,6 +51,29 @@
 <div class="docs-body">
 <h1>documentation</h1>
 <p class="lead">wingthing runs AI agents sandboxed on your machine, accessible from anywhere.</p>
+
+<div class="docs-section" id="quickstart">
+<h2>quickstart</h2>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">using wingthing.ai</h3>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span><br>
+<span class="prompt">$ </span><span class="cmd">wt login</span><br>
+<span class="prompt">$ </span><span class="cmd">wt start</span><br>
+<span class="prompt">$ </span><span class="cmd">open app.wingthing.ai</span>
+</div>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">self-host</h3>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span><br>
+<span class="prompt">$ </span><span class="cmd">wt serve --local</span><span class="comment">      # start your own roost</span><br>
+<span class="comment"># in another terminal:</span><br>
+<span class="prompt">$ </span><span class="cmd">wt start --local</span><span class="comment">      # connect wing to localhost:8080</span><br>
+<span class="prompt">$ </span><span class="cmd">open localhost:8080</span>
+</div>
+
+<p>Your machine is now a <strong>wing</strong> — a remote-accessible sandbox host. Open a terminal from the browser, pick an agent (Claude, Codex, Ollama), and it runs in an isolated <strong>egg</strong> on your hardware. All traffic is end-to-end encrypted through the <strong>roost</strong> (relay).</p>
+</div>
 
 <div class="docs-section" id="overview">
 <h2>overview</h2>
@@ -167,7 +191,7 @@
 <p>Without an <code>egg.yaml</code>, the sandbox applies opinionated defaults: CWD is writable, home is read-only, sensitive directories (<code>~/.ssh</code>, <code>~/.gnupg</code>, <code>~/.aws</code>, etc.) are denied, and only essential env vars pass through. Network is blocked except for exactly what your agent needs - each agent has a profile declaring its API domains, env vars, and config directories. Claude gets <code>api.anthropic.com</code>, Ollama gets <code>localhost</code>, etc. You don't configure any of this.</p>
 <p>A local <a href="https://en.wikipedia.org/wiki/HTTP_tunnel">CONNECT proxy</a> enforces domain-level filtering - agents can only reach their own API, not the entire internet. On macOS, Seatbelt forces all traffic through the proxy at the OS level. On Linux, the proxy is set via <code>HTTPS_PROXY</code>.</p>
 <p>Drop an <code>egg.yaml</code> in your project to customize. Configs are additive - you only declare what you're changing from the defaults.</p>
-<p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the <a href="/">sandbox builder</a> on the homepage to generate configs visually.</p>
+<p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the <a href="/">sandbox builder</a> on the homepage to generate configs visually, or install the <a href="https://github.com/ehrlich-b/wingthing/tree/main/docs/skills/create-egg">Claude Code skill</a> for an interactive security interview that generates hardened configs.</p>
 <p>Example <code>egg.yaml</code>:</p>
 <div class="docs-code">
 fs:<br>
