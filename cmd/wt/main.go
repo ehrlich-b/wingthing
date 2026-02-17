@@ -84,7 +84,7 @@ func startCmd() *cobra.Command {
 	var localFlag bool
 	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "Start the wing daemon (alias for wt wing start)",
+		Short: "Start the daemon (alias for wt wing start / wt daemon start)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			exe, exeErr := os.Executable()
 			if exeErr != nil {
@@ -131,7 +131,7 @@ func startCmd() *cobra.Command {
 func stopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the wing daemon (alias for wt wing stop)",
+		Short: "Stop the daemon (alias for wt wing stop / wt daemon stop)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pid, err := readPid()
 			if err != nil {

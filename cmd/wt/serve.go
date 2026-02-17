@@ -29,8 +29,9 @@ func serveCmd() *cobra.Command {
 	var localFlag bool
 
 	cmd := &cobra.Command{
-		Use:   "serve",
-		Short: "Start the wt.ai web server",
+		Use:     "relay",
+		Aliases: []string{"serve", "roost"},
+		Short:   "Start the relay server (web UI + WebSocket relay)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {

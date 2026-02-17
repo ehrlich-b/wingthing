@@ -24,9 +24,10 @@ func eggCmd() *cobra.Command {
 	var configFlag string
 
 	cmd := &cobra.Command{
-		Use:   "egg [agent]",
-		Short: "Run an agent in a sandboxed session",
-		Long:  "Spawns an agent (claude, ollama, codex) inside a per-session egg process with PTY persistence and optional sandboxing.\nStandalone eggs use dangerously_skip_permissions by default — the sandbox IS the permission boundary.",
+		Use:     "sandbox [agent]",
+		Aliases: []string{"egg"},
+		Short:   "Run an agent in a sandboxed session",
+		Long:    "Spawns an agent (claude, ollama, codex) inside a per-session sandbox with PTY persistence.\nThe sandbox IS the permission boundary — agents get dangerously_skip_permissions by default.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {

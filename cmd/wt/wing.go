@@ -342,9 +342,10 @@ func readPid() (int, error) {
 
 func wingCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "wing",
-		Short: "Manage your wing",
-		Long:  "Your wing makes this machine reachable from anywhere via the roost. Use 'wt wing start' to go online.",
+		Use:     "daemon",
+		Aliases: []string{"wing"},
+		Short:   "Connect this machine to a relay, accessible from anywhere",
+		Long:    "Makes this machine reachable from anywhere via the relay.\nUse 'wt daemon start' to go online, 'wt daemon status' to check.",
 	}
 
 	cmd.AddCommand(wingStartCmd())
