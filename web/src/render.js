@@ -1372,10 +1372,15 @@ function renderActiveSessionRows(sessions) {
         var sDot = s.status === 'active' ? 'live' : 'detached';
         var kind = s.kind || 'terminal';
         var auditBadge = s.audit ? '<span class="wd-audit-badge">audit</span>' : '';
+        var auditBtns = s.audit
+            ? '<button class="btn-sm wd-replay-btn" data-sid="' + s.id + '">replay</button>' +
+              '<button class="btn-sm wd-keylog-btn" data-sid="' + s.id + '">keylog</button>'
+            : '';
         return '<div class="wd-session-row" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<span class="session-dot ' + sDot + '"></span>' +
             '<span class="wd-session-name">' + escapeHtml(sName) + ' \u00b7 ' + agentWithIcon(s.agent || '?') + '</span>' +
             auditBadge +
+            auditBtns +
             '<button class="wd-kill-btn" data-sid="' + s.id + '" title="kill session">x</button>' +
         '</div>';
     }).join('');
@@ -1384,7 +1389,7 @@ function renderActiveSessionRows(sessions) {
 function wireActiveSessionRows() {
     DOM.wingDetailContent.querySelectorAll('.wd-session-row').forEach(function(row) {
         row.addEventListener('click', function(e) {
-            if (e.target.classList.contains('wd-kill-btn')) return;
+            if (e.target.classList.contains('wd-kill-btn') || e.target.classList.contains('wd-replay-btn') || e.target.classList.contains('wd-keylog-btn')) return;
             var sid = row.dataset.sid;
             switchToSession(sid);
         });
@@ -1413,6 +1418,18 @@ function wireActiveSessionRows() {
                     btn.classList.remove('confirming');
                 }, 3000);
             }
+        });
+    });
+    DOM.wingDetailContent.querySelectorAll('.wd-session-row .wd-replay-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            openAuditReplay(S.currentWingId, btn.dataset.sid);
+        });
+    });
+    DOM.wingDetailContent.querySelectorAll('.wd-session-row .wd-keylog-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            openAuditKeylog(S.currentWingId, btn.dataset.sid);
         });
     });
 }

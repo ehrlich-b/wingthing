@@ -72,9 +72,11 @@ type Session struct {
 	audit          bool
 	auditor        *inputAuditor // nil when audit disabled
 	auditWriter    *gzip.Writer  // nil when audit disabled or after PTY exit
+	auditFile      *os.File     // underlying file for audit flush
 	auditStart     time.Time     // start time for audit timestamps
 	auditLastMS    uint64        // last frame timestamp for delta encoding
-	auditMu        sync.Mutex   // protects auditWriter/auditLastMS
+	auditFrames    int           // frame count since last flush
+	auditMu        sync.Mutex   // protects auditWriter/auditLastMS/auditFrames
 }
 
 // RunConfig holds everything needed to start a single egg session.
@@ -767,11 +769,13 @@ func (s *Server) readPTY(sess *Session) {
 			writeVarint(gw, uint64(sess.Rows))
 			sess.auditMu.Lock()
 			sess.auditWriter = gw
+			sess.auditFile = f
 			sess.auditStart = sess.StartedAt
 			sess.auditMu.Unlock()
 			defer func() {
 				sess.auditMu.Lock()
 				sess.auditWriter = nil
+				sess.auditFile = nil
 				sess.auditMu.Unlock()
 				gw.Close()
 				f.Close()
@@ -820,6 +824,13 @@ func (sess *Session) writeAuditFrame(frameType uint64, data []byte) {
 	writeVarint(sess.auditWriter, frameType)
 	writeVarint(sess.auditWriter, uint64(len(data)))
 	sess.auditWriter.Write(data)
+	sess.auditFrames++
+	if sess.auditFrames%100 == 0 {
+		sess.auditWriter.Flush()
+		if sess.auditFile != nil {
+			sess.auditFile.Sync()
+		}
+	}
 }
 
 // writeAuditResize writes a resize event to the audit stream.
