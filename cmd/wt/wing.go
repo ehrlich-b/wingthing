@@ -493,7 +493,7 @@ func wingStartCmd() *cobra.Command {
 	var pathsFlag string
 	var auditFlag bool
 	var localFlag bool
-	var vteFlag bool
+	var rawReplayFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -502,7 +502,7 @@ func wingStartCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Foreground mode: run directly
 			if foregroundFlag {
-				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag, vteFlag)
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag, !rawReplayFlag)
 			}
 
 			// Daemon mode (default): re-exec detached, write PID file, return
@@ -548,8 +548,8 @@ func wingStartCmd() *cobra.Command {
 			if localFlag {
 				childArgs = append(childArgs, "--local")
 			}
-			if vteFlag {
-				childArgs = append(childArgs, "--vte")
+			if rawReplayFlag {
+				childArgs = append(childArgs, "--raw-replay")
 			}
 
 			rotateLog(wingLogPath())
@@ -601,7 +601,7 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&pathsFlag, "paths", "", "comma-separated directories the wing can browse (default: ~/)")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "connect to localhost:8080 (for self-hosted wt serve)")
-	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect instead of replay buffer")
+	cmd.Flags().BoolVar(&rawReplayFlag, "raw-replay", false, "use raw replay buffer for reconnect instead of VTerm snapshot")
 
 	return cmd
 }
