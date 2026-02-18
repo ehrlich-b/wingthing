@@ -54,6 +54,19 @@
 
             <section id="terminal-section" style="display:none;">
                 <div id="terminal-container"></div>
+                <div id="preview-divider" style="display:none;"></div>
+                <div id="preview-panel" style="display:none;">
+                    <div id="preview-header">
+                        <span id="preview-title">Preview</span>
+                        <span id="preview-url-bar" style="display:none;">
+                            <span id="preview-url"></span>
+                            <button id="preview-copy-btn">copy</button>
+                            <a id="preview-open-btn" target="_blank">open</a>
+                        </span>
+                        <button id="preview-close-btn">&times;</button>
+                    </div>
+                    <iframe id="preview-iframe" sandbox="allow-scripts allow-same-origin"></iframe>
+                </div>
                 <div id="replay-overlay" style="display:none;">
                     <div id="replay-bar"><div id="replay-fill"></div></div>
                     <div id="replay-label">restoring session...</div>

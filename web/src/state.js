@@ -71,4 +71,14 @@ export function initDOM() {
     DOM.paletteResults = document.getElementById('palette-results');
     DOM.paletteStatus = document.getElementById('palette-status');
     DOM.paletteHints = document.getElementById('palette-hints');
+    DOM.previewDivider = document.getElementById('preview-divider');
+    DOM.previewPanel = document.getElementById('preview-panel');
+    DOM.previewHeader = document.getElementById('preview-header');
+    DOM.previewTitle = document.getElementById('preview-title');
+    DOM.previewUrlBar = document.getElementById('preview-url-bar');
+    DOM.previewUrl = document.getElementById('preview-url');
+    DOM.previewCopyBtn = document.getElementById('preview-copy-btn');
+    DOM.previewOpenBtn = document.getElementById('preview-open-btn');
+    DOM.previewCloseBtn = document.getElementById('preview-close-btn');
+    DOM.previewIframe = document.getElementById('preview-iframe');
 }

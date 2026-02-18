@@ -448,7 +448,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				s.dispatchWingEvent("wing.config", w)
 			}
 
-		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge:
+		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge, ws.TypePTYPreview:
 			// Extract session_id and forward to browser
 			var partial struct {
 				SessionID string `json:"session_id"`

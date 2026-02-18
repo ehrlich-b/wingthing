@@ -63,6 +63,13 @@ The bar: someone new can use a wing without confusion or broken UX.
 - [ ] WebSocket direct to Fly — bypass Cloudflare for ws:// traffic (ws.wingthing.ai)
 
 ### Security
+- [ ] Ubuntu 24.04 sandbox breakage — AppArmor 4.0 gates `CLONE_NEWUSER` behind
+  `userns_create` profile. `probeUserNamespace()` in `internal/sandbox/linux.go:87`
+  will fail, sandbox either errors out or falls back to no isolation. Options:
+  (a) ship an AppArmor profile for `wt` that allows `userns_create`,
+  (b) detect and guide user to `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`,
+  (c) document as known issue. Slide fleet is 22.04 today — no current exposure but
+  will bite on upgrade.
 - [ ] Encrypt pty.resize — cols/rows sent as plaintext, should go through E2E like pty.input
 - [ ] Tunnel passkey replay protection — `passkey.auth.begin`/`finish` protocol with server-generated nonce
 - [ ] Internal API trust boundary — mTLS or signed service tokens for node-to-node calls

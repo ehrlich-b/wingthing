@@ -31,6 +31,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/ws"
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 )
 
@@ -83,6 +84,107 @@ func generateAttentionNonce() string {
 		log.Printf("generateAttentionNonce: crypto/rand failed: %v", err)
 	}
 	return fmt.Sprintf("%x", b)
+}
+
+// parsePreviewFile parses a .wt-preview file into a mode/url/content map.
+func parsePreviewFile(data []byte) map[string]string {
+	s := strings.TrimSpace(string(data))
+	if s == "" {
+		return map[string]string{"mode": ""}
+	}
+	firstLine := s
+	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+		firstLine = s[:idx]
+	}
+	if strings.HasPrefix(firstLine, "url:") {
+		return map[string]string{"mode": "url", "url": strings.TrimSpace(firstLine[4:])}
+	}
+	return map[string]string{"mode": "markdown", "content": string(data)}
+}
+
+// consumeAndSendPreview reads a .wt-preview file, deletes it, encrypts the content, and sends it.
+func consumeAndSendPreview(path, sessionID string, mu *sync.Mutex, gcm *cipher.AEAD, write ws.PTYWriteFunc) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	os.Remove(path)
+
+	parsed := parsePreviewFile(data)
+	jsonBytes, err := json.Marshal(parsed)
+	if err != nil {
+		return
+	}
+
+	mu.Lock()
+	currentGCM := *gcm
+	mu.Unlock()
+	if currentGCM == nil {
+		return
+	}
+
+	encrypted, err := auth.Encrypt(currentGCM, jsonBytes)
+	if err != nil {
+		log.Printf("pty session %s: preview encrypt error: %v", sessionID, err)
+		return
+	}
+	write(ws.PTYPreview{Type: ws.TypePTYPreview, SessionID: sessionID, Data: encrypted})
+}
+
+// watchPreviewFile watches for .wt-preview file creation in the given directory.
+func watchPreviewFile(ctx context.Context, cwd, sessionID string, mu *sync.Mutex, gcm *cipher.AEAD, write ws.PTYWriteFunc) {
+	previewPath := filepath.Join(cwd, ".wt-preview")
+
+	// Try fsnotify first
+	watcher, err := fsnotify.NewWatcher()
+	if err == nil {
+		defer watcher.Close()
+		if addErr := watcher.Add(cwd); addErr != nil {
+			log.Printf("pty session %s: fsnotify add failed, falling back to polling: %v", sessionID, addErr)
+			goto poll
+		}
+		var debounce *time.Timer
+		for {
+			select {
+			case ev, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if filepath.Base(ev.Name) != ".wt-preview" {
+					continue
+				}
+				if ev.Op&(fsnotify.Create|fsnotify.Write) == 0 {
+					continue
+				}
+				if debounce != nil {
+					debounce.Stop()
+				}
+				debounce = time.AfterFunc(50*time.Millisecond, func() {
+					consumeAndSendPreview(previewPath, sessionID, mu, gcm, write)
+				})
+			case _, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+
+poll:
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if _, err := os.Stat(previewPath); err == nil {
+				consumeAndSendPreview(previewPath, sessionID, mu, gcm, write)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // tunnelKeys caches derived AES-GCM keys per sender public key.
@@ -2437,6 +2539,11 @@ authDone:
 
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	defer sessionCancel()
+
+	// Watch for .wt-preview file in agent working directory
+	if start.CWD != "" {
+		go watchPreviewFile(sessionCtx, start.CWD, start.SessionID, &mu, &gcm, write)
+	}
 
 	// Read output from egg -> encrypt -> send to browser
 	go func() {

@@ -5,6 +5,7 @@ go 1.25.7
 require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20251106193841-7889546fc720
 	github.com/charmbracelet/x/vt v0.0.0-00010101000000-000000000000
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.47.0

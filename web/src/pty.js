@@ -9,6 +9,7 @@ import { loadHome } from './data.js';
 import { showHome } from './nav.js';
 import { wingDisplayName, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
 import { saveTunnelAuthTokens } from './tunnel.js';
+import { handlePreview, closePreview } from './preview.js';
 
 function sessionTitle(agent, wingId) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
@@ -302,6 +303,7 @@ function setupPTYHandlers(ws, reattach) {
             case 'pty.exited':
                 if (S.ptySessionId && msg.session_id !== S.ptySessionId) break;
                 if (!S.ptySessionId && !msg.error) break;
+                closePreview();
                 DOM.headerTitle.textContent = '';
                 DOM.sessionCloseBtn.style.display = 'none';
                 if (msg.session_id) clearTermBuffer(msg.session_id);
@@ -343,6 +345,16 @@ function setupPTYHandlers(ws, reattach) {
                 loadHome();
                 break;
 
+            case 'pty.preview':
+                if (msg.session_id !== S.ptySessionId) break;
+                e2eDecrypt(msg.data).then(function(bytes) {
+                    var preview = JSON.parse(new TextDecoder().decode(bytes));
+                    handlePreview(preview);
+                }).catch(function(err) {
+                    console.error('preview decrypt error:', err);
+                });
+                break;
+
             case 'error':
                 DOM.ptyStatus.textContent = msg.message;
                 break;
@@ -379,6 +391,7 @@ function setupPTYHandlers(ws, reattach) {
 
 export function connectPTY(agent, cwd, wingId) {
     detachPTY();
+    closePreview();
     S.ptyBandwidthExceeded = false;
 
     S.term.clear();

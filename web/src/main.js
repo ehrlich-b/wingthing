@@ -11,6 +11,7 @@ import { closeAuditOverlay } from './audit.js';
 import { hideDetailModal, showSessionInfo, renderSidebar, renderDashboard } from './render.js';
 import { initNotifyListeners } from './notify.js';
 import { loadTunnelAuthTokens } from './tunnel.js';
+import { initPreview } from './preview.js';
 
 async function init() {
     initDOM();
@@ -271,6 +272,7 @@ async function init() {
 
     await document.fonts.load("400 14px 'JetBrains Mono'");
     initTerminal();
+    initPreview();
     initNotifyListeners();
     loadHome();
     setInterval(loadHome, 30000);

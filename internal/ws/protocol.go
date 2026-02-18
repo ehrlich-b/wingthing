@@ -17,6 +17,7 @@ const (
 	TypePTYKill         = "pty.kill"          // browser → relay → wing (terminate session)
 	TypePTYDetach       = "pty.detach"        // browser → relay (explicit detach before disconnect)
 	TypePTYAttentionAck = "pty.attention_ack" // browser → relay → wing (notification seen)
+	TypePTYPreview      = "pty.preview"       // wing → relay → browser (ephemeral)
 
 	// Encrypted tunnel (browser ↔ wing, relay is opaque forwarder)
 	TypeTunnelRequest  = "tunnel.req"    // browser → relay → wing
@@ -154,6 +155,13 @@ type PTYOutput struct {
 	SessionID  string `json:"session_id"`
 	Data       string `json:"data"`                 // base64-encoded
 	Compressed bool   `json:"compressed,omitempty"` // gzip before encrypt
+}
+
+// PTYPreview carries preview panel data (URL or markdown) from wing to browser.
+type PTYPreview struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Data      string `json:"data"` // base64(AES-GCM encrypted JSON)
 }
 
 // PTYInput carries keystrokes from browser to wing.
