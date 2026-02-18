@@ -63,12 +63,12 @@ type Session struct {
 	StartedAt      time.Time
 	ptmx           *os.File
 	replay         *replayBuffer
-	vterm          *VTerm // server-side VTE for snapshot-based reconnect
-	useVTE         bool   // when true, attach sends VTerm snapshot instead of replay buffer
-	sb             sandbox.Sandbox
-	cmd            *exec.Cmd
-	mu             sync.Mutex
-	writeMu        sync.Mutex // gates dual-write (readPTY) and snapshot (attach handler)
+	vterm   *VTerm        // server-side VTE — only accessed by runVTermLoop goroutine
+	vtermCh chan vtermMsg // async vterm processing channel
+	useVTE  bool         // when true, attach sends VTerm snapshot instead of replay buffer
+	sb      sandbox.Sandbox
+	cmd     *exec.Cmd
+	mu      sync.Mutex
 	done           chan struct{} // closed when process exits
 	exitCode       int
 	debug          bool
@@ -603,9 +603,10 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		Cols:           rc.Cols,
 		Rows:           rc.Rows,
 		ptmx:           ptmx,
-		replay:         newReplayBuffer(rc.Agent),
-		vterm:          NewVTerm(int(rc.Cols), int(rc.Rows)),
-		useVTE:         rc.VTE,
+		replay:  newReplayBuffer(rc.Agent),
+		vterm:   NewVTerm(int(rc.Cols), int(rc.Rows)),
+		vtermCh: make(chan vtermMsg, 256),
+		useVTE:  rc.VTE,
 		sb:             sb,
 		cmd:            cmd,
 		done:           make(chan struct{}),
@@ -630,6 +631,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	s.mu.Unlock()
 
 	log.Printf("egg: session %s agent=%s pid=%d network=%s fs=%d", sessionID, rc.Agent, cmd.Process.Pid, networkSummary, len(rc.FS))
+
+	// VTerm async processing goroutine — must start before readPTY
+	go runVTermLoop(sess.vterm, sess.vtermCh, sess.done)
 
 	// Read PTY output (with first-byte timing)
 	go s.readPTY(sess)
@@ -807,12 +811,12 @@ func (s *Server) readPTY(sess *Session) {
 			}
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			sess.writeMu.Lock()
 			sess.replay.Write(data)
-			if sess.vterm != nil {
-				sess.vterm.Write(data)
+			offset := sess.replay.WritePosition()
+			select {
+			case sess.vtermCh <- vtermMsg{data: data, offset: offset}:
+			default:
 			}
-			sess.writeMu.Unlock()
 			if debugFile != nil {
 				debugFile.Write(data)
 			}
@@ -892,8 +896,9 @@ func (s *Server) Resize(ctx context.Context, req *pb.ResizeRequest) (*pb.ResizeR
 		Cols: uint16(req.Cols),
 		Rows: uint16(req.Rows),
 	})
-	if sess.vterm != nil {
-		sess.vterm.Resize(int(req.Cols), int(req.Rows))
+	select {
+	case sess.vtermCh <- vtermMsg{resize: &vtermResize{int(req.Cols), int(req.Rows)}}:
+	default:
 	}
 	sess.writeAuditResize(req.Cols, req.Rows)
 	s.updateMetaDimensions(req.Cols, req.Rows)
@@ -939,15 +944,30 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 
 	if msg.GetAttach() {
 		// Full replay as first message, then cursor starts after snapshot.
-		sess.writeMu.Lock()
 		var snapshot []byte
 		if sess.useVTE && sess.vterm != nil {
-			snapshot = sess.vterm.Snapshot()
-			startOffset = sess.replay.WritePosition()
+			fenceCh := make(chan vtermFenceResult, 1)
+			select {
+			case sess.vtermCh <- vtermMsg{fence: fenceCh}:
+				select {
+				case result := <-fenceCh:
+					snapshot = result.Snapshot
+					startOffset = result.Offset
+				case <-sess.done:
+					snapshot, startOffset = sess.replay.Snapshot()
+				case <-time.After(5 * time.Second):
+					log.Printf("egg: vterm fence timeout, falling back to replay")
+					snapshot, startOffset = sess.replay.Snapshot()
+				}
+			case <-sess.done:
+				snapshot, startOffset = sess.replay.Snapshot()
+			case <-time.After(5 * time.Second):
+				log.Printf("egg: vterm fence enqueue timeout, falling back to replay")
+				snapshot, startOffset = sess.replay.Snapshot()
+			}
 		} else {
 			snapshot, startOffset = sess.replay.Snapshot()
 		}
-		sess.writeMu.Unlock()
 		if err := stream.Send(&pb.SessionMsg{
 			SessionId: sessionID,
 			Payload:   &pb.SessionMsg_Output{Output: snapshot},
@@ -1023,8 +1043,9 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 				Cols: uint16(p.Resize.Cols),
 				Rows: uint16(p.Resize.Rows),
 			})
-			if sess.vterm != nil {
-				sess.vterm.Resize(int(p.Resize.Cols), int(p.Resize.Rows))
+			select {
+			case sess.vtermCh <- vtermMsg{resize: &vtermResize{int(p.Resize.Cols), int(p.Resize.Rows)}}:
+			default:
 			}
 			sess.writeAuditResize(p.Resize.Cols, p.Resize.Rows)
 			s.updateMetaDimensions(p.Resize.Cols, p.Resize.Rows)

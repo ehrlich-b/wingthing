@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/vt"
 )
@@ -528,4 +530,275 @@ func TestVTermAuditReplay(t *testing.T) {
 	}
 
 	t.Logf("round-trip grid match: OK (%d bytes, cursor at %v)", len(origRender), origPos)
+}
+
+// --- Async VTerm tests ---
+// These test the runVTermLoop goroutine, vtermMsg channel, and fence mechanism.
+// No PTY, gRPC, or sandbox needed — just replayBuffer + VTerm + channel.
+
+type asyncVTermHarness struct {
+	replay  *replayBuffer
+	vterm   *VTerm
+	vtermCh chan vtermMsg
+	done    chan struct{}
+}
+
+func newAsyncVTermHarness(cols, rows, chSize int) *asyncVTermHarness {
+	h := &asyncVTermHarness{
+		replay:  newReplayBuffer(""),
+		vterm:   NewVTerm(cols, rows),
+		vtermCh: make(chan vtermMsg, chSize),
+		done:    make(chan struct{}),
+	}
+	go runVTermLoop(h.vterm, h.vtermCh, h.done)
+	return h
+}
+
+func (h *asyncVTermHarness) writeAndEnqueue(data []byte) {
+	h.replay.Write(data)
+	offset := h.replay.WritePosition()
+	select {
+	case h.vtermCh <- vtermMsg{data: data, offset: offset}:
+	default:
+	}
+}
+
+func (h *asyncVTermHarness) fence() vtermFenceResult {
+	fenceCh := make(chan vtermFenceResult, 1)
+	h.vtermCh <- vtermMsg{fence: fenceCh}
+	return <-fenceCh
+}
+
+func (h *asyncVTermHarness) close() {
+	close(h.done)
+}
+
+func TestAsyncVTermFenceBasic(t *testing.T) {
+	h := newAsyncVTermHarness(80, 24, 256)
+	defer h.close()
+
+	h.writeAndEnqueue([]byte("hello "))
+	h.writeAndEnqueue([]byte("world"))
+
+	result := h.fence()
+
+	snap := string(result.Snapshot)
+	if !strings.Contains(snap, "hello world") {
+		t.Errorf("fence snapshot missing content, got:\n%s", snap)
+	}
+
+	expectedOffset := h.replay.WritePosition()
+	if result.Offset != expectedOffset {
+		t.Errorf("fence offset = %d, want %d", result.Offset, expectedOffset)
+	}
+}
+
+func TestAsyncVTermFenceStreamBoundary(t *testing.T) {
+	h := newAsyncVTermHarness(80, 24, 256)
+	defer h.close()
+
+	h.writeAndEnqueue([]byte("A"))
+	h.writeAndEnqueue([]byte("B"))
+
+	result := h.fence()
+	fenceOffset := result.Offset
+
+	// Write more after the fence
+	h.writeAndEnqueue([]byte("C"))
+	h.writeAndEnqueue([]byte("D"))
+
+	// Register a cursor at the fence offset and read after
+	cursor := h.replay.Register(fenceOffset)
+	defer h.replay.Unregister(cursor)
+
+	data, _ := h.replay.ReadAfter(cursor)
+	if string(data) != "CD" {
+		t.Errorf("ReadAfter fence returned %q, want %q", string(data), "CD")
+	}
+}
+
+func TestAsyncVTermFenceDuringHeavyOutput(t *testing.T) {
+	h := newAsyncVTermHarness(80, 24, 256)
+	defer h.close()
+
+	chunkSize := 1024
+	totalChunks := 1000
+	chunk := make([]byte, chunkSize)
+	for i := range chunk {
+		chunk[i] = 'X'
+	}
+
+	// Writer goroutine
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for range totalChunks {
+			h.writeAndEnqueue(chunk)
+		}
+	}()
+
+	// Wait a bit for some data to flow, then fence
+	<-writerDone
+
+	result := h.fence()
+
+	totalWritten := h.replay.WritePosition()
+	if result.Offset > totalWritten {
+		t.Errorf("fence offset %d > total written %d", result.Offset, totalWritten)
+	}
+	if result.Offset == 0 {
+		t.Error("fence offset should not be 0 after heavy output")
+	}
+	if len(result.Snapshot) == 0 {
+		t.Error("fence snapshot should not be empty")
+	}
+}
+
+func TestAsyncVTermFenceResizeOrdering(t *testing.T) {
+	h := newAsyncVTermHarness(80, 24, 256)
+	defer h.close()
+
+	h.writeAndEnqueue([]byte("before resize\r\n"))
+
+	// Send resize through channel
+	h.vtermCh <- vtermMsg{resize: &vtermResize{120, 40}}
+
+	h.writeAndEnqueue([]byte("after resize"))
+
+	result := h.fence()
+
+	snap := string(result.Snapshot)
+	if !strings.Contains(snap, "after resize") {
+		t.Errorf("fence snapshot missing post-resize content, got:\n%s", snap)
+	}
+}
+
+func TestAsyncVTermChannelSkip(t *testing.T) {
+	// Tiny buffer — messages will be dropped
+	h := newAsyncVTermHarness(80, 24, 4)
+	defer h.close()
+
+	totalWrites := 100
+	for i := range totalWrites {
+		data := []byte(fmt.Sprintf("line %d\r\n", i))
+		h.replay.Write(data)
+		offset := h.replay.WritePosition()
+		select {
+		case h.vtermCh <- vtermMsg{data: data, offset: offset}:
+		default:
+			// Dropped — expected with tiny buffer
+		}
+	}
+
+	result := h.fence()
+
+	// Key invariant: replay has everything, even if VTerm missed some
+	replaySnap, replayOffset := h.replay.Snapshot()
+	if result.Offset > replayOffset {
+		t.Errorf("fence offset %d > replay offset %d", result.Offset, replayOffset)
+	}
+
+	// Replay should have all 100 lines
+	replayStr := string(replaySnap)
+	if !strings.Contains(replayStr, "line 99") {
+		t.Error("replay missing last line — replay integrity broken")
+	}
+}
+
+func TestAsyncVTermSessionExitDuringFence(t *testing.T) {
+	h := newAsyncVTermHarness(80, 24, 256)
+
+	h.writeAndEnqueue([]byte("some output"))
+
+	// Close done — goroutine exits
+	close(h.done)
+
+	// Fence should not hang — simulate the attach handler's pattern
+	fenceCh := make(chan vtermFenceResult, 1)
+	select {
+	case h.vtermCh <- vtermMsg{fence: fenceCh}:
+		// Enqueued — but nobody reads it since goroutine exited
+		select {
+		case <-fenceCh:
+			// If we get a result before done, that's fine
+		case <-time.After(100 * time.Millisecond):
+			// Expected — goroutine exited, fence never processed
+		}
+	default:
+		// Channel might be full or goroutine already exited — also fine
+	}
+	// Key: no hang, no panic
+}
+
+func TestAsyncVTermReattachDuringActiveOutput(t *testing.T) {
+	h := newAsyncVTermHarness(80, 24, 256)
+	defer h.close()
+
+	// Simulate active output with a writer goroutine
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for i := range 500 {
+			h.writeAndEnqueue([]byte(fmt.Sprintf("stream %d\r\n", i)))
+		}
+	}()
+
+	// Fence mid-stream (simulates reattach)
+	result := h.fence()
+	fenceOffset := result.Offset
+
+	<-writerDone
+
+	// Register cursor at fence offset
+	cursor := h.replay.Register(fenceOffset)
+	defer h.replay.Unregister(cursor)
+
+	data, _ := h.replay.ReadAfter(cursor)
+	totalWritten := h.replay.WritePosition()
+	streamBytes := totalWritten - fenceOffset
+
+	if int64(len(data)) != streamBytes {
+		t.Errorf("stream bytes: got %d from ReadAfter, expected %d (totalWritten=%d, fenceOffset=%d)",
+			len(data), streamBytes, totalWritten, fenceOffset)
+	}
+}
+
+func TestAsyncVTermConcurrentFenceAndWrites(t *testing.T) {
+	h := newAsyncVTermHarness(80, 24, 256)
+	defer h.close()
+
+	// 4 writer goroutines
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range 250 {
+				h.writeAndEnqueue([]byte(fmt.Sprintf("w%d\r\n", i)))
+			}
+		}()
+	}
+
+	// 8 concurrent fences
+	fenceResults := make(chan vtermFenceResult, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result := h.fence()
+			fenceResults <- result
+		}()
+	}
+
+	wg.Wait()
+	close(fenceResults)
+
+	for result := range fenceResults {
+		if result.Offset < 0 {
+			t.Errorf("negative fence offset: %d", result.Offset)
+		}
+		if len(result.Snapshot) == 0 {
+			t.Error("empty fence snapshot")
+		}
+	}
 }

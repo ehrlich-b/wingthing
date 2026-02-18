@@ -156,3 +156,45 @@ func (v *VTerm) scrollbackLines() []string {
 	}
 	return lines
 }
+
+// vtermMsg is sent to the VTerm goroutine for async processing.
+type vtermMsg struct {
+	data   []byte
+	offset int64
+	resize *vtermResize
+	fence  chan<- vtermFenceResult
+}
+
+type vtermResize struct{ cols, rows int }
+
+// vtermFenceResult is returned through a fence channel to provide a consistent
+// (snapshot, offset) pair for reconnect.
+type vtermFenceResult struct {
+	Snapshot []byte
+	Offset   int64
+}
+
+// runVTermLoop processes VTerm writes, resizes, and fence (snapshot) requests
+// in a dedicated goroutine. Exits when done is closed. The channel ch is
+// NEVER closed — it is GC'd when all references are dropped after session end.
+func runVTermLoop(vt *VTerm, ch <-chan vtermMsg, done <-chan struct{}) {
+	defer vt.Close()
+	var lastOffset int64
+	for {
+		select {
+		case msg := <-ch:
+			if msg.data != nil {
+				vt.Write(msg.data)
+				lastOffset = msg.offset
+			}
+			if msg.resize != nil {
+				vt.Resize(msg.resize.cols, msg.resize.rows)
+			}
+			if msg.fence != nil {
+				msg.fence <- vtermFenceResult{Snapshot: vt.Snapshot(), Offset: lastOffset}
+			}
+		case <-done:
+			return
+		}
+	}
+}
