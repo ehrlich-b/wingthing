@@ -253,7 +253,17 @@ deny:
   - ~/.kube
 ```
 
-#### 4. Agent config dir enables persistence attacks
+#### 4. SSH agent socket leaks through filesystem deny
+
+**What happens:** The egg inherits `SSH_AUTH_SOCK` from the host environment. When `deny:~/.ssh` is configured, the intent is to block SSH access. But SSH can still authenticate via the forwarded agent socket even when `~/.ssh` is unreadable. SSH then prompts for host-key verification (since it can't read `known_hosts`), which surfaces through the PTY unexpectedly.
+
+**Result:** A sandboxed task can make outbound SSH connections — including `git` over SSH — using the user's SSH identity, despite `deny:~/.ssh`. If `StrictHostKeyChecking` triggers, the user sees an interactive host-key prompt they didn't expect.
+
+**Fix (v0.10.4+):** `BuildEnv` strips `SSH_AUTH_SOCK` from the environment whenever any FS deny rule covers `~/.ssh`. Denying the key directory implies denying agent auth.
+
+**Why not the reverse:** If users explicitly need git-over-SSH inside a sandbox (e.g., `network:*` + no deny on `~/.ssh`), `SSH_AUTH_SOCK` passes through normally. The stripping only happens when `deny:~/.ssh` is present.
+
+#### 5. Agent config dir enables persistence attacks
 
 **What happens:** `~/.claude/` is writable (agent needs it). Inside it, `settings.json` controls Claude Code hooks. A sandboxed task could inject a hook into `settings.json` that runs on every future Claude invocation — including ones outside the sandbox.
 
@@ -265,7 +275,7 @@ deny:
 - **Near-term:** Snapshot `settings.json` before the egg session, restore on exit. Changes made by the task don't persist.
 - **Longer-term:** Copy agent config into a tmpfs overlay so ALL changes are ephemeral. The agent works normally inside the session, but nothing persists to the host.
 
-#### 5. /proc visible on Linux
+#### 6. /proc visible on Linux
 
 **What happens:** The agent has its own PID namespace (CLONE_NEWPID), so it can only see its own processes. But the mount namespace inherits the host's /proc mount, which may expose system info (kernel version, cgroups, mount topology).
 
