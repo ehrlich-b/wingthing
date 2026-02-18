@@ -35,6 +35,9 @@ The bar: someone new can use a wing without confusion or broken UX.
 - [ ] Fix cursor preamble for other agents (codex, cursor, ollama) — same pattern, lower priority
 - [x] Fix notifications — multi-tab dedup via BroadcastChannel, nonce-based ntfy dedup, isViewingSession suppression
 - [ ] Latency pass — audit round-trip times, find low-hanging optimizations
+- [ ] Rescan `paths` for new folders — wing only discovers project directories at
+  startup, so new folders under configured paths don't appear until `wt stop && wt start`.
+  Add periodic rescan (e.g. every 60s) so the directory listing stays fresh without restart
 
 ### Self-Hosting First Class
 - [x] `wt serve` should work standalone with zero config for single-user self-hosted

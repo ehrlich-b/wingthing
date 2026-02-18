@@ -63,6 +63,7 @@ type Session struct {
 	StartedAt      time.Time
 	ptmx           *os.File
 	replay         *replayBuffer
+	vterm          *VTerm // server-side VTE for snapshot-based reconnect
 	sb             sandbox.Sandbox
 	cmd            *exec.Cmd
 	mu             sync.Mutex
@@ -593,6 +594,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		Rows:           rc.Rows,
 		ptmx:           ptmx,
 		replay:         newReplayBuffer(rc.Agent),
+		vterm:          NewVTerm(int(rc.Cols), int(rc.Rows)),
 		sb:             sb,
 		cmd:            cmd,
 		done:           make(chan struct{}),
@@ -795,6 +797,9 @@ func (s *Server) readPTY(sess *Session) {
 			data := make([]byte, n)
 			copy(data, buf[:n])
 			sess.replay.Write(data)
+			if sess.vterm != nil {
+				sess.vterm.Write(data)
+			}
 			if debugFile != nil {
 				debugFile.Write(data)
 			}
@@ -993,6 +998,9 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 				Cols: uint16(p.Resize.Cols),
 				Rows: uint16(p.Resize.Rows),
 			})
+			if sess.vterm != nil {
+				sess.vterm.Resize(int(p.Resize.Cols), int(p.Resize.Rows))
+			}
 			sess.writeAuditResize(p.Resize.Cols, p.Resize.Rows)
 			s.updateMetaDimensions(p.Resize.Cols, p.Resize.Rows)
 		case *pb.SessionMsg_Detach:
