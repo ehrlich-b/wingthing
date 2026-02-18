@@ -201,7 +201,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				go c.OnOrphanKill(ctx, partial.SessionID)
 			}
 
-		case TypePTYInput, TypePTYResize:
+		case TypePTYInput, TypePTYResize, TypePasskeyResponse:
 			var partial struct {
 				SessionID string `json:"session_id"`
 			}
@@ -229,6 +229,11 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 					return c.writeJSON(ctx, v)
 				})
 			}
+
+		case TypePasskeyRegistered:
+			var msg PasskeyRegistered
+			json.Unmarshal(data, &msg)
+			log.Printf("passkey.registered: user %s (%s) registered a passkey", msg.UserID, msg.Email)
 
 		case TypeError:
 			var msg ErrorMsg

@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -264,6 +265,13 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			} else if wing.OrgID != "" && s.Store != nil {
 				start.OrgRole = s.Store.GetOrgMemberRole(wing.OrgID, userID)
 			}
+			if s.Store != nil {
+				if creds, err := s.Store.ListPasskeyCredentials(userID); err == nil && len(creds) > 0 {
+					for _, c := range creds {
+						start.Passkeys = append(start.Passkeys, base64.StdEncoding.EncodeToString(c.PublicKey))
+					}
+				}
+			}
 
 			s.PTY.Set(sessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID, Agent: start.Agent, CWD: start.CWD})
 
@@ -352,6 +360,13 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				req.SenderOrgRole = "owner"
 			} else if wing.OrgID != "" && s.Store != nil {
 				req.SenderOrgRole = s.Store.GetOrgMemberRole(wing.OrgID, userID)
+			}
+			if s.Store != nil {
+				if creds, err := s.Store.ListPasskeyCredentials(userID); err == nil && len(creds) > 0 {
+					for _, c := range creds {
+						req.SenderPasskeys = append(req.SenderPasskeys, base64.StdEncoding.EncodeToString(c.PublicKey))
+					}
+				}
 			}
 			s.tunnelMu.Lock()
 			s.tunnelRequests[req.RequestID] = conn

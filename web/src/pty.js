@@ -47,12 +47,32 @@ function hideReplayOverlay() {
 
 function showPasskeyOverlay() {
     var overlay = document.getElementById('passkey-overlay');
-    if (overlay) overlay.style.display = '';
+    if (!overlay) return;
+    overlay.style.display = '';
+    // Reset button in case showPasskeySetupOverlay changed it
+    var btn = overlay.querySelector('button');
+    if (btn) {
+        btn.textContent = 'authenticate with passkey';
+        btn.onclick = null;
+    }
 }
 
 function hidePasskeyOverlay() {
     var overlay = document.getElementById('passkey-overlay');
     if (overlay) overlay.style.display = 'none';
+}
+
+function showPasskeySetupOverlay() {
+    var overlay = document.getElementById('passkey-overlay');
+    if (!overlay) return;
+    overlay.style.display = '';
+    var btn = overlay.querySelector('button');
+    if (btn) {
+        btn.textContent = 'set up passkey';
+        btn.onclick = function() {
+            location.hash = '#account';
+        };
+    }
 }
 
 export async function handlePTYPasskey() {
@@ -70,6 +90,12 @@ export async function handlePTYPasskey() {
             });
         }
     } catch (e) {}
+
+    // No registered passkeys — show setup overlay instead of broken WebAuthn
+    if (allowCredentials.length === 0) {
+        showPasskeySetupOverlay();
+        return;
+    }
 
     var challenge = b64urlToBytes(msg.challenge);
     var opts = {

@@ -875,7 +875,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 				authTTL = d
 			}
 		}
-		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debugLive.Load(), vte, allowedKeys, passkeyCache, authTTL)
+		handlePTYSession(ctx, cfg, wingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, authTTL)
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
@@ -2244,7 +2244,8 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
+	allowedKeys := *allowedKeysPtr
 	// Passkey verification — if allowed keys are configured, require auth
 	if len(allowedKeys) > 0 {
 		// Check cached auth token first
@@ -2314,6 +2315,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 
 				// Try each allowed key
 				var matched bool
+				var matchedRawKey []byte
 				for _, ak := range allowedKeys {
 					rawKey, decErr := base64.StdEncoding.DecodeString(ak.Key)
 					if decErr != nil || len(rawKey) != 64 {
@@ -2321,6 +2323,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 					}
 					if err := auth.VerifyPasskeyAssertion(rawKey, challenge, authData, clientJSON, sig); err == nil {
 						matched = true
+						matchedRawKey = rawKey
 						display := ak.Email
 						if display == "" {
 							display = ak.UserID
@@ -2329,19 +2332,26 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart
 							display = ak.Key[:8] + "..."
 						}
 						log.Printf("pty session %s: passkey verified (%s)", start.SessionID, display)
-
-						// Issue auth token for subsequent sessions
-						token, tokErr := auth.GenerateAuthToken()
-						if tokErr == nil {
-							passkeyCache.Put(token, rawKey)
-							start.AuthToken = token // will be included in PTYStarted
-						}
 						break
 					}
 				}
+
+				// If stored keys didn't match, try relay-provided passkeys for pre-approved users
+				if !matched && len(start.Passkeys) > 0 {
+					matched, matchedRawKey = tryRelayPasskeys(allowedKeysPtr, wingCfg, cfg, start.UserID, start.Email, start.Passkeys, challenge, authData, clientJSON, sig, nil, ctx)
+					allowedKeys = *allowedKeysPtr
+				}
+
 				if !matched {
 					write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey signature"})
 					return
+				}
+
+				// Issue auth token for subsequent sessions
+				token, tokErr := auth.GenerateAuthToken()
+				if tokErr == nil {
+					passkeyCache.Put(token, matchedRawKey)
+					start.AuthToken = token // will be included in PTYStarted
 				}
 				passkeyVerified = true
 
@@ -2726,6 +2736,62 @@ func canSeeSession(req ws.TunnelRequest, sessionUserID string) bool {
 	return sessionUserID == "" || sessionUserID == req.SenderUserID
 }
 
+// tryRelayPasskeys checks relay-provided passkeys against a pre-approved user with no stored key.
+// If a relay key verifies the assertion, it auto-records the key in wing.yaml and updates in-memory state.
+func tryRelayPasskeys(allowedKeysPtr *[]config.AllowKey, wingCfg *config.WingConfig, cfg *config.Config,
+	senderUserID, senderEmail string, relayKeys []string,
+	challenge, authData, cdJSON, sig []byte, client *ws.Client, ctx context.Context) (bool, []byte) {
+
+	allowedKeys := *allowedKeysPtr
+
+	// Find pre-approved entry for this user with no key
+	entryIdx := -1
+	for i, ak := range allowedKeys {
+		if ak.UserID == senderUserID && ak.Key == "" {
+			entryIdx = i
+			break
+		}
+	}
+	if entryIdx < 0 {
+		return false, nil
+	}
+
+	// Try each relay-provided key
+	for _, keyB64 := range relayKeys {
+		keyBytes, err := base64.StdEncoding.DecodeString(keyB64)
+		if err != nil || len(keyBytes) != 64 {
+			continue
+		}
+		if err := auth.VerifyPasskeyAssertion(keyBytes, challenge, authData, cdJSON, sig); err == nil {
+			// Auto-record: update entry with verified key
+			allowedKeys[entryIdx].Key = keyB64
+			*allowedKeysPtr = allowedKeys
+
+			// Persist to wing.yaml
+			for i, ak := range wingCfg.AllowKeys {
+				if ak.UserID == senderUserID && ak.Key == "" {
+					wingCfg.AllowKeys[i].Key = keyB64
+					break
+				}
+			}
+			config.SaveWingConfig(cfg.Dir, wingCfg)
+
+			display := senderEmail
+			if display == "" {
+				display = senderUserID
+			}
+			log.Printf("passkey auto-recorded for pre-approved user %s", display)
+
+			if client != nil {
+				client.AllowedCount = len(wingCfg.AllowKeys)
+				client.SendConfig(ctx)
+			}
+			return true, keyBytes
+		}
+	}
+	return false, nil
+}
+
 // handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
 func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, req ws.TunnelRequest, write ws.PTYWriteFunc,
 	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, privKey *ecdh.PrivateKey, home string,
@@ -2961,7 +3027,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		var matchedKey []byte
 		for _, ak := range allowedKeys {
 			keyBytes, err := base64.StdEncoding.DecodeString(ak.Key)
-			if err != nil {
+			if err != nil || len(keyBytes) != 64 {
 				continue
 			}
 			if err := auth.VerifyPasskeyAssertion(keyBytes, challenge, authData, cdJSON, sig); err == nil {
@@ -2971,6 +3037,13 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 		}
 		_ = credID // credential_id used for client-side key lookup, not needed server-side
+
+		// If stored keys didn't match, try relay-provided passkeys for pre-approved users with no key
+		if !verified && len(req.SenderPasskeys) > 0 {
+			verified, matchedKey = tryRelayPasskeys(allowedKeysPtr, wingCfg, cfg, req.SenderUserID, req.SenderEmail, req.SenderPasskeys, challenge, authData, cdJSON, sig, client, ctx)
+			allowedKeys = *allowedKeysPtr
+		}
+
 		if !verified {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "passkey verification failed"}, write)
 			return

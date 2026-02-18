@@ -1189,12 +1189,15 @@ export function renderWingDetailPage(wingId) {
 
     var isNotAllowed = w.tunnel_error === 'not_allowed';
     var isPasskeyNeeded = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
-    var isLocked = isNotAllowed || isPasskeyNeeded;
+    var isNoPasskeys = w.tunnel_error === 'no_passkeys_configured';
+    var isLocked = isNotAllowed || isPasskeyNeeded || isNoPasskeys;
     var userEmail = (S.currentUser && S.currentUser.email) || 'your@email.com';
 
     var lockBanner = '';
     if (isNotAllowed) {
         lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> This wing is locked. Ask the owner to add you:<br><code>wt wing allow --email ' + escapeHtml(userEmail) + '</code></div>';
+    } else if (isNoPasskeys) {
+        lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> Configure a passkey to access this wing<br><a class="btn-sm btn-accent" href="#account">set up passkey</a></div>';
     } else if (isPasskeyNeeded) {
         lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> Authenticate to access this wing<br><button class="btn-sm btn-accent" id="wd-auth-btn">authenticate</button></div>';
     }
@@ -1272,6 +1275,8 @@ export function renderWingDetailPage(wingId) {
                 .catch(function(e) {
                     if (e.message && e.message.indexOf('not_allowed') !== -1) {
                         w.tunnel_error = 'not_allowed';
+                    } else if (e.noPasskeys) {
+                        w.tunnel_error = 'no_passkeys_configured';
                     } else {
                         w.tunnel_error = 'passkey_failed';
                     }
@@ -2087,10 +2092,11 @@ export function renderDashboard() {
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
             var isCardPasskey = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
+            var isCardNoPasskeys = w.tunnel_error === 'no_passkeys_configured';
             var hasAuth = !!S.tunnelAuthTokens[w.wing_id];
             var lockedBadge = (w.locked && !hasAuth) ? '<span class="wing-pinned-badge">locked</span>' : '';
-            var authBadge = isCardPasskey ? '<span class="wing-pinned-badge">authenticate</span>' : '';
-            var lockIcon = ((w.locked && !hasAuth) || isCardPasskey) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
+            var authBadge = isCardNoPasskeys ? '<span class="wing-pinned-badge">set up passkey</span>' : (isCardPasskey ? '<span class="wing-pinned-badge">authenticate</span>' : '');
+            var lockIcon = ((w.locked && !hasAuth) || isCardPasskey || isCardNoPasskeys) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
             var draggable = ('ontouchstart' in window || navigator.maxTouchPoints > 0) ? '' : ' draggable="true"';
             return '<div class="wing-box"' + draggable + ' data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
@@ -2114,6 +2120,10 @@ export function renderDashboard() {
                 if (e.target.closest('.box-menu-btn')) return;
                 var mid = box.dataset.wingId;
                 var w = S.wingsData.find(function(w) { return w.wing_id === mid; });
+                if (w && w.tunnel_error === 'no_passkeys_configured') {
+                    location.hash = '#account';
+                    return;
+                }
                 if (w && (w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed')) {
                     // Passkey auth on dashboard — unlock in-place, don't navigate
                     var badge = box.querySelector('.wing-pinned-badge');

@@ -1,17 +1,22 @@
 package relay
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
+	"github.com/coder/websocket"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
+
+	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 // webauthnUser wraps our User for the webauthn library interface.
@@ -173,6 +178,13 @@ func (s *Server) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Requ
 		"label":      label,
 	})
 	log.Printf("passkey: registered credential for user %s (id=%s)", user.ID, id)
+
+	// Notify connected wings that this user registered a passkey
+	email := ""
+	if user.Email != nil {
+		email = *user.Email
+	}
+	go s.notifyPasskeyRegistered(user.ID, email)
 }
 
 // extractRawP256Key extracts the raw 64-byte P-256 public key (X||Y) from COSE-encoded key bytes.
@@ -269,4 +281,44 @@ func (s *Server) handlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 	log.Printf("passkey: deleted credential %s for user %s", id, user.ID)
+}
+
+// notifyPasskeyRegistered sends a lightweight passkey.registered event to wings
+// owned by or in the same org as the user who just registered a passkey.
+func (s *Server) notifyPasskeyRegistered(userID, email string) {
+	msg, _ := json.Marshal(ws.PasskeyRegistered{
+		Type:   ws.TypePasskeyRegistered,
+		UserID: userID,
+		Email:  email,
+	})
+
+	// Find wings owned by this user directly
+	sent := map[string]bool{}
+	for _, w := range s.Wings.All() {
+		if w.UserID == userID {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			w.Conn.Write(ctx, websocket.MessageText, msg)
+			cancel()
+			sent[w.ID] = true
+		}
+	}
+
+	// Find wings in orgs the user belongs to
+	if s.Store != nil {
+		orgs, _ := s.Store.ListOrgsForUser(userID)
+		for _, org := range orgs {
+			for _, w := range s.Wings.All() {
+				if w.OrgID == org.ID && !sent[w.ID] {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					w.Conn.Write(ctx, websocket.MessageText, msg)
+					cancel()
+					sent[w.ID] = true
+				}
+			}
+		}
+	}
+
+	if len(sent) > 0 {
+		log.Printf("passkey.registered: notified %d wings for user %s", len(sent), userID)
+	}
 }

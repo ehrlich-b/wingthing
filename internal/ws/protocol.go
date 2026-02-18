@@ -33,6 +33,9 @@ const (
 	TypePasskeyChallenge = "passkey.challenge"
 	TypePasskeyResponse  = "passkey.response"
 
+	// Relay → Wing (passkey lifecycle event)
+	TypePasskeyRegistered = "passkey.registered"
+
 	// Wing → Relay (config change)
 	TypeWingConfig = "wing.config"
 
@@ -101,20 +104,21 @@ type ErrorMsg struct {
 
 // PTYStart requests a new interactive terminal session on the wing.
 type PTYStart struct {
-	Type                string `json:"type"`
-	SessionID           string `json:"session_id"`
-	Agent               string `json:"agent"` // "claude", "codex", "ollama"
-	Cols                int    `json:"cols"`
-	Rows                int    `json:"rows"`
-	PublicKey           string `json:"public_key,omitempty"`            // browser's ephemeral X25519 (base64)
-	CWD                 string `json:"cwd,omitempty"`                   // working directory for the agent
-	WingID              string `json:"wing_id,omitempty"`               // target wing (picks first if empty)
-	PasskeyCredentialID string `json:"passkey_credential_id,omitempty"` // base64url credential ID
-	AuthToken           string `json:"auth_token,omitempty"`            // cached passkey auth token
-	UserID              string `json:"user_id,omitempty"`               // relay-injected creator user ID
-	Email               string `json:"email,omitempty"`                 // relay-injected user email
-	DisplayName         string `json:"display_name,omitempty"`          // relay-injected display name (Google full name, GitHub login)
-	OrgRole             string `json:"org_role,omitempty"`              // relay-injected: "owner", "admin", "member", ""
+	Type                string   `json:"type"`
+	SessionID           string   `json:"session_id"`
+	Agent               string   `json:"agent"` // "claude", "codex", "ollama"
+	Cols                int      `json:"cols"`
+	Rows                int      `json:"rows"`
+	PublicKey           string   `json:"public_key,omitempty"`            // browser's ephemeral X25519 (base64)
+	CWD                 string   `json:"cwd,omitempty"`                   // working directory for the agent
+	WingID              string   `json:"wing_id,omitempty"`               // target wing (picks first if empty)
+	PasskeyCredentialID string   `json:"passkey_credential_id,omitempty"` // base64url credential ID
+	AuthToken           string   `json:"auth_token,omitempty"`            // cached passkey auth token
+	UserID              string   `json:"user_id,omitempty"`               // relay-injected creator user ID
+	Email               string   `json:"email,omitempty"`                 // relay-injected user email
+	DisplayName         string   `json:"display_name,omitempty"`          // relay-injected display name (Google full name, GitHub login)
+	OrgRole             string   `json:"org_role,omitempty"`              // relay-injected: "owner", "admin", "member", ""
+	Passkeys            []string `json:"passkeys,omitempty"`              // relay-injected: base64 raw P-256 public keys
 }
 
 // PTYStarted confirms the PTY session is running.
@@ -206,14 +210,15 @@ type PTYAttentionAck struct {
 
 // TunnelRequest is an encrypted request from browser to wing via relay.
 type TunnelRequest struct {
-	Type          string `json:"type"`
-	WingID        string `json:"wing_id"`
-	RequestID     string `json:"request_id"`
-	SenderPub     string `json:"sender_pub,omitempty"`      // browser X25519 identity pubkey
-	Payload       string `json:"payload"`                   // base64(AES-GCM encrypted)
-	SenderUserID  string `json:"sender_user_id,omitempty"`  // relay-injected user ID
-	SenderOrgRole string `json:"sender_org_role,omitempty"` // relay-injected: "owner", "admin", "member", ""
-	SenderEmail   string `json:"sender_email,omitempty"`    // relay-injected user email
+	Type            string   `json:"type"`
+	WingID          string   `json:"wing_id"`
+	RequestID       string   `json:"request_id"`
+	SenderPub       string   `json:"sender_pub,omitempty"`        // browser X25519 identity pubkey
+	Payload         string   `json:"payload"`                     // base64(AES-GCM encrypted)
+	SenderUserID    string   `json:"sender_user_id,omitempty"`    // relay-injected user ID
+	SenderOrgRole   string   `json:"sender_org_role,omitempty"`   // relay-injected: "owner", "admin", "member", ""
+	SenderEmail     string   `json:"sender_email,omitempty"`      // relay-injected user email
+	SenderPasskeys  []string `json:"sender_passkeys,omitempty"`   // relay-injected: base64 raw P-256 public keys
 }
 
 // TunnelResponse is an encrypted response from wing to browser via relay.
@@ -265,6 +270,14 @@ type PTYWriteFunc func(v any) error
 type BandwidthExceeded struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+}
+
+// PasskeyRegistered is sent from relay to wings when a user registers a new passkey.
+// Lightweight event — actual key data flows through relay-enriched messages at auth time.
+type PasskeyRegistered struct {
+	Type   string `json:"type"`
+	UserID string `json:"user_id"`
+	Email  string `json:"email,omitempty"`
 }
 
 // RelayRestart is sent to all connected WebSockets when the server is shutting down.

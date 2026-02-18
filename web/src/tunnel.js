@@ -280,12 +280,21 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
 
         if (result.error === 'passkey_required') {
             if (!(opts && opts.skipPasskey)) {
-                var authToken = await handleTunnelPasskey(wingId, wing.public_key);
-                if (authToken) {
-                    S.tunnelAuthTokens[wingId] = authToken;
-                    saveTunnelAuthTokens();
-                    innerMsg.auth_token = authToken;
-                    return sendTunnelRequest(wingId, innerMsg, opts, (_depth || 0) + 1);
+                try {
+                    var authToken = await handleTunnelPasskey(wingId, wing.public_key);
+                    if (authToken) {
+                        S.tunnelAuthTokens[wingId] = authToken;
+                        saveTunnelAuthTokens();
+                        innerMsg.auth_token = authToken;
+                        return sendTunnelRequest(wingId, innerMsg, opts, (_depth || 0) + 1);
+                    }
+                } catch (passkeyErr) {
+                    if (passkeyErr.noPasskeys) {
+                        var noKeyErr = new Error('no_passkeys_configured');
+                        noKeyErr.noPasskeys = true;
+                        throw noKeyErr;
+                    }
+                    // Other passkey errors fall through to passkey_required
                 }
             }
             var err = new Error('passkey_required');
@@ -356,6 +365,13 @@ async function handleTunnelPasskey(wingId, wingPubKey) {
             }
         } catch (e) {}
 
+        // No registered passkeys — throw distinct error so UI can show setup message
+        if (allowCredentials.length === 0) {
+            var noKeyErr = new Error('no_passkeys');
+            noKeyErr.noPasskeys = true;
+            throw noKeyErr;
+        }
+
         var challenge = crypto.getRandomValues(new Uint8Array(32));
         var getOpts = {
             publicKey: {
@@ -411,6 +427,7 @@ async function handleTunnelPasskey(wingId, wingPubKey) {
             }, 60000);
         });
     } catch (e) {
+        if (e.noPasskeys) throw e;
         console.error('passkey auth failed:', e);
         return null;
     }
