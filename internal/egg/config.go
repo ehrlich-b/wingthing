@@ -483,10 +483,48 @@ func (c *EggConfig) IsAllEnv() bool {
 	return false
 }
 
+// sshDirDenied returns true if any FS deny rule covers the user's ~/.ssh directory.
+func (c *EggConfig) sshDirDenied() bool {
+	home, _ := os.UserHomeDir()
+	sshDir := filepath.Join(home, ".ssh")
+	for _, entry := range c.FS {
+		mode, path, ok := strings.Cut(entry, ":")
+		if !ok {
+			continue
+		}
+		if mode != "deny" {
+			continue
+		}
+		expanded := expandTilde(path, home)
+		if expanded == sshDir || strings.HasPrefix(sshDir+"/", expanded+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // BuildEnv filters the host environment based on the config.
+// SSH_AUTH_SOCK is stripped when ~/.ssh is denied — otherwise the agent can
+// still make outbound SSH connections via the forwarded socket despite the
+// filesystem deny, causing unexpected host-key prompts inside the egg.
 func (c *EggConfig) BuildEnv() []string {
+	stripSSHAgent := c.sshDirDenied()
+
+	filter := func(env []string) []string {
+		if !stripSSHAgent {
+			return env
+		}
+		out := env[:0:0]
+		for _, e := range env {
+			if !strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+
 	if c.IsAllEnv() {
-		return os.Environ()
+		return filter(os.Environ())
 	}
 	allowed := make(map[string]bool)
 	for _, k := range c.Env {
@@ -499,7 +537,7 @@ func (c *EggConfig) BuildEnv() []string {
 			env = append(env, e)
 		}
 	}
-	return env
+	return filter(env)
 }
 
 // BuildEnvMap returns the environment as a map for proto SpawnRequest.

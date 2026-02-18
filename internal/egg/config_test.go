@@ -648,6 +648,52 @@ func TestDefaultEggConfig_EnvEssentials(t *testing.T) {
 	}
 }
 
+func TestBuildEnv_SSHAuthSockStrippedWhenSSHDenied(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/fake-ssh-agent.sock")
+
+	home, _ := os.UserHomeDir()
+
+	// deny:~/.ssh should strip SSH_AUTH_SOCK
+	cfg := &EggConfig{
+		FS:  []string{"rw:./", "deny:~/.ssh"},
+		Env: []string{"*"},
+	}
+	env := cfg.BuildEnv()
+	for _, e := range env {
+		if strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
+			t.Errorf("SSH_AUTH_SOCK should be stripped when ~/.ssh is denied, got %s", e)
+		}
+	}
+
+	// deny:~/.ssh/<subpath> should also strip it (parent is denied)
+	cfg2 := &EggConfig{
+		FS:  []string{"deny:" + home + "/.ssh"},
+		Env: []string{"*"},
+	}
+	env2 := cfg2.BuildEnv()
+	for _, e := range env2 {
+		if strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
+			t.Errorf("SSH_AUTH_SOCK should be stripped when ~/.ssh is denied (absolute path), got %s", e)
+		}
+	}
+
+	// no deny:~/.ssh — SSH_AUTH_SOCK should pass through
+	cfg3 := &EggConfig{
+		FS:  []string{"rw:./", "deny:~/.gnupg"},
+		Env: []string{"*"},
+	}
+	env3 := cfg3.BuildEnv()
+	found := false
+	for _, e := range env3 {
+		if strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("SSH_AUTH_SOCK should not be stripped when ~/.ssh is not denied")
+	}
+}
+
 func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")
