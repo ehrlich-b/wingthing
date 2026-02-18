@@ -116,6 +116,7 @@ async function _probeWingInner(w) {
         w.hostname = data.hostname || w.hostname;
         w.platform = data.platform || w.platform;
         w.version = data.version || w.version;
+        if (data.wing_label) w.wing_label = data.wing_label;
         w.agents = data.agents || [];
         w.projects = data.projects || [];
         w.locked = data.locked || false;

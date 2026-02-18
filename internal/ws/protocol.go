@@ -81,6 +81,7 @@ type WingRegister struct {
 	Projects    []WingProject `json:"projects,omitempty"`
 	OrgSlug     string        `json:"org_slug,omitempty"`
 	RootDir     string        `json:"root_dir,omitempty"`
+	PublicKey    string        `json:"public_key,omitempty"`    // wing's X25519 identity key (base64)
 	Locked       bool          `json:"locked"`                 // explicit locked flag from wing.yaml
 	AllowedCount int           `json:"allowed_count,omitempty"` // number of allowed keys
 }

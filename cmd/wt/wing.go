@@ -942,6 +942,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		Hostname:    cfg.Hostname,
 		Platform:    runtime.GOOS,
 		Version:     version,
+		PublicKey:   base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes()),
 		Agents:      agents,
 		Skills:      skills,
 		Labels:      labels,
@@ -3049,15 +3050,19 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
 			projects = filterProjectsByPaths(projects, userPaths)
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]any{
-			"hostname":     client.Hostname,
-			"platform":     client.Platform,
-			"version":      version,
-			"agents":       client.Agents,
-			"projects":     projects,
+		resp := map[string]any{
+			"hostname":      client.Hostname,
+			"platform":      client.Platform,
+			"version":       version,
+			"agents":        client.Agents,
+			"projects":      projects,
 			"locked":        wingCfg.Locked,
 			"allowed_count": len(wingCfg.AllowKeys),
-		}, write)
+		}
+		if wingCfg.Label != "" {
+			resp["wing_label"] = wingCfg.Label
+		}
+		tunnelRespond(gcm, req.RequestID, resp, write)
 
 	case "sessions.list":
 		sessions := listAliveEggSessions(cfg)

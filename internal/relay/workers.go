@@ -358,6 +358,11 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Prefer JWT-derived public key; fall back to registration message (local/roost mode)
+	if wingPublicKey == "" {
+		wingPublicKey = reg.PublicKey
+	}
+
 	wing := &ConnectedWing{
 		ID:           uuid.New().String(),
 		UserID:       userID,

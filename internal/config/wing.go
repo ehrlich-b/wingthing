@@ -11,6 +11,7 @@ import (
 // WingConfig holds wing-specific settings persisted in ~/.wingthing/wing.yaml.
 type WingConfig struct {
 	WingID    string     `yaml:"wing_id"`
+	Label     string     `yaml:"label,omitempty"` // display name shown in the web UI
 	Roost     string     `yaml:"roost,omitempty"`
 	Org       string     `yaml:"org,omitempty"`
 	Paths     PathList   `yaml:"paths,omitempty"`

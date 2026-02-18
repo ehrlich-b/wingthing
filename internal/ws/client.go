@@ -43,6 +43,8 @@ type Client struct {
 	OrgSlug    string
 	RootDir    string
 
+	PublicKey string // X25519 identity key (base64)
+
 	Locked       bool
 	AllowedCount int
 
@@ -125,6 +127,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		Projects:    nil,
 		OrgSlug:     c.OrgSlug,
 		RootDir:      c.RootDir,
+		PublicKey:    c.PublicKey,
 		Locked:       c.Locked,
 		AllowedCount: c.AllowedCount,
 	}
