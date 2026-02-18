@@ -162,10 +162,6 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	}
 	defer store.Close()
 
-	if err := relay.SeedDefaultSkills(store); err != nil {
-		return fmt.Errorf("seed skills: %w", err)
-	}
-
 	if err := store.BackfillProUsers(); err != nil {
 		return fmt.Errorf("backfill pro users: %w", err)
 	}

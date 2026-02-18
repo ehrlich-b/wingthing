@@ -94,9 +94,6 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("POST /auth/claim", s.handleAuthClaim)
 	s.mux.HandleFunc("POST /auth/refresh", s.handleAuthRefresh)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
-	s.mux.HandleFunc("GET /api/skills", s.handleListSkills)
-	s.mux.HandleFunc("GET /api/skills/{name}", s.handleGetSkill)
-	s.mux.HandleFunc("GET /api/skills/{name}/raw", s.handleGetSkillRaw)
 	// Relay: worker WebSocket
 	s.mux.HandleFunc("GET /ws/wing", s.handleWingWS)
 	s.mux.HandleFunc("GET /ws/pty", s.handlePTYWS)
@@ -138,8 +135,6 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	// Web pages
 	s.mux.HandleFunc("GET /{$}", s.handleHome)
 	s.mux.HandleFunc("GET /login", s.handleLogin)
-	s.mux.HandleFunc("GET /skills", s.handleSkillsPage)
-	s.mux.HandleFunc("GET /skills/{name}", s.handleSkillDetailPage)
 	s.mux.HandleFunc("GET /install", s.handleInstallPage)
 	s.mux.HandleFunc("GET /docs", s.handleDocs)
 	s.mux.HandleFunc("GET /terms", s.handleTerms)
@@ -309,7 +304,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Default host: full site with caching
-	if r.Method == "GET" && (path == "/" || path == "/skills" || path == "/login" || path == "/docs" || path == "/terms" || path == "/privacy" || path == "/abuse") {
+	if r.Method == "GET" && (path == "/" || path == "/login" || path == "/docs" || path == "/terms" || path == "/privacy" || path == "/abuse") {
 		if r.URL.RawQuery != "" {
 			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
 		} else {

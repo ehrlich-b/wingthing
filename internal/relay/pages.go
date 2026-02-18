@@ -57,8 +57,6 @@ var tmplFuncs = template.FuncMap{
 var (
 	homeTmpl        = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/home.html"))
 	loginTmpl       = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/login.html"))
-	skillsTmpl      = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skills.html"))
-	skillDetailTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/skill_detail.html"))
 	docsTmpl        = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/docs.html"))
 	termsTmpl       = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/terms.html"))
 	privacyTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/privacy.html"))
@@ -147,95 +145,6 @@ func (s *Server) handleInstallPage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(installScript)
-}
-
-type skillsPageItem struct {
-	Name        string
-	Description string
-	Category    string
-	Publisher   string
-	SourceURL   string
-	Weight      int
-}
-
-type skillsPageData struct {
-	User      *User
-	LocalMode bool
-	Skills    []skillsPageItem
-}
-
-func (s *Server) handleSkillsPage(w http.ResponseWriter, r *http.Request) {
-	skills, err := s.Store.ListSkills("")
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	var items []skillsPageItem
-	for _, sk := range skills {
-		items = append(items, skillsPageItem{
-			Name:        sk.Name,
-			Description: sk.Description,
-			Category:    sk.Category,
-			Publisher:   sk.Publisher,
-			SourceURL:   sk.SourceURL,
-			Weight:      sk.Weight,
-		})
-	}
-	data := skillsPageData{
-		User:      s.sessionUser(r),
-		LocalMode: s.LocalMode,
-		Skills:    items,
-	}
-	s.template(skillsTmpl, "base.html", "skills.html").ExecuteTemplate(w, "base", data)
-}
-
-type skillDetailPageData struct {
-	User        *User
-	LocalMode   bool
-	Name        string
-	Description string
-	Category    string
-	Publisher   string
-	SourceURL   string
-	Content     string
-	Tags        string
-}
-
-func (s *Server) handleSkillDetailPage(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if name == "" {
-		http.NotFound(w, r)
-		return
-	}
-
-	sk, err := s.Store.GetSkill(name)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if sk == nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	// External skills redirect to their source
-	if sk.SourceURL != "" {
-		http.Redirect(w, r, sk.SourceURL, http.StatusFound)
-		return
-	}
-
-	data := skillDetailPageData{
-		User:        s.sessionUser(r),
-		LocalMode:   s.LocalMode,
-		Name:        sk.Name,
-		Description: sk.Description,
-		Category:    sk.Category,
-		Publisher:   sk.Publisher,
-		SourceURL:   sk.SourceURL,
-		Content:     sk.Content,
-		Tags:        sk.Tags,
-	}
-	s.template(skillDetailTmpl, "base.html", "skill_detail.html").ExecuteTemplate(w, "base", data)
 }
 
 // isSafeRedirect returns true if dest is a relative path (no open redirect).

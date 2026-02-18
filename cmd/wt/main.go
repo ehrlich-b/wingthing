@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"syscall"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -55,7 +52,6 @@ func main() {
 		statusCmd(),
 		logCmd(),
 		agentCmd(),
-		skillCmd(),
 		scheduleCmd(),
 		retryCmd(),
 		initCmd(),
@@ -578,216 +574,6 @@ func agentCmd() *cobra.Command {
 	return ag
 }
 
-func skillCmd() *cobra.Command {
-	sk := &cobra.Command{
-		Use:   "skill",
-		Short: "Manage skills",
-	}
-
-	listCmd := &cobra.Command{
-		Use:   "list",
-		Short: "List installed skills",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			available, _ := cmd.Flags().GetBool("available")
-			category, _ := cmd.Flags().GetString("category")
-
-			if available {
-				cfg, err := config.Load()
-				if err != nil {
-					return err
-				}
-				if cfg.RoostURL == "" {
-					return fmt.Errorf("roost_url not configured — set it in ~/.wingthing/config.yaml")
-				}
-				url := strings.TrimRight(cfg.RoostURL, "/") + "/api/skills"
-				if category != "" {
-					url += "?category=" + category
-				}
-				resp, err := http.Get(url)
-				if err != nil {
-					return fmt.Errorf("fetch skills: %w", err)
-				}
-				defer resp.Body.Close()
-				if resp.StatusCode != 200 {
-					return fmt.Errorf("registry returned %d", resp.StatusCode)
-				}
-				var skills []struct {
-					Name        string `json:"name"`
-					Description string `json:"description"`
-					Category    string `json:"category"`
-				}
-				if err := json.NewDecoder(resp.Body).Decode(&skills); err != nil {
-					return fmt.Errorf("decode skills: %w", err)
-				}
-				if len(skills) == 0 {
-					fmt.Println("no skills available")
-					return nil
-				}
-				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "NAME\tCATEGORY\tDESCRIPTION")
-				for _, s := range skills {
-					desc := s.Description
-					if len(desc) > 50 {
-						desc = desc[:47] + "..."
-					}
-					fmt.Fprintf(w, "%s\t%s\t%s\n", s.Name, s.Category, desc)
-				}
-				w.Flush()
-				return nil
-			}
-
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			entries, err := os.ReadDir(cfg.SkillsDir())
-			if err != nil {
-				if os.IsNotExist(err) {
-					fmt.Println("no skills installed")
-					return nil
-				}
-				return err
-			}
-			state, err := skill.LoadState(cfg.Dir)
-			if err != nil {
-				return fmt.Errorf("load skill state: %w", err)
-			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tSTATUS")
-			for _, e := range entries {
-				if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-					name := strings.TrimSuffix(e.Name(), ".md")
-					status := "enabled"
-					if !state.IsEnabled(name) {
-						status = "disabled"
-					}
-					fmt.Fprintf(w, "%s\t%s\n", name, status)
-				}
-			}
-			w.Flush()
-			return nil
-		},
-	}
-	listCmd.Flags().Bool("available", false, "List skills from the registry")
-	listCmd.Flags().String("category", "", "Filter by category (used with --available)")
-	sk.AddCommand(listCmd)
-
-	sk.AddCommand(&cobra.Command{
-		Use:   "enable <name>",
-		Short: "Enable a skill",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			name := args[0]
-			path := filepath.Join(cfg.SkillsDir(), name+".md")
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				return fmt.Errorf("skill %q not installed", name)
-			}
-			state, err := skill.LoadState(cfg.Dir)
-			if err != nil {
-				return err
-			}
-			state.Enable(name)
-			if err := state.Save(cfg.Dir); err != nil {
-				return err
-			}
-			fmt.Printf("enabled: %s\n", name)
-			return nil
-		},
-	})
-
-	sk.AddCommand(&cobra.Command{
-		Use:   "disable <name>",
-		Short: "Disable a skill (stays installed but won't run on schedule)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			name := args[0]
-			path := filepath.Join(cfg.SkillsDir(), name+".md")
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				return fmt.Errorf("skill %q not installed", name)
-			}
-			state, err := skill.LoadState(cfg.Dir)
-			if err != nil {
-				return err
-			}
-			state.Disable(name)
-			if err := state.Save(cfg.Dir); err != nil {
-				return err
-			}
-			fmt.Printf("disabled: %s\n", name)
-			return nil
-		},
-	})
-
-	sk.AddCommand(&cobra.Command{
-		Use:   "add [file-or-name]",
-		Short: "Install a skill from file or registry",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			src := args[0]
-
-			// If it looks like a local file, read from disk
-			if strings.HasSuffix(src, ".md") || strings.Contains(src, "/") {
-				data, err := os.ReadFile(src)
-				if err != nil {
-					return fmt.Errorf("read skill: %w", err)
-				}
-				name := filepath.Base(src)
-				dst := filepath.Join(cfg.SkillsDir(), name)
-				if err := os.MkdirAll(cfg.SkillsDir(), 0755); err != nil {
-					return err
-				}
-				if err := os.WriteFile(dst, data, 0644); err != nil {
-					return fmt.Errorf("write skill: %w", err)
-				}
-				fmt.Printf("installed: %s\n", strings.TrimSuffix(name, ".md"))
-				return nil
-			}
-
-			// Otherwise, fetch from registry
-			if cfg.RoostURL == "" {
-				cfg.RoostURL = "https://wingthing.ai"
-			}
-			url := strings.TrimRight(cfg.RoostURL, "/") + "/api/skills/" + src + "/raw"
-			resp, err := http.Get(url)
-			if err != nil {
-				return fmt.Errorf("fetch skill: %w", err)
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode == 404 {
-				return fmt.Errorf("skill %q not found in registry", src)
-			}
-			if resp.StatusCode != 200 {
-				return fmt.Errorf("registry returned %d", resp.StatusCode)
-			}
-			data, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return fmt.Errorf("read response: %w", err)
-			}
-			dst := filepath.Join(cfg.SkillsDir(), src+".md")
-			if err := os.MkdirAll(cfg.SkillsDir(), 0755); err != nil {
-				return err
-			}
-			if err := os.WriteFile(dst, data, 0644); err != nil {
-				return fmt.Errorf("write skill: %w", err)
-			}
-			fmt.Printf("installed: %s\n", src)
-			return nil
-		},
-	})
-	return sk
-}
 
 func scheduleCmd() *cobra.Command {
 	sc := &cobra.Command{
