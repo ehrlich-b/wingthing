@@ -267,6 +267,7 @@ async function init() {
         }
     });
 
+    await document.fonts.load("400 14px 'JetBrains Mono'");
     initTerminal();
     initNotifyListeners();
     loadHome();

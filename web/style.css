@@ -1,3 +1,19 @@
+@font-face {
+    font-family: 'JetBrains Mono';
+    src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: block;
+}
+
+@font-face {
+    font-family: 'JetBrains Mono';
+    src: url('/fonts/JetBrainsMono-Bold.woff2') format('woff2');
+    font-weight: 700;
+    font-style: normal;
+    font-display: block;
+}
+
 :root {
     --bg: #1a1a2e;
     --bg-card: #16213e;
@@ -13,7 +29,7 @@
     --blue: #3498db;
     --red: #e74c3c;
     --orange: #e67e22;
-    --font: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    --font: 'JetBrains Mono', monospace;
     --sidebar-w: 48px;
 }
 

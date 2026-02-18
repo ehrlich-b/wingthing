@@ -11,7 +11,7 @@ export function initTerminal() {
     S.term = new Terminal({
         cursorBlink: true,
         fontSize: 14,
-        fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
+        fontFamily: "'JetBrains Mono', monospace",
         theme: {
             background: '#1a1a2e',
             foreground: '#eee',
