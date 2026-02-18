@@ -87,6 +87,15 @@ func DenyInit(args []string) {
 		log.Fatal("_deny_init: missing -- separator or command")
 	}
 
+	// Make all mounts in this namespace private so bind mounts don't
+	// propagate back to the parent namespace. systemd sets "/" to shared
+	// propagation by default, which causes every bind mount we create
+	// here to leak into the host mount table (accumulating thousands of
+	// stale mounts across egg sessions).
+	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
+		log.Printf("_deny_init: make root private: %v", err)
+	}
+
 	// Write isolation: make HOME read-only, then punch writable holes.
 	// Must happen BEFORE deny mounts so deny tmpfs overlays take precedence.
 	// Skip if HOME itself is in the writable list (user wants full HOME rw).
