@@ -1,45 +1,55 @@
 import { x25519 } from '@noble/curves/ed25519.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { gcm } from '@noble/ciphers/aes.js';
 import { b64ToBytes, bytesToB64, b64urlToBytes, bytesToB64url } from './helpers.js';
 import { S } from './state.js';
 import { identityKey, identityPubKey } from './crypto.js';
 
-// --- Crypto (unchanged) ---
+// --- Crypto (pure JS — works without crypto.subtle / secure context) ---
 
-async function deriveE2ETunnelKey(wingPublicKeyB64) {
+function deriveE2ETunnelKey(wingPublicKeyB64) {
     if (S.tunnelKeys[wingPublicKeyB64]) return S.tunnelKeys[wingPublicKeyB64];
     if (!identityKey.priv) return null;
     var wingPubBytes = b64ToBytes(wingPublicKeyB64);
     var shared = x25519.getSharedSecret(identityKey.priv, wingPubBytes);
     var salt = new Uint8Array(32);
-    var keyMaterial = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
     var enc = new TextEncoder();
-    var key = await crypto.subtle.deriveKey(
-        { name: 'HKDF', hash: 'SHA-256', salt: salt, info: enc.encode('wt-tunnel') },
-        keyMaterial,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['encrypt', 'decrypt']
-    );
+    var key = hkdf(sha256, shared, salt, enc.encode('wt-tunnel'), 32);
     S.tunnelKeys[wingPublicKeyB64] = key;
     return key;
 }
 
-async function tunnelEncrypt(key, plaintext) {
+function tunnelEncrypt(key, plaintext) {
     var enc = new TextEncoder();
     var iv = crypto.getRandomValues(new Uint8Array(12));
-    var ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, enc.encode(plaintext));
-    var result = new Uint8Array(iv.length + ciphertext.byteLength);
+    var cipher = gcm(key, iv);
+    var ciphertext = cipher.encrypt(enc.encode(plaintext));
+    var result = new Uint8Array(iv.length + ciphertext.length);
     result.set(iv);
-    result.set(new Uint8Array(ciphertext), iv.length);
+    result.set(ciphertext, iv.length);
     return bytesToB64(result);
 }
 
-async function tunnelDecrypt(key, encoded) {
+function tunnelDecrypt(key, encoded) {
     var data = b64ToBytes(encoded);
     var iv = data.slice(0, 12);
     var ciphertext = data.slice(12);
-    var plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ciphertext);
+    var cipher = gcm(key, iv);
+    var plaintext = cipher.decrypt(ciphertext);
     return new TextDecoder().decode(plaintext);
+}
+
+// crypto.randomUUID requires secure context in some browsers
+function randomUUID() {
+    if (typeof crypto.randomUUID === 'function') {
+        try { return crypto.randomUUID(); } catch (e) {}
+    }
+    var b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    var h = Array.from(b, function(v) { return v.toString(16).padStart(2, '0'); }).join('');
+    return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
 }
 
 // --- Auth Token Persistence ---
@@ -247,14 +257,14 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
 
-    var key = await deriveE2ETunnelKey(wing.public_key);
+    var key = deriveE2ETunnelKey(wing.public_key);
     if (!key) throw new Error('could not derive tunnel key');
 
     var token = S.tunnelAuthTokens[wingId];
     if (token) innerMsg.auth_token = token;
 
-    var requestId = crypto.randomUUID();
-    var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
+    var requestId = randomUUID();
+    var payload = tunnelEncrypt(key, JSON.stringify(innerMsg));
 
     var conn = await acquireConn(wingId);
 
@@ -275,7 +285,7 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
             }
         }, 30000);
     }).then(async function(msg) {
-        var decrypted = await tunnelDecrypt(key, msg.payload);
+        var decrypted = tunnelDecrypt(key, msg.payload);
         var result = JSON.parse(decrypted);
 
         if (result.error === 'passkey_required') {
@@ -311,14 +321,14 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
 
-    var key = await deriveE2ETunnelKey(wing.public_key);
+    var key = deriveE2ETunnelKey(wing.public_key);
     if (!key) throw new Error('could not derive tunnel key');
 
     var token = S.tunnelAuthTokens[wingId];
     if (token) innerMsg.auth_token = token;
 
-    var requestId = crypto.randomUUID();
-    var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
+    var requestId = randomUUID();
+    var payload = tunnelEncrypt(key, JSON.stringify(innerMsg));
 
     var conn = await acquireConn(wingId);
 
@@ -328,7 +338,7 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
             reject: reject,
             onStream: async function(msg) {
                 try {
-                    var decrypted = await tunnelDecrypt(key, msg.payload);
+                    var decrypted = tunnelDecrypt(key, msg.payload);
                     var chunk = JSON.parse(decrypted);
                     onChunk(chunk);
                 } catch (e) { console.error('tunnel stream decrypt error:', e); }
@@ -386,8 +396,8 @@ async function handleTunnelPasskey(wingId, wingPubKey) {
         }
         var credential = await navigator.credentials.get(getOpts);
 
-        var key = await deriveE2ETunnelKey(wingPubKey);
-        var requestId = crypto.randomUUID();
+        var key = deriveE2ETunnelKey(wingPubKey);
+        var requestId = randomUUID();
         var innerMsg = {
             type: 'passkey.auth',
             credential_id: bytesToB64url(new Uint8Array(credential.rawId)),
@@ -395,7 +405,7 @@ async function handleTunnelPasskey(wingId, wingPubKey) {
             client_data_json: bytesToB64(new Uint8Array(credential.response.clientDataJSON)),
             signature: bytesToB64(new Uint8Array(credential.response.signature))
         };
-        var payload = await tunnelEncrypt(key, JSON.stringify(innerMsg));
+        var payload = tunnelEncrypt(key, JSON.stringify(innerMsg));
 
         var conn = await acquireConn(wingId);
 
@@ -403,7 +413,7 @@ async function handleTunnelPasskey(wingId, wingPubKey) {
             conn.pending[requestId] = {
                 resolve: async function(msg) {
                     try {
-                        var decrypted = await tunnelDecrypt(key, msg.payload);
+                        var decrypted = tunnelDecrypt(key, msg.payload);
                         var result = JSON.parse(decrypted);
                         resolve(result.auth_token || null);
                     } catch (e) { resolve(null); }

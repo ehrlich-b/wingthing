@@ -140,6 +140,7 @@ async function _probeWingInner(w) {
                 w.locked = true;
             }
         } else {
+            console.error('[wt] wing probe failed for', w.wing_id, e);
             w.tunnel_error = 'unreachable';
         }
     }
