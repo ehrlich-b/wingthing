@@ -46,10 +46,11 @@ type Client struct {
 	Locked       bool
 	AllowedCount int
 
-	OnPTY        PTYHandler
-	OnTunnel     TunnelHandler
-	OnOrphanKill func(ctx context.Context, sessionID string) // kill egg with no active goroutine
-	OnReconnect  func(ctx context.Context)                   // called after re-registration with relay
+	OnPTY               PTYHandler
+	OnTunnel            TunnelHandler
+	OnOrphanKill        func(ctx context.Context, sessionID string) // kill egg with no active goroutine
+	OnReconnect         func(ctx context.Context)                   // called after re-registration with relay
+	OnPasskeyRegistered func(msg PasskeyRegistered)                 // called when a user registers a passkey
 
 	// ptySessions tracks active PTY sessions for routing input/resize
 	ptySessions   map[string]chan []byte // session_id → input channel
@@ -234,6 +235,9 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			var msg PasskeyRegistered
 			json.Unmarshal(data, &msg)
 			log.Printf("passkey.registered: user %s (%s) registered a passkey", msg.UserID, msg.Email)
+			if c.OnPasskeyRegistered != nil {
+				go c.OnPasskeyRegistered(msg)
+			}
 
 		case TypeError:
 			var msg ErrorMsg

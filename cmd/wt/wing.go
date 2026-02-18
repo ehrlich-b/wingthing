@@ -358,6 +358,19 @@ func isMemberRole(orgRole string) bool {
 	return orgRole == "member" || orgRole == ""
 }
 
+// isPathMember returns true if email matches any member in any path entry.
+func isPathMember(paths config.PathList, email string) bool {
+	emailLower := strings.ToLower(email)
+	for _, e := range paths {
+		for _, m := range e.Members {
+			if strings.ToLower(m) == emailLower {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
 // Returns group directories (sorted by project count) followed by individual repos (sorted by mtime).
 func discoverProjects(dir string, maxDepth int) []ws.WingProject {
@@ -940,10 +953,9 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	}
 
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
-		// Block PTY when wing is locked with no authorized users
-		if wingCfg.Locked && len(allowedKeys) == 0 {
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "wing is locked with no authorized users — add yourself with: wt wing allow --email <your-email>"})
-			return
+		// Wing-level admin override: admins get full access regardless of org role
+		if wingCfg.IsAdmin(start.Email) && isMemberRole(start.OrgRole) {
+			start.OrgRole = "admin"
 		}
 		// Per-user path ACLs: members only see their tagged folders
 		userPaths := pathsForRequest(wingCfg.Paths, start.Email, start.OrgRole, home)
@@ -988,6 +1000,28 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		killOrphanEgg(cfg, sessionID)
 	}
 
+	client.OnPasskeyRegistered = func(msg ws.PasskeyRegistered) {
+		if msg.Email == "" {
+			return
+		}
+		// Auto-enroll path members: if registered user's email matches a path member, add AllowKey
+		if !isPathMember(wingCfg.Paths, msg.Email) {
+			return
+		}
+		// Check if already in allow_keys
+		for _, ak := range allowedKeys {
+			if ak.UserID == msg.UserID {
+				return
+			}
+		}
+		ak := config.AllowKey{UserID: msg.UserID, Email: msg.Email}
+		allowedKeys = append(allowedKeys, ak)
+		wingCfg.AllowKeys = append(wingCfg.AllowKeys, ak)
+		config.SaveWingConfig(cfg.Dir, wingCfg)
+		client.AllowedCount = len(wingCfg.AllowKeys)
+		log.Printf("passkey.registered: auto-enrolled path member %s", msg.Email)
+	}
+
 	// Reclaim surviving egg sessions on every (re)connect
 	client.OnReconnect = func(rctx context.Context) {
 		var authTTL time.Duration // default 0 = boot-scoped, no expiry
@@ -1018,6 +1052,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 					}
 					wingCfg.Locked = newCfg.Locked
 					wingCfg.AllowKeys = newCfg.AllowKeys
+					wingCfg.Admins = newCfg.Admins
 					allowedKeys = append([]config.AllowKey{}, newCfg.AllowKeys...)
 					client.Locked = newCfg.Locked
 					client.AllowedCount = len(newCfg.AllowKeys)
@@ -2859,6 +2894,18 @@ func tryRelayPasskeys(allowedKeysPtr *[]config.AllowKey, wingCfg *config.WingCon
 			break
 		}
 	}
+
+	// Path-member fallback: if no AllowKey exists but sender is a path member,
+	// create one on the fly so relay passkeys can be tried
+	if entryIdx < 0 && senderEmail != "" && isPathMember(wingCfg.Paths, senderEmail) {
+		ak := config.AllowKey{UserID: senderUserID, Email: senderEmail}
+		allowedKeys = append(allowedKeys, ak)
+		*allowedKeysPtr = allowedKeys
+		wingCfg.AllowKeys = append(wingCfg.AllowKeys, ak)
+		entryIdx = len(allowedKeys) - 1
+		log.Printf("passkey: auto-enrolled path member %s for relay key auth", senderEmail)
+	}
+
 	if entryIdx < 0 {
 		return false, nil
 	}
@@ -2905,6 +2952,11 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool, client *ws.Client) {
 
 	allowedKeys := *allowedKeysPtr
+
+	// Wing-level admin override
+	if wingCfg.IsAdmin(req.SenderEmail) && isMemberRole(req.SenderOrgRole) {
+		req.SenderOrgRole = "admin"
+	}
 
 	// Derive or retrieve cached AES-GCM key for this sender
 	var gcm cipher.AEAD

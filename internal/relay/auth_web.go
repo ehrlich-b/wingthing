@@ -97,6 +97,14 @@ func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request
 	}
 	s.setSessionCookie(w, token)
 
+	// Roost mode: auto-grant pro to all OAuth users (self-hosted = unlimited)
+	if s.RoostMode && !s.Store.IsUserPro(user.ID) {
+		subID := uuid.New().String()
+		s.Store.CreateSubscription(&Subscription{ID: subID, UserID: &user.ID, Plan: "roost", Status: "active", Seats: 1})
+		s.Store.CreateEntitlement(&Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID})
+		s.Store.UpdateUserTier(user.ID, "pro")
+	}
+
 	// Check for pending org invite token — redirect to invite page for explicit accept
 	if c, err := r.Cookie("invite_token"); err == nil && c.Value != "" {
 		http.Redirect(w, r, "/invite/"+c.Value, http.StatusSeeOther)

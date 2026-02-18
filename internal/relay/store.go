@@ -322,6 +322,45 @@ func (s *RelayStore) CreateLocalUser() (*User, string, error) {
 	return u, token, nil
 }
 
+// CreateServiceUser creates a service user for the roost wing goroutine.
+// Idempotent: returns existing user + token if already created.
+func (s *RelayStore) CreateServiceUser() (*User, string, error) {
+	const serviceUserID = "roost-wing-service"
+
+	u, err := s.GetUserByProvider("service", "roost-wing")
+	if err != nil {
+		return nil, "", err
+	}
+	if u == nil {
+		u = &User{
+			ID:          serviceUserID,
+			Provider:    "service",
+			ProviderID:  "roost-wing",
+			DisplayName: "roost-wing",
+		}
+		if err := s.UpsertUser(u); err != nil {
+			return nil, "", err
+		}
+	}
+
+	// Check for existing device token
+	var existing string
+	err = s.db.QueryRow(
+		"SELECT token FROM device_tokens WHERE user_id = ? AND device_id = 'roost-wing'",
+		u.ID,
+	).Scan(&existing)
+	if err == nil {
+		return u, existing, nil
+	}
+
+	// Create non-expiring device token
+	token := generateToken()
+	if err := s.CreateDeviceToken(token, u.ID, "roost-wing", nil); err != nil {
+		return nil, "", fmt.Errorf("create service device token: %w", err)
+	}
+	return u, token, nil
+}
+
 // GetDeviceCodeByUserCode finds a device code by user_code.
 func (s *RelayStore) GetDeviceCodeByUserCode(userCode string) (*DeviceCodeRow, error) {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")

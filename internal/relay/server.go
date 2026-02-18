@@ -47,6 +47,7 @@ type Server struct {
 	DevTemplateDir string // if set, re-read templates from disk on each request
 	DevMode        bool   // if set, auto-claim device codes with test-user
 	LocalMode      bool   // if set, bypass auth — single-user, zero-config
+	RoostMode      bool   // if set, all authenticated users can access all wings (self-hosted)
 	localUser      *User
 	Wings          *WingRegistry
 	PTY            *PTYRoutes

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -43,10 +44,21 @@ func (s *Server) newWebAuthn() (*webauthn.WebAuthn, error) {
 	origins := []string{"http://localhost:5173", "http://localhost:8080"}
 
 	if s.Config.AppHost != "" {
+		// Production: app.wingthing.ai
 		rpID = "wingthing.ai"
 		origins = []string{"https://app.wingthing.ai"}
 		if s.Config.BaseURL != "" {
 			origins = append(origins, s.Config.BaseURL)
+		}
+	} else if s.Config.BaseURL != "" {
+		// Self-hosted: derive RPID from BaseURL hostname
+		if u, err := url.Parse(s.Config.BaseURL); err == nil && u.Hostname() != "" {
+			rpID = u.Hostname()
+			origins = []string{s.Config.BaseURL}
+			// Keep localhost dev origins if BaseURL is localhost
+			if rpID == "localhost" {
+				origins = append(origins, "http://localhost:5173")
+			}
 		}
 	}
 

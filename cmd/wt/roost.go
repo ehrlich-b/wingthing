@@ -205,26 +205,51 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		fmt.Println("dev mode: templates reload, auto-claim login")
 	}
 
-	// Local mode is always on for roost
-	user, token, err := store.CreateLocalUser()
-	if err != nil {
-		return fmt.Errorf("setup local user: %w", err)
-	}
-	srv.LocalMode = true
-	srv.SetLocalUser(user)
+	// Auth mode detection: same pattern as serve.go
+	hasAuth := srvCfg.GoogleClientID != "" || srvCfg.GitHubClientID != "" || srvCfg.SMTPHost != ""
 
-	// Grant pro tier — self-hosted has no bandwidth cap
-	if !store.IsUserPro(user.ID) {
-		subID := uuid.New().String()
-		store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &user.ID, Plan: "local", Status: "active", Seats: 1})
-		store.CreateEntitlement(&relay.Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID})
-		store.UpdateUserTier(user.ID, "pro")
+	var wingToken string
+	if !hasAuth {
+		// No auth providers — single user, no login (existing behavior)
+		user, token, err := store.CreateLocalUser()
+		if err != nil {
+			return fmt.Errorf("setup local user: %w", err)
+		}
+		srv.LocalMode = true
+		srv.SetLocalUser(user)
+		wingToken = token
+
+		// Grant pro tier — self-hosted has no bandwidth cap
+		if !store.IsUserPro(user.ID) {
+			subID := uuid.New().String()
+			store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &user.ID, Plan: "local", Status: "active", Seats: 1})
+			store.CreateEntitlement(&relay.Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID})
+			store.UpdateUserTier(user.ID, "pro")
+		}
+		fmt.Println("no auth providers configured — local mode")
+	} else {
+		// OAuth configured — real auth, roost wing visible to all logged-in users
+		srv.RoostMode = true
+		user, token, err := store.CreateServiceUser()
+		if err != nil {
+			return fmt.Errorf("setup service user: %w", err)
+		}
+		wingToken = token
+
+		// Grant pro to service user
+		if !store.IsUserPro(user.ID) {
+			subID := uuid.New().String()
+			store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &user.ID, Plan: "roost", Status: "active", Seats: 1})
+			store.CreateEntitlement(&relay.Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID})
+			store.UpdateUserTier(user.ID, "pro")
+		}
+		fmt.Println("auth providers configured — roost mode (OAuth enabled)")
 	}
 
 	// Write device token so the wing goroutine can connect
 	ts := auth.NewTokenStore(cfg.Dir)
 	ts.Save(&auth.DeviceToken{
-		Token:    token,
+		Token:    wingToken,
 		DeviceID: "local",
 	})
 

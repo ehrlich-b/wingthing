@@ -18,6 +18,11 @@ func (s *Server) wingRegistrySummary() string {
 // canAccessWing returns true if userID can use this wing.
 // userOrgIDs are the user's org memberships from their session (works on edge nodes without DB).
 func (s *Server) canAccessWing(userID string, wing *ConnectedWing, userOrgIDs ...[]string) bool {
+	// Roost mode: all authenticated users can access all wings
+	if s.RoostMode {
+		return true
+	}
+
 	// Owner always has access
 	if wing.UserID == userID {
 		return true
