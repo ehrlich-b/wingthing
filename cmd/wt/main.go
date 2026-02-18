@@ -83,6 +83,7 @@ func startCmd() *cobra.Command {
 	var allowFlags []string
 	var pathsFlag string
 	var localFlag bool
+	var vteFlag bool
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the daemon (alias for wt wing start / wt daemon start)",
@@ -113,6 +114,9 @@ func startCmd() *cobra.Command {
 			if localFlag {
 				childArgs = append(childArgs, "--local")
 			}
+			if vteFlag {
+				childArgs = append(childArgs, "--vte")
+			}
 			child := exec.Command(exe, childArgs...)
 			child.Stdout = os.Stdout
 			child.Stderr = os.Stderr
@@ -126,6 +130,7 @@ func startCmd() *cobra.Command {
 	cmd.Flags().StringVar(&pathsFlag, "paths", "", "comma-separated directories the wing can browse (default: ~/)")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "connect to localhost:8080 (for self-hosted wt serve)")
+	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect instead of replay buffer")
 	return cmd
 }
 

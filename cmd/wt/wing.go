@@ -493,6 +493,7 @@ func wingStartCmd() *cobra.Command {
 	var pathsFlag string
 	var auditFlag bool
 	var localFlag bool
+	var vteFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -501,7 +502,7 @@ func wingStartCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Foreground mode: run directly
 			if foregroundFlag {
-				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag)
+				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag, vteFlag)
 			}
 
 			// Daemon mode (default): re-exec detached, write PID file, return
@@ -546,6 +547,9 @@ func wingStartCmd() *cobra.Command {
 			}
 			if localFlag {
 				childArgs = append(childArgs, "--local")
+			}
+			if vteFlag {
+				childArgs = append(childArgs, "--vte")
 			}
 
 			rotateLog(wingLogPath())
@@ -597,21 +601,22 @@ func wingStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&pathsFlag, "paths", "", "comma-separated directories the wing can browse (default: ~/)")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable audit logging for all egg sessions")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "connect to localhost:8080 (for self-hosted wt serve)")
+	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect instead of replay buffer")
 
 	return cmd
 }
 
-func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local bool) error {
+func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte bool) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	sighupCh := make(chan os.Signal, 1)
 	signal.Notify(sighupCh, syscall.SIGHUP)
 
-	return runWingWithContext(ctx, sighupCh, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debug, audit, local)
+	return runWingWithContext(ctx, sighupCh, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debug, audit, local, vte)
 }
 
-func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local bool) error {
+func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -870,7 +875,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 				authTTL = d
 			}
 		}
-		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debugLive.Load(), allowedKeys, passkeyCache, authTTL)
+		handlePTYSession(ctx, cfg, start, write, input, eggCfg, debugLive.Load(), vte, allowedKeys, passkeyCache, authTTL)
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
@@ -2118,7 +2123,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					write(started)
 				}
 
-				// 4. New egg subscriber — replay first (atomic), then live frames
+				// 4. Resize egg to browser dimensions before snapshot
+				if attach.Cols > 0 && attach.Rows > 0 {
+					ec.Resize(ctx, sessionID, attach.Rows, attach.Cols)
+				}
+
+				// 5. New egg subscriber — replay first (atomic), then live frames
 				newStreamCtx, newSCancel := context.WithCancel(ctx)
 				newStream, reErr := ec.AttachSession(newStreamCtx, sessionID)
 				if reErr != nil {
@@ -2127,7 +2137,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					continue
 				}
 
-				// 5. Read replay (first message) and send to browser in chunks
+				// 6. Read replay (first message) and send to browser in chunks
 				if newGCM != nil {
 					replayMsg, rErr := newStream.Recv()
 					if rErr == nil {
@@ -2137,7 +2147,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 				}
 
-				// 6. Activate new key + stream, start new output goroutine
+				// 7. Activate new key + stream, start new output goroutine
 				mu.Lock()
 				gcm = newGCM
 				activeStream = newStream
@@ -2233,7 +2243,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug bool, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
 	// Passkey verification — if allowed keys are configured, require auth
 	if len(allowedKeys) > 0 {
 		// Check cached auth token first
@@ -2370,7 +2380,7 @@ authDone:
 	}
 
 	// Spawn a per-session egg
-	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug)
+	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte)
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := readEggCrashInfo(eggDir)
@@ -2509,7 +2519,12 @@ authDone:
 					PublicKey: wingPubKeyB64,
 				})
 
-				// 4. New egg subscriber — replay first (atomic), then live frames
+				// 4. Resize egg to browser dimensions before snapshot
+				if attach.Cols > 0 && attach.Rows > 0 {
+					ec.Resize(ctx, start.SessionID, attach.Rows, attach.Cols)
+				}
+
+				// 5. New egg subscriber — replay first (atomic), then live frames
 				newStreamCtx, newSCancel := context.WithCancel(ctx)
 				newStream, reErr := ec.AttachSession(newStreamCtx, start.SessionID)
 				if reErr != nil {
@@ -2518,7 +2533,7 @@ authDone:
 					continue
 				}
 
-				// 5. Read replay (first message) and send to browser in chunks
+				// 6. Read replay (first message) and send to browser in chunks
 				if newGCM != nil {
 					replayMsg, rErr := newStream.Recv()
 					if rErr == nil {
@@ -2528,7 +2543,7 @@ authDone:
 					}
 				}
 
-				// 6. Activate new key + stream, start new output goroutine
+				// 7. Activate new key + stream, start new output goroutine
 				mu.Lock()
 				gcm = newGCM
 				activeStream = newStream

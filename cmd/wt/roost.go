@@ -259,7 +259,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 
 	wingErrCh := make(chan error, 1)
 	go func() {
-		wingErrCh <- runWingWithContext(ctx, sighupCh, "", labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true)
+		wingErrCh <- runWingWithContext(ctx, sighupCh, "", labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false)
 	}()
 
 	// --- Wait for shutdown ---

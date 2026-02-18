@@ -62,6 +62,7 @@ func eggRunCmd() *cobra.Command {
 		maxFDsFlag uint32
 		debugFlag  bool
 		auditFlag  bool
+		vteFlag    bool
 		renderedConfigFlag string
 		dangerouslySkipPermissions bool
 	)
@@ -119,6 +120,7 @@ func eggRunCmd() *cobra.Command {
 				MaxFDs:         maxFDsFlag,
 				Debug:          debugFlag,
 				Audit:          auditFlag,
+				VTE:            vteFlag,
 				RenderedConfig: renderedConfigFlag,
 			}
 
@@ -156,6 +158,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&maxFDsFlag, "max-fds", 0, "max open file descriptors")
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable input audit log and PTY stream recording")
+	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect (internal)")
 	cmd.Flags().StringVar(&renderedConfigFlag, "rendered-config", "", "rendered egg config YAML (internal)")
 	cmd.MarkFlagRequired("session-id")
 
@@ -328,7 +331,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 	sessionID := uuid.New().String()[:8]
 
 	// Spawn egg as child process
-	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false)
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false)
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
@@ -408,7 +411,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 }
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
-func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug bool) (*egg.Client, error) {
+func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte bool) (*egg.Client, error) {
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create egg dir: %w", err)
@@ -463,6 +466,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if debug {
 		args = append(args, "--debug")
+	}
+	if vte {
+		args = append(args, "--vte")
 	}
 	if eggCfg.Audit {
 		args = append(args, "--audit")

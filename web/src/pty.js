@@ -409,6 +409,7 @@ export function attachPTY(sessionId) {
         var msg = { type: 'pty.attach', session_id: sessionId, public_key: identityPubKey };
         if (S.ptyWingId) msg.wing_id = S.ptyWingId;
         if (S.ptyWingId && S.tunnelAuthTokens[S.ptyWingId]) msg.auth_token = S.tunnelAuthTokens[S.ptyWingId];
+        if (S.term) { msg.cols = S.term.cols; msg.rows = S.term.rows; }
         S.ptyWs.send(JSON.stringify(msg));
     };
 
@@ -470,6 +471,7 @@ function ptyReconnectAttach(sessionId, attempt) {
         var msg = { type: 'pty.attach', session_id: sessionId, public_key: identityPubKey };
         if (S.ptyWingId) msg.wing_id = S.ptyWingId;
         if (S.ptyWingId && S.tunnelAuthTokens[S.ptyWingId]) msg.auth_token = S.tunnelAuthTokens[S.ptyWingId];
+        if (S.term) { msg.cols = S.term.cols; msg.rows = S.term.rows; }
         S.ptyWs.send(JSON.stringify(msg));
     };
 

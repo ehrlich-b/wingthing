@@ -64,9 +64,11 @@ type Session struct {
 	ptmx           *os.File
 	replay         *replayBuffer
 	vterm          *VTerm // server-side VTE for snapshot-based reconnect
+	useVTE         bool   // when true, attach sends VTerm snapshot instead of replay buffer
 	sb             sandbox.Sandbox
 	cmd            *exec.Cmd
 	mu             sync.Mutex
+	writeMu        sync.Mutex // gates dual-write (readPTY) and snapshot (attach handler)
 	done           chan struct{} // closed when process exits
 	exitCode       int
 	debug          bool
@@ -97,6 +99,7 @@ type RunConfig struct {
 	MaxFDs                     uint32
 	Debug                      bool
 	Audit                      bool
+	VTE                        bool   // use VTerm snapshot for reconnect instead of replay buffer
 	RenderedConfig             string // effective egg config as YAML (after merge/resolve)
 }
 
@@ -257,6 +260,13 @@ func (r *replayBuffer) Snapshot() ([]byte, int64) {
 	cp := make([]byte, len(r.buf))
 	copy(cp, r.buf)
 	return cp, r.trimmed + int64(len(r.buf))
+}
+
+// WritePosition returns the absolute end offset without copying the buffer.
+func (r *replayBuffer) WritePosition() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.trimmed + int64(len(r.buf))
 }
 
 // ReadAfter returns data after the cursor's current offset and advances the cursor.
@@ -595,6 +605,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		ptmx:           ptmx,
 		replay:         newReplayBuffer(rc.Agent),
 		vterm:          NewVTerm(int(rc.Cols), int(rc.Rows)),
+		useVTE:         rc.VTE,
 		sb:             sb,
 		cmd:            cmd,
 		done:           make(chan struct{}),
@@ -796,10 +807,12 @@ func (s *Server) readPTY(sess *Session) {
 			}
 			data := make([]byte, n)
 			copy(data, buf[:n])
+			sess.writeMu.Lock()
 			sess.replay.Write(data)
 			if sess.vterm != nil {
 				sess.vterm.Write(data)
 			}
+			sess.writeMu.Unlock()
 			if debugFile != nil {
 				debugFile.Write(data)
 			}
@@ -879,6 +892,11 @@ func (s *Server) Resize(ctx context.Context, req *pb.ResizeRequest) (*pb.ResizeR
 		Cols: uint16(req.Cols),
 		Rows: uint16(req.Rows),
 	})
+	if sess.vterm != nil {
+		sess.vterm.Resize(int(req.Cols), int(req.Rows))
+	}
+	sess.writeAuditResize(req.Cols, req.Rows)
+	s.updateMetaDimensions(req.Cols, req.Rows)
 	return &pb.ResizeResponse{}, nil
 }
 
@@ -921,14 +939,21 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 
 	if msg.GetAttach() {
 		// Full replay as first message, then cursor starts after snapshot.
-		snapshot, snapEnd := sess.replay.Snapshot()
+		sess.writeMu.Lock()
+		var snapshot []byte
+		if sess.useVTE && sess.vterm != nil {
+			snapshot = sess.vterm.Snapshot()
+			startOffset = sess.replay.WritePosition()
+		} else {
+			snapshot, startOffset = sess.replay.Snapshot()
+		}
+		sess.writeMu.Unlock()
 		if err := stream.Send(&pb.SessionMsg{
 			SessionId: sessionID,
 			Payload:   &pb.SessionMsg_Output{Output: snapshot},
 		}); err != nil {
 			return err
 		}
-		startOffset = snapEnd
 	} else {
 		// Non-attach (initial session): start cursor at current position.
 		_, startOffset = sess.replay.Snapshot()
