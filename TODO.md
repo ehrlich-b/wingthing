@@ -24,6 +24,8 @@ The bar: someone new can use a wing without confusion or broken UX.
 - [x] Architecture overview: relay is a dumb pipe, wing owns all data, E2E encryption
 
 ### UX Polish
+- [ ] Split org and personal wings in dashboard UI — personal vs work icon when tabbing through wings
+- [ ] Fix command palette passkey prompt — 1) never auto-prompt for passkey (require Enter), 2) passkey completion should actually unlock the palette
 - [x] Session ID in URL on session start
 - [x] Close / end session from terminal header
 - [x] Ctrl-V paste + Ctrl-C copy on Windows
