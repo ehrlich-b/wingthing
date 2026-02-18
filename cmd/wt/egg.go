@@ -331,7 +331,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 	sessionID := uuid.New().String()[:8]
 
 	// Spawn egg as child process
-	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false)
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, EggIdentity{})
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
@@ -410,8 +410,50 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 	return nil
 }
 
+// EggIdentity holds the authenticated user's identity for per-session env injection.
+// Zero value means no identity (local egg, no authenticated user).
+type EggIdentity struct {
+	UserID      string // relay user ID
+	Email       string // authenticated email (e.g. from Google OAuth)
+	DisplayName string // human-readable name (Google full name, GitHub login)
+}
+
+// sanitizeEnvValue strips characters that could cause shell injection.
+// Allows alphanumeric, spaces, hyphens, underscores, dots, and @.
+func sanitizeEnvValue(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == ' ' || c == '-' || c == '_' || c == '.' || c == '@' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// NormalizeUser converts an email local part to a safe username.
+// Lowercase, alphanumeric + hyphens only. Dots and special chars become hyphens.
+func NormalizeUser(email string) string {
+	local, _, _ := strings.Cut(email, "@")
+	local = strings.ToLower(local)
+	var b strings.Builder
+	for _, c := range local {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	// Collapse multiple hyphens and trim edges
+	s := b.String()
+	for strings.Contains(s, "--") {
+		s = strings.ReplaceAll(s, "--", "-")
+	}
+	return strings.Trim(s, "-")
+}
+
 // spawnEgg starts a per-session egg child process and returns a connected client.
-func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte bool) (*egg.Client, error) {
+func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte bool, identity EggIdentity) (*egg.Client, error) {
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create egg dir: %w", err)
@@ -453,7 +495,21 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		args = append(args, "--network", d)
 	}
 	for k, v := range eggCfg.BuildEnvMap() {
+		// Skip WT_ prefix — reserved for session identity injection
+		if strings.HasPrefix(k, "WT_") {
+			continue
+		}
 		args = append(args, "--env", k+"="+v)
+	}
+	// Inject per-session identity vars (always override, not configurable via egg.yaml).
+	// All values are sanitized to prevent shell injection.
+	args = append(args, "--env", "WT_SESSION_ID="+sessionID)
+	if identity.Email != "" {
+		args = append(args, "--env", "WT_USER="+NormalizeUser(identity.Email))
+		args = append(args, "--env", "WT_USER_EMAIL="+sanitizeEnvValue(identity.Email))
+	}
+	if identity.DisplayName != "" {
+		args = append(args, "--env", "WT_USER_NAME="+sanitizeEnvValue(identity.DisplayName))
 	}
 	if eggCfg.Resources.CPU != "" {
 		args = append(args, "--cpu", eggCfg.Resources.CPU)

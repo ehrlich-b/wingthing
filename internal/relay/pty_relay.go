@@ -93,10 +93,12 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 	// Auth
 	var userID string
 	var userEmail string
+	var userDisplayName string
 	var userOrgIDs []string
 	if u := s.sessionUser(r); u != nil {
 		userID = u.ID
 		userOrgIDs = u.OrgIDs
+		userDisplayName = u.DisplayName
 		if u.Email != nil {
 			userEmail = *u.Email
 		}
@@ -256,6 +258,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			start.SessionID = sessionID
 			start.UserID = userID
 			start.Email = userEmail
+			start.DisplayName = userDisplayName
 			if wing.UserID == userID {
 				start.OrgRole = "owner"
 			} else if wing.OrgID != "" && s.Store != nil {

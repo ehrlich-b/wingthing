@@ -113,6 +113,7 @@ type PTYStart struct {
 	AuthToken           string `json:"auth_token,omitempty"`            // cached passkey auth token
 	UserID              string `json:"user_id,omitempty"`               // relay-injected creator user ID
 	Email               string `json:"email,omitempty"`                 // relay-injected user email
+	DisplayName         string `json:"display_name,omitempty"`          // relay-injected display name (Google full name, GitHub login)
 	OrgRole             string `json:"org_role,omitempty"`              // relay-injected: "owner", "admin", "member", ""
 }
 
