@@ -2,7 +2,7 @@ import '@xterm/xterm/css/xterm.css';
 import { S, DOM, initDOM } from './state.js';
 import { loginRedirect } from './helpers.js';
 import { initTerminal, sendPTYInput } from './terminal.js';
-import { showHome, showTerminal, switchToSession, navigateToWingDetail, navigateToAccount } from './nav.js';
+import { showHome, showTerminal, switchToSession, navigateToWingDetail, navigateToAccount, deleteSession } from './nav.js';
 import { disconnectPTY, retryReconnect, attachPTY, handlePTYPasskey } from './pty.js';
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
 import { connectAppWS } from './dashboard.js';
@@ -39,7 +39,9 @@ async function init() {
         if (DOM.sessionCloseBtn.dataset.confirm) {
             delete DOM.sessionCloseBtn.dataset.confirm;
             DOM.sessionCloseBtn.textContent = 'x';
+            var sid = S.ptySessionId;
             disconnectPTY();
+            if (sid) deleteSession(sid);
             showHome();
         } else {
             DOM.sessionCloseBtn.dataset.confirm = '1';
