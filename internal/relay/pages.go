@@ -101,6 +101,11 @@ type loginPageData struct {
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+	// Local/roost mode: skip marketing page, go straight to the app
+	if s.LocalMode || s.RoostMode {
+		http.Redirect(w, r, "/app/", http.StatusSeeOther)
+		return
+	}
 	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, HeroVideo: s.Config.HeroVideo != ""}
 	s.template(homeTmpl, "base.html", "home.html").ExecuteTemplate(w, "base", data)
 }

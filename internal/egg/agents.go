@@ -18,7 +18,7 @@ var agentProfiles = map[string]AgentProfile{
 		WriteRegex: []string{".claude"},
 	},
 	"codex": {
-		Domains:   []string{"api.openai.com", "*.openai.com"},
+		Domains:   []string{"api.openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"},
 		EnvVars:   []string{"OPENAI_API_KEY"},
 		WriteDirs: []string{".codex"},
 	},

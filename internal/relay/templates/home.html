@@ -105,7 +105,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <h1>your AI agents, reachable from anywhere</h1>
 <p class="tagline">Run Claude, Codex, Cursor, and Gemini in a sandbox on your machine. Access them from any device over an encrypted, passkey-protected relay that can't read your data.</p>
 {{if .User}}<div class="prompt-flow">
-<a href="https://app.wingthing.ai" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open app</span></a>
+<a href="{{if .LocalMode}}/app/{{else}}https://app.wingthing.ai{{end}}" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open app</span></a>
 </div>
 {{else}}<div class="prompt-flow" id="prompt-flow">
 <div class="prompt-line"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to start</span></div>
