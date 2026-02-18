@@ -2126,6 +2126,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				// 4. Resize egg to browser dimensions before snapshot
 				if attach.Cols > 0 && attach.Rows > 0 {
 					ec.Resize(ctx, sessionID, attach.Rows, attach.Cols)
+					time.Sleep(150 * time.Millisecond) // let agent repaint for new dimensions before VTE snapshot
 				}
 
 				// 5. New egg subscriber — replay first (atomic), then live frames
@@ -2522,6 +2523,7 @@ authDone:
 				// 4. Resize egg to browser dimensions before snapshot
 				if attach.Cols > 0 && attach.Rows > 0 {
 					ec.Resize(ctx, start.SessionID, attach.Rows, attach.Cols)
+					time.Sleep(150 * time.Millisecond) // let agent repaint for new dimensions before VTE snapshot
 				}
 
 				// 5. New egg subscriber — replay first (atomic), then live frames
