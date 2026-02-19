@@ -515,11 +515,13 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	// Per-user home directory for multi-user isolation (guests on shared machines).
 	// Owners/admins use real HOME so their Keychain, OAuth tokens, and config work.
+	realHome, _ := os.UserHomeDir()
+	effectiveHome := realHome
 	if identity.Email != "" && !identity.IsOwner {
 		perUserHome := filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
 		os.MkdirAll(perUserHome, 0700)
+		effectiveHome = perUserHome
 		// Seed shell + agent config symlinks from real HOME
-		realHome, _ := os.UserHomeDir()
 		if realHome != "" {
 			for _, rc := range []string{".bashrc", ".zshrc", ".profile", ".claude.json"} {
 				src := filepath.Join(realHome, rc)
@@ -541,12 +543,15 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				os.Symlink(agentBin, dst)
 			}
 		}
-		// Rebuild agent settings every session: read existing user prefs,
-		// layer host settings on top (host always wins for permissions),
-		// then inject agent-specific overrides.
+		args = append(args, "--user-home", perUserHome)
+	}
+	// Rebuild agent settings every session for all authenticated users.
+	// Reads existing prefs, layers host settings on top (host always wins
+	// for permissions), then injects agent-specific overrides.
+	if identity.Email != "" {
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
-			settingsDst := filepath.Join(perUserHome, agentProfile.SettingsFile)
+			settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
 			os.MkdirAll(filepath.Dir(settingsDst), 0700)
 			baseSettings := make(map[string]any)
 			// Read existing session settings to preserve user preferences
@@ -574,8 +579,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 					}
 				}
 			}
-			// Claude-specific: inject apiKeyHelper when API key present
-			if agentName == "claude" {
+			// Claude-specific: inject apiKeyHelper for guests (owners use
+			// ANTHROPIC_API_KEY directly from env, no rename needed).
+			if !identity.IsOwner && agentName == "claude" {
 				if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
 					envMap["_WT_ANTHROPIC_KEY"] = v
 					delete(envMap, "ANTHROPIC_API_KEY")
@@ -588,7 +594,6 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				}
 			}
 		}
-		args = append(args, "--user-home", perUserHome)
 	}
 	for k, v := range envMap {
 		// Skip WT_ prefix — reserved for session identity injection
