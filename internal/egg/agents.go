@@ -25,7 +25,7 @@ var agentProfiles = map[string]AgentProfile{
 	"cursor": {
 		Domains:   []string{"api.anthropic.com", "api.openai.com", "*.cursor.sh"},
 		EnvVars:   []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
-		WriteDirs: []string{".cursor", "Library/Caches/cursor-compile-cache"},
+		WriteDirs: []string{".cursor", ".config", "Library/Caches/cursor-compile-cache"},
 	},
 	"ollama": {
 		Domains:   []string{"localhost"},

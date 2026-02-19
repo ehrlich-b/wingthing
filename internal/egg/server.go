@@ -548,10 +548,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		if profileHome != "" && len(mounts) > 0 {
 			for _, d := range profile.WriteRegex {
 				abs := filepath.Join(profileHome, d)
+				os.MkdirAll(abs, 0700)
 				mounts = append(mounts, sandbox.Mount{Source: abs, Target: abs, UseRegex: true})
 			}
 			for _, d := range profile.WriteDirs {
 				abs := filepath.Join(profileHome, d)
+				os.MkdirAll(abs, 0700)
 				mounts = append(mounts, sandbox.Mount{Source: abs, Target: abs})
 			}
 		}

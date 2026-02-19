@@ -14,6 +14,20 @@ Org mode features are complete. Next up: VTE for proper reconnect, then P2P.
 
 ---
 
+## Enterprise Blocker: Project Discovery in Multi-Role Repos
+
+Git repo parent (`ai-playground/`) swallows role subdirs (`dev/`, `qa/`, etc.) that have
+`egg.yaml`. `scanDir` finds `.git` and stops — subdirs never appear as projects. Users
+land in the parent (no egg.yaml → wrong sandbox), can't select the role dir they need.
+
+**Fix**: after finding a git repo, check immediate children for `egg.yaml`. If any exist,
+offer those children as projects instead of (or in addition to) the parent. Path ACLs
+complicate this — members may only see specific subdirs.
+
+**Files**: `cmd/wt/wing.go:462-496` (`scanDir`)
+
+---
+
 ## MVP — Demo-Ready
 
 The bar: someone new can use a wing without confusion or broken UX.
