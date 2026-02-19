@@ -516,23 +516,6 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			}
 		}
 	}
-	for k, v := range envMap {
-		// Skip WT_ prefix — reserved for session identity injection
-		if strings.HasPrefix(k, "WT_") {
-			continue
-		}
-		args = append(args, "--env", k+"="+v)
-	}
-	// Inject per-session identity vars (always override, not configurable via egg.yaml).
-	// All values are sanitized to prevent shell injection.
-	args = append(args, "--env", "WT_SESSION_ID="+sessionID)
-	if identity.Email != "" {
-		args = append(args, "--env", "WT_USER="+NormalizeUser(identity.Email))
-		args = append(args, "--env", "WT_USER_EMAIL="+sanitizeEnvValue(identity.Email))
-	}
-	if identity.DisplayName != "" {
-		args = append(args, "--env", "WT_USER_NAME="+sanitizeEnvValue(identity.DisplayName))
-	}
 	// Per-user home directory (only for relay/wing sessions with authenticated user)
 	if identity.Email != "" {
 		perUserHome := filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
@@ -551,14 +534,35 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			}
 		}
 		// Configure Claude Code apiKeyHelper to bypass login prompt.
-		// ANTHROPIC_API_KEY in env alone still triggers first-run setup screen.
+		// Replace ANTHROPIC_API_KEY with a hidden name so Claude only sees the helper.
+		if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
+			envMap["_WT_ANTHROPIC_KEY"] = v
+			delete(envMap, "ANTHROPIC_API_KEY")
+		}
 		claudeDir := filepath.Join(perUserHome, ".claude")
 		os.MkdirAll(claudeDir, 0700)
 		settingsPath := filepath.Join(claudeDir, "settings.json")
 		if _, err := os.Stat(settingsPath); err != nil {
-			os.WriteFile(settingsPath, []byte("{\"apiKeyHelper\":\"echo $ANTHROPIC_API_KEY\"}\n"), 0644)
+			os.WriteFile(settingsPath, []byte("{\"apiKeyHelper\":\"echo $_WT_ANTHROPIC_KEY\"}\n"), 0644)
 		}
 		args = append(args, "--user-home", perUserHome)
+	}
+	for k, v := range envMap {
+		// Skip WT_ prefix — reserved for session identity injection
+		if strings.HasPrefix(k, "WT_") {
+			continue
+		}
+		args = append(args, "--env", k+"="+v)
+	}
+	// Inject per-session identity vars (always override, not configurable via egg.yaml).
+	// All values are sanitized to prevent shell injection.
+	args = append(args, "--env", "WT_SESSION_ID="+sessionID)
+	if identity.Email != "" {
+		args = append(args, "--env", "WT_USER="+NormalizeUser(identity.Email))
+		args = append(args, "--env", "WT_USER_EMAIL="+sanitizeEnvValue(identity.Email))
+	}
+	if identity.DisplayName != "" {
+		args = append(args, "--env", "WT_USER_NAME="+sanitizeEnvValue(identity.DisplayName))
 	}
 	if eggCfg.Resources.CPU != "" {
 		args = append(args, "--cpu", eggCfg.Resources.CPU)
