@@ -29,7 +29,7 @@ func eggCmd() *cobra.Command {
 		Use:     "sandbox [agent]",
 		Aliases: []string{"egg"},
 		Short:   "Run an agent in a sandboxed session",
-		Long:    "Spawns an agent (claude, ollama, codex) inside a per-session sandbox with PTY persistence.\nThe sandbox IS the permission boundary — agents get dangerously_skip_permissions by default.",
+		Long:    "Spawns an agent (claude, ollama, codex) inside a per-session sandbox with PTY persistence.\nSet dangerously_skip_permissions in egg.yaml to bypass agent permission prompts.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -317,11 +317,6 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 		cwd, _ := os.Getwd()
 		eggCfg = egg.DiscoverEggConfig(cwd, nil)
 	}
-	// Standalone eggs default to dangerously_skip_permissions ON
-	if !eggCfg.DangerouslySkipPermissions {
-		eggCfg.DangerouslySkipPermissions = true
-	}
-
 	// Get terminal size
 	fd := int(os.Stdin.Fd())
 	cols, rows := 80, 24
@@ -533,6 +528,8 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				}
 			}
 		}
+		// Create ~/.local/bin so Claude Code doesn't warn about missing native install dir.
+		os.MkdirAll(filepath.Join(perUserHome, ".local", "bin"), 0755)
 		// Configure Claude Code apiKeyHelper to bypass login prompt.
 		// Replace ANTHROPIC_API_KEY with a hidden name so Claude only sees the helper.
 		if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
