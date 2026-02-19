@@ -1121,6 +1121,9 @@ func agentCommand(agentName string, dangerouslySkip bool, shell string) (string,
 		}
 	case "cursor":
 		name = "agent"
+		if dangerouslySkip {
+			args = append(args, "--yolo")
+		}
 	case "ollama":
 		name = "ollama"
 		args = []string{"run", "llama3.2"}
