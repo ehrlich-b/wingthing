@@ -1095,11 +1095,13 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		if msg.Email == "" {
 			return
 		}
-		// Auto-enroll path members: if registered user's email matches a path member, add AllowKey
+		// Auto-enroll path members: if registered user's email matches a path member, add AllowKey.
+		// In-memory only — don't persist to wing.yaml. SaveWingConfig serializes the entire
+		// WingConfig which can clobber shared wings (e.g. PinnedCompat leaking locked: true,
+		// or allow_keys containing only one user). Admins manage allow_keys explicitly.
 		if !isPathMember(wingCfg.Paths, msg.Email) {
 			return
 		}
-		// Check if already in allow_keys
 		for _, ak := range allowedKeys {
 			if ak.UserID == msg.UserID {
 				return
@@ -1107,10 +1109,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		}
 		ak := config.AllowKey{UserID: msg.UserID, Email: msg.Email}
 		allowedKeys = append(allowedKeys, ak)
-		wingCfg.AllowKeys = append(wingCfg.AllowKeys, ak)
-		config.SaveWingConfig(cfg.Dir, wingCfg)
-		client.AllowedCount = len(wingCfg.AllowKeys)
-		log.Printf("passkey.registered: auto-enrolled path member %s", msg.Email)
+		log.Printf("passkey.registered: auto-enrolled path member %s (session-scoped)", msg.Email)
 	}
 
 	// Reclaim surviving egg sessions on every (re)connect
