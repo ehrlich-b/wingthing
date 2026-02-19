@@ -505,7 +505,18 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	for _, d := range eggCfg.Network {
 		args = append(args, "--network", d)
 	}
-	for k, v := range eggCfg.BuildEnvMap() {
+	envMap := eggCfg.BuildEnvMap()
+	// Inject agent profile env vars from host env (e.g. ANTHROPIC_API_KEY for claude).
+	// BuildEnvMap uses the egg config whitelist which may not include these.
+	profile := egg.Profile(agentName)
+	for _, k := range profile.EnvVars {
+		if _, ok := envMap[k]; !ok {
+			if v := os.Getenv(k); v != "" {
+				envMap[k] = v
+			}
+		}
+	}
+	for k, v := range envMap {
 		// Skip WT_ prefix — reserved for session identity injection
 		if strings.HasPrefix(k, "WT_") {
 			continue
