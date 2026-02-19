@@ -371,53 +371,56 @@ export function renderAccountPage() {
         });
     });
 
-    var createForm = document.getElementById('ac-create-form');
-    document.getElementById('ac-create-toggle').addEventListener('click', function() {
-        createForm.style.display = createForm.style.display === 'none' ? '' : 'none';
-        if (createForm.style.display !== 'none') {
-            document.getElementById('ac-create-name').focus();
-        }
-    });
+    var createToggle = document.getElementById('ac-create-toggle');
+    if (createToggle) {
+        var createForm = document.getElementById('ac-create-form');
+        createToggle.addEventListener('click', function() {
+            createForm.style.display = createForm.style.display === 'none' ? '' : 'none';
+            if (createForm.style.display !== 'none') {
+                document.getElementById('ac-create-name').focus();
+            }
+        });
 
-    document.getElementById('ac-create-btn').addEventListener('click', function() {
-        var btn = this;
-        var nameInput = document.getElementById('ac-create-name');
-        var errEl = document.getElementById('ac-create-error');
-        var name = nameInput.value.trim();
-        if (!name) return;
-        btn.textContent = 'creating...';
-        btn.disabled = true;
-        errEl.style.display = 'none';
-        fetch('/api/orgs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name })
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.error) {
-                errEl.textContent = data.error;
-                errEl.style.display = '';
+        document.getElementById('ac-create-btn').addEventListener('click', function() {
+            var btn = this;
+            var nameInput = document.getElementById('ac-create-name');
+            var errEl = document.getElementById('ac-create-error');
+            var name = nameInput.value.trim();
+            if (!name) return;
+            btn.textContent = 'creating...';
+            btn.disabled = true;
+            errEl.style.display = 'none';
+            fetch('/api/orgs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.error) {
+                    errEl.textContent = data.error;
+                    errEl.style.display = '';
+                    btn.textContent = 'create';
+                    btn.disabled = false;
+                    return;
+                }
+                nameInput.value = '';
+                createForm.style.display = 'none';
+                errEl.style.display = 'none';
                 btn.textContent = 'create';
                 btn.disabled = false;
-                return;
-            }
-            nameInput.value = '';
-            createForm.style.display = 'none';
-            errEl.style.display = 'none';
-            btn.textContent = 'create';
-            btn.disabled = false;
-            loadAccountOrgs();
-        })
-        .catch(function() {
-            btn.textContent = 'create';
-            btn.disabled = false;
-            errEl.textContent = 'request failed';
-            errEl.style.display = '';
+                loadAccountOrgs();
+            })
+            .catch(function() {
+                btn.textContent = 'create';
+                btn.disabled = false;
+                errEl.textContent = 'request failed';
+                errEl.style.display = '';
+            });
         });
-    });
 
-    loadAccountOrgs();
+        loadAccountOrgs();
+    }
     loadAccountPasskeys();
     loadNtfyConfig();
 
