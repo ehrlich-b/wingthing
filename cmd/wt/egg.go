@@ -541,43 +541,50 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				os.Symlink(agentBin, dst)
 			}
 		}
-		// Seed agent settings from egg.yaml agent_settings config (or host HOME fallback).
+		// Rebuild agent settings every session: read existing user prefs,
+		// layer host settings on top (host always wins for permissions),
+		// then inject agent-specific overrides.
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
 			settingsDst := filepath.Join(perUserHome, agentProfile.SettingsFile)
-			if _, err := os.Stat(settingsDst); err != nil {
-				os.MkdirAll(filepath.Dir(settingsDst), 0700)
-				baseSettings := make(map[string]any)
-				// Prefer explicit agent_settings path from egg.yaml
-				if srcPath, ok := eggCfg.AgentSettings[agentName]; ok {
-					if data, err := os.ReadFile(srcPath); err == nil {
-						json.Unmarshal(data, &baseSettings)
-					}
-				} else if realHome != "" {
-					// Fallback: read from host HOME
-					hostPath := filepath.Join(realHome, agentProfile.SettingsFile)
-					if data, err := os.ReadFile(hostPath); err == nil {
-						json.Unmarshal(data, &baseSettings)
-					}
-				}
-				// Claude-specific: inject apiKeyHelper when API key present
-				if agentName == "claude" {
-					if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
-						envMap["_WT_ANTHROPIC_KEY"] = v
-						delete(envMap, "ANTHROPIC_API_KEY")
-						baseSettings["apiKeyHelper"] = "echo $_WT_ANTHROPIC_KEY"
+			os.MkdirAll(filepath.Dir(settingsDst), 0700)
+			baseSettings := make(map[string]any)
+			// Read existing session settings to preserve user preferences
+			if data, err := os.ReadFile(settingsDst); err == nil {
+				json.Unmarshal(data, &baseSettings)
+			}
+			// Layer host settings on top (permissions from host always win)
+			if srcPath, ok := eggCfg.AgentSettings[agentName]; ok {
+				if data, err := os.ReadFile(srcPath); err == nil {
+					var hostSettings map[string]any
+					if json.Unmarshal(data, &hostSettings) == nil {
+						for k, v := range hostSettings {
+							baseSettings[k] = v
+						}
 					}
 				}
-				if len(baseSettings) > 0 {
-					if data, err := json.MarshalIndent(baseSettings, "", "  "); err == nil {
-						os.WriteFile(settingsDst, append(data, '\n'), 0644)
+			} else if realHome != "" {
+				hostPath := filepath.Join(realHome, agentProfile.SettingsFile)
+				if data, err := os.ReadFile(hostPath); err == nil {
+					var hostSettings map[string]any
+					if json.Unmarshal(data, &hostSettings) == nil {
+						for k, v := range hostSettings {
+							baseSettings[k] = v
+						}
 					}
 				}
-			} else if agentName == "claude" {
+			}
+			// Claude-specific: inject apiKeyHelper when API key present
+			if agentName == "claude" {
 				if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
-					// Settings already exist (re-attach) but still need the key rename
 					envMap["_WT_ANTHROPIC_KEY"] = v
 					delete(envMap, "ANTHROPIC_API_KEY")
+					baseSettings["apiKeyHelper"] = "echo $_WT_ANTHROPIC_KEY"
+				}
+			}
+			if len(baseSettings) > 0 {
+				if data, err := json.MarshalIndent(baseSettings, "", "  "); err == nil {
+					os.WriteFile(settingsDst, append(data, '\n'), 0644)
 				}
 			}
 		}
