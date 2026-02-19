@@ -607,6 +607,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// Inject per-session identity vars (always override, not configurable via egg.yaml).
 	// All values are sanitized to prevent shell injection.
 	args = append(args, "--env", "WT_SESSION_ID="+sessionID)
+	// Preview dir: tells wt-preview shim where to write .wt-preview so the
+	// wing watcher picks it up even if the agent changes its CWD.
+	args = append(args, "--env", "WT_PREVIEW_DIR="+cwd)
 	if identity.Email != "" {
 		args = append(args, "--env", "WT_USER="+NormalizeUser(identity.Email))
 		args = append(args, "--env", "WT_USER_EMAIL="+sanitizeEnvValue(identity.Email))
