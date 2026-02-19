@@ -315,8 +315,14 @@ window.addEventListener('popstate', function(e) {
     }
 });
 
+// Unregister stale service workers that cache old assets
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(function () {});
+    navigator.serviceWorker.getRegistrations().then(function(regs) {
+        regs.forEach(function(r) { r.unregister(); });
+    });
+    caches.keys().then(function(names) {
+        names.forEach(function(n) { caches.delete(n); });
+    });
 }
 
 init();
