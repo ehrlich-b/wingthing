@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -540,17 +541,44 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				os.Symlink(agentBin, dst)
 			}
 		}
-		// Configure Claude Code apiKeyHelper to bypass login prompt.
-		// Replace ANTHROPIC_API_KEY with a hidden name so Claude only sees the helper.
-		// Only set apiKeyHelper when an API key exists — otherwise let OAuth work.
-		if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
-			envMap["_WT_ANTHROPIC_KEY"] = v
-			delete(envMap, "ANTHROPIC_API_KEY")
-			claudeDir := filepath.Join(perUserHome, ".claude")
-			os.MkdirAll(claudeDir, 0700)
-			settingsPath := filepath.Join(claudeDir, "settings.json")
-			if _, err := os.Stat(settingsPath); err != nil {
-				os.WriteFile(settingsPath, []byte("{\"apiKeyHelper\":\"echo $_WT_ANTHROPIC_KEY\"}\n"), 0644)
+		// Seed agent settings from egg.yaml agent_settings config (or host HOME fallback).
+		agentProfile := egg.Profile(agentName)
+		if agentProfile.SettingsFile != "" {
+			settingsDst := filepath.Join(perUserHome, agentProfile.SettingsFile)
+			if _, err := os.Stat(settingsDst); err != nil {
+				os.MkdirAll(filepath.Dir(settingsDst), 0700)
+				baseSettings := make(map[string]any)
+				// Prefer explicit agent_settings path from egg.yaml
+				if srcPath, ok := eggCfg.AgentSettings[agentName]; ok {
+					if data, err := os.ReadFile(srcPath); err == nil {
+						json.Unmarshal(data, &baseSettings)
+					}
+				} else if realHome != "" {
+					// Fallback: read from host HOME
+					hostPath := filepath.Join(realHome, agentProfile.SettingsFile)
+					if data, err := os.ReadFile(hostPath); err == nil {
+						json.Unmarshal(data, &baseSettings)
+					}
+				}
+				// Claude-specific: inject apiKeyHelper when API key present
+				if agentName == "claude" {
+					if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
+						envMap["_WT_ANTHROPIC_KEY"] = v
+						delete(envMap, "ANTHROPIC_API_KEY")
+						baseSettings["apiKeyHelper"] = "echo $_WT_ANTHROPIC_KEY"
+					}
+				}
+				if len(baseSettings) > 0 {
+					if data, err := json.MarshalIndent(baseSettings, "", "  "); err == nil {
+						os.WriteFile(settingsDst, append(data, '\n'), 0644)
+					}
+				}
+			} else if agentName == "claude" {
+				if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
+					// Settings already exist (re-attach) but still need the key rename
+					envMap["_WT_ANTHROPIC_KEY"] = v
+					delete(envMap, "ANTHROPIC_API_KEY")
+				}
 			}
 		}
 		args = append(args, "--user-home", perUserHome)

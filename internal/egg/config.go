@@ -100,14 +100,15 @@ func (b BaseField) HasMasks() bool {
 
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
-	Base                       BaseField    `yaml:"base,omitempty"`
-	FS                         []string     `yaml:"fs"`
-	Network                    NetworkField `yaml:"network"`
-	Env                        EnvField     `yaml:"env"`
-	Resources                  EggResources `yaml:"resources"`
-	Shell                      string       `yaml:"shell"`
-	DangerouslySkipPermissions bool         `yaml:"dangerously_skip_permissions"`
-	Audit                      bool         `yaml:"audit"`
+	Base                       BaseField         `yaml:"base,omitempty"`
+	FS                         []string          `yaml:"fs"`
+	Network                    NetworkField      `yaml:"network"`
+	Env                        EnvField          `yaml:"env"`
+	Resources                  EggResources      `yaml:"resources"`
+	Shell                      string            `yaml:"shell"`
+	DangerouslySkipPermissions bool              `yaml:"dangerously_skip_permissions"`
+	Audit                      bool              `yaml:"audit"`
+	AgentSettings              map[string]string `yaml:"agent_settings,omitempty"` // agent name -> settings file path
 }
 
 // EggResources configures resource limits for sandboxed processes.
@@ -340,6 +341,17 @@ func MergeEggConfig(parent, child *EggConfig) *EggConfig {
 
 	// Audit: OR (once enabled by org/parent, can't be disabled)
 	merged.Audit = parent.Audit || child.Audit
+
+	// AgentSettings: child overrides parent per-key
+	if len(parent.AgentSettings) > 0 || len(child.AgentSettings) > 0 {
+		merged.AgentSettings = make(map[string]string)
+		for k, v := range parent.AgentSettings {
+			merged.AgentSettings[k] = v
+		}
+		for k, v := range child.AgentSettings {
+			merged.AgentSettings[k] = v
+		}
+	}
 
 	return merged
 }
