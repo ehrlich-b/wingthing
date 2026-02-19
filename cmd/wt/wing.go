@@ -308,6 +308,36 @@ func gzipData(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// ptyChunkSize is the max raw data size per WebSocket message. Larger payloads are
+// split into multiple pty.output messages to stay under the 512KB WS read limit.
+const ptyChunkSize = 128 * 1024 // 128KB raw → compresses well under WS limit
+
+// sendPTYOutput encrypts and sends PTY output, chunking if the data exceeds ptyChunkSize.
+func sendPTYOutput(sessionID string, data []byte, gcm cipher.AEAD, write ws.PTYWriteFunc) {
+	if len(data) <= ptyChunkSize {
+		encrypted, err := auth.Encrypt(gcm, data)
+		if err != nil {
+			log.Printf("pty session %s: encrypt error: %v", sessionID, err)
+			return
+		}
+		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
+		return
+	}
+	for sent := 0; sent < len(data); {
+		end := sent + ptyChunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+		encrypted, err := auth.Encrypt(gcm, data[sent:end])
+		if err != nil {
+			log.Printf("pty session %s: chunk encrypt error: %v", sessionID, err)
+			return
+		}
+		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
+		sent = end
+	}
+}
+
 // sendReplayChunked splits replay data into chunks, compresses and encrypts each
 // independently, and sends as multiple pty.output messages. Each chunk is a complete
 // gzip stream so the browser can decompress them individually.
@@ -481,15 +511,24 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 			})
 			return // don't recurse into .git
 		}
-		// Check if this child has a .git dir
+		// Check if this child has a .git dir or egg.yaml
 		gitDir := filepath.Join(full, ".git")
+		eggFile := filepath.Join(full, "egg.yaml")
+		hasGit := false
+		hasEgg := false
 		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
+			hasGit = true
+		}
+		if info, err := os.Stat(eggFile); err == nil && !info.IsDir() {
+			hasEgg = true
+		}
+		if hasGit || hasEgg {
 			*projects = append(*projects, ws.WingProject{
 				Name:    e.Name(),
 				Path:    full,
 				ModTime: projectModTime(full),
 			})
-			continue // don't recurse into known repos
+			continue // don't recurse into known projects
 		}
 		scanDir(full, depth+1, maxDepth, projects)
 	}
@@ -2160,11 +2199,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if currentGCM == nil {
 					continue // no key yet or reattach in progress
 				}
-				encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
-				if encErr != nil {
-					continue
-				}
-				write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
+				sendPTYOutput(sessionID, p.Output, currentGCM, write)
 			case *pb.SessionMsg_ExitCode:
 				log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
 				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
@@ -2359,11 +2394,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							if currentGCM == nil {
 								continue
 							}
-							encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
-							if encErr != nil {
-								continue
-							}
-							write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
+							sendPTYOutput(sessionID, p.Output, currentGCM, write)
 						case *pb.SessionMsg_ExitCode:
 							log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
 							write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
@@ -2653,16 +2684,7 @@ authDone:
 				if currentGCM == nil {
 					continue
 				}
-				encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
-				if encErr != nil {
-					log.Printf("pty session %s: encrypt error: %v", start.SessionID, encErr)
-					continue
-				}
-				write(ws.PTYOutput{
-					Type:      ws.TypePTYOutput,
-					SessionID: start.SessionID,
-					Data:      encrypted,
-				})
+				sendPTYOutput(start.SessionID, p.Output, currentGCM, write)
 
 			case *pb.SessionMsg_ExitCode:
 				log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
@@ -2774,15 +2796,7 @@ authDone:
 							if currentGCM == nil {
 								continue
 							}
-							encrypted, encErr := auth.Encrypt(currentGCM, p.Output)
-							if encErr != nil {
-								continue
-							}
-							write(ws.PTYOutput{
-								Type:      ws.TypePTYOutput,
-								SessionID: start.SessionID,
-								Data:      encrypted,
-							})
+							sendPTYOutput(start.SessionID, p.Output, currentGCM, write)
 						case *pb.SessionMsg_ExitCode:
 							log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
 							write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
