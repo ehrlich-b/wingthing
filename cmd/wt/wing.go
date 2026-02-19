@@ -2950,6 +2950,17 @@ func tryRelayPasskeys(allowedKeysPtr *[]config.AllowKey, wingCfg *config.WingCon
 		log.Printf("passkey: auto-enrolled path member %s for relay key auth", senderEmail)
 	}
 
+	// Admin fallback: admins bypass the allow list but still need an AllowKey entry
+	// to store their verified passkey
+	if entryIdx < 0 && senderEmail != "" && wingCfg.IsAdmin(senderEmail) {
+		ak := config.AllowKey{UserID: senderUserID, Email: senderEmail}
+		allowedKeys = append(allowedKeys, ak)
+		*allowedKeysPtr = allowedKeys
+		wingCfg.AllowKeys = append(wingCfg.AllowKeys, ak)
+		entryIdx = len(allowedKeys) - 1
+		log.Printf("passkey: auto-enrolled admin %s for relay key auth", senderEmail)
+	}
+
 	if entryIdx < 0 {
 		return false, nil
 	}
