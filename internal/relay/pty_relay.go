@@ -260,7 +260,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			start.UserID = userID
 			start.Email = userEmail
 			start.DisplayName = userDisplayName
-			if wing.UserID == userID {
+			if s.LocalMode || wing.UserID == userID {
 				start.OrgRole = "owner"
 			} else if wing.OrgID != "" && s.Store != nil {
 				start.OrgRole = s.Store.GetOrgMemberRole(wing.OrgID, userID)

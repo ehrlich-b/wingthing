@@ -416,6 +416,7 @@ type EggIdentity struct {
 	UserID      string // relay user ID
 	Email       string // authenticated email (e.g. from Google OAuth)
 	DisplayName string // human-readable name (Google full name, GitHub login)
+	IsOwner     bool   // owner/admin of this wing — use real HOME, skip per-user isolation
 }
 
 // sanitizeEnvValue strips characters that could cause shell injection.
@@ -511,8 +512,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			}
 		}
 	}
-	// Per-user home directory (only for relay/wing sessions with authenticated user)
-	if identity.Email != "" {
+	// Per-user home directory for multi-user isolation (guests on shared machines).
+	// Owners/admins use real HOME so their Keychain, OAuth tokens, and config work.
+	if identity.Email != "" && !identity.IsOwner {
 		perUserHome := filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
 		os.MkdirAll(perUserHome, 0700)
 		// Seed shell + agent config symlinks from real HOME
