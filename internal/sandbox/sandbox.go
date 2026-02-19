@@ -35,6 +35,7 @@ type Config struct {
 	CPULimit    time.Duration // RLIMIT_CPU (0 = backend default)
 	MemLimit    uint64        // RLIMIT_AS in bytes (0 = backend default)
 	MaxFDs      uint32        // RLIMIT_NOFILE (0 = backend default)
+	UserHome    string        // per-user home override (empty = os.UserHomeDir)
 }
 
 // EnforcementError is returned when the system cannot enforce the requested sandbox config.

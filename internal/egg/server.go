@@ -573,6 +573,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			CPULimit:    rc.CPULimit,
 			MemLimit:    rc.MemLimit,
 			MaxFDs:      rc.MaxFDs,
+			UserHome:    rc.UserHome,
 		}
 
 		sb, err = sandbox.New(sbCfg)

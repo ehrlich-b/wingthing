@@ -139,7 +139,10 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		for _, d := range s.cfg.DenyWrite {
 			wrapArgs = append(wrapArgs, "--deny-write", d)
 		}
-		home, _ := os.UserHomeDir()
+		home := s.cfg.UserHome
+		if home == "" {
+			home, _ = os.UserHomeDir()
+		}
 		if home != "" {
 			wrapArgs = append(wrapArgs, "--home", home)
 		}
