@@ -167,7 +167,7 @@ async function _probeWingInner(w) {
             S.sessionsData = S.sessionsData.filter(function(s) { return s.wing_id !== w.wing_id; });
             saveSessionCache();
         } else if (msg.indexOf('passkey_required') !== -1) {
-            w.tunnel_error = 'passkey_required';
+            w.tunnel_error = (S.currentUser && !S.currentUser.has_passkeys) ? 'no_passkeys_configured' : 'passkey_required';
             if (e.metadata) {
                 w.hostname = e.metadata.hostname || w.hostname;
                 w.platform = e.metadata.platform || w.platform;
