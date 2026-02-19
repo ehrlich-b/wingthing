@@ -537,10 +537,10 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if identity.Email != "" {
 		perUserHome := filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
 		os.MkdirAll(perUserHome, 0700)
-		// Seed shell config symlinks from real HOME
+		// Seed shell + agent config symlinks from real HOME
 		realHome, _ := os.UserHomeDir()
 		if realHome != "" {
-			for _, rc := range []string{".bashrc", ".zshrc", ".profile"} {
+			for _, rc := range []string{".bashrc", ".zshrc", ".profile", ".claude.json"} {
 				src := filepath.Join(realHome, rc)
 				dst := filepath.Join(perUserHome, rc)
 				if _, err := os.Stat(src); err == nil {
