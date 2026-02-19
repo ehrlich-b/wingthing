@@ -540,15 +540,16 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		// Configure Claude Code apiKeyHelper to bypass login prompt.
 		// Replace ANTHROPIC_API_KEY with a hidden name so Claude only sees the helper.
+		// Only set apiKeyHelper when an API key exists — otherwise let OAuth work.
 		if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
 			envMap["_WT_ANTHROPIC_KEY"] = v
 			delete(envMap, "ANTHROPIC_API_KEY")
-		}
-		claudeDir := filepath.Join(perUserHome, ".claude")
-		os.MkdirAll(claudeDir, 0700)
-		settingsPath := filepath.Join(claudeDir, "settings.json")
-		if _, err := os.Stat(settingsPath); err != nil {
-			os.WriteFile(settingsPath, []byte("{\"apiKeyHelper\":\"echo $_WT_ANTHROPIC_KEY\"}\n"), 0644)
+			claudeDir := filepath.Join(perUserHome, ".claude")
+			os.MkdirAll(claudeDir, 0700)
+			settingsPath := filepath.Join(claudeDir, "settings.json")
+			if _, err := os.Stat(settingsPath); err != nil {
+				os.WriteFile(settingsPath, []byte("{\"apiKeyHelper\":\"echo $_WT_ANTHROPIC_KEY\"}\n"), 0644)
+			}
 		}
 		args = append(args, "--user-home", perUserHome)
 	}
