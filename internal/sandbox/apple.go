@@ -138,6 +138,11 @@ func buildProfile(cfg Config) string {
 				}
 			}
 		}
+		// Allow keychain writes so agents can persist OAuth tokens.
+		// Matches Apple's application.sb — keychain ops go through securityd
+		// but need file-write to ~/Library/Keychains/.
+		keychains := filepath.Join(home, "Library", "Keychains")
+		fmt.Fprintf(&sb, "(allow file-write* (subpath %q))\n", keychains)
 		// Always allow writes to system tmp dirs (resolve symlinks for macOS /tmp -> /private/tmp)
 		tmpDir := os.TempDir()
 		if real, err := filepath.EvalSymlinks(tmpDir); err == nil {
