@@ -97,6 +97,41 @@ export function saveWingCache() {
     }));
 }
 
+// Crypto error toast — single dismissable popup with incrementing counter
+
+var _cryptoToastCount = 0;
+var _cryptoToastTimer = null;
+
+function showCryptoToast(message) {
+    _cryptoToastCount++;
+    var existing = document.getElementById('crypto-error-toast');
+    if (existing) {
+        existing.querySelector('.crypto-error-count').textContent = '(' + _cryptoToastCount + ')';
+        existing.querySelector('.crypto-error-msg').textContent = message;
+        clearTimeout(_cryptoToastTimer);
+        _cryptoToastTimer = setTimeout(function() { dismissCryptoToast(); }, 30000);
+        return;
+    }
+    var toast = document.createElement('div');
+    toast.id = 'crypto-error-toast';
+    toast.className = 'crypto-error-toast';
+    toast.innerHTML = '<span class="crypto-error-label">crypto error</span> ' +
+        '<span class="crypto-error-count">(' + _cryptoToastCount + ')</span> ' +
+        '<span class="crypto-error-msg">' + message.replace(/</g, '&lt;') + '</span>' +
+        '<button class="crypto-error-dismiss">&times;</button>';
+    document.body.appendChild(toast);
+    toast.querySelector('.crypto-error-dismiss').addEventListener('click', function() { dismissCryptoToast(); });
+    _cryptoToastTimer = setTimeout(function() { dismissCryptoToast(); }, 30000);
+}
+
+function dismissCryptoToast() {
+    var el = document.getElementById('crypto-error-toast');
+    if (el) el.remove();
+    _cryptoToastCount = 0;
+    clearTimeout(_cryptoToastTimer);
+    _cryptoToastTimer = null;
+}
+
 // Tunnel probe — populates wing metadata or sets tunnel_error
 // Deduplicate: if a probe is already in-flight for this wing, return the same promise
 
@@ -139,6 +174,11 @@ async function _probeWingInner(w) {
                 w.version = e.metadata.version || w.version;
                 w.locked = true;
             }
+        } else if (msg.indexOf('decrypt') !== -1) {
+            console.error('[wt] tunnel decrypt failed for', w.wing_id, '— clearing cached key');
+            w.tunnel_error = 'key_mismatch';
+            delete w.public_key;
+            showCryptoToast(msg);
         } else {
             console.error('[wt] wing probe failed for', w.wing_id, e);
             w.tunnel_error = 'unreachable';

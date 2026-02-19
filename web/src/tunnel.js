@@ -285,7 +285,13 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
             }
         }, 30000);
     }).then(async function(msg) {
-        var decrypted = tunnelDecrypt(key, msg.payload);
+        var decrypted;
+        try {
+            decrypted = tunnelDecrypt(key, msg.payload);
+        } catch (err) {
+            delete S.tunnelKeys[wing.public_key];
+            throw new Error('tunnel decryption failed — wing key may have changed');
+        }
         var result = JSON.parse(decrypted);
 
         if (result.error === 'passkey_required') {

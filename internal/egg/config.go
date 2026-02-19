@@ -2,6 +2,7 @@ package egg
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -181,9 +182,11 @@ func LoadEggConfigFromYAML(yamlStr string) (*EggConfig, error) {
 func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	if cwd != "" {
 		path := filepath.Join(cwd, "egg.yaml")
-		if cfg, err := ResolveEggConfig(path); err == nil {
+		cfg, err := ResolveEggConfig(path)
+		if err == nil {
 			return cfg
 		}
+		log.Printf("egg: config discovery failed for %s: %v", path, err)
 	}
 	if wingDefault != nil {
 		return wingDefault

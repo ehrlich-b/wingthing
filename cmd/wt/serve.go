@@ -134,9 +134,12 @@ func serveCmd() *cobra.Command {
 			}
 
 			if devFlag {
-				srv.DevTemplateDir = "internal/relay/templates"
+				if _, err := os.Stat("internal/relay/templates"); err == nil {
+					srv.DevTemplateDir = "internal/relay/templates"
+					fmt.Println("dev mode: templates reload from source tree")
+				}
 				srv.DevMode = true
-				fmt.Println("dev mode: templates reload, auto-claim login")
+				fmt.Println("dev mode: auto-claim login")
 			}
 			// Auto-enable local mode when no auth providers are configured
 			if !localFlag && !isEdge && srvCfg.GitHubClientID == "" &&

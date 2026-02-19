@@ -196,9 +196,12 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	})
 
 	if devFlag {
-		srv.DevTemplateDir = "internal/relay/templates"
+		if _, err := os.Stat("internal/relay/templates"); err == nil {
+			srv.DevTemplateDir = "internal/relay/templates"
+			fmt.Println("dev mode: templates reload from source tree")
+		}
 		srv.DevMode = true
-		fmt.Println("dev mode: templates reload, auto-claim login")
+		fmt.Println("dev mode: auto-claim login")
 	}
 
 	// Auth mode detection: same pattern as serve.go

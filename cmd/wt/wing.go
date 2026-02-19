@@ -965,6 +965,10 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	// Reap dead egg directories on startup
 	reapDeadEggs(cfg)
 
+	// Ensure wing keypair exists (auto-generate on first run)
+	if _, err := auth.EnsureKeyPair(cfg.Dir); err != nil {
+		return fmt.Errorf("ensure keypair: %w", err)
+	}
 	// Load wing private key for tunnel E2E encryption
 	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
 	if privKeyErr != nil {
