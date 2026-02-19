@@ -513,11 +513,13 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			}
 		}
 	}
-	// Per-user home directory for multi-user isolation (guests on shared machines).
-	// Owners/admins use real HOME so their Keychain, OAuth tokens, and config work.
+	// Per-user home directory for multi-user isolation on shared machines.
+	// All authenticated relay users get per-user homes — owner/admin is an
+	// authorization role, not an isolation bypass. Only local mode (no
+	// identity) uses real HOME.
 	realHome, _ := os.UserHomeDir()
 	effectiveHome := realHome
-	if identity.Email != "" && !identity.IsOwner {
+	if identity.Email != "" {
 		perUserHome := filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
 		os.MkdirAll(perUserHome, 0700)
 		effectiveHome = perUserHome
@@ -579,9 +581,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 					}
 				}
 			}
-			// Claude-specific: inject apiKeyHelper for guests (owners use
-			// ANTHROPIC_API_KEY directly from env, no rename needed).
-			if !identity.IsOwner && agentName == "claude" {
+			// Claude-specific: inject apiKeyHelper so the raw key isn't
+			// visible in the agent's environment.
+			if agentName == "claude" {
 				if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
 					envMap["_WT_ANTHROPIC_KEY"] = v
 					delete(envMap, "ANTHROPIC_API_KEY")
