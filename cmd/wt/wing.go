@@ -3033,9 +3033,9 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	// Two-state auth check for locked wings
 	if wingCfg.Locked && inner.Type != "passkey.auth" && inner.Type != "allow.add" {
-		// Step 1: Is sender in the allow list?
-		inList := false
-		if req.SenderUserID != "" {
+		// Step 1: Is sender in the allow list or an admin?
+		inList := wingCfg.IsAdmin(req.SenderEmail)
+		if !inList && req.SenderUserID != "" {
 			for _, ak := range allowedKeys {
 				if ak.UserID != "" && ak.UserID == req.SenderUserID {
 					inList = true
