@@ -131,9 +131,10 @@ func consumeAndSendPreview(path, sessionID string, mu *sync.Mutex, gcm *cipher.A
 	write(ws.PTYPreview{Type: ws.TypePTYPreview, SessionID: sessionID, Data: encrypted})
 }
 
-// watchPreviewFile watches for .wt-preview file creation in the given directory.
+// watchPreviewFile watches for the session-specific preview file in the given directory.
 func watchPreviewFile(ctx context.Context, cwd, sessionID string, mu *sync.Mutex, gcm *cipher.AEAD, write ws.PTYWriteFunc) {
-	previewPath := filepath.Join(cwd, ".wt-preview")
+	previewFile := ".wt-preview-" + sessionID
+	previewPath := filepath.Join(cwd, previewFile)
 
 	// Try fsnotify first
 	watcher, err := fsnotify.NewWatcher()
@@ -150,7 +151,7 @@ func watchPreviewFile(ctx context.Context, cwd, sessionID string, mu *sync.Mutex
 				if !ok {
 					return
 				}
-				if filepath.Base(ev.Name) != ".wt-preview" {
+				if filepath.Base(ev.Name) != previewFile {
 					continue
 				}
 				if ev.Op&(fsnotify.Create|fsnotify.Write) == 0 {
