@@ -468,6 +468,10 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			}
 		}
 	}
+	// Default TERM for headless services (systemd has no terminal)
+	if envMap["TERM"] == "" {
+		envMap["TERM"] = "xterm-256color"
+	}
 	// Per-user home override for relay sessions
 	if rc.UserHome != "" {
 		envMap["HOME"] = rc.UserHome
