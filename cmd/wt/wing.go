@@ -187,6 +187,42 @@ poll:
 	}
 }
 
+// watchBrowserRequests polls for new lines in the browser-requests file and forwards them as PTYBrowserOpen messages.
+func watchBrowserRequests(ctx context.Context, path, sessionID string, write ws.PTYWriteFunc) {
+	var lastOffset int64
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			f, err := os.Open(path)
+			if err != nil {
+				continue
+			}
+			info, err := f.Stat()
+			if err != nil || info.Size() <= lastOffset {
+				f.Close()
+				continue
+			}
+			f.Seek(lastOffset, io.SeekStart)
+			data, err := io.ReadAll(f)
+			f.Close()
+			if err != nil || len(data) == 0 {
+				continue
+			}
+			lastOffset += int64(len(data))
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					write(ws.PTYBrowserOpen{Type: ws.TypePTYBrowserOpen, SessionID: sessionID, URL: line})
+				}
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 // tunnelKeys caches derived AES-GCM keys per sender public key.
 var tunnelKeys sync.Map // senderPub string → cipher.AEAD
 
@@ -2581,6 +2617,9 @@ authDone:
 		go watchPreviewFile(sessionCtx, start.CWD, start.SessionID, &mu, &gcm, write)
 	}
 
+	// Watch for browser open requests from the shim
+	go watchBrowserRequests(sessionCtx, filepath.Join(cfg.Dir, "eggs", start.SessionID, "browser-requests"), start.SessionID, write)
+
 	// Read output from egg -> encrypt -> send to browser
 	go func() {
 		var lastHadBell bool
@@ -3061,6 +3100,16 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		if wingCfg.Label != "" {
 			resp["wing_label"] = wingCfg.Label
+		}
+		// Report which well-known API keys are set in the wing's environment
+		var globalKeys []string
+		for _, k := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "CURSOR_API_KEY"} {
+			if os.Getenv(k) != "" {
+				globalKeys = append(globalKeys, k)
+			}
+		}
+		if len(globalKeys) > 0 {
+			resp["global_keys"] = globalKeys
 		}
 		tunnelRespond(gcm, req.RequestID, resp, write)
 

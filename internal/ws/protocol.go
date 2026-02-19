@@ -18,6 +18,7 @@ const (
 	TypePTYDetach       = "pty.detach"        // browser → relay (explicit detach before disconnect)
 	TypePTYAttentionAck = "pty.attention_ack" // browser → relay → wing (notification seen)
 	TypePTYPreview      = "pty.preview"       // wing → relay → browser (ephemeral)
+	TypePTYBrowserOpen  = "pty.browser_open"  // wing → relay → browser (URL open request)
 
 	// Encrypted tunnel (browser ↔ wing, relay is opaque forwarder)
 	TypeTunnelRequest  = "tunnel.req"    // browser → relay → wing
@@ -287,6 +288,13 @@ type PasskeyRegistered struct {
 	Type   string `json:"type"`
 	UserID string `json:"user_id"`
 	Email  string `json:"email,omitempty"`
+}
+
+// PTYBrowserOpen notifies the browser that an agent requested a URL open.
+type PTYBrowserOpen struct {
+	Type      string `json:"type"`       // "pty.browser_open"
+	SessionID string `json:"session_id"`
+	URL       string `json:"url"`
 }
 
 // RelayRestart is sent to all connected WebSockets when the server is shutting down.

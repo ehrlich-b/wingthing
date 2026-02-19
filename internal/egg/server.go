@@ -101,6 +101,7 @@ type RunConfig struct {
 	Audit                      bool
 	VTE                        bool   // use VTerm snapshot for reconnect instead of replay buffer
 	RenderedConfig             string // effective egg config as YAML (after merge/resolve)
+	UserHome                   string // per-user home directory (relay sessions only)
 }
 
 // replayBuffer is an append-only (bounded) log of PTY output.
@@ -467,6 +468,10 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			}
 		}
 	}
+	// Per-user home override for relay sessions
+	if rc.UserHome != "" {
+		envMap["HOME"] = rc.UserHome
+	}
 
 	// Snapshot agent config before session so we can restore on exit
 	configSnap := SnapshotAgentConfig(rc.Agent)
@@ -488,6 +493,22 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			envMap["HTTP_PROXY"] = proxyURL
 			envMap["NODE_USE_ENV_PROXY"] = "1" // node 22.18+ native proxy support
 		}
+	}
+
+	// Browser open interception shim
+	shimDir := filepath.Join(s.dir, "shims")
+	os.MkdirAll(shimDir, 0755)
+	shimScript := "#!/bin/sh\necho \"$1\" >> \"$WT_SESSION_DIR/browser-requests\"\n"
+	shimPath := filepath.Join(shimDir, "wt-browser")
+	os.WriteFile(shimPath, []byte(shimScript), 0755)
+	os.Symlink("wt-browser", filepath.Join(shimDir, "open"))
+	os.Symlink("wt-browser", filepath.Join(shimDir, "xdg-open"))
+	envMap["BROWSER"] = "wt-browser"
+	envMap["WT_SESSION_DIR"] = s.dir
+	if path, ok := envMap["PATH"]; ok {
+		envMap["PATH"] = shimDir + ":" + path
+	} else {
+		envMap["PATH"] = shimDir + ":/usr/bin:/bin"
 	}
 
 	// Build envSlice AFTER proxy setup so HTTPS_PROXY etc. are included
@@ -519,13 +540,18 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		}
 
 		// Auto-inject agent profile write dirs.
-		if home != "" && len(mounts) > 0 {
+		// Use per-user home for agent config dirs when set.
+		profileHome := home
+		if rc.UserHome != "" {
+			profileHome = rc.UserHome
+		}
+		if profileHome != "" && len(mounts) > 0 {
 			for _, d := range profile.WriteRegex {
-				abs := filepath.Join(home, d)
+				abs := filepath.Join(profileHome, d)
 				mounts = append(mounts, sandbox.Mount{Source: abs, Target: abs, UseRegex: true})
 			}
 			for _, d := range profile.WriteDirs {
-				abs := filepath.Join(home, d)
+				abs := filepath.Join(profileHome, d)
 				mounts = append(mounts, sandbox.Mount{Source: abs, Target: abs})
 			}
 		}

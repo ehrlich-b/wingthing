@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -64,6 +66,7 @@ func eggRunCmd() *cobra.Command {
 		auditFlag  bool
 		vteFlag    bool
 		renderedConfigFlag string
+		userHomeFlag string
 		dangerouslySkipPermissions bool
 	)
 
@@ -122,6 +125,7 @@ func eggRunCmd() *cobra.Command {
 				Audit:          auditFlag,
 				VTE:            vteFlag,
 				RenderedConfig: renderedConfigFlag,
+				UserHome:       userHomeFlag,
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -160,6 +164,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable input audit log and PTY stream recording")
 	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect (internal)")
 	cmd.Flags().StringVar(&renderedConfigFlag, "rendered-config", "", "rendered egg config YAML (internal)")
+	cmd.Flags().StringVar(&userHomeFlag, "user-home", "", "per-user home directory (internal)")
 	cmd.MarkFlagRequired("session-id")
 
 	return cmd
@@ -452,6 +457,12 @@ func NormalizeUser(email string) string {
 	return strings.Trim(s, "-")
 }
 
+// userHash returns the first 12 hex chars of the SHA256 of the email.
+func userHash(email string) string {
+	h := sha256.Sum256([]byte(email))
+	return hex.EncodeToString(h[:])[:12]
+}
+
 // spawnEgg starts a per-session egg child process and returns a connected client.
 func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte bool, identity EggIdentity) (*egg.Client, error) {
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
@@ -510,6 +521,25 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if identity.DisplayName != "" {
 		args = append(args, "--env", "WT_USER_NAME="+sanitizeEnvValue(identity.DisplayName))
+	}
+	// Per-user home directory (only for relay/wing sessions with authenticated user)
+	if identity.Email != "" {
+		perUserHome := filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
+		os.MkdirAll(perUserHome, 0700)
+		// Seed shell config symlinks from real HOME
+		realHome, _ := os.UserHomeDir()
+		if realHome != "" {
+			for _, rc := range []string{".bashrc", ".zshrc", ".profile"} {
+				src := filepath.Join(realHome, rc)
+				dst := filepath.Join(perUserHome, rc)
+				if _, err := os.Stat(src); err == nil {
+					if _, err := os.Lstat(dst); err != nil {
+						os.Symlink(src, dst)
+					}
+				}
+			}
+		}
+		args = append(args, "--user-home", perUserHome)
 	}
 	if eggCfg.Resources.CPU != "" {
 		args = append(args, "--cpu", eggCfg.Resources.CPU)

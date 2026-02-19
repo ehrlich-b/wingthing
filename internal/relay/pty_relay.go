@@ -271,7 +271,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 						start.Passkeys = append(start.Passkeys, base64.StdEncoding.EncodeToString(c.PublicKey))
 					}
 				}
-			}
+				}
 
 			s.PTY.Set(sessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID, Agent: start.Agent, CWD: start.CWD})
 

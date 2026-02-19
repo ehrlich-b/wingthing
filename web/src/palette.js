@@ -39,7 +39,8 @@ function currentPaletteAgent() {
 export function cyclePaletteAgent(dir) {
     var agents = currentPaletteAgents();
     if (agents.length <= 1) return;
-    paletteAgentIndex = (paletteAgentIndex + (dir || 1) + agents.length) % agents.length;
+    var step = dir || 1;
+    paletteAgentIndex = (paletteAgentIndex + step + agents.length) % agents.length;
     renderPaletteStatus();
 }
 
@@ -316,8 +317,8 @@ export function launchFromPalette(cwd) {
     if (onlineWings().length === 0) return;
     var wing = currentPaletteWing();
     if (!wing) return;
-    var wingId = wing.wing_id;
     var agent = currentPaletteAgent();
+    var wingId = wing.wing_id;
     var validCwd = (cwd && cwd.charAt(0) === '/') ? cwd : '';
     hidePalette();
     setLastTermAgent(agent);

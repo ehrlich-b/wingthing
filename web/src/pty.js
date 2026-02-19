@@ -11,6 +11,31 @@ import { wingDisplayName, b64urlToBytes, bytesToB64url, bytesToB64 } from './hel
 import { saveTunnelAuthTokens } from './tunnel.js';
 import { handlePreview, closePreview } from './preview.js';
 
+function showBrowserOpenToast(url, sessionId) {
+    var existing = document.getElementById('browser-open-toast');
+    if (existing) existing.remove();
+
+    var toast = document.createElement('div');
+    toast.id = 'browser-open-toast';
+    toast.className = 'browser-open-toast';
+    toast.innerHTML = '<span class="browser-open-text">session wants to open:</span> ' +
+        '<a href="' + url.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener">' + url.replace(/</g, '&lt;') + '</a>' +
+        '<button class="browser-open-dismiss">&times;</button>';
+    document.body.appendChild(toast);
+
+    var dismissTimer = setTimeout(function() { toast.remove(); }, 15000);
+
+    toast.querySelector('.browser-open-dismiss').addEventListener('click', function() {
+        clearTimeout(dismissTimer);
+        toast.remove();
+    });
+
+    toast.querySelector('a').addEventListener('click', function() {
+        clearTimeout(dismissTimer);
+        toast.remove();
+    });
+}
+
 function sessionTitle(agent, wingId) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     var name = wing ? wingDisplayName(wing) : '';
@@ -343,6 +368,10 @@ function setupPTYHandlers(ws, reattach) {
 
                 renderSidebar();
                 loadHome();
+                break;
+
+            case 'pty.browser_open':
+                showBrowserOpenToast(msg.url, msg.session_id);
                 break;
 
             case 'pty.preview':

@@ -1231,7 +1231,9 @@ export function renderWingDetailPage(wingId) {
             '<div class="detail-row"><span class="detail-key">scope</span><span class="detail-val">' + scopeHtml + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">platform</span><span class="detail-val">' + escapeHtml(w.platform || 'unknown') + '</span></div>' +
             '<div class="detail-row"><span class="detail-key">version</span><span class="detail-val">' + escapeHtml(ver || 'unknown') + '</span></div>' +
-            (isLocked ? '' : '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + escapeHtml((w.agents || []).join(', ') || 'none') + '</span></div>') +
+            (isLocked ? '' : '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + ((w.agents || []).map(function(a) {
+                return agentWithIcon(a);
+            }).join(' ') || 'none') + '</span></div>') +
             '<div class="detail-row"><span class="detail-key">public key</span>' + pubKeyHtml + '</div>' +
             (isLocked ? '' : '<div class="detail-row"><span class="detail-key">projects</span><div class="detail-val">' + projList + '</div></div>') +
         '</div>' +
@@ -1472,7 +1474,8 @@ function setupWingPalette(wing) {
     function currentAgent() { return agents[wpAgentIndex % agents.length]; }
 
     function renderStatus() {
-        statusEl.innerHTML = '<span class="accent">' + agentWithIcon(currentAgent()) + '</span>' +
+        var agent = currentAgent();
+        statusEl.innerHTML = '<span class="accent">' + agentWithIcon(agent) + '</span>' +
             (agents.length > 1 ? ' <span class="text-dim">(shift+tab to switch)</span>' : '');
     }
     renderStatus();
@@ -2103,7 +2106,9 @@ export function renderDashboard() {
                     '<span class="wing-dot ' + dotClass + '"></span>' +
                     '<span class="wing-name">' + escapeHtml(name) + lockIcon + '</span>' +
                 '</div>' +
-                '<span class="wing-agents">' + (((w.locked && !hasAuth) || isCardPasskey) ? '' : (w.agents || []).map(function(a) { return agentIcon(a) || escapeHtml(a); }).join(' ')) + '</span>' +
+                '<span class="wing-agents">' + (((w.locked && !hasAuth) || isCardPasskey) ? '' : (w.agents || []).map(function(a) {
+                    return agentIcon(a) || escapeHtml(a);
+                }).join(' ')) + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
                     (isCardPasskey ? authBadge : ((w.locked && !hasAuth) ? lockedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>'))) +
