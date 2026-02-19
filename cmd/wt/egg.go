@@ -528,8 +528,16 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				}
 			}
 		}
-		// Create ~/.local/bin so Claude Code doesn't warn about missing native install dir.
-		os.MkdirAll(filepath.Join(perUserHome, ".local", "bin"), 0755)
+		// Create ~/.local/bin and symlink the agent binary so Claude Code
+		// doesn't warn about missing native install dir or command not found.
+		localBin := filepath.Join(perUserHome, ".local", "bin")
+		os.MkdirAll(localBin, 0755)
+		if agentBin, err := exec.LookPath(agentName); err == nil {
+			dst := filepath.Join(localBin, agentName)
+			if _, err := os.Lstat(dst); err != nil {
+				os.Symlink(agentBin, dst)
+			}
+		}
 		// Configure Claude Code apiKeyHelper to bypass login prompt.
 		// Replace ANTHROPIC_API_KEY with a hidden name so Claude only sees the helper.
 		if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
