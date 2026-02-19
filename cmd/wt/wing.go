@@ -493,6 +493,27 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 	if depth > maxDepth {
 		return
 	}
+
+	// Check if THIS directory is itself a project (has .git or egg.yaml).
+	// This handles configured paths that point directly at project dirs.
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		*projects = append(*projects, ws.WingProject{
+			Name:    filepath.Base(dir),
+			Path:    dir,
+			ModTime: projectModTime(dir),
+		})
+		return
+	}
+	if _, err := os.Stat(filepath.Join(dir, "egg.yaml")); err == nil {
+		*projects = append(*projects, ws.WingProject{
+			Name:    filepath.Base(dir),
+			Path:    dir,
+			ModTime: projectModTime(dir),
+		})
+		return
+	}
+
+	// Not a project itself — scan children.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -502,16 +523,6 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 			continue
 		}
 		full := filepath.Join(dir, e.Name())
-		if e.Name() == ".git" {
-			// Parent is a git repo
-			*projects = append(*projects, ws.WingProject{
-				Name:    filepath.Base(dir),
-				Path:    dir,
-				ModTime: projectModTime(dir),
-			})
-			return // don't recurse into .git
-		}
-		// Check if this child has a .git dir or egg.yaml
 		gitDir := filepath.Join(full, ".git")
 		eggFile := filepath.Join(full, "egg.yaml")
 		hasGit := false
@@ -528,7 +539,7 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 				Path:    full,
 				ModTime: projectModTime(full),
 			})
-			continue // don't recurse into known projects
+			continue
 		}
 		scanDir(full, depth+1, maxDepth, projects)
 	}
