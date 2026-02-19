@@ -1228,11 +1228,12 @@ export function renderWingDetailPage(wingId) {
                 (!isOnline || w.tunnel_error === 'unreachable' ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
             '</div>' +
         '</div>' +
-        (isOnline && !isLocked ? '<div class="wd-palette">' +
+        (isOnline && !isLocked && (w.agents || []).length > 0 ? '<div class="wd-palette">' +
             '<input id="wd-search" type="text" class="wd-search" placeholder="' + (w.locked && !S.tunnelAuthTokens[wingId] ? 'start a session (passkey auth on first browse)...' : 'start a session...') + '" autocomplete="off" spellcheck="false">' +
             '<div id="wd-search-results" class="wd-search-results"></div>' +
             '<div id="wd-search-status" class="wd-search-status"></div>' +
         '</div>' : '') +
+        (isOnline && !isLocked && (w.agents || []).length === 0 ? '<div class="wd-no-agents"><span class="text-dim">no agents installed — run <code>wt doctor</code> on this machine to diagnose</span></div>' : '') +
         (isLocked ? '' : activeHtml) +
         (isLocked ? '' : '<div class="wd-section"><h3 class="section-label">session history</h3><div id="wd-past-sessions"><span class="text-dim">' + (isOnline ? 'loading...' : 'wing offline') + '</span></div></div>') +
         '<div class="wd-info">' +
@@ -2123,9 +2124,9 @@ export function renderDashboard() {
                     '<span class="wing-dot ' + dotClass + '"></span>' +
                     '<span class="wing-name">' + escapeHtml(name) + lockIcon + '</span>' +
                 '</div>' +
-                '<span class="wing-agents">' + ((needsPasskeySetup || needsAuth || isCardPasskey) ? '' : (w.agents || []).map(function(a) {
+                '<span class="wing-agents">' + ((needsPasskeySetup || needsAuth || isCardPasskey) ? '' : ((w.agents || []).length === 0 ? '<span class="text-dim">no agents</span>' : (w.agents || []).map(function(a) {
                     return agentIcon(a) || escapeHtml(a);
-                }).join(' ')) + '</span>' +
+                }).join(' '))) + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
                     ((needsPasskeySetup || needsAuth || isCardPasskey) ? lockedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>')) +
