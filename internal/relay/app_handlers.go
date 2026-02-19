@@ -80,6 +80,7 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 		tier = "pro"
 	}
 	hasPersonalSub := s.Store.HasPersonalSubscription(user.ID)
+	creds, _ := s.Store.ListPasskeyCredentials(user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":               user.ID,
 		"display_name":     user.DisplayName,
@@ -90,6 +91,7 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 		"email":            user.Email,
 		"personal_pro":     hasPersonalSub,
 		"roost_mode":       s.RoostMode,
+		"has_passkeys":     len(creds) > 0,
 	})
 }
 

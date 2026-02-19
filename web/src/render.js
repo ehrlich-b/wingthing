@@ -466,6 +466,7 @@ export function renderAccountPage() {
                 if (data.error) throw new Error(data.error);
                 btn.textContent = '+';
                 btn.disabled = false;
+                if (S.currentUser) S.currentUser.has_passkeys = true;
                 loadAccountPasskeys();
             })
             .catch(function(e) {
@@ -2109,23 +2110,25 @@ export function renderDashboard() {
             var isCardPasskey = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
             var isCardNoPasskeys = w.tunnel_error === 'no_passkeys_configured';
             var hasAuth = !!S.tunnelAuthTokens[w.wing_id];
-            var lockedBadge = (w.locked && !hasAuth) ? '<span class="wing-pinned-badge wing-badge-passkey">add passkey</span>' : '';
-            var authBadge = isCardNoPasskeys ? '<span class="wing-pinned-badge">set up passkey</span>' : (isCardPasskey ? '<span class="wing-pinned-badge">authenticate</span>' : '');
-            var needsPasskeySetup = w.locked && !hasAuth && !isCardPasskey && !isCardNoPasskeys;
-            var lockIcon = (isCardPasskey || isCardNoPasskeys) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' :
-                needsPasskeySetup ? '<span class="wing-lock wing-lock-setup" title="add a passkey to unlock">&#x1f511;</span>' : '';
+            var userHasPasskeys = S.currentUser && S.currentUser.has_passkeys;
+            var needsPasskeySetup = w.locked && !hasAuth && !userHasPasskeys && !isCardPasskey;
+            var needsAuth = w.locked && !hasAuth && userHasPasskeys && !needsPasskeySetup;
+            var lockedBadge = needsPasskeySetup ? '<span class="wing-pinned-badge wing-badge-passkey">add passkey</span>' :
+                (needsAuth || isCardPasskey) ? '<span class="wing-pinned-badge">authenticate</span>' : '';
+            var lockIcon = needsPasskeySetup ? '<span class="wing-lock wing-lock-setup" title="add a passkey to unlock">&#x1f511;</span>' :
+                ((needsAuth || isCardPasskey || isCardNoPasskeys) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '');
             var draggable = ('ontouchstart' in window || navigator.maxTouchPoints > 0) ? '' : ' draggable="true"';
             return '<div class="wing-box"' + draggable + ' data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
                     '<span class="wing-name">' + escapeHtml(name) + lockIcon + '</span>' +
                 '</div>' +
-                '<span class="wing-agents">' + (((w.locked && !hasAuth) || isCardPasskey) ? '' : (w.agents || []).map(function(a) {
+                '<span class="wing-agents">' + ((needsPasskeySetup || needsAuth || isCardPasskey) ? '' : (w.agents || []).map(function(a) {
                     return agentIcon(a) || escapeHtml(a);
                 }).join(' ')) + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
-                    (isCardPasskey ? authBadge : ((w.locked && !hasAuth) ? lockedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>'))) +
+                    ((needsPasskeySetup || needsAuth || isCardPasskey) ? lockedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>')) +
                 '</div>' +
             '</div>';
         }).join('');
@@ -2143,11 +2146,13 @@ export function renderDashboard() {
                     navigateToAccount(true);
                     return;
                 }
-                if (w && w.locked && !S.tunnelAuthTokens[w.wing_id]) {
+                // Locked wing without passkeys → go add one
+                if (w && w.locked && !S.tunnelAuthTokens[w.wing_id] && !(S.currentUser && S.currentUser.has_passkeys)) {
                     navigateToAccount(true);
                     return;
                 }
-                if (w && (w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed')) {
+                // Locked wing with passkeys (or passkey_required from probe) → authenticate
+                if (w && ((w.locked && !S.tunnelAuthTokens[w.wing_id]) || w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed')) {
                     // Passkey auth on dashboard — unlock in-place, don't navigate
                     var badge = box.querySelector('.wing-pinned-badge');
                     if (badge) badge.textContent = 'authenticating...';

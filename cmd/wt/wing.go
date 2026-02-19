@@ -3206,8 +3206,13 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "passkey.auth":
-		if !wingCfg.Locked || len(allowedKeys) == 0 {
+		if !wingCfg.Locked {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "wing is not locked"}, write)
+			return
+		}
+		// Allow passkey auth even with empty allow_keys if relay provides passkeys (admin/roost case)
+		if len(allowedKeys) == 0 && len(req.SenderPasskeys) == 0 {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "no allowed keys configured"}, write)
 			return
 		}
 		credID, _ := base64.RawURLEncoding.DecodeString(inner.CredentialID)
