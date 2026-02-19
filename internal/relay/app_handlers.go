@@ -89,6 +89,7 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 		"tier":             tier,
 		"email":            user.Email,
 		"personal_pro":     hasPersonalSub,
+		"roost_mode":       s.RoostMode,
 	})
 }
 

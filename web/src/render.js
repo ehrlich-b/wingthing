@@ -3,7 +3,7 @@ import { escapeHtml, wingDisplayName, shortenPath, projectName, formatRelativeTi
 import { identityPubKey } from './crypto.js';
 import { sendTunnelRequest, tunnelCloseWing } from './tunnel.js';
 import { switchToSession } from './nav.js';
-import { showHome, navigateToWingDetail } from './nav.js';
+import { showHome, navigateToWingDetail, navigateToAccount } from './nav.js';
 import { connectPTY } from './pty.js';
 import { setLastTermAgent, getLastTermAgent, setWingOrder, setEggOrder, getCachedWingSessions, setCachedWingSessions, probeWing, fetchWingSessions, mergeWingSessions } from './data.js';
 import { rebuildAgentLists } from './dashboard.js';
@@ -286,12 +286,14 @@ export function renderAccountPage() {
         '</div>' +
         '<div class="ac-actions">';
 
-    if (tier === 'free') {
-        html += '<button class="btn-sm btn-accent" id="account-upgrade">give me pro</button>';
-    } else if (S.currentUser.personal_pro) {
-        html += '<button class="btn-sm" id="account-downgrade" style="color:var(--text-dim)">cancel pro</button>';
-    } else {
-        html += '<span class="text-dim" style="font-size:12px">pro via org</span>';
+    if (!S.currentUser.roost_mode) {
+        if (tier === 'free') {
+            html += '<button class="btn-sm btn-accent" id="account-upgrade">give me pro</button>';
+        } else if (S.currentUser.personal_pro) {
+            html += '<button class="btn-sm" id="account-downgrade" style="color:var(--text-dim)">cancel pro</button>';
+        } else {
+            html += '<span class="text-dim" style="font-size:12px">pro via org</span>';
+        }
     }
     html += '<button class="btn-sm btn-danger" id="account-logout">log out</button>';
     html += '</div>';
@@ -313,19 +315,21 @@ export function renderAccountPage() {
         '<div id="ac-ntfy-content"><span class="text-dim">loading...</span></div>' +
     '</div>';
 
-    // Org section
-    html += '<div class="ac-section">' +
-        '<div class="ac-section-header">' +
-            '<h3>organizations</h3>' +
-            '<button class="ac-create-btn" id="ac-create-toggle" title="create org">+</button>' +
-        '</div>' +
-        '<div id="ac-create-form" class="ac-create-form" style="display:none;">' +
-            '<input type="text" class="ac-input" id="ac-create-name" placeholder="team name">' +
-            '<button class="btn-sm btn-accent" id="ac-create-btn">create</button>' +
-        '</div>' +
-        '<div id="ac-create-error" class="ac-error" style="display:none;"></div>' +
-        '<div id="ac-org-list" class="ac-org-list"><span class="text-dim">loading...</span></div>' +
-    '</div>';
+    // Org section (hidden in roost mode)
+    if (!S.currentUser.roost_mode) {
+        html += '<div class="ac-section">' +
+            '<div class="ac-section-header">' +
+                '<h3>organizations</h3>' +
+                '<button class="ac-create-btn" id="ac-create-toggle" title="create org">+</button>' +
+            '</div>' +
+            '<div id="ac-create-form" class="ac-create-form" style="display:none;">' +
+                '<input type="text" class="ac-input" id="ac-create-name" placeholder="team name">' +
+                '<button class="btn-sm btn-accent" id="ac-create-btn">create</button>' +
+            '</div>' +
+            '<div id="ac-create-error" class="ac-error" style="display:none;"></div>' +
+            '<div id="ac-org-list" class="ac-org-list"><span class="text-dim">loading...</span></div>' +
+        '</div>';
+    }
 
     html += '</div>';
     DOM.accountContent.innerHTML = html;
@@ -1197,7 +1201,7 @@ export function renderWingDetailPage(wingId) {
     if (isNotAllowed) {
         lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> This wing is locked. Ask the owner to add you:<br><code>wt wing allow --email ' + escapeHtml(userEmail) + '</code></div>';
     } else if (isNoPasskeys) {
-        lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> Configure a passkey to access this wing<br><a class="btn-sm btn-accent" href="#account">set up passkey</a></div>';
+        lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> Configure a passkey to access this wing<br><button class="btn-sm btn-accent" id="wd-passkey-setup-btn">set up passkey</button></div>';
     } else if (isPasskeyNeeded) {
         lockBanner = '<div class="wd-lock-banner"><span class="wd-lock-icon">&#x1f512;</span> Authenticate to access this wing<br><button class="btn-sm btn-accent" id="wd-auth-btn">authenticate</button></div>';
     }
@@ -1285,6 +1289,11 @@ export function renderWingDetailPage(wingId) {
                     renderWingDetailPage(wingId);
                 });
         });
+    }
+
+    var passkeySetupBtn = document.getElementById('wd-passkey-setup-btn');
+    if (passkeySetupBtn) {
+        passkeySetupBtn.addEventListener('click', function() { navigateToAccount(true); });
     }
 
     var nameEl = document.getElementById('wd-name');
@@ -2099,7 +2108,9 @@ export function renderDashboard() {
             var hasAuth = !!S.tunnelAuthTokens[w.wing_id];
             var lockedBadge = (w.locked && !hasAuth) ? '<span class="wing-pinned-badge wing-badge-passkey">add passkey</span>' : '';
             var authBadge = isCardNoPasskeys ? '<span class="wing-pinned-badge">set up passkey</span>' : (isCardPasskey ? '<span class="wing-pinned-badge">authenticate</span>' : '');
-            var lockIcon = ((w.locked && !hasAuth) || isCardPasskey || isCardNoPasskeys) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
+            var needsPasskeySetup = w.locked && !hasAuth && !isCardPasskey && !isCardNoPasskeys;
+            var lockIcon = (isCardPasskey || isCardNoPasskeys) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' :
+                needsPasskeySetup ? '<span class="wing-lock wing-lock-setup" title="add a passkey to unlock">&#x1f511;</span>' : '';
             var draggable = ('ontouchstart' in window || navigator.maxTouchPoints > 0) ? '' : ' draggable="true"';
             return '<div class="wing-box"' + draggable + ' data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
@@ -2126,11 +2137,11 @@ export function renderDashboard() {
                 var mid = box.dataset.wingId;
                 var w = S.wingsData.find(function(w) { return w.wing_id === mid; });
                 if (w && w.tunnel_error === 'no_passkeys_configured') {
-                    location.hash = '#account';
+                    navigateToAccount(true);
                     return;
                 }
                 if (w && w.locked && !S.tunnelAuthTokens[w.wing_id]) {
-                    location.hash = '#account';
+                    navigateToAccount(true);
                     return;
                 }
                 if (w && (w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed')) {

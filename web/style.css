@@ -350,6 +350,9 @@ body {
 .wing-dot.dot-live { background: var(--green); }
 .wing-dot.dot-offline { background: var(--yellow); }
 
+.wing-lock-setup { opacity: 0.7; }
+.wing-badge-passkey { color: var(--accent); }
+
 /* Wing box hover */
 .wing-box:hover { background: var(--bg-hover); }
 
