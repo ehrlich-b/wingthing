@@ -2097,7 +2097,7 @@ export function renderDashboard() {
             var isCardPasskey = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
             var isCardNoPasskeys = w.tunnel_error === 'no_passkeys_configured';
             var hasAuth = !!S.tunnelAuthTokens[w.wing_id];
-            var lockedBadge = (w.locked && !hasAuth) ? '<span class="wing-pinned-badge">locked</span>' : '';
+            var lockedBadge = (w.locked && !hasAuth) ? '<span class="wing-pinned-badge wing-badge-passkey">add passkey</span>' : '';
             var authBadge = isCardNoPasskeys ? '<span class="wing-pinned-badge">set up passkey</span>' : (isCardPasskey ? '<span class="wing-pinned-badge">authenticate</span>' : '');
             var lockIcon = ((w.locked && !hasAuth) || isCardPasskey || isCardNoPasskeys) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '';
             var draggable = ('ontouchstart' in window || navigator.maxTouchPoints > 0) ? '' : ' draggable="true"';
@@ -2126,6 +2126,10 @@ export function renderDashboard() {
                 var mid = box.dataset.wingId;
                 var w = S.wingsData.find(function(w) { return w.wing_id === mid; });
                 if (w && w.tunnel_error === 'no_passkeys_configured') {
+                    location.hash = '#account';
+                    return;
+                }
+                if (w && w.locked && !S.tunnelAuthTokens[w.wing_id]) {
                     location.hash = '#account';
                     return;
                 }
