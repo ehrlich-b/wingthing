@@ -550,6 +550,14 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				}
 			}
 		}
+		// Configure Claude Code apiKeyHelper to bypass login prompt.
+		// ANTHROPIC_API_KEY in env alone still triggers first-run setup screen.
+		claudeDir := filepath.Join(perUserHome, ".claude")
+		os.MkdirAll(claudeDir, 0700)
+		settingsPath := filepath.Join(claudeDir, "settings.json")
+		if _, err := os.Stat(settingsPath); err != nil {
+			os.WriteFile(settingsPath, []byte("{\"apiKeyHelper\":\"echo $ANTHROPIC_API_KEY\"}\n"), 0644)
+		}
 		args = append(args, "--user-home", perUserHome)
 	}
 	if eggCfg.Resources.CPU != "" {
