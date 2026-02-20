@@ -156,6 +156,7 @@ async function _probeWingInner(w) {
         w.projects = data.projects || [];
         w.locked = data.locked || false;
         w.allowed_count = data.allowed_count || 0;
+        w.passkey_enrolled = !!data.passkey_enrolled;
         delete w.tunnel_error;
     } catch (e) {
         var msg = e.message || '';
@@ -172,7 +173,7 @@ async function _probeWingInner(w) {
                 w.hostname = e.metadata.hostname || w.hostname;
                 w.platform = e.metadata.platform || w.platform;
                 w.version = e.metadata.version || w.version;
-                w.locked = true;
+                w.locked = e.metadata ? (e.metadata.locked !== false) : true;
             }
         } else if (msg.indexOf('decrypt') !== -1) {
             console.error('[wt] tunnel decrypt failed for', w.wing_id, '— clearing cached key');

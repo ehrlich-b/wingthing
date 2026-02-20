@@ -196,6 +196,7 @@ type PTYAttach struct {
 	PublicKey string `json:"public_key,omitempty"`  // new browser ephemeral key
 	WingID    string `json:"wing_id,omitempty"`     // target wing (for relay routing)
 	AuthToken string `json:"auth_token,omitempty"`  // cached passkey auth token
+	UserID    string `json:"user_id,omitempty"`     // relay-injected
 	Cols      uint32 `json:"cols,omitempty"`         // browser terminal cols (for resize-before-snapshot)
 	Rows      uint32 `json:"rows,omitempty"`         // browser terminal rows (for resize-before-snapshot)
 }

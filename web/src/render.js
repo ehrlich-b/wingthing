@@ -1224,6 +1224,7 @@ export function renderWingDetailPage(wingId) {
                 '<span class="session-dot ' + (isOnline ? 'live' : 'offline') + '"></span>' +
                 '<span class="wd-name" id="wd-name" title="click to rename">' + escapeHtml(name) + '</span>' +
                 (w.locked && !S.tunnelAuthTokens[wingId] ? '<span class="wd-pinned-badge" title="passkey required">&#x1f512; locked</span>' : '') +
+                (!w.locked && w.passkey_enrolled ? '<span class="wd-pinned-badge" title="passkey enrolled">&#x1f511; passkey</span>' : '') +
                 (w.wing_label ? '<a class="wd-clear-label" id="wd-delete-label" title="clear name">x</a>' : '') +
                 (!isOnline || w.tunnel_error === 'unreachable' ? '<a class="wd-dismiss-link" id="wd-dismiss">remove</a>' : '') +
             '</div>' +
@@ -2117,7 +2118,8 @@ export function renderDashboard() {
             var lockedBadge = needsPasskeySetup ? '<span class="wing-pinned-badge wing-badge-passkey">add passkey</span>' :
                 (needsAuth || isCardPasskey) ? '<span class="wing-pinned-badge">authenticate</span>' : '';
             var lockIcon = needsPasskeySetup ? '<span class="wing-lock wing-lock-setup" title="add a passkey to unlock">&#x1f511;</span>' :
-                ((needsAuth || isCardPasskey || isCardNoPasskeys) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' : '');
+                ((needsAuth || isCardPasskey || isCardNoPasskeys) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' :
+                (w.passkey_enrolled && !w.locked ? '<span class="wing-lock" title="passkey active">&#x1f511;</span>' : ''));
             var draggable = ('ontouchstart' in window || navigator.maxTouchPoints > 0) ? '' : ' draggable="true"';
             return '<div class="wing-box"' + draggable + ' data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
@@ -2166,6 +2168,7 @@ export function renderDashboard() {
                             w.projects = data.projects || [];
                             w.locked = data.locked || false;
                             w.allowed_count = data.allowed_count || 0;
+                            w.passkey_enrolled = !!data.passkey_enrolled;
                             delete w.tunnel_error;
                             rebuildAgentLists();
                             renderDashboard();

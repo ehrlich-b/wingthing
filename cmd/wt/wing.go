@@ -2371,9 +2371,18 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				reclaimIdleState.connected = true
 				reclaimIdleState.mu.Unlock()
 
-				// Passkey auth gate — same check as handlePTYSession
+				// Passkey auth gate — per-user check
 				var attachAuthToken string
-				if len(allowedKeys) > 0 {
+				var attachUserHasPasskey bool
+				if attach.UserID != "" {
+					for _, ak := range allowedKeys {
+						if ak.UserID == attach.UserID && ak.Key != "" {
+							attachUserHasPasskey = true
+							break
+						}
+					}
+				}
+				if attachUserHasPasskey {
 					tokenOK := false
 					if attach.AuthToken != "" {
 						if _, ok := passkeyCache.Check(attach.AuthToken, authTTL); ok {
@@ -2607,8 +2616,21 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 // E2E encryption stays in the wing — the egg sees plaintext only.
 func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, idleTimeout time.Duration) {
 	allowedKeys := *allowedKeysPtr
-	// Passkey verification — if allowed keys are configured, require auth
-	if len(allowedKeys) > 0 {
+	// Passkey verification — per-user check: only challenge users who have a passkey
+	var userHasPasskey bool
+	if start.UserID != "" {
+		for _, ak := range allowedKeys {
+			if ak.UserID == start.UserID && ak.Key != "" {
+				userHasPasskey = true
+				break
+			}
+		}
+		// Relay attests this user has passkeys (covers post-restart re-enrollment)
+		if !userHasPasskey && len(start.Passkeys) > 0 {
+			userHasPasskey = true
+		}
+	}
+	if userHasPasskey {
 		// Check cached auth token first
 		if start.AuthToken != "" {
 			if _, ok := passkeyCache.Check(start.AuthToken, authTTL); ok {
@@ -3155,8 +3177,16 @@ func tryRelayPasskeys(allowedKeysPtr *[]config.AllowKey, wingCfg *config.WingCon
 		log.Printf("passkey: auto-enrolled admin %s for relay key auth", senderEmail)
 	}
 
+	// Relay-passkeys fallback: user has relay-registered passkeys but no local entry.
+	// Handles "pull from roost" after wing restart — session-scoped entries are gone
+	// but the relay still attests the user's passkeys.
 	if entryIdx < 0 {
-		return false, nil
+		ak := config.AllowKey{UserID: senderUserID, Email: senderEmail}
+		allowedKeys = append(allowedKeys, ak)
+		*allowedKeysPtr = allowedKeys
+		wingCfg.AllowKeys = append(wingCfg.AllowKeys, ak)
+		entryIdx = len(allowedKeys) - 1
+		log.Printf("passkey: auto-enrolled relay-passkey user %s", senderEmail)
 	}
 
 	// Try each relay-provided key
@@ -3284,6 +3314,47 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 	}
 
+	// Per-user passkey enforcement on unlocked wings
+	if !wingCfg.Locked && inner.Type != "passkey.auth" && inner.Type != "allow.add" {
+		if req.SenderUserID != "" {
+			userNeedsPasskey := false
+			for _, ak := range allowedKeys {
+				if ak.UserID == req.SenderUserID && ak.Key != "" {
+					userNeedsPasskey = true
+					break
+				}
+			}
+			// Relay attests this user has passkeys (covers post-restart re-enrollment)
+			if !userNeedsPasskey && len(req.SenderPasskeys) > 0 {
+				userNeedsPasskey = true
+			}
+			if userNeedsPasskey {
+				var authTTL time.Duration
+				if wingCfg.AuthTTL != "" {
+					if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil {
+						authTTL = d
+					}
+				}
+				authorized := false
+				if inner.AuthToken != "" {
+					if _, ok := passkeyCache.Check(inner.AuthToken, authTTL); ok {
+						authorized = true
+					}
+				}
+				if !authorized {
+					tunnelRespond(gcm, req.RequestID, map[string]any{
+						"error":    "passkey_required",
+						"hostname": client.Hostname,
+						"platform": client.Platform,
+						"version":  version,
+						"locked":   false,
+					}, write)
+					return
+				}
+			}
+		}
+	}
+
 	log.Printf("tunnel %s: %s (user=%s role=%s)", req.RequestID, inner.Type, req.SenderUserID, req.SenderOrgRole)
 
 	switch inner.Type {
@@ -3319,6 +3390,21 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		if len(globalKeys) > 0 {
 			resp["global_keys"] = globalKeys
+		}
+		if req.SenderUserID != "" {
+			enrolled := false
+			for _, ak := range allowedKeys {
+				if ak.UserID == req.SenderUserID && ak.Key != "" {
+					enrolled = true
+					break
+				}
+			}
+			if !enrolled && len(req.SenderPasskeys) > 0 {
+				enrolled = true
+			}
+			if enrolled {
+				resp["passkey_enrolled"] = true
+			}
 		}
 		tunnelRespond(gcm, req.RequestID, resp, write)
 
@@ -3411,10 +3497,6 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "passkey.auth":
-		if !wingCfg.Locked {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "wing is not locked"}, write)
-			return
-		}
 		// Allow passkey auth even with empty allow_keys if relay provides passkeys (admin/roost case)
 		if len(allowedKeys) == 0 && len(req.SenderPasskeys) == 0 {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "no allowed keys configured"}, write)

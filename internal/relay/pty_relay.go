@@ -304,6 +304,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 
 			s.PTY.Set(attach.SessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID})
 
+			attach.UserID = userID
 			fwd, _ := json.Marshal(attach)
 			wing.Conn.Write(ctx, websocket.MessageText, fwd)
 
