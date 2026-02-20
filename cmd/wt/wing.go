@@ -45,6 +45,18 @@ var wingAttentionCooldown sync.Map // sessionID → time.Time
 // Same nonce = same attention episode. Cleared when user responds.
 var wingAttentionNonce sync.Map // sessionID → string
 
+// sessionIdleState tracks I/O timestamps for wing-side idle detection.
+type sessionIdleState struct {
+	mu         sync.Mutex
+	lastInput  time.Time
+	lastOutput time.Time
+	connected  bool
+	eggDir     string
+}
+
+// sessionStates tracks idle state for all active sessions.
+var sessionStates sync.Map // sessionID -> *sessionIdleState
+
 const attentionCooldown = 30 * time.Second
 
 // checkAndSendAttention fires session.attention if the cooldown has elapsed.
@@ -1081,7 +1093,13 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 				authTTL = d
 			}
 		}
-		handlePTYSession(ctx, cfg, wingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, authTTL)
+		var idleTimeout time.Duration
+		if wingCfg.IdleTimeout != "" {
+			if d, err := time.ParseDuration(wingCfg.IdleTimeout); err == nil {
+				idleTimeout = d
+			}
+		}
+		handlePTYSession(ctx, cfg, wingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, authTTL, idleTimeout)
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
@@ -1152,9 +1170,10 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 					auditLive.Store(newCfg.Audit)
 					debugLive.Store(newCfg.Debug)
 
-					// Hot-reload conv, auth_ttl
+					// Hot-reload conv, auth_ttl, idle_timeout
 					wingCfg.Conv = newCfg.Conv
 					wingCfg.AuthTTL = newCfg.AuthTTL
+					wingCfg.IdleTimeout = newCfg.IdleTimeout
 
 					// Hot-reload labels
 					wingCfg.Labels = newCfg.Labels
@@ -1187,6 +1206,78 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			}
 		}
 	}()
+
+	// Idle session reaper — kills sessions that have been idle too long.
+	// Always runs; reads wingCfg.IdleTimeout dynamically so SIGHUP reload works.
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			var idleTimeout time.Duration
+			if wingCfg.IdleTimeout != "" {
+				if d, parseErr := time.ParseDuration(wingCfg.IdleTimeout); parseErr == nil {
+					idleTimeout = d
+				}
+			}
+			if idleTimeout <= 0 {
+				continue
+			}
+			sessionStates.Range(func(key, value any) bool {
+				sid := key.(string)
+				state := value.(*sessionIdleState)
+				state.mu.Lock()
+				lastIO := state.lastOutput
+				if state.lastInput.After(lastIO) {
+					lastIO = state.lastInput
+				}
+				eggDir := state.eggDir
+				connected := state.connected
+				state.mu.Unlock()
+
+				if lastIO.IsZero() {
+					return true // no I/O yet, skip
+				}
+				idle := time.Since(lastIO)
+
+				// If disconnected and no recent output, cross-check with the egg
+				if !connected && idle > idleTimeout/2 {
+					sockPath := filepath.Join(eggDir, "egg.sock")
+					tokenPath := filepath.Join(eggDir, "egg.token")
+					if ec, dialErr := egg.Dial(sockPath, tokenPath); dialErr == nil {
+						pollCtx, pollCancel := context.WithTimeout(ctx, 2*time.Second)
+						if st, stErr := ec.Status(pollCtx); stErr == nil {
+							polledIdle := time.Duration(st.IdleSeconds) * time.Second
+							if polledIdle < idle {
+								idle = polledIdle
+							}
+						}
+						pollCancel()
+						ec.Close()
+					}
+				}
+
+				if idle > idleTimeout {
+					log.Printf("idle reaper: killing session %s (idle %s, limit %s)", sid, idle.Round(time.Second), idleTimeout)
+					sockPath := filepath.Join(eggDir, "egg.sock")
+					tokenPath := filepath.Join(eggDir, "egg.token")
+					if ec, dialErr := egg.Dial(sockPath, tokenPath); dialErr == nil {
+						ec.Kill(ctx, sid)
+						ec.Close()
+					}
+					sessionStates.Delete(sid)
+				}
+				return true
+			})
+		}
+	}()
+	if wingCfg.IdleTimeout != "" {
+		log.Printf("idle reaper enabled: timeout=%s", wingCfg.IdleTimeout)
+	}
 
 	return client.Run(ctx)
 }
@@ -2166,6 +2257,15 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	}
 	wingPubKeyB64 := base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
 
+	// Register idle state tracking (reclaimed — starts disconnected)
+	reclaimIdleState := &sessionIdleState{
+		lastOutput: time.Now(),
+		connected:  false,
+		eggDir:     eggDir,
+	}
+	sessionStates.Store(sessionID, reclaimIdleState)
+	defer sessionStates.Delete(sessionID)
+
 	// Attach to existing egg session
 	streamCtx, sCancel := context.WithCancel(ctx)
 	stream, err := ec.AttachSession(streamCtx, sessionID)
@@ -2193,9 +2293,9 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 			}
 			switch p := msg.Payload.(type) {
 			case *pb.SessionMsg_Output:
-				// Two consecutive chunks with BEL = real notification.
-				// Single BEL is likely an OSC terminator; repeated means
-				// the agent is persistently pinging for attention.
+				reclaimIdleState.mu.Lock()
+				reclaimIdleState.lastOutput = time.Now()
+				reclaimIdleState.mu.Unlock()
 				if hasBell(p.Output) {
 					if lastHadBell {
 						checkAndSendAttention(sessionID, reclaimAgent, reclaimCWD, write)
@@ -2223,6 +2323,11 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 	// Process input from browser
 	go func() {
+		defer func() {
+			reclaimIdleState.mu.Lock()
+			reclaimIdleState.connected = false
+			reclaimIdleState.mu.Unlock()
+		}()
 		for data := range input {
 			var env ws.Envelope
 			if err := json.Unmarshal(data, &env); err != nil {
@@ -2235,6 +2340,9 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					continue
 				}
 				clearAttentionCooldown(sessionID)
+				reclaimIdleState.mu.Lock()
+				reclaimIdleState.connected = true
+				reclaimIdleState.mu.Unlock()
 
 				// Passkey auth gate — same check as handlePTYSession
 				var attachAuthToken string
@@ -2391,6 +2499,9 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 						}
 						switch p := msg.Payload.(type) {
 						case *pb.SessionMsg_Output:
+							reclaimIdleState.mu.Lock()
+							reclaimIdleState.lastOutput = time.Now()
+							reclaimIdleState.mu.Unlock()
 							if hasBell(p.Output) {
 								if lastHadBell {
 									checkAndSendAttention(sessionID, reclaimAgent, reclaimCWD, write)
@@ -2418,6 +2529,9 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 			case ws.TypePTYInput:
 				clearAttentionCooldown(sessionID)
+				reclaimIdleState.mu.Lock()
+				reclaimIdleState.lastInput = time.Now()
+				reclaimIdleState.mu.Unlock()
 				var msg ws.PTYInput
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue
@@ -2464,7 +2578,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, idleTimeout time.Duration) {
 	allowedKeys := *allowedKeysPtr
 	// Passkey verification — if allowed keys are configured, require auth
 	if len(allowedKeys) > 0 {
@@ -2612,7 +2726,7 @@ authDone:
 
 	// Spawn a per-session egg
 	isOwner := start.OrgRole == "owner" || start.OrgRole == "admin"
-	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, EggIdentity{UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName, IsOwner: isOwner})
+	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, EggIdentity{UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName, IsOwner: isOwner}, idleTimeout)
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := readEggCrashInfo(eggDir)
@@ -2623,6 +2737,16 @@ authDone:
 	defer ec.Close()
 
 	log.Printf("pty session %s: spawned (user=%s agent=%s)", start.SessionID, start.UserID, start.Agent)
+
+	// Register idle state tracking
+	idleState := &sessionIdleState{
+		lastOutput: time.Now(),
+		lastInput:  time.Now(),
+		connected:  true,
+		eggDir:     filepath.Join(cfg.Dir, "eggs", start.SessionID),
+	}
+	sessionStates.Store(start.SessionID, idleState)
+	defer sessionStates.Delete(start.SessionID)
 
 	// Persist session creator
 	if start.UserID != "" {
@@ -2681,6 +2805,9 @@ authDone:
 
 			switch p := msg.Payload.(type) {
 			case *pb.SessionMsg_Output:
+				idleState.mu.Lock()
+				idleState.lastOutput = time.Now()
+				idleState.mu.Unlock()
 				if hasBell(p.Output) {
 					if lastHadBell {
 						checkAndSendAttention(start.SessionID, start.Agent, start.CWD, write)
@@ -2710,6 +2837,11 @@ authDone:
 
 	// Process input from browser -> decrypt -> send to egg
 	go func() {
+		defer func() {
+			idleState.mu.Lock()
+			idleState.connected = false
+			idleState.mu.Unlock()
+		}()
 		for data := range input {
 			var env ws.Envelope
 			if err := json.Unmarshal(data, &env); err != nil {
@@ -2722,6 +2854,9 @@ authDone:
 					continue
 				}
 				clearAttentionCooldown(start.SessionID)
+				idleState.mu.Lock()
+				idleState.connected = true
+				idleState.mu.Unlock()
 				// 1. Invalidate key — old output goroutine stops sending
 				mu.Lock()
 				gcm = nil
@@ -2794,6 +2929,9 @@ authDone:
 						}
 						switch p := msg.Payload.(type) {
 						case *pb.SessionMsg_Output:
+							idleState.mu.Lock()
+							idleState.lastOutput = time.Now()
+							idleState.mu.Unlock()
 							if hasBell(p.Output) {
 								if lastHadBell {
 									checkAndSendAttention(start.SessionID, start.Agent, start.CWD, write)
@@ -2821,6 +2959,9 @@ authDone:
 
 			case ws.TypePTYInput:
 				clearAttentionCooldown(start.SessionID)
+				idleState.mu.Lock()
+				idleState.lastInput = time.Now()
+				idleState.mu.Unlock()
 				var msg ws.PTYInput
 				if err := json.Unmarshal(data, &msg); err != nil {
 					continue

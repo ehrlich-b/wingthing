@@ -24,7 +24,8 @@ type WingConfig struct {
 	Locked    bool       `yaml:"locked,omitempty"`     // explicit lock mode toggle
 	AuthTTL   string     `yaml:"auth_ttl,omitempty"`   // passkey auth token duration (default "1h")
 	AllowKeys []AllowKey `yaml:"allow_keys,omitempty"`
-	Admins    []string   `yaml:"admins,omitempty"` // emails with admin role (see all sessions, all paths)
+	Admins      []string   `yaml:"admins,omitempty"`       // emails with admin role (see all sessions, all paths)
+	IdleTimeout string     `yaml:"idle_timeout,omitempty"` // kill sessions idle for this long (e.g. "4h")
 
 	PinnedCompat bool `yaml:"pinned,omitempty"` // backwards compat: old "pinned" key
 }

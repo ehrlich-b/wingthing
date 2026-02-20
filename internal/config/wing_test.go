@@ -139,6 +139,51 @@ func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsHelper(s, sub))
 }
 
+func TestWingConfigIdleTimeout(t *testing.T) {
+	input := `
+wing_id: abc123
+idle_timeout: 4h
+`
+	var cfg WingConfig
+	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.IdleTimeout != "4h" {
+		t.Errorf("IdleTimeout = %q, want %q", cfg.IdleTimeout, "4h")
+	}
+}
+
+func TestWingConfigIdleTimeoutEmpty(t *testing.T) {
+	input := `
+wing_id: abc123
+`
+	var cfg WingConfig
+	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.IdleTimeout != "" {
+		t.Errorf("IdleTimeout = %q, want empty", cfg.IdleTimeout)
+	}
+}
+
+func TestWingConfigIdleTimeoutRoundtrip(t *testing.T) {
+	cfg := WingConfig{
+		WingID:      "abc123",
+		IdleTimeout: "30m",
+	}
+	data, err := yaml.Marshal(&cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var cfg2 WingConfig
+	if err := yaml.Unmarshal(data, &cfg2); err != nil {
+		t.Fatalf("unmarshal roundtrip: %v", err)
+	}
+	if cfg2.IdleTimeout != "30m" {
+		t.Errorf("roundtrip IdleTimeout = %q, want %q", cfg2.IdleTimeout, "30m")
+	}
+}
+
 func containsHelper(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

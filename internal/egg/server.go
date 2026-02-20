@@ -69,6 +69,9 @@ type Session struct {
 	sb      sandbox.Sandbox
 	cmd     *exec.Cmd
 	mu      sync.Mutex
+	lastOutput     time.Time     // last PTY output timestamp
+	lastInput      time.Time     // last user input timestamp
+	idleTimeout    time.Duration // 0 = disabled
 	done           chan struct{} // closed when process exits
 	exitCode       int
 	debug          bool
@@ -102,6 +105,7 @@ type RunConfig struct {
 	VTE                        bool   // use VTerm snapshot for reconnect instead of replay buffer
 	RenderedConfig             string // effective egg config as YAML (after merge/resolve)
 	UserHome                   string // per-user home directory (relay sessions only)
+	IdleTimeout                time.Duration // 0 = disabled; self-terminate after this much idle
 }
 
 // replayBuffer is an append-only (bounded) log of PTY output.
@@ -646,6 +650,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		Network:        networkSummary,
 		RenderedConfig: rc.RenderedConfig,
 		StartedAt:      time.Now(),
+		idleTimeout:    rc.IdleTimeout,
 		Cols:           rc.Cols,
 		Rows:           rc.Rows,
 		ptmx:           ptmx,
@@ -686,6 +691,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 
 	// Watchdog: if no PTY output within 15s, dump diagnostic info
 	go s.startupWatchdog(sess)
+
+	// Idle timeout self-termination (safety net if wing dies)
+	if sess.idleTimeout > 0 {
+		go s.idleWatchdog(sess)
+	}
 
 	// Write files and start gRPC server
 	sockPath := filepath.Join(s.dir, "egg.sock")
@@ -858,6 +868,9 @@ func (s *Server) readPTY(sess *Session) {
 			data := make([]byte, n)
 			copy(data, buf[:n])
 			sess.replay.Write(data)
+			sess.mu.Lock()
+			sess.lastOutput = time.Now()
+			sess.mu.Unlock()
 			offset := sess.replay.WritePosition()
 			select {
 			case sess.vtermCh <- vtermMsg{data: data, offset: offset}:
@@ -959,6 +972,7 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 		return nil, status.Error(codes.NotFound, "no session")
 	}
 	st := sess.replay.Stats()
+	idleSec := int64(sess.idleDuration().Seconds())
 	return &pb.StatusResponse{
 		SessionId:      sess.ID,
 		Agent:          sess.Agent,
@@ -968,6 +982,7 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 		Readers:        int32(st.Readers),
 		UptimeSeconds:  int64(time.Since(sess.StartedAt).Seconds()),
 		RenderedConfig: sess.RenderedConfig,
+		IdleSeconds:    idleSec,
 	}, nil
 }
 
@@ -1080,6 +1095,9 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 
 		switch p := msg.Payload.(type) {
 		case *pb.SessionMsg_Input:
+			sess.mu.Lock()
+			sess.lastInput = time.Now()
+			sess.mu.Unlock()
 			if sess.auditor != nil {
 				sess.auditor.Process(p.Input)
 			}
@@ -1288,6 +1306,51 @@ func (s *Server) startupWatchdog(sess *Session) {
 			lines = lines[:50]
 		}
 		log.Printf("egg: WATCHDOG: lsof (first 50 lines):\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+// idleDuration returns how long since the last PTY I/O (input or output).
+// If no I/O has occurred, returns time since session start.
+func (sess *Session) idleDuration() time.Duration {
+	sess.mu.Lock()
+	lastIO := sess.lastOutput
+	if sess.lastInput.After(lastIO) {
+		lastIO = sess.lastInput
+	}
+	sess.mu.Unlock()
+	if lastIO.IsZero() {
+		return time.Since(sess.StartedAt)
+	}
+	return time.Since(lastIO)
+}
+
+// idleWatchdog terminates the egg if no PTY I/O for idleTimeout.
+// Safety net: if the wing dies, the egg can still self-terminate.
+func (s *Server) idleWatchdog(sess *Session) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sess.done:
+			return
+		case <-ticker.C:
+		}
+		idle := sess.idleDuration()
+		if idle > sess.idleTimeout {
+			log.Printf("egg: idle timeout (%s idle, limit %s) — terminating", idle.Round(time.Second), sess.idleTimeout)
+			if sess.cmd != nil && sess.cmd.Process != nil {
+				sess.cmd.Process.Signal(syscall.SIGTERM)
+				select {
+				case <-sess.done:
+					return
+				case <-time.After(5 * time.Second):
+					sess.cmd.Process.Kill()
+				}
+			}
+			// Wait for normal cleanup path (cmd.Wait -> close(done) -> gRPC stop)
+			<-sess.done
+			return
+		}
 	}
 }
 

@@ -68,6 +68,7 @@ func eggRunCmd() *cobra.Command {
 		vteFlag    bool
 		renderedConfigFlag string
 		userHomeFlag string
+		idleTimeoutFlag string
 		dangerouslySkipPermissions bool
 	)
 
@@ -109,6 +110,11 @@ func eggRunCmd() *cobra.Command {
 				memLimit = parseMemFlag(memFlag)
 			}
 
+			var idleTimeout time.Duration
+			if idleTimeoutFlag != "" {
+				idleTimeout, _ = time.ParseDuration(idleTimeoutFlag)
+			}
+
 			rc := egg.RunConfig{
 				Agent:   agentName,
 				CWD:     cwd,
@@ -127,6 +133,7 @@ func eggRunCmd() *cobra.Command {
 				VTE:            vteFlag,
 				RenderedConfig: renderedConfigFlag,
 				UserHome:       userHomeFlag,
+				IdleTimeout:    idleTimeout,
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -166,6 +173,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect (internal)")
 	cmd.Flags().StringVar(&renderedConfigFlag, "rendered-config", "", "rendered egg config YAML (internal)")
 	cmd.Flags().StringVar(&userHomeFlag, "user-home", "", "per-user home directory (internal)")
+	cmd.Flags().StringVar(&idleTimeoutFlag, "idle-timeout", "", "idle timeout duration (e.g. 4h)")
 	cmd.MarkFlagRequired("session-id")
 
 	return cmd
@@ -257,13 +265,14 @@ func eggListCmd() *cobra.Command {
 					cancel()
 					ec.Close()
 					if stErr == nil {
-						line += fmt.Sprintf("  agent=%s  buf=%s  written=%s  trimmed=%s  readers=%d  uptime=%s",
+						line += fmt.Sprintf("  agent=%s  buf=%s  written=%s  trimmed=%s  readers=%d  uptime=%s  idle=%s",
 							st.Agent,
 							humanBytes(st.BufferBytes),
 							humanBytes(st.TotalWritten),
 							humanBytes(st.TotalTrimmed),
 							st.Readers,
 							humanDuration(time.Duration(st.UptimeSeconds)*time.Second),
+							humanDuration(time.Duration(st.IdleSeconds)*time.Second),
 						)
 					}
 				}
@@ -332,7 +341,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 	sessionID := uuid.New().String()[:8]
 
 	// Spawn egg as child process
-	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, EggIdentity{})
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, EggIdentity{}, 0)
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
@@ -461,7 +470,7 @@ func userHash(email string) string {
 }
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
-func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte bool, identity EggIdentity) (*egg.Client, error) {
+func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte bool, identity EggIdentity, idleTimeout time.Duration) (*egg.Client, error) {
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create egg dir: %w", err)
@@ -635,6 +644,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if eggCfg.Audit {
 		args = append(args, "--audit")
+	}
+	if idleTimeout > 0 {
+		args = append(args, "--idle-timeout", idleTimeout.String())
 	}
 
 	// Serialize rendered config as YAML for status RPC

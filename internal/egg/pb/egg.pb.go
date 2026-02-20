@@ -67,6 +67,7 @@ type StatusResponse struct {
 	Readers        int32                  `protobuf:"varint,6,opt,name=readers,proto3" json:"readers,omitempty"`
 	UptimeSeconds  int64                  `protobuf:"varint,7,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
 	RenderedConfig string                 `protobuf:"bytes,8,opt,name=rendered_config,json=renderedConfig,proto3" json:"rendered_config,omitempty"`
+	IdleSeconds    int64                  `protobuf:"varint,9,opt,name=idle_seconds,json=idleSeconds,proto3" json:"idle_seconds,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -155,6 +156,13 @@ func (x *StatusResponse) GetRenderedConfig() string {
 		return x.RenderedConfig
 	}
 	return ""
+}
+
+func (x *StatusResponse) GetIdleSeconds() int64 {
+	if x != nil {
+		return x.IdleSeconds
+	}
+	return 0
 }
 
 type KillRequest struct {
@@ -544,7 +552,7 @@ var File_egg_proto protoreflect.FileDescriptor
 const file_egg_proto_rawDesc = "" +
 	"\n" +
 	"\tegg.proto\x12\x03egg\"\x0f\n" +
-	"\rStatusRequest\"\x9c\x02\n" +
+	"\rStatusRequest\"\xbf\x02\n" +
 	"\x0eStatusResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -554,7 +562,8 @@ const file_egg_proto_rawDesc = "" +
 	"\rtotal_trimmed\x18\x05 \x01(\x03R\ftotalTrimmed\x12\x18\n" +
 	"\areaders\x18\x06 \x01(\x05R\areaders\x12%\n" +
 	"\x0euptime_seconds\x18\a \x01(\x03R\ruptimeSeconds\x12'\n" +
-	"\x0frendered_config\x18\b \x01(\tR\x0erenderedConfig\",\n" +
+	"\x0frendered_config\x18\b \x01(\tR\x0erenderedConfig\x12!\n" +
+	"\fidle_seconds\x18\t \x01(\x03R\vidleSeconds\",\n" +
 	"\vKillRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x0e\n" +
