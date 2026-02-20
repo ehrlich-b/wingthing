@@ -523,12 +523,12 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 	}
 	// Per-user home directory for multi-user isolation on shared machines.
-	// All authenticated relay users get per-user homes — owner/admin is an
-	// authorization role, not an isolation bypass. Only local mode (no
-	// identity) uses real HOME.
+	// Owners and admins use real HOME — they're the machine owner and
+	// shouldn't be sandboxed into a synthetic home. Only non-owner
+	// authenticated users get per-user homes.
 	realHome, _ := os.UserHomeDir()
 	effectiveHome := realHome
-	if identity.Email != "" {
+	if identity.Email != "" && !identity.IsOwner {
 		perUserHome := filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
 		os.MkdirAll(perUserHome, 0700)
 		effectiveHome = perUserHome
@@ -556,10 +556,11 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		args = append(args, "--user-home", perUserHome)
 	}
-	// Rebuild agent settings every session for all authenticated users.
-	// Reads existing prefs, layers host settings on top (host always wins
-	// for permissions), then injects agent-specific overrides.
-	if identity.Email != "" {
+	// Rebuild agent settings every session for non-owner users.
+	// Owners use their real HOME and real agent config — no overrides.
+	// For guests, reads existing prefs, layers host settings on top
+	// (host always wins for permissions), then injects agent-specific overrides.
+	if identity.Email != "" && !identity.IsOwner {
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
 			settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)

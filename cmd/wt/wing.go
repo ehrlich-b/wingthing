@@ -507,23 +507,30 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 		return
 	}
 
-	// Check if THIS directory is itself a project (has .git or egg.yaml).
-	// This handles configured paths that point directly at project dirs.
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-		*projects = append(*projects, ws.WingProject{
-			Name:    filepath.Base(dir),
-			Path:    dir,
-			ModTime: projectModTime(dir),
-		})
-		return
-	}
-	if _, err := os.Stat(filepath.Join(dir, "egg.yaml")); err == nil {
-		*projects = append(*projects, ws.WingProject{
-			Name:    filepath.Base(dir),
-			Path:    dir,
-			ModTime: projectModTime(dir),
-		})
-		return
+	// At depth 0, check if the configured path itself is a project.
+	// This handles paths that point directly at project dirs (e.g.
+	// paths: [~/repos/myproject]). At depth > 0, the parent's child
+	// scan already added this dir if it had .git or egg.yaml.
+	if depth == 0 {
+		hasGit := false
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			hasGit = true
+		}
+		hasEgg := false
+		if _, err := os.Stat(filepath.Join(dir, "egg.yaml")); err == nil {
+			hasEgg = true
+		}
+		if hasGit || hasEgg {
+			*projects = append(*projects, ws.WingProject{
+				Name:    filepath.Base(dir),
+				Path:    dir,
+				ModTime: projectModTime(dir),
+			})
+			if hasGit {
+				return
+			}
+			// egg.yaml only: also scan children for git repos
+		}
 	}
 
 	// Not a project itself — scan children.
@@ -552,8 +559,28 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 				Path:    full,
 				ModTime: projectModTime(full),
 			})
+		}
+		if hasGit {
+			// Git repo found. Also check immediate children for egg.yaml
+			// sub-projects (e.g. ai-playground/.git + ai-playground/dev/egg.yaml).
+			if subs, err := os.ReadDir(full); err == nil {
+				for _, sub := range subs {
+					if !sub.IsDir() || strings.HasPrefix(sub.Name(), ".") {
+						continue
+					}
+					subFull := filepath.Join(full, sub.Name())
+					if info, err := os.Stat(filepath.Join(subFull, "egg.yaml")); err == nil && !info.IsDir() {
+						*projects = append(*projects, ws.WingProject{
+							Name:    sub.Name(),
+							Path:    subFull,
+							ModTime: projectModTime(subFull),
+						})
+					}
+				}
+			}
 			continue
 		}
+		// No .git — keep scanning (egg.yaml dirs can contain git repos).
 		scanDir(full, depth+1, maxDepth, projects)
 	}
 }
