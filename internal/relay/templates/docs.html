@@ -68,7 +68,7 @@
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">run your own</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span><br>
-<span class="prompt">$ </span><span class="cmd">wt roost</span><span class="comment">              # server + wing, one command</span><br>
+<span class="prompt">$ </span><span class="cmd">wt roost start</span><span class="comment">        # server + wing, one command</span><br>
 <span class="prompt">$ </span><span class="cmd">open localhost:8080</span>
 </div>
 
@@ -81,7 +81,7 @@
 <table class="vocab-table">
 <tr><th>term</th><th>what it is</th></tr>
 <tr><td>wing</td><td>Your machine. Install <code>wt</code>, run <code>wt start</code>, and it connects outbound to the roost. One machine = one wing.</td></tr>
-<tr><td>roost</td><td>The server. Handles login and routes connections. wingthing.ai is a roost. <code>wt roost</code> runs your own.</td></tr>
+<tr><td>roost</td><td>The server. Handles login and routes connections. wingthing.ai is a roost. <code>wt roost start</code> runs your own.</td></tr>
 <tr><td>egg</td><td>A sandboxed agent session. Each egg is an isolated process with its own PTY, sandbox profile, and gRPC socket. Runs Claude, Codex, Ollama, etc.</td></tr>
 </table>
 <p>Wings connect outbound to the roost (no port forwarding needed), and the roost bridges WebSocket connections between wings and browsers. All PTY traffic is E2E encrypted.</p>
@@ -290,14 +290,14 @@ dangerously_skip_permissions: true
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">quick start</h3>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">wt roost</span>
+<span class="prompt">$ </span><span class="cmd">wt roost start</span>
 </div>
 <p>Open <a href="http://localhost:8080">localhost:8080</a>. Server and wing in one process, no login page, no config.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">multi-user</h3>
 <p>Same command, add OAuth env vars. Now multiple people can log in.</p>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">GITHUB_CLIENT_ID=xxx GITHUB_CLIENT_SECRET=yyy wt roost</span>
+<span class="prompt">$ </span><span class="cmd">GITHUB_CLIENT_ID=xxx GITHUB_CLIENT_SECRET=yyy wt roost start</span>
 </div>
 <p>Or use Google OAuth with <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>. Connect additional wings from other machines with <code>wt login --roost https://my-roost.example.com</code> and <code>wt start --roost https://my-roost.example.com</code>. Or set <code>roost_url</code> in <code>~/.wingthing/config.yaml</code> to avoid passing the flag every time.</p>
 
@@ -316,7 +316,7 @@ Description=wingthing roost<br>
 After=network.target<br>
 <br>
 [Service]<br>
-ExecStart=/usr/local/bin/wt roost --foreground<br>
+ExecStart=/usr/local/bin/wt roost start --foreground<br>
 Restart=always<br>
 <br>
 [Install]<br>

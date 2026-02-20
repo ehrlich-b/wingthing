@@ -19,7 +19,7 @@ open app.wingthing.ai      # start sessions from any browser
 
 **The wing** is a daemon on your machine that connects outbound to a roost. All traffic between your browser and your wing is E2E encrypted (X25519 + AES-GCM) - the roost forwards ciphertext that it can't read. Wings connect outbound only, so they work behind any NAT or firewall. Lock your wing and sessions require a passkey on top of encryption.
 
-**The roost** is the server. `app.wingthing.ai` is the hosted roost. Self-host with `wt roost` on your own machine - that runs the server and a wing together in one process, no separate daemon to manage. The roost handles login, routes connections to the right wing (or itself in self-hosted mode), and stores credentials. It never sees terminal data, file contents, or session recordings.
+**The roost** is the server. `app.wingthing.ai` is the hosted roost. Self-host with `wt roost start` on your own machine - that runs the server and a wing together in one process, no separate daemon to manage. The roost handles login, routes connections to the right wing (or itself in self-hosted mode), and stores credentials. It never sees terminal data, file contents, or session recordings.
 
 ## Sandbox
 
@@ -82,7 +82,7 @@ Update with `wt update`.
 Single binary, SQLite, no external deps.
 
 ```bash
-wt roost                   # server + wing, one command
+wt roost start             # server + wing, one command
 open localhost:8080         # start sessions
 ```
 
