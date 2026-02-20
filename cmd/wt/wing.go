@@ -3516,17 +3516,13 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			UserID: req.SenderUserID,
 			Email:  req.SenderEmail,
 		}
-		wingCfg.AllowKeys = append(wingCfg.AllowKeys, newEntry)
-		if !wingCfg.Locked {
-			wingCfg.Locked = true
-		}
-		config.SaveWingConfig(cfg.Dir, wingCfg)
+		// In-memory only — don't persist to wing.yaml. Persisting here
+		// clobbers shared wings (sets locked: true + allow_keys with only
+		// the enrolling user, locking everyone else out).
+		// Admins manage allow_keys explicitly via `wt wing allow`.
 		allowedKeys = append(allowedKeys, newEntry)
 		*allowedKeysPtr = allowedKeys
-		client.Locked = wingCfg.Locked
-		client.AllowedCount = len(wingCfg.AllowKeys)
-		client.SendConfig(ctx)
-		log.Printf("allowed: user=%s email=%s has_passkey=%v", req.SenderUserID, req.SenderEmail, inner.Key != "")
+		log.Printf("allowed: user=%s email=%s has_passkey=%v (session-scoped)", req.SenderUserID, req.SenderEmail, inner.Key != "")
 		tunnelRespond(gcm, req.RequestID, map[string]any{
 			"ok": "true", "email": req.SenderEmail, "user_id": req.SenderUserID,
 			"has_passkey": inner.Key != "",
@@ -3557,26 +3553,36 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 			return
 		}
-		found := false
+		// Remove from persisted config (if present)
+		persistedRemoved := false
 		for i, ak := range wingCfg.AllowKeys {
 			if ak.UserID == target || (inner.Key != "" && ak.Key == inner.Key) {
 				wingCfg.AllowKeys = append(wingCfg.AllowKeys[:i], wingCfg.AllowKeys[i+1:]...)
-				found = true
+				persistedRemoved = true
 				break
 			}
 		}
-		if !found {
+		if persistedRemoved {
+			config.SaveWingConfig(cfg.Dir, wingCfg)
+		}
+		// Also remove from in-memory list (covers session-scoped entries)
+		memRemoved := false
+		for i, ak := range allowedKeys {
+			if ak.UserID == target || (inner.Key != "" && ak.Key == inner.Key) {
+				allowedKeys = append(allowedKeys[:i], allowedKeys[i+1:]...)
+				memRemoved = true
+				break
+			}
+		}
+		if !persistedRemoved && !memRemoved {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "entry not found"}, write)
 			return
 		}
-		config.SaveWingConfig(cfg.Dir, wingCfg)
-		// Rebuild allowedKeys from config
-		allowedKeys = append([]config.AllowKey{}, wingCfg.AllowKeys...)
 		*allowedKeysPtr = allowedKeys
 		client.Locked = wingCfg.Locked
 		client.AllowedCount = len(wingCfg.AllowKeys)
 		client.SendConfig(ctx)
-		log.Printf("revoked: target=%s by=%s", target, req.SenderUserID)
+		log.Printf("revoked: target=%s by=%s persisted=%v", target, req.SenderUserID, persistedRemoved)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "paths.list":
