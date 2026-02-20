@@ -2,7 +2,7 @@
 
 ## Design Goal
 
-The relay (roost) should never be able to read wing data. It routes encrypted bytes between browsers and wings without inspecting, logging, or tampering with them. This covers terminal I/O, directory listings, session history, audit recordings, egg configs, and passkey assertions. This document describes how that works, where the gaps are, and what happens if the relay is compromised.
+The roost should never be able to read wing data. It routes encrypted bytes between browsers and wings without inspecting, logging, or tampering with them. This covers terminal I/O, directory listings, session history, audit recordings, egg configs, and passkey assertions. This document describes how that works, where the gaps are, and what happens if the roost is compromised.
 
 ## Architecture
 
@@ -145,7 +145,7 @@ If an attacker gains full control of the Fly.io deployment (SSH, deploy credenti
 
 ### What they can do
 
-1. **Deploy a modified relay binary** that logs plaintext metadata, performs traffic analysis, drops sessions (DoS), or injects fake error messages.
+1. **Deploy a modified roost binary** that logs plaintext metadata, performs traffic analysis, drops sessions (DoS), or injects fake error messages.
 
 2. **Read the SQLite database** containing user accounts (emails, GitHub/Google IDs), device auth codes (not reusable after claim), JWT signing secret, and passkey public keys/credential IDs. Public keys can't be used to impersonate users. See the privacy policy for what a database leak means.
 
@@ -161,7 +161,7 @@ A modified web client is reduced to a phishing attack. It can capture what you t
 
 ### What they cannot do
 
-1. **Decrypt existing E2E traffic** - the relay binary as-built can't read encrypted PTY data
+1. **Decrypt existing E2E traffic** - the roost binary as-built can't read encrypted PTY data
 2. **Access wing machines** - the roost has no shell access to wings
 3. **Read wing private keys** - stored at `~/.wingthing/wing_key`, never transmitted
 4. **Access API keys** - env vars like `ANTHROPIC_API_KEY` exist only on the wing

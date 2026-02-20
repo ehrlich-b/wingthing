@@ -2,14 +2,14 @@
 
 [![cinch](https://cinch.sh/badge/github.com/ehrlich-b/wingthing.svg)](https://cinch.sh/jobs/github.com/ehrlich-b/wingthing)
 
-Sandboxed AI agents on your machine, accessible from anywhere over an encrypted, passkey-protected relay that can't read your data.
+Sandboxed AI agents on your machine, accessible from anywhere over an encrypted, passkey-protected roost that can't read your data.
 
 https://github.com/user-attachments/assets/f1f04caf-4b07-4298-ba76-db5b226c38f2
 
 
 ```
 wt egg claude              # sandboxed Claude Code session
-wt start                   # connect your machine to the relay
+wt start                   # connect your machine to the roost
 open app.wingthing.ai      # start sessions from any browser
 ```
 
@@ -17,7 +17,7 @@ open app.wingthing.ai      # start sessions from any browser
 
 **The egg** protects you from the agent. Each session runs inside an OS-level sandbox - Seatbelt on macOS, user namespaces + seccomp on Linux. Filesystem access, network reach, and system calls are all controlled. No containers, no VMs.
 
-**The wing** protects you from the relay. All traffic between your browser and your machine is E2E encrypted (X25519 + AES-GCM). The relay forwards ciphertext and can't read it. Wings connect outbound only - no open ports, no static IP, works behind any NAT or firewall. Lock your wing and sessions require a passkey on top of encryption - the relay can't start sessions on your behalf even if it wanted to.
+**The wing** protects you from the roost. All traffic between your browser and your machine is E2E encrypted (X25519 + AES-GCM). The roost forwards ciphertext and can't read it. Wings connect outbound only - no open ports, no static IP, works behind any NAT or firewall. Lock your wing and sessions require a passkey on top of encryption - the roost can't start sessions on your behalf even if it wanted to.
 
 **The roost** controls access. It handles login and routes connections to the right wing. It never sees terminal data, file contents, or session recordings.
 
@@ -79,15 +79,14 @@ Update with `wt update`.
 
 ## Self-hosting
 
-Single binary, SQLite, no external deps. `--local` runs single-user mode with no login page.
+Single binary, SQLite, no external deps.
 
 ```bash
-wt serve --local           # start the relay
-wt start --local           # connect a wing (separate terminal)
+wt roost                   # server + wing, one command
 open localhost:8080         # start sessions
 ```
 
-For multi-user, set up GitHub/Google OAuth and run `wt serve` without `--local`. See the [docs](https://wingthing.ai/docs#self-hosting).
+For multi-user, add GitHub or Google OAuth env vars. See the [docs](https://wingthing.ai/docs#self-hosting).
 
 ## Docs
 

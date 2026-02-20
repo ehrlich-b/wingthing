@@ -41,6 +41,8 @@
 <a href="#wing-configuration">wing configuration</a>
 <a href="#access-control">access control</a>
 <a href="#organizations">organizations</a>
+<a href="#shared-wings">shared wings</a>
+<a href="#idle-timeouts">idle timeouts</a>
 <a href="#egg-configuration">egg configuration</a>
 <a href="#self-hosting">self-hosting</a>
 <a href="#roost-configuration">roost configuration</a>
@@ -63,25 +65,23 @@
 <span class="prompt">$ </span><span class="cmd">open app.wingthing.ai</span>
 </div>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">self-host</h3>
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">run your own</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span><br>
-<span class="prompt">$ </span><span class="cmd">wt serve --local</span><span class="comment">      # start your own roost</span><br>
-<span class="comment"># in another terminal:</span><br>
-<span class="prompt">$ </span><span class="cmd">wt start --local</span><span class="comment">      # connect wing to localhost:8080</span><br>
+<span class="prompt">$ </span><span class="cmd">wt roost</span><span class="comment">              # server + wing, one command</span><br>
 <span class="prompt">$ </span><span class="cmd">open localhost:8080</span>
 </div>
 
-<p>Your machine is now a <strong>wing</strong> — a remote-accessible sandbox host. Open a terminal from the browser, pick an agent (Claude, Codex, Ollama), and it runs in an isolated <strong>egg</strong> on your hardware. All traffic is end-to-end encrypted through the <strong>roost</strong> (relay).</p>
+<p>Your machine is now a <strong>wing</strong> — a remote-accessible sandbox host. Open a terminal from the browser, pick an agent (Claude, Codex, Ollama), and it runs in an isolated <strong>egg</strong> on your hardware. All traffic is end-to-end encrypted through the <strong>roost</strong>.</p>
 </div>
 
 <div class="docs-section" id="overview">
 <h2>overview</h2>
-<p>wingthing is a CLI tool (<code>wt</code>) that lets you run Claude Code, Codex, Ollama, and other AI agents in sandboxed sessions on your own hardware - then access them remotely from any device via an encrypted relay.</p>
+<p>wingthing is a CLI tool (<code>wt</code>) that lets you run Claude Code, Codex, Ollama, and other AI agents in sandboxed sessions on your own hardware - then access them from any device through an encrypted connection.</p>
 <table class="vocab-table">
 <tr><th>term</th><th>what it is</th></tr>
 <tr><td>wing</td><td>Your machine. Install <code>wt</code>, run <code>wt start</code>, and it connects outbound to the roost. One machine = one wing.</td></tr>
-<tr><td>roost</td><td>The relay server. Wings connect to it; browsers connect to it. It bridges the two. Use ours at <code>wingthing.ai</code> or self-host.</td></tr>
+<tr><td>roost</td><td>The server. Handles login and routes connections. wingthing.ai is a roost. <code>wt roost</code> runs your own.</td></tr>
 <tr><td>egg</td><td>A sandboxed agent session. Each egg is an isolated process with its own PTY, sandbox profile, and gRPC socket. Runs Claude, Codex, Ollama, etc.</td></tr>
 </table>
 <p>Wings connect outbound to the roost (no port forwarding needed), and the roost bridges WebSocket connections between wings and browsers. All PTY traffic is E2E encrypted.</p>
@@ -135,6 +135,8 @@
 <tr><td>labels</td><td>freeform tags shown in the web UI (e.g. "gpu", "linux", "work")</td><td>live</td></tr>
 <tr><td>locked</td><td>enable passkey access control. See <a href="#access-control">access control</a></td><td>live</td></tr>
 <tr><td>auth_ttl</td><td>passkey nonce lifetime. Default <code>0</code> (boot-scoped - valid until wing restarts). Set to e.g. <code>1h</code> to force re-authentication periodically</td><td>live</td></tr>
+<tr><td>admins</td><td>emails with admin role - admins see all sessions and all paths</td><td>live</td></tr>
+<tr><td>idle_timeout</td><td>kill idle sessions after this duration (e.g. <code>4h</code>). Default: disabled</td><td>live</td></tr>
 <tr><td>egg_config</td><td>path to default <code>egg.yaml</code> for sessions on this wing</td><td>live</td></tr>
 <tr><td>audit</td><td>record session terminal output for replay</td><td>live</td></tr>
 <tr><td>debug</td><td>verbose daemon logging</td><td>live</td></tr>
@@ -146,7 +148,7 @@
 <h2>access control</h2>
 <p>By default, anyone with your account credentials can start sessions on your wing. Locking it adds a second factor using <a href="https://passkeys.dev">passkeys</a> - the same WebAuthn standard behind "Sign in with Face ID" and "Sign in with Windows Hello."</p>
 <p>A passkey is a cryptographic credential stored in your password manager (1Password, LastPass, iCloud Keychain, Bitwarden) or your OS (Touch ID, Windows Hello, Android biometrics). Most people already have one and don't know it.</p>
-<p>When your wing is locked, browsers must prove they hold a passkey on the allowlist before the wing will start or reattach a session. The relay can't fake this - the cryptographic challenge-response happens directly between your browser and your wing.</p>
+<p>When your wing is locked, browsers must prove they hold a passkey on the allowlist before the wing will start or reattach a session. The roost can't fake this - the cryptographic challenge-response happens directly between your browser and your wing.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">lock your wing</h3>
 <div class="docs-code">
@@ -186,6 +188,68 @@
 <p>Org wings show up for all org members in the web UI. Combine with <code>wt wing lock</code> to require passkey auth - org membership gets you visibility, but the wing owner controls who can actually start sessions.</p>
 </div>
 
+<div class="docs-section" id="shared-wings">
+<h2>shared wings</h2>
+<p>Multiple users can share a single wing. Each user gets an isolated home directory, and you can restrict which folders each person sees.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">adding users</h3>
+<p>Set up OAuth on your roost (GitHub or Google), and users log in through the browser. Each authenticated user automatically gets their own home directory at <code>~/.wingthing/user-homes/&lt;hash&gt;/</code> with shell configs and agent binaries symlinked from the host. The owner gets a per-user home too - there's no bypass for local users.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">restricting paths</h3>
+<p>By default, all users see all configured paths. Add <code>members</code> to restrict access per folder:</p>
+<div class="docs-code">
+<span class="comment"># wing.yaml</span><br>
+paths:<br>
+&nbsp;&nbsp;- ~/docs<span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# everyone</span><br>
+&nbsp;&nbsp;- path: ~/repos/api<br>
+&nbsp;&nbsp;&nbsp;&nbsp;members: [alice@co.com, bob@co.com]<span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# only alice and bob</span><br>
+&nbsp;&nbsp;- path: ~/repos/infra<br>
+&nbsp;&nbsp;&nbsp;&nbsp;members:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- carol@co.com<span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# only carol</span>
+</div>
+<p>Owners and admins always see everything regardless of member lists.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">admin role</h3>
+<p>Add emails to the <code>admins</code> list in <code>wing.yaml</code>. Admins see all sessions and all paths - same visibility as the wing owner.</p>
+<div class="docs-code">
+<span class="comment"># wing.yaml</span><br>
+admins:<br>
+&nbsp;&nbsp;- admin@co.com<br>
+&nbsp;&nbsp;- ops@co.com
+</div>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">agent settings</h3>
+<p>Override agent config for all users on a wing with <code>agent_settings</code> in <code>egg.yaml</code>:</p>
+<div class="docs-code">
+<span class="comment"># egg.yaml</span><br>
+agent_settings:<br>
+&nbsp;&nbsp;claude: /opt/wingthing/claude-settings.json
+</div>
+<p>Host settings take precedence over user preferences. For Claude, <code>apiKeyHelper</code> in the settings file keeps <code>ANTHROPIC_API_KEY</code> out of the agent's environment.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">environment</h3>
+<p>Every egg gets these variables, available to CLAUDE.md, scripts, and any process inside the session:</p>
+<table class="docs-table">
+<tr><th>variable</th><th>value</th></tr>
+<tr><td>WT_SESSION_ID</td><td>session UUID</td></tr>
+<tr><td>WT_USER</td><td>normalized username from email</td></tr>
+<tr><td>WT_USER_EMAIL</td><td>authenticated email address</td></tr>
+<tr><td>WT_USER_NAME</td><td>display name (Google full name, GitHub login)</td></tr>
+<tr><td>WT_PREVIEW_DIR</td><td>working directory path</td></tr>
+<tr><td>WT_PREVIEW_FILE</td><td>.wt-preview-&lt;session-id&gt;</td></tr>
+</table>
+</div>
+
+<div class="docs-section" id="idle-timeouts">
+<h2>idle timeouts</h2>
+<p>Kill sessions that go quiet. Set <code>idle_timeout</code> in <code>wing.yaml</code>:</p>
+<div class="docs-code">
+<span class="comment"># wing.yaml</span><br>
+idle_timeout: 4h
+</div>
+<p>A session is idle when there's no output from the agent and no input from the user. Agent thinking generates PTY output, so active sessions won't be killed. Default is disabled - sessions run until stopped manually.</p>
+</div>
+
 <div class="docs-section" id="egg-configuration">
 <h2>egg configuration</h2>
 <p>Without an <code>egg.yaml</code>, the sandbox applies opinionated defaults: CWD is writable, home is read-only, sensitive directories (<code>~/.ssh</code>, <code>~/.gnupg</code>, <code>~/.aws</code>, etc.) are denied, and only essential env vars pass through. Network is blocked except for exactly what your agent needs - each agent has a profile declaring its API domains, env vars, and config directories. Claude gets <code>api.anthropic.com</code>, Ollama gets <code>localhost</code>, etc. You don't configure any of this.</p>
@@ -211,6 +275,7 @@ dangerously_skip_permissions: true
 <tr><td>network</td><td>domain allowlist, merged with agent defaults. Use <code>"*"</code> for unrestricted</td></tr>
 <tr><td>env</td><td>extra env vars to pass through (agent-required vars are auto-injected)</td></tr>
 <tr><td>dangerously_skip_permissions</td><td>let the agent run without asking - the sandbox is the permission boundary</td></tr>
+<tr><td>agent_settings</td><td>map of agent name to settings file path (e.g. <code>claude: /path/to/settings.json</code>). Host settings override user prefs</td></tr>
 <tr><td>base</td><td>inherit from another config. <code>none</code> for blank slate, or a path to another egg.yaml</td></tr>
 <tr><td>cpu *</td><td>CPU time limit as a duration string, e.g. <code>300s</code> or <code>5m</code>. Linux only, ignored on macOS</td></tr>
 <tr><td>memory *</td><td>memory limit, e.g. <code>4G</code>. Linux only, ignored on macOS</td></tr>
@@ -224,20 +289,39 @@ dangerously_skip_permissions: true
 <p>Run your own roost. Single binary, SQLite, no external dependencies.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">quick start</h3>
-<p><code>--local</code> runs single-user mode: no OAuth, no env vars, no login page. Just works.</p>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">git clone https://github.com/ehrlich-b/wingthing.git</span><br>
-<span class="prompt">$ </span><span class="cmd">cd wingthing && make build</span><br>
-<span class="prompt">$ </span><span class="cmd">./wt serve --local</span>
+<span class="prompt">$ </span><span class="cmd">wt roost</span>
 </div>
-<p>Open <a href="http://localhost:8080">localhost:8080</a>. You're logged in automatically.</p>
+<p>Open <a href="http://localhost:8080">localhost:8080</a>. Server and wing in one process, no login page, no config.</p>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">connect a wing</h3>
-<p>In another terminal:</p>
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">multi-user</h3>
+<p>Same command, add OAuth env vars. Now multiple people can log in.</p>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">wt start --local</span>
+<span class="prompt">$ </span><span class="cmd">GITHUB_CLIENT_ID=xxx GITHUB_CLIENT_SECRET=yyy wt roost</span>
 </div>
-<p>This connects to <code>localhost:8080</code> and skips login - the device token is written automatically. Use <code>--roost http://host:port</code> if your roost is on a different machine.</p>
+<p>Or use Google OAuth with <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>. Connect additional wings from other machines with <code>wt login --roost https://my-roost.example.com</code> and <code>wt start --roost https://my-roost.example.com</code>. Or set <code>roost_url</code> in <code>~/.wingthing/config.yaml</code> to avoid passing the flag every time.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">running separately</h3>
+<p>If you need the server and wing on different machines, run them as separate processes:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt serve</span><span class="comment">                          # server only</span><br>
+<span class="comment"># on another machine:</span><br>
+<span class="prompt">$ </span><span class="cmd">wt start --roost http://host:port</span><span class="comment">   # wing only</span>
+</div>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">systemd</h3>
+<div class="docs-code">
+[Unit]<br>
+Description=wingthing roost<br>
+After=network.target<br>
+<br>
+[Service]<br>
+ExecStart=/usr/local/bin/wt roost --foreground<br>
+Restart=always<br>
+<br>
+[Install]<br>
+WantedBy=multi-user.target
+</div>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">docker</h3>
 <div class="docs-code">
@@ -250,13 +334,6 @@ dangerously_skip_permissions: true
 <span class="prompt">$ </span><span class="cmd">fly launch --name my-wingthing</span><br>
 <span class="prompt">$ </span><span class="cmd">fly deploy</span>
 </div>
-
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">multi-user (production)</h3>
-<p>For shared roosts, set up GitHub OAuth and run without <code>--local</code>:</p>
-<div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">./wt serve --addr :8080</span>
-</div>
-<p>Then connect wings with <code>wt login --roost https://my-roost.example.com</code> and <code>wt start --roost https://my-roost.example.com</code>. Or set <code>roost_url</code> in <code>~/.wingthing/config.yaml</code> to avoid passing it every time.</p>
 </div>
 
 <div class="docs-section" id="roost-configuration">
@@ -266,6 +343,8 @@ dangerously_skip_permissions: true
 <tr><td>WT_BASE_URL</td><td>public URL for OAuth callbacks</td></tr>
 <tr><td>GITHUB_CLIENT_ID</td><td>GitHub OAuth app ID</td></tr>
 <tr><td>GITHUB_CLIENT_SECRET</td><td>GitHub OAuth app secret</td></tr>
+<tr><td>GOOGLE_CLIENT_ID</td><td>Google OAuth client ID</td></tr>
+<tr><td>GOOGLE_CLIENT_SECRET</td><td>Google OAuth client secret</td></tr>
 <tr><td>OPENAI_API_KEY</td><td>embeddings (optional)</td></tr>
 <tr><td>WT_JWT_SECRET</td><td>base64-encoded JWT signing key (auto-generated if unset)</td></tr>
 <tr><td>WT_APP_HOST</td><td>hostname for app subdomain (e.g. app.example.com)</td></tr>
@@ -285,7 +364,7 @@ dangerously_skip_permissions: true
 <p>Every connection between your browser and your wing gets a fresh X25519 key pair on both sides. The two do a Diffie-Hellman exchange, derive an AES-GCM key via HKDF, and encrypt everything from that point. Terminal I/O, file listings, session history, audit data - all ciphertext as far as the roost is concerned. Keys live in sessionStorage and vanish when you close the tab. Previous sessions can't be decrypted, even by the wing.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">passkey auth</h3>
-<p>Encryption keeps the relay from reading your data. Passkeys control who can start sessions in the first place. When your wing is locked, the browser sends a WebAuthn assertion directly to the wing inside the encrypted channel. The relay forwards the blob but can't read or forge it. The wing verifies the signature against its local allowlist and issues a boot-scoped nonce for subsequent requests.</p>
+<p>Encryption keeps the roost from reading your data. Passkeys control who can start sessions in the first place. When your wing is locked, the browser sends a WebAuthn assertion directly to the wing inside the encrypted channel. The roost forwards the blob but can't read or forge it. The wing verifies the signature against its local allowlist and issues a boot-scoped nonce for subsequent requests.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what the roost stores</h3>
 <p>User accounts, OAuth tokens, org membership, device auth tokens, bandwidth counters. That's it. No terminal data, no file contents, no session recordings. If you self-host, the SQLite database contains only auth state.</p>
