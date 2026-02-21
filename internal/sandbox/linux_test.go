@@ -46,7 +46,8 @@ func TestCloneFlagsFull(t *testing.T) {
 
 func TestSeccompFilterStructure(t *testing.T) {
 	filter := buildSeccompFilter()
-	nDenied := len(deniedSyscalls)
+	allDenied := append(deniedSyscallsCommon, deniedSyscallsArch...)
+	nDenied := len(allDenied)
 
 	// Expected: 1 (load) + nDenied (jeq checks) + 1 (allow) + 1 (deny)
 	wantLen := nDenied + 3
@@ -69,8 +70,8 @@ func TestSeccompFilterStructure(t *testing.T) {
 		if inst.Code != unix.BPF_JMP|unix.BPF_JEQ|unix.BPF_K {
 			t.Errorf("filter[%d] code = 0x%x, want BPF_JMP|BPF_JEQ|BPF_K", 1+i, inst.Code)
 		}
-		if inst.K != deniedSyscalls[i] {
-			t.Errorf("filter[%d] K = %d, want syscall %d", 1+i, inst.K, deniedSyscalls[i])
+		if inst.K != allDenied[i] {
+			t.Errorf("filter[%d] K = %d, want syscall %d", 1+i, inst.K, allDenied[i])
 		}
 		// Jt should jump to the deny instruction
 		wantJt := uint8(nDenied - i)
@@ -111,10 +112,19 @@ func TestSeccompDeniedSyscallsIncluded(t *testing.T) {
 			checked[inst.K] = true
 		}
 	}
-	for _, nr := range deniedSyscalls {
+	allDenied := append(deniedSyscallsCommon, deniedSyscallsArch...)
+	for _, nr := range allDenied {
 		if !checked[nr] {
 			t.Errorf("syscall %d not in seccomp filter", nr)
 		}
+	}
+}
+
+func TestSeccompMinimumDenyCount(t *testing.T) {
+	allDenied := append(deniedSyscallsCommon, deniedSyscallsArch...)
+	// Common has 26 syscalls, amd64 adds 3 more
+	if len(allDenied) < 26 {
+		t.Errorf("total denied syscalls = %d, want >= 26", len(allDenied))
 	}
 }
 

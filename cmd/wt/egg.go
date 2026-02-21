@@ -62,7 +62,8 @@ func eggRunCmd() *cobra.Command {
 		envFlag    []string
 		cpuFlag    string
 		memFlag    string
-		maxFDsFlag uint32
+		maxFDsFlag  uint32
+		maxPidsFlag uint32
 		debugFlag  bool
 		auditFlag  bool
 		vteFlag    bool
@@ -128,6 +129,7 @@ func eggRunCmd() *cobra.Command {
 				CPULimit:       cpuLimit,
 				MemLimit:       memLimit,
 				MaxFDs:         maxFDsFlag,
+				PidLimit:       maxPidsFlag,
 				Debug:          debugFlag,
 				Audit:          auditFlag,
 				VTE:            vteFlag,
@@ -168,6 +170,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cpuFlag, "cpu", "", "CPU time limit (e.g. 300s)")
 	cmd.Flags().StringVar(&memFlag, "memory", "", "memory limit (e.g. 2GB)")
 	cmd.Flags().Uint32Var(&maxFDsFlag, "max-fds", 0, "max open file descriptors")
+	cmd.Flags().Uint32Var(&maxPidsFlag, "max-pids", 0, "max processes in cgroup (Linux only)")
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable input audit log and PTY stream recording")
 	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect (internal)")
@@ -636,6 +639,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if eggCfg.Resources.MaxFDs > 0 {
 		args = append(args, "--max-fds", strconv.Itoa(int(eggCfg.Resources.MaxFDs)))
+	}
+	if eggCfg.Resources.MaxPids > 0 {
+		args = append(args, "--max-pids", strconv.Itoa(int(eggCfg.Resources.MaxPids)))
 	}
 	if debug {
 		args = append(args, "--debug")

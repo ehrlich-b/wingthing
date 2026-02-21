@@ -280,6 +280,7 @@ dangerously_skip_permissions: true
 <tr><td>cpu *</td><td>CPU time limit as a duration string, e.g. <code>300s</code> or <code>5m</code>. Linux only, ignored on macOS</td></tr>
 <tr><td>memory *</td><td>memory limit, e.g. <code>4G</code>. Linux only, ignored on macOS</td></tr>
 <tr><td>max_fds *</td><td>max open file descriptors. Linux only, ignored on macOS</td></tr>
+<tr><td>max_pids *</td><td>max processes in cgroup. Linux only, requires cgroups v2</td></tr>
 </table>
 <p style="font-size:12px;color:var(--text-dim)">* Linux only. macOS Seatbelt doesn't support resource limits. If these limitations are blocking you, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a>.</p>
 </div>
@@ -390,8 +391,8 @@ WantedBy=multi-user.target
 <tr><td>write isolation (HOME read-only)</td><td>SBPL rules</td><td>bind-mount read-only + writable holes</td></tr>
 <tr><td>network deny</td><td>full block via SBPL</td><td>network namespace (CLONE_NEWNET)</td></tr>
 <tr><td>domain filtering</td><td>SBPL forces traffic through local CONNECT proxy; only whitelisted domains pass</td><td>CONNECT proxy via HTTPS_PROXY (cooperative)</td></tr>
-<tr><td>seccomp syscall filter</td><td>n/a</td><td>blocks mount, ptrace, kexec, etc.</td></tr>
-<tr><td>resource limits (CPU, mem, FDs)</td><td>not available</td><td>rlimit(2)</td></tr>
+<tr><td>seccomp syscall filter</td><td>n/a</td><td>blocks mount, ptrace, kexec, setns, unshare, bpf, open_by_handle_at, and 20+ more</td></tr>
+<tr><td>resource limits (CPU, mem, FDs)</td><td>not available</td><td>cgroups v2 (memory, PIDs) + rlimit(2) (CPU, virtual address space, FDs)</td></tr>
 <tr><td>PID isolation</td><td>n/a</td><td>CLONE_NEWPID</td></tr>
 </table>
 <p style="font-size:12px;color:var(--text-dim)">* See sandbox limits below.</p>
@@ -405,7 +406,7 @@ WantedBy=multi-user.target
 <li><strong>Agent credentials are readable.</strong> API keys and config files are mounted into the sandbox. The agent can read them, but domain filtering means the only place it can send them is the agent's own API.</li>
 <li><strong>HOME is readable.</strong> The agent reads your codebase. Add <code>"deny:~/.secrets"</code> to the <code>fs</code> list to hide sensitive directories.</li>
 <li><strong>Agent config is writable.</strong> <code>~/.claude/</code> and similar directories must be writable for the agent to function.</li>
-<li><strong>Resource limits are Linux-only.</strong> macOS agents can consume unbounded CPU and memory.</li>
+<li><strong>Resource limits are Linux-only.</strong> macOS agents can consume unbounded CPU and memory. On Linux, cgroups v2 limits real memory (RSS) and process count; rlimit covers CPU time, virtual address space, and file descriptors. Cgroups require v2 with delegation. Falls back to rlimit-only when unavailable.</li>
 </ul>
 <p>These are on the roadmap. If any of these are blocking you, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a> - it helps us prioritize. If you need hard isolation today, run wingthing inside a VM or container.</p>
 </div>

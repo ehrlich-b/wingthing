@@ -19,8 +19,9 @@ import (
 // V8/Bun/Node need 1GB+ virtual address space for JIT CodeRange alone,
 // and interactive sessions shouldn't have a CPU time limit.
 
-// Dangerous syscalls to deny via seccomp.
-var deniedSyscalls = []uint32{
+// Dangerous syscalls to deny via seccomp (cross-platform, all Linux archs).
+var deniedSyscallsCommon = []uint32{
+	// Original set: filesystem/module/process
 	unix.SYS_MOUNT,
 	unix.SYS_UMOUNT2,
 	unix.SYS_REBOOT,
@@ -32,11 +33,34 @@ var deniedSyscalls = []uint32{
 	unix.SYS_DELETE_MODULE,
 	unix.SYS_PIVOT_ROOT,
 	unix.SYS_PTRACE,
+	// Namespace escape
+	unix.SYS_SETNS,
+	unix.SYS_UNSHARE,
+	// Container escape (Shocker CVE-2014-3519)
+	unix.SYS_OPEN_BY_HANDLE_AT,
+	// eBPF / perf (privilege escalation surface)
+	unix.SYS_BPF,
+	unix.SYS_PERF_EVENT_OPEN,
+	unix.SYS_USERFAULTFD,
+	// Kernel keyring
+	unix.SYS_KEYCTL,
+	unix.SYS_ADD_KEY,
+	unix.SYS_REQUEST_KEY,
+	// Misc privilege escalation
+	unix.SYS_KCMP,
+	unix.SYS_LOOKUP_DCOOKIE,
+	unix.SYS_ACCT,
+	// Time manipulation
+	unix.SYS_CLOCK_SETTIME,
+	unix.SYS_SETTIMEOFDAY,
+	// Kexec variant
+	unix.SYS_KEXEC_FILE_LOAD,
 }
 
 type linuxSandbox struct {
 	cfg    Config
 	tmpDir string
+	cgroup *cgroupManager
 }
 
 // newPlatform tries to create a namespace+seccomp sandbox.
@@ -50,8 +74,15 @@ func newPlatform(cfg Config) (Sandbox, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox tmpdir: %w", err)
 	}
-	log.Printf("linux sandbox: created tmpdir=%s network=%s", dir, cfg.NetworkNeed)
-	return &linuxSandbox{cfg: cfg, tmpDir: dir}, nil
+
+	// Create cgroup for real memory/PID limits (graceful fallback to prlimit-only)
+	var cg *cgroupManager
+	if cfg.MemLimit > 0 || cfg.PidLimit > 0 {
+		cg, _ = newCgroupManager(cfg.SessionID, cfg.MemLimit, cfg.PidLimit)
+	}
+
+	log.Printf("linux sandbox: created tmpdir=%s network=%s cgroup=%v", dir, cfg.NetworkNeed, cg != nil)
+	return &linuxSandbox{cfg: cfg, tmpDir: dir, cgroup: cg}, nil
 }
 
 func hasNamespaceCapability() bool {
@@ -181,8 +212,22 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 	return cmd, nil
 }
 
-// PostStart applies resource limits to the sandboxed process via prlimit.
+// PostStart adds the sandboxed process to the cgroup (if available) then
+// applies prlimit resource limits as belt+suspenders.
+//
+// Known race: the child process is already running when PostStart is called,
+// so there's a brief window before cgroup limits apply. This is acceptable
+// because the child is _deny_init (doing mount setup, not the agent), and
+// prlimit covers the gap. CLONE_INTO_CGROUP (Linux 5.7+) would eliminate
+// this race but requires CAP_SYS_ADMIN.
 func (s *linuxSandbox) PostStart(pid int) error {
+	// Cgroup first — real memory (RSS) and PID tree limits
+	if s.cgroup != nil {
+		if err := s.cgroup.AddPID(pid); err != nil {
+			log.Printf("linux sandbox: cgroup AddPID(%d) failed: %v (prlimit still applied)", pid, err)
+		}
+	}
+	// Prlimit as belt+suspenders (virtual address space, CPU, FDs)
 	for _, rl := range s.rlimits() {
 		lim := unix.Rlimit{Cur: rl.value, Max: rl.value}
 		if err := unix.Prlimit(pid, rl.resource, &lim, nil); err != nil {
@@ -193,6 +238,11 @@ func (s *linuxSandbox) PostStart(pid int) error {
 }
 
 func (s *linuxSandbox) Destroy() error {
+	if s.cgroup != nil {
+		if err := s.cgroup.Destroy(); err != nil {
+			log.Printf("linux sandbox: cgroup destroy: %v", err)
+		}
+	}
 	return os.RemoveAll(s.tmpDir)
 }
 
@@ -304,6 +354,7 @@ func buildSeccompFilter() []unix.SockFilter {
 	// 3. Allow (default)
 	// 4. Deny: return EPERM
 
+	deniedSyscalls := append(deniedSyscallsCommon, deniedSyscallsArch...)
 	nDenied := len(deniedSyscalls)
 	if nDenied == 0 {
 		return nil

@@ -35,6 +35,8 @@ type Config struct {
 	CPULimit    time.Duration // RLIMIT_CPU (0 = backend default)
 	MemLimit    uint64        // RLIMIT_AS in bytes (0 = backend default)
 	MaxFDs      uint32        // RLIMIT_NOFILE (0 = backend default)
+	PidLimit    uint32        // cgroup pids.max (0 = no limit)
+	SessionID   string        // unique ID for cgroup naming
 	UserHome    string        // per-user home override (empty = os.UserHomeDir)
 }
 

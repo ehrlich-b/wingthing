@@ -450,7 +450,7 @@ func installSeccomp() error {
 		return fmt.Errorf("seccomp(SET_MODE_FILTER): %v", errno)
 	}
 
-	log.Printf("_deny_init: seccomp installed (%d denied syscalls)", len(deniedSyscalls))
+	log.Printf("_deny_init: seccomp installed (%d denied syscalls)", len(deniedSyscallsCommon)+len(deniedSyscallsArch))
 	return nil
 }
 

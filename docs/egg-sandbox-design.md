@@ -166,9 +166,11 @@ Parent process (wt egg run)
 
 **Filesystem:** Deny paths via tmpfs overlays (empty, read-only). Write isolation via bind-mount HOME read-only, then bind-mount specific writable dirs/files. Prefix matching: for writable path `~/.claude`, automatically bind-mounts adjacent files like `~/.claude.json`.
 
-**Seccomp:** BPF filter blocks dangerous syscalls: mount, umount, reboot, swapon/off, kexec_load, init/finit/delete_module, pivot_root, ptrace. Installed after mounts, inherited by child. Prevents agent from undoing deny paths.
+**Seccomp:** BPF filter blocks 27+ dangerous syscalls across multiple categories: filesystem (mount, umount2, pivot_root), module loading (init/finit/delete_module), reboot/swap, process debug (ptrace), namespace escape (setns, unshare), container escape (open_by_handle_at), eBPF/perf (bpf, perf_event_open, userfaultfd), kernel keyring (keyctl, add_key, request_key), time manipulation (clock_settime, settimeofday), and misc (kcmp, lookup_dcookie, acct, kexec_file_load). On x86-64, also blocks iopl, ioperm, modify_ldt. Installed after mounts, inherited by child. Prevents agent from undoing deny paths or escalating privileges.
 
-**Resource limits:** RLIMIT_CPU, RLIMIT_AS, RLIMIT_NOFILE applied via prlimit(2) on Linux. 4GB floor on RLIMIT_AS because JIT runtimes (Bun/JSC, V8) need 1GB+ virtual address space for CodeRange alone.
+**Resource limits (two layers):**
+- **Cgroups v2:** `memory.max` limits real memory (RSS), `pids.max` limits the process tree. Created as a sub-cgroup under the daemon's own cgroup. Requires cgroups v2 with controller delegation. Falls back gracefully to prlimit-only when unavailable. Handles the cgroups v2 "no internal processes" rule by moving the daemon to a `wt-daemon` leaf cgroup if needed.
+- **prlimit(2):** RLIMIT_CPU, RLIMIT_AS, RLIMIT_NOFILE as belt+suspenders. 4GB floor on RLIMIT_AS because JIT runtimes (Bun/JSC, V8) need 1GB+ virtual address space for CodeRange alone. Both layers are applied in PostStart after the child process starts (known race: brief window before cgroup limits apply; acceptable because child is _deny_init, not the agent).
 
 ## Jailbreak Testing
 
@@ -370,24 +372,29 @@ DNS resolution goes through `/private/var/run/mDNSResponder` (Unix domain socket
 
 ## Remaining Work
 
+### Done
+
+- **Cgroups v2 resource limits** - real memory (RSS) and PID tree limits via cgroups v2, with graceful fallback to prlimit-only. Handles subtree_control EBUSY, daemon self-migration, and cgroup lifecycle.
+- **Expanded seccomp deny list** - 27+ cross-platform syscalls blocked (was 11). Added namespace escape (setns, unshare), container escape (open_by_handle_at), eBPF/perf, kernel keyring, time manipulation. x86-only syscalls (iopl, ioperm, modify_ldt) in separate build-tagged file.
+
 ### High priority
 
-1. **Linux network pinholes** — veth pair + iptables in namespace for port-level filtering. This closes the biggest gap between macOS and Linux security. Without it, Linux lockdown mode has full network for any agent that needs HTTPS.
+1. **Linux network pinholes** - veth pair + iptables in namespace for port-level filtering. This closes the biggest gap between macOS and Linux security. Without it, Linux lockdown mode has full network for any agent that needs HTTPS.
 
-2. **SNI-based domain filtering (both platforms)** — Currently NetworkHTTPS opens outbound TCP 443/80 to ALL hosts. The agent profile should declare allowed domains (e.g. `api.anthropic.com` for Claude). A lightweight SNI proxy or eBPF filter can inspect the TLS ClientHello SNI field and block connections to non-allowlisted domains. Anthropic publishes their IP ranges (`160.79.104.0/23`, `2607:6bc0::/48`) but SBPL can't filter by IP/CIDR. An SNI proxy running in the sandbox's network path would solve this for both platforms. This is the gap between "opens all websites on 443" and "opens only what the agent needs."
+2. **Agent config snapshotting** - snapshot agent config (e.g. `~/.claude/settings.json`) before egg session, restore on exit. Prevents persistence attacks via hook injection.
 
-3. **Agent config snapshotting** — Snapshot agent config (e.g. `~/.claude/settings.json`) before egg session, restore on exit. Prevents persistence attacks via hook injection.
+3. **CLONE_INTO_CGROUP** - eliminate the PostStart race by cloning the child directly into the cgroup (Linux 5.7+, requires CAP_SYS_ADMIN). Currently the child runs briefly before cgroup limits apply.
 
 ### Medium priority
 
-3. **Default paranoid deny list** — Ship a recommended deny list covering common sensitive files (bash_history, gitconfig, netrc, docker, kube) so users don't have to discover these themselves.
+4. **Default paranoid deny list** - ship a recommended deny list covering common sensitive files (bash_history, gitconfig, netrc, docker, kube) so users don't have to discover these themselves.
 
-4. **/proc remount in PID namespace** — Mount fresh /proc inside the agent's PID namespace to hide host process info and mount topology.
+5. **/proc remount in PID namespace** - mount fresh /proc inside the agent's PID namespace to hide host process info and mount topology.
 
-5. **macOS resource limits** — seatbelt can't do rlimits; need `setrlimit` in PostStart. Currently only Linux enforces CPU/memory/FD limits.
+6. **macOS resource limits** - seatbelt can't do rlimits; need `setrlimit` in PostStart. Currently only Linux enforces CPU/memory/FD limits.
 
 ### Low priority
 
-6. **Tmpfs overlay for agent config** — Instead of bind-mounting the real `~/.claude/`, copy into a tmpfs. All changes are ephemeral. Fully eliminates persistence risk but adds complexity around agent updates and state.
+7. **Tmpfs overlay for agent config** - instead of bind-mounting the real `~/.claude/`, copy into a tmpfs. All changes are ephemeral. Eliminates persistence risk but adds complexity around agent updates and state.
 
-7. **hidepid=2 for /proc** — Restrict process enumeration even within the PID namespace.
+8. **hidepid=2 for /proc** - restrict process enumeration even within the PID namespace.

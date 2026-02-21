@@ -136,13 +136,13 @@ Implementations in `internal/sandbox/`:
 | Platform | Implementation | How |
 |----------|---------------|-----|
 | macOS | Seatbelt | `sandbox-exec` with generated SBPL profile |
-| Linux | User namespaces + seccomp | CLONE_NEWUSER/NEWNS/NEWPID/NEWNET, BPF syscall filter |
+| Linux | User namespaces + seccomp + cgroups v2 | CLONE_NEWUSER/NEWNS/NEWPID/NEWNET, BPF syscall filter (27+ denied), cgroups v2 memory/PIDs + prlimit |
 
 No fallback — if the platform can't enforce the requested isolation, the egg fails with `EnforcementError`.
 
 Isolation levels: `strict` (no network, minimal fs), `standard` (no network, mounted dirs), `network` (network + mounted dirs), `privileged` (no sandbox).
 
-Configure via `egg.yaml` (project-level, `~/.wingthing/egg.yaml`, or built-in defaults). The sandbox auto-injects mounts for the agent binary's install root and config dir (`~/.<agent>/`) so config authors don't need to know where agents are installed. Resource limits (CPU, memory, max FDs) only apply when explicitly configured — no defaults.
+Configure via `egg.yaml` (project-level, `~/.wingthing/egg.yaml`, or built-in defaults). The sandbox auto-injects mounts for the agent binary's install root and config dir (`~/.<agent>/`) so config authors don't need to know where agents are installed. Resource limits (CPU, memory, max FDs, max PIDs) only apply when explicitly configured. No defaults. On Linux, cgroups v2 provides real memory (RSS) and PID tree limits; prlimit covers CPU time, virtual address space, and FDs.
 
 ### Agent network auto-drilling
 
@@ -164,7 +164,7 @@ When `isolation` is `strict` or `standard` (no network), the sandbox automatical
 |---------|------|
 | `internal/egg` | Per-session egg server (gRPC, PTY, sandbox lifecycle), client, config |
 | `internal/egg/pb` | Protobuf-generated gRPC types (Kill, Resize, Session) |
-| `internal/sandbox` | Seatbelt (macOS) and namespace (Linux) sandbox implementations |
+| `internal/sandbox` | Seatbelt (macOS) and namespace + seccomp + cgroups v2 (Linux) sandbox implementations |
 | `internal/ws` | WebSocket protocol (wing<->relay messages, tunnel.req/res/stream types), client with auto-reconnect |
 | `internal/auth` | ECDH key exchange, AES-GCM E2E encryption (PTY + tunnel HKDF domains), device auth, passkey verification, token store |
 | `internal/agent` | LLM agent adapters (claude, ollama, gemini, codex, cursor) |
@@ -203,6 +203,7 @@ CI runs via **cinch**. Use `cinch run` to trigger a build, `cinch status` to che
 - `wt wing --relay http://localhost:8080` connects a wing to the local relay
 - Test the full stack locally before even thinking about prod
 - End-of-day or explicit request = deploy to Fly
+- **Never tail `fly deploy` output.** Run it with full output visible (no `| tail`). Truncating deploy output hides errors and makes it impossible to tell if prod is broken.
 
 ### Running `wt serve` during development
 

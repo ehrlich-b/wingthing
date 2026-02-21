@@ -24,7 +24,7 @@ The roost sits between the browser and the wing. All connections use TLS, but TL
 
 ### The egg: protecting you from the agent
 
-Agents run inside an OS-level sandbox - Seatbelt on macOS, user namespaces + seccomp on Linux. The sandbox controls filesystem access, network reach, and system calls. A local CONNECT proxy enforces domain-level filtering so agents can only reach their own API. See `docs/egg-sandbox-design.md` for implementation details.
+Agents run inside an OS-level sandbox - Seatbelt on macOS, user namespaces + seccomp on Linux. The sandbox controls filesystem access, network reach, system calls, and resource usage (cgroups v2 for memory/PIDs, rlimits for CPU/FDs on Linux). A local CONNECT proxy enforces domain-level filtering so agents can only reach their own API. See `docs/egg-sandbox-design.md` for implementation details.
 
 ### The wing: protecting you from the roost
 

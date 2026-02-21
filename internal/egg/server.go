@@ -100,6 +100,7 @@ type RunConfig struct {
 	CPULimit                   time.Duration
 	MemLimit                   uint64
 	MaxFDs                     uint32
+	PidLimit                   uint32
 	Debug                      bool
 	Audit                      bool
 	VTE                        bool   // use VTerm snapshot for reconnect instead of replay buffer
@@ -538,6 +539,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		envSlice = append(envSlice, k+"="+v)
 	}
 
+	sessionID := filepath.Base(s.dir)
+
 	// Build sandbox and command
 	var sb sandbox.Sandbox
 	var cmd *exec.Cmd
@@ -594,6 +597,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			CPULimit:    rc.CPULimit,
 			MemLimit:    rc.MemLimit,
 			MaxFDs:      rc.MaxFDs,
+			PidLimit:    rc.PidLimit,
+			SessionID:   sessionID,
 			UserHome:    rc.UserHome,
 		}
 
@@ -640,7 +645,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		}
 	}
 
-	sessionID := filepath.Base(s.dir)
 	networkSummary := networkSummaryFromDomains(mergedDomains)
 	sess := &Session{
 		ID:             sessionID,

@@ -113,9 +113,10 @@ type EggConfig struct {
 
 // EggResources configures resource limits for sandboxed processes.
 type EggResources struct {
-	CPU    string `yaml:"cpu"`     // duration: "300s"
-	Memory string `yaml:"memory"`  // size: "2GB"
-	MaxFDs uint32 `yaml:"max_fds"`
+	CPU     string `yaml:"cpu"`      // duration: "300s"
+	Memory  string `yaml:"memory"`   // size: "2GB"
+	MaxFDs  uint32 `yaml:"max_fds"`
+	MaxPids uint32 `yaml:"max_pids"` // cgroup pids.max (Linux only)
 }
 
 // DefaultDenyPaths returns paths that should be blocked by default in sandboxed sessions.
@@ -439,6 +440,9 @@ func mergeResources(parent, child EggResources) EggResources {
 	if child.MaxFDs > 0 {
 		r.MaxFDs = child.MaxFDs
 	}
+	if child.MaxPids > 0 {
+		r.MaxPids = child.MaxPids
+	}
 	return r
 }
 
@@ -485,6 +489,7 @@ func (c *EggConfig) ToSandboxConfig() sandbox.Config {
 		CPULimit:    c.Resources.CPUDuration(),
 		MemLimit:    c.Resources.MemBytes(),
 		MaxFDs:      c.Resources.MaxFDs,
+		PidLimit:    c.Resources.MaxPids,
 	}
 }
 

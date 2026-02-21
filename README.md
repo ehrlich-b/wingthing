@@ -15,7 +15,7 @@ open app.wingthing.ai      # start sessions from any browser
 
 ## Three security domains
 
-**The egg** is a sandboxed agent session on your machine. Each `wt egg <agent>` spawns a child process inside an OS-level sandbox (Seatbelt on macOS, user namespaces + seccomp on Linux). Same idea as containers but lighter weight. Filesystem access, network reach, and system calls are all controlled.
+**The egg** is a sandboxed agent session on your machine. Each `wt egg <agent>` spawns a child process inside an OS-level sandbox (Seatbelt on macOS, user namespaces + seccomp on Linux). Same idea as containers but lighter weight. Filesystem access, network reach, system calls, and resource usage are all controlled.
 
 **The wing** is a daemon on your machine that connects outbound to a roost. All traffic between your browser and your wing is E2E encrypted (X25519 + AES-GCM) - the roost forwards ciphertext that it can't read. Wings connect outbound only, so they work behind any NAT or firewall. Lock your wing and sessions require a passkey on top of encryption.
 

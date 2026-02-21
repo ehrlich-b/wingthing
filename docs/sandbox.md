@@ -1,140 +1,90 @@
-# Sandbox: Current State and Problems
+# Sandbox Reference
 
 ## Architecture
 
-Three-tier sandbox with platform detection:
+Platform-native sandbox. No fallback, no silent degradation.
 
 ```
-sandbox.New(cfg) → try newPlatform(cfg) → fallback to newFallback(cfg)
+sandbox.New(cfg) → newPlatform(cfg) → EnforcementError if platform can't enforce
 ```
 
 | Backend | Platform | Isolation Mechanism |
 |---------|----------|-------------------|
-| Apple Containers | macOS 26+ | `container init/exec` — per-task Linux VMs |
-| Linux Namespaces | Linux (CAP_SYS_ADMIN) | CLONE_NEWNS/PID/NET + seccomp BPF + rlimits |
-| Fallback | Any | Isolated tmpdir, restricted TMPDIR env var. Not a real sandbox. |
+| Seatbelt | macOS | `sandbox-exec` with generated SBPL profiles |
+| Linux Namespaces | Linux | CLONE_NEWUSER/NEWNS/NEWPID/NEWNET + seccomp BPF + cgroups v2 + rlimits |
 
-## Isolation Levels
+If the platform cannot enforce the requested isolation, the egg fails with `EnforcementError`. No silent fallback.
 
-| Level | Network | Filesystem | Linux Cloneflags |
-|-------|---------|-----------|-----------------|
-| strict | No | Minimal, all mounts forced read-only | CLONE_NEWNS + CLONE_NEWPID + CLONE_NEWNET |
-| standard | No | Mounted dirs only, respects per-mount ReadOnly | CLONE_NEWNS + CLONE_NEWPID |
-| network | Yes | Mounted dirs only | CLONE_NEWNS + CLONE_NEWPID (same as standard!) |
-| privileged | Yes | Full host access | 0 (no namespaces, skips sandbox entirely) |
+## What the Sandbox Enforces
 
-## Problems
+### Both Platforms
 
-### 1. Egg doesn't use sandbox for PTY processes
+| Feature | macOS | Linux |
+|---------|-------|-------|
+| Deny paths (.ssh, .aws, etc.) | SBPL rules | tmpfs overlays |
+| Write isolation (HOME read-only) | SBPL rules | bind-mount read-only + writable holes |
+| Network deny | SBPL `(deny network*)` | CLONE_NEWNET |
+| Domain filtering | SBPL forces traffic through local CONNECT proxy | CONNECT proxy via HTTPS_PROXY (cooperative) |
+| PID isolation | n/a | CLONE_NEWPID |
 
-**Severity: Critical**
+### Seccomp (Linux only)
 
-`server.go:Spawn()` creates the PTY via `exec.Command(binPath, args...)` then `pty.StartWithSize(cmd, ...)` — this runs the agent directly on the host. The sandbox is created *after* the process starts and stored on the session struct but never wraps the agent execution.
+BPF filter blocks 27+ syscalls across these categories:
 
-The sandbox `Exec()` API returns a configured `*exec.Cmd` (with namespaces/seccomp on Linux, or `container exec` wrapper on Apple). For PTY sessions, we need to:
-1. Call `sb.Exec()` to get the sandboxed cmd
-2. Pass that cmd to `pty.StartWithSize()`
+| Category | Blocked Syscalls |
+|----------|-----------------|
+| Filesystem | mount, umount2, pivot_root |
+| Module loading | init_module, finit_module, delete_module |
+| Reboot/swap | reboot, swapon, swapoff, kexec_load, kexec_file_load |
+| Process debug | ptrace |
+| Namespace escape | setns, unshare |
+| Container escape | open_by_handle_at (Shocker CVE-2014-3519) |
+| eBPF / perf | bpf, perf_event_open, userfaultfd |
+| Kernel keyring | keyctl, add_key, request_key |
+| Misc privilege escalation | kcmp, lookup_dcookie, acct |
+| Time manipulation | clock_settime, settimeofday |
+| x86-only | iopl, ioperm, modify_ldt (amd64 only) |
 
-This is a design issue: `sb.Exec()` returns an `*exec.Cmd` which is exactly what `pty.StartWithSize` expects, so the fix is straightforward — just reverse the order and pipe the sandbox cmd into the PTY.
+Installed in `_deny_init` after mounts are complete, inherited by child processes. Prevents the agent from undoing deny-path overmounts.
 
-**Fix location:** `internal/egg/server.go:Spawn()`
+### Resource Limits (Linux only)
 
-### 2. Linux network isolation is broken for `network` level
+Two enforcement layers: cgroups v2 for real limits, prlimit as belt+suspenders.
 
-**Severity: Medium**
+| Mechanism | What it limits | Config field |
+|-----------|---------------|-------------|
+| cgroups v2 `memory.max` | Real memory (RSS) | `resources.memory` |
+| cgroups v2 `pids.max` | Process tree count | `resources.max_pids` |
+| prlimit RLIMIT_AS | Virtual address space (4GB floor for JIT) | `resources.memory` |
+| prlimit RLIMIT_CPU | CPU time | `resources.cpu` |
+| prlimit RLIMIT_NOFILE | Open file descriptors | `resources.max_fds` |
 
-`network` and `standard` produce identical clone flags:
-```go
-case Standard:
-    return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID
-case Network:
-    return syscall.CLONE_NEWNS | syscall.CLONE_NEWPID  // identical!
-```
+Cgroups v2 requires delegation from the init system (systemd usually provides this). When unavailable, falls back to prlimit-only with a log warning. No defaults. Limits only apply when explicitly configured in egg.yaml.
 
-The intent is that `standard` blocks network and `network` allows it. But neither sets `CLONE_NEWNET`. The difference is only checked in `hasNetwork()` for Apple Container's `--network` flag. On Linux, both levels have identical behavior — full host network access.
+macOS Seatbelt does not support resource limits.
 
-To actually block network on `standard`/`strict` on Linux, `standard` needs `CLONE_NEWNET` too (like `strict` already has), and `network` stays without it. Currently it's backwards.
+## Known Limitations
 
-**Fix location:** `internal/sandbox/linux.go:cloneFlags()`
+### Linux: Full network when agent needs HTTPS
 
-### 3. Linux rlimits are defined but never applied
+`isolation: standard` creates CLONE_NEWNET, but cloud agents (Claude, Codex, etc.) need HTTPS. Linux strips CLONE_NEWNET entirely because unprivileged user namespaces can't do port-level filtering. A CONNECT proxy provides cooperative domain filtering.
 
-**Severity: High**
+macOS enforces port-level filtering at the OS level: TCP 443/80 + mDNSResponder.
 
-`rlimits()` in `linux.go` returns the limit pairs (CPU=120s, AS=512MB, NOFILE=256) but `sysProcAttr()` never calls it. The rlimits function exists, the values are defined, but they're never set on the `SysProcAttr`. The process runs with inherited limits.
+### Agent credentials are accessible
 
-```go
-func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
-    attr := &syscall.SysProcAttr{
-        Cloneflags: s.cloneFlags(),
-    }
-    // rlimits() is never called here
-    filter := buildSeccompFilter()
-    if len(filter) > 0 {
-        attr.AmbientCaps = []uintptr{}
-    }
-    return attr
-}
-```
+Claude needs `~/.claude/` writable. The sandbox mounts it read-write. A sandboxed task can read credentials there, but domain filtering limits where it can send them.
 
-**Fix location:** `internal/sandbox/linux.go:sysProcAttr()`
+### HOME is readable
 
-### 4. Seccomp filter is built but never installed
+Write isolation makes HOME read-only but still readable. Add `deny:~/.secrets` to block specific paths.
 
-**Severity: High**
+### Agent config is writable
 
-`buildSeccompFilter()` constructs a valid BPF program but `sysProcAttr()` never attaches it. There's no `SysProcAttr.SeccompFilter` or `prctl(PR_SET_SECCOMP)` call. The BPF program is constructed and discarded. Go's `syscall.SysProcAttr` doesn't have a seccomp field — you'd need to install it via a child process wrapper or `Pdeathsig` + init code.
+`~/.claude/` and similar dirs must be writable for the agent. A task could inject hooks into `settings.json` that persist after the session.
 
-**Fix location:** Needs a wrapper binary or `SECCOMP_SET_MODE_FILTER` via prctl in the child. This is a bigger lift.
+### Resource limits are Linux-only
 
-### 5. Linux mount namespace mounts are prepared but never executed
+macOS agents can consume unbounded CPU and memory.
 
-**Severity: High**
-
-`mountPaths()` computes bind mount arguments but nothing calls `mount(2)`. After `CLONE_NEWNS`, the child inherits the parent's mount namespace copy. Without explicit bind mounts and pivot_root/chroot, the child sees the entire host filesystem.
-
-This is the same class of problem as seccomp — the data structures exist but the actual syscalls are never made. Needs an init process or wrapper that executes the mounts after clone.
-
-**Fix location:** `internal/sandbox/linux.go` — needs child-side mount execution
-
-### 6. Fallback sandbox provides no meaningful isolation
-
-**Severity: Low (known/documented)**
-
-The fallback is documented as "not a real sandbox." It sets `TMPDIR` and `Dir` to an isolated tmpdir but passes through the full host environment. An agent in fallback mode has full disk/network/process access. This is acceptable as a last resort but should be logged prominently.
-
-### 7. Resource limits are hardcoded, not configurable
-
-**Severity: Medium**
-
-CPU (120s), memory (512MB), and fd limits (256) are compile-time constants. There's no way for a skill or session to request different limits. Interactive PTY sessions especially need different limits than batch skill execution — an interactive Claude session shouldn't be killed after 120s of CPU time.
-
-The egg's `SpawnRequest` proto needs fields for per-session resource limits. The sandbox `Config` struct needs limit overrides.
-
-**Fix location:** `internal/sandbox/sandbox.go:Config`, `proto/egg.proto:SpawnRequest`
-
-### 8. Apple Container timeout leaks cancel func
-
-**Severity: Low**
-
-```go
-func (s *appleSandbox) Exec(...) (*exec.Cmd, error) {
-    if s.cfg.Timeout > 0 {
-        ctx, cancel = context.WithTimeout(ctx, s.cfg.Timeout)
-        _ = cancel // caller owns the cmd lifecycle; context handles TTL
-    }
-```
-
-The cancel func is discarded. The comment says "caller owns the cmd lifecycle" but the caller never gets the cancel func. The timeout context will be collected by GC eventually but this is a resource leak pattern. Should either return the cancel or use `AfterFunc`.
-
-**Fix location:** `internal/sandbox/apple.go:Exec()`
-
-## Fix Priority
-
-1. **Egg sandbox wiring** — processes run unsandboxed today (critical, easy fix)
-2. **Linux rlimits + seccomp application** — defined but not applied (high, moderate lift)
-3. **Linux mount execution** — prepared but not executed (high, bigger lift)
-4. **Linux network isolation** — standard/network have identical behavior (medium, easy fix)
-5. **Configurable resource limits** — hardcoded constants (medium, proto + sandbox config)
-6. **Fallback logging** — make it obvious when fallback is used (low, trivial)
-7. **Apple cancel leak** — minor resource leak (low, trivial)
+See `docs/egg-sandbox-design.md` for full design details, agent profiles, and SBPL reference.
