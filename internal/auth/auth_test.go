@@ -207,6 +207,48 @@ func TestTokenStoreDelete(t *testing.T) {
 	}
 }
 
+func TestValidateTokenRemote_OK(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/check" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer valid-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	if err := ValidateTokenRemote(srv.URL, "valid-token"); err != nil {
+		t.Fatalf("expected nil, got: %v", err)
+	}
+}
+
+func TestValidateTokenRemote_Unauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	err := ValidateTokenRemote(srv.URL, "bad-token")
+	if err != ErrAuthFailed {
+		t.Fatalf("expected ErrAuthFailed, got: %v", err)
+	}
+}
+
+func TestValidateTokenRemote_Unreachable(t *testing.T) {
+	err := ValidateTokenRemote("http://127.0.0.1:1", "any-token")
+	if err == nil {
+		t.Fatal("expected error for unreachable server")
+	}
+	if err == ErrAuthFailed {
+		t.Fatal("should not be ErrAuthFailed for network error")
+	}
+}
+
 func TestIsValid(t *testing.T) {
 	store := NewTokenStore(t.TempDir())
 

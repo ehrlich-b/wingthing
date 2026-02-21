@@ -646,6 +646,70 @@ func wingLogPath() string {
 	return filepath.Join(home, ".wingthing", "wing.log")
 }
 
+func wingStatusPath() string {
+	cfg, _ := config.Load()
+	if cfg != nil {
+		return filepath.Join(cfg.Dir, "wing.status")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".wingthing", "wing.status")
+}
+
+// wingStatus is the JSON schema for wing.status.
+type wingStatus struct {
+	State string `json:"state"` // connecting, connected, auth_failed, disconnected
+	Error string `json:"error,omitempty"`
+	TS    string `json:"ts"`
+}
+
+func writeWingStatus(state, lastErr string) {
+	s := wingStatus{State: state, Error: lastErr, TS: time.Now().UTC().Format(time.RFC3339)}
+	data, _ := json.Marshal(s)
+	tmp := wingStatusPath() + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return
+	}
+	os.Rename(tmp, wingStatusPath())
+}
+
+func readWingStatus() (*wingStatus, error) {
+	data, err := os.ReadFile(wingStatusPath())
+	if err != nil {
+		return nil, err
+	}
+	var s wingStatus
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// waitForWingStatus polls wing.status for up to timeout, returning the final state.
+// Returns "connected", "auth_failed", or "" (timeout/still connecting).
+func waitForWingStatus(pid int, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		// Check if daemon died
+		if proc, err := os.FindProcess(pid); err != nil {
+			return ""
+		} else if err := proc.Signal(syscall.Signal(0)); err != nil {
+			// Process exited — check final status
+			if s, err := readWingStatus(); err == nil {
+				return s.State
+			}
+			return "auth_failed" // daemon died, likely auth
+		}
+		if s, err := readWingStatus(); err == nil {
+			switch s.State {
+			case "connected", "auth_failed":
+				return s.State
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return ""
+}
+
 func roostPidPath() string {
 	cfg, _ := config.Load()
 	if cfg != nil {
@@ -751,6 +815,45 @@ func wingStartCmd() *cobra.Command {
 				return fmt.Errorf("wing daemon already running (pid %d)", pid)
 			}
 
+			// Pre-flight auth probe: catch expired tokens before spawning daemon
+			if !localFlag || roostFlag != "" {
+				cfg, cfgErr := config.Load()
+				if cfgErr == nil {
+					ts := auth.NewTokenStore(cfg.Dir)
+					tok, tokErr := ts.Load()
+					if tokErr != nil || !ts.IsValid(tok) {
+						return fmt.Errorf("not logged in — run: wt login")
+					}
+					// Mirror the daemon's relay URL resolution: flag → wing.yaml → config → default
+					relayURL := roostFlag
+					if relayURL == "" {
+						if wc, wcErr := config.LoadWingConfig(cfg.Dir); wcErr == nil && wc.Roost != "" {
+							relayURL = wc.Roost
+						}
+					}
+					if localFlag && relayURL == "" {
+						relayURL = "http://localhost:8080"
+					}
+					if relayURL == "" {
+						relayURL = cfg.RoostURL
+					}
+					if relayURL == "" {
+						relayURL = "https://wingthing.ai"
+					}
+					// Ensure HTTP scheme for the auth probe (roost URLs may use wss://)
+					relayURL = strings.TrimRight(relayURL, "/")
+					relayURL = strings.Replace(relayURL, "wss://", "https://", 1)
+					relayURL = strings.Replace(relayURL, "ws://", "http://", 1)
+					if err := auth.ValidateTokenRemote(relayURL, tok.Token); err != nil {
+						if err == auth.ErrAuthFailed {
+							return fmt.Errorf("login expired — run: wt login")
+						}
+						// Network error: warn but proceed (daemon will retry)
+						fmt.Printf("warning: relay unreachable (%v) — starting daemon anyway\n", err)
+					}
+				}
+			}
+
 			exe, err := os.Executable()
 			if err != nil {
 				return err
@@ -793,6 +896,9 @@ func wingStartCmd() *cobra.Command {
 				childArgs = append(childArgs, "--raw-replay")
 			}
 
+			// Remove stale status from previous run
+			os.Remove(wingStatusPath())
+
 			rotateLog(wingLogPath())
 			logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 			if err != nil {
@@ -819,7 +925,27 @@ func wingStartCmd() *cobra.Command {
 			if err := os.WriteFile(wingArgsPath(), []byte(strings.Join(childArgs, "\n")), 0644); err != nil {
 				log.Printf("warning: failed to write args file: %v", err)
 			}
-			fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
+
+			// Wait for daemon to report initial connection state
+			startupResult := waitForWingStatus(child.Process.Pid, 5*time.Second)
+			switch startupResult {
+			case "auth_failed":
+				// Kill daemon, clean up
+				if proc, findErr := os.FindProcess(child.Process.Pid); findErr == nil {
+					proc.Signal(syscall.SIGTERM)
+				}
+				os.Remove(wingPidPath())
+				os.Remove(wingArgsPath())
+				os.Remove(wingStatusPath())
+				return fmt.Errorf("login expired — run: wt login")
+			case "connected":
+				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
+				fmt.Printf("  relay: connected\n")
+			default:
+				// Timeout or still connecting — daemon is running, relay might be slow
+				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
+				fmt.Printf("  relay: connecting...\n")
+			}
 			fmt.Printf("  log: %s\n", wingLogPath())
 			fmt.Println()
 			if localFlag {
@@ -850,6 +976,7 @@ func wingStartCmd() *cobra.Command {
 func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte bool) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	defer os.Remove(wingStatusPath())
 
 	sighupCh := make(chan os.Signal, 1)
 	signal.Notify(sighupCh, syscall.SIGHUP)
@@ -1081,6 +1208,14 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		RootDir:     resolvedPaths[0],
 		Locked:       wingCfg.Locked,
 		AllowedCount: len(wingCfg.AllowKeys),
+	}
+
+	client.OnStateChange = func(state string, stateErr error) {
+		errMsg := ""
+		if stateErr != nil {
+			errMsg = stateErr.Error()
+		}
+		writeWingStatus(state, errMsg)
 	}
 
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
@@ -1324,6 +1459,7 @@ func wingStopCmd() *cobra.Command {
 			}
 			os.Remove(wingPidPath())
 			os.Remove(wingArgsPath())
+			os.Remove(wingStatusPath())
 			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
 			return nil
 		},
@@ -1341,6 +1477,25 @@ func wingStatusCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Printf("wing daemon is running (pid %d)\n", pid)
+
+			// Show relay connection state
+			if s, statusErr := readWingStatus(); statusErr == nil {
+				switch s.State {
+				case "connected":
+					fmt.Println("  relay: connected")
+				case "auth_failed":
+					fmt.Println("  relay: auth_failed — run: wt login")
+				case "connecting":
+					fmt.Println("  relay: connecting...")
+				case "disconnected":
+					if s.Error != "" {
+						fmt.Printf("  relay: disconnected (%s)\n", s.Error)
+					} else {
+						fmt.Println("  relay: disconnected")
+					}
+				}
+			}
+
 			fmt.Printf("  log: %s\n", wingLogPath())
 
 			// Show egg sessions from filesystem

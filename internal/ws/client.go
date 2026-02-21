@@ -3,13 +3,18 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 )
+
+// ErrAuthRejected is returned when the relay rejects the WebSocket handshake with 401.
+var ErrAuthRejected = errors.New("relay rejected authentication (401)")
 
 const (
 	heartbeatInterval = 30 * time.Second
@@ -53,6 +58,7 @@ type Client struct {
 	OnOrphanKill        func(ctx context.Context, sessionID string) // kill egg with no active goroutine
 	OnReconnect         func(ctx context.Context)                   // called after re-registration with relay
 	OnPasskeyRegistered func(msg PasskeyRegistered)                 // called when a user registers a passkey
+	OnStateChange       func(state string, err error)               // called on connection state transitions
 
 	// ptySessions tracks active PTY sessions for routing input/resize
 	ptySessions   map[string]chan []byte // session_id → input channel
@@ -64,28 +70,53 @@ type Client struct {
 
 // Run connects to the relay and processes tasks until ctx is cancelled.
 // Automatically reconnects on disconnect with exponential backoff.
+// Returns ErrAuthRejected if the relay rejects the token with 401.
 func (c *Client) Run(ctx context.Context) error {
+	c.notifyState("connecting", nil)
 	delay := time.Second
 	for {
 		connected, err := c.connectAndServe(ctx)
 		if ctx.Err() != nil {
+			c.notifyState("disconnected", ctx.Err())
 			return ctx.Err()
+		}
+		if isAuthError(err) {
+			c.notifyState("auth_failed", err)
+			return ErrAuthRejected
 		}
 		if connected {
 			// Was connected successfully — reset backoff
 			delay = time.Second
 		}
+		c.notifyState("disconnected", err)
 		log.Printf("relay disconnected: %v — reconnecting in %s", err, delay)
 		select {
 		case <-ctx.Done():
+			c.notifyState("disconnected", ctx.Err())
 			return ctx.Err()
 		case <-time.After(delay):
 		}
+		c.notifyState("connecting", nil)
 		delay *= 2
 		if delay > maxReconnectDelay {
 			delay = maxReconnectDelay
 		}
 	}
+}
+
+func (c *Client) notifyState(state string, err error) {
+	if c.OnStateChange != nil {
+		c.OnStateChange(state, err)
+	}
+}
+
+// isAuthError returns true if the error indicates a 401 handshake rejection.
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "401")
 }
 
 func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error) {
@@ -158,6 +189,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			var msg RegisteredMsg
 			json.Unmarshal(data, &msg)
 			log.Printf("registered with relay as wing %s", msg.WingID)
+			c.notifyState("connected", nil)
 			if c.OnReconnect != nil {
 				go c.OnReconnect(ctx)
 			}

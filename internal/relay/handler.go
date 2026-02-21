@@ -22,6 +22,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
+	if s.requireToken(w, r) == "" {
+		return // requireToken already wrote 401
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		WingID    string `json:"wing_id"`

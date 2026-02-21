@@ -99,6 +99,32 @@ func PollForToken(ctx context.Context, baseURL, deviceCode string, interval int)
 	}
 }
 
+// ValidateTokenRemote checks a device token against the relay's /auth/check endpoint.
+// Returns nil on 200 (valid), ErrAuthFailed on 401, or a wrapped error for network failures.
+func ValidateTokenRemote(baseURL, token string) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequest("GET", baseURL+"/auth/check", nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("relay unreachable: %w", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return ErrAuthFailed
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %s", resp.Status)
+	}
+	return nil
+}
+
+// ErrAuthFailed is returned when the relay rejects a token with 401.
+var ErrAuthFailed = fmt.Errorf("authentication failed")
+
 func RefreshToken(baseURL string, token DeviceToken) (*TokenResponse, error) {
 	body, err := json.Marshal(token)
 	if err != nil {

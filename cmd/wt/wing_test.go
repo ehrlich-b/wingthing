@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,6 +40,53 @@ func hasName(ps []ws.WingProject, name string) bool {
 		}
 	}
 	return false
+}
+
+func TestWingStatusRoundTrip(t *testing.T) {
+	// writeWingStatus/readWingStatus use wingStatusPath() which depends on config.Load().
+	// We test the JSON struct directly for unit isolation.
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, "wing.status")
+
+	s := wingStatus{State: "connected", Error: "", TS: "2026-02-21T00:00:00Z"}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got wingStatus
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "connected" {
+		t.Errorf("state = %q, want connected", got.State)
+	}
+}
+
+func TestWingStatusAuthFailed(t *testing.T) {
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, "wing.status")
+
+	s := wingStatus{State: "auth_failed", Error: "relay rejected authentication (401)", TS: "2026-02-21T00:00:00Z"}
+	data, _ := json.Marshal(s)
+	os.WriteFile(statusPath, data, 0644)
+
+	raw, _ := os.ReadFile(statusPath)
+	var got wingStatus
+	json.Unmarshal(raw, &got)
+	if got.State != "auth_failed" {
+		t.Errorf("state = %q, want auth_failed", got.State)
+	}
+	if got.Error == "" {
+		t.Error("expected non-empty error")
+	}
 }
 
 func TestScanDir_GitRepos(t *testing.T) {

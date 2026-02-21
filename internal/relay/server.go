@@ -94,6 +94,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("POST /auth/claim", s.handleAuthClaim)
 	s.mux.HandleFunc("POST /auth/refresh", s.handleAuthRefresh)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /auth/check", s.handleAuthCheck)
 	// Relay: worker WebSocket
 	s.mux.HandleFunc("GET /ws/wing", s.handleWingWS)
 	s.mux.HandleFunc("GET /ws/pty", s.handlePTYWS)
