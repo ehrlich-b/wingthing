@@ -116,9 +116,8 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		secret, secretErr := GenerateOrLoadSecret(s.Store, s.Config.JWTSecret)
-		if secretErr == nil {
-			if claims, err := ValidateWingJWT(secret, token); err == nil {
+		if s.JWTPubKey() != nil {
+			if claims, err := ValidateWingJWT(s.JWTPubKey(), token); err == nil {
 				userID = claims.Subject
 			}
 		}
@@ -310,7 +309,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 
 			log.Printf("pty session %s reattached (user=%s)", attach.SessionID, userID)
 
-		case ws.TypePTYInput, ws.TypePTYResize, ws.TypePTYAttentionAck, ws.TypePasskeyResponse:
+		case ws.TypePTYInput, ws.TypePTYResize, ws.TypePTYAttentionAck, ws.TypePasskeyResponse, ws.TypePTYMigrate:
 			wing := lookupWing()
 			if wing == nil {
 				continue

@@ -5,7 +5,7 @@
 - Single Fly machine in ewr, no process groups
 - Volume `wt_data` mounted at `/data` with no process group scope
 - CMD from Dockerfile: `sh -c 'mkdir -p /data/.wingthing && exec ./wt serve --addr :8080'`
-- `WT_JWT_SECRET` already set in Fly secrets
+- `WT_JWT_KEY` already set in Fly secrets
 - Bryan uses this daily — zero downtime tolerance for screwups
 
 ## What the deploy changes
@@ -38,9 +38,9 @@ fly apps create wingthing-staging
 fly volumes create wt_data --region ewr --size 1 --app wingthing-staging
 
 # Copy secrets
-fly secrets set WT_JWT_SECRET=$(fly secrets list --app wingthing | grep WT_JWT_SECRET) --app wingthing-staging
+fly secrets set WT_JWT_KEY=$(fly secrets list --app wingthing | grep WT_JWT_KEY) --app wingthing-staging
 # ^ that won't work, secrets aren't readable. Generate a new one:
-fly secrets set WT_JWT_SECRET=$(openssl rand -base64 32) --app wingthing-staging
+fly secrets set WT_JWT_KEY=$(openssl rand -base64 32) --app wingthing-staging
 
 # Deploy with the new fly.toml
 fly deploy --app wingthing-staging

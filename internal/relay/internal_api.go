@@ -34,7 +34,7 @@ func (s *Server) withInternalAuth(next http.HandlerFunc) http.HandlerFunc {
 		if s.Config.NodeRole != "" {
 			flyPort := r.Header.Get("Fly-Forwarded-Port")
 			secret := r.Header.Get("X-Internal-Secret")
-			if flyPort == "" && (s.Config.JWTSecret == "" || secret != s.Config.JWTSecret) {
+			if flyPort == "" && (s.Config.JWTKey == "" || secret != s.Config.JWTKey) {
 				// Also allow from private IPs (10.x, fdaa:, 172.16-31, 192.168)
 				ip := clientIP(r)
 				if !isPrivateIP(ip) {

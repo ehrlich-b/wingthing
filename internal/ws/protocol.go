@@ -19,6 +19,9 @@ const (
 	TypePTYAttentionAck = "pty.attention_ack" // browser → relay → wing (notification seen)
 	TypePTYPreview      = "pty.preview"       // wing → relay → browser (ephemeral)
 	TypePTYBrowserOpen  = "pty.browser_open"  // wing → relay → browser (URL open request)
+	TypePTYMigrate      = "pty.migrate"       // browser → relay → wing (request P2P migration)
+	TypePTYMigrated     = "pty.migrated"      // wing → relay → browser (P2P migration complete)
+	TypePTYFallback     = "pty.fallback"      // wing → relay → browser (P2P failed, back to relay)
 
 	// Encrypted tunnel (browser ↔ wing, relay is opaque forwarder)
 	TypeTunnelRequest  = "tunnel.req"    // browser → relay → wing
@@ -95,8 +98,9 @@ type WingHeartbeat struct {
 
 // RegisteredMsg is the relay's acknowledgment of a successful wing registration.
 type RegisteredMsg struct {
-	Type   string `json:"type"`
-	WingID string `json:"wing_id"`
+	Type        string `json:"type"`
+	WingID      string `json:"wing_id"`
+	RelayPubKey string `json:"relay_pub_key,omitempty"` // base64 DER EC P-256 public key for JWT verification
 }
 
 // ErrorMsg is sent by the relay for protocol errors.
@@ -296,6 +300,25 @@ type PTYBrowserOpen struct {
 	Type      string `json:"type"`       // "pty.browser_open"
 	SessionID string `json:"session_id"`
 	URL       string `json:"url"`
+}
+
+// PTYMigrate requests migration of a PTY session to a P2P DataChannel.
+type PTYMigrate struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	AuthToken string `json:"auth_token,omitempty"` // passkey auth token for re-validation
+}
+
+// PTYMigrated confirms a PTY session has been migrated to a P2P DataChannel.
+type PTYMigrated struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+}
+
+// PTYFallback notifies the browser that a P2P DataChannel died and I/O is back on the relay.
+type PTYFallback struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
 }
 
 // RelayRestart is sent to all connected WebSockets when the server is shutting down.

@@ -306,9 +306,8 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	// Try JWT validation first, fall back to DB token
 	var userID string
 	var wingPublicKey string
-	secret, secretErr := GenerateOrLoadSecret(s.Store, s.Config.JWTSecret)
-	if secretErr == nil {
-		claims, jwtErr := ValidateWingJWT(secret, token)
+	if s.JWTPubKey() != nil {
+		claims, jwtErr := ValidateWingJWT(s.JWTPubKey(), token)
 		if jwtErr == nil {
 			userID = claims.Subject
 			wingPublicKey = claims.PublicKey
@@ -424,8 +423,13 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("wing %s connected (user=%s wing=%s machine=%s role=%s total_wings=%d)", wing.ID, userID, reg.WingID, s.Config.FlyMachineID, s.Config.NodeRole, len(s.Wings.All()))
 
-	// Send ack
+	// Send ack (include relay public key for JWT verification in direct mode)
 	ack := ws.RegisteredMsg{Type: ws.TypeRegistered, WingID: wing.ID}
+	if s.JWTPubKey() != nil {
+		if pubStr, err := MarshalECPublicKey(s.JWTPubKey()); err == nil {
+			ack.RelayPubKey = pubStr
+		}
+	}
 	ackData, _ := json.Marshal(ack)
 	conn.Write(ctx, websocket.MessageText, ackData)
 
@@ -453,7 +457,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				s.dispatchWingEvent("wing.config", w)
 			}
 
-		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge, ws.TypePTYPreview, ws.TypePTYBrowserOpen:
+		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge, ws.TypePTYPreview, ws.TypePTYBrowserOpen, ws.TypePTYMigrated, ws.TypePTYFallback:
 			// Extract session_id and forward to browser
 			var partial struct {
 				SessionID string `json:"session_id"`

@@ -25,7 +25,13 @@ type WingConfig struct {
 	AuthTTL   string     `yaml:"auth_ttl,omitempty"`   // passkey auth token duration (default "1h")
 	AllowKeys []AllowKey `yaml:"allow_keys,omitempty"`
 	Admins      []string   `yaml:"admins,omitempty"`       // emails with admin role (see all sessions, all paths)
-	IdleTimeout string     `yaml:"idle_timeout,omitempty"` // kill sessions idle for this long (e.g. "4h")
+	IdleTimeout    string `yaml:"idle_timeout,omitempty"`    // kill sessions idle for this long (e.g. "4h")
+	ConnectionMode string `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
+
+	// P2P / Direct mode settings
+	ICEServers []ICEServer `yaml:"ice_servers,omitempty"` // STUN/TURN servers for WebRTC
+	DirectPort int         `yaml:"direct_port,omitempty"` // port for direct WebSocket connections
+	DirectTLS  bool        `yaml:"direct_tls,omitempty"`  // enable TLS for direct mode
 
 	PinnedCompat bool `yaml:"pinned,omitempty"` // backwards compat: old "pinned" key
 }
@@ -39,6 +45,13 @@ func (c *WingConfig) IsAdmin(email string) bool {
 		}
 	}
 	return false
+}
+
+// ICEServer is a STUN/TURN server configuration for WebRTC P2P connections.
+type ICEServer struct {
+	URLs       []string `yaml:"urls" json:"urls"`
+	Username   string   `yaml:"username,omitempty" json:"username,omitempty"`
+	Credential string   `yaml:"credential,omitempty" json:"credential,omitempty"`
 }
 
 // AllowKey is an allowed user for wing access control.

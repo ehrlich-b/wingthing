@@ -10,6 +10,7 @@ import { showHome } from './nav.js';
 import { wingDisplayName, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
 import { saveTunnelAuthTokens } from './tunnel.js';
 import { handlePreview, closePreview } from './preview.js';
+import { initWebRTC, completeMigration, cleanupPeer, cleanupSession, dcActive, sendViaDC } from './webrtc.js';
 
 function showBrowserOpenToast(url, sessionId) {
     var existing = document.getElementById('browser-open-toast');
@@ -300,8 +301,12 @@ function setupPTYHandlers(ws, reattach) {
                 loadHome();
 
                 S.term.onResize(function (size) {
-                    if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN && S.ptySessionId) {
-                        S.ptyWs.send(JSON.stringify({ type: 'pty.resize', session_id: S.ptySessionId, cols: size.cols, rows: size.rows }));
+                    if (!S.ptySessionId) return;
+                    var msg = { type: 'pty.resize', session_id: S.ptySessionId, cols: size.cols, rows: size.rows };
+                    // P2P: try DataChannel first
+                    if (sendViaDC(S.ptySessionId, msg)) return;
+                    if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN) {
+                        S.ptyWs.send(JSON.stringify(msg));
                     }
                 });
                 S.fitAddon.fit();
@@ -310,6 +315,28 @@ function setupPTYHandlers(ws, reattach) {
                 // dimensions from a different machine/window.
                 if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN && S.ptySessionId) {
                     S.ptyWs.send(JSON.stringify({ type: 'pty.resize', session_id: S.ptySessionId, cols: S.term.cols, rows: S.term.rows }));
+                }
+
+                // P2P: check if wing supports P2P and initiate WebRTC
+                if (S.ptyWingId && !reattach) {
+                    var wingP2P = S.wingsData.find(function(w) { return w.wing_id === S.ptyWingId; });
+                    if (wingP2P && wingP2P.p2p) {
+                        var p2pOnly = wingP2P.connection_mode === 'p2p_only';
+                        initWebRTC(S.ptyWingId, S.ptySessionId, p2pOnly);
+                    }
+                }
+                break;
+
+            case 'pty.migrated':
+                if (msg.session_id === S.ptySessionId && S.ptyWingId) {
+                    completeMigration(S.ptyWingId, msg.session_id);
+                }
+                break;
+
+            case 'pty.fallback':
+                if (msg.session_id === S.ptySessionId) {
+                    delete dcActive[msg.session_id];
+                    console.log('[P2P] session ' + msg.session_id + ' FALLBACK — input+output back on relay WS');
                 }
                 break;
 
@@ -485,6 +512,8 @@ export function attachPTY(sessionId) {
 }
 
 export function detachPTY() {
+    if (S.ptySessionId) cleanupSession(S.ptySessionId);
+    if (S.ptyWingId) cleanupPeer(S.ptyWingId);
     if (S.ptyWs) {
         if (S.ptySessionId && S.ptyWs.readyState === WebSocket.OPEN) {
             S.ptyWs.send(JSON.stringify({ type: 'pty.detach', session_id: S.ptySessionId }));
@@ -499,6 +528,8 @@ export function detachPTY() {
 
 export function disconnectPTY() {
     S.ptyReconnecting = false;
+    if (S.ptySessionId) cleanupSession(S.ptySessionId);
+    if (S.ptyWingId) cleanupPeer(S.ptyWingId);
     if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN && S.ptySessionId) {
         S.ptyWs.send(JSON.stringify({ type: 'pty.kill', session_id: S.ptySessionId }));
     }

@@ -23,6 +23,9 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
 	store := testStore(t)
 	srv := NewServer(store, ServerConfig{})
+	if err := srv.InitJWTKey(); err != nil {
+		t.Fatalf("init jwt key: %v", err)
+	}
 	ts := httptest.NewServer(srv)
 	t.Cleanup(func() { ts.Close() })
 	return srv, ts

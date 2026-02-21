@@ -47,4 +47,4 @@ primary_region = "ewr"
 #   fly scale count edge=2 --region nrt,lhr
 #
 # One-time setup:
-#   fly secrets set WT_JWT_SECRET=<base64-secret>
+#   fly secrets set WT_JWT_KEY=<base64-or-pem-ec-p256-key>

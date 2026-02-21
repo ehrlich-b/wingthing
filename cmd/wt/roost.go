@@ -170,7 +170,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
 		AppHost:            os.Getenv("WT_APP_HOST"),
 		WSHost:             os.Getenv("WT_WS_HOST"),
-		JWTSecret:          os.Getenv("WT_JWT_SECRET"),
+		JWTKey:             os.Getenv("WT_JWT_KEY"),
 		GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
 		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
@@ -184,6 +184,9 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	}
 
 	srv := relay.NewServer(store, srvCfg)
+	if err := srv.InitJWTKey(); err != nil {
+		return fmt.Errorf("init jwt key: %w", err)
+	}
 	srv.RateLimit = relay.NewRateLimiter(5, 20)
 
 	// Local mode: direct DB access for bandwidth

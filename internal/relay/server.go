@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,7 +24,7 @@ type ServerConfig struct {
 	BaseURL            string
 	AppHost            string // e.g. "app.wingthing.ai" — serve SPA at root
 	WSHost             string // e.g. "ws.wingthing.ai" — WebSocket only
-	JWTSecret          string // base64-encoded; overrides DB-stored secret
+	JWTKey             string // PEM or base64-DER EC P-256 private key; overrides DB-stored key
 	GitHubClientID     string
 	GitHubClientSecret string
 	GoogleClientID     string
@@ -53,6 +54,7 @@ type Server struct {
 	PTY            *PTYRoutes
 	Bandwidth      *BandwidthMeter
 	RateLimit      *RateLimiter
+	jwtKey         *ecdsa.PrivateKey
 	mux            *http.ServeMux
 
 	// Latest release version cache (fetched from GitHub)
@@ -171,6 +173,27 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.registerStaticRoutes()
 	s.registerInternalRoutes()
 	return s
+}
+
+// InitJWTKey loads or generates the ES256 signing key. Must be called before serving.
+func (s *Server) InitJWTKey() error {
+	key, err := GenerateOrLoadKey(s.Store, s.Config.JWTKey)
+	if err != nil {
+		return fmt.Errorf("jwt key: %w", err)
+	}
+	s.jwtKey = key
+	return nil
+}
+
+// JWTKey returns the ES256 private key for JWT signing.
+func (s *Server) JWTKey() *ecdsa.PrivateKey { return s.jwtKey }
+
+// JWTPubKey returns the ES256 public key for JWT verification.
+func (s *Server) JWTPubKey() *ecdsa.PublicKey {
+	if s.jwtKey == nil {
+		return nil
+	}
+	return &s.jwtKey.PublicKey
 }
 
 func (s *Server) registerStaticRoutes() {

@@ -109,9 +109,8 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Issue JWT instead of UUID token
-	secret, err := GenerateOrLoadSecret(s.Store, s.Config.JWTSecret)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "jwt secret: "+err.Error())
+	if s.jwtKey == nil {
+		writeError(w, http.StatusInternalServerError, "jwt key not initialized")
 		return
 	}
 
@@ -120,7 +119,7 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 		publicKey = *dc.PublicKey
 	}
 
-	token, exp, err := IssueWingJWT(secret, *dc.UserID, publicKey, dc.DeviceID)
+	token, exp, err := IssueWingJWT(s.jwtKey, *dc.UserID, publicKey, dc.DeviceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "issue jwt: "+err.Error())
 		return
@@ -310,9 +309,8 @@ func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 	}
 
 	// Try JWT first
-	secret, secretErr := GenerateOrLoadSecret(s.Store, s.Config.JWTSecret)
-	if secretErr == nil {
-		if claims, err := ValidateWingJWT(secret, token); err == nil {
+	if s.JWTPubKey() != nil {
+		if claims, err := ValidateWingJWT(s.JWTPubKey(), token); err == nil {
 			return claims.Subject
 		}
 	}

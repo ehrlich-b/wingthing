@@ -28,10 +28,14 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	directpkg "github.com/ehrlich-b/wingthing/internal/direct"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	relaypkg "github.com/ehrlich-b/wingthing/internal/relay"
+	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/fsnotify/fsnotify"
+	pionwebrtc "github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 )
 
@@ -838,7 +842,7 @@ func wingStartCmd() *cobra.Command {
 						relayURL = cfg.RoostURL
 					}
 					if relayURL == "" {
-						relayURL = "https://wingthing.ai"
+						relayURL = "https://ws.wingthing.ai"
 					}
 					// Ensure HTTP scheme for the auth probe (roost URLs may use wss://)
 					relayURL = strings.TrimRight(relayURL, "/")
@@ -1192,7 +1196,55 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		return fmt.Errorf("load private key: %w", privKeyErr)
 	}
 
-	client := &ws.Client{
+	// P2P: initialize PeerManager if connection mode supports it
+	var peerMgr *webrtcpkg.PeerManager
+	p2pEnabled := wingCfg.ConnectionMode == "p2p" || wingCfg.ConnectionMode == "p2p_only"
+	if p2pEnabled {
+		var iceServers []pionwebrtc.ICEServer
+		for _, s := range wingCfg.ICEServers {
+			iceServers = append(iceServers, pionwebrtc.ICEServer{
+				URLs:           s.URLs,
+				Username:       s.Username,
+				Credential:     s.Credential,
+			})
+		}
+		peerMgr = webrtcpkg.NewPeerManager(iceServers)
+		defer peerMgr.Close()
+		log.Printf("[P2P] peer manager initialized (mode=%s, ice_servers=%d)", wingCfg.ConnectionMode, len(iceServers))
+	}
+
+	// P2P: track DataChannels and SwappableWriters per session
+	var dcSessions sync.Map // sessionID → *pionwebrtc.DataChannel
+	var swSessions sync.Map // sessionID → *webrtcpkg.SwappableWriter
+
+	var client *ws.Client // declared early so peerMgr.OnDC closure can capture it
+
+	// P2P: wire up DataChannel message routing when DCs open
+	if peerMgr != nil {
+		peerMgr.OnDC(func(senderPub, sessionID string, dc *pionwebrtc.DataChannel) {
+			if sessionID == "" {
+				log.Printf("[P2P] DC opened with no session ID from %s", senderPub[:8])
+				return
+			}
+			dcSessions.Store(sessionID, dc)
+			log.Printf("[P2P] DC stored for session %s from %s", sessionID, senderPub[:8])
+
+			dc.OnMessage(func(msg pionwebrtc.DataChannelMessage) {
+				client.PushPTYInput(sessionID, msg.Data)
+			})
+			dc.OnClose(func() {
+				dcSessions.Delete(sessionID)
+				// Trigger fallback to relay if session still active
+				if swVal, ok := swSessions.Load(sessionID); ok {
+					sessionSW := swVal.(*webrtcpkg.SwappableWriter)
+					sessionSW.FallbackToRelay(sessionID)
+				}
+				log.Printf("[P2P] DC closed for session %s", sessionID)
+			})
+		})
+	}
+
+	client = &ws.Client{
 		RoostURL:    wsURL,
 		Token:       tok.Token,
 		WingID:      cfg.WingID,
@@ -1261,11 +1313,20 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 				idleTimeout = d
 			}
 		}
-		handlePTYSession(ctx, cfg, wingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, authTTL, idleTimeout)
+		// P2P: wrap write in SwappableWriter for potential DC migration
+		var sw *webrtcpkg.SwappableWriter
+		if peerMgr != nil {
+			sw = webrtcpkg.NewSwappableWriter(webrtcpkg.WriteFn(write))
+			swSessions.Store(start.SessionID, sw)
+			defer swSessions.Delete(start.SessionID)
+			handlePTYSession(ctx, cfg, wingCfg, start, sw.Write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, authTTL, idleTimeout, sw, &dcSessions)
+		} else {
+			handlePTYSession(ctx, cfg, wingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, authTTL, idleTimeout, nil, nil)
+		}
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
-		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, home, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client)
+		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, privKey, home, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client, peerMgr, &dcSessions)
 	}
 
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
@@ -1441,6 +1502,33 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		log.Printf("idle reaper enabled: timeout=%s", wingCfg.IdleTimeout)
 	}
 
+	// Direct mode: start a local WebSocket server for direct browser connections
+	if wingCfg.ConnectionMode == "direct" && wingCfg.DirectPort > 0 {
+		directSrv := &directpkg.Server{
+			OnPTY: client.OnPTY,
+		}
+		go func() {
+			addr := fmt.Sprintf(":%d", wingCfg.DirectPort)
+			if err := directSrv.Start(addr); err != nil {
+				log.Printf("[direct] server error: %v", err)
+			}
+		}()
+		defer directSrv.Close()
+
+		// Cache relay public key once available (set after registration)
+		go func() {
+			// Wait a bit for registration to complete
+			time.Sleep(3 * time.Second)
+			if client.RelayPubKey != "" {
+				pubKey, err := relaypkg.ParseECPublicKey(client.RelayPubKey)
+				if err == nil {
+					directSrv.RelayPubKey = pubKey
+					log.Printf("[direct] relay public key cached for JWT verification")
+				}
+			}
+		}()
+	}
+
 	return client.Run(ctx)
 }
 
@@ -1520,7 +1608,7 @@ func wingStatusCmd() *cobra.Command {
 func resolveEmail(cfg *config.Config, email string) (string, string, error) {
 	roostURL := cfg.RoostURL
 	if roostURL == "" {
-		roostURL = "https://wingthing.ai"
+		roostURL = "https://ws.wingthing.ai"
 	}
 	ts := auth.NewTokenStore(cfg.Dir)
 	tok, err := ts.Load()
@@ -1598,7 +1686,7 @@ func wingAllowCmd() *cobra.Command {
 				}
 				roostURL := cfg.RoostURL
 				if roostURL == "" {
-					roostURL = "https://wingthing.ai"
+					roostURL = "https://ws.wingthing.ai"
 				}
 				ts := auth.NewTokenStore(cfg.Dir)
 				tok, err := ts.Load()
@@ -2769,7 +2857,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, idleTimeout time.Duration) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map) {
 	allowedKeys := *allowedKeysPtr
 	// Passkey verification — per-user check: only challenge users who have a passkey
 	var userHasPasskey bool
@@ -3209,6 +3297,21 @@ authDone:
 					})
 				}
 
+			case ws.TypePTYMigrate:
+				if sw == nil {
+					log.Printf("[P2P] pty.migrate for %s but P2P not enabled", start.SessionID)
+					continue
+				}
+				// Look up the DataChannel for this session
+				if dcVal, ok := dcSessions.Load(start.SessionID); ok {
+					dc := dcVal.(*pionwebrtc.DataChannel)
+					if err := sw.MigrateToDC(start.SessionID, dc); err != nil {
+						log.Printf("[P2P] migrate failed for %s: %v", start.SessionID, err)
+					}
+				} else {
+					log.Printf("[P2P] pty.migrate for %s but no DC found", start.SessionID)
+				}
+
 			case ws.TypePTYKill:
 				log.Printf("pty session %s: kill received", start.SessionID)
 				ec.Kill(ctx, start.SessionID)
@@ -3233,6 +3336,7 @@ type tunnelInner struct {
 	AuthToken string `json:"auth_token,omitempty"`
 	Key         string `json:"key,omitempty"` // passkey public key for allow.add
 	AllowUserID string `json:"allow_user_id,omitempty"` // target user_id for allow.remove
+	SDP         string `json:"sdp,omitempty"`            // WebRTC SDP for webrtc.offer
 
 	// Path ACL fields (for paths.set / paths.add_member / paths.remove_member)
 	Paths   []config.PathEntry `json:"paths,omitempty"`   // for paths.set (bulk replace)
@@ -3383,7 +3487,8 @@ func tryRelayPasskeys(allowedKeysPtr *[]config.AllowKey, wingCfg *config.WingCon
 // handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
 func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, req ws.TunnelRequest, write ws.PTYWriteFunc,
 	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, privKey *ecdh.PrivateKey, home string,
-	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool, client *ws.Client) {
+	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool, client *ws.Client,
+	peerMgr *webrtcpkg.PeerManager, dcSessions *sync.Map) {
 
 	allowedKeys := *allowedKeysPtr
 
@@ -3536,6 +3641,14 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		if wingCfg.Label != "" {
 			resp["wing_label"] = wingCfg.Label
 		}
+		// P2P: tell browser whether this wing supports P2P
+		if peerMgr != nil {
+			resp["p2p"] = true
+			resp["connection_mode"] = wingCfg.ConnectionMode
+			if len(wingCfg.ICEServers) > 0 {
+				resp["ice_servers"] = wingCfg.ICEServers
+			}
+		}
 		// Report which well-known API keys are set in the wing's environment
 		var globalKeys []string
 		for _, k := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "CURSOR_API_KEY"} {
@@ -3562,6 +3675,24 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 		}
 		tunnelRespond(gcm, req.RequestID, resp, write)
+
+	case "webrtc.offer":
+		if peerMgr == nil {
+			tunnelRespond(gcm, req.RequestID, map[string]any{"error": "p2p not enabled"}, write)
+			return
+		}
+		if inner.SDP == "" {
+			tunnelRespond(gcm, req.RequestID, map[string]any{"error": "missing sdp"}, write)
+			return
+		}
+		answerSDP, err := peerMgr.HandleOffer(req.SenderPub, req.SenderUserID, req.SenderEmail, req.SenderOrgRole, req.SenderPasskeys, inner.SDP)
+		if err != nil {
+			log.Printf("[P2P] webrtc.offer failed: %v", err)
+			tunnelRespond(gcm, req.RequestID, map[string]any{"error": fmt.Sprintf("webrtc offer: %v", err)}, write)
+			return
+		}
+		log.Printf("[P2P] webrtc.offer accepted from %s, answer SDP %d bytes", req.SenderPub[:8], len(answerSDP))
+		tunnelRespond(gcm, req.RequestID, map[string]any{"sdp": answerSDP}, write)
 
 	case "sessions.list":
 		sessions := listAliveEggSessions(cfg)

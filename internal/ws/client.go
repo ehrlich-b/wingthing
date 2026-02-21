@@ -53,6 +53,10 @@ type Client struct {
 	Locked       bool
 	AllowedCount int
 
+	// RelayPubKey is the relay's EC P-256 public key (base64 DER), received during registration.
+	// Used for JWT verification in direct mode.
+	RelayPubKey string
+
 	OnPTY               PTYHandler
 	OnTunnel            TunnelHandler
 	OnOrphanKill        func(ctx context.Context, sessionID string) // kill egg with no active goroutine
@@ -188,6 +192,9 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		case TypeRegistered:
 			var msg RegisteredMsg
 			json.Unmarshal(data, &msg)
+			if msg.RelayPubKey != "" {
+				c.RelayPubKey = msg.RelayPubKey
+			}
 			log.Printf("registered with relay as wing %s", msg.WingID)
 			c.notifyState("connected", nil)
 			if c.OnReconnect != nil {
@@ -237,7 +244,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				go c.OnOrphanKill(ctx, partial.SessionID)
 			}
 
-		case TypePTYInput, TypePTYResize, TypePasskeyResponse:
+		case TypePTYInput, TypePTYResize, TypePasskeyResponse, TypePTYMigrate:
 			var partial struct {
 				SessionID string `json:"session_id"`
 			}
@@ -342,6 +349,24 @@ func (c *Client) RegisterPTYSession(ctx context.Context, sessionID string) (writ
 		c.ptySessionsMu.Unlock()
 	}
 	return writeFn, inputCh, cleanupFn
+}
+
+// PushPTYInput pushes raw data into a session's input channel from outside the WebSocket read loop.
+// Used by P2P DataChannels to route messages into the session handler.
+// Returns true if the session exists and the message was delivered.
+func (c *Client) PushPTYInput(sessionID string, data []byte) bool {
+	c.ptySessionsMu.Lock()
+	ch := c.ptySessions[sessionID]
+	c.ptySessionsMu.Unlock()
+	if ch == nil {
+		return false
+	}
+	select {
+	case ch <- data:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) writeJSON(ctx context.Context, v any) error {

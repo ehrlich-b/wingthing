@@ -80,7 +80,7 @@ func serveCmd() *cobra.Command {
 				BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
 				AppHost:            os.Getenv("WT_APP_HOST"),
 				WSHost:             os.Getenv("WT_WS_HOST"),
-				JWTSecret:          os.Getenv("WT_JWT_SECRET"),
+				JWTKey:             os.Getenv("WT_JWT_KEY"),
 				GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
 				GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
 				GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
@@ -99,6 +99,9 @@ func serveCmd() *cobra.Command {
 			}
 
 			srv := relay.NewServer(store, srvCfg)
+			if err := srv.InitJWTKey(); err != nil {
+				return fmt.Errorf("init jwt key: %w", err)
+			}
 
 			// Rate limit: 5 req/s sustained, 20 burst per IP
 			srv.RateLimit = relay.NewRateLimiter(5, 20)

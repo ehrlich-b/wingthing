@@ -6,6 +6,7 @@ import { S, DOM, TERM_BUF_PREFIX, TERM_THUMB_PREFIX } from './state.js';
 import { e2eEncrypt } from './crypto.js';
 import { setNotification, clearNotification } from './notify.js';
 import { showHome } from './nav.js';
+import { sendViaDC } from './webrtc.js';
 
 export function initTerminal() {
     S.term = new Terminal({
@@ -243,9 +244,14 @@ export function clearTermBuffer(sessionId) {
 }
 
 export function sendPTYInput(text) {
-    if (!S.ptyWs || S.ptyWs.readyState !== WebSocket.OPEN || !S.ptySessionId) return;
+    if (!S.ptySessionId) return;
     clearNotification(S.ptySessionId);
     e2eEncrypt(text).then(function (encoded) {
-        S.ptyWs.send(JSON.stringify({ type: 'pty.input', session_id: S.ptySessionId, data: encoded }));
+        var msg = { type: 'pty.input', session_id: S.ptySessionId, data: encoded };
+        // P2P: try DataChannel first, fall back to relay WS
+        if (sendViaDC(S.ptySessionId, msg)) return;
+        if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN) {
+            S.ptyWs.send(JSON.stringify(msg));
+        }
     });
 }

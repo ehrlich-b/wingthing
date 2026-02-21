@@ -13,16 +13,10 @@ Edge nodes discover the login node via Fly internal DNS: `login.process.wingthin
 
 ## One-time setup
 
-Generate a shared JWT secret so wings can auth against any node:
+Generate an EC P-256 signing key so wings can auth against any node:
 
 ```
-openssl rand -base64 32 | fly secrets set WT_JWT_SECRET=-
-```
-
-Or:
-
-```
-fly secrets set WT_JWT_SECRET=$(openssl rand -base64 32)
+fly secrets set WT_JWT_KEY=$(openssl ecparam -genkey -name prime256v1 -noout | openssl ec -outform DER 2>/dev/null | base64)
 ```
 
 ## Deploy
