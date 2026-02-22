@@ -30,13 +30,14 @@ func NewSwappableWriter(relayWrite WriteFn) *SwappableWriter {
 }
 
 // Write sends a message via the current active transport.
+// Lock is held through the write call to prevent migration mid-write.
 func (sw *SwappableWriter) Write(v any) error {
 	sw.mu.Lock()
+	defer sw.mu.Unlock()
 	w := sw.dcWrite
 	if w == nil {
 		w = sw.relayWrite
 	}
-	sw.mu.Unlock()
 	return w(v)
 }
 

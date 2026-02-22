@@ -359,12 +359,14 @@ func (c *Client) PushPTYInput(sessionID string, data []byte) bool {
 	ch := c.ptySessions[sessionID]
 	c.ptySessionsMu.Unlock()
 	if ch == nil {
+		log.Printf("[P2P] PushPTYInput: no session %s", sessionID)
 		return false
 	}
 	select {
 	case ch <- data:
 		return true
 	default:
+		log.Printf("[P2P] PushPTYInput: input buffer full for session %s, dropping %d bytes", sessionID, len(data))
 		return false
 	}
 }

@@ -335,7 +335,7 @@ function setupPTYHandlers(ws, reattach) {
 
             case 'pty.fallback':
                 if (msg.session_id === S.ptySessionId) {
-                    delete dcActive[msg.session_id];
+                    cleanupSession(msg.session_id);
                     console.log('[P2P] session ' + msg.session_id + ' FALLBACK — input+output back on relay WS');
                 }
                 break;

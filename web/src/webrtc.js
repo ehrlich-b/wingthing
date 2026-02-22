@@ -5,9 +5,10 @@ import { saveTermBuffer } from './terminal.js';
 import { checkForNotification, setNotification } from './notify.js';
 
 // Per-wing peer connections and per-session data channels
-var peers = {};      // wingId -> RTCPeerConnection
+var peers = {};        // wingId -> RTCPeerConnection
 var dataChannels = {}; // sessionId -> RTCDataChannel
 var dcBuffers = {};    // sessionId -> [] (buffered messages before migration confirmed)
+var sessionWings = {}; // sessionId -> wingId (tracks which wing owns each session's DC)
 
 // Whether each session is actively using DC for I/O
 // Exported so pty.js and terminal.js can check
@@ -75,6 +76,7 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
         var dc = pc.createDataChannel('pty:' + sessionId);
         dataChannels[sessionId] = dc;
         dcBuffers[sessionId] = [];
+        sessionWings[sessionId] = wingId;
 
         dc.onopen = function() {
             console.log('[P2P] data channel \'pty:' + sessionId + '\' state: open');
@@ -86,12 +88,27 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
                     session_id: sessionId
                 }));
             }
+            // Timeout: if pty.migrated doesn't arrive within 3s, clean up and stay on relay
+            var migrateTimer = setTimeout(function() {
+                if (!dcActive[sessionId]) {
+                    console.log('[P2P] migration timeout for session ' + sessionId + ' — no pty.migrated after 3s, staying on relay');
+                    delete dcBuffers[sessionId];
+                    var timedOutDC = dataChannels[sessionId];
+                    if (timedOutDC) {
+                        timedOutDC.close();
+                        delete dataChannels[sessionId];
+                    }
+                }
+            }, 3000);
+            // Store timer so completeMigration can cancel it
+            dc._migrateTimer = migrateTimer;
         };
 
         dc.onclose = function() {
             console.log('[P2P] data channel \'pty:' + sessionId + '\' closed — falling back to relay WS');
             delete dataChannels[sessionId];
             delete dcBuffers[sessionId];
+            delete sessionWings[sessionId];
             if (dcActive[sessionId]) {
                 delete dcActive[sessionId];
                 console.log('[P2P] session ' + sessionId + ' FALLBACK — input+output back on relay WS');
@@ -190,6 +207,12 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
  */
 export function completeMigration(wingId, sessionId) {
     dcActive[sessionId] = true;
+    // Cancel migration timeout
+    var dc = dataChannels[sessionId];
+    if (dc && dc._migrateTimer) {
+        clearTimeout(dc._migrateTimer);
+        dc._migrateTimer = null;
+    }
     var buffered = dcBuffers[sessionId] || [];
     delete dcBuffers[sessionId];
     console.log('[P2P] received pty.migrated for session ' + sessionId);
@@ -284,12 +307,18 @@ export function cleanupPeer(wingId) {
     if (!pc) return;
 
     var dcCount = 0, pcCount = 1;
-    // Clean up any data channels for this wing
-    for (var sid in dataChannels) {
-        delete dataChannels[sid];
-        delete dcActive[sid];
-        delete dcBuffers[sid];
-        dcCount++;
+    // Clean up only data channels belonging to this wing
+    for (var sid in sessionWings) {
+        if (sessionWings[sid] === wingId) {
+            if (dataChannels[sid]) {
+                dataChannels[sid].close();
+                delete dataChannels[sid];
+            }
+            delete dcActive[sid];
+            delete dcBuffers[sid];
+            delete sessionWings[sid];
+            dcCount++;
+        }
     }
 
     pc.close();
@@ -308,4 +337,5 @@ export function cleanupSession(sessionId) {
     }
     delete dcActive[sessionId];
     delete dcBuffers[sessionId];
+    delete sessionWings[sessionId];
 }

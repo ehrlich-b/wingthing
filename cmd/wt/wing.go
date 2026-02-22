@@ -3302,14 +3302,21 @@ authDone:
 					log.Printf("[P2P] pty.migrate for %s but P2P not enabled", start.SessionID)
 					continue
 				}
-				// Look up the DataChannel for this session
-				if dcVal, ok := dcSessions.Load(start.SessionID); ok {
-					dc := dcVal.(*pionwebrtc.DataChannel)
-					if err := sw.MigrateToDC(start.SessionID, dc); err != nil {
+				// Look up the DataChannel — retry briefly since OnDC callback may not have fired yet
+				var migrateDC *pionwebrtc.DataChannel
+				for attempt := 0; attempt < 10; attempt++ {
+					if dcVal, ok := dcSessions.Load(start.SessionID); ok {
+						migrateDC = dcVal.(*pionwebrtc.DataChannel)
+						break
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+				if migrateDC != nil {
+					if err := sw.MigrateToDC(start.SessionID, migrateDC); err != nil {
 						log.Printf("[P2P] migrate failed for %s: %v", start.SessionID, err)
 					}
 				} else {
-					log.Printf("[P2P] pty.migrate for %s but no DC found", start.SessionID)
+					log.Printf("[P2P] pty.migrate for %s but no DC found after 500ms", start.SessionID)
 				}
 
 			case ws.TypePTYKill:
