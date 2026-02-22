@@ -98,6 +98,7 @@ func (pm *PeerManager) HandleOffer(senderPub, userID, email, orgRole string, pas
 			pm.mu.Lock()
 			if pm.peers[senderPub] == pc {
 				delete(pm.peers, senderPub)
+				delete(pm.identities, senderPub)
 			}
 			pm.mu.Unlock()
 		}

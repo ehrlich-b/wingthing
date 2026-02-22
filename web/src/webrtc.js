@@ -69,6 +69,11 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
         var config = { iceServers: iceServers };
         console.log('[P2P] RTCPeerConnection created (host-only ICE, ' + iceServers.length + ' STUN servers)');
 
+        // Close existing peer connection for this wing (e.g. retry or second session)
+        if (peers[wingId]) {
+            cleanupPeer(wingId);
+        }
+
         var pc = new RTCPeerConnection(config);
         peers[wingId] = pc;
 
@@ -164,7 +169,12 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
             };
         });
         await pc.setLocalDescription(offer);
-        await gatherComplete;
+        await Promise.race([
+            gatherComplete,
+            new Promise(function(_, reject) {
+                setTimeout(function() { reject(new Error('ICE gathering timeout (10s)')); }, 10000);
+            })
+        ]);
 
         if (!pc.localDescription || !pc.localDescription.sdp) {
             console.log('[P2P] no local description after ICE gathering');

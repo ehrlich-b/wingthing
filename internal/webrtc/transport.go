@@ -66,7 +66,7 @@ func (sw *SwappableWriter) MigrateToDC(sessionID string, dc *webrtc.DataChannel)
 		if err != nil {
 			return err
 		}
-		return dc.Send(data)
+		return dc.SendText(string(data))
 	}
 	sw.mode = "p2p"
 
