@@ -22,10 +22,12 @@ func testStore(t *testing.T) *RelayStore {
 func testServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
 	store := testStore(t)
-	srv := NewServer(store, ServerConfig{})
-	if err := srv.InitJWTKey(); err != nil {
-		t.Fatalf("init jwt key: %v", err)
+	key, _, err := GenerateECKey()
+	if err != nil {
+		t.Fatalf("generate test jwt key: %v", err)
 	}
+	srv := NewServer(store, ServerConfig{})
+	srv.SetJWTKey(key)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(func() { ts.Close() })
 	return srv, ts

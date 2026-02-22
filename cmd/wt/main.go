@@ -63,6 +63,7 @@ func main() {
 		wingCmd(),
 		roostCmd(),
 		eggCmd(),
+		keygenCmd(),
 		updateCmd(),
 	)
 

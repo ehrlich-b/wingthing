@@ -76,16 +76,26 @@ func serveCmd() *cobra.Command {
 				}
 			}
 
+			// Auto-enable local mode when no auth providers are configured.
+			// Must happen before JWT key check — local mode uses wing.yaml, not env.
+			githubID := os.Getenv("GITHUB_CLIENT_ID")
+			googleID := os.Getenv("GOOGLE_CLIENT_ID")
+			smtpHost := os.Getenv("SMTP_HOST")
+			if !localFlag && !isEdge && githubID == "" && googleID == "" && smtpHost == "" {
+				localFlag = true
+				fmt.Println("no auth providers configured — enabling local mode")
+			}
+
 			srvCfg := relay.ServerConfig{
 				BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
 				AppHost:            os.Getenv("WT_APP_HOST"),
 				WSHost:             os.Getenv("WT_WS_HOST"),
 				JWTKey:             os.Getenv("WT_JWT_KEY"),
-				GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
+				GitHubClientID:     githubID,
 				GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-				GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+				GoogleClientID:     googleID,
 				GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-				SMTPHost:           os.Getenv("SMTP_HOST"),
+				SMTPHost:           smtpHost,
 				SMTPPort:           envOr("SMTP_PORT", "587"),
 				SMTPUser:           os.Getenv("SMTP_USER"),
 				SMTPPass:           os.Getenv("SMTP_PASS"),
@@ -96,6 +106,20 @@ func serveCmd() *cobra.Command {
 				FlyRegion:          flyRegion,
 				FlyAppName:         flyApp,
 				HeroVideo:          os.Getenv("WT_HERO_VIDEO"),
+			}
+
+			// JWT key: server mode requires WT_JWT_KEY env var.
+			// Local mode loads/generates key from wing.yaml.
+			if srvCfg.JWTKey == "" {
+				if localFlag {
+					key, err := ensureJWTKeyInWingYaml(cfg.Dir)
+					if err != nil {
+						return fmt.Errorf("jwt key: %w", err)
+					}
+					srvCfg.JWTKey = key
+				} else {
+					return fmt.Errorf("WT_JWT_KEY is required — generate with: wt keygen")
+				}
 			}
 
 			srv := relay.NewServer(store, srvCfg)
@@ -143,12 +167,6 @@ func serveCmd() *cobra.Command {
 				}
 				srv.DevMode = true
 				fmt.Println("dev mode: auto-claim login")
-			}
-			// Auto-enable local mode when no auth providers are configured
-			if !localFlag && !isEdge && srvCfg.GitHubClientID == "" &&
-				srvCfg.GoogleClientID == "" && srvCfg.SMTPHost == "" {
-				localFlag = true
-				fmt.Println("no auth providers configured — enabling local mode")
 			}
 
 			if localFlag {
@@ -229,4 +247,30 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&localFlag, "local", false, "single-user mode, no login required")
 
 	return cmd
+}
+
+// ensureJWTKeyInWingYaml loads the JWT signing key from wing.yaml, or generates
+// one and saves it. Used by local/roost mode where there's no external secrets manager.
+func ensureJWTKeyInWingYaml(configDir string) (string, error) {
+	wingCfg, err := config.LoadWingConfig(configDir)
+	if err != nil {
+		return "", fmt.Errorf("load wing config: %w", err)
+	}
+
+	if wingCfg.JWTKey != "" {
+		return wingCfg.JWTKey, nil
+	}
+
+	// Auto-generate and persist
+	_, encoded, err := relay.GenerateECKey()
+	if err != nil {
+		return "", err
+	}
+
+	wingCfg.JWTKey = encoded
+	if err := config.SaveWingConfig(configDir, wingCfg); err != nil {
+		return "", fmt.Errorf("save wing config: %w", err)
+	}
+	fmt.Println("generated JWT signing key → wing.yaml")
+	return encoded, nil
 }

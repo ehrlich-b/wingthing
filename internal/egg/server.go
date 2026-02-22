@@ -483,6 +483,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	if envMap["TERM"] == "" {
 		envMap["TERM"] = "xterm-256color"
 	}
+	// Prevent git from prompting on the TTY (password, username, etc.) — these
+	// interleave with agent output and produce garbled text.
+	if _, ok := envMap["GIT_TERMINAL_PROMPT"]; !ok {
+		envMap["GIT_TERMINAL_PROMPT"] = "0"
+	}
 	// Per-user home override for relay sessions
 	if rc.UserHome != "" {
 		envMap["HOME"] = rc.UserHome

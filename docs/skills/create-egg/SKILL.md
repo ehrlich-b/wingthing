@@ -41,6 +41,7 @@ fs:
   - "rw:~/Library/Caches/"    # macOS build caches
   - "rw:~/go/pkg/mod/cache/"  # Go module cache
   - "deny:~/.ssh"             # SSH keys blocked
+  - "ro:~/.ssh/known_hosts"   # preserved so SSH can verify hosts
   - "deny:~/.gnupg"           # GPG keys blocked
   - "deny:~/.aws"             # AWS credentials blocked
   - "deny:~/.docker"          # Docker config blocked

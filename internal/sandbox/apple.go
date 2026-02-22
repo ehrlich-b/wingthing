@@ -87,6 +87,13 @@ func buildProfile(cfg Config) string {
 
 	// Deny paths — block reads and writes to specific directories.
 	// Resolve symlinks because sandbox-exec uses real paths.
+	sshDir, _ := os.UserHomeDir()
+	if sshDir != "" {
+		sshDir = filepath.Join(sshDir, ".ssh")
+		if real, err := filepath.EvalSymlinks(sshDir); err == nil {
+			sshDir = real
+		}
+	}
 	for _, d := range cfg.Deny {
 		abs, err := filepath.Abs(d)
 		if err != nil {
@@ -96,6 +103,12 @@ func buildProfile(cfg Config) string {
 			abs = real
 		}
 		fmt.Fprintf(&sb, "(deny file-read* file-write* (subpath %q))\n", abs)
+		// Allow reading ~/.ssh/known_hosts so SSH can verify host keys
+		// without prompting (prompts interleave with agent PTY output).
+		// Skipped if known_hosts is also explicitly denied.
+		if abs == sshDir && !containsDenyPath(cfg.Deny, filepath.Join(abs, "known_hosts")) {
+			fmt.Fprintf(&sb, "(allow file-read* (literal %q))\n", filepath.Join(abs, "known_hosts"))
+		}
 	}
 
 	// Mount-based filesystem write isolation.
@@ -166,6 +179,23 @@ func buildProfile(cfg Config) string {
 	}
 
 	return sb.String()
+}
+
+// containsDenyPath checks if a resolved path is in the deny list (resolving symlinks).
+func containsDenyPath(deny []string, target string) bool {
+	for _, d := range deny {
+		abs, err := filepath.Abs(d)
+		if err != nil {
+			continue
+		}
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = real
+		}
+		if abs == target {
+			return true
+		}
+	}
+	return false
 }
 
 // sbplRegexEscape escapes regex metacharacters for SBPL (regex #"...") patterns.

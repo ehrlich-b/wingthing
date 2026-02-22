@@ -40,7 +40,7 @@ fly volumes create wt_data --region ewr --size 1 --app wingthing-staging
 # Copy secrets
 fly secrets set WT_JWT_KEY=$(fly secrets list --app wingthing | grep WT_JWT_KEY) --app wingthing-staging
 # ^ that won't work, secrets aren't readable. Generate a new one:
-fly secrets set WT_JWT_KEY=$(openssl rand -base64 32) --app wingthing-staging
+fly secrets set WT_JWT_KEY=$(wt keygen) --app wingthing-staging
 
 # Deploy with the new fly.toml
 fly deploy --app wingthing-staging

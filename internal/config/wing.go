@@ -33,6 +33,10 @@ type WingConfig struct {
 	DirectPort int         `yaml:"direct_port,omitempty"` // port for direct WebSocket connections
 	DirectTLS  bool        `yaml:"direct_tls,omitempty"`  // enable TLS for direct mode
 
+	// JWT signing key for roost mode (base64-DER P-256 private key).
+	// Auto-generated on first roost start. Server mode uses WT_JWT_KEY env instead.
+	JWTKey string `yaml:"jwt_key,omitempty"`
+
 	PinnedCompat bool `yaml:"pinned,omitempty"` // backwards compat: old "pinned" key
 }
 

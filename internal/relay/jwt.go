@@ -13,8 +13,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const jwtKeyDBKey = "jwt_ec_key"
-
 // WingClaims are the JWT claims for a wing connection.
 type WingClaims struct {
 	jwt.RegisteredClaims
@@ -29,41 +27,27 @@ type HandoffClaims struct {
 	OrgRole string `json:"org_role,omitempty"`
 }
 
-// GenerateOrLoadKey returns the ES256 private key for JWT signing.
-// Priority: envKey (from WT_JWT_KEY, PEM or base64-DER) > relay_config DB > auto-generate.
-func GenerateOrLoadKey(store *RelayStore, envKey string) (*ecdsa.PrivateKey, error) {
-	if envKey != "" {
-		return parseECKey(envKey)
+// ParseECKeyFromEnv parses a P-256 private key from an environment variable value.
+// Accepts PEM or base64-encoded DER. Returns an error if the value is empty or invalid.
+func ParseECKeyFromEnv(envValue string) (*ecdsa.PrivateKey, error) {
+	if envValue == "" {
+		return nil, fmt.Errorf("WT_JWT_KEY is required — generate with: wt keygen")
 	}
+	return parseECKey(envValue)
+}
 
-	if store != nil {
-		val, err := store.GetRelayConfig(jwtKeyDBKey)
-		if err != nil {
-			return nil, err
-		}
-		if val != "" {
-			return parseECKey(val)
-		}
-	}
-
-	// Auto-generate P-256 key
+// GenerateECKey creates a new P-256 private key and returns it along with
+// its base64-DER encoding (suitable for storing in wing.yaml).
+func GenerateECKey() (*ecdsa.PrivateKey, string, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("generate ec key: %w", err)
+		return nil, "", fmt.Errorf("generate ec key: %w", err)
 	}
-
 	der, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return nil, fmt.Errorf("marshal ec key: %w", err)
+		return nil, "", fmt.Errorf("marshal ec key: %w", err)
 	}
-	encoded := base64.StdEncoding.EncodeToString(der)
-
-	if store != nil {
-		if err := store.SetRelayConfig(jwtKeyDBKey, encoded); err != nil {
-			return nil, err
-		}
-	}
-	return key, nil
+	return key, base64.StdEncoding.EncodeToString(der), nil
 }
 
 // parseECKey parses a P-256 private key from PEM or base64-encoded DER.

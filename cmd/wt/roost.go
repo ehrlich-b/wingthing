@@ -166,11 +166,21 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		return fmt.Errorf("backfill pro users: %w", err)
 	}
 
+	// JWT key: env var overrides wing.yaml, otherwise load/generate from wing.yaml.
+	jwtKey := os.Getenv("WT_JWT_KEY")
+	if jwtKey == "" {
+		var keyErr error
+		jwtKey, keyErr = ensureJWTKeyInWingYaml(cfg.Dir)
+		if keyErr != nil {
+			return fmt.Errorf("jwt key: %w", keyErr)
+		}
+	}
+
 	srvCfg := relay.ServerConfig{
 		BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
 		AppHost:            os.Getenv("WT_APP_HOST"),
 		WSHost:             os.Getenv("WT_WS_HOST"),
-		JWTKey:             os.Getenv("WT_JWT_KEY"),
+		JWTKey:             jwtKey,
 		GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
 		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),

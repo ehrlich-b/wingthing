@@ -108,6 +108,7 @@ The built-in default is the root of all inheritance. It's what you get with zero
 fs:
   - "rw:./"
   - "deny:~/.ssh"
+  - "ro:~/.ssh/known_hosts"       # preserved so SSH doesn't prompt
   - "deny:~/.gnupg"
   - "deny:~/.aws"
   - "deny:~/.docker"

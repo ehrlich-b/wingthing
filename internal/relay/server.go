@@ -175,14 +175,26 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	return s
 }
 
-// InitJWTKey loads or generates the ES256 signing key. Must be called before serving.
+// InitJWTKey loads the ES256 signing key. In server mode (non-local, non-roost),
+// WT_JWT_KEY env var is required and the app refuses to start without it.
+// In local/roost mode, the caller provides the key via Config.JWTKey (from wing.yaml).
 func (s *Server) InitJWTKey() error {
-	key, err := GenerateOrLoadKey(s.Store, s.Config.JWTKey)
-	if err != nil {
-		return fmt.Errorf("jwt key: %w", err)
+	if s.Config.JWTKey != "" {
+		key, err := ParseECKeyFromEnv(s.Config.JWTKey)
+		if err != nil {
+			return fmt.Errorf("jwt key: %w", err)
+		}
+		s.jwtKey = key
+		return nil
 	}
-	s.jwtKey = key
+	// No key provided — local/roost callers set it before calling InitJWTKey.
+	// If we get here in server mode, that's a fatal misconfiguration.
 	return nil
+}
+
+// SetJWTKey directly sets the signing key (used by roost mode after loading from wing.yaml).
+func (s *Server) SetJWTKey(key *ecdsa.PrivateKey) {
+	s.jwtKey = key
 }
 
 // JWTKey returns the ES256 private key for JWT signing.

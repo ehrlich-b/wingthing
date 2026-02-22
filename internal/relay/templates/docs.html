@@ -252,7 +252,7 @@ idle_timeout: 4h
 
 <div class="docs-section" id="egg-configuration">
 <h2>egg configuration</h2>
-<p>Without an <code>egg.yaml</code>, the sandbox applies opinionated defaults: CWD is writable, home is read-only, sensitive directories (<code>~/.ssh</code>, <code>~/.gnupg</code>, <code>~/.aws</code>, etc.) are denied, and only essential env vars pass through. Network is blocked except for exactly what your agent needs - each agent has a profile declaring its API domains, env vars, and config directories. Claude gets <code>api.anthropic.com</code>, Ollama gets <code>localhost</code>, etc. You don't configure any of this.</p>
+<p>Without an <code>egg.yaml</code>, the sandbox applies opinionated defaults: CWD is writable, home is read-only, sensitive directories (<code>~/.ssh</code>, <code>~/.gnupg</code>, <code>~/.aws</code>, etc.) are denied, and only essential env vars pass through. <code>~/.ssh/known_hosts</code> is preserved read-only so SSH can verify host keys without prompting (add <code>deny:~/.ssh/known_hosts</code> to disable this). Network is blocked except for exactly what your agent needs - each agent has a profile declaring its API domains, env vars, and config directories. Claude gets <code>api.anthropic.com</code>, Ollama gets <code>localhost</code>, etc. You don't configure any of this.</p>
 <p>A local <a href="https://en.wikipedia.org/wiki/HTTP_tunnel">CONNECT proxy</a> enforces domain-level filtering - agents can only reach their own API, not the entire internet. On macOS, Seatbelt forces all traffic through the proxy at the OS level. On Linux, the proxy is set via <code>HTTPS_PROXY</code>.</p>
 <p>Drop an <code>egg.yaml</code> in your project to customize. Configs are additive - you only declare what you're changing from the defaults.</p>
 <p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the <a href="/">sandbox builder</a> on the homepage to generate configs visually, or install the <a href="https://github.com/ehrlich-b/wingthing/tree/main/docs/skills/create-egg">Claude Code skill</a> for an interactive security interview that generates hardened configs.</p>
@@ -347,7 +347,7 @@ WantedBy=multi-user.target
 <tr><td>GOOGLE_CLIENT_ID</td><td>Google OAuth client ID</td></tr>
 <tr><td>GOOGLE_CLIENT_SECRET</td><td>Google OAuth client secret</td></tr>
 <tr><td>OPENAI_API_KEY</td><td>embeddings (optional)</td></tr>
-<tr><td>WT_JWT_KEY</td><td>EC P-256 private key (PEM or base64-DER) for JWT signing (auto-generated if unset)</td></tr>
+<tr><td>WT_JWT_KEY</td><td>EC P-256 private key (PEM or base64-DER) for JWT signing (<strong>required</strong> in server mode, auto-generated in local/roost mode)</td></tr>
 <tr><td>WT_APP_HOST</td><td>hostname for app subdomain (e.g. app.example.com)</td></tr>
 <tr><td>WT_WS_HOST</td><td>hostname for WebSocket subdomain (e.g. ws.example.com)</td></tr>
 </table>

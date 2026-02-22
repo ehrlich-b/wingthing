@@ -123,8 +123,35 @@ func DenyInit(args []string) {
 			log.Printf("_deny_init: mkdir %s: %v", p, err)
 			continue
 		}
-		if err := unix.Mount("tmpfs", p, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, "size=0"); err != nil {
-			log.Printf("_deny_init: mount deny %s: %v", p, err)
+
+		// Preserve ~/.ssh/known_hosts so SSH can verify host keys without
+		// prompting. The prompt writes to /dev/tty and interleaves with
+		// agent output, producing garbled text. Skipped if known_hosts
+		// is also explicitly denied (deny: ~/.ssh/known_hosts).
+		var knownHosts []byte
+		sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
+		khPath := filepath.Join(sshDir, "known_hosts")
+		if p == sshDir && !containsPath(denyPaths, khPath) {
+			knownHosts, _ = os.ReadFile(khPath)
+		}
+
+		if knownHosts != nil {
+			// Mount writable tmpfs, write known_hosts, remount read-only.
+			if err := unix.Mount("tmpfs", p, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=65536"); err != nil {
+				log.Printf("_deny_init: mount deny %s: %v", p, err)
+				continue
+			}
+			khPath := filepath.Join(p, "known_hosts")
+			if err := os.WriteFile(khPath, knownHosts, 0644); err != nil {
+				log.Printf("_deny_init: write known_hosts: %v", err)
+			}
+			if err := unix.Mount("", p, "", unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, "size=65536"); err != nil {
+				log.Printf("_deny_init: remount deny %s ro: %v", p, err)
+			}
+		} else {
+			if err := unix.Mount("tmpfs", p, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, "size=0"); err != nil {
+				log.Printf("_deny_init: mount deny %s: %v", p, err)
+			}
 		}
 	}
 

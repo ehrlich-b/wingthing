@@ -209,62 +209,10 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </div>
 </div>
 </div>
-<div class="how" id="pricing">
-<h2>pricing</h2>
-<div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-bottom:20px;font-family:var(--mono);font-size:13px">
-<span style="color:var(--text-dim)">monthly</span>
-<label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer">
-<input type="checkbox" id="yearly-toggle" checked onchange="toggleBilling()" style="opacity:0;width:0;height:0">
-<span style="position:absolute;inset:0;background:var(--accent);border-radius:11px;transition:background 0.2s"></span>
-<span style="position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:transform 0.2s" id="toggle-dot"></span>
-</label>
-<span>yearly <span style="color:var(--action);font-weight:600">save 20%</span></span>
-</div>
-<div class="how-grid">
-<div class="how-card">
-<h3>free</h3>
-<p style="font-size:20px;font-weight:700;margin:8px 0">$0</p>
-<p>1 GB/month relay bandwidth<br>5 concurrent relay sessions<br>Unlimited local eggs</p>
-</div>
-<div class="how-card" style="border:1px solid var(--action)">
-<h3>pro</h3>
-<p style="font-size:20px;font-weight:700;margin:8px 0" id="pro-price">$4<span style="font-size:13px;font-weight:400">/mo</span></p>
-<p style="font-size:11px;color:var(--text-dim);margin-bottom:8px" id="pro-note">billed yearly ($48)</p>
-<p>Unlimited relay bandwidth<br>Unlimited relay sessions<br>Priority support</p>
-</div>
-<div class="how-card">
-<h3>team</h3>
-<p style="font-size:20px;font-weight:700;margin:8px 0" id="team-price">$4<span style="font-size:13px;font-weight:400">/seat/mo</span></p>
-<p style="font-size:11px;color:var(--text-dim);margin-bottom:8px" id="team-note">billed yearly ($48/seat)</p>
-<p>Each seat includes Pro<br>Shared wings (org access)<br>Audit logging<br>Invite-by-email</p>
-</div>
-</div>
-<p style="text-align:center;font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-top:12px">Self-hosting is always free. MIT licensed. <code style="background:var(--bg-card);padding:2px 6px;border-radius:3px;font-size:11px">wt serve --local</code></p>
-</div>
 <div class="links">
 <a href="/docs">docs</a>
 <a href="https://github.com/ehrlich-b/wingthing">github</a>
 </div>
-<script>
-function toggleBilling(){
-  var y=document.getElementById('yearly-toggle').checked;
-  var dot=document.getElementById('toggle-dot');
-  dot.style.transform=y?'translateX(18px)':'';
-  document.getElementById('pro-price').innerHTML=y
-    ?'$4<span style="font-size:13px;font-weight:400">/mo</span>'
-    :'$5<span style="font-size:13px;font-weight:400">/mo</span>';
-  document.getElementById('pro-note').textContent=y?'billed yearly ($48)':'billed monthly';
-  document.getElementById('team-price').innerHTML=y
-    ?'$4<span style="font-size:13px;font-weight:400">/seat/mo</span>'
-    :'$5<span style="font-size:13px;font-weight:400">/seat/mo</span>';
-  document.getElementById('team-note').textContent=y?'billed yearly ($48/seat)':'billed monthly';
-}
-// Init toggle dot position (starts checked = yearly)
-document.addEventListener('DOMContentLoaded',function(){
-  var dot=document.getElementById('toggle-dot');
-  if(dot)dot.style.transform='translateX(18px)';
-});
-</script>
 <script>
 (function(){
 var agents=['claude','codex','cursor','ollama','gemini'];
@@ -281,6 +229,7 @@ var defaultFS=[
   {mode:'rw',path:'~/Library/Caches/'},
   {mode:'rw',path:'~/go/pkg/mod/cache/'},
   {mode:'deny',path:'~/.ssh'},
+  {mode:'ro',path:'~/.ssh/known_hosts'},
   {mode:'deny',path:'~/.gnupg'},
   {mode:'deny',path:'~/.aws'},
   {mode:'deny',path:'~/.docker'},
