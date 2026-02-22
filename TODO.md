@@ -77,6 +77,10 @@ The bar: someone new can use a wing without confusion or broken UX.
 - [ ] WebSocket direct to Fly — bypass Cloudflare for ws:// traffic (ws.wingthing.ai)
 
 ### Security
+- [ ] Stop storing JWTs in device_tokens — new ES256 tokens should be stateless (verify
+  by signature only). Remove `CreateDeviceToken` call from JWT issuance, remove
+  `ValidateToken` fallback from wing/PTY auth paths. Keep device_tokens for local mode
+  UUID tokens and web session auth only. Can force re-login to flush old HS256 tokens.
 - [ ] Ubuntu 24.04 sandbox breakage — AppArmor 4.0 gates `CLONE_NEWUSER` behind
   `userns_create` profile. `probeUserNamespace()` in `internal/sandbox/linux.go:87`
   will fail, sandbox either errors out or falls back to no isolation. Options:
