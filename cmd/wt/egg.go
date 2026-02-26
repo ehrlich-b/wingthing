@@ -429,7 +429,7 @@ type EggIdentity struct {
 	UserID      string // relay user ID
 	Email       string // authenticated email (e.g. from Google OAuth)
 	DisplayName string // human-readable name (Google full name, GitHub login)
-	IsOwner     bool   // owner/admin of this wing — use real HOME, skip per-user isolation
+	IsOwner     bool   // owner/admin of this wing — visible at wing level, not used for egg isolation
 }
 
 // sanitizeEnvValue strips characters that could cause shell injection.
@@ -526,12 +526,10 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 	}
 	// Per-user home directory for multi-user isolation on shared machines.
-	// Owners and admins use real HOME — they're the machine owner and
-	// shouldn't be sandboxed into a synthetic home. Only non-owner
-	// authenticated users get per-user homes.
+	// All authenticated users get per-user homes.
 	realHome, _ := os.UserHomeDir()
 	effectiveHome := realHome
-	if identity.Email != "" && !identity.IsOwner {
+	if identity.Email != "" {
 		perUserHome := filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
 		os.MkdirAll(perUserHome, 0700)
 		effectiveHome = perUserHome
@@ -559,11 +557,10 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		args = append(args, "--user-home", perUserHome)
 	}
-	// Rebuild agent settings every session for non-owner users.
-	// Owners use their real HOME and real agent config — no overrides.
-	// For guests, reads existing prefs, layers host settings on top
-	// (host always wins for permissions), then injects agent-specific overrides.
-	if identity.Email != "" && !identity.IsOwner {
+	// Rebuild agent settings every session for authenticated users.
+	// Reads existing prefs, layers host settings on top (host always wins
+	// for permissions), then injects agent-specific overrides.
+	if identity.Email != "" {
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
 			settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
@@ -668,6 +665,25 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 
 	child := exec.Command(exe, args...)
+	// Build an explicit env allowlist so the child doesn't inherit secrets
+	// (e.g. WT_JWT_SECRET, GOOGLE_CLIENT_SECRET) from the roost process.
+	allowedKeys := map[string]bool{
+		"HOME": true, "PATH": true, "TERM": true, "LANG": true,
+		"USER": true, "SHELL": true, "TMPDIR": true,
+		"ANTHROPIC_API_KEY": true,
+	}
+	// Also allow any key explicitly passed via --env flags.
+	for k := range envMap {
+		allowedKeys[k] = true
+	}
+	var childEnv []string
+	for _, e := range os.Environ() {
+		k, _, ok := strings.Cut(e, "=")
+		if ok && allowedKeys[k] {
+			childEnv = append(childEnv, e)
+		}
+	}
+	child.Env = childEnv
 	child.Stdout = logFile
 	child.Stderr = logFile
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

@@ -119,8 +119,27 @@ func DenyInit(args []string) {
 	// Mount empty read-only tmpfs over each deny path to hide its contents.
 	// We're UID 0 in the namespace -> have CAP_SYS_ADMIN -> can mount.
 	for _, p := range denyPaths {
-		if err := os.MkdirAll(p, 0755); err != nil {
-			log.Printf("_deny_init: mkdir %s: %v", p, err)
+		// Stat to determine if path is a file or directory. Files can't
+		// be overmounted with tmpfs — bind-mount /dev/null instead.
+		info, statErr := os.Lstat(p)
+		if statErr != nil && os.IsNotExist(statErr) {
+			// Path doesn't exist — create as dir for tmpfs mount.
+			if err := os.MkdirAll(p, 0755); err != nil {
+				log.Printf("_deny_init: mkdir %s: %v", p, err)
+				continue
+			}
+		} else if statErr != nil {
+			log.Printf("_deny_init: stat %s: %v", p, statErr)
+			continue
+		} else if !info.IsDir() {
+			// Regular file (or symlink): bind-mount /dev/null over it.
+			if err := unix.Mount("/dev/null", p, "", unix.MS_BIND, ""); err != nil {
+				log.Printf("_deny_init: bind /dev/null over %s: %v", p, err)
+			} else {
+				// Remount read-only so agent can't write to it.
+				unix.Mount("", p, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, "")
+				log.Printf("_deny_init: deny file %s (bind /dev/null)", p)
+			}
 			continue
 		}
 
