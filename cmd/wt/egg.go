@@ -594,9 +594,15 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 					}
 				}
 			}
-			// Clean up stale apiKeyHelper from previous sessions —
-			// ANTHROPIC_API_KEY is now passed directly via env.
-			delete(baseSettings, "apiKeyHelper")
+			// Claude-specific: inject apiKeyHelper so the raw key isn't
+			// visible in the agent's environment.
+			if agentName == "claude" {
+				if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
+					envMap["_WT_ANTHROPIC_KEY"] = v
+					delete(envMap, "ANTHROPIC_API_KEY")
+					baseSettings["apiKeyHelper"] = "echo $_WT_ANTHROPIC_KEY"
+				}
+			}
 			if len(baseSettings) > 0 {
 				if data, err := json.MarshalIndent(baseSettings, "", "  "); err == nil {
 					os.WriteFile(settingsDst, append(data, '\n'), 0644)

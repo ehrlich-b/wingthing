@@ -460,6 +460,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	// Merge required env vars from agent profile
 	for _, k := range profile.EnvVars {
 		if _, ok := envMap[k]; !ok {
+			// Skip ANTHROPIC_API_KEY when apiKeyHelper rename is active —
+			// the caller already renamed it to _WT_ANTHROPIC_KEY to avoid
+			// Claude Code's "auth conflict" warning.
+			if k == "ANTHROPIC_API_KEY" && envMap["_WT_ANTHROPIC_KEY"] != "" {
+				continue
+			}
 			if v := os.Getenv(k); v != "" {
 				envMap[k] = v
 			}
