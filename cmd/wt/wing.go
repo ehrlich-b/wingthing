@@ -436,6 +436,17 @@ func isUnderPaths(path string, resolvedPaths []string) bool {
 	return false
 }
 
+// isExactPath returns true if path exactly matches one of the configured paths.
+func isExactPath(path string, paths []string) bool {
+	cleaned := filepath.Clean(path)
+	for _, p := range paths {
+		if cleaned == p {
+			return true
+		}
+	}
+	return false
+}
+
 // isMemberRole returns true if the org role is "member" or empty (not owner/admin).
 func isMemberRole(orgRole string) bool {
 	return orgRole == "member" || orgRole == ""
@@ -1281,9 +1292,11 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no accessible folders on this machine"})
 			return
 		}
-		// Clamp CWD to user-accessible paths
+		// Clamp CWD to exact configured paths (not subdirectories).
+		// Allowing subdirectories lets users write their own egg.yaml and
+		// boot into a self-defined sandbox — a sandbox escape.
 		if len(userPaths) > 0 {
-			if !isUnderPaths(start.CWD, userPaths) {
+			if !isExactPath(start.CWD, userPaths) {
 				start.CWD = userPaths[0]
 			}
 		}
@@ -2202,7 +2215,23 @@ func wingConfigSetCmd() *cobra.Command {
 }
 
 // getDirEntries returns directory entries for the given path, suitable for cwd selection.
+// When resolvedPaths is set, acts as a strict whitelist: only the configured paths are
+// returned, no filesystem browsing. This prevents users from navigating into subdirectories
+// and writing their own egg.yaml (sandbox escape).
 func getDirEntries(path string, resolvedPaths []string) []ws.DirEntry {
+	// Strict whitelist mode: only return configured paths, no browsing.
+	if len(resolvedPaths) > 0 {
+		var results []ws.DirEntry
+		for _, rp := range resolvedPaths {
+			results = append(results, ws.DirEntry{
+				Name:  filepath.Base(rp),
+				IsDir: true,
+				Path:  rp,
+			})
+		}
+		return results
+	}
+
 	if path == "" {
 		home, _ := os.UserHomeDir()
 		path = home
@@ -2210,27 +2239,6 @@ func getDirEntries(path string, resolvedPaths []string) []ws.DirEntry {
 	if strings.HasPrefix(path, "~") {
 		home, _ := os.UserHomeDir()
 		path = home + path[1:]
-	}
-
-	// Constrain to resolved paths if configured
-	if len(resolvedPaths) > 0 {
-		if path == "" {
-			path = resolvedPaths[0]
-		}
-		abs := filepath.Clean(path)
-		if a, err := filepath.Abs(abs); err == nil {
-			abs = a
-		}
-		underAny := false
-		for _, rp := range resolvedPaths {
-			if abs == rp || strings.HasPrefix(abs, rp+string(filepath.Separator)) {
-				underAny = true
-				break
-			}
-		}
-		if !underAny {
-			path = resolvedPaths[0]
-		}
 	}
 
 	// Try path as a directory first; if it doesn't exist, treat the last
