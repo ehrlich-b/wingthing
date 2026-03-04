@@ -1,4 +1,5 @@
-.PHONY: build test check clean web serve release proto deploy deploy-edge scale status jail
+.PHONY: build test check clean web serve release proto deploy deploy-edge scale status jail \
+	build-linux build-mock-agent build-linux-tests test-linux test-linux-ubuntu test-integ test-e2e
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -68,6 +69,36 @@ scale:
 proto:
 	protoc -I proto --go_out=paths=source_relative:internal/egg/pb --go-grpc_out=paths=source_relative:internal/egg/pb proto/egg.proto
 
+# Detect host arch for cross-compilation target
+LINUX_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+
+build-linux:
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go build -buildvcs=false \
+		-ldflags "-X main.version=test" -o test/linux/wt ./cmd/wt
+
+build-mock-agent:
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go build -o test/linux/mock-agent ./test/mock-agent/
+
+build-linux-tests:
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go test -c -tags 'e2e linux' \
+		-o test/linux/run-tests ./test/linux/
+
+test-linux: build-linux build-mock-agent build-linux-tests
+	docker build -t wt-test-linux -f test/linux/Dockerfile test/linux/
+	docker run --rm --privileged wt-test-linux \
+		/root/run-tests -test.v -test.timeout 120s
+
+test-linux-ubuntu: build-linux build-mock-agent build-linux-tests
+	docker build -t wt-test-ubuntu -f test/linux/Dockerfile.ubuntu2404 test/linux/
+	docker run --rm --privileged wt-test-ubuntu \
+		/root/run-tests -test.v -test.timeout 120s
+
+test-integ:
+	go test -tags e2e -v -timeout 120s ./test/integ/...
+
+test-e2e: test-linux test-linux-ubuntu test-integ
+
 clean:
 	rm -f wt
 	rm -rf dist/
+	rm -f test/linux/wt test/linux/mock-agent test/linux/run-tests

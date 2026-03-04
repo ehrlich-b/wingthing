@@ -37,6 +37,9 @@ func newPlatform(cfg Config) (Sandbox, error) {
 }
 
 func (s *seatbeltSandbox) Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
+	if s.cfg.Trace {
+		return nil, fmt.Errorf("trace mode requires strace (Linux only)")
+	}
 	execArgs := []string{"-p", s.profile, name}
 	execArgs = append(execArgs, args...)
 	cmd := exec.CommandContext(ctx, "sandbox-exec", execArgs...)
@@ -47,6 +50,9 @@ func (s *seatbeltSandbox) Exec(ctx context.Context, name string, args []string) 
 func (s *seatbeltSandbox) PostStart(pid int) error {
 	return nil
 }
+
+func (s *seatbeltSandbox) DiagLog() string  { return "" }
+func (s *seatbeltSandbox) TraceLog() string { return "" }
 
 func (s *seatbeltSandbox) Destroy() error {
 	return os.RemoveAll(s.tmpDir)

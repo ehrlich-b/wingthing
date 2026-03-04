@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -32,6 +35,7 @@ var wellKnownCLIs = []struct {
 	{"gemini", "gemini", "agents"},
 	{"codex", "codex", "agents"},
 	{"cursor", "agent", "agents"},
+	{"strace", "strace", "trace mode"},
 }
 
 func doctorCmd() *cobra.Command {
@@ -54,7 +58,11 @@ func doctorCmd() *cobra.Command {
 				if err != nil {
 					fmt.Printf("  %-12s not found\n", c.name)
 				} else {
-					fmt.Printf("  %-12s %s\n", c.name, path)
+					if resolved, rErr := filepath.EvalSymlinks(path); rErr == nil && resolved != path {
+						fmt.Printf("  %-12s %s -> %s\n", c.name, path, resolved)
+					} else {
+						fmt.Printf("  %-12s %s\n", c.name, path)
+					}
 				}
 			}
 			fmt.Println()
@@ -87,6 +95,18 @@ func doctorCmd() *cobra.Command {
 				}
 			}
 			fmt.Println()
+
+			// Sandbox
+			fmt.Println("Sandbox:")
+			if ok, help := sandbox.CheckCapability(); ok {
+				fmt.Printf("  %-12s available (%s)\n", runtime.GOOS, sandboxBackend())
+			} else {
+				fmt.Printf("  %-12s NOT AVAILABLE\n", runtime.GOOS)
+				fmt.Printf("  %s\n", help)
+			}
+			fmt.Println()
+
+			printSystemSection()
 
 			// Config
 			fmt.Println("Config:")
@@ -124,4 +144,15 @@ func roostReachable(roostURL string) bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+func sandboxBackend() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "seatbelt"
+	case "linux":
+		return "user namespaces + seccomp"
+	default:
+		return "unknown"
+	}
 }

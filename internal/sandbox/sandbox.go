@@ -3,6 +3,8 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -14,6 +16,8 @@ type Sandbox interface {
 	Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error)
 	PostStart(pid int) error // apply rlimits etc. after process starts
 	Destroy() error
+	DiagLog() string  // path to sandbox diagnostic log, or ""
+	TraceLog() string // path to strace output log, or ""
 }
 
 // Mount describes a filesystem mount for the sandbox.
@@ -38,6 +42,7 @@ type Config struct {
 	PidLimit    uint32        // cgroup pids.max (0 = no limit)
 	SessionID   string        // unique ID for cgroup naming
 	UserHome    string        // per-user home override (empty = os.UserHomeDir)
+	Trace       bool          // wrap command with strace (Linux only)
 }
 
 // EnforcementError is returned when the system cannot enforce the requested sandbox config.
@@ -82,12 +87,30 @@ func newEnforcementError(cfg Config, platformErr error) *EnforcementError {
 	}
 }
 
+// CheckCapability reports whether the current system can run sandboxed agents.
+// Returns (true, "") if capable, or (false, helpMessage) with fix instructions.
+func CheckCapability() (bool, string) {
+	// Suppress log output from newPlatform during capability check.
+	prev := log.Writer()
+	log.SetOutput(io.Discard)
+	s, err := newPlatform(Config{
+		Mounts: []Mount{{Source: "/tmp", Target: "/tmp", ReadOnly: true}},
+	})
+	log.SetOutput(prev)
+	if err != nil {
+		return false, platformHelp()
+	}
+	s.Destroy()
+	return true, ""
+}
+
 func platformHelp() string {
 	switch runtime.GOOS {
 	case "darwin":
 		return "macOS: requires Apple Containers (macOS 26+, 'container' CLI)"
 	case "linux":
-		return "Linux: requires root or CAP_SYS_ADMIN (try: sudo setcap cap_sys_admin+ep /path/to/wt-egg)"
+		return "Linux: your system does not allow unprivileged user namespaces, which wt needs to sandbox agents. " +
+			"Fix: sudo sysctl -w kernel.unprivileged_userns_clone=1 (or run: sudo wt egg claude)"
 	default:
 		return fmt.Sprintf("platform %s: no sandbox backend available", runtime.GOOS)
 	}

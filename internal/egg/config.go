@@ -108,6 +108,7 @@ type EggConfig struct {
 	Shell                      string            `yaml:"shell"`
 	DangerouslySkipPermissions bool              `yaml:"dangerously_skip_permissions"`
 	Audit                      bool              `yaml:"audit"`
+	Trace                      bool              `yaml:"trace"`
 	AgentSettings              map[string]string `yaml:"agent_settings,omitempty"` // agent name -> settings file path
 }
 
@@ -343,6 +344,9 @@ func MergeEggConfig(parent, child *EggConfig) *EggConfig {
 	// Audit: OR (once enabled by org/parent, can't be disabled)
 	merged.Audit = parent.Audit || child.Audit
 
+	// Trace: OR
+	merged.Trace = parent.Trace || child.Trace
+
 	// AgentSettings: child overrides parent per-key
 	if len(parent.AgentSettings) > 0 || len(child.AgentSettings) > 0 {
 		merged.AgentSettings = make(map[string]string)
@@ -490,6 +494,7 @@ func (c *EggConfig) ToSandboxConfig() sandbox.Config {
 		MemLimit:    c.Resources.MemBytes(),
 		MaxFDs:      c.Resources.MaxFDs,
 		PidLimit:    c.Resources.MaxPids,
+		Trace:       c.Trace,
 	}
 }
 
@@ -531,14 +536,19 @@ func (c *EggConfig) BuildEnv() []string {
 	stripSSHAgent := c.sshDirDenied()
 
 	filter := func(env []string) []string {
-		if !stripSSHAgent {
-			return env
-		}
 		out := env[:0:0]
 		for _, e := range env {
-			if !strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
-				out = append(out, e)
+			if stripSSHAgent && strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
+				continue
 			}
+			// Never pass parent agent session vars into sandboxed agents.
+			// CLAUDECODE causes Claude Code to refuse to start ("nested session").
+			// CLAUDE_CODE_* are internal session state that shouldn't leak.
+			k, _, _ := strings.Cut(e, "=")
+			if k == "CLAUDECODE" || strings.HasPrefix(k, "CLAUDE_CODE_") {
+				continue
+			}
+			out = append(out, e)
 		}
 		return out
 	}

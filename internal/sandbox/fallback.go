@@ -24,12 +24,18 @@ func newFallback(cfg Config) (Sandbox, error) {
 }
 
 func (s *fallbackSandbox) Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
+	if s.cfg.Trace {
+		return nil, fmt.Errorf("trace mode requires strace (Linux only)")
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = s.tmpDir
 	cmd.Env = s.buildEnv()
 	s.setLimits(cmd)
 	return cmd, nil
 }
+
+func (s *fallbackSandbox) DiagLog() string  { return "" }
+func (s *fallbackSandbox) TraceLog() string { return "" }
 
 func (s *fallbackSandbox) Destroy() error {
 	return os.RemoveAll(s.tmpDir)

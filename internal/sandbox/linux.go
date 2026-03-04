@@ -199,6 +199,19 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		cmd = exec.CommandContext(ctx, name, args...)
 	}
 
+	// Wrap with strace if trace mode is enabled.
+	if s.cfg.Trace {
+		straceBin, err := exec.LookPath("strace")
+		if err != nil {
+			return nil, fmt.Errorf("trace mode: strace not found in PATH")
+		}
+		traceLog := filepath.Join(s.tmpDir, "strace.log")
+		traceArgs := []string{"-f", "-o", traceLog}
+		traceArgs = append(traceArgs, cmd.Path)
+		traceArgs = append(traceArgs, cmd.Args[1:]...)
+		cmd = exec.CommandContext(ctx, straceBin, traceArgs...)
+	}
+
 	cmd.Dir = s.tmpDir
 	cmd.Env = s.buildEnv()
 	attr := s.sysProcAttr()
@@ -235,6 +248,17 @@ func (s *linuxSandbox) PostStart(pid int) error {
 		}
 	}
 	return nil
+}
+
+func (s *linuxSandbox) DiagLog() string {
+	return filepath.Join(s.tmpDir, "deny_init.log")
+}
+
+func (s *linuxSandbox) TraceLog() string {
+	if s.cfg.Trace {
+		return filepath.Join(s.tmpDir, "strace.log")
+	}
+	return ""
 }
 
 func (s *linuxSandbox) Destroy() error {

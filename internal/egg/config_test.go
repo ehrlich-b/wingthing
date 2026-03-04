@@ -694,6 +694,37 @@ func TestBuildEnv_SSHAuthSockStrippedWhenSSHDenied(t *testing.T) {
 	}
 }
 
+func TestBuildEnv_ClaudeCodeVarsNeverLeak(t *testing.T) {
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	t.Setenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1")
+	t.Setenv("HOME", os.Getenv("HOME"))
+
+	// env: ["*"] should still strip CLAUDECODE and CLAUDE_CODE_* vars
+	cfg := &EggConfig{
+		FS:  []string{"rw:./"},
+		Env: []string{"*"},
+	}
+	for _, e := range cfg.BuildEnv() {
+		k, _, _ := strings.Cut(e, "=")
+		if k == "CLAUDECODE" || strings.HasPrefix(k, "CLAUDE_CODE_") {
+			t.Errorf("agent env should never contain %s (causes nested session error)", k)
+		}
+	}
+
+	// Explicit allowlist should also strip them
+	cfg2 := &EggConfig{
+		FS:  []string{"rw:./"},
+		Env: []string{"HOME", "PATH", "CLAUDECODE"},
+	}
+	for _, e := range cfg2.BuildEnv() {
+		k, _, _ := strings.Cut(e, "=")
+		if k == "CLAUDECODE" {
+			t.Errorf("CLAUDECODE should be stripped even if explicitly listed in env config")
+		}
+	}
+}
+
 func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")

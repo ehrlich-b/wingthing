@@ -11,3 +11,6 @@ spaces/cache/*.bin
 *.pem
 *.key
 .DS_Store
+test/linux/wt
+test/linux/mock-agent
+test/linux/run-tests

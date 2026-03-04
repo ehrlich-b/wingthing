@@ -1,0 +1,38 @@
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates procps strace curl unzip && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 22 LTS (Claude Code runtime)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
+
+# Install Bun (Claude Code also ships a bun-based build)
+RUN curl -fsSL https://bun.sh/install | bash
+# NOTE: Do NOT set ENV PATH with bun first — wt resolves agents via its own PATH
+# (exec.LookPath), so bun's claude would shadow the mock agent at /usr/local/bin/claude.
+ENV PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.bun/bin"
+
+# Install real Claude Code (npm + bun) — the mock agent can't catch Node.js/seccomp issues.
+# These may fail in CI without network; the test skips if the binary isn't found.
+# Use readlink -f to resolve the REAL binary path before mock-agent overwrites /usr/local/bin/claude.
+RUN npm install -g @anthropic-ai/claude-code 2>/dev/null || true
+RUN ln -sf "$(readlink -f "$(which claude 2>/dev/null)" 2>/dev/null || echo /dev/null)" /usr/local/bin/claude-node; true
+# Bun global install
+RUN /root/.bun/bin/bun install -g @anthropic-ai/claude-code 2>/dev/null || true
+RUN ln -sf "$(readlink -f "$(/root/.bun/bin/bun pm ls -g 2>/dev/null | grep claude-code | head -1 | awk '{print $NF}')/bin/claude" 2>/dev/null || echo /dev/null)" /usr/local/bin/claude-bun; true
+
+# Mock agent for sandbox probe tests (installed as "claude" so existing tests work).
+# Must come AFTER real Claude Code installs so we overwrite any npm-installed claude.
+COPY mock-agent /usr/local/bin/claude
+COPY mock-agent /usr/local/bin/mock-agent
+
+COPY wt /usr/local/bin/wt
+COPY run-tests /root/run-tests
+RUN chmod +x /usr/local/bin/wt /usr/local/bin/claude /usr/local/bin/mock-agent /root/run-tests
+RUN mkdir -p /root/.wingthing/eggs /root/.wingthing/logs /root/.claude /root/.ssh
+# Non-root user for namespace failure tests.
+# Ubuntu 24.04 ships with 'ubuntu' UID 1000 — use a different UID.
+RUN useradd -m -u 1001 testuser && \
+    mkdir -p /home/testuser/.wingthing/eggs /home/testuser/.wingthing/logs /home/testuser/.claude && \
+    chown -R testuser:testuser /home/testuser
+WORKDIR /root

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -25,6 +26,7 @@ import (
 
 func eggCmd() *cobra.Command {
 	var configFlag string
+	var traceFlag bool
 
 	cmd := &cobra.Command{
 		Use:     "sandbox [agent]",
@@ -36,11 +38,12 @@ func eggCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return eggSpawn(cmd.Context(), args[0], configFlag)
+			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag)
 		},
 	}
 
 	cmd.Flags().StringVar(&configFlag, "config", "", "path to egg.yaml (default: discover from cwd, then ~/.wingthing/egg.yaml, then built-in)")
+	cmd.Flags().BoolVar(&traceFlag, "trace", false, "wrap sandbox with strace for syscall tracing (Linux only)")
 
 	cmd.AddCommand(eggRunCmd())
 	cmd.AddCommand(eggStopCmd())
@@ -66,6 +69,7 @@ func eggRunCmd() *cobra.Command {
 		maxPidsFlag uint32
 		debugFlag  bool
 		auditFlag  bool
+		traceFlag  bool
 		vteFlag    bool
 		renderedConfigFlag string
 		userHomeFlag string
@@ -132,6 +136,7 @@ func eggRunCmd() *cobra.Command {
 				PidLimit:       maxPidsFlag,
 				Debug:          debugFlag,
 				Audit:          auditFlag,
+				Trace:          traceFlag,
 				VTE:            vteFlag,
 				RenderedConfig: renderedConfigFlag,
 				UserHome:       userHomeFlag,
@@ -173,6 +178,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&maxPidsFlag, "max-pids", 0, "max processes in cgroup (Linux only)")
 	cmd.Flags().BoolVar(&debugFlag, "debug", false, "dump raw PTY output to /tmp")
 	cmd.Flags().BoolVar(&auditFlag, "audit", false, "enable input audit log and PTY stream recording")
+	cmd.Flags().BoolVar(&traceFlag, "trace", false, "wrap sandbox with strace for syscall tracing (Linux only)")
 	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect (internal)")
 	cmd.Flags().StringVar(&renderedConfigFlag, "rendered-config", "", "rendered egg config YAML (internal)")
 	cmd.Flags().StringVar(&userHomeFlag, "user-home", "", "per-user home directory (internal)")
@@ -313,7 +319,11 @@ func humanDuration(d time.Duration) string {
 }
 
 // eggSpawn starts an agent session in a per-session egg and attaches the terminal.
-func eggSpawn(ctx context.Context, agentName, configPath string) error {
+func eggSpawn(ctx context.Context, agentName, configPath string, trace bool) error {
+	if trace && runtime.GOOS != "linux" {
+		return fmt.Errorf("--trace requires Linux (strace is not available on %s)", runtime.GOOS)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -344,7 +354,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 	sessionID := uuid.New().String()[:8]
 
 	// Spawn egg as child process
-	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, EggIdentity{}, 0)
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0)
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
@@ -478,7 +488,7 @@ func userHash(email string) string {
 }
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
-func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte bool, identity EggIdentity, idleTimeout time.Duration) (*egg.Client, error) {
+func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration) (*egg.Client, error) {
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create egg dir: %w", err)
@@ -663,6 +673,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if eggCfg.Audit {
 		args = append(args, "--audit")
+	}
+	if trace || eggCfg.Trace {
+		args = append(args, "--trace")
 	}
 	if idleTimeout > 0 {
 		args = append(args, "--idle-timeout", idleTimeout.String())

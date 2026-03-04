@@ -103,6 +103,7 @@ type RunConfig struct {
 	PidLimit                   uint32
 	Debug                      bool
 	Audit                      bool
+	Trace                      bool   // wrap sandbox command with strace (Linux only)
 	VTE                        bool   // use VTerm snapshot for reconnect instead of replay buffer
 	RenderedConfig             string // effective egg config as YAML (after merge/resolve)
 	UserHome                   string // per-user home directory (relay sessions only)
@@ -449,6 +450,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	if resolved, err := filepath.EvalSymlinks(binPath); err == nil {
 		binPath = resolved
 	}
+	log.Printf("egg: agent binary: %s", binPath)
 
 	// Build environment: always use rc.Env (caller filtered via BuildEnvMap).
 	// Merge agent profile required vars + essentials from host env if missing.
@@ -613,6 +615,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			PidLimit:    rc.PidLimit,
 			SessionID:   sessionID,
 			UserHome:    rc.UserHome,
+			Trace:       rc.Trace,
 		}
 
 		sb, err = sandbox.New(sbCfg)
@@ -647,6 +650,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	if err != nil {
 		if sb != nil {
 			sb.Destroy()
+		}
+		// Detect namespace creation failures that slip past the capability probe.
+		// The probe tests simple CLONE_NEWUSER but the sandbox uses CLONE_NEWUSER|NEWNS|NEWPID
+		// which can fail in restricted environments (containers, AppArmor, etc.).
+		if strings.Contains(err.Error(), "operation not permitted") || strings.Contains(err.Error(), "permission denied") {
+			return fmt.Errorf("start pty: %v — your system blocked sandbox namespace creation. "+
+				"Fix: sudo sysctl -w kernel.unprivileged_userns_clone=1 (or run: sudo wt egg claude)", err)
 		}
 		return fmt.Errorf("start pty: %v", err)
 	}
@@ -777,6 +787,23 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			domainProxy.Close()
 		}
 		if sess.sb != nil {
+			if diagPath := sess.sb.DiagLog(); diagPath != "" {
+				if data, _ := os.ReadFile(diagPath); len(data) > 0 {
+					logsDir := filepath.Join(filepath.Dir(filepath.Dir(s.dir)), "logs")
+					os.MkdirAll(logsDir, 0755)
+					os.WriteFile(filepath.Join(logsDir, sessionID+".deny_init.log"), data, 0644)
+				}
+			}
+			if tracePath := sess.sb.TraceLog(); tracePath != "" {
+				if data, _ := os.ReadFile(tracePath); len(data) > 0 {
+					logsDir := filepath.Join(filepath.Dir(filepath.Dir(s.dir)), "logs")
+					os.MkdirAll(logsDir, 0755)
+					if len(data) > 10*1024*1024 {
+						data = data[len(data)-10*1024*1024:]
+					}
+					os.WriteFile(filepath.Join(logsDir, sessionID+".strace.log"), data, 0644)
+				}
+			}
 			sess.sb.Destroy()
 		}
 

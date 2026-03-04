@@ -2400,7 +2400,10 @@ func cleanEggDir(dir string) {
 	os.Remove(filepath.Join(dir, "egg.sock"))
 	os.Remove(filepath.Join(dir, "egg.token"))
 	os.Remove(filepath.Join(dir, "egg.pid"))
-	os.Remove(filepath.Join(dir, "egg.log"))
+	// Preserve egg.log — the parent process reads it via readEggCrashInfo
+	// after this child exits. Deleting it here causes a race where the
+	// crash message is lost ("egg process crashed (no log available)").
+	// The log is small and the parent's cleanEggDir call cleans it up later.
 	// Keep egg.meta, egg.owner, and dir if audit recordings exist
 	_, hasPty := os.Stat(filepath.Join(dir, "audit.pty.gz"))
 	_, hasLog := os.Stat(filepath.Join(dir, "audit.log"))
@@ -2510,7 +2513,10 @@ func readEggCrashInfo(dir string) string {
 		return "egg process crashed (no log available)"
 	}
 
-	lines := strings.Split(string(data), "\n")
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 0 {
+		return "egg process crashed (empty log)"
+	}
 
 	// Find the last panic
 	lastPanic := -1
@@ -2521,17 +2527,29 @@ func readEggCrashInfo(dir string) string {
 		}
 	}
 
-	if lastPanic == -1 {
-		return fmt.Sprintf("egg process crashed (check %s)", logPath)
+	if lastPanic != -1 {
+		// Extract up to 20 lines from the panic point
+		end := lastPanic + 20
+		if end > len(lines) {
+			end = len(lines)
+		}
+		excerpt := strings.Join(lines[lastPanic:end], "\n")
+		return fmt.Sprintf("egg crashed: %s", strings.TrimSpace(excerpt))
 	}
 
-	// Extract up to 20 lines from the panic point
-	end := lastPanic + 20
-	if end > len(lines) {
-		end = len(lines)
+	// No panic found — return the last line (cobra prints "Error: ..." there)
+	// plus any "Error:" lines from the log.
+	last := lines[len(lines)-1]
+	if strings.Contains(last, "Error:") || strings.Contains(last, "error") {
+		return strings.TrimSpace(last)
 	}
-	excerpt := strings.Join(lines[lastPanic:end], "\n")
-	return fmt.Sprintf("egg crashed: %s", strings.TrimSpace(excerpt))
+
+	// Fall back to last 5 lines for context
+	start := len(lines) - 5
+	if start < 0 {
+		start = 0
+	}
+	return strings.TrimSpace(strings.Join(lines[start:], "\n"))
 }
 
 // reclaimEggSessions discovers surviving egg sessions and re-registers their
@@ -3107,7 +3125,7 @@ authDone:
 	}
 
 	// Spawn a per-session egg
-	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, EggIdentity{UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName, OrgWing: wingCfg.Org != ""}, idleTimeout)
+	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace, EggIdentity{UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName, OrgWing: wingCfg.Org != ""}, idleTimeout)
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := readEggCrashInfo(eggDir)
