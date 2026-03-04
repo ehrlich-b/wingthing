@@ -37,7 +37,6 @@ type WingConfig struct {
 	// Auto-generated on first roost start. Server mode uses WT_JWT_KEY env instead.
 	JWTKey string `yaml:"jwt_key,omitempty"`
 
-	PinnedCompat bool `yaml:"pinned,omitempty"` // backwards compat: old "pinned" key
 }
 
 // IsAdmin returns true if email is in the Admins list (case-insensitive).
@@ -171,9 +170,6 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
-	}
-	if cfg.PinnedCompat && !cfg.Locked {
-		cfg.Locked = true
 	}
 	// Migrate legacy root -> paths
 	if cfg.Root != "" && len(cfg.Paths) == 0 {

@@ -2100,7 +2100,7 @@ export function showSessionInfo() {
 
 export function renderDashboard() {
     var visibleWings = S.wingsData.filter(function(w) {
-        return w.tunnel_error !== 'not_allowed' && wingDisplayName(w);
+        return wingDisplayName(w);
     });
     if (visibleWings.length > 0) {
         var wingHtml = '<h3 class="section-label">wings</h3><div class="wing-grid">';

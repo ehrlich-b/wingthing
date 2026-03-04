@@ -90,9 +90,7 @@ export function saveSessionCache() {
 }
 
 export function saveWingCache() {
-    setCachedWings(S.wingsData.filter(function(w) {
-        return w.tunnel_error !== 'not_allowed';
-    }).map(function(w) {
+    setCachedWings(S.wingsData.map(function(w) {
         return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform, agents: w.agents, locked: w.locked || false };
     }));
 }
@@ -322,9 +320,6 @@ async function _loadHomeInner() {
     // Step 6: Probe all online wings in parallel
     var onlineWings = S.wingsData.filter(function(w) { return w.online !== false && w.wing_id && w.public_key; });
     await Promise.all(onlineWings.map(function(w) { return probeWing(w); }));
-
-    // Remove wings that were denied access
-    S.wingsData = S.wingsData.filter(function(w) { return w.tunnel_error !== 'not_allowed'; });
 
     // Step 7: Save cache, render once after all probes
     saveWingCache();

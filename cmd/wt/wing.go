@@ -1125,6 +1125,29 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		return fmt.Errorf("not logged in — run: wt login")
 	}
 
+	// Auto-enroll token user on locked wings so `wt login` + `wt start` always works
+	if wingCfg.Locked {
+		relayHTTP := strings.Replace(roostURL, "wss://", "https://", 1)
+		relayHTTP = strings.Replace(relayHTTP, "ws://", "http://", 1)
+		if info, infoErr := auth.FetchUserInfo(relayHTTP, tok.Token); infoErr == nil && info.UserID != "" {
+			found := false
+			for _, ak := range wingCfg.AllowKeys {
+				if ak.UserID == info.UserID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				wingCfg.AllowKeys = append(wingCfg.AllowKeys, config.AllowKey{UserID: info.UserID, Email: info.Email})
+				if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
+					log.Printf("wing: failed to persist auto-enrolled user: %v", err)
+				} else {
+					log.Printf("wing: auto-enrolled token user %s (%s) into allow_keys", info.Email, info.UserID)
+				}
+			}
+		}
+	}
+
 	// Detect available agents
 	var agents []string
 	for _, a := range []struct{ name, cmd string }{
@@ -1375,8 +1398,8 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		}
 		// Auto-enroll path members: if registered user's email matches a path member, add AllowKey.
 		// In-memory only — don't persist to wing.yaml. SaveWingConfig serializes the entire
-		// WingConfig which can clobber shared wings (e.g. PinnedCompat leaking locked: true,
-		// or allow_keys containing only one user). Admins manage allow_keys explicitly.
+		// WingConfig which can clobber shared wings (e.g. allow_keys containing only one user).
+		// Admins manage allow_keys explicitly.
 		if !isPathMember(wingCfg.Paths, msg.Email) {
 			return
 		}
