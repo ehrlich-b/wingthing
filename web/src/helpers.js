@@ -50,7 +50,7 @@ export function projectName(cwd) {
 
 export function wingDisplayName(wing) {
     if (!wing) return '';
-    return wing.wing_label || wing.hostname || '';
+    return wing.wing_label || wing.hostname || (wing.wing_id ? wing.wing_id.substring(0, 8) : '');
 }
 
 export function shortenPath(path) {

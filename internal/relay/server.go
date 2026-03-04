@@ -329,9 +329,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ws.wingthing.ai: WebSocket + health only
+	// ws.wingthing.ai: WebSocket + health + auth check (wings validate tokens before connecting)
 	if s.Config.WSHost != "" && host == s.Config.WSHost {
-		if strings.HasPrefix(path, "/ws/") || path == "/health" {
+		if strings.HasPrefix(path, "/ws/") || path == "/auth/check" || path == "/health" {
 			s.mux.ServeHTTP(w, r)
 			return
 		}

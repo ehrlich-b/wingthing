@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -26,9 +27,20 @@ type DeviceCodeResponse struct {
 }
 
 type TokenResponse struct {
-	Token     string `json:"token"`
-	ExpiresAt int64  `json:"expires_at"`
-	Error     string `json:"error,omitempty"`
+	Token       string `json:"token"`
+	ExpiresAt   int64  `json:"expires_at"`
+	Error       string `json:"error,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+}
+
+// UserInfo represents the authenticated user's identity from the relay.
+type UserInfo struct {
+	UserID      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+	Provider    string `json:"provider"`
 }
 
 func RequestDeviceCode(baseURL, wingID string, publicKey ...string) (*DeviceCodeResponse, error) {
@@ -102,28 +114,39 @@ func PollForToken(ctx context.Context, baseURL, deviceCode string, interval int)
 // ValidateTokenRemote checks a device token against the relay's /auth/check endpoint.
 // Returns nil on 200 (valid), ErrAuthFailed on 401, or a wrapped error for network failures.
 func ValidateTokenRemote(baseURL, token string) error {
+	_, err := FetchUserInfo(baseURL, token)
+	return err
+}
+
+// FetchUserInfo calls /auth/check and returns the authenticated user's identity.
+// Returns ErrAuthFailed on 401, or a wrapped error for network failures.
+func FetchUserInfo(baseURL, token string) (*UserInfo, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, err := http.NewRequest("GET", baseURL+"/auth/check", nil)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("relay unreachable: %w", err)
+		return nil, fmt.Errorf("relay unreachable: %w", err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
-		return ErrAuthFailed
+		return nil, ErrAuthFailed
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status: %s", resp.Status)
+		return nil, fmt.Errorf("unexpected status: %s", resp.Status)
 	}
-	return nil
+	var info UserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("decode user info: %w", err)
+	}
+	return &info, nil
 }
 
 // ErrAuthFailed is returned when the relay rejects a token with 401.
-var ErrAuthFailed = fmt.Errorf("authentication failed")
+var ErrAuthFailed = errors.New("authentication failed")
 
 func RefreshToken(baseURL string, token DeviceToken) (*TokenResponse, error) {
 	body, err := json.Marshal(token)

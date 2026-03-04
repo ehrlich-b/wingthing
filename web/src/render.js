@@ -2106,7 +2106,9 @@ export function renderDashboard() {
         var wingHtml = '<h3 class="section-label">wings</h3><div class="wing-grid">';
         wingHtml += visibleWings.map(function(w) {
             var name = wingDisplayName(w);
-            var dotClass = (w.online === undefined) ? '' : (w.online === true ? 'dot-live' : 'dot-offline');
+            var isUnreachable = w.tunnel_error === 'unreachable' || w.tunnel_error === 'key_mismatch';
+            var dotClass = isUnreachable ? 'dot-offline' :
+                (w.online === undefined) ? '' : (w.online === true ? 'dot-live' : 'dot-offline');
             var projectCount = (w.projects || []).length;
             var plat = w.platform === 'darwin' ? 'mac' : (w.platform || '');
             var isCardPasskey = w.tunnel_error === 'passkey_required' || w.tunnel_error === 'passkey_failed';
@@ -2131,7 +2133,8 @@ export function renderDashboard() {
                 }).join(' '))) + '</span>' +
                 '<div class="wing-statusbar">' +
                     '<span>' + escapeHtml(plat) + '</span>' +
-                    ((needsPasskeySetup || needsAuth || isCardPasskey) ? lockedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>')) +
+                    (isUnreachable ? '<span class="text-dim">unreachable</span>' :
+                    ((needsPasskeySetup || needsAuth || isCardPasskey) ? lockedBadge : (projectCount ? '<span>' + projectCount + ' proj</span>' : '<span></span>'))) +
                 '</div>' +
             '</div>';
         }).join('');
@@ -2206,6 +2209,17 @@ export function renderDashboard() {
     var noSessionsEl = document.getElementById('empty-no-sessions');
     if (noWingsEl) noWingsEl.style.display = (!hasSessions && !hasWings) ? '' : 'none';
     if (noSessionsEl) noSessionsEl.style.display = (!hasSessions && hasWings) ? '' : 'none';
+
+    // Show signed-in identity in empty state for diagnostic breadcrumb
+    var signedInEl = document.getElementById('empty-signed-in');
+    if (signedInEl && S.currentUser) {
+        var acct = S.currentUser.email || S.currentUser.display_name || '';
+        var prov = S.currentUser.provider || '';
+        if (acct) {
+            signedInEl.textContent = 'signed in as ' + acct + (prov ? ' via ' + prov : '');
+            signedInEl.style.display = '';
+        }
+    }
 
     if (!hasSessions) {
         DOM.sessionsList.innerHTML = '';

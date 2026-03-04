@@ -9,6 +9,7 @@ import (
 	crand "crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -860,7 +861,7 @@ func wingStartCmd() *cobra.Command {
 					relayURL = strings.Replace(relayURL, "wss://", "https://", 1)
 					relayURL = strings.Replace(relayURL, "ws://", "http://", 1)
 					if err := auth.ValidateTokenRemote(relayURL, tok.Token); err != nil {
-						if err == auth.ErrAuthFailed {
+						if errors.Is(err, auth.ErrAuthFailed) {
 							return fmt.Errorf("login expired — run: wt login")
 						}
 						// Network error: warn but proceed (daemon will retry)
@@ -960,6 +961,15 @@ func wingStartCmd() *cobra.Command {
 				// Timeout or still connecting — daemon is running, relay might be slow
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Printf("  relay: connecting...\n")
+			}
+			// Show account identity
+			if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
+				relayURL := resolveRelayHTTPURL(cfgLoaded)
+				if tok, tokErr := auth.NewTokenStore(cfgLoaded.Dir).Load(); tokErr == nil && tok != nil {
+					if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
+						fmt.Printf("  account: %s\n", formatUserIdentity(info))
+					}
+				}
 			}
 			fmt.Printf("  log: %s\n", wingLogPath())
 			fmt.Println()
@@ -1279,6 +1289,18 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			errMsg = stateErr.Error()
 		}
 		writeWingStatus(state, errMsg)
+		switch state {
+		case "auth_failed":
+			log.Printf("FATAL: relay rejected authentication — run: wt logout && wt login && wt start")
+		case "disconnected":
+			if stateErr != nil {
+				log.Printf("relay disconnected: %v", stateErr)
+			} else {
+				log.Printf("relay disconnected")
+			}
+		case "connected":
+			log.Printf("relay connected")
+		}
 	}
 
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
@@ -1542,7 +1564,13 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		}()
 	}
 
-	return client.Run(ctx)
+	err = client.Run(ctx)
+	if err != nil {
+		log.Printf("wing daemon exiting: %v", err)
+	} else {
+		log.Printf("wing daemon exiting cleanly")
+	}
+	return err
 }
 
 func wingStopCmd() *cobra.Command {
@@ -1579,11 +1607,33 @@ func wingStatusCmd() *cobra.Command {
 			}
 			fmt.Printf("wing daemon is running (pid %d)\n", pid)
 
+			cfg, _ := config.Load()
+
+			// Show account identity and relay verification
+			var relayVerified bool
+			if cfg != nil {
+				relayURL := resolveRelayHTTPURL(cfg)
+				if tok, tokErr := auth.NewTokenStore(cfg.Dir).Load(); tokErr == nil && tok != nil {
+					if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
+						fmt.Printf("  account: %s\n", formatUserIdentity(info))
+						relayVerified = true
+					} else if errors.Is(infoErr, auth.ErrAuthFailed) {
+						fmt.Println("  account: token expired — run: wt logout && wt login")
+					} else {
+						fmt.Printf("  account: relay unreachable (%v)\n", infoErr)
+					}
+				}
+			}
+
 			// Show relay connection state
 			if s, statusErr := readWingStatus(); statusErr == nil {
 				switch s.State {
 				case "connected":
-					fmt.Println("  relay: connected")
+					if relayVerified {
+						fmt.Println("  relay: connected (verified)")
+					} else {
+						fmt.Println("  relay: connected")
+					}
 				case "auth_failed":
 					fmt.Println("  relay: auth_failed — run: wt login")
 				case "connecting":
@@ -1594,13 +1644,17 @@ func wingStatusCmd() *cobra.Command {
 					} else {
 						fmt.Println("  relay: disconnected")
 					}
+				default:
+					fmt.Printf("  relay: %s\n", s.State)
 				}
 			}
 
+			if cfg != nil {
+				fmt.Printf("  wing_id: %s\n", cfg.WingID)
+			}
 			fmt.Printf("  log: %s\n", wingLogPath())
 
 			// Show egg sessions from filesystem
-			cfg, _ := config.Load()
 			if cfg != nil {
 				sessions := listAliveEggSessions(cfg)
 				if len(sessions) > 0 {

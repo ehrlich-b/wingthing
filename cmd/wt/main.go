@@ -1,12 +1,17 @@
 package main
 
 import (
+	"archive/zip"
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"path/filepath"
 	"runtime"
@@ -57,6 +62,8 @@ func main() {
 		initCmd(),
 		loginCmd(),
 		logoutCmd(),
+		whoamiCmd(),
+		supportCmd(),
 		embedCmd(),
 		doctorCmd(),
 		serveCmd(),
@@ -829,7 +836,12 @@ func loginCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Println("logged in successfully")
+			if tr.DisplayName != "" || tr.Email != "" {
+				info := &auth.UserInfo{DisplayName: tr.DisplayName, Email: tr.Email, Provider: tr.Provider}
+				fmt.Printf("logged in as %s\n", formatUserIdentity(info))
+			} else {
+				fmt.Println("logged in successfully")
+			}
 			return nil
 		},
 	}
@@ -847,6 +859,25 @@ func logoutCmd() *cobra.Command {
 				return err
 			}
 
+			// Stop wing daemon if running (prevents orphaned daemon with revoked token)
+			if pid, pidErr := readPid(); pidErr == nil {
+				fmt.Printf("stopping wing daemon (pid %d)...\n", pid)
+				if proc, findErr := os.FindProcess(pid); findErr == nil {
+					proc.Signal(syscall.SIGTERM)
+					// Wait briefly for clean shutdown before deleting token
+					for i := 0; i < 10; i++ {
+						time.Sleep(200 * time.Millisecond)
+						if err := proc.Signal(syscall.Signal(0)); err != nil {
+							break // process exited
+						}
+					}
+				}
+				os.Remove(wingPidPath())
+				os.Remove(wingArgsPath())
+				os.Remove(roostPidPath())
+				os.Remove(roostArgsPath())
+			}
+
 			ts := auth.NewTokenStore(cfg.Dir)
 			if err := ts.Delete(); err != nil {
 				return err
@@ -855,6 +886,226 @@ func logoutCmd() *cobra.Command {
 			fmt.Println("logged out")
 			return nil
 		},
+	}
+}
+
+// resolveRelayHTTPURL returns the relay's HTTP base URL from config.
+func resolveRelayHTTPURL(cfg *config.Config) string {
+	relayURL := cfg.RoostURL
+	if relayURL == "" {
+		if wc, err := config.LoadWingConfig(cfg.Dir); err == nil && wc.Roost != "" {
+			relayURL = wc.Roost
+		}
+	}
+	if relayURL == "" {
+		relayURL = "https://ws.wingthing.ai"
+	}
+	relayURL = strings.TrimRight(relayURL, "/")
+	relayURL = strings.Replace(relayURL, "wss://", "https://", 1)
+	relayURL = strings.Replace(relayURL, "ws://", "http://", 1)
+	// Ensure we have a scheme — bare hostnames break http.Client
+	if !strings.HasPrefix(relayURL, "http://") && !strings.HasPrefix(relayURL, "https://") {
+		relayURL = "https://" + relayURL
+	}
+	return relayURL
+}
+
+// formatUserIdentity formats a user identity string from auth.UserInfo.
+func formatUserIdentity(info *auth.UserInfo) string {
+	identity := info.DisplayName
+	if info.Email != "" {
+		if identity != "" {
+			identity += " (" + info.Email + ")"
+		} else {
+			identity = info.Email
+		}
+	}
+	if info.Provider != "" {
+		identity += " via " + info.Provider
+	}
+	if identity == "" {
+		identity = info.UserID
+	}
+	return identity
+}
+
+func whoamiCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "whoami",
+		Short: "Show the currently logged-in user",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			ts := auth.NewTokenStore(cfg.Dir)
+			tok, err := ts.Load()
+			if err != nil {
+				return err
+			}
+			if !ts.IsValid(tok) {
+				return fmt.Errorf("not logged in — run: wt login")
+			}
+
+			relayURL := resolveRelayHTTPURL(cfg)
+			info, err := auth.FetchUserInfo(relayURL, tok.Token)
+			if err != nil {
+				if errors.Is(err, auth.ErrAuthFailed) {
+					return fmt.Errorf("token expired — run: wt logout && wt login")
+				}
+				return fmt.Errorf("relay: %w", err)
+			}
+
+			fmt.Println(formatUserIdentity(info))
+			fmt.Printf("  wing_id: %s\n", cfg.WingID)
+			return nil
+		},
+	}
+}
+
+func supportCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "support",
+		Short: "Collect diagnostic bundle for troubleshooting",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			ts := time.Now().Format("20060102-150405")
+			zipPath := filepath.Join(os.TempDir(), fmt.Sprintf("wt-support-%s.zip", ts))
+			f, err := os.Create(zipPath)
+			if err != nil {
+				return fmt.Errorf("create zip: %w", err)
+			}
+			defer f.Close()
+			zw := zip.NewWriter(f)
+			defer zw.Close()
+
+			// meta.json
+			hostname, _ := os.Hostname()
+			meta := map[string]any{
+				"wing_id":   cfg.WingID,
+				"hostname":  hostname,
+				"platform":  runtime.GOOS,
+				"version":   version,
+				"timestamp": time.Now().UTC().Format(time.RFC3339),
+			}
+			if pid, pidErr := readPid(); pidErr == nil {
+				meta["daemon_pid"] = pid
+			}
+			tok, _ := auth.NewTokenStore(cfg.Dir).Load()
+			if tok != nil {
+				meta["token_expires_at"] = tok.ExpiresAt
+				meta["token_device_id"] = tok.DeviceID
+			}
+			if s, sErr := readWingStatus(); sErr == nil {
+				meta["wing_status"] = s.State
+				if s.Error != "" {
+					meta["wing_status_error"] = s.Error
+				}
+			}
+			// Try whoami
+			if tok != nil {
+				relayURL := resolveRelayHTTPURL(cfg)
+				if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
+					meta["account"] = formatUserIdentity(info)
+				} else {
+					meta["account_error"] = infoErr.Error()
+				}
+			}
+			metaJSON, _ := json.MarshalIndent(meta, "", "  ")
+			addZipFile(zw, "meta.json", metaJSON)
+
+			// wing.log (last 10000 lines)
+			addZipTail(zw, "wing.log", wingLogPath(), 10000)
+
+			// egg.log (last 1000 lines)
+			addZipTail(zw, "egg.log", filepath.Join(cfg.Dir, "egg.log"), 1000)
+
+			// wing.yaml (redact secrets)
+			addZipRedacted(zw, "wing.yaml", filepath.Join(cfg.Dir, "wing.yaml"),
+				[]string{"jwt_key:", "allow_keys:", "- public_key:"})
+
+			// wing.status
+			addZipCopy(zw, "wing.status", wingStatusPath())
+
+			// doctor output
+			if doctorOut, doctorErr := exec.Command(os.Args[0], "doctor").CombinedOutput(); doctorErr == nil {
+				addZipFile(zw, "doctor.txt", doctorOut)
+			}
+
+			zw.Close()
+			f.Close()
+			fmt.Printf("diagnostic bundle: %s\n", zipPath)
+			return nil
+		},
+	}
+}
+
+func addZipFile(zw *zip.Writer, name string, data []byte) {
+	w, err := zw.Create(name)
+	if err != nil {
+		return
+	}
+	w.Write(data)
+}
+
+func addZipRedacted(zw *zip.Writer, name, srcPath string, redactPrefixes []string) {
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		redacted := false
+		for _, prefix := range redactPrefixes {
+			if strings.HasPrefix(trimmed, prefix) {
+				out = append(out, strings.SplitN(line, ":", 2)[0]+": <redacted>")
+				redacted = true
+				break
+			}
+		}
+		if !redacted {
+			out = append(out, line)
+		}
+	}
+	addZipFile(zw, name, []byte(strings.Join(out, "\n")))
+}
+
+func addZipCopy(zw *zip.Writer, name, srcPath string) {
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return
+	}
+	addZipFile(zw, name, data)
+}
+
+func addZipTail(zw *zip.Writer, name, srcPath string, maxLines int) {
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 256*1024), 256*1024)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+		if len(lines) > maxLines {
+			lines = lines[1:]
+		}
+	}
+
+	w, err := zw.Create(name)
+	if err != nil {
+		return
+	}
+	for _, line := range lines {
+		io.WriteString(w, line+"\n")
 	}
 }
 

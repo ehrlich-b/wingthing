@@ -2,7 +2,7 @@
 name: debug-wing
 description: Diagnose wing connectivity issues. Checks auth, relay connection, daemon status, and identifies why a wing might not appear in the web UI.
 argument-hint: "[symptom or error message]"
-allowed-tools: Read, Glob, Grep, Bash(wt wing status), Bash(wt doctor), Bash(cat *), Bash(tail *), Bash(head *), Bash(curl *), Bash(ps *), Bash(grep *)
+allowed-tools: Read, Glob, Grep, Bash(wt whoami), Bash(wt wing status), Bash(wt doctor), Bash(wt support), Bash(cat *), Bash(tail *), Bash(head *), Bash(curl *), Bash(ps *), Bash(grep *)
 ---
 
 # Wing Connectivity Debugger
@@ -17,83 +17,60 @@ You are a support engineer debugging why a user's wing isn't working. You have d
 
 Run these in order. Stop and report as soon as you find the issue.
 
-### Step 1: Is the daemon running?
+### Step 1: Who am I?
+
+```bash
+wt whoami
+```
+
+This shows the account the CLI is authenticated as (name, email, provider, wing_id). If it fails with "token expired", run `wt logout && wt login`.
+
+Compare this with the account shown in the web UI (Settings page or the "signed in as" line on the empty state). If they don't match, that's the problem.
+
+### Step 2: What's the daemon and relay status?
 
 ```bash
 wt wing status
 ```
 
-If "not running": the daemon died. Check `~/.wingthing/wing.log` for the cause (likely `auth_failed` or crash). Fix: `wt start`.
+This shows:
+- Daemon PID and whether it's running
+- Account identity (verified against the relay)
+- Relay connection state (connected/disconnected/auth_failed)
+- Wing ID
+- Active egg sessions
 
-### Step 2: What's the connection state?
+If "not running": `wt start`. If "auth_failed": `wt logout && wt login && wt start`. If "token expired": same fix.
 
-```bash
-cat ~/.wingthing/wing.status
-```
-
-Expected: `{"state":"connected","ts":"..."}`. If `auth_failed`, the token is invalid — run `wt logout && wt login && wt stop; wt start`. If `disconnected`, check the log for network errors.
-
-### Step 3: Who am I logged in as?
-
-There is currently NO way to see the logged-in user from the CLI. This is a known gap. Instead, check the token:
+### Step 3: Collect diagnostic bundle
 
 ```bash
-cat ~/.wingthing/device_token.yaml
+wt support
 ```
 
-Show the user `expires_at` and `device_id` (NOT the token value — it's a secret). If `expires_at` is in the past, `wt logout && wt login`.
+This creates a zip at `/tmp/wt-support-<timestamp>.zip` containing:
+- `meta.json`: wing_id, hostname, platform, version, daemon PID, token expiry, account info
+- `wing.log`: last 10,000 lines
+- `egg.log`: last 1,000 lines
+- `doctor.txt`: agent detection results
+- `wing.yaml` and `wing.status`: config and state files
 
-### Step 4: Can the relay see us?
+Share this zip with support for relay-side investigation.
 
-Test the token against the relay:
-
-```bash
-TOKEN=$(grep 'device_token:' ~/.wingthing/device_token.yaml | awk '{print $2}')
-curl -s -w "\nHTTP %{http_code}\n" -H "Authorization: Bearer $TOKEN" https://ws.wingthing.ai/auth/check
-```
-
-- `200` + `{"ok":true}` = token is valid
-- `401` = token expired or invalid, re-login
-- Connection error = network issue (firewall, DNS, proxy)
-
-### Step 5: What's my wing_id?
-
-```bash
-grep wing_id ~/.wingthing/wing.yaml
-```
-
-This is the machine ID the relay uses to track this wing. Share it with support if the relay-side needs investigation.
-
-### Step 6: Check the daemon log
+### Step 4: Check the daemon log
 
 ```bash
 tail -100 ~/.wingthing/wing.log
 ```
 
 Look for:
-- `"auth_failed"` or `"invalid token"` — re-login needed
+- `"FATAL: relay rejected authentication"` — re-login needed
 - `"relay disconnected: ... EOF"` repeating — WebSocket instability (network/proxy issue)
-- `"registered with relay as wing ..."` — successful connection (wing IS connected)
+- `"relay connected"` — successful connection
+- `"wing daemon exiting"` — daemon shut down (check reason)
 - `panic` or `fatal error` — daemon crash, needs restart
-- `"ErrAuthRejected"` — token was revoked (happens if `wt logout` while daemon running)
 
-### Step 7: Check for stale daemon
-
-If `wt wing status` says running but the log shows the daemon exited:
-
-```bash
-cat ~/.wingthing/wing.pid
-ps -p $(cat ~/.wingthing/wing.pid)
-```
-
-If the process doesn't exist, the PID file is stale. Fix:
-
-```bash
-rm ~/.wingthing/wing.pid
-wt start
-```
-
-### Step 8: Nuclear option
+### Step 5: Nuclear option
 
 If nothing above helps:
 
@@ -114,23 +91,11 @@ The `--debug` flag enables verbose logging. Watch the log for connection events 
 |---------|-------|-----|
 | "no wings" in web UI but `wt wing status` says connected | Account mismatch (different OAuth provider on CLI vs web) | `wt logout && wt login` using same provider as web |
 | Wing connects then disconnects every 60-90s | WebSocket terminated by proxy/firewall | Check corporate proxy, try different network |
-| `auth_failed` in wing.status | Token expired or revoked by `wt logout` | `wt logout && wt login && wt stop; wt start` |
+| `auth_failed` in wing.status | Token expired or revoked by `wt logout` | `wt logout && wt login && wt start` |
 | `relay unreachable` on startup | Network issue or relay down | Check `curl https://ws.wingthing.ai/health` |
 | "wing daemon already running" but no connection | Stale PID file | `rm ~/.wingthing/wing.pid && wt start` |
 | Wing connected, UI shows wing, but can't open terminal | Passkey required or E2E key mismatch | Check if wing has `locked: true` in wing.yaml |
 
-## What to Send Bryan
+## What to Send Support
 
-If you can't resolve it, collect this bundle:
-
-```
-wing_id: (from wing.yaml)
-wing.status: (full content)
-device_token expires_at: (NOT the token itself)
-last 50 lines of wing.log
-output of: wt wing status
-output of: wt doctor
-curl /auth/check HTTP status code
-```
-
-Send this to Bryan and he can check the relay side.
+Run `wt support` and share the resulting zip file. It contains everything needed for diagnosis without any secrets.

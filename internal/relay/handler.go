@@ -23,10 +23,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
-	if s.requireToken(w, r) == "" {
+	userID := s.requireToken(w, r)
+	if userID == "" {
 		return // requireToken already wrote 401
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	resp := map[string]any{"ok": true, "user_id": userID}
+	if u, _ := s.Store.GetUserByID(userID); u != nil {
+		resp["display_name"] = u.DisplayName
+		if u.Email != nil {
+			resp["email"] = *u.Email
+		}
+		resp["provider"] = u.Provider
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
@@ -130,10 +139,18 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 
 	s.Store.AppendAudit(*dc.UserID, "jwt_issued", strPtr(fmt.Sprintf("device=%s", dc.DeviceID)))
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	tokenResp := map[string]any{
 		"token":      token,
 		"expires_at": exp.Unix(),
-	})
+	}
+	if user, _ := s.Store.GetUserByID(*dc.UserID); user != nil {
+		tokenResp["display_name"] = user.DisplayName
+		if user.Email != nil {
+			tokenResp["email"] = *user.Email
+		}
+		tokenResp["provider"] = user.Provider
+	}
+	writeJSON(w, http.StatusOK, tokenResp)
 }
 
 // handleAuthClaim handles POST /auth/claim — requires web session (OAuth).
