@@ -820,6 +820,10 @@ func (s *Server) shutdown() {
 }
 
 func (s *Server) cleanup() {
+	// Preserve egg.log to persistent log dir before removing the session directory.
+	// Logs are not audits — always keep them so `wt support` can capture crash reasons.
+	s.preserveEggLog()
+
 	os.Remove(filepath.Join(s.dir, "egg.sock"))
 	os.Remove(filepath.Join(s.dir, "egg.token"))
 	s.mu.RLock()
@@ -830,6 +834,31 @@ func (s *Server) cleanup() {
 		os.RemoveAll(s.dir)
 	}
 	// Audit sessions keep egg.meta, egg.pid, audit.pty.gz, audit.log
+}
+
+// preserveEggLog copies the session's egg.log to ~/.wingthing/logs/<session-id>.log,
+// pruning old logs to keep at most 20.
+func (s *Server) preserveEggLog() {
+	src := filepath.Join(s.dir, "egg.log")
+	data, err := os.ReadFile(src)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	logsDir := filepath.Join(filepath.Dir(filepath.Dir(s.dir)), "logs")
+	os.MkdirAll(logsDir, 0755)
+	sessionID := filepath.Base(s.dir)
+	dst := filepath.Join(logsDir, sessionID+".log")
+	os.WriteFile(dst, data, 0644)
+
+	// Prune: keep most recent 20 logs
+	entries, err := os.ReadDir(logsDir)
+	if err != nil || len(entries) <= 20 {
+		return
+	}
+	// ReadDir returns entries sorted by name; oldest session IDs first
+	for _, e := range entries[:len(entries)-20] {
+		os.Remove(filepath.Join(logsDir, e.Name()))
+	}
 }
 
 func (s *Server) readPTY(sess *Session) {

@@ -418,6 +418,11 @@ func eggSpawn(ctx context.Context, agentName, configPath string) error {
 	<-done
 
 	if exitCode != 0 {
+		// Dump egg.log so the user can see why the agent crashed
+		logPath := filepath.Join(cfg.Dir, "eggs", sessionID, "egg.log")
+		if logData, err := os.ReadFile(logPath); err == nil && len(logData) > 0 {
+			os.Stderr.Write(logData)
+		}
 		return fmt.Errorf("agent exited with code %d", exitCode)
 	}
 	return nil

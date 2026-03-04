@@ -1102,6 +1102,14 @@ func supportCmd() *cobra.Command {
 			// egg.log (last 1000 lines)
 			addZipTail(zw, "egg.log", filepath.Join(cfg.Dir, "egg.log"), 1000)
 
+			// Session logs (preserved from ~/.wingthing/logs/)
+			logsDir := filepath.Join(cfg.Dir, "logs")
+			if logEntries, logErr := os.ReadDir(logsDir); logErr == nil {
+				for _, e := range logEntries {
+					addZipTail(zw, "logs/"+e.Name(), filepath.Join(logsDir, e.Name()), 500)
+				}
+			}
+
 			// wing.yaml (redact secrets)
 			addZipRedacted(zw, "wing.yaml", filepath.Join(cfg.Dir, "wing.yaml"),
 				[]string{"jwt_key:", "allow_keys:", "- public_key:"})
