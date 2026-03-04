@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"path/filepath"
@@ -842,6 +843,11 @@ func loginCmd() *cobra.Command {
 			} else {
 				fmt.Println("logged in successfully")
 			}
+
+			// If a daemon was running, restart it so it picks up the new token
+			if err := restartWingDaemonIfRunning(); err != nil {
+				fmt.Printf("warning: failed to restart wing daemon: %v\n", err)
+			}
 			return nil
 		},
 	}
@@ -887,6 +893,78 @@ func logoutCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// restartWingDaemonIfRunning stops the running wing daemon and starts a new one
+// with the same args so it picks up the new auth token.
+func restartWingDaemonIfRunning() error {
+	pid, err := readPid()
+	if err != nil {
+		return nil // no daemon running, nothing to do
+	}
+
+	// Read saved args so we can restart with same flags
+	argsData, err := os.ReadFile(wingArgsPath())
+	if err != nil {
+		return fmt.Errorf("can't read wing.args (stop and restart manually: wt stop && wt start): %w", err)
+	}
+	savedArgs := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+
+	// Stop the old daemon
+	fmt.Printf("restarting wing daemon (pid %d)...\n", pid)
+	if proc, findErr := os.FindProcess(pid); findErr == nil {
+		proc.Signal(syscall.SIGTERM)
+		for i := 0; i < 15; i++ {
+			time.Sleep(200 * time.Millisecond)
+			if err := proc.Signal(syscall.Signal(0)); err != nil {
+				break
+			}
+		}
+	}
+	os.Remove(wingPidPath())
+	os.Remove(wingArgsPath())
+	os.Remove(wingStatusPath())
+
+	// Start new daemon with same args
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+
+	rotateLog(wingLogPath())
+	logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("open log: %w", err)
+	}
+
+	home, _ := os.UserHomeDir()
+	child := exec.Command(exe, savedArgs...)
+	child.Dir = home
+	child.Stdout = logFile
+	child.Stderr = logFile
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	if err := child.Start(); err != nil {
+		logFile.Close()
+		return fmt.Errorf("start daemon: %w", err)
+	}
+	logFile.Close()
+
+	os.WriteFile(wingPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644)
+	os.WriteFile(wingArgsPath(), argsData, 0644)
+
+	result := waitForWingStatus(child.Process.Pid, 5*time.Second)
+	switch result {
+	case "connected":
+		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
+		fmt.Printf("  relay: connected\n")
+	case "auth_failed":
+		fmt.Printf("wing daemon restarted but auth failed — run: wt logout && wt login\n")
+	default:
+		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
+		fmt.Printf("  relay: connecting...\n")
+	}
+	return nil
 }
 
 // resolveRelayHTTPURL returns the relay's HTTP base URL from config.
