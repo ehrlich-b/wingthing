@@ -3079,8 +3079,7 @@ authDone:
 	}
 
 	// Spawn a per-session egg
-	isOwner := start.OrgRole == "owner" || start.OrgRole == "admin"
-	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, EggIdentity{UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName, IsOwner: isOwner}, idleTimeout)
+	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, EggIdentity{UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName, OrgWing: wingCfg.Org != ""}, idleTimeout)
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := readEggCrashInfo(eggDir)

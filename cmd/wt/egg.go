@@ -429,7 +429,7 @@ type EggIdentity struct {
 	UserID      string // relay user ID
 	Email       string // authenticated email (e.g. from Google OAuth)
 	DisplayName string // human-readable name (Google full name, GitHub login)
-	IsOwner     bool   // owner/admin of this wing — visible at wing level, not used for egg isolation
+	OrgWing     bool   // true if this is an org wing — all users get per-user isolation
 }
 
 // sanitizeEnvValue strips characters that could cause shell injection.
@@ -525,11 +525,13 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			}
 		}
 	}
-	// Per-user home directory for multi-user isolation on shared machines.
-	// All authenticated users get per-user homes.
+	// Per-user home directory for multi-user isolation on org wings.
+	// On personal wings, the owner IS the machine — use real HOME so
+	// agent auth (e.g. Claude Code /login) and config persist normally.
+	// On org wings, ALL users get per-user homes for isolation.
 	realHome, _ := os.UserHomeDir()
 	effectiveHome := realHome
-	if identity.Email != "" {
+	if identity.Email != "" && identity.OrgWing {
 		perUserHome := filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
 		os.MkdirAll(perUserHome, 0700)
 		effectiveHome = perUserHome
@@ -557,10 +559,10 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		args = append(args, "--user-home", perUserHome)
 	}
-	// Rebuild agent settings every session for authenticated users.
+	// Rebuild agent settings every session for org wing users.
 	// Reads existing prefs, layers host settings on top (host always wins
 	// for permissions), then injects agent-specific overrides.
-	if identity.Email != "" {
+	if identity.Email != "" && identity.OrgWing {
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
 			settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
