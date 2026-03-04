@@ -281,3 +281,155 @@ func TestStaticManifest(t *testing.T) {
 		t.Errorf("manifest name = %q, want wingthing", body["name"])
 	}
 }
+
+func TestAuthCheckReturnsUserInfo(t *testing.T) {
+	srv, ts := testServer(t)
+	srv.DevMode = true
+
+	// Create a user with profile data
+	token, userID := createTestToken(t, srv.Store, "dev1")
+	srv.Store.DB().Exec("UPDATE users SET display_name = ?, email = ?, provider = ? WHERE id = ?",
+		"Phil Heckel", "phil@test.com", "github", userID)
+
+	req, _ := http.NewRequest("GET", ts.URL+"/auth/check", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /auth/check: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]any
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["ok"] != true {
+		t.Errorf("ok = %v, want true", body["ok"])
+	}
+	if body["user_id"] != userID {
+		t.Errorf("user_id = %v, want %s", body["user_id"], userID)
+	}
+	if body["display_name"] != "Phil Heckel" {
+		t.Errorf("display_name = %v, want Phil Heckel", body["display_name"])
+	}
+	if body["email"] != "phil@test.com" {
+		t.Errorf("email = %v, want phil@test.com", body["email"])
+	}
+	if body["provider"] != "github" {
+		t.Errorf("provider = %v, want github", body["provider"])
+	}
+}
+
+func TestAuthCheckUnauthorized(t *testing.T) {
+	_, ts := testServer(t)
+
+	req, _ := http.NewRequest("GET", ts.URL+"/auth/check", nil)
+	req.Header.Set("Authorization", "Bearer invalid-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /auth/check: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestAuthCheckNoAuthHeader(t *testing.T) {
+	_, ts := testServer(t)
+
+	resp, err := http.Get(ts.URL + "/auth/check")
+	if err != nil {
+		t.Fatalf("GET /auth/check: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestAuthTokenReturnsUserInfo(t *testing.T) {
+	srv, ts := testServer(t)
+	srv.DevMode = true
+
+	// Device flow: request code (dev mode auto-claims)
+	resp, err := http.Post(ts.URL+"/auth/device", "application/json",
+		strings.NewReader(`{"wing_id":"mac1","public_key":"dGVzdGtleQ=="}`))
+	if err != nil {
+		t.Fatalf("POST /auth/device: %v", err)
+	}
+	var dcResp struct {
+		DeviceCode string `json:"device_code"`
+	}
+	json.NewDecoder(resp.Body).Decode(&dcResp)
+	resp.Body.Close()
+
+	// Set user profile on the auto-created dev user before polling for token
+	// Dev mode creates user with ID = "test-user"
+	srv.Store.DB().Exec("UPDATE users SET display_name = ?, email = ?, provider = ? WHERE id = ?",
+		"Bryan Ehrlich", "bryan@test.com", "google", "test-user")
+
+	// Poll for token
+	resp2, err := http.Post(ts.URL+"/auth/token", "application/json",
+		strings.NewReader(`{"device_code":"`+dcResp.DeviceCode+`"}`))
+	if err != nil {
+		t.Fatalf("POST /auth/token: %v", err)
+	}
+	var tokenResp map[string]any
+	json.NewDecoder(resp2.Body).Decode(&tokenResp)
+	resp2.Body.Close()
+
+	if tokenResp["token"] == nil || tokenResp["token"] == "" {
+		t.Fatal("expected token in response")
+	}
+	if tokenResp["display_name"] != "Bryan Ehrlich" {
+		t.Errorf("display_name = %v, want Bryan Ehrlich", tokenResp["display_name"])
+	}
+	if tokenResp["email"] != "bryan@test.com" {
+		t.Errorf("email = %v, want bryan@test.com", tokenResp["email"])
+	}
+	if tokenResp["provider"] != "google" {
+		t.Errorf("provider = %v, want google", tokenResp["provider"])
+	}
+}
+
+func TestWSHostRouting(t *testing.T) {
+	store := testStore(t)
+	key, _, err := GenerateECKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	srv := NewServer(store, ServerConfig{WSHost: "ws.test.local"})
+	srv.SetJWTKey(key)
+
+	token, _ := createTestToken(t, store, "dev1")
+
+	tests := []struct {
+		name   string
+		host   string
+		path   string
+		want   int
+	}{
+		{"ws host /health allowed", "ws.test.local", "/health", 200},
+		{"ws host /auth/check allowed", "ws.test.local", "/auth/check?token=" + token, 200},
+		{"ws host /auth/device blocked", "ws.test.local", "/auth/device", 404},
+		{"ws host /auth/token blocked", "ws.test.local", "/auth/token", 404},
+		{"ws host /auth/claim blocked", "ws.test.local", "/auth/claim", 404},
+		{"ws host /auth/google blocked", "ws.test.local", "/auth/google", 404},
+		{"ws host /api/app/me blocked", "ws.test.local", "/api/app/me", 404},
+		{"ws host / blocked", "ws.test.local", "/", 404},
+		{"ws host /app blocked", "ws.test.local", "/app", 404},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tt.path, nil)
+			req.Host = tt.host
+			w := httptest.NewRecorder()
+			srv.ServeHTTP(w, req)
+			if w.Code != tt.want {
+				t.Errorf("%s %s: status = %d, want %d", tt.host, tt.path, w.Code, tt.want)
+			}
+		})
+	}
+}

@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -207,6 +209,65 @@ func TestTokenStoreDelete(t *testing.T) {
 	}
 }
 
+func TestFetchUserInfo_OK(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/check" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer valid-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok":           true,
+			"user_id":      "u1",
+			"display_name": "Phil Heckel",
+			"email":        "phil@test.com",
+			"provider":     "github",
+		})
+	}))
+	defer srv.Close()
+
+	info, err := FetchUserInfo(srv.URL, "valid-token")
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if info.UserID != "u1" {
+		t.Errorf("user_id = %q, want u1", info.UserID)
+	}
+	if info.DisplayName != "Phil Heckel" {
+		t.Errorf("display_name = %q, want Phil Heckel", info.DisplayName)
+	}
+	if info.Email != "phil@test.com" {
+		t.Errorf("email = %q, want phil@test.com", info.Email)
+	}
+	if info.Provider != "github" {
+		t.Errorf("provider = %q, want github", info.Provider)
+	}
+}
+
+func TestFetchUserInfo_NoProfile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"user_id": "u2",
+		})
+	}))
+	defer srv.Close()
+
+	info, err := FetchUserInfo(srv.URL, "any-token")
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+	if info.UserID != "u2" {
+		t.Errorf("user_id = %q, want u2", info.UserID)
+	}
+	if info.DisplayName != "" {
+		t.Errorf("display_name = %q, want empty", info.DisplayName)
+	}
+}
+
 func TestValidateTokenRemote_OK(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/auth/check" {
@@ -217,13 +278,49 @@ func TestValidateTokenRemote_OK(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"ok":true}`))
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "user_id": "u1"})
 	}))
 	defer srv.Close()
 
 	if err := ValidateTokenRemote(srv.URL, "valid-token"); err != nil {
 		t.Fatalf("expected nil, got: %v", err)
+	}
+}
+
+func TestFetchUserInfo_Unauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	_, err := FetchUserInfo(srv.URL, "bad-token")
+	if !errors.Is(err, ErrAuthFailed) {
+		t.Fatalf("expected ErrAuthFailed, got: %v", err)
+	}
+}
+
+func TestFetchUserInfo_Unreachable(t *testing.T) {
+	_, err := FetchUserInfo("http://127.0.0.1:1", "any-token")
+	if err == nil {
+		t.Fatal("expected error for unreachable server")
+	}
+	if errors.Is(err, ErrAuthFailed) {
+		t.Fatal("should not be ErrAuthFailed for network error")
+	}
+}
+
+func TestFetchUserInfo_UnexpectedStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	_, err := FetchUserInfo(srv.URL, "any-token")
+	if err == nil {
+		t.Fatal("expected error for 404")
+	}
+	if errors.Is(err, ErrAuthFailed) {
+		t.Fatal("404 should not be ErrAuthFailed")
 	}
 }
 
@@ -234,7 +331,7 @@ func TestValidateTokenRemote_Unauthorized(t *testing.T) {
 	defer srv.Close()
 
 	err := ValidateTokenRemote(srv.URL, "bad-token")
-	if err != ErrAuthFailed {
+	if !errors.Is(err, ErrAuthFailed) {
 		t.Fatalf("expected ErrAuthFailed, got: %v", err)
 	}
 }
@@ -244,8 +341,20 @@ func TestValidateTokenRemote_Unreachable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unreachable server")
 	}
-	if err == ErrAuthFailed {
+	if errors.Is(err, ErrAuthFailed) {
 		t.Fatal("should not be ErrAuthFailed for network error")
+	}
+}
+
+func TestErrAuthFailed_ErrorsIs(t *testing.T) {
+	// Verify ErrAuthFailed works with errors.Is (was a bug with fmt.Errorf)
+	err := ErrAuthFailed
+	if !errors.Is(err, ErrAuthFailed) {
+		t.Error("errors.Is should match ErrAuthFailed")
+	}
+	wrapped := fmt.Errorf("outer: %w", ErrAuthFailed)
+	if !errors.Is(wrapped, ErrAuthFailed) {
+		t.Error("errors.Is should match wrapped ErrAuthFailed")
 	}
 }
 
