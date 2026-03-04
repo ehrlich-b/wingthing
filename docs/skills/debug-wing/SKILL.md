@@ -55,7 +55,7 @@ This creates a zip at `/tmp/wt-support-<timestamp>.zip` containing:
 - `doctor.txt`: agent detection results
 - `wing.yaml` and `wing.status`: config and state files
 
-Share this zip with support for relay-side investigation.
+Email the zip to support@wingthing.ai for relay-side investigation.
 
 ### Step 4: Check the daemon log
 
@@ -98,4 +98,4 @@ The `--debug` flag enables verbose logging. Watch the log for connection events 
 
 ## What to Send Support
 
-Run `wt support` and share the resulting zip file. It contains everything needed for diagnosis without any secrets.
+Run `wt support` and email the resulting zip to support@wingthing.ai. It contains everything needed for diagnosis without any secrets.
