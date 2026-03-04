@@ -390,7 +390,7 @@ func sendReplayChunked(sessionID string, raw []byte, gcm cipher.AEAD, write ws.P
 }
 
 // resolvePathStrings resolves ~/ prefixes and makes paths absolute.
-// Returns at least [home] if input is empty.
+// Returns empty if input is empty (no path restrictions).
 func resolvePathStrings(paths []string, home string) []string {
 	var out []string
 	for _, p := range paths {
@@ -403,9 +403,6 @@ func resolvePathStrings(paths []string, home string) []string {
 			p = abs
 		}
 		out = append(out, p)
-	}
-	if len(out) == 0 {
-		out = []string{home}
 	}
 	return out
 }
@@ -1160,6 +1157,10 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	// Resolve paths to absolute
 	home, _ := os.UserHomeDir()
 	resolvedPaths := resolvePathStrings(cliPaths, home)
+	rootDir := home
+	if len(resolvedPaths) > 0 {
+		rootDir = resolvedPaths[0]
+	}
 
 	// Scan for git projects in each path
 	cwd, _ := os.Getwd()
@@ -1278,7 +1279,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		Labels:      labels,
 		Projects:    projects,
 		OrgSlug:     orgFlag,
-		RootDir:     resolvedPaths[0],
+		RootDir:     rootDir,
 		Locked:       wingCfg.Locked,
 		AllowedCount: len(wingCfg.AllowKeys),
 	}
@@ -1440,7 +1441,11 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 					// Hot-reload paths
 					wingCfg.Paths = newCfg.Paths
 					resolvedPaths = resolvePathStrings(newCfg.Paths.Strings(), home)
-					client.RootDir = resolvedPaths[0]
+					if len(resolvedPaths) > 0 {
+						client.RootDir = resolvedPaths[0]
+					} else {
+						client.RootDir = home
+					}
 
 					// Hot-reload egg config (if path changed)
 					oldEggConfig := wingCfg.EggConfig

@@ -1,14 +1,26 @@
 package egg
 
+import "runtime"
+
 // AgentProfile declares what an agent needs from the host system.
 // The sandbox merges these into the egg config automatically so users
 // don't need to know agent internals (e.g. where Claude stores config).
 type AgentProfile struct {
 	Domains      []string // network domains needed (empty = no network)
 	EnvVars      []string // required env var names (merged from host)
+	PlatformEnv  []string // platform-specific env vars (e.g. macOS Keychain access)
 	WriteDirs    []string // relative to $HOME, need write access
 	WriteRegex   []string // dirs needing UseRegex (e.g. ".claude" covers .claude.json)
 	SettingsFile string   // agent config file relative to HOME (e.g. ".claude/settings.json")
+}
+
+// macOSKeychainEnv are env vars required for Apple Keychain access.
+// Claude Code stores auth tokens in the macOS Keychain via Security framework,
+// which needs XPC and CoreFoundation env vars to function.
+var macOSKeychainEnv = []string{
+	"XPC_SERVICE_NAME",
+	"XPC_FLAGS",
+	"__CFBundleIdentifier",
 }
 
 var agentProfiles = map[string]AgentProfile{
@@ -44,9 +56,19 @@ var agentProfiles = map[string]AgentProfile{
 
 // Profile returns the agent profile for the given agent name.
 // Unknown agents get a restrictive default (no network, no extra dirs).
+// Platform-specific env vars are injected based on runtime.GOOS.
 func Profile(agent string) AgentProfile {
-	if p, ok := agentProfiles[agent]; ok {
-		return p
+	p, ok := agentProfiles[agent]
+	if !ok {
+		return AgentProfile{}
 	}
-	return AgentProfile{}
+	// On macOS, agents that use Keychain (claude, codex, cursor) need
+	// XPC/CoreFoundation env vars for Security.framework access.
+	if runtime.GOOS == "darwin" {
+		switch agent {
+		case "claude", "codex", "cursor":
+			p.PlatformEnv = macOSKeychainEnv
+		}
+	}
+	return p
 }

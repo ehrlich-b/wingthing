@@ -525,6 +525,14 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			}
 		}
 	}
+	// Platform-specific env vars the agent needs (e.g. macOS Keychain access for Claude).
+	for _, k := range profile.PlatformEnv {
+		if _, ok := envMap[k]; !ok {
+			if v := os.Getenv(k); v != "" {
+				envMap[k] = v
+			}
+		}
+	}
 	// Per-user home directory for multi-user isolation on org wings.
 	// On personal wings, the owner IS the machine — use real HOME so
 	// agent auth (e.g. Claude Code /login) and config persist normally.
@@ -667,25 +675,31 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 
 	child := exec.Command(exe, args...)
-	// Build an explicit env allowlist so the child doesn't inherit secrets
-	// (e.g. WT_JWT_SECRET, GOOGLE_CLIENT_SECRET) from the roost process.
-	allowedKeys := map[string]bool{
-		"HOME": true, "PATH": true, "TERM": true, "LANG": true,
-		"USER": true, "SHELL": true, "TMPDIR": true,
-		"ANTHROPIC_API_KEY": true,
-	}
-	// Also allow any key explicitly passed via --env flags.
-	for k := range envMap {
-		allowedKeys[k] = true
-	}
-	var childEnv []string
-	for _, e := range os.Environ() {
-		k, _, ok := strings.Cut(e, "=")
-		if ok && allowedKeys[k] {
-			childEnv = append(childEnv, e)
+	// Always build a clean env for the wt-egg-run child process.
+	// Base system vars + egg config env + agent profile env + platform env.
+	// This prevents server secrets (WT_JWT_SECRET, GOOGLE_CLIENT_SECRET)
+	// from leaking when eggs are spawned from the roost process (org wings),
+	// while still passing platform vars agents need (e.g. macOS Keychain).
+	{
+		allowed := map[string]bool{
+			"HOME": true, "PATH": true, "TERM": true, "LANG": true,
+			"USER": true, "SHELL": true, "TMPDIR": true,
 		}
+		for k := range envMap {
+			allowed[k] = true
+		}
+		for _, k := range profile.PlatformEnv {
+			allowed[k] = true
+		}
+		var childEnv []string
+		for _, e := range os.Environ() {
+			k, _, ok := strings.Cut(e, "=")
+			if ok && allowed[k] {
+				childEnv = append(childEnv, e)
+			}
+		}
+		child.Env = childEnv
 	}
-	child.Env = childEnv
 	child.Stdout = logFile
 	child.Stderr = logFile
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

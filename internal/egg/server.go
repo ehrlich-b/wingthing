@@ -471,6 +471,14 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			}
 		}
 	}
+	// Merge platform-specific env vars (e.g. macOS Keychain access for Claude)
+	for _, k := range profile.PlatformEnv {
+		if _, ok := envMap[k]; !ok {
+			if v := os.Getenv(k); v != "" {
+				envMap[k] = v
+			}
+		}
+	}
 	// Ensure essentials are present
 	for _, k := range []string{"HOME", "PATH", "TERM"} {
 		if _, ok := envMap[k]; !ok {
