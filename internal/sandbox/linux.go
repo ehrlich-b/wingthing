@@ -102,16 +102,18 @@ func hasNamespaceCapability() bool {
 			return true
 		}
 	}
-	// Check unprivileged user namespaces (works without root on most modern distros)
+	// Check unprivileged user namespaces sysctl (fast reject if explicitly disabled).
 	if val, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone"); err == nil {
-		return strings.TrimSpace(string(val)) == "1"
+		if strings.TrimSpace(string(val)) != "1" {
+			return false
+		}
+		// Sysctl says enabled, but AppArmor may still block it (Ubuntu 24.04+,
+		// kernel 6.1+ with apparmor_restrict_unprivileged_userns=1).
+		// Fall through to probe.
 	}
-	// Sysctl missing (e.g. WSL2, non-Debian kernels) — probe by actually
-	// trying to create a user namespace. This is the only reliable check.
-	if probeUserNamespace() {
-		return true
-	}
-	return false
+	// Probe by actually trying to create a user namespace. This is the only
+	// reliable check — it catches AppArmor, seccomp, and any other blocker.
+	return probeUserNamespace()
 }
 
 // probeUserNamespace spawns a trivial child in a new user namespace to test support.

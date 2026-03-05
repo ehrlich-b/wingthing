@@ -39,10 +39,16 @@ var wellKnownCLIs = []struct {
 }
 
 func doctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var fixFlag bool
+
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check available agents, embedders, and API keys",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if fixFlag {
+				return doctorFix()
+			}
+
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -120,6 +126,9 @@ func doctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&fixFlag, "fix", false, "auto-fix detected issues (may require sudo)")
+	return cmd
 }
 
 func ollamaReachable(baseURL string) bool {

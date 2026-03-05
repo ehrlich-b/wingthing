@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -489,6 +490,13 @@ func userHash(email string) string {
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
 func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration) (*egg.Client, error) {
+	// Pre-flight: verify the sandbox can work before spawning a child process.
+	// Catches AppArmor userns restrictions, missing sysctl, etc. with a clear
+	// error instead of a silent 5s timeout.
+	if ok, help := sandbox.CheckCapability(); !ok {
+		return nil, fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
+	}
+
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create egg dir: %w", err)

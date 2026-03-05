@@ -593,6 +593,52 @@ func TestTraceMode(t *testing.T) {
 	t.Logf("strace.log: %d bytes, contains execve", len(data))
 }
 
+// TestPreflightSandboxCheck verifies that `wt egg claude` (the parent command
+// with the pre-flight sandbox.CheckCapability call) fails immediately with a
+// clear error when namespaces aren't available — no 5s timeout waiting for
+// the child process. This is the path Phil hits on Ubuntu 24.04 with AppArmor
+// blocking userns.
+func TestPreflightSandboxCheck(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("must run as root to su to testuser")
+	}
+
+	// testuser (UID 1001, created in Dockerfile) can't create user namespaces
+	// inside Docker/Colima — same as AppArmor blocking userns on the host.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Use `wt egg claude` (not `wt egg run`) so we exercise eggSpawn's pre-flight check.
+	cmd := exec.CommandContext(ctx, "su", "-", "testuser", "-s", "/bin/sh", "-c", "wt egg claude 2>&1")
+	cmd.Env = os.Environ()
+	start := time.Now()
+	output, err := cmd.CombinedOutput()
+	elapsed := time.Since(start)
+	out := string(output)
+
+	if err == nil {
+		t.Fatalf("expected wt egg claude to fail as testuser, but it succeeded:\n%s", out)
+	}
+
+	t.Logf("elapsed: %s", elapsed)
+	t.Logf("output:\n%s", out)
+
+	// Must fail FAST (pre-flight check), not after 5s timeout.
+	if elapsed > 8*time.Second {
+		t.Errorf("pre-flight check too slow (%s) — should fail immediately, not wait for child timeout", elapsed)
+	}
+
+	// Error must mention sandbox and fix instructions.
+	if !strings.Contains(out, "sandbox not available") && !strings.Contains(out, "sandbox") {
+		t.Errorf("expected 'sandbox not available' in error, got:\n%s", out)
+	}
+
+	// Error must mention wt doctor --fix.
+	if !strings.Contains(out, "doctor --fix") {
+		t.Errorf("expected 'doctor --fix' in error output, got:\n%s", out)
+	}
+}
+
 func TestSandboxFailsWithClearErrorWithoutNamespaces(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("must run as root to test non-root namespace failure")

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -109,6 +110,25 @@ func platformHelp() string {
 	case "darwin":
 		return "macOS: requires Apple Containers (macOS 26+, 'container' CLI)"
 	case "linux":
+		// Check if AppArmor is specifically blocking unprivileged user namespaces (Ubuntu 24.04+, kernel 6.1+).
+		if val, err := os.ReadFile("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"); err == nil {
+			if strings.TrimSpace(string(val)) == "1" {
+				exe, _ := os.Executable()
+				if exe == "" {
+					exe = "/usr/local/bin/wt"
+				}
+				return fmt.Sprintf("Linux: AppArmor is blocking unprivileged user namespaces (apparmor_restrict_unprivileged_userns=1). "+
+					"Fix: create an AppArmor profile for wt:\n"+
+					"  sudo tee /etc/apparmor.d/wingthing <<'EOF'\n"+
+					"  abi <abi/4.0>,\n"+
+					"  profile wingthing %s flags=(unconfined) {\n"+
+					"    userns,\n"+
+					"  }\n"+
+					"  EOF\n"+
+					"  sudo apparmor_parser -r /etc/apparmor.d/wingthing\n"+
+					"Or disable the restriction globally: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0", exe)
+			}
+		}
 		return "Linux: your system does not allow unprivileged user namespaces, which wt needs to sandbox agents. " +
 			"Fix: sudo sysctl -w kernel.unprivileged_userns_clone=1 (or run: sudo wt egg claude)"
 	default:

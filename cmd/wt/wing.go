@@ -3130,6 +3130,12 @@ authDone:
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := readEggCrashInfo(eggDir)
 		log.Printf("pty session %s: spawn egg failed: %v", start.SessionID, err)
+		// If no crash info from the child (e.g. pre-flight check failed before
+		// child was spawned), use the spawn error directly — it contains the
+		// actionable fix instructions.
+		if strings.Contains(crashInfo, "no log available") || strings.Contains(crashInfo, "empty log") {
+			crashInfo = err.Error()
+		}
 		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
 		return
 	}
