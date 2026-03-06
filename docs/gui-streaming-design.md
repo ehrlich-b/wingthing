@@ -1,5 +1,7 @@
 # GUI Streaming Design: H.264 Over WebSocket
 
+> **Status: DESIGN ONLY — not yet implemented.** No code exists for this feature.
+
 ## Core Principle
 
 The relay is a dumb pipe. GUI streaming adds a new payload type alongside PTY bytes — encoded video frames flowing through the same WebSocket, same E2E encryption, same relay routing. The relay never decodes a frame.

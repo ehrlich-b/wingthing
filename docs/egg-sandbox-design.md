@@ -107,6 +107,15 @@ Each agent declares what it needs to function via `internal/egg/agents.go`. Thes
 | FS write | ~/.gemini/ | Config/state |
 | FS read | Agent binary install root (read-only), system libs, CWD | Execution |
 
+### OpenCode
+
+| Category | Requirement | Why |
+|---|---|---|
+| Network | HTTPS + DNS | API calls to anthropic, openai, or googleapis |
+| Env vars | ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY | API auth (supports multiple providers) |
+| FS write | ~/.opencode/ | Config/state |
+| FS read | Agent binary install root (read-only), system libs, CWD | Execution |
+
 ### Ollama (local)
 
 | Category | Requirement | Why |
@@ -376,14 +385,13 @@ DNS resolution goes through `/private/var/run/mDNSResponder` (Unix domain socket
 
 - **Cgroups v2 resource limits** - real memory (RSS) and PID tree limits via cgroups v2, with graceful fallback to prlimit-only. Handles subtree_control EBUSY, daemon self-migration, and cgroup lifecycle.
 - **Expanded seccomp deny list** - 27+ cross-platform syscalls blocked (was 11). Added namespace escape (setns, unshare), container escape (open_by_handle_at), eBPF/perf, kernel keyring, time manipulation. x86-only syscalls (iopl, ioperm, modify_ldt) in separate build-tagged file.
+- **Agent config snapshotting** - snapshot agent config (e.g. `~/.claude/settings.json`, `~/.codex/config.json`, `~/.cursor/settings.json`) before egg session, restore on exit. Prevents persistence attacks via hook injection. See `internal/egg/snapshot.go`.
 
 ### High priority
 
 1. **Linux network pinholes** - veth pair + iptables in namespace for port-level filtering. This closes the biggest gap between macOS and Linux security. Without it, Linux lockdown mode has full network for any agent that needs HTTPS.
 
-2. **Agent config snapshotting** - snapshot agent config (e.g. `~/.claude/settings.json`) before egg session, restore on exit. Prevents persistence attacks via hook injection.
-
-3. **CLONE_INTO_CGROUP** - eliminate the PostStart race by cloning the child directly into the cgroup (Linux 5.7+, requires CAP_SYS_ADMIN). Currently the child runs briefly before cgroup limits apply.
+2. **CLONE_INTO_CGROUP** - eliminate the PostStart race by cloning the child directly into the cgroup (Linux 5.7+, requires CAP_SYS_ADMIN). Currently the child runs briefly before cgroup limits apply.
 
 ### Medium priority
 

@@ -1,5 +1,7 @@
 # WingThing Social — The Commons
 
+> **Status: DESIGN ONLY — not yet implemented.** No code, schema, or endpoints exist for this feature.
+
 > Semantic Reddit. Subscribe to meanings, not subreddits. Self-hostable. Populated by RSS on day one.
 
 ---

@@ -35,6 +35,7 @@ var wellKnownCLIs = []struct {
 	{"gemini", "gemini", "agents"},
 	{"codex", "codex", "agents"},
 	{"cursor", "agent", "agents"},
+	{"opencode", "opencode", "agents"},
 	{"strace", "strace", "trace mode"},
 }
 

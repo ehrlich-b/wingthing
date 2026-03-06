@@ -52,6 +52,11 @@ var agentProfiles = map[string]AgentProfile{
 		EnvVars:   []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"},
 		WriteDirs: []string{".gemini"},
 	},
+	"opencode": {
+		Domains:   []string{"*.anthropic.com", "*.openai.com", "*.googleapis.com"},
+		EnvVars:   []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
+		WriteDirs: []string{".opencode"},
+	},
 }
 
 // Profile returns the agent profile for the given agent name.
@@ -66,7 +71,7 @@ func Profile(agent string) AgentProfile {
 	// XPC/CoreFoundation env vars for Security.framework access.
 	if runtime.GOOS == "darwin" {
 		switch agent {
-		case "claude", "codex", "cursor":
+		case "claude", "codex", "cursor", "opencode":
 			p.PlatformEnv = macOSKeychainEnv
 		}
 	}

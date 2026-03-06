@@ -1,5 +1,7 @@
 # Container and VM Mode
 
+> **Status: DESIGN ONLY — not yet implemented.** No code exists for this feature.
+
 Thinking out loud about what it would look like if `egg.yaml` could define a Dockerfile or VM config instead of using the OS-level sandbox.
 
 ## Why bother

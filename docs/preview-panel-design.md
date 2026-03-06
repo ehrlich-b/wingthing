@@ -38,10 +38,10 @@ Step 4 happens automatically. No copy-paste. No context switch. The user sees th
 ### Location
 
 ```
-<agent working directory>/.wt-preview
+<agent working directory>/.wt-preview-{sessionID}
 ```
 
-The agent writes this in its normal writable start directory (e.g. `~/sales/` in the Slide deployment). No sandbox changes needed --- it's already writable.
+The agent writes this in its normal writable start directory (e.g. `~/sales/` in the Slide deployment). No sandbox changes needed --- it's already writable. The per-session suffix prevents collisions when multiple sessions share a working directory.
 
 ### Format: Two modes
 

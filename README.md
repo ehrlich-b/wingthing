@@ -61,6 +61,7 @@ Open [app.wingthing.ai](https://app.wingthing.ai) to browse your wings, start se
 | Cursor Agent | `agent` |
 | Gemini | `gemini` |
 | Ollama | `ollama` |
+| OpenCode | `opencode` |
 
 ## Install
 

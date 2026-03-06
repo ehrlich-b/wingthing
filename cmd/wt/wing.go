@@ -3415,6 +3415,18 @@ authDone:
 					log.Printf("[P2P] pty.migrate for %s but P2P not enabled", start.SessionID)
 					continue
 				}
+				// Validate auth token on locked wings before allowing P2P migration
+				if userHasPasskey {
+					var migrateMsg ws.PTYMigrate
+					if err := json.Unmarshal(data, &migrateMsg); err != nil {
+						log.Printf("[P2P] pty.migrate for %s: bad message: %v", start.SessionID, err)
+						continue
+					}
+					if _, ok := passkeyCache.Check(migrateMsg.AuthToken, authTTL); !ok {
+						log.Printf("[P2P] pty.migrate for %s: REJECTED — invalid or expired auth token", start.SessionID)
+						continue
+					}
+				}
 				// Look up the DataChannel — retry briefly since OnDC callback may not have fired yet
 				var migrateDC *pionwebrtc.DataChannel
 				for attempt := 0; attempt < 10; attempt++ {

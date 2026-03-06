@@ -247,6 +247,8 @@ func newAgent(name string) agent.Agent {
 		return agent.NewCodex(0)
 	case "cursor":
 		return agent.NewCursor(0)
+	case "opencode":
+		return agent.NewOpenCode(0)
 	default:
 		return agent.NewClaude(0)
 	}
@@ -262,7 +264,8 @@ func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.T
 		"ollama": newAgent("ollama"),
 		"gemini": newAgent("gemini"),
 		"codex":  newAgent("codex"),
-		"cursor": newAgent("cursor"),
+		"cursor":   newAgent("cursor"),
+		"opencode": newAgent("opencode"),
 	}
 	mem := memory.New(cfg.MemoryDir())
 
