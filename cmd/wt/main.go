@@ -71,6 +71,7 @@ func main() {
 		wingCmd(),
 		roostCmd(),
 		eggCmd(),
+		sessionCmd(),
 		keygenCmd(),
 		updateCmd(),
 	)

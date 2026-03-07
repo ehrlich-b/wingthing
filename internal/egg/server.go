@@ -108,6 +108,7 @@ type RunConfig struct {
 	RenderedConfig             string // effective egg config as YAML (after merge/resolve)
 	UserHome                   string // per-user home directory (relay sessions only)
 	IdleTimeout                time.Duration // 0 = disabled; self-terminate after this much idle
+	ResumeSessionID            string // agent session ID to resume (from chat.meta)
 }
 
 // replayBuffer is an append-only (bounded) log of PTY output.
@@ -436,7 +437,7 @@ func NewServer(dir string) (*Server, error) {
 func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	os.Setenv("GOTRACEBACK", "all")
 
-	name, args := agentCommand(rc.Agent, rc.DangerouslySkipPermissions, rc.Shell)
+	name, args := agentCommand(rc.Agent, rc.DangerouslySkipPermissions, rc.ResumeSessionID)
 	if name == "" {
 		return fmt.Errorf("unsupported agent: %s", rc.Agent)
 	}
@@ -724,6 +725,28 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		go s.idleWatchdog(sess)
 	}
 
+	// Periodic chat history capture (runs outside sandbox, on host filesystem)
+	captureHome := rc.UserHome
+	if captureHome == "" {
+		captureHome, _ = os.UserHomeDir()
+	}
+	if profile := Profile(rc.Agent); profile.SessionDir != "" && captureHome != "" {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if err := CaptureSessionHistory(rc.Agent, rc.CWD, s.dir, captureHome, sess.StartedAt); err != nil {
+						log.Printf("egg: chat capture: %v", err)
+					}
+				case <-sess.done:
+					return
+				}
+			}
+		}()
+	}
+
 	// Write files and start gRPC server
 	sockPath := filepath.Join(s.dir, "egg.sock")
 	tokenPath := filepath.Join(s.dir, "egg.token")
@@ -807,6 +830,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			sess.sb.Destroy()
 		}
 
+		// Final chat history capture (gets the complete conversation)
+		if profile := Profile(rc.Agent); profile.SessionDir != "" && captureHome != "" {
+			if err := CaptureSessionHistory(rc.Agent, rc.CWD, s.dir, captureHome, sess.StartedAt); err != nil {
+				log.Printf("egg: final chat capture: %v", err)
+			}
+		}
+
 		// Give gRPC a moment to send exit_code, then stop
 		time.Sleep(500 * time.Millisecond)
 		s.grpcServer.GracefulStop()
@@ -856,11 +886,12 @@ func (s *Server) cleanup() {
 	s.mu.RLock()
 	sess := s.session
 	s.mu.RUnlock()
-	if sess == nil || !sess.audit {
-		// Non-audit: remove the entire session directory
+	// Keep session dir if audit recordings or chat history exist
+	hasAudit := sess != nil && sess.audit
+	_, hasChat := os.Stat(filepath.Join(s.dir, "chat.jsonl.gz"))
+	if !hasAudit && hasChat != nil {
 		os.RemoveAll(s.dir)
 	}
-	// Audit sessions keep egg.meta, egg.pid, audit.pty.gz, audit.log
 }
 
 // preserveEggLog copies the session's egg.log to ~/.wingthing/logs/<session-id>.log,
@@ -1195,7 +1226,7 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 }
 
 // agentCommand returns the command and args for an interactive terminal session.
-func agentCommand(agentName string, dangerouslySkip bool, shell string) (string, []string) {
+func agentCommand(agentName string, dangerouslySkip bool, resumeSessionID string) (string, []string) {
 	var name string
 	var args []string
 
@@ -1220,6 +1251,19 @@ func agentCommand(agentName string, dangerouslySkip bool, shell string) (string,
 		args = []string{"run", "llama3.2"}
 	default:
 		return "", nil
+	}
+
+	// Append resume flags if resuming a session
+	if resumeSessionID != "" {
+		profile := Profile(agentName)
+		if profile.ResumeFlag != "" {
+			if agentName == "codex" {
+				// Codex uses "resume" as a subcommand
+				args = append([]string{profile.ResumeFlag}, args...)
+			} else {
+				args = append(args, profile.ResumeFlag, resumeSessionID)
+			}
+		}
 	}
 
 	return name, args

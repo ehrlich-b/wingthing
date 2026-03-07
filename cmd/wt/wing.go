@@ -2395,7 +2395,7 @@ func reapDeadEggs(cfg *config.Config) {
 }
 
 // cleanEggDir removes the files in an egg session directory, then the directory itself.
-// If audit files exist, preserves egg.meta, egg.owner, and audit data (only removes runtime files).
+// If audit files or chat history exist, preserves egg.meta, egg.owner, and data (only removes runtime files).
 func cleanEggDir(dir string) {
 	os.Remove(filepath.Join(dir, "egg.sock"))
 	os.Remove(filepath.Join(dir, "egg.token"))
@@ -2404,10 +2404,11 @@ func cleanEggDir(dir string) {
 	// after this child exits. Deleting it here causes a race where the
 	// crash message is lost ("egg process crashed (no log available)").
 	// The log is small and the parent's cleanEggDir call cleans it up later.
-	// Keep egg.meta, egg.owner, and dir if audit recordings exist
+	// Keep egg.meta, egg.owner, and dir if audit recordings or chat history exist
 	_, hasPty := os.Stat(filepath.Join(dir, "audit.pty.gz"))
 	_, hasLog := os.Stat(filepath.Join(dir, "audit.log"))
-	if hasPty == nil || hasLog == nil {
+	_, hasChat := os.Stat(filepath.Join(dir, "chat.jsonl.gz"))
+	if hasPty == nil || hasLog == nil || hasChat == nil {
 		return
 	}
 	os.Remove(filepath.Join(dir, "egg.meta"))
@@ -2470,6 +2471,9 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		// Check if audit recording exists
 		if _, err := os.Stat(filepath.Join(dir, "audit.pty.gz")); err == nil {
 			info.Audit = true
+		}
+		if _, err := os.Stat(filepath.Join(dir, "chat.jsonl.gz")); err == nil {
+			info.Chat = true
 		}
 		out = append(out, info)
 	}
@@ -3489,6 +3493,7 @@ type pastSessionInfo struct {
 	CWD       string `json:"cwd,omitempty"`
 	StartedAt int64  `json:"started_at,omitempty"`
 	Audit     bool   `json:"audit,omitempty"`
+	Chat      bool   `json:"chat,omitempty"`
 	UserID    string `json:"user_id,omitempty"`
 }
 
@@ -4217,7 +4222,11 @@ func getSessionsHistory(cfg *config.Config, offset, limit int) ([]pastSessionInf
 		if _, err := os.Stat(filepath.Join(dir, "audit.pty.gz")); err == nil {
 			hasAudit = true
 		}
-		if agentName == "" && !hasAudit {
+		hasChat := false
+		if _, err := os.Stat(filepath.Join(dir, "chat.jsonl.gz")); err == nil {
+			hasChat = true
+		}
+		if agentName == "" && !hasAudit && !hasChat {
 			continue
 		}
 		if agentName == "" {
@@ -4229,6 +4238,7 @@ func getSessionsHistory(cfg *config.Config, offset, limit int) ([]pastSessionInf
 			Agent:     agentName,
 			CWD:       cwd,
 			Audit:     hasAudit,
+			Chat:      hasChat,
 			UserID:    readEggOwner(dir),
 		}
 		if stat, err := os.Stat(dir); err == nil {
@@ -4263,6 +4273,8 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 	switch kind {
 	case "keylog":
 		filePath = filepath.Join(dir, "audit.log")
+	case "chat":
+		filePath = filepath.Join(dir, "chat.jsonl.gz")
 	default:
 		filePath = filepath.Join(dir, "audit.pty.gz")
 	}
@@ -4270,6 +4282,22 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		tunnelRespond(gcm, requestID, map[string]string{"error": "file not found: " + kind}, write)
+		return
+	}
+
+	if kind == "chat" {
+		// Chat: stream raw gzip bytes as base64 chunks
+		const chunkSize = 32 * 1024
+		for i := 0; i < len(data); i += chunkSize {
+			end := i + chunkSize
+			if end > len(data) {
+				end = len(data)
+			}
+			chunk := map[string]string{"data": base64.StdEncoding.EncodeToString(data[i:end])}
+			chunkJSON, _ := json.Marshal(chunk)
+			tunnelStreamChunk(gcm, requestID, chunkJSON, false, write)
+		}
+		tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
 		return
 	}
 

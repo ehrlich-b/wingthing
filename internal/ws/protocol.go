@@ -268,6 +268,7 @@ type SessionInfo struct {
 	EggConfig      string `json:"egg_config,omitempty"` // YAML config snapshot
 	NeedsAttention bool   `json:"needs_attention,omitempty"`
 	Audit          bool   `json:"audit,omitempty"` // true if session has audit recording
+	Chat           bool   `json:"chat,omitempty"`  // true if session has chat history
 	UserID         string `json:"user_id,omitempty"`
 }
 

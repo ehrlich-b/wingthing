@@ -7,7 +7,7 @@ import { showHome, navigateToWingDetail, navigateToAccount } from './nav.js';
 import { connectPTY } from './pty.js';
 import { setLastTermAgent, getLastTermAgent, setWingOrder, setEggOrder, getCachedWingSessions, setCachedWingSessions, probeWing, fetchWingSessions, mergeWingSessions } from './data.js';
 import { rebuildAgentLists } from './dashboard.js';
-import { openAuditReplay, openAuditKeylog } from './audit.js';
+import { openAuditReplay, openAuditKeylog, downloadChatHistory } from './audit.js';
 import { showTerminal } from './nav.js';
 
 function wingNameById(wingId) {
@@ -1956,15 +1956,21 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
         var name = s.cwd ? projectName(s.cwd) : s.session_id.substring(0, 8);
         var startStr = s.started_at ? formatRelativeTime(s.started_at * 1000) : '';
         var auditBadge = s.audit ? '<span class="wd-audit-badge">audit</span>' : '';
+        var chatBadge = s.chat ? '<span class="wd-audit-badge">chat</span>' : '';
         var auditBtns = s.audit
             ? '<button class="btn-sm wd-replay-btn" data-sid="' + escapeHtml(s.session_id) + '">replay</button>' +
               '<button class="btn-sm wd-keylog-btn" data-sid="' + escapeHtml(s.session_id) + '">keylog</button>'
+            : '';
+        var chatBtn = s.chat
+            ? '<button class="btn-sm wd-chat-btn" data-sid="' + escapeHtml(s.session_id) + '">chat</button>'
             : '';
         return '<div class="wd-past-row">' +
             '<span class="wd-past-name">' + escapeHtml(name) + ' \u00b7 ' + escapeHtml(s.agent || '?') + '</span>' +
             '<span class="wd-past-time text-dim">' + startStr + '</span>' +
             auditBadge +
+            chatBadge +
             auditBtns +
+            chatBtn +
         '</div>';
     }).join('');
 
@@ -1989,6 +1995,11 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
     container.querySelectorAll('.wd-keylog-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
             openAuditKeylog(wingId, btn.dataset.sid);
+        });
+    });
+    container.querySelectorAll('.wd-chat-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            downloadChatHistory(wingId, btn.dataset.sid);
         });
     });
 }

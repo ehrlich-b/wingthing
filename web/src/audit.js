@@ -166,6 +166,44 @@ export function openAuditReplay(wingId, sessionId) {
     document.getElementById('audit-backdrop').onclick = closeBtn.onclick;
 }
 
+export function downloadChatHistory(wingId, sessionId) {
+    var chunks = [];
+    sendTunnelStream(wingId, { type: 'audit.request', session_id: sessionId, kind: 'chat' }, function(chunk) {
+        if (chunk.data) {
+            var bin = atob(chunk.data);
+            var bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            chunks.push(bytes);
+        }
+    }).then(function() {
+        if (chunks.length === 0) {
+            alert('No chat history available');
+            return;
+        }
+        // Concatenate gzipped chunks then decompress
+        var total = 0;
+        chunks.forEach(function(c) { total += c.length; });
+        var combined = new Uint8Array(total);
+        var offset = 0;
+        chunks.forEach(function(c) { combined.set(c, offset); offset += c.length; });
+
+        // Decompress using DecompressionStream API
+        var ds = new DecompressionStream('gzip');
+        var blob = new Blob([combined]);
+        var stream = blob.stream().pipeThrough(ds);
+        new Response(stream).text().then(function(text) {
+            var dlBlob = new Blob([text], { type: 'application/jsonl' });
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(dlBlob);
+            a.download = sessionId + '-chat.jsonl';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        });
+    }).catch(function(err) {
+        alert('Error downloading chat history: ' + err.message);
+    });
+}
+
 export function openAuditKeylog(wingId, sessionId) {
     var overlay = document.getElementById('audit-overlay');
     var termEl = document.getElementById('audit-terminal');

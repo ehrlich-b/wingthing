@@ -28,6 +28,7 @@ import (
 func eggCmd() *cobra.Command {
 	var configFlag string
 	var traceFlag bool
+	var resumeFlag string
 
 	cmd := &cobra.Command{
 		Use:     "sandbox [agent]",
@@ -39,12 +40,13 @@ func eggCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag)
+			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag, resumeFlag)
 		},
 	}
 
 	cmd.Flags().StringVar(&configFlag, "config", "", "path to egg.yaml (default: discover from cwd, then ~/.wingthing/egg.yaml, then built-in)")
 	cmd.Flags().BoolVar(&traceFlag, "trace", false, "wrap sandbox with strace for syscall tracing (Linux only)")
+	cmd.Flags().StringVar(&resumeFlag, "resume", "", "resume a previous session by session ID")
 
 	cmd.AddCommand(eggRunCmd())
 	cmd.AddCommand(eggStopCmd())
@@ -76,6 +78,7 @@ func eggRunCmd() *cobra.Command {
 		userHomeFlag string
 		idleTimeoutFlag string
 		dangerouslySkipPermissions bool
+		resumeSessionFlag string
 	)
 
 	cmd := &cobra.Command{
@@ -131,17 +134,18 @@ func eggRunCmd() *cobra.Command {
 				Rows:    rows,
 				Cols:    cols,
 				DangerouslySkipPermissions: dangerouslySkipPermissions,
-				CPULimit:       cpuLimit,
-				MemLimit:       memLimit,
-				MaxFDs:         maxFDsFlag,
-				PidLimit:       maxPidsFlag,
-				Debug:          debugFlag,
-				Audit:          auditFlag,
-				Trace:          traceFlag,
-				VTE:            vteFlag,
-				RenderedConfig: renderedConfigFlag,
-				UserHome:       userHomeFlag,
-				IdleTimeout:    idleTimeout,
+				CPULimit:        cpuLimit,
+				MemLimit:        memLimit,
+				MaxFDs:          maxFDsFlag,
+				PidLimit:        maxPidsFlag,
+				Debug:           debugFlag,
+				Audit:           auditFlag,
+				Trace:           traceFlag,
+				VTE:             vteFlag,
+				RenderedConfig:  renderedConfigFlag,
+				UserHome:        userHomeFlag,
+				IdleTimeout:     idleTimeout,
+				ResumeSessionID: resumeSessionFlag,
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -184,6 +188,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&renderedConfigFlag, "rendered-config", "", "rendered egg config YAML (internal)")
 	cmd.Flags().StringVar(&userHomeFlag, "user-home", "", "per-user home directory (internal)")
 	cmd.Flags().StringVar(&idleTimeoutFlag, "idle-timeout", "", "idle timeout duration (e.g. 4h)")
+	cmd.Flags().StringVar(&resumeSessionFlag, "resume-session", "", "agent session ID to resume (internal)")
 	cmd.MarkFlagRequired("session-id")
 
 	return cmd
@@ -320,7 +325,7 @@ func humanDuration(d time.Duration) string {
 }
 
 // eggSpawn starts an agent session in a per-session egg and attaches the terminal.
-func eggSpawn(ctx context.Context, agentName, configPath string, trace bool) error {
+func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID string) error {
 	if trace && runtime.GOOS != "linux" {
 		return fmt.Errorf("--trace requires Linux (strace is not available on %s)", runtime.GOOS)
 	}
@@ -354,8 +359,20 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool) err
 	cwd, _ := os.Getwd()
 	sessionID := uuid.New().String()[:8]
 
+	// Handle --resume: restore chat history and get agent session ID
+	var agentResumeID string
+	if resumeID != "" {
+		home, _ := os.UserHomeDir()
+		eggDir := filepath.Join(cfg.Dir, "eggs", resumeID)
+		var restoreErr error
+		agentResumeID, restoreErr = egg.RestoreSessionHistory(agentName, cwd, eggDir, home)
+		if restoreErr != nil {
+			return fmt.Errorf("restore session: %w", restoreErr)
+		}
+	}
+
 	// Spawn egg as child process
-	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0)
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0, agentResumeID)
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
@@ -489,7 +506,7 @@ func userHash(email string) string {
 }
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
-func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration) (*egg.Client, error) {
+func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration, resumeSessionID ...string) (*egg.Client, error) {
 	// Pre-flight: verify the sandbox can work before spawning a child process.
 	// Catches AppArmor userns restrictions, missing sysctl, etc. with a clear
 	// error instead of a silent 5s timeout.
@@ -687,6 +704,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if idleTimeout > 0 {
 		args = append(args, "--idle-timeout", idleTimeout.String())
+	}
+	if len(resumeSessionID) > 0 && resumeSessionID[0] != "" {
+		args = append(args, "--resume-session", resumeSessionID[0])
 	}
 
 	// Serialize rendered config as YAML for status RPC
