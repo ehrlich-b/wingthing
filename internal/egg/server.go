@@ -502,8 +502,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	// Per-user home override for relay sessions
 	if rc.UserHome != "" {
 		envMap["HOME"] = rc.UserHome
-		// Prepend ~/.local/bin to PATH so agents find it
-		localBin := filepath.Join(rc.UserHome, ".local", "bin")
+	}
+	// Prepend ~/.local/bin to PATH so agents like Claude Code find their
+	// native installation and don't warn about missing PATH entries.
+	home := envMap["HOME"]
+	if home != "" {
+		localBin := filepath.Join(home, ".local", "bin")
 		if p, ok := envMap["PATH"]; ok {
 			envMap["PATH"] = localBin + ":" + p
 		} else {
