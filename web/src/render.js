@@ -1223,6 +1223,7 @@ export function renderWingDetailPage(wingId) {
             '<div class="wd-hero-top">' +
                 '<span class="session-dot ' + (isOnline ? 'live' : 'offline') + '"></span>' +
                 '<span class="wd-name" id="wd-name" title="click to rename">' + escapeHtml(name) + '</span>' +
+                (w.owner && !(S.currentUser && w.user_id === S.currentUser.id) ? '<span class="wd-owner">' + escapeHtml(w.owner) + '</span>' : '') +
                 (w.locked && !S.tunnelAuthTokens[wingId] ? '<span class="wd-pinned-badge" title="passkey required">&#x1f512; locked</span>' : '') +
                 (!w.locked && w.passkey_enrolled ? '<span class="wd-pinned-badge" title="passkey enrolled">&#x1f511; passkey</span>' : '') +
                 (w.wing_label ? '<a class="wd-clear-label" id="wd-delete-label" title="clear name">x</a>' : '') +
@@ -2134,10 +2135,13 @@ export function renderDashboard() {
                 ((needsAuth || isCardPasskey || isCardNoPasskeys) ? '<span class="wing-lock" title="passkey required">&#x1f512;</span>' :
                 (w.passkey_enrolled && !w.locked ? '<span class="wing-lock" title="passkey active">&#x1f511;</span>' : ''));
             var draggable = ('ontouchstart' in window || navigator.maxTouchPoints > 0) ? '' : ' draggable="true"';
+            var isMine = S.currentUser && w.user_id === S.currentUser.id;
+            var ownerTag = (w.owner && !isMine) ? '<span class="wing-owner">' + escapeHtml(w.owner) + '</span>' : '';
             return '<div class="wing-box"' + draggable + ' data-wing-id="' + escapeHtml(w.wing_id || '') + '">' +
                 '<div class="wing-box-top">' +
                     '<span class="wing-dot ' + dotClass + '"></span>' +
                     '<span class="wing-name">' + escapeHtml(name) + lockIcon + '</span>' +
+                    ownerTag +
                 '</div>' +
                 '<span class="wing-agents">' + ((needsPasskeySetup || needsAuth || isCardPasskey) ? '' : ((w.agents || []).length === 0 ? '<span class="text-dim">no agents</span>' : (w.agents || []).map(function(a) {
                     return agentIcon(a) || escapeHtml(a);

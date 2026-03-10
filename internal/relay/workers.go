@@ -43,6 +43,8 @@ type WingEvent struct {
 	SessionID    string `json:"session_id,omitempty"`
 	Locked       *bool  `json:"locked,omitempty"`
 	AllowedCount *int   `json:"allowed_count,omitempty"`
+	UserID       string `json:"user_id,omitempty"`
+	Owner        string `json:"owner,omitempty"`
 }
 
 // eventSub is a dashboard subscriber with its org memberships.
@@ -583,6 +585,17 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 		}
 	}
 
+	// Resolve owner display name for dashboard
+	ownerName := ""
+	if s.Store != nil {
+		if u, err := s.Store.GetUserByID(wing.UserID); err == nil && u != nil {
+			ownerName = u.DisplayName
+			if ownerName == "" && u.Email != nil {
+				ownerName = *u.Email
+			}
+		}
+	}
+
 	// Deliver locally
 	var ev WingEvent
 	if eventType == "wing.offline" {
@@ -596,6 +609,8 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 			PublicKey:    wing.PublicKey,
 			Locked:       &locked,
 			AllowedCount: &allowedCount,
+			UserID:       wing.UserID,
+			Owner:        ownerName,
 		}
 	}
 	s.Wings.notifyWing(wing.UserID, wing.OrgID, ev)

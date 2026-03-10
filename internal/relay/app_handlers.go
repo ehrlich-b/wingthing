@@ -106,15 +106,19 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	wings := s.listAccessibleWings(user.ID)
 	latestVer := s.getLatestVersion()
 
+	// Collect unique owner IDs and resolve display names
+	ownerIDs := make(map[string]bool)
 	out := make([]map[string]any, 0, len(wings))
 	seenWings := make(map[string]bool) // dedup by wing_id
 	for _, wing := range wings {
 		seenWings[wing.WingID] = true
+		ownerIDs[wing.UserID] = true
 		entry := map[string]any{
 			"wing_id":        wing.WingID,
 			"public_key":     wing.PublicKey,
 			"latest_version": latestVer,
 			"org_id":         wing.OrgID,
+			"user_id":        wing.UserID,
 		}
 		out = append(out, entry)
 	}
@@ -132,16 +136,41 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			seenWings[wingID] = true
+			ownerIDs[loc.UserID] = true
 			entry := map[string]any{
 				"wing_id":        wingID,
 				"public_key":     loc.PublicKey,
 				"latest_version": latestVer,
 				"org_id":         loc.OrgID,
+				"user_id":        loc.UserID,
 			}
 			if loc.MachineID != s.Config.FlyMachineID {
 				entry["remote_node"] = loc.MachineID
 			}
 			out = append(out, entry)
+		}
+	}
+
+	// Resolve owner display names
+	ownerNames := make(map[string]string)
+	if s.Store != nil {
+		for uid := range ownerIDs {
+			if uid == user.ID {
+				continue
+			}
+			if u, err := s.Store.GetUserByID(uid); err == nil && u != nil {
+				name := u.DisplayName
+				if name == "" && u.Email != nil {
+					name = *u.Email
+				}
+				ownerNames[uid] = name
+			}
+		}
+	}
+	for _, entry := range out {
+		uid, _ := entry["user_id"].(string)
+		if name, ok := ownerNames[uid]; ok {
+			entry["owner"] = name
 		}
 	}
 

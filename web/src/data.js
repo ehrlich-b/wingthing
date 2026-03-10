@@ -91,7 +91,7 @@ export function saveSessionCache() {
 
 export function saveWingCache() {
     setCachedWings(S.wingsData.map(function(w) {
-        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform, agents: w.agents, locked: w.locked || false };
+        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform, agents: w.agents, locked: w.locked || false, user_id: w.user_id, owner: w.owner };
     }));
 }
 
@@ -277,6 +277,8 @@ async function _loadHomeInner() {
         if (aw) {
             w.online = true;
             if (aw.public_key) w.public_key = aw.public_key;
+            if (aw.user_id) w.user_id = aw.user_id;
+            if (aw.owner) w.owner = aw.owner;
         } else {
             w.online = false;
         }
@@ -299,6 +301,8 @@ async function _loadHomeInner() {
                 platform: c ? c.platform : undefined,
                 agents: (c && c.agents) || [],
                 projects: [],
+                user_id: aw.user_id,
+                owner: aw.owner,
             });
             added = true;
         }

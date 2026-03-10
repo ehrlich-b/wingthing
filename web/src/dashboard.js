@@ -94,6 +94,8 @@ function applyWingEvent(ev) {
                 platform: c ? c.platform : undefined,
                 projects: [],
                 agents: [],
+                user_id: ev.user_id,
+                owner: ev.owner,
             };
             // Add to wingsData immediately so sendTunnelRequest can find it
             S.wingsData.push(newWing);
