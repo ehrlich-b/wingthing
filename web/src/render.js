@@ -158,100 +158,102 @@ function saveWingOrder() {
 }
 
 export function setupEggDrag() {
-    var grid = DOM.sessionsList.querySelector('.egg-grid');
-    if (!grid) return;
-    var cards = grid.querySelectorAll('.egg-box');
-    var dragSrc = null;
+    var grids = DOM.sessionsList.querySelectorAll('.egg-grid');
+    if (!grids.length) return;
 
     var isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    cards.forEach(function(card) {
-        if (!isTouch) card.setAttribute('draggable', 'true');
-        card.addEventListener('dragstart', function(e) {
-            dragSrc = card;
-            card.classList.add('dragging');
-            e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', card.dataset.sid);
-        });
-        card.addEventListener('dragend', function() {
-            card.classList.remove('dragging');
-            cards.forEach(function(c) { c.classList.remove('drag-over'); });
-            dragSrc = null;
-        });
-        card.addEventListener('dragover', function(e) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            if (card !== dragSrc) {
-                cards.forEach(function(c) { c.classList.remove('drag-over'); });
-                card.classList.add('drag-over');
-            }
-        });
-        card.addEventListener('dragleave', function() {
-            card.classList.remove('drag-over');
-        });
-        card.addEventListener('drop', function(e) {
-            e.preventDefault();
-            card.classList.remove('drag-over');
-            if (!dragSrc || dragSrc === card) return;
-            if (dragSrc.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING) {
-                grid.insertBefore(dragSrc, card.nextSibling);
-            } else {
-                grid.insertBefore(dragSrc, card);
-            }
-            saveEggOrder();
-        });
-    });
-
-    // Touch drag (mobile) — requires long press (400ms) to start dragging.
-    // Short taps pass through to the click handler for opening sessions.
     var touchSrc = null;
     var touchTimer = null;
 
-    cards.forEach(function(card) {
-        card.addEventListener('touchstart', function(e) {
-            if (e.target.closest('.egg-delete, .box-menu-btn')) return;
-            touchTimer = setTimeout(function() {
-                touchSrc = card;
+    grids.forEach(function(grid) {
+        var cards = grid.querySelectorAll('.egg-box');
+        var dragSrc = null;
+
+        cards.forEach(function(card) {
+            if (!isTouch) card.setAttribute('draggable', 'true');
+            card.addEventListener('dragstart', function(e) {
+                dragSrc = card;
                 card.classList.add('dragging');
-            }, 400);
-        }, { passive: true });
-        card.addEventListener('touchmove', function() {
-            // Finger moved before long press — cancel drag
-            if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
-        }, { passive: true });
-        card.addEventListener('touchend', function() {
-            if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', card.dataset.sid);
+            });
+            card.addEventListener('dragend', function() {
+                card.classList.remove('dragging');
+                cards.forEach(function(c) { c.classList.remove('drag-over'); });
+                dragSrc = null;
+            });
+            card.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (card !== dragSrc) {
+                    cards.forEach(function(c) { c.classList.remove('drag-over'); });
+                    card.classList.add('drag-over');
+                }
+            });
+            card.addEventListener('dragleave', function() {
+                card.classList.remove('drag-over');
+            });
+            card.addEventListener('drop', function(e) {
+                e.preventDefault();
+                card.classList.remove('drag-over');
+                if (!dragSrc || dragSrc === card) return;
+                if (dragSrc.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                    grid.insertBefore(dragSrc, card.nextSibling);
+                } else {
+                    grid.insertBefore(dragSrc, card);
+                }
+                saveEggOrder();
+            });
+        });
+
+        // Touch drag (mobile) — requires long press (400ms) to start dragging.
+        // Short taps pass through to the click handler for opening sessions.
+        cards.forEach(function(card) {
+            card.addEventListener('touchstart', function(e) {
+                if (e.target.closest('.egg-delete, .box-menu-btn')) return;
+                touchTimer = setTimeout(function() {
+                    touchSrc = card;
+                    card.classList.add('dragging');
+                }, 400);
+            }, { passive: true });
+            card.addEventListener('touchmove', function() {
+                if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
+            }, { passive: true });
+            card.addEventListener('touchend', function() {
+                if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
+            }, { passive: true });
+        });
+
+        grid.addEventListener('touchmove', function(e) {
+            if (!touchSrc) return;
+            e.preventDefault();
+            var touch = e.touches[0];
+            var target = document.elementFromPoint(touch.clientX, touch.clientY);
+            var targetCard = target ? target.closest('.egg-box') : null;
+            cards.forEach(function(c) { c.classList.remove('drag-over'); });
+            if (targetCard && targetCard !== touchSrc) {
+                targetCard.classList.add('drag-over');
+            }
+        }, { passive: false });
+
+        grid.addEventListener('touchend', function(e) {
+            if (!touchSrc) return;
+            var touch = e.changedTouches[0];
+            var target = document.elementFromPoint(touch.clientX, touch.clientY);
+            var targetCard = target ? target.closest('.egg-box') : null;
+            cards.forEach(function(c) { c.classList.remove('drag-over'); });
+            touchSrc.classList.remove('dragging');
+            if (targetCard && targetCard !== touchSrc) {
+                if (touchSrc.compareDocumentPosition(targetCard) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                    grid.insertBefore(touchSrc, targetCard.nextSibling);
+                } else {
+                    grid.insertBefore(touchSrc, targetCard);
+                }
+                saveEggOrder();
+            }
+            touchSrc = null;
         }, { passive: true });
     });
-
-    grid.addEventListener('touchmove', function(e) {
-        if (!touchSrc) return;
-        e.preventDefault();
-        var touch = e.touches[0];
-        var target = document.elementFromPoint(touch.clientX, touch.clientY);
-        var targetCard = target ? target.closest('.egg-box') : null;
-        cards.forEach(function(c) { c.classList.remove('drag-over'); });
-        if (targetCard && targetCard !== touchSrc) {
-            targetCard.classList.add('drag-over');
-        }
-    }, { passive: false });
-
-    grid.addEventListener('touchend', function(e) {
-        if (!touchSrc) return;
-        var touch = e.changedTouches[0];
-        var target = document.elementFromPoint(touch.clientX, touch.clientY);
-        var targetCard = target ? target.closest('.egg-box') : null;
-        cards.forEach(function(c) { c.classList.remove('drag-over'); });
-        touchSrc.classList.remove('dragging');
-        if (targetCard && targetCard !== touchSrc) {
-            if (touchSrc.compareDocumentPosition(targetCard) & Node.DOCUMENT_POSITION_FOLLOWING) {
-                grid.insertBefore(touchSrc, targetCard.nextSibling);
-            } else {
-                grid.insertBefore(touchSrc, targetCard);
-            }
-            saveEggOrder();
-        }
-        touchSrc = null;
-    }, { passive: true });
 }
 
 function saveEggOrder() {
@@ -2241,26 +2243,22 @@ export function renderDashboard() {
         return;
     }
 
-    var eggHtml = '<h3 class="section-label">eggs</h3><div class="egg-grid">';
-    eggHtml += visibleSessions.map(function(s) {
+    function renderEggCard(s) {
         var name = projectName(s.cwd);
         var isActive = s.status === 'active';
         var kind = s.kind || 'terminal';
         var needsAttention = S.sessionNotifications[s.id];
         var dotClass = isActive ? 'live' : (s.swept ? 'detached' : 'offline');
         if (needsAttention) dotClass = 'attention';
-
         var previewHtml = '';
         var thumbUrl = '';
         try { thumbUrl = localStorage.getItem(TERM_THUMB_PREFIX + s.id) || ''; } catch(e) {}
         if (thumbUrl) previewHtml = '<img src="' + thumbUrl + '" alt="">';
-
         var wingName = '';
         if (s.wing_id) {
             var wing = S.wingsData.find(function(w) { return w.wing_id === s.wing_id; });
             if (wing) wingName = wingDisplayName(wing);
         }
-
         return '<div class="egg-box" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<div class="egg-preview">' + previewHtml + '</div>' +
             '<div class="egg-footer">' +
@@ -2272,8 +2270,39 @@ export function renderDashboard() {
             '</div>' +
             (wingName ? '<div class="egg-wing">' + escapeHtml(wingName) + '</div>' : '') +
         '</div>';
-    }).join('');
-    eggHtml += '</div>';
+    }
+
+    var eggHtml;
+    if (S.currentUser && S.currentUser.roost_mode) {
+        var groups = {};
+        var groupOrder = [];
+        visibleSessions.forEach(function(s) {
+            var key = s.user_id || '_unknown';
+            if (!groups[key]) {
+                groups[key] = { email: s.email || 'unknown', sessions: [] };
+                groupOrder.push(key);
+            }
+            groups[key].sessions.push(s);
+        });
+        groupOrder.sort(function(a, b) {
+            if (S.currentUser.id && a === S.currentUser.id) return -1;
+            if (S.currentUser.id && b === S.currentUser.id) return 1;
+            return (groups[a].email).localeCompare(groups[b].email);
+        });
+        eggHtml = '<h3 class="section-label">eggs</h3>';
+        groupOrder.forEach(function(uid) {
+            var g = groups[uid];
+            var label = (S.currentUser.id && uid === S.currentUser.id) ? 'my eggs' : g.email;
+            eggHtml += '<div class="egg-group">' +
+                '<h4 class="egg-group-label">' + escapeHtml(label) + ' (' + g.sessions.length + ')</h4>' +
+                '<div class="egg-grid">' + g.sessions.map(renderEggCard).join('') + '</div>' +
+                '</div>';
+        });
+    } else {
+        eggHtml = '<h3 class="section-label">eggs</h3><div class="egg-grid">';
+        eggHtml += visibleSessions.map(renderEggCard).join('');
+        eggHtml += '</div>';
+    }
     DOM.sessionsList.innerHTML = eggHtml;
 
     DOM.sessionsList.querySelectorAll('.egg-box').forEach(function(card) {

@@ -270,6 +270,7 @@ type SessionInfo struct {
 	Audit          bool   `json:"audit,omitempty"` // true if session has audit recording
 	Chat           bool   `json:"chat,omitempty"`  // true if session has chat history
 	UserID         string `json:"user_id,omitempty"`
+	Email          string `json:"email,omitempty"`
 }
 
 // DirEntry is a single entry in a directory listing.

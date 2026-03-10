@@ -485,6 +485,16 @@ body {
 /* === Egg boxes (sessions) === */
 
 .egg-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+.egg-group { margin-bottom: 16px; }
+.egg-group:last-child { margin-bottom: 0; }
+.egg-group-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: lowercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
 
 .egg-box {
     width: 280px;

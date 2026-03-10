@@ -2464,6 +2464,7 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 			Agent:     agent,
 			CWD:       sessionCWD,
 			UserID:    readEggOwner(dir),
+			Email:     readEggOwnerEmail(dir),
 		}
 		if _, ok := wingAttention.Load(sessionID); ok {
 			info.NeedsAttention = true
