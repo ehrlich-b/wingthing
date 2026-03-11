@@ -620,12 +620,21 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		}
 	}
 	// pivot_root: swap new root into place, old root at .pivot.
+	// Save cwd so we can restore it after pivot (cmd.Dir set by parent).
+	origCwd, _ := os.Getwd()
 	pivotDir := filepath.Join(newRoot, ".pivot")
 	os.MkdirAll(pivotDir, 0700)
 	if err := unix.PivotRoot(newRoot, pivotDir); err != nil {
 		log.Fatalf("_deny_init: pivot_root: %v", err)
 	}
-	os.Chdir("/")
+	if origCwd != "" {
+		if err := os.Chdir(origCwd); err != nil {
+			log.Printf("_deny_init: chdir %s after pivot: %v, falling back to /", origCwd, err)
+			os.Chdir("/")
+		}
+	} else {
+		os.Chdir("/")
+	}
 	unix.Unmount("/.pivot", unix.MNT_DETACH)
 	os.Remove("/.pivot")
 	log.Printf("_deny_init: jail active (ro=%d rw=%d home=%s)", len(roMounts), len(writablePaths), home)
