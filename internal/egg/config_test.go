@@ -725,6 +725,43 @@ func TestBuildEnv_ClaudeCodeVarsNeverLeak(t *testing.T) {
 	}
 }
 
+func TestParseFSRules_DenyRoot(t *testing.T) {
+	home := "/home/test"
+	fs := []string{
+		"deny:/",
+		"ro:/usr",
+		"ro:/etc",
+		"rw:/opt/work",
+		"deny:/opt/secret",
+		"deny-write:./egg.yaml",
+	}
+	mounts, deny, denyWrite := ParseFSRules(fs, home)
+	// Mounts: /usr (ro), /etc (ro), /opt/work (rw)
+	if len(mounts) != 3 {
+		t.Errorf("mounts = %d, want 3", len(mounts))
+	}
+	if mounts[0].Source != "/usr" || !mounts[0].ReadOnly {
+		t.Errorf("mounts[0] = %+v, want ro /usr", mounts[0])
+	}
+	if mounts[2].Source != "/opt/work" || mounts[2].ReadOnly {
+		t.Errorf("mounts[2] = %+v, want rw /opt/work", mounts[2])
+	}
+	// Deny: / and /opt/secret
+	if len(deny) != 2 {
+		t.Errorf("deny = %v, want 2 entries", deny)
+	}
+	if deny[0] != "/" {
+		t.Errorf("deny[0] = %q, want /", deny[0])
+	}
+	if deny[1] != "/opt/secret" {
+		t.Errorf("deny[1] = %q, want /opt/secret", deny[1])
+	}
+	// DenyWrite: ./egg.yaml
+	if len(denyWrite) != 1 || denyWrite[0] != "./egg.yaml" {
+		t.Errorf("denyWrite = %v, want [./egg.yaml]", denyWrite)
+	}
+}
+
 func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")

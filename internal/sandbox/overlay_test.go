@@ -164,6 +164,69 @@ func TestOverlayPrefixSkipsOutsideHome(t *testing.T) {
 	}
 }
 
+// TestExecJailModeArgs verifies that Exec generates --mount-ro flags when
+// deny list contains "/" (jail mode).
+func TestExecJailModeArgs(t *testing.T) {
+	s := &linuxSandbox{
+		cfg: Config{
+			Mounts: []Mount{
+				{Source: "/usr", Target: "/usr", ReadOnly: true},
+				{Source: "/etc", Target: "/etc", ReadOnly: true},
+				{Source: "/", Target: "/", ReadOnly: true},
+				{Source: "/opt/work", Target: "/opt/work"},
+			},
+			Deny:        []string{"/", "/opt/secret"},
+			NetworkNeed: NetworkFull,
+		},
+		tmpDir: t.TempDir(),
+	}
+	ctx := context.Background()
+	cmd, err := s.Exec(ctx, "/bin/echo", []string{"test"})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	args := strings.Join(cmd.Args, " ")
+	if !strings.Contains(args, "--mount-ro /usr") {
+		t.Errorf("expected --mount-ro /usr in args, got: %s", args)
+	}
+	if !strings.Contains(args, "--mount-ro /etc") {
+		t.Errorf("expected --mount-ro /etc in args, got: %s", args)
+	}
+	// ro:/ should be excluded (source is "/")
+	count := strings.Count(args, "--mount-ro")
+	if count != 2 {
+		t.Errorf("expected 2 --mount-ro flags, got %d in: %s", count, args)
+	}
+	// writable path should still be --writable
+	if !strings.Contains(args, "--writable /opt/work") {
+		t.Errorf("expected --writable /opt/work in args, got: %s", args)
+	}
+}
+
+// TestExecNoMountRoWithoutJail verifies --mount-ro is NOT generated when
+// deny list does not contain "/".
+func TestExecNoMountRoWithoutJail(t *testing.T) {
+	s := &linuxSandbox{
+		cfg: Config{
+			Mounts: []Mount{
+				{Source: "/usr", Target: "/usr", ReadOnly: true},
+			},
+			Deny:        []string{"/tmp/test-deny"},
+			NetworkNeed: NetworkFull,
+		},
+		tmpDir: t.TempDir(),
+	}
+	ctx := context.Background()
+	cmd, err := s.Exec(ctx, "/bin/echo", []string{"test"})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	args := strings.Join(cmd.Args, " ")
+	if strings.Contains(args, "--mount-ro") {
+		t.Errorf("should not have --mount-ro without deny:/, got: %s", args)
+	}
+}
+
 // TestNoOverlayPrefixWithoutUseRegex verifies that non-UseRegex mounts
 // don't generate --overlay-prefix flags.
 func TestNoOverlayPrefixWithoutUseRegex(t *testing.T) {

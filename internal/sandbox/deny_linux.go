@@ -29,12 +29,13 @@ import (
 // itself is NOT in a PID namespace — this keeps host /proc valid so Go can
 // write uid_map for the nested CLONE_NEWUSER without remounting /proc.
 //
-// Args format: --uid UID --gid GID [--log PATH] [--deny PATH...] [--home PATH] [--writable PATH...] [--overlay-prefix PREFIX...] -- CMD ARGS...
+// Args format: --uid UID --gid GID [--log PATH] [--deny PATH...] [--home PATH] [--writable PATH...] [--mount-ro PATH...] [--overlay-prefix PREFIX...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
 	var denyWritePaths []string
 	var writablePaths []string
 	var overlayPrefixes []string
+	var roMounts []string
 	var home string
 	var logPath string
 	var uid, gid int
@@ -58,6 +59,9 @@ func DenyInit(args []string) {
 				i++
 			case "--overlay-prefix":
 				overlayPrefixes = append(overlayPrefixes, args[i+1])
+				i++
+			case "--mount-ro":
+				roMounts = append(roMounts, args[i+1])
 				i++
 			case "--home":
 				home = args[i+1]
@@ -96,6 +100,22 @@ func DenyInit(args []string) {
 		log.Printf("_deny_init: make root private: %v", err)
 	}
 
+	tmpDir := filepath.Dir(logPath)
+
+	// Jail mode: deny:/ creates an allowlist filesystem. Only explicitly
+	// mounted paths are visible; everything else is inaccessible.
+	jailMode := containsPath(denyPaths, "/")
+	if jailMode {
+		setupJail(tmpDir, roMounts, writablePaths, home)
+		var filtered []string
+		for _, d := range denyPaths {
+			if d != "/" {
+				filtered = append(filtered, d)
+			}
+		}
+		denyPaths = filtered
+	}
+
 	// Write isolation: make HOME read-only, then punch writable holes.
 	// Must happen BEFORE deny mounts so deny tmpfs overlays take precedence.
 	// Skip if HOME itself is in the writable list (user wants full HOME rw).
@@ -105,8 +125,7 @@ func DenyInit(args []string) {
 	// so new files can be created and renames work (needed for atomic writes).
 	// Prefix-matching files are persisted back to the real HOME on exit.
 	var overlayPersistFn func()
-	tmpDir := filepath.Dir(logPath)
-	if home != "" && len(writablePaths) > 0 && !containsPath(writablePaths, home) {
+	if !jailMode && home != "" && len(writablePaths) > 0 && !containsPath(writablePaths, home) {
 		if len(overlayPrefixes) > 0 {
 			overlayPersistFn = setupOverlayHome(home, writablePaths, overlayPrefixes, tmpDir)
 		}
@@ -508,4 +527,106 @@ func containsPath(paths []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// setupJail creates an allowlist filesystem using pivot_root. Starting from an
+// empty tmpfs root, it bind-mounts only the paths in roMounts (read-only) and
+// writablePaths (read-write), plus essential virtual filesystems (/proc, /dev,
+// /tmp). After pivot_root, the old root is lazily unmounted — nothing outside
+// the explicit mounts is accessible.
+func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
+	newRoot := filepath.Join(tmpDir, "newroot")
+	if err := os.MkdirAll(newRoot, 0755); err != nil {
+		log.Fatalf("_deny_init: jail mkdir newroot: %v", err)
+	}
+	if err := unix.Mount("tmpfs", newRoot, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=64m"); err != nil {
+		log.Fatalf("_deny_init: jail mount newroot: %v", err)
+	}
+	// Recreate merged-usr symlinks (/bin -> usr/bin, etc.) if the host uses them.
+	for _, link := range [][2]string{
+		{"bin", "usr/bin"}, {"sbin", "usr/sbin"}, {"lib", "usr/lib"}, {"lib64", "usr/lib64"},
+	} {
+		if target, err := os.Readlink("/" + link[0]); err == nil {
+			os.Symlink(target, filepath.Join(newRoot, link[0]))
+			log.Printf("_deny_init: jail symlink /%s -> %s", link[0], target)
+		}
+	}
+	// Essential virtual filesystems FIRST — user bind-mounts may land on top
+	// of these (e.g. a writable path under /tmp).
+	// Bind-mount host /proc rather than mounting a fresh instance. A fresh
+	// proc mount inside a non-init user namespace has restricted PID visibility,
+	// which breaks Go's uid_map writing for CLONE_NEWUSER children.
+	procPath := filepath.Join(newRoot, "proc")
+	os.MkdirAll(procPath, 0555)
+	if err := unix.Mount("/proc", procPath, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		log.Printf("_deny_init: jail bind /proc: %v", err)
+	}
+	devPath := filepath.Join(newRoot, "dev")
+	os.MkdirAll(devPath, 0755)
+	if err := unix.Mount("tmpfs", devPath, "tmpfs", unix.MS_NOSUID, "size=65536,mode=755"); err != nil {
+		log.Printf("_deny_init: jail mount /dev: %v", err)
+	}
+	for _, dev := range []string{"null", "zero", "urandom", "tty", "random"} {
+		dp := filepath.Join(devPath, dev)
+		if f, err := os.Create(dp); err == nil {
+			f.Close()
+			unix.Mount("/dev/"+dev, dp, "", unix.MS_BIND, "")
+		}
+	}
+	shmPath := filepath.Join(devPath, "shm")
+	os.MkdirAll(shmPath, 01777)
+	unix.Mount("tmpfs", shmPath, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=64m")
+	tmpPath := filepath.Join(newRoot, "tmp")
+	os.MkdirAll(tmpPath, 01777)
+	unix.Mount("tmpfs", tmpPath, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=1g")
+	// Recreate tmpDir inside jail so HOME/TMPDIR env vars resolve.
+	os.MkdirAll(filepath.Join(newRoot, tmpDir), 0755)
+	// Bind-mount read-only paths from real root.
+	for _, p := range roMounts {
+		target := filepath.Join(newRoot, p)
+		if err := os.MkdirAll(target, 0755); err != nil {
+			log.Printf("_deny_init: jail mkdir ro %s: %v", p, err)
+			continue
+		}
+		if err := unix.Mount(p, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			log.Printf("_deny_init: jail bind ro %s: %v", p, err)
+			continue
+		}
+		unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, "")
+		log.Printf("_deny_init: jail ro %s", p)
+	}
+	// Bind-mount writable paths (order matters: rw mounts override ro parents).
+	for _, p := range writablePaths {
+		target := filepath.Join(newRoot, p)
+		if err := os.MkdirAll(target, 0755); err != nil {
+			log.Printf("_deny_init: jail mkdir rw %s: %v", p, err)
+			continue
+		}
+		if err := unix.Mount(p, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			log.Printf("_deny_init: jail bind rw %s: %v", p, err)
+			continue
+		}
+		log.Printf("_deny_init: jail rw %s", p)
+	}
+	// Bind-mount home directory (writable).
+	if home != "" {
+		target := filepath.Join(newRoot, home)
+		if err := os.MkdirAll(target, 0755); err != nil {
+			log.Printf("_deny_init: jail mkdir home %s: %v", home, err)
+		} else if err := unix.Mount(home, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			log.Printf("_deny_init: jail bind home %s: %v", home, err)
+		} else {
+			log.Printf("_deny_init: jail home %s", home)
+		}
+	}
+	// pivot_root: swap new root into place, old root at .pivot.
+	pivotDir := filepath.Join(newRoot, ".pivot")
+	os.MkdirAll(pivotDir, 0700)
+	if err := unix.PivotRoot(newRoot, pivotDir); err != nil {
+		log.Fatalf("_deny_init: pivot_root: %v", err)
+	}
+	os.Chdir("/")
+	unix.Unmount("/.pivot", unix.MNT_DETACH)
+	os.Remove("/.pivot")
+	log.Printf("_deny_init: jail active (ro=%d rw=%d home=%s)", len(roMounts), len(writablePaths), home)
 }

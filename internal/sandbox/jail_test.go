@@ -13,6 +13,16 @@ import (
 	"testing"
 )
 
+// TestMain handles re-exec as the _deny_init wrapper. Without this, the test
+// binary ignores _deny_init and the wrapper exits without setting up isolation.
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "_deny_init" {
+		DenyInit(os.Args[2:])
+		return
+	}
+	os.Exit(m.Run())
+}
+
 // runJail creates a sandbox and runs a shell command, returning stdout+stderr and error.
 func runJail(t *testing.T, cfg Config, shellCmd string) (string, error) {
 	t.Helper()
@@ -296,9 +306,10 @@ func TestJail_DefaultDenyList(t *testing.T) {
 	}
 
 	for _, dp := range denyPaths {
-		_, err := runJail(t, cfg, "ls "+dp)
-		if err == nil {
-			t.Errorf("listing denied path %s should fail", dp)
+		out, _ := runJail(t, cfg, "ls "+dp+" 2>/dev/null")
+		// Deny mounts an empty tmpfs (or tmpfs with just known_hosts for .ssh).
+		if out != "" && out != "known_hosts" {
+			t.Errorf("denied path %s should be empty (or only known_hosts), got: %s", dp, out)
 		}
 	}
 }
@@ -355,6 +366,144 @@ func TestJail_ProxyWildcard(t *testing.T) {
 	}
 	if proxy.allowed("evil.com:443") {
 		t.Error("evil.com should not match *.anthropic.com")
+	}
+}
+
+func TestJail_RootDeny_OnlyAllowedPaths(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	allowed := t.TempDir()
+	os.WriteFile(filepath.Join(allowed, "visible.txt"), []byte("visible"), 0644)
+	secret := t.TempDir()
+	os.WriteFile(filepath.Join(secret, "secret.txt"), []byte("hidden"), 0644)
+
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/"},
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+			{Source: "/etc", Target: "/etc", ReadOnly: true},
+			{Source: allowed, Target: allowed, ReadOnly: true},
+		},
+	}
+	out, err := runJail(t, cfg, "cat "+filepath.Join(allowed, "visible.txt"))
+	if err != nil {
+		t.Fatalf("read allowed path should succeed: %v (output: %s)", err, out)
+	}
+	if out != "visible" {
+		t.Errorf("output = %q, want %q", out, "visible")
+	}
+	_, err = runJail(t, cfg, "cat "+filepath.Join(secret, "secret.txt"))
+	if err == nil {
+		t.Fatal("read outside allowed paths should fail")
+	}
+}
+
+func TestJail_RootDeny_SymlinkRecreation(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/"},
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+		},
+	}
+	// /bin should be a symlink to usr/bin on merged-usr systems
+	out, err := runJail(t, cfg, "readlink /bin 2>/dev/null || echo not-a-symlink")
+	if err != nil {
+		t.Fatalf("readlink /bin: %v", err)
+	}
+	// On merged-usr, expect "usr/bin"; on non-merged, "not-a-symlink"
+	hostTarget, hostErr := os.Readlink("/bin")
+	if hostErr == nil {
+		if out != hostTarget {
+			t.Errorf("/bin symlink = %q in jail, want %q (matching host)", out, hostTarget)
+		}
+	}
+}
+
+func TestJail_RootDeny_DevSetup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/"},
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+		},
+	}
+	// Verify /proc and /dev/null exist
+	out, err := runJail(t, cfg, "test -d /proc && test -c /dev/null && test -c /dev/urandom && echo ok")
+	if err != nil {
+		t.Fatalf("dev setup check failed: %v (output: %s)", err, out)
+	}
+	if out != "ok" {
+		t.Errorf("output = %q, want ok", out)
+	}
+}
+
+func TestJail_RootDeny_WritablePaths(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	writable := t.TempDir()
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/"},
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+			{Source: writable, Target: writable},
+		},
+	}
+	out, err := runJail(t, cfg, "echo ok > "+writable+"/test.txt && cat "+writable+"/test.txt")
+	if err != nil {
+		t.Fatalf("write to writable path should succeed: %v (output: %s)", err, out)
+	}
+	if out != "ok" {
+		t.Errorf("output = %q, want ok", out)
+	}
+	// Verify ro paths are actually read-only
+	_, err = runJail(t, cfg, "touch /usr/test-rw 2>&1")
+	if err == nil {
+		os.Remove("/usr/test-rw")
+		t.Fatal("write to ro path should fail")
+	}
+}
+
+func TestJail_RootDeny_DenyWithinJail(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	roDir := t.TempDir()
+	secretFile := filepath.Join(roDir, "secret.txt")
+	os.WriteFile(secretFile, []byte("secret"), 0644)
+	normalFile := filepath.Join(roDir, "normal.txt")
+	os.WriteFile(normalFile, []byte("normal"), 0644)
+
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/", secretFile},
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+			{Source: roDir, Target: roDir, ReadOnly: true},
+		},
+	}
+	// Normal file should be readable
+	out, err := runJail(t, cfg, "cat "+normalFile)
+	if err != nil {
+		t.Fatalf("read normal file should succeed: %v (output: %s)", err, out)
+	}
+	if out != "normal" {
+		t.Errorf("output = %q, want normal", out)
+	}
+	// Secret file should be denied (bind /dev/null within jail — reads empty)
+	out2, _ := runJail(t, cfg, "cat "+secretFile)
+	if strings.Contains(out2, "secret") {
+		t.Fatal("denied file content should not be readable in jail")
 	}
 }
 

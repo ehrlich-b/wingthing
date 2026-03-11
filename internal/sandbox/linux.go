@@ -182,6 +182,17 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		for _, p := range writablePaths {
 			wrapArgs = append(wrapArgs, "--writable", p)
 		}
+		// In jail mode (deny:/), pass read-only mount paths for allowlist setup.
+		for _, d := range s.cfg.Deny {
+			if d == "/" {
+				for _, m := range s.cfg.Mounts {
+					if m.ReadOnly && m.Source != "/" {
+						wrapArgs = append(wrapArgs, "--mount-ro", m.Source)
+					}
+				}
+				break
+			}
+		}
 		// UseRegex mounts need overlayfs on HOME (Linux can't do prefix-based
 		// write permissions with bind mounts — new file creation and renames
 		// in the RO parent directory fail with EROFS).
