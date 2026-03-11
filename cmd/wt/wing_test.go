@@ -238,6 +238,21 @@ func TestFilterProjectsByPaths(t *testing.T) {
 	}
 }
 
+func TestFilterProjectsExact(t *testing.T) {
+	projects := []ws.WingProject{
+		{Name: "eng", Path: "/opt/wingthing/eng"},
+		{Name: "stu", Path: "/opt/wingthing/eng/stu"},
+		{Name: "support", Path: "/opt/wingthing/support"},
+	}
+	filtered := filterProjectsExact(projects, []string{"/opt/wingthing/eng"})
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1, got %d: %v", len(filtered), projectNames(filtered))
+	}
+	if filtered[0].Name != "eng" {
+		t.Errorf("expected eng, got %s", filtered[0].Name)
+	}
+}
+
 func TestIsUnderPaths(t *testing.T) {
 	paths := []string{"/home/user/repos", "/home/user/work"}
 

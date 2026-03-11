@@ -434,6 +434,17 @@ func isUnderPaths(path string, resolvedPaths []string) bool {
 	return false
 }
 
+// filterProjectsExact returns only projects whose paths exactly match one of the resolved paths.
+func filterProjectsExact(projects []ws.WingProject, resolvedPaths []string) []ws.WingProject {
+	var out []ws.WingProject
+	for _, p := range projects {
+		if isExactPath(p.Path, resolvedPaths) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // isExactPath returns true if path exactly matches one of the configured paths.
 func isExactPath(path string, paths []string) bool {
 	cleaned := filepath.Clean(path)
@@ -3763,9 +3774,9 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	case "wing.info":
 		projects := client.Projects
-		if isMemberFiltered(req) {
-			userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
-			projects = filterProjectsByPaths(projects, userPaths)
+		userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
+		if len(userPaths) > 0 {
+			projects = filterProjectsExact(projects, userPaths)
 		}
 		resp := map[string]any{
 			"hostname":      client.Hostname,
