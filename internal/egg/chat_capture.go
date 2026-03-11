@@ -73,6 +73,18 @@ func CaptureSessionHistory(agent, cwd, eggDir, home string, startedAfter time.Ti
 	return nil
 }
 
+// FindLiveSessionFile locates the live agent JSONL file for an active session.
+// Returns the file path and agent name, or empty strings if not found.
+func FindLiveSessionFile(agent, cwd, home string) (string, error) {
+	profile := Profile(agent)
+	if profile.SessionDir == "" {
+		return "", nil
+	}
+	// Use zero time to find any file (we want the most recent)
+	path, _, err := findAgentSession(agent, cwd, home, profile.SessionDir, time.Time{})
+	return path, err
+}
+
 // findAgentSession locates the agent's most recent session file modified after startedAfter.
 func findAgentSession(agent, cwd, home, sessionDir string, startedAfter time.Time) (filePath, sessionID string, err error) {
 	switch agent {

@@ -5,9 +5,13 @@ import { clearTermBuffer } from './terminal.js';
 import { clearNotification } from './notify.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { loadHome, saveSessionCache, setEggOrder } from './data.js';
+import { startChatPolling, stopChatPolling, isMobileChatDefault, setViewPreference } from './chat-view.js';
 
 export function showHome(pushHistory) {
     S.activeView = 'home';
+    stopChatPolling();
+    setChatViewActive(false);
+    hideViewToggle();
     document.getElementById('app').classList.remove('in-terminal');
     DOM.homeSection.style.display = '';
     DOM.terminalSection.style.display = 'none';
@@ -30,7 +34,7 @@ export function showHome(pushHistory) {
     }
 }
 
-export function showTerminal() {
+export function showTerminal(chatMode) {
     S.activeView = 'terminal';
     document.getElementById('app').classList.add('in-terminal');
     DOM.homeSection.style.display = 'none';
@@ -38,10 +42,62 @@ export function showTerminal() {
     DOM.chatSection.style.display = 'none';
     DOM.wingDetailSection.style.display = 'none';
     DOM.accountSection.style.display = 'none';
-    if (S.term && S.fitAddon) {
-        S.fitAddon.fit();
-        S.term.focus();
+    var useChat = chatMode !== undefined ? chatMode : isMobileChatDefault();
+    setChatViewActive(useChat);
+    if (useChat) {
+        startChatPolling();
+    } else {
+        stopChatPolling();
+        if (S.term && S.fitAddon) {
+            S.fitAddon.fit();
+            S.term.focus();
+        }
     }
+    updateViewToggle();
+}
+
+export function toggleChatView() {
+    var section = document.getElementById('terminal-section');
+    var isChat = section.classList.contains('chat-active');
+    var newMode = !isChat;
+    setChatViewActive(newMode);
+    setViewPreference(newMode ? 'chat' : 'terminal');
+    if (newMode) {
+        startChatPolling();
+    } else {
+        stopChatPolling();
+        if (S.term && S.fitAddon) {
+            S.fitAddon.fit();
+            S.term.focus();
+        }
+    }
+    updateViewToggle();
+}
+
+function setChatViewActive(active) {
+    var section = document.getElementById('terminal-section');
+    if (active) {
+        section.classList.add('chat-active');
+    } else {
+        section.classList.remove('chat-active');
+    }
+}
+
+function updateViewToggle() {
+    var btn = document.getElementById('view-toggle-btn');
+    if (!btn) return;
+    if (S.activeView !== 'terminal') {
+        btn.style.display = 'none';
+        return;
+    }
+    btn.style.display = '';
+    var section = document.getElementById('terminal-section');
+    btn.textContent = section.classList.contains('chat-active') ? 'terminal' : 'chat';
+}
+
+function hideViewToggle() {
+    var btn = document.getElementById('view-toggle-btn');
+    if (btn) btn.style.display = 'none';
 }
 
 export function switchToSession(sessionId, pushHistory) {
@@ -58,6 +114,9 @@ export function switchToSession(sessionId, pushHistory) {
 export function navigateToWingDetail(wingId, pushHistory) {
     S.activeView = 'wing-detail';
     S.currentWingId = wingId;
+    stopChatPolling();
+    setChatViewActive(false);
+    hideViewToggle();
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = 'none';
     DOM.chatSection.style.display = 'none';
@@ -76,6 +135,9 @@ export function navigateToAccount(pushHistory, orgSlug) {
     if (!S.currentUser) return;
     S.activeView = 'account';
     S.accountExpandSlug = orgSlug || null;
+    stopChatPolling();
+    setChatViewActive(false);
+    hideViewToggle();
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = 'none';
     DOM.chatSection.style.display = 'none';

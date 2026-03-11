@@ -2,7 +2,8 @@ import '@xterm/xterm/css/xterm.css';
 import { S, DOM, initDOM } from './state.js';
 import { loginRedirect } from './helpers.js';
 import { initTerminal, sendPTYInput } from './terminal.js';
-import { showHome, showTerminal, switchToSession, navigateToWingDetail, navigateToAccount, deleteSession } from './nav.js';
+import { showHome, showTerminal, switchToSession, navigateToWingDetail, navigateToAccount, deleteSession, toggleChatView } from './nav.js';
+import { initChatView } from './chat-view.js';
 import { disconnectPTY, retryReconnect, attachPTY, handlePTYPasskey } from './pty.js';
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
 import { connectAppWS } from './dashboard.js';
@@ -73,6 +74,15 @@ async function init() {
             handlePTYPasskey();
         });
     }
+
+    // View toggle (chat/terminal)
+    var viewToggleBtn = document.getElementById('view-toggle-btn');
+    if (viewToggleBtn) {
+        viewToggleBtn.addEventListener('click', toggleChatView);
+    }
+
+    // Init chat view
+    initChatView();
 
     // Type overlay (mobile text input)
     var typeOverlay = document.getElementById('type-overlay');
