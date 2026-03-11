@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -504,6 +505,149 @@ func TestJail_RootDeny_DenyWithinJail(t *testing.T) {
 	out2, _ := runJail(t, cfg, "cat "+secretFile)
 	if strings.Contains(out2, "secret") {
 		t.Fatal("denied file content should not be readable in jail")
+	}
+}
+
+func TestJail_RootDeny_FileMountRO(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	// Create a file (not directory) to mount read-only into the jail.
+	dir := t.TempDir()
+	src := filepath.Join(dir, "config.txt")
+	os.WriteFile(src, []byte("file-content"), 0644)
+
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/"},
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+			{Source: src, Target: src, ReadOnly: true},
+		},
+	}
+	out, err := runJail(t, cfg, "cat "+src)
+	if err != nil {
+		t.Fatalf("read file mount should succeed: %v (output: %s)", err, out)
+	}
+	if out != "file-content" {
+		t.Errorf("output = %q, want %q", out, "file-content")
+	}
+	// Writing to ro file mount should fail
+	_, err = runJail(t, cfg, "echo nope > "+src+" 2>&1")
+	if err == nil {
+		t.Fatal("write to ro file mount should fail")
+	}
+}
+
+func TestJail_RootDeny_FileMountRW(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "data.txt")
+	os.WriteFile(src, []byte("original"), 0644)
+
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/"},
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+			{Source: src, Target: src},
+		},
+	}
+	out, err := runJail(t, cfg, "echo updated > "+src+" && cat "+src)
+	if err != nil {
+		t.Fatalf("write to rw file mount should succeed: %v (output: %s)", err, out)
+	}
+	if out != "updated" {
+		t.Errorf("output = %q, want %q", out, "updated")
+	}
+}
+
+func TestJail_RootDeny_SocketMount(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	// Create a Unix socket, mount it into jail, verify connectivity.
+	sockDir := t.TempDir()
+	sockPath := filepath.Join(sockDir, "test.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	os.Chmod(sockPath, 0666)
+	// Echo server: accepts one connection, reads, writes back "ok:"+data.
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 1024)
+		n, _ := conn.Read(buf)
+		conn.Write([]byte("ok:" + string(buf[:n])))
+	}()
+
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/"},
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+			{Source: sockPath, Target: sockPath},
+		},
+	}
+	// Use python to connect to the socket (more portable than socat in jail)
+	pycmd := fmt.Sprintf(`python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect('%s')
+s.sendall(b'ping')
+s.shutdown(socket.SHUT_WR)
+print(s.recv(1024).decode(), end='')
+s.close()
+"`, sockPath)
+	out, err := runJail(t, cfg, pycmd)
+	if err != nil {
+		t.Fatalf("socket connect in jail should succeed: %v (output: %s)", err, out)
+	}
+	if out != "ok:ping" {
+		t.Errorf("socket response = %q, want %q", out, "ok:ping")
+	}
+}
+
+func TestJail_RootDeny_CwdPreserved(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	writable := t.TempDir()
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/"},
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+			{Source: writable, Target: writable},
+		},
+	}
+	// The sandbox sets cmd.Dir to a writable path. Verify pwd resolves.
+	sb, err := newPlatform(cfg)
+	if err != nil {
+		t.Fatalf("newPlatform: %v", err)
+	}
+	defer sb.Destroy()
+	cmd, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", "pwd"})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	cmd.Dir = writable
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Run: %v (output: %s)", err, out.String())
+	}
+	if strings.TrimSpace(out.String()) != writable {
+		t.Errorf("cwd = %q, want %q", strings.TrimSpace(out.String()), writable)
 	}
 }
 

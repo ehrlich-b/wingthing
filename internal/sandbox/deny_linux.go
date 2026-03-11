@@ -584,8 +584,8 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 	// Bind-mount read-only paths from real root.
 	for _, p := range roMounts {
 		target := filepath.Join(newRoot, p)
-		if err := os.MkdirAll(target, 0755); err != nil {
-			log.Printf("_deny_init: jail mkdir ro %s: %v", p, err)
+		if err := jailMkTarget(p, target); err != nil {
+			log.Printf("_deny_init: jail mktarget ro %s: %v", p, err)
 			continue
 		}
 		if err := unix.Mount(p, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
@@ -598,8 +598,8 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 	// Bind-mount writable paths (order matters: rw mounts override ro parents).
 	for _, p := range writablePaths {
 		target := filepath.Join(newRoot, p)
-		if err := os.MkdirAll(target, 0755); err != nil {
-			log.Printf("_deny_init: jail mkdir rw %s: %v", p, err)
+		if err := jailMkTarget(p, target); err != nil {
+			log.Printf("_deny_init: jail mktarget rw %s: %v", p, err)
 			continue
 		}
 		if err := unix.Mount(p, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
@@ -638,4 +638,25 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 	unix.Unmount("/.pivot", unix.MNT_DETACH)
 	os.Remove("/.pivot")
 	log.Printf("_deny_init: jail active (ro=%d rw=%d home=%s)", len(roMounts), len(writablePaths), home)
+}
+
+// jailMkTarget creates the bind-mount target inside the jail root.
+// For directories it creates the full path; for files/sockets it creates the
+// parent directory and an empty file as the mount point.
+func jailMkTarget(src, target string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return os.MkdirAll(target, 0755)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	f, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
