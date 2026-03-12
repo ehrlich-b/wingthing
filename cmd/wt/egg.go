@@ -648,12 +648,15 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			}
 		}
 	}
-	// Write ANTHROPIC_API_KEY to a session-scoped file and use apiKeyHelper
-	// to read it. The key never enters the agent's environment.
+	// Write ANTHROPIC_API_KEY to a stable file and use apiKeyHelper to read
+	// it. The key never enters the agent's environment. The file lives at
+	// effectiveHome/.anthropic_key (not per-session) so the settings.json
+	// path doesn't go stale when sessions end or race with each other.
 	if agentName == "claude" {
 		if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
 			delete(envMap, "ANTHROPIC_API_KEY")
-			keyFile := filepath.Join(dir, "api_key")
+			keyFile := filepath.Join(effectiveHome, ".anthropic_key")
+			os.Remove(keyFile) // remove old 0400 file so WriteFile can create fresh
 			os.WriteFile(keyFile, []byte(v), 0400)
 			agentProfile := egg.Profile(agentName)
 			if agentProfile.SettingsFile != "" {
