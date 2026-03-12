@@ -3185,8 +3185,9 @@ authDone:
 	var toolNames []string
 	if len(tools) > 0 {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
-		os.MkdirAll(eggDir, 0700)
-		toolSocketPath = filepath.Join(eggDir, "tool.sock")
+		toolsDir := filepath.Join(eggDir, ".tools")
+		os.MkdirAll(toolsDir, 0700)
+		toolSocketPath = filepath.Join(toolsDir, "tool.sock")
 		var tlErr error
 		toolListener, tlErr = egg.NewToolListener(toolSocketPath, tools)
 		if tlErr != nil {

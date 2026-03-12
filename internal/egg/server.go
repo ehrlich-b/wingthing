@@ -549,16 +549,25 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		envMap["PATH"] = shimDir + ":/usr/bin:/bin"
 	}
 
-	// Generate tool shims for privileged tools (called via wt tool-call)
+	// Generate tool shims for privileged tools (called via wt tool-call).
+	// Tool shims live in the .tools dir (parent of ToolSocketPath) which gets
+	// mounted read-only into the sandbox — separate from the session dir so
+	// audit logs, chat data, etc. are never exposed to the sandboxed agent.
 	if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
+		toolsDir := filepath.Dir(rc.ToolSocketPath)
 		envMap["WT_TOOL_SOCKET"] = rc.ToolSocketPath
 		wtBin, _ := os.Executable()
 		if resolved, err := filepath.EvalSymlinks(wtBin); err == nil {
 			wtBin = resolved
 		}
 		for _, name := range rc.ToolNames {
-			toolShim := fmt.Sprintf("#!/bin/sh\nexec %s tool-call %s \"$@\"\n", wtBin, name)
-			os.WriteFile(filepath.Join(shimDir, name), []byte(toolShim), 0755)
+			toolShim := fmt.Sprintf("#!/bin/sh\nexec \"%s\" tool-call %s \"$@\"\n", wtBin, name)
+			os.WriteFile(filepath.Join(toolsDir, name), []byte(toolShim), 0755)
+		}
+		if path, ok := envMap["PATH"]; ok {
+			envMap["PATH"] = toolsDir + ":" + path
+		} else {
+			envMap["PATH"] = toolsDir + ":" + shimDir + ":/usr/bin:/bin"
 		}
 	}
 
@@ -611,15 +620,18 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			}
 		}
 
-		// Mount wt binary and session dir for tool shim access in jail mode
+		// Mount wt binary dir and .tools dir for tool shim access in jail mode.
+		// Only .tools is mounted — the rest of the session dir (audit logs, chat
+		// data) stays invisible to the sandboxed agent.
 		if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
 			wtBin, _ := os.Executable()
 			if resolved, err := filepath.EvalSymlinks(wtBin); err == nil {
 				wtBin = resolved
 			}
 			wtDir := filepath.Dir(wtBin)
+			toolsDir := filepath.Dir(rc.ToolSocketPath)
 			mounts = append(mounts, sandbox.Mount{Source: wtDir, Target: wtDir, ReadOnly: true})
-			mounts = append(mounts, sandbox.Mount{Source: s.dir, Target: s.dir})
+			mounts = append(mounts, sandbox.Mount{Source: toolsDir, Target: toolsDir, ReadOnly: true})
 		}
 
 		proxyPort := 0

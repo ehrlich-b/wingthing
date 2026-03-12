@@ -340,6 +340,137 @@ func TestFormatUserIdentity(t *testing.T) {
 	}
 }
 
+func TestSetupAPIKeyHelper_RemovesKeyFromEnv(t *testing.T) {
+	home := t.TempDir()
+	envMap := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test123", "OTHER": "keep"}
+	setupAPIKeyHelper("claude", envMap, home)
+	if _, ok := envMap["ANTHROPIC_API_KEY"]; ok {
+		t.Error("ANTHROPIC_API_KEY should be removed from envMap")
+	}
+	if envMap["OTHER"] != "keep" {
+		t.Error("other env vars should be preserved")
+	}
+}
+
+func TestSetupAPIKeyHelper_WritesKeyFile(t *testing.T) {
+	home := t.TempDir()
+	envMap := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-secret"}
+	setupAPIKeyHelper("claude", envMap, home)
+	keyFile := filepath.Join(home, ".anthropic_key")
+	data, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("key file not written: %v", err)
+	}
+	if string(data) != "sk-ant-secret" {
+		t.Errorf("key file = %q, want sk-ant-secret", string(data))
+	}
+	info, _ := os.Stat(keyFile)
+	if info.Mode().Perm() != 0400 {
+		t.Errorf("key file perm = %o, want 0400", info.Mode().Perm())
+	}
+}
+
+func TestSetupAPIKeyHelper_SetsApiKeyHelperInSettings(t *testing.T) {
+	home := t.TempDir()
+	envMap := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"}
+	setupAPIKeyHelper("claude", envMap, home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("settings not written: %v", err)
+	}
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+	want := "cat " + filepath.Join(home, ".anthropic_key")
+	if got := settings["apiKeyHelper"]; got != want {
+		t.Errorf("apiKeyHelper = %q, want %q", got, want)
+	}
+}
+
+func TestSetupAPIKeyHelper_PreservesExistingSettings(t *testing.T) {
+	home := t.TempDir()
+	settingsDir := filepath.Join(home, ".claude")
+	os.MkdirAll(settingsDir, 0700)
+	existing := map[string]any{"theme": "dark", "permissions": map[string]any{"allow": true}}
+	data, _ := json.Marshal(existing)
+	os.WriteFile(filepath.Join(settingsDir, "settings.json"), data, 0644)
+	envMap := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"}
+	setupAPIKeyHelper("claude", envMap, home)
+	raw, _ := os.ReadFile(filepath.Join(settingsDir, "settings.json"))
+	var settings map[string]any
+	json.Unmarshal(raw, &settings)
+	if settings["theme"] != "dark" {
+		t.Errorf("existing theme setting clobbered, got %v", settings["theme"])
+	}
+	if settings["apiKeyHelper"] == nil {
+		t.Error("apiKeyHelper not set")
+	}
+}
+
+func TestSetupAPIKeyHelper_StablePath_NoSessionRace(t *testing.T) {
+	// Two "sessions" calling setupAPIKeyHelper should write to the same file,
+	// not per-session paths. This is the v0.128.0 bug fix.
+	home := t.TempDir()
+	env1 := map[string]string{"ANTHROPIC_API_KEY": "key-session-1"}
+	env2 := map[string]string{"ANTHROPIC_API_KEY": "key-session-2"}
+	setupAPIKeyHelper("claude", env1, home)
+	setupAPIKeyHelper("claude", env2, home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	raw, _ := os.ReadFile(settingsPath)
+	var settings map[string]any
+	json.Unmarshal(raw, &settings)
+	helper := settings["apiKeyHelper"].(string)
+	// Both sessions should point to the same stable path (no session ID in path)
+	wantPath := filepath.Join(home, ".anthropic_key")
+	if helper != "cat "+wantPath {
+		t.Errorf("apiKeyHelper = %q, want stable path %q", helper, "cat "+wantPath)
+	}
+	// The key file should contain the last writer's key (both are valid,
+	// the point is the PATH is stable, not per-session)
+	data, _ := os.ReadFile(wantPath)
+	if string(data) != "key-session-2" {
+		t.Errorf("key file = %q, want key-session-2", string(data))
+	}
+}
+
+func TestSetupAPIKeyHelper_OverwritesOldReadOnlyKeyFile(t *testing.T) {
+	home := t.TempDir()
+	keyFile := filepath.Join(home, ".anthropic_key")
+	os.WriteFile(keyFile, []byte("old-key"), 0400)
+	envMap := map[string]string{"ANTHROPIC_API_KEY": "new-key"}
+	setupAPIKeyHelper("claude", envMap, home)
+	data, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("key file gone after overwrite: %v", err)
+	}
+	if string(data) != "new-key" {
+		t.Errorf("key file = %q, want new-key", string(data))
+	}
+}
+
+func TestSetupAPIKeyHelper_NonClaudeAgent_Noop(t *testing.T) {
+	home := t.TempDir()
+	envMap := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"}
+	setupAPIKeyHelper("codex", envMap, home)
+	if _, ok := envMap["ANTHROPIC_API_KEY"]; !ok {
+		t.Error("non-claude agent should not remove ANTHROPIC_API_KEY")
+	}
+	keyFile := filepath.Join(home, ".anthropic_key")
+	if _, err := os.Stat(keyFile); err == nil {
+		t.Error("key file should not be created for non-claude agent")
+	}
+}
+
+func TestSetupAPIKeyHelper_NoKey_Noop(t *testing.T) {
+	home := t.TempDir()
+	envMap := map[string]string{"OTHER": "val"}
+	setupAPIKeyHelper("claude", envMap, home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if _, err := os.Stat(settingsPath); err == nil {
+		t.Error("settings should not be created when no API key present")
+	}
+}
+
 func TestResolveRelayHTTPURL(t *testing.T) {
 	tests := []struct {
 		name     string

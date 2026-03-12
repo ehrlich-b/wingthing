@@ -665,27 +665,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// it. The key never enters the agent's environment. The file lives at
 	// effectiveHome/.anthropic_key (not per-session) so the settings.json
 	// path doesn't go stale when sessions end or race with each other.
-	if agentName == "claude" {
-		if v, ok := envMap["ANTHROPIC_API_KEY"]; ok {
-			delete(envMap, "ANTHROPIC_API_KEY")
-			keyFile := filepath.Join(effectiveHome, ".anthropic_key")
-			os.Remove(keyFile) // remove old 0400 file so WriteFile can create fresh
-			os.WriteFile(keyFile, []byte(v), 0400)
-			agentProfile := egg.Profile(agentName)
-			if agentProfile.SettingsFile != "" {
-				settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
-				os.MkdirAll(filepath.Dir(settingsDst), 0700)
-				settings := make(map[string]any)
-				if data, err := os.ReadFile(settingsDst); err == nil {
-					json.Unmarshal(data, &settings)
-				}
-				settings["apiKeyHelper"] = "cat " + keyFile
-				if data, err := json.MarshalIndent(settings, "", "  "); err == nil {
-					os.WriteFile(settingsDst, append(data, '\n'), 0644)
-				}
-			}
-		}
-	}
+	setupAPIKeyHelper(agentName, envMap, effectiveHome)
 	for k, v := range envMap {
 		// Skip WT_ prefix — reserved for session identity injection
 		if strings.HasPrefix(k, "WT_") {
@@ -828,4 +808,36 @@ func parseMemFlag(s string) uint64 {
 		return 0
 	}
 	return n * multiplier
+}
+
+// setupAPIKeyHelper moves ANTHROPIC_API_KEY out of the environment and into a
+// stable file + apiKeyHelper setting. This prevents the key from entering the
+// agent's env and avoids the v0.128.0 race where per-session paths in
+// settings.json went stale.
+func setupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome string) {
+	if agentName != "claude" {
+		return
+	}
+	v, ok := envMap["ANTHROPIC_API_KEY"]
+	if !ok {
+		return
+	}
+	delete(envMap, "ANTHROPIC_API_KEY")
+	keyFile := filepath.Join(effectiveHome, ".anthropic_key")
+	os.Remove(keyFile) // remove old 0400 file so WriteFile can create fresh
+	os.WriteFile(keyFile, []byte(v), 0400)
+	agentProfile := egg.Profile(agentName)
+	if agentProfile.SettingsFile == "" {
+		return
+	}
+	settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
+	os.MkdirAll(filepath.Dir(settingsDst), 0700)
+	settings := make(map[string]any)
+	if data, err := os.ReadFile(settingsDst); err == nil {
+		json.Unmarshal(data, &settings)
+	}
+	settings["apiKeyHelper"] = "cat " + keyFile
+	if data, err := json.MarshalIndent(settings, "", "  "); err == nil {
+		os.WriteFile(settingsDst, append(data, '\n'), 0644)
+	}
 }
