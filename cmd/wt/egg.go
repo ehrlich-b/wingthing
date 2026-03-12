@@ -79,6 +79,8 @@ func eggRunCmd() *cobra.Command {
 		idleTimeoutFlag string
 		dangerouslySkipPermissions bool
 		resumeSessionFlag string
+		toolNamesFlag []string
+		toolSocketFlag string
 	)
 
 	cmd := &cobra.Command{
@@ -146,6 +148,8 @@ func eggRunCmd() *cobra.Command {
 				UserHome:        userHomeFlag,
 				IdleTimeout:     idleTimeout,
 				ResumeSessionID: resumeSessionFlag,
+				ToolNames:       toolNamesFlag,
+				ToolSocketPath:  toolSocketFlag,
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -189,6 +193,8 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&userHomeFlag, "user-home", "", "per-user home directory (internal)")
 	cmd.Flags().StringVar(&idleTimeoutFlag, "idle-timeout", "", "idle timeout duration (e.g. 4h)")
 	cmd.Flags().StringVar(&resumeSessionFlag, "resume-session", "", "agent session ID to resume (internal)")
+	cmd.Flags().StringArrayVar(&toolNamesFlag, "tool-name", nil, "privileged tool names (internal)")
+	cmd.Flags().StringVar(&toolSocketFlag, "tool-socket", "", "tool socket path (internal)")
 	cmd.MarkFlagRequired("session-id")
 
 	return cmd
@@ -372,7 +378,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	}
 
 	// Spawn egg as child process
-	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0, agentResumeID)
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0, spawnEggOpts{ResumeSessionID: agentResumeID})
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
@@ -505,8 +511,15 @@ func userHash(email string) string {
 	return hex.EncodeToString(h[:])[:12]
 }
 
+// spawnEggOpts holds optional parameters for spawnEgg.
+type spawnEggOpts struct {
+	ResumeSessionID string
+	ToolNames       []string
+	ToolSocketPath  string
+}
+
 // spawnEgg starts a per-session egg child process and returns a connected client.
-func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration, resumeSessionID ...string) (*egg.Client, error) {
+func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration, opts ...spawnEggOpts) (*egg.Client, error) {
 	// Pre-flight: verify the sandbox can work before spawning a child process.
 	// Catches AppArmor userns restrictions, missing sysctl, etc. with a clear
 	// error instead of a silent 5s timeout.
@@ -705,8 +718,18 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if idleTimeout > 0 {
 		args = append(args, "--idle-timeout", idleTimeout.String())
 	}
-	if len(resumeSessionID) > 0 && resumeSessionID[0] != "" {
-		args = append(args, "--resume-session", resumeSessionID[0])
+	var o spawnEggOpts
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	if o.ResumeSessionID != "" {
+		args = append(args, "--resume-session", o.ResumeSessionID)
+	}
+	if o.ToolSocketPath != "" && len(o.ToolNames) > 0 {
+		args = append(args, "--tool-socket", o.ToolSocketPath)
+		for _, tn := range o.ToolNames {
+			args = append(args, "--tool-name", tn)
+		}
 	}
 
 	// Serialize rendered config as YAML for status RPC

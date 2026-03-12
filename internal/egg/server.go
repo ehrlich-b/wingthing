@@ -109,6 +109,8 @@ type RunConfig struct {
 	UserHome                   string // per-user home directory (relay sessions only)
 	IdleTimeout                time.Duration // 0 = disabled; self-terminate after this much idle
 	ResumeSessionID            string // agent session ID to resume (from chat.meta)
+	ToolNames                  []string // names of privileged tools (for shim generation)
+	ToolSocketPath             string   // path to tool.sock (set by wing, empty = no tools)
 }
 
 // replayBuffer is an append-only (bounded) log of PTY output.
@@ -553,6 +555,19 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		envMap["PATH"] = shimDir + ":/usr/bin:/bin"
 	}
 
+	// Generate tool shims for privileged tools (called via wt tool-call)
+	if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
+		envMap["WT_TOOL_SOCKET"] = rc.ToolSocketPath
+		wtBin, _ := os.Executable()
+		if resolved, err := filepath.EvalSymlinks(wtBin); err == nil {
+			wtBin = resolved
+		}
+		for _, name := range rc.ToolNames {
+			toolShim := fmt.Sprintf("#!/bin/sh\nexec %s tool-call %s \"$@\"\n", wtBin, name)
+			os.WriteFile(filepath.Join(shimDir, name), []byte(toolShim), 0755)
+		}
+	}
+
 	// Build envSlice AFTER proxy setup so HTTPS_PROXY etc. are included
 	var envSlice []string
 	for k, v := range envMap {
@@ -602,25 +617,42 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			}
 		}
 
+		// Mount wt binary and session dir for tool shim access in jail mode
+		if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
+			wtBin, _ := os.Executable()
+			if resolved, err := filepath.EvalSymlinks(wtBin); err == nil {
+				wtBin = resolved
+			}
+			wtDir := filepath.Dir(wtBin)
+			mounts = append(mounts, sandbox.Mount{Source: wtDir, Target: wtDir, ReadOnly: true})
+			mounts = append(mounts, sandbox.Mount{Source: s.dir, Target: s.dir})
+		}
+
 		proxyPort := 0
 		if domainProxy != nil {
 			proxyPort = domainProxy.Port()
 		}
 
+		var allowSockets []string
+		if rc.ToolSocketPath != "" {
+			allowSockets = append(allowSockets, rc.ToolSocketPath)
+		}
+
 		sbCfg := sandbox.Config{
-			Mounts:      mounts,
-			Deny:        deny,
-			DenyWrite:   denyWrite,
-			NetworkNeed: netNeed,
-			Domains:     mergedDomains,
-			ProxyPort:   proxyPort,
-			CPULimit:    rc.CPULimit,
-			MemLimit:    rc.MemLimit,
-			MaxFDs:      rc.MaxFDs,
-			PidLimit:    rc.PidLimit,
-			SessionID:   sessionID,
-			UserHome:    rc.UserHome,
-			Trace:       rc.Trace,
+			Mounts:       mounts,
+			Deny:         deny,
+			DenyWrite:    denyWrite,
+			NetworkNeed:  netNeed,
+			Domains:      mergedDomains,
+			ProxyPort:    proxyPort,
+			CPULimit:     rc.CPULimit,
+			MemLimit:     rc.MemLimit,
+			MaxFDs:       rc.MaxFDs,
+			PidLimit:     rc.PidLimit,
+			SessionID:    sessionID,
+			UserHome:     rc.UserHome,
+			Trace:        rc.Trace,
+			AllowSockets: allowSockets,
 		}
 
 		sb, err = sandbox.New(sbCfg)

@@ -91,6 +91,19 @@ func buildProfile(cfg Config) string {
 		}
 	}
 
+	// Allow outbound connections to specific Unix sockets (e.g. tool sockets).
+	// Must come after any network deny rule so the allow takes precedence.
+	for _, sock := range cfg.AllowSockets {
+		abs, err := filepath.Abs(sock)
+		if err != nil {
+			continue
+		}
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = real
+		}
+		fmt.Fprintf(&sb, "(allow network-outbound (literal %q))\n", abs)
+	}
+
 	// Deny paths — block reads and writes to specific directories.
 	// Resolve symlinks because sandbox-exec uses real paths.
 	sshDir, _ := os.UserHomeDir()

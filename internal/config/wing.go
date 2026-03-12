@@ -37,6 +37,9 @@ type WingConfig struct {
 	// Auto-generated on first roost start. Server mode uses WT_JWT_KEY env instead.
 	JWTKey string `yaml:"jwt_key,omitempty"`
 
+	// ToolsDir is the directory containing privileged tool YAML configs.
+	// Defaults to ~/.wingthing/tools/ if empty.
+	ToolsDir string `yaml:"tools_dir,omitempty"`
 }
 
 // IsAdmin returns true if email is in the Admins list (case-insensitive).

@@ -74,6 +74,8 @@ func main() {
 		sessionCmd(),
 		keygenCmd(),
 		updateCmd(),
+		toolCallCmd(),
+		toolListCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

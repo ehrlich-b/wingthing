@@ -42,8 +42,9 @@ type Config struct {
 	MaxFDs      uint32        // RLIMIT_NOFILE (0 = backend default)
 	PidLimit    uint32        // cgroup pids.max (0 = no limit)
 	SessionID   string        // unique ID for cgroup naming
-	UserHome    string        // per-user home override (empty = os.UserHomeDir)
-	Trace       bool          // wrap command with strace (Linux only)
+	UserHome     string        // per-user home override (empty = os.UserHomeDir)
+	Trace        bool          // wrap command with strace (Linux only)
+	AllowSockets []string      // Unix socket paths to allow outbound connections (macOS Seatbelt)
 }
 
 // EnforcementError is returned when the system cannot enforce the requested sandbox config.

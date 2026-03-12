@@ -1110,6 +1110,23 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	}
 	var wingEggMu sync.Mutex
 
+	// Load privileged tool configs
+	toolsDir := wingCfg.ToolsDir
+	if toolsDir == "" {
+		toolsDir = filepath.Join(cfg.Dir, "tools")
+	}
+	if strings.HasPrefix(toolsDir, "~/") {
+		h, _ := os.UserHomeDir()
+		toolsDir = filepath.Join(h, toolsDir[2:])
+	}
+	wingTools, toolErr := config.LoadToolsDir(toolsDir)
+	if toolErr != nil {
+		log.Printf("wing: load tools: %v (continuing without tools)", toolErr)
+	} else if len(wingTools) > 0 {
+		log.Printf("wing: loaded %d tool(s) from %s", len(wingTools), toolsDir)
+	}
+	var wingToolsMu sync.Mutex
+
 	// Resolve roost URL
 	roostURL := roostFlag
 	if local && roostURL == "" {
@@ -1383,15 +1400,19 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 				idleTimeout = d
 			}
 		}
+		// Snapshot tools for this session
+		wingToolsMu.Lock()
+		sessionTools := append([]*config.ToolConfig{}, wingTools...)
+		wingToolsMu.Unlock()
 		// P2P: wrap write in SwappableWriter for potential DC migration
 		var sw *webrtcpkg.SwappableWriter
 		if peerMgr != nil {
 			sw = webrtcpkg.NewSwappableWriter(webrtcpkg.WriteFn(write))
 			swSessions.Store(start.SessionID, sw)
 			defer swSessions.Delete(start.SessionID)
-			handlePTYSession(ctx, cfg, wingCfg, start, sw.Write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, authTTL, idleTimeout, sw, &dcSessions)
+			handlePTYSession(ctx, cfg, wingCfg, start, sw.Write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, authTTL, idleTimeout, sw, &dcSessions, sessionTools)
 		} else {
-			handlePTYSession(ctx, cfg, wingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, authTTL, idleTimeout, nil, nil)
+			handlePTYSession(ctx, cfg, wingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, authTTL, idleTimeout, nil, nil, sessionTools)
 		}
 	}
 
@@ -1495,6 +1516,24 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 							wingEggMu.Unlock()
 							log.Printf("egg config reloaded from %s", eggPath)
 						}
+					}
+
+					// Hot-reload tools
+					newToolsDir := newCfg.ToolsDir
+					if newToolsDir == "" {
+						newToolsDir = filepath.Join(cfg.Dir, "tools")
+					}
+					if strings.HasPrefix(newToolsDir, "~/") {
+						h, _ := os.UserHomeDir()
+						newToolsDir = filepath.Join(h, newToolsDir[2:])
+					}
+					if newTools, tErr := config.LoadToolsDir(newToolsDir); tErr == nil {
+						wingToolsMu.Lock()
+						wingTools = newTools
+						wingToolsMu.Unlock()
+						log.Printf("tools reloaded: %d tool(s) from %s", len(newTools), newToolsDir)
+					} else {
+						log.Printf("tools reload failed: %v", tErr)
 					}
 
 					client.SendConfig(ctx)
@@ -2981,7 +3020,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
-func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map) {
+func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map, tools []*config.ToolConfig) {
 	allowedKeys := *allowedKeysPtr
 	// Passkey verification — per-user check: only challenge users who have a passkey
 	var userHasPasskey bool
@@ -3140,8 +3179,29 @@ authDone:
 		log.Printf("pty session %s: E2E encryption enabled", start.SessionID)
 	}
 
+	// Start tool socket listener if tools are configured
+	var toolListener *egg.ToolListener
+	var toolSocketPath string
+	var toolNames []string
+	if len(tools) > 0 {
+		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
+		os.MkdirAll(eggDir, 0700)
+		toolSocketPath = filepath.Join(eggDir, "tool.sock")
+		var tlErr error
+		toolListener, tlErr = egg.NewToolListener(toolSocketPath, tools)
+		if tlErr != nil {
+			log.Printf("pty session %s: tool listener failed: %v", start.SessionID, tlErr)
+		} else {
+			toolNames = config.ToolNames(tools)
+			log.Printf("pty session %s: tool listener started (%d tools)", start.SessionID, len(toolNames))
+		}
+	}
+	if toolListener != nil {
+		defer toolListener.Close()
+	}
+
 	// Spawn a per-session egg
-	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace, EggIdentity{UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName, OrgWing: wingCfg.Org != ""}, idleTimeout)
+	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace, EggIdentity{UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName, OrgWing: wingCfg.Org != ""}, idleTimeout, spawnEggOpts{ToolNames: toolNames, ToolSocketPath: toolSocketPath})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := readEggCrashInfo(eggDir)
