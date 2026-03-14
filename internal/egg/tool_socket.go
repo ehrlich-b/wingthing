@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"sync"
 	"time"
 
@@ -200,6 +201,10 @@ func (tl *ToolListener) executeTool(tc *config.ToolConfig, args []string) ToolRe
 	// "tool" is $0, args become $1, $2, etc.
 	cmdArgs := append([]string{"-c", tc.Run, "tool"}, args...)
 	cmd := exec.CommandContext(ctx, "sh", cmdArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	// Build environment: inherit minimal host env + tool-specific env
 	cmd.Env = append(os.Environ(), toolEnvSlice(tc.Env)...)
 	var stdout, stderr strings.Builder
@@ -208,10 +213,10 @@ func (tl *ToolListener) executeTool(tc *config.ToolConfig, args []string) ToolRe
 	err := cmd.Run()
 	exitCode := 0
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else if ctx.Err() == context.DeadlineExceeded {
+		if ctx.Err() == context.DeadlineExceeded {
 			return ToolResponse{ExitCode: 124, Stderr: "tool execution timed out"}
+		} else if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
 		} else {
 			return ToolResponse{ExitCode: 1, Stderr: err.Error()}
 		}
