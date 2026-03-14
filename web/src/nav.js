@@ -5,7 +5,7 @@ import { clearTermBuffer } from './terminal.js';
 import { clearNotification } from './notify.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { loadHome, saveSessionCache, setEggOrder } from './data.js';
-import { startChatPolling, stopChatPolling, isMobileChatDefault, setViewPreference } from './chat-view.js';
+import { stopChatPolling } from './chat-view.js';
 import { showCanvasView, hideCanvasView } from './canvas.js';
 
 function hideCanvasChrome() {
@@ -20,8 +20,6 @@ export function showCanvas(pushHistory) {
     if (window.innerWidth < 768) { showHome(pushHistory); return; }
     S.activeView = 'canvas';
     stopChatPolling();
-    setChatViewActive(false);
-    hideViewToggle();
     document.getElementById('app').classList.remove('in-terminal');
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = 'none';
@@ -44,8 +42,6 @@ export function showCanvas(pushHistory) {
 export function showHome(pushHistory) {
     S.activeView = 'home';
     stopChatPolling();
-    setChatViewActive(false);
-    hideViewToggle();
     hideCanvasChrome();
     document.getElementById('app').classList.remove('in-terminal');
     DOM.homeSection.style.display = '';
@@ -71,9 +67,11 @@ export function showHome(pushHistory) {
     }
 }
 
-export function showTerminal(chatMode) {
+export function showTerminal() {
     S.activeView = 'terminal';
     hideCanvasChrome();
+    var canvasBtn = document.getElementById('canvas-toggle-btn');
+    if (canvasBtn) canvasBtn.style.display = 'none';
     document.getElementById('app').classList.add('in-terminal');
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = '';
@@ -82,62 +80,11 @@ export function showTerminal(chatMode) {
     DOM.accountSection.style.display = 'none';
     DOM.canvasSection.style.display = 'none';
     hideCanvasView();
-    var useChat = chatMode !== undefined ? chatMode : isMobileChatDefault();
-    setChatViewActive(useChat);
-    if (useChat) {
-        startChatPolling();
-    } else {
-        stopChatPolling();
-        if (S.term && S.fitAddon) {
-            S.fitAddon.fit();
-            S.term.focus();
-        }
+    stopChatPolling();
+    if (S.term && S.fitAddon) {
+        S.fitAddon.fit();
+        S.term.focus();
     }
-    updateViewToggle();
-}
-
-export function toggleChatView() {
-    var section = document.getElementById('terminal-section');
-    var isChat = section.classList.contains('chat-active');
-    var newMode = !isChat;
-    setChatViewActive(newMode);
-    setViewPreference(newMode ? 'chat' : 'terminal');
-    if (newMode) {
-        startChatPolling();
-    } else {
-        stopChatPolling();
-        if (S.term && S.fitAddon) {
-            S.fitAddon.fit();
-            S.term.focus();
-        }
-    }
-    updateViewToggle();
-}
-
-function setChatViewActive(active) {
-    var section = document.getElementById('terminal-section');
-    if (active) {
-        section.classList.add('chat-active');
-    } else {
-        section.classList.remove('chat-active');
-    }
-}
-
-function updateViewToggle() {
-    var btn = document.getElementById('view-toggle-btn');
-    if (!btn) return;
-    if (S.activeView !== 'terminal') {
-        btn.style.display = 'none';
-        return;
-    }
-    btn.style.display = '';
-    var section = document.getElementById('terminal-section');
-    btn.textContent = section.classList.contains('chat-active') ? 'terminal' : 'chat';
-}
-
-function hideViewToggle() {
-    var btn = document.getElementById('view-toggle-btn');
-    if (btn) btn.style.display = 'none';
 }
 
 export function switchToSession(sessionId, pushHistory) {
@@ -155,8 +102,6 @@ export function navigateToWingDetail(wingId, pushHistory) {
     S.activeView = 'wing-detail';
     S.currentWingId = wingId;
     stopChatPolling();
-    setChatViewActive(false);
-    hideViewToggle();
     hideCanvasChrome();
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = 'none';
@@ -179,8 +124,6 @@ export function navigateToAccount(pushHistory, orgSlug) {
     S.activeView = 'account';
     S.accountExpandSlug = orgSlug || null;
     stopChatPolling();
-    setChatViewActive(false);
-    hideViewToggle();
     hideCanvasChrome();
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = 'none';

@@ -2,7 +2,7 @@ import '@xterm/xterm/css/xterm.css';
 import { S, DOM, initDOM } from './state.js';
 import { loginRedirect } from './helpers.js';
 import { initTerminal, sendPTYInput } from './terminal.js';
-import { showHome, showTerminal, showCanvas, switchToSession, navigateToWingDetail, navigateToAccount, deleteSession, toggleChatView } from './nav.js';
+import { showHome, showTerminal, showCanvas, switchToSession, navigateToWingDetail, navigateToAccount, deleteSession } from './nav.js';
 import { initCanvas, isCanvasActive, canvasSpawnAtCenter, toggleCanvasMode } from './canvas.js';
 import { setCanvasLaunchCallback } from './palette.js';
 import { initChatView } from './chat-view.js';
@@ -75,12 +75,6 @@ async function init() {
             if (overlay) overlay.style.display = 'none';
             handlePTYPasskey();
         });
-    }
-
-    // View toggle (chat/terminal)
-    var viewToggleBtn = document.getElementById('view-toggle-btn');
-    if (viewToggleBtn) {
-        viewToggleBtn.addEventListener('click', toggleChatView);
     }
 
     // Init chat view
