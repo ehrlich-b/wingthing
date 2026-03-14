@@ -592,9 +592,7 @@ function ptyReconnectAttach(sessionId, attempt) {
             hideReconnectBanner();
         }
         if (msg.type === 'error') {
-            S.ptyReconnecting = false;
-            DOM.ptyStatus.textContent = 'session lost';
-            showReconnectBanner('connection lost', true);
+            // Don't give up — close WS so onclose fires and retries
             if (innerWs) { try { innerWs.close(); } catch(ex) {} }
             return;
         }

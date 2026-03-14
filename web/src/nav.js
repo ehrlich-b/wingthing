@@ -73,6 +73,7 @@ export function showTerminal() {
     var canvasBtn = document.getElementById('canvas-toggle-btn');
     if (canvasBtn) canvasBtn.style.display = 'none';
     document.getElementById('app').classList.add('in-terminal');
+    document.getElementById('terminal-section').classList.remove('chat-active');
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = '';
     DOM.chatSection.style.display = 'none';

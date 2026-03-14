@@ -250,7 +250,7 @@ async function _loadHomeInner() {
     if (S.sessionsData.length === 0) {
         var cachedSessions = getCachedSessions();
         if (cachedSessions.length > 0) {
-            cachedSessions.forEach(function(s) { s.status = 'detached'; });
+            cachedSessions.forEach(function(s) { s.status = 'detached'; s.swept = true; });
             S.sessionsData = sortSessionsByOrder(cachedSessions);
         }
     }
