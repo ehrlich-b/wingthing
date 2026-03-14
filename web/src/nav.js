@@ -17,6 +17,7 @@ function hideCanvasChrome() {
 }
 
 export function showCanvas(pushHistory) {
+    if (window.innerWidth < 768) { showHome(pushHistory); return; }
     S.activeView = 'canvas';
     stopChatPolling();
     setChatViewActive(false);

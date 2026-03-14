@@ -4,7 +4,7 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 import { gcm } from '@noble/ciphers/aes.js';
 import { S, DOM } from './state.js';
 import { deriveE2EKey, identityPubKey } from './crypto.js';
-import { b64ToBytes, bytesToB64, wingDisplayName } from './helpers.js';
+import { b64ToBytes, bytesToB64, wingDisplayName, agentIcon } from './helpers.js';
 import { onlineWings, showPalette, setCanvasLaunchCallback } from './palette.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { checkForNotification, setNotification, clearNotification } from './notify.js';
@@ -65,7 +65,6 @@ function clearCells(col, row, w, h) {
 }
 
 function canPlace(col, row, w, h, excludeId) {
-    if (col < 0 || row < 0) return false;
     for (var r = row; r < row + h; r++) {
         for (var c = col; c < col + w; c++) {
             var key = c + ',' + r;
@@ -148,6 +147,7 @@ function cycleCanvasWing() {
     if (online.length <= 1) return;
     canvasWingIndex = (canvasWingIndex + 1) % online.length;
     canvasAgentIndex = 0;
+    canvasCwd = '';
     renderCanvasToolbar();
 }
 
@@ -170,7 +170,7 @@ export function renderCanvasToolbar() {
     if (!DOM.canvasToolbar) return;
     var wing = currentCanvasWing();
     DOM.ctWing.textContent = wing ? wingDisplayName(wing) : 'no wings online';
-    DOM.ctAgent.textContent = currentCanvasAgent();
+    DOM.ctAgent.innerHTML = agentIcon(currentCanvasAgent()) + ' ' + currentCanvasAgent();
 
     // Auto-pick cwd from wing's first project if not set
     if (!canvasCwd && wing) {
@@ -385,11 +385,11 @@ function createTerminalEl(id, x, y, width, height) {
     el.appendChild(body);
     el.appendChild(handle);
 
-    // Left-click on terminal body -> focus + stop propagation to prevent viewport handler
+    // Only intercept body clicks on the FOCUSED terminal (live, accepts input).
+    // Unfocused terminals let events bubble to viewport for pan.
     body.addEventListener('mousedown', function(e) {
-        if (e.button === 0) {
+        if (e.button === 0 && sid() === focusedId) {
             e.stopPropagation();
-            focusSession(sid());
         }
     });
 
@@ -412,10 +412,10 @@ function createTerminalEl(id, x, y, width, height) {
         }
     });
 
-    // In use mode, stop mousedown on the element itself from reaching viewport.
-    // In create mode, let it through so viewport handles pan/spawn.
+    // Only block propagation for the focused terminal in use mode.
+    // Unfocused terminals let events through to viewport for pan.
     el.addEventListener('mousedown', function(e) {
-        if (canvasMode === 'use') e.stopPropagation();
+        if (canvasMode === 'use' && sid() === focusedId) e.stopPropagation();
     });
 
     // Only the focused terminal captures wheel for scrollback.
@@ -475,8 +475,8 @@ function onMouseMove(e) {
         var dy = (e.clientY - moving.startY) / scale;
         var sess = sessions[moving.id];
         if (!sess) return;
-        var targetCol = Math.max(0, snapToGrid(moving.origCol * CELL + dx));
-        var targetRow = Math.max(0, snapToGrid(moving.origRow * CELL + dy));
+        var targetCol = snapToGrid(moving.origCol * CELL + dx);
+        var targetRow = snapToGrid(moving.origRow * CELL + dy);
         var valid = canPlace(targetCol, targetRow, sess.cellW, sess.cellH, sess.id);
         positionGhost(targetCol, targetRow, sess.cellW, sess.cellH, valid);
         moving._targetCol = targetCol;
@@ -537,7 +537,11 @@ function onMouseUp(e) {
 
             canvasConnect(currentCanvasAgent(), cwd, wing.wing_id, col, row);
         }
-        // In use mode (source: 'pan'), click on empty space does nothing
+        // In use mode, click (no drag) on unfocused terminal → focus it
+        if (pc.source === 'pan' && pc.target) {
+            var termEl = pc.target.closest && pc.target.closest('.canvas-terminal');
+            if (termEl) focusSession(termEl.dataset.sessionId);
+        }
         return;
     }
     if (moving) {
@@ -786,6 +790,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
                 sessions[realId] = sess;
                 markCells(sess.col, sess.row, sess.cellW, sess.cellH, realId);
                 if (focusedId === tempId) focusedId = realId;
+                saveCanvasLayout();
 
                 parts.title.textContent = sessionTitle(agent, wingId);
 
@@ -923,15 +928,14 @@ function onViewportMouseDown(e) {
     if (e.button !== 0) return;
 
     if (canvasMode === 'create') {
-        // In create mode, header buttons still work, header drag still moves
         if (e.target.closest && e.target.closest('.canvas-terminal-header')) return;
         e.preventDefault();
         pendingClick = { screenX: e.clientX, screenY: e.clientY, source: 'create' };
     } else {
-        // In use mode, terminal handles its own events
-        if (e.target.closest && e.target.closest('.canvas-terminal')) return;
+        // Focused terminal handles its own events (stopPropagation above)
+        // Unfocused terminals fall through here — treat like empty space
         e.preventDefault();
-        pendingClick = { screenX: e.clientX, screenY: e.clientY, source: 'pan' };
+        pendingClick = { screenX: e.clientX, screenY: e.clientY, source: 'pan', target: e.target };
     }
     panning = null;
 }
@@ -1260,10 +1264,27 @@ export function showCanvasView() {
     if (DOM.canvasToolbar) DOM.canvasToolbar.style.display = '';
     applyTransform();
 
-    // Refit existing canvas terminals
+    // Refit existing canvas terminals, reconnect dead WebSockets
+    var reconnectIds = [];
     for (var id in sessions) {
         var sess = sessions[id];
-        setTimeout((function(s) { return function() { s.fitAddon.fit(); }; })(sess), 50);
+        if (sess.ws && sess.ws.readyState !== WebSocket.OPEN && !sess.dead) {
+            reconnectIds.push(id);
+        } else {
+            setTimeout((function(s) { return function() { s.fitAddon.fit(); }; })(sess), 50);
+        }
+    }
+    for (var i = 0; i < reconnectIds.length; i++) {
+        var rid = reconnectIds[i];
+        var rs = sessions[rid];
+        var savedCol = rs.col, savedRow = rs.row;
+        var savedCellW = rs.cellW, savedCellH = rs.cellH;
+        var savedAgent = rs.agent, savedWingId = rs.wingId;
+        clearCells(savedCol, savedRow, savedCellW, savedCellH);
+        if (rs.el && rs.el.parentNode) rs.el.parentNode.removeChild(rs.el);
+        try { rs.term.dispose(); } catch(e) {}
+        delete sessions[rid];
+        canvasAttach(rid, savedAgent, savedWingId, savedCol, savedRow, savedCellW, savedCellH);
     }
 
     // Auto-populate: connect to existing sessions that aren't already on the canvas

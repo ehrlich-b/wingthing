@@ -5,7 +5,7 @@ import { getCachedWings, fetchWingSessions, mergeWingSessions, loadHome, probeWi
 import { updatePaletteState } from './palette.js';
 import { tunnelCloseWing } from './tunnel.js';
 import { setNotification } from './notify.js';
-import { isCanvasActive, canvasSetAttention } from './canvas.js';
+import { isCanvasActive, canvasSetAttention, renderCanvasToolbar } from './canvas.js';
 
 var reconnectBannerTimer = null;
 
@@ -227,4 +227,5 @@ export function rebuildAgentLists() {
             S.allProjects.push({ name: p.name, path: p.path, wingId: w.wing_id });
         });
     });
+    if (isCanvasActive()) renderCanvasToolbar();
 }
