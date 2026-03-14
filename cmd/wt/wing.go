@@ -982,7 +982,11 @@ func wingStartCmd() *cobra.Command {
 			fmt.Printf("  log: %s\n", wingLogPath())
 			fmt.Println()
 			if localFlag {
-				fmt.Println("open http://localhost:8080 to start a terminal")
+				localURL := roostFlag
+				if localURL == "" {
+					localURL = "http://localhost:8080"
+				}
+				fmt.Printf("open %s to start a terminal\n", localURL)
 			} else {
 				fmt.Println("open https://app.wingthing.ai to start a terminal")
 			}
@@ -1251,7 +1255,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	}
 	fmt.Println()
 	if local || strings.Contains(roostURL, "localhost") {
-		fmt.Println("open http://localhost:8080 to start a terminal")
+		fmt.Printf("open %s to start a terminal\n", strings.TrimRight(roostURL, "/"))
 	} else {
 		fmt.Println("open https://app.wingthing.ai to start a terminal")
 	}

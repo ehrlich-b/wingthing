@@ -7,6 +7,7 @@ import { connectPTY } from './pty.js';
 
 var paletteWingIndex = 0;
 var paletteAgentIndex = 0;
+var _canvasLaunchCb = null;
 var paletteSelectedIndex = 0;
 var dirListTimer = null;
 var dirListPending = false;
@@ -313,6 +314,10 @@ export function tabCompletePalette() {
     }
 }
 
+export function setCanvasLaunchCallback(fn) {
+    _canvasLaunchCb = fn;
+}
+
 export function launchFromPalette(cwd) {
     if (onlineWings().length === 0) return;
     var wing = currentPaletteWing();
@@ -322,6 +327,12 @@ export function launchFromPalette(cwd) {
     var validCwd = (cwd && cwd.charAt(0) === '/') ? cwd : '';
     hidePalette();
     setLastTermAgent(agent);
+    if (_canvasLaunchCb) {
+        var cb = _canvasLaunchCb;
+        _canvasLaunchCb = null;
+        cb(agent, validCwd, wingId);
+        return;
+    }
     showTerminal();
     connectPTY(agent, validCwd, wingId);
 }

@@ -2,7 +2,9 @@ import '@xterm/xterm/css/xterm.css';
 import { S, DOM, initDOM } from './state.js';
 import { loginRedirect } from './helpers.js';
 import { initTerminal, sendPTYInput } from './terminal.js';
-import { showHome, showTerminal, switchToSession, navigateToWingDetail, navigateToAccount, deleteSession, toggleChatView } from './nav.js';
+import { showHome, showTerminal, showCanvas, switchToSession, navigateToWingDetail, navigateToAccount, deleteSession, toggleChatView } from './nav.js';
+import { initCanvas, isCanvasActive, canvasSpawnAtCenter, toggleCanvasMode } from './canvas.js';
+import { setCanvasLaunchCallback } from './palette.js';
 import { initChatView } from './chat-view.js';
 import { disconnectPTY, retryReconnect, attachPTY, handlePTYPasskey } from './pty.js';
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
@@ -25,7 +27,7 @@ async function init() {
         DOM.userInfo.textContent = S.currentUser.display_name || 'user';
     } catch (e) { loginRedirect(); return; }
 
-    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account')) {
+    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account') && location.hash !== '#canvas') {
         history.replaceState({ view: 'home' }, '', location.pathname);
     }
 
@@ -167,13 +169,25 @@ async function init() {
     document.addEventListener('keydown', function(e) {
         if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
             e.preventDefault();
-            if (DOM.commandPalette.style.display === 'none') showPalette();
-            else hidePalette();
+            if (DOM.commandPalette.style.display === 'none') {
+                if (isCanvasActive()) {
+                    setCanvasLaunchCallback(function(agent, cwd, wingId) {
+                        canvasSpawnAtCenter(agent, cwd, wingId);
+                    });
+                }
+                showPalette();
+            } else {
+                hidePalette();
+            }
         }
         if ((e.key === '.' || e.key === '+') && DOM.commandPalette.style.display === 'none') {
             var tag = document.activeElement && document.activeElement.tagName;
             if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT' && !document.activeElement.closest('#terminal-container, #chat-container')) {
                 e.preventDefault();
+                if (isCanvasActive()) {
+                    toggleCanvasMode();
+                    return;
+                }
                 showPalette();
             }
         }
@@ -282,7 +296,20 @@ async function init() {
 
     await document.fonts.load("400 14px 'JetBrains Mono'");
     initTerminal();
+    initCanvas();
     initPreview();
+
+    // Canvas toggle button
+    var canvasToggleBtn = document.getElementById('canvas-toggle-btn');
+    if (canvasToggleBtn) {
+        canvasToggleBtn.addEventListener('click', function() {
+            if (isCanvasActive()) {
+                showHome();
+            } else {
+                showCanvas();
+            }
+        });
+    }
     initNotifyListeners();
     loadHome();
     setInterval(loadHome, 30000);
@@ -304,6 +331,9 @@ async function init() {
     if (accountMatch) {
         navigateToAccount(true, accountMatch[1] || null);
     }
+    if (location.hash === '#canvas') {
+        showCanvas(false);
+    }
 }
 
 // Browser history (back/forward)
@@ -322,6 +352,8 @@ window.addEventListener('popstate', function(e) {
         navigateToWingDetail(state.wingId, false);
     } else if (state.view === 'account') {
         navigateToAccount(false, state.orgSlug || null);
+    } else if (state.view === 'canvas') {
+        showCanvas(false);
     }
 });
 

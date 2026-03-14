@@ -127,7 +127,7 @@ func roostStartCmd() *cobra.Command {
 			fmt.Printf("roost daemon started (pid %d)\n", child.Process.Pid)
 			fmt.Printf("  log: %s\n", roostLogPath())
 			fmt.Println()
-			fmt.Println("open http://localhost:8080 to start a terminal")
+			fmt.Printf("open http://localhost%s to start a terminal\n", addrFlag)
 			return nil
 		},
 	}
@@ -288,7 +288,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	go func() {
 		fmt.Printf("wt roost listening on %s\n", addrFlag)
 		fmt.Println()
-		fmt.Println("open http://localhost:8080 to start a terminal")
+		fmt.Printf("open http://localhost%s to start a terminal\n", addrFlag)
 		relayErrCh <- httpSrv.ListenAndServe()
 	}()
 
@@ -296,7 +296,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 
 	wingErrCh := make(chan error, 1)
 	go func() {
-		wingErrCh <- runWingWithContext(ctx, sighupCh, "", labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false)
+		wingErrCh <- runWingWithContext(ctx, sighupCh, "http://localhost"+addrFlag, labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false)
 	}()
 
 	// --- Wait for shutdown ---

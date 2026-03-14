@@ -23,8 +23,16 @@
                     <span id="header-title"></span>
                     <span id="pty-status"></span>
                     <button id="session-close-btn" title="End session" style="display:none">x</button>
+                    <div id="canvas-toolbar" style="display:none">
+                        <span id="ct-wing" class="ct-item"></span>
+                        <span class="ct-sep">&middot;</span>
+                        <span id="ct-agent" class="ct-item"></span>
+                        <span class="ct-sep">&middot;</span>
+                        <span id="ct-cwd" class="ct-item">~/</span>
+                    </div>
                 </div>
                 <div id="header-right">
+                    <button id="canvas-toggle-btn" class="btn-sm" style="display:none" title="Canvas view">grid</button>
                     <button id="view-toggle-btn" class="btn-sm" style="display:none" title="Switch view">terminal</button>
                     <span id="wing-indicator" class="wing-dot dot-offline" style="display:none"></span>
                     <span id="user-info"></span>
@@ -113,6 +121,19 @@
 
             <section id="account-section" style="display:none;">
                 <div id="account-content"></div>
+            </section>
+
+            <section id="canvas-section" style="display:none;">
+                <div id="canvas-viewport">
+                    <div id="canvas-world"></div>
+                </div>
+                <div id="canvas-fab" title="New terminal (n)">+</div>
+                <div id="canvas-zoom">
+                    <button id="canvas-zoom-out">&minus;</button>
+                    <span id="canvas-zoom-level">100%</span>
+                    <button id="canvas-zoom-in">+</button>
+                    <button id="canvas-zoom-reset" title="Reset view">&#x21ba;</button>
+                </div>
             </section>
         </div>
     </div>

@@ -5,6 +5,7 @@ import { getCachedWings, fetchWingSessions, mergeWingSessions, loadHome, probeWi
 import { updatePaletteState } from './palette.js';
 import { tunnelCloseWing } from './tunnel.js';
 import { setNotification } from './notify.js';
+import { isCanvasActive, canvasSetAttention } from './canvas.js';
 
 var reconnectBannerTimer = null;
 
@@ -125,6 +126,7 @@ function applyWingEvent(ev) {
         // DON'T clear sessions — wing might reconnect momentarily
     } else if (ev.type === 'session.attention' && ev.session_id) {
         setNotification(ev.session_id);
+        if (isCanvasActive()) canvasSetAttention(ev.session_id);
         renderSidebar();
         return;
     }
@@ -207,6 +209,8 @@ export function updateHeaderStatus() {
     indicator.classList.toggle('dot-live', anyOnline);
     indicator.classList.toggle('dot-offline', !anyOnline);
     indicator.style.display = S.wingsData.length > 0 ? '' : 'none';
+    var canvasBtn = document.getElementById('canvas-toggle-btn');
+    if (canvasBtn) canvasBtn.style.display = anyOnline ? '' : 'none';
 }
 
 export function rebuildAgentLists() {

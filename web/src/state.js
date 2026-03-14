@@ -81,4 +81,17 @@ export function initDOM() {
     DOM.previewOpenBtn = document.getElementById('preview-open-btn');
     DOM.previewCloseBtn = document.getElementById('preview-close-btn');
     DOM.previewIframe = document.getElementById('preview-iframe');
+    DOM.canvasSection = document.getElementById('canvas-section');
+    DOM.canvasViewport = document.getElementById('canvas-viewport');
+    DOM.canvasWorld = document.getElementById('canvas-world');
+    DOM.canvasToolbar = document.getElementById('canvas-toolbar');
+    DOM.ctWing = document.getElementById('ct-wing');
+    DOM.ctAgent = document.getElementById('ct-agent');
+    DOM.ctCwd = document.getElementById('ct-cwd');
+    DOM.canvasFab = document.getElementById('canvas-fab');
+    DOM.canvasZoom = document.getElementById('canvas-zoom');
+    DOM.canvasZoomOut = document.getElementById('canvas-zoom-out');
+    DOM.canvasZoomIn = document.getElementById('canvas-zoom-in');
+    DOM.canvasZoomLevel = document.getElementById('canvas-zoom-level');
+    DOM.canvasZoomReset = document.getElementById('canvas-zoom-reset');
 }

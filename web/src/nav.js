@@ -6,18 +6,54 @@ import { clearNotification } from './notify.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { loadHome, saveSessionCache, setEggOrder } from './data.js';
 import { startChatPolling, stopChatPolling, isMobileChatDefault, setViewPreference } from './chat-view.js';
+import { showCanvasView, hideCanvasView } from './canvas.js';
+
+function hideCanvasChrome() {
+    if (DOM.canvasToolbar) DOM.canvasToolbar.style.display = 'none';
+    DOM.headerTitle.style.display = '';
+    DOM.ptyStatus.style.display = '';
+    var canvasBtn = document.getElementById('canvas-toggle-btn');
+    if (canvasBtn) canvasBtn.classList.remove('active');
+}
+
+export function showCanvas(pushHistory) {
+    S.activeView = 'canvas';
+    stopChatPolling();
+    setChatViewActive(false);
+    hideViewToggle();
+    document.getElementById('app').classList.remove('in-terminal');
+    DOM.homeSection.style.display = 'none';
+    DOM.terminalSection.style.display = 'none';
+    DOM.chatSection.style.display = 'none';
+    DOM.wingDetailSection.style.display = 'none';
+    DOM.accountSection.style.display = 'none';
+    DOM.canvasSection.style.display = '';
+    detachPTY();
+    showCanvasView();
+    DOM.headerTitle.style.display = 'none';
+    DOM.ptyStatus.style.display = 'none';
+    DOM.sessionCloseBtn.style.display = 'none';
+    var canvasBtn = document.getElementById('canvas-toggle-btn');
+    if (canvasBtn) canvasBtn.classList.add('active');
+    if (pushHistory !== false) {
+        history.pushState({ view: 'canvas' }, '', '#canvas');
+    }
+}
 
 export function showHome(pushHistory) {
     S.activeView = 'home';
     stopChatPolling();
     setChatViewActive(false);
     hideViewToggle();
+    hideCanvasChrome();
     document.getElementById('app').classList.remove('in-terminal');
     DOM.homeSection.style.display = '';
     DOM.terminalSection.style.display = 'none';
     DOM.chatSection.style.display = 'none';
     DOM.wingDetailSection.style.display = 'none';
     DOM.accountSection.style.display = 'none';
+    DOM.canvasSection.style.display = 'none';
+    hideCanvasView();
     S.currentWingId = null;
     DOM.headerTitle.textContent = '';
     DOM.ptyStatus.textContent = '';
@@ -36,12 +72,15 @@ export function showHome(pushHistory) {
 
 export function showTerminal(chatMode) {
     S.activeView = 'terminal';
+    hideCanvasChrome();
     document.getElementById('app').classList.add('in-terminal');
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = '';
     DOM.chatSection.style.display = 'none';
     DOM.wingDetailSection.style.display = 'none';
     DOM.accountSection.style.display = 'none';
+    DOM.canvasSection.style.display = 'none';
+    hideCanvasView();
     var useChat = chatMode !== undefined ? chatMode : isMobileChatDefault();
     setChatViewActive(useChat);
     if (useChat) {
@@ -117,11 +156,14 @@ export function navigateToWingDetail(wingId, pushHistory) {
     stopChatPolling();
     setChatViewActive(false);
     hideViewToggle();
+    hideCanvasChrome();
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = 'none';
     DOM.chatSection.style.display = 'none';
     DOM.wingDetailSection.style.display = '';
     DOM.accountSection.style.display = 'none';
+    DOM.canvasSection.style.display = 'none';
+    hideCanvasView();
     detachPTY();
     DOM.headerTitle.textContent = '';
     DOM.ptyStatus.textContent = '';
@@ -138,11 +180,14 @@ export function navigateToAccount(pushHistory, orgSlug) {
     stopChatPolling();
     setChatViewActive(false);
     hideViewToggle();
+    hideCanvasChrome();
     DOM.homeSection.style.display = 'none';
     DOM.terminalSection.style.display = 'none';
     DOM.chatSection.style.display = 'none';
     DOM.wingDetailSection.style.display = 'none';
     DOM.accountSection.style.display = '';
+    DOM.canvasSection.style.display = 'none';
+    hideCanvasView();
     detachPTY();
     DOM.headerTitle.textContent = '';
     DOM.ptyStatus.textContent = '';
