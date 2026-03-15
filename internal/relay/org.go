@@ -622,15 +622,23 @@ func (s *Server) handleConsumeInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate email BEFORE consuming the invite so a wrong-account login
+	// doesn't burn the token.
+	inv, err := s.Store.GetInviteByToken(token)
+	if err != nil || inv == nil || inv.ClaimedAt != nil {
+		http.Error(w, "invite already used or expired", http.StatusBadRequest)
+		return
+	}
+	if user.Email == nil || !strings.EqualFold(*user.Email, inv.Email) {
+		http.Error(w, "email mismatch", http.StatusForbidden)
+		return
+	}
 	email, orgID, invRole, err := s.Store.ConsumeOrgInvite(token)
 	if err != nil {
 		http.Error(w, "invite already used or expired", http.StatusBadRequest)
 		return
 	}
-	if user.Email == nil || !strings.EqualFold(*user.Email, email) {
-		http.Error(w, "email mismatch", http.StatusForbidden)
-		return
-	}
+	_ = email // validated above
 
 	s.Store.AddOrgMember(orgID, user.ID, invRole)
 	s.grantOrgEntitlement(orgID, user.ID)

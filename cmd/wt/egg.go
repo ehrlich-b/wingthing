@@ -567,7 +567,18 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	for _, d := range eggCfg.Network {
 		args = append(args, "--network", d)
 	}
-	envMap := eggCfg.BuildEnvMap()
+	// Per-user home directory for multi-user isolation on org wings.
+	// On personal wings, the owner IS the machine — use real HOME so
+	// agent auth (e.g. Claude Code /login) and config persist normally.
+	// On org wings, ALL users get per-user homes for isolation.
+	// Computed before BuildEnvMap so ~ expansion in FS rules (e.g. deny:~/.ssh)
+	// resolves against the correct home.
+	realHome, _ := os.UserHomeDir()
+	effectiveHome := realHome
+	if identity.Email != "" && identity.OrgWing {
+		effectiveHome = filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
+	}
+	envMap := eggCfg.BuildEnvMap(effectiveHome)
 	// Inject agent profile env vars from host env (e.g. ANTHROPIC_API_KEY for claude).
 	// BuildEnvMap uses the egg config whitelist which may not include these.
 	profile := egg.Profile(agentName)
@@ -586,16 +597,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			}
 		}
 	}
-	// Per-user home directory for multi-user isolation on org wings.
-	// On personal wings, the owner IS the machine — use real HOME so
-	// agent auth (e.g. Claude Code /login) and config persist normally.
-	// On org wings, ALL users get per-user homes for isolation.
-	realHome, _ := os.UserHomeDir()
-	effectiveHome := realHome
 	if identity.Email != "" && identity.OrgWing {
-		perUserHome := filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
+		perUserHome := effectiveHome
 		os.MkdirAll(perUserHome, 0700)
-		effectiveHome = perUserHome
 		// Seed shell + agent config symlinks from real HOME
 		if realHome != "" {
 			for _, rc := range []string{".bashrc", ".zshrc", ".profile", ".claude.json"} {

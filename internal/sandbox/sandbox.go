@@ -109,7 +109,7 @@ func CheckCapability() (bool, string) {
 func platformHelp() string {
 	switch runtime.GOOS {
 	case "darwin":
-		return "macOS: requires Apple Containers (macOS 26+, 'container' CLI)"
+		return "macOS: requires sandbox-exec (built into macOS)"
 	case "linux":
 		// Check if AppArmor is specifically blocking unprivileged user namespaces (Ubuntu 24.04+, kernel 6.1+).
 		if val, err := os.ReadFile("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"); err == nil {

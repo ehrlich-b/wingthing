@@ -160,6 +160,52 @@ func TestListOrgsIncludesInvited(t *testing.T) {
 	}
 }
 
+func TestConsumeInvite_EmailMismatchDoesNotBurnToken(t *testing.T) {
+	store := testStore(t)
+	srv := NewServer(store, ServerConfig{})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(func() { ts.Close() })
+
+	// Create org and invite for alice@test.com
+	ownerID := "owner-inv"
+	store.CreateUser(ownerID)
+	store.CreateOrg("org-inv", "Invite Org", "invite-org", ownerID)
+	store.DB().Exec("UPDATE orgs SET max_seats = 10 WHERE id = 'org-inv'")
+	store.CreateOrgInvite("inv-1", "org-inv", "alice@test.com", "tok-123", ownerID, "member")
+
+	// Bob logs in and tries to consume alice's invite
+	bobID := "bob-user"
+	store.CreateUser(bobID)
+	store.UpdateUserEmail(bobID, "bob@test.com")
+	bobToken := "session-bob"
+	store.CreateSession(bobToken, bobID, time.Now().Add(time.Hour))
+	jar := &testCookieJar{cookies: map[string][]*http.Cookie{}}
+	jar.cookies[ts.URL] = []*http.Cookie{{Name: "wt_session", Value: bobToken}}
+	bobClient := &http.Client{Jar: jar}
+
+	// POST should fail with email mismatch
+	resp, err := bobClient.Post(ts.URL+"/invite/tok-123", "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		t.Fatalf("POST /invite: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("wrong-email consume: status = %d, want 403", resp.StatusCode)
+	}
+
+	// Token should NOT be consumed — alice can still use it
+	inv, err := store.GetInviteByToken("tok-123")
+	if err != nil {
+		t.Fatalf("GetInviteByToken: %v", err)
+	}
+	if inv == nil {
+		t.Fatal("invite should still exist")
+	}
+	if inv.ClaimedAt != nil {
+		t.Error("invite should not be claimed after email mismatch")
+	}
+}
+
 func TestCountOrgsOwnedByUser(t *testing.T) {
 	store := testStore(t)
 

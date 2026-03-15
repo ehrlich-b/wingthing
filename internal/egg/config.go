@@ -479,8 +479,11 @@ func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string, []string
 }
 
 // ToSandboxConfig converts the egg config to a sandbox.Config.
-func (c *EggConfig) ToSandboxConfig() sandbox.Config {
-	home, _ := os.UserHomeDir()
+// If home is non-empty it is used to expand ~ in FS rules; otherwise os.UserHomeDir().
+func (c *EggConfig) ToSandboxConfig(home string) sandbox.Config {
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
 	mounts, deny, denyWrite := ParseFSRules(c.FS, home)
 	netNeed := sandbox.NetworkNeedFromDomains([]string(c.Network))
 
@@ -509,8 +512,11 @@ func (c *EggConfig) IsAllEnv() bool {
 }
 
 // sshDirDenied returns true if any FS deny rule covers the user's ~/.ssh directory.
-func (c *EggConfig) sshDirDenied() bool {
-	home, _ := os.UserHomeDir()
+// If home is non-empty it is used to expand ~; otherwise os.UserHomeDir().
+func (c *EggConfig) sshDirDenied(home string) bool {
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
 	sshDir := filepath.Join(home, ".ssh")
 	for _, entry := range c.FS {
 		mode, path, ok := strings.Cut(entry, ":")
@@ -532,8 +538,9 @@ func (c *EggConfig) sshDirDenied() bool {
 // SSH_AUTH_SOCK is stripped when ~/.ssh is denied — otherwise the agent can
 // still make outbound SSH connections via the forwarded socket despite the
 // filesystem deny, causing unexpected host-key prompts inside the egg.
-func (c *EggConfig) BuildEnv() []string {
-	stripSSHAgent := c.sshDirDenied()
+// If home is non-empty it is used to expand ~ in FS rules; otherwise os.UserHomeDir().
+func (c *EggConfig) BuildEnv(home string) []string {
+	stripSSHAgent := c.sshDirDenied(home)
 
 	filter := func(env []string) []string {
 		out := env[:0:0]
@@ -571,8 +578,9 @@ func (c *EggConfig) BuildEnv() []string {
 }
 
 // BuildEnvMap returns the environment as a map for proto SpawnRequest.
-func (c *EggConfig) BuildEnvMap() map[string]string {
-	envSlice := c.BuildEnv()
+// If home is non-empty it is used to expand ~ in FS rules; otherwise os.UserHomeDir().
+func (c *EggConfig) BuildEnvMap(home string) map[string]string {
+	envSlice := c.BuildEnv(home)
 	m := make(map[string]string, len(envSlice))
 	for _, e := range envSlice {
 		k, v, ok := strings.Cut(e, "=")

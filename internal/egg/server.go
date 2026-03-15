@@ -586,7 +586,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	hasSandbox := len(rc.FS) > 0 || netNeed < sandbox.NetworkFull
 	if hasSandbox {
 		home, _ := os.UserHomeDir()
-		mounts, deny, denyWrite := ParseFSRules(rc.FS, home)
+		// Use per-user home for ~ expansion when set, so FS rules like
+		// rw:~/.cache resolve to the per-user home, not the host home.
+		fsHome := home
+		if rc.UserHome != "" {
+			fsHome = rc.UserHome
+		}
+		mounts, deny, denyWrite := ParseFSRules(rc.FS, fsHome)
 
 		// Auto-inject agent binary install root so sandbox can find it.
 		if home != "" && len(mounts) > 0 {

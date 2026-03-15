@@ -658,7 +658,7 @@ func TestBuildEnv_SSHAuthSockStrippedWhenSSHDenied(t *testing.T) {
 		FS:  []string{"rw:./", "deny:~/.ssh"},
 		Env: []string{"*"},
 	}
-	env := cfg.BuildEnv()
+	env := cfg.BuildEnv("")
 	for _, e := range env {
 		if strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
 			t.Errorf("SSH_AUTH_SOCK should be stripped when ~/.ssh is denied, got %s", e)
@@ -670,7 +670,7 @@ func TestBuildEnv_SSHAuthSockStrippedWhenSSHDenied(t *testing.T) {
 		FS:  []string{"deny:" + home + "/.ssh"},
 		Env: []string{"*"},
 	}
-	env2 := cfg2.BuildEnv()
+	env2 := cfg2.BuildEnv("")
 	for _, e := range env2 {
 		if strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
 			t.Errorf("SSH_AUTH_SOCK should be stripped when ~/.ssh is denied (absolute path), got %s", e)
@@ -682,7 +682,7 @@ func TestBuildEnv_SSHAuthSockStrippedWhenSSHDenied(t *testing.T) {
 		FS:  []string{"rw:./", "deny:~/.gnupg"},
 		Env: []string{"*"},
 	}
-	env3 := cfg3.BuildEnv()
+	env3 := cfg3.BuildEnv("")
 	found := false
 	for _, e := range env3 {
 		if strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
@@ -705,7 +705,7 @@ func TestBuildEnv_ClaudeCodeVarsNeverLeak(t *testing.T) {
 		FS:  []string{"rw:./"},
 		Env: []string{"*"},
 	}
-	for _, e := range cfg.BuildEnv() {
+	for _, e := range cfg.BuildEnv("") {
 		k, _, _ := strings.Cut(e, "=")
 		if k == "CLAUDECODE" || strings.HasPrefix(k, "CLAUDE_CODE_") {
 			t.Errorf("agent env should never contain %s (causes nested session error)", k)
@@ -717,7 +717,7 @@ func TestBuildEnv_ClaudeCodeVarsNeverLeak(t *testing.T) {
 		FS:  []string{"rw:./"},
 		Env: []string{"HOME", "PATH", "CLAUDECODE"},
 	}
-	for _, e := range cfg2.BuildEnv() {
+	for _, e := range cfg2.BuildEnv("") {
 		k, _, _ := strings.Cut(e, "=")
 		if k == "CLAUDECODE" {
 			t.Errorf("CLAUDECODE should be stripped even if explicitly listed in env config")
@@ -762,6 +762,90 @@ func TestParseFSRules_DenyRoot(t *testing.T) {
 	}
 }
 
+func TestParseFSRules_TildeExpandsToUserHome(t *testing.T) {
+	userHome := "/custom/user-home"
+	fs := []string{
+		"rw:~/.cache",
+		"deny:~/.ssh",
+		"ro:~/projects",
+	}
+	mounts, deny, _ := ParseFSRules(fs, userHome)
+
+	// rw:~/.cache should expand to /custom/user-home/.cache
+	if len(mounts) != 2 {
+		t.Fatalf("mounts = %d, want 2", len(mounts))
+	}
+	if mounts[0].Source != "/custom/user-home/.cache" {
+		t.Errorf("rw mount = %q, want /custom/user-home/.cache", mounts[0].Source)
+	}
+	if mounts[0].ReadOnly {
+		t.Error("~/.cache should be rw")
+	}
+
+	// ro:~/projects should expand to /custom/user-home/projects
+	if mounts[1].Source != "/custom/user-home/projects" || !mounts[1].ReadOnly {
+		t.Errorf("ro mount = %+v, want ro /custom/user-home/projects", mounts[1])
+	}
+
+	// deny:~/.ssh should expand to /custom/user-home/.ssh
+	if len(deny) != 1 || deny[0] != "/custom/user-home/.ssh" {
+		t.Errorf("deny = %v, want [/custom/user-home/.ssh]", deny)
+	}
+}
+
+func TestToSandboxConfig_RespectsCustomHome(t *testing.T) {
+	cfg := &EggConfig{
+		FS: []string{"deny:~/.ssh", "rw:~/.cache"},
+	}
+	userHome := "/custom/user-home"
+	sbCfg := cfg.ToSandboxConfig(userHome)
+
+	// Deny should use custom home
+	if len(sbCfg.Deny) != 1 || sbCfg.Deny[0] != "/custom/user-home/.ssh" {
+		t.Errorf("deny = %v, want [/custom/user-home/.ssh]", sbCfg.Deny)
+	}
+	// Mount should use custom home
+	if len(sbCfg.Mounts) != 1 || sbCfg.Mounts[0].Source != "/custom/user-home/.cache" {
+		t.Errorf("mounts = %v, want rw /custom/user-home/.cache", sbCfg.Mounts)
+	}
+}
+
+func TestSshDirDenied_RespectsCustomHome(t *testing.T) {
+	userHome := "/custom/user-home"
+
+	// deny:~/.ssh with custom home should match custom home's .ssh
+	cfg := &EggConfig{
+		FS: []string{"deny:~/.ssh"},
+	}
+	if !cfg.sshDirDenied(userHome) {
+		t.Error("sshDirDenied should be true when deny:~/.ssh is set with custom home")
+	}
+
+	// deny using a different absolute path should not match
+	cfg2 := &EggConfig{
+		FS: []string{"deny:/other/home/.ssh"},
+	}
+	if cfg2.sshDirDenied(userHome) {
+		t.Error("sshDirDenied should be false when deny path doesn't match custom home")
+	}
+}
+
+func TestBuildEnv_RespectsCustomHome(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/fake-ssh-agent.sock")
+	userHome := "/custom/user-home"
+
+	// deny:~/.ssh with custom home should strip SSH_AUTH_SOCK
+	cfg := &EggConfig{
+		FS:  []string{"rw:./", "deny:~/.ssh"},
+		Env: []string{"*"},
+	}
+	for _, e := range cfg.BuildEnv(userHome) {
+		if strings.HasPrefix(e, "SSH_AUTH_SOCK=") {
+			t.Error("SSH_AUTH_SOCK should be stripped when deny:~/.ssh with custom home")
+		}
+	}
+}
+
 func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")
@@ -775,7 +859,7 @@ func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
 	if len(cfg.Env) != 1 || cfg.Env[0] != "CUSTOM_ONLY" {
 		t.Errorf("env should be [CUSTOM_ONLY], got %v", cfg.Env)
 	}
-	env := cfg.BuildEnv()
+	env := cfg.BuildEnv("")
 	for _, e := range env {
 		k, _, _ := strings.Cut(e, "=")
 		if k == "HOME" || k == "PATH" {

@@ -300,7 +300,9 @@ function setupPTYHandlers(ws, reattach) {
                 renderSidebar();
                 loadHome();
 
-                S.term.onResize(function (size) {
+                // Dispose previous resize listener to prevent accumulation across sessions
+                if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
+                S._resizeDispose = S.term.onResize(function (size) {
                     if (!S.ptySessionId) return;
                     var msg = { type: 'pty.resize', session_id: S.ptySessionId, cols: size.cols, rows: size.rows };
                     // P2P: try DataChannel first
@@ -512,6 +514,7 @@ export function attachPTY(sessionId) {
 }
 
 export function detachPTY() {
+    if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
     if (S.ptySessionId) cleanupSession(S.ptySessionId);
     if (S.ptyWingId) cleanupPeer(S.ptyWingId);
     if (S.ptyWs) {
@@ -528,6 +531,7 @@ export function detachPTY() {
 
 export function disconnectPTY() {
     S.ptyReconnecting = false;
+    if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
     if (S.ptySessionId) cleanupSession(S.ptySessionId);
     if (S.ptyWingId) cleanupPeer(S.ptyWingId);
     if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN && S.ptySessionId) {
