@@ -387,6 +387,13 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				conn.Write(ctx, websocket.MessageText, data)
 				return
 			}
+			if org == nil && s.RoostMode {
+				// Self-hosted: auto-create org on first connection
+				if err := s.Store.CreateOrg(wing.OrgID, wing.OrgID, wing.OrgID, userID); err == nil {
+					s.Store.DB().Exec("UPDATE orgs SET max_seats = 9999 WHERE id = ?", wing.OrgID)
+					org, _ = s.Store.ResolveOrg(wing.OrgID, userID)
+				}
+			}
 			if org == nil {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org not found: " + wing.OrgID}
 				data, _ := json.Marshal(errMsg)
@@ -396,6 +403,11 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			// Store the resolved org ID (not the slug)
 			wing.OrgID = org.ID
 			role := s.Store.GetOrgMemberRole(org.ID, userID)
+			if role == "" && s.RoostMode {
+				// Self-hosted: all authenticated users are org members
+				s.Store.AddOrgMember(org.ID, userID, "member")
+				role = "member"
+			}
 			if role == "" {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "not a member of org: " + org.Name}
 				data, _ := json.Marshal(errMsg)

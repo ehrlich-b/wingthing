@@ -245,3 +245,63 @@ func TestCountOrgsOwnedByUser(t *testing.T) {
 		t.Errorf("other count = %d, want 1", count)
 	}
 }
+
+func TestRoostAutoCreateOrg(t *testing.T) {
+	store := testStore(t)
+	userID := "first-user"
+	store.CreateUser(userID)
+
+	// Org doesn't exist yet
+	org, err := store.ResolveOrg("myorg", userID)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if org != nil {
+		t.Fatal("expected nil org before creation")
+	}
+
+	// Simulate roost auto-create: first user creates the org
+	if err := store.CreateOrg("myorg", "myorg", "myorg", userID); err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+	store.DB().Exec("UPDATE orgs SET max_seats = 9999 WHERE id = ?", "myorg")
+
+	org, err = store.ResolveOrg("myorg", userID)
+	if err != nil {
+		t.Fatalf("resolve after create: %v", err)
+	}
+	if org == nil {
+		t.Fatal("expected org after creation")
+	}
+
+	// First user is owner (from CreateOrg)
+	role := store.GetOrgMemberRole(org.ID, userID)
+	if role != "owner" {
+		t.Errorf("first user role = %q, want owner", role)
+	}
+}
+
+func TestRoostAutoAddMember(t *testing.T) {
+	store := testStore(t)
+	ownerID := "owner"
+	memberID := "new-member"
+	store.CreateUser(ownerID)
+	store.CreateUser(memberID)
+
+	store.CreateOrg("myorg", "myorg", "myorg", ownerID)
+	store.DB().Exec("UPDATE orgs SET max_seats = 9999 WHERE id = ?", "myorg")
+
+	// New user is not a member yet
+	role := store.GetOrgMemberRole("myorg", memberID)
+	if role != "" {
+		t.Errorf("expected empty role, got %q", role)
+	}
+
+	// Simulate roost auto-join
+	store.AddOrgMember("myorg", memberID, "member")
+
+	role = store.GetOrgMemberRole("myorg", memberID)
+	if role != "member" {
+		t.Errorf("role = %q, want member", role)
+	}
+}
