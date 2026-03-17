@@ -28,7 +28,7 @@ var macOSKeychainEnv = []string{
 
 var agentProfiles = map[string]AgentProfile{
 	"claude": {
-		Domains:       []string{"*.anthropic.com", "*.claude.com", "sentry.io", "statsigapi.net", "raw.githubusercontent.com"},
+		Domains:       []string{"*.anthropic.com", "*.claude.com", "sentry.io", "statsigapi.net"},
 		EnvVars:       []string{"ANTHROPIC_API_KEY"},
 		WriteDirs:     []string{".cache/claude"},
 		WriteRegex:    []string{".claude"},
