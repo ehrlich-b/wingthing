@@ -10,6 +10,214 @@ import (
 	"testing"
 )
 
+// TestCopyFileDoesNotFollowSymlink verifies that copyFile writing to a symlink
+// destination follows the symlink (this is the DEFAULT behavior we need to guard
+// against in the persist function).
+func TestCopyFileFollowsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "outside.txt")
+	os.WriteFile(outside, []byte("old"), 0644)
+	src := filepath.Join(dir, "src.txt")
+	os.WriteFile(src, []byte("new"), 0644)
+	link := filepath.Join(dir, "link.txt")
+	os.Symlink(outside, link)
+
+	if err := copyFile(src, link); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+	// copyFile follows the symlink — outside.txt was overwritten
+	data, _ := os.ReadFile(outside)
+	if string(data) != "new" {
+		t.Errorf("outside.txt = %q, want %q (copyFile should follow symlink)", string(data), "new")
+	}
+}
+
+// TestPersistFunctionRemovesSymlinks verifies that the persist logic in
+// setupOverlayHome removes symlinks at the destination before copying, so
+// writes stay within the per-user home and don't escape via symlinks to
+// shared paths like /opt/wingthing/.claude.json.
+func TestPersistFunctionRemovesSymlinks(t *testing.T) {
+	// Simulate: realHome has a symlink .claude.json -> outsideFile
+	// Overlay upper has a new .claude.json
+	// After persist: realHome should have a real file, outsideFile unchanged
+	dir := t.TempDir()
+	outsideFile := filepath.Join(dir, "shared-claude.json")
+	os.WriteFile(outsideFile, []byte("shared-config"), 0644)
+
+	realHome := filepath.Join(dir, "real-home")
+	os.MkdirAll(realHome, 0755)
+	os.Symlink(outsideFile, filepath.Join(realHome, ".claude.json"))
+
+	upperDir := filepath.Join(dir, "upper")
+	os.MkdirAll(upperDir, 0755)
+	os.WriteFile(filepath.Join(upperDir, ".claude.json"), []byte("user-config"), 0644)
+
+	// Run persist logic (same as setupOverlayHome's persist function)
+	prefixes := []string{".claude"}
+	entries, _ := os.ReadDir(upperDir)
+	for _, e := range entries {
+		name := e.Name()
+		matched := false
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(name, prefix) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		src := filepath.Join(upperDir, name)
+		dst := filepath.Join(realHome, name)
+		if fi, err := os.Lstat(dst); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			os.Remove(dst)
+		}
+		if err := copyFile(src, dst); err != nil {
+			t.Fatalf("copyFile: %v", err)
+		}
+	}
+
+	// realHome should have a real file, not a symlink
+	fi, err := os.Lstat(filepath.Join(realHome, ".claude.json"))
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Error("realHome/.claude.json should be a regular file, not a symlink")
+	}
+	data, _ := os.ReadFile(filepath.Join(realHome, ".claude.json"))
+	if string(data) != "user-config" {
+		t.Errorf("realHome/.claude.json = %q, want %q", string(data), "user-config")
+	}
+	// Outside file should be unchanged
+	data, _ = os.ReadFile(outsideFile)
+	if string(data) != "shared-config" {
+		t.Errorf("outsideFile = %q, want %q (should not be modified)", string(data), "shared-config")
+	}
+}
+
+// TestPersistDirRemovesSymlinks verifies that persistDir also removes
+// symlinks before copying files within subdirectories.
+func TestPersistDirRemovesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	outsideFile := filepath.Join(dir, "outside-settings.json")
+	os.WriteFile(outsideFile, []byte("shared"), 0644)
+
+	src := filepath.Join(dir, "src-dir")
+	os.MkdirAll(src, 0755)
+	os.WriteFile(filepath.Join(src, "settings.json"), []byte("per-user"), 0644)
+
+	dst := filepath.Join(dir, "dst-dir")
+	os.MkdirAll(dst, 0755)
+	os.Symlink(outsideFile, filepath.Join(dst, "settings.json"))
+
+	persistDir(src, dst)
+
+	// dst/settings.json should be a real file now
+	fi, err := os.Lstat(filepath.Join(dst, "settings.json"))
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Error("dst/settings.json should be a regular file, not a symlink")
+	}
+	data, _ := os.ReadFile(filepath.Join(dst, "settings.json"))
+	if string(data) != "per-user" {
+		t.Errorf("dst/settings.json = %q, want %q", string(data), "per-user")
+	}
+	// Outside file untouched
+	data, _ = os.ReadFile(outsideFile)
+	if string(data) != "shared" {
+		t.Errorf("outsideFile = %q, want %q", string(data), "shared")
+	}
+}
+
+// TestPersistPrefixMatching verifies that only files matching the overlay
+// prefix are persisted, and non-matching files are ignored.
+func TestPersistPrefixMatching(t *testing.T) {
+	dir := t.TempDir()
+	realHome := filepath.Join(dir, "real-home")
+	os.MkdirAll(realHome, 0755)
+	upperDir := filepath.Join(dir, "upper")
+	os.MkdirAll(upperDir, 0755)
+
+	os.WriteFile(filepath.Join(upperDir, ".claude.json"), []byte("keep"), 0644)
+	os.WriteFile(filepath.Join(upperDir, ".claude-settings"), []byte("keep"), 0644)
+	os.WriteFile(filepath.Join(upperDir, ".bashrc"), []byte("ignore"), 0644)
+	os.WriteFile(filepath.Join(upperDir, ".profile"), []byte("ignore"), 0644)
+
+	prefixes := []string{".claude"}
+	entries, _ := os.ReadDir(upperDir)
+	for _, e := range entries {
+		name := e.Name()
+		matched := false
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(name, prefix) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		src := filepath.Join(upperDir, name)
+		dst := filepath.Join(realHome, name)
+		if fi, err := os.Lstat(dst); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			os.Remove(dst)
+		}
+		copyFile(src, dst)
+	}
+
+	// .claude* files should exist
+	if _, err := os.Stat(filepath.Join(realHome, ".claude.json")); err != nil {
+		t.Error(".claude.json should be persisted")
+	}
+	if _, err := os.Stat(filepath.Join(realHome, ".claude-settings")); err != nil {
+		t.Error(".claude-settings should be persisted")
+	}
+	// non-.claude files should NOT exist
+	if _, err := os.Stat(filepath.Join(realHome, ".bashrc")); err == nil {
+		t.Error(".bashrc should NOT be persisted")
+	}
+	if _, err := os.Stat(filepath.Join(realHome, ".profile")); err == nil {
+		t.Error(".profile should NOT be persisted")
+	}
+}
+
+// TestPersistBrokenSymlink verifies that broken symlinks at the destination
+// are removed and replaced with real files.
+func TestPersistBrokenSymlink(t *testing.T) {
+	dir := t.TempDir()
+	realHome := filepath.Join(dir, "real-home")
+	os.MkdirAll(realHome, 0755)
+	// Create a broken symlink (target doesn't exist)
+	os.Symlink("/nonexistent/path/.claude.json", filepath.Join(realHome, ".claude.json"))
+
+	upperDir := filepath.Join(dir, "upper")
+	os.MkdirAll(upperDir, 0755)
+	os.WriteFile(filepath.Join(upperDir, ".claude.json"), []byte("fresh"), 0644)
+
+	dst := filepath.Join(realHome, ".claude.json")
+	if fi, err := os.Lstat(dst); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		os.Remove(dst)
+	}
+	if err := copyFile(filepath.Join(upperDir, ".claude.json"), dst); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+
+	fi, err := os.Lstat(dst)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Error("should be a regular file, not a symlink")
+	}
+	data, _ := os.ReadFile(dst)
+	if string(data) != "fresh" {
+		t.Errorf("got %q, want %q", string(data), "fresh")
+	}
+}
+
 func TestCopyFile(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.txt")

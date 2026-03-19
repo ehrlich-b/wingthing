@@ -380,6 +380,11 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 			}
 			src := filepath.Join(upperDir, name)
 			dst := filepath.Join(realHome, name)
+			// Remove symlinks at dst so we don't follow them and write
+			// outside the per-user home (e.g. stale symlink to /opt/wingthing/.claude.json).
+			if fi, err := os.Lstat(dst); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+				os.Remove(dst)
+			}
 			if err := copyFile(src, dst); err != nil {
 				log.Printf("_deny_init: persist %s: %v", name, err)
 			} else {
@@ -457,6 +462,10 @@ func persistDir(src, dst string) {
 		if e.IsDir() {
 			persistDir(s, d)
 			continue
+		}
+		// Remove symlinks so we don't follow them outside per-user home.
+		if fi, err := os.Lstat(d); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			os.Remove(d)
 		}
 		if err := copyFile(s, d); err != nil {
 			log.Printf("_deny_init: persist %s: %v", d, err)
