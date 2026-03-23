@@ -3038,94 +3038,6 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	<-sessionCtx.Done()
 }
 
-// handleSpectatorPasskey runs passkey auth for a spectator attach. Returns (true, token)
-// if auth passed (or not needed), (false, "") if auth failed and the caller should skip.
-func handleSpectatorPasskey(sessionID string, attach ws.PTYAttach, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, write ws.PTYWriteFunc, input <-chan []byte, ctx context.Context) (bool, string) {
-	var hasPasskey bool
-	if attach.UserID != "" {
-		for _, ak := range allowedKeys {
-			if ak.UserID == attach.UserID && ak.Key != "" {
-				hasPasskey = true
-				break
-			}
-		}
-		if !hasPasskey && len(attach.Passkeys) > 0 {
-			hasPasskey = true
-		}
-	}
-	if !hasPasskey {
-		return true, "" // no passkey needed
-	}
-
-	// Check cached auth token
-	if attach.AuthToken != "" {
-		if _, ok := passkeyCache.Check(attach.AuthToken, authTTL); ok {
-			log.Printf("pty session %s: spectator passkey auth via cached token (viewer=%s)", sessionID, attach.ViewerID)
-			return true, attach.AuthToken
-		}
-	}
-
-	// Generate and send challenge
-	challenge, chalErr := auth.GenerateChallenge()
-	if chalErr != nil {
-		log.Printf("pty session %s: spectator challenge generation failed: %v", sessionID, chalErr)
-		return false, ""
-	}
-	write(ws.PasskeyChallenge{
-		Type:      ws.TypePasskeyChallenge,
-		SessionID: sessionID,
-		Challenge: base64.RawURLEncoding.EncodeToString(challenge),
-	})
-	log.Printf("pty session %s: spectator passkey challenge sent (viewer=%s)", sessionID, attach.ViewerID)
-
-	timer := time.NewTimer(60 * time.Second)
-	defer timer.Stop()
-	for {
-		select {
-		case authData, ok := <-input:
-			if !ok {
-				return false, ""
-			}
-			var authEnv ws.Envelope
-			if err := json.Unmarshal(authData, &authEnv); err != nil {
-				continue
-			}
-			if authEnv.Type != ws.TypePasskeyResponse {
-				continue
-			}
-			var resp ws.PasskeyResponse
-			if err := json.Unmarshal(authData, &resp); err != nil {
-				continue
-			}
-			ad, _ := base64.StdEncoding.DecodeString(resp.AuthenticatorData)
-			cj, _ := base64.StdEncoding.DecodeString(resp.ClientDataJSON)
-			sig, _ := base64.StdEncoding.DecodeString(resp.Signature)
-			for _, ak := range allowedKeys {
-				rawKey, decErr := base64.StdEncoding.DecodeString(ak.Key)
-				if decErr != nil || len(rawKey) != 64 {
-					continue
-				}
-				if err := auth.VerifyPasskeyAssertion(rawKey, challenge, ad, cj, sig); err == nil {
-					var token string
-					if t, tokErr := auth.GenerateAuthToken(); tokErr == nil {
-						passkeyCache.Put(t, rawKey)
-						token = t
-					}
-					log.Printf("pty session %s: spectator passkey verified (viewer=%s)", sessionID, attach.ViewerID)
-					return true, token
-				}
-			}
-			write(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey"})
-		case <-timer.C:
-			log.Printf("pty session %s: spectator passkey timed out (viewer=%s)", sessionID, attach.ViewerID)
-			write(ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out"})
-			return false, ""
-		case <-ctx.Done():
-			return false, ""
-		}
-	}
-}
-
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
 func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map, tools []*config.ToolConfig) {
@@ -3455,11 +3367,6 @@ authDone:
 						write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "spectate not enabled", ViewerID: attach.ViewerID})
 						continue
 					}
-					authOK, authToken := handleSpectatorPasskey(start.SessionID, attach, allowedKeys, passkeyCache, authTTL, write, input, ctx)
-				if !authOK {
-						continue
-					}
-
 					// Derive spectator-specific E2E key (independent of controller)
 					var spectatorGCM cipher.AEAD
 					if attach.PublicKey != "" {
@@ -3479,7 +3386,6 @@ authDone:
 						Agent:     start.Agent,
 						PublicKey: wingPubKeyB64,
 						ViewerID:  attach.ViewerID,
-						AuthToken: authToken,
 					})
 
 					// Open independent egg stream (gets replay + live cursor)

@@ -537,3 +537,158 @@ func TestSpectateKillBlocked(t *testing.T) {
 		t.Errorf("wing got %q, want %q", decoded, "still-alive")
 	}
 }
+
+func TestSpectateStartedRouting(t *testing.T) {
+	_, ts, store := testRelayAndWS(t)
+	token, _ := createTestUser(t, store, "spectate-started")
+
+	wingConn := connectWing(t, wsURL(ts), token, "wing-spec-str", []string{"claude"})
+	defer wingConn.CloseNow()
+
+	owner := connectBrowser(t, wsURL(ts), token, "wing-spec-str")
+	defer owner.CloseNow()
+
+	sess := startSession(t, owner, wingConn, "claude", "wing-spec-str")
+
+	spectator := connectBrowser(t, wsURL(ts), token, "wing-spec-str")
+	defer spectator.CloseNow()
+	viewerID := spectateSession(t, spectator, wingConn, sess, "wing-spec-str")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Wing sends pty.started with viewer_id — spectator gets it, owner does NOT
+	wsjson.Write(ctx, wingConn, ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sess, Agent: "claude", PublicKey: "fakepub", ViewerID: viewerID})
+
+	var specStarted ws.PTYStarted
+	if err := wsjson.Read(ctx, spectator, &specStarted); err != nil {
+		t.Fatalf("spectator read started: %v", err)
+	}
+	if specStarted.PublicKey != "fakepub" {
+		t.Errorf("spectator got public_key=%q, want %q", specStarted.PublicKey, "fakepub")
+	}
+
+	// Owner should NOT get this message
+	shortCtx, shortCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer shortCancel()
+	var ghost json.RawMessage
+	if err := wsjson.Read(shortCtx, owner, &ghost); err == nil {
+		t.Errorf("owner should not receive spectator's pty.started, got: %s", ghost)
+	}
+}
+
+func TestSpectateControllerExitFansOut(t *testing.T) {
+	_, ts, store := testRelayAndWS(t)
+	token, _ := createTestUser(t, store, "spectate-fanout")
+
+	wingConn := connectWing(t, wsURL(ts), token, "wing-spec-fan", []string{"claude"})
+	defer wingConn.CloseNow()
+
+	owner := connectBrowser(t, wsURL(ts), token, "wing-spec-fan")
+	defer owner.CloseNow()
+
+	sess := startSession(t, owner, wingConn, "claude", "wing-spec-fan")
+
+	spectator := connectBrowser(t, wsURL(ts), token, "wing-spec-fan")
+	defer spectator.CloseNow()
+	_ = spectateSession(t, spectator, wingConn, sess, "wing-spec-fan")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Controller exit (no viewer_id) — both owner AND spectator should get it
+	wsjson.Write(ctx, wingConn, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sess, ExitCode: 42})
+
+	var ownerExit ws.PTYExited
+	if err := wsjson.Read(ctx, owner, &ownerExit); err != nil {
+		t.Fatalf("owner read exit: %v", err)
+	}
+	if ownerExit.ExitCode != 42 {
+		t.Errorf("owner exit code = %d, want 42", ownerExit.ExitCode)
+	}
+
+	var specExit ws.PTYExited
+	if err := wsjson.Read(ctx, spectator, &specExit); err != nil {
+		t.Fatalf("spectator read exit: %v", err)
+	}
+	if specExit.ExitCode != 42 {
+		t.Errorf("spectator exit code = %d, want 42", specExit.ExitCode)
+	}
+}
+
+func TestSpectatePreviewRouting(t *testing.T) {
+	_, ts, store := testRelayAndWS(t)
+	token, _ := createTestUser(t, store, "spectate-preview")
+
+	wingConn := connectWing(t, wsURL(ts), token, "wing-spec-prv", []string{"claude"})
+	defer wingConn.CloseNow()
+
+	owner := connectBrowser(t, wsURL(ts), token, "wing-spec-prv")
+	defer owner.CloseNow()
+
+	sess := startSession(t, owner, wingConn, "claude", "wing-spec-prv")
+
+	spectator := connectBrowser(t, wsURL(ts), token, "wing-spec-prv")
+	defer spectator.CloseNow()
+	viewerID := spectateSession(t, spectator, wingConn, sess, "wing-spec-prv")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Wing sends pty.preview with viewer_id — spectator gets it
+	previewData := base64.StdEncoding.EncodeToString([]byte("preview-content"))
+	wsjson.Write(ctx, wingConn, ws.PTYPreview{Type: ws.TypePTYPreview, SessionID: sess, Data: previewData, ViewerID: viewerID})
+
+	var specPreview ws.PTYPreview
+	if err := wsjson.Read(ctx, spectator, &specPreview); err != nil {
+		t.Fatalf("spectator read preview: %v", err)
+	}
+	decoded, _ := base64.StdEncoding.DecodeString(specPreview.Data)
+	if string(decoded) != "preview-content" {
+		t.Errorf("spectator got %q, want %q", decoded, "preview-content")
+	}
+
+	// Owner should NOT get it
+	shortCtx, shortCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer shortCancel()
+	var ghost json.RawMessage
+	if err := wsjson.Read(shortCtx, owner, &ghost); err == nil {
+		t.Errorf("owner should not receive spectator's preview, got: %s", ghost)
+	}
+}
+
+func TestSpectateNonexistentRoute(t *testing.T) {
+	_, ts, store := testRelayAndWS(t)
+	token, _ := createTestUser(t, store, "spectate-noroute")
+
+	wingConn := connectWing(t, wsURL(ts), token, "wing-spec-nr", []string{"claude"})
+	defer wingConn.CloseNow()
+
+	browser := connectBrowser(t, wsURL(ts), token, "wing-spec-nr")
+	defer browser.CloseNow()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Spectate a session that doesn't exist — attach still forwards to wing,
+	// AddViewer silently no-ops (route is nil). No crash.
+	attach := ws.PTYAttach{
+		Type:      ws.TypePTYAttach,
+		SessionID: "nonexistent-session",
+		WingID:    "wing-spec-nr",
+		Spectate:  true,
+	}
+	wsjson.Write(ctx, browser, attach)
+
+	// Wing receives the forwarded attach (relay forwards regardless)
+	var wingAttach ws.PTYAttach
+	if err := wsjson.Read(ctx, wingConn, &wingAttach); err != nil {
+		t.Fatalf("wing read: %v", err)
+	}
+	if !wingAttach.Spectate {
+		t.Error("expected spectate=true on forwarded attach")
+	}
+	if wingAttach.ViewerID == "" {
+		t.Error("expected relay-assigned viewer_id")
+	}
+}

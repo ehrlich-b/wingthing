@@ -366,17 +366,12 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			attach.UserID = userID
 
 			if attach.Spectate {
-				// Spectator mode: add as read-only viewer, don't overwrite controller
+				// Spectator mode: add as read-only viewer, don't overwrite controller.
+				// No passkey auth — spectate is opt-in via wing config. The only gate
+				// is canAccessWing (owner, org member, or roost mode).
 				viewerID := uuid.New().String()[:8]
 				attach.ViewerID = viewerID
 				attach.Email = userEmail
-				if s.Store != nil {
-					if creds, err := s.Store.ListPasskeyCredentials(userID); err == nil && len(creds) > 0 {
-						for _, c := range creds {
-							attach.Passkeys = append(attach.Passkeys, base64.StdEncoding.EncodeToString(c.PublicKey))
-						}
-					}
-				}
 				s.PTY.AddViewer(attach.SessionID, viewerID, conn)
 				log.Printf("pty session %s spectator added (viewer=%s user=%s)", attach.SessionID, viewerID, userID)
 			} else {
