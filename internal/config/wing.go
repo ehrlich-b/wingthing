@@ -22,6 +22,7 @@ type WingConfig struct {
 	Audit     bool       `yaml:"audit,omitempty"`
 	Debug     bool       `yaml:"debug,omitempty"`
 	Locked    bool       `yaml:"locked,omitempty"`     // explicit lock mode toggle
+	Spectate  bool       `yaml:"spectate,omitempty"`   // allow spectator (read-only) session viewing
 	AuthTTL   string     `yaml:"auth_ttl,omitempty"`   // passkey auth token duration (default "1h")
 	AllowKeys []AllowKey `yaml:"allow_keys,omitempty"`
 	Admins      []string   `yaml:"admins,omitempty"`       // emails with admin role (see all sessions, all paths)

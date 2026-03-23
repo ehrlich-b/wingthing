@@ -91,7 +91,7 @@ export function saveSessionCache() {
 
 export function saveWingCache() {
     setCachedWings(S.wingsData.map(function(w) {
-        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform, agents: w.agents, locked: w.locked || false, user_id: w.user_id, owner: w.owner };
+        return { wing_id: w.wing_id, public_key: w.public_key, wing_label: w.wing_label, hostname: w.hostname, platform: w.platform, agents: w.agents, locked: w.locked || false, spectate: w.spectate || false, user_id: w.user_id, owner: w.owner };
     }));
 }
 
@@ -153,6 +153,7 @@ async function _probeWingInner(w) {
         w.agents = data.agents || [];
         w.projects = data.projects || [];
         w.locked = data.locked || false;
+        w.spectate = data.spectate || false;
         w.allowed_count = data.allowed_count || 0;
         w.passkey_enrolled = !!data.passkey_enrolled;
         delete w.tunnel_error;

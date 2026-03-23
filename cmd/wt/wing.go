@@ -331,14 +331,14 @@ func gzipData(data []byte) ([]byte, error) {
 const ptyChunkSize = 128 * 1024 // 128KB raw → compresses well under WS limit
 
 // sendPTYOutput encrypts and sends PTY output, chunking if the data exceeds ptyChunkSize.
-func sendPTYOutput(sessionID string, data []byte, gcm cipher.AEAD, write ws.PTYWriteFunc) {
+func sendPTYOutputTagged(sessionID, viewerID string, data []byte, gcm cipher.AEAD, write ws.PTYWriteFunc) {
 	if len(data) <= ptyChunkSize {
 		encrypted, err := auth.Encrypt(gcm, data)
 		if err != nil {
 			log.Printf("pty session %s: encrypt error: %v", sessionID, err)
 			return
 		}
-		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
+		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, ViewerID: viewerID})
 		return
 	}
 	for sent := 0; sent < len(data); {
@@ -351,9 +351,13 @@ func sendPTYOutput(sessionID string, data []byte, gcm cipher.AEAD, write ws.PTYW
 			log.Printf("pty session %s: chunk encrypt error: %v", sessionID, err)
 			return
 		}
-		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted})
+		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, ViewerID: viewerID})
 		sent = end
 	}
+}
+
+func sendPTYOutput(sessionID string, data []byte, gcm cipher.AEAD, write ws.PTYWriteFunc) {
+	sendPTYOutputTagged(sessionID, "", data, gcm, write)
 }
 
 // sendReplayChunked splits replay data into chunks, compresses and encrypts each
@@ -361,7 +365,7 @@ func sendPTYOutput(sessionID string, data []byte, gcm cipher.AEAD, write ws.PTYW
 // gzip stream so the browser can decompress them individually.
 const replayChunkSize = 128 * 1024 // 128KB raw → compresses well under WS limit
 
-func sendReplayChunked(sessionID string, raw []byte, gcm cipher.AEAD, write ws.PTYWriteFunc) {
+func sendReplayChunkedTagged(sessionID, viewerID string, raw []byte, gcm cipher.AEAD, write ws.PTYWriteFunc) {
 	sent := 0
 	chunks := 0
 	totalCompressed := 0
@@ -381,12 +385,16 @@ func sendReplayChunked(sessionID string, raw []byte, gcm cipher.AEAD, write ws.P
 			log.Printf("pty session %s: replay chunk encrypt error: %v", sessionID, encErr)
 			return
 		}
-		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed})
+		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed, ViewerID: viewerID})
 		totalCompressed += len(compressed)
 		sent = end
 		chunks++
 	}
 	log.Printf("pty session %s: replayed %d bytes (gzip %d, %d chunks)", sessionID, len(raw), totalCompressed, chunks)
+}
+
+func sendReplayChunked(sessionID string, raw []byte, gcm cipher.AEAD, write ws.PTYWriteFunc) {
+	sendReplayChunkedTagged(sessionID, "", raw, gcm, write)
 }
 
 // resolvePathStrings resolves ~/ prefixes and makes paths absolute.
@@ -1478,6 +1486,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 						continue
 					}
 					wingCfg.Locked = newCfg.Locked
+					wingCfg.Spectate = newCfg.Spectate
 					wingCfg.AllowKeys = newCfg.AllowKeys
 					wingCfg.Admins = newCfg.Admins
 					allowedKeys = append([]config.AllowKey{}, newCfg.AllowKeys...)
@@ -2203,6 +2212,7 @@ func wingConfigCmd() *cobra.Command {
 			fmt.Printf("audit:      %v\n", wingCfg.Audit)
 			fmt.Printf("debug:      %v\n", wingCfg.Debug)
 			fmt.Printf("locked:     %v\n", wingCfg.Locked)
+			fmt.Printf("spectate:   %v\n", wingCfg.Spectate)
 			authTTL := wingCfg.AuthTTL
 			if authTTL == "" {
 				authTTL = "0"
@@ -2269,6 +2279,12 @@ func wingConfigSetCmd() *cobra.Command {
 						return fmt.Errorf("locked: expected true or false")
 					}
 					wingCfg.Locked = b
+				case "spectate":
+					b, err := strconv.ParseBool(value)
+					if err != nil {
+						return fmt.Errorf("spectate: expected true or false")
+					}
+					wingCfg.Spectate = b
 				case "labels":
 					var labels []string
 					for _, l := range strings.Split(value, ",") {
@@ -3022,6 +3038,94 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	<-sessionCtx.Done()
 }
 
+// handleSpectatorPasskey runs passkey auth for a spectator attach. Returns (true, token)
+// if auth passed (or not needed), (false, "") if auth failed and the caller should skip.
+func handleSpectatorPasskey(sessionID string, attach ws.PTYAttach, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, write ws.PTYWriteFunc, input <-chan []byte, ctx context.Context) (bool, string) {
+	var hasPasskey bool
+	if attach.UserID != "" {
+		for _, ak := range allowedKeys {
+			if ak.UserID == attach.UserID && ak.Key != "" {
+				hasPasskey = true
+				break
+			}
+		}
+		if !hasPasskey && len(attach.Passkeys) > 0 {
+			hasPasskey = true
+		}
+	}
+	if !hasPasskey {
+		return true, "" // no passkey needed
+	}
+
+	// Check cached auth token
+	if attach.AuthToken != "" {
+		if _, ok := passkeyCache.Check(attach.AuthToken, authTTL); ok {
+			log.Printf("pty session %s: spectator passkey auth via cached token (viewer=%s)", sessionID, attach.ViewerID)
+			return true, attach.AuthToken
+		}
+	}
+
+	// Generate and send challenge
+	challenge, chalErr := auth.GenerateChallenge()
+	if chalErr != nil {
+		log.Printf("pty session %s: spectator challenge generation failed: %v", sessionID, chalErr)
+		return false, ""
+	}
+	write(ws.PasskeyChallenge{
+		Type:      ws.TypePasskeyChallenge,
+		SessionID: sessionID,
+		Challenge: base64.RawURLEncoding.EncodeToString(challenge),
+	})
+	log.Printf("pty session %s: spectator passkey challenge sent (viewer=%s)", sessionID, attach.ViewerID)
+
+	timer := time.NewTimer(60 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case authData, ok := <-input:
+			if !ok {
+				return false, ""
+			}
+			var authEnv ws.Envelope
+			if err := json.Unmarshal(authData, &authEnv); err != nil {
+				continue
+			}
+			if authEnv.Type != ws.TypePasskeyResponse {
+				continue
+			}
+			var resp ws.PasskeyResponse
+			if err := json.Unmarshal(authData, &resp); err != nil {
+				continue
+			}
+			ad, _ := base64.StdEncoding.DecodeString(resp.AuthenticatorData)
+			cj, _ := base64.StdEncoding.DecodeString(resp.ClientDataJSON)
+			sig, _ := base64.StdEncoding.DecodeString(resp.Signature)
+			for _, ak := range allowedKeys {
+				rawKey, decErr := base64.StdEncoding.DecodeString(ak.Key)
+				if decErr != nil || len(rawKey) != 64 {
+					continue
+				}
+				if err := auth.VerifyPasskeyAssertion(rawKey, challenge, ad, cj, sig); err == nil {
+					var token string
+					if t, tokErr := auth.GenerateAuthToken(); tokErr == nil {
+						passkeyCache.Put(t, rawKey)
+						token = t
+					}
+					log.Printf("pty session %s: spectator passkey verified (viewer=%s)", sessionID, attach.ViewerID)
+					return true, token
+				}
+			}
+			write(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey"})
+		case <-timer.C:
+			log.Printf("pty session %s: spectator passkey timed out (viewer=%s)", sessionID, attach.ViewerID)
+			write(ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out"})
+			return false, ""
+		case <-ctx.Done():
+			return false, ""
+		}
+	}
+}
+
 // handlePTYSession bridges a PTY session between a per-session egg and the relay.
 // E2E encryption stays in the wing — the egg sees plaintext only.
 func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map, tools []*config.ToolConfig) {
@@ -3343,6 +3447,83 @@ authDone:
 				idleState.mu.Lock()
 				idleState.connected = true
 				idleState.mu.Unlock()
+
+				// Spectator mode: independent stream without disrupting controller
+				if attach.Spectate {
+					if !wingCfg.Spectate {
+						log.Printf("pty session %s: spectate rejected (not enabled in wing config)", start.SessionID)
+						write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "spectate not enabled", ViewerID: attach.ViewerID})
+						continue
+					}
+					authOK, authToken := handleSpectatorPasskey(start.SessionID, attach, allowedKeys, passkeyCache, authTTL, write, input, ctx)
+				if !authOK {
+						continue
+					}
+
+					// Derive spectator-specific E2E key (independent of controller)
+					var spectatorGCM cipher.AEAD
+					if attach.PublicKey != "" {
+						derived, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
+						if deriveErr != nil {
+							log.Printf("pty session %s: spectator key derive failed: %v", start.SessionID, deriveErr)
+							continue
+						}
+						spectatorGCM = derived
+						log.Printf("pty session %s: spectator E2E enabled (viewer=%s)", start.SessionID, attach.ViewerID)
+					}
+
+					// Send pty.started so spectator browser can derive key
+					write(ws.PTYStarted{
+						Type:      ws.TypePTYStarted,
+						SessionID: start.SessionID,
+						Agent:     start.Agent,
+						PublicKey: wingPubKeyB64,
+						ViewerID:  attach.ViewerID,
+						AuthToken: authToken,
+					})
+
+					// Open independent egg stream (gets replay + live cursor)
+					specCtx, specCancel := context.WithCancel(ctx)
+					specStream, specErr := ec.AttachSession(specCtx, start.SessionID)
+					if specErr != nil {
+						specCancel()
+						log.Printf("pty session %s: spectator attach to egg failed: %v", start.SessionID, specErr)
+						continue
+					}
+
+					// Replay
+					if spectatorGCM != nil {
+						replayMsg, rErr := specStream.Recv()
+						if rErr == nil {
+							if replay, ok := replayMsg.Payload.(*pb.SessionMsg_Output); ok && len(replay.Output) > 0 {
+								sendReplayChunkedTagged(start.SessionID, attach.ViewerID, replay.Output, spectatorGCM, write)
+							}
+						}
+					}
+
+					// Independent output goroutine
+					go func(viewerID string, g cipher.AEAD, stream pb.Egg_SessionClient, cancel context.CancelFunc) {
+						defer cancel()
+						for {
+							msg, err := stream.Recv()
+							if err != nil {
+								return
+							}
+							switch p := msg.Payload.(type) {
+							case *pb.SessionMsg_Output:
+								if g != nil {
+									sendPTYOutputTagged(start.SessionID, viewerID, p.Output, g, write)
+								}
+							case *pb.SessionMsg_ExitCode:
+								write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode), ViewerID: viewerID})
+								return
+							}
+						}
+					}(attach.ViewerID, spectatorGCM, specStream, specCancel)
+					log.Printf("pty session %s: spectator streaming started (viewer=%s)", start.SessionID, attach.ViewerID)
+					continue
+				}
+
 				// 1. Invalidate key — old output goroutine stops sending
 				mu.Lock()
 				gcm = nil
@@ -3850,6 +4031,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			"agents":        client.Agents,
 			"projects":      projects,
 			"locked":        wingCfg.Locked,
+			"spectate":      wingCfg.Spectate,
 			"allowed_count": len(wingCfg.AllowKeys),
 		}
 		if wingCfg.Label != "" {

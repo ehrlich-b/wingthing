@@ -32,6 +32,7 @@ export var S = {
     latestVersion: '',
     ptyReconnecting: false,
     ptyBandwidthExceeded: false,
+    spectating: false,
     currentWingId: null,
     wingPastSessions: {},
     tunnelKeys: {},

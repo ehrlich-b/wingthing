@@ -6,7 +6,7 @@ import { showHome, showTerminal, showCanvas, switchToSession, navigateToWingDeta
 import { initCanvas, isCanvasActive, canvasSpawnAtCenter, toggleCanvasMode } from './canvas.js';
 import { setCanvasLaunchCallback } from './palette.js';
 import { initChatView } from './chat-view.js';
-import { disconnectPTY, retryReconnect, attachPTY, handlePTYPasskey } from './pty.js';
+import { detachPTY, disconnectPTY, retryReconnect, attachPTY, handlePTYPasskey } from './pty.js';
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
 import { connectAppWS } from './dashboard.js';
 import { loadHome } from './data.js';
@@ -40,6 +40,12 @@ async function init() {
         if (S.ptySessionId) showSessionInfo();
     });
     DOM.sessionCloseBtn.addEventListener('click', function() {
+        if (S.spectating) {
+            // Spectators just detach — never kill the session
+            detachPTY();
+            showHome();
+            return;
+        }
         if (DOM.sessionCloseBtn.dataset.confirm) {
             delete DOM.sessionCloseBtn.dataset.confirm;
             DOM.sessionCloseBtn.textContent = 'x';

@@ -303,7 +303,7 @@ function setupPTYHandlers(ws, reattach) {
                 // Dispose previous resize listener to prevent accumulation across sessions
                 if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
                 S._resizeDispose = S.term.onResize(function (size) {
-                    if (!S.ptySessionId) return;
+                    if (!S.ptySessionId || S.spectating) return;
                     var msg = { type: 'pty.resize', session_id: S.ptySessionId, cols: size.cols, rows: size.rows };
                     // P2P: try DataChannel first
                     if (sendViaDC(S.ptySessionId, msg)) return;
@@ -315,7 +315,7 @@ function setupPTYHandlers(ws, reattach) {
                 // Always send resize on session load — fitAddon.fit() only triggers
                 // onResize when dimensions change, but the remote PTY may have stale
                 // dimensions from a different machine/window.
-                if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN && S.ptySessionId) {
+                if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN && S.ptySessionId && !S.spectating) {
                     S.ptyWs.send(JSON.stringify({ type: 'pty.resize', session_id: S.ptySessionId, cols: S.term.cols, rows: S.term.rows }));
                 }
 
@@ -495,7 +495,13 @@ export function attachPTY(sessionId) {
 
     var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
     S.ptyWingId = sess ? sess.wing_id : null;
-    DOM.headerTitle.textContent = sess ? sessionTitle(sess.agent || '?', sess.wing_id) : 'reconnecting...';
+
+    // Auto-spectate: if this is another user's session and the wing has spectate enabled
+    var isOtherUser = sess && sess.user_id && S.currentUser && sess.user_id !== S.currentUser.id;
+    var wing = isOtherUser && sess.wing_id ? S.wingsData.find(function(w) { return w.wing_id === sess.wing_id; }) : null;
+    S.spectating = !!(isOtherUser && wing && wing.spectate);
+
+    DOM.headerTitle.textContent = S.spectating ? 'watching (read-only)' : (sess ? sessionTitle(sess.agent || '?', sess.wing_id) : 'reconnecting...');
     DOM.ptyStatus.textContent = '';
 
     if (S.ptyWingId) url += '?wing_id=' + encodeURIComponent(S.ptyWingId);
@@ -504,6 +510,7 @@ export function attachPTY(sessionId) {
     S.ptyWs = new WebSocket(url);
     S.ptyWs.onopen = function () {
         var msg = { type: 'pty.attach', session_id: sessionId, public_key: identityPubKey };
+        if (S.spectating) msg.spectate = true;
         if (S.ptyWingId) msg.wing_id = S.ptyWingId;
         if (S.ptyWingId && S.tunnelAuthTokens[S.ptyWingId]) msg.auth_token = S.tunnelAuthTokens[S.ptyWingId];
         if (S.term) { msg.cols = S.term.cols; msg.rows = S.term.rows; }
@@ -527,6 +534,7 @@ export function detachPTY() {
     S.ptySessionId = null;
     S.ptyWingId = null;
     S.e2eKey = null;
+    S.spectating = false;
 }
 
 export function disconnectPTY() {
@@ -541,6 +549,7 @@ export function disconnectPTY() {
     S.ptySessionId = null;
     S.ptyWingId = null;
     S.e2eKey = null;
+    S.spectating = false;
 
     DOM.ptyStatus.textContent = '';
     DOM.headerTitle.textContent = '';
@@ -572,6 +581,7 @@ function ptyReconnectAttach(sessionId, attempt) {
     S.ptyWs = new WebSocket(url);
     S.ptyWs.onopen = function () {
         var msg = { type: 'pty.attach', session_id: sessionId, public_key: identityPubKey };
+        if (S.spectating) msg.spectate = true;
         if (S.ptyWingId) msg.wing_id = S.ptyWingId;
         if (S.ptyWingId && S.tunnelAuthTokens[S.ptyWingId]) msg.auth_token = S.tunnelAuthTokens[S.ptyWingId];
         if (S.term) { msg.cols = S.term.cols; msg.rows = S.term.rows; }

@@ -244,7 +244,7 @@ export function clearTermBuffer(sessionId) {
 }
 
 export function sendPTYInput(text) {
-    if (!S.ptySessionId) return;
+    if (!S.ptySessionId || S.spectating) return;
     clearNotification(S.ptySessionId);
     e2eEncrypt(text).then(function (encoded) {
         var msg = { type: 'pty.input', session_id: S.ptySessionId, data: encoded };

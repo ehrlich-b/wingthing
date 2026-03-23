@@ -20,11 +20,12 @@ import (
 // PTYRoute is a minimal routing entry for wing→browser output forwarding.
 // No session metadata — the wing owns all session intelligence.
 type PTYRoute struct {
-	BrowserConn *websocket.Conn
-	UserID      string // bandwidth metering only
-	WingID      string // machine ID for offline notification
-	Agent       string // agent name for ntfy notifications
-	CWD         string // working directory for ntfy notifications
+	BrowserConn *websocket.Conn            // controller (can send input)
+	Viewers     map[string]*websocket.Conn // viewer_id → spectator conn (read-only)
+	UserID      string                     // bandwidth metering only
+	WingID      string                     // machine ID for offline notification
+	Agent       string                     // agent name for ntfy notifications
+	CWD         string                     // working directory for ntfy notifications
 	mu          sync.Mutex
 }
 
@@ -58,7 +59,53 @@ func (r *PTYRoutes) Remove(sessionID string) {
 	delete(r.routes, sessionID)
 }
 
-// ClearBrowser nils the BrowserConn on all routes owned by this connection.
+// AddViewer adds a spectator connection to a session route.
+func (r *PTYRoutes) AddViewer(sessionID, viewerID string, conn *websocket.Conn) {
+	r.mu.RLock()
+	route := r.routes[sessionID]
+	r.mu.RUnlock()
+	if route == nil {
+		return
+	}
+	route.mu.Lock()
+	if route.Viewers == nil {
+		route.Viewers = make(map[string]*websocket.Conn)
+	}
+	route.Viewers[viewerID] = conn
+	route.mu.Unlock()
+}
+
+// RemoveViewer removes a spectator connection from a session route.
+func (r *PTYRoutes) RemoveViewer(sessionID, viewerID string) {
+	r.mu.RLock()
+	route := r.routes[sessionID]
+	r.mu.RUnlock()
+	if route == nil {
+		return
+	}
+	route.mu.Lock()
+	delete(route.Viewers, viewerID)
+	route.mu.Unlock()
+}
+
+// IsSpectator returns true if conn is a spectator on any session.
+func (r *PTYRoutes) IsSpectator(conn *websocket.Conn) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, route := range r.routes {
+		route.mu.Lock()
+		for _, vc := range route.Viewers {
+			if vc == conn {
+				route.mu.Unlock()
+				return true
+			}
+		}
+		route.mu.Unlock()
+	}
+	return false
+}
+
+// ClearBrowser nils the BrowserConn and removes spectator entries for this connection.
 func (r *PTYRoutes) ClearBrowser(conn *websocket.Conn) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -66,6 +113,11 @@ func (r *PTYRoutes) ClearBrowser(conn *websocket.Conn) {
 		route.mu.Lock()
 		if route.BrowserConn == conn {
 			route.BrowserConn = nil
+		}
+		for vid, vc := range route.Viewers {
+			if vc == conn {
+				delete(route.Viewers, vid)
+			}
 		}
 		route.mu.Unlock()
 	}
@@ -80,12 +132,22 @@ func (r *PTYRoutes) NotifyWingOffline(wingID string) {
 		route.mu.Lock()
 		bc := route.BrowserConn
 		wid := route.WingID
-		route.mu.Unlock()
-		if wid == wingID && bc != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			bc.Write(ctx, websocket.MessageText, msg)
-			cancel()
+		viewers := make([]*websocket.Conn, 0, len(route.Viewers))
+		for _, vc := range route.Viewers {
+			viewers = append(viewers, vc)
 		}
+		route.mu.Unlock()
+		if wid != wingID {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if bc != nil {
+			bc.Write(ctx, websocket.MessageText, msg)
+		}
+		for _, vc := range viewers {
+			vc.Write(ctx, websocket.MessageText, msg)
+		}
+		cancel()
 	}
 }
 
@@ -301,15 +363,36 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			s.PTY.Set(attach.SessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID})
-
 			attach.UserID = userID
+
+			if attach.Spectate {
+				// Spectator mode: add as read-only viewer, don't overwrite controller
+				viewerID := uuid.New().String()[:8]
+				attach.ViewerID = viewerID
+				attach.Email = userEmail
+				if s.Store != nil {
+					if creds, err := s.Store.ListPasskeyCredentials(userID); err == nil && len(creds) > 0 {
+						for _, c := range creds {
+							attach.Passkeys = append(attach.Passkeys, base64.StdEncoding.EncodeToString(c.PublicKey))
+						}
+					}
+				}
+				s.PTY.AddViewer(attach.SessionID, viewerID, conn)
+				log.Printf("pty session %s spectator added (viewer=%s user=%s)", attach.SessionID, viewerID, userID)
+			} else {
+				// Normal reattach: overwrite controller
+				s.PTY.Set(attach.SessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID})
+				log.Printf("pty session %s reattached (user=%s)", attach.SessionID, userID)
+			}
+
 			fwd, _ := json.Marshal(attach)
 			wing.Conn.Write(ctx, websocket.MessageText, fwd)
 
-			log.Printf("pty session %s reattached (user=%s)", attach.SessionID, userID)
-
 		case ws.TypePTYInput, ws.TypePTYResize, ws.TypePTYAttentionAck, ws.TypePasskeyResponse, ws.TypePTYMigrate:
+			// Drop input from spectators
+			if s.PTY.IsSpectator(conn) {
+				continue
+			}
 			wing := lookupWing()
 			if wing == nil {
 				continue
@@ -329,9 +412,19 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if route.BrowserConn == conn {
 				route.BrowserConn = nil
 			}
+			// Also remove from spectators
+			for vid, vc := range route.Viewers {
+				if vc == conn {
+					delete(route.Viewers, vid)
+				}
+			}
 			route.mu.Unlock()
 
 		case ws.TypePTYKill:
+			// Spectators cannot kill sessions
+			if s.PTY.IsSpectator(conn) {
+				continue
+			}
 			var kill ws.PTYKill
 			if err := json.Unmarshal(data, &kill); err != nil {
 				continue
@@ -384,35 +477,100 @@ func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
 		return
 	}
 
-	// Handle pty.exited: clean up route + send ntfy exit notification
+	// Extract viewer_id for spectator routing
+	var viewerID string
 	var env ws.Envelope
-	if err := json.Unmarshal(data, &env); err == nil && env.Type == ws.TypePTYExited {
+	if err := json.Unmarshal(data, &env); err != nil {
+		return
+	}
+
+	// Handle pty.exited: clean up route + send ntfy exit notification
+	if env.Type == ws.TypePTYExited {
+		var exited ws.PTYExited
+		if err := json.Unmarshal(data, &exited); err != nil {
+			return
+		}
+		viewerID = exited.ViewerID
+
+		// Spectator exit: route to specific viewer, don't remove the route
+		if viewerID != "" {
+			route.mu.Lock()
+			vc := route.Viewers[viewerID]
+			delete(route.Viewers, viewerID)
+			route.mu.Unlock()
+			if vc != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				vc.Write(ctx, websocket.MessageText, data)
+				cancel()
+			}
+			return
+		}
+
+		// Controller exit: send to controller + all spectators, clean up route
 		route.mu.Lock()
 		bc := route.BrowserConn
 		userID := route.UserID
 		agent := route.Agent
 		cwd := route.CWD
+		viewers := make(map[string]*websocket.Conn, len(route.Viewers))
+		for k, v := range route.Viewers {
+			viewers[k] = v
+		}
 		route.mu.Unlock()
 
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		if bc != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
 			bc.Write(ctx, websocket.MessageText, data)
 		}
-
-		// Send ntfy exit notification (sessionID as nonce — one exit per session)
-		var exited ws.PTYExited
-		if err := json.Unmarshal(data, &exited); err == nil {
-			clickURL := ntfyClickURL(sessionID)
-			s.trySendNtfy("exit:"+sessionID, userID, func(c *ntfy.Client) {
-				c.SendExit(sessionID, agent, cwd, exited.ExitCode, clickURL)
-			})
+		for _, vc := range viewers {
+			vc.Write(ctx, websocket.MessageText, data)
 		}
+
+		// Send ntfy exit notification
+		clickURL := ntfyClickURL(sessionID)
+		s.trySendNtfy("exit:"+sessionID, userID, func(c *ntfy.Client) {
+			c.SendExit(sessionID, agent, cwd, exited.ExitCode, clickURL)
+		})
 
 		s.PTY.Remove(sessionID)
 		return
 	}
 
+	// Extract viewer_id from output/preview messages for spectator routing
+	switch env.Type {
+	case ws.TypePTYOutput:
+		var out ws.PTYOutput
+		if json.Unmarshal(data, &out) == nil {
+			viewerID = out.ViewerID
+		}
+	case ws.TypePTYPreview:
+		var prev ws.PTYPreview
+		if json.Unmarshal(data, &prev) == nil {
+			viewerID = prev.ViewerID
+		}
+	case ws.TypePTYStarted:
+		var started ws.PTYStarted
+		if json.Unmarshal(data, &started) == nil {
+			viewerID = started.ViewerID
+		}
+	}
+
+	// Route to specific spectator
+	if viewerID != "" {
+		route.mu.Lock()
+		vc := route.Viewers[viewerID]
+		route.mu.Unlock()
+		if vc == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		vc.Write(ctx, websocket.MessageText, data)
+		return
+	}
+
+	// Route to controller (existing behavior)
 	route.mu.Lock()
 	bc := route.BrowserConn
 	userID := route.UserID

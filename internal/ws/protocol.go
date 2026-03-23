@@ -136,6 +136,7 @@ type PTYStarted struct {
 	PublicKey string `json:"public_key,omitempty"` // wing's X25519 (base64)
 	CWD       string `json:"cwd,omitempty"`        // resolved working directory
 	AuthToken string `json:"auth_token,omitempty"` // passkey auth token
+	ViewerID  string `json:"viewer_id,omitempty"`  // spectator viewer ID (relay-assigned)
 }
 
 // PasskeyChallenge is sent from wing to browser requesting passkey verification.
@@ -161,13 +162,15 @@ type PTYOutput struct {
 	SessionID  string `json:"session_id"`
 	Data       string `json:"data"`                 // base64-encoded
 	Compressed bool   `json:"compressed,omitempty"` // gzip before encrypt
+	ViewerID   string `json:"viewer_id,omitempty"`  // spectator viewer ID (for relay routing)
 }
 
 // PTYPreview carries preview panel data (URL or markdown) from wing to browser.
 type PTYPreview struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
-	Data      string `json:"data"` // base64(AES-GCM encrypted JSON)
+	Data      string `json:"data"`                // base64(AES-GCM encrypted JSON)
+	ViewerID  string `json:"viewer_id,omitempty"` // spectator viewer ID (for relay routing)
 }
 
 // PTYInput carries keystrokes from browser to wing.
@@ -191,18 +194,23 @@ type PTYExited struct {
 	SessionID string `json:"session_id"`
 	ExitCode  int    `json:"exit_code"`
 	Error     string `json:"error,omitempty"` // crash/error info for display
+	ViewerID  string `json:"viewer_id,omitempty"` // spectator viewer ID (for relay routing)
 }
 
 // PTYAttach requests reattachment to an existing PTY session.
 type PTYAttach struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	PublicKey string `json:"public_key,omitempty"`  // new browser ephemeral key
-	WingID    string `json:"wing_id,omitempty"`     // target wing (for relay routing)
-	AuthToken string `json:"auth_token,omitempty"`  // cached passkey auth token
-	UserID    string `json:"user_id,omitempty"`     // relay-injected
-	Cols      uint32 `json:"cols,omitempty"`         // browser terminal cols (for resize-before-snapshot)
-	Rows      uint32 `json:"rows,omitempty"`         // browser terminal rows (for resize-before-snapshot)
+	Type      string   `json:"type"`
+	SessionID string   `json:"session_id"`
+	PublicKey string   `json:"public_key,omitempty"`  // new browser ephemeral key
+	WingID    string   `json:"wing_id,omitempty"`     // target wing (for relay routing)
+	AuthToken string   `json:"auth_token,omitempty"`  // cached passkey auth token
+	UserID    string   `json:"user_id,omitempty"`     // relay-injected
+	Cols      uint32   `json:"cols,omitempty"`         // browser terminal cols (for resize-before-snapshot)
+	Rows      uint32   `json:"rows,omitempty"`         // browser terminal rows (for resize-before-snapshot)
+	Spectate  bool     `json:"spectate,omitempty"`     // read-only spectator mode
+	ViewerID  string   `json:"viewer_id,omitempty"`    // relay-assigned spectator ID
+	Email     string   `json:"email,omitempty"`        // relay-injected user email
+	Passkeys  []string `json:"passkeys,omitempty"`     // relay-injected passkey attestation
 }
 
 // PTYKill requests termination of a PTY session.
