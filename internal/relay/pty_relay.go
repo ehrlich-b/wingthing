@@ -375,8 +375,16 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				s.PTY.AddViewer(attach.SessionID, viewerID, conn)
 				log.Printf("pty session %s spectator added (viewer=%s user=%s)", attach.SessionID, viewerID, userID)
 			} else {
-				// Normal reattach: overwrite controller
-				s.PTY.Set(attach.SessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID})
+				// Normal reattach: update controller conn, preserve spectators
+				route := s.PTY.Get(attach.SessionID)
+				if route != nil {
+					route.mu.Lock()
+					route.BrowserConn = conn
+					route.UserID = userID
+					route.mu.Unlock()
+				} else {
+					s.PTY.Set(attach.SessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID})
+				}
 				log.Printf("pty session %s reattached (user=%s)", attach.SessionID, userID)
 			}
 

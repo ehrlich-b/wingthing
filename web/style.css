@@ -2129,6 +2129,25 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     flex-shrink: 0;
 }
 
+/* Spectate toast */
+.spectate-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2000;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: var(--text-dim);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    animation: toast-in 0.2s ease-out;
+    pointer-events: none;
+}
+
+
 .crypto-error-dismiss:hover { color: var(--text); }
 
 /* === Mobile === */

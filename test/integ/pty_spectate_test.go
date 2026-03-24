@@ -692,3 +692,49 @@ func TestSpectateNonexistentRoute(t *testing.T) {
 		t.Error("expected relay-assigned viewer_id")
 	}
 }
+
+func TestSpectateControllerReattachPreservesViewers(t *testing.T) {
+	_, ts, store := testRelayAndWS(t)
+	token, _ := createTestUser(t, store, "spectate-reattach")
+
+	wingConn := connectWing(t, wsURL(ts), token, "wing-spec-ra", []string{"claude"})
+	defer wingConn.CloseNow()
+
+	owner := connectBrowser(t, wsURL(ts), token, "wing-spec-ra")
+	defer owner.CloseNow()
+
+	sess := startSession(t, owner, wingConn, "claude", "wing-spec-ra")
+
+	spectator := connectBrowser(t, wsURL(ts), token, "wing-spec-ra")
+	defer spectator.CloseNow()
+	viewerID := spectateSession(t, spectator, wingConn, sess, "wing-spec-ra")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Controller reattaches (simulates page reload)
+	owner2 := connectBrowser(t, wsURL(ts), token, "wing-spec-ra")
+	defer owner2.CloseNow()
+	reattach := ws.PTYAttach{
+		Type:      ws.TypePTYAttach,
+		SessionID: sess,
+		WingID:    "wing-spec-ra",
+	}
+	wsjson.Write(ctx, owner2, reattach)
+	// Drain the forwarded attach from wing
+	var wingAttach ws.PTYAttach
+	wsjson.Read(ctx, wingConn, &wingAttach)
+
+	// Spectator should still receive output after controller reattach
+	specData := base64.StdEncoding.EncodeToString([]byte("after-reattach"))
+	wsjson.Write(ctx, wingConn, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sess, Data: specData, ViewerID: viewerID})
+
+	var specOut ws.PTYOutput
+	if err := wsjson.Read(ctx, spectator, &specOut); err != nil {
+		t.Fatalf("spectator read after controller reattach: %v", err)
+	}
+	decoded, _ := base64.StdEncoding.DecodeString(specOut.Data)
+	if string(decoded) != "after-reattach" {
+		t.Errorf("spectator got %q, want %q", decoded, "after-reattach")
+	}
+}

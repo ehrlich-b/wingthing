@@ -264,7 +264,13 @@ function setupPTYHandlers(ws, reattach) {
                     break;
                 }
                 S.ptySessionId = msg.session_id;
-                DOM.headerTitle.textContent = sessionTitle(msg.agent, S.ptyWingId);
+                if (S.spectating) {
+                    var sess = S.sessionsData.find(function(s) { return s.id === msg.session_id; });
+                    var who = sess && sess.email ? sess.email : '';
+                    DOM.headerTitle.textContent = 'watching' + (who ? ' ' + who : '') + ' · ' + (msg.agent || '?');
+                } else {
+                    DOM.headerTitle.textContent = sessionTitle(msg.agent, S.ptyWingId);
+                }
                 DOM.sessionCloseBtn.style.display = '';
                 hidePasskeyOverlay();
                 if (msg.auth_token && S.ptyWingId) {
@@ -484,7 +490,26 @@ export function connectPTY(agent, cwd, wingId) {
     setupPTYHandlers(S.ptyWs, false);
 }
 
-export function attachPTY(sessionId) {
+export function attachPTY(sessionId, _retries) {
+    var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
+
+    // Deep link before data loaded — wait for session or a spectate-enabled wing
+    if (!sess && !_retries) {
+        showReplayOverlay();
+        DOM.headerTitle.textContent = 'connecting...';
+        var attempts = 0;
+        var timer = setInterval(function() {
+            var s = S.sessionsData.find(function(s) { return s.id === sessionId; });
+            var hasSpectateWing = S.wingsData.some(function(w) { return w.online !== false && w.spectate; });
+            attempts++;
+            if (s || hasSpectateWing || attempts > 20) {
+                clearInterval(timer);
+                attachPTY(sessionId, attempts);
+            }
+        }, 500);
+        return;
+    }
+
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
 
@@ -493,7 +518,6 @@ export function attachPTY(sessionId) {
 
     if (S.ptyWs) { try { S.ptyWs.close(); } catch(e) {} }
 
-    var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
     S.ptyWingId = sess ? sess.wing_id : null;
 
     // Auto-spectate: if this is another user's session and the wing has spectate enabled
@@ -501,7 +525,20 @@ export function attachPTY(sessionId) {
     var wing = isOtherUser && sess.wing_id ? S.wingsData.find(function(w) { return w.wing_id === sess.wing_id; }) : null;
     S.spectating = !!(isOtherUser && wing && wing.spectate);
 
-    DOM.headerTitle.textContent = S.spectating ? 'watching (read-only)' : (sess ? sessionTitle(sess.agent || '?', sess.wing_id) : 'reconnecting...');
+    // Session not in our list (spectator deep link, path ACLs, etc.) —
+    // find a spectate-enabled wing and attach directly. The wing will
+    // accept if it has the session running.
+    if (!sess && !S.spectating) {
+        var spectateWing = S.wingsData.find(function(w) { return w.online !== false && w.spectate; });
+        if (spectateWing) {
+            S.ptyWingId = spectateWing.wing_id;
+            S.spectating = true;
+        }
+    }
+
+    var watchLabel = 'watching';
+    if (S.spectating && sess && sess.email) watchLabel = 'watching ' + sess.email;
+    DOM.headerTitle.textContent = S.spectating ? watchLabel : (sess ? sessionTitle(sess.agent || '?', sess.wing_id) : 'reconnecting...');
     DOM.ptyStatus.textContent = '';
 
     if (S.ptyWingId) url += '?wing_id=' + encodeURIComponent(S.ptyWingId);

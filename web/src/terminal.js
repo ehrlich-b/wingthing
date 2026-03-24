@@ -42,6 +42,10 @@ export function initTerminal() {
         if (e.type === 'keydown' && (e.ctrlKey || e.metaKey) && e.key === 'c' && S.term.hasSelection()) {
             return false;
         }
+        // Spectator: show toast on real keyboard input only
+        if (e.type === 'keydown' && S.spectating && !e.metaKey && !e.ctrlKey) {
+            showSpectateToast();
+        }
         return true;
     });
 
@@ -241,6 +245,24 @@ export function restoreTermBuffer(sessionId) {
 export function clearTermBuffer(sessionId) {
     try { localStorage.removeItem(TERM_BUF_PREFIX + sessionId); } catch (e) {}
     try { localStorage.removeItem(TERM_THUMB_PREFIX + sessionId); } catch (e) {}
+}
+
+var _spectateToastTimer = null;
+
+function showSpectateToast() {
+    if (_spectateToastTimer) return;
+    var existing = document.getElementById('spectate-toast');
+    if (existing) return;
+    var toast = document.createElement('div');
+    toast.id = 'spectate-toast';
+    toast.className = 'spectate-toast';
+    toast.textContent = 'read-only session';
+    document.body.appendChild(toast);
+    _spectateToastTimer = setTimeout(function() {
+        var el = document.getElementById('spectate-toast');
+        if (el) el.remove();
+        _spectateToastTimer = null;
+    }, 2000);
 }
 
 export function sendPTYInput(text) {

@@ -336,6 +336,30 @@ async function init() {
     }
 }
 
+// Hash change (user pastes #s/ URL while page is already loaded)
+window.addEventListener('hashchange', function() {
+    var hashMatch = location.hash.match(/^#s\/(.+)$/);
+    if (hashMatch) {
+        history.replaceState({ view: 'terminal', sessionId: hashMatch[1] }, '', '#s/' + hashMatch[1]);
+        showTerminal();
+        attachPTY(hashMatch[1]);
+        return;
+    }
+    var wingMatch = location.hash.match(/^#w\/(.+)$/);
+    if (wingMatch) {
+        navigateToWingDetail(wingMatch[1]);
+        return;
+    }
+    var accountMatch = location.hash.match(/^#account(?:\/(.+))?$/);
+    if (accountMatch) {
+        navigateToAccount(true, accountMatch[1] || null);
+        return;
+    }
+    if (location.hash === '#canvas') {
+        showCanvas(false);
+    }
+});
+
 // Browser history (back/forward)
 window.addEventListener('popstate', function(e) {
     var auditOverlay = document.getElementById('audit-overlay');
