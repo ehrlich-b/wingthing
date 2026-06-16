@@ -33,7 +33,7 @@ const maxReplaySize = 2 * 1024 * 1024 // 2MB replay buffer — trim at safe cut 
 
 // Terminal escape sequences used as safe cut points for buffer trimming.
 var (
-	syncEnd   = []byte("\x1b[?2026l")  // end of synchronized update frame (Claude, Codex)
+	syncEnd   = []byte("\x1b[?2026l")   // end of synchronized update frame (Claude, Codex)
 	eraseLine = []byte("\x1b[2K\x1b[G") // erase line + column 1 (Cursor)
 )
 
@@ -63,12 +63,12 @@ type Session struct {
 	StartedAt      time.Time
 	ptmx           *os.File
 	replay         *replayBuffer
-	vterm   *VTerm        // server-side VTE — only accessed by runVTermLoop goroutine
-	vtermCh chan vtermMsg // async vterm processing channel
-	useVTE  bool         // when true, attach sends VTerm snapshot instead of replay buffer
-	sb      sandbox.Sandbox
-	cmd     *exec.Cmd
-	mu      sync.Mutex
+	vterm          *VTerm        // server-side VTE — only accessed by runVTermLoop goroutine
+	vtermCh        chan vtermMsg // async vterm processing channel
+	useVTE         bool          // when true, attach sends VTerm snapshot instead of replay buffer
+	sb             sandbox.Sandbox
+	cmd            *exec.Cmd
+	mu             sync.Mutex
 	lastOutput     time.Time     // last PTY output timestamp
 	lastInput      time.Time     // last user input timestamp
 	idleTimeout    time.Duration // 0 = disabled
@@ -78,11 +78,11 @@ type Session struct {
 	audit          bool
 	auditor        *inputAuditor // nil when audit disabled
 	auditWriter    *gzip.Writer  // nil when audit disabled or after PTY exit
-	auditFile      *os.File     // underlying file for audit flush
+	auditFile      *os.File      // underlying file for audit flush
 	auditStart     time.Time     // start time for audit timestamps
 	auditLastMS    uint64        // last frame timestamp for delta encoding
 	auditFrames    int           // frame count since last flush
-	auditMu        sync.Mutex   // protects auditWriter/auditLastMS/auditFrames
+	auditMu        sync.Mutex    // protects auditWriter/auditLastMS/auditFrames
 }
 
 // RunConfig holds everything needed to start a single egg session.
@@ -90,8 +90,8 @@ type RunConfig struct {
 	Agent   string
 	CWD     string
 	Shell   string
-	FS      []string          // "rw:./", "deny:~/.ssh"
-	Network []string          // domain list
+	FS      []string // "rw:./", "deny:~/.ssh"
+	Network []string // domain list
 	Env     map[string]string
 	Rows    uint32
 	Cols    uint32
@@ -103,14 +103,14 @@ type RunConfig struct {
 	PidLimit                   uint32
 	Debug                      bool
 	Audit                      bool
-	Trace                      bool   // wrap sandbox command with strace (Linux only)
-	VTE                        bool   // use VTerm snapshot for reconnect instead of replay buffer
-	RenderedConfig             string // effective egg config as YAML (after merge/resolve)
-	UserHome                   string // per-user home directory (relay sessions only)
+	Trace                      bool          // wrap sandbox command with strace (Linux only)
+	VTE                        bool          // use VTerm snapshot for reconnect instead of replay buffer
+	RenderedConfig             string        // effective egg config as YAML (after merge/resolve)
+	UserHome                   string        // per-user home directory (relay sessions only)
 	IdleTimeout                time.Duration // 0 = disabled; self-terminate after this much idle
-	ResumeSessionID            string // agent session ID to resume (from chat.meta)
-	ToolNames                  []string // names of privileged tools (for shim generation)
-	ToolSocketPath             string   // path to tool.sock (set by wing, empty = no tools)
+	ResumeSessionID            string        // agent session ID to resume (from chat.meta)
+	ToolNames                  []string      // names of privileged tools (for shim generation)
+	ToolSocketPath             string        // path to tool.sock (set by wing, empty = no tools)
 }
 
 // replayBuffer is an append-only (bounded) log of PTY output.
@@ -122,23 +122,23 @@ type readerCursor struct {
 }
 
 type replayBuffer struct {
-	mu            sync.Mutex
-	buf           []byte
-	trimmed       int64          // total bytes ever trimmed from front
-	written       int64          // total bytes ever written
-	notify        chan struct{}   // closed+replaced on Write to wake readers
-	advanced      chan struct{}   // closed+replaced when a reader advances (unblocks writer)
-	readers       []*readerCursor
-	trimPreamble  []byte         // mode sequences to re-inject after trim
-	cursorRow     int            // last known absolute cursor row (1-based)
-	cursorCol     int            // last known absolute cursor col (1-based)
+	mu           sync.Mutex
+	buf          []byte
+	trimmed      int64         // total bytes ever trimmed from front
+	written      int64         // total bytes ever written
+	notify       chan struct{} // closed+replaced on Write to wake readers
+	advanced     chan struct{} // closed+replaced when a reader advances (unblocks writer)
+	readers      []*readerCursor
+	trimPreamble []byte // mode sequences to re-inject after trim
+	cursorRow    int    // last known absolute cursor row (1-based)
+	cursorCol    int    // last known absolute cursor col (1-based)
 }
 
 type replayStats struct {
-	BufSize  int
-	Written  int64
-	Trimmed  int64
-	Readers  int
+	BufSize int
+	Written int64
+	Trimmed int64
+	Readers int
 }
 
 func (r *replayBuffer) Stats() replayStats {
@@ -365,7 +365,7 @@ func trackCursorPos(data []byte, row *int, col *int) {
 			continue
 		}
 		// CUP — Cursor Position: ESC [ row ; col H
-		params := data[start : i]
+		params := data[start:i]
 		r, c := 1, 1
 		semi := bytes.IndexByte(params, ';')
 		if semi >= 0 {
@@ -476,6 +476,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			if v := os.Getenv(k); v != "" {
 				envMap[k] = v
 			}
+		}
+	}
+	// Agent-forced env defaults (e.g. CLAUDE_CODE_DISABLE_MOUSE). Host/config still wins.
+	for k, v := range profile.SetEnv {
+		if _, ok := envMap[k]; !ok {
+			envMap[k] = v
 		}
 	}
 	// Ensure essentials are present
@@ -730,10 +736,10 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		Cols:           rc.Cols,
 		Rows:           rc.Rows,
 		ptmx:           ptmx,
-		replay:  newReplayBuffer(rc.Agent),
-		vterm:   NewVTerm(int(rc.Cols), int(rc.Rows)),
-		vtermCh: make(chan vtermMsg, 256),
-		useVTE:  rc.VTE,
+		replay:         newReplayBuffer(rc.Agent),
+		vterm:          NewVTerm(int(rc.Cols), int(rc.Rows)),
+		vtermCh:        make(chan vtermMsg, 256),
+		useVTE:         rc.VTE,
 		sb:             sb,
 		cmd:            cmd,
 		done:           make(chan struct{}),

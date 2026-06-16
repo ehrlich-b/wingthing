@@ -35,7 +35,7 @@ func eggCmd() *cobra.Command {
 		Aliases: []string{"egg"},
 		Short:   "Run an agent in a sandboxed session",
 		Long:    "Spawns an agent (claude, ollama, codex) inside a per-session sandbox with PTY persistence.\nSet dangerously_skip_permissions in egg.yaml to bypass agent permission prompts.",
-		Args:  cobra.MaximumNArgs(1),
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
@@ -57,30 +57,30 @@ func eggCmd() *cobra.Command {
 // eggRunCmd starts a single per-session egg process (hidden, called by wing or eggSpawn).
 func eggRunCmd() *cobra.Command {
 	var (
-		sessionID  string
-		agentName  string
-		cwd        string
-		shell      string
-		rows       uint32
-		cols       uint32
-		fsFlag     []string
-		networkFlag []string
-		envFlag    []string
-		cpuFlag    string
-		memFlag    string
-		maxFDsFlag  uint32
-		maxPidsFlag uint32
-		debugFlag  bool
-		auditFlag  bool
-		traceFlag  bool
-		vteFlag    bool
-		renderedConfigFlag string
-		userHomeFlag string
-		idleTimeoutFlag string
+		sessionID                  string
+		agentName                  string
+		cwd                        string
+		shell                      string
+		rows                       uint32
+		cols                       uint32
+		fsFlag                     []string
+		networkFlag                []string
+		envFlag                    []string
+		cpuFlag                    string
+		memFlag                    string
+		maxFDsFlag                 uint32
+		maxPidsFlag                uint32
+		debugFlag                  bool
+		auditFlag                  bool
+		traceFlag                  bool
+		vteFlag                    bool
+		renderedConfigFlag         string
+		userHomeFlag               string
+		idleTimeoutFlag            string
 		dangerouslySkipPermissions bool
-		resumeSessionFlag string
-		toolNamesFlag []string
-		toolSocketFlag string
+		resumeSessionFlag          string
+		toolNamesFlag              []string
+		toolSocketFlag             string
 	)
 
 	cmd := &cobra.Command{
@@ -127,29 +127,29 @@ func eggRunCmd() *cobra.Command {
 			}
 
 			rc := egg.RunConfig{
-				Agent:   agentName,
-				CWD:     cwd,
-				Shell:   shell,
-				FS:      fsFlag,
-				Network: networkFlag,
-				Env:     envMap,
-				Rows:    rows,
-				Cols:    cols,
+				Agent:                      agentName,
+				CWD:                        cwd,
+				Shell:                      shell,
+				FS:                         fsFlag,
+				Network:                    networkFlag,
+				Env:                        envMap,
+				Rows:                       rows,
+				Cols:                       cols,
 				DangerouslySkipPermissions: dangerouslySkipPermissions,
-				CPULimit:        cpuLimit,
-				MemLimit:        memLimit,
-				MaxFDs:          maxFDsFlag,
-				PidLimit:        maxPidsFlag,
-				Debug:           debugFlag,
-				Audit:           auditFlag,
-				Trace:           traceFlag,
-				VTE:             vteFlag,
-				RenderedConfig:  renderedConfigFlag,
-				UserHome:        userHomeFlag,
-				IdleTimeout:     idleTimeout,
-				ResumeSessionID: resumeSessionFlag,
-				ToolNames:       toolNamesFlag,
-				ToolSocketPath:  toolSocketFlag,
+				CPULimit:                   cpuLimit,
+				MemLimit:                   memLimit,
+				MaxFDs:                     maxFDsFlag,
+				PidLimit:                   maxPidsFlag,
+				Debug:                      debugFlag,
+				Audit:                      auditFlag,
+				Trace:                      traceFlag,
+				VTE:                        vteFlag,
+				RenderedConfig:             renderedConfigFlag,
+				UserHome:                   userHomeFlag,
+				IdleTimeout:                idleTimeout,
+				ResumeSessionID:            resumeSessionFlag,
+				ToolNames:                  toolNamesFlag,
+				ToolSocketPath:             toolSocketFlag,
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -595,6 +595,12 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			if v := os.Getenv(k); v != "" {
 				envMap[k] = v
 			}
+		}
+	}
+	// Agent-forced env defaults (e.g. CLAUDE_CODE_DISABLE_MOUSE). Host/config still wins.
+	for k, v := range profile.SetEnv {
+		if _, ok := envMap[k]; !ok {
+			envMap[k] = v
 		}
 	}
 	if identity.Email != "" && identity.OrgWing {

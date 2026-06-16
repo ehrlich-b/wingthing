@@ -6,15 +6,16 @@ import "runtime"
 // The sandbox merges these into the egg config automatically so users
 // don't need to know agent internals (e.g. where Claude stores config).
 type AgentProfile struct {
-	Domains       []string // network domains needed (empty = no network)
-	EnvVars       []string // required env var names (merged from host)
-	PlatformEnv   []string // platform-specific env vars (e.g. macOS Keychain access)
-	WriteDirs     []string // relative to $HOME, need write access
-	WriteRegex    []string // dirs needing UseRegex (e.g. ".claude" covers .claude.json)
-	SettingsFile  string   // agent config file relative to HOME (e.g. ".claude/settings.json")
-	SessionDir    string   // agent session storage relative to $HOME (e.g. ".claude/projects")
-	ResumeFlag    string   // CLI flag for resuming (e.g. "--resume")
-	SessionIDFlag string   // CLI flag for controlling session ID (e.g. "--session-id")
+	Domains       []string          // network domains needed (empty = no network)
+	EnvVars       []string          // required env var names (merged from host)
+	SetEnv        map[string]string // env vars forced to a default (host/config still wins)
+	PlatformEnv   []string          // platform-specific env vars (e.g. macOS Keychain access)
+	WriteDirs     []string          // relative to $HOME, need write access
+	WriteRegex    []string          // dirs needing UseRegex (e.g. ".claude" covers .claude.json)
+	SettingsFile  string            // agent config file relative to HOME (e.g. ".claude/settings.json")
+	SessionDir    string            // agent session storage relative to $HOME (e.g. ".claude/projects")
+	ResumeFlag    string            // CLI flag for resuming (e.g. "--resume")
+	SessionIDFlag string            // CLI flag for controlling session ID (e.g. "--session-id")
 }
 
 // macOSKeychainEnv are env vars required for Apple Keychain access.
@@ -28,8 +29,11 @@ var macOSKeychainEnv = []string{
 
 var agentProfiles = map[string]AgentProfile{
 	"claude": {
-		Domains:       []string{"*.anthropic.com", "*.claude.com", "sentry.io", "statsigapi.net"},
-		EnvVars:       []string{"ANTHROPIC_API_KEY"},
+		Domains: []string{"*.anthropic.com", "*.claude.com", "sentry.io", "statsigapi.net"},
+		EnvVars: []string{"ANTHROPIC_API_KEY"},
+		// 2.1.150+ enables xterm mouse reporting, which steals click-drag selection in the
+		// browser terminal and breaks copy/paste. The TUI is keyboard-driven; turn it off.
+		SetEnv:        map[string]string{"CLAUDE_CODE_DISABLE_MOUSE": "1"},
 		WriteDirs:     []string{".cache/claude"},
 		WriteRegex:    []string{".claude"},
 		SettingsFile:  ".claude/settings.json",
@@ -38,12 +42,12 @@ var agentProfiles = map[string]AgentProfile{
 		SessionIDFlag: "--session-id",
 	},
 	"codex": {
-		Domains:       []string{"api.openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"},
-		EnvVars:       []string{"OPENAI_API_KEY"},
-		WriteDirs:     []string{".codex"},
-		SettingsFile:  ".codex/settings.json",
-		SessionDir:    ".codex/sessions",
-		ResumeFlag:    "resume",
+		Domains:      []string{"api.openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"},
+		EnvVars:      []string{"OPENAI_API_KEY"},
+		WriteDirs:    []string{".codex"},
+		SettingsFile: ".codex/settings.json",
+		SessionDir:   ".codex/sessions",
+		ResumeFlag:   "resume",
 	},
 	"cursor": {
 		Domains:      []string{"api.anthropic.com", "api.openai.com", "*.cursor.sh"},
