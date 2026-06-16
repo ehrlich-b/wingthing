@@ -1,6 +1,6 @@
 # wingthing
 
-[![cinch](https://cinch.sh/badge/github.com/ehrlich-b/wingthing.svg)](https://cinch.sh/jobs/github.com/ehrlich-b/wingthing)
+[![ci](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml/badge.svg)](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml)
 
 Sandboxed AI agents on your machine, accessible from anywhere over an encrypted, passkey-protected roost that can't read your data.
 

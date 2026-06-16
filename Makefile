@@ -20,13 +20,7 @@ serve: build
 	./wt serve
 
 release: web
-	@if [ -z "$(CINCH_TAG)" ]; then \
-		echo "Error: CINCH_TAG not set (run via Cinch CI on tag push)"; \
-		exit 1; \
-	fi
-	$(eval VERSION := $(CINCH_TAG))
-	$(eval LDFLAGS := -s -w -X main.version=$(VERSION))
-	@echo "Building $(CINCH_TAG) for all platforms..."
+	@echo "Building $(VERSION) for all platforms..."
 	@mkdir -p dist
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; \
@@ -35,8 +29,7 @@ release: web
 		echo "  $$os/$$arch"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -buildvcs=false -ldflags="$(LDFLAGS)" -o $$output ./cmd/wt; \
 	done
-	@echo "Creating release $(CINCH_TAG)..."
-	cinch release dist/*
+	@echo "Built $(VERSION) -> dist/ (publish via gh release create)"
 
 jail: build
 	go test -tags integration -v ./internal/sandbox/ -run TestJail

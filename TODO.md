@@ -161,7 +161,7 @@ full screen redraw but annoying.
 - [ ] GUI streaming — H.264 over WebSocket for graphical agent windows (Cursor, etc.)
 - [ ] Wing-to-wing communication — wings coordinate via shared thread
 - [ ] Context sync — teleport CLAUDE.md, memory files to wings on connect
-- [ ] Cinch CI — GitHub release pipeline, badges
+- [x] CI + release pipeline + badge — GitHub Actions (migrated off cinch 2026-06-16)
 
 ---
 

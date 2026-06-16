@@ -226,7 +226,7 @@ Run `make check` to verify changes. Run `make web` before `make check` if you ch
 
 ### CI
 
-CI runs via **cinch**. Use `cinch run` to trigger a build, `cinch status` to check results. When Bryan says "cinch run" or "cinch status", run those commands directly.
+CI runs via **GitHub Actions** (`.github/workflows/ci.yml` on push/PR; `release.yml` on `v*` tags). Use `gh run list`, `gh run watch`, or `gh run view --log-failed` to check builds.
 
 ### Development is LOCAL
 

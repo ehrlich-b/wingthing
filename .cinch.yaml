@@ -1,3 +1,0 @@
-build: make check
-release: make release
-devcontainer: true
