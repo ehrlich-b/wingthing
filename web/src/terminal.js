@@ -49,6 +49,29 @@ export function initTerminal() {
         return true;
     });
 
+    // Claude Code (and other fullscreen TUIs) draw in the alternate screen buffer,
+    // which has no scrollback for xterm.js to scroll. Claude's mouse reporting is
+    // disabled (CLAUDE_CODE_DISABLE_MOUSE, see internal/egg/agents.go) so browser
+    // click-drag copy/paste keeps working — but that also means the agent never sees
+    // wheel events, so the wheel did nothing. Translate wheel motion into PgUp/PgDn,
+    // the only scroll keys Claude honors when the mouse is off. In the normal buffer
+    // we return true and leave xterm's own scrollback handling untouched.
+    var wheelAccum = 0;
+    var WHEEL_STEP = 120; // wheel-delta px per half-viewport PgUp/PgDn step (tunable)
+    S.term.attachCustomWheelEventHandler(function (e) {
+        if (!S.term || S.term.buffer.active.type !== 'alternate') return true;
+        var dy = e.deltaY;
+        if (e.deltaMode === 1) dy *= 16;                                      // lines -> px
+        else if (e.deltaMode === 2) dy *= DOM.terminalContainer.clientHeight; // pages -> px
+        wheelAccum += dy;
+        while (Math.abs(wheelAccum) >= WHEEL_STEP) {
+            if (wheelAccum < 0) { sendPTYInput('\x1b[5~'); wheelAccum += WHEEL_STEP; } // PgUp
+            else { sendPTYInput('\x1b[6~'); wheelAccum -= WHEEL_STEP; }               // PgDn
+        }
+        e.preventDefault();
+        return false;
+    });
+
     S.term.onData(function (data) {
         if (S.ctrlActive) {
             S.ctrlActive = false;
