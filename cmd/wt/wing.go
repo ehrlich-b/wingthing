@@ -1465,7 +1465,10 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 				authTTL = d
 			}
 		}
-		reclaimEggSessions(rctx, cfg, client, allowedKeys, passkeyCache, authTTL)
+		wingToolsMu.Lock()
+		reclaimTools := append([]*config.ToolConfig{}, wingTools...)
+		wingToolsMu.Unlock()
+		reclaimEggSessions(rctx, cfg, client, allowedKeys, passkeyCache, authTTL, reclaimTools)
 	}
 
 	// SIGHUP reload goroutine — caller owns SIGTERM/SIGINT via ctx cancellation
@@ -2630,7 +2633,7 @@ func readEggCrashInfo(dir string) string {
 // reclaimEggSessions discovers surviving egg sessions and re-registers their
 // input routing goroutines. The relay no longer tracks sessions — browser
 // discovers them via E2E tunnel and reattaches directly via wing_id.
-func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Client, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
+func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Client, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, tools []*config.ToolConfig) {
 	// Small delay to let registration complete
 	time.Sleep(500 * time.Millisecond)
 
@@ -2690,13 +2693,13 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		go func(sid string, ec *egg.Client, dir string) {
 			defer cleanup()
 			defer ec.Close()
-			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, allowedKeys, passkeyCache, authTTL)
+			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, allowedKeys, passkeyCache, authTTL, tools)
 		}(sessionID, ec, dir)
 	}
 }
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
-func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration) {
+func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, authTTL time.Duration, tools []*config.ToolConfig) {
 	reclaimAgent, reclaimCWD := readEggMeta(eggDir)
 	var mu sync.Mutex
 	var gcm cipher.AEAD
@@ -2718,6 +2721,24 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	}
 	sessionStates.Store(sessionID, reclaimIdleState)
 	defer sessionStates.Delete(sessionID)
+
+	// Recreate the tool socket listener. It was owned by the previous daemon
+	// process and died with it, but the surviving egg still points at this path
+	// via --tool-socket. Re-listen on the same socket so privileged tools keep
+	// working after a daemon restart. Only sessions that were started with tools
+	// have a .tools dir; skip the rest.
+	if len(tools) > 0 {
+		toolsDir := filepath.Join(eggDir, ".tools")
+		if _, statErr := os.Stat(toolsDir); statErr == nil {
+			toolSocketPath := filepath.Join(toolsDir, "tool.sock")
+			if tl, tlErr := egg.NewToolListener(toolSocketPath, tools); tlErr != nil {
+				log.Printf("pty session %s: reclaim tool listener failed: %v", sessionID, tlErr)
+			} else {
+				log.Printf("pty session %s: reclaim tool listener restarted (%d tools)", sessionID, len(tools))
+				defer tl.Close()
+			}
+		}
+	}
 
 	// Attach to existing egg session
 	streamCtx, sCancel := context.WithCancel(ctx)
