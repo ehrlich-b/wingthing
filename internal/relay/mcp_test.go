@@ -408,6 +408,23 @@ func TestMCPRejectsGeneralWingJWT(t *testing.T) {
 	}
 }
 
+func TestMCPRejectsCrossOriginBeforeAuthentication(t *testing.T) {
+	_, ts, _ := mcpTestServer(t)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://attacker.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin unauthenticated MCP request = %d, want 403", resp.StatusCode)
+	}
+}
+
 func TestJWTTokenUseSeparatesWingAndMCP(t *testing.T) {
 	srv, ts, _ := mcpTestServer(t)
 	wingToken, _, err := IssueWingJWT(srv.jwtKey, "alice", "pub", "wing-1")

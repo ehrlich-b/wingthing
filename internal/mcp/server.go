@@ -80,7 +80,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !requestOriginAllowed(r) {
+	if !OriginAllowed(r) {
 		http.Error(w, "invalid origin", http.StatusForbidden)
 		return
 	}
@@ -169,7 +169,7 @@ func ensureJSONEOF(dec *json.Decoder) error {
 
 // Native MCP clients omit Origin. Browser-originated requests must be same-host to prevent
 // DNS rebinding; reverse proxies preserve the external Host header.
-func requestOriginAllowed(r *http.Request) bool {
+func OriginAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true

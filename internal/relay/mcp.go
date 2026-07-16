@@ -84,6 +84,13 @@ func (s *Server) mcpPolicySnapshot() *mcp.Policy {
 // to the MCP server. An unauthenticated request gets the MCP 401 challenge so the client
 // knows where to begin OAuth.
 func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
+	// Origin validation is a transport requirement and must run before bearer authentication.
+	// Otherwise a cross-origin request without a token receives an OAuth challenge instead of
+	// the required DNS-rebinding rejection.
+	if !mcp.OriginAllowed(r) {
+		http.Error(w, "invalid origin", http.StatusForbidden)
+		return
+	}
 	server, policy := s.mcpSnapshot()
 	if server == nil || policy == nil {
 		http.NotFound(w, r)
