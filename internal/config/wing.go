@@ -191,12 +191,17 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	return cfg, nil
 }
 
-// SaveWingConfig writes wing.yaml to dir.
+// SaveWingConfig writes wing.yaml to dir. The file may contain the roost's JWT signing
+// key, so it must never be readable by other local users.
 func SaveWingConfig(dir string, cfg *WingConfig) error {
 	os.MkdirAll(dir, 0755)
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "wing.yaml"), data, 0644)
+	path := filepath.Join(dir, "wing.yaml")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0600)
 }
