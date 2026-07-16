@@ -97,6 +97,11 @@ audience, client ID, token-use claim, signature, and expiry. General wing JWTs a
 API tokens are rejected. Role membership is checked again when an access or refresh token is
 used, so removing a member revokes future use without waiting for every token to expire.
 
+The current authorization flow represents human users only. A proposed future design for
+non-human workloads, direct API tokens, and OAuth client credentials is documented in
+[MCP service accounts and API credentials](mcp-service-accounts-design.md). It is not part of
+the current implementation.
+
 Dynamic client registrations are stored in the roost database. Authorization codes and
 refresh-token grants are short-lived process state; restarting the roost requires the MCP
 client to authenticate again.
