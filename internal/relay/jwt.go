@@ -3,11 +3,14 @@ package relay
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -38,6 +41,42 @@ type MCPClaims struct {
 }
 
 const mcpAccessTokenTTL = time.Hour
+
+const jwtSecretDerivationContext = "wingthing/jwt-signing-key/es256/v1"
+
+// DeriveECKeyStringFromSecret deterministically derives a P-256 signing key from an existing
+// high-entropy deployment secret. Rejection sampling avoids modulo bias, while the context
+// string domain-separates this key from any other use of the same secret.
+func DeriveECKeyStringFromSecret(secret string) (string, error) {
+	if len(secret) < 16 {
+		return "", fmt.Errorf("WT_JWT_SECRET must contain at least 16 bytes")
+	}
+	curve := elliptic.P256()
+	var d *big.Int
+	for counter := 0; counter < 256; counter++ {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(jwtSecretDerivationContext))
+		mac.Write([]byte{byte(counter)})
+		candidate := new(big.Int).SetBytes(mac.Sum(nil))
+		if candidate.Sign() > 0 && candidate.Cmp(curve.Params().N) < 0 {
+			d = candidate
+			break
+		}
+	}
+	if d == nil {
+		return "", fmt.Errorf("derive P-256 key from WT_JWT_SECRET")
+	}
+	x, y := curve.ScalarBaseMult(d.Bytes())
+	key := &ecdsa.PrivateKey{
+		PublicKey: ecdsa.PublicKey{Curve: curve, X: x, Y: y},
+		D:         d,
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return "", fmt.Errorf("marshal derived EC key: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(der), nil
+}
 
 // ParseECKeyFromEnv parses a P-256 private key from an environment variable value.
 // Accepts PEM or base64-encoded DER. Returns an error if the value is empty or invalid.

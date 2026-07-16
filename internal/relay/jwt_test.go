@@ -45,3 +45,34 @@ func TestParseECKeyRejectsNonP256Curve(t *testing.T) {
 		t.Fatal("P-384 key accepted for ES256")
 	}
 }
+
+func TestDeriveECKeyStringFromSecretIsStableAndDomainSafe(t *testing.T) {
+	first, err := DeriveECKeyStringFromSecret("0123456789abcdef-existing-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := DeriveECKeyStringFromSecret("0123456789abcdef-existing-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := DeriveECKeyStringFromSecret("fedcba9876543210-different-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != again {
+		t.Fatal("same secret derived different signing keys")
+	}
+	if first == other {
+		t.Fatal("different secrets derived the same signing key")
+	}
+	key, err := ParseECKeyFromEnv(first)
+	if err != nil {
+		t.Fatalf("derived key is not a valid P-256 private key: %v", err)
+	}
+	if key.Curve != elliptic.P256() || key.D.Sign() <= 0 {
+		t.Fatal("derived key has invalid P-256 parameters")
+	}
+	if _, err := DeriveECKeyStringFromSecret("too-short"); err == nil {
+		t.Fatal("short deployment secret was accepted")
+	}
+}

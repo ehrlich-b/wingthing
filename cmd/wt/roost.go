@@ -167,14 +167,19 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		return fmt.Errorf("backfill pro users: %w", err)
 	}
 
-	// JWT key: env var overrides wing.yaml, otherwise load/generate from wing.yaml.
-	jwtKey := os.Getenv("WT_JWT_KEY")
+	// JWT key: an explicit key wins; existing WT_JWT_SECRET deployments derive a stable
+	// P-256 key; otherwise local mode loads/generates the key in wing.yaml.
+	jwtKey, keyErr := jwtKeyFromEnvironment()
+	if keyErr != nil {
+		return fmt.Errorf("jwt key: %w", keyErr)
+	}
 	if jwtKey == "" {
-		var keyErr error
 		jwtKey, keyErr = ensureJWTKeyInWingYaml(cfg.Dir)
 		if keyErr != nil {
 			return fmt.Errorf("jwt key: %w", keyErr)
 		}
+	} else if os.Getenv("WT_JWT_KEY") == "" {
+		log.Printf("using stable P-256 JWT signing key derived from WT_JWT_SECRET")
 	}
 
 	srvCfg := relay.ServerConfig{

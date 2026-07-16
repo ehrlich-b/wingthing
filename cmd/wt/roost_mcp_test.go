@@ -39,3 +39,24 @@ mcp:
 		t.Fatalf("policy = %#v", policy)
 	}
 }
+
+func TestJWTKeyFromEnvironmentUsesExistingSecretAndPrefersExplicitKey(t *testing.T) {
+	t.Setenv("WT_JWT_KEY", "")
+	t.Setenv("WT_JWT_SECRET", "0123456789abcdef-existing-deployment-secret")
+	derived, err := jwtKeyFromEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if derived == "" {
+		t.Fatal("WT_JWT_SECRET did not derive a signing key")
+	}
+
+	t.Setenv("WT_JWT_KEY", "explicit-key")
+	got, err := jwtKeyFromEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "explicit-key" {
+		t.Fatalf("explicit WT_JWT_KEY did not take precedence: %q", got)
+	}
+}

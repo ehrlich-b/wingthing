@@ -85,12 +85,16 @@ func serveCmd() *cobra.Command {
 				localFlag = true
 				fmt.Println("no auth providers configured — enabling local mode")
 			}
+			jwtKey, err := jwtKeyFromEnvironment()
+			if err != nil {
+				return fmt.Errorf("jwt key: %w", err)
+			}
 
 			srvCfg := relay.ServerConfig{
 				BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
 				AppHost:            os.Getenv("WT_APP_HOST"),
 				WSHost:             os.Getenv("WT_WS_HOST"),
-				JWTKey:             os.Getenv("WT_JWT_KEY"),
+				JWTKey:             jwtKey,
 				GitHubClientID:     githubID,
 				GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
 				GoogleClientID:     googleID,
@@ -247,6 +251,18 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&localFlag, "local", false, "single-user mode, no login required")
 
 	return cmd
+}
+
+// jwtKeyFromEnvironment prefers an explicit encoded P-256 key. Existing deployments that
+// provide only WT_JWT_SECRET get a stable, domain-separated P-256 key without another secret.
+func jwtKeyFromEnvironment() (string, error) {
+	if key := os.Getenv("WT_JWT_KEY"); key != "" {
+		return key, nil
+	}
+	if secret := os.Getenv("WT_JWT_SECRET"); secret != "" {
+		return relay.DeriveECKeyStringFromSecret(secret)
+	}
+	return "", nil
 }
 
 // ensureJWTKeyInWingYaml loads the JWT signing key from wing.yaml, or generates
