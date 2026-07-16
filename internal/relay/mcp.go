@@ -1,0 +1,183 @@
+package relay
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/mcp"
+)
+
+type mcpIdentityKey struct{}
+
+type mcpIdentity struct {
+	UserID   string
+	Email    string
+	ClientID string
+	Roles    []string
+}
+
+// EnableMCP wires the role-scoped MCP surface onto the roost: a ToolRunner (the same tool
+// configs the wing uses) gated by a per-role Policy, reachable at POST /mcp with OAuth
+// bearer auth. Registers the MCP + OAuth routes. Call after NewServer, before serving.
+func (s *Server) EnableMCP(runner *egg.ToolRunner, policy *mcp.Policy) {
+	s.mcpOAuth = newMCPOAuth()
+	s.ReloadMCP(runner, policy)
+
+	s.mux.HandleFunc("POST /mcp", s.handleMCP)
+	s.mux.HandleFunc("GET /.well-known/oauth-protected-resource", s.handleOAuthProtectedResource)
+	s.mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.handleOAuthServerMetadata)
+	s.mux.HandleFunc("POST /oauth/register", s.handleOAuthRegister)
+	s.mux.HandleFunc("GET /oauth/authorize", s.handleOAuthAuthorize)
+	s.mux.HandleFunc("POST /oauth/authorize", s.handleOAuthConsent)
+	s.mux.HandleFunc("POST /oauth/token", s.handleOAuthToken)
+}
+
+// ReloadMCP atomically replaces the authorization policy and tool runner. In-flight
+// requests finish on the previous immutable snapshot; new requests see both replacements.
+func (s *Server) ReloadMCP(runner *egg.ToolRunner, policy *mcp.Policy) {
+	// The MCP server reads the caller's roles from the request context, which handleMCP
+	// populates after authenticating the bearer token.
+	server := mcp.NewServer(runner, policy, func(r *http.Request) []string {
+		identity, _ := r.Context().Value(mcpIdentityKey{}).(mcpIdentity)
+		return identity.Roles
+	})
+	server.SetCallObserver(s.auditMCPCall)
+	server.SetCallEnv(func(r *http.Request) map[string]string {
+		identity, _ := r.Context().Value(mcpIdentityKey{}).(mcpIdentity)
+		return map[string]string{
+			"WT_MCP_USER":      identity.UserID,
+			"WT_MCP_EMAIL":     identity.Email,
+			"WT_MCP_ROLES":     strings.Join(identity.Roles, ","),
+			"WT_MCP_CLIENT_ID": identity.ClientID,
+		}
+	})
+	s.mcpMu.Lock()
+	s.mcpServer = server
+	s.mcpPolicy = policy
+	s.mcpMu.Unlock()
+}
+
+// MCPEnabled reports whether the MCP surface is configured.
+func (s *Server) MCPEnabled() bool {
+	server, _ := s.mcpSnapshot()
+	return server != nil
+}
+
+func (s *Server) mcpSnapshot() (*mcp.Server, *mcp.Policy) {
+	s.mcpMu.RLock()
+	defer s.mcpMu.RUnlock()
+	return s.mcpServer, s.mcpPolicy
+}
+
+func (s *Server) mcpPolicySnapshot() *mcp.Policy {
+	_, policy := s.mcpSnapshot()
+	return policy
+}
+
+// handleMCP authenticates the caller, resolves their role from the policy, and delegates
+// to the MCP server. An unauthenticated request gets the MCP 401 challenge so the client
+// knows where to begin OAuth.
+func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
+	server, policy := s.mcpSnapshot()
+	if server == nil || policy == nil {
+		http.NotFound(w, r)
+		return
+	}
+	claims := s.mcpBearerClaims(r)
+	if claims == nil {
+		s.mcpChallenge(w, r)
+		return
+	}
+	u, _ := s.Store.GetUserByID(claims.Subject)
+	if u == nil || u.Email == nil {
+		writeError(w, http.StatusForbidden, "MCP access is not enabled for this user")
+		return
+	}
+	roles := policy.EnabledRoles(policy.RolesForEmail(*u.Email))
+	if len(roles) == 0 {
+		writeError(w, http.StatusForbidden, "MCP access is not enabled for this user")
+		return
+	}
+	ctx := context.WithValue(r.Context(), mcpIdentityKey{}, mcpIdentity{
+		UserID: claims.Subject, Email: *u.Email, ClientID: claims.ClientID, Roles: roles,
+	})
+	server.ServeHTTP(w, r.WithContext(ctx))
+}
+
+func (s *Server) auditMCPCall(r *http.Request, tool string, args []string, resp egg.ToolResponse) {
+	identity, _ := r.Context().Value(mcpIdentityKey{}).(mcpIdentity)
+	if identity.UserID == "" {
+		return
+	}
+	detail := map[string]any{
+		"client_id": identity.ClientID,
+		"roles":     identity.Roles,
+		"tool":      tool,
+		"exit_code": resp.ExitCode,
+		"is_error":  resp.ExitCode != 0 || resp.Error != "",
+	}
+	rawArgs, _ := json.Marshal(args)
+	if len(rawArgs) <= 16<<10 {
+		detail["args"] = args
+	} else {
+		sum := sha256.Sum256(rawArgs)
+		detail["args_truncated"] = true
+		detail["args_sha256"] = hex.EncodeToString(sum[:])
+	}
+	raw, _ := json.Marshal(detail)
+	s.Store.AppendAudit(identity.UserID, "mcp_tool_call", strPtr(string(raw)))
+}
+
+// mcpBearerClaims accepts only a dedicated, audience-bound MCP JWT. General wing and
+// database API tokens must never cross into the MCP resource server.
+func (s *Server) mcpBearerClaims(r *http.Request) *MCPClaims {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return nil
+	}
+	token := strings.TrimPrefix(auth, "Bearer ")
+	if s.JWTPubKey() == nil {
+		return nil
+	}
+	base := s.mcpBaseURL(r)
+	claims, err := ValidateMCPJWT(s.JWTPubKey(), token, base, base+"/mcp")
+	if err != nil {
+		return nil
+	}
+	return claims
+}
+
+// mcpChallenge emits the 401 that points an MCP client at our OAuth metadata (RFC 9728).
+func (s *Server) mcpChallenge(w http.ResponseWriter, r *http.Request) {
+	base := s.mcpBaseURL(r)
+	w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource_metadata=%q`, base+"/.well-known/oauth-protected-resource"))
+	writeError(w, http.StatusUnauthorized, "authentication required")
+}
+
+// mcpBaseURL is the roost's externally-reachable base URL (no trailing slash).
+func (s *Server) mcpBaseURL(r *http.Request) string {
+	if s.Config.BaseURL != "" {
+		return strings.TrimRight(s.Config.BaseURL, "/")
+	}
+	proto := "https"
+	if r.TLS == nil {
+		proto = "http"
+	}
+	return proto + "://" + r.Host
+}
+
+// handleOAuthProtectedResource serves RFC 9728 protected-resource metadata: it names this
+// MCP resource and which authorization server issues tokens for it.
+func (s *Server) handleOAuthProtectedResource(w http.ResponseWriter, r *http.Request) {
+	base := s.mcpBaseURL(r)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"resource":              base + "/mcp",
+		"authorization_servers": []string{base},
+	})
+}

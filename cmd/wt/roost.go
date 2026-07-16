@@ -15,6 +15,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -258,6 +259,16 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		fmt.Println("auth providers configured — roost mode (OAuth enabled)")
 	}
 
+	// Remote MCP is an explicit part of wing.yaml. It uses the same tools_dir as the wing.
+	tools, policy, err := loadRoostMCPConfig(cfg.Dir)
+	if err != nil {
+		return err
+	}
+	if policy != nil {
+		srv.EnableMCP(egg.NewToolRunner(tools), policy)
+		log.Printf("mcp: enabled — %d tool(s), %d role(s) at POST /mcp", len(tools), len(policy.Roles))
+	}
+
 	// Write device token so the wing goroutine can connect
 	ts := auth.NewTokenStore(cfg.Dir)
 	ts.Save(&auth.DeviceToken{
@@ -277,6 +288,32 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 
 	sighupCh := make(chan os.Signal, 1)
 	signal.Notify(sighupCh, syscall.SIGHUP)
+	defer signal.Stop(sighupCh)
+	if srv.MCPEnabled() {
+		mcpSIGHUPCh := make(chan os.Signal, 1)
+		signal.Notify(mcpSIGHUPCh, syscall.SIGHUP)
+		defer signal.Stop(mcpSIGHUPCh)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-mcpSIGHUPCh:
+					newTools, newPolicy, reloadErr := loadRoostMCPConfig(cfg.Dir)
+					if reloadErr != nil {
+						log.Printf("mcp: reload failed; keeping previous configuration: %v", reloadErr)
+						continue
+					}
+					if newPolicy == nil {
+						log.Printf("mcp: disabling the endpoint requires a roost restart; keeping previous configuration")
+						continue
+					}
+					srv.ReloadMCP(egg.NewToolRunner(newTools), newPolicy)
+					log.Printf("mcp: reloaded %d tool(s), %d role(s)", len(newTools), len(newPolicy.Roles))
+				}
+			}
+		}()
+	}
 
 	// Start bandwidth sync
 	srv.Bandwidth.SeedFromDB()
@@ -310,6 +347,33 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	case err := <-wingErrCh:
 		return fmt.Errorf("wing: %w", err)
 	}
+}
+
+func loadRoostMCPConfig(configDir string) ([]*config.ToolConfig, *config.MCPConfig, error) {
+	wingCfg, err := config.LoadWingConfig(configDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load wing config for mcp: %w", err)
+	}
+	if wingCfg.MCP == nil || !wingCfg.MCP.Enabled {
+		return nil, nil, nil
+	}
+	toolsDir := config.ResolveToolsDir(configDir, wingCfg.ToolsDir)
+	tools, err := config.LoadToolsDir(toolsDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load mcp tools from %s: %w", toolsDir, err)
+	}
+	toolNames := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		toolNames[tool.Name] = true
+	}
+	for roleName, role := range wingCfg.MCP.Roles {
+		for _, toolName := range append(append([]string{}, role.Allow...), role.Deny...) {
+			if !toolNames[toolName] {
+				return nil, nil, fmt.Errorf("mcp role %q references unknown tool %q", roleName, toolName)
+			}
+		}
+	}
+	return tools, wingCfg.MCP, nil
 }
 
 func roostStopCmd() *cobra.Command {

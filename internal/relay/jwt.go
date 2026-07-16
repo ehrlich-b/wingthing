@@ -18,14 +18,26 @@ type WingClaims struct {
 	jwt.RegisteredClaims
 	PublicKey string `json:"pub,omitempty"`
 	WingID    string `json:"wing,omitempty"`
+	TokenUse  string `json:"token_use"`
 }
 
 // HandoffClaims are short-lived JWT claims for browser direct-mode connections.
 type HandoffClaims struct {
 	jwt.RegisteredClaims
-	Email   string `json:"email,omitempty"`
-	OrgRole string `json:"org_role,omitempty"`
+	Email    string `json:"email,omitempty"`
+	OrgRole  string `json:"org_role,omitempty"`
+	TokenUse string `json:"token_use"`
 }
+
+// MCPClaims are deliberately distinct from wing connection credentials. Audience binds the
+// token to one MCP resource, while TokenUse prevents another JWT class from crossing surfaces.
+type MCPClaims struct {
+	jwt.RegisteredClaims
+	TokenUse string `json:"token_use"`
+	ClientID string `json:"client_id"`
+}
+
+const mcpAccessTokenTTL = time.Hour
 
 // ParseECKeyFromEnv parses a P-256 private key from an environment variable value.
 // Accepts PEM or base64-encoded DER. Returns an error if the value is empty or invalid.
@@ -59,6 +71,9 @@ func parseECKey(data string) (*ecdsa.PrivateKey, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse pem ec key: %w", err)
 		}
+		if key.Curve != elliptic.P256() {
+			return nil, fmt.Errorf("EC private key must use P-256")
+		}
 		return key, nil
 	}
 
@@ -70,6 +85,9 @@ func parseECKey(data string) (*ecdsa.PrivateKey, error) {
 	key, err := x509.ParseECPrivateKey(der)
 	if err != nil {
 		return nil, fmt.Errorf("parse der ec key: %w", err)
+	}
+	if key.Curve != elliptic.P256() {
+		return nil, fmt.Errorf("EC private key must use P-256")
 	}
 	return key, nil
 }
@@ -85,6 +103,7 @@ func IssueWingJWT(key *ecdsa.PrivateKey, userID, publicKey, wingID string) (stri
 		},
 		PublicKey: publicKey,
 		WingID:    wingID,
+		TokenUse:  "wing",
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
@@ -98,17 +117,16 @@ func IssueWingJWT(key *ecdsa.PrivateKey, userID, publicKey, wingID string) (stri
 // ValidateWingJWT verifies an ES256 JWT and returns the claims.
 func ValidateWingJWT(pubKey *ecdsa.PublicKey, tokenString string) (*WingClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &WingClaims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
 		return pubKey, nil
-	})
+	}, jwt.WithValidMethods([]string{"ES256"}), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
 	if err != nil {
 		return nil, fmt.Errorf("parse jwt: %w", err)
 	}
 
 	claims, ok := token.Claims.(*WingClaims)
-	if !ok || !token.Valid {
+	// Empty token_use is accepted only for wing credentials issued before token classes were
+	// separated. New wing tokens are explicit; MCP and handoff validators never accept empty.
+	if !ok || !token.Valid || (claims.TokenUse != "wing" && claims.TokenUse != "") || claims.Subject == "" || claims.WingID == "" {
 		return nil, fmt.Errorf("invalid jwt claims")
 	}
 	return claims, nil
@@ -122,8 +140,9 @@ func IssueHandoffJWT(key *ecdsa.PrivateKey, userID, email, orgRole string) (stri
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
 		},
-		Email:   email,
-		OrgRole: orgRole,
+		Email:    email,
+		OrgRole:  orgRole,
+		TokenUse: "handoff",
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
@@ -132,6 +151,51 @@ func IssueHandoffJWT(key *ecdsa.PrivateKey, userID, email, orgRole string) (stri
 		return "", fmt.Errorf("sign handoff jwt: %w", err)
 	}
 	return signed, nil
+}
+
+// IssueMCPJWT mints a short-lived bearer token for exactly one MCP resource and client.
+func IssueMCPJWT(key *ecdsa.PrivateKey, userID, issuer, resource, clientID string) (string, time.Time, error) {
+	now := time.Now()
+	exp := now.Add(mcpAccessTokenTTL)
+	claims := MCPClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    issuer,
+			Subject:   userID,
+			Audience:  jwt.ClaimStrings{resource},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(exp),
+		},
+		TokenUse: "mcp",
+		ClientID: clientID,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	signed, err := token.SignedString(key)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("sign mcp jwt: %w", err)
+	}
+	return signed, exp, nil
+}
+
+// ValidateMCPJWT accepts only an ES256 MCP token issued for this authorization server and
+// audience. General wing, handoff, and database tokens are not valid MCP credentials.
+func ValidateMCPJWT(pubKey *ecdsa.PublicKey, tokenString, issuer, resource string) (*MCPClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &MCPClaims{}, func(t *jwt.Token) (any, error) {
+		return pubKey, nil
+	},
+		jwt.WithValidMethods([]string{"ES256"}),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
+		jwt.WithIssuer(issuer),
+		jwt.WithAudience(resource),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("parse mcp jwt: %w", err)
+	}
+	claims, ok := token.Claims.(*MCPClaims)
+	if !ok || !token.Valid || claims.TokenUse != "mcp" || claims.Subject == "" || claims.ClientID == "" {
+		return nil, fmt.Errorf("invalid mcp jwt claims")
+	}
+	return claims, nil
 }
 
 // MarshalECPublicKey returns the base64-encoded DER form of an ECDSA public key.
@@ -154,7 +218,7 @@ func ParseECPublicKey(data string) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("parse ec public key: %w", err)
 	}
 	ecPub, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
+	if !ok || ecPub.Curve != elliptic.P256() {
 		return nil, fmt.Errorf("key is not ECDSA P-256")
 	}
 	return ecPub, nil

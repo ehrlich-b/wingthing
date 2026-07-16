@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,9 @@ type WingConfig struct {
 	// ToolsDir is the directory containing privileged tool YAML configs.
 	// Defaults to ~/.wingthing/tools/ if empty.
 	ToolsDir string `yaml:"tools_dir,omitempty"`
+
+	// MCP is the optional OAuth-gated remote surface over privileged tools.
+	MCP *MCPConfig `yaml:"mcp,omitempty"`
 }
 
 // IsAdmin returns true if email is in the Admins list (case-insensitive).
@@ -173,7 +177,12 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if cfg.MCP != nil {
+		if err := cfg.MCP.Validate(); err != nil {
+			return nil, fmt.Errorf("validate %s mcp config: %w", path, err)
+		}
 	}
 	// Migrate legacy root -> paths
 	if cfg.Root != "" && len(cfg.Paths) == 0 {
