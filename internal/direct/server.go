@@ -19,14 +19,15 @@ import (
 // HandoffClaims are the JWT claims for browser direct-mode connections.
 type HandoffClaims struct {
 	jwt.RegisteredClaims
-	Email   string `json:"email,omitempty"`
-	OrgRole string `json:"org_role,omitempty"`
+	Email    string `json:"email,omitempty"`
+	OrgRole  string `json:"org_role,omitempty"`
+	TokenUse string `json:"token_use"`
 }
 
 // Server is a lightweight HTTP server for direct-mode wing connections.
 // Browsers connect directly to the wing via WebSocket, bypassing the relay for PTY I/O.
 type Server struct {
-	RelayPubKey *ecdsa.PublicKey           // relay's ES256 public key for JWT verification
+	RelayPubKey *ecdsa.PublicKey // relay's ES256 public key for JWT verification
 	OnPTY       ws.PTYHandler
 
 	mu       sync.Mutex
@@ -155,16 +156,13 @@ func (s *Server) handleDirectPTY(w http.ResponseWriter, r *http.Request) {
 
 func validateHandoffJWT(pubKey *ecdsa.PublicKey, tokenStr string) (*HandoffClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &HandoffClaims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodECDSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
 		return pubKey, nil
-	})
+	}, jwt.WithValidMethods([]string{"ES256"}), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
 	if err != nil {
 		return nil, fmt.Errorf("parse handoff jwt: %w", err)
 	}
 	claims, ok := token.Claims.(*HandoffClaims)
-	if !ok || !token.Valid {
+	if !ok || !token.Valid || claims.TokenUse != "handoff" || claims.Subject == "" {
 		return nil, fmt.Errorf("invalid handoff jwt claims")
 	}
 	return claims, nil

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,9 @@ type WingConfig struct {
 	// ToolsDir is the directory containing privileged tool YAML configs.
 	// Defaults to ~/.wingthing/tools/ if empty.
 	ToolsDir string `yaml:"tools_dir,omitempty"`
+
+	// MCP is the optional OAuth-gated remote surface over privileged tools.
+	MCP *MCPConfig `yaml:"mcp,omitempty"`
 }
 
 // IsAdmin returns true if email is in the Admins list (case-insensitive).
@@ -173,7 +177,12 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if cfg.MCP != nil {
+		if err := cfg.MCP.Validate(); err != nil {
+			return nil, fmt.Errorf("validate %s mcp config: %w", path, err)
+		}
 	}
 	// Migrate legacy root -> paths
 	if cfg.Root != "" && len(cfg.Paths) == 0 {
@@ -182,12 +191,17 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	return cfg, nil
 }
 
-// SaveWingConfig writes wing.yaml to dir.
+// SaveWingConfig writes wing.yaml to dir. The file may contain the roost's JWT signing
+// key, so it must never be readable by other local users.
 func SaveWingConfig(dir string, cfg *WingConfig) error {
 	os.MkdirAll(dir, 0755)
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "wing.yaml"), data, 0644)
+	path := filepath.Join(dir, "wing.yaml")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0600)
 }

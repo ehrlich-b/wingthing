@@ -16,6 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/ehrlich-b/wingthing/web"
 )
@@ -77,12 +78,18 @@ type Server struct {
 	loginProxy       http.Handler
 	sessionCache     *SessionCache
 	EntitlementCache *EntitlementCache
+
+	// MCP surface (roost mode): role-scoped remote MCP over the wing's tools, OAuth-gated.
+	mcpMu     sync.RWMutex
+	mcpServer *mcp.Server
+	mcpPolicy *mcp.Policy
+	mcpOAuth  *mcpOAuth
 }
 
 func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s := &Server{
-		Store:        store,
-		Config:       cfg,
+		Store:          store,
+		Config:         cfg,
 		Wings:          NewWingRegistry(),
 		PTY:            NewPTYRoutes(),
 		mux:            http.NewServeMux(),
@@ -321,7 +328,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.Config.AppHost != "" && host == s.Config.AppHost {
 		if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/auth/") ||
 			strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/app/") ||
-			strings.HasPrefix(path, "/assets/") {
+			strings.HasPrefix(path, "/assets/") ||
+			path == "/mcp" || strings.HasPrefix(path, "/oauth/") ||
+			strings.HasPrefix(path, "/.well-known/") {
 			s.mux.ServeHTTP(w, r)
 			return
 		}
@@ -355,6 +364,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) shouldRateLimit(method, path string) bool {
 	// All auth endpoints (login, token exchange, magic link, device auth)
 	if strings.HasPrefix(path, "/auth/") {
+		return true
+	}
+	// OAuth registration/token endpoints and MCP calls are externally reachable and can
+	// otherwise be used to exhaust in-memory grants or privileged-tool concurrency.
+	if strings.HasPrefix(path, "/oauth/") || (method == http.MethodPost && path == "/mcp") {
 		return true
 	}
 	// Mutating API endpoints

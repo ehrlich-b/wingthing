@@ -1,10 +1,30 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestSaveWingConfigRestrictsSigningKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wing.yaml")
+	if err := os.WriteFile(path, []byte("wing_id: old\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWingConfig(dir, &WingConfig{WingID: "wing-1", JWTKey: "private-key"}); err != nil {
+		t.Fatalf("SaveWingConfig: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("wing.yaml mode = %o, want 600", got)
+	}
+}
 
 func TestPathListUnmarshalMixed(t *testing.T) {
 	input := `

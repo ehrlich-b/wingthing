@@ -3,6 +3,7 @@ package relay
 import (
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -30,6 +31,69 @@ type DeviceCodeRow struct {
 	CreatedAt time.Time
 	ExpiresAt time.Time
 	Claimed   bool
+}
+
+// MCPClientRegistration is durable Dynamic Client Registration state. Claude Code keeps
+// client IDs across MCP logout/remove operations, so registrations must outlive a roost restart.
+type MCPClientRegistration struct {
+	ClientID     string
+	ClientName   string
+	RedirectURIs []string
+	ExpiresAt    time.Time
+}
+
+func (s *RelayStore) SaveMCPClientRegistration(reg MCPClientRegistration) error {
+	redirectURIs, err := json.Marshal(reg.RedirectURIs)
+	if err != nil {
+		return fmt.Errorf("marshal MCP client redirect URIs: %w", err)
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, expires_at)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(client_id) DO UPDATE SET
+		   client_name = excluded.client_name,
+		   redirect_uris = excluded.redirect_uris,
+		   expires_at = excluded.expires_at`,
+		reg.ClientID, reg.ClientName, string(redirectURIs), reg.ExpiresAt.UTC().Format("2006-01-02 15:04:05"),
+	)
+	if err != nil {
+		return fmt.Errorf("save MCP client registration: %w", err)
+	}
+	return nil
+}
+
+func (s *RelayStore) GetMCPClientRegistration(clientID string, now time.Time) (*MCPClientRegistration, error) {
+	row := s.db.QueryRow(
+		`SELECT client_id, client_name, redirect_uris, expires_at
+		 FROM mcp_oauth_clients WHERE client_id = ? AND expires_at > ?`,
+		clientID, now.UTC().Format("2006-01-02 15:04:05"),
+	)
+	var reg MCPClientRegistration
+	var redirectURIs string
+	if err := row.Scan(&reg.ClientID, &reg.ClientName, &redirectURIs, &reg.ExpiresAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get MCP client registration: %w", err)
+	}
+	if err := json.Unmarshal([]byte(redirectURIs), &reg.RedirectURIs); err != nil {
+		return nil, fmt.Errorf("parse MCP client redirect URIs: %w", err)
+	}
+	return &reg, nil
+}
+
+func (s *RelayStore) CountMCPClientRegistrations(now time.Time) (int, error) {
+	if _, err := s.db.Exec(
+		"DELETE FROM mcp_oauth_clients WHERE expires_at <= ?",
+		now.UTC().Format("2006-01-02 15:04:05"),
+	); err != nil {
+		return 0, fmt.Errorf("delete expired MCP client registrations: %w", err)
+	}
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM mcp_oauth_clients").Scan(&count); err != nil {
+		return 0, fmt.Errorf("count MCP client registrations: %w", err)
+	}
+	return count, nil
 }
 
 func OpenRelay(dsn string) (*RelayStore, error) {

@@ -1123,14 +1123,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	var wingEggMu sync.Mutex
 
 	// Load privileged tool configs
-	toolsDir := wingCfg.ToolsDir
-	if toolsDir == "" {
-		toolsDir = filepath.Join(cfg.Dir, "tools")
-	}
-	if strings.HasPrefix(toolsDir, "~/") {
-		h, _ := os.UserHomeDir()
-		toolsDir = filepath.Join(h, toolsDir[2:])
-	}
+	toolsDir := config.ResolveToolsDir(cfg.Dir, wingCfg.ToolsDir)
 	wingTools, toolErr := config.LoadToolsDir(toolsDir)
 	if toolErr != nil {
 		log.Printf("wing: load tools: %v (continuing without tools)", toolErr)
@@ -1535,14 +1528,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 					}
 
 					// Hot-reload tools
-					newToolsDir := newCfg.ToolsDir
-					if newToolsDir == "" {
-						newToolsDir = filepath.Join(cfg.Dir, "tools")
-					}
-					if strings.HasPrefix(newToolsDir, "~/") {
-						h, _ := os.UserHomeDir()
-						newToolsDir = filepath.Join(h, newToolsDir[2:])
-					}
+					newToolsDir := config.ResolveToolsDir(cfg.Dir, newCfg.ToolsDir)
 					if newTools, tErr := config.LoadToolsDir(newToolsDir); tErr == nil {
 						wingToolsMu.Lock()
 						wingTools = newTools

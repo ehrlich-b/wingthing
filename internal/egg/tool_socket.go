@@ -1,16 +1,13 @@
 package egg
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
-	"syscall"
 	"sync"
 	"time"
 
@@ -34,8 +31,9 @@ type ToolResponse struct {
 
 // ToolListEntry describes one tool for the list action.
 type ToolListEntry struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
+	Name        string             `json:"name"`
+	Description string             `json:"description,omitempty"`
+	Params      []config.ToolParam `json:"params,omitempty"`
 }
 
 // ToolListResponse is returned for the "list" action.
@@ -43,13 +41,13 @@ type ToolListResponse struct {
 	Tools []ToolListEntry `json:"tools"`
 }
 
-// ToolListener accepts connections on a Unix socket and dispatches tool execution.
+// ToolListener accepts connections on a Unix socket and dispatches tool execution to a
+// shared ToolRunner. Egg sessions reach tools this way; the remote MCP server wraps the
+// same runner over HTTP.
 type ToolListener struct {
-	mu       sync.RWMutex
-	tools    map[string]*config.ToolConfig
+	runner   *ToolRunner
 	listener net.Listener
 	wg       sync.WaitGroup
-	sema     map[string]chan struct{} // per-tool concurrency semaphores
 }
 
 // NewToolListener creates and starts a tool socket listener.
@@ -62,15 +60,8 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener
 	}
 	os.Chmod(sockPath, 0700)
 	tl := &ToolListener{
-		tools:    make(map[string]*config.ToolConfig, len(tools)),
+		runner:   NewToolRunner(tools),
 		listener: ln,
-		sema:     make(map[string]chan struct{}),
-	}
-	for _, t := range tools {
-		tl.tools[t.Name] = t
-		if t.MaxConcurrent > 0 {
-			tl.sema[t.Name] = make(chan struct{}, t.MaxConcurrent)
-		}
 	}
 	tl.wg.Add(1)
 	go tl.acceptLoop()
@@ -86,23 +77,7 @@ func (tl *ToolListener) Close() error {
 
 // Reload replaces the tool configs atomically.
 func (tl *ToolListener) Reload(tools []*config.ToolConfig) {
-	tl.mu.Lock()
-	defer tl.mu.Unlock()
-	newMap := make(map[string]*config.ToolConfig, len(tools))
-	newSema := make(map[string]chan struct{})
-	for _, t := range tools {
-		newMap[t.Name] = t
-		if t.MaxConcurrent > 0 {
-			// Reuse existing semaphore if same capacity
-			if old, ok := tl.sema[t.Name]; ok && cap(old) == t.MaxConcurrent {
-				newSema[t.Name] = old
-			} else {
-				newSema[t.Name] = make(chan struct{}, t.MaxConcurrent)
-			}
-		}
-	}
-	tl.tools = newMap
-	tl.sema = newSema
+	tl.runner.Reload(tools)
 }
 
 func (tl *ToolListener) acceptLoop() {
@@ -137,99 +112,21 @@ func (tl *ToolListener) handleConn(conn net.Conn) {
 		return
 	}
 	if req.Action == "list" {
-		tl.handleList(conn)
+		out, _ := json.Marshal(ToolListResponse{Tools: tl.runner.List()})
+		conn.Write(out)
 		return
 	}
 	if req.Tool == "" {
 		writeJSON(conn, ToolResponse{Error: "missing tool name"})
 		return
 	}
-	tl.mu.RLock()
-	tc, ok := tl.tools[req.Tool]
-	var sema chan struct{}
-	if ok {
-		sema = tl.sema[req.Tool]
-	}
-	tl.mu.RUnlock()
-	if !ok {
-		writeJSON(conn, ToolResponse{Error: "unknown tool: " + req.Tool})
-		return
-	}
-	// Extend deadline based on tool timeout
-	toolTimeout := tc.TimeoutDuration()
-	if toolTimeout <= 0 {
-		toolTimeout = 60 * time.Second
-	}
+	// Extend deadline based on tool timeout.
 	deadline := 5 * time.Minute
-	if toolTimeout+30*time.Second > deadline {
-		deadline = toolTimeout + 30*time.Second
+	if tt := tl.runner.TimeoutFor(req.Tool); tt+30*time.Second > deadline {
+		deadline = tt + 30*time.Second
 	}
 	conn.SetDeadline(time.Now().Add(deadline))
-	// Concurrency semaphore
-	if sema != nil {
-		select {
-		case sema <- struct{}{}:
-			defer func() { <-sema }()
-		default:
-			writeJSON(conn, ToolResponse{Error: fmt.Sprintf("tool %s: max concurrent limit reached", req.Tool)})
-			return
-		}
-	}
-	resp := tl.executeTool(tc, req.Args)
-	writeJSON(conn, resp)
-}
-
-func (tl *ToolListener) handleList(conn net.Conn) {
-	tl.mu.RLock()
-	var entries []ToolListEntry
-	for _, t := range tl.tools {
-		entries = append(entries, ToolListEntry{Name: t.Name, Description: t.Description})
-	}
-	tl.mu.RUnlock()
-	data, _ := json.Marshal(ToolListResponse{Tools: entries})
-	conn.Write(data)
-}
-
-func (tl *ToolListener) executeTool(tc *config.ToolConfig, args []string) ToolResponse {
-	timeout := tc.TimeoutDuration()
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	// sh -c 'script' tool arg1 arg2 ...
-	// "tool" is $0, args become $1, $2, etc.
-	cmdArgs := append([]string{"-c", tc.Run, "tool"}, args...)
-	cmd := exec.CommandContext(ctx, "sh", cmdArgs...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
-	// Build environment: inherit minimal host env + tool-specific env
-	cmd.Env = append(os.Environ(), toolEnvSlice(tc.Env)...)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	exitCode := 0
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return ToolResponse{ExitCode: 124, Stderr: "tool execution timed out"}
-		} else if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			return ToolResponse{ExitCode: 1, Stderr: err.Error()}
-		}
-	}
-	return ToolResponse{ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String()}
-}
-
-func toolEnvSlice(env map[string]string) []string {
-	s := make([]string, 0, len(env))
-	for k, v := range env {
-		s = append(s, k+"="+v)
-	}
-	return s
+	writeJSON(conn, tl.runner.Call(req.Tool, req.Args))
 }
 
 func writeJSON(conn net.Conn, v any) {
