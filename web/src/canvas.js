@@ -8,6 +8,7 @@ import { b64ToBytes, bytesToB64, wingDisplayName, agentIcon } from './helpers.js
 import { onlineWings, showPalette, setCanvasLaunchCallback } from './palette.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { checkForNotification, setNotification, clearNotification } from './notify.js';
+import { writeTerm } from './mouse.js';
 
 // Grid constants
 var CELL = 40;
@@ -899,11 +900,11 @@ function processOutput(sess, dataStr, compressed) {
         var bytes = sessionDecrypt(sess.e2eKey, dataStr);
         if (compressed) {
             gunzip(bytes).then(function(decompressed) {
-                sess.term.write(decompressed);
+                writeTerm(sess.term, decompressed);
                 checkOutputForAttention(sess, decompressed);
             }).catch(function() {});
         } else {
-            sess.term.write(bytes);
+            writeTerm(sess.term, bytes);
             checkOutputForAttention(sess, bytes);
         }
     } catch(err) {

@@ -1,4 +1,4 @@
-.PHONY: build test check clean web serve release proto deploy deploy-edge scale status jail \
+.PHONY: build test test-web check clean web serve release proto deploy deploy-edge scale status jail \
 	build-linux build-mock-agent build-linux-tests test-linux test-linux-ubuntu test-integ test-e2e
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -11,7 +11,10 @@ build:
 test:
 	go test ./...
 
-check: web test build
+test-web:
+	node --test web/src/*.test.js
+
+check: web test test-web build
 
 web:
 	cd web && npm ci && npm run build

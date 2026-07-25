@@ -2,6 +2,7 @@ import { S } from './state.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { e2eDecrypt } from './crypto.js';
 import { saveTermBuffer } from './terminal.js';
+import { writeTerm } from './mouse.js';
 import { checkForNotification, setNotification } from './notify.js';
 
 // Per-wing peer connections and per-session data channels
@@ -276,7 +277,7 @@ function processP2POutput(dataStr, compressed) {
         return compressed ? gunzip(bytes) : bytes;
     }).then(function(bytes) {
         if (!bytes) return;
-        S.term.write(bytes);
+        writeTerm(S.term, bytes);
         saveTermBuffer();
         try {
             var text = new TextDecoder().decode(bytes);

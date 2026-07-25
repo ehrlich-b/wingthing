@@ -31,9 +31,9 @@ var agentProfiles = map[string]AgentProfile{
 	"claude": {
 		Domains: []string{"*.anthropic.com", "*.claude.com", "sentry.io", "statsigapi.net"},
 		EnvVars: []string{"ANTHROPIC_API_KEY"},
-		// 2.1.150+ enables xterm mouse reporting, which steals click-drag selection in the
-		// browser terminal and breaks copy/paste. The TUI is keyboard-driven; turn it off.
-		SetEnv:        map[string]string{"CLAUDE_CODE_DISABLE_MOUSE": "1"},
+		// Mouse reporting stays on: it's how the wheel scrolls the transcript. The
+		// browser terminal keeps its click-drag selection by hiding the tracking modes
+		// from xterm and forwarding only the wheel (see web/src/mouse.js).
 		WriteDirs:     []string{".cache/claude"},
 		WriteRegex:    []string{".claude"},
 		SettingsFile:  ".claude/settings.json",

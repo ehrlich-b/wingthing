@@ -7,6 +7,7 @@ import { e2eEncrypt } from './crypto.js';
 import { setNotification, clearNotification } from './notify.js';
 import { showHome } from './nav.js';
 import { sendViaDC } from './webrtc.js';
+import { appMouseActive, wheelReport, writeTerm } from './mouse.js';
 
 export function initTerminal() {
     S.term = new Terminal({
@@ -49,25 +50,57 @@ export function initTerminal() {
         return true;
     });
 
-    // Claude Code (and other fullscreen TUIs) draw in the alternate screen buffer,
-    // which has no scrollback for xterm.js to scroll. Claude's mouse reporting is
-    // disabled (CLAUDE_CODE_DISABLE_MOUSE, see internal/egg/agents.go) so browser
-    // click-drag copy/paste keeps working — but that also means the agent never sees
-    // wheel events, so the wheel did nothing. Translate wheel motion into PgUp/PgDn,
-    // the only scroll keys Claude honors when the mouse is off. In the normal buffer
-    // we return true and leave xterm's own scrollback handling untouched.
+    // The wheel goes to whoever can act on it. Apps that ask for mouse tracking
+    // (Claude Code does) get real wheel notches, so scrolling is as fine-grained as
+    // it is in a native terminal — and since mouse.js hid those tracking modes from
+    // xterm, click-drag selection stays local and needs no modifier key.
+    //
+    // With no app mouse there's nobody to forward to: the alt screen has no xterm
+    // scrollback either, so PgUp/PgDn remains the best available for a TUI running
+    // without mouse support (vim, less). In the normal buffer we return true and
+    // leave xterm's own scrollback handling untouched.
+    function cellUnder(e) {
+        var rect = DOM.terminalContainer.getBoundingClientRect();
+        var col = 1, row = 1;
+        if (rect.width > 0 && rect.height > 0) {
+            col = Math.floor((e.clientX - rect.left) / (rect.width / S.term.cols)) + 1;
+            row = Math.floor((e.clientY - rect.top) / (rect.height / S.term.rows)) + 1;
+        }
+        return {
+            col: Math.min(Math.max(col, 1), S.term.cols),
+            row: Math.min(Math.max(row, 1), S.term.rows)
+        };
+    }
+
     var wheelAccum = 0;
-    var WHEEL_STEP = 120; // wheel-delta px per half-viewport PgUp/PgDn step (tunable)
+    var WHEEL_STEP_APP = 40;   // wheel-delta px per notch handed to the app (trackpad-friendly)
+    var WHEEL_STEP_KEYS = 120; // wheel-delta px per PgUp/PgDn step when there's no app mouse
+    var MAX_NOTCHES = 12;      // one page-mode event shouldn't flood the pty
     S.term.attachCustomWheelEventHandler(function (e) {
-        if (!S.term || S.term.buffer.active.type !== 'alternate') return true;
+        if (!S.term) return true;
+        var toApp = appMouseActive(S.term);
+        if (!toApp && S.term.buffer.active.type !== 'alternate') return true;
+
         var dy = e.deltaY;
         if (e.deltaMode === 1) dy *= 16;                                      // lines -> px
         else if (e.deltaMode === 2) dy *= DOM.terminalContainer.clientHeight; // pages -> px
+
+        var step = toApp ? WHEEL_STEP_APP : WHEEL_STEP_KEYS;
+        var cell = toApp ? cellUnder(e) : null;
+        var sent = 0;
         wheelAccum += dy;
-        while (Math.abs(wheelAccum) >= WHEEL_STEP) {
-            if (wheelAccum < 0) { sendPTYInput('\x1b[5~'); wheelAccum += WHEEL_STEP; } // PgUp
-            else { sendPTYInput('\x1b[6~'); wheelAccum -= WHEEL_STEP; }               // PgDn
+        while (Math.abs(wheelAccum) >= step && sent < MAX_NOTCHES) {
+            var up = wheelAccum < 0;
+            if (toApp) {
+                var report = wheelReport(S.term, up, cell.col, cell.row);
+                if (report) sendPTYInput(report);
+            } else {
+                sendPTYInput(up ? '\x1b[5~' : '\x1b[6~');
+            }
+            wheelAccum += up ? step : -step;
+            sent++;
         }
+        if (sent >= MAX_NOTCHES) wheelAccum = 0;
         e.preventDefault();
         return false;
     });
@@ -261,7 +294,7 @@ export function saveTermThumb() {
 export function restoreTermBuffer(sessionId) {
     try {
         var data = localStorage.getItem(TERM_BUF_PREFIX + sessionId);
-        if (data && S.term) S.term.write(data);
+        if (data && S.term) writeTerm(S.term, data);
     } catch (e) {}
 }
 

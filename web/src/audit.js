@@ -2,6 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { formatAuditTime } from './helpers.js';
 import { sendTunnelStream } from './tunnel.js';
+import { writeTerm } from './mouse.js';
 
 export function closeAuditOverlay() {
     var overlay = document.getElementById('audit-overlay');
@@ -103,7 +104,7 @@ export function openAuditReplay(wingId, sessionId) {
         } else {
             var data = f[2];
             try { data = decodeBase64UTF8(data); } catch (e) {}
-            auditTerm.write(data);
+            writeTerm(auditTerm, data);
         }
         frameIndex++;
         var elapsed = f[0];

@@ -2,6 +2,7 @@ import { S, DOM } from './state.js';
 import { e2eDecrypt, deriveE2EKey } from './crypto.js';
 import { identityPubKey } from './crypto.js';
 import { saveTermBuffer, clearTermBuffer } from './terminal.js';
+import { writeTerm } from './mouse.js';
 import { checkForNotification, setNotification, clearNotification } from './notify.js';
 import { showReconnectBanner, hideReconnectBanner } from './dashboard.js';
 import { renderSidebar } from './render.js';
@@ -185,7 +186,7 @@ function setupPTYHandlers(ws, reattach) {
             return compressed ? gunzip(bytes) : bytes;
         }).then(function (bytes) {
             if (!bytes || ws !== S.ptyWs) return;
-            S.term.write(bytes);
+            writeTerm(S.term, bytes);
             saveTermBuffer();
             try {
                 var text = new TextDecoder().decode(bytes);
@@ -218,7 +219,7 @@ function setupPTYHandlers(ws, reattach) {
             var off = 0;
             for (var i = 0; i < good.length; i++) { combined.set(good[i], off); off += good[i].length; }
             S.term.reset();
-            S.term.write(combined, function () {
+            writeTerm(S.term, combined, function () {
                 hideReplayOverlay();
                 S.term.focus();
                 replayDone = true;
