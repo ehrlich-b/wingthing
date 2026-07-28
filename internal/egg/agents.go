@@ -31,12 +31,13 @@ var agentProfiles = map[string]AgentProfile{
 	"claude": {
 		Domains: []string{"*.anthropic.com", "*.claude.com", "sentry.io", "statsigapi.net"},
 		EnvVars: []string{"ANTHROPIC_API_KEY"},
-		// 2.1.150+ enables xterm mouse reporting, which steals click-drag selection in the
-		// browser terminal and breaks copy/paste. DISABLE_MOUSE kills reporting entirely,
-		// which also kills wheel scrolling; DISABLE_MOUSE_CLICKS (2.1.195+) drops only
-		// click/drag/hover and keeps the wheel, so selection works and the wheel scrolls
-		// natively. DISABLE_MOUSE takes precedence if both are set — don't reintroduce it.
-		SetEnv:        map[string]string{"CLAUDE_CODE_DISABLE_MOUSE_CLICKS": "1"},
+		// Nothing to force here. 2.1.150+ enables mouse reporting, which we want — it is
+		// what makes claude parse the wheel events the browser terminal sends. The enable
+		// never reaches xterm (see stripMouseTracking), so the terminal never captures the
+		// mouse and no click events are generated for claude to act on, which is why
+		// CLAUDE_CODE_DISABLE_MOUSE_CLICKS is unnecessary. Do NOT set
+		// CLAUDE_CODE_DISABLE_MOUSE: it kills reporting outright, wheel included, and it
+		// takes precedence over every other mouse flag.
 		WriteDirs:     []string{".cache/claude"},
 		WriteRegex:    []string{".claude"},
 		SettingsFile:  ".claude/settings.json",

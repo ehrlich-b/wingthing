@@ -446,11 +446,22 @@ var mouseTrackingEnables = [][]byte{
 	[]byte("\x1b[?1005h"), []byte("\x1b[?1006h"), []byte("\x1b[?1015h"), []byte("\x1b[?1016h"),
 }
 
+// Private OSC left in place of the enable so the browser terminal knows the agent will
+// parse mouse input even though xterm never entered mouse mode — it sends SGR wheel
+// events when it sees this and falls back to arrow keys when it doesn't. xterm discards
+// OSCs it has no handler for, so anything else rendering this stream is unaffected.
+var mouseTrackingMarker = []byte("\x1b]7771;1\x07")
+
 func stripMouseTracking(data []byte) []byte {
+	found := false
 	for _, seq := range mouseTrackingEnables {
 		if bytes.Contains(data, seq) {
 			data = bytes.ReplaceAll(data, seq, nil)
+			found = true
 		}
+	}
+	if found {
+		data = append(data, mouseTrackingMarker...)
 	}
 	return data
 }
