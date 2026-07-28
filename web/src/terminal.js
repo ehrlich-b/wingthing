@@ -49,15 +49,17 @@ export function initTerminal() {
         return true;
     });
 
+    // Alternate scroll mode, the way xterm/iTerm2/Ghostty do it.
+    //
     // Claude Code (and other fullscreen TUIs) draw in the alternate screen buffer,
-    // which has no scrollback for xterm.js to scroll. Claude's mouse reporting is
-    // disabled (CLAUDE_CODE_DISABLE_MOUSE, see internal/egg/agents.go) so browser
-    // click-drag copy/paste keeps working — but that also means the agent never sees
-    // wheel events, so the wheel did nothing. Translate wheel motion into PgUp/PgDn,
-    // the only scroll keys Claude honors when the mouse is off. In the normal buffer
-    // we return true and leave xterm's own scrollback handling untouched.
+    // which has no scrollback for xterm.js to scroll, and Claude never enables mouse
+    // reporting — verified against 2.1.216 and 2.1.220, which set only 1004h/2004h/2031h
+    // even when DA1 and XTVERSION are answered. So the wheel has to become keystrokes.
+    // Native terminals send arrow keys here; we were sending PgUp/PgDn, which is why
+    // the transcript jumped a full page per notch. Arrows scroll it line by line.
+    // In the normal buffer we return true and leave xterm's own scrollback untouched.
     var wheelAccum = 0;
-    var WHEEL_STEP = 120; // wheel-delta px per half-viewport PgUp/PgDn step (tunable)
+    var WHEEL_STEP = 40; // wheel-delta px per line step — ~3 lines per notch (tunable)
     S.term.attachCustomWheelEventHandler(function (e) {
         if (!S.term || S.term.buffer.active.type !== 'alternate') return true;
         var dy = e.deltaY;
@@ -65,8 +67,8 @@ export function initTerminal() {
         else if (e.deltaMode === 2) dy *= DOM.terminalContainer.clientHeight; // pages -> px
         wheelAccum += dy;
         while (Math.abs(wheelAccum) >= WHEEL_STEP) {
-            if (wheelAccum < 0) { sendPTYInput('\x1b[5~'); wheelAccum += WHEEL_STEP; } // PgUp
-            else { sendPTYInput('\x1b[6~'); wheelAccum -= WHEEL_STEP; }               // PgDn
+            if (wheelAccum < 0) { sendPTYInput('\x1b[A'); wheelAccum += WHEEL_STEP; } // up
+            else { sendPTYInput('\x1b[B'); wheelAccum -= WHEEL_STEP; }               // down
         }
         e.preventDefault();
         return false;
