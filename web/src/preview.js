@@ -3,6 +3,17 @@ import { S, DOM } from './state.js';
 
 var SPLIT_KEY = 'wt_preview_split';
 
+// Extensions rendered as markdown; everything else renders as plain source.
+var MD_EXT = /\.(md|markdown|mdown|mkd)$/i;
+
+// What the download button hands back. Populated in content mode, cleared in
+// URL mode (where "open" already covers it) and on close.
+var current = null;
+
+function escapeHTML(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function savedRatio() {
     try {
         var v = parseFloat(localStorage.getItem(SPLIT_KEY));
@@ -23,6 +34,9 @@ function isOpen() {
 
 function setContent(opts) {
     if (opts.mode === 'url') {
+        current = null;
+        DOM.previewDownloadBtn.style.display = 'none';
+        DOM.previewTitle.textContent = 'Preview';
         DOM.previewIframe.removeAttribute('srcdoc');
         DOM.previewIframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
         DOM.previewIframe.src = opts.url;
@@ -31,9 +45,25 @@ function setContent(opts) {
         DOM.previewCopyBtn.textContent = 'copy';
         DOM.previewOpenBtn.href = opts.url;
     } else {
-        // markdown mode — strip HTML tags, render with marked
-        var clean = (opts.content || '').replace(/<[^>]*>/g, '');
-        var html = marked(clean);
+        // Old wings send no filename/mime — markdown is the historical default.
+        var content = opts.content || '';
+        var filename = opts.filename || 'preview.md';
+        current = {
+            content: content,
+            filename: filename,
+            mime: opts.mime || 'text/markdown'
+        };
+        DOM.previewDownloadBtn.style.display = '';
+        DOM.previewTitle.textContent = opts.filename ? filename : 'Preview';
+
+        var body;
+        if (MD_EXT.test(filename)) {
+            // markdown mode — strip HTML tags, render with marked
+            body = marked(content.replace(/<[^>]*>/g, ''));
+        } else {
+            // Any other file type: show the source verbatim, never as markdown.
+            body = '<pre class="src">' + escapeHTML(content) + '</pre>';
+        }
         var doc = '<!DOCTYPE html><html><head><style>'
             + 'body{font-family:system-ui,sans-serif;font-size:14px;line-height:1.6;padding:16px;margin:0;background:#fff;color:#222;}'
             + 'pre{background:#f5f5f5;padding:12px;border-radius:4px;overflow-x:auto;}'
@@ -43,7 +73,8 @@ function setContent(opts) {
             + 'th{background:#f5f5f5;font-weight:600;}'
             + 'img{max-width:100%;}'
             + 'a{color:#0066cc;}'
-            + '</style></head><body>' + html + '</body></html>';
+            + 'pre.src{font-family:monospace;font-size:13px;line-height:1.45;white-space:pre;}'
+            + '</style></head><body>' + body + '</body></html>';
         DOM.previewIframe.removeAttribute('src');
         DOM.previewIframe.setAttribute('sandbox', 'allow-same-origin');
         DOM.previewIframe.srcdoc = doc;
@@ -79,6 +110,8 @@ export function handlePreview(opts) {
 }
 
 export function closePreview() {
+    current = null;
+    DOM.previewDownloadBtn.style.display = 'none';
     DOM.previewPanel.style.display = 'none';
     DOM.previewDivider.style.display = 'none';
     DOM.terminalSection.classList.remove('has-preview');
@@ -94,6 +127,21 @@ function initCopyBtn() {
         navigator.clipboard.writeText(url);
         DOM.previewCopyBtn.textContent = 'copied!';
         setTimeout(function() { DOM.previewCopyBtn.textContent = 'copy'; }, 1500);
+    });
+}
+
+// Download button — saves the previewed content under the name and type the
+// agent declared via the "file:" header.
+function initDownloadBtn() {
+    DOM.previewDownloadBtn.addEventListener('click', function() {
+        if (!current) return;
+        var blob = new Blob([current.content], { type: current.mime });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = current.filename;
+        a.click();
+        setTimeout(function() { URL.revokeObjectURL(url); }, 0);
     });
 }
 
@@ -141,6 +189,7 @@ function initDividerDrag() {
 
 export function initPreview() {
     initCopyBtn();
+    initDownloadBtn();
     initCloseBtn();
     initDividerDrag();
 }

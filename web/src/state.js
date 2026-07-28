@@ -80,6 +80,7 @@ export function initDOM() {
     DOM.previewUrl = document.getElementById('preview-url');
     DOM.previewCopyBtn = document.getElementById('preview-copy-btn');
     DOM.previewOpenBtn = document.getElementById('preview-open-btn');
+    DOM.previewDownloadBtn = document.getElementById('preview-download-btn');
     DOM.previewCloseBtn = document.getElementById('preview-close-btn');
     DOM.previewIframe = document.getElementById('preview-iframe');
     DOM.canvasSection = document.getElementById('canvas-section');

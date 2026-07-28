@@ -42,6 +42,7 @@
 <a href="#access-control">access control</a>
 <a href="#organizations">organizations</a>
 <a href="#shared-wings">shared wings</a>
+<a href="#preview-panel">preview panel</a>
 <a href="#idle-timeouts">idle timeouts</a>
 <a href="#egg-configuration">egg configuration</a>
 <a href="#self-hosting">self-hosting</a>
@@ -238,6 +239,40 @@ agent_settings:<br>
 <tr><td>WT_PREVIEW_DIR</td><td>working directory path</td></tr>
 <tr><td>WT_PREVIEW_FILE</td><td>.wt-preview-&lt;session-id&gt;</td></tr>
 </table>
+</div>
+
+<div class="docs-section" id="preview-panel">
+<h2>preview panel</h2>
+<p>An agent can open a panel next to the terminal by writing <code>$WT_PREVIEW_DIR/$WT_PREVIEW_FILE</code>. The file is consumed - it disappears once the panel picks it up, which is how the agent knows the preview is live. Write it again to update the panel, or write an empty file to close it.</p>
+<p>The first line selects the mode:</p>
+<table class="docs-table">
+<tr><th>first line</th><th>panel shows</th></tr>
+<tr><td><code>url:&lt;url&gt;</code></td><td>the page in an iframe, with copy and open buttons</td></tr>
+<tr><td><code>file:&lt;name&gt;</code></td><td>the rest of the file, with a download button</td></tr>
+<tr><td>anything else</td><td>the whole file rendered as markdown</td></tr>
+</table>
+<p>Show a deployed app:</p>
+<div class="docs-code">
+echo "url:https://example.com/apps/$WT_USER/tracker/" &gt; "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE"
+</div>
+<p>Show a file the user can download. The name after <code>file:</code> sets both the download filename and its content type - <code>report.csv</code> downloads as CSV, <code>main.go</code> as Go source:</p>
+<div class="docs-code">
+{<br>
+&nbsp;&nbsp;echo "file:report.csv"<br>
+&nbsp;&nbsp;cat report.csv<br>
+} &gt; "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE"
+</div>
+<p>Files ending in <code>.md</code> render as markdown; everything else is shown as plain source. Content is text - the panel renders it in a sandboxed iframe with no scripts and no raw HTML. Binary files aren't supported; serve those over a URL instead.</p>
+<p>Markdown with no <code>file:</code> header still works and downloads as <code>preview.md</code>:</p>
+<div class="docs-code">
+cat &gt; "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE" &lt;&lt; 'EOF'<br>
+# Backup Status<br>
+<br>
+| Partner | Last Backup | Status |<br>
+|---------|-------------|--------|<br>
+| Acme | 2h ago | OK |<br>
+EOF
+</div>
 </div>
 
 <div class="docs-section" id="idle-timeouts">

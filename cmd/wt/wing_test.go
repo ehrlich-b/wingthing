@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
@@ -490,6 +491,106 @@ func TestResolveRelayHTTPURL(t *testing.T) {
 			got := resolveRelayHTTPURL(cfg)
 			if got != tt.want {
 				t.Errorf("resolveRelayHTTPURL(%q) = %q, want %q", tt.roostURL, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParsePreviewFile(t *testing.T) {
+	tests := []struct {
+		name                            string
+		data                            string
+		mode, url, content, file, mtype string
+	}{
+		{name: "empty", data: "", mode: ""},
+		{name: "whitespace only", data: "  \n\t\n", mode: ""},
+		{
+			name: "url mode", data: "url:https://example.com/app/",
+			mode: "url", url: "https://example.com/app/",
+		},
+		{
+			name: "bare markdown defaults to preview.md",
+			data: "# Report\n\n| a | b |\n",
+			mode: "markdown", content: "# Report\n\n| a | b |\n",
+			file: "preview.md", mtype: "text/markdown",
+		},
+		{
+			name: "file header carries name and mime",
+			data: "file:report.csv\npartner,status\nAcme,OK\n",
+			mode: "markdown", content: "partner,status\nAcme,OK\n",
+			file: "report.csv", mtype: "text/csv",
+		},
+		{
+			name: "file header preserves leading whitespace in content",
+			data: "file:main.go\n\tif x {\n\t\treturn\n\t}\n",
+			mode: "markdown", content: "\tif x {\n\t\treturn\n\t}\n",
+			file: "main.go", mtype: "text/x-go",
+		},
+		{
+			name: "file header after blank lines",
+			data: "\n\nfile:notes.txt\nbody\n",
+			mode: "markdown", content: "body\n",
+			file: "notes.txt", mtype: "text/plain",
+		},
+		{
+			name: "file header with no content",
+			data: "file:empty.json",
+			mode: "markdown", content: "",
+			file: "empty.json", mtype: "application/json",
+		},
+		{
+			name: "path traversal stripped to base name",
+			data: "file:../../etc/passwd\nroot\n",
+			mode: "markdown", content: "root\n",
+			file: "passwd", mtype: "application/octet-stream",
+		},
+		{
+			name: "unusable file name falls back to markdown",
+			data: "file:   \nstill content\n",
+			mode: "markdown", content: "file:   \nstill content\n",
+			file: "preview.md", mtype: "text/markdown",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parsePreviewFile([]byte(tt.data))
+			if got["mode"] != tt.mode {
+				t.Errorf("mode = %q, want %q", got["mode"], tt.mode)
+			}
+			if got["url"] != tt.url {
+				t.Errorf("url = %q, want %q", got["url"], tt.url)
+			}
+			if got["content"] != tt.content {
+				t.Errorf("content = %q, want %q", got["content"], tt.content)
+			}
+			if got["filename"] != tt.file {
+				t.Errorf("filename = %q, want %q", got["filename"], tt.file)
+			}
+			if tt.mtype != "" && !strings.HasPrefix(got["mime"], tt.mtype) {
+				t.Errorf("mime = %q, want prefix %q", got["mime"], tt.mtype)
+			}
+		})
+	}
+}
+
+func TestPreviewMIME(t *testing.T) {
+	tests := []struct{ name, want string }{
+		{"a.md", "text/markdown"},
+		{"a.csv", "text/csv"},
+		{"a.json", "application/json"},
+		{"a.png", "image/png"},
+		{"a.pdf", "application/pdf"},
+		{"a.go", "text/x-go"},
+		{"a.zig", "text/x-zig"},
+		{"a.yaml", "application/yaml"},
+		{"a.wasm", "application/wasm"},
+		{"Makefile", "application/octet-stream"},
+		{"a.qqqzzz", "application/octet-stream"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := previewMIME(tt.name); !strings.HasPrefix(got, tt.want) {
+				t.Errorf("previewMIME(%q) = %q, want prefix %q", tt.name, got, tt.want)
 			}
 		})
 	}

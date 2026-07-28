@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -103,20 +104,154 @@ func generateAttentionNonce() string {
 	return fmt.Sprintf("%x", b)
 }
 
+// previewMIMEFallback covers extensions the system MIME database commonly
+// misses. Go's builtin table is tiny (~20 types) and hosts without a
+// /etc/mime.types are otherwise stuck with application/octet-stream.
+var previewMIMEFallback = map[string]string{
+	// docs / markup
+	".md": "text/markdown", ".markdown": "text/markdown", ".rst": "text/x-rst",
+	".txt": "text/plain", ".text": "text/plain", ".adoc": "text/asciidoc",
+	".tex": "application/x-tex", ".org": "text/org",
+	// config / data
+	".yaml": "application/yaml", ".yml": "application/yaml",
+	".toml": "application/toml", ".ini": "text/plain", ".conf": "text/plain",
+	".cfg": "text/plain", ".properties": "text/plain", ".env": "text/plain",
+	".json": "application/json", ".json5": "application/json",
+	".jsonl": "application/x-ndjson", ".ndjson": "application/x-ndjson",
+	".csv": "text/csv", ".tsv": "text/tab-separated-values",
+	".xml": "application/xml", ".plist": "application/xml",
+	".lock": "text/plain", ".log": "text/plain", ".diff": "text/x-diff",
+	".patch": "text/x-diff", ".sql": "application/sql", ".proto": "text/plain",
+	".graphql": "application/graphql", ".gql": "application/graphql",
+	// web
+	".html": "text/html", ".htm": "text/html", ".css": "text/css",
+	".scss": "text/x-scss", ".sass": "text/x-sass", ".less": "text/x-less",
+	".js": "text/javascript", ".mjs": "text/javascript", ".cjs": "text/javascript",
+	".ts": "text/typescript", ".tsx": "text/typescript", ".jsx": "text/javascript",
+	".vue": "text/plain", ".svelte": "text/plain", ".map": "application/json",
+	// languages
+	".go": "text/x-go", ".rs": "text/x-rust", ".zig": "text/x-zig",
+	".c": "text/x-c", ".h": "text/x-c", ".cc": "text/x-c++", ".cpp": "text/x-c++",
+	".cxx": "text/x-c++", ".hpp": "text/x-c++", ".hh": "text/x-c++",
+	".py": "text/x-python", ".pyi": "text/x-python", ".rb": "text/x-ruby",
+	".java": "text/x-java", ".kt": "text/x-kotlin", ".kts": "text/x-kotlin",
+	".scala": "text/x-scala", ".swift": "text/x-swift", ".m": "text/x-objcsrc",
+	".cs": "text/x-csharp", ".fs": "text/x-fsharp", ".php": "application/x-httpd-php",
+	".pl": "text/x-perl", ".pm": "text/x-perl", ".lua": "text/x-lua",
+	".r": "text/x-r", ".jl": "text/x-julia", ".dart": "application/dart",
+	".ex": "text/x-elixir", ".exs": "text/x-elixir", ".erl": "text/x-erlang",
+	".hs": "text/x-haskell", ".clj": "text/x-clojure", ".lisp": "text/x-lisp",
+	".nim": "text/x-nim", ".v": "text/plain", ".asm": "text/x-asm", ".s": "text/x-asm",
+	// shell / build
+	".sh": "application/x-sh", ".bash": "application/x-sh", ".zsh": "application/x-sh",
+	".fish": "application/x-sh", ".ps1": "application/x-powershell",
+	".bat": "application/x-bat", ".cmd": "application/x-bat",
+	".mk": "text/x-makefile", ".make": "text/x-makefile",
+	".cmake": "text/x-cmake", ".gradle": "text/plain", ".bazel": "text/plain",
+	".dockerfile": "text/plain", ".tf": "text/plain", ".tfvars": "text/plain",
+	// images / media
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+	".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp",
+	".avif": "image/avif", ".bmp": "image/bmp", ".ico": "image/x-icon",
+	".tif": "image/tiff", ".tiff": "image/tiff", ".heic": "image/heic",
+	".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+	".flac": "audio/flac", ".m4a": "audio/mp4", ".mp4": "video/mp4",
+	".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska",
+	// documents
+	".pdf": "application/pdf", ".rtf": "application/rtf", ".epub": "application/epub+zip",
+	".doc": "application/msword", ".xls": "application/vnd.ms-excel",
+	".ppt": "application/vnd.ms-powerpoint",
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	// archives / binary
+	".zip": "application/zip", ".gz": "application/gzip", ".tgz": "application/gzip",
+	".bz2": "application/x-bzip2", ".xz": "application/x-xz", ".zst": "application/zstd",
+	".tar": "application/x-tar", ".7z": "application/x-7z-compressed",
+	".rar": "application/vnd.rar", ".wasm": "application/wasm",
+	".cast": "application/x-asciicast", ".ttf": "font/ttf", ".otf": "font/otf",
+	".woff": "font/woff", ".woff2": "font/woff2",
+}
+
+// previewMIME resolves a content type for a preview filename. The system MIME
+// database covers the long tail; previewMIMEFallback covers what it misses.
+func previewMIME(name string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" {
+		return "application/octet-stream"
+	}
+	if ct := mime.TypeByExtension(ext); ct != "" {
+		return ct
+	}
+	if ct, ok := previewMIMEFallback[ext]; ok {
+		return ct
+	}
+	return "application/octet-stream"
+}
+
+// previewFilename sanitizes an agent-supplied preview filename down to a bare
+// base name, so it can't steer the browser's download path.
+func previewFilename(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.ReplaceAll(name, "\\", "/")
+	name = filepath.Base(name)
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == '/' {
+			return -1
+		}
+		return r
+	}, name)
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	if len(name) > 128 {
+		name = name[:128]
+	}
+	return name
+}
+
 // parsePreviewFile parses a .wt-preview file into a mode/url/content map.
+//
+// First line "url:<url>"   → URL mode.
+// First line "file:<name>" → content mode carrying a filename, so the browser
+// can offer a download with a real name and MIME type.
+// Anything else            → content mode as markdown.
 func parsePreviewFile(data []byte) map[string]string {
-	s := strings.TrimSpace(string(data))
-	if s == "" {
+	if strings.TrimSpace(string(data)) == "" {
 		return map[string]string{"mode": ""}
 	}
-	firstLine := s
-	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
-		firstLine = s[:idx]
+	// Leading-trimmed only: the header may sit after blank lines, but content
+	// after the header must survive byte-for-byte.
+	lead := strings.TrimLeft(string(data), " \t\r\n")
+	firstLine := lead
+	if idx := strings.IndexByte(lead, '\n'); idx >= 0 {
+		firstLine = lead[:idx]
 	}
+	firstLine = strings.TrimRight(firstLine, "\r")
 	if strings.HasPrefix(firstLine, "url:") {
 		return map[string]string{"mode": "url", "url": strings.TrimSpace(firstLine[4:])}
 	}
-	return map[string]string{"mode": "markdown", "content": string(data)}
+	// "file:" header: everything after the header line is content.
+	if strings.HasPrefix(firstLine, "file:") {
+		if name := previewFilename(firstLine[5:]); name != "" {
+			body := ""
+			if idx := strings.IndexByte(lead, '\n'); idx >= 0 {
+				body = lead[idx+1:]
+			}
+			return map[string]string{
+				"mode":     "markdown",
+				"content":  body,
+				"filename": name,
+				"mime":     previewMIME(name),
+			}
+		}
+	}
+	return map[string]string{
+		"mode":     "markdown",
+		"content":  string(data),
+		"filename": "preview.md",
+		"mime":     "text/markdown",
+	}
 }
 
 // consumeAndSendPreview reads a .wt-preview file, deletes it, encrypts the content, and sends it.

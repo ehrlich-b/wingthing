@@ -1999,6 +1999,18 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 #preview-copy-btn:hover { color: var(--accent-hover); }
 
+#preview-download-btn {
+    font-size: 11px;
+    color: var(--accent);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    font-weight: 600;
+    margin-left: auto;
+}
+#preview-download-btn:hover { color: var(--accent-hover); }
+
 #preview-open-btn {
     font-size: 11px;
     color: var(--accent);
@@ -2012,7 +2024,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     color: var(--text-dim);
     cursor: pointer;
     font-size: 18px;
-    margin-left: auto;
     padding: 0 4px;
     line-height: 1;
 }
