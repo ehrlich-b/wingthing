@@ -51,24 +51,37 @@ export function initTerminal() {
 
     // Alternate scroll mode, the way xterm/iTerm2/Ghostty do it.
     //
-    // Claude Code (and other fullscreen TUIs) draw in the alternate screen buffer,
-    // which has no scrollback for xterm.js to scroll, and Claude never enables mouse
-    // reporting — verified against 2.1.216 and 2.1.220, which set only 1004h/2004h/2031h
-    // even when DA1 and XTVERSION are answered. So the wheel has to become keystrokes.
-    // Native terminals send arrow keys here; we were sending PgUp/PgDn, which is why
-    // the transcript jumped a full page per notch. Arrows scroll it line by line.
+    // The egg removes the agent's mouse-tracking enable and leaves a private OSC in its
+    // place (see stripMouseTracking) — that tells us the agent parses mouse input even
+    // though xterm never entered mouse mode, which is what keeps drag-to-select alive.
+    S.term.parser.registerOscHandler(7771, function () { S.agentMouse = true; return true; });
+
+    // Claude Code (and other fullscreen TUIs) draw in the alternate screen buffer, which
+    // has no scrollback for xterm.js to scroll, so the wheel has to reach the agent.
+    // For mouse-capable agents we send what a real terminal sends — SGR wheel events,
+    // button 64 up / 65 down — and the agent scrolls natively, ~3 lines a notch.
+    // Agents that never enable mouse reporting get arrow keys instead, the way
+    // xterm/iTerm2/Ghostty do alternate scroll mode. That is why Claude used to print
+    // "Scroll wheel is sending arrow keys"; PgUp/PgDn is worse still, a page per notch.
     // In the normal buffer we return true and leave xterm's own scrollback untouched.
     var wheelAccum = 0;
-    var WHEEL_STEP = 40; // wheel-delta px per line step — ~3 lines per notch (tunable)
+    var WHEEL_NOTCH = 120; // wheel-delta px per SGR wheel event (tunable)
+    var WHEEL_LINE = 40;   // wheel-delta px per arrow-key line step (tunable)
     S.term.attachCustomWheelEventHandler(function (e) {
         if (!S.term || S.term.buffer.active.type !== 'alternate') return true;
         var dy = e.deltaY;
         if (e.deltaMode === 1) dy *= 16;                                      // lines -> px
         else if (e.deltaMode === 2) dy *= DOM.terminalContainer.clientHeight; // pages -> px
         wheelAccum += dy;
-        while (Math.abs(wheelAccum) >= WHEEL_STEP) {
-            if (wheelAccum < 0) { sendPTYInput('\x1b[A'); wheelAccum += WHEEL_STEP; } // up
-            else { sendPTYInput('\x1b[B'); wheelAccum -= WHEEL_STEP; }               // down
+        var step = S.agentMouse ? WHEEL_NOTCH : WHEEL_LINE;
+        var rect = DOM.terminalContainer.getBoundingClientRect();
+        var col = Math.min(S.term.cols, Math.max(1, Math.ceil((e.clientX - rect.left) / (rect.width / S.term.cols))));
+        var row = Math.min(S.term.rows, Math.max(1, Math.ceil((e.clientY - rect.top) / (rect.height / S.term.rows))));
+        while (Math.abs(wheelAccum) >= step) {
+            var up = wheelAccum < 0;
+            if (S.agentMouse) sendPTYInput('\x1b[<' + (up ? 64 : 65) + ';' + col + ';' + row + 'M');
+            else sendPTYInput(up ? '\x1b[A' : '\x1b[B');
+            wheelAccum += up ? step : -step;
         }
         e.preventDefault();
         return false;
