@@ -51,24 +51,30 @@ export function initTerminal() {
 
     // Alternate scroll mode, the way xterm/iTerm2/Ghostty do it.
     //
-    // Claude Code (and other fullscreen TUIs) draw in the alternate screen buffer,
-    // which has no scrollback for xterm.js to scroll, and Claude never enables mouse
-    // reporting — verified against 2.1.216 and 2.1.220, which set only 1004h/2004h/2031h
-    // even when DA1 and XTVERSION are answered. So the wheel has to become keystrokes.
-    // Native terminals send arrow keys here; we were sending PgUp/PgDn, which is why
-    // the transcript jumped a full page per notch. Arrows scroll it line by line.
+    // Claude Code (and other fullscreen TUIs) draw in the alternate screen buffer, which
+    // has no scrollback for xterm.js to scroll, so the wheel has to reach the agent.
+    // Sending keystrokes is the usual trick, but PgUp/PgDn jumps a whole page per notch
+    // and arrows make Claude print "Scroll wheel is sending arrow keys". So we send what
+    // a real terminal sends: SGR wheel events (button 64 up / 65 down). The agent scrolls
+    // natively, ~3 lines a notch. The egg strips the agent's mouse-tracking enable on the
+    // way out (see stripMouseTracking) so xterm never enters mouse mode and drag-to-select
+    // keeps working — otherwise the terminal captures the mouse and selection dies.
     // In the normal buffer we return true and leave xterm's own scrollback untouched.
     var wheelAccum = 0;
-    var WHEEL_STEP = 40; // wheel-delta px per line step — ~3 lines per notch (tunable)
+    var WHEEL_STEP = 120; // wheel-delta px per emitted notch (tunable)
     S.term.attachCustomWheelEventHandler(function (e) {
         if (!S.term || S.term.buffer.active.type !== 'alternate') return true;
         var dy = e.deltaY;
         if (e.deltaMode === 1) dy *= 16;                                      // lines -> px
         else if (e.deltaMode === 2) dy *= DOM.terminalContainer.clientHeight; // pages -> px
         wheelAccum += dy;
+        var rect = DOM.terminalContainer.getBoundingClientRect();
+        var col = Math.min(S.term.cols, Math.max(1, Math.ceil((e.clientX - rect.left) / (rect.width / S.term.cols))));
+        var row = Math.min(S.term.rows, Math.max(1, Math.ceil((e.clientY - rect.top) / (rect.height / S.term.rows))));
         while (Math.abs(wheelAccum) >= WHEEL_STEP) {
-            if (wheelAccum < 0) { sendPTYInput('\x1b[A'); wheelAccum += WHEEL_STEP; } // up
-            else { sendPTYInput('\x1b[B'); wheelAccum -= WHEEL_STEP; }               // down
+            var btn = wheelAccum < 0 ? 64 : 65; // 64 = wheel up, 65 = wheel down
+            sendPTYInput('\x1b[<' + btn + ';' + col + ';' + row + 'M');
+            wheelAccum += wheelAccum < 0 ? WHEEL_STEP : -WHEEL_STEP;
         }
         e.preventDefault();
         return false;

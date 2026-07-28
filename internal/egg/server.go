@@ -435,6 +435,26 @@ func NewServer(dir string) (*Server, error) {
 	}, nil
 }
 
+// Mouse-tracking enables the browser terminal must never see. Claude turns mouse
+// reporting on so the wheel reaches it, but if xterm.js also enters mouse mode it stops
+// doing local selection and drag-to-copy dies — there is no DECSET that reports the
+// wheel without also capturing buttons. So we swallow the enable: the agent believes
+// mouse is on and parses the SGR wheel events terminal.js synthesizes, while the
+// terminal never captures the mouse and selection keeps working. Disables pass through.
+var mouseTrackingEnables = [][]byte{
+	[]byte("\x1b[?1000h"), []byte("\x1b[?1002h"), []byte("\x1b[?1003h"),
+	[]byte("\x1b[?1005h"), []byte("\x1b[?1006h"), []byte("\x1b[?1015h"), []byte("\x1b[?1016h"),
+}
+
+func stripMouseTracking(data []byte) []byte {
+	for _, seq := range mouseTrackingEnables {
+		if bytes.Contains(data, seq) {
+			data = bytes.ReplaceAll(data, seq, nil)
+		}
+	}
+	return data
+}
+
 // RunSession is the core lifecycle: create sandbox, start agent in PTY, serve gRPC, exit when done.
 func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	os.Setenv("GOTRACEBACK", "all")
@@ -1025,6 +1045,7 @@ func (s *Server) readPTY(sess *Session) {
 			}
 			data := make([]byte, n)
 			copy(data, buf[:n])
+			data = stripMouseTracking(data)
 			sess.replay.Write(data)
 			sess.mu.Lock()
 			sess.lastOutput = time.Now()
