@@ -61,6 +61,7 @@ func main() {
 		agentCmd(),
 		scheduleCmd(),
 		retryCmd(),
+		promptCmd(),
 		initCmd(),
 		loginCmd(),
 		logoutCmd(),
@@ -79,6 +80,7 @@ func main() {
 		updateCmd(),
 		toolCallCmd(),
 		toolListCmd(),
+		mcpCmd(),
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
