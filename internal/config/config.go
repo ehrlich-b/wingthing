@@ -17,7 +17,7 @@ type Config struct {
 	Dir               string            `yaml:"-"`
 	DefaultAgent      string            `yaml:"default_agent"`
 	DefaultEmbedder   string            `yaml:"default_embedder"`
-	WingID         string            `yaml:"wing_id"`
+	WingID            string            `yaml:"wing_id"`
 	Hostname          string            `yaml:"-"` // os.Hostname(), not persisted
 	PollInterval      string            `yaml:"poll_interval"`
 	DefaultMaxRetries int               `yaml:"max_retries"`
@@ -116,6 +116,10 @@ func (c *Config) MemoryDir() string {
 
 func (c *Config) SkillsDir() string {
 	return filepath.Join(c.Dir, "skills")
+}
+
+func (c *Config) PromptsDir() string {
+	return filepath.Join(c.Dir, "prompts")
 }
 
 func (c *Config) RelayDBPath() string {
