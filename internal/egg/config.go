@@ -13,26 +13,65 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// NetworkField handles YAML unmarshaling of network: string | []string.
-// "none" → nil, "*" → ["*"], list → as-is.
-type NetworkField []string
+// NetworkField handles YAML unmarshaling of network: string | []string | mapping.
+// The scalar and list forms are a frozen contract: "none"/"" → no network,
+// "*" → unrestricted, list → domain allowlist. The mapping form is additive and
+// carries the loopback forwarding, enforcement mode, and egress logging options
+// described in docs/sandbox-enhancement-design.md.
+type NetworkField struct {
+	Domains    []string `yaml:"domains,omitempty"`
+	LocalPorts []int    `yaml:"local_ports,omitempty"`
+	Mode       string   `yaml:"mode,omitempty"` // "" (default) | "observe" | "enforce"
+	Log        *bool    `yaml:"log,omitempty"`
+}
 
 func (n *NetworkField) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind == yaml.ScalarNode {
+	switch value.Kind {
+	case yaml.ScalarNode:
 		s := value.Value
 		if s == "none" || s == "" {
-			*n = nil
+			*n = NetworkField{}
 			return nil
 		}
-		*n = NetworkField{s}
+		*n = NetworkField{Domains: []string{s}}
+		return nil
+	case yaml.MappingNode:
+		type plain NetworkField
+		var p plain
+		if err := value.Decode(&p); err != nil {
+			return err
+		}
+		*n = NetworkField(p)
+		return nil
+	default:
+		var list []string
+		if err := value.Decode(&list); err != nil {
+			return err
+		}
+		*n = NetworkField{Domains: list}
 		return nil
 	}
-	var list []string
-	if err := value.Decode(&list); err != nil {
-		return err
+}
+
+// MarshalYAML re-emits the legacy scalar and list shapes whenever no mapping-only
+// option is set, so rendered configs stay byte-stable for existing users.
+func (n NetworkField) MarshalYAML() (interface{}, error) {
+	if len(n.LocalPorts) == 0 && n.Mode == "" && n.Log == nil {
+		if len(n.Domains) == 0 {
+			return "none", nil
+		}
+		if len(n.Domains) == 1 && n.Domains[0] == "*" {
+			return "*", nil
+		}
+		return n.Domains, nil
 	}
-	*n = NetworkField(list)
-	return nil
+	type plain NetworkField
+	return plain(n), nil
+}
+
+// IsZero lets yaml omitempty treat an unset network block as absent.
+func (n NetworkField) IsZero() bool {
+	return len(n.Domains) == 0 && len(n.LocalPorts) == 0 && n.Mode == "" && n.Log == nil
 }
 
 // EnvField handles YAML unmarshaling of env: string | []string.
@@ -285,7 +324,7 @@ func applySectionMasks(parent *EggConfig, masks BaseField, configDir string,
 	}
 	if masks.Network != "" {
 		if masks.Network == "none" {
-			parent.Network = nil
+			parent.Network = NetworkField{}
 		} else {
 			refPath := resolveBasePath(masks.Network, configDir)
 			ref, err := resolveEggConfig(refPath, visited, depth+1)
@@ -323,8 +362,14 @@ func MergeEggConfig(parent, child *EggConfig) *EggConfig {
 	// FS: append child to parent, with deny override logic
 	merged.FS = mergeFS(parent.FS, child.FS)
 
-	// Network: union with wildcard short-circuit
-	merged.Network = NetworkField(mergeStringSet([]string(parent.Network), []string(child.Network)))
+	// Network: union domains with wildcard short-circuit; mapping-only options
+	// follow child-wins, matching how Resources merge.
+	merged.Network = NetworkField{
+		Domains:    mergeStringSet(parent.Network.Domains, child.Network.Domains),
+		LocalPorts: mergeIntSet(parent.Network.LocalPorts, child.Network.LocalPorts),
+		Mode:       firstNonEmpty(child.Network.Mode, parent.Network.Mode),
+		Log:        firstNonNilBool(child.Network.Log, parent.Network.Log),
+	}
 
 	// Env: union with wildcard short-circuit
 	merged.Env = EnvField(mergeStringSet([]string(parent.Env), []string(child.Env)))
@@ -404,6 +449,38 @@ func normalizeFSPath(path, home string) string {
 }
 
 // mergeStringSet unions two string slices with dedup. "*" in either -> ["*"].
+func mergeIntSet(a, b []int) []int {
+	seen := make(map[int]bool, len(a)+len(b))
+	var out []int
+	for _, group := range [][]int{a, b} {
+		for _, v := range group {
+			if !seen[v] {
+				seen[v] = true
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func firstNonNilBool(values ...*bool) *bool {
+	for _, v := range values {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
 func mergeStringSet(a, b []string) []string {
 	for _, s := range a {
 		if s == "*" {
@@ -485,14 +562,14 @@ func (c *EggConfig) ToSandboxConfig(home string) sandbox.Config {
 		home, _ = os.UserHomeDir()
 	}
 	mounts, deny, denyWrite := ParseFSRules(c.FS, home)
-	netNeed := sandbox.NetworkNeedFromDomains([]string(c.Network))
+	netNeed := sandbox.NetworkNeedFromDomains(c.Network.Domains)
 
 	return sandbox.Config{
 		Mounts:      mounts,
 		Deny:        deny,
 		DenyWrite:   denyWrite,
 		NetworkNeed: netNeed,
-		Domains:     []string(c.Network),
+		Domains:     c.Network.Domains,
 		CPULimit:    c.Resources.CPUDuration(),
 		MemLimit:    c.Resources.MemBytes(),
 		MaxFDs:      c.Resources.MaxFDs,
@@ -602,15 +679,15 @@ func (c *EggConfig) YAML() (string, error) {
 
 // NetworkSummary returns a short description of the network config for logging.
 func (c *EggConfig) NetworkSummary() string {
-	if len(c.Network) == 0 {
+	if len(c.Network.Domains) == 0 {
 		return "none"
 	}
-	for _, d := range c.Network {
+	for _, d := range c.Network.Domains {
 		if d == "*" {
 			return "*"
 		}
 	}
-	return strings.Join([]string(c.Network), ",")
+	return strings.Join(c.Network.Domains, ",")
 }
 
 func expandTilde(path string, home string) string {

@@ -558,7 +558,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		args = append(args, "--fs", mode+":"+path)
 	}
-	for _, d := range eggCfg.Network {
+	for _, d := range eggCfg.Network.Domains {
 		args = append(args, "--network", d)
 	}
 	// Per-user home directory for multi-user isolation on org wings.

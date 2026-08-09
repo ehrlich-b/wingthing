@@ -10,19 +10,44 @@ import (
 	"sync"
 )
 
-// DomainProxy is an HTTP CONNECT proxy that only allows connections to whitelisted domains.
-type DomainProxy struct {
-	listener net.Listener
-	server   *http.Server
-	domains  map[string]bool // exact matches
-	wildcards []string       // wildcard patterns like "*.anthropic.com"
-	mu       sync.Mutex
-	closed   bool
+// EgressEvent is one observed outbound connection attempt. The proxy is the only
+// component that knows what a sandboxed agent actually contacted, so these are
+// evidence, not just logs.
+type EgressEvent struct {
+	Host    string // as requested, including port
+	Matched bool   // matched the domain allowlist
+	Blocked bool   // actually refused (false in observe mode even when unmatched)
 }
 
-// StartProxy starts an HTTP CONNECT proxy on localhost with the given domain allowlist.
-// Supports exact domains ("api.anthropic.com") and wildcards ("*.anthropic.com").
+// ProxyOptions configures a DomainProxy.
+type ProxyOptions struct {
+	Domains []string
+	// Observe records what enforce mode would have refused without refusing it.
+	// This is the migration path for tightening egress on existing deployments.
+	Observe bool
+}
+
+// DomainProxy is an HTTP CONNECT proxy that only allows connections to whitelisted domains.
+type DomainProxy struct {
+	listener  net.Listener
+	server    *http.Server
+	domains   map[string]bool // exact matches
+	wildcards []string        // wildcard patterns like "*.anthropic.com"
+	observe   bool
+	mu        sync.Mutex
+	closed    bool
+	events    []EgressEvent
+}
+
+// StartProxy starts an enforcing HTTP CONNECT proxy on localhost with the given
+// domain allowlist. Supports exact domains ("api.anthropic.com") and wildcards
+// ("*.anthropic.com").
 func StartProxy(domains []string) (*DomainProxy, error) {
+	return StartProxyWithOptions(ProxyOptions{Domains: domains})
+}
+
+// StartProxyWithOptions starts a proxy with explicit options.
+func StartProxyWithOptions(opts ProxyOptions) (*DomainProxy, error) {
 	lis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		return nil, fmt.Errorf("proxy listen: %w", err)
@@ -31,8 +56,9 @@ func StartProxy(domains []string) (*DomainProxy, error) {
 	p := &DomainProxy{
 		listener: lis,
 		domains:  make(map[string]bool),
+		observe:  opts.Observe,
 	}
-	for _, d := range domains {
+	for _, d := range opts.Domains {
 		if strings.HasPrefix(d, "*.") {
 			p.wildcards = append(p.wildcards, d[1:]) // store ".anthropic.com"
 		} else {
@@ -67,6 +93,31 @@ func (p *DomainProxy) Close() {
 	p.server.Close()
 }
 
+// record appends an egress event. Bounded so a long-running session with a noisy
+// agent cannot grow this without limit.
+const maxEgressEvents = 10000
+
+func (p *DomainProxy) record(e EgressEvent) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.events) >= maxEgressEvents {
+		copy(p.events, p.events[1:])
+		p.events[len(p.events)-1] = e
+		return
+	}
+	p.events = append(p.events, e)
+}
+
+// Events returns a copy of the observed outbound connection attempts, oldest first.
+func (p *DomainProxy) Events() []EgressEvent {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]EgressEvent(nil), p.events...)
+}
+
+// Observing reports whether the proxy logs violations instead of refusing them.
+func (p *DomainProxy) Observing() bool { return p.observe }
+
 // allowed checks if a domain is in the allowlist.
 func (p *DomainProxy) allowed(host string) bool {
 	// Strip port if present
@@ -93,10 +144,16 @@ func (p *DomainProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !p.allowed(r.Host) {
+	matched := p.allowed(r.Host)
+	blocked := !matched && !p.observe
+	p.record(EgressEvent{Host: r.Host, Matched: matched, Blocked: blocked})
+	if blocked {
 		log.Printf("domain proxy: BLOCKED %s", r.Host)
 		http.Error(w, "domain not allowed", http.StatusForbidden)
 		return
+	}
+	if !matched {
+		log.Printf("domain proxy: OBSERVED (would block) %s", r.Host)
 	}
 
 	// Dial the target

@@ -37,7 +37,7 @@ func TestMergeEggConfig_NoBase(t *testing.T) {
 	// Child with no base merges on top of built-in default
 	child := &EggConfig{
 		FS:      []string{"ro:~/.ssh"},
-		Network: NetworkField{"api.anthropic.com"},
+		Network: NetworkField{Domains: []string{"api.anthropic.com"}},
 	}
 	parent := DefaultEggConfig()
 	merged := MergeEggConfig(parent, child)
@@ -70,7 +70,7 @@ func TestMergeEggConfig_NoBase(t *testing.T) {
 		t.Error("parent deny:~/.gnupg should survive merge")
 	}
 	// Network should include child's domains
-	if len(merged.Network) != 1 || merged.Network[0] != "api.anthropic.com" {
+	if len(merged.Network.Domains) != 1 || merged.Network.Domains[0] != "api.anthropic.com" {
 		t.Errorf("network = %v, want [api.anthropic.com]", merged.Network)
 	}
 }
@@ -149,7 +149,7 @@ network:
 		t.Error("parent deny:~/.aws should survive merge")
 	}
 	// Network should be union
-	if len(cfg.Network) != 1 || cfg.Network[0] != "api.anthropic.com" {
+	if len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "api.anthropic.com" {
 		t.Errorf("network = %v, want [api.anthropic.com]", cfg.Network)
 	}
 }
@@ -221,18 +221,18 @@ func TestResolveEggConfig_MaxDepth(t *testing.T) {
 }
 
 func TestMergeEggConfig_NetworkUnion(t *testing.T) {
-	parent := &EggConfig{Network: NetworkField{"api.anthropic.com"}}
-	child := &EggConfig{Network: NetworkField{"api.openai.com"}}
+	parent := &EggConfig{Network: NetworkField{Domains: []string{"api.anthropic.com"}}}
+	child := &EggConfig{Network: NetworkField{Domains: []string{"api.openai.com"}}}
 	merged := MergeEggConfig(parent, child)
-	if len(merged.Network) != 2 {
+	if len(merged.Network.Domains) != 2 {
 		t.Errorf("network = %v, want 2 domains", merged.Network)
 	}
 
 	// Wildcard in either -> wildcard
-	parent2 := &EggConfig{Network: NetworkField{"*"}}
-	child2 := &EggConfig{Network: NetworkField{"api.openai.com"}}
+	parent2 := &EggConfig{Network: NetworkField{Domains: []string{"*"}}}
+	child2 := &EggConfig{Network: NetworkField{Domains: []string{"api.openai.com"}}}
 	merged2 := MergeEggConfig(parent2, child2)
-	if len(merged2.Network) != 1 || merged2.Network[0] != "*" {
+	if len(merged2.Network.Domains) != 1 || merged2.Network.Domains[0] != "*" {
 		t.Errorf("network = %v, want [*]", merged2.Network)
 	}
 }
@@ -361,10 +361,10 @@ fs:
 func TestDiscoverEggConfig_WingDefault(t *testing.T) {
 	wingCfg := &EggConfig{
 		FS:      []string{"rw:./", "deny:~/.ssh"},
-		Network: NetworkField{"*"},
+		Network: NetworkField{Domains: []string{"*"}},
 	}
 	cfg := DiscoverEggConfig("/nonexistent", wingCfg)
-	if len(cfg.Network) != 1 || cfg.Network[0] != "*" {
+	if len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "*" {
 		t.Error("should use wing default when no project config")
 	}
 }
@@ -551,7 +551,7 @@ func TestSectionMask_Combo(t *testing.T) {
 		t.Errorf("fs should be empty (masked none), got %v", cfg.FS)
 	}
 	// Network: from strict
-	if len(cfg.Network) != 1 || cfg.Network[0] != "api.internal.corp" {
+	if len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "api.internal.corp" {
 		t.Errorf("network should come from strict, got %v", cfg.Network)
 	}
 	// Env: from prod-env
