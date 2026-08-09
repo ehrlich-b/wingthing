@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,8 +24,8 @@ type mockAgent struct {
 func (m *mockAgent) Run(_ context.Context, _ string, _ agent.RunOpts) (*agent.Stream, error) {
 	return nil, nil
 }
-func (m *mockAgent) Health() error       { return nil }
-func (m *mockAgent) ContextWindow() int  { return m.contextWindow }
+func (m *mockAgent) Health() error      { return nil }
+func (m *mockAgent) ContextWindow() int { return m.contextWindow }
 
 // mockThread implements ThreadRenderer for testing.
 type mockThread struct {
@@ -237,6 +238,43 @@ func TestBuildAdHocTask(t *testing.T) {
 	}
 	if result.BudgetTotal != 200000 {
 		t.Errorf("budget total = %d, want 200000", result.BudgetTotal)
+	}
+}
+
+func TestBuildIncludesCompletedDependencyOutputs(t *testing.T) {
+	memDir := setupMemory(t)
+	skillsDir := setupSkills(t)
+	b, s := setupBuilder(t, memDir, skillsDir, "")
+
+	dependency := &store.Task{
+		ID: "t-worker", Type: "prompt", What: "research", RunAt: time.Now(), Agent: "gemini", Status: "pending",
+	}
+	if err := s.CreateTask(dependency); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTaskOutput(dependency.ID, "worker found the decisive evidence"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTaskStatus(dependency.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	deps, _ := json.Marshal([]string{dependency.ID})
+	depsJSON := string(deps)
+	reducer := &store.Task{
+		ID: "t-reducer", Type: "prompt", What: "synthesize", RunAt: time.Now(), Agent: "claude", DependsOn: &depsJSON,
+	}
+	if err := s.CreateTask(reducer); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := b.Build(context.Background(), reducer.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Dependency Results", "t-worker (gemini)", "worker found the decisive evidence", "synthesize"} {
+		if !strings.Contains(result.Prompt, want) {
+			t.Errorf("prompt missing %q:\n%s", want, result.Prompt)
+		}
 	}
 }
 
