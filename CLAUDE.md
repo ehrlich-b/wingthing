@@ -8,6 +8,32 @@
 - `wt start` -- connect your machine to the relay, access from app.wingthing.ai
 - `wt serve` -- relay server (web UI, WebSocket relay, skill registry), HTTP + SQLite
 
+## Current Push: AI-Usable API
+
+**An AI must be able to orchestrate wingthing as easily as a human can.** This is
+the primary focus of the current work. Anything a human can do from the terminal
+or the browser, a model must be able to do through a typed interface with the
+same authority model and the same audit trail.
+
+The rule: **if you ship a capability only a human can drive, it is unfinished.**
+
+- `wt mcp stdio` is the model-facing surface. Tools have closed JSON Schemas,
+  return structured content, and declare read-only/mutating/destructive intent.
+- CLI subcommands take `--json` for scripting. Human-readable output is a
+  rendering of structured data, never the only representation.
+- **Never treat a UI as an API.** No scraping the web UI, and no parsing a TUI's
+  screen when the underlying runtime can report the fact directly.
+- Terminal snapshots (`wt session read`) are raw ANSI state, not a conversation
+  transcript. Do not let callers pretend otherwise — agent-aware state belongs
+  in typed events above the PTY, sourced from agent hooks and protocols first
+  and screen heuristics only as a declared fallback.
+- Ambient authority is not accessibility. Every new model-reachable action needs
+  a principal, a grant, a bound (time/iterations/concurrency), and a log line.
+
+When adding a capability, the checklist is: runtime primitive → CLI verb with
+`--json` → MCP tool with a schema → tests at two tiers → doc line. See
+`docs/agent-meta-layer.md` for the object model.
+
 ## Design Philosophy
 
 **Curated > marketplace.** Skills live in `skills/` in this repo. They're reviewed, validated, and version-controlled. No storefront where anyone can publish prompt injections. Private skills go in `~/.wingthing/skills/`.
@@ -218,13 +244,54 @@ When `isolation` is `strict` or `standard` (no network), the sandbox automatical
 |---------|-------------|
 | `make check` | Run tests then build (the default verification step) |
 | `make build` | Build the `wt` binary |
-| `make test` | Run `go test ./...` |
+| `make test` | Unit tier — `go test ./...` |
+| `make test-integ` | Integration tier — relay/wing/PTY protocol with simulated endpoints |
+| `make test-linux` / `test-linux-ubuntu` | E2E tier — privileged Linux sandbox battery in Docker |
 | `make test-provider-swap` | Opt-in real-harness/Ollama/LiteLLM release smoke matrix |
+| `make coverage` | Statement coverage report |
 | `make web` | Build vite output (`cd web && npm run build`) |
 | `make serve` | Build then run `wt serve` in foreground |
 | `make clean` | Remove built binary |
 
 Run `make check` to verify changes. Run `make web` before `make check` if you changed anything in `web/`.
+
+`make build` and the Go test targets seed a placeholder `web/dist` when it is
+missing, because `web/embed.go` embeds it and the built assets are gitignored.
+`make web` overwrites the placeholder with the real vite output.
+
+### Testing bar
+
+**Target: roughly half of the Go in this repo is test code.** As of 2026-08-09 it
+is 33% (17.7k test lines against 35.7k non-test). New work should close that gap,
+not widen it.
+
+This is a floor on how much testing effort a change deserves — **not** a license
+for coverage theater. A test that asserts a getter returns what the setter set is
+worth nothing and still inflates the ratio. Prefer tests that pin a real
+contract: an exact argv, a wire message, a sandbox denial, a reconnect.
+
+Three tiers, and every new capability lands with tests in **at least two**:
+
+| Tier | Command | Proves |
+|------|---------|--------|
+| Unit | `make test` | Exact contracts — argv, parsing, schemas, validation, config resolution |
+| Integration | `make test-integ` | Component protocol against simulated endpoints — no real agent, no network |
+| E2E | `make test-linux-ubuntu` | Real enforcement and real lifecycle on a real kernel |
+
+Rules:
+
+- **A mocked test proves our routing, not that a vendor kept its flags.** Agent
+  invocations need an exact-argv unit test so an upstream change is a test
+  failure, not a support ticket.
+- **Sandbox claims need E2E.** If a doc says a path is denied or a syscall is
+  blocked, a test must run in the sandbox and observe the denial. An enforcement
+  feature that is available but broken is a failure, never a skip.
+- **Skips must be capability-driven and explicit.** Missing kernel feature or
+  uninstalled real CLI may skip. Nothing else may.
+- **Both halves of the AI surface get tested.** A new MCP tool needs schema and
+  strict-argument-decoding tests plus one test that actually drives it.
+- Reach for a real e2e test before a clever unit test when the risk is lifecycle
+  (detach, reattach, restart, crash) rather than logic.
 
 ### CI
 
