@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	directpkg "github.com/ehrlich-b/wingthing/internal/direct"
@@ -160,7 +161,7 @@ var previewMIMEFallback = map[string]string{
 	// documents
 	".pdf": "application/pdf", ".rtf": "application/rtf", ".epub": "application/epub+zip",
 	".doc": "application/msword", ".xls": "application/vnd.ms-excel",
-	".ppt": "application/vnd.ms-powerpoint",
+	".ppt":  "application/vnd.ms-powerpoint",
 	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 	".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -1318,15 +1319,9 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 
 	// Detect available agents
 	var agents []string
-	for _, a := range []struct{ name, cmd string }{
-		{"claude", "claude"},
-		{"ollama", "ollama"},
-		{"gemini", "gemini"},
-		{"codex", "codex"},
-		{"cursor", "agent"},
-	} {
-		if _, err := exec.LookPath(a.cmd); err == nil {
-			agents = append(agents, a.name)
+	for _, definition := range agentpkg.Definitions() {
+		if _, err := exec.LookPath(definition.Command); err == nil {
+			agents = append(agents, definition.Name)
 		}
 	}
 
@@ -1416,9 +1411,9 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		var iceServers []pionwebrtc.ICEServer
 		for _, s := range wingCfg.ICEServers {
 			iceServers = append(iceServers, pionwebrtc.ICEServer{
-				URLs:           s.URLs,
-				Username:       s.Username,
-				Credential:     s.Credential,
+				URLs:       s.URLs,
+				Username:   s.Username,
+				Credential: s.Credential,
 			})
 		}
 		peerMgr = webrtcpkg.NewPeerManager(iceServers)
@@ -1458,19 +1453,19 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	}
 
 	client = &ws.Client{
-		RoostURL:    wsURL,
-		Token:       tok.Token,
-		WingID:      cfg.WingID,
-		Hostname:    cfg.Hostname,
-		Platform:    runtime.GOOS,
-		Version:     version,
-		PublicKey:   base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes()),
-		Agents:      agents,
-		Skills:      skills,
-		Labels:      labels,
-		Projects:    projects,
-		OrgSlug:     orgFlag,
-		RootDir:     rootDir,
+		RoostURL:     wsURL,
+		Token:        tok.Token,
+		WingID:       cfg.WingID,
+		Hostname:     cfg.Hostname,
+		Platform:     runtime.GOOS,
+		Version:      version,
+		PublicKey:    base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes()),
+		Agents:       agents,
+		Skills:       skills,
+		Labels:       labels,
+		Projects:     projects,
+		OrgSlug:      orgFlag,
+		RootDir:      rootDir,
 		Locked:       wingCfg.Locked,
 		AllowedCount: len(wingCfg.AllowKeys),
 	}
@@ -2019,10 +2014,10 @@ func wingAllowCmd() *cobra.Command {
 				}
 				var membersResp struct {
 					Members []struct {
-						UserID          string `json:"user_id"`
-						Email           string `json:"email"`
-						DisplayName     string `json:"display_name"`
-						PasskeyPubKey   string `json:"passkey_public_key"`
+						UserID        string `json:"user_id"`
+						Email         string `json:"email"`
+						DisplayName   string `json:"display_name"`
+						PasskeyPubKey string `json:"passkey_public_key"`
 					} `json:"members"`
 				}
 				if err := json.NewDecoder(resp.Body).Decode(&membersResp); err != nil {
@@ -2607,6 +2602,7 @@ func cleanEggDir(dir string) {
 	}
 	os.Remove(filepath.Join(dir, "egg.meta"))
 	os.Remove(filepath.Join(dir, "egg.owner"))
+	os.Remove(filepath.Join(dir, "session.name"))
 	os.Remove(dir)
 }
 
@@ -3768,17 +3764,17 @@ authDone:
 
 // tunnelInner is the decrypted JSON payload inside a tunnel request.
 type tunnelInner struct {
-	Type      string `json:"type"`
-	Path      string `json:"path,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	Kind      string `json:"kind,omitempty"`
-	YAML      string `json:"yaml,omitempty"`
-	Offset    int    `json:"offset,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
-	AuthToken string `json:"auth_token,omitempty"`
-	Key         string `json:"key,omitempty"` // passkey public key for allow.add
+	Type        string `json:"type"`
+	Path        string `json:"path,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	YAML        string `json:"yaml,omitempty"`
+	Offset      int    `json:"offset,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
+	AuthToken   string `json:"auth_token,omitempty"`
+	Key         string `json:"key,omitempty"`           // passkey public key for allow.add
 	AllowUserID string `json:"allow_user_id,omitempty"` // target user_id for allow.remove
-	SDP         string `json:"sdp,omitempty"`            // WebRTC SDP for webrtc.offer
+	SDP         string `json:"sdp,omitempty"`           // WebRTC SDP for webrtc.offer
 
 	// Path ACL fields (for paths.set / paths.add_member / paths.remove_member)
 	Paths   []config.PathEntry `json:"paths,omitempty"`   // for paths.set (bulk replace)
@@ -4250,7 +4246,9 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 
 		// Extract challenge from clientDataJSON to find matching one
-		var cd struct{ Challenge string `json:"challenge"` }
+		var cd struct {
+			Challenge string `json:"challenge"`
+		}
 		if err := json.Unmarshal(cdJSON, &cd); err != nil {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "malformed client data JSON"}, write)
 			return

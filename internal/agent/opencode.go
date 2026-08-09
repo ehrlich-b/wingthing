@@ -27,15 +27,26 @@ func (o *OpenCode) ContextWindow() int {
 }
 
 func (o *OpenCode) Health() error {
-	cmd := exec.Command(o.command, "--version")
-	if err := cmd.Run(); err != nil {
+	if err := runHealthCheck(healthCheckTimeout, o.command, "--version"); err != nil {
 		return fmt.Errorf("opencode health check failed: %w", err)
 	}
 	return nil
 }
 
 func (o *OpenCode) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream, err error) {
-	args := []string{"-p", prompt, "-q"}
+	args := []string{"run"}
+	// Headless OpenCode must not wait for an approval UI when Wingthing has
+	// already placed it inside an outer sandbox.
+	if opts.CmdFactory != nil {
+		args = append(args, "--auto")
+	}
+	// OpenCode exposes an explicit project flag for headless runs. Supplying it
+	// is stronger than relying only on the parent process cwd (notably when an
+	// npm launcher crosses the Windows/WSL boundary).
+	if opts.WorkDir != "" {
+		args = append(args, "--dir", opts.WorkDir)
+	}
+	args = append(args, prompt)
 
 	var cmd *exec.Cmd
 	if opts.CmdFactory != nil {
@@ -46,12 +57,16 @@ func (o *OpenCode) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Str
 	} else {
 		cmd = exec.CommandContext(ctx, o.command, args...)
 	}
+	if opts.WorkDir != "" {
+		cmd.Dir = opts.WorkDir
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
+	diagnostics, err := startAgentCommand(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start opencode: %w", err)
 	}
 
@@ -65,7 +80,7 @@ func (o *OpenCode) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Str
 				stream.send(Chunk{Text: line + "\n"})
 			}
 		}
-		err := cmd.Wait()
+		err := waitAgentCommand(cmd, diagnostics)
 		if scanErr := scanner.Err(); scanErr != nil && err == nil {
 			err = scanErr
 		}

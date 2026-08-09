@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/spf13/cobra"
@@ -25,19 +26,24 @@ var wellKnownEnvKeys = []struct {
 	{"google", "GOOGLE_API_KEY", "agents"},
 }
 
-var wellKnownCLIs = []struct {
+type wellKnownCLI struct {
 	name    string
 	cmd     string
 	enables string
-}{
-	{"claude", "claude", "agents"},
-	{"ollama", "ollama", "agents, embeddings"},
-	{"gemini", "gemini", "agents"},
-	{"codex", "codex", "agents"},
-	{"cursor", "agent", "agents"},
-	{"opencode", "opencode", "agents"},
-	{"strace", "strace", "trace mode"},
 }
+
+var wellKnownCLIs = func() []wellKnownCLI {
+	definitions := agent.Definitions()
+	result := make([]wellKnownCLI, 0, len(definitions)+1)
+	for _, definition := range definitions {
+		enables := "agents"
+		if definition.Name == "ollama" {
+			enables = "agents, embeddings"
+		}
+		result = append(result, wellKnownCLI{name: definition.Name, cmd: definition.Command, enables: enables})
+	}
+	return append(result, wellKnownCLI{name: "strace", cmd: "strace", enables: "trace mode"})
+}()
 
 func doctorCmd() *cobra.Command {
 	var fixFlag bool

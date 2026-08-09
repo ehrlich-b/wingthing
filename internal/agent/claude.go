@@ -25,8 +25,7 @@ func (c *Claude) ContextWindow() int {
 }
 
 func (c *Claude) Health() error {
-	cmd := exec.Command("claude", "--version")
-	if err := cmd.Run(); err != nil {
+	if err := runHealthCheck(healthCheckTimeout, "claude", "--version"); err != nil {
 		return fmt.Errorf("claude health check failed: %w", err)
 	}
 	return nil
@@ -34,6 +33,12 @@ func (c *Claude) Health() error {
 
 func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream, err error) {
 	args := []string{"-p", prompt, "--output-format", "stream-json", "--verbose"}
+	// Print mode cannot open an approval UI. When Wingthing supplies the outer
+	// sandbox, let Claude execute tools inside that boundary without consulting
+	// state left in the user's settings from an earlier interactive session.
+	if opts.CmdFactory != nil {
+		args = append(args, "--dangerously-skip-permissions")
+	}
 	if opts.SystemPrompt != "" {
 		if opts.ReplaceSystemPrompt {
 			args = append(args, "--system-prompt", opts.SystemPrompt)
@@ -54,11 +59,15 @@ func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 	} else {
 		cmd = exec.CommandContext(ctx, "claude", args...)
 	}
+	if opts.WorkDir != "" {
+		cmd.Dir = opts.WorkDir
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
+	diagnostics, err := startAgentCommand(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
 
@@ -75,7 +84,7 @@ func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 				stream.SetTokens(input, output)
 			}
 		}
-		err := cmd.Wait()
+		err := waitAgentCommand(cmd, diagnostics)
 		if scanErr := scanner.Err(); scanErr != nil && err == nil {
 			err = scanErr
 		}

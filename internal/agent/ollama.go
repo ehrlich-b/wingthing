@@ -14,9 +14,14 @@ type Ollama struct {
 	ctxWindow int
 }
 
+// DefaultOllamaModel is small enough for a developer workstation while still
+// supporting Ollama's native structured tool-call protocol. Keep the catalog
+// and headless adapter on the same model so PTY and prompt behavior agree.
+const DefaultOllamaModel = "qwen3:4b"
+
 func NewOllama(model string, ctxWindow int) *Ollama {
 	if model == "" {
-		model = "llama3.2"
+		model = DefaultOllamaModel
 	}
 	if ctxWindow <= 0 {
 		ctxWindow = 128000
@@ -33,8 +38,7 @@ func (o *Ollama) ContextWindow() int {
 }
 
 func (o *Ollama) Health() error {
-	cmd := exec.Command(o.command, "list")
-	if err := cmd.Run(); err != nil {
+	if err := runHealthCheck(healthCheckTimeout, o.command, "list"); err != nil {
 		return fmt.Errorf("ollama health check failed: %w", err)
 	}
 	return nil
@@ -52,13 +56,17 @@ func (o *Ollama) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 	} else {
 		cmd = exec.CommandContext(ctx, o.command, args...)
 	}
+	if opts.WorkDir != "" {
+		cmd.Dir = opts.WorkDir
+	}
 	cmd.Stdin = strings.NewReader(prompt)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
+	diagnostics, err := startAgentCommand(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start ollama: %w", err)
 	}
 
@@ -72,7 +80,7 @@ func (o *Ollama) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 				stream.send(Chunk{Text: line + "\n"})
 			}
 		}
-		err := cmd.Wait()
+		err := waitAgentCommand(cmd, diagnostics)
 		if scanErr := scanner.Err(); scanErr != nil && err == nil {
 			err = scanErr
 		}

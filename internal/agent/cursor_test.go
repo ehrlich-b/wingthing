@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"context"
+	"os/exec"
+	"reflect"
 	"testing"
 )
 
@@ -23,6 +26,37 @@ func TestNewCursorCustomWindow(t *testing.T) {
 
 func TestCursorImplementsAgent(t *testing.T) {
 	var _ Agent = (*Cursor)(nil)
+}
+
+func TestCursorRunCommandContract(t *testing.T) {
+	cursor := NewCursor(0)
+	var gotName string
+	var gotArgs []string
+	stream, err := cursor.Run(context.Background(), "hello cursor", RunOpts{
+		CmdFactory: func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
+			gotName = name
+			gotArgs = append([]string(nil), args...)
+			return exec.CommandContext(ctx, "sh", "-c", `printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"cursor output"}]}}'`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, ok := stream.Next(); !ok {
+			break
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	wantArgs := []string{"-p", "hello cursor", "--output-format", "stream-json"}
+	if gotName != "agent" || !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("invocation = %q %q, want agent %q", gotName, gotArgs, wantArgs)
+	}
+	if got := stream.Text(); got != "cursor output" {
+		t.Fatalf("output = %q", got)
+	}
 }
 
 // Cursor reuses Claude's parseStreamEvent — verify it works for cursor-format events too.
