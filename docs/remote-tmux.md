@@ -1,5 +1,10 @@
 # wingthing as remote tmux
 
+> Historical framing note: the local-first direction and layer boundaries are now
+> developed in [local-first-architecture.md](local-first-architecture.md). The CLI
+> attach priority described below has begun with `wt attach`, including SSH-native
+> `wt attach <session-id> --remote <host>`.
+
 Session persistence from any device. That's the pitch. SSH gives you a shell. mosh gives you a roaming shell. tmux gives you persistent sessions on one machine. wingthing gives you persistent sessions accessible from anywhere - your phone, your laptop, a browser on someone else's computer.
 
 This doc frames the project as a remote terminal tool first. AI agents and sandboxing are features on top.
@@ -32,7 +37,9 @@ After verification, the wing issues an auth token (64 random hex bytes) cached i
 
 The roost never sees any of this. The challenge, signature, and token all travel inside the E2E encrypted tunnel. The roost forwards ciphertext. A compromised roost can't forge passkey assertions because it doesn't have the private key and can't even read the challenge.
 
-**No client install.** It's a web terminal. Open a browser, connect.
+**Browser with no client install, or native CLI.** Open a browser when that is
+the convenient client, or use `wt attach` locally and over SSH. The browser is
+no longer the only product surface.
 
 **Sandboxing.** Optional per-session OS-level sandbox (seatbelt on macOS, namespaces + seccomp + cgroups on Linux). Not relevant for plain terminal access, but available when you want to constrain what a process can touch.
 
@@ -60,13 +67,22 @@ Key management is the hard part. Each browser has its own ephemeral key, so the 
 
 ### CLI client
 
-Today: browser-only. The web terminal handles remote access well but not "I'm already in a terminal and want to attach to a remote session."
+The first slice now exists: `wt attach <session-id>` reattaches locally, and
+`wt attach <session-id> --remote <ssh-host>` reattaches through ordinary SSH.
+The web terminal remains useful, but it is no longer the only reattach surface.
 
-Goal: `wt attach <session-id>` from any terminal. Same protocol, same encryption, same multi-attach. The CLI client connects via WebSocket and renders in the local terminal emulator (ghostty, iTerm, whatever). No browser needed.
+Next goal: converge the local, SSH, direct, P2P, and relayed clients on the same
+wing-owned attach protocol. No browser should be required, and the hosted relay
+should be an optional transport rather than the product's center of gravity.
 
-**Auth: SSH keys instead of passkeys.** The browser uses WebAuthn passkeys because that's what browsers have. A CLI client doesn't have `navigator.credentials.get()`, but the user already has SSH keys. The auth model is the same - challenge-response with an asymmetric keypair. The wing sends a challenge, the CLI signs it with the user's SSH private key (ed25519, ecdsa, whatever `ssh-agent` has), the wing verifies against the stored public key. Same security properties, different key container.
+**Auth today: let SSH be SSH.** The first remote client uses normal OpenSSH
+authentication and then connects to the egg's user-private local socket on the
+remote host. It does not add a second Wingthing challenge or enrollment flow.
 
-This means the wing's `allow_keys` config accepts both passkey public keys (from browser enrollment) and SSH public keys (from `wt attach` enrollment or manual config). One list, two key types, same verification flow.
+If a future native client attaches through the hosted relay without SSH, it will
+need its own CLI-friendly authentication. Signing a challenge through
+`ssh-agent` is one possible design, but accepting SSH key types in `allow_keys`
+is not implemented and should not be implied by the current command.
 
 This is what makes wingthing usable as a daily driver for people who live in the terminal.
 
@@ -102,11 +118,13 @@ Tailscale solves the network. wingthing solves the session.
 
 AI agents are a session type. `wt egg claude` is "start a sandboxed Claude Code session." The underlying machinery - PTY management, E2E encryption, VTE snapshots, remote access - works for any terminal process.
 
-`wt egg bash` is a sandboxed shell. `wt egg python` is a sandboxed REPL. The sandbox is optional. egg.yaml controls filesystem access, network filtering, and resource limits for any session, not just agents.
+`wt terminal` is a sandboxed shell. `wt terminal -- python` is a persistent
+Python REPL. `egg.yaml` controls filesystem access, network filtering, and
+resource limits for any session, not just agents.
 
 ## Implementation priorities
 
-1. **CLI client** (`wt attach`) - proves the protocol works outside a browser
+1. **CLI client** (`wt attach`) - first local + SSH slice implemented; converge transports next
 2. **Multi-attach** - multiple terminals on one session, output broadcast
 3. **Disk-backed scrollback** - unbounded session history
 4. **P2P** (browser WebRTC, CLI QUIC) - reduce relay load, lower latency

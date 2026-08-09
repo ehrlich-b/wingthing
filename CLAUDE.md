@@ -27,6 +27,7 @@ If you find yourself reaching for an external tool and wingthing _should_ handle
 ## Architecture
 
 - `wt egg <agent>` -- spawns a per-session child process (`wt egg run`) with its own sandbox, PTY, and gRPC socket at `~/.wingthing/eggs/<session-id>/`
+- `wt attach [session-id]` -- list or reattach to local eggs; `--remote <ssh-host>` runs the same attach path over ordinary SSH
 - `wt wing` -- WebSocket client that connects outbound to the relay, handles PTY sessions and encrypted tunnel requests, spawns eggs for each session
 - `wt serve` -- relay server (web UI + WebSocket relay + skill registry), HTTP + SQLite. The relay is a dumb pipe for wing data -- it forwards encrypted blobs without reading them.
 - **The relay knows NOTHING about wings except their IDs and public keys.** `GET /api/app/wings` returns a list of wing UUIDs. All wing metadata (hostname, platform, agents, projects, labels) comes from the wing itself via encrypted tunnel requests (`wing.info`). The frontend must cache this metadata in localStorage and show cached data on page load while probing wings in the background.
@@ -103,7 +104,7 @@ Wings can be shared via organizations. The relay has a full org system:
 ### Agents (brains)
 CLI tools detected by `wt doctor`:
 - `claude` CLI -- Anthropic Claude
-- `ollama` CLI -- local models (llama3.2 default)
+- `ollama` CLI -- local models (`qwen3:4b` default; native structured tools)
 - `gemini` CLI -- Google Gemini
 - `codex` CLI -- OpenAI Codex
 - `cursor` CLI (`agent` subcommand) -- Cursor
@@ -218,6 +219,7 @@ When `isolation` is `strict` or `standard` (no network), the sandbox automatical
 | `make check` | Run tests then build (the default verification step) |
 | `make build` | Build the `wt` binary |
 | `make test` | Run `go test ./...` |
+| `make test-provider-swap` | Opt-in real-harness/Ollama/LiteLLM release smoke matrix |
 | `make web` | Build vite output (`cd web && npm run build`) |
 | `make serve` | Build then run `wt serve` in foreground |
 | `make clean` | Remove built binary |
@@ -231,6 +233,15 @@ CI runs via **GitHub Actions** (`.github/workflows/ci.yml` on push/PR; `release.
 ### Development is LOCAL
 
 **Prod (wingthing.fly.dev) is Bryan's daily driver.** Do not deploy to Fly during development unless explicitly asked. All development and testing happens locally.
+
+### Vacation freeze: local-first branch only
+
+Through approximately 2026-08-20, treat `main` as frozen. Major runtime work
+belongs on `feature-local-first-terminal-routing`. Do not merge it to `main`,
+tag a version, create a release, deploy Fly, or change the Slide deployment.
+Build the repository binary and use an isolated `WINGTHING_DIR` for local
+dogfooding. See `docs/vacation-local-first.md` for the branch contract and
+post-vacation promotion gate.
 
 - `make serve` starts a local relay on `:8080`
 - `wt wing --relay http://localhost:8080` connects a wing to the local relay
@@ -255,6 +266,7 @@ After `make check`, restart the wing daemon with the local build: `./wt stop && 
 | `wt egg <agent>` | Run agent in sandboxed session (claude, codex, ollama, etc.) |
 | `wt egg list` | List active egg sessions |
 | `wt egg stop <id>` | Stop an egg session |
+| `wt attach [id]` | List or attach to a live local session; add `--remote <ssh-host>` for SSH-native attach |
 | `wt wing` | Connect to relay, serve encrypted tunnel + PTY sessions |
 | `wt wing start` | Start wing as background daemon |
 | `wt wing stop` | Stop wing daemon |

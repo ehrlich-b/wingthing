@@ -10,7 +10,12 @@ with live SIGHUP reload, `wt roost` for single-process self-hosted mode. Single 
 node (shared-cpu-2x, 512MB), horizontal scaling built and tested — edge nodes are one
 uncomment away in fly.toml.
 
-Org mode features are complete. Next up: VTE for proper reconnect, then P2P.
+VTE reconnect and browser P2P are implemented. The current architectural
+direction is to make the existing runtime local-first and client-agnostic, then
+layer collaboration on top; see `docs/local-first-architecture.md`. Major local
+work is isolated on `feature-local-first-terminal-routing` under the temporary
+freeze in `docs/vacation-local-first.md`; do not tag or deploy it before the
+post-vacation review.
 
 ---
 
@@ -66,8 +71,13 @@ The bar: someone new can use a wing without confusion or broken UX.
 ## 0.1 — Ship Week
 
 ### Core Features
-- [ ] Native shell — use a wing without any agent installed (plain bash/zsh PTY)
-- [ ] Egg reattach on CLI — resume existing sessions from terminal (`wt egg attach <id>`)
+- [x] Native shell and arbitrary persistent commands — `wt terminal` / `wt new`
+- [x] Egg reattach on CLI — `wt attach <id>` locally or `--remote <ssh-host>`;
+  next converge SSH, direct, P2P, and relay behind one attach protocol
+- [x] Human-readable session names, native picker, and local read/send/wait CLI
+- [x] Local MCP meta-access — terminal control, agent prompt runs, bounded loops,
+  dependency-DAG swarms, durable task output, and versioned prompt assets; see
+  `docs/agent-meta-layer.md`
 - [ ] PTY watch mode — multiple concurrent consumers of same PTY (pair programming, monitoring)
 
 ### Revenue
