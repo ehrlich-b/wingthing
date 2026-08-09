@@ -1,5 +1,6 @@
-.PHONY: build test check clean web serve release proto deploy deploy-edge scale status jail \
-	build-linux build-mock-agent build-linux-tests test-linux test-linux-ubuntu test-integ test-e2e
+.PHONY: build test coverage check clean web serve release proto deploy deploy-edge scale status jail \
+	build-linux build-mock-agent build-linux-tests test-linux test-linux-ubuntu test-integ test-e2e \
+	test-provider-swap
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -10,6 +11,11 @@ build:
 
 test:
 	go test ./...
+
+COVERAGE_OUT ?= /tmp/wingthing-coverage.out
+coverage:
+	go test -coverprofile=$(COVERAGE_OUT) ./...
+	go tool cover -func=$(COVERAGE_OUT)
 
 check: web test build
 
@@ -87,9 +93,14 @@ test-linux-ubuntu: build-linux build-mock-agent build-linux-tests
 		/root/run-tests -test.v -test.timeout 120s
 
 test-integ:
-	go test -tags e2e -v -timeout 120s ./test/integ/...
+	go test -count=1 -tags e2e -v -timeout 120s ./test/integ/...
 
 test-e2e: test-linux test-linux-ubuntu test-integ
+
+# Opt-in release gate for real, model-swapped harnesses. Requires the local
+# Ollama/LiteLLM services and upstream CLIs documented in docs/release-e2e.md.
+test-provider-swap:
+	python3 test/live/provider_swap_smoke.py
 
 clean:
 	rm -f wt

@@ -1,5 +1,7 @@
 /wt
+/wt-linux
 /dist
+/.local-state/
 *.db
 *.db-journal
 *.db-wal
@@ -14,3 +16,4 @@ spaces/cache/*.bin
 test/linux/wt
 test/linux/mock-agent
 test/linux/run-tests
+__pycache__/
