@@ -38,8 +38,8 @@ tags: [work, slide, pr, deploy]
 
 # Active Projects
 
-## Slide (Work)
-- Current sprint: SLIDE-4521
+## Acme (Work)
+- Current sprint: ACME-1234
 - PR open: #892
 
 ## Lang (Side Project)

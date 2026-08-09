@@ -20,7 +20,7 @@ func sampleEntries() []*store.ThreadEntry {
 			Agent:     strPtr("claude"),
 			Skill:     strPtr("jira-briefing"),
 			UserInput: nil,
-			Summary:   "Sprint SLIDE-4521: rate engine migration in progress",
+			Summary:   "Sprint ACME-1234: widget pipeline migration in progress",
 		},
 		{
 			ID:        2,
@@ -48,7 +48,7 @@ func TestRenderBasic(t *testing.T) {
 	got := Render(entries)
 
 	// Check header for first entry
-	if !strings.Contains(got, "## 08:02 — Sprint SLIDE-4521: rate engine migration in progress [claude, jira-briefing]") {
+	if !strings.Contains(got, "## 08:02 — Sprint ACME-1234: widget pipeline migration in progress [claude, jira-briefing]") {
 		t.Errorf("missing first entry header in:\n%s", got)
 	}
 	// First entry has no user input
