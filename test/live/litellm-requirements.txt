@@ -1,0 +1,2 @@
+litellm[proxy]==1.95.0
+fastapi==0.136.3

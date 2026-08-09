@@ -1,0 +1,36 @@
+model_list:
+  - model_name: wingthing-local
+    litellm_params:
+      model: ollama_chat/qwen3:4b
+      api_base: http://127.0.0.1:11434
+      keep_alive: -1
+      num_ctx: 32768
+    model_info:
+      supports_function_calling: true
+      max_input_tokens: 32768
+      max_output_tokens: 4096
+  - model_name: wingthing-local-8b
+    litellm_params:
+      model: ollama_chat/qwen3:8b
+      api_base: http://127.0.0.1:11434
+      keep_alive: -1
+      num_ctx: 65536
+    model_info:
+      supports_function_calling: true
+      max_input_tokens: 65536
+      max_output_tokens: 4096
+  # Wingthing's Gemini adapter currently uses the upstream default model name.
+  # The release canary maps that name to the same local 8B deployment.
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      model: ollama_chat/qwen3:8b
+      api_base: http://127.0.0.1:11434
+      keep_alive: -1
+      num_ctx: 65536
+    model_info:
+      supports_function_calling: true
+      max_input_tokens: 65536
+      max_output_tokens: 4096
+
+litellm_settings:
+  drop_params: true

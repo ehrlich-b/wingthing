@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/gemini-cli-settings.json",
+  "security": {
+    "auth": {
+      "selectedType": "gemini-api-key"
+    }
+  },
+  "telemetry": {
+    "enabled": false
+  }
+}
