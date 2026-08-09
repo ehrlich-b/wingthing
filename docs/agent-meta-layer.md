@@ -92,7 +92,7 @@ Current tools:
 | `terminal_read` | Read the current ANSI snapshot |
 | `terminal_send` | Send PTY input |
 | `terminal_wait` | Wait for output text or I/O idleness without client polling |
-| `agent_start` | Start a persistent sandboxed agent terminal |
+| `agent_start` | Start a persistent sandboxed agent terminal, with verbatim passthrough of agent CLI arguments such as model selection |
 | `terminal_stop` | Stop a terminal and its process tree |
 | `prompt_list` | List current named prompt assets and revisions |
 | `prompt_get` | Read a current or immutable historical prompt revision |

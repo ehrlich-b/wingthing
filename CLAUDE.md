@@ -330,7 +330,7 @@ After `make check`, restart the wing daemon with the local build: `./wt stop && 
 
 | Command | What it does |
 |---------|-------------|
-| `wt egg <agent>` | Run agent in sandboxed session (claude, codex, ollama, etc.) |
+| `wt egg <agent> [-- args]` | Run agent in sandboxed session; args after `--` pass through to the agent CLI (`wt egg codex -- -m gpt-5.6-terra`) |
 | `wt egg list` | List active egg sessions |
 | `wt egg stop <id>` | Stop an egg session |
 | `wt egg explain [agent]` | Show the effective sandbox policy and every auto-drilled agent hole (`--json`) |

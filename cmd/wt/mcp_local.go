@@ -243,6 +243,10 @@ func localMCPTools() []localMCPTool {
 				"cwd":        stringProperty("Working directory; defaults to the MCP server's current directory"),
 				"label":      stringProperty("Optional stable human-readable session label"),
 				"unattended": map[string]any{"type": "boolean", "description": "Enable the agent's unattended permission mode", "default": false},
+				"args": map[string]any{
+					"type": "array", "items": map[string]any{"type": "string"}, "default": []string{},
+					"description": "Extra arguments passed to the agent CLI verbatim, after Wingthing's own flags. Use the agent's native syntax, for example [\"--model\",\"sonnet\"] for claude or [\"-m\",\"gpt-5.6-terra\"] for codex.",
+				},
 			}, "agent"), Annotations: modelCall,
 		},
 		{
@@ -553,16 +557,20 @@ func (s *localMCPServer) toolTerminalWait(ctx context.Context, arguments json.Ra
 
 func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
-		Agent      string `json:"agent"`
-		CWD        string `json:"cwd"`
-		Label      string `json:"label"`
-		Unattended bool   `json:"unattended"`
+		Agent      string   `json:"agent"`
+		CWD        string   `json:"cwd"`
+		Label      string   `json:"label"`
+		Unattended bool     `json:"unattended"`
+		Args       []string `json:"args"`
 	}
 	if err := decodeStrict(arguments, &args); err != nil || args.Agent == "" {
 		return nil, errors.New("agent is required")
 	}
 	if _, ok := agentpkg.LookupDefinition(args.Agent); !ok {
 		return nil, fmt.Errorf("unsupported agent %q", args.Agent)
+	}
+	if err := validateAgentArgs(args.Args); err != nil {
+		return nil, err
 	}
 	resolvedCWD, err := resolveWorkingDirectory(args.CWD)
 	if err != nil {
@@ -577,12 +585,15 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 	}
 	sessionID := uuid.NewString()[:8]
 	ec, err := spawnEgg(s.cfg, sessionID, args.Agent, eggCfg, 24, 80, args.CWD, false, false, false, EggIdentity{}, 0,
-		spawnEggOpts{Label: args.Label, Kind: "agent"})
+		spawnEggOpts{Label: args.Label, Kind: "agent", AgentArgs: args.Args})
 	if err != nil {
 		return nil, err
 	}
 	_ = ec.Close()
-	return map[string]any{"session": sessionID, "label": args.Label, "agent": args.Agent, "cwd": args.CWD}, nil
+	return map[string]any{
+		"session": sessionID, "label": args.Label, "agent": args.Agent,
+		"cwd": args.CWD, "args": args.Args,
+	}, nil
 }
 
 func (s *localMCPServer) toolTerminalStop(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {

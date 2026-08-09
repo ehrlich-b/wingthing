@@ -38,14 +38,19 @@ func eggCmd() *cobra.Command {
 		Use:     "sandbox [agent]",
 		Aliases: []string{"egg"},
 		Short:   "Run an agent in a sandboxed session",
-		Long:    "Spawns an agent (claude, ollama, codex) inside a per-session sandbox with PTY persistence.\nSet dangerously_skip_permissions in egg.yaml to bypass agent permission prompts.",
-		Args:    cobra.MaximumNArgs(1),
+		Long: "Spawns an agent (claude, ollama, codex) inside a per-session sandbox with PTY persistence.\n" +
+			"Set dangerously_skip_permissions in egg.yaml to bypass agent permission prompts.\n\n" +
+			"Arguments after -- are passed through to the agent verbatim.",
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag, resumeFlag, nameFlag)
+			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag, resumeFlag, nameFlag, args[1:])
 		},
+		Example: "  wt egg claude\n" +
+			"  wt egg claude --name research -- --model sonnet\n" +
+			"  wt egg codex -- -m gpt-5.6-terra",
 	}
 
 	cmd.Flags().StringVar(&configFlag, "config", "", "path to egg.yaml (default: discover from cwd, then ~/.wingthing/egg.yaml, then built-in)")
@@ -89,6 +94,7 @@ func eggRunCmd() *cobra.Command {
 		toolSocketFlag             string
 		kindFlag                   string
 		commandFlag                []string
+		agentArgFlag               []string
 	)
 
 	cmd := &cobra.Command{
@@ -138,6 +144,7 @@ func eggRunCmd() *cobra.Command {
 				Agent:                      agentName,
 				Kind:                       kindFlag,
 				Command:                    commandFlag,
+				AgentArgs:                  agentArgFlag,
 				CWD:                        cwd,
 				Shell:                      shell,
 				FS:                         fsFlag,
@@ -207,6 +214,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&toolSocketFlag, "tool-socket", "", "tool socket path (internal)")
 	cmd.Flags().StringVar(&kindFlag, "kind", "agent", "session kind (internal)")
 	cmd.Flags().StringArrayVar(&commandFlag, "command-arg", nil, "command argument (internal)")
+	cmd.Flags().StringArrayVar(&agentArgFlag, "agent-arg", nil, "extra agent argument (internal)")
 	cmd.MarkFlagRequired("session-id")
 
 	return cmd
@@ -521,7 +529,7 @@ func humanDuration(d time.Duration) string {
 }
 
 // eggSpawn starts an agent session in a per-session egg and attaches the terminal.
-func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID, name string) error {
+func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID, name string, agentArgs []string) error {
 	if trace && runtime.GOOS != "linux" {
 		return fmt.Errorf("--trace requires Linux (strace is not available on %s)", runtime.GOOS)
 	}
@@ -568,7 +576,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	}
 
 	// Spawn egg as child process
-	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0, spawnEggOpts{ResumeSessionID: agentResumeID, Label: name, Kind: "agent"})
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0, spawnEggOpts{ResumeSessionID: agentResumeID, Label: name, Kind: "agent", AgentArgs: agentArgs})
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
@@ -721,6 +729,21 @@ func userHash(email string) string {
 }
 
 // spawnEggOpts holds optional parameters for spawnEgg.
+// validateAgentArgs checks caller-supplied agent arguments before any process
+// is spawned. These become argv entries verbatim, so an empty or NUL-bearing
+// argument is rejected here rather than confusing the agent's own flag parser.
+func validateAgentArgs(args []string) error {
+	for _, arg := range args {
+		if strings.TrimSpace(arg) == "" {
+			return errors.New("agent arguments cannot be empty")
+		}
+		if strings.IndexByte(arg, 0) >= 0 {
+			return errors.New("agent arguments cannot contain NUL bytes")
+		}
+	}
+	return nil
+}
+
 type spawnEggOpts struct {
 	ResumeSessionID string
 	ToolNames       []string
@@ -728,6 +751,7 @@ type spawnEggOpts struct {
 	Label           string
 	Kind            string
 	Command         []string
+	AgentArgs       []string
 }
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
@@ -785,6 +809,12 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	for _, arg := range o.Command {
 		args = append(args, "--command-arg="+arg)
+	}
+	if err := validateAgentArgs(o.AgentArgs); err != nil {
+		return nil, err
+	}
+	for _, arg := range o.AgentArgs {
+		args = append(args, "--agent-arg="+arg)
 	}
 	if eggCfg.Shell != "" {
 		args = append(args, "--shell", eggCfg.Shell)

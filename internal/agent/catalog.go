@@ -25,9 +25,14 @@ var definitions = []Definition{
 		ReleaseCanary:        true,
 	},
 	{
-		Name:                 "codex",
-		Command:              "codex",
-		UnattendedArgs:       []string{"--full-auto"},
+		Name:    "codex",
+		Command: "codex",
+		// Codex removed --full-auto from the interactive CLI (gone by 0.147.0);
+		// passing it makes the TUI exit immediately with a usage error. This is
+		// also what the headless adapter already sends: Codex runs inside
+		// Wingthing's sandbox, so its own inner sandbox and approvals are what
+		// we are turning off, exactly as claude gets --dangerously-skip-permissions.
+		UnattendedArgs:       []string{"--dangerously-bypass-approvals-and-sandbox"},
 		ResumeFlag:           "resume",
 		ResumeSubcommand:     true,
 		ProviderSubstitution: true,
@@ -100,7 +105,12 @@ func LookupDefinition(name string) (Definition, bool) {
 
 // InteractiveInvocation builds the executable and arguments for a PTY-backed
 // agent. Resume subcommands include the requested session ID explicitly.
-func InteractiveInvocation(name string, unattended bool, resumeSessionID string) (string, []string, bool) {
+//
+// extra is passed through verbatim after everything Wingthing generates, so a
+// caller can select a model or set any other agent flag without Wingthing
+// having to model that agent's options. Later flags win in every supported CLI,
+// so appending is what makes the passthrough an override.
+func InteractiveInvocation(name string, unattended bool, resumeSessionID string, extra ...string) (string, []string, bool) {
 	definition, ok := LookupDefinition(name)
 	if !ok {
 		return "", nil, false
@@ -117,5 +127,8 @@ func InteractiveInvocation(name string, unattended bool, resumeSessionID string)
 			args = append(args, definition.ResumeFlag, resumeSessionID)
 		}
 	}
+	// Copy rather than alias: the caller's slice must not be reachable from the
+	// returned argv, and the returned argv must not be reachable from theirs.
+	args = append(args, extra...)
 	return definition.Command, args, true
 }

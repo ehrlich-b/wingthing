@@ -68,6 +68,23 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 				t.Error("prompt_run schema does not expose working directory")
 			}
 		}
+		// Choosing a model is the most ordinary thing a human does at an agent
+		// prompt. A model that cannot express it is not at parity, so the
+		// passthrough has to be discoverable in the schema, not just accepted.
+		if tool.Name == "agent_start" {
+			properties := tool.InputSchema["properties"].(map[string]any)
+			args, ok := properties["args"].(map[string]any)
+			if !ok {
+				t.Fatal("agent_start schema does not expose agent arguments")
+			}
+			if args["type"] != "array" {
+				t.Errorf("agent_start args type = %v, want array", args["type"])
+			}
+			items, ok := args["items"].(map[string]any)
+			if !ok || items["type"] != "string" {
+				t.Errorf("agent_start args items = %v, want string items", args["items"])
+			}
+		}
 	}
 	for _, want := range []string{
 		"terminal_list", "agent_start", "prompt_list", "prompt_get", "prompt_save",
@@ -243,6 +260,30 @@ func TestLocalMCPSandboxExplain(t *testing.T) {
 		"sandbox_explain", json.RawMessage(`{"config":`+strconv.Quote(filepath.Join(dir, "nope.yaml"))+`}`))
 	if !isError {
 		t.Fatalf("missing config silently accepted: %#v", missing)
+	}
+}
+
+// TestAgentStartArgsAreValidated keeps the passthrough from becoming a hole.
+// These arguments become argv for a real process, so they are checked before a
+// session is ever spawned rather than failing somewhere inside the egg.
+func TestAgentStartArgsAreValidated(t *testing.T) {
+	tests := map[string][]string{
+		"empty argument":   {""},
+		"NUL byte":         {"--model\x00sonnet"},
+		"blank after trim": {"   "},
+	}
+	for name, args := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := validateAgentArgs(args); err == nil {
+				t.Fatalf("accepted %q", args)
+			}
+		})
+	}
+	if err := validateAgentArgs([]string{"--model", "sonnet"}); err != nil {
+		t.Fatalf("rejected ordinary args: %v", err)
+	}
+	if err := validateAgentArgs(nil); err != nil {
+		t.Fatalf("rejected empty args: %v", err)
 	}
 }
 

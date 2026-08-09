@@ -15,7 +15,7 @@ func TestInteractiveInvocation(t *testing.T) {
 		args       []string
 	}{
 		{name: "claude", agent: "claude", unattended: true, resume: "c1", command: "claude", args: []string{"--dangerously-skip-permissions", "--resume", "c1"}},
-		{name: "codex resume includes id", agent: "codex", unattended: true, resume: "cx1", command: "codex", args: []string{"resume", "cx1", "--full-auto"}},
+		{name: "codex resume includes id", agent: "codex", unattended: true, resume: "cx1", command: "codex", args: []string{"resume", "cx1", "--dangerously-bypass-approvals-and-sandbox"}},
 		{name: "cursor", agent: "cursor", unattended: true, resume: "cu1", command: "agent", args: []string{"--yolo", "--resume", "cu1"}},
 		{name: "gemini", agent: "gemini", unattended: true, resume: "g1", command: "gemini", args: []string{"--yolo", "--resume", "g1"}},
 		{name: "hermes", agent: "hermes", unattended: true, resume: "h1", command: "hermes", args: []string{"--yolo", "--resume", "h1"}},
@@ -33,6 +33,72 @@ func TestInteractiveInvocation(t *testing.T) {
 				t.Fatalf("InteractiveInvocation(%q) = %q %q, want %q %q", test.agent, command, args, test.command, test.args)
 			}
 		})
+	}
+}
+
+// TestInteractiveInvocationAppendsCallerArgs pins the exact argv for the thing a
+// human does constantly and a model could not do at all: pick the model. Extra
+// args go last so they override the harness defaults ahead of them, and they are
+// appended to the agent invocation rather than replacing it, which is what
+// separates this from the --command-arg path.
+func TestInteractiveInvocationAppendsCallerArgs(t *testing.T) {
+	tests := []struct {
+		name       string
+		agent      string
+		unattended bool
+		resume     string
+		extra      []string
+		command    string
+		args       []string
+	}{
+		{
+			name: "claude model", agent: "claude", extra: []string{"--model", "sonnet"},
+			command: "claude", args: []string{"--model", "sonnet"},
+		},
+		{
+			name: "codex model", agent: "codex", extra: []string{"-m", "gpt-5.6-terra"},
+			command: "codex", args: []string{"-m", "gpt-5.6-terra"},
+		},
+		{
+			name: "extra args come after unattended and resume", agent: "claude",
+			unattended: true, resume: "c1", extra: []string{"--model", "opus"},
+			command: "claude", args: []string{"--dangerously-skip-permissions", "--resume", "c1", "--model", "opus"},
+		},
+		{
+			name: "resume subcommand still leads", agent: "codex",
+			unattended: true, resume: "cx1", extra: []string{"-m", "gpt-5.6-terra"},
+			command: "codex", args: []string{"resume", "cx1", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.6-terra"},
+		},
+		{
+			name: "no extra args is the previous behaviour", agent: "ollama",
+			command: "ollama", args: []string{"run", DefaultOllamaModel},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, args, ok := InteractiveInvocation(test.agent, test.unattended, test.resume, test.extra...)
+			if !ok {
+				t.Fatalf("InteractiveInvocation(%q) not found", test.agent)
+			}
+			if command != test.command || !reflect.DeepEqual(args, test.args) {
+				t.Fatalf("InteractiveInvocation(%q) = %q %q, want %q %q", test.agent, command, args, test.command, test.args)
+			}
+		})
+	}
+}
+
+// TestInteractiveInvocationDoesNotAliasCallerArgs proves the catalog cannot be
+// corrupted by a caller reusing its slice, the same guarantee Definitions has.
+func TestInteractiveInvocationDoesNotAliasCallerArgs(t *testing.T) {
+	extra := []string{"--model", "sonnet"}
+	_, args, _ := InteractiveInvocation("claude", false, "", extra...)
+	args[0] = "mutated"
+	if extra[0] != "--model" {
+		t.Fatalf("caller slice was aliased: %q", extra)
+	}
+	if _, second, _ := InteractiveInvocation("claude", false, "", "--model", "sonnet"); second[0] != "--model" {
+		t.Fatalf("catalog retained mutation: %q", second)
 	}
 }
 

@@ -90,10 +90,13 @@ type Session struct {
 
 // RunConfig holds everything needed to start a single egg session.
 type RunConfig struct {
-	Agent   string
-	Kind    string
-	Command []string
-	CWD     string
+	Agent string
+	Kind  string
+	// Command replaces the agent entirely; AgentArgs extends the agent's own
+	// invocation and keeps the session an agent session. They are alternatives.
+	Command   []string
+	AgentArgs []string
+	CWD       string
 	Shell   string
 	FS      []string // "rw:./", "deny:~/.ssh"
 	Network []string // domain list
@@ -475,15 +478,12 @@ func stripMouseTracking(data []byte) []byte {
 func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	os.Setenv("GOTRACEBACK", "all")
 
-	name, args := "", []string(nil)
+	name, args := sessionCommand(rc)
 	if len(rc.Command) > 0 {
-		name = rc.Command[0]
-		args = append(args, rc.Command[1:]...)
 		if rc.Kind == "" {
 			rc.Kind = "command"
 		}
 	} else {
-		name, args = agentCommand(rc.Agent, rc.DangerouslySkipPermissions, rc.ResumeSessionID)
 		if name == "" {
 			return fmt.Errorf("unsupported agent: %s", rc.Agent)
 		}
@@ -1342,12 +1342,23 @@ func formatCommand(command []string) string {
 }
 
 // agentCommand returns the command and args for an interactive agent session.
-func agentCommand(agentName string, dangerouslySkip bool, resumeSessionID string) (string, []string) {
-	name, args, ok := agentpkg.InteractiveInvocation(agentName, dangerouslySkip, resumeSessionID)
+func agentCommand(agentName string, dangerouslySkip bool, resumeSessionID string, extra ...string) (string, []string) {
+	name, args, ok := agentpkg.InteractiveInvocation(agentName, dangerouslySkip, resumeSessionID, extra...)
 	if !ok {
 		return "", nil
 	}
 	return name, args
+}
+
+// sessionCommand resolves what a session actually executes. An explicit Command
+// replaces the agent entirely and the session becomes an opaque command;
+// AgentArgs extends the agent's own invocation and the session stays an agent
+// session, keeping the agent's sandbox profile and resume semantics.
+func sessionCommand(rc RunConfig) (string, []string) {
+	if len(rc.Command) > 0 {
+		return rc.Command[0], append([]string(nil), rc.Command[1:]...)
+	}
+	return agentCommand(rc.Agent, rc.DangerouslySkipPermissions, rc.ResumeSessionID, rc.AgentArgs...)
 }
 
 // Recovery interceptors
