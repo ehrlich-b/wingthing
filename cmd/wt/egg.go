@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,6 +30,7 @@ func eggCmd() *cobra.Command {
 	var configFlag string
 	var traceFlag bool
 	var resumeFlag string
+	var nameFlag string
 
 	cmd := &cobra.Command{
 		Use:     "sandbox [agent]",
@@ -40,13 +42,14 @@ func eggCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag, resumeFlag)
+			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag, resumeFlag, nameFlag)
 		},
 	}
 
 	cmd.Flags().StringVar(&configFlag, "config", "", "path to egg.yaml (default: discover from cwd, then ~/.wingthing/egg.yaml, then built-in)")
 	cmd.Flags().BoolVar(&traceFlag, "trace", false, "wrap sandbox with strace for syscall tracing (Linux only)")
 	cmd.Flags().StringVar(&resumeFlag, "resume", "", "resume a previous session by session ID")
+	cmd.Flags().StringVarP(&nameFlag, "name", "n", "", "human-readable session name")
 
 	cmd.AddCommand(eggRunCmd())
 	cmd.AddCommand(eggStopCmd())
@@ -81,6 +84,8 @@ func eggRunCmd() *cobra.Command {
 		resumeSessionFlag          string
 		toolNamesFlag              []string
 		toolSocketFlag             string
+		kindFlag                   string
+		commandFlag                []string
 	)
 
 	cmd := &cobra.Command{
@@ -128,6 +133,8 @@ func eggRunCmd() *cobra.Command {
 
 			rc := egg.RunConfig{
 				Agent:                      agentName,
+				Kind:                       kindFlag,
+				Command:                    commandFlag,
 				CWD:                        cwd,
 				Shell:                      shell,
 				FS:                         fsFlag,
@@ -195,6 +202,8 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&resumeSessionFlag, "resume-session", "", "agent session ID to resume (internal)")
 	cmd.Flags().StringArrayVar(&toolNamesFlag, "tool-name", nil, "privileged tool names (internal)")
 	cmd.Flags().StringVar(&toolSocketFlag, "tool-socket", "", "tool socket path (internal)")
+	cmd.Flags().StringVar(&kindFlag, "kind", "agent", "session kind (internal)")
+	cmd.Flags().StringArrayVar(&commandFlag, "command-arg", nil, "command argument (internal)")
 	cmd.MarkFlagRequired("session-id")
 
 	return cmd
@@ -210,24 +219,15 @@ func eggStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sessionID := args[0]
-			pidPath := filepath.Join(cfg.Dir, "eggs", sessionID, "egg.pid")
-			data, err := os.ReadFile(pidPath)
+			session, ec, err := openLocalEgg(cmd.Context(), cfg, args[0])
 			if err != nil {
-				return fmt.Errorf("session %s not found", sessionID)
+				return err
 			}
-			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-			if err != nil {
-				return fmt.Errorf("bad pid file")
+			defer ec.Close()
+			if err := ec.Kill(cmd.Context(), session.ID); err != nil {
+				return fmt.Errorf("stop session %s: %w", session.ID, err)
 			}
-			proc, err := os.FindProcess(pid)
-			if err != nil {
-				return fmt.Errorf("find process: %w", err)
-			}
-			if err := proc.Signal(syscall.SIGTERM); err != nil {
-				return fmt.Errorf("kill pid %d: %w", pid, err)
-			}
-			fmt.Printf("egg %s stopped (pid %d)\n", sessionID, pid)
+			fmt.Printf("session %s stopped (pid %d)\n", session.ID, session.PID)
 			return nil
 		},
 	}
@@ -242,71 +242,13 @@ func eggListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			eggsDir := filepath.Join(cfg.Dir, "eggs")
-			entries, err := os.ReadDir(eggsDir)
-			if err != nil {
-				fmt.Println("no active sessions")
-				return nil
-			}
-
-			found := false
-			for _, e := range entries {
-				if !e.IsDir() {
-					continue
-				}
-				sessionID := e.Name()
-				pidPath := filepath.Join(eggsDir, sessionID, "egg.pid")
-				data, err := os.ReadFile(pidPath)
-				if err != nil {
-					continue
-				}
-				pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-				if err != nil {
-					continue
-				}
-				proc, err := os.FindProcess(pid)
-				if err != nil {
-					continue
-				}
-				if err := proc.Signal(syscall.Signal(0)); err != nil {
-					// Dead — clean up
-					cleanEggDir(filepath.Join(eggsDir, sessionID))
-					continue
-				}
-
-				line := fmt.Sprintf("  %s  pid=%d", sessionID, pid)
-
-				// Try gRPC status for live debug info
-				sockPath := filepath.Join(eggsDir, sessionID, "egg.sock")
-				tokenPath := filepath.Join(eggsDir, sessionID, "egg.token")
-				ec, dialErr := egg.Dial(sockPath, tokenPath)
-				if dialErr == nil {
-					ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Second)
-					st, stErr := ec.Status(ctx)
-					cancel()
-					ec.Close()
-					if stErr == nil {
-						line += fmt.Sprintf("  agent=%s  buf=%s  written=%s  trimmed=%s  readers=%d  uptime=%s  idle=%s",
-							st.Agent,
-							humanBytes(st.BufferBytes),
-							humanBytes(st.TotalWritten),
-							humanBytes(st.TotalTrimmed),
-							st.Readers,
-							humanDuration(time.Duration(st.UptimeSeconds)*time.Second),
-							humanDuration(time.Duration(st.IdleSeconds)*time.Second),
-						)
-					}
-				}
-
-				fmt.Println(line)
-				found = true
-			}
-			if !found {
-				fmt.Println("no active sessions")
-			}
-			return nil
+			return listEggSessions(cmd.Context(), cfg)
 		},
 	}
+}
+
+func listEggSessions(ctx context.Context, cfg *config.Config) error {
+	return printActiveSessions(ctx, cfg, false)
 }
 
 func humanBytes(b int64) string {
@@ -331,7 +273,7 @@ func humanDuration(d time.Duration) string {
 }
 
 // eggSpawn starts an agent session in a per-session egg and attaches the terminal.
-func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID string) error {
+func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID, name string) error {
 	if trace && runtime.GOOS != "linux" {
 		return fmt.Errorf("--trace requires Linux (strace is not available on %s)", runtime.GOOS)
 	}
@@ -378,7 +320,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	}
 
 	// Spawn egg as child process
-	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0, spawnEggOpts{ResumeSessionID: agentResumeID})
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0, spawnEggOpts{ResumeSessionID: agentResumeID, Label: name, Kind: "agent"})
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
@@ -430,18 +372,32 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 		}
 	}()
 
-	// Read stdin → egg input
+	// Read stdin → egg input. Ctrl+B Q detaches the local client while the
+	// setsid egg process and its agent keep running.
+	detachCh := make(chan struct{}, 1)
 	go func() {
+		filter := &attachInputFilter{}
 		buf := make([]byte, 4096)
 		for {
 			n, err := os.Stdin.Read(buf)
 			if n > 0 {
-				data := make([]byte, n)
-				copy(data, buf[:n])
-				stream.Send(&pb.SessionMsg{
-					SessionId: sessionID,
-					Payload:   &pb.SessionMsg_Input{Input: data},
-				})
+				data, detach := filter.filter(buf[:n])
+				if len(data) > 0 {
+					if sendErr := stream.Send(&pb.SessionMsg{
+						SessionId: sessionID,
+						Payload:   &pb.SessionMsg_Input{Input: data},
+					}); sendErr != nil {
+						return
+					}
+				}
+				if detach {
+					_ = stream.Send(&pb.SessionMsg{
+						SessionId: sessionID,
+						Payload:   &pb.SessionMsg_Detach{Detach: true},
+					})
+					detachCh <- struct{}{}
+					return
+				}
 			}
 			if err != nil {
 				return
@@ -449,7 +405,12 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 		}
 	}()
 
-	<-done
+	select {
+	case <-detachCh:
+		fmt.Fprintf(os.Stderr, "\r\n[detached from %s]\r\n", sessionID)
+		return nil
+	case <-done:
+	}
 
 	if exitCode != 0 {
 		// Dump egg.log so the user can see why the agent crashed
@@ -516,10 +477,34 @@ type spawnEggOpts struct {
 	ResumeSessionID string
 	ToolNames       []string
 	ToolSocketPath  string
+	Label           string
+	Kind            string
+	Command         []string
 }
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
 func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration, opts ...spawnEggOpts) (*egg.Client, error) {
+	var o spawnEggOpts
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	if err := validateSessionName(o.Label); err != nil {
+		return nil, err
+	}
+	if len(o.Command) > 0 && o.Command[0] == "" {
+		return nil, errors.New("command executable cannot be empty")
+	}
+	for _, arg := range o.Command {
+		if strings.IndexByte(arg, 0) >= 0 {
+			return nil, errors.New("command arguments cannot contain NUL bytes")
+		}
+	}
+	if o.Label != "" {
+		if err := ensureSessionNameAvailable(cfg, o.Label, sessionID); err != nil {
+			return nil, err
+		}
+	}
+
 	// Pre-flight: verify the sandbox can work before spawning a child process.
 	// Catches AppArmor userns restrictions, missing sysctl, etc. with a clear
 	// error instead of a silent 5s timeout.
@@ -531,6 +516,11 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create egg dir: %w", err)
 	}
+	if o.Label != "" {
+		if err := writeSessionName(dir, o.Label); err != nil {
+			return nil, err
+		}
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -540,9 +530,13 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	args := []string{"egg", "run",
 		"--session-id", sessionID,
 		"--agent", agentName,
+		"--kind", o.Kind,
 		"--cwd", cwd,
 		"--rows", strconv.Itoa(int(rows)),
 		"--cols", strconv.Itoa(int(cols)),
+	}
+	for _, arg := range o.Command {
+		args = append(args, "--command-arg="+arg)
 	}
 	if eggCfg.Shell != "" {
 		args = append(args, "--shell", eggCfg.Shell)
@@ -724,10 +718,6 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if idleTimeout > 0 {
 		args = append(args, "--idle-timeout", idleTimeout.String())
 	}
-	var o spawnEggOpts
-	if len(opts) > 0 {
-		o = opts[0]
-	}
 	if o.ResumeSessionID != "" {
 		args = append(args, "--resume-session", o.ResumeSessionID)
 	}
@@ -758,7 +748,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	{
 		allowed := map[string]bool{
 			"HOME": true, "PATH": true, "TERM": true, "LANG": true,
-			"USER": true, "SHELL": true, "TMPDIR": true,
+			"USER": true, "SHELL": true, "TMPDIR": true, "WINGTHING_DIR": true,
 		}
 		for k := range envMap {
 			allowed[k] = true
