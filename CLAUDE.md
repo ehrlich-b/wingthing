@@ -333,6 +333,7 @@ After `make check`, restart the wing daemon with the local build: `./wt stop && 
 | `wt egg <agent>` | Run agent in sandboxed session (claude, codex, ollama, etc.) |
 | `wt egg list` | List active egg sessions |
 | `wt egg stop <id>` | Stop an egg session |
+| `wt egg explain [agent]` | Show the effective sandbox policy and every auto-drilled agent hole (`--json`) |
 | `wt attach [id]` | List or attach to a live local session; add `--remote <ssh-host>` for SSH-native attach |
 | `wt wing` | Connect to relay, serve encrypted tunnel + PTY sessions |
 | `wt wing start` | Start wing as background daemon |

@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -50,8 +53,8 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Result.Tools) != 14 {
-		t.Fatalf("tools = %d, want 14", len(listed.Result.Tools))
+	if len(listed.Result.Tools) != 15 {
+		t.Fatalf("tools = %d, want 15", len(listed.Result.Tools))
 	}
 	names := make(map[string]bool)
 	for _, tool := range listed.Result.Tools {
@@ -68,7 +71,7 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	}
 	for _, want := range []string{
 		"terminal_list", "agent_start", "prompt_list", "prompt_get", "prompt_save",
-		"prompt_run", "prompt_loop", "swarm_run",
+		"prompt_run", "prompt_loop", "swarm_run", "sandbox_explain",
 	} {
 		if !names[want] {
 			t.Errorf("missing tool %q", want)
@@ -172,6 +175,74 @@ func TestResolveWorkingDirectory(t *testing.T) {
 	}
 	if _, err := resolveWorkingDirectory(dir + "/missing"); err == nil {
 		t.Fatal("missing working directory was accepted")
+	}
+}
+
+// TestLocalMCPSandboxExplain proves the sandbox policy is reachable by a model,
+// not only by a human reading `wt egg explain`. A capability only a human can
+// drive is unfinished (CLAUDE.md), and "is this sandbox safe?" is exactly the
+// question an orchestrating model has to be able to ask.
+func TestLocalMCPSandboxExplain(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "egg.yaml")
+	if err := os.WriteFile(configPath, []byte("base: none\nfs: [\"rw:./\"]\nnetwork: [corp.example]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := &localMCPServer{cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, logs: &bytes.Buffer{}}
+
+	args := json.RawMessage(`{"agent":"claude","config":` + strconv.Quote(configPath) + `}`)
+	got, isError, protocolErr := server.callTool(context.Background(), "sandbox_explain", args)
+	if protocolErr != nil || isError {
+		t.Fatalf("sandbox_explain = %#v isError=%v protocol=%v", got, isError, protocolErr)
+	}
+
+	policy, ok := got["policy"].(explainedPolicy)
+	if !ok {
+		t.Fatalf("policy = %#v, want explainedPolicy", got["policy"])
+	}
+	if policy.Agent != "claude" {
+		t.Errorf("agent = %q, want claude", policy.Agent)
+	}
+	if !containsString(policy.Domains, "corp.example") {
+		t.Errorf("domains %v missing the declared domain", policy.Domains)
+	}
+	if len(policy.Drilled) == 0 {
+		t.Error("no auto-drilled holes reported to the model")
+	}
+	if policy.Enforcement == "" {
+		t.Error("policy does not tell the model whether the boundary is enforced")
+	}
+
+	// The whole policy must survive the JSON round trip a real client performs.
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded struct {
+		Policy explainedPolicy `json:"policy"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(decoded.Policy.Drilled) != len(policy.Drilled) {
+		t.Errorf("round trip lost holes: %d != %d", len(decoded.Policy.Drilled), len(policy.Drilled))
+	}
+
+	// Unknown arguments are rejected, like every other tool here.
+	if _, _, err := server.callTool(context.Background(), "sandbox_explain", json.RawMessage(`{"surprise":true}`)); err != nil {
+		t.Fatalf("protocol error: %v", err)
+	}
+	bad, isError, _ := server.callTool(context.Background(), "sandbox_explain", json.RawMessage(`{"surprise":true}`))
+	if !isError {
+		t.Fatalf("unknown argument accepted: %#v", bad)
+	}
+
+	// A missing config is an error, not a silent fallback to built-in defaults —
+	// answering with the wrong policy is worse than refusing.
+	missing, isError, _ := server.callTool(context.Background(),
+		"sandbox_explain", json.RawMessage(`{"config":`+strconv.Quote(filepath.Join(dir, "nope.yaml"))+`}`))
+	if !isError {
+		t.Fatalf("missing config silently accepted: %#v", missing)
 	}
 }
 

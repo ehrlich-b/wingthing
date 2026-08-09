@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -54,6 +56,7 @@ func eggCmd() *cobra.Command {
 	cmd.AddCommand(eggRunCmd())
 	cmd.AddCommand(eggStopCmd())
 	cmd.AddCommand(eggListCmd())
+	cmd.AddCommand(eggExplainCmd())
 	return cmd
 }
 
@@ -249,6 +252,251 @@ func eggListCmd() *cobra.Command {
 
 func listEggSessions(ctx context.Context, cfg *config.Config) error {
 	return printActiveSessions(ctx, cfg, false)
+}
+
+// explainedPolicy is the wire shape of `wt egg explain`. The sandbox is egg.yaml
+// plus holes drilled automatically for the agent, and until now nothing could
+// report what that added up to. These field names are an API contract.
+type explainedPolicy struct {
+	Agent        string           `json:"agent"`
+	ConfigSource string           `json:"config_source"`
+	NetworkNeed  string           `json:"network_need"`
+	Enforcement  string           `json:"enforcement"`
+	Domains      []string         `json:"domains"`
+	LocalPorts   []int            `json:"local_ports"`
+	Mode         string           `json:"mode"`
+	Mounts       []explainedMount `json:"mounts"`
+	Deny         []string         `json:"deny"`
+	DenyWrite    []string         `json:"deny_write"`
+	Drilled      []explainedHole  `json:"drilled"`
+}
+
+type explainedMount struct {
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"read_only"`
+}
+
+type explainedHole struct {
+	Kind   string `json:"kind"`
+	Value  string `json:"value"`
+	Agent  string `json:"agent"`
+	Reason string `json:"reason"`
+}
+
+func eggExplainCmd() *cobra.Command {
+	var configFlag string
+	var jsonFlag bool
+
+	cmd := &cobra.Command{
+		Use:   "explain [agent]",
+		Short: "Show the effective sandbox policy for a session",
+		Long: "Resolves egg.yaml against the agent's profile and prints the policy that would apply, " +
+			"including every hole drilled automatically for the agent and why.\n\n" +
+			"Omit the agent to see the policy for a plain shell session.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var agentName string
+			if len(args) == 1 {
+				agentName = args[0]
+			}
+
+			cwd, _ := os.Getwd()
+			eggCfg, source, err := loadEggConfigForExplain(configFlag, cwd)
+			if err != nil {
+				return err
+			}
+			home, _ := os.UserHomeDir()
+
+			policy := explainPolicy(eggCfg, agentName, home, source)
+			if jsonFlag {
+				return writePolicyJSON(cmd.OutOrStdout(), policy)
+			}
+			return renderPolicy(cmd.OutOrStdout(), policy)
+		},
+	}
+
+	cmd.Flags().StringVar(&configFlag, "config", "", "path to egg.yaml (default: discover from cwd, then built-in)")
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print the policy as JSON")
+	return cmd
+}
+
+// loadEggConfigForExplain resolves the same config eggSpawn would use, and
+// reports where it came from. An explicit --config that does not load is an
+// error here, unlike discovery, which is allowed to fall back.
+func loadEggConfigForExplain(configPath, cwd string) (*egg.EggConfig, string, error) {
+	if configPath != "" {
+		cfg, err := egg.ResolveEggConfig(configPath)
+		if err != nil {
+			return nil, "", fmt.Errorf("load egg config: %w", err)
+		}
+		return cfg, configPath, nil
+	}
+	source := "built-in defaults"
+	if cwd != "" {
+		if path := filepath.Join(cwd, "egg.yaml"); fileExists(path) {
+			source = path
+		}
+	}
+	return egg.DiscoverEggConfig(cwd, nil), source, nil
+}
+
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
+}
+
+// explainEnforcement reports how the network policy is actually held, which is
+// not the same on both platforms. macOS denies all egress in the seatbelt
+// profile and allows only the proxy port. Linux strips CLONE_NEWNET for any
+// need above NetworkNone, so HTTPS_PROXY is the only thing steering traffic and
+// the sandboxed process is free to ignore it. Saying "proxy" there would be a
+// lie, and this command exists to stop the sandbox being unauditable.
+func explainEnforcement(need sandbox.NetworkNeed, goos string) string {
+	switch need {
+	case sandbox.NetworkNone:
+		return "none"
+	case sandbox.NetworkFull:
+		return "unrestricted"
+	}
+	if goos == "linux" {
+		return "advisory"
+	}
+	if need == sandbox.NetworkHTTPS {
+		return "proxy"
+	}
+	return "kernel"
+}
+
+func explainPolicy(cfg *egg.EggConfig, agentName, home, source string) explainedPolicy {
+	resolved := egg.ResolvePolicy(cfg, agentName, home)
+
+	p := explainedPolicy{
+		Agent:        agentName,
+		ConfigSource: source,
+		NetworkNeed:  resolved.NetworkNeed.String(),
+		Enforcement:  explainEnforcement(resolved.NetworkNeed, runtime.GOOS),
+		Domains:      nonNilStrings(resolved.Domains),
+		LocalPorts:   resolved.LocalPorts,
+		Mode:         resolved.Mode,
+		Deny:         nonNilStrings(resolved.Deny),
+		DenyWrite:    nonNilStrings(resolved.DenyWrite),
+		Mounts:       make([]explainedMount, 0, len(resolved.Mounts)),
+		Drilled:      make([]explainedHole, 0, len(resolved.Drilled)),
+	}
+	if p.LocalPorts == nil {
+		p.LocalPorts = []int{}
+	}
+	for _, m := range resolved.Mounts {
+		p.Mounts = append(p.Mounts, explainedMount{Source: m.Source, Target: m.Target, ReadOnly: m.ReadOnly})
+	}
+	for _, h := range resolved.Drilled {
+		p.Drilled = append(p.Drilled, explainedHole{Kind: h.Kind, Value: h.Value, Agent: h.Agent, Reason: h.Reason})
+	}
+	return p
+}
+
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+func writePolicyJSON(w io.Writer, p explainedPolicy) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(p)
+}
+
+func renderPolicy(w io.Writer, p explainedPolicy) error {
+	agentName := p.Agent
+	if agentName == "" {
+		agentName = "(none — shell session)"
+	}
+	mode := p.Mode
+	if mode == "" {
+		mode = "default"
+	}
+
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(tw, "agent\t%s\n", agentName)
+	fmt.Fprintf(tw, "config\t%s\n", p.ConfigSource)
+	fmt.Fprintf(tw, "network\t%s\n", p.NetworkNeed)
+	fmt.Fprintf(tw, "enforcement\t%s\n", p.Enforcement)
+	fmt.Fprintf(tw, "mode\t%s\n", mode)
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+
+	drilledDomains := make(map[string]string, len(p.Drilled))
+	for _, h := range p.Drilled {
+		if h.Kind == "domain" {
+			drilledDomains[h.Value] = h.Reason
+		}
+	}
+
+	if len(p.Domains) > 0 {
+		fmt.Fprintf(w, "\ndomains (%d)\n", len(p.Domains))
+		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		for _, d := range p.Domains {
+			if reason, ok := drilledDomains[d]; ok {
+				fmt.Fprintf(tw, "  %s\tauto\t%s\n", d, reason)
+			} else {
+				fmt.Fprintf(tw, "  %s\tdeclared\t\n", d)
+			}
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+
+	if len(p.LocalPorts) > 0 {
+		fmt.Fprintf(w, "\nforwarded loopback ports\n")
+		for _, port := range p.LocalPorts {
+			fmt.Fprintf(w, "  %d\n", port)
+		}
+	}
+
+	if len(p.Mounts) > 0 {
+		fmt.Fprintf(w, "\nmounts (%d)\n", len(p.Mounts))
+		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		for _, m := range p.Mounts {
+			access := "rw"
+			if m.ReadOnly {
+				access = "ro"
+			}
+			fmt.Fprintf(tw, "  %s\t%s\n", access, m.Source)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+
+	for _, section := range []struct {
+		title string
+		paths []string
+	}{{"denied", p.Deny}, {"deny-write", p.DenyWrite}} {
+		if len(section.paths) == 0 {
+			continue
+		}
+		fmt.Fprintf(w, "\n%s (%d)\n", section.title, len(section.paths))
+		for _, path := range section.paths {
+			fmt.Fprintf(w, "  %s\n", path)
+		}
+	}
+
+	if len(p.Drilled) > 0 {
+		fmt.Fprintf(w, "\nauto-drilled for %s (%d)\n", p.Agent, len(p.Drilled))
+		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		for _, h := range p.Drilled {
+			fmt.Fprintf(tw, "  %s\t%s\t%s\n", h.Kind, h.Value, h.Reason)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func humanBytes(b int64) string {

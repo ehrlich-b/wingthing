@@ -196,6 +196,15 @@ func localMCPTools() []localMCPTool {
 			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
 		},
 		{
+			Name: "sandbox_explain", Title: "Explain sandbox policy",
+			Description: "Resolve the effective sandbox policy for an agent: mounts, denied paths, network domains, whether the network boundary is actually enforced on this platform, and every hole drilled automatically for the agent with the reason for it.",
+			InputSchema: objectSchema(map[string]any{
+				"agent":  stringProperty("Agent name; omit for a plain shell session"),
+				"config": stringProperty("Path to an egg.yaml; discovered from the working directory when omitted"),
+				"cwd":    stringProperty("Directory to discover egg.yaml in; defaults to the MCP server's current directory"),
+			}), Annotations: readOnly,
+		},
+		{
 			Name: "terminal_list", Title: "List persistent terminals",
 			Description: "List live local Wingthing sessions with stable IDs, labels, process kind, agent, activity, and working directory.",
 			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
@@ -342,6 +351,8 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 	switch name {
 	case "wingthing_capabilities":
 		data, err = s.toolCapabilities(arguments)
+	case "sandbox_explain":
+		data, err = s.toolSandboxExplain(arguments)
 	case "terminal_list":
 		data, err = s.toolTerminalList(ctx, arguments)
 	case "terminal_read":
@@ -405,13 +416,34 @@ func (s *localMCPServer) toolCapabilities(arguments json.RawMessage) (map[string
 	return map[string]any{
 		"version": version,
 		"agents":  agents,
-		"objects": []string{"terminal", "prompt_asset", "task", "loop", "swarm"},
+		"objects": []string{"terminal", "prompt_asset", "task", "loop", "swarm", "sandbox_policy"},
 		"transports": map[string]any{
 			"local": true,
 			"ssh":   true,
 			"web":   true,
 		},
 	}, nil
+}
+
+func (s *localMCPServer) toolSandboxExplain(arguments json.RawMessage) (map[string]any, error) {
+	var args struct {
+		Agent  string `json:"agent"`
+		Config string `json:"config"`
+		CWD    string `json:"cwd"`
+	}
+	if err := decodeStrict(arguments, &args); err != nil {
+		return nil, err
+	}
+	cwd, err := resolveWorkingDirectory(args.CWD)
+	if err != nil {
+		return nil, err
+	}
+	eggCfg, source, err := loadEggConfigForExplain(args.Config, cwd)
+	if err != nil {
+		return nil, err
+	}
+	home, _ := os.UserHomeDir()
+	return map[string]any{"policy": explainPolicy(eggCfg, args.Agent, home, source)}, nil
 }
 
 func (s *localMCPServer) toolTerminalList(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {

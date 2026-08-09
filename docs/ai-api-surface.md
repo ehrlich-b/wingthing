@@ -19,11 +19,12 @@ transport, and only one of them can actually drive an agent.
 | 3 | REST `/api/...` (`internal/relay/`) | HTTP | session cookie / bearer | Account, usage, passkeys, ntfy, orgs, and a list of wing IDs |
 | 4 | Encrypted tunnel (`internal/ws/`) | WebSocket, E2E encrypted | passkey + device token | `dir.list`, `sessions.list`, `sessions.history`, `pty.*`, `egg.config_update`, … |
 
-### The 14 local MCP tools (surface 1)
+### The 15 local MCP tools (surface 1)
 
-`wingthing_capabilities`, `terminal_list`, `terminal_read`, `terminal_send`,
-`terminal_wait`, `agent_start`, `terminal_stop`, `prompt_list`, `prompt_get`,
-`prompt_save`, `prompt_run`, `task_get`, `prompt_loop`, `swarm_run`.
+`wingthing_capabilities`, `sandbox_explain`, `terminal_list`, `terminal_read`,
+`terminal_send`, `terminal_wait`, `agent_start`, `terminal_stop`, `prompt_list`,
+`prompt_get`, `prompt_save`, `prompt_run`, `task_get`, `prompt_loop`,
+`swarm_run`.
 
 ### The problems
 
