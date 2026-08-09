@@ -22,6 +22,16 @@ func Open(dsn string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
+	// PRAGMAs are connection-local. Keep each Store on the initialized
+	// connection; callers can still open multiple Store handles safely.
+	db.SetMaxOpenConns(1)
+	// Task swarms legitimately have multiple workers updating one local store.
+	// SQLite otherwise fails immediately when another writer briefly owns the
+	// lock. A bounded busy timeout turns that expected contention into waiting.
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set busy timeout: %w", err)
+	}
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)

@@ -2,9 +2,51 @@ package store
 
 import (
 	"fmt"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestConcurrentStoreHandlesWaitForSQLiteWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "concurrent.db")
+	initial, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := initial.Close(); err != nil {
+		t.Fatal(err)
+	}
+	const workers = 12
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s, err := Open(path)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer s.Close()
+			<-start
+			errs <- s.CreateTask(&Task{
+				ID: fmt.Sprintf("t-concurrent-%d", i), Type: "prompt", What: "test",
+				RunAt: time.Now(), Agent: "claude",
+			})
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
@@ -23,11 +65,14 @@ func TestCreateAndGetTask(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	task := &Task{
-		ID:    "t-test-001",
-		Type:  "prompt",
-		What:  "hello world",
-		RunAt: now,
-		Agent: "claude",
+		ID:             "t-test-001",
+		Type:           "prompt",
+		What:           "hello world",
+		RunAt:          now,
+		Agent:          "claude",
+		CWD:            "/work/project",
+		PromptName:     "review",
+		PromptRevision: "abcdef123456",
 	}
 	if err := s.CreateTask(task); err != nil {
 		t.Fatalf("create: %v", err)
@@ -49,6 +94,12 @@ func TestCreateAndGetTask(t *testing.T) {
 	if got.Status != "pending" {
 		t.Errorf("status = %q, want %q", got.Status, "pending")
 	}
+	if got.CWD != "/work/project" {
+		t.Errorf("cwd = %q, want /work/project", got.CWD)
+	}
+	if got.PromptName != "review" || got.PromptRevision != "abcdef123456" {
+		t.Errorf("prompt provenance = %q@%q", got.PromptName, got.PromptRevision)
+	}
 }
 
 func TestGetTaskNotFound(t *testing.T) {
@@ -59,6 +110,24 @@ func TestGetTaskNotFound(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("expected nil, got %+v", got)
+	}
+}
+
+func TestSetTaskResolved(t *testing.T) {
+	s := openTestStore(t)
+	task := &Task{ID: "t-resolved", What: "test", RunAt: time.Now()}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTaskResolved(task.ID, "gemini", "standard"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetTask(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Agent != "gemini" || got.Isolation != "standard" {
+		t.Fatalf("resolved task = agent %q isolation %q", got.Agent, got.Isolation)
 	}
 }
 
@@ -191,8 +260,8 @@ func TestAppendAndListThread(t *testing.T) {
 	s := openTestStore(t)
 
 	entry := &ThreadEntry{
-		WingID: "test-machine",
-		Summary:   "did a thing",
+		WingID:  "test-machine",
+		Summary: "did a thing",
 	}
 	if err := s.AppendThread(entry); err != nil {
 		t.Fatalf("append: %v", err)
@@ -218,8 +287,8 @@ func TestListRecentThread(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		s.AppendThread(&ThreadEntry{
-			WingID: "test",
-			Summary:   fmt.Sprintf("entry %d", i),
+			WingID:  "test",
+			Summary: fmt.Sprintf("entry %d", i),
 		})
 	}
 

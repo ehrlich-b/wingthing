@@ -10,25 +10,28 @@ import (
 const timeFmt = "2006-01-02T15:04:05Z"
 
 type Task struct {
-	ID         string
-	Type       string
-	What       string
-	RunAt      time.Time
-	Agent      string
-	Isolation  string
-	Memory     *string
-	ParentID   *string
-	Status     string
-	Cron       *string
-	WingID     *string
-	CreatedAt  time.Time
-	StartedAt  *time.Time
-	FinishedAt *time.Time
-	Output     *string
-	Error      *string
-	RetryCount int
-	MaxRetries int
-	DependsOn  *string
+	ID             string
+	Type           string
+	What           string
+	RunAt          time.Time
+	Agent          string
+	Isolation      string
+	Memory         *string
+	ParentID       *string
+	Status         string
+	Cron           *string
+	WingID         *string
+	CreatedAt      time.Time
+	StartedAt      *time.Time
+	FinishedAt     *time.Time
+	Output         *string
+	Error          *string
+	RetryCount     int
+	MaxRetries     int
+	DependsOn      *string
+	CWD            string
+	PromptName     string
+	PromptRevision string
 }
 
 func (s *Store) CreateTask(t *Task) error {
@@ -41,9 +44,9 @@ func (s *Store) CreateTask(t *Task) error {
 	if t.Type == "" {
 		t.Type = "prompt"
 	}
-	_, err := s.db.Exec(`INSERT INTO tasks (id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, wing_id, retry_count, max_retries, depends_on)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.Type, t.What, t.RunAt.UTC().Format(timeFmt), t.Agent, t.Isolation, t.Memory, t.ParentID, t.Status, t.Cron, t.WingID, t.RetryCount, t.MaxRetries, t.DependsOn)
+	_, err := s.db.Exec(`INSERT INTO tasks (id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, wing_id, retry_count, max_retries, depends_on, cwd, prompt_name, prompt_revision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Type, t.What, t.RunAt.UTC().Format(timeFmt), t.Agent, t.Isolation, t.Memory, t.ParentID, t.Status, t.Cron, t.WingID, t.RetryCount, t.MaxRetries, t.DependsOn, t.CWD, t.PromptName, t.PromptRevision)
 	if err != nil {
 		return fmt.Errorf("create task: %w", err)
 	}
@@ -55,9 +58,9 @@ func (s *Store) GetTask(id string) (*Task, error) {
 	var runAt, createdAt string
 	var startedAt, finishedAt *string
 	err := s.db.QueryRow(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, wing_id,
-		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on FROM tasks WHERE id = ?`, id).Scan(
+		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on, cwd, prompt_name, prompt_revision FROM tasks WHERE id = ?`, id).Scan(
 		&t.ID, &t.Type, &t.What, &runAt, &t.Agent, &t.Isolation, &t.Memory, &t.ParentID, &t.Status, &t.Cron, &t.WingID,
-		&createdAt, &startedAt, &finishedAt, &t.Output, &t.Error, &t.RetryCount, &t.MaxRetries, &t.DependsOn)
+		&createdAt, &startedAt, &finishedAt, &t.Output, &t.Error, &t.RetryCount, &t.MaxRetries, &t.DependsOn, &t.CWD, &t.PromptName, &t.PromptRevision)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -73,7 +76,7 @@ func (s *Store) GetTask(id string) (*Task, error) {
 
 func (s *Store) ListPending(now time.Time) ([]*Task, error) {
 	rows, err := s.db.Query(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, wing_id,
-		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on
+		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on, cwd, prompt_name, prompt_revision
 		FROM tasks WHERE status = 'pending' AND run_at <= ? ORDER BY run_at`, now.UTC().Format(timeFmt))
 	if err != nil {
 		return nil, fmt.Errorf("list pending: %w", err)
@@ -84,7 +87,7 @@ func (s *Store) ListPending(now time.Time) ([]*Task, error) {
 
 func (s *Store) ListRecent(n int) ([]*Task, error) {
 	rows, err := s.db.Query(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, wing_id,
-		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on
+		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on, cwd, prompt_name, prompt_revision
 		FROM tasks ORDER BY created_at DESC LIMIT ?`, n)
 	if err != nil {
 		return nil, fmt.Errorf("list recent: %w", err)
@@ -141,6 +144,15 @@ func (s *Store) UpdateTaskStatus(id, status string) error {
 	return err
 }
 
+// SetTaskResolved records the runtime choices made by the orchestrator. Tasks
+// may be submitted without either field, so the stored values must be updated
+// after skill/config precedence has been resolved if API clients are to see
+// what actually ran.
+func (s *Store) SetTaskResolved(id, agent, isolation string) error {
+	_, err := s.db.Exec("UPDATE tasks SET agent = ?, isolation = ? WHERE id = ?", agent, isolation, id)
+	return err
+}
+
 func (s *Store) SetTaskOutput(id, output string) error {
 	_, err := s.db.Exec("UPDATE tasks SET output = ? WHERE id = ?", output, id)
 	return err
@@ -154,7 +166,7 @@ func (s *Store) SetTaskError(id, errMsg string) error {
 
 func (s *Store) ListRecurring() ([]*Task, error) {
 	rows, err := s.db.Query(`SELECT id, type, what, run_at, agent, isolation, memory, parent_id, status, cron, wing_id,
-		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on
+		created_at, started_at, finished_at, output, error, retry_count, max_retries, depends_on, cwd, prompt_name, prompt_revision
 		FROM tasks WHERE cron IS NOT NULL AND cron != '' ORDER BY run_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list recurring: %w", err)
@@ -180,7 +192,7 @@ func scanTasks(rows *sql.Rows) ([]*Task, error) {
 		var runAt, createdAt string
 		var startedAt, finishedAt *string
 		if err := rows.Scan(&t.ID, &t.Type, &t.What, &runAt, &t.Agent, &t.Isolation, &t.Memory, &t.ParentID,
-			&t.Status, &t.Cron, &t.WingID, &createdAt, &startedAt, &finishedAt, &t.Output, &t.Error, &t.RetryCount, &t.MaxRetries, &t.DependsOn); err != nil {
+			&t.Status, &t.Cron, &t.WingID, &createdAt, &startedAt, &finishedAt, &t.Output, &t.Error, &t.RetryCount, &t.MaxRetries, &t.DependsOn, &t.CWD, &t.PromptName, &t.PromptRevision); err != nil {
 			return nil, fmt.Errorf("scan task: %w", err)
 		}
 		t.RunAt = parseTime(runAt)
