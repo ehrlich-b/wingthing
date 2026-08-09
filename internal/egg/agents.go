@@ -29,8 +29,12 @@ var macOSKeychainEnv = []string{
 
 var agentProfiles = map[string]AgentProfile{
 	"claude": {
-		Domains: []string{"*.anthropic.com", "*.claude.com", "sentry.io", "statsigapi.net"},
-		EnvVars: []string{"ANTHROPIC_API_KEY"},
+		Domains: []string{"*.anthropic.com", "*.claude.com", "sentry.io", "statsigapi.net", "localhost", "127.0.0.1"},
+		EnvVars: []string{
+			"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL",
+			"ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+			"WT_PROVIDER_BASE_URL",
+		},
 		// Nothing to force here. 2.1.150+ enables mouse reporting, which we want — it is
 		// what makes claude parse the wheel events the browser terminal sends. The enable
 		// never reaches xterm (see stripMouseTracking), so the terminal never captures the
@@ -46,8 +50,8 @@ var agentProfiles = map[string]AgentProfile{
 		SessionIDFlag: "--session-id",
 	},
 	"codex": {
-		Domains:      []string{"api.openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"},
-		EnvVars:      []string{"OPENAI_API_KEY"},
+		Domains:      []string{"api.openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com", "localhost", "127.0.0.1"},
+		EnvVars:      []string{"OPENAI_API_KEY", "CODEX_HOME", "WT_PROVIDER_BASE_URL"},
 		WriteDirs:    []string{".codex"},
 		SettingsFile: ".codex/settings.json",
 		SessionDir:   ".codex/sessions",
@@ -65,15 +69,35 @@ var agentProfiles = map[string]AgentProfile{
 		WriteDirs: []string{".ollama"},
 	},
 	"gemini": {
-		Domains:   []string{"*.googleapis.com", "generativelanguage.googleapis.com"},
-		EnvVars:   []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"},
-		WriteDirs: []string{".gemini"},
+		Domains:    []string{"*.googleapis.com", "*.google.com", "*.googleusercontent.com", "generativelanguage.googleapis.com", "localhost", "127.0.0.1"},
+		EnvVars:    []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_GENAI_API_VERSION", "GEMINI_CLI_TRUST_WORKSPACE", "WT_PROVIDER_BASE_URL"},
+		WriteDirs:  []string{".gemini"},
+		SessionDir: ".gemini/tmp",
+		ResumeFlag: "--resume",
+	},
+	"hermes": {
+		// Hermes is provider- and tool-gateway-agnostic. Its configured target
+		// may be any cloud or local OpenAI-compatible endpoint, so a fixed list
+		// would create a false security boundary. The capability is explicit.
+		Domains: []string{"*"},
+		EnvVars: []string{
+			"HERMES_HOME", "NOUS_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY",
+			"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+			"WT_HERMES_TOOLSETS",
+			"WT_PROVIDER_BASE_URL",
+		},
+		WriteDirs:    []string{".hermes"},
+		SettingsFile: ".hermes/config.yaml",
+		SessionDir:   ".hermes",
+		ResumeFlag:   "--resume",
 	},
 	"opencode": {
-		Domains:    []string{"*.anthropic.com", "*.openai.com", "*.googleapis.com"},
-		EnvVars:    []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
-		WriteDirs:  []string{".opencode"},
-		SessionDir: ".opencode/sessions",
+		Domains:      []string{"*.anthropic.com", "*.openai.com", "*.googleapis.com", "opencode.ai", "*.opencode.ai", "models.dev", "localhost", "127.0.0.1"},
+		EnvVars:      []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OLLAMA_HOST", "WT_PROVIDER_BASE_URL"},
+		WriteDirs:    []string{".config/opencode", ".local/share/opencode", ".local/state/opencode", ".cache/opencode"},
+		SettingsFile: ".config/opencode/opencode.json",
+		SessionDir:   ".local/share/opencode",
+		ResumeFlag:   "--session",
 	},
 }
 
