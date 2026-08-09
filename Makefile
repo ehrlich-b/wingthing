@@ -6,14 +6,23 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
-build:
+# internal/relay embeds web/dist (web/embed.go), but the built assets are
+# generated and gitignored, so a fresh clone has none and every Go build fails
+# with "pattern dist: no matching files found". Seed a placeholder when it is
+# missing; `make web` overwrites it with the real vite output.
+web/dist:
+	@mkdir -p $@
+	@printf '%s\n' '<!doctype html><meta charset="utf-8"><title>wingthing</title>' \
+		'<p>Web assets were not built. Run <code>make web</code>.' > $@/index.html
+
+build: | web/dist
 	go build -buildvcs=false -ldflags "-X main.version=$(VERSION)" -o wt ./cmd/wt
 
-test:
+test: | web/dist
 	go test ./...
 
 COVERAGE_OUT ?= /tmp/wingthing-coverage.out
-coverage:
+coverage: | web/dist
 	go test -coverprofile=$(COVERAGE_OUT) ./...
 	go tool cover -func=$(COVERAGE_OUT)
 
@@ -71,14 +80,14 @@ proto:
 # Detect host arch for cross-compilation target
 LINUX_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
 
-build-linux:
+build-linux: | web/dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go build -buildvcs=false \
 		-ldflags "-X main.version=test" -o test/linux/wt ./cmd/wt
 
 build-mock-agent:
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go build -o test/linux/mock-agent ./test/mock-agent/
 
-build-linux-tests:
+build-linux-tests: | web/dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go test -c -tags 'e2e linux' \
 		-o test/linux/run-tests ./test/linux/
 
@@ -92,7 +101,7 @@ test-linux-ubuntu: build-linux build-mock-agent build-linux-tests
 	docker run --rm --privileged wt-test-ubuntu \
 		/root/run-tests -test.v -test.timeout 120s
 
-test-integ:
+test-integ: | web/dist
 	go test -count=1 -tags e2e -v -timeout 120s ./test/integ/...
 
 test-e2e: test-linux test-linux-ubuntu test-integ
