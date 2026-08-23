@@ -272,6 +272,7 @@ When `isolation` is `strict` or `standard` (no network), the sandbox automatical
 | `make test` | Unit tier — `go test ./...` |
 | `make test-integ` | Integration tier — relay/wing/PTY protocol with simulated endpoints |
 | `make test-linux` / `test-linux-ubuntu` | E2E tier — privileged Linux sandbox battery in Docker |
+| `make test-web` | Browser E2E tier — seeded shared-roost org-mode canary + Playwright in Docker (`test/web/`) |
 | `make test-provider-swap` | Opt-in real-harness/Ollama/LiteLLM release smoke matrix |
 | `make coverage` | Statement coverage report |
 | `make web` | Build vite output (`cd web && npm run build`) |

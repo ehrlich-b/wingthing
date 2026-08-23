@@ -1,0 +1,31 @@
+org: slide
+locked: false
+spectate: false
+admins:
+  - alice@slide.tech
+egg_config: /root/.wingthing/egg.yaml
+paths:
+  - path: /opt/wingthing/eng
+    members:
+      - alice@slide.tech
+      - bob@slide.tech
+  - path: /opt/wingthing/support
+    members:
+      - alice@slide.tech
+      - carol@slide.tech
+audit: true
+idle_timeout: 4h
+mcp:
+  enabled: true
+  default_allow_all: false
+  roles:
+    eng:
+      enabled: true
+      members:
+        - alice@slide.tech
+        - bob@slide.tech
+    support:
+      enabled: true
+      members:
+        - alice@slide.tech
+        - carol@slide.tech

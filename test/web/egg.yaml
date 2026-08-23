@@ -1,0 +1,8 @@
+# Trusted-container policy: the docker container is the security boundary.
+# Mirrors egg.UnsandboxedEggConfig() — full env and network passthrough,
+# no FS or resource restrictions, so the egg runtime keeps PTY persistence
+# but skips the OS sandbox (rootless docker on WSL2 has no nested userns).
+base: none
+network:
+  domains: ["*"]
+env: ["*"]

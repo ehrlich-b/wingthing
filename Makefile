@@ -1,7 +1,7 @@
 .PHONY: build test coverage check clean web serve release proto deploy deploy-edge scale status jail \
 	build-linux build-mock-agent build-linux-tests build-linux-sandbox-tests test-linux test-linux-ubuntu test-integ test-e2e \
 	build-linux-wt-tests \
-	test-provider-swap
+	test-provider-swap build-web-e2e test-web
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -103,6 +103,19 @@ build-linux-sandbox-tests: | web/dist
 build-linux-wt-tests: | web/dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go test -c -tags integration \
 		-o test/linux/wt-tests ./cmd/wt/
+
+# Browser E2E tier: seeded shared-roost (org mode) + Playwright in Docker.
+# Binaries are built for the docker host's native arch so the container can
+# run them without emulation. Needs the real web dist (it tests the UI).
+WEB_TEST_ARCH ?= $(HOST_ARCH)
+
+build-web-e2e: web
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) go build -buildvcs=false \
+		-ldflags "-X main.version=test" -o test/web/wt ./cmd/wt
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) go build -o test/web/mock-agent ./test/mock-agent/
+
+test-web: build-web-e2e
+	test/web/run.sh
 
 test-linux:
 	@if [ "$(LINUX_TEST_ARCH)" != "$(HOST_ARCH)" ]; then \
