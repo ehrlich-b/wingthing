@@ -6,7 +6,7 @@ import { S, DOM } from './state.js';
 import { deriveE2EKey, identityPubKey } from './crypto.js';
 import { b64ToBytes, bytesToB64, wingDisplayName, agentIcon } from './helpers.js';
 import { onlineWings, showPalette, setCanvasLaunchCallback } from './palette.js';
-import { sendTunnelRequest } from './tunnel.js';
+import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { checkForNotification, setNotification, clearNotification } from './notify.js';
 
 // Grid constants
@@ -715,7 +715,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     term.loadAddon(fitAddon);
     term.loadAddon(serializeAddon);
 
-    var tempId = 'canvas-' + crypto.randomUUID();
+    var tempId = 'canvas-' + randomUUID();
 
     var parts = createTerminalEl(tempId, x, y, width, height);
     DOM.canvasWorld.appendChild(parts.el);

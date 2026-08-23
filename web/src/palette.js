@@ -1,6 +1,6 @@
 import { S, DOM } from './state.js';
 import { escapeHtml, wingDisplayName, shortenPath, nestedRepoCount, agentWithIcon, dirParent } from './helpers.js';
-import { sendTunnelRequest } from './tunnel.js';
+import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { getLastTermAgent, setLastTermAgent } from './data.js';
 import { showTerminal } from './nav.js';
 import { connectPTY } from './pty.js';
@@ -243,7 +243,7 @@ function fetchDirList(dirPath) {
     var wing = currentPaletteWing();
     if (!wing) { dirListPending = false; return; }
 
-    var fetchId = crypto.randomUUID();
+    var fetchId = randomUUID();
     dirListQuery = fetchId;
     dirListPending = true;
 

@@ -41,7 +41,7 @@ function tunnelDecrypt(key, encoded) {
 }
 
 // crypto.randomUUID requires secure context in some browsers
-function randomUUID() {
+export function randomUUID() {
     if (typeof crypto.randomUUID === 'function') {
         try { return crypto.randomUUID(); } catch (e) {}
     }
