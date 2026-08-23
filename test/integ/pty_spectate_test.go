@@ -199,6 +199,76 @@ func TestSpectateDoesNotDisruptController(t *testing.T) {
 	}
 }
 
+func TestSpectatePasskeyResponseIsBoundToViewer(t *testing.T) {
+	_, ts, store := testRelayAndWS(t)
+	token, _ := createTestUser(t, store, "spectate-passkey")
+
+	wingConn := connectWing(t, wsURL(ts), token, "wing-spec-passkey", []string{"claude"})
+	defer wingConn.CloseNow()
+	owner := connectBrowser(t, wsURL(ts), token, "wing-spec-passkey")
+	defer owner.CloseNow()
+	sess := startSession(t, owner, wingConn, "claude", "wing-spec-passkey")
+	spectatorA := connectBrowser(t, wsURL(ts), token, "wing-spec-passkey")
+	defer spectatorA.CloseNow()
+	viewerA := spectateSession(t, spectatorA, wingConn, sess, "wing-spec-passkey")
+	spectatorB := connectBrowser(t, wsURL(ts), token, "wing-spec-passkey")
+	defer spectatorB.CloseNow()
+	viewerB := spectateSession(t, spectatorB, wingConn, sess, "wing-spec-passkey")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := wsjson.Write(ctx, wingConn, ws.PasskeyChallenge{
+		Type: ws.TypePasskeyChallenge, SessionID: sess, Challenge: "challenge-a", ViewerID: viewerA,
+	}); err != nil {
+		t.Fatalf("wing write challenge A: %v", err)
+	}
+	if err := wsjson.Write(ctx, wingConn, ws.PasskeyChallenge{
+		Type: ws.TypePasskeyChallenge, SessionID: sess, Challenge: "challenge-b", ViewerID: viewerB,
+	}); err != nil {
+		t.Fatalf("wing write challenge B: %v", err)
+	}
+	var challengeA, challengeB ws.PasskeyChallenge
+	if err := wsjson.Read(ctx, spectatorA, &challengeA); err != nil {
+		t.Fatalf("spectator A read challenge: %v", err)
+	}
+	if err := wsjson.Read(ctx, spectatorB, &challengeB); err != nil {
+		t.Fatalf("spectator B read challenge: %v", err)
+	}
+	if challengeA.ViewerID != viewerA || challengeB.ViewerID != viewerB {
+		t.Fatalf("challenge viewer IDs = %q, %q; want %q, %q", challengeA.ViewerID, challengeB.ViewerID, viewerA, viewerB)
+	}
+
+	if err := wsjson.Write(ctx, spectatorA, ws.PasskeyResponse{
+		Type: ws.TypePasskeyResponse, SessionID: sess, ViewerID: viewerB, CredentialID: "wrong-owner",
+	}); err != nil {
+		t.Fatalf("spectator A write mismatched response: %v", err)
+	}
+	if err := wsjson.Write(ctx, spectatorB, ws.PasskeyResponse{
+		Type: ws.TypePasskeyResponse, SessionID: sess, ViewerID: viewerB, CredentialID: "correct-owner",
+	}); err != nil {
+		t.Fatalf("spectator B write response: %v", err)
+	}
+	var response ws.PasskeyResponse
+	if err := wsjson.Read(ctx, wingConn, &response); err != nil {
+		t.Fatalf("wing read response: %v", err)
+	}
+	if response.ViewerID != viewerB || response.CredentialID != "correct-owner" {
+		t.Fatalf("wing received response for wrong viewer owner: %#v", response)
+	}
+
+	if err := wsjson.Write(ctx, spectatorA, ws.PasskeyResponse{
+		Type: ws.TypePasskeyResponse, SessionID: sess, ViewerID: viewerA, CredentialID: "viewer-a",
+	}); err != nil {
+		t.Fatalf("spectator A write own response: %v", err)
+	}
+	if err := wsjson.Read(ctx, wingConn, &response); err != nil {
+		t.Fatalf("wing read spectator A response: %v", err)
+	}
+	if response.ViewerID != viewerA || response.CredentialID != "viewer-a" {
+		t.Fatalf("wing received wrong spectator A response: %#v", response)
+	}
+}
+
 func TestSpectateRelayInjection(t *testing.T) {
 	_, ts, store := testRelayAndWS(t)
 	token, _ := createTestUser(t, store, "spectate-inject")

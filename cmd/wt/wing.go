@@ -2777,6 +2777,93 @@ func readEggCrashInfo(dir string) string {
 	return strings.TrimSpace(strings.Join(lines[start:], "\n"))
 }
 
+type pendingReattachAuth struct {
+	attach    ws.PTYAttach
+	challenge []byte
+	subject   string
+	expiresAt time.Time
+}
+
+type pendingReattachAuths struct {
+	byViewer map[string]pendingReattachAuth
+	timer    *time.Timer
+	timerC   <-chan time.Time
+}
+
+func newPendingReattachAuths() *pendingReattachAuths {
+	return &pendingReattachAuths{byViewer: make(map[string]pendingReattachAuth)}
+}
+
+func (p *pendingReattachAuths) put(attach ws.PTYAttach, challenge []byte, subject string, timeout time.Duration) {
+	p.byViewer[attach.ViewerID] = pendingReattachAuth{
+		attach:    attach,
+		challenge: append([]byte(nil), challenge...),
+		subject:   subject,
+		expiresAt: time.Now().Add(timeout),
+	}
+	p.resetTimer()
+}
+
+func (p *pendingReattachAuths) take(viewerID string) (pendingReattachAuth, bool) {
+	pending, ok := p.byViewer[viewerID]
+	if ok {
+		delete(p.byViewer, viewerID)
+		p.resetTimer()
+	}
+	return pending, ok
+}
+
+func (p *pendingReattachAuths) expire(now time.Time) []pendingReattachAuth {
+	var expired []pendingReattachAuth
+	for viewerID, pending := range p.byViewer {
+		if !pending.expiresAt.After(now) {
+			expired = append(expired, pending)
+			delete(p.byViewer, viewerID)
+		}
+	}
+	p.resetTimer()
+	return expired
+}
+
+func (p *pendingReattachAuths) timeout() <-chan time.Time {
+	return p.timerC
+}
+
+func (p *pendingReattachAuths) close() {
+	if p.timer != nil {
+		p.timer.Stop()
+	}
+}
+
+func (p *pendingReattachAuths) resetTimer() {
+	if p.timer != nil && !p.timer.Stop() {
+		select {
+		case <-p.timer.C:
+		default:
+		}
+	}
+	if len(p.byViewer) == 0 {
+		p.timerC = nil
+		return
+	}
+	var next time.Time
+	for _, pending := range p.byViewer {
+		if next.IsZero() || pending.expiresAt.Before(next) {
+			next = pending.expiresAt
+		}
+	}
+	wait := time.Until(next)
+	if wait < 0 {
+		wait = 0
+	}
+	if p.timer == nil {
+		p.timer = time.NewTimer(wait)
+	} else {
+		p.timer.Reset(wait)
+	}
+	p.timerC = p.timer.C
+}
+
 // reclaimEggSessions discovers surviving egg sessions and re-registers their
 // input routing goroutines. The relay no longer tracks sessions — browser
 // discovers them via E2E tunnel and reattaches directly via wing_id.
@@ -2940,22 +3027,71 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 	// Process input from browser
 	go func() {
+		pendingAuth := newPendingReattachAuths()
+		defer pendingAuth.close()
 		defer func() {
 			reclaimIdleState.mu.Lock()
 			reclaimIdleState.connected = false
 			reclaimIdleState.mu.Unlock()
 		}()
 	reclaimInputLoop:
-		for data := range input {
+		for {
+			var data []byte
+			select {
+			case <-ctx.Done():
+				return
+			case <-pendingAuth.timeout():
+				for _, pending := range pendingAuth.expire(time.Now()) {
+					log.Printf("pty session %s: reattach passkey timed out", sessionID)
+					write(ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+				}
+				continue
+			case inputData, ok := <-input:
+				if !ok {
+					return
+				}
+				data = inputData
+			}
 			var env ws.Envelope
 			if err := json.Unmarshal(data, &env); err != nil {
 				continue
 			}
+			var attach ws.PTYAttach
+			if env.Type == ws.TypePasskeyResponse {
+				var response ws.PasskeyResponse
+				if err := json.Unmarshal(data, &response); err != nil {
+					continue
+				}
+				pending, ok := pendingAuth.take(response.ViewerID)
+				if !ok {
+					log.Printf("pty session %s: ignoring passkey response without matching reattach", sessionID)
+					continue
+				}
+				authData, _ := base64.StdEncoding.DecodeString(response.AuthenticatorData)
+				clientData, _ := base64.StdEncoding.DecodeString(response.ClientDataJSON)
+				signature, _ := base64.StdEncoding.DecodeString(response.Signature)
+				rawKey, verifyErr := verifySubjectPasskey(allowedKeys, pending.attach.UserID, pending.challenge, authData, clientData, signature, passkeyPolicy)
+				if verifyErr != nil {
+					write(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					continue
+				}
+				token, tokenErr := auth.GenerateAuthToken()
+				if tokenErr != nil {
+					write(ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					continue
+				}
+				passkeyCache.Put(token, rawKey, pending.subject)
+				attach = pending.attach
+				attach.AuthToken = token
+				env.Type = ws.TypePTYAttach
+				log.Printf("pty session %s: reattach passkey verified", sessionID)
+			}
 			switch env.Type {
 			case ws.TypePTYAttach:
-				var attach ws.PTYAttach
-				if err := json.Unmarshal(data, &attach); err != nil {
-					continue
+				if attach.Type == "" {
+					if err := json.Unmarshal(data, &attach); err != nil {
+						continue
+					}
 				}
 				if !canAttachSession(attach.UserID, attach.OrgRole, readEggOwner(eggDir)) {
 					write(ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: sessionID, ViewerID: attach.ViewerID})
@@ -2980,6 +3116,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					if attach.AuthToken != "" {
 						if _, ok := passkeyCache.Check(attach.AuthToken, authTTL, attachSubject); ok {
 							tokenOK = true
+							attachAuthToken = attach.AuthToken
 							log.Printf("pty session %s: reattach passkey auth via cached token", sessionID)
 						}
 					}
@@ -2997,57 +3134,8 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							ViewerID:  attach.ViewerID,
 						})
 						log.Printf("pty session %s: reattach passkey challenge sent", sessionID)
-
-						timer := time.NewTimer(60 * time.Second)
-						verified := false
-						for !verified {
-							select {
-							case authData, ok := <-input:
-								if !ok {
-									timer.Stop()
-									return
-								}
-								var authEnv ws.Envelope
-								if err := json.Unmarshal(authData, &authEnv); err != nil {
-									continue
-								}
-								if authEnv.Type != ws.TypePasskeyResponse {
-									continue
-								}
-								var resp ws.PasskeyResponse
-								if err := json.Unmarshal(authData, &resp); err != nil {
-									continue
-								}
-								ad, _ := base64.StdEncoding.DecodeString(resp.AuthenticatorData)
-								cj, _ := base64.StdEncoding.DecodeString(resp.ClientDataJSON)
-								sig, _ := base64.StdEncoding.DecodeString(resp.Signature)
-								rawKey, verifyErr := verifySubjectPasskey(allowedKeys, attach.UserID, challenge, ad, cj, sig, passkeyPolicy)
-								if verifyErr != nil {
-									write(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: sessionID, ViewerID: attach.ViewerID})
-									timer.Stop()
-									continue reclaimInputLoop
-								}
-								token, tokErr := auth.GenerateAuthToken()
-								if tokErr != nil {
-									write(ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: sessionID, ViewerID: attach.ViewerID})
-									timer.Stop()
-									continue reclaimInputLoop
-								}
-								passkeyCache.Put(token, rawKey, attachSubject)
-								attachAuthToken = token
-								log.Printf("pty session %s: reattach passkey verified", sessionID)
-								verified = true
-							case <-timer.C:
-								log.Printf("pty session %s: reattach passkey timed out", sessionID)
-								write(ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: sessionID, ViewerID: attach.ViewerID})
-								timer.Stop()
-								continue reclaimInputLoop
-							case <-ctx.Done():
-								timer.Stop()
-								return
-							}
-						}
-						timer.Stop()
+						pendingAuth.put(attach, challenge, attachSubject, time.Minute)
+						continue reclaimInputLoop
 					}
 				}
 
@@ -3504,22 +3592,71 @@ authDone:
 
 	// Process input from browser -> decrypt -> send to egg
 	go func() {
+		pendingAuth := newPendingReattachAuths()
+		defer pendingAuth.close()
 		defer func() {
 			idleState.mu.Lock()
 			idleState.connected = false
 			idleState.mu.Unlock()
 		}()
 	inputLoop:
-		for data := range input {
+		for {
+			var data []byte
+			select {
+			case <-ctx.Done():
+				return
+			case <-pendingAuth.timeout():
+				for _, pending := range pendingAuth.expire(time.Now()) {
+					log.Printf("pty session %s: reattach passkey timed out", start.SessionID)
+					write(ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+				}
+				continue
+			case inputData, ok := <-input:
+				if !ok {
+					return
+				}
+				data = inputData
+			}
 			var env ws.Envelope
 			if err := json.Unmarshal(data, &env); err != nil {
 				continue
 			}
+			var attach ws.PTYAttach
+			if env.Type == ws.TypePasskeyResponse {
+				var response ws.PasskeyResponse
+				if err := json.Unmarshal(data, &response); err != nil {
+					continue
+				}
+				pending, ok := pendingAuth.take(response.ViewerID)
+				if !ok {
+					log.Printf("pty session %s: ignoring passkey response without matching reattach", start.SessionID)
+					continue
+				}
+				authData, _ := base64.StdEncoding.DecodeString(response.AuthenticatorData)
+				clientData, _ := base64.StdEncoding.DecodeString(response.ClientDataJSON)
+				signature, _ := base64.StdEncoding.DecodeString(response.Signature)
+				rawKey, verifyErr := verifySubjectPasskey(allowedKeys, pending.attach.UserID, pending.challenge, authData, clientData, signature, passkeyPolicy)
+				if verifyErr != nil {
+					write(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					continue
+				}
+				token, tokenErr := auth.GenerateAuthToken()
+				if tokenErr != nil {
+					write(ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					continue
+				}
+				passkeyCache.Put(token, rawKey, pending.subject)
+				attach = pending.attach
+				attach.AuthToken = token
+				env.Type = ws.TypePTYAttach
+				log.Printf("pty session %s: reattach passkey verified", start.SessionID)
+			}
 			switch env.Type {
 			case ws.TypePTYAttach:
-				var attach ws.PTYAttach
-				if err := json.Unmarshal(data, &attach); err != nil {
-					continue
+				if attach.Type == "" {
+					if err := json.Unmarshal(data, &attach); err != nil {
+						continue
+					}
 				}
 				if !canAttachSession(attach.UserID, attach.OrgRole, start.UserID) {
 					write(ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: start.SessionID, ViewerID: attach.ViewerID})
@@ -3557,50 +3694,8 @@ authDone:
 							RPID:      passkeyPolicy.RPID,
 							ViewerID:  attach.ViewerID,
 						})
-						timer := time.NewTimer(time.Minute)
-						verified := false
-						for !verified {
-							select {
-							case assertion, ok := <-input:
-								if !ok {
-									timer.Stop()
-									return
-								}
-								var assertionEnv ws.Envelope
-								if err := json.Unmarshal(assertion, &assertionEnv); err != nil || assertionEnv.Type != ws.TypePasskeyResponse {
-									continue
-								}
-								var response ws.PasskeyResponse
-								if err := json.Unmarshal(assertion, &response); err != nil {
-									continue
-								}
-								authData, _ := base64.StdEncoding.DecodeString(response.AuthenticatorData)
-								clientData, _ := base64.StdEncoding.DecodeString(response.ClientDataJSON)
-								signature, _ := base64.StdEncoding.DecodeString(response.Signature)
-								rawKey, verifyErr := verifySubjectPasskey(allowedKeys, attach.UserID, challenge, authData, clientData, signature, passkeyPolicy)
-								if verifyErr != nil {
-									write(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: start.SessionID, ViewerID: attach.ViewerID})
-									timer.Stop()
-									continue inputLoop
-								}
-								token, tokenErr := auth.GenerateAuthToken()
-								if tokenErr != nil {
-									write(ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
-									timer.Stop()
-									continue inputLoop
-								}
-								passkeyCache.Put(token, rawKey, attachSubject)
-								attachAuthToken = token
-								verified = true
-							case <-timer.C:
-								write(ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: start.SessionID, ViewerID: attach.ViewerID})
-								continue inputLoop
-							case <-ctx.Done():
-								timer.Stop()
-								return
-							}
-						}
-						timer.Stop()
+						pendingAuth.put(attach, challenge, attachSubject, time.Minute)
+						continue inputLoop
 					}
 				}
 

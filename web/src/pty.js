@@ -140,6 +140,7 @@ export async function handlePTYPasskey() {
         S.ptyWs.send(JSON.stringify({
             type: 'passkey.response',
             session_id: msg.session_id,
+            viewer_id: msg.viewer_id || '',
             credential_id: bytesToB64url(new Uint8Array(credential.rawId)),
             authenticator_data: bytesToB64(new Uint8Array(credential.response.authenticatorData)),
             client_data_json: bytesToB64(new Uint8Array(credential.response.clientDataJSON)),

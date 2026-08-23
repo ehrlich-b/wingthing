@@ -23,21 +23,26 @@ func TestPTYRoutesAuthenticateOnlyAssociatedConnections(t *testing.T) {
 	for name, connection := range map[string]*websocket.Conn{
 		"controller": controller,
 		"pending":    pending,
-		"viewer":     viewer,
 	} {
-		if !routes.CanAuthenticate("session", connection) {
+		if !routes.CanAuthenticate("session", "", connection) {
 			t.Fatalf("%s should be associated with route", name)
 		}
 	}
-	if routes.CanAuthenticate("session", stranger) {
+	if !routes.CanAuthenticate("session", "viewer", viewer) {
+		t.Fatal("viewer should authenticate with its assigned viewer ID")
+	}
+	if routes.CanAuthenticate("session", "", viewer) || routes.CanAuthenticate("session", "wrong", viewer) {
+		t.Fatal("viewer authenticated without its exact viewer ID")
+	}
+	if routes.CanAuthenticate("session", "", stranger) {
 		t.Fatal("unassociated connection was allowed to submit passkey response")
 	}
 
 	routes.ClearBrowser(pending)
-	if routes.CanAuthenticate("session", pending) {
+	if routes.CanAuthenticate("session", "", pending) {
 		t.Fatal("closed pending controller remained associated")
 	}
-	if !routes.CanAuthenticate("session", controller) {
+	if !routes.CanAuthenticate("session", "", controller) {
 		t.Fatal("clearing pending controller displaced authorized controller")
 	}
 
@@ -45,7 +50,7 @@ func TestPTYRoutesAuthenticateOnlyAssociatedConnections(t *testing.T) {
 	if !restartedRoutes.AddViewer("reclaimed", "viewer", "wing-1", viewer) {
 		t.Fatal("spectator route was rejected")
 	}
-	if !restartedRoutes.CanAuthenticate("reclaimed", viewer) {
+	if !restartedRoutes.CanAuthenticate("reclaimed", "viewer", viewer) {
 		t.Fatal("spectator route was not recreated after relay restart")
 	}
 	if route := restartedRoutes.Get("reclaimed"); route == nil || route.WingID != "wing-1" {
@@ -66,7 +71,7 @@ func TestPTYRoutesRejectCrossWingAttach(t *testing.T) {
 	if routes.SetPendingController("session", "wing-b", "user-b", pending) {
 		t.Fatal("another wing attached a pending controller to an existing route")
 	}
-	if routes.CanAuthenticate("session", viewer) || routes.CanAuthenticate("session", pending) {
+	if routes.CanAuthenticate("session", "viewer", viewer) || routes.CanAuthenticate("session", "", pending) {
 		t.Fatal("rejected cross-wing connection remained associated with the route")
 	}
 	if !routes.AddViewer("session", "viewer", "wing-a", viewer) {
@@ -87,10 +92,10 @@ func TestPTYRoutesAllowOnlyOnePendingController(t *testing.T) {
 	if routes.SetPendingController("session", "wing-a", "user-b", second) {
 		t.Fatal("second pending controller replaced an in-flight authorization")
 	}
-	if wingID, ok := routes.AuthenticationWing("session", first); !ok || wingID != "wing-a" {
+	if wingID, ok := routes.AuthenticationWing("session", "", first); !ok || wingID != "wing-a" {
 		t.Fatalf("first pending controller association = %q, %v", wingID, ok)
 	}
-	if _, ok := routes.AuthenticationWing("session", second); ok {
+	if _, ok := routes.AuthenticationWing("session", "", second); ok {
 		t.Fatal("rejected pending controller remained associated with the route")
 	}
 }
@@ -123,14 +128,19 @@ func TestPTYRoutesAuthenticationResolvesAssociatedWing(t *testing.T) {
 		BrowserConn: controller, PendingController: pending,
 		Viewers: map[string]*websocket.Conn{"viewer": viewer}, WingID: "wing-a",
 	})
-	for name, connection := range map[string]*websocket.Conn{
-		"controller": controller, "pending": pending, "viewer": viewer,
+	for name, tc := range map[string]struct {
+		viewerID string
+		conn     *websocket.Conn
+	}{
+		"controller": {conn: controller},
+		"pending":    {conn: pending},
+		"viewer":     {viewerID: "viewer", conn: viewer},
 	} {
-		if wingID, ok := routes.AuthenticationWing("session", connection); !ok || wingID != "wing-a" {
+		if wingID, ok := routes.AuthenticationWing("session", tc.viewerID, tc.conn); !ok || wingID != "wing-a" {
 			t.Fatalf("%s authentication route = %q, %v", name, wingID, ok)
 		}
 	}
-	if _, ok := routes.AuthenticationWing("session", &websocket.Conn{}); ok {
+	if _, ok := routes.AuthenticationWing("session", "", &websocket.Conn{}); ok {
 		t.Fatal("unassociated connection received an authentication route")
 	}
 }

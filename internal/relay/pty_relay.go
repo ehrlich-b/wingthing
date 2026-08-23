@@ -162,17 +162,16 @@ func (r *PTYRoutes) IsSpectator(conn *websocket.Conn) bool {
 	return false
 }
 
-// CanAuthenticate reports whether conn is already associated with this route
-// as its controller, pending controller, or a spectator. Passkey responses are
-// the only spectator-originated messages allowed through the relay.
-func (r *PTYRoutes) CanAuthenticate(sessionID string, conn *websocket.Conn) bool {
-	_, ok := r.AuthenticationWing(sessionID, conn)
+// CanAuthenticate reports whether conn owns this route's controller attach or
+// the exact spectator viewer ID carried by a passkey response.
+func (r *PTYRoutes) CanAuthenticate(sessionID, viewerID string, conn *websocket.Conn) bool {
+	_, ok := r.AuthenticationWing(sessionID, viewerID, conn)
 	return ok
 }
 
-// AuthenticationWing returns the route's wing only when conn is associated with the
-// session as its controller, pending controller, or one of its spectators.
-func (r *PTYRoutes) AuthenticationWing(sessionID string, conn *websocket.Conn) (string, bool) {
+// AuthenticationWing returns the route's wing only when conn owns the attach
+// attempt identified by viewerID. Controller attempts use an empty viewer ID.
+func (r *PTYRoutes) AuthenticationWing(sessionID, viewerID string, conn *websocket.Conn) (string, bool) {
 	r.mu.RLock()
 	route := r.routes[sessionID]
 	r.mu.RUnlock()
@@ -181,13 +180,11 @@ func (r *PTYRoutes) AuthenticationWing(sessionID string, conn *websocket.Conn) (
 	}
 	route.mu.Lock()
 	defer route.mu.Unlock()
-	if route.BrowserConn == conn || route.PendingController == conn {
+	if viewerID == "" && (route.BrowserConn == conn || route.PendingController == conn) {
 		return route.WingID, route.WingID != ""
 	}
-	for _, viewer := range route.Viewers {
-		if viewer == conn {
-			return route.WingID, route.WingID != ""
-		}
+	if viewerID != "" && route.Viewers[viewerID] == conn {
+		return route.WingID, route.WingID != ""
 	}
 	return "", false
 }
@@ -545,7 +542,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &response); err != nil {
 				continue
 			}
-			routeWingID, allowed := s.PTY.AuthenticationWing(response.SessionID, conn)
+			routeWingID, allowed := s.PTY.AuthenticationWing(response.SessionID, response.ViewerID, conn)
 			if !allowed {
 				continue
 			}

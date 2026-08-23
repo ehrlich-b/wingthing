@@ -157,6 +157,7 @@ type PasskeyChallenge struct {
 type PasskeyResponse struct {
 	Type              string `json:"type"`
 	SessionID         string `json:"session_id"`
+	ViewerID          string `json:"viewer_id,omitempty"`
 	CredentialID      string `json:"credential_id"`      // base64url
 	AuthenticatorData string `json:"authenticator_data"` // base64
 	ClientDataJSON    string `json:"client_data_json"`   // base64
@@ -216,7 +217,7 @@ type PTYAttach struct {
 	Cols      uint32   `json:"cols,omitempty"`       // browser terminal cols (for resize-before-snapshot)
 	Rows      uint32   `json:"rows,omitempty"`       // browser terminal rows (for resize-before-snapshot)
 	Spectate  bool     `json:"spectate,omitempty"`   // read-only spectator mode
-	ViewerID  string   `json:"viewer_id,omitempty"`  // relay-assigned spectator ID
+	ViewerID  string   `json:"viewer_id,omitempty"`  // relay-assigned attach attempt ID
 	Email     string   `json:"email,omitempty"`      // relay-injected user email
 	Passkeys  []string `json:"passkeys,omitempty"`   // relay-injected passkey attestation
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -79,6 +80,54 @@ func TestSessionAttachOwnership(t *testing.T) {
 		if !canAttachSession("operator", role, "alice") {
 			t.Fatalf("%s could not attach for session oversight", role)
 		}
+	}
+}
+
+func TestPendingReattachAuthsAreViewerScoped(t *testing.T) {
+	pending := newPendingReattachAuths()
+	t.Cleanup(pending.close)
+
+	challengeA := []byte("challenge-a")
+	pending.put(ws.PTYAttach{Type: ws.TypePTYAttach, ViewerID: "viewer-a", UserID: "alice"}, challengeA, "alice:key-a", time.Hour)
+	pending.put(ws.PTYAttach{Type: ws.TypePTYAttach, ViewerID: "viewer-b", UserID: "alice"}, []byte("challenge-b"), "alice:key-b", time.Hour)
+	challengeA[0] = 'X'
+
+	if _, ok := pending.take(""); ok {
+		t.Fatal("response without a viewer ID consumed a pending viewer attach")
+	}
+	got, ok := pending.take("viewer-b")
+	if !ok {
+		t.Fatal("viewer-b could not resume its pending attach")
+	}
+	if got.attach.ViewerID != "viewer-b" || got.subject != "alice:key-b" || string(got.challenge) != "challenge-b" {
+		t.Fatalf("viewer-b resumed the wrong challenge: %#v", got)
+	}
+	got, ok = pending.take("viewer-a")
+	if !ok || string(got.challenge) != "challenge-a" {
+		t.Fatalf("viewer-a challenge was lost or aliased: %#v, %v", got, ok)
+	}
+}
+
+func TestPendingReattachAuthsExpireIndependently(t *testing.T) {
+	pending := newPendingReattachAuths()
+	t.Cleanup(pending.close)
+	now := time.Now()
+	pending.byViewer["expired"] = pendingReattachAuth{
+		attach:    ws.PTYAttach{ViewerID: "expired"},
+		expiresAt: now.Add(-time.Second),
+	}
+	pending.byViewer["live"] = pendingReattachAuth{
+		attach:    ws.PTYAttach{ViewerID: "live"},
+		expiresAt: now.Add(time.Hour),
+	}
+	pending.resetTimer()
+
+	expired := pending.expire(now)
+	if len(expired) != 1 || expired[0].attach.ViewerID != "expired" {
+		t.Fatalf("expired attaches = %#v, want only expired", expired)
+	}
+	if _, ok := pending.take("live"); !ok {
+		t.Fatal("expiring one viewer removed another viewer's pending attach")
 	}
 }
 
