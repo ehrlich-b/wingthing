@@ -26,6 +26,7 @@ type RunOpts struct {
 	ReplaceSystemPrompt bool
 	Timeout             time.Duration
 	WorkDir             string
+	Model               string
 	CmdFactory          CmdFactory
 }
 

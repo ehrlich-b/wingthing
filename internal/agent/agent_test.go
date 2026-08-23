@@ -136,6 +136,7 @@ func TestClaudeRunCommandContract(t *testing.T) {
 	var gotName string
 	var gotArgs []string
 	stream, err := claude.Run(context.Background(), "hello claude", RunOpts{
+		Model:               "opus",
 		SystemPrompt:        "system",
 		ReplaceSystemPrompt: true,
 		AllowedTools:        []string{"Read", "Write"},
@@ -156,7 +157,7 @@ func TestClaudeRunCommandContract(t *testing.T) {
 	if err := stream.Err(); err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := []string{"-p", "hello claude", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--system-prompt", "system", "--allowedTools", "Read,Write"}
+	wantArgs := []string{"-p", "hello claude", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "--system-prompt", "system", "--allowedTools", "Read,Write"}
 	if gotName != "claude" || !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("invocation = %q %q, want claude %q", gotName, gotArgs, wantArgs)
 	}

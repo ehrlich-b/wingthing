@@ -19,10 +19,11 @@ import (
 // carries the loopback forwarding, enforcement mode, and egress logging options
 // described in docs/sandbox-enhancement-design.md.
 type NetworkField struct {
-	Domains    []string `yaml:"domains,omitempty"`
-	LocalPorts []int    `yaml:"local_ports,omitempty"`
-	Mode       string   `yaml:"mode,omitempty"` // "" (default) | "observe" | "enforce"
-	Log        *bool    `yaml:"log,omitempty"`
+	Domains      []string `yaml:"domains,omitempty"`
+	LocalPorts   []int    `yaml:"local_ports,omitempty"`
+	Mode         string   `yaml:"mode,omitempty"` // "" (default) | "observe" | "enforce"
+	Log          *bool    `yaml:"log,omitempty"`
+	AgentDomains string   `yaml:"agent_domains,omitempty"` // ""/"merge" (default) | "none"
 }
 
 func (n *NetworkField) UnmarshalYAML(value *yaml.Node) error {
@@ -41,6 +42,9 @@ func (n *NetworkField) UnmarshalYAML(value *yaml.Node) error {
 		if err := value.Decode(&p); err != nil {
 			return err
 		}
+		if err := validateAgentDomainsMode(p.AgentDomains); err != nil {
+			return err
+		}
 		*n = NetworkField(p)
 		return nil
 	default:
@@ -56,7 +60,7 @@ func (n *NetworkField) UnmarshalYAML(value *yaml.Node) error {
 // MarshalYAML re-emits the legacy scalar and list shapes whenever no mapping-only
 // option is set, so rendered configs stay byte-stable for existing users.
 func (n NetworkField) MarshalYAML() (interface{}, error) {
-	if len(n.LocalPorts) == 0 && n.Mode == "" && n.Log == nil {
+	if len(n.LocalPorts) == 0 && n.Mode == "" && n.Log == nil && n.AgentDomains == "" {
 		if len(n.Domains) == 0 {
 			return "none", nil
 		}
@@ -71,7 +75,16 @@ func (n NetworkField) MarshalYAML() (interface{}, error) {
 
 // IsZero lets yaml omitempty treat an unset network block as absent.
 func (n NetworkField) IsZero() bool {
-	return len(n.Domains) == 0 && len(n.LocalPorts) == 0 && n.Mode == "" && n.Log == nil
+	return len(n.Domains) == 0 && len(n.LocalPorts) == 0 && n.Mode == "" && n.Log == nil && n.AgentDomains == ""
+}
+
+func validateAgentDomainsMode(mode string) error {
+	switch mode {
+	case "", "merge", "none":
+		return nil
+	default:
+		return fmt.Errorf("network.agent_domains must be merge or none, got %q", mode)
+	}
 }
 
 // EnvField handles YAML unmarshaling of env: string | []string.
@@ -142,7 +155,7 @@ type EggConfig struct {
 	Base                       BaseField         `yaml:"base,omitempty"`
 	FS                         []string          `yaml:"fs"`
 	Network                    NetworkField      `yaml:"network"`
-	Env                        EnvField          `yaml:"env"`
+	Env                        EnvField          `yaml:"env,omitempty"`
 	Resources                  EggResources      `yaml:"resources"`
 	Shell                      string            `yaml:"shell"`
 	DangerouslySkipPermissions bool              `yaml:"dangerously_skip_permissions"`
@@ -153,8 +166,8 @@ type EggConfig struct {
 
 // EggResources configures resource limits for sandboxed processes.
 type EggResources struct {
-	CPU     string `yaml:"cpu"`      // duration: "300s"
-	Memory  string `yaml:"memory"`   // size: "2GB"
+	CPU     string `yaml:"cpu"`    // duration: "300s"
+	Memory  string `yaml:"memory"` // size: "2GB"
 	MaxFDs  uint32 `yaml:"max_fds"`
 	MaxPids uint32 `yaml:"max_pids"` // cgroup pids.max (Linux only)
 }
@@ -171,9 +184,9 @@ func DefaultDenyPaths() []string {
 // Go, npm, pip, cargo, etc. all write to these. No secrets live here.
 func DefaultCacheDirs() []string {
 	return []string{
-		"~/.cache/",            // XDG_CACHE_HOME default (Linux) — go-build, pip, etc.
-		"~/Library/Caches/",    // macOS app caches — go-build, npm, etc.
-		"~/go/pkg/mod/cache/",  // Go module download cache
+		"~/.cache/",           // XDG_CACHE_HOME default (Linux) — go-build, pip, etc.
+		"~/Library/Caches/",   // macOS app caches — go-build, npm, etc.
+		"~/go/pkg/mod/cache/", // Go module download cache
 	}
 }
 
@@ -194,6 +207,38 @@ func DefaultEggConfig() *EggConfig {
 		FS:  fs,
 		Env: EnvField{"HOME", "PATH", "TERM", "LANG", "USER"},
 	}
+}
+
+// UnsandboxedEggConfig returns the explicit trusted-host policy used when an
+// outer VM or container is the security boundary. It passes the full
+// environment and network through and declares no filesystem or resource
+// restrictions, which causes the egg runtime to keep PTY persistence while
+// skipping the OS sandbox entirely.
+func UnsandboxedEggConfig() *EggConfig {
+	return &EggConfig{
+		Base:    BaseField{Name: "none"},
+		Network: NetworkField{Domains: []string{"*"}},
+		Env:     EnvField{"*"},
+	}
+}
+
+// RequiresSandbox reports whether cfg asks the runtime to enforce any policy.
+// Agent network requirements are included because they are drilled into the
+// effective policy at launch. Keep this predicate aligned with RunSession: the
+// CLI uses it to avoid demanding user namespaces for an explicitly trusted VM.
+func RequiresSandbox(cfg *EggConfig, agentName string) bool {
+	if cfg == nil {
+		return true
+	}
+	if len(cfg.FS) > 0 || cfg.Trace || cfg.Resources.CPU != "" ||
+		cfg.Resources.Memory != "" || cfg.Resources.MaxFDs > 0 || cfg.Resources.MaxPids > 0 {
+		return true
+	}
+	domains := append([]string(nil), cfg.Network.Domains...)
+	if agentName != "" && cfg.Network.AgentDomains != "none" {
+		domains = mergeStringSet(domains, Profile(agentName).Domains)
+	}
+	return sandbox.NetworkNeedFromDomains(domains) < sandbox.NetworkFull
 }
 
 // LoadEggConfig reads and parses an egg.yaml file.
@@ -224,14 +269,26 @@ func LoadEggConfigFromYAML(yamlStr string) (*EggConfig, error) {
 func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	if cwd != "" {
 		path := filepath.Join(cwd, "egg.yaml")
-		cfg, err := ResolveEggConfig(path)
-		if err == nil {
-			return cfg
+		if _, statErr := os.Stat(path); statErr == nil {
+			cfg, err := ResolveEggConfig(path)
+			if err == nil {
+				return cfg
+			}
+			log.Printf("egg: config discovery failed for %s: %v", path, err)
 		}
-		log.Printf("egg: config discovery failed for %s: %v", path, err)
 	}
 	if wingDefault != nil {
 		return wingDefault
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		path := filepath.Join(home, ".wingthing", "egg.yaml")
+		if _, statErr := os.Stat(path); statErr == nil {
+			cfg, resolveErr := ResolveEggConfig(path)
+			if resolveErr == nil {
+				return cfg
+			}
+			log.Printf("egg: global config discovery failed for %s: %v", path, resolveErr)
+		}
 	}
 	return DefaultEggConfig()
 }
@@ -365,10 +422,11 @@ func MergeEggConfig(parent, child *EggConfig) *EggConfig {
 	// Network: union domains with wildcard short-circuit; mapping-only options
 	// follow child-wins, matching how Resources merge.
 	merged.Network = NetworkField{
-		Domains:    mergeStringSet(parent.Network.Domains, child.Network.Domains),
-		LocalPorts: mergeIntSet(parent.Network.LocalPorts, child.Network.LocalPorts),
-		Mode:       firstNonEmpty(child.Network.Mode, parent.Network.Mode),
-		Log:        firstNonNilBool(child.Network.Log, parent.Network.Log),
+		Domains:      mergeStringSet(parent.Network.Domains, child.Network.Domains),
+		LocalPorts:   mergeIntSet(parent.Network.LocalPorts, child.Network.LocalPorts),
+		Mode:         firstNonEmpty(child.Network.Mode, parent.Network.Mode),
+		Log:          firstNonNilBool(child.Network.Log, parent.Network.Log),
+		AgentDomains: firstNonEmpty(child.Network.AgentDomains, parent.Network.AgentDomains),
 	}
 
 	// Env: union with wildcard short-circuit

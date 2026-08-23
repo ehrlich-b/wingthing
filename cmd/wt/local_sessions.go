@@ -24,15 +24,20 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const sessionNameFile = "session.name"
+const (
+	sessionNameFile      = "session.name"
+	sessionPrincipalFile = "session.principal"
+)
 
 type localSession struct {
 	ID           string `json:"id"`
 	Name         string `json:"name,omitempty"`
+	Principal    string `json:"principal,omitempty"`
 	Kind         string `json:"kind"`
 	Agent        string `json:"agent,omitempty"`
 	Command      string `json:"command,omitempty"`
 	CWD          string `json:"cwd,omitempty"`
+	Isolation    string `json:"isolation,omitempty"`
 	PID          int    `json:"pid"`
 	Readers      int32  `json:"readers"`
 	UptimeSecs   int64  `json:"uptime_seconds"`
@@ -97,13 +102,15 @@ func discoverSessionRefs(cfg *config.Config) ([]localSession, error) {
 
 		meta := readEggMetaValues(dir)
 		s := localSession{
-			ID:      sessionID,
-			Name:    readSessionName(dir),
-			Kind:    meta["kind"],
-			Agent:   meta["agent"],
-			Command: meta["command"],
-			CWD:     meta["cwd"],
-			PID:     pid,
+			ID:        sessionID,
+			Name:      readSessionName(dir),
+			Principal: readSessionPrincipal(dir),
+			Kind:      meta["kind"],
+			Agent:     meta["agent"],
+			Command:   meta["command"],
+			CWD:       meta["cwd"],
+			Isolation: meta["isolation"],
+			PID:       pid,
 		}
 		if s.Kind == "" {
 			if s.Agent != "" {
@@ -117,6 +124,31 @@ func discoverSessionRefs(cfg *config.Config) ([]localSession, error) {
 	}
 	sortLocalSessions(sessions)
 	return sessions, nil
+}
+
+func readSessionPrincipal(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, sessionPrincipalFile))
+	if err != nil {
+		return ""
+	}
+	principal := strings.TrimSpace(string(data))
+	if validateSessionName(principal) != nil {
+		return ""
+	}
+	return principal
+}
+
+func writeSessionPrincipal(dir, principal string) error {
+	if principal == "" {
+		return nil
+	}
+	if err := validateSessionName(principal); err != nil {
+		return fmt.Errorf("invalid MCP client name: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, sessionPrincipalFile), []byte(principal+"\n"), 0600); err != nil {
+		return fmt.Errorf("write session principal: %w", err)
+	}
+	return nil
 }
 
 func sortLocalSessions(sessions []localSession) {
@@ -144,12 +176,19 @@ func readAliveEggPID(dir string) (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil || proc.Signal(syscall.Signal(0)) != nil {
+	if !processIsAlive(pid) {
 		cleanEggDir(dir)
 		return 0, false
 	}
 	return pid, true
+}
+
+func processIsAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	return err == nil && proc.Signal(syscall.Signal(0)) == nil
 }
 
 func readEggMetaValues(dir string) map[string]string {
@@ -277,7 +316,7 @@ func printActiveSessions(ctx context.Context, cfg *config.Config, jsonOutput boo
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tID\tKIND\tPROCESS\tREADERS\tUPTIME\tIDLE\tCWD")
+	fmt.Fprintln(w, "NAME\tID\tKIND\tPROCESS\tISOLATION\tREADERS\tUPTIME\tIDLE\tCWD")
 	for _, session := range sessions {
 		name := session.Name
 		if name == "" {
@@ -290,8 +329,12 @@ func printActiveSessions(ctx context.Context, cfg *config.Config, jsonOutput boo
 		if process == "" {
 			process = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
-			name, session.ID, session.Kind, process, session.Readers,
+		isolation := session.Isolation
+		if isolation == "" {
+			isolation = "unknown"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			name, session.ID, session.Kind, process, isolation, session.Readers,
 			humanDuration(time.Duration(session.UptimeSecs)*time.Second),
 			humanDuration(time.Duration(session.IdleSecs)*time.Second),
 			shortenPath(session.CWD),

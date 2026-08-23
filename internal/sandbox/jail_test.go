@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -21,7 +22,32 @@ func TestMain(m *testing.M) {
 		DenyInit(os.Args[2:])
 		return
 	}
+	if runtime.GOOS == "linux" {
+		missing := sandboxBatteryPrerequisites()
+		if len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "wingthing sandbox battery preflight failed: required commands missing from PATH: %s\n", strings.Join(missing, ", "))
+			os.Exit(2)
+		}
+	}
 	os.Exit(m.Run())
+}
+
+func sandboxBatteryPrerequisites() []string {
+	var missing []string
+	for _, command := range []string{"curl", "python3"} {
+		if _, err := exec.LookPath(command); err != nil {
+			missing = append(missing, command)
+		}
+	}
+	return missing
+}
+
+func TestSandboxBatteryPrerequisitesReportAllMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	missing := sandboxBatteryPrerequisites()
+	if strings.Join(missing, ",") != "curl,python3" {
+		t.Fatalf("missing prerequisites = %q", missing)
+	}
 }
 
 // runJail creates a sandbox and runs a shell command, returning stdout+stderr and error.
@@ -114,6 +140,28 @@ func TestJail_DenyPathBlocked(t *testing.T) {
 	}, "cat "+testFile)
 	if err == nil {
 		t.Fatal("read of denied path should fail")
+	}
+}
+
+func TestJail_MissingDenyPathPreparedBeforeReadonlyHome(t *testing.T) {
+	home := t.TempDir()
+	writable := filepath.Join(home, ".cache")
+	if err := os.MkdirAll(writable, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(home, ".aws")
+
+	out, err := runJail(t, Config{
+		NetworkNeed: NetworkFull,
+		UserHome:    home,
+		Mounts:      []Mount{{Source: writable, Target: writable}},
+		Deny:        []string{missing},
+	}, "test -d "+missing+" && ! touch "+missing+"/credential 2>/dev/null && printf launched")
+	if err != nil {
+		t.Fatalf("sandbox rejected an absent deny path under read-only HOME: output=%q error=%v", out, err)
+	}
+	if out != "launched" {
+		t.Fatalf("agent did not launch after deny mount preparation: %q", out)
 	}
 }
 

@@ -23,7 +23,7 @@ All three give you a single terminal connection. Want to check on a long-running
 
 **Outbound-only connectivity.** The wing connects outbound to a roost. No ports to open, no static IP. Works behind any NAT, any firewall, any cellular network.
 
-**E2E encryption.** Terminal I/O is encrypted between browser and wing (X25519 + AES-256-GCM). The roost forwards ciphertext it can't read.
+**Application encryption.** Terminal I/O is encrypted between the shipped browser client and wing (X25519 + AES-256-GCM), so the normal roost forwarding path receives ciphertext. The hosted web client and initial TOFU wing-key pin are part of the trust boundary; this is not a claim that malicious service-supplied JavaScript cannot read a session.
 
 **Session persistence with VTE snapshots.** A server-side virtual terminal emulator (`charmbracelet/x/vt`) captures full terminal state in the egg process. On reconnect, the egg sends a VTE snapshot (current screen + scrollback) instead of replaying raw bytes. This is the same architecture as tmux and mosh - a userspace terminal emulator sits between the PTY and the network. Close your laptop, open your phone, reattach. The browser gets the current screen state instantly.
 
@@ -35,7 +35,7 @@ The VTE also maintains a 50,000-line scrollback ring buffer. Lines that scroll o
 
 After verification, the wing issues an auth token (64 random hex bytes) cached in the browser's sessionStorage. Subsequent reattaches present the token instead of re-prompting. Tokens are boot-scoped by default (cleared on wing restart) with optional TTL via `auth_ttl` in wing.yaml.
 
-The roost never sees any of this. The challenge, signature, and token all travel inside the E2E encrypted tunnel. The roost forwards ciphertext. A compromised roost can't forge passkey assertions because it doesn't have the private key and can't even read the challenge.
+Tunnel challenges, assertions, and tokens travel inside the application-encrypted tunnel; PTY ceremonies use fresh wing challenges on the PTY control path. The wing verifies a locally pinned public key and binds tokens to the client key and relay user. This prevents the as-built relay from minting a locked-wing token, but a compromised hosted service can still replace the browser JavaScript; see `security.md`.
 
 **Browser with no client install, or native CLI.** Open a browser when that is
 the convenient client, or use `wt attach` locally and over SSH. The browser is
@@ -51,7 +51,7 @@ The terminal stack has three layers that don't know about each other. Changes to
 
 **Session state (egg).** The VTE in the egg process is the source of truth for terminal state. It captures the grid, cursor, modes, scrollback. It produces snapshots on reconnect and passes raw bytes through for the live path. This is independent of how those bytes reach the browser.
 
-**Transport (relay).** Today, all bytes flow through the roost via WebSocket. The roost is a dumb pipe forwarding ciphertext. The transport could change to P2P (WebRTC DataChannel for browsers, QUIC for CLI clients) without touching the VTE or the renderer. The E2E encryption is transport-independent - same ECDH key exchange, same AES-GCM, whether bytes flow through the roost or directly between peers.
+**Transport (relay).** Today, all bytes flow through the roost via WebSocket. Its normal forwarding path carries application ciphertext. The transport could change to P2P (WebRTC DataChannel for browsers, QUIC for CLI clients) without touching the VTE or the renderer. The payload encryption is transport-independent - same ECDH key agreement and AES-GCM, whether bytes flow through the roost or directly between peers.
 
 ## What's missing
 
@@ -104,7 +104,7 @@ For browsers: WebRTC DataChannels are the only browser API that does P2P with NA
 
 For CLI clients: QUIC gives UDP-based multiplexing with connection migration (handles roaming). quic-go has NAT traversal support.
 
-This is a later optimization. The relay works fine for now, and the E2E encryption means the security model doesn't change either way.
+This is a later optimization. The relay works fine for now. P2P reduces relay exposure to payload ciphertext and traffic volume, but it does not remove signaling, client-distribution, endpoint, or initial-key trust from the security model.
 
 ### Tailscale complementarity
 

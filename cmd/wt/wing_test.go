@@ -45,6 +45,23 @@ func hasName(ps []ws.WingProject, name string) bool {
 	return false
 }
 
+func TestMemberSessionVisibilityFailsClosed(t *testing.T) {
+	req := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "member"}
+	if canSeeSession(req, "") {
+		t.Fatal("member could see a session with missing ownership metadata")
+	}
+	if !canSeeSession(req, "alice") {
+		t.Fatal("member could not see their own session")
+	}
+	if canSeeSession(req, "bob") {
+		t.Fatal("member could see another user's session")
+	}
+	owner := ws.TunnelRequest{SenderUserID: "owner", SenderOrgRole: "owner"}
+	if !canSeeSession(owner, "") || !canSeeSession(owner, "bob") {
+		t.Fatal("wing owner lost administrative session visibility")
+	}
+}
+
 func TestWingStatusRoundTrip(t *testing.T) {
 	// writeWingStatus/readWingStatus use wingStatusPath() which depends on config.Load().
 	// We test the JSON struct directly for unit isolation.
@@ -493,6 +510,30 @@ func TestResolveRelayHTTPURL(t *testing.T) {
 				t.Errorf("resolveRelayHTTPURL(%q) = %q, want %q", tt.roostURL, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPasskeyPolicyForRoost(t *testing.T) {
+	managed := passkeyPolicyForRoost("wss://ws.wingthing.ai/ws/wing")
+	if managed.RPID != "wingthing.ai" || len(managed.Origins) != 1 || managed.Origins[0] != "https://app.wingthing.ai" || !managed.RequireUserVerification {
+		t.Fatalf("managed policy = %#v", managed)
+	}
+	selfHosted := passkeyPolicyForRoost("https://roost.example.test:8443")
+	if selfHosted.RPID != "roost.example.test" || len(selfHosted.Origins) != 1 || selfHosted.Origins[0] != "https://roost.example.test:8443" {
+		t.Fatalf("self-hosted policy = %#v", selfHosted)
+	}
+}
+
+func TestPasskeysForSubjectNeverTrustsAnotherUser(t *testing.T) {
+	allowed := []config.AllowKey{
+		{UserID: "alice", Key: "alice-key"},
+		{UserID: "bob", Key: "bob-key"},
+		{Key: "intentional-key-only"},
+		{UserID: "alice"},
+	}
+	got := passkeysForSubject(allowed, "alice")
+	if len(got) != 2 || got[0].Key != "alice-key" || got[1].Key != "intentional-key-only" {
+		t.Fatalf("alice keys = %#v", got)
 	}
 }
 

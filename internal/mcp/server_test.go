@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,51 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 )
+
+func TestServerPublishesAndCallsNativeToolsWithoutRolePolicy(t *testing.T) {
+	srv := NewServer(nil, nil, nil)
+	srv.SetNativeTools([]NativeTool{{
+		Name: "terminal_list", Title: "List owned terminals", Description: "List the caller's terminals.",
+		InputSchema: map[string]any{"type": "object", "additionalProperties": false},
+		Annotations: map[string]any{"readOnlyHint": true},
+		Call: func(_ context.Context, principal Principal, arguments json.RawMessage) (map[string]any, bool, error) {
+			if principal.UserID != "user-1" || principal.ClientID != "client-1" {
+				t.Fatalf("principal = %+v", principal)
+			}
+			if string(arguments) != `{}` {
+				t.Fatalf("arguments = %s", arguments)
+			}
+			return map[string]any{"owner": principal.UserID}, false, nil
+		},
+	}}, func(*http.Request) Principal { return Principal{UserID: "user-1", ClientID: "client-1"} })
+
+	call := func(body string) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "https://wing.example/mcp", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	listed := call(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	tools := listed["result"].(map[string]any)["tools"].([]any)
+	if len(tools) != 1 || tools[0].(map[string]any)["title"] != "List owned terminals" {
+		t.Fatalf("tools = %#v", tools)
+	}
+	result := call(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"terminal_list"}}`)["result"].(map[string]any)
+	if result["isError"] != false || result["structuredContent"].(map[string]any)["owner"] != "user-1" {
+		t.Fatalf("result = %#v", result)
+	}
+}
 
 func testMCPServer() *Server {
 	p := &Policy{Roles: map[string]*RolePolicy{

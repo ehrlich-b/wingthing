@@ -5,9 +5,12 @@ import { gcm } from '@noble/ciphers/aes.js';
 import { b64ToBytes, bytesToB64 } from './helpers.js';
 import { S } from './state.js';
 
-// Browser identity key (sessionStorage — ephemeral per tab, provides PFS)
+// Browser identity key (sessionStorage — ephemeral per tab). The wing key is
+// persistent, so this provides key separation but not forward secrecy against
+// later compromise of the wing key.
 var IDENTITY_PUBKEY_KEY = 'wt_identity_pubkey';
 var IDENTITY_PRIVKEY_KEY = 'wt_identity_privkey';
+var WING_IDENTITY_PINS_KEY = 'wt_wing_identity_pins_v1';
 
 function getOrCreateIdentityKey() {
     try {
@@ -25,8 +28,28 @@ function getOrCreateIdentityKey() {
 export var identityKey = getOrCreateIdentityKey();
 export var identityPubKey = identityKey.pub;
 
+// Trust on first use: retain the first wing identity seen for a machine ID and
+// fail closed if the relay later presents a different key. A user can clear the
+// site data after deliberately rotating/reinstalling a wing. This protects
+// against later control-plane key substitution, but not a malicious first use
+// or malicious JavaScript served by the relay.
+export function assertWingIdentity(wingId, wingPublicKeyB64) {
+    if (!wingId || !wingPublicKeyB64) throw new Error('missing wing identity');
+    var pins = {};
+    try { pins = JSON.parse(localStorage.getItem(WING_IDENTITY_PINS_KEY) || '{}'); } catch (e) {}
+    var pinned = pins[wingId];
+    if (pinned && pinned !== wingPublicKeyB64) {
+        throw new Error('wing identity changed; verify the wing before clearing this site\'s stored data');
+    }
+    if (!pinned) {
+        pins[wingId] = wingPublicKeyB64;
+        localStorage.setItem(WING_IDENTITY_PINS_KEY, JSON.stringify(pins));
+    }
+}
+
 // Pure JS HKDF + AES-GCM — works without crypto.subtle / secure context
-export async function deriveE2EKey(wingPublicKeyB64) {
+export async function deriveE2EKey(wingPublicKeyB64, wingId) {
+    if (wingId) assertWingIdentity(wingId, wingPublicKeyB64);
     if (!identityKey.priv) return null;
     var wingPubBytes = b64ToBytes(wingPublicKeyB64);
     var shared = x25519.getSharedSecret(identityKey.priv, wingPubBytes);

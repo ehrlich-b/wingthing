@@ -1,7 +1,7 @@
 # Wingthing as an agent meta-access layer
 
-Status: first local implementation slice  
-Reviewed: 2026-08-08
+Status: local implementation with principal guardrails
+Reviewed: 2026-08-20
 
 ## Thesis
 
@@ -75,7 +75,7 @@ runs, dependency flow, and collaboration controls.
 This branch adds:
 
 ```bash
-wt mcp stdio
+wt mcp stdio --client CLIENT
 ```
 
 It implements newline-delimited MCP JSON-RPC over stdin/stdout. Standard output
@@ -92,7 +92,9 @@ Current tools:
 | `terminal_read` | Read the current ANSI snapshot |
 | `terminal_send` | Send PTY input |
 | `terminal_wait` | Wait for output text or I/O idleness without client polling |
+| `terminal_start` | Start a persistent terminal for a generic command or shell |
 | `agent_start` | Start a persistent sandboxed agent terminal, with verbatim passthrough of agent CLI arguments such as model selection |
+| `terminal_rename` | Rename a terminal owned by the calling principal |
 | `terminal_stop` | Stop a terminal and its process tree |
 | `prompt_list` | List current named prompt assets and revisions |
 | `prompt_get` | Read a current or immutable historical prompt revision |
@@ -109,15 +111,25 @@ A generic local MCP client can register it with the equivalent of:
   "mcpServers": {
     "wingthing": {
       "command": "wt",
-      "args": ["mcp", "stdio"]
+      "args": ["mcp", "stdio", "--client", "my-llm"]
     }
   }
 }
 ```
 
 The exact configuration file differs by client. No Wingthing account or network
-service is involved; the MCP child process has the same local authority as the
-user who launched it.
+service is involved; the MCP child process still has the OS authority of the
+user who launched it. The client name is an attribution and Wingthing-policy
+principal, not independent authentication from another local user. A mode-0600
+`~/.wingthing/clients.yaml` can require configured client names and give each
+one explicit grants and spawn bounds.
+
+When the process already runs inside a dedicated sandbox VM or container, the
+operator can register `wt mcp stdio --client CLIENT --unsandboxed`. This is a
+server-wide authority choice, not a per-tool argument: persistent sessions and
+headless prompt/loop/swarm tasks run with the full authority of the VM user. The
+capability response and initialize instructions expose the mode, and audit rows
+record `outer-boundary`. See [the VM recipe](sandboxed-ai-vm.md).
 
 ## Loop semantics
 
@@ -184,11 +196,13 @@ LLM accessibility must not mean invisible ambient authority.
 - SQLite writer contention has a bounded busy timeout.
 - Terminal stop is explicit and separately marked destructive.
 
-The current stdio server is intentionally local-user authority. Before exposing
-these calls remotely, Wingthing needs principal-aware grants for each action:
-view terminal, control terminal, start process, stop process, invoke model,
-access path/profile, and use privileged tools. Transport authentication alone
-is not authorization.
+The stdio server remains local-user authority, but named clients now get
+principal-aware grants, spawn bounds, terminal/task ownership, and a mode-0600
+JSONL audit trail. These controls prevent accidental cross-client access inside
+Wingthing; they are not an OS sandbox and cannot constrain a malicious process
+that can read the same files or connect to the same local sockets. Any remote
+version still needs cryptographically authenticated principals and path/profile
+policy. Transport authentication alone is not authorization.
 
 ## Relationship to collaboration
 
@@ -212,7 +226,9 @@ it. Neither one owns the abstract agent workflow.
 Implemented on the vacation branch:
 
 - local MCP stdio server and strict tool schemas
-- terminal list/read/send/wait/start/stop
+- terminal list/read/send/wait/start/rename/stop
+- named local principals with per-client grants and spawn bounds, terminal/task
+  ownership, and append-only JSONL audit records
 - named prompt templates with declared variables, content-addressed revisions,
   immutable local history, atomic writes, and conflict detection
 - structured headless prompt runs and task inspection
@@ -234,7 +250,8 @@ Important next steps:
 4. Extend prompt assets with output schemas, model policy, composition, and
    portable project selectors; named/versioned templates and run provenance are
    already present.
-5. Add budgets for wall time, tokens, spend, retries, and tool authority.
+5. Extend current session/spawn/tool bounds with wall-time, token, spend, retry,
+   path, and profile budgets.
 6. Add pause/approve/resume nodes and human-visible control leases.
 7. Run the same API over SSH/direct/P2P/relay transports with explicit grants.
 8. Build a TUI/browser graph view only after the runtime semantics stabilize.

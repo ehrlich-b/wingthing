@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -17,6 +18,67 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/mcp"
 )
+
+func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testing.T) {
+	srv, ts := testServer(t)
+	srv.RoostMode = true
+	if err := srv.Store.CreateUser("carol"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.Store.DB().Exec("UPDATE users SET email = ? WHERE id = ?", "carol@example.com", "carol"); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Store.CreateSession("sess-carol", "carol", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	srv.EnableMCP(nil, nil, mcp.NativeTool{
+		Name: "terminal_list", Title: "List owned terminals",
+		InputSchema: map[string]any{"type": "object", "additionalProperties": false},
+		Call: func(_ context.Context, principal mcp.Principal, _ json.RawMessage) (map[string]any, bool, error) {
+			return map[string]any{"owner_id": principal.UserID, "actor_id": principal.ClientID}, false, nil
+		},
+	})
+
+	clientID := oauthRegister(t, ts.URL, "http://localhost:9999/cb")
+	verifier := "verifier-abcdefghijklmnopqrstuvwxyz-0123456789"
+	sum := sha256.Sum256([]byte(verifier))
+	code := oauthAuthorize(t, ts.URL, clientID, "http://localhost:9999/cb",
+		base64.RawURLEncoding.EncodeToString(sum[:]), "sess-carol")
+	token := oauthToken(t, ts.URL, clientID, "http://localhost:9999/cb", code, verifier)
+	if names := mcpToolNames(t, ts.URL, token); !names["terminal_list"] {
+		t.Fatalf("native control tool missing: %v", names)
+	}
+
+	body := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"terminal_list","arguments":{}}}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Result struct {
+			Structured map[string]any `json:"structuredContent"`
+			IsError    bool           `json:"isError"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.IsError || result.Result.Structured["owner_id"] != "carol" || result.Result.Structured["actor_id"] != clientID {
+		t.Fatalf("native result = %#v", result.Result)
+	}
+	var audit string
+	if err := srv.Store.DB().QueryRow("SELECT detail FROM audit_log WHERE event = 'mcp_control_call' ORDER BY id DESC LIMIT 1").Scan(&audit); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(audit, `"owner_id":"carol"`) || !strings.Contains(audit, `"actor_id":"`+clientID+`"`) {
+		t.Fatalf("native audit = %s", audit)
+	}
+}
 
 // mcpTestServer builds a roost with the MCP surface enabled, one email'd user in role "eng"
 // (which is denied slide-db), and a web session for that user.

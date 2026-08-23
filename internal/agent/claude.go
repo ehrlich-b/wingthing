@@ -39,6 +39,9 @@ func (c *Claude) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 	if opts.CmdFactory != nil {
 		args = append(args, "--dangerously-skip-permissions")
 	}
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
 	if opts.SystemPrompt != "" {
 		if opts.ReplaceSystemPrompt {
 			args = append(args, "--system-prompt", opts.SystemPrompt)

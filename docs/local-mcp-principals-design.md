@@ -1,11 +1,11 @@
 # Local MCP principals: isolating co-resident agents
 
-Status: proposed  
-Reviewed: 2026-08-09
+Status: implemented through grants/bounds and shared-owner actors; sandbox ceiling remains
+Reviewed: 2026-08-20
 
 Companion to [MCP service accounts](mcp-service-accounts-design.md), which covers the
 **remote** surface (`POST /mcp`) and unattended cloud consumers. This document covers the
-**local stdio** surface (`wt mcp stdio`), whose problem is different and currently unsolved.
+**local stdio** surface (`wt mcp stdio`), whose problem is different.
 
 ## The problem
 
@@ -68,10 +68,15 @@ which is the entire stated worry.
 `wt mcp stdio --client <name>`, or `WT_MCP_CLIENT=<name>`.
 
 - **Named client** → its own namespace, and its own grants if configured.
+- **Named clients with one configured `owner`** → shared sessions, tasks, and
+  messages with distinct audit actors. This is the local Codex/Claude pair
+  pattern.
 - **Unnamed client** → the shared `default` principal, which is exactly today's behavior.
   Backward compatible: nothing that works now breaks.
-- `mcp.require_client: true` in config rejects unnamed clients outright. That is the
-  lockdown switch, opt-in.
+- `require_client: true` in `~/.wingthing/clients.yaml` rejects unnamed and
+  unconfigured clients outright. That is the lockdown switch, opt-in. When a
+  clients file already names clients, an explicit unknown name is also rejected
+  so a typo cannot bypass its grant table.
 
 Recommended setup registers each agent's MCP client under its own name, so isolation is
 the consequence of ordinary configuration rather than a security ritual:
@@ -81,31 +86,41 @@ the consequence of ordinary configuration rather than a security ritual:
     "command": "wt", "args": ["mcp", "stdio", "--client", "claude-code"] } } }
 ```
 
-A token in `~/.wingthing/clients.yaml` (mode 0600) may be required alongside the name. It
-raises the cost of impersonation from "type a different flag" to "read a file you can
-already read" — worth having for attribution integrity, worth *not* overstating.
+A token alongside the name may be added later. It would raise the cost of
+impersonation from "type a different flag" to "read a file you can already read" —
+potentially useful for attribution integrity, but still not a same-UID security boundary.
 
 ### 3. Grants and bounds
 
 Per client, in `~/.wingthing/clients.yaml`:
 
 ```yaml
+require_client: true
 clients:
   claude-code:
-    grants: [terminal.start, terminal.read, terminal.send, terminal.stop, prompt.run]
+    owner: ehrlich
+    grants: [terminal.start, terminal.read, terminal.send, terminal.stop, prompt.run, message.read, message.send]
     bounds: {max_sessions: 4, max_spawns_per_hour: 20}
-    sandbox_ceiling: ~/.wingthing/egg-ceiling.yaml
   codex:
-    grants: [terminal.read]          # observes, never drives
+    owner: ehrlich
+    grants: [terminal.read, message.read, message.send]
   cron-jobs:
     grants: [prompt.run]
-    bounds: {max_concurrent: 1}
 ```
 
 Grant names map to tools, not to transports, so the same vocabulary works when these
-capabilities reach the remote surface. Absent config, a named client gets the full default
-grant set — naming yourself buys isolation, not restriction, unless restriction is written
-down.
+capabilities reach the remote surface. With no clients file, a named client gets the full
+default grant set — naming yourself buys isolation, not restriction. Once a clients file
+names clients, an explicit unknown name is rejected; a present client with an empty grant
+list gets no tools.
+
+Implemented bounds are `max_sessions` and `max_spawns_per_hour`. Implemented
+grant names are `capabilities.read`, `sandbox.read`, `terminal.start`,
+`terminal.read`, `terminal.send`, `terminal.rename`, `terminal.stop`,
+`agent.run`, `agent.read`, `agent.stop`, `message.read`, `message.send`,
+`prompt.read`, `prompt.save`, and `prompt.run`. The rolling per-hour spawn count
+is process-local and therefore a guardrail, not a durable quota or hostile-client
+security boundary.
 
 ### 4. Sandbox ceiling
 
@@ -122,8 +137,8 @@ directory can escape by choosing a different one.
 ### 5. Audit
 
 Append-only `~/.wingthing/mcp-audit.log`, one line per call: timestamp, principal, tool,
-target session, decision, and an argument digest. Mutating and destructive tools always;
-read-only tools behind a flag so the log stays readable.
+target session, decision, and an argument digest. The current implementation records every
+tool call, including reads and authorization failures.
 
 This is the "log line" the `CLAUDE.md` authority rule requires and the only way to answer
 "what did that agent do while I was away."
@@ -137,6 +152,14 @@ This is the "log line" the `CLAUDE.md` authority rule requires and the only way 
 5. Sandbox ceiling, which is also the fix for caller-chosen egg policy generally.
 
 Steps 1–3 are additive and break nothing. Step 4 is where a machine can be locked down.
+
+As of 2026-08-20, steps 1–4 are implemented. Session creators are recorded in
+`session.principal`, named MCP enumeration/control is owner-scoped, every tool
+call is attributed in `~/.wingthing/mcp-audit.log`, and `clients.yaml` enforces
+grants plus spawn bounds. A configured `owner` lets distinct local client actors
+share those owner-scoped resources and exchange durable messages. Step 5, the sandbox ceiling/intersection algorithm,
+remains a release gap: a client with `terminal.start` can still select a working
+directory whose `egg.yaml` is more permissive than an administrator intended.
 
 ## Testing
 

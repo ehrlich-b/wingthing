@@ -72,6 +72,11 @@ func (b *Builder) Build(ctx context.Context, taskID string) (*PromptResult, erro
 		agentIsolation = dbAgent.DefaultIsolation
 	}
 	rc := ResolveConfig(sk, task.Agent, agentIsolation, b.Config)
+	// A task-level isolation value is an explicit invocation override. "none"
+	// is the store's legacy unresolved sentinel, not an isolation mode.
+	if task.Isolation != "" && task.Isolation != "none" {
+		rc.Isolation = task.Isolation
+	}
 
 	// 4. Look up agent context window
 	contextWindow := 200000 // default

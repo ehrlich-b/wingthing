@@ -86,7 +86,10 @@ Masks are invalid with `base: none` (nothing to mask).
 
 #### Interaction with agent auto-drill
 
-Agent profiles are applied AFTER config resolution. Per-section masks don't affect auto-drilling — agents always get their declared network, env, and fs holes regardless of what the egg config specifies.
+Agent profiles are applied after config resolution. Per-section masks leave
+auto-drilling intact. `network.agent_domains: none` is the explicit switch for
+suppressing profile domains; `WT_PROVIDER_BASE_URL` supplies one derived exact
+host when configured.
 
 ### Merge rules
 

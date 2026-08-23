@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
@@ -49,12 +50,10 @@ func printSystemSection() {
 	}
 
 	// overlayfs
-	if data, err := os.ReadFile("/proc/filesystems"); err == nil {
-		if strings.Contains(string(data), "overlay") {
-			fmt.Printf("  %-14s %s\n", "overlayfs:", "available")
-		} else {
-			fmt.Printf("  %-14s %s\n", "overlayfs:", "not available")
-		}
+	if overlayFSAvailable() {
+		fmt.Printf("  %-14s %s\n", "overlayfs:", "available")
+	} else {
+		fmt.Printf("  %-14s %s\n", "overlayfs:", "not available")
 	}
 
 	// apparmor
@@ -101,6 +100,39 @@ func printSystemSection() {
 	fmt.Println()
 }
 
+func overlayFSAvailable() bool {
+	filesystems, _ := os.ReadFile("/proc/filesystems")
+	kernelRelease, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	if overlayFSAvailableFrom(filesystems, strings.TrimSpace(string(kernelRelease)), []string{"/lib/modules", "/usr/lib/modules"}) {
+		return true
+	}
+	modinfo, err := exec.LookPath("modinfo")
+	if err != nil {
+		return false
+	}
+	output, err := exec.Command(modinfo, "-F", "filename", "overlay").Output()
+	return err == nil && strings.TrimSpace(string(output)) != ""
+}
+
+func overlayFSAvailableFrom(filesystems []byte, kernelRelease string, moduleRoots []string) bool {
+	for _, line := range strings.Split(string(filesystems), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[len(fields)-1] == "overlay" {
+			return true
+		}
+	}
+	if kernelRelease == "" {
+		return false
+	}
+	for _, root := range moduleRoots {
+		matches, err := filepath.Glob(filepath.Join(root, kernelRelease, "kernel", "fs", "overlayfs", "overlay.ko*"))
+		if err == nil && len(matches) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func doctorFix() error {
 	// Check if AppArmor userns restriction is the issue.
 	val, err := os.ReadFile("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
@@ -124,6 +156,10 @@ func doctorFix() error {
 	if err != nil {
 		return fmt.Errorf("resolve wt binary symlinks: %w", err)
 	}
+	if err := validateAppArmorExecutablePath(exe); err != nil {
+		return err
+	}
+	fmt.Println("AppArmor profile executable:", exe)
 
 	profileContent := fmt.Sprintf(`abi <abi/4.0>,
 profile wingthing %s flags=(unconfined) {
@@ -139,14 +175,27 @@ profile wingthing %s flags=(unconfined) {
 			fmt.Println("AppArmor profile already installed at", profilePath)
 			// Try to reload it in case it wasn't loaded.
 			if os.Geteuid() == 0 {
-				exec.Command("apparmor_parser", "-r", profilePath).Run()
+				cmd := exec.Command("apparmor_parser", "-r", profilePath)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					return fmt.Errorf("apparmor_parser -r %s: %w", profilePath, err)
+				}
+				fmt.Println("AppArmor profile loaded for", exe)
+				fmt.Println("verify from the unprivileged account with: wt doctor")
+				return nil
 			}
 			if ok, _ := sandbox.CheckCapability(); ok {
 				fmt.Println("sandbox is working")
 				return nil
 			}
-			fmt.Println("profile exists but sandbox still not working — try: sudo apparmor_parser -r", profilePath)
+			fmt.Println("profile exists; reload it with: sudo apparmor_parser -r", profilePath)
 			return nil
+		}
+		if previous := appArmorProfileExecutable(existing); previous != "" {
+			fmt.Printf("replacing AppArmor profile executable %s with %s\n", previous, exe)
+		} else {
+			fmt.Println("replacing existing AppArmor profile at", profilePath)
 		}
 	}
 
@@ -162,14 +211,8 @@ profile wingthing %s flags=(unconfined) {
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("apparmor_parser -r %s: %w", profilePath, err)
 		}
-		fmt.Println("AppArmor profile installed and loaded")
-
-		// Verify.
-		if ok, _ := sandbox.CheckCapability(); ok {
-			fmt.Println("sandbox is now working")
-		} else {
-			fmt.Println("warning: profile loaded but sandbox probe still fails")
-		}
+		fmt.Println("AppArmor profile installed and loaded for", exe)
+		fmt.Println("verify from the unprivileged account with: wt doctor")
 		return nil
 	}
 
@@ -198,4 +241,56 @@ echo "done — wt sandbox should now work"
 `, profilePath, profileContent, profilePath)
 	fmt.Println("--- cut here ---")
 	return nil
+}
+
+// validateAppArmorExecutablePath ensures the profile cannot be redirected by
+// replacing the executable or one of its parent directories. AppArmor path
+// attachment has no content hash, so the complete path must be controlled by
+// root. This deliberately rejects binaries run from a checkout, download
+// directory, user home, or /tmp; install wt to a stable system path first.
+func validateAppArmorExecutablePath(path string) error {
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return fmt.Errorf("AppArmor profile requires an absolute executable path; install wt to /usr/local/bin/wt first")
+	}
+	if strings.ContainsAny(clean, " \t\r\n{}") {
+		return fmt.Errorf("AppArmor profile executable path contains unsupported characters: %q", clean)
+	}
+
+	for component := clean; ; component = filepath.Dir(component) {
+		info, err := os.Stat(component)
+		if err != nil {
+			return fmt.Errorf("inspect AppArmor executable path component %s: %w", component, err)
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return fmt.Errorf("inspect ownership of AppArmor executable path component %s", component)
+		}
+		if stat.Uid != 0 || info.Mode().Perm()&0022 != 0 {
+			return fmt.Errorf("AppArmor profile requires a root-owned, root-writable-only executable path; unsafe component %s has owner uid %d and mode %04o. Install wt to /usr/local/bin/wt, then run sudo /usr/local/bin/wt doctor --fix",
+				component, stat.Uid, info.Mode().Perm())
+		}
+		if component == string(filepath.Separator) {
+			break
+		}
+	}
+
+	info, err := os.Stat(clean)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("AppArmor profile executable must be a regular file: %s", clean)
+	}
+	return nil
+}
+
+func appArmorProfileExecutable(profile []byte) string {
+	for _, line := range strings.Split(string(profile), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) >= 3 && fields[0] == "profile" && fields[1] == "wingthing" {
+			return fields[2]
+		}
+	}
+	return ""
 }

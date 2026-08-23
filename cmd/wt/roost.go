@@ -264,14 +264,20 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		fmt.Println("auth providers configured — roost mode (OAuth enabled)")
 	}
 
-	// Remote MCP is an explicit part of wing.yaml. It uses the same tools_dir as the wing.
+	// Authenticated roost users always receive the typed owner-scoped control
+	// surface. wing.yaml can add role-scoped executable tools beside it.
 	tools, policy, err := loadRoostMCPConfig(cfg.Dir)
 	if err != nil {
 		return err
 	}
-	if policy != nil {
-		srv.EnableMCP(egg.NewToolRunner(tools), policy)
-		log.Printf("mcp: enabled — %d tool(s), %d role(s) at POST /mcp", len(tools), len(policy.Roles))
+	nativeTools := roostNativeMCPTools(cfg, hasAuth)
+	if hasAuth || policy != nil {
+		srv.EnableMCP(egg.NewToolRunner(tools), policy, nativeTools...)
+		roleCount := 0
+		if policy != nil {
+			roleCount = len(policy.Roles)
+		}
+		log.Printf("mcp: enabled — %d control operation(s), %d executable tool(s), %d role(s) at POST /mcp", len(nativeTools), len(tools), roleCount)
 	}
 
 	// Write device token so the wing goroutine can connect
@@ -309,12 +315,12 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 						log.Printf("mcp: reload failed; keeping previous configuration: %v", reloadErr)
 						continue
 					}
-					if newPolicy == nil {
-						log.Printf("mcp: disabling the endpoint requires a roost restart; keeping previous configuration")
-						continue
-					}
 					srv.ReloadMCP(egg.NewToolRunner(newTools), newPolicy)
-					log.Printf("mcp: reloaded %d tool(s), %d role(s)", len(newTools), len(newPolicy.Roles))
+					roleCount := 0
+					if newPolicy != nil {
+						roleCount = len(newPolicy.Roles)
+					}
+					log.Printf("mcp: reloaded %d executable tool(s), %d role(s)", len(newTools), roleCount)
 				}
 			}
 		}()
@@ -338,7 +344,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 
 	wingErrCh := make(chan error, 1)
 	go func() {
-		wingErrCh <- runWingWithContext(ctx, sighupCh, "http://localhost"+addrFlag, labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false)
+		wingErrCh <- runWingWithContext(ctx, sighupCh, "http://localhost"+addrFlag, labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth)
 	}()
 
 	// --- Wait for shutdown ---

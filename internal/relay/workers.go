@@ -37,7 +37,7 @@ type ConnectedWing struct {
 
 // WingEvent is sent to dashboard subscribers for wing/session lifecycle events.
 type WingEvent struct {
-	Type         string `json:"type"`                    // "wing.online", "wing.offline", "session.attention"
+	Type         string `json:"type"` // "wing.online", "wing.offline", "session.attention"
 	WingID       string `json:"wing_id"`
 	PublicKey    string `json:"public_key,omitempty"`
 	SessionID    string `json:"session_id,omitempty"`
@@ -471,7 +471,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				s.dispatchWingEvent("wing.config", w)
 			}
 
-		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge, ws.TypePTYPreview, ws.TypePTYBrowserOpen, ws.TypePTYMigrated, ws.TypePTYFallback:
+		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge, ws.TypePTYPreview, ws.TypePTYBrowserOpen, ws.TypePTYMigrated, ws.TypePTYFallback, ws.TypeError:
 			// Extract session_id and forward to browser
 			var partial struct {
 				SessionID string `json:"session_id"`

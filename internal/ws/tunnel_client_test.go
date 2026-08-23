@@ -8,11 +8,53 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/coder/websocket"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 )
+
+func TestTunnelClientPinsWingIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_wings.json")
+	tc := &TunnelClient{KnownWingsPath: path}
+	keyA := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	keyBBytes := make([]byte, 32)
+	keyBBytes[0] = 1
+	keyB := base64.StdEncoding.EncodeToString(keyBBytes)
+
+	if err := tc.VerifyWingIdentity(WingInfo{WingID: "wing-1", PublicKey: keyA}); err != nil {
+		t.Fatalf("first use should pin: %v", err)
+	}
+	if err := tc.VerifyWingIdentity(WingInfo{WingID: "wing-1", PublicKey: keyA}); err != nil {
+		t.Fatalf("same key should remain trusted: %v", err)
+	}
+	if err := tc.VerifyWingIdentity(WingInfo{WingID: "wing-1", PublicKey: keyB}); err == nil {
+		t.Fatal("changed identity must be rejected")
+	}
+}
+
+func TestTunnelClientListWings(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("authorization = %q", got)
+		}
+		json.NewEncoder(w).Encode([]WingInfo{{
+			WingID: "wing-1", PublicKey: "public-key", Owner: "owner@example.com",
+			OrgID: "org-1", RemoteNode: "machine-2", LatestVersion: "v1.2.3",
+		}})
+	}))
+	defer server.Close()
+
+	client := &TunnelClient{RelayURL: server.URL, DeviceToken: "test-token"}
+	wings, err := client.ListWings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wings) != 1 || wings[0].WingID != "wing-1" || wings[0].Owner != "owner@example.com" || wings[0].RemoteNode != "machine-2" {
+		t.Fatalf("wings = %#v", wings)
+	}
+}
 
 func TestTunnelClient_DeriveKey(t *testing.T) {
 	// Generate two keypairs (client and wing)

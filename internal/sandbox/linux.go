@@ -67,7 +67,7 @@ type linuxSandbox struct {
 // Returns an error if capabilities are insufficient so the factory falls back.
 func newPlatform(cfg Config) (Sandbox, error) {
 	if !hasNamespaceCapability() {
-		return nil, fmt.Errorf("linux sandbox: need root or CAP_SYS_ADMIN for namespaces")
+		return nil, fmt.Errorf("linux sandbox: required user and mount namespace operations are unavailable")
 	}
 
 	dir, err := os.MkdirTemp("", "wt-sandbox-*")
@@ -111,28 +111,84 @@ func hasNamespaceCapability() bool {
 		// kernel 6.1+ with apparmor_restrict_unprivileged_userns=1).
 		// Fall through to probe.
 	}
-	// Probe by actually trying to create a user namespace. This is the only
-	// reliable check — it catches AppArmor, seccomp, and any other blocker.
-	return probeUserNamespace()
+	// Probe the mount operations the sandbox actually depends on. Ubuntu 24.04
+	// can allow CLONE_NEWUSER and then transition the child into AppArmor's
+	// unprivileged_userns profile, where mount(2) is denied. A namespace-only
+	// probe reports a dangerous false positive on those hosts.
+	return probeMountNamespace()
 }
 
-// probeUserNamespace spawns a trivial child in a new user namespace to test support.
-func probeUserNamespace() bool {
-	cmd := exec.Command("true")
+const mountProbeArg = "_sandbox_mount_probe"
+
+// init handles the mount probe in every binary that imports this package,
+// including Go test binaries. The target is restricted to a freshly-created
+// directory under the process temp directory so this hidden re-exec path can
+// never mount over an arbitrary caller-supplied path.
+func init() {
+	if len(os.Args) != 3 || os.Args[1] != mountProbeArg {
+		return
+	}
+	if err := runMountProbe(os.Args[2]); err != nil {
+		fmt.Fprintf(os.Stderr, "wingthing sandbox mount probe: %v\n", err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+// probeMountNamespace creates the same user+mount namespace shape used by
+// _deny_init, then asks the child to make the root private and mount tmpfs.
+// Both operations are prerequisites for trustworthy filesystem policy.
+func probeMountNamespace() bool {
+	probeDir, err := os.MkdirTemp("", "wt-userns-probe-")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(probeDir)
+
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command(exe, mountProbeArg, probeDir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUSER,
+		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
 		UidMappings: []syscall.SysProcIDMap{{
-			ContainerID: os.Getuid(),
+			ContainerID: 0,
 			HostID:      os.Getuid(),
 			Size:        1,
 		}},
 		GidMappings: []syscall.SysProcIDMap{{
-			ContainerID: os.Getgid(),
+			ContainerID: 0,
 			HostID:      os.Getgid(),
 			Size:        1,
 		}},
 	}
 	return cmd.Run() == nil
+}
+
+func runMountProbe(probeDir string) error {
+	clean := filepath.Clean(probeDir)
+	if filepath.Dir(clean) != filepath.Clean(os.TempDir()) ||
+		!strings.HasPrefix(filepath.Base(clean), "wt-userns-probe-") {
+		return fmt.Errorf("refusing unsafe probe target %q", probeDir)
+	}
+	info, err := os.Stat(clean)
+	if err != nil {
+		return fmt.Errorf("stat probe target: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("probe target is not a directory")
+	}
+	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
+		return fmt.Errorf("make root private: %w", err)
+	}
+	if err := unix.Mount("tmpfs", clean, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, "size=0"); err != nil {
+		return fmt.Errorf("mount read-only tmpfs: %w", err)
+	}
+	if err := unix.Unmount(clean, 0); err != nil {
+		return fmt.Errorf("unmount tmpfs: %w", err)
+	}
+	return nil
 }
 
 func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
@@ -379,7 +435,6 @@ type rlimitPair struct {
 	resource int
 	value    uint64
 }
-
 
 // buildSeccompFilter constructs a BPF program that denies dangerous syscalls.
 // The filter returns SECCOMP_RET_ERRNO(EPERM) for denied calls and

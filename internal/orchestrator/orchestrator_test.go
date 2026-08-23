@@ -457,6 +457,27 @@ func TestBuildAdHocTaskNoMounts(t *testing.T) {
 	}
 }
 
+func TestBuildHonorsExplicitTaskIsolation(t *testing.T) {
+	memDir := setupMemory(t)
+	skillsDir := setupSkills(t)
+	b, s := setupBuilder(t, memDir, skillsDir, "")
+
+	task := &store.Task{
+		ID: "t-test-trusted-vm", Type: "prompt", What: "hello", Agent: "claude",
+		Isolation: "privileged", RunAt: time.Now(), Status: "pending",
+	}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+	result, err := b.Build(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Isolation != "privileged" {
+		t.Fatalf("isolation = %q, want privileged", result.Isolation)
+	}
+}
+
 func TestConfigPrecedence(t *testing.T) {
 	cfg := &config.Config{
 		DefaultAgent: "claude",

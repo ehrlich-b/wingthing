@@ -58,9 +58,15 @@
 <div class="docs-section" id="quickstart">
 <h2>quickstart</h2>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">using wingthing.ai</h3>
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">local — no account or service</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span><br>
+<span class="prompt">$ </span><span class="cmd">wt terminal --name work</span><br>
+<span class="prompt">$ </span><span class="cmd">wt attach work</span>
+</div>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">optional browser access through wingthing.ai</h3>
+<div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
 <span class="prompt">$ </span><span class="cmd">wt start</span><br>
 <span class="prompt">$ </span><span class="cmd">open app.wingthing.ai</span>
@@ -73,7 +79,7 @@
 <span class="prompt">$ </span><span class="cmd">open localhost:8080</span>
 </div>
 
-<p>Your machine is now a <strong>wing</strong> — a remote-accessible sandbox host. Open a terminal from the browser, pick an agent (Claude, Codex, Ollama), and it runs in an isolated <strong>egg</strong> on your hardware. All traffic is end-to-end encrypted through the <strong>roost</strong>.</p>
+<p>Your machine is now a <strong>wing</strong> — a remote-accessible sandbox host. Open a terminal from the browser, pick an agent (Claude, Codex, Ollama), and it runs in an isolated <strong>egg</strong> on your hardware. Terminal and wing API payloads are application-encrypted through the <strong>roost</strong>.</p>
 </div>
 
 <div class="docs-section" id="overview">
@@ -85,7 +91,7 @@
 <tr><td>roost</td><td>The server. Handles login and routes connections. wingthing.ai is a roost. <code>wt roost start</code> runs your own.</td></tr>
 <tr><td>egg</td><td>A sandboxed agent session. Each egg is an isolated process with its own PTY, sandbox profile, and gRPC socket. Runs Claude, Codex, Ollama, etc.</td></tr>
 </table>
-<p>Wings connect outbound to the roost (no port forwarding needed), and the roost bridges WebSocket connections between wings and browsers. All PTY traffic is E2E encrypted.</p>
+<p>Wings connect outbound to the roost (no port forwarding needed), and the roost bridges WebSocket connections between wings and browsers. PTY content is application-encrypted between the shipped browser client and wing.</p>
 </div>
 
 <div class="docs-section" id="installation">
@@ -149,13 +155,13 @@
 <h2>access control</h2>
 <p>By default, anyone with your account credentials can start sessions on your wing. Locking it adds a second factor using <a href="https://passkeys.dev">passkeys</a> - the same WebAuthn standard behind "Sign in with Face ID" and "Sign in with Windows Hello."</p>
 <p>A passkey is a cryptographic credential stored in your password manager (1Password, LastPass, iCloud Keychain, Bitwarden) or your OS (Touch ID, Windows Hello, Android biometrics). Most people already have one and don't know it.</p>
-<p>When your wing is locked, browsers must prove they hold a passkey on the allowlist before the wing will start or reattach a session. The roost can't fake this - the cryptographic challenge-response happens directly between your browser and your wing.</p>
+<p>When your wing is locked, browsers must prove they hold a passkey whose public key is pinned in the wing's local allowlist before the wing will start, control, or spectate a session. The wing generates one-time challenges, fully validates the WebAuthn context and signature, and binds the resulting token to the browser encryption key and relay user.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">lock your wing</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt wing lock</span>
 </div>
-<p>Once locked, the browser shows an "authenticate with passkey" button when you open a session. Click it, verify with your fingerprint or password manager, and the session starts. The wing issues a nonce that's valid for the rest of the boot - you won't be prompted again until the wing restarts. Set <code>auth_ttl</code> if you want periodic re-authentication on top of that.</p>
+<p>Once locked, the browser shows an "authenticate with passkey" button when you open a session. Click it, verify with your fingerprint or password manager, and the session starts. The wing issues a client-bound token that's valid for the rest of the boot; set <code>auth_ttl</code> to require periodic re-authentication.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">manage the allowlist</h3>
 <p>When locked, only passkeys on the allowlist can access the wing:</p>
@@ -391,13 +397,13 @@ WantedBy=multi-user.target
 
 <div class="docs-section" id="architecture">
 <h2>architecture</h2>
-<p>The roost is a dumb pipe. It forwards encrypted blobs between browsers and wings without reading them. All session data, terminal output, file listings, and audit recordings are end-to-end encrypted. The roost knows wing IDs and connection state - nothing else.</p>
+<p>For terminal content and encrypted tunnel APIs, the shipped roost forwards application ciphertext between browsers and wings during normal operation. It also owns accounts and routing, sees wing/session identifiers, selected agent and working-directory metadata, timing and sizes, and serves the browser code.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">how the pieces connect</h3>
-<p>Your wing opens an outbound WebSocket to the roost and holds it open. When you open a terminal in the browser, the browser connects to the roost over a second WebSocket. The roost matches them by wing ID and forwards messages both ways. All traffic is encrypted end-to-end.</p>
+<p>Your wing opens an outbound WebSocket to the roost and holds it open. When you open a terminal in the browser, the browser connects to the roost over a second WebSocket. The roost matches them by wing ID and forwards messages both ways. Content payloads use Wingthing's application encryption; routing envelopes and metadata remain visible.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">encryption</h3>
-<p>Every connection between your browser and your wing gets a fresh X25519 key pair on both sides. The two do a Diffie-Hellman exchange, derive an AES-GCM key via HKDF, and encrypt everything from that point. Terminal I/O, file listings, session history, audit data - all ciphertext as far as the roost is concerned. Keys live in sessionStorage and vanish when you close the tab. Previous sessions can't be decrypted, even by the wing.</p>
+<p>The browser keeps an X25519 identity key for the tab and the wing has a persistent X25519 identity key. They derive separate AES-GCM keys via HKDF for PTY and tunnel payloads. Terminal I/O, encrypted controls, file listings, session history, and audit data are ciphertext as far as the as-built roost is concerned. The browser pins the first wing key it sees and rejects later changes. Because the wing key is persistent, Wingthing does not currently claim forward secrecy against later theft of that key.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">passkey auth</h3>
 <p>Encryption keeps the roost from reading your data. Passkeys control who can start sessions in the first place. When your wing is locked, the browser sends a WebAuthn assertion directly to the wing inside the encrypted channel. The roost forwards the blob but can't read or forge it. The wing verifies the signature against its local allowlist and issues a boot-scoped nonce for subsequent requests.</p>
@@ -414,7 +420,7 @@ WantedBy=multi-user.target
 <p>Agents run inside a platform-native sandbox - Seatbelt on macOS, user namespaces + seccomp on Linux. The sandbox controls filesystem access, network reach, and system calls. Configure it with <code>egg.yaml</code>; see <a href="#egg-configuration">egg configuration</a>.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">the wing: protecting you from the roost</h3>
-<p>All traffic between your browser and your wing is E2E encrypted (X25519 + AES-GCM). The roost forwards ciphertext and can't read it. Wings connect outbound only - no inbound ports, no static IP, works behind any NAT or firewall. Lock your wing and sessions require a <a href="#access-control">passkey</a> on top of encryption - the roost can't start sessions on your behalf even if it wanted to.</p>
+<p>Terminal and tunnel payloads between the shipped browser and wing are application-encrypted (X25519 + AES-GCM). Wings connect outbound only - no inbound ports or static IP. Locking adds a locally verified <a href="#access-control">passkey</a>. The hosted browser still trusts JavaScript delivered by the service, so this is not a malicious-service-resistant guarantee; see the security model for the exact boundary.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">the roost: controlling access</h3>
 <p>The roost handles login (OAuth, device auth) and routes connections to the right wing. When a wing is locked, the roost stores passkey credential IDs so it can hand them to the wing during <code>wt wing allow</code> - but the WebAuthn verification happens on the wing, not the roost. See <a href="#access-control">access control</a>.</p>

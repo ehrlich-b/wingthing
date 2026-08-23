@@ -33,6 +33,7 @@ func eggCmd() *cobra.Command {
 	var traceFlag bool
 	var resumeFlag string
 	var nameFlag string
+	var unsandboxedFlag bool
 
 	cmd := &cobra.Command{
 		Use:     "sandbox [agent]",
@@ -46,7 +47,7 @@ func eggCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag, resumeFlag, nameFlag, args[1:])
+			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag, resumeFlag, nameFlag, unsandboxedFlag, args[1:])
 		},
 		Example: "  wt egg claude\n" +
 			"  wt egg claude --name research -- --model sonnet\n" +
@@ -57,6 +58,8 @@ func eggCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&traceFlag, "trace", false, "wrap sandbox with strace for syscall tracing (Linux only)")
 	cmd.Flags().StringVar(&resumeFlag, "resume", "", "resume a previous session by session ID")
 	cmd.Flags().StringVarP(&nameFlag, "name", "n", "", "human-readable session name")
+	cmd.Flags().BoolVar(&unsandboxedFlag, "unsandboxed", false, "trust the host boundary; disable Wingthing filesystem, network, syscall, and resource isolation")
+	cmd.MarkFlagsMutuallyExclusive("config", "unsandboxed")
 
 	cmd.AddCommand(eggRunCmd())
 	cmd.AddCommand(eggStopCmd())
@@ -76,6 +79,7 @@ func eggRunCmd() *cobra.Command {
 		cols                       uint32
 		fsFlag                     []string
 		networkFlag                []string
+		agentDomainsFlag           string
 		envFlag                    []string
 		cpuFlag                    string
 		memFlag                    string
@@ -87,6 +91,7 @@ func eggRunCmd() *cobra.Command {
 		vteFlag                    bool
 		renderedConfigFlag         string
 		userHomeFlag               string
+		skipHostAgentEnvFlag       bool
 		idleTimeoutFlag            string
 		dangerouslySkipPermissions bool
 		resumeSessionFlag          string
@@ -149,6 +154,7 @@ func eggRunCmd() *cobra.Command {
 				Shell:                      shell,
 				FS:                         fsFlag,
 				Network:                    networkFlag,
+				AgentDomains:               agentDomainsFlag,
 				Env:                        envMap,
 				Rows:                       rows,
 				Cols:                       cols,
@@ -163,6 +169,7 @@ func eggRunCmd() *cobra.Command {
 				VTE:                        vteFlag,
 				RenderedConfig:             renderedConfigFlag,
 				UserHome:                   userHomeFlag,
+				SkipHostAgentEnv:           skipHostAgentEnvFlag,
 				IdleTimeout:                idleTimeout,
 				ResumeSessionID:            resumeSessionFlag,
 				ToolNames:                  toolNamesFlag,
@@ -196,6 +203,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&cols, "cols", 80, "terminal cols")
 	cmd.Flags().StringArrayVar(&fsFlag, "fs", nil, "filesystem rules (rw:./, deny:~/.ssh)")
 	cmd.Flags().StringArrayVar(&networkFlag, "network", nil, "network domains (api.anthropic.com, *, none)")
+	cmd.Flags().StringVar(&agentDomainsFlag, "agent-domains", "", "agent domain policy: merge or none (internal)")
 	cmd.Flags().StringArrayVar(&envFlag, "env", nil, "environment variables (KEY=VAL)")
 	cmd.Flags().BoolVar(&dangerouslySkipPermissions, "dangerously-skip-permissions", false, "skip agent permission prompts")
 	cmd.Flags().StringVar(&cpuFlag, "cpu", "", "CPU time limit (e.g. 300s)")
@@ -208,6 +216,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&vteFlag, "vte", false, "use VTerm snapshot for reconnect (internal)")
 	cmd.Flags().StringVar(&renderedConfigFlag, "rendered-config", "", "rendered egg config YAML (internal)")
 	cmd.Flags().StringVar(&userHomeFlag, "user-home", "", "per-user home directory (internal)")
+	cmd.Flags().BoolVar(&skipHostAgentEnvFlag, "skip-host-agent-env", false, "do not inherit host provider credentials (internal)")
 	cmd.Flags().StringVar(&idleTimeoutFlag, "idle-timeout", "", "idle timeout duration (e.g. 4h)")
 	cmd.Flags().StringVar(&resumeSessionFlag, "resume-session", "", "agent session ID to resume (internal)")
 	cmd.Flags().StringArrayVar(&toolNamesFlag, "tool-name", nil, "privileged tool names (internal)")
@@ -268,6 +277,7 @@ func listEggSessions(ctx context.Context, cfg *config.Config) error {
 type explainedPolicy struct {
 	Agent        string           `json:"agent"`
 	ConfigSource string           `json:"config_source"`
+	Isolation    string           `json:"isolation"`
 	NetworkNeed  string           `json:"network_need"`
 	Enforcement  string           `json:"enforcement"`
 	Domains      []string         `json:"domains"`
@@ -277,6 +287,8 @@ type explainedPolicy struct {
 	Deny         []string         `json:"deny"`
 	DenyWrite    []string         `json:"deny_write"`
 	Drilled      []explainedHole  `json:"drilled"`
+	Derived      []explainedHole  `json:"derived"`
+	Suppressed   []explainedHole  `json:"suppressed"`
 }
 
 type explainedMount struct {
@@ -316,7 +328,10 @@ func eggExplainCmd() *cobra.Command {
 			}
 			home, _ := os.UserHomeDir()
 
-			policy := explainPolicy(eggCfg, agentName, home, source)
+			policy, err := explainPolicyWithProvider(eggCfg, agentName, home, source, os.Getenv("WT_PROVIDER_BASE_URL"))
+			if err != nil {
+				return err
+			}
 			if jsonFlag {
 				return writePolicyJSON(cmd.OutOrStdout(), policy)
 			}
@@ -377,11 +392,29 @@ func explainEnforcement(need sandbox.NetworkNeed, goos string) string {
 }
 
 func explainPolicy(cfg *egg.EggConfig, agentName, home, source string) explainedPolicy {
-	resolved := egg.ResolvePolicy(cfg, agentName, home)
+	policy, _ := explainPolicyWithProvider(cfg, agentName, home, source, "")
+	return policy
+}
+
+func explainPolicyWithProvider(cfg *egg.EggConfig, agentName, home, source, providerURL string) (explainedPolicy, error) {
+	resolved, err := egg.ResolvePolicyWithProvider(cfg, agentName, home, providerURL)
+	if err != nil {
+		return explainedPolicy{}, err
+	}
+	isolation := "wingthing-sandbox"
+	if !egg.RequiresSandbox(cfg, agentName) {
+		isolation = "outer-boundary"
+		// Agent profile write directories are holes in a sandbox. They are not
+		// mounts or restrictions when the outer host is the boundary.
+		resolved.Mounts = nil
+		resolved.Deny = nil
+		resolved.DenyWrite = nil
+	}
 
 	p := explainedPolicy{
 		Agent:        agentName,
 		ConfigSource: source,
+		Isolation:    isolation,
 		NetworkNeed:  resolved.NetworkNeed.String(),
 		Enforcement:  explainEnforcement(resolved.NetworkNeed, runtime.GOOS),
 		Domains:      nonNilStrings(resolved.Domains),
@@ -391,6 +424,8 @@ func explainPolicy(cfg *egg.EggConfig, agentName, home, source string) explained
 		DenyWrite:    nonNilStrings(resolved.DenyWrite),
 		Mounts:       make([]explainedMount, 0, len(resolved.Mounts)),
 		Drilled:      make([]explainedHole, 0, len(resolved.Drilled)),
+		Derived:      make([]explainedHole, 0, len(resolved.Derived)),
+		Suppressed:   make([]explainedHole, 0, len(resolved.Suppressed)),
 	}
 	if p.LocalPorts == nil {
 		p.LocalPorts = []int{}
@@ -401,7 +436,13 @@ func explainPolicy(cfg *egg.EggConfig, agentName, home, source string) explained
 	for _, h := range resolved.Drilled {
 		p.Drilled = append(p.Drilled, explainedHole{Kind: h.Kind, Value: h.Value, Agent: h.Agent, Reason: h.Reason})
 	}
-	return p
+	for _, h := range resolved.Derived {
+		p.Derived = append(p.Derived, explainedHole{Kind: h.Kind, Value: h.Value, Agent: h.Agent, Reason: h.Reason})
+	}
+	for _, h := range resolved.Suppressed {
+		p.Suppressed = append(p.Suppressed, explainedHole{Kind: h.Kind, Value: h.Value, Agent: h.Agent, Reason: h.Reason})
+	}
+	return p, nil
 }
 
 func nonNilStrings(s []string) []string {
@@ -430,6 +471,7 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintf(tw, "agent\t%s\n", agentName)
 	fmt.Fprintf(tw, "config\t%s\n", p.ConfigSource)
+	fmt.Fprintf(tw, "isolation\t%s\n", p.Isolation)
 	fmt.Fprintf(tw, "network\t%s\n", p.NetworkNeed)
 	fmt.Fprintf(tw, "enforcement\t%s\n", p.Enforcement)
 	fmt.Fprintf(tw, "mode\t%s\n", mode)
@@ -443,16 +485,35 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 			drilledDomains[h.Value] = h.Reason
 		}
 	}
+	derivedDomains := make(map[string]string, len(p.Derived))
+	for _, h := range p.Derived {
+		if h.Kind == "domain" {
+			derivedDomains[h.Value] = h.Reason
+		}
+	}
 
 	if len(p.Domains) > 0 {
 		fmt.Fprintf(w, "\ndomains (%d)\n", len(p.Domains))
 		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, d := range p.Domains {
-			if reason, ok := drilledDomains[d]; ok {
+			if reason, ok := derivedDomains[d]; ok {
+				fmt.Fprintf(tw, "  %s\tderived\t%s\n", d, reason)
+			} else if reason, ok := drilledDomains[d]; ok {
 				fmt.Fprintf(tw, "  %s\tauto\t%s\n", d, reason)
 			} else {
 				fmt.Fprintf(tw, "  %s\tdeclared\t\n", d)
 			}
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+
+	if len(p.Suppressed) > 0 {
+		fmt.Fprintln(w, "\nsuppressed agent domains")
+		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		for _, h := range p.Suppressed {
+			fmt.Fprintf(tw, "  %s\tsuppressed\t%s\n", h.Value, h.Reason)
 		}
 		if err := tw.Flush(); err != nil {
 			return err
@@ -529,9 +590,12 @@ func humanDuration(d time.Duration) string {
 }
 
 // eggSpawn starts an agent session in a per-session egg and attaches the terminal.
-func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID, name string, agentArgs []string) error {
+func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID, name string, unsandboxed bool, agentArgs []string) error {
 	if trace && runtime.GOOS != "linux" {
 		return fmt.Errorf("--trace requires Linux (strace is not available on %s)", runtime.GOOS)
+	}
+	if trace && unsandboxed {
+		return errors.New("--trace and --unsandboxed cannot be combined")
 	}
 
 	cfg, err := config.Load()
@@ -539,16 +603,10 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 		return err
 	}
 
-	// Load egg config (with base chain resolution)
-	var eggCfg *egg.EggConfig
-	if configPath != "" {
-		eggCfg, err = egg.ResolveEggConfig(configPath)
-		if err != nil {
-			return fmt.Errorf("load egg config: %w", err)
-		}
-	} else {
-		cwd, _ := os.Getwd()
-		eggCfg = egg.DiscoverEggConfig(cwd, nil)
+	cwd, _ := os.Getwd()
+	eggCfg, err := loadSpawnEggConfig(configPath, cwd, unsandboxed)
+	if err != nil {
+		return err
 	}
 	// Get terminal size
 	fd := int(os.Stdin.Fd())
@@ -560,7 +618,6 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 		}
 	}
 
-	cwd, _ := os.Getwd()
 	sessionID := uuid.New().String()[:8]
 
 	// Handle --resume: restore chat history and get agent session ID
@@ -679,13 +736,37 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	return nil
 }
 
+// loadSpawnEggConfig is shared by the human CLI and the local MCP server so an
+// LLM gets the same trusted-VM behavior. Unsandboxed mode deliberately ignores
+// discovered policy; combining it with an explicit config is rejected rather
+// than giving a false impression that any of that config is enforced.
+func loadSpawnEggConfig(configPath, cwd string, unsandboxed bool) (*egg.EggConfig, error) {
+	if unsandboxed {
+		if configPath != "" {
+			return nil, errors.New("--config and --unsandboxed cannot be combined")
+		}
+		return egg.UnsandboxedEggConfig(), nil
+	}
+	if configPath != "" {
+		cfg, err := egg.ResolveEggConfig(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("load egg config: %w", err)
+		}
+		return cfg, nil
+	}
+	return egg.DiscoverEggConfig(cwd, nil), nil
+}
+
 // EggIdentity holds the authenticated user's identity for per-session env injection.
 // Zero value means no identity (local egg, no authenticated user).
 type EggIdentity struct {
-	UserID      string // relay user ID
-	Email       string // authenticated email (e.g. from Google OAuth)
-	DisplayName string // human-readable name (Google full name, GitHub login)
-	OrgWing     bool   // true if this is an org wing — all users get per-user isolation
+	UserID       string   // relay user ID
+	Email        string   // authenticated email (e.g. from Google OAuth)
+	DisplayName  string   // human-readable name (Google full name, GitHub login)
+	OrgWing      bool     // true if this is an org wing — all users get per-user isolation
+	SharedHost   bool     // true when several owners use one OS account through a roost
+	AllowedPaths []string // canonical host roots this owner may reach on a shared host
+	SealedFS     bool     // replace caller filesystem rules with the shared-host allowlist jail
 }
 
 // sanitizeEnvValue strips characters that could cause shell injection.
@@ -728,6 +809,27 @@ func userHash(email string) string {
 	return hex.EncodeToString(h[:])[:12]
 }
 
+func writeEggOwner(dir, userID, email string) error {
+	if userID == "" {
+		return nil
+	}
+	if len(userID) > 256 || strings.ContainsAny(userID, "\r\n\x00") {
+		return errors.New("invalid egg owner ID")
+	}
+	if len(email) > 512 || strings.ContainsAny(email, "\r\n\x00") {
+		return errors.New("invalid egg owner email")
+	}
+	ownerData := userID
+	if email != "" {
+		ownerData += "\n" + email
+	}
+	path := filepath.Join(dir, "egg.owner")
+	if err := os.WriteFile(path, []byte(ownerData), 0600); err != nil {
+		return fmt.Errorf("write egg owner: %w", err)
+	}
+	return os.Chmod(path, 0600)
+}
+
 // spawnEggOpts holds optional parameters for spawnEgg.
 // validateAgentArgs checks caller-supplied agent arguments before any process
 // is spawned. These become argv entries verbatim, so an empty or NUL-bearing
@@ -752,6 +854,7 @@ type spawnEggOpts struct {
 	Kind            string
 	Command         []string
 	AgentArgs       []string
+	Principal       string
 }
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
@@ -776,17 +879,34 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			return nil, err
 		}
 	}
-
+	if identity.SealedFS {
+		if runtime.GOOS != "linux" {
+			return nil, errors.New("shared-host credential isolation requires the Linux filesystem jail")
+		}
+		sealed, err := sealedSharedHostEggConfig(cfg, eggCfg, cwd, identity.AllowedPaths)
+		if err != nil {
+			return nil, err
+		}
+		eggCfg = sealed
+	}
 	// Pre-flight: verify the sandbox can work before spawning a child process.
 	// Catches AppArmor userns restrictions, missing sysctl, etc. with a clear
 	// error instead of a silent 5s timeout.
-	if ok, help := sandbox.CheckCapability(); !ok {
-		return nil, fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
+	if egg.RequiresSandbox(eggCfg, agentName) {
+		if ok, help := sandbox.CheckCapability(); !ok {
+			return nil, fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
+		}
 	}
 
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create egg dir: %w", err)
+	}
+	if err := writeSessionPrincipal(dir, o.Principal); err != nil {
+		return nil, err
+	}
+	if err := writeEggOwner(dir, identity.UserID, identity.Email); err != nil {
+		return nil, err
 	}
 	if o.Label != "" {
 		if err := writeSessionName(dir, o.Label); err != nil {
@@ -839,7 +959,10 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	for _, d := range eggCfg.Network.Domains {
 		args = append(args, "--network", d)
 	}
-	// Per-user home directory for multi-user isolation on org wings.
+	if eggCfg.Network.AgentDomains != "" {
+		args = append(args, "--agent-domains", eggCfg.Network.AgentDomains)
+	}
+	// Per-user home directory for multi-user isolation on org wings and shared roosts.
 	// On personal wings, the owner IS the machine — use real HOME so
 	// agent auth (e.g. Claude Code /login) and config persist normally.
 	// On org wings, ALL users get per-user homes for isolation.
@@ -847,14 +970,29 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// resolves against the correct home.
 	realHome, _ := os.UserHomeDir()
 	effectiveHome := realHome
-	if identity.Email != "" && identity.OrgWing {
-		effectiveHome = filepath.Join(cfg.Dir, "user-homes", userHash(identity.Email))
+	isolatedUser := identity.UserID != "" && (identity.OrgWing || identity.SharedHost)
+	if isolatedUser {
+		effectiveHome = filepath.Join(cfg.Dir, "user-homes", userHash(identity.UserID))
 	}
 	envMap := eggCfg.BuildEnvMap(effectiveHome)
+	if identity.SharedHost {
+		safe := map[string]bool{
+			"HOME": true, "PATH": true, "TERM": true, "LANG": true,
+			"USER": true, "SHELL": true, "TMPDIR": true,
+		}
+		for key := range envMap {
+			if !safe[key] {
+				delete(envMap, key)
+			}
+		}
+	}
 	// Inject agent profile env vars from host env (e.g. ANTHROPIC_API_KEY for claude).
 	// BuildEnvMap uses the egg config whitelist which may not include these.
 	profile := egg.Profile(agentName)
 	for _, k := range profile.EnvVars {
+		if identity.SharedHost {
+			continue
+		}
 		if _, ok := envMap[k]; !ok {
 			if v := os.Getenv(k); v != "" {
 				envMap[k] = v
@@ -863,6 +1001,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	// Platform-specific env vars the agent needs (e.g. macOS Keychain access for Claude).
 	for _, k := range profile.PlatformEnv {
+		if identity.SharedHost {
+			continue
+		}
 		if _, ok := envMap[k]; !ok {
 			if v := os.Getenv(k); v != "" {
 				envMap[k] = v
@@ -875,11 +1016,11 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			envMap[k] = v
 		}
 	}
-	if identity.Email != "" && identity.OrgWing {
+	if isolatedUser {
 		perUserHome := effectiveHome
 		os.MkdirAll(perUserHome, 0700)
 		// Seed shell + agent config symlinks from real HOME
-		if realHome != "" {
+		if realHome != "" && !identity.SharedHost {
 			for _, rc := range []string{".bashrc", ".zshrc", ".profile"} {
 				src := filepath.Join(realHome, rc)
 				dst := filepath.Join(perUserHome, rc)
@@ -896,7 +1037,11 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		os.MkdirAll(localBin, 0755)
 		if agentBin, err := exec.LookPath(agentName); err == nil {
 			dst := filepath.Join(localBin, agentName)
-			if _, err := os.Lstat(dst); err != nil {
+			if identity.SealedFS {
+				if err := installSharedAgentBinary(agentBin, dst); err != nil {
+					return nil, fmt.Errorf("prepare shared-host %s runtime: %w", agentName, err)
+				}
+			} else if _, err := os.Lstat(dst); err != nil {
 				os.Symlink(agentBin, dst)
 			}
 		}
@@ -905,7 +1050,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// Rebuild agent settings every session for org wing users.
 	// Reads existing prefs, layers host settings on top (host always wins
 	// for permissions), then injects agent-specific overrides.
-	if identity.Email != "" && identity.OrgWing {
+	if isolatedUser {
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
 			settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
@@ -925,7 +1070,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 						}
 					}
 				}
-			} else if realHome != "" {
+			} else if realHome != "" && !identity.SharedHost {
 				hostPath := filepath.Join(realHome, agentProfile.SettingsFile)
 				if data, err := os.ReadFile(hostPath); err == nil {
 					var hostSettings map[string]any
@@ -1005,6 +1150,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			args = append(args, "--tool-name", tn)
 		}
 	}
+	if identity.SharedHost {
+		args = append(args, "--skip-host-agent-env")
+	}
 
 	// Serialize rendered config as YAML for status RPC
 	if rendered, yamlErr := eggCfg.YAML(); yamlErr == nil {
@@ -1031,8 +1179,10 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		for k := range envMap {
 			allowed[k] = true
 		}
-		for _, k := range profile.PlatformEnv {
-			allowed[k] = true
+		if !identity.SharedHost {
+			for _, k := range profile.PlatformEnv {
+				allowed[k] = true
+			}
 		}
 		var childEnv []string
 		for _, e := range os.Environ() {
@@ -1065,6 +1215,132 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 
 	return nil, fmt.Errorf("egg did not start within 5s (check %s)", logPath)
+}
+
+func sealedSharedHostEggConfig(cfg *config.Config, source *egg.EggConfig, cwd string, allowedPaths []string) (*egg.EggConfig, error) {
+	if source == nil {
+		return nil, errors.New("shared-host egg config is required")
+	}
+	rules, canonical, err := sharedHostFilesystemRules(cfg, allowedPaths)
+	if err != nil {
+		return nil, err
+	}
+	resolvedCWD := canonicalSessionPath(cwd)
+	if !isUnderPaths(resolvedCWD, canonical) {
+		return nil, fmt.Errorf("working directory %q is outside this user's roost paths", cwd)
+	}
+	sealed := *source
+	sealed.FS = rules
+	sealed.AgentSettings = nil
+	sealed.Env = append(egg.EnvField(nil), source.Env...)
+	sealed.Network.Domains = append([]string(nil), source.Network.Domains...)
+	sealed.Network.LocalPorts = append([]int(nil), source.Network.LocalPorts...)
+	return &sealed, nil
+}
+
+func sharedHostFilesystemRules(cfg *config.Config, allowedPaths []string) ([]string, []string, error) {
+	canonical := canonicalPaths(allowedPaths)
+	if len(canonical) == 0 {
+		return nil, nil, errors.New("shared-host sessions require at least one configured workspace path")
+	}
+	stateDir := canonicalSessionPath(cfg.Dir)
+	hostHome, _ := os.UserHomeDir()
+	hostHome = canonicalSessionPath(hostHome)
+	for _, path := range canonical {
+		if path == string(filepath.Separator) {
+			return nil, nil, errors.New("the filesystem root cannot be a shared-roost workspace path")
+		}
+		info, err := os.Stat(path)
+		if err != nil || !info.IsDir() {
+			if err == nil {
+				err = errors.New("not a directory")
+			}
+			return nil, nil, fmt.Errorf("shared-roost workspace %q: %w", path, err)
+		}
+		if isUnderPaths(stateDir, []string{path}) || isUnderPaths(path, []string{stateDir}) {
+			return nil, nil, fmt.Errorf("shared-roost workspace %q overlaps Wingthing state", path)
+		}
+		if hostHome != "." && isUnderPaths(hostHome, []string{path}) {
+			return nil, nil, fmt.Errorf("shared-roost workspace %q contains the host account home", path)
+		}
+	}
+
+	rules := []string{"deny:/"}
+	for _, path := range sharedHostSystemReadPaths() {
+		rules = append(rules, "ro:"+path)
+	}
+	for _, path := range canonical {
+		rules = append(rules, "rw:"+path)
+	}
+	return rules, canonical, nil
+}
+
+func sharedHostSystemReadPaths() []string {
+	candidates := []string{
+		"/usr", "/lib", "/lib64",
+		"/etc/ssl", "/etc/pki", "/etc/ca-certificates",
+		"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf",
+		"/etc/passwd", "/etc/group", "/etc/ld.so.cache",
+		"/nix/store",
+	}
+	paths := make([]string, 0, len(candidates))
+	for _, path := range candidates {
+		info, err := os.Lstat(path)
+		if err == nil && info.Mode()&os.ModeSymlink == 0 {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func installSharedAgentBinary(source, destination string) error {
+	resolved, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return err
+	}
+	input, err := os.Open(resolved)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	var magic [4]byte
+	if _, err := io.ReadFull(input, magic[:]); err != nil {
+		return err
+	}
+	if string(magic[:]) != "\x7fELF" {
+		return fmt.Errorf("%s is not a self-contained Linux executable; install a native agent binary", resolved)
+	}
+	if _, err := input.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	destinationDir := filepath.Dir(destination)
+	if err := os.MkdirAll(destinationDir, 0700); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(destinationDir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		if err == nil {
+			err = errors.New("runtime directory is not a plain directory")
+		}
+		return err
+	}
+	temporary, err := os.CreateTemp(destinationDir, ".agent-runtime-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if _, err := io.Copy(temporary, input); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Chmod(0755); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, destination)
 }
 
 // parseMemFlag parses a memory string like "2GB" or "512MB" into bytes.

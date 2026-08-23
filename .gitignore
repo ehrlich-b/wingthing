@@ -16,4 +16,6 @@ spaces/cache/*.bin
 test/linux/wt
 test/linux/mock-agent
 test/linux/run-tests
+test/linux/sandbox-tests
+test/linux/wt-tests
 __pycache__/

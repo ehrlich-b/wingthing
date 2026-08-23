@@ -15,11 +15,13 @@ import (
 
 func terminalCmd() *cobra.Command {
 	var (
-		nameFlag   string
-		configFlag string
-		cwdFlag    string
-		detachFlag bool
-		traceFlag  bool
+		nameFlag        string
+		configFlag      string
+		cwdFlag         string
+		detachFlag      bool
+		traceFlag       bool
+		jsonFlag        bool
+		unsandboxedFlag bool
 	)
 
 	cmd := &cobra.Command{
@@ -34,7 +36,7 @@ func terminalCmd() *cobra.Command {
 			if traceFlag && runtime.GOOS != "linux" {
 				return fmt.Errorf("--trace requires Linux (strace is not available on %s)", runtime.GOOS)
 			}
-			return terminalSpawn(cmd, args, nameFlag, configFlag, cwdFlag, detachFlag, traceFlag)
+			return terminalSpawn(cmd, args, nameFlag, configFlag, cwdFlag, detachFlag || jsonFlag, traceFlag, jsonFlag, unsandboxedFlag)
 		},
 		Example: "  wt terminal --name work\n" +
 			"  wt terminal --name dev-server -- npm run dev\n" +
@@ -45,10 +47,13 @@ func terminalCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&cwdFlag, "cwd", "C", "", "working directory (default: current directory)")
 	cmd.Flags().BoolVarP(&detachFlag, "detach", "d", false, "start without attaching")
 	cmd.Flags().BoolVar(&traceFlag, "trace", false, "wrap the command with strace (Linux only)")
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "start detached and print machine-readable JSON")
+	cmd.Flags().BoolVar(&unsandboxedFlag, "unsandboxed", false, "trust the host boundary; disable Wingthing filesystem, network, syscall, and resource isolation")
+	cmd.MarkFlagsMutuallyExclusive("config", "unsandboxed")
 	return cmd
 }
 
-func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd string, detach, trace bool) error {
+func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd string, detach, trace, jsonOutput, unsandboxed bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -66,14 +71,12 @@ func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd s
 		return fmt.Errorf("working directory %q does not exist or is not a directory", cwd)
 	}
 
-	var eggCfg *egg.EggConfig
-	if configPath != "" {
-		eggCfg, err = egg.ResolveEggConfig(configPath)
-		if err != nil {
-			return fmt.Errorf("load egg config: %w", err)
-		}
-	} else {
-		eggCfg = egg.DiscoverEggConfig(cwd, nil)
+	if trace && unsandboxed {
+		return fmt.Errorf("--trace and --unsandboxed cannot be combined")
+	}
+	eggCfg, err := loadSpawnEggConfig(configPath, cwd, unsandboxed)
+	if err != nil {
+		return err
 	}
 
 	kind := "command"
@@ -120,6 +123,12 @@ func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd s
 		display = name + " (" + sessionID + ")"
 	}
 	if detach {
+		if jsonOutput {
+			return writeSessionJSON(map[string]any{
+				"session": sessionID, "name": name, "kind": kind, "command": command,
+				"cwd": cwd, "status": "started", "isolation": sessionIsolationLabel(eggCfg),
+			})
+		}
 		fmt.Printf("started %s\n", display)
 		return nil
 	}
@@ -129,4 +138,11 @@ func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd s
 		fmt.Fprintf(os.Stderr, "\r\n[detached from %s]\r\n", display)
 	}
 	return err
+}
+
+func sessionIsolationLabel(cfg *egg.EggConfig) string {
+	if egg.RequiresSandbox(cfg, "") {
+		return "wingthing-sandbox"
+	}
+	return "outer-boundary"
 }

@@ -99,7 +99,8 @@ Wingthing did not miss the runtime. It buried it under the network and organizat
 - The egg keeps bounded replay state and a VTE snapshot with scrollback for reattach.
 - Multiple gRPC readers can attach to a live egg.
 - A wing discovers, starts, reclaims, and routes persistent eggs.
-- Browser ↔ wing terminal traffic is end-to-end encrypted through the relay.
+- Browser ↔ wing terminal content is application-encrypted through the relay;
+  see `docs/security.md` for metadata, TOFU, web-code, and forward-secrecy limits.
 - WebRTC can migrate browser traffic to a direct data channel with relay fallback.
 - A direct WebSocket server exists for browser clients on reachable networks.
 - Sandboxing, auditing, per-user homes, path policy, and privileged tools already sit next to the PTY runtime.
@@ -203,6 +204,27 @@ This is what the Slide deployment actually is: an Ansible-managed, always-on roo
 
 That deployment is a first-class product shape. It should be described as a **team runtime** or **shared roost**, not used as the internal model for personal Wingthing.
 
+### Hosted gateway: keep it optional, do not delete it
+
+The local/SSH path removes `wingthing.ai` from the critical path; it does not
+remove the hosted product. An outbound relay is still materially useful when a
+wing has no acceptable inbound route, when the client is a browser or phone, or
+when identity, sharing, discovery, notifications, and support should work
+without operating a gateway.
+
+The product promise should therefore be **managed reachability for a runtime the
+customer owns**, not “your agents run on our service” and not “all use must pass
+through us.” A paid plan has to sell convenience and collaboration—reliable
+rendezvous/relay, browser/mobile clients, identity and grants, team policy,
+notifications, support, and bandwidth—not hold local terminal persistence
+hostage. SSH remains the excellent free path for a laptop that can already
+reach a VM.
+
+Application encryption is part of that value, with the limits in
+[`security.md`](security.md): routing metadata is visible, the hosted service
+delivers the browser code, and a compromised wing/client endpoint is outside
+the promise. Native clients and self-hosting remain the higher-assurance paths.
+
 ## Why the org work felt kludged
 
 The organization feature was asked to solve too many unrelated problems:
@@ -245,6 +267,21 @@ This is intentionally not routed through `wingthing.ai`. It proves the native cl
 
 The current SSH implementation runs the small attach client on the remote host and carries ANSI/input over an allocated SSH TTY. A later transport-neutral client protocol can keep the client-side state machine local, as Herdr does, when that creates concrete benefits such as local clipboard integration or seamless transport fallback.
 
+The native client can also discover the online wings available to its relay
+identity:
+
+```bash
+wt wings
+wt wings --json
+wt wings --roost https://roost.example.com --json
+```
+
+The relay supplies only the authorized online roster and routing public keys.
+The CLI pins each first-seen wing identity and obtains hostname, version, agents,
+and projects with an application-encrypted `wing.info` probe. This is hosted
+rendezvous, not wing-to-wing discovery, and it does not yet make remote terminal
+control available through the native CLI.
+
 ## Local runtime surface: second slice
 
 The vacation feature branch extends the same egg runtime beyond named agents:
@@ -286,6 +323,7 @@ global routing.
 - [x] Lead documentation with local persistence; present the web relay as optional.
 - [x] Add stable human-readable session labels alongside immutable IDs.
 - [x] Add persistent shells and arbitrary commands alongside agent sessions.
+- [x] Let the native CLI list and encrypted-probe wings available through a roost.
 - [ ] Dogfood before post-vacation promotion.
 - [ ] Make `wt attach` one client protocol across every transport.
 
@@ -321,7 +359,7 @@ global routing.
 
 - Put local, SSH, direct, P2P, and relay paths behind one attach protocol.
 - Prefer direct reachability and make relay fallback observable.
-- Let `wingthing.ai` provide optional discovery/rendezvous without owning session metadata.
+- [x] Let `wingthing.ai` provide optional discovery/rendezvous without owning session metadata.
 - Keep the browser as a first-class client on the same protocol.
 - Emit a versioned control-protocol schema from the installed binary.
 - Keep the native SSH client local so clipboard, keybindings, and notifications remain client capabilities.

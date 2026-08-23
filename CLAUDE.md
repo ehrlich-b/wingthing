@@ -46,17 +46,42 @@ When adding a capability, the checklist is: runtime primitive → CLI verb with
 
 ## Dogfooding
 
-**Always use wingthing's own tools and infrastructure.** If wingthing can do something, use wingthing to do it. Don't shell out to external scripts or paid APIs when the equivalent exists (or should exist) in the codebase.
+**Always use Wingthing's own tools and infrastructure.** Agent, terminal,
+sandbox, and orchestration work on this repository should run through Wingthing
+whenever it can perform the job.
 
-If you find yourself reaching for an external tool and wingthing _should_ handle it, that's a gap to fill in wingthing itself.
+Treat Wingthing friction as product work. When a real dogfood task is awkward or
+fails:
+
+1. reproduce the smallest underlying product gap;
+2. fix the runtime or typed contract, with a regression test;
+3. rebuild Wingthing and retry the original task through Wingthing; and
+4. record any remaining limitation in the relevant design document.
+
+Recursive fixes count toward the task. Fix the first genuine blocker before
+completing the parent task via terminal scraping, ad hoc scripts, or a second
+orchestration system. Leave working paths alone unless a real task exposes a
+problem.
+
+The destination is the shared roost: any useful local operation added while
+dogfooding must be designed as a reusable runtime primitive that can also be
+exposed through an authenticated, owner-scoped, typed, audited roost adapter.
+A local-only convenience is incomplete unless it is a deliberate intermediate
+step toward that parity.
+
+The only current real user workflow is Slide's shared roost in the web UI.
+Preserve it by default while iterating on other workflows. Breaking changes are
+allowed when they materially simplify or improve the product, but first present
+Bryan with the concrete benefit, affected workflow, and migration plan and get
+his agreement. Compatibility remains a conscious tradeoff.
 
 ## Architecture
 
 - `wt egg <agent>` -- spawns a per-session child process (`wt egg run`) with its own sandbox, PTY, and gRPC socket at `~/.wingthing/eggs/<session-id>/`
 - `wt attach [session-id]` -- list or reattach to local eggs; `--remote <ssh-host>` runs the same attach path over ordinary SSH
 - `wt wing` -- WebSocket client that connects outbound to the relay, handles PTY sessions and encrypted tunnel requests, spawns eggs for each session
-- `wt serve` -- relay server (web UI + WebSocket relay + skill registry), HTTP + SQLite. The relay is a dumb pipe for wing data -- it forwards encrypted blobs without reading them.
-- **The relay knows NOTHING about wings except their IDs and public keys.** `GET /api/app/wings` returns a list of wing UUIDs. All wing metadata (hostname, platform, agents, projects, labels) comes from the wing itself via encrypted tunnel requests (`wing.info`). The frontend must cache this metadata in localStorage and show cached data on page load while probing wings in the background.
+- `wt serve` -- relay server (web UI + WebSocket relay + skill registry), HTTP + SQLite. For encrypted terminal/tunnel payloads the relay is a router, but it still owns account/routing metadata and serves the browser code. See `docs/security.md` before making security claims.
+- The relay stores wing IDs/public keys, ownership/org binding, lock state, and connection metadata. Rich wing metadata (hostname, platform, agents, projects, labels) comes from the wing via encrypted tunnel requests (`wing.info`). The frontend caches this metadata in localStorage and shows cached data on page load while probing wings in the background.
 - `wt run` -- direct agent invocation for prompts and skills (the old `wt [prompt]`)
 - `wt roost` -- combined relay + wing in one process for self-hosted deployments
 - Agents are pluggable (claude, ollama, gemini, codex, cursor, opencode). `wt` calls them as child processes.
@@ -64,7 +89,7 @@ If you find yourself reaching for an external tool and wingthing _should_ handle
 
 ### Encrypted Tunnel Protocol
 
-All wing data (directory listings, session history, audit recordings, egg configs, passkey assertions) flows through an E2E encrypted tunnel. The relay cannot read any of it.
+Wing API payloads (directory listings, session history, audit recordings, egg configs, and tunnel passkey assertions) flow through an application-encrypted tunnel. The shipped relay does not receive their plaintext during normal operation. This is not a malicious-web-service guarantee: the relay serves the browser JavaScript, initial wing-key trust is TOFU, and routing metadata stays visible.
 
 | Message | Direction | Description |
 |---------|-----------|-------------|
@@ -81,7 +106,7 @@ Inner message types (inside encrypted payload): `dir.list`, `wing.info`, `webrtc
 | PTY session key | Per-session ephemeral X25519 | `"wt-pty"` | Terminal I/O encryption |
 | Tunnel key | Persistent identity X25519 | `"wt-tunnel"` | All non-PTY wing data |
 
-Browser identity key is stored in sessionStorage (ephemeral per tab, provides PFS). Passkey auth tokens are shared between PTY and tunnel, with configurable TTL via `auth_ttl` in wing.yaml. Wing restart revokes all sessions (in-memory cache).
+Browser identity key is stored in sessionStorage (ephemeral per tab). Because the wing key is persistent, this alone does **not** provide forward secrecy against later wing-key compromise. Passkey auth tokens are shared between PTY and tunnel but bound to relay user ID plus the client's X25519 key, with configurable TTL via `auth_ttl` in wing.yaml. Wing restart revokes all tokens (in-memory cache).
 
 ### Wing ID Scheme (IMPORTANT — two different IDs)
 

@@ -94,15 +94,16 @@ type RunConfig struct {
 	Kind  string
 	// Command replaces the agent entirely; AgentArgs extends the agent's own
 	// invocation and keeps the session an agent session. They are alternatives.
-	Command   []string
-	AgentArgs []string
-	CWD       string
-	Shell   string
-	FS      []string // "rw:./", "deny:~/.ssh"
-	Network []string // domain list
-	Env     map[string]string
-	Rows    uint32
-	Cols    uint32
+	Command      []string
+	AgentArgs    []string
+	CWD          string
+	Shell        string
+	FS           []string // "rw:./", "deny:~/.ssh"
+	Network      []string // domain list
+	AgentDomains string   // ""/"merge" or "none"
+	Env          map[string]string
+	Rows         uint32
+	Cols         uint32
 
 	DangerouslySkipPermissions bool
 	CPULimit                   time.Duration
@@ -115,6 +116,7 @@ type RunConfig struct {
 	VTE                        bool          // use VTerm snapshot for reconnect instead of replay buffer
 	RenderedConfig             string        // effective egg config as YAML (after merge/resolve)
 	UserHome                   string        // per-user home directory (relay sessions only)
+	SkipHostAgentEnv           bool          // shared hosts keep provider credentials in UserHome
 	IdleTimeout                time.Duration // 0 = disabled; self-terminate after this much idle
 	ResumeSessionID            string        // agent session ID to resume (from chat.meta)
 	ToolNames                  []string      // names of privileged tools (for shim generation)
@@ -511,18 +513,20 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		envMap[k] = v
 	}
 	// Merge required env vars from agent profile
-	for _, k := range profile.EnvVars {
-		if _, ok := envMap[k]; !ok {
-			if v := os.Getenv(k); v != "" {
-				envMap[k] = v
+	if !rc.SkipHostAgentEnv {
+		for _, k := range profile.EnvVars {
+			if _, ok := envMap[k]; !ok {
+				if v := os.Getenv(k); v != "" {
+					envMap[k] = v
+				}
 			}
 		}
-	}
-	// Merge platform-specific env vars (e.g. macOS Keychain access for Claude)
-	for _, k := range profile.PlatformEnv {
-		if _, ok := envMap[k]; !ok {
-			if v := os.Getenv(k); v != "" {
-				envMap[k] = v
+		// Merge platform-specific env vars (e.g. macOS Keychain access for Claude)
+		for _, k := range profile.PlatformEnv {
+			if _, ok := envMap[k]; !ok {
+				if v := os.Getenv(k); v != "" {
+					envMap[k] = v
+				}
 			}
 		}
 	}
@@ -570,8 +574,15 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	// Snapshot agent config before session so we can restore on exit
 	configSnap := SnapshotAgentConfig(rc.Agent)
 
-	// Merge domains: user config + agent profile (dedup)
-	mergedDomains := mergeDomains(rc.Network, profile.Domains)
+	// Resolve declared, agent-profile, and provider-derived domains through the
+	// same policy path used by `wt egg explain`.
+	networkPolicy, err := ResolvePolicyWithProvider(&EggConfig{
+		Network: NetworkField{Domains: rc.Network, AgentDomains: rc.AgentDomains},
+	}, rc.Agent, envMap["HOME"], envMap["WT_PROVIDER_BASE_URL"])
+	if err != nil {
+		return err
+	}
+	mergedDomains := networkPolicy.Domains
 	netNeed := sandbox.NetworkNeedFromDomains(mergedDomains)
 
 	// Start domain-filtering proxy if we have specific domains (not "*" or empty)
@@ -639,7 +650,19 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	var sb sandbox.Sandbox
 	var cmd *exec.Cmd
 
-	hasSandbox := len(rc.FS) > 0 || netNeed < sandbox.NetworkFull
+	sessionPolicy := &EggConfig{
+		FS:        rc.FS,
+		Network:   NetworkField{Domains: rc.Network},
+		Resources: EggResources{MaxFDs: rc.MaxFDs, MaxPids: rc.PidLimit},
+		Trace:     rc.Trace,
+	}
+	if rc.CPULimit > 0 {
+		sessionPolicy.Resources.CPU = rc.CPULimit.String()
+	}
+	if rc.MemLimit > 0 {
+		sessionPolicy.Resources.Memory = strconv.FormatUint(rc.MemLimit, 10)
+	}
+	hasSandbox := RequiresSandbox(sessionPolicy, rc.Agent)
 	if hasSandbox {
 		home, _ := os.UserHomeDir()
 		// Use per-user home for ~ expansion when set, so FS rules like
@@ -881,8 +904,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 
 	// Write session metadata so the wing can read it on reclaim
 	metaPath := filepath.Join(s.dir, "egg.meta")
-	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\ncols=%d\nrows=%d\nstarted_at=%d\n",
-		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, rc.Cols, rc.Rows, sess.StartedAt.Unix())
+	isolationMode := "outer-boundary"
+	if hasSandbox {
+		isolationMode = "wingthing-sandbox"
+	}
+	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\n",
+		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix())
 	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
 	}

@@ -70,9 +70,13 @@ func TestCreateAndGetTask(t *testing.T) {
 		What:           "hello world",
 		RunAt:          now,
 		Agent:          "claude",
+		Model:          "opus",
+		TimeoutSeconds: 900,
 		CWD:            "/work/project",
 		PromptName:     "review",
 		PromptRevision: "abcdef123456",
+		Principal:      "mcp-reviewer",
+		EggConfigYAML:  "network: [factory.example.test]\n",
 	}
 	if err := s.CreateTask(task); err != nil {
 		t.Fatalf("create: %v", err)
@@ -99,6 +103,18 @@ func TestCreateAndGetTask(t *testing.T) {
 	}
 	if got.PromptName != "review" || got.PromptRevision != "abcdef123456" {
 		t.Errorf("prompt provenance = %q@%q", got.PromptName, got.PromptRevision)
+	}
+	if got.Principal != "mcp-reviewer" {
+		t.Errorf("principal = %q, want mcp-reviewer", got.Principal)
+	}
+	if got.Model != "opus" {
+		t.Errorf("model = %q, want opus", got.Model)
+	}
+	if got.TimeoutSeconds != 900 {
+		t.Errorf("timeout_seconds = %d, want 900", got.TimeoutSeconds)
+	}
+	if got.EggConfigYAML != task.EggConfigYAML {
+		t.Errorf("egg config = %q, want %q", got.EggConfigYAML, task.EggConfigYAML)
 	}
 }
 

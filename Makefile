@@ -1,5 +1,6 @@
 .PHONY: build test coverage check clean web serve release proto deploy deploy-edge scale status jail \
-	build-linux build-mock-agent build-linux-tests test-linux test-linux-ubuntu test-integ test-e2e \
+	build-linux build-mock-agent build-linux-tests build-linux-sandbox-tests test-linux test-linux-ubuntu test-integ test-e2e \
+	build-linux-wt-tests \
 	test-provider-swap
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -77,8 +78,12 @@ scale:
 proto:
 	protoc -I proto --go_out=paths=source_relative:internal/egg/pb --go-grpc_out=paths=source_relative:internal/egg/pb proto/egg.proto
 
-# Detect host arch for cross-compilation target
-LINUX_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+# Deploy artifacts target the x86-64 shared hosts by default. Security tests use
+# the local machine's native architecture because qemu/Rosetta translate
+# syscall numbers below seccomp and produce invalid sandbox results.
+HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+LINUX_ARCH ?= amd64
+LINUX_TEST_ARCH ?= $(HOST_ARCH)
 
 build-linux: | web/dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go build -buildvcs=false \
@@ -91,15 +96,33 @@ build-linux-tests: | web/dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go test -c -tags 'e2e linux' \
 		-o test/linux/run-tests ./test/linux/
 
-test-linux: build-linux build-mock-agent build-linux-tests
-	docker build -t wt-test-linux -f test/linux/Dockerfile test/linux/
-	docker run --rm --privileged wt-test-linux \
-		/root/run-tests -test.v -test.timeout 120s
+build-linux-sandbox-tests: | web/dist
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go test -c -tags integration \
+		-o test/linux/sandbox-tests ./internal/sandbox/
 
-test-linux-ubuntu: build-linux build-mock-agent build-linux-tests
+build-linux-wt-tests: | web/dist
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go test -c -tags integration \
+		-o test/linux/wt-tests ./cmd/wt/
+
+test-linux:
+	@if [ "$(LINUX_TEST_ARCH)" != "$(HOST_ARCH)" ]; then \
+		echo "cross-architecture seccomp tests are invalid (host=$(HOST_ARCH), requested=$(LINUX_TEST_ARCH)); run this battery on a native $(LINUX_TEST_ARCH) host"; \
+		exit 1; \
+	fi
+	$(MAKE) LINUX_ARCH=$(LINUX_TEST_ARCH) build-linux build-mock-agent build-linux-tests build-linux-sandbox-tests build-linux-wt-tests
+	docker build -t wt-test-linux -f test/linux/Dockerfile test/linux/
+	docker run --rm --privileged wt-test-linux sh -lc \
+		'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s'
+
+test-linux-ubuntu:
+	@if [ "$(LINUX_TEST_ARCH)" != "$(HOST_ARCH)" ]; then \
+		echo "cross-architecture seccomp tests are invalid (host=$(HOST_ARCH), requested=$(LINUX_TEST_ARCH)); run this battery on a native $(LINUX_TEST_ARCH) host"; \
+		exit 1; \
+	fi
+	$(MAKE) LINUX_ARCH=$(LINUX_TEST_ARCH) build-linux build-mock-agent build-linux-tests build-linux-sandbox-tests build-linux-wt-tests
 	docker build -t wt-test-ubuntu -f test/linux/Dockerfile.ubuntu2404 test/linux/
-	docker run --rm --privileged wt-test-ubuntu \
-		/root/run-tests -test.v -test.timeout 120s
+	docker run --rm --privileged wt-test-ubuntu sh -lc \
+		'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s'
 
 test-integ: | web/dist
 	go test -count=1 -tags e2e -v -timeout 120s ./test/integ/...
@@ -114,4 +137,4 @@ test-provider-swap:
 clean:
 	rm -f wt
 	rm -rf dist/
-	rm -f test/linux/wt test/linux/mock-agent test/linux/run-tests
+	rm -f test/linux/wt test/linux/mock-agent test/linux/run-tests test/linux/sandbox-tests test/linux/wt-tests

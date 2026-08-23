@@ -1,0 +1,111 @@
+{{define "title"}}patterns - wingthing.ai{{end}}
+{{define "head"}}
+<style>
+.patterns{max-width:980px;margin:0 auto;padding:18px 8px 40px}
+.patterns h1{font-size:28px;letter-spacing:-0.03em;margin-bottom:8px}
+.patterns .lead{max-width:720px;color:var(--text-dim);font-size:15px;line-height:1.7;margin-bottom:30px}
+.piece-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0 40px}
+.piece{background:var(--bg-card);border:1px solid var(--accent);border-radius:7px;padding:16px}
+.piece h2{font-family:var(--mono);font-size:15px;color:var(--action);margin-bottom:6px}
+.piece p{color:var(--text-dim);font-size:13px;line-height:1.55}
+.pattern-list{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+.pattern{position:relative;background:var(--bg-card);border:1px solid var(--accent);border-radius:7px;padding:22px 22px 20px}
+.pattern-head{display:flex;justify-content:space-between;gap:16px;align-items:baseline;margin-bottom:8px}
+.pattern h2{font-size:18px;letter-spacing:-0.02em}
+.pattern-num{font-family:var(--mono);font-size:11px;color:var(--action);letter-spacing:0.08em;margin-bottom:12px}
+.pattern-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.pattern-tag{font-family:var(--mono);font-size:10px;color:var(--text-dim);border:1px solid var(--accent);border-radius:10px;padding:2px 8px}
+.pattern p{color:var(--text-dim);line-height:1.65;margin-bottom:10px}
+.flow{font-family:var(--mono);font-size:12px;background:var(--bg);padding:10px 12px;border-radius:4px;overflow-x:auto;color:var(--text)}
+.recipe-row{display:flex;gap:12px;align-items:center;margin-top:12px;font-family:var(--mono);font-size:11px}
+.recipe-row a,.copy-recipe{color:var(--text-dim);background:none;border:none;padding:0;font:inherit;cursor:pointer;text-decoration:none}
+.recipe-row a:hover,.copy-recipe:hover{color:var(--action)}
+.skill-row{margin:-16px 0 30px}
+@media(max-width:700px){.piece-row,.pattern-list{grid-template-columns:1fr}.pattern-head{display:block}}
+</style>
+{{end}}
+{{define "content"}}
+<main class="patterns">
+<h1>ways to use wingthing</h1>
+<p class="lead">Wingthing provides three pieces you can compose. A roost coordinates access, a wing supplies a machine, and an egg wraps one durable agent session. The patterns change who drives the egg and where it runs.</p>
+<div class="recipe-row skill-row"><a href="/patterns/SKILL.md">open the patterns skill</a><button class="copy-recipe" data-copy="/patterns/SKILL.md">copy skill markdown</button></div>
+
+<div class="piece-row">
+<section class="piece"><h2>roost</h2><p>Login, identity, policy, and routing for people and agent clients that share infrastructure.</p></section>
+<section class="piece"><h2>wing</h2><p>A machine that runs eggs. It can connect to a hosted roost or live inside a self-hosted one.</p></section>
+<section class="piece"><h2>egg</h2><p>An owner-scoped agent or terminal with a PTY, sandbox policy, and durable lifecycle.</p></section>
+</div>
+
+<div class="pattern-list">
+<section class="pattern">
+<div class="pattern-num">01</div>
+<div class="pattern-tags"><span class="pattern-tag">human</span><span class="pattern-tag">local</span></div>
+<div class="pattern-head"><h2>use it as a local sandbox</h2></div>
+<p>Start Claude, Codex, or another agent inside an egg on the current machine. The egg applies the project sandbox policy and keeps running across terminal disconnects.</p>
+<div class="flow">you → wt egg → sandboxed agent</div>
+<div class="recipe-row"><a href="/patterns/local-sandbox/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/local-sandbox/INSTRUCTIONS.md">copy markdown</button></div>
+</section>
+
+<section class="pattern">
+<div class="pattern-num">02</div>
+<div class="pattern-tags"><span class="pattern-tag">agent</span><span class="pattern-tag">local</span></div>
+<div class="pattern-head"><h2>give your AI sandboxed sub-agents</h2></div>
+<p>Connect a main Codex or Claude session to Wingthing's typed interface. It can launch owner-scoped eggs, select a model, wait for completion, and read semantic results.</p>
+<div class="flow">your AI → local MCP → owned egg → result</div>
+<div class="recipe-row"><a href="/patterns/local-subagents/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/local-subagents/INSTRUCTIONS.md">copy markdown</button></div>
+</section>
+
+<section class="pattern">
+<div class="pattern-num">03</div>
+<div class="pattern-tags"><span class="pattern-tag">human</span><span class="pattern-tag">remote</span></div>
+<div class="pattern-head"><h2>reach your machine from the web</h2></div>
+<p>Run a wing on a workstation and connect it outbound to the hosted roost. Open and resume its eggs from a browser without an inbound port.</p>
+<div class="flow">browser → hosted roost → your wing → egg</div>
+<div class="recipe-row"><a href="/patterns/personal-remote-wing/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/personal-remote-wing/INSTRUCTIONS.md">copy markdown</button></div>
+</section>
+
+<section class="pattern">
+<div class="pattern-num">04</div>
+<div class="pattern-tags"><span class="pattern-tag">team</span><span class="pattern-tag">shared host</span></div>
+<div class="pattern-head"><h2>share a roost over the web</h2></div>
+<p>Several people log into one roost and run agents on its hardware. Each egg has an owner. A ticket workspace can be shared separately when the work calls for it.</p>
+<div class="flow">team browsers → shared roost → owner-scoped eggs</div>
+<div class="recipe-row"><a href="/patterns/shared-web-roost/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/shared-web-roost/INSTRUCTIONS.md">copy markdown</button></div>
+</section>
+
+<section class="pattern">
+<div class="pattern-num">05</div>
+<div class="pattern-tags"><span class="pattern-tag">agent</span><span class="pattern-tag">shared host</span></div>
+<div class="pattern-head"><h2>let your AI use a shared roost</h2></div>
+<p>Codex or Claude authenticates with the person's Wingthing login and orchestrates that person's eggs on shared hardware. The provider login stays in the owner's agent home.</p>
+<div class="flow">your AI → roost MCP → your eggs → results</div>
+<div class="recipe-row"><a href="/patterns/shared-roost-agents/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/shared-roost-agents/INSTRUCTIONS.md">copy markdown</button></div>
+</section>
+
+<section class="pattern">
+<div class="pattern-num">06</div>
+<div class="pattern-tags"><span class="pattern-tag">human or agent</span><span class="pattern-tag">remote hosts</span></div>
+<div class="pattern-head"><h2>orchestrate work on remote hosts</h2></div>
+<p>Select a roost or wing, launch work near the required code and hardware, and supervise it through the same typed operations used locally.</p>
+<div class="flow">you or your AI → remote runtime → owned eggs</div>
+<div class="recipe-row"><a href="/patterns/remote-orchestration/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/remote-orchestration/INSTRUCTIONS.md">copy markdown</button></div>
+</section>
+</div>
+</main>
+<script>
+document.querySelectorAll('[data-copy]').forEach(function(button){
+  button.addEventListener('click',async function(){
+    var original=button.textContent;
+    try{
+      var response=await fetch(button.dataset.copy);
+      if(!response.ok)throw new Error('HTTP '+response.status);
+      await navigator.clipboard.writeText(await response.text());
+      button.textContent='copied';
+    }catch(error){
+      button.textContent='copy failed';
+    }
+    setTimeout(function(){button.textContent=original},1500);
+  });
+});
+</script>
+{{end}}

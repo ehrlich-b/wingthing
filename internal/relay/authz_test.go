@@ -118,6 +118,25 @@ func TestAuthzPersonalWingIsolation(t *testing.T) {
 	})
 }
 
+func TestRoostModeSharesOnlyEmbeddedServiceWing(t *testing.T) {
+	store := testStore(t)
+	s := NewServer(store, ServerConfig{})
+	s.RoostMode = true
+
+	shared := &ConnectedWing{UserID: roostWingServiceUserID, WingID: "shared-roost"}
+	personal := &ConnectedWing{UserID: "owner", WingID: "personal"}
+
+	if !s.canAccessWing("any-authenticated-user", shared) {
+		t.Fatal("roost users should be able to access the embedded service wing")
+	}
+	if !s.canAccessWing("owner", personal) {
+		t.Fatal("personal wing owner should retain access in roost mode")
+	}
+	if s.canAccessWing("other-user", personal) {
+		t.Fatal("roost mode must not expose an external personal wing to every user")
+	}
+}
+
 // --- Wing event notification tests ---
 
 func TestAuthzOrgWingNotifications(t *testing.T) {

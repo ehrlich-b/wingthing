@@ -22,11 +22,13 @@ type mcpIdentity struct {
 	Roles    []string
 }
 
-// EnableMCP wires the role-scoped MCP surface onto the roost: a ToolRunner (the same tool
-// configs the wing uses) gated by a per-role Policy, reachable at POST /mcp with OAuth
-// bearer auth. Registers the MCP + OAuth routes. Call after NewServer, before serving.
-func (s *Server) EnableMCP(runner *egg.ToolRunner, policy *mcp.Policy) {
+// EnableMCP wires owner-scoped native controls and optional role-scoped executable
+// tools onto POST /mcp with OAuth bearer authentication.
+func (s *Server) EnableMCP(runner *egg.ToolRunner, policy *mcp.Policy, nativeTools ...mcp.NativeTool) {
 	s.mcpOAuth = newMCPOAuth()
+	s.mcpMu.Lock()
+	s.mcpNativeTools = append([]mcp.NativeTool(nil), nativeTools...)
+	s.mcpMu.Unlock()
 	s.ReloadMCP(runner, policy)
 
 	s.mux.HandleFunc("POST /mcp", s.handleMCP)
@@ -41,6 +43,9 @@ func (s *Server) EnableMCP(runner *egg.ToolRunner, policy *mcp.Policy) {
 // ReloadMCP atomically replaces the authorization policy and tool runner. In-flight
 // requests finish on the previous immutable snapshot; new requests see both replacements.
 func (s *Server) ReloadMCP(runner *egg.ToolRunner, policy *mcp.Policy) {
+	s.mcpMu.RLock()
+	nativeTools := append([]mcp.NativeTool(nil), s.mcpNativeTools...)
+	s.mcpMu.RUnlock()
 	// The MCP server reads the caller's roles from the request context, which handleMCP
 	// populates after authenticating the bearer token.
 	server := mcp.NewServer(runner, policy, func(r *http.Request) []string {
@@ -48,6 +53,14 @@ func (s *Server) ReloadMCP(runner *egg.ToolRunner, policy *mcp.Policy) {
 		return identity.Roles
 	})
 	server.SetCallObserver(s.auditMCPCall)
+	server.SetNativeTools(nativeTools, func(r *http.Request) mcp.Principal {
+		identity, _ := r.Context().Value(mcpIdentityKey{}).(mcpIdentity)
+		return mcp.Principal{
+			UserID: identity.UserID, Email: identity.Email,
+			ClientID: identity.ClientID, Roles: append([]string(nil), identity.Roles...),
+		}
+	})
+	server.SetNativeCallObserver(s.auditNativeMCPCall)
 	server.SetCallEnv(func(r *http.Request) map[string]string {
 		identity, _ := r.Context().Value(mcpIdentityKey{}).(mcpIdentity)
 		return map[string]string{
@@ -91,8 +104,8 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid origin", http.StatusForbidden)
 		return
 	}
-	server, policy := s.mcpSnapshot()
-	if server == nil || policy == nil {
+	server, _ := s.mcpSnapshot()
+	if server == nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -102,19 +115,47 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, _ := s.Store.GetUserByID(claims.Subject)
-	if u == nil || u.Email == nil {
+	if u == nil {
 		writeError(w, http.StatusForbidden, "MCP access is not enabled for this user")
 		return
 	}
-	roles := policy.EnabledRoles(policy.RolesForEmail(*u.Email))
-	if len(roles) == 0 {
+	roles := s.mcpRolesForUser(u)
+	if len(roles) == 0 && !(s.RoostMode && server.HasNativeTools()) {
 		writeError(w, http.StatusForbidden, "MCP access is not enabled for this user")
 		return
+	}
+	email := ""
+	if u.Email != nil {
+		email = *u.Email
 	}
 	ctx := context.WithValue(r.Context(), mcpIdentityKey{}, mcpIdentity{
-		UserID: claims.Subject, Email: *u.Email, ClientID: claims.ClientID, Roles: roles,
+		UserID: claims.Subject, Email: email, ClientID: claims.ClientID, Roles: roles,
 	})
 	server.ServeHTTP(w, r.WithContext(ctx))
+}
+
+func (s *Server) auditNativeMCPCall(r *http.Request, tool string, arguments json.RawMessage, result map[string]any, isError bool) {
+	identity, _ := r.Context().Value(mcpIdentityKey{}).(mcpIdentity)
+	if identity.UserID == "" {
+		return
+	}
+	detail := map[string]any{
+		"owner_id": identity.UserID,
+		"actor_id": identity.ClientID,
+		"roles":    identity.Roles,
+		"tool":     tool,
+		"is_error": isError,
+	}
+	sum := sha256.Sum256(arguments)
+	detail["argument_sha256"] = hex.EncodeToString(sum[:])
+	for _, key := range []string{"session", "run_id", "task_id", "message_id"} {
+		if value, ok := result[key].(string); ok && value != "" {
+			detail["target"] = value
+			break
+		}
+	}
+	raw, _ := json.Marshal(detail)
+	s.Store.AppendAudit(identity.UserID, "mcp_control_call", strPtr(string(raw)))
 }
 
 func (s *Server) auditMCPCall(r *http.Request, tool string, args []string, resp egg.ToolResponse) {

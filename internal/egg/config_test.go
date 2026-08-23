@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"gopkg.in/yaml.v3"
 )
 
@@ -221,11 +222,14 @@ func TestResolveEggConfig_MaxDepth(t *testing.T) {
 }
 
 func TestMergeEggConfig_NetworkUnion(t *testing.T) {
-	parent := &EggConfig{Network: NetworkField{Domains: []string{"api.anthropic.com"}}}
-	child := &EggConfig{Network: NetworkField{Domains: []string{"api.openai.com"}}}
+	parent := &EggConfig{Network: NetworkField{Domains: []string{"api.anthropic.com"}, AgentDomains: "merge"}}
+	child := &EggConfig{Network: NetworkField{Domains: []string{"api.openai.com"}, AgentDomains: "none"}}
 	merged := MergeEggConfig(parent, child)
 	if len(merged.Network.Domains) != 2 {
 		t.Errorf("network = %v, want 2 domains", merged.Network)
+	}
+	if merged.Network.AgentDomains != "none" {
+		t.Errorf("agent_domains = %q, want child value none", merged.Network.AgentDomains)
 	}
 
 	// Wildcard in either -> wildcard
@@ -339,9 +343,27 @@ func TestResolveEggConfig_FileNotFound(t *testing.T) {
 }
 
 func TestDiscoverEggConfig_FallsBackToDefault(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	cfg := DiscoverEggConfig("/nonexistent", nil)
 	if len(cfg.FS) == 0 {
 		t.Error("should fall back to default config")
+	}
+}
+
+func TestDiscoverEggConfig_GlobalDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	globalDir := filepath.Join(home, ".wingthing")
+	if err := os.MkdirAll(globalDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(globalDir, "egg.yaml"), []byte("base: none\nnetwork: '*'\nenv: '*'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := DiscoverEggConfig("/nonexistent", nil)
+	if RequiresSandbox(cfg, "claude") {
+		t.Fatal("global trusted-host config was not discovered")
 	}
 }
 
@@ -366,6 +388,25 @@ func TestDiscoverEggConfig_WingDefault(t *testing.T) {
 	cfg := DiscoverEggConfig("/nonexistent", wingCfg)
 	if len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "*" {
 		t.Error("should use wing default when no project config")
+	}
+}
+
+func TestUnsandboxedEggConfig(t *testing.T) {
+	cfg := UnsandboxedEggConfig()
+	if RequiresSandbox(cfg, "claude") {
+		t.Fatal("trusted VM policy unexpectedly requires a nested sandbox")
+	}
+	if !cfg.IsAllEnv() {
+		t.Fatal("trusted VM policy does not pass the host environment")
+	}
+	if got := sandbox.NetworkNeedFromDomains(cfg.Network.Domains); got != sandbox.NetworkFull {
+		t.Fatalf("network need = %s, want full", got)
+	}
+
+	withLimit := *cfg
+	withLimit.Resources.Memory = "1GB"
+	if !RequiresSandbox(&withLimit, "claude") {
+		t.Fatal("resource policy must require the sandbox backend")
 	}
 }
 

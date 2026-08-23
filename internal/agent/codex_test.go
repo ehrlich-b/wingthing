@@ -33,6 +33,7 @@ func TestCodexRunCommandContract(t *testing.T) {
 	var gotName string
 	var gotArgs []string
 	stream, err := codex.Run(context.Background(), "hello codex", RunOpts{
+		Model: "gpt-5.6-terra",
 		CmdFactory: func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
 			gotName = name
 			gotArgs = append([]string(nil), args...)
@@ -50,7 +51,7 @@ func TestCodexRunCommandContract(t *testing.T) {
 	if err := stream.Err(); err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := []string{"exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "hello codex", "--json"}
+	wantArgs := []string{"exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.6-terra", "hello codex", "--json"}
 	if gotName != "codex" || !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("invocation = %q %q, want codex %q", gotName, gotArgs, wantArgs)
 	}

@@ -46,6 +46,9 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 	if opts.CmdFactory != nil {
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	}
+	if opts.Model != "" {
+		args = append(args, "-m", opts.Model)
+	}
 	args = append(args, prompt, "--json")
 
 	var cmd *exec.Cmd

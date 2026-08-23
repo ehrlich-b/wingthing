@@ -8,7 +8,7 @@ import { renderSidebar } from './render.js';
 import { loadHome } from './data.js';
 import { showHome } from './nav.js';
 import { wingDisplayName, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
-import { saveTunnelAuthTokens } from './tunnel.js';
+import { saveTunnelAuthTokens, sendTunnelRequest } from './tunnel.js';
 import { handlePreview, closePreview } from './preview.js';
 import { initWebRTC, completeMigration, cleanupPeer, cleanupSession, dcActive, sendViaDC } from './webrtc.js';
 
@@ -128,8 +128,8 @@ export async function handlePTYPasskey() {
     var opts = {
         publicKey: {
             challenge: challenge,
-            rpId: location.hostname,
-            userVerification: 'preferred',
+            rpId: msg.rp_id || location.hostname,
+            userVerification: 'required',
             timeout: 60000
         }
     };
@@ -282,17 +282,16 @@ function setupPTYHandlers(ws, reattach) {
                 }
 
                 if (msg.public_key) {
-                    deriveE2EKey(msg.public_key).then(function (key) {
+                    deriveE2EKey(msg.public_key, S.ptyWingId).then(function (key) {
                         if (ws !== S.ptyWs) return;
                         S.e2eKey = key;
                         keyReady = true;
                         DOM.ptyStatus.textContent = key ? '\uD83D\uDD12' : '';
                         if (reattach) { flushReplay(); } else { pendingOutput.forEach(processOutput); pendingOutput = []; }
-                    }).catch(function () {
+                    }).catch(function (err) {
                         if (ws !== S.ptyWs) return;
-                        keyReady = true;
-                        DOM.ptyStatus.textContent = '';
-                        if (reattach) { flushReplay(); } else { pendingOutput.forEach(processOutput); pendingOutput = []; }
+                        DOM.ptyStatus.textContent = err && err.message ? err.message : 'wing identity verification failed';
+                        ws.close();
                     });
                 } else {
                     keyReady = true;
@@ -313,16 +312,16 @@ function setupPTYHandlers(ws, reattach) {
                     var msg = { type: 'pty.resize', session_id: S.ptySessionId, cols: size.cols, rows: size.rows };
                     // P2P: try DataChannel first
                     if (sendViaDC(S.ptySessionId, msg)) return;
-                    if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN) {
-                        S.ptyWs.send(JSON.stringify(msg));
+                    if (S.ptyWingId) {
+                        sendTunnelRequest(S.ptyWingId, msg).catch(function() {});
                     }
                 });
                 S.fitAddon.fit();
                 // Always send resize on session load — fitAddon.fit() only triggers
                 // onResize when dimensions change, but the remote PTY may have stale
                 // dimensions from a different machine/window.
-                if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN && S.ptySessionId && !S.spectating) {
-                    S.ptyWs.send(JSON.stringify({ type: 'pty.resize', session_id: S.ptySessionId, cols: S.term.cols, rows: S.term.rows }));
+                if (S.ptyWingId && S.ptySessionId && !S.spectating) {
+                    sendTunnelRequest(S.ptyWingId, { type: 'pty.resize', session_id: S.ptySessionId, cols: S.term.cols, rows: S.term.rows }).catch(function() {});
                 }
 
                 // P2P: check if wing supports P2P and initiate WebRTC
@@ -579,8 +578,8 @@ export function disconnectPTY() {
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
     if (S.ptySessionId) cleanupSession(S.ptySessionId);
     if (S.ptyWingId) cleanupPeer(S.ptyWingId);
-    if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN && S.ptySessionId) {
-        S.ptyWs.send(JSON.stringify({ type: 'pty.kill', session_id: S.ptySessionId }));
+    if (S.ptyWingId && S.ptySessionId) {
+        sendTunnelRequest(S.ptyWingId, { type: 'pty.kill', session_id: S.ptySessionId }).catch(function() {});
     }
     if (S.ptyWs) { S.ptyWs.close(); S.ptyWs = null; }
     S.ptySessionId = null;

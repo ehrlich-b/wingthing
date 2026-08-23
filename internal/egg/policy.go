@@ -2,6 +2,7 @@ package egg
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"sort"
@@ -35,12 +36,23 @@ type EffectivePolicy struct {
 	LocalPorts  []int
 	Mode        string
 	Drilled     []DrilledHole
+	Derived     []DrilledHole
+	Suppressed  []DrilledHole
 }
 
 // ResolvePolicy merges an egg config with the named agent's profile and reports
 // the result along with the provenance of every automatic addition. An empty
 // agent name (a plain shell or command session) drills nothing.
 func ResolvePolicy(cfg *EggConfig, agent, home string) EffectivePolicy {
+	policy, _ := ResolvePolicyWithProvider(cfg, agent, home, "")
+	return policy
+}
+
+// ResolvePolicyWithProvider resolves the effective policy while treating an
+// explicit provider URL as authoritative routing metadata. The derived exact
+// host replaces the profile's static vendor domains and remains visible as a
+// distinct source in explain output.
+func ResolvePolicyWithProvider(cfg *EggConfig, agent, home, providerURL string) (EffectivePolicy, error) {
 	mounts, deny, denyWrite := ParseFSRules(cfg.FS, home)
 
 	policy := EffectivePolicy{
@@ -54,18 +66,55 @@ func ResolvePolicy(cfg *EggConfig, agent, home string) EffectivePolicy {
 
 	if agent != "" {
 		profile := Profile(agent)
+		if err := validateAgentDomainsMode(cfg.Network.AgentDomains); err != nil {
+			return EffectivePolicy{}, err
+		}
 
-		for _, domain := range profile.Domains {
-			if containsFold(policy.Domains, domain) {
-				continue
+		providerHost, hasProvider, err := providerDomain(profile, providerURL)
+		if err != nil {
+			return EffectivePolicy{}, err
+		}
+		switch {
+		case hasProvider:
+			for _, domain := range profile.Domains {
+				policy.Suppressed = append(policy.Suppressed, DrilledHole{
+					Kind:   "domain",
+					Value:  domain,
+					Agent:  agent,
+					Reason: "explicit WT_PROVIDER_BASE_URL replaces the agent's static provider domains",
+				})
 			}
-			policy.Domains = append(policy.Domains, domain)
-			policy.Drilled = append(policy.Drilled, DrilledHole{
+			if !containsFold(policy.Domains, providerHost) && !containsFold(policy.Domains, "*") {
+				policy.Domains = append(policy.Domains, providerHost)
+			}
+			policy.Derived = append(policy.Derived, DrilledHole{
 				Kind:   "domain",
-				Value:  domain,
+				Value:  providerHost,
 				Agent:  agent,
-				Reason: fmt.Sprintf("agent %q requires network access to %s", agent, domain),
+				Reason: "exact host derived from WT_PROVIDER_BASE_URL",
 			})
+		case cfg.Network.AgentDomains == "none":
+			for _, domain := range profile.Domains {
+				policy.Suppressed = append(policy.Suppressed, DrilledHole{
+					Kind:   "domain",
+					Value:  domain,
+					Agent:  agent,
+					Reason: "network.agent_domains is none",
+				})
+			}
+		default:
+			for _, domain := range profile.Domains {
+				if containsFold(policy.Domains, domain) || containsFold(policy.Domains, "*") {
+					continue
+				}
+				policy.Domains = append(policy.Domains, domain)
+				policy.Drilled = append(policy.Drilled, DrilledHole{
+					Kind:   "domain",
+					Value:  domain,
+					Agent:  agent,
+					Reason: fmt.Sprintf("agent %q requires network access to %s", agent, domain),
+				})
+			}
 		}
 
 		if home != "" {
@@ -95,7 +144,7 @@ func ResolvePolicy(cfg *EggConfig, agent, home string) EffectivePolicy {
 	}
 
 	policy.NetworkNeed = sandbox.NetworkNeedFromDomains(policy.Domains)
-	policy.LocalPorts = InferLocalPorts(cfg, agent, "")
+	policy.LocalPorts = InferLocalPorts(cfg, agent, providerURL)
 	for _, port := range policy.LocalPorts {
 		if containsInt(cfg.Network.LocalPorts, port) {
 			continue
@@ -108,7 +157,48 @@ func ResolvePolicy(cfg *EggConfig, agent, home string) EffectivePolicy {
 		})
 	}
 
-	return policy
+	return policy, nil
+}
+
+func providerDomain(profile AgentProfile, raw string) (string, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !containsExact(profile.EnvVars, "WT_PROVIDER_BASE_URL") {
+		return "", false, nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" || !parsed.IsAbs() {
+		return "", false, fmt.Errorf("WT_PROVIDER_BASE_URL must be an absolute URL with a host")
+	}
+	if parsed.User != nil {
+		return "", false, fmt.Errorf("WT_PROVIDER_BASE_URL must not contain userinfo")
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	loopback := isLoopbackDomain(host)
+	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopback) {
+		return "", false, fmt.Errorf("WT_PROVIDER_BASE_URL must use https; http is allowed only for loopback")
+	}
+	if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
+		return "", false, fmt.Errorf("WT_PROVIDER_BASE_URL must use a hostname; IP literals are allowed only for loopback")
+	}
+	return host, true, nil
+}
+
+func containsExact(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func isLoopbackDomain(host string) bool {
+	switch strings.ToLower(host) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 // defaultAgentPorts are loopback services an agent profile implies but cannot
@@ -128,13 +218,14 @@ var defaultAgentPorts = map[string]int{
 // network.local_ports entries are always honored.
 func InferLocalPorts(cfg *EggConfig, agent, providerURL string) []int {
 	ports := append([]int(nil), cfg.Network.LocalPorts...)
+	providerPort, hasProviderPort := loopbackPortFromURL(providerURL)
 
-	if declaresLoopback(cfg.Network.Domains) || len(cfg.Network.LocalPorts) > 0 {
+	if declaresLoopback(cfg.Network.Domains) || len(cfg.Network.LocalPorts) > 0 || hasProviderPort {
 		if port, ok := defaultAgentPorts[agent]; ok {
 			ports = append(ports, port)
 		}
-		if port, ok := loopbackPortFromURL(providerURL); ok {
-			ports = append(ports, port)
+		if hasProviderPort {
+			ports = append(ports, providerPort)
 		}
 	}
 

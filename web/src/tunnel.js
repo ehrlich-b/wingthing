@@ -4,7 +4,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { gcm } from '@noble/ciphers/aes.js';
 import { b64ToBytes, bytesToB64, b64urlToBytes, bytesToB64url } from './helpers.js';
 import { S } from './state.js';
-import { identityKey, identityPubKey } from './crypto.js';
+import { assertWingIdentity, identityKey, identityPubKey } from './crypto.js';
 
 // --- Crypto (pure JS — works without crypto.subtle / secure context) ---
 
@@ -256,6 +256,7 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
     await acquireToken();
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
+	assertWingIdentity(wingId, wing.public_key);
 
     var key = deriveE2ETunnelKey(wing.public_key);
     if (!key) throw new Error('could not derive tunnel key');
@@ -297,7 +298,7 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
         if (result.error === 'passkey_required') {
             if (!(opts && opts.skipPasskey)) {
                 try {
-                    var authToken = await handleTunnelPasskey(wingId, wing.public_key);
+                    var authToken = await handleTunnelPasskey(wingId);
                     if (authToken) {
                         S.tunnelAuthTokens[wingId] = authToken;
                         saveTunnelAuthTokens();
@@ -326,6 +327,7 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
 export async function sendTunnelStream(wingId, innerMsg, onChunk) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     if (!wing || !wing.public_key) throw new Error('wing not found or no public key');
+	assertWingIdentity(wingId, wing.public_key);
 
     var key = deriveE2ETunnelKey(wing.public_key);
     if (!key) throw new Error('could not derive tunnel key');
@@ -367,7 +369,7 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
     });
 }
 
-async function handleTunnelPasskey(wingId, wingPubKey) {
+async function handleTunnelPasskey(wingId) {
     try {
         // Fetch user's registered credential IDs so password managers (LastPass etc) trigger
         var allowCredentials = [];
@@ -388,12 +390,17 @@ async function handleTunnelPasskey(wingId, wingPubKey) {
             throw noKeyErr;
         }
 
-        var challenge = crypto.getRandomValues(new Uint8Array(32));
+        // The wing owns challenge generation and consumes each challenge once.
+        // The relay only forwards the encrypted begin/finish messages.
+        var begin = await sendTunnelRequest(wingId, { type: 'passkey.auth.begin' }, { skipPasskey: true });
+        if (!begin || !begin.challenge || !begin.challenge_id || !begin.rp_id) {
+            throw new Error('wing returned an invalid passkey challenge');
+        }
         var getOpts = {
             publicKey: {
-                challenge: challenge,
-                rpId: location.hostname,
-                userVerification: 'preferred',
+                challenge: b64urlToBytes(begin.challenge),
+                rpId: begin.rp_id,
+                userVerification: 'required',
                 timeout: 60000
             }
         };
@@ -402,46 +409,16 @@ async function handleTunnelPasskey(wingId, wingPubKey) {
         }
         var credential = await navigator.credentials.get(getOpts);
 
-        var key = deriveE2ETunnelKey(wingPubKey);
-        var requestId = randomUUID();
         var innerMsg = {
-            type: 'passkey.auth',
+            type: 'passkey.auth.finish',
+            challenge_id: begin.challenge_id,
             credential_id: bytesToB64url(new Uint8Array(credential.rawId)),
             authenticator_data: bytesToB64(new Uint8Array(credential.response.authenticatorData)),
             client_data_json: bytesToB64(new Uint8Array(credential.response.clientDataJSON)),
             signature: bytesToB64(new Uint8Array(credential.response.signature))
         };
-        var payload = tunnelEncrypt(key, JSON.stringify(innerMsg));
-
-        var conn = await acquireConn(wingId);
-
-        return new Promise(function(resolve, reject) {
-            conn.pending[requestId] = {
-                resolve: async function(msg) {
-                    try {
-                        var decrypted = tunnelDecrypt(key, msg.payload);
-                        var result = JSON.parse(decrypted);
-                        resolve(result.auth_token || null);
-                    } catch (e) { resolve(null); }
-                    checkIdle(wingId, conn);
-                },
-                reject: function() { resolve(null); checkIdle(wingId, conn); }
-            };
-            conn.ws.send(JSON.stringify({
-                type: 'tunnel.req',
-                wing_id: wingId,
-                request_id: requestId,
-                sender_pub: identityPubKey,
-                payload: payload
-            }));
-            setTimeout(function() {
-                if (conn.pending[requestId]) {
-                    delete conn.pending[requestId];
-                    resolve(null);
-                    checkIdle(wingId, conn);
-                }
-            }, 60000);
-        });
+        var result = await sendTunnelRequest(wingId, innerMsg, { skipPasskey: true });
+        return result.auth_token || null;
     } catch (e) {
         if (e.noPasskeys) throw e;
         console.error('passkey auth failed:', e);

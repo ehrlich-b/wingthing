@@ -54,6 +54,10 @@ case ":$PATH:" in
 esac
 
 echo ""
-echo "get started:"
+echo "get started locally (no account required):"
+echo "  wt terminal --name work"
+echo "  wt attach"
+echo ""
+echo "optional encrypted browser access:"
 echo "  wt login"
-echo "  wt wing -d"
+echo "  wt start"

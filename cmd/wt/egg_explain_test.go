@@ -149,7 +149,7 @@ func TestExplainPolicyJSONShape(t *testing.T) {
 
 	for _, key := range []string{
 		"agent", "config_source", "network_need", "enforcement",
-		"domains", "local_ports", "mode", "mounts", "deny", "deny_write", "drilled",
+		"domains", "local_ports", "mode", "mounts", "deny", "deny_write", "drilled", "derived", "suppressed",
 	} {
 		if _, ok := got[key]; !ok {
 			t.Errorf("missing key %q in %s", key, buf.String())
@@ -183,6 +183,30 @@ func TestExplainPolicyJSONShape(t *testing.T) {
 	for _, key := range []string{"source", "target", "read_only"} {
 		if _, ok := m[key]; !ok {
 			t.Errorf("mount entry missing key %q: %v", key, m)
+		}
+	}
+}
+
+func TestExplainPolicyShowsDerivedAndSuppressedDomains(t *testing.T) {
+	cfg, err := egg.LoadEggConfigFromYAML("network:\n  domains: []\n  agent_domains: none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := explainPolicyWithProvider(cfg, "opencode", "/home/test", "egg.yaml", "https://api.arliai.com/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policy.Domains) != 1 || policy.Domains[0] != "api.arliai.com" {
+		t.Fatalf("domains = %v, want one derived provider host", policy.Domains)
+	}
+	var buf bytes.Buffer
+	if err := renderPolicy(&buf, policy); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	for _, want := range []string{"domains (1)", "api.arliai.com", "derived", "suppressed agent domains", "*.openai.com"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
 		}
 	}
 }

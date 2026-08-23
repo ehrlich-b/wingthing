@@ -4,14 +4,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
+	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
+	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
 func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
@@ -53,8 +59,8 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Result.Tools) != 15 {
-		t.Fatalf("tools = %d, want 15", len(listed.Result.Tools))
+	if len(listed.Result.Tools) != 27 {
+		t.Fatalf("tools = %d, want 27", len(listed.Result.Tools))
 	}
 	names := make(map[string]bool)
 	for _, tool := range listed.Result.Tools {
@@ -73,6 +79,9 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 		// passthrough has to be discoverable in the schema, not just accepted.
 		if tool.Name == "agent_start" {
 			properties := tool.InputSchema["properties"].(map[string]any)
+			if _, ok := properties["model"]; !ok {
+				t.Fatal("agent_start schema does not expose model selection")
+			}
 			args, ok := properties["args"].(map[string]any)
 			if !ok {
 				t.Fatal("agent_start schema does not expose agent arguments")
@@ -87,8 +96,9 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"terminal_list", "agent_start", "prompt_list", "prompt_get", "prompt_save",
-		"prompt_run", "prompt_loop", "swarm_run", "sandbox_explain",
+		"terminal_list", "terminal_start", "terminal_rename", "agent_start", "agent_run", "agent_status",
+		"agent_wait", "agent_result", "agent_events", "agent_steer", "agent_stop", "prompt_list", "prompt_get", "prompt_save",
+		"prompt_run", "prompt_loop", "swarm_run", "sandbox_explain", "message_send", "message_list", "message_wait",
 	} {
 		if !names[want] {
 			t.Errorf("missing tool %q", want)
@@ -112,6 +122,42 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	}
 }
 
+func TestLocalMCPUnsandboxedModeIsExplicitAndAudited(t *testing.T) {
+	dir := t.TempDir()
+	server := &localMCPServer{
+		cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, logs: &bytes.Buffer{},
+		principal: "claude-code", unsandboxed: true,
+	}
+	capabilities, err := server.toolCapabilities(json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capabilities["session_isolation"] != "outer-boundary" {
+		t.Fatalf("session isolation = %v", capabilities["session_isolation"])
+	}
+	if !strings.Contains(server.mcpInstructions(), "full authority") {
+		t.Fatal("initialize instructions hide unsandboxed authority")
+	}
+	explained, err := server.toolSandboxExplain(json.RawMessage(`{"agent":"claude"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := explained["policy"].(explainedPolicy)
+	if policy.ConfigSource != "MCP server --unsandboxed" || policy.Enforcement != "unrestricted" || policy.Isolation != "outer-boundary" {
+		t.Fatalf("policy = %#v", policy)
+	}
+	if err := server.auditToolCall("wingthing_capabilities", json.RawMessage(`{}`), capabilities, "allowed"); err != nil {
+		t.Fatal(err)
+	}
+	audit, err := os.ReadFile(filepath.Join(dir, "mcp-audit.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(audit, []byte(`"isolation":"outer-boundary"`)) {
+		t.Fatalf("audit does not record trusted-host mode: %s", audit)
+	}
+}
+
 func TestLocalMCPRejectsUnknownToolAndArguments(t *testing.T) {
 	server := &localMCPServer{cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, logs: &bytes.Buffer{}}
 
@@ -132,6 +178,20 @@ func TestLocalMCPRejectsUnknownToolAndArguments(t *testing.T) {
 	result := response.Result.(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("unexpected arguments should be a tool error: %#v", result)
+	}
+
+	// Strict decoding errors must survive validation. Reporting a missing
+	// required field when the caller merely misspelled an optional one makes a
+	// model retry the wrong fix and was found by dogfooding terminal_wait.
+	badWaitArgs := localMCPRequest{
+		JSONRPC: "2.0", ID: json.RawMessage(`3`), Method: "tools/call",
+		Params: json.RawMessage(`{"name":"terminal_wait","arguments":{"session":"example","timeout":30}}`),
+	}
+	response, _ = server.handle(context.Background(), badWaitArgs)
+	result = response.Result.(map[string]any)
+	structured := result["structuredContent"].(map[string]any)
+	if got := structured["error"]; got != `json: unknown field "timeout"` {
+		t.Fatalf("terminal_wait strict error = %q", got)
 	}
 }
 
@@ -308,5 +368,673 @@ func TestLocalMCPPromptManager(t *testing.T) {
 	listed, isError, _ := server.callTool(context.Background(), "prompt_list", json.RawMessage(`{}`))
 	if isError || len(listed["prompts"].([]promptmgr.Asset)) != 1 {
 		t.Fatalf("list = %#v isError=%v", listed, isError)
+	}
+}
+
+func TestLocalMCPPrincipalOwnershipAndAudit(t *testing.T) {
+	dir := t.TempDir()
+	createSession := func(id, principal string) {
+		sessionDir := filepath.Join(dir, "eggs", id)
+		if err := os.MkdirAll(sessionDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sessionDir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sessionDir, "egg.meta"), []byte("kind=agent\nagent=claude\ncwd=/tmp\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if principal != "" {
+			if err := writeSessionPrincipal(sessionDir, principal); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	createSession("alpha001", "alpha")
+	createSession("beta001", "beta")
+	createSession("human01", "")
+
+	server := &localMCPServer{
+		cfg:       &config.Config{Dir: dir, DefaultAgent: "claude"},
+		logs:      &bytes.Buffer{},
+		principal: "alpha",
+	}
+	listed, isError, protocolErr := server.callTool(context.Background(), "terminal_list", json.RawMessage(`{}`))
+	if protocolErr != nil || isError {
+		t.Fatalf("terminal_list failed: %#v %v", listed, protocolErr)
+	}
+	sessions := listed["sessions"].([]localSession)
+	if len(sessions) != 1 || sessions[0].ID != "alpha001" {
+		t.Fatalf("alpha saw sessions %#v", sessions)
+	}
+	if _, err := server.resolveOwnedSession(context.Background(), "beta001"); err == nil || err.Error() != "session not found or not owned by caller" {
+		t.Fatalf("cross-principal lookup error = %v", err)
+	}
+
+	defaultServer := &localMCPServer{cfg: server.cfg, logs: &bytes.Buffer{}}
+	if _, err := defaultServer.resolveOwnedSession(context.Background(), "human01"); err != nil {
+		t.Fatalf("default principal should retain access to legacy sessions: %v", err)
+	}
+	if _, err := defaultServer.resolveOwnedSession(context.Background(), "alpha001"); err == nil {
+		t.Fatal("default principal reached a named client's session")
+	}
+
+	auditData, err := os.ReadFile(filepath.Join(dir, "mcp-audit.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(auditData, []byte(`"principal":"alpha"`)) || !bytes.Contains(auditData, []byte(`"tool":"terminal_list"`)) {
+		t.Fatalf("audit log missing attribution: %s", auditData)
+	}
+}
+
+func TestLocalMCPClientConfigGrantsAndBounds(t *testing.T) {
+	dir := t.TempDir()
+	contents := []byte(`require_client: true
+clients:
+  observer:
+    owner: ehrlich
+    grants: [terminal.read]
+    bounds:
+      max_sessions: 2
+      max_spawns_per_hour: 3
+`)
+	if err := os.WriteFile(filepath.Join(dir, "clients.yaml"), contents, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadLocalMCPClientsConfig(&config.Config{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := loaded.Clients["observer"]
+	server := &localMCPServer{
+		cfg:              &config.Config{Dir: dir},
+		logs:             &bytes.Buffer{},
+		principal:        "observer",
+		grants:           grantSet(client.Grants),
+		maxSessions:      client.Bounds.MaxSessions,
+		maxSpawnsPerHour: client.Bounds.MaxSpawnsPerHour,
+	}
+	if !loaded.RequireClient || client.Owner != "ehrlich" || !server.toolAllowed("terminal_list") || server.toolAllowed("terminal_send") || server.toolAllowed("agent_start") {
+		t.Fatalf("grant evaluation is wrong: %#v", loaded)
+	}
+	result, isError, protocolErr := server.callTool(context.Background(), "terminal_send", json.RawMessage(`{"session":"x","input":"oops"}`))
+	if protocolErr != nil || !isError || !strings.Contains(result["error"].(string), "lacks grant") {
+		t.Fatalf("denied tool result = %#v isError=%v protocol=%v", result, isError, protocolErr)
+	}
+}
+
+func TestLocalMCPRejectsUnknownConfiguredClient(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WINGTHING_DIR", dir)
+	configData := []byte("require_client: true\nclients:\n  observer:\n    grants: [terminal.read]\n")
+	if err := os.WriteFile(filepath.Join(dir, "clients.yaml"), configData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := mcpCmd()
+	cmd.SetArgs([]string{"stdio", "--client", "typo"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), `MCP client "typo" is not configured`) {
+		t.Fatalf("unknown client error = %v", err)
+	}
+}
+
+func TestLocalMCPRejectsImplicitDefaultWhenAnyClientsAreConfigured(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WINGTHING_DIR", dir)
+	configData := []byte("clients:\n  observer:\n    grants: [terminal.read]\n")
+	if err := os.WriteFile(filepath.Join(dir, "clients.yaml"), configData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := mcpCmd()
+	cmd.SetArgs([]string{"stdio"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), `MCP client "default" is not configured`) {
+		t.Fatalf("implicit default error = %v", err)
+	}
+}
+
+func TestLocalMCPMessagesShareOwnerAndPreserveActorIsolation(t *testing.T) {
+	dir := t.TempDir()
+	codex := &localMCPServer{
+		cfg: &config.Config{Dir: dir}, logs: &bytes.Buffer{},
+		principal: "ehrlich", actor: "codex",
+	}
+	claude := &localMCPServer{
+		cfg: &config.Config{Dir: dir}, logs: &bytes.Buffer{},
+		principal: "ehrlich", actor: "claude",
+	}
+	otherOwner := &localMCPServer{
+		cfg: &config.Config{Dir: dir}, logs: &bytes.Buffer{},
+		principal: "someone-else", actor: "claude",
+	}
+
+	secretBody := "filesystem gate passed; canary content stays redacted"
+	sent, isError, protocolErr := codex.callTool(context.Background(), "message_send", json.RawMessage(`{
+		"channel":"factory-security","kind":"evidence","content":"filesystem gate passed; canary content stays redacted"
+	}`))
+	if protocolErr != nil || isError {
+		t.Fatalf("send = %#v isError=%v protocol=%v", sent, isError, protocolErr)
+	}
+	messageID := sent["message_id"].(string)
+
+	listed, isError, protocolErr := claude.callTool(context.Background(), "message_list", json.RawMessage(`{"channel":"factory-security"}`))
+	if protocolErr != nil || isError {
+		t.Fatalf("list = %#v isError=%v protocol=%v", listed, isError, protocolErr)
+	}
+	messages := listed["messages"].([]map[string]any)
+	if len(messages) != 1 || messages[0]["message_id"] != messageID || messages[0]["sender_actor"] != "codex" {
+		t.Fatalf("claude messages = %#v", messages)
+	}
+
+	self, _, _ := codex.callTool(context.Background(), "message_list", json.RawMessage(`{"channel":"factory-security"}`))
+	if got := self["messages"].([]map[string]any); len(got) != 0 {
+		t.Fatalf("sender received its own broadcast: %#v", got)
+	}
+	foreign, _, _ := otherOwner.callTool(context.Background(), "message_list", json.RawMessage(`{"channel":"factory-security"}`))
+	if got := foreign["messages"].([]map[string]any); len(got) != 0 {
+		t.Fatalf("other owner saw messages: %#v", got)
+	}
+
+	audit, err := os.ReadFile(filepath.Join(dir, "mcp-audit.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(audit, []byte(secretBody)) {
+		t.Fatalf("message content leaked into audit log: %s", audit)
+	}
+	if !bytes.Contains(audit, []byte(`"actor":"codex"`)) || !bytes.Contains(audit, []byte(`"target":"`+messageID+`"`)) {
+		t.Fatalf("message audit missing actor/target: %s", audit)
+	}
+}
+
+func TestLocalMCPMessageWaitUnblocksOnSameOwnerSend(t *testing.T) {
+	dir := t.TempDir()
+	codex := &localMCPServer{cfg: &config.Config{Dir: dir}, logs: &bytes.Buffer{}, principal: "ehrlich", actor: "codex"}
+	claude := &localMCPServer{cfg: &config.Config{Dir: dir}, logs: &bytes.Buffer{}, principal: "ehrlich", actor: "claude"}
+
+	type waitResult struct {
+		data map[string]any
+		err  error
+	}
+	waited := make(chan waitResult, 1)
+	go func() {
+		data, err := claude.toolMessageWait(context.Background(), json.RawMessage(`{
+			"channel":"factory-live","timeout_seconds":2
+		}`))
+		waited <- waitResult{data: data, err: err}
+	}()
+	time.Sleep(250 * time.Millisecond)
+	if _, err := codex.toolMessageSend(json.RawMessage(`{
+		"channel":"factory-live","kind":"question","content":"rerun the Arli canary"
+	}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case result := <-waited:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.data["timed_out"] != false || len(result.data["messages"].([]map[string]any)) != 1 {
+			t.Fatalf("wait result = %#v", result.data)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("message_wait stayed blocked after message_send")
+	}
+}
+
+func TestRoostMessageToolsShareOneOwnerAcrossOAuthClients(t *testing.T) {
+	dir := t.TempDir()
+	workspace := t.TempDir()
+	cfg := &config.Config{Dir: dir}
+	if err := config.SaveWingConfig(dir, &config.WingConfig{Paths: config.PathList{{Path: workspace}}}); err != nil {
+		t.Fatal(err)
+	}
+	var sendTool, listTool mcppkg.NativeTool
+	for _, tool := range roostNativeMCPTools(cfg, true) {
+		switch tool.Name {
+		case "message_send":
+			sendTool = tool
+		case "message_list":
+			listTool = tool
+		}
+	}
+	if sendTool.Call == nil || listTool.Call == nil {
+		t.Fatal("roost message tools are missing")
+	}
+
+	aliceCodex := mcppkg.Principal{UserID: "alice", Email: "alice@example.com", ClientID: "codex-client"}
+	aliceClaude := mcppkg.Principal{UserID: "alice", Email: "alice@example.com", ClientID: "claude-client"}
+	bobClaude := mcppkg.Principal{UserID: "bob", Email: "bob@example.com", ClientID: "claude-client"}
+	sent, isError, err := sendTool.Call(context.Background(), aliceCodex, json.RawMessage(`{"content":"factory evidence","kind":"evidence"}`))
+	if err != nil || isError {
+		t.Fatalf("roost send = %#v isError=%v err=%v", sent, isError, err)
+	}
+	for _, test := range []struct {
+		name      string
+		principal mcppkg.Principal
+		want      int
+	}{{"same owner", aliceClaude, 1}, {"other owner", bobClaude, 0}, {"sender", aliceCodex, 0}} {
+		t.Run(test.name, func(t *testing.T) {
+			listed, isError, err := listTool.Call(context.Background(), test.principal, json.RawMessage(`{}`))
+			if err != nil || isError {
+				t.Fatalf("list = %#v isError=%v err=%v", listed, isError, err)
+			}
+			if got := len(listed["messages"].([]map[string]any)); got != test.want {
+				t.Fatalf("messages = %d, want %d (%#v)", got, test.want, listed)
+			}
+		})
+	}
+}
+
+func TestLocalMCPTaskOwnership(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{Dir: dir}
+	taskStore, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := taskStore.CreateTask(&store.Task{ID: "task-beta", What: "secret", RunAt: time.Now(), Principal: "beta"}); err != nil {
+		t.Fatal(err)
+	}
+	taskStore.Close()
+
+	server := &localMCPServer{cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha"}
+	result, isError, protocolErr := server.callTool(context.Background(), "task_get", json.RawMessage(`{"task_id":"task-beta"}`))
+	if protocolErr != nil || !isError || !strings.Contains(result["error"].(string), `owned by principal "beta"`) {
+		t.Fatalf("cross-principal task result = %#v isError=%v protocol=%v", result, isError, protocolErr)
+	}
+}
+
+func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
+	dir := t.TempDir()
+	cwd := t.TempDir()
+	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := &localMCPServer{
+		cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha",
+		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
+				return err
+			}
+			_ = taskStore.AppendLog(task.ID, "started", nil)
+			close(started)
+			select {
+			case <-ctx.Done():
+				return taskStore.SetTaskError(task.ID, ctx.Err().Error())
+			case <-release:
+			}
+			if err := taskStore.SetTaskOutput(task.ID, "semantic ✓ result"); err != nil {
+				return err
+			}
+			return taskStore.UpdateTaskStatus(task.ID, "done")
+		},
+	}
+	startedData, isError, protocolErr := server.callTool(context.Background(), "agent_run", json.RawMessage(`{
+		"prompt":"review this branch","agent":"claude","model":"opus","cwd":"`+cwd+`","label":"review"
+	}`))
+	if protocolErr != nil || isError {
+		t.Fatalf("agent_run = %#v isError=%v protocol=%v", startedData, isError, protocolErr)
+	}
+	runID := startedData["run_id"].(string)
+	<-started
+
+	status, err := server.toolAgentStatus(json.RawMessage(`{"run_id":"` + runID + `"}`))
+	if err != nil || status["status"] != "running" || status["model"] != "opus" {
+		t.Fatalf("agent_status = %#v err=%v", status, err)
+	}
+	other := &localMCPServer{cfg: cfg, logs: &bytes.Buffer{}, principal: "beta"}
+	if _, err := other.toolAgentStatus(json.RawMessage(`{"run_id":"` + runID + `"}`)); err == nil {
+		t.Fatal("another principal read the run")
+	}
+	before, err := server.toolAgentResult(json.RawMessage(`{"run_id":"` + runID + `"}`))
+	if err != nil || before["ready"] != false {
+		t.Fatalf("early result = %#v err=%v", before, err)
+	}
+
+	close(release)
+	waited, err := server.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":"`+runID+`","timeout_seconds":2}`))
+	if err != nil || waited["status"] != "done" {
+		t.Fatalf("agent_wait = %#v err=%v", waited, err)
+	}
+	result, err := server.toolAgentResult(json.RawMessage(`{"run_id":"` + runID + `","max_chars":10}`))
+	if err != nil || result["output"] != "semantic ✓" || result["truncated"] != true {
+		t.Fatalf("agent_result = %#v err=%v", result, err)
+	}
+	events, err := server.toolAgentEvents(json.RawMessage(`{"run_id":"` + runID + `"}`))
+	if err != nil || len(events["events"].([]map[string]any)) == 0 {
+		t.Fatalf("agent_events = %#v err=%v", events, err)
+	}
+}
+
+func TestAgentStopWinsCompletionRace(t *testing.T) {
+	dir := t.TempDir()
+	cwd := t.TempDir()
+	started := make(chan struct{})
+	server := &localMCPServer{
+		cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, logs: &bytes.Buffer{}, principal: "alpha",
+		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
+				return err
+			}
+			close(started)
+			<-ctx.Done()
+			// Deliberately attempt the stale completion write that used to win
+			// the cancellation race. toolAgentStop waits for this runner and
+			// writes the final stopped state afterward.
+			_ = taskStore.SetTaskOutput(task.ID, "late output")
+			return taskStore.UpdateTaskStatus(task.ID, "done")
+		},
+	}
+	created, err := server.toolAgentRun(json.RawMessage(`{"prompt":"keep working","agent":"claude","cwd":` + strconv.Quote(cwd) + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := created["run_id"].(string)
+	<-started
+	stopped, err := server.toolAgentStop(json.RawMessage(`{"run_id":` + strconv.Quote(runID) + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped["status"] != "failed" || stopped["stopped"] != true {
+		t.Fatalf("stopped = %#v", stopped)
+	}
+	result, err := server.toolAgentResult(json.RawMessage(`{"run_id":` + strconv.Quote(runID) + `}`))
+	if err != nil || !strings.Contains(result["error"].(string), "stopped by MCP principal alpha") {
+		t.Fatalf("final result = %#v err=%v", result, err)
+	}
+}
+
+func TestUnsandboxedAgentRunPersistsPrivilegedIsolation(t *testing.T) {
+	dir := t.TempDir()
+	cwd := t.TempDir()
+	seen := make(chan string, 1)
+	server := &localMCPServer{
+		cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, logs: &bytes.Buffer{},
+		principal: "alpha", unsandboxed: true,
+		runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+			seen <- task.Isolation
+			return taskStore.UpdateTaskStatus(task.ID, "done")
+		},
+	}
+	created, err := server.toolAgentRun(json.RawMessage(`{"prompt":"trusted task","agent":"claude","cwd":` + strconv.Quote(cwd) + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created["isolation"] != "privileged" {
+		t.Fatalf("submitted isolation = %#v", created)
+	}
+	select {
+	case isolation := <-seen:
+		if isolation != "privileged" {
+			t.Fatalf("runner isolation = %q", isolation)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("agent runner did not start")
+	}
+}
+
+func TestAgentStatusMarksOrphanedRunnerFailed(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
+	taskStore, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &store.Task{
+		ID: "orphaned-run", Type: "agent_run", What: "orphan", Agent: "claude",
+		RunAt: time.Now(), CWD: t.TempDir(), Principal: "alpha", RunnerPID: 1 << 30,
+	}
+	if err := taskStore.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
+		t.Fatal(err)
+	}
+	taskStore.Close()
+	server := &localMCPServer{cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha"}
+	status, err := server.toolAgentStatus(json.RawMessage(`{"run_id":"orphaned-run"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status["status"] != "failed" {
+		t.Fatalf("orphan status = %#v", status)
+	}
+	result, err := server.toolAgentResult(json.RawMessage(`{"run_id":"orphaned-run"}`))
+	if err != nil || !strings.Contains(result["error"].(string), "supervising Wingthing process") {
+		t.Fatalf("orphan result = %#v err=%v", result, err)
+	}
+}
+
+func TestFailedParentDoesNotReleaseSteeredRun(t *testing.T) {
+	dir := t.TempDir()
+	cwd := t.TempDir()
+	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
+	taskStore, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := &store.Task{
+		ID: "failed-parent", Type: "agent_run", What: "original review", Agent: "claude", Model: "opus",
+		RunAt: time.Now(), CWD: cwd, Principal: "alpha", RunnerPID: os.Getpid(),
+	}
+	if err := taskStore.CreateTask(parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := taskStore.SetTaskError(parent.ID, "review failed"); err != nil {
+		t.Fatal(err)
+	}
+	taskStore.Close()
+	runnerCalled := make(chan struct{}, 1)
+	server := &localMCPServer{
+		cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha",
+		runAgentTask: func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error {
+			runnerCalled <- struct{}{}
+			return nil
+		},
+	}
+	created, err := server.toolAgentSteer(json.RawMessage(`{"run_id":"failed-parent","prompt":"focus on auth"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	childID := created["run_id"].(string)
+	waited, err := server.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":`+strconv.Quote(childID)+`,"timeout_seconds":2}`))
+	if err != nil || waited["status"] != "failed" {
+		t.Fatalf("child wait = %#v err=%v", waited, err)
+	}
+	select {
+	case <-runnerCalled:
+		t.Fatal("failed parent released the steered child")
+	default:
+	}
+	child, childStore, err := server.ownedAgentRun(childID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer childStore.Close()
+	if !strings.Contains(child.What, "Prior request:\noriginal review") || !strings.Contains(child.What, "New direction:\nfocus on auth") {
+		t.Fatalf("steered prompt = %q", child.What)
+	}
+}
+
+func TestStdioWaitDoesNotBlockStop(t *testing.T) {
+	dir := t.TempDir()
+	cwd := t.TempDir()
+	started := make(chan struct{})
+	inputReader, inputWriter := io.Pipe()
+	outputReader, outputWriter := io.Pipe()
+	server := &localMCPServer{
+		cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, in: inputReader, out: outputWriter,
+		logs: &bytes.Buffer{}, principal: "alpha",
+		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
+				return err
+			}
+			close(started)
+			<-ctx.Done()
+			return taskStore.SetTaskError(task.ID, ctx.Err().Error())
+		},
+	}
+	created, err := server.toolAgentRun(json.RawMessage(`{"prompt":"long task","agent":"claude","cwd":` + strconv.Quote(cwd) + `}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := created["run_id"].(string)
+	<-started
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.serve(context.Background()) }()
+	if _, err := fmt.Fprintf(inputWriter, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agent_wait","arguments":{"run_id":%s,"timeout_seconds":10}}}`+"\n", strconv.Quote(runID)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if _, err := fmt.Fprintf(inputWriter, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"agent_stop","arguments":{"run_id":%s}}}`+"\n", strconv.Quote(runID)); err != nil {
+		t.Fatal(err)
+	}
+
+	responses := make(chan []localMCPResponse, 1)
+	go func() {
+		decoder := json.NewDecoder(outputReader)
+		var got []localMCPResponse
+		for len(got) < 2 {
+			var response localMCPResponse
+			if err := decoder.Decode(&response); err != nil {
+				break
+			}
+			got = append(got, response)
+		}
+		responses <- got
+	}()
+	select {
+	case got := <-responses:
+		if len(got) != 2 {
+			t.Fatalf("responses = %#v", got)
+		}
+		seen := map[string]bool{}
+		for _, response := range got {
+			seen[string(response.ID)] = true
+		}
+		if !seen["1"] || !seen["2"] {
+			t.Fatalf("response IDs = %#v", seen)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("agent_stop was blocked behind agent_wait")
+	}
+	_ = inputWriter.Close()
+	_ = outputReader.Close()
+	select {
+	case err := <-serveDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stdio server did not finish")
+	}
+}
+
+func TestSharedRoostPathBoundsFailClosed(t *testing.T) {
+	dir := t.TempDir()
+	workspace := t.TempDir()
+	server := &localMCPServer{
+		cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, logs: &bytes.Buffer{},
+		principal: "member", enforcePathBounds: true,
+	}
+	if _, err := server.resolveWorkingDirectory(workspace); err == nil || !strings.Contains(err.Error(), "no configured workspace paths") {
+		t.Fatalf("empty path policy error = %v", err)
+	}
+	listed, err := server.toolTerminalList(context.Background(), json.RawMessage(`{}`))
+	if err != nil || len(listed["sessions"].([]localSession)) != 0 {
+		t.Fatalf("empty path policy list = %#v err=%v", listed, err)
+	}
+}
+
+func TestSharedHostFilesystemPolicyIgnoresCallerWidening(t *testing.T) {
+	stateDir := t.TempDir()
+	workspace := t.TempDir()
+	cfg := &config.Config{Dir: stateDir}
+	source := &egg.EggConfig{
+		FS:            []string{"rw:/", "rw:/Users/someone-else"},
+		AgentSettings: map[string]string{"claude": "/host/secret/settings.json"},
+	}
+	sealed, err := sealedSharedHostEggConfig(cfg, source, workspace, []string{workspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sealed.FS) == 0 || sealed.FS[0] != "deny:/" {
+		t.Fatalf("sealed fs = %#v", sealed.FS)
+	}
+	for _, rule := range sealed.FS {
+		if rule == "rw:/" || strings.Contains(rule, "someone-else") {
+			t.Fatalf("caller widened sealed policy with %q", rule)
+		}
+	}
+	if !containsString(sealed.FS, "rw:"+canonicalSessionPath(workspace)) {
+		t.Fatalf("workspace missing from sealed fs: %#v", sealed.FS)
+	}
+	if sealed.AgentSettings != nil {
+		t.Fatalf("host agent settings survived sealing: %#v", sealed.AgentSettings)
+	}
+	if _, _, err := sharedHostFilesystemRules(cfg, []string{stateDir}); err == nil {
+		t.Fatal("Wingthing state was accepted as a shared workspace")
+	}
+}
+
+func TestRoostControlToolsKeepTwoUsersSessionsSeparate(t *testing.T) {
+	dir := t.TempDir()
+	workspace := t.TempDir()
+	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
+	if err := config.SaveWingConfig(dir, &config.WingConfig{
+		Paths: config.PathList{{Path: workspace}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, userID := range []string{"alice", "bob"} {
+		sessionDir := filepath.Join(dir, "eggs", "session-"+userID)
+		if err := os.MkdirAll(sessionDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sessionDir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sessionDir, "egg.meta"), []byte("cwd="+workspace+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeSessionPrincipal(sessionDir, roostSessionPrincipal(userID)); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeEggOwner(sessionDir, userID, userID+"@example.com"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var listTool mcppkg.NativeTool
+	for _, tool := range roostNativeMCPTools(cfg, true) {
+		if tool.Name == "terminal_list" {
+			listTool = tool
+			break
+		}
+	}
+	if listTool.Call == nil {
+		t.Fatal("roost terminal_list tool is missing")
+	}
+	for _, userID := range []string{"alice", "bob"} {
+		result, isError, err := listTool.Call(context.Background(), mcppkg.Principal{
+			UserID: userID, Email: userID + "@example.com", ClientID: "client-" + userID,
+		}, json.RawMessage(`{}`))
+		if err != nil || isError {
+			t.Fatalf("%s terminal_list: result=%#v isError=%v err=%v", userID, result, isError, err)
+		}
+		sessions := result["sessions"].([]localSession)
+		if len(sessions) != 1 || sessions[0].ID != "session-"+userID {
+			t.Fatalf("%s saw sessions %#v", userID, sessions)
+		}
+		ownerPath := filepath.Join(dir, "eggs", sessions[0].ID, "egg.owner")
+		info, err := os.Stat(ownerPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0600 {
+			t.Fatalf("owner metadata mode = %v", info.Mode().Perm())
+		}
 	}
 }

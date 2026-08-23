@@ -66,6 +66,9 @@ func (s *Server) newWebAuthn() (*webauthn.WebAuthn, error) {
 		RPDisplayName: "Wingthing",
 		RPID:          rpID,
 		RPOrigins:     origins,
+		AuthenticatorSelection: protocol.AuthenticatorSelection{
+			UserVerification: protocol.VerificationRequired,
+		},
 	})
 }
 
@@ -225,6 +228,9 @@ func extractRawP256Key(coseKey []byte) ([]byte, error) {
 // GET /api/app/passkey
 func (s *Server) handlePasskeyList(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
+	if user == nil {
+		user = s.tokenUser(r)
+	}
 	if user == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return

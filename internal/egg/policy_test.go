@@ -76,6 +76,67 @@ func TestResolvePolicyWithNoAgentDrillsNothing(t *testing.T) {
 	}
 }
 
+func TestResolvePolicyCanSuppressAgentDomains(t *testing.T) {
+	cfg, err := LoadEggConfigFromYAML("network:\n  domains: [api.arliai.com]\n  agent_domains: none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := ResolvePolicyWithProvider(cfg, "opencode", "/home/test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(policy.Domains, []string{"api.arliai.com"}) {
+		t.Fatalf("domains = %v, want only declared provider", policy.Domains)
+	}
+	if len(policy.Suppressed) != len(Profile("opencode").Domains) {
+		t.Fatalf("suppressed = %d, want %d profile domains", len(policy.Suppressed), len(Profile("opencode").Domains))
+	}
+}
+
+func TestResolvePolicyDerivesExactProviderHost(t *testing.T) {
+	cfg, err := LoadEggConfigFromYAML("network:\n  domains: []\n  agent_domains: none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := ResolvePolicyWithProvider(cfg, "opencode", "/home/test", "https://api.arliai.com/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(policy.Domains, []string{"api.arliai.com"}) {
+		t.Fatalf("domains = %v, want exact derived provider host", policy.Domains)
+	}
+	if len(policy.Derived) != 1 || policy.Derived[0].Value != "api.arliai.com" {
+		t.Fatalf("derived provenance = %+v", policy.Derived)
+	}
+	if len(policy.Suppressed) != len(Profile("opencode").Domains) {
+		t.Fatalf("suppressed = %d, want %d profile domains", len(policy.Suppressed), len(Profile("opencode").Domains))
+	}
+}
+
+func TestProviderURLGuardrails(t *testing.T) {
+	cfg := &EggConfig{}
+	tests := []string{
+		"http://api.arliai.com/v1",
+		"https://user:pass@api.arliai.com/v1",
+		"https://203.0.113.7/v1",
+		"api.arliai.com/v1",
+	}
+	for _, raw := range tests {
+		t.Run(raw, func(t *testing.T) {
+			if _, err := ResolvePolicyWithProvider(cfg, "opencode", "/home/test", raw); err == nil {
+				t.Fatalf("provider URL %q was accepted", raw)
+			}
+		})
+	}
+	for _, raw := range []string{"http://localhost:4000/v1", "http://127.0.0.1:4000/v1"} {
+		t.Run(raw, func(t *testing.T) {
+			if _, err := ResolvePolicyWithProvider(cfg, "opencode", "/home/test", raw); err != nil {
+				t.Fatalf("loopback provider URL %q: %v", raw, err)
+			}
+		})
+	}
+}
+
 // TestInferLocalPorts covers the loopback trap: retaining CLONE_NEWNET means the
 // jail's 127.0.0.1 is not the host's, so every local model provider breaks unless
 // its port is forwarded. Existing configs declare loopback via domain literals,

@@ -1,7 +1,7 @@
 # The AI API surface
 
-Status: inventory and target design
-Reviewed: 2026-08-09
+Status: implemented local slice and target design
+Reviewed: 2026-08-21
 
 The goal from `CLAUDE.md`: **an AI must be able to orchestrate wingthing as easily
 as a human can.** This doc answers three questions honestly — what surfaces exist
@@ -9,42 +9,54 @@ today, why they do not add up to that goal, and what the target shape is.
 
 ## What exists today
 
-There are four surfaces. They do not share a vocabulary, an auth model, or a
-transport, and only one of them can actually drive an agent.
+There are four surfaces. Local stdio MCP and authenticated shared-roost HTTP MCP
+now share the typed terminal, agent-run, sandbox, and message vocabulary. The
+REST and encrypted external-wing surfaces still use separate contracts.
 
 | # | Surface | Transport | Auth | What it can do |
 |---|---------|-----------|------|----------------|
-| 1 | `wt mcp stdio` (`cmd/wt/mcp_local.go`) | stdio, local only | none — inherits the launching user | **All agent orchestration**: terminals, prompts, loops, swarms |
-| 2 | `POST /mcp` (`internal/relay/mcp.go`) | HTTP | OAuth 2.0, dynamic client registration, role-scoped policy, audit observer | **Privileged tools only** (`egg.ToolRunner`) — the Slide shim pattern |
-| 3 | REST `/api/...` (`internal/relay/`) | HTTP | session cookie / bearer | Account, usage, passkeys, ntfy, orgs, and a list of wing IDs |
-| 4 | Encrypted tunnel (`internal/ws/`) | WebSocket, E2E encrypted | passkey + device token | `dir.list`, `sessions.list`, `sessions.history`, `pty.*`, `egg.config_update`, … |
+| 1 | `wt mcp stdio` (`cmd/wt/mcp_local.go`) | stdio, local only | OS user plus optional owner, actor, grants, and bounds | Agent orchestration, terminals, messages, prompts, loops, swarms |
+| 2 | `POST /mcp` (`internal/relay/mcp.go`) | HTTP | OAuth 2.0, dynamic client registration, owner-scoped native controls, role-scoped executable tools, audit observer | Shared-roost terminals, agent runs, messages, sandbox explanation, and configured privileged tools |
+| 3 | REST `/api/...` (`internal/relay/`) | HTTP | session cookie / bearer | Account, usage, passkeys, ntfy, orgs, and an authorized online-wing roster |
+| 4 | Encrypted tunnel (`internal/ws/`) | WebSocket, application-encrypted through relay | passkey + device token | `dir.list`, `sessions.list`, `sessions.history`, `pty.*`, `egg.config_update`, … |
 
-### The 15 local MCP tools (surface 1)
+For pre-isolated VMs, the CLI and local MCP adapters share an explicit trusted
+outer-boundary mode. It is selected at CLI/MCP-server startup, reported through
+capabilities and session JSON, and included in the MCP audit trail; a model
+cannot toggle it per call.
 
-`wingthing_capabilities`, `sandbox_explain`, `terminal_list`, `terminal_read`,
-`terminal_send`, `terminal_wait`, `agent_start`, `terminal_stop`, `prompt_list`,
-`prompt_get`, `prompt_save`, `prompt_run`, `task_get`, `prompt_loop`,
-`swarm_run`.
+### The 27 local MCP tools (surface 1)
+
+`wingthing_capabilities`, `message_send`, `message_list`, `message_wait`,
+`sandbox_explain`, `terminal_list`, `terminal_read`,
+`terminal_send`, `terminal_wait`, `terminal_start`, `agent_start`,
+`agent_run`, `agent_status`, `agent_wait`, `agent_result`, `agent_events`,
+`agent_steer`, `agent_stop`, `terminal_rename`, `terminal_stop`, `prompt_list`,
+`prompt_get`, `prompt_save`, `prompt_run`, `task_get`, `prompt_loop`, `swarm_run`.
 
 ### The problems
 
-1. **Two MCP servers with disjoint tool sets.** Surface 1 orchestrates agents but
-   has no auth and no remote transport. Surface 2 has real auth and a remote
-   transport but exposes privileged tools, not terminals or tasks. Neither can do
-   the other's job.
+1. **Control semantics still live in the stdio adapter.** Surface 2 wraps the
+   same typed operations in-process and supplies authenticated owner/actor
+   identity, which proves shared-roost parity. Extracting `internal/control`
+   remains the maintainability step that gives CLI, stdio, HTTP, and future REST
+   one implementation.
 2. **There is no REST API for agent orchestration at all.** Surface 3 is account
-   plumbing. `GET /api/app/wings` deliberately returns only wing IDs, because the
-   relay is a dumb pipe and knows nothing else.
-3. **Surface 4 is the real wing API, and it has exactly one client.** Every
-   capability a human uses in the browser — directory listing, session history,
-   config, kill — is defined there, encrypted, undocumented, and reachable only
-   by the web UI. That is the definition of a UI that is not an API.
-4. **The local MCP cannot be reached remotely, and the remote surfaces cannot
-   orchestrate.** So a model can drive wingthing only when it is already running
-   on the same machine as the user.
+   plumbing. `GET /api/app/wings` deliberately returns routing identity rather
+   than host/project details, because the relay is a dumb pipe and knows nothing
+   else. `wt wings` composes that roster with encrypted `wing.info` probes.
+3. **Surface 4 is the real wing API, but only the browser is a general client.**
+   The native CLI has a pinned-key tunnel client for discovery probes and session
+   sync; browser capabilities such as directory listing, remote terminal
+   lifecycle, session history, and configuration are still bespoke encrypted
+   messages rather than a supported general CLI/API surface. That is still a
+   UI-shaped API.
+4. **External wings still lack the typed control transport.** Shared roosts call
+   the embedded runtime directly. A hosted relay connected to a separate wing
+   still needs these operations carried through the encrypted tunnel.
 
-The net effect: a human with a browser can do strictly more than any model can.
-That fails the bar in `CLAUDE.md`.
+The remaining parity gap is external-wing reachability plus extraction of the
+shared semantics into a transport-independent package.
 
 ## Target shape
 

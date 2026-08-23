@@ -38,7 +38,7 @@ differentiates:
 | Claude only | Agent-agnostic: seven agents today |
 | Requires a claude.ai subscription; API keys not supported | No account required at all |
 | **Disabled when `ANTHROPIC_BASE_URL` points anywhere but `api.anthropic.com`** | Provider substitution is a tested release gate (LiteLLM, Ollama, local models) |
-| Transcript stored on Anthropic servers | Relay is a dumb pipe; E2E encrypted, relay cannot read |
+| Transcript stored on Anthropic servers | Local runtime; hosted relay normally routes application ciphertext, with the browser-code and metadata limits in `security.md` |
 | Not available on Bedrock, Vertex, Foundry | Transport-agnostic |
 | Incompatible with Zero Data Retention policies | Self-hosted roost |
 | Local process must keep running; ~10 min network outage kills it | Eggs are detached process sessions with PTY persistence |
@@ -55,7 +55,7 @@ mobile and voice-first, sessions that survive the laptop going offline).
 
 **Implication:** "remote access to your agent" is no longer a differentiator on
 its own. The defensible framing is the combination — *sandboxed, agent-agnostic,
-self-hosted, E2E encrypted, works with local models.* The README and product copy
+self-hosted, application-encrypted through the optional relay, works with local models.* The README and product copy
 should lead with that combination, not with remote access alone.
 
 ## Protocols: ACP is the real story

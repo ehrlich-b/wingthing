@@ -14,26 +14,27 @@ import (
 // shape, following the same scalar-or-object pattern BaseField already uses.
 func TestNetworkFieldAcceptsAllThreeForms(t *testing.T) {
 	tests := []struct {
-		name        string
-		yaml        string
-		wantDomains []string
-		wantPorts   []int
-		wantMode    string
+		name             string
+		yaml             string
+		wantDomains      []string
+		wantPorts        []int
+		wantMode         string
+		wantAgentDomains string
 	}{
-		{"scalar none", "network: none", nil, nil, ""},
-		{"scalar empty", `network: ""`, nil, nil, ""},
-		{"scalar wildcard", `network: "*"`, []string{"*"}, nil, ""},
-		{"scalar single domain", "network: api.anthropic.com", []string{"api.anthropic.com"}, nil, ""},
-		{"list", "network:\n  - a.example\n  - b.example", []string{"a.example", "b.example"}, nil, ""},
+		{"scalar none", "network: none", nil, nil, "", ""},
+		{"scalar empty", `network: ""`, nil, nil, "", ""},
+		{"scalar wildcard", `network: "*"`, []string{"*"}, nil, "", ""},
+		{"scalar single domain", "network: api.anthropic.com", []string{"api.anthropic.com"}, nil, "", ""},
+		{"list", "network:\n  - a.example\n  - b.example", []string{"a.example", "b.example"}, nil, "", ""},
 		{
 			"mapping",
-			"network:\n  domains: [a.example]\n  local_ports: [11434]\n  mode: observe",
-			[]string{"a.example"}, []int{11434}, "observe",
+			"network:\n  domains: [a.example]\n  local_ports: [11434]\n  mode: observe\n  agent_domains: none",
+			[]string{"a.example"}, []int{11434}, "observe", "none",
 		},
 		{
 			"mapping domains only",
 			"network:\n  domains: [a.example]",
-			[]string{"a.example"}, nil, "",
+			[]string{"a.example"}, nil, "", "",
 		},
 	}
 
@@ -52,7 +53,17 @@ func TestNetworkFieldAcceptsAllThreeForms(t *testing.T) {
 			if cfg.Network.Mode != tc.wantMode {
 				t.Errorf("mode = %q, want %q", cfg.Network.Mode, tc.wantMode)
 			}
+			if cfg.Network.AgentDomains != tc.wantAgentDomains {
+				t.Errorf("agent_domains = %q, want %q", cfg.Network.AgentDomains, tc.wantAgentDomains)
+			}
 		})
+	}
+}
+
+func TestNetworkFieldRejectsUnknownAgentDomainsMode(t *testing.T) {
+	_, err := LoadEggConfigFromYAML("network:\n  domains: [a.example]\n  agent_domains: replace")
+	if err == nil || !contains(err.Error(), "agent_domains must be merge or none") {
+		t.Fatalf("error = %v, want agent_domains validation", err)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
@@ -76,6 +77,7 @@ func main() {
 		terminalCmd(),
 		attachCmd(),
 		sessionCmd(),
+		wingsCmd(),
 		keygenCmd(),
 		updateCmd(),
 		toolCallCmd(),
@@ -182,6 +184,8 @@ func runCmd() *cobra.Command {
 	var agentFlag string
 	var afterFlag string
 	var noRun bool
+	var unsandboxed bool
+	var configFlag string
 
 	cmd := &cobra.Command{
 		Use:   "run [prompt]",
@@ -205,10 +209,18 @@ func runCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("get working directory: %w", err)
 			}
+			eggConfigYAML, err := resolveRunEggConfigYAML(configFlag, cwd, unsandboxed)
+			if err != nil {
+				return err
+			}
 			t := &store.Task{
-				ID:    genTaskID(),
-				RunAt: time.Now().UTC(),
-				CWD:   cwd,
+				ID:            genTaskID(),
+				RunAt:         time.Now().UTC(),
+				CWD:           cwd,
+				EggConfigYAML: eggConfigYAML,
+			}
+			if unsandboxed {
+				t.Isolation = "privileged"
 			}
 			if skillFlag != "" {
 				t.What = skillFlag
@@ -248,8 +260,46 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&skillFlag, "skill", "", "Run a named skill")
 	cmd.Flags().StringVar(&agentFlag, "agent", "", "Use specific agent")
 	cmd.Flags().StringVar(&afterFlag, "after", "", "Task ID this task depends on")
+	cmd.Flags().StringVar(&configFlag, "config", "", "Path to egg config")
 	cmd.Flags().BoolVar(&noRun, "no-run", false, "Submit task without running it")
+	cmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "trust the host boundary; run with the full authority of the local OS user")
+	cmd.MarkFlagsMutuallyExclusive("config", "unsandboxed")
 	return cmd
+}
+
+func resolveRunEggConfigYAML(configPath, cwd string, unsandboxed bool) (string, error) {
+	if unsandboxed {
+		if configPath != "" {
+			return "", errors.New("--config and --unsandboxed cannot be combined")
+		}
+		return "", nil
+	}
+	eggCfg, err := loadSpawnEggConfig(configPath, cwd, false)
+	if err != nil {
+		return "", err
+	}
+	// wt run retains its established process-environment behavior until the
+	// explicit agent_env boundary ships. The resolved task policy therefore
+	// freezes filesystem, network, and resource controls while leaving env
+	// absent; the direct runner applies its existing local/shared-host rules.
+	runCfg := *eggCfg
+	runCfg.Env = nil
+	rendered, err := runCfg.YAML()
+	if err != nil {
+		return "", fmt.Errorf("render egg config: %w", err)
+	}
+	return rendered, nil
+}
+
+func taskEggConfig(t *store.Task, cwd string) (*egg.EggConfig, error) {
+	if strings.TrimSpace(t.EggConfigYAML) == "" {
+		return egg.DiscoverEggConfig(cwd, nil), nil
+	}
+	eggCfg, err := egg.LoadEggConfigFromYAML(t.EggConfigYAML)
+	if err != nil {
+		return nil, fmt.Errorf("load task egg config: %w", err)
+	}
+	return eggCfg, nil
 }
 
 func newAgent(name string) agent.Agent {
@@ -276,8 +326,23 @@ func runTask(ctx context.Context, cfg *config.Config, s *store.Store, t *store.T
 }
 
 func runTaskTo(ctx context.Context, cfg *config.Config, s *store.Store, t *store.Task, destination io.Writer) error {
+	return runTaskToWithOptions(ctx, cfg, s, t, destination, taskRunOptions{})
+}
+
+type taskRunOptions struct {
+	UserHome     string
+	SharedHost   bool
+	AllowedPaths []string
+}
+
+func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Store, t *store.Task, destination io.Writer, options taskRunOptions) error {
 	s.UpdateTaskStatus(t.ID, "running")
 	s.AppendLog(t.ID, "started", nil)
+	if options.SharedHost && runtime.GOOS != "linux" {
+		err := errors.New("shared-host credential isolation requires the Linux filesystem jail")
+		s.SetTaskError(t.ID, err.Error())
+		return err
+	}
 
 	// Pre-create all agents so the builder can look up any agent's context window
 	agents := make(map[string]agent.Agent)
@@ -334,8 +399,19 @@ func runTaskTo(ctx context.Context, cfg *config.Config, s *store.Store, t *store
 		s.SetTaskError(t.ID, statErr.Error())
 		return fmt.Errorf("working directory %q: %w", workDir, statErr)
 	}
+	if options.SharedHost {
+		canonicalWorkDir := canonicalSessionPath(workDir)
+		if len(options.AllowedPaths) == 0 || !isUnderPaths(canonicalWorkDir, options.AllowedPaths) {
+			err := fmt.Errorf("working directory %q is outside this user's roost paths", workDir)
+			s.SetTaskError(t.ID, err.Error())
+			return err
+		}
+		workDir = canonicalWorkDir
+	}
 	var runOpts agent.RunOpts
+	var sandboxDiagnosticPath string
 	runOpts.WorkDir = workDir
+	runOpts.Model = t.Model
 
 	// If this is a skill, override system prompt to ensure strict output compliance
 	if t.Type == "skill" {
@@ -344,19 +420,54 @@ func runTaskTo(ctx context.Context, cfg *config.Config, s *store.Store, t *store
 	}
 
 	if pr.Isolation != "privileged" {
-		home, homeErr := os.UserHomeDir()
-		if homeErr != nil {
-			s.SetTaskError(t.ID, homeErr.Error())
-			return fmt.Errorf("resolve user home: %w", homeErr)
+		home := options.UserHome
+		if home == "" {
+			var homeErr error
+			home, homeErr = os.UserHomeDir()
+			if homeErr != nil {
+				s.SetTaskError(t.ID, homeErr.Error())
+				return fmt.Errorf("resolve user home: %w", homeErr)
+			}
 		}
 		if stateErr := prepareDirectAgentState(agentName, home); stateErr != nil {
 			s.SetTaskError(t.ID, stateErr.Error())
 			return fmt.Errorf("prepare %s state: %w", agentName, stateErr)
 		}
+		if options.SharedHost {
+			agentBin, lookupErr := exec.LookPath(agentName)
+			if lookupErr != nil {
+				s.SetTaskError(t.ID, lookupErr.Error())
+				return fmt.Errorf("find shared-host %s runtime: %w", agentName, lookupErr)
+			}
+			if installErr := installSharedAgentBinary(agentBin, filepath.Join(home, ".local", "bin", agentName)); installErr != nil {
+				s.SetTaskError(t.ID, installErr.Error())
+				return fmt.Errorf("prepare shared-host %s runtime: %w", agentName, installErr)
+			}
+		}
 
 		mountPaths := append([]string(nil), pr.Mounts...)
+		if options.SharedHost {
+			bounded := mountPaths[:0]
+			for _, path := range mountPaths {
+				canonical := canonicalSessionPath(path)
+				if isUnderPaths(canonical, options.AllowedPaths) {
+					bounded = append(bounded, canonical)
+				}
+			}
+			mountPaths = bounded
+		}
 		mountPaths = append(mountPaths, workDir)
-		sbCfg := directAgentSandboxConfig(agentName, pr.Isolation, home, mountPaths)
+		eggCfg, configErr := taskEggConfig(t, workDir)
+		if configErr != nil {
+			s.SetTaskError(t.ID, configErr.Error())
+			return configErr
+		}
+		sbCfg, policyErr := directAgentSandboxConfigForTask(eggCfg, agentName, pr.Isolation, home, workDir, mountPaths, options.SharedHost)
+		if policyErr != nil {
+			s.SetTaskError(t.ID, policyErr.Error())
+			return fmt.Errorf("resolve sandbox network policy: %w", policyErr)
+		}
+		sbCfg.SessionID = t.ID
 		var domainProxy *sandbox.DomainProxy
 		if sbCfg.NetworkNeed == sandbox.NetworkHTTPS && len(sbCfg.Domains) > 0 {
 			domainProxy, err = sandbox.StartProxy(sbCfg.Domains)
@@ -374,7 +485,8 @@ func runTaskTo(ctx context.Context, cfg *config.Config, s *store.Store, t *store
 			return fmt.Errorf("create sandbox: %w", sbErr)
 		}
 		defer sb.Destroy()
-		agentEnv := directAgentEnv(agentName, home, sbCfg.ProxyPort)
+		sandboxDiagnosticPath = sb.DiagLog()
+		agentEnv := directAgentEnvWithPolicy(agentName, home, sbCfg.ProxyPort, !options.SharedHost)
 		runOpts.CmdFactory = func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
 			cmd, execErr := sb.Exec(ctx, name, args)
 			if execErr != nil {
@@ -387,8 +499,12 @@ func runTaskTo(ctx context.Context, cfg *config.Config, s *store.Store, t *store
 
 	runCtx := ctx
 	var cancel context.CancelFunc
-	if pr.Timeout > 0 {
-		runCtx, cancel = context.WithTimeout(ctx, pr.Timeout)
+	timeout := pr.Timeout
+	if t.TimeoutSeconds > 0 {
+		timeout = time.Duration(t.TimeoutSeconds) * time.Second
+	}
+	if timeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	stream, err := a.Run(runCtx, pr.Prompt, runOpts)
@@ -408,8 +524,17 @@ func runTaskTo(ctx context.Context, cfg *config.Config, s *store.Store, t *store
 	fmt.Fprintln(destination)
 
 	if err := stream.Err(); err != nil {
+		diagnostics := mergeAgentFailureDiagnostics(err, readSandboxDiagnostics(sandboxDiagnosticPath))
+		_ = s.SetTaskOutput(t.ID, mergeAgentFailureOutput(stream.Text(), diagnostics))
 		s.SetTaskError(t.ID, err.Error())
+		if diagnostics != "" {
+			fmt.Fprintln(destination, diagnostics)
+		}
 		return fmt.Errorf("agent error: %w", err)
+	}
+	if err := runCtx.Err(); err != nil {
+		s.SetTaskError(t.ID, err.Error())
+		return fmt.Errorf("agent run ended after cancellation: %w", err)
 	}
 
 	// Store result
@@ -433,6 +558,48 @@ func runTaskTo(ctx context.Context, cfg *config.Config, s *store.Store, t *store
 	}
 
 	return nil
+}
+
+const maxSandboxDiagnostics = 64 * 1024
+
+func readSandboxDiagnostics(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if len(data) > maxSandboxDiagnostics {
+		data = data[len(data)-maxSandboxDiagnostics:]
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func mergeAgentFailureDiagnostics(runErr error, sandboxDiagnostics string) string {
+	var sections []string
+	if runErr != nil && strings.TrimSpace(runErr.Error()) != "" {
+		sections = append(sections, strings.TrimSpace(runErr.Error()))
+	}
+	sandboxDiagnostics = strings.TrimSpace(sandboxDiagnostics)
+	if sandboxDiagnostics != "" {
+		sections = append(sections, sandboxDiagnostics)
+	}
+	return strings.Join(sections, "\n")
+}
+
+func mergeAgentFailureOutput(stdout, diagnostics string) string {
+	diagnostics = strings.TrimSpace(diagnostics)
+	if diagnostics == "" {
+		return stdout
+	}
+	if strings.TrimSpace(stdout) == "" {
+		return diagnostics
+	}
+	if !strings.HasSuffix(stdout, "\n") {
+		stdout += "\n"
+	}
+	return stdout + diagnostics
 }
 
 func truncate(s string, n int) string {
@@ -763,6 +930,8 @@ func retryCmd() *cobra.Command {
 				What:           t.What,
 				RunAt:          time.Now().UTC(),
 				Agent:          t.Agent,
+				Model:          t.Model,
+				TimeoutSeconds: t.TimeoutSeconds,
 				Isolation:      t.Isolation,
 				Memory:         t.Memory,
 				Cron:           t.Cron,
@@ -772,6 +941,8 @@ func retryCmd() *cobra.Command {
 				CWD:            t.CWD,
 				PromptName:     t.PromptName,
 				PromptRevision: t.PromptRevision,
+				Principal:      t.Principal,
+				EggConfigYAML:  t.EggConfigYAML,
 			}
 			if err := s.CreateTask(newTask); err != nil {
 				return err

@@ -16,10 +16,10 @@ import (
 const version = "mock-agent v0.0.1-test"
 
 type Results struct {
-	Version  string          `json:"version"`
-	Probes   ProbeResults    `json:"probes"`
-	Errors   []string        `json:"errors"`
-	ExitCode int             `json:"exit_code"`
+	Version  string       `json:"version"`
+	Probes   ProbeResults `json:"probes"`
+	Errors   []string     `json:"errors"`
+	ExitCode int          `json:"exit_code"`
 }
 
 type ProbeResults struct {
@@ -36,6 +36,7 @@ type FSProbe struct {
 	WriteClaudeDir    bool `json:"write_claude_dir"`
 	WriteCacheDir     bool `json:"write_cache_dir"`
 	ReadSSHKey        bool `json:"read_ssh_key"`
+	ReadDeniedCanary  bool `json:"read_denied_canary"`
 	WriteOutsideMount bool `json:"write_outside_mount"`
 	HomeExists        bool `json:"home_exists"`
 	HomeWritable      bool `json:"home_writable"`
@@ -233,6 +234,15 @@ func probeFS() FSProbe {
 		sshKey := filepath.Join(home, ".ssh", "id_rsa")
 		if _, err := os.ReadFile(sshKey); err == nil {
 			p.ReadSSHKey = true
+		}
+	}
+
+	// Try to read the unique canary created by the E2E runner inside a path
+	// that the resolved policy claims is denied. This distinguishes a working
+	// mask from an absent-file false positive.
+	if canary := os.Getenv("WT_TEST_DENIED_CANARY"); canary != "" {
+		if _, err := os.ReadFile(canary); err == nil {
+			p.ReadDeniedCanary = true
 		}
 	}
 

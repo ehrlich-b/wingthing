@@ -375,6 +375,19 @@ func TestPTYRoutingReattach(t *testing.T) {
 		t.Errorf("attach session = %s, want %s", wingAttach.SessionID, sess)
 	}
 
+	// Reattach is not authoritative until the wing has completed its local
+	// authorization and encryption setup. The relay promotes the pending
+	// controller only after this acknowledgement.
+	if err := wsjson.Write(ctx, wingConn, ws.PTYStarted{
+		Type: ws.TypePTYStarted, SessionID: sess, Agent: "claude",
+	}); err != nil {
+		t.Fatalf("wing write reattach pty.started: %v", err)
+	}
+	var reattached ws.PTYStarted
+	if err := wsjson.Read(ctx, browser2, &reattached); err != nil {
+		t.Fatalf("browser2 read reattach pty.started: %v", err)
+	}
+
 	// Wing sends output — browser 2 should get it
 	outData := base64.StdEncoding.EncodeToString([]byte("reattached-output"))
 	wsjson.Write(ctx, wingConn, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sess, Data: outData})
