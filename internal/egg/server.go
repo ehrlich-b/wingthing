@@ -494,6 +494,25 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		}
 	}
 
+	sessionPolicy := &EggConfig{
+		FS:        rc.FS,
+		Network:   NetworkField{Domains: rc.Network},
+		Resources: EggResources{MaxFDs: rc.MaxFDs, MaxPids: rc.PidLimit},
+		Trace:     rc.Trace,
+	}
+	if rc.CPULimit > 0 {
+		sessionPolicy.Resources.CPU = rc.CPULimit.String()
+	}
+	if rc.MemLimit > 0 {
+		sessionPolicy.Resources.Memory = strconv.FormatUint(rc.MemLimit, 10)
+	}
+	hasSandbox := RequiresSandbox(sessionPolicy, rc.Agent)
+	if hasSandbox {
+		if ok, help := sandbox.CheckCapability(); !ok {
+			return fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
+		}
+	}
+
 	binPath, err := exec.LookPath(name)
 	if err != nil {
 		return fmt.Errorf("command %q not found: %v", name, err)
@@ -650,19 +669,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	var sb sandbox.Sandbox
 	var cmd *exec.Cmd
 
-	sessionPolicy := &EggConfig{
-		FS:        rc.FS,
-		Network:   NetworkField{Domains: rc.Network},
-		Resources: EggResources{MaxFDs: rc.MaxFDs, MaxPids: rc.PidLimit},
-		Trace:     rc.Trace,
-	}
-	if rc.CPULimit > 0 {
-		sessionPolicy.Resources.CPU = rc.CPULimit.String()
-	}
-	if rc.MemLimit > 0 {
-		sessionPolicy.Resources.Memory = strconv.FormatUint(rc.MemLimit, 10)
-	}
-	hasSandbox := RequiresSandbox(sessionPolicy, rc.Agent)
 	if hasSandbox {
 		home, _ := os.UserHomeDir()
 		// Use per-user home for ~ expansion when set, so FS rules like

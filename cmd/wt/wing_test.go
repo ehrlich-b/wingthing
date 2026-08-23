@@ -62,6 +62,45 @@ func TestMemberSessionVisibilityFailsClosed(t *testing.T) {
 	}
 }
 
+func TestSessionAttachOwnership(t *testing.T) {
+	if !canAttachSession("alice", "member", "alice") {
+		t.Fatal("member could not attach to their own session")
+	}
+	if canAttachSession("mallory", "member", "alice") {
+		t.Fatal("member attached to another member's session")
+	}
+	if canAttachSession("mallory", "", "alice") {
+		t.Fatal("unknown role attached to another user's session")
+	}
+	if canAttachSession("", "member", "") {
+		t.Fatal("missing identities were treated as equal owners")
+	}
+	for _, role := range []string{"owner", "admin"} {
+		if !canAttachSession("operator", role, "alice") {
+			t.Fatalf("%s could not attach for session oversight", role)
+		}
+	}
+}
+
+func TestMemberWorkspaceVisibilityFailsClosedWithoutPaths(t *testing.T) {
+	member := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "member"}
+	owner := ws.TunnelRequest{SenderUserID: "owner", SenderOrgRole: "owner"}
+	projects := []ws.WingProject{{Name: "host-project", Path: t.TempDir()}}
+
+	if entries := requestDirEntries(member, t.TempDir(), nil); len(entries) != 0 {
+		t.Fatalf("member without paths could enumerate host directories: %#v", entries)
+	}
+	if visible := requestProjects(member, projects, nil); len(visible) != 0 {
+		t.Fatalf("member without paths could enumerate host projects: %#v", visible)
+	}
+	if canAccessSessionPath(member, projects[0].Path, nil) {
+		t.Fatal("member without paths could see a session outside an assigned workspace")
+	}
+	if visible := requestProjects(owner, projects, nil); len(visible) != 1 {
+		t.Fatal("owner with an empty path list lost personal-wing project visibility")
+	}
+}
+
 func TestWingStatusRoundTrip(t *testing.T) {
 	// writeWingStatus/readWingStatus use wingStatusPath() which depends on config.Load().
 	// We test the JSON struct directly for unit isolation.

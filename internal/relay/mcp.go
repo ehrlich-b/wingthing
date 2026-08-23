@@ -164,20 +164,16 @@ func (s *Server) auditMCPCall(r *http.Request, tool string, args []string, resp 
 		return
 	}
 	detail := map[string]any{
-		"client_id": identity.ClientID,
-		"roles":     identity.Roles,
-		"tool":      tool,
-		"exit_code": resp.ExitCode,
-		"is_error":  resp.ExitCode != 0 || resp.Error != "",
+		"client_id":  identity.ClientID,
+		"roles":      identity.Roles,
+		"tool":       tool,
+		"exit_code":  resp.ExitCode,
+		"is_error":   resp.ExitCode != 0 || resp.Error != "",
+		"args_count": len(args),
 	}
 	rawArgs, _ := json.Marshal(args)
-	if len(rawArgs) <= 16<<10 {
-		detail["args"] = args
-	} else {
-		sum := sha256.Sum256(rawArgs)
-		detail["args_truncated"] = true
-		detail["args_sha256"] = hex.EncodeToString(sum[:])
-	}
+	sum := sha256.Sum256(rawArgs)
+	detail["args_sha256"] = hex.EncodeToString(sum[:])
 	raw, _ := json.Marshal(detail)
 	s.Store.AppendAudit(identity.UserID, "mcp_tool_call", strPtr(string(raw)))
 }

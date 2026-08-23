@@ -859,9 +859,7 @@ func waitForWingStatus(pid int, timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		// Check if daemon died
-		if proc, err := os.FindProcess(pid); err != nil {
-			return ""
-		} else if err := proc.Signal(syscall.Signal(0)); err != nil {
+		if !ownedProcessIsAlive(pid) {
 			// Process exited — check final status
 			if s, err := readWingStatus(); err == nil {
 				return s.State
@@ -916,11 +914,7 @@ func readPidFrom(path string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return 0, err
-	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
+	if !ownedProcessIsAlive(pid) {
 		os.Remove(path)
 		return 0, fmt.Errorf("stale pid")
 	}
@@ -2598,12 +2592,7 @@ func reapDeadEggs(cfg *config.Config) {
 			cleanEggDir(dir)
 			continue
 		}
-		proc, err := os.FindProcess(pid)
-		if err != nil {
-			cleanEggDir(dir)
-			continue
-		}
-		if err := proc.Signal(syscall.Signal(0)); err != nil {
+		if !ownedProcessIsAlive(pid) {
 			// Dead process
 			log.Printf("egg: reaping dead egg %s (pid %d)", e.Name(), pid)
 			cleanEggDir(dir)
@@ -2658,12 +2647,7 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		if err != nil {
 			continue
 		}
-		proc, err := os.FindProcess(pid)
-		if err != nil {
-			continue
-		}
-		if err := proc.Signal(syscall.Signal(0)); err != nil {
-			cleanEggDir(dir)
+		if !ownedProcessIsAlive(pid) {
 			continue
 		}
 
@@ -2821,11 +2805,7 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		if err != nil {
 			continue
 		}
-		proc, err := os.FindProcess(pid)
-		if err != nil {
-			continue
-		}
-		if err := proc.Signal(syscall.Signal(0)); err != nil {
+		if !ownedProcessIsAlive(pid) {
 			cleanEggDir(dir)
 			continue
 		}
@@ -2975,6 +2955,10 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 			case ws.TypePTYAttach:
 				var attach ws.PTYAttach
 				if err := json.Unmarshal(data, &attach); err != nil {
+					continue
+				}
+				if !canAttachSession(attach.UserID, attach.OrgRole, readEggOwner(eggDir)) {
+					write(ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: sessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 				clearAttentionCooldown(sessionID)
@@ -3537,6 +3521,10 @@ authDone:
 				if err := json.Unmarshal(data, &attach); err != nil {
 					continue
 				}
+				if !canAttachSession(attach.UserID, attach.OrgRole, start.UserID) {
+					write(ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+					continue
+				}
 				clearAttentionCooldown(start.SessionID)
 				if attach.PublicKey == "" {
 					write(ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: start.SessionID, ViewerID: attach.ViewerID})
@@ -4029,6 +4017,37 @@ func canSeeSession(req ws.TunnelRequest, sessionUserID string) bool {
 	return sessionUserID != "" && sessionUserID == req.SenderUserID
 }
 
+func canAttachSession(userID, orgRole, sessionUserID string) bool {
+	if orgRole == "owner" || orgRole == "admin" {
+		return true
+	}
+	return userID != "" && sessionUserID != "" && userID == sessionUserID
+}
+
+func canAccessSessionPath(req ws.TunnelRequest, sessionPath string, userPaths []string) bool {
+	if !isMemberFiltered(req) {
+		return true
+	}
+	return len(userPaths) > 0 && isUnderPaths(sessionPath, userPaths)
+}
+
+func requestDirEntries(req ws.TunnelRequest, path string, userPaths []string) []ws.DirEntry {
+	if isMemberFiltered(req) && len(userPaths) == 0 {
+		return nil
+	}
+	return getDirEntries(path, userPaths)
+}
+
+func requestProjects(req ws.TunnelRequest, projects []ws.WingProject, userPaths []string) []ws.WingProject {
+	if len(userPaths) > 0 {
+		return filterProjectsExact(projects, userPaths)
+	}
+	if isMemberFiltered(req) {
+		return nil
+	}
+	return projects
+}
+
 // handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
 func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, req ws.TunnelRequest, write ws.PTYWriteFunc,
 	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyChallenges *auth.ChallengeCache,
@@ -4152,15 +4171,12 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	switch inner.Type {
 	case "dir.list":
 		userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
-		entries := getDirEntries(inner.Path, userPaths)
+		entries := requestDirEntries(req, inner.Path, userPaths)
 		tunnelRespond(gcm, req.RequestID, map[string]any{"entries": entries}, write)
 
 	case "wing.info":
-		projects := client.Projects
 		userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
-		if len(userPaths) > 0 {
-			projects = filterProjectsExact(projects, userPaths)
-		}
+		projects := requestProjects(req, client.Projects, userPaths)
 		resp := map[string]any{
 			"hostname":      client.Hostname,
 			"platform":      client.Platform,
@@ -4230,7 +4246,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
 			var filtered []ws.SessionInfo
 			for _, s := range sessions {
-				if canSeeSession(req, s.UserID) && (len(userPaths) == 0 || isUnderPaths(s.CWD, userPaths)) {
+				if canSeeSession(req, s.UserID) && canAccessSessionPath(req, s.CWD, userPaths) {
 					filtered = append(filtered, s)
 				}
 			}
@@ -4244,7 +4260,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
 			var filtered []pastSessionInfo
 			for _, s := range sessions {
-				if canSeeSession(req, s.UserID) && (len(userPaths) == 0 || isUnderPaths(s.CWD, userPaths)) {
+				if canSeeSession(req, s.UserID) && canAccessSessionPath(req, s.CWD, userPaths) {
 					filtered = append(filtered, s)
 				}
 			}
@@ -4622,11 +4638,8 @@ func getSessionsHistory(cfg *config.Config, offset, limit int) ([]pastSessionInf
 		pidData, err := os.ReadFile(filepath.Join(dir, "egg.pid"))
 		if err == nil {
 			pid, _ := strconv.Atoi(strings.TrimSpace(string(pidData)))
-			if pid > 0 {
-				proc, _ := os.FindProcess(pid)
-				if proc != nil && proc.Signal(syscall.Signal(0)) == nil {
-					continue
-				}
+			if ownedProcessIsAlive(pid) {
+				continue
 			}
 		}
 

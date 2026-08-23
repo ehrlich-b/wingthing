@@ -361,6 +361,9 @@ func TestPTYRoutingReattach(t *testing.T) {
 		Type:      ws.TypePTYAttach,
 		SessionID: sess,
 		WingID:    "wing-reattach",
+		UserID:    "forged-user",
+		OrgRole:   "admin",
+		Passkeys:  []string{"forged-passkey"},
 	}
 	if err := wsjson.Write(ctx, browser2, attach); err != nil {
 		t.Fatalf("write pty.attach: %v", err)
@@ -373,6 +376,12 @@ func TestPTYRoutingReattach(t *testing.T) {
 	}
 	if wingAttach.SessionID != sess {
 		t.Errorf("attach session = %s, want %s", wingAttach.SessionID, sess)
+	}
+	if wingAttach.UserID != "user-reattach" || wingAttach.OrgRole != "owner" {
+		t.Fatalf("attach identity = user %q role %q", wingAttach.UserID, wingAttach.OrgRole)
+	}
+	if len(wingAttach.Passkeys) != 0 {
+		t.Fatalf("browser-supplied attach passkeys reached wing: %#v", wingAttach.Passkeys)
 	}
 
 	// Reattach is not authoritative until the wing has completed its local
@@ -399,6 +408,74 @@ func TestPTYRoutingReattach(t *testing.T) {
 	decoded, _ := base64.StdEncoding.DecodeString(b2out.Data)
 	if string(decoded) != "reattached-output" {
 		t.Errorf("browser2 got %q, want %q", decoded, "reattached-output")
+	}
+}
+
+func TestPTYRoutingRejectsCrossWingAttach(t *testing.T) {
+	for _, spectate := range []bool{false, true} {
+		name := "controller"
+		if spectate {
+			name = "spectator"
+		}
+		t.Run(name, func(t *testing.T) {
+			_, ts, store := testRelayAndWS(t)
+			token, _ := createTestUser(t, store, "cross-wing-"+name)
+
+			wingA := connectWing(t, wsURL(ts), token, "wing-cross-a", []string{"claude"})
+			defer wingA.CloseNow()
+			wingB := connectWing(t, wsURL(ts), token, "wing-cross-b", []string{"claude"})
+			defer wingB.CloseNow()
+
+			owner := connectBrowser(t, wsURL(ts), token, "wing-cross-a")
+			defer owner.CloseNow()
+			sess := startSession(t, owner, wingA, "claude", "wing-cross-a")
+
+			attacker := connectBrowser(t, wsURL(ts), token, "wing-cross-b")
+			defer attacker.CloseNow()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			attach := ws.PTYAttach{
+				Type:      ws.TypePTYAttach,
+				SessionID: sess,
+				WingID:    "wing-cross-b",
+				Spectate:  spectate,
+			}
+			if err := wsjson.Write(ctx, attacker, attach); err != nil {
+				t.Fatalf("write cross-wing pty.attach: %v", err)
+			}
+
+			var errMsg ws.ErrorMsg
+			if err := wsjson.Read(ctx, attacker, &errMsg); err != nil {
+				t.Fatalf("read cross-wing error: %v", err)
+			}
+			if errMsg.Type != ws.TypeError || errMsg.Message != "session not found" {
+				t.Fatalf("cross-wing attach response = %#v, want session not found", errMsg)
+			}
+
+			shortCtx, shortCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer shortCancel()
+			var forwarded ws.PTYAttach
+			if err := wsjson.Read(shortCtx, wingB, &forwarded); err == nil {
+				t.Fatalf("cross-wing attach forwarded to wing B: %#v", forwarded)
+			}
+
+			outData := base64.StdEncoding.EncodeToString([]byte("owner-still-authorized"))
+			if err := wsjson.Write(ctx, wingA, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sess, Data: outData}); err != nil {
+				t.Fatalf("wing A write after rejected attach: %v", err)
+			}
+			var ownerOut ws.PTYOutput
+			if err := wsjson.Read(ctx, owner, &ownerOut); err != nil {
+				t.Fatalf("owner read after rejected attach: %v", err)
+			}
+			decoded, err := base64.StdEncoding.DecodeString(ownerOut.Data)
+			if err != nil {
+				t.Fatalf("decode owner output: %v", err)
+			}
+			if string(decoded) != "owner-still-authorized" {
+				t.Fatalf("owner output = %q, want owner-still-authorized", decoded)
+			}
+		})
 	}
 }
 
@@ -446,11 +523,14 @@ func TestPTYRoutingUserInjection(t *testing.T) {
 
 	// Send pty.start
 	start := ws.PTYStart{
-		Type:   ws.TypePTYStart,
-		Agent:  "claude",
-		WingID: "wing-inject",
-		Cols:   80,
-		Rows:   24,
+		Type:     ws.TypePTYStart,
+		Agent:    "claude",
+		WingID:   "wing-inject",
+		Cols:     80,
+		Rows:     24,
+		UserID:   "forged-user",
+		OrgRole:  "admin",
+		Passkeys: []string{"forged-passkey"},
 	}
 	wsjson.Write(ctx, browser, start)
 
@@ -464,6 +544,9 @@ func TestPTYRoutingUserInjection(t *testing.T) {
 	// DevMode with personal wing → owner role
 	if wingStart.OrgRole != "owner" {
 		t.Errorf("org_role = %q, want %q", wingStart.OrgRole, "owner")
+	}
+	if len(wingStart.Passkeys) != 0 {
+		t.Fatalf("browser-supplied passkeys reached wing: %#v", wingStart.Passkeys)
 	}
 }
 

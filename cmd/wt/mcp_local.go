@@ -1173,6 +1173,12 @@ func (s *localMCPServer) toolSandboxExplain(arguments json.RawMessage) (map[stri
 	if err != nil {
 		return nil, err
 	}
+	if args.Config != "" {
+		args.Config, err = s.resolveConfigPath(args.Config)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var eggCfg *egg.EggConfig
 	var source string
 	if s.unsandboxed && args.Config == "" {
@@ -1190,6 +1196,21 @@ func (s *localMCPServer) toolSandboxExplain(arguments json.RawMessage) (map[stri
 		return nil, err
 	}
 	return map[string]any{"policy": policy}, nil
+}
+
+func (s *localMCPServer) resolveConfigPath(path string) (string, error) {
+	resolved, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve sandbox config path: %w", err)
+	}
+	canonical := filepath.Clean(resolved)
+	if evaluated, evalErr := filepath.EvalSymlinks(canonical); evalErr == nil {
+		canonical = evaluated
+	}
+	if s.enforcePathBounds && (len(s.allowedPaths) == 0 || !isUnderPaths(canonical, s.allowedPaths)) {
+		return "", fmt.Errorf("sandbox config %q is outside this user's roost paths", path)
+	}
+	return canonical, nil
 }
 
 func (s *localMCPServer) ownsSession(session localSession) bool {
@@ -1657,7 +1678,9 @@ func (s *localMCPServer) agentTaskRunOptions() taskRunOptions {
 	}
 	if s.identity.UserID != "" && (s.identity.SharedHost || s.identity.OrgWing) {
 		options.UserHome = filepath.Join(s.cfg.Dir, "user-homes", userHash(s.identity.UserID))
-		_ = os.MkdirAll(options.UserHome, 0700)
+		if !s.identity.SharedHost {
+			_ = os.MkdirAll(options.UserHome, 0700)
+		}
 	}
 	return options
 }
@@ -1690,15 +1713,11 @@ func (s *localMCPServer) ownedAgentRun(runID string) (*store.Task, *store.Store,
 		taskStore.Close()
 		return nil, nil, err
 	}
-	if task == nil || task.Type != "agent_run" {
+	if task == nil || task.Type != "agent_run" || !s.ownsTask(task) {
 		taskStore.Close()
-		return nil, nil, fmt.Errorf("agent run %q not found", runID)
+		return nil, nil, fmt.Errorf("agent run %q not found or not owned by caller", runID)
 	}
-	if !s.ownsTask(task) {
-		taskStore.Close()
-		return nil, nil, fmt.Errorf("agent run %s is owned by another principal", runID)
-	}
-	if (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !processIsAlive(task.RunnerPID) {
+	if (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !ownedProcessIsAlive(task.RunnerPID) {
 		_ = taskStore.SetTaskError(task.ID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID))
 		task, err = taskStore.GetTask(runID)
 		if err != nil {

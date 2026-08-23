@@ -116,6 +116,46 @@ func TestSharedHostAgentRunUsesSealedJail(t *testing.T) {
 	}
 }
 
+func TestSharedAgentRuntimeRejectsSymlinkedPersistentState(t *testing.T) {
+	home := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".local"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(home, ".local", "bin")); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareSharedAgentHome(home, []string{filepath.Join(".local", "bin")}); err == nil {
+		t.Fatal("shared agent home accepted a symlinked runtime directory")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installSharedAgentBinary(executable, home, "claude"); err == nil {
+		t.Fatal("shared runtime installer followed a symlinked destination directory")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "claude")); !os.IsNotExist(err) {
+		t.Fatalf("runtime installer wrote outside the persistent agent home: %v", err)
+	}
+}
+
+func TestPrepareSharedAgentHomeCreatesOwnerOnlyParentTree(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "state", "user-homes", "new-user")
+	if err := prepareSharedAgentHome(home, []string{filepath.Join(".local", "bin")}); err != nil {
+		t.Fatalf("prepare new shared agent home: %v", err)
+	}
+	for _, path := range []string{home, filepath.Join(home, ".local"), filepath.Join(home, ".local", "bin")} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
+			t.Fatalf("shared-home path %s has unsafe mode %v", path, info.Mode())
+		}
+	}
+}
+
 func runSharedHostFixtureAgent(args []string) int {
 	prompt := argumentValue(args, "-p")
 	workspace := promptFixtureValue(prompt, "workspace")

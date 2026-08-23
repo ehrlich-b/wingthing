@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestReadMountInfoParsesEffectiveMounts(t *testing.T) {
@@ -67,6 +69,22 @@ func TestVerifyMountEntriesAcceptsReadonlyMaskAndWritableHole(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMountFlagsFromOptionsPreservesRemountState(t *testing.T) {
+	options := map[string]bool{
+		"rw":          true,
+		"nosuid":      true,
+		"nodev":       true,
+		"noexec":      true,
+		"relatime":    true,
+		"nosymfollow": true,
+		"unknown":     true,
+	}
+	want := uintptr(unix.MS_NOSUID | unix.MS_NODEV | unix.MS_NOEXEC | unix.MS_RELATIME | unix.MS_NOSYMFOLLOW)
+	if got := mountFlagsFromOptions(options); got != want {
+		t.Fatalf("mount flags = %#x, want %#x", got, want)
 	}
 }
 

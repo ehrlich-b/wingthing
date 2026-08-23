@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +18,69 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+const jailAgentInitArg = "_jail_agent_init"
+
+// The allowlist jail initially bind-mounts the host procfs because the outer
+// wrapper still needs host PIDs while Go writes the nested user namespace's
+// uid_map. Once that child exists in its own PID namespace, this early re-exec
+// replaces the host procfs with one owned by the child's PID namespace before
+// any agent code runs.
+func init() {
+	if len(os.Args) < 4 || os.Args[1] != jailAgentInitArg || os.Args[2] != "--" {
+		return
+	}
+	jailAgentInit(os.Args[3:])
+}
+
+func jailAgentInit(command []string) {
+	if len(command) == 0 || command[0] == "" {
+		log.Fatal("_jail_agent_init: missing command")
+	}
+	if err := unix.Unmount("/proc", unix.MNT_DETACH); err != nil {
+		failEnforcement("detach host procfs", "/proc", err)
+	}
+	if err := unix.Mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
+		failEnforcement("mount PID-namespace procfs", "/proc", err)
+	}
+	if err := verifyPrivateProcfs(); err != nil {
+		failEnforcement("verify PID-namespace procfs", "/proc/self/status", err)
+	}
+	logOutput := log.Writer()
+	log.SetOutput(io.Discard)
+	seccompErr := installSeccomp()
+	log.SetOutput(logOutput)
+	if seccompErr != nil {
+		failEnforcement("install seccomp", "agent process", seccompErr)
+	}
+	if err := syscall.Exec(command[0], command, os.Environ()); err != nil {
+		log.Fatalf("_jail_agent_init: exec agent: %v", err)
+	}
+}
+
+func verifyPrivateProcfs() error {
+	file, err := os.Open("/proc/self/status")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "NSpid:") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(line, "NSpid:"))
+		if len(fields) != 1 || fields[0] != "1" {
+			return fmt.Errorf("agent init is not PID 1 in a private procfs (NSpid=%q)", fields)
+		}
+		return nil
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return fmt.Errorf("NSpid is unavailable")
+}
 
 // DenyInit is called early in main when the binary is re-exec'd as a sandbox
 // wrapper. It runs as root (UID 0) inside the user namespace so it can:
@@ -160,8 +224,11 @@ func DenyInit(args []string) {
 			if err := unix.Mount("/dev/null", p, "", unix.MS_BIND, ""); err != nil {
 				failEnforcement("mask denied file", p, err)
 			}
-			// Remount read-only so agent can't write to it.
-			if err := unix.Mount("", p, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, ""); err != nil {
+			// Remount read-only so agent can't write to it. Preserve the bind
+			// mount's existing VFS flags: WSL rejects a remount that implicitly
+			// drops flags such as nosuid or relatime even though Linux commonly
+			// accepts the shorter MS_REMOUNT|MS_BIND|MS_RDONLY form.
+			if err := remountBindReadonly(p); err != nil {
 				failEnforcement("make denied file mask read-only", p, err)
 			}
 			expectedMounts = append(expectedMounts, expectedMount{Path: p, ReadOnly: true})
@@ -212,7 +279,7 @@ func DenyInit(args []string) {
 		if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
 			failEnforcement("bind deny-write path", p, err)
 		}
-		if err := unix.Mount("", p, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, ""); err != nil {
+		if err := remountBindReadonly(p); err != nil {
 			failEnforcement("make deny-write path read-only", p, err)
 		}
 		expectedMounts = append(expectedMounts, expectedMount{Path: p, ReadOnly: true})
@@ -226,11 +293,12 @@ func DenyInit(args []string) {
 		failEnforcement("verify filesystem policy", "/proc/self/mountinfo", err)
 	}
 
-	// Install seccomp filter AFTER mounts (SYS_MOUNT is in the deny list).
-	// This prevents the agent from undoing deny-path overmounts or write
-	// isolation via mount/umount. The filter is inherited by child processes.
-	if err := installSeccomp(); err != nil {
-		failEnforcement("install seccomp", "agent process", err)
+	// Install seccomp after mounts. Jail mode delegates this to the PID-namespace
+	// init, which must replace the temporarily visible host procfs first.
+	if !jailMode {
+		if err := installSeccomp(); err != nil {
+			failEnforcement("install seccomp", "agent process", err)
+		}
 	}
 
 	// Spawn agent with CLONE_NEWPID (PID isolation) + CLONE_NEWUSER (UID drop).
@@ -247,6 +315,16 @@ func DenyInit(args []string) {
 	}
 
 	cmd := exec.Command(binPath, cmdArgs[1:]...)
+	if jailMode {
+		// /proc/self/exe remains executable after pivot_root even when the wt
+		// binary's original host path is outside the jail allowlist. Carry the
+		// outer wrapper's PATH resolution into the jail because syscall.Exec does
+		// not search PATH and the host-side agent binary itself is intentionally
+		// absent there.
+		resolvedCommand := append([]string{cmd.Path}, cmdArgs[1:]...)
+		initArgs := append([]string{jailAgentInitArg, "--"}, resolvedCommand...)
+		cmd = exec.Command("/proc/self/exe", initArgs...)
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -489,7 +567,7 @@ func setupReadonlyHome(home string, writablePaths []string) error {
 	}
 
 	// Remount HOME read-only. Child bind-mounts stay read-write.
-	if err := unix.Mount("", home, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, ""); err != nil {
+	if err := remountBindReadonly(home); err != nil {
 		return fmt.Errorf("remount HOME read-only: %w", err)
 	}
 	expected = append(expected, expectedMount{Path: home, ReadOnly: true})
@@ -561,6 +639,66 @@ type mountInfoEntry struct {
 	Options map[string]bool
 }
 
+// remountBindReadonly changes only the bind mount's read-only state while
+// preserving its current per-mount flags. Passing a minimal flag set works on
+// many Linux kernels, but WSL returns EPERM when a remount would implicitly
+// discard flags inherited from the source mount.
+func remountBindReadonly(path string) error {
+	entries, err := readMountInfo("/proc/self/mountinfo")
+	if err != nil {
+		return err
+	}
+	entry, ok := effectiveMountEntry(entries, path)
+	if !ok {
+		return fmt.Errorf("bind mount missing at %s", path)
+	}
+	flags := uintptr(unix.MS_REMOUNT | unix.MS_BIND | unix.MS_RDONLY)
+	flags |= mountFlagsFromOptions(entry.Options)
+	return unix.Mount("", path, "", flags, "")
+}
+
+func mountFlagsFromOptions(options map[string]bool) uintptr {
+	known := []struct {
+		option string
+		flag   uintptr
+	}{
+		{"nosuid", unix.MS_NOSUID},
+		{"nodev", unix.MS_NODEV},
+		{"noexec", unix.MS_NOEXEC},
+		{"sync", unix.MS_SYNCHRONOUS},
+		{"mand", unix.MS_MANDLOCK},
+		{"dirsync", unix.MS_DIRSYNC},
+		{"nosymfollow", unix.MS_NOSYMFOLLOW},
+		{"noatime", unix.MS_NOATIME},
+		{"nodiratime", unix.MS_NODIRATIME},
+		{"relatime", unix.MS_RELATIME},
+		{"iversion", unix.MS_I_VERSION},
+		{"strictatime", unix.MS_STRICTATIME},
+		{"lazytime", unix.MS_LAZYTIME},
+	}
+	var flags uintptr
+	for _, candidate := range known {
+		if options[candidate.option] {
+			flags |= candidate.flag
+		}
+	}
+	return flags
+}
+
+func effectiveMountEntry(entries map[string]mountInfoEntry, path string) (mountInfoEntry, bool) {
+	clean := filepath.Clean(path)
+	entry, ok := entries[clean]
+	if ok {
+		return entry, true
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return mountInfoEntry{}, false
+	}
+	entry, ok = entries[filepath.Clean(resolved)]
+	return entry, ok
+}
+
 // verifyExpectedMounts reads the effective mount table in the sandbox child.
 // It deliberately verifies kernel state rather than the policy struct or the
 // sequence of successful-looking mount calls.
@@ -577,15 +715,7 @@ func verifyExpectedMounts(expected []expectedMount) error {
 
 func verifyMountEntries(entries map[string]mountInfoEntry, expected []expectedMount) error {
 	for _, want := range expected {
-		path := filepath.Clean(want.Path)
-		got, ok := entries[path]
-		if !ok {
-			// mount(2) follows a symlink used as a mountpoint. Resolve it for
-			// verification while keeping the caller-facing path in the error.
-			if resolved, resolveErr := filepath.EvalSymlinks(path); resolveErr == nil {
-				got, ok = entries[filepath.Clean(resolved)]
-			}
-		}
+		got, ok := effectiveMountEntry(entries, want.Path)
 		if !ok {
 			return fmt.Errorf("required mount missing at %s", want.Path)
 		}
@@ -662,7 +792,7 @@ func currentSecurityProfile() string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	return strings.Trim(string(data), " \t\r\n\x00")
 }
 
 // installSeccomp installs a BPF seccomp filter that denies dangerous syscalls
@@ -685,10 +815,17 @@ func installSeccomp() error {
 		Filter: &prog[0],
 	}
 
-	// SECCOMP_SET_MODE_FILTER = 1
-	if _, _, errno := unix.RawSyscall(unix.SYS_SECCOMP,
-		1, 0, uintptr(unsafe.Pointer(&bpfProg))); errno != 0 {
+	// Apply the filter to every Go runtime thread. Without TSYNC, only the
+	// calling OS thread is filtered and a later fork/exec can silently inherit
+	// an unfiltered thread's state. On a TSYNC synchronization failure Linux may
+	// return the first unsynchronized thread ID as a positive result with errno 0.
+	result, _, errno := unix.RawSyscall(unix.SYS_SECCOMP,
+		unix.SECCOMP_SET_MODE_FILTER, unix.SECCOMP_FILTER_FLAG_TSYNC, uintptr(unsafe.Pointer(&bpfProg)))
+	if errno != 0 {
 		return fmt.Errorf("seccomp(SET_MODE_FILTER): %v", errno)
+	}
+	if result != 0 {
+		return fmt.Errorf("seccomp(SET_MODE_FILTER|TSYNC): thread %d was not synchronized", result)
 	}
 
 	log.Printf("_deny_init: seccomp installed (%d denied syscalls)", len(deniedSyscallsCommon)+len(deniedSyscallsArch))
@@ -731,9 +868,9 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 	}
 	// Essential virtual filesystems FIRST — user bind-mounts may land on top
 	// of these (e.g. a writable path under /tmp).
-	// Bind-mount host /proc rather than mounting a fresh instance. A fresh
-	// proc mount inside a non-init user namespace has restricted PID visibility,
-	// which breaks Go's uid_map writing for CLONE_NEWUSER children.
+	// Bind-mount host /proc temporarily. The outer wrapper needs host PIDs while
+	// Go writes the nested user namespace's uid_map. The nested PID-namespace
+	// init replaces this mount before it executes the agent.
 	procPath := filepath.Join(newRoot, "proc")
 	if err := os.MkdirAll(procPath, 0555); err != nil {
 		failEnforcement("create jail /proc", "/proc", err)
@@ -795,7 +932,7 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		if err := unix.Mount(p, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 			failEnforcement("bind jail read-only path", p, err)
 		}
-		if err := unix.Mount("", target, "", unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY, ""); err != nil {
+		if err := remountBindReadonly(target); err != nil {
 			failEnforcement("make jail path read-only", p, err)
 		}
 		expected = append(expected, expectedMount{Path: p, ReadOnly: true})
@@ -803,6 +940,12 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 	}
 	// Bind-mount writable paths (order matters: rw mounts override ro parents).
 	for _, p := range writablePaths {
+		// HOME is mounted as one persistent owner-scoped tree below. Mounting a
+		// child separately is redundant and would follow a user-created symlink
+		// on the host side before pivot_root.
+		if home != "" && isPathWithin(p, home) {
+			continue
+		}
 		target := filepath.Join(newRoot, p)
 		if err := jailMkTarget(p, target); err != nil {
 			failEnforcement("create jail writable mountpoint", p, err)
@@ -854,6 +997,12 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		failEnforcement("verify jail filesystem policy", "/proc/self/mountinfo", err)
 	}
 	log.Printf("_deny_init: jail active (ro=%d rw=%d home=%s)", len(roMounts), len(writablePaths), home)
+}
+
+func isPathWithin(path, root string) bool {
+	cleanPath := filepath.Clean(path)
+	cleanRoot := filepath.Clean(root)
+	return cleanPath == cleanRoot || strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
 }
 
 // jailMkTarget creates the bind-mount target inside the jail root.

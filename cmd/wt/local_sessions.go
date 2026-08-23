@@ -176,19 +176,30 @@ func readAliveEggPID(dir string) (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	if !processIsAlive(pid) {
-		cleanEggDir(dir)
+	if !ownedProcessIsAlive(pid) {
 		return 0, false
 	}
 	return pid, true
 }
 
-func processIsAlive(pid int) bool {
+// ownedProcessIsAlive probes a process recorded by this wt instance. Every PID
+// stored in the daemon, task, and egg metadata belongs to a same-UID child (the
+// sandboxed agent may use another UID, but its supervising egg does not). EPERM
+// therefore means that the PID has been recycled by a foreign process, not that
+// the recorded child is still alive.
+func ownedProcessIsAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
 	proc, err := os.FindProcess(pid)
-	return err == nil && proc.Signal(syscall.Signal(0)) == nil
+	if err != nil {
+		return false
+	}
+	return ownedProcessSignalIndicatesAlive(proc.Signal(syscall.Signal(0)))
+}
+
+func ownedProcessSignalIndicatesAlive(err error) bool {
+	return err == nil
 }
 
 func readEggMetaValues(dir string) map[string]string {

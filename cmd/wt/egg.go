@@ -81,6 +81,7 @@ func eggRunCmd() *cobra.Command {
 		networkFlag                []string
 		agentDomainsFlag           string
 		envFlag                    []string
+		envFileRequired            bool
 		cpuFlag                    string
 		memFlag                    string
 		maxFDsFlag                 uint32
@@ -111,6 +112,14 @@ func eggRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := validateSessionID(sessionID); err != nil {
+				return err
+			}
+			envPath := filepath.Join(cfg.Dir, "eggs", sessionID, ".egg.env")
+			envMap, err := readEggEnvironment(envPath, envFlag, envFileRequired)
+			if err != nil {
+				return err
+			}
 
 			dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 			if err := os.MkdirAll(dir, 0700); err != nil {
@@ -120,15 +129,6 @@ func eggRunCmd() *cobra.Command {
 			srv, err := egg.NewServer(dir)
 			if err != nil {
 				return err
-			}
-
-			// Parse env flags into map
-			envMap := make(map[string]string)
-			for _, e := range envFlag {
-				k, v, ok := strings.Cut(e, "=")
-				if ok {
-					envMap[k] = v
-				}
 			}
 
 			var cpuLimit time.Duration
@@ -205,6 +205,8 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&networkFlag, "network", nil, "network domains (api.anthropic.com, *, none)")
 	cmd.Flags().StringVar(&agentDomainsFlag, "agent-domains", "", "agent domain policy: merge or none (internal)")
 	cmd.Flags().StringArrayVar(&envFlag, "env", nil, "environment variables (KEY=VAL)")
+	cmd.Flags().BoolVar(&envFileRequired, "env-file-required", false, "require the internal environment payload")
+	cmd.Flags().MarkHidden("env-file-required")
 	cmd.Flags().BoolVar(&dangerouslySkipPermissions, "dangerously-skip-permissions", false, "skip agent permission prompts")
 	cmd.Flags().StringVar(&cpuFlag, "cpu", "", "CPU time limit (e.g. 300s)")
 	cmd.Flags().StringVar(&memFlag, "memory", "", "memory limit (e.g. 2GB)")
@@ -227,6 +229,89 @@ func eggRunCmd() *cobra.Command {
 	cmd.MarkFlagRequired("session-id")
 
 	return cmd
+}
+
+const maxEggEnvironmentBytes = 1 << 20
+
+func readEggEnvironment(path string, entries []string, required bool) (map[string]string, error) {
+	environment := make(map[string]string)
+	if path != "" {
+		file, err := os.Open(path)
+		if errors.Is(err, os.ErrNotExist) && !required {
+			file = nil
+		} else if err != nil {
+			return nil, fmt.Errorf("read egg environment: %w", err)
+		}
+		if file != nil {
+			data, readErr := io.ReadAll(io.LimitReader(file, maxEggEnvironmentBytes+1))
+			closeErr := file.Close()
+			removeErr := os.Remove(path)
+			if readErr != nil {
+				return nil, fmt.Errorf("read egg environment: %w", readErr)
+			}
+			if closeErr != nil {
+				return nil, fmt.Errorf("close egg environment: %w", closeErr)
+			}
+			if removeErr != nil {
+				return nil, fmt.Errorf("remove egg environment: %w", removeErr)
+			}
+			if len(data) > maxEggEnvironmentBytes {
+				return nil, errors.New("egg environment exceeds 1 MiB")
+			}
+			if err := json.Unmarshal(data, &environment); err != nil {
+				return nil, fmt.Errorf("decode egg environment: %w", err)
+			}
+			if environment == nil {
+				environment = make(map[string]string)
+			}
+		}
+	}
+	for _, entry := range entries {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid environment entry %q", entry)
+		}
+		environment[key] = value
+	}
+	for key, value := range environment {
+		if key == "" || strings.ContainsAny(key, "=\x00") || strings.IndexByte(value, 0) >= 0 {
+			return nil, fmt.Errorf("invalid environment variable %q", key)
+		}
+	}
+	return environment, nil
+}
+
+func writeEggEnvironment(dir string, environment map[string]string) (string, error) {
+	data, err := json.Marshal(environment)
+	if err != nil {
+		return "", fmt.Errorf("encode egg environment: %w", err)
+	}
+	if len(data) > maxEggEnvironmentBytes {
+		return "", errors.New("egg environment exceeds 1 MiB")
+	}
+	path := filepath.Join(dir, ".egg.env")
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return "", fmt.Errorf("create egg environment: %w", err)
+	}
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		os.Remove(path)
+		return "", fmt.Errorf("write egg environment: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("close egg environment: %w", err)
+	}
+	return path, nil
+}
+
+func prepareEggEnvironmentTransport(dir string, args []string, environment map[string]string) ([]string, string, error) {
+	path, err := writeEggEnvironment(dir, environment)
+	if err != nil {
+		return nil, "", err
+	}
+	return append(args, "--env-file-required"), path, nil
 }
 
 func eggStopCmd() *cobra.Command {
@@ -859,6 +944,9 @@ type spawnEggOpts struct {
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
 func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration, opts ...spawnEggOpts) (*egg.Client, error) {
+	if err := validateSessionID(sessionID); err != nil {
+		return nil, err
+	}
 	var o spawnEggOpts
 	if len(opts) > 0 {
 		o = opts[0]
@@ -1018,7 +1106,15 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if isolatedUser {
 		perUserHome := effectiveHome
-		os.MkdirAll(perUserHome, 0700)
+		if identity.SharedHost {
+			profileDirs := append(append([]string(nil), profile.WriteRegex...), profile.WriteDirs...)
+			profileDirs = append(profileDirs, filepath.Join(".local", "bin"))
+			if err := prepareSharedAgentHome(perUserHome, profileDirs); err != nil {
+				return nil, fmt.Errorf("prepare shared-host agent home: %w", err)
+			}
+		} else if err := os.MkdirAll(perUserHome, 0700); err != nil {
+			return nil, fmt.Errorf("prepare agent home: %w", err)
+		}
 		// Seed shell + agent config symlinks from real HOME
 		if realHome != "" && !identity.SharedHost {
 			for _, rc := range []string{".bashrc", ".zshrc", ".profile"} {
@@ -1034,11 +1130,15 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		// Create ~/.local/bin and symlink the agent binary so Claude Code
 		// doesn't warn about missing native install dir or command not found.
 		localBin := filepath.Join(perUserHome, ".local", "bin")
-		os.MkdirAll(localBin, 0755)
+		if !identity.SharedHost {
+			if err := os.MkdirAll(localBin, 0755); err != nil {
+				return nil, fmt.Errorf("prepare agent bin directory: %w", err)
+			}
+		}
 		if agentBin, err := exec.LookPath(agentName); err == nil {
 			dst := filepath.Join(localBin, agentName)
 			if identity.SealedFS {
-				if err := installSharedAgentBinary(agentBin, dst); err != nil {
+				if err := installSharedAgentBinary(agentBin, perUserHome, agentName); err != nil {
 					return nil, fmt.Errorf("prepare shared-host %s runtime: %w", agentName, err)
 				}
 			} else if _, err := os.Lstat(dst); err != nil {
@@ -1050,7 +1150,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// Rebuild agent settings every session for org wing users.
 	// Reads existing prefs, layers host settings on top (host always wins
 	// for permissions), then injects agent-specific overrides.
-	if isolatedUser {
+	if isolatedUser && !identity.SharedHost {
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
 			settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
@@ -1093,26 +1193,27 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// effectiveHome/.anthropic_key (not per-session) so the settings.json
 	// path doesn't go stale when sessions end or race with each other.
 	setupAPIKeyHelper(agentName, envMap, effectiveHome)
+	sessionEnv := make(map[string]string, len(envMap)+6)
 	for k, v := range envMap {
 		// Skip WT_ prefix — reserved for session identity injection
 		if strings.HasPrefix(k, "WT_") {
 			continue
 		}
-		args = append(args, "--env", k+"="+v)
+		sessionEnv[k] = v
 	}
 	// Inject per-session identity vars (always override, not configurable via egg.yaml).
 	// All values are sanitized to prevent shell injection.
-	args = append(args, "--env", "WT_SESSION_ID="+sessionID)
+	sessionEnv["WT_SESSION_ID"] = sessionID
 	// Preview: session-specific file so multi-user previews don't collide.
 	// The shim writes to $WT_PREVIEW_DIR/$WT_PREVIEW_FILE.
-	args = append(args, "--env", "WT_PREVIEW_DIR="+cwd)
-	args = append(args, "--env", "WT_PREVIEW_FILE=.wt-preview-"+sessionID)
+	sessionEnv["WT_PREVIEW_DIR"] = cwd
+	sessionEnv["WT_PREVIEW_FILE"] = ".wt-preview-" + sessionID
 	if identity.Email != "" {
-		args = append(args, "--env", "WT_USER="+NormalizeUser(identity.Email))
-		args = append(args, "--env", "WT_USER_EMAIL="+sanitizeEnvValue(identity.Email))
+		sessionEnv["WT_USER"] = NormalizeUser(identity.Email)
+		sessionEnv["WT_USER_EMAIL"] = sanitizeEnvValue(identity.Email)
 	}
 	if identity.DisplayName != "" {
-		args = append(args, "--env", "WT_USER_NAME="+sanitizeEnvValue(identity.DisplayName))
+		sessionEnv["WT_USER_NAME"] = sanitizeEnvValue(identity.DisplayName)
 	}
 	if eggCfg.Resources.CPU != "" {
 		args = append(args, "--cpu", eggCfg.Resources.CPU)
@@ -1164,10 +1265,17 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err != nil {
 		return nil, fmt.Errorf("open egg log: %w", err)
 	}
+	args, envPath, err := prepareEggEnvironmentTransport(dir, args, sessionEnv)
+	if err != nil {
+		logFile.Close()
+		return nil, err
+	}
+	defer os.Remove(envPath)
 
 	child := exec.Command(exe, args...)
 	// Always build a clean env for the wt-egg-run child process.
-	// Base system vars + egg config env + agent profile env + platform env.
+	// Base system vars only. Session values move through an owner-only file so
+	// credentials never appear in the wrapper's argv or ambient environment.
 	// This prevents server secrets (WT_JWT_SECRET, GOOGLE_CLIENT_SECRET)
 	// from leaking when eggs are spawned from the roost process (org wings),
 	// while still passing platform vars agents need (e.g. macOS Keychain).
@@ -1175,14 +1283,6 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		allowed := map[string]bool{
 			"HOME": true, "PATH": true, "TERM": true, "LANG": true,
 			"USER": true, "SHELL": true, "TMPDIR": true, "WINGTHING_DIR": true,
-		}
-		for k := range envMap {
-			allowed[k] = true
-		}
-		if !identity.SharedHost {
-			for _, k := range profile.PlatformEnv {
-				allowed[k] = true
-			}
 		}
 		var childEnv []string
 		for _, e := range os.Environ() {
@@ -1291,56 +1391,6 @@ func sharedHostSystemReadPaths() []string {
 		}
 	}
 	return paths
-}
-
-func installSharedAgentBinary(source, destination string) error {
-	resolved, err := filepath.EvalSymlinks(source)
-	if err != nil {
-		return err
-	}
-	input, err := os.Open(resolved)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-	var magic [4]byte
-	if _, err := io.ReadFull(input, magic[:]); err != nil {
-		return err
-	}
-	if string(magic[:]) != "\x7fELF" {
-		return fmt.Errorf("%s is not a self-contained Linux executable; install a native agent binary", resolved)
-	}
-	if _, err := input.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	destinationDir := filepath.Dir(destination)
-	if err := os.MkdirAll(destinationDir, 0700); err != nil {
-		return err
-	}
-	if info, err := os.Lstat(destinationDir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		if err == nil {
-			err = errors.New("runtime directory is not a plain directory")
-		}
-		return err
-	}
-	temporary, err := os.CreateTemp(destinationDir, ".agent-runtime-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if _, err := io.Copy(temporary, input); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Chmod(0755); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporaryPath, destination)
 }
 
 // parseMemFlag parses a memory string like "2GB" or "512MB" into bytes.

@@ -235,7 +235,8 @@ type mcpTool struct {
 // genericSchema accepts positional string args for tools without parameter metadata.
 func genericSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":                 "object",
+		"additionalProperties": false,
 		"properties": map[string]any{
 			"args": map[string]any{
 				"type":        "array",
@@ -402,7 +403,9 @@ func toolArguments(raw json.RawMessage, params []config.ToolParam) ([]string, er
 		if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			raw = json.RawMessage(`{}`)
 		}
-		if err := json.Unmarshal(raw, &arguments); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&arguments); err != nil || ensureJSONEOF(decoder) != nil {
 			return nil, fmt.Errorf("expected an object containing an optional string array named args")
 		}
 		return arguments.Args, nil

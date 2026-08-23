@@ -172,7 +172,10 @@ func TestMCPOAuthFlowAndScoping(t *testing.T) {
 	).Scan(&auditDetail); err != nil {
 		t.Fatalf("missing per-call audit: %v", err)
 	}
-	if !strings.Contains(auditDetail, `"args":["Acme"]`) || !strings.Contains(auditDetail, `"client_id"`) {
+	if strings.Contains(auditDetail, `"args":["Acme"]`) ||
+		!strings.Contains(auditDetail, `"args_count":1`) ||
+		!strings.Contains(auditDetail, `"args_sha256"`) ||
+		!strings.Contains(auditDetail, `"client_id"`) {
 		t.Fatalf("incomplete per-call audit: %s", auditDetail)
 	}
 }

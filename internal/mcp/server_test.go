@@ -196,6 +196,9 @@ func TestServerPublishesOptionalNamedParameterSchema(t *testing.T) {
 	if _, ok := out.Result.Tools[0].InputSchema["properties"].(map[string]any)["args"]; !ok {
 		t.Fatalf("generic schema = %#v", out.Result.Tools[0].InputSchema)
 	}
+	if out.Result.Tools[0].InputSchema["additionalProperties"] != false {
+		t.Fatalf("generic schema allows extra properties: %#v", out.Result.Tools[0].InputSchema)
+	}
 	named := out.Result.Tools[1].InputSchema
 	if named["additionalProperties"] != false {
 		t.Fatalf("named schema allows extra properties: %#v", named)
@@ -208,6 +211,16 @@ func TestServerPublishesOptionalNamedParameterSchema(t *testing.T) {
 	method := properties["method"].(map[string]any)
 	if method["description"] != "Read-only request method" {
 		t.Fatalf("method schema = %#v", method)
+	}
+}
+
+func TestGenericToolArgumentsRejectUnknownProperties(t *testing.T) {
+	if _, err := toolArguments(json.RawMessage(`{"args":["ok"],"credential":"must-not-be-ignored"}`), nil); err == nil {
+		t.Fatal("generic tool arguments silently accepted an unknown property")
+	}
+	args, err := toolArguments(json.RawMessage(`{"args":["ok"]}`), nil)
+	if err != nil || len(args) != 1 || args[0] != "ok" {
+		t.Fatalf("valid generic tool arguments = %v, %v", args, err)
 	}
 }
 

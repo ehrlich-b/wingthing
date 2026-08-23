@@ -212,6 +212,7 @@ type PTYAttach struct {
 	WingID    string   `json:"wing_id,omitempty"`    // target wing (for relay routing)
 	AuthToken string   `json:"auth_token,omitempty"` // cached passkey auth token
 	UserID    string   `json:"user_id,omitempty"`    // relay-injected
+	OrgRole   string   `json:"org_role,omitempty"`   // relay-injected: "owner", "admin", "member", ""
 	Cols      uint32   `json:"cols,omitempty"`       // browser terminal cols (for resize-before-snapshot)
 	Rows      uint32   `json:"rows,omitempty"`       // browser terminal rows (for resize-before-snapshot)
 	Spectate  bool     `json:"spectate,omitempty"`   // read-only spectator mode

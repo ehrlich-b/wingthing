@@ -83,6 +83,10 @@ func testWTPath() string {
 	return filepath.Join(testBinDir(), "wt")
 }
 
+func shellArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
 func testWingthingDir(t *testing.T) string {
 	t.Helper()
 	if dir := os.Getenv("WINGTHING_DIR"); dir != "" {
@@ -967,7 +971,8 @@ func TestPreflightSandboxCheck(t *testing.T) {
 	defer cancel()
 
 	// Use `wt egg claude` (not `wt egg run`) so we exercise eggSpawn's pre-flight check.
-	cmd := exec.CommandContext(ctx, "su", "-", testUser, "-s", "/bin/sh", "-c", fmt.Sprintf("%q egg claude 2>&1", testWTPath()))
+	command := "PATH=" + shellArg(testPATH()) + " " + shellArg(testWTPath()) + " egg claude 2>&1"
+	cmd := exec.CommandContext(ctx, "su", "-", testUser, "-s", "/bin/sh", "-c", command)
 	cmd.Env = os.Environ()
 	start := time.Now()
 	output, err := cmd.CombinedOutput()
@@ -1014,7 +1019,7 @@ func TestSandboxFailsWithClearErrorWithoutNamespaces(t *testing.T) {
 	sessionID := fmt.Sprintf("test-nouserns-%d", time.Now().UnixNano()%100000)
 
 	// Build the wt command as a single string for su -c
-	wtCmd := fmt.Sprintf("%q egg run"+
+	wtCmd := fmt.Sprintf("PATH=%s %s egg run"+
 		" --session-id %s"+
 		" --agent claude"+
 		" --cwd %s"+
@@ -1025,7 +1030,7 @@ func TestSandboxFailsWithClearErrorWithoutNamespaces(t *testing.T) {
 		" --env HOME=%s"+
 		" --env PATH=%s"+
 		" --env TERM=xterm-256color",
-		testWTPath(), sessionID, cwd, cwd, testUserHome, testPATH())
+		shellArg(testPATH()), shellArg(testWTPath()), sessionID, cwd, cwd, testUserHome, testPATH())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1042,12 +1047,11 @@ func TestSandboxFailsWithClearErrorWithoutNamespaces(t *testing.T) {
 	t.Logf("exit error: %v", err)
 	t.Logf("output:\n%s", out)
 
-	// The error should contain actionable fix instructions.
-	// Two paths can trigger: early capability check ("unprivileged user namespaces")
-	// or late PTY start failure ("blocked sandbox namespace creation").
-	// Both include the sysctl fix.
-	if !strings.Contains(out, "sysctl") {
-		t.Errorf("expected error with sysctl fix instructions, got:\n%s", out)
+	// Namespace policy and AppArmor denial have distinct safe remediations.
+	// Accept the scoped executable profile for AppArmor and the sysctl for a
+	// host where unprivileged user namespaces themselves are disabled.
+	if !strings.Contains(out, "doctor --fix") && !strings.Contains(out, "sysctl") {
+		t.Errorf("expected actionable sandbox remediation, got:\n%s", out)
 	}
 }
 

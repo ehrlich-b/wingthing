@@ -343,6 +343,14 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		s.SetTaskError(t.ID, err.Error())
 		return err
 	}
+	if options.SharedHost {
+		_, canonical, err := sharedHostFilesystemRules(cfg, options.AllowedPaths)
+		if err != nil {
+			s.SetTaskError(t.ID, err.Error())
+			return err
+		}
+		options.AllowedPaths = canonical
+	}
 
 	// Pre-create all agents so the builder can look up any agent's context window
 	agents := make(map[string]agent.Agent)
@@ -429,7 +437,16 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 				return fmt.Errorf("resolve user home: %w", homeErr)
 			}
 		}
-		if stateErr := prepareDirectAgentState(agentName, home); stateErr != nil {
+		var stateErr error
+		if options.SharedHost {
+			profile := egg.Profile(agentName)
+			dirs := append(append([]string(nil), profile.WriteRegex...), profile.WriteDirs...)
+			dirs = append(dirs, filepath.Join(".local", "bin"))
+			stateErr = prepareSharedAgentHome(home, dirs)
+		} else {
+			stateErr = prepareDirectAgentState(agentName, home)
+		}
+		if stateErr != nil {
 			s.SetTaskError(t.ID, stateErr.Error())
 			return fmt.Errorf("prepare %s state: %w", agentName, stateErr)
 		}
@@ -439,24 +456,13 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 				s.SetTaskError(t.ID, lookupErr.Error())
 				return fmt.Errorf("find shared-host %s runtime: %w", agentName, lookupErr)
 			}
-			if installErr := installSharedAgentBinary(agentBin, filepath.Join(home, ".local", "bin", agentName)); installErr != nil {
+			if installErr := installSharedAgentBinary(agentBin, home, agentName); installErr != nil {
 				s.SetTaskError(t.ID, installErr.Error())
 				return fmt.Errorf("prepare shared-host %s runtime: %w", agentName, installErr)
 			}
 		}
 
-		mountPaths := append([]string(nil), pr.Mounts...)
-		if options.SharedHost {
-			bounded := mountPaths[:0]
-			for _, path := range mountPaths {
-				canonical := canonicalSessionPath(path)
-				if isUnderPaths(canonical, options.AllowedPaths) {
-					bounded = append(bounded, canonical)
-				}
-			}
-			mountPaths = bounded
-		}
-		mountPaths = append(mountPaths, workDir)
+		mountPaths := taskSandboxMountPaths(pr.Mounts, workDir, options)
 		eggCfg, configErr := taskEggConfig(t, workDir)
 		if configErr != nil {
 			s.SetTaskError(t.ID, configErr.Error())
@@ -558,6 +564,14 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 
 	return nil
+}
+
+func taskSandboxMountPaths(promptMounts []string, workDir string, options taskRunOptions) []string {
+	if options.SharedHost {
+		return append([]string(nil), options.AllowedPaths...)
+	}
+	mounts := append([]string(nil), promptMounts...)
+	return append(mounts, workDir)
 }
 
 const maxSandboxDiagnostics = 64 * 1024
@@ -1112,7 +1126,7 @@ func logoutCmd() *cobra.Command {
 					// Wait briefly for clean shutdown before deleting token
 					for i := 0; i < 10; i++ {
 						time.Sleep(200 * time.Millisecond)
-						if err := proc.Signal(syscall.Signal(0)); err != nil {
+						if !ownedProcessIsAlive(pid) {
 							break // process exited
 						}
 					}
@@ -1155,7 +1169,7 @@ func restartWingDaemonIfRunning() error {
 		proc.Signal(syscall.SIGTERM)
 		for i := 0; i < 15; i++ {
 			time.Sleep(200 * time.Millisecond)
-			if err := proc.Signal(syscall.Signal(0)); err != nil {
+			if !ownedProcessIsAlive(pid) {
 				break
 			}
 		}

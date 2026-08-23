@@ -323,6 +323,44 @@ func TestLocalMCPSandboxExplain(t *testing.T) {
 	}
 }
 
+func TestRoostMCPSandboxExplainBoundsExplicitConfig(t *testing.T) {
+	workspace := t.TempDir()
+	inside := filepath.Join(workspace, "egg.yaml")
+	if err := os.WriteFile(inside, []byte("base: none\nfs: [\"rw:./\"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "egg.yaml")
+	if err := os.WriteFile(outside, []byte("base: none\nfs: [\"rw:/\"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(workspace, "linked.yaml")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	server := &localMCPServer{
+		cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, logs: &bytes.Buffer{},
+		allowedPaths: []string{canonicalSessionPath(workspace)}, enforcePathBounds: true,
+	}
+	for name, configPath := range map[string]string{
+		"outside":         outside,
+		"symlink outside": link,
+	} {
+		t.Run(name, func(t *testing.T) {
+			arguments := json.RawMessage(`{"cwd":` + strconv.Quote(workspace) + `,"config":` + strconv.Quote(configPath) + `}`)
+			if _, err := server.toolSandboxExplain(arguments); err == nil || !strings.Contains(err.Error(), "outside this user's roost paths") {
+				t.Fatalf("explicit config %q error = %v", configPath, err)
+			}
+		})
+	}
+
+	arguments := json.RawMessage(`{"cwd":` + strconv.Quote(workspace) + `,"config":` + strconv.Quote(inside) + `}`)
+	if _, err := server.toolSandboxExplain(arguments); err != nil {
+		t.Fatalf("in-workspace config rejected: %v", err)
+	}
+}
+
 // TestAgentStartArgsAreValidated keeps the passthrough from becoming a hole.
 // These arguments become argv for a real process, so they are checked before a
 // session is ever spawned rather than failing somewhere inside the egg.
@@ -686,8 +724,13 @@ func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
 		t.Fatalf("agent_status = %#v err=%v", status, err)
 	}
 	other := &localMCPServer{cfg: cfg, logs: &bytes.Buffer{}, principal: "beta"}
-	if _, err := other.toolAgentStatus(json.RawMessage(`{"run_id":"` + runID + `"}`)); err == nil {
-		t.Fatal("another principal read the run")
+	wantHidden := fmt.Sprintf("agent run %q not found or not owned by caller", runID)
+	if _, err := other.toolAgentStatus(json.RawMessage(`{"run_id":"` + runID + `"}`)); err == nil || err.Error() != wantHidden {
+		t.Fatalf("cross-principal lookup error = %v, want %q", err, wantHidden)
+	}
+	wantMissing := `agent run "missing-run" not found or not owned by caller`
+	if _, err := other.toolAgentStatus(json.RawMessage(`{"run_id":"missing-run"}`)); err == nil || err.Error() != wantMissing {
+		t.Fatalf("missing lookup error = %v, want %q", err, wantMissing)
 	}
 	before, err := server.toolAgentResult(json.RawMessage(`{"run_id":"` + runID + `"}`))
 	if err != nil || before["ready"] != false {

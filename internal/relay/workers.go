@@ -308,16 +308,18 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	// Try JWT validation first, fall back to DB token
 	var userID string
 	var wingPublicKey string
+	var credentialWingID string
 	if s.JWTPubKey() != nil {
 		claims, jwtErr := ValidateWingJWT(s.JWTPubKey(), token)
 		if jwtErr == nil {
 			userID = claims.Subject
 			wingPublicKey = claims.PublicKey
+			credentialWingID = claims.WingID
 		}
 	}
 	if userID == "" && s.Store != nil {
 		var err error
-		userID, _, err = s.Store.ValidateToken(token)
+		userID, credentialWingID, err = s.Store.ValidateToken(token)
 		if err != nil {
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
@@ -356,6 +358,12 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	var reg ws.WingRegister
 	if err := json.Unmarshal(data, &reg); err != nil {
 		log.Printf("bad registration: %v", err)
+		return
+	}
+	if !s.wingRegistrationAllowed(userID, credentialWingID, reg.WingID) {
+		errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "wing ID does not match credential"}
+		data, _ := json.Marshal(errMsg)
+		conn.Write(ctx, websocket.MessageText, data)
 		return
 	}
 
@@ -477,17 +485,17 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				SessionID string `json:"session_id"`
 			}
 			json.Unmarshal(data, &partial)
-			s.forwardPTYToBrowser(partial.SessionID, data)
+			s.forwardPTYToBrowser(partial.SessionID, wing.WingID, data)
 
 		case ws.TypeTunnelResponse:
 			var resp ws.TunnelResponse
 			json.Unmarshal(data, &resp)
-			s.forwardTunnelToBrowser(resp.RequestID, data, true)
+			s.forwardTunnelToBrowser(wing.WingID, resp.RequestID, data, true)
 
 		case ws.TypeTunnelStream:
 			var stream ws.TunnelStream
 			json.Unmarshal(data, &stream)
-			s.forwardTunnelToBrowser(stream.RequestID, data, stream.Done)
+			s.forwardTunnelToBrowser(wing.WingID, stream.RequestID, data, stream.Done)
 
 		case ws.TypeSessionAttention:
 			var attn ws.SessionAttention
@@ -529,6 +537,20 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 
 		}
 	}
+}
+
+func (s *Server) wingRegistrationAllowed(userID, credentialWingID, registrationWingID string) bool {
+	if registrationWingID == "" || len(registrationWingID) > 200 {
+		return false
+	}
+	if credentialWingID == registrationWingID {
+		return true
+	}
+	// Embedded local and shared-roost wings use service tokens whose historical
+	// device IDs are "local" or "roost-wing", while their runtime WingID comes
+	// from the host configuration. Dev mode has the same intentionally local
+	// trust boundary and preserves its existing test/development token flow.
+	return s.LocalMode || s.DevMode || (s.RoostMode && userID == roostWingServiceUserID)
 }
 
 // validateOrgViaLogin proxies org membership validation to the login node.
@@ -671,20 +693,34 @@ func (s *Server) forwardPayloadToLogin(payload []byte) {
 	resp.Body.Close()
 }
 
-// forwardTunnelToBrowser routes an encrypted tunnel response from wing to the originating browser.
-func (s *Server) forwardTunnelToBrowser(requestID string, data []byte, done bool) {
-	s.tunnelMu.Lock()
-	bc := s.tunnelRequests[requestID]
-	if done {
-		delete(s.tunnelRequests, requestID)
-	}
-	s.tunnelMu.Unlock()
+// forwardTunnelToBrowser routes an encrypted tunnel response from its source wing to the
+// originating browser. The source binding prevents one connected wing from consuming or
+// injecting another wing's pending request by reusing its request ID.
+func (s *Server) forwardTunnelToBrowser(wingID, requestID string, data []byte, done bool) {
+	bc := s.pendingTunnelBrowser(wingID, requestID, done)
 	if bc == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	bc.Write(ctx, websocket.MessageText, data)
+}
+
+func (s *Server) pendingTunnelBrowser(wingID, requestID string, done bool) *websocket.Conn {
+	s.tunnelMu.Lock()
+	key := tunnelRequestKey{WingID: wingID, RequestID: requestID}
+	pending, ok := s.tunnelRequests[key]
+	if ok && time.Since(pending.CreatedAt) > pendingTunnelRequestTTL {
+		delete(s.tunnelRequests, key)
+		ok = false
+	} else if done {
+		delete(s.tunnelRequests, key)
+	}
+	s.tunnelMu.Unlock()
+	if !ok {
+		return nil
+	}
+	return pending.Browser
 }
 
 // trySendNtfy deduplicates by nonce and sends an ntfy push notification.

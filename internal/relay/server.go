@@ -69,7 +69,7 @@ type Server struct {
 
 	// Tunnel request tracking (requestID → browser WebSocket)
 	tunnelMu       sync.Mutex
-	tunnelRequests map[string]*websocket.Conn
+	tunnelRequests map[tunnelRequestKey]pendingTunnelRequest
 
 	// Cluster routing (multi-node)
 	WingMap *WingMap
@@ -96,7 +96,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 		PTY:            NewPTYRoutes(),
 		mux:            http.NewServeMux(),
 		browserConns:   make(map[*websocket.Conn]struct{}),
-		tunnelRequests: make(map[string]*websocket.Conn),
+		tunnelRequests: make(map[tunnelRequestKey]pendingTunnelRequest),
 	}
 
 	// API routes

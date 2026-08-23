@@ -136,8 +136,9 @@ func init() {
 }
 
 // probeMountNamespace creates the same user+mount namespace shape used by
-// _deny_init, then asks the child to make the root private and mount tmpfs.
-// Both operations are prerequisites for trustworthy filesystem policy.
+// _deny_init, then asks the child to make the root private, create and remount
+// a read-only bind mask, and mount tmpfs. These are the filesystem primitives
+// the sandbox depends on for deny paths and write isolation.
 func probeMountNamespace() bool {
 	probeDir, err := os.MkdirTemp("", "wt-userns-probe-")
 	if err != nil {
@@ -181,6 +182,22 @@ func runMountProbe(probeDir string) error {
 	}
 	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
 		return fmt.Errorf("make root private: %w", err)
+	}
+	probeFile := filepath.Join(clean, "deny-file")
+	if err := os.WriteFile(probeFile, nil, 0o600); err != nil {
+		return fmt.Errorf("create deny-file probe: %w", err)
+	}
+	if err := unix.Mount("/dev/null", probeFile, "", unix.MS_BIND, ""); err != nil {
+		return fmt.Errorf("bind deny-file probe: %w", err)
+	}
+	if err := remountBindReadonly(probeFile); err != nil {
+		return fmt.Errorf("remount deny-file probe read-only: %w", err)
+	}
+	if err := verifyExpectedMounts([]expectedMount{{Path: probeFile, ReadOnly: true}}); err != nil {
+		return fmt.Errorf("verify deny-file probe: %w", err)
+	}
+	if err := unix.Unmount(probeFile, 0); err != nil {
+		return fmt.Errorf("unmount deny-file probe: %w", err)
 	}
 	if err := unix.Mount("tmpfs", clean, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, "size=0"); err != nil {
 		return fmt.Errorf("mount read-only tmpfs: %w", err)

@@ -257,6 +257,21 @@ func TestSharedHostDirectAgentUsesAllowlistJail(t *testing.T) {
 	}
 }
 
+func TestSharedHostTaskMountsValidatedWorkspaceRoots(t *testing.T) {
+	root := t.TempDir()
+	workDir := filepath.Join(root, "mutable", "checkout")
+	options := taskRunOptions{SharedHost: true, AllowedPaths: []string{root}}
+	mounts := taskSandboxMountPaths([]string{workDir, "/caller/widening"}, workDir, options)
+	if len(mounts) != 1 || mounts[0] != root {
+		t.Fatalf("shared-host task mounts = %#v, want only %q", mounts, root)
+	}
+
+	personal := taskSandboxMountPaths([]string{"/prompt/mount"}, workDir, taskRunOptions{})
+	if len(personal) != 2 || personal[0] != "/prompt/mount" || personal[1] != workDir {
+		t.Fatalf("personal task mounts = %#v", personal)
+	}
+}
+
 func hasSandboxMount(mounts []sandbox.Mount, source string) bool {
 	for _, mount := range mounts {
 		if mount.Source == source && !mount.ReadOnly {

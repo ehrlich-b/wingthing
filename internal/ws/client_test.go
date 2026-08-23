@@ -31,6 +31,7 @@ func TestClientRejectsPlaintextRelayControls(t *testing.T) {
 			PTYResize{Type: TypePTYResize, SessionID: "session-1", Cols: 120, Rows: 40},
 			PTYKill{Type: TypePTYKill, SessionID: "session-1"},
 			PTYInput{Type: TypePTYInput, SessionID: "session-1", Data: "ciphertext"},
+			PTYAttentionAck{Type: TypePTYAttentionAck, SessionID: "session-1"},
 		}
 		for _, message := range messages {
 			data, _ := json.Marshal(message)
@@ -70,6 +71,16 @@ func TestClientRejectsPlaintextRelayControls(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("session did not receive allowed encrypted input envelope")
+	}
+	select {
+	case data := <-input:
+		var envelope Envelope
+		json.Unmarshal(data, &envelope)
+		if envelope.Type != TypePTYAttentionAck {
+			t.Fatalf("attention acknowledgement type = %q", envelope.Type)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("authorized attention acknowledgement did not reach session")
 	}
 
 	trustedResize, _ := json.Marshal(PTYResize{Type: TypePTYResize, SessionID: "session-1", Cols: 80, Rows: 24})
