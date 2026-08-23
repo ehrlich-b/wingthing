@@ -612,6 +612,20 @@ func TestPasskeyPolicyForRoost(t *testing.T) {
 	}
 }
 
+func TestPasskeyRPURLPrefersPublicBaseURL(t *testing.T) {
+	// The embedded roost wing connects over loopback, but browsers reach the
+	// roost at WT_BASE_URL; the RP ID must anchor on the browser-facing host.
+	embedded := passkeyPolicyForRoost(passkeyRPURL("http://localhost:8080", "https://roost.example.test"))
+	if embedded.RPID != "roost.example.test" || len(embedded.Origins) != 1 || embedded.Origins[0] != "https://roost.example.test" {
+		t.Fatalf("embedded roost policy = %#v", embedded)
+	}
+	// A standalone wing with no WT_BASE_URL keeps the roost connection host.
+	standalone := passkeyPolicyForRoost(passkeyRPURL("https://roost.example.test:8443", ""))
+	if standalone.RPID != "roost.example.test" {
+		t.Fatalf("standalone policy = %#v", standalone)
+	}
+}
+
 func TestPasskeysForSubjectNeverTrustsAnotherUser(t *testing.T) {
 	allowed := []config.AllowKey{
 		{UserID: "alice", Key: "alice-key"},

@@ -1275,7 +1275,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	if roostURL == "" {
 		roostURL = "https://ws.wingthing.ai"
 	}
-	passkeyPolicy := passkeyPolicyForRoost(roostURL)
+	passkeyPolicy := passkeyPolicyForRoost(passkeyRPURL(roostURL, os.Getenv("WT_BASE_URL")))
 	// Convert HTTP URL to WebSocket URL
 	wsURL := strings.Replace(roostURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
@@ -3997,6 +3997,18 @@ func passkeySubject(userID, clientPublicKey string) string {
 		return ""
 	}
 	return userID + "\x00" + clientPublicKey
+}
+
+// passkeyRPURL picks the URL whose host anchors the WebAuthn relying party.
+// The embedded roost wing connects over loopback while browsers reach the
+// roost at its public base URL (WT_BASE_URL) — the same source the relay's
+// passkey registration endpoint derives its RP ID from. RP ID and origin must
+// match the browser-facing host or every WebAuthn ceremony fails closed.
+func passkeyRPURL(roostURL, baseURL string) string {
+	if baseURL != "" {
+		return baseURL
+	}
+	return roostURL
 }
 
 // passkeyPolicyForRoost mirrors the relying-party configuration used by the
