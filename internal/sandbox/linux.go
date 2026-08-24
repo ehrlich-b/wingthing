@@ -205,6 +205,21 @@ func runMountProbe(probeDir string) error {
 	if err := unix.Unmount(clean, 0); err != nil {
 		return fmt.Errorf("unmount tmpfs: %w", err)
 	}
+	// Mirror the jail's procfs swap: bind host /proc non-recursively, then
+	// lazily detach it. This is the operation _jail_agent_init performs before
+	// launching an agent, and it must be probed here — Ubuntu 22.04 (5.15)
+	// proved a host can pass every mount primitive above and still refuse a
+	// procfs detach at spawn time.
+	procProbe := filepath.Join(clean, "proc")
+	if err := os.Mkdir(procProbe, 0o555); err != nil {
+		return fmt.Errorf("create procfs probe dir: %w", err)
+	}
+	if err := unix.Mount("/proc", procProbe, "", unix.MS_BIND, ""); err != nil {
+		return fmt.Errorf("bind procfs probe: %w", err)
+	}
+	if err := unix.Unmount(procProbe, unix.MNT_DETACH); err != nil {
+		return fmt.Errorf("detach procfs probe: %w", err)
+	}
 	return nil
 }
 
