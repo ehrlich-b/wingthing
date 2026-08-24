@@ -340,7 +340,15 @@ func DenyInit(args []string) {
 		Cloneflags: syscall.CLONE_NEWPID,
 	}
 	if uid != 0 {
-		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWUSER
+		// CLONE_NEWNS must accompany CLONE_NEWUSER: the nested user namespace
+		// holds no capabilities over the wrapper's mount namespace, so without
+		// its own namespace the PID-namespace init cannot swap /proc at all —
+		// every mount call fails EPERM (observed on 5.15 shared hosts; masked
+		// on root runs, which skip CLONE_NEWUSER and keep full capabilities).
+		// Inside its own namespace the init may lazily detach the inherited
+		// procfs subtree wholesale, locked children included — the same
+		// operation the wrapper performs on the pivoted old root.
+		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS
 		cmd.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{
 			ContainerID: uid,
 			HostID:      0, // 0 in our namespace = real uid on host
