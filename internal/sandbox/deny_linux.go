@@ -63,10 +63,11 @@ func jailAgentInit(uidStr, gidStr string, command []string) {
 	// Mounting the PID-namespace procfs on top is equally sound: the host
 	// procfs is left shadowed and unreachable, the seccomp filter installed by
 	// the drop stage denies the agent mount and umount, and verifyPrivateProcfs
-	// asserts the visible /proc belongs to this PID namespace either way.
-	if err := unix.Unmount("/proc", unix.MNT_DETACH); err != nil {
-		log.Printf("_jail_agent_init: detach host procfs refused (%v); overmounting PID-namespace procfs", err)
-	}
+	// asserts the visible /proc belongs to this PID namespace either way. The
+	// detach is best-effort and its refusal is an expected, benign path, so it
+	// is not surfaced to the agent's terminal — only a failed overmount, or a
+	// procfs that verifies as non-private, is fatal.
+	_ = unix.Unmount("/proc", unix.MNT_DETACH)
 	if err := unix.Mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
 		failEnforcement("mount PID-namespace procfs", "/proc", err)
 	}
