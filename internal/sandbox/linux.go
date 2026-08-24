@@ -30,6 +30,7 @@ var deniedSyscallsCommon = []uint32{
 	// fail EPERM, but deny them outright as defense-in-depth.
 	unix.SYS_MOVE_MOUNT,
 	unix.SYS_OPEN_TREE,
+	unix.SYS_OPEN_TREE_ATTR, // Linux 6.15: open_tree + mount_setattr in one call
 	unix.SYS_FSOPEN,
 	unix.SYS_FSCONFIG,
 	unix.SYS_FSMOUNT,
@@ -396,6 +397,11 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 
 	attr := &syscall.SysProcAttr{
 		Cloneflags: flags,
+		// Tie the sandbox wrapper's lifetime to this runtime process: if the egg
+		// server dies (crash or hard SIGKILL) the wrapper is killed too, which
+		// cascades (via the stage-2 init's own Pdeathsig) to tear down the whole
+		// jail namespace instead of leaving a detached tenant session running.
+		Pdeathsig: syscall.SIGKILL,
 	}
 
 	// When not root, use user namespaces for unprivileged isolation.
@@ -496,39 +502,43 @@ func buildSeccompFilter() []unix.SockFilter {
 		return nil
 	}
 
-	// Total instructions: 1 (load) + nDenied (jeq) + 1 (allow) + 1 (deny)
-	prog := make([]unix.SockFilter, 0, nDenied+3)
+	denyInstr := unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: seccompRetErrno | uint32(unix.EPERM)}
+	var prog []unix.SockFilter
 
-	// Load syscall number: BPF_LD+BPF_W+BPF_ABS, offset 0
-	prog = append(prog, unix.SockFilter{
-		Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS,
-		K:    0, // offsetof(struct seccomp_data, nr)
-	})
-
-	// For each denied syscall, jump to deny block if match.
-	// Jump targets are relative: jt=jump-to-deny, jf=next-instruction
-	for i, nr := range deniedSyscalls {
-		jmpToDeny := uint8(nDenied - i) // distance to deny instruction
-		prog = append(prog, unix.SockFilter{
-			Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K,
-			Jt:   jmpToDeny,
-			Jf:   0, // fall through to next check
-			K:    nr,
-		})
+	// ABI validation. A denylist keyed only on seccomp_data.nr is bypassable by
+	// issuing the syscall under a different ABI, whose numbers differ from the
+	// native table. Reject any non-native architecture, and on x86-64 reject the
+	// x32 number range, BEFORE the number checks. Skipped where seccompNativeArch
+	// is 0 (unhardened platforms), preserving prior behavior there.
+	if seccompNativeArch != 0 {
+		// Load seccomp_data.arch (offset 4); if it is native, skip the deny.
+		prog = append(prog,
+			unix.SockFilter{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 4},
+			unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, K: seccompNativeArch, Jt: 1, Jf: 0},
+			denyInstr,
+		)
 	}
 
-	// Allow
-	prog = append(prog, unix.SockFilter{
-		Code: unix.BPF_RET | unix.BPF_K,
-		K:    seccompRetAllow,
-	})
+	// Load seccomp_data.nr (offset 0).
+	prog = append(prog, unix.SockFilter{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 0})
 
-	// Deny with EPERM
-	prog = append(prog, unix.SockFilter{
-		Code: unix.BPF_RET | unix.BPF_K,
-		K:    seccompRetErrno | uint32(unix.EPERM),
-	})
+	// Conditional deny checks start here; their jump distance to the final deny
+	// instruction is fixed up once the full program length is known.
+	condStart := len(prog)
+	if seccompX32Bit != 0 {
+		// Reject the x32 syscall number range (nr >= __X32_SYSCALL_BIT).
+		prog = append(prog, unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JGE | unix.BPF_K, K: seccompX32Bit})
+	}
+	for _, nr := range deniedSyscalls {
+		prog = append(prog, unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, K: nr})
+	}
+	prog = append(prog, unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: seccompRetAllow}) // default allow
+	prog = append(prog, denyInstr)                                                            // final deny
 
+	denyIdx := len(prog) - 1
+	for i := condStart; i < denyIdx-1; i++ { // every conditional jumps to the final deny on match
+		prog[i].Jt = uint8(denyIdx - i - 1)
+	}
 	return prog
 }
 

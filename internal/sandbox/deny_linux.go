@@ -102,22 +102,39 @@ func jailAgentInit(uidStr, gidStr string, command []string) {
 	if err := drop.Start(); err != nil {
 		log.Fatalf("_jail_agent_init: start drop stage: %v", err)
 	}
-	// This process is PID 1 of the jail's PID namespace; act as a minimal init —
-	// forward termination signals to the agent and exit with its status.
+	agentPID := drop.Process.Pid
+	// This process is PID 1 of the jail's PID namespace, so it must act as a
+	// real init: forward termination signals to the agent, and reap EVERY exited
+	// child. Orphaned grandchildren (the agent double-forks) are reparented to
+	// PID 1; without reaping they accumulate as zombies (there is no PID limit),
+	// so wait4(-1) rather than waiting only for the direct child. Exit with the
+	// agent's status once it is the one that exited.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	go func() {
 		for sig := range sigCh {
-			drop.Process.Signal(sig)
+			if p, err := os.FindProcess(agentPID); err == nil {
+				p.Signal(sig)
+			}
 		}
 	}()
-	if err := drop.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+	var ws syscall.WaitStatus
+	for {
+		wpid, err := syscall.Wait4(-1, &ws, 0, nil)
+		if err == syscall.EINTR {
+			continue
 		}
-		log.Fatalf("_jail_agent_init: wait drop stage: %v", err)
+		if err != nil {
+			log.Fatalf("_jail_agent_init: wait4: %v", err)
+		}
+		if wpid != agentPID {
+			continue // reaped an orphaned grandchild — keep going
+		}
+		if ws.Signaled() {
+			os.Exit(128 + int(ws.Signal()))
+		}
+		os.Exit(ws.ExitStatus())
 	}
-	os.Exit(0)
 }
 
 // jailAgentDrop (stage 3) runs as the real nonzero uid in a nested user
@@ -414,6 +431,11 @@ func DenyInit(args []string) {
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWPID,
+		// If this wrapper (_deny_init) dies, kill the PID-namespace init too. In
+		// jail mode that init is PID 1, so killing it tears down the whole jail
+		// namespace (agent and all descendants), so a hard-terminated session
+		// never leaves survivors running detached from the runtime.
+		Pdeathsig: syscall.SIGKILL,
 	}
 	if uid != 0 {
 		// CLONE_NEWNS must accompany CLONE_NEWUSER: the nested user namespace
