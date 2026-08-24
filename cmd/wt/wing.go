@@ -386,6 +386,17 @@ var tunnelKeys sync.Map // senderPub string → cipher.AEAD
 // into a corrupt config.
 var wingCfgMu sync.Mutex
 
+// clonePathList deep-copies a PathList so a failed save can roll the live ACL
+// back to exactly its prior state.
+func clonePathList(paths config.PathList) config.PathList {
+	out := make(config.PathList, len(paths))
+	for i, e := range paths {
+		out[i] = e
+		out[i].Members = append([]string(nil), e.Members...)
+	}
+	return out
+}
+
 // readEggOwner reads the creator user ID from an egg's owner file.
 func readEggOwner(dir string) string {
 	data, err := os.ReadFile(filepath.Join(dir, "egg.owner"))
@@ -4648,8 +4659,13 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 			return
 		}
-		// Remove from persisted config (if present)
+		// Remove from persisted config (if present). Revocation is an ACL
+		// mutation: serialize with the other wing.yaml writers, and roll the
+		// in-memory change back if persistence fails so a request reported as
+		// failed cannot leave a live-but-unsaved authorization change.
 		persistedRemoved := false
+		wingCfgMu.Lock()
+		oldAllowKeys := append([]config.AllowKey(nil), wingCfg.AllowKeys...)
 		for i, ak := range wingCfg.AllowKeys {
 			if ak.UserID == target || (inner.Key != "" && ak.Key == inner.Key) {
 				wingCfg.AllowKeys = append(wingCfg.AllowKeys[:i], wingCfg.AllowKeys[i+1:]...)
@@ -4658,8 +4674,14 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 		}
 		if persistedRemoved {
-			config.SaveWingConfig(cfg.Dir, wingCfg)
+			if saveErr := config.SaveWingConfig(cfg.Dir, wingCfg); saveErr != nil {
+				wingCfg.AllowKeys = oldAllowKeys
+				wingCfgMu.Unlock()
+				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
+				return
+			}
 		}
+		wingCfgMu.Unlock()
 		// Also remove from in-memory list (covers session-scoped entries)
 		memRemoved := false
 		for i, ak := range allowedKeys {
@@ -4700,15 +4722,18 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			return
 		}
 		wingCfgMu.Lock()
+		oldPaths, oldRoot := wingCfg.Paths, wingCfg.Root
 		wingCfg.Paths = config.PathList(inner.Paths)
 		wingCfg.Root = ""
-		saveErr := config.SaveWingConfig(cfg.Dir, wingCfg)
-		wingCfgMu.Unlock()
-		if saveErr != nil {
-			// The in-memory change would revert on restart; do not claim success.
+		if saveErr := config.SaveWingConfig(cfg.Dir, wingCfg); saveErr != nil {
+			// Roll back so a request reported as failed does not keep steering
+			// live authorization until restart.
+			wingCfg.Paths, wingCfg.Root = oldPaths, oldRoot
+			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 			return
 		}
+		wingCfgMu.Unlock()
 		log.Printf("paths.set: %d entries by %s", len(wingCfg.Paths), req.SenderUserID)
 		go killSessionsViolatingACLs(cfg, wingCfg.Paths, home)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
@@ -4725,6 +4750,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		found := false
 		emailLower := strings.ToLower(inner.Email)
 		wingCfgMu.Lock()
+		oldPaths := clonePathList(wingCfg.Paths)
 		for i, e := range wingCfg.Paths {
 			if e.Path == inner.Path {
 				// Check duplicate
@@ -4747,12 +4773,13 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "path not found"}, write)
 			return
 		}
-		saveErr := config.SaveWingConfig(cfg.Dir, wingCfg)
-		wingCfgMu.Unlock()
-		if saveErr != nil {
+		if saveErr := config.SaveWingConfig(cfg.Dir, wingCfg); saveErr != nil {
+			wingCfg.Paths = oldPaths
+			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 			return
 		}
+		wingCfgMu.Unlock()
 		log.Printf("paths.add_member: %s to %s by %s", inner.Email, inner.Path, req.SenderUserID)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
@@ -4768,6 +4795,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		found := false
 		emailLower := strings.ToLower(inner.Email)
 		wingCfgMu.Lock()
+		oldPaths := clonePathList(wingCfg.Paths)
 		for i, e := range wingCfg.Paths {
 			if e.Path == inner.Path {
 				// An empty member list means a legacy open entry visible to every
@@ -4793,12 +4821,13 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "path or member not found"}, write)
 			return
 		}
-		saveErr := config.SaveWingConfig(cfg.Dir, wingCfg)
-		wingCfgMu.Unlock()
-		if saveErr != nil {
+		if saveErr := config.SaveWingConfig(cfg.Dir, wingCfg); saveErr != nil {
+			wingCfg.Paths = oldPaths
+			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 			return
 		}
+		wingCfgMu.Unlock()
 		log.Printf("paths.remove_member: %s from %s by %s", inner.Email, inner.Path, req.SenderUserID)
 		go killSessionsViolatingACLs(cfg, wingCfg.Paths, home)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)

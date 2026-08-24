@@ -58,6 +58,10 @@ const (
 	// expiry one authenticated browser could grow the route map without bound.
 	maxProvisionalRoutes = 1024
 	provisionalRouteTTL  = 2 * time.Minute
+
+	// One route's viewer map is also attacker-growable by re-attaching to the
+	// same (possibly nonexistent) session ID with fresh viewer IDs.
+	maxViewersPerRoute = 64
 )
 
 // admitProvisionalLocked sweeps expired provisional routes and reports whether
@@ -125,6 +129,10 @@ func (r *PTYRoutes) AddViewer(sessionID, viewerID, wingID string, conn *websocke
 	}
 	if route.Viewers == nil {
 		route.Viewers = make(map[string]*websocket.Conn)
+	}
+	if _, exists := route.Viewers[viewerID]; !exists && len(route.Viewers) >= maxViewersPerRoute {
+		route.mu.Unlock()
+		return false
 	}
 	route.Viewers[viewerID] = conn
 	route.mu.Unlock()
