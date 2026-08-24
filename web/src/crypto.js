@@ -43,7 +43,12 @@ export function assertWingIdentity(wingId, wingPublicKeyB64) {
     }
     if (!pinned) {
         pins[wingId] = wingPublicKeyB64;
-        localStorage.setItem(WING_IDENTITY_PINS_KEY, JSON.stringify(pins));
+        // Persisting the pin is best-effort. A browser with storage disabled,
+        // full, or partitioned (private windows, some embedded contexts) throws
+        // on write — and TOFU pinning is defense-in-depth, not a hard
+        // requirement, so a storage failure must not break the tunnel. Degrade
+        // to not-persisted rather than throw, matching the guarded read above.
+        try { localStorage.setItem(WING_IDENTITY_PINS_KEY, JSON.stringify(pins)); } catch (e) {}
     }
 }
 
