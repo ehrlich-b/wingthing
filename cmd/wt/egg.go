@@ -1147,6 +1147,37 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		args = append(args, "--user-home", perUserHome)
 	}
+	// Claude keeps its monolithic config (onboarding completion, theme, project
+	// trust, MCP servers) in $CLAUDE_CONFIG_DIR/.claude.json, defaulting to
+	// ~/.claude.json at the HOME root. On isolated (org/shared) homes the HOME
+	// root is mounted read-only, so that file — and the .claude.json.lock it
+	// writes beside it — can only be created in the overlay COW layer, which is
+	// copied back to the real home only when the session process exits cleanly.
+	// Browser sessions routinely outlive their tab and are reaped hard (or never
+	// reaped), so onboarding never persisted and every new session re-prompted.
+	// Point CLAUDE_CONFIG_DIR at ~/.claude, which is bind-mounted read-write to
+	// the per-user home: onboarding and theme now land there immediately and
+	// survive across sessions regardless of how the previous one ended.
+	if isolatedUser && agentName == "claude" {
+		claudeDir := filepath.Join(effectiveHome, ".claude")
+		envMap["CLAUDE_CONFIG_DIR"] = claudeDir
+		// One-time migration: users who already completed onboarding under the
+		// old layout have their config at ~/.claude.json (HOME root). Relocating
+		// CLAUDE_CONFIG_DIR would leave that behind and re-prompt them once on
+		// release. Seed the new path from the old file if it hasn't been created
+		// yet. Only a regular file is migrated — a symlink at the root is the
+		// shared empty stub, whose users never had persisted state to preserve.
+		newCfg := filepath.Join(claudeDir, ".claude.json")
+		oldCfg := filepath.Join(effectiveHome, ".claude.json")
+		if _, err := os.Stat(newCfg); os.IsNotExist(err) {
+			if fi, lerr := os.Lstat(oldCfg); lerr == nil && fi.Mode().IsRegular() {
+				if data, rerr := os.ReadFile(oldCfg); rerr == nil {
+					os.MkdirAll(claudeDir, 0700)
+					os.WriteFile(newCfg, data, 0600)
+				}
+			}
+		}
+	}
 	// Rebuild agent settings every session for org wing users.
 	// Reads existing prefs, layers host settings on top (host always wins
 	// for permissions), then injects agent-specific overrides.
