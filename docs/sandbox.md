@@ -15,7 +15,48 @@ sandbox.New(cfg) → newPlatform(cfg) → EnforcementError if platform can't enf
 
 If the platform cannot enforce the requested isolation, the egg fails with `EnforcementError`. No silent fallback.
 
+Linux capability detection exercises the mount operations Wingthing depends
+on inside a user+mount namespace. Creating `CLONE_NEWUSER` alone is insufficient
+on Ubuntu 24.04: AppArmor may allow namespace creation and then move the child
+into a profile that denies mounts. `wt doctor` reports that host state as
+`NOT AVAILABLE`; `sudo wt doctor --fix` installs an executable-scoped AppArmor
+profile. The fixer accepts a root-owned executable whose complete path is
+root-writable-only, such as `/usr/local/bin/wt`. It refuses checkouts, user
+homes, download directories, and temporary paths before writing the profile;
+AppArmor path attachment does not bind the grant to a content hash.
+
+`_deny_init` treats every policy operation as mandatory. It aborts before the
+agent process exists when a mask, read-only bind, HOME boundary, jail mount,
+pivot, old-root detach, or seccomp installation fails. After setup it reads
+`/proc/self/mountinfo` and verifies every expected mask and writable hole. The
+Linux E2E gate plants a unique readable canary inside a denied directory and
+attempts the read from the agent's live namespace.
+
 ## What the Sandbox Enforces
+
+### Narrowing agent profile domains
+
+Agent profiles contribute the provider domains an agent usually needs. The
+mapping form can suppress those additions for a tightly scoped provider:
+
+```yaml
+network:
+  domains: []
+  agent_domains: none
+env:
+  - OPENAI_API_KEY
+  - WT_PROVIDER_BASE_URL
+```
+
+With `WT_PROVIDER_BASE_URL=https://api.arliai.com/v1`, the effective network
+policy contains the exact host `api.arliai.com`. The default value for
+`agent_domains` is `merge`, preserving existing scalar, list, and mapping
+configurations. `wt egg explain <agent>` lists declared, automatic, derived,
+and suppressed domains with their provenance.
+
+Provider URLs use HTTPS. HTTP is accepted for loopback providers, and IP
+literals are accepted for loopback addresses. Userinfo in provider URLs is
+rejected.
 
 ### Both Platforms
 

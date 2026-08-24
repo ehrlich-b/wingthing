@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -43,6 +44,110 @@ func hasName(ps []ws.WingProject, name string) bool {
 		}
 	}
 	return false
+}
+
+func TestMemberSessionVisibilityFailsClosed(t *testing.T) {
+	req := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "member"}
+	if canSeeSession(req, "") {
+		t.Fatal("member could see a session with missing ownership metadata")
+	}
+	if !canSeeSession(req, "alice") {
+		t.Fatal("member could not see their own session")
+	}
+	if canSeeSession(req, "bob") {
+		t.Fatal("member could see another user's session")
+	}
+	owner := ws.TunnelRequest{SenderUserID: "owner", SenderOrgRole: "owner"}
+	if !canSeeSession(owner, "") || !canSeeSession(owner, "bob") {
+		t.Fatal("wing owner lost administrative session visibility")
+	}
+}
+
+func TestSessionAttachOwnership(t *testing.T) {
+	if !canAttachSession("alice", "member", "alice") {
+		t.Fatal("member could not attach to their own session")
+	}
+	if canAttachSession("mallory", "member", "alice") {
+		t.Fatal("member attached to another member's session")
+	}
+	if canAttachSession("mallory", "", "alice") {
+		t.Fatal("unknown role attached to another user's session")
+	}
+	if canAttachSession("", "member", "") {
+		t.Fatal("missing identities were treated as equal owners")
+	}
+	for _, role := range []string{"owner", "admin"} {
+		if !canAttachSession("operator", role, "alice") {
+			t.Fatalf("%s could not attach for session oversight", role)
+		}
+	}
+}
+
+func TestPendingReattachAuthsAreViewerScoped(t *testing.T) {
+	pending := newPendingReattachAuths()
+	t.Cleanup(pending.close)
+
+	challengeA := []byte("challenge-a")
+	pending.put(ws.PTYAttach{Type: ws.TypePTYAttach, ViewerID: "viewer-a", UserID: "alice"}, challengeA, "alice:key-a", time.Hour)
+	pending.put(ws.PTYAttach{Type: ws.TypePTYAttach, ViewerID: "viewer-b", UserID: "alice"}, []byte("challenge-b"), "alice:key-b", time.Hour)
+	challengeA[0] = 'X'
+
+	if _, ok := pending.take(""); ok {
+		t.Fatal("response without a viewer ID consumed a pending viewer attach")
+	}
+	got, ok := pending.take("viewer-b")
+	if !ok {
+		t.Fatal("viewer-b could not resume its pending attach")
+	}
+	if got.attach.ViewerID != "viewer-b" || got.subject != "alice:key-b" || string(got.challenge) != "challenge-b" {
+		t.Fatalf("viewer-b resumed the wrong challenge: %#v", got)
+	}
+	got, ok = pending.take("viewer-a")
+	if !ok || string(got.challenge) != "challenge-a" {
+		t.Fatalf("viewer-a challenge was lost or aliased: %#v, %v", got, ok)
+	}
+}
+
+func TestPendingReattachAuthsExpireIndependently(t *testing.T) {
+	pending := newPendingReattachAuths()
+	t.Cleanup(pending.close)
+	now := time.Now()
+	pending.byViewer["expired"] = pendingReattachAuth{
+		attach:    ws.PTYAttach{ViewerID: "expired"},
+		expiresAt: now.Add(-time.Second),
+	}
+	pending.byViewer["live"] = pendingReattachAuth{
+		attach:    ws.PTYAttach{ViewerID: "live"},
+		expiresAt: now.Add(time.Hour),
+	}
+	pending.resetTimer()
+
+	expired := pending.expire(now)
+	if len(expired) != 1 || expired[0].attach.ViewerID != "expired" {
+		t.Fatalf("expired attaches = %#v, want only expired", expired)
+	}
+	if _, ok := pending.take("live"); !ok {
+		t.Fatal("expiring one viewer removed another viewer's pending attach")
+	}
+}
+
+func TestMemberWorkspaceVisibilityFailsClosedWithoutPaths(t *testing.T) {
+	member := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "member"}
+	owner := ws.TunnelRequest{SenderUserID: "owner", SenderOrgRole: "owner"}
+	projects := []ws.WingProject{{Name: "host-project", Path: t.TempDir()}}
+
+	if entries := requestDirEntries(member, t.TempDir(), nil); len(entries) != 0 {
+		t.Fatalf("member without paths could enumerate host directories: %#v", entries)
+	}
+	if visible := requestProjects(member, projects, nil); len(visible) != 0 {
+		t.Fatalf("member without paths could enumerate host projects: %#v", visible)
+	}
+	if canAccessSessionPath(member, projects[0].Path, nil) {
+		t.Fatal("member without paths could see a session outside an assigned workspace")
+	}
+	if visible := requestProjects(owner, projects, nil); len(visible) != 1 {
+		t.Fatal("owner with an empty path list lost personal-wing project visibility")
+	}
 }
 
 func TestWingStatusRoundTrip(t *testing.T) {
@@ -493,6 +598,44 @@ func TestResolveRelayHTTPURL(t *testing.T) {
 				t.Errorf("resolveRelayHTTPURL(%q) = %q, want %q", tt.roostURL, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPasskeyPolicyForRoost(t *testing.T) {
+	managed := passkeyPolicyForRoost("wss://ws.wingthing.ai/ws/wing")
+	if managed.RPID != "wingthing.ai" || len(managed.Origins) != 1 || managed.Origins[0] != "https://app.wingthing.ai" || !managed.RequireUserVerification {
+		t.Fatalf("managed policy = %#v", managed)
+	}
+	selfHosted := passkeyPolicyForRoost("https://roost.example.test:8443")
+	if selfHosted.RPID != "roost.example.test" || len(selfHosted.Origins) != 1 || selfHosted.Origins[0] != "https://roost.example.test:8443" {
+		t.Fatalf("self-hosted policy = %#v", selfHosted)
+	}
+}
+
+func TestPasskeyRPURLPrefersPublicBaseURL(t *testing.T) {
+	// The embedded roost wing connects over loopback, but browsers reach the
+	// roost at WT_BASE_URL; the RP ID must anchor on the browser-facing host.
+	embedded := passkeyPolicyForRoost(passkeyRPURL("http://localhost:8080", "https://roost.example.test"))
+	if embedded.RPID != "roost.example.test" || len(embedded.Origins) != 1 || embedded.Origins[0] != "https://roost.example.test" {
+		t.Fatalf("embedded roost policy = %#v", embedded)
+	}
+	// A standalone wing with no WT_BASE_URL keeps the roost connection host.
+	standalone := passkeyPolicyForRoost(passkeyRPURL("https://roost.example.test:8443", ""))
+	if standalone.RPID != "roost.example.test" {
+		t.Fatalf("standalone policy = %#v", standalone)
+	}
+}
+
+func TestPasskeysForSubjectNeverTrustsAnotherUser(t *testing.T) {
+	allowed := []config.AllowKey{
+		{UserID: "alice", Key: "alice-key"},
+		{UserID: "bob", Key: "bob-key"},
+		{Key: "intentional-key-only"},
+		{UserID: "alice"},
+	}
+	got := passkeysForSubject(allowed, "alice")
+	if len(got) != 2 || got[0].Key != "alice-key" || got[1].Key != "intentional-key-only" {
+		t.Fatalf("alice keys = %#v", got)
 	}
 }
 

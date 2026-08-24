@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"os/exec"
+	"reflect"
 	"testing"
 )
 
@@ -126,6 +128,41 @@ func TestNewClaudeCustomWindow(t *testing.T) {
 	c := NewClaude(128000)
 	if c.ContextWindow() != 128000 {
 		t.Errorf("context window = %d, want 128000", c.ContextWindow())
+	}
+}
+
+func TestClaudeRunCommandContract(t *testing.T) {
+	claude := NewClaude(0)
+	var gotName string
+	var gotArgs []string
+	stream, err := claude.Run(context.Background(), "hello claude", RunOpts{
+		Model:               "opus",
+		SystemPrompt:        "system",
+		ReplaceSystemPrompt: true,
+		AllowedTools:        []string{"Read", "Write"},
+		CmdFactory: func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
+			gotName = name
+			gotArgs = append([]string(nil), args...)
+			return exec.CommandContext(ctx, "sh", "-c", `printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"claude output"}]}}'`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, ok := stream.Next(); !ok {
+			break
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	wantArgs := []string{"-p", "hello claude", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", "--model", "opus", "--system-prompt", "system", "--allowedTools", "Read,Write"}
+	if gotName != "claude" || !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("invocation = %q %q, want claude %q", gotName, gotArgs, wantArgs)
+	}
+	if got := stream.Text(); got != "claude output" {
+		t.Fatalf("output = %q", got)
 	}
 }
 

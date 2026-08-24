@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	patternfiles "github.com/ehrlich-b/wingthing/patterns"
 )
 
 //go:embed templates
@@ -55,14 +57,15 @@ var tmplFuncs = template.FuncMap{
 }
 
 var (
-	homeTmpl        = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/home.html"))
-	loginTmpl       = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/login.html"))
-	docsTmpl        = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/docs.html"))
-	termsTmpl       = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/terms.html"))
-	privacyTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/privacy.html"))
-	abuseTmpl       = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/abuse.html"))
-	installTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/install.html"))
-	claimTmpl       = template.Must(template.New("claim.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/claim.html"))
+	homeTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/home.html"))
+	loginTmpl    = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/login.html"))
+	docsTmpl     = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/docs.html"))
+	patternsTmpl = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/patterns.html"))
+	termsTmpl    = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/terms.html"))
+	privacyTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/privacy.html"))
+	abuseTmpl    = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/abuse.html"))
+	installTmpl  = template.Must(template.New("base.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/base.html", "templates/install.html"))
+	claimTmpl    = template.Must(template.New("claim.html").Funcs(tmplFuncs).ParseFS(templateFS, "templates/claim.html"))
 )
 
 // template returns a parsed template. In dev mode (DevTemplateDir set),
@@ -120,6 +123,30 @@ func (s *Server) handleHeroVideo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
 	s.template(docsTmpl, "base.html", "docs.html").ExecuteTemplate(w, "base", data)
+}
+
+func (s *Server) handlePatterns(w http.ResponseWriter, r *http.Request) {
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
+	s.template(patternsTmpl, "base.html", "patterns.html").ExecuteTemplate(w, "base", data)
+}
+
+func (s *Server) handlePatternSkill(w http.ResponseWriter, _ *http.Request) {
+	s.servePatternMarkdown(w, "SKILL.md")
+}
+
+func (s *Server) handlePatternInstructions(w http.ResponseWriter, r *http.Request) {
+	s.servePatternMarkdown(w, r.PathValue("slug")+"/INSTRUCTIONS.md")
+}
+
+func (s *Server) servePatternMarkdown(w http.ResponseWriter, name string) {
+	data, err := patternfiles.Files.ReadFile(name)
+	if err != nil {
+		http.Error(w, "404 page not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	_, _ = w.Write(data)
 }
 
 func (s *Server) handleTerms(w http.ResponseWriter, r *http.Request) {

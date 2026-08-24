@@ -6,15 +6,17 @@ const (
 	TypeWingRegister  = "wing.register"
 	TypeWingHeartbeat = "wing.heartbeat"
 
-	// PTY (bidirectional, already E2E encrypted)
+	// PTY routing. Input/output payloads are application-encrypted; lifecycle
+	// envelopes remain visible. Resize/kill use the encrypted tunnel in current
+	// clients, and current wings reject their legacy plaintext relay forms.
 	TypePTYStart        = "pty.start"         // browser → relay → wing
 	TypePTYStarted      = "pty.started"       // wing → relay → browser
 	TypePTYOutput       = "pty.output"        // wing → relay → browser
 	TypePTYInput        = "pty.input"         // browser → relay → wing
-	TypePTYResize       = "pty.resize"        // browser → relay → wing
+	TypePTYResize       = "pty.resize"        // legacy relay form; current wings reject it
 	TypePTYExited       = "pty.exited"        // wing → relay → browser
 	TypePTYAttach       = "pty.attach"        // browser → relay → wing (reattach)
-	TypePTYKill         = "pty.kill"          // browser → relay → wing (terminate session)
+	TypePTYKill         = "pty.kill"          // legacy relay form; current wings reject it
 	TypePTYDetach       = "pty.detach"        // browser → relay (explicit detach before disconnect)
 	TypePTYAttentionAck = "pty.attention_ack" // browser → relay → wing (notification seen)
 	TypePTYPreview      = "pty.preview"       // wing → relay → browser (ephemeral)
@@ -73,20 +75,20 @@ type WingProject struct {
 
 // WingRegister is sent by the wing on connect.
 type WingRegister struct {
-	Type        string        `json:"type"`
-	WingID      string        `json:"wing_id"`
-	Hostname    string        `json:"hostname,omitempty"`
-	Platform    string        `json:"platform,omitempty"` // runtime.GOOS (e.g. "darwin", "linux")
-	Version     string        `json:"version,omitempty"`  // build version (e.g. "v0.7.35")
-	Agents      []string      `json:"agents"`
-	Skills      []string      `json:"skills"`
-	Labels      []string      `json:"labels"`
-	Identities  []string      `json:"identities"`
-	Projects    []WingProject `json:"projects,omitempty"`
-	OrgSlug     string        `json:"org_slug,omitempty"`
-	RootDir     string        `json:"root_dir,omitempty"`
+	Type         string        `json:"type"`
+	WingID       string        `json:"wing_id"`
+	Hostname     string        `json:"hostname,omitempty"`
+	Platform     string        `json:"platform,omitempty"` // runtime.GOOS (e.g. "darwin", "linux")
+	Version      string        `json:"version,omitempty"`  // build version (e.g. "v0.7.35")
+	Agents       []string      `json:"agents"`
+	Skills       []string      `json:"skills"`
+	Labels       []string      `json:"labels"`
+	Identities   []string      `json:"identities"`
+	Projects     []WingProject `json:"projects,omitempty"`
+	OrgSlug      string        `json:"org_slug,omitempty"`
+	RootDir      string        `json:"root_dir,omitempty"`
 	PublicKey    string        `json:"public_key,omitempty"`    // wing's X25519 identity key (base64)
-	Locked       bool          `json:"locked"`                 // explicit locked flag from wing.yaml
+	Locked       bool          `json:"locked"`                  // explicit locked flag from wing.yaml
 	AllowedCount int           `json:"allowed_count,omitempty"` // number of allowed keys
 }
 
@@ -103,10 +105,13 @@ type RegisteredMsg struct {
 	RelayPubKey string `json:"relay_pub_key,omitempty"` // base64 DER EC P-256 public key for JWT verification
 }
 
-// ErrorMsg is sent by the relay for protocol errors.
+// ErrorMsg is sent for protocol/session errors. Session and viewer IDs let a
+// relay route an authorization failure back to the pending attach attempt.
 type ErrorMsg struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
+	Type      string `json:"type"`
+	Message   string `json:"message"`
+	SessionID string `json:"session_id,omitempty"`
+	ViewerID  string `json:"viewer_id,omitempty"`
 }
 
 // PTYStart requests a new interactive terminal session on the wing.
@@ -144,12 +149,15 @@ type PasskeyChallenge struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 	Challenge string `json:"challenge"` // base64url random 32 bytes
+	RPID      string `json:"rp_id"`     // wing-configured WebAuthn relying-party ID
+	ViewerID  string `json:"viewer_id,omitempty"`
 }
 
 // PasskeyResponse is sent from browser to wing with the passkey assertion.
 type PasskeyResponse struct {
 	Type              string `json:"type"`
 	SessionID         string `json:"session_id"`
+	ViewerID          string `json:"viewer_id,omitempty"`
 	CredentialID      string `json:"credential_id"`      // base64url
 	AuthenticatorData string `json:"authenticator_data"` // base64
 	ClientDataJSON    string `json:"client_data_json"`   // base64
@@ -193,7 +201,7 @@ type PTYExited struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 	ExitCode  int    `json:"exit_code"`
-	Error     string `json:"error,omitempty"` // crash/error info for display
+	Error     string `json:"error,omitempty"`     // crash/error info for display
 	ViewerID  string `json:"viewer_id,omitempty"` // spectator viewer ID (for relay routing)
 }
 
@@ -201,16 +209,17 @@ type PTYExited struct {
 type PTYAttach struct {
 	Type      string   `json:"type"`
 	SessionID string   `json:"session_id"`
-	PublicKey string   `json:"public_key,omitempty"`  // new browser ephemeral key
-	WingID    string   `json:"wing_id,omitempty"`     // target wing (for relay routing)
-	AuthToken string   `json:"auth_token,omitempty"`  // cached passkey auth token
-	UserID    string   `json:"user_id,omitempty"`     // relay-injected
-	Cols      uint32   `json:"cols,omitempty"`         // browser terminal cols (for resize-before-snapshot)
-	Rows      uint32   `json:"rows,omitempty"`         // browser terminal rows (for resize-before-snapshot)
-	Spectate  bool     `json:"spectate,omitempty"`     // read-only spectator mode
-	ViewerID  string   `json:"viewer_id,omitempty"`    // relay-assigned spectator ID
-	Email     string   `json:"email,omitempty"`        // relay-injected user email
-	Passkeys  []string `json:"passkeys,omitempty"`     // relay-injected passkey attestation
+	PublicKey string   `json:"public_key,omitempty"` // new browser ephemeral key
+	WingID    string   `json:"wing_id,omitempty"`    // target wing (for relay routing)
+	AuthToken string   `json:"auth_token,omitempty"` // cached passkey auth token
+	UserID    string   `json:"user_id,omitempty"`    // relay-injected
+	OrgRole   string   `json:"org_role,omitempty"`   // relay-injected: "owner", "admin", "member", ""
+	Cols      uint32   `json:"cols,omitempty"`       // browser terminal cols (for resize-before-snapshot)
+	Rows      uint32   `json:"rows,omitempty"`       // browser terminal rows (for resize-before-snapshot)
+	Spectate  bool     `json:"spectate,omitempty"`   // read-only spectator mode
+	ViewerID  string   `json:"viewer_id,omitempty"`  // relay-assigned attach attempt ID
+	Email     string   `json:"email,omitempty"`      // relay-injected user email
+	Passkeys  []string `json:"passkeys,omitempty"`   // relay-injected passkey attestation
 }
 
 // PTYKill requests termination of a PTY session.
@@ -233,15 +242,15 @@ type PTYAttentionAck struct {
 
 // TunnelRequest is an encrypted request from browser to wing via relay.
 type TunnelRequest struct {
-	Type            string   `json:"type"`
-	WingID          string   `json:"wing_id"`
-	RequestID       string   `json:"request_id"`
-	SenderPub       string   `json:"sender_pub,omitempty"`        // browser X25519 identity pubkey
-	Payload         string   `json:"payload"`                     // base64(AES-GCM encrypted)
-	SenderUserID    string   `json:"sender_user_id,omitempty"`    // relay-injected user ID
-	SenderOrgRole   string   `json:"sender_org_role,omitempty"`   // relay-injected: "owner", "admin", "member", ""
-	SenderEmail     string   `json:"sender_email,omitempty"`      // relay-injected user email
-	SenderPasskeys  []string `json:"sender_passkeys,omitempty"`   // relay-injected: base64 raw P-256 public keys
+	Type           string   `json:"type"`
+	WingID         string   `json:"wing_id"`
+	RequestID      string   `json:"request_id"`
+	SenderPub      string   `json:"sender_pub,omitempty"`      // browser X25519 identity pubkey
+	Payload        string   `json:"payload"`                   // base64(AES-GCM encrypted)
+	SenderUserID   string   `json:"sender_user_id,omitempty"`  // relay-injected user ID
+	SenderOrgRole  string   `json:"sender_org_role,omitempty"` // relay-injected: "owner", "admin", "member", ""
+	SenderEmail    string   `json:"sender_email,omitempty"`    // relay-injected user email
+	SenderPasskeys []string `json:"sender_passkeys,omitempty"` // relay-injected: base64 raw P-256 public keys
 }
 
 // TunnelResponse is an encrypted response from wing to browser via relay.
@@ -307,7 +316,7 @@ type PasskeyRegistered struct {
 
 // PTYBrowserOpen notifies the browser that an agent requested a URL open.
 type PTYBrowserOpen struct {
-	Type      string `json:"type"`       // "pty.browser_open"
+	Type      string `json:"type"` // "pty.browser_open"
 	SessionID string `json:"session_id"`
 	URL       string `json:"url"`
 }

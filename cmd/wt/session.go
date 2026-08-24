@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -18,11 +21,268 @@ import (
 func sessionCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "session",
-		Short: "Manage egg sessions",
+		Short: "Inspect and automate persistent terminal sessions",
 	}
 	cmd.AddCommand(sessionSyncCmd())
 	cmd.AddCommand(sessionListCmd())
+	cmd.AddCommand(sessionPSCmd())
+	cmd.AddCommand(sessionReadCmd())
+	cmd.AddCommand(sessionSendCmd())
+	cmd.AddCommand(sessionWaitCmd())
+	cmd.AddCommand(sessionRenameCmd())
+	cmd.AddCommand(sessionKillCmd())
 	return cmd
+}
+
+func sessionPSCmd() *cobra.Command {
+	var jsonFlag bool
+	cmd := &cobra.Command{
+		Use:     "ps",
+		Aliases: []string{"active"},
+		Short:   "List active local terminal sessions",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			return printActiveSessions(cmd.Context(), cfg, jsonFlag)
+		},
+	}
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print machine-readable JSON")
+	return cmd
+}
+
+func sessionReadCmd() *cobra.Command {
+	var jsonFlag bool
+	cmd := &cobra.Command{
+		Use:   "read <session>",
+		Short: "Print the current terminal snapshot",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			session, snapshot, err := readSessionSnapshot(cmd.Context(), cfg, args[0])
+			if err != nil {
+				return err
+			}
+			if jsonFlag {
+				return writeSessionJSON(map[string]any{
+					"session": session.ID, "label": session.Name, "ansi": string(snapshot),
+					"base64": base64.StdEncoding.EncodeToString(snapshot), "byte_length": len(snapshot),
+				})
+			}
+			_, err = os.Stdout.Write(snapshot)
+			return err
+		},
+	}
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print machine-readable JSON")
+	return cmd
+}
+
+func sessionSendCmd() *cobra.Command {
+	var enterFlag bool
+	var stdinFlag bool
+	var jsonFlag bool
+	cmd := &cobra.Command{
+		Use:   "send <session> [text]",
+		Short: "Send input to a terminal session",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if stdinFlag && len(args) > 1 {
+				return fmt.Errorf("provide text arguments or --stdin, not both")
+			}
+			var input []byte
+			if stdinFlag {
+				var err error
+				input, err = io.ReadAll(os.Stdin)
+				if err != nil {
+					return fmt.Errorf("read stdin: %w", err)
+				}
+			} else if len(args) > 1 {
+				input = []byte(strings.Join(args[1:], " "))
+			}
+			if len(input) == 0 && !enterFlag {
+				return fmt.Errorf("provide text, --stdin, or --enter")
+			}
+			if enterFlag {
+				input = append(input, '\r')
+			}
+
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			session, err := sendSessionBytes(cmd.Context(), cfg, args[0], input)
+			if err != nil {
+				return err
+			}
+			if jsonFlag {
+				return writeSessionJSON(map[string]any{"session": session.ID, "bytes_sent": len(input)})
+			}
+			fmt.Printf("sent %d bytes to %s\n", len(input), session.ID)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&enterFlag, "enter", "e", false, "append Enter after the input")
+	cmd.Flags().BoolVar(&stdinFlag, "stdin", false, "read input bytes from stdin")
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print machine-readable JSON")
+	return cmd
+}
+
+func sessionWaitCmd() *cobra.Command {
+	var containsFlag string
+	var idleFlag time.Duration
+	var timeoutFlag time.Duration
+	var jsonFlag bool
+
+	cmd := &cobra.Command{
+		Use:   "wait <session>",
+		Short: "Wait for terminal output or an idle session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if containsFlag != "" && cmd.Flags().Changed("idle") {
+				return fmt.Errorf("--contains and --idle are mutually exclusive")
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			waitCtx := cmd.Context()
+			var cancel context.CancelFunc
+			if timeoutFlag > 0 {
+				waitCtx, cancel = context.WithTimeout(waitCtx, timeoutFlag)
+				defer cancel()
+			}
+
+			if containsFlag != "" {
+				session, waitErr := waitForSessionText(waitCtx, cfg, args[0], containsFlag)
+				if waitErr != nil {
+					return waitErr
+				}
+				if jsonFlag {
+					return writeSessionJSON(map[string]any{"session": session.ID, "condition": "contains", "value": containsFlag})
+				}
+				fmt.Printf("session %s produced %q\n", session.ID, containsFlag)
+				return nil
+			}
+
+			if idleFlag <= 0 {
+				idleFlag = 2 * time.Second
+			}
+			session, ec, err := openLocalEgg(waitCtx, cfg, args[0])
+			if err != nil {
+				return err
+			}
+			defer ec.Close()
+			ticker := time.NewTicker(200 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				statusResponse, statusErr := ec.Status(waitCtx)
+				if statusErr != nil {
+					if waitCtx.Err() != nil {
+						return waitCtx.Err()
+					}
+					return fmt.Errorf("wait for session %s: %w", session.ID, statusErr)
+				}
+				if time.Duration(statusResponse.IdleSeconds)*time.Second >= idleFlag {
+					if jsonFlag {
+						return writeSessionJSON(map[string]any{"session": session.ID, "condition": "idle", "idle_seconds": statusResponse.IdleSeconds})
+					}
+					fmt.Printf("session %s idle for %s\n", session.ID, humanDuration(time.Duration(statusResponse.IdleSeconds)*time.Second))
+					return nil
+				}
+				select {
+				case <-waitCtx.Done():
+					return waitCtx.Err()
+				case <-ticker.C:
+				}
+			}
+		},
+	}
+	cmd.Flags().StringVar(&containsFlag, "contains", "", "wait until the terminal output contains this text")
+	cmd.Flags().DurationVar(&idleFlag, "idle", 0, "wait until the session has been idle for this duration (default 2s)")
+	cmd.Flags().DurationVarP(&timeoutFlag, "timeout", "t", 30*time.Second, "maximum time to wait; 0 disables the timeout")
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print machine-readable JSON")
+	return cmd
+}
+
+func sessionRenameCmd() *cobra.Command {
+	var jsonFlag bool
+	cmd := &cobra.Command{
+		Use:   "rename <session> <name>",
+		Short: "Give an active session a human-readable name",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if args[1] == "" {
+				return fmt.Errorf("session name cannot be empty")
+			}
+			if err := validateSessionName(args[1]); err != nil {
+				return err
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			session, err := resolveActiveSession(cmd.Context(), cfg, args[0])
+			if err != nil {
+				return err
+			}
+			if err := ensureSessionNameAvailable(cfg, args[1], session.ID); err != nil {
+				return err
+			}
+			if err := writeSessionName(filepath.Join(cfg.Dir, "eggs", session.ID), args[1]); err != nil {
+				return err
+			}
+			if jsonFlag {
+				return writeSessionJSON(map[string]any{"session": session.ID, "name": args[1]})
+			}
+			fmt.Printf("session %s named %s\n", session.ID, args[1])
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print machine-readable JSON")
+	return cmd
+}
+
+func sessionKillCmd() *cobra.Command {
+	var jsonFlag bool
+	cmd := &cobra.Command{
+		Use:     "kill <session>",
+		Aliases: []string{"stop"},
+		Short:   "Stop a persistent terminal session",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			session, ec, err := openLocalEgg(cmd.Context(), cfg, args[0])
+			if err != nil {
+				return err
+			}
+			defer ec.Close()
+			if err := ec.Kill(cmd.Context(), session.ID); err != nil {
+				return fmt.Errorf("kill session %s: %w", session.ID, err)
+			}
+			if jsonFlag {
+				return writeSessionJSON(map[string]any{"session": session.ID, "status": "stopped"})
+			}
+			fmt.Printf("session %s stopped\n", session.ID)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print machine-readable JSON")
+	return cmd
+}
+
+func writeSessionJSON(value any) error {
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
 }
 
 func sessionSyncCmd() *cobra.Command {
@@ -56,9 +316,10 @@ func sessionSyncCmd() *cobra.Command {
 
 			relayURL := resolveRelayHTTPURL(cfg)
 			tc := &ws.TunnelClient{
-				RelayURL:    relayURL,
-				DeviceToken: tok.Token,
-				PrivKey:     privKey,
+				RelayURL:       relayURL,
+				DeviceToken:    tok.Token,
+				PrivKey:        privKey,
+				KnownWingsPath: filepath.Join(cfg.Dir, "known_wings.json"),
 			}
 
 			// Discover target wing

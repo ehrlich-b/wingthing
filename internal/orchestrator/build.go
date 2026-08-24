@@ -25,11 +25,11 @@ type ThreadRenderer interface {
 
 // Builder assembles prompts for task execution.
 type Builder struct {
-	Store    *store.Store
-	Memory   *memory.MemoryStore
-	Config   *config.Config
-	Agents   map[string]agent.Agent
-	Thread   ThreadRenderer
+	Store  *store.Store
+	Memory *memory.MemoryStore
+	Config *config.Config
+	Agents map[string]agent.Agent
+	Thread ThreadRenderer
 }
 
 // PromptResult holds the assembled prompt and metadata about what was included.
@@ -72,6 +72,11 @@ func (b *Builder) Build(ctx context.Context, taskID string) (*PromptResult, erro
 		agentIsolation = dbAgent.DefaultIsolation
 	}
 	rc := ResolveConfig(sk, task.Agent, agentIsolation, b.Config)
+	// A task-level isolation value is an explicit invocation override. "none"
+	// is the store's legacy unresolved sentinel, not an isolation mode.
+	if task.Isolation != "" && task.Isolation != "none" {
+		rc.Isolation = task.Isolation
+	}
 
 	// 4. Look up agent context window
 	contextWindow := 200000 // default
@@ -222,10 +227,23 @@ func (b *Builder) Build(ctx context.Context, taskID string) (*PromptResult, erro
 		taskPrompt = strings.Join(parts, "\n\n")
 	}
 
+	// Dependency outputs are the dataflow edge in a task DAG. This turns the
+	// existing depends_on gate into something useful for agent swarms: a
+	// reducer can consume the actual results of its completed workers without
+	// screen scraping or an out-of-band prompt rewrite.
+	dependencyBlock := b.dependencyResults(task, budget)
+	budget -= len(dependencyBlock)
+	if budget < 0 {
+		budget = 0
+	}
+
 	// 8. Assemble final prompt
 	var sections []string
 	if memoryBlock != "" {
 		sections = append(sections, memoryBlock)
+	}
+	if dependencyBlock != "" {
+		sections = append(sections, dependencyBlock)
 	}
 	sections = append(sections, taskPrompt)
 	sections = append(sections, FormatDocs)
@@ -248,4 +266,37 @@ func (b *Builder) Build(ctx context.Context, taskID string) (*PromptResult, erro
 		BudgetUsed:   budgetUsed,
 		BudgetTotal:  contextWindow,
 	}, nil
+}
+
+func (b *Builder) dependencyResults(task *store.Task, budget int) string {
+	if task.DependsOn == nil || budget <= 0 {
+		return ""
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(*task.DependsOn), &ids); err != nil || len(ids) == 0 {
+		return ""
+	}
+
+	var sections []string
+	used := len("## Dependency Results\n")
+	for _, id := range ids {
+		dependency, err := b.Store.GetTask(id)
+		if err != nil || dependency == nil || dependency.Status != "done" || dependency.Output == nil {
+			continue
+		}
+		section := fmt.Sprintf("### %s (%s)\n%s", dependency.ID, dependency.Agent, *dependency.Output)
+		remaining := budget - used
+		if remaining <= 0 {
+			break
+		}
+		if len(section) > remaining {
+			section = section[:remaining]
+		}
+		sections = append(sections, section)
+		used += len(section) + 2
+	}
+	if len(sections) == 0 {
+		return ""
+	}
+	return "## Dependency Results\n\n" + strings.Join(sections, "\n\n")
 }

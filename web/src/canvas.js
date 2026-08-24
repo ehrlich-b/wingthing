@@ -6,7 +6,7 @@ import { S, DOM } from './state.js';
 import { deriveE2EKey, identityPubKey } from './crypto.js';
 import { b64ToBytes, bytesToB64, wingDisplayName, agentIcon } from './helpers.js';
 import { onlineWings, showPalette, setCanvasLaunchCallback } from './palette.js';
-import { sendTunnelRequest } from './tunnel.js';
+import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { checkForNotification, setNotification, clearNotification } from './notify.js';
 
 // Grid constants
@@ -585,13 +585,13 @@ function onMouseUp(e) {
 }
 
 function sendResize(sess) {
-    if (!sess.ws || sess.ws.readyState !== WebSocket.OPEN || !sess.id) return;
-    sess.ws.send(JSON.stringify({
+    if (!sess.id || !sess.wingId) return;
+    sendTunnelRequest(sess.wingId, {
         type: 'pty.resize',
         session_id: sess.id,
         cols: sess.term.cols,
         rows: sess.term.rows
-    }));
+    }).catch(function() {});
 }
 
 function toggleExpand(id) {
@@ -715,7 +715,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     term.loadAddon(fitAddon);
     term.loadAddon(serializeAddon);
 
-    var tempId = 'canvas-' + crypto.randomUUID();
+    var tempId = 'canvas-' + randomUUID();
 
     var parts = createTerminalEl(tempId, x, y, width, height);
     DOM.canvasWorld.appendChild(parts.el);
@@ -795,7 +795,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
                 parts.title.textContent = sessionTitle(agent, wingId);
 
                 if (msg.public_key) {
-                    deriveE2EKey(msg.public_key).then(function(key) {
+                    deriveE2EKey(msg.public_key, wingId).then(function(key) {
                         sess.e2eKey = key;
                         sess.keyReady = true;
                         var pending = pendingOutput;
@@ -803,13 +803,9 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
                         pending.forEach(function(item) {
                             processOutput(sess, item.data, item.compressed);
                         });
-                    }).catch(function() {
-                        sess.keyReady = true;
-                        var pending = pendingOutput;
-                        pendingOutput = [];
-                        pending.forEach(function(item) {
-                            processOutput(sess, item.data, item.compressed);
-                        });
+                    }).catch(function(err) {
+                        sess.term.writeln('\r\n\x1b[31m' + (err && err.message ? err.message : 'wing identity verification failed') + '\x1b[0m');
+                        ws.close();
                     });
                 } else {
                     sess.keyReady = true;
@@ -1061,7 +1057,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH) {
         switch (msg.type) {
             case 'pty.started':
                 if (msg.public_key) {
-                    deriveE2EKey(msg.public_key).then(function(key) {
+                    deriveE2EKey(msg.public_key, wingId).then(function(key) {
                         sess.e2eKey = key;
                         sess.keyReady = true;
                         var pending = pendingOutput;
@@ -1069,13 +1065,9 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH) {
                         pending.forEach(function(item) {
                             processOutput(sess, item.data, item.compressed);
                         });
-                    }).catch(function() {
-                        sess.keyReady = true;
-                        var pending = pendingOutput;
-                        pendingOutput = [];
-                        pending.forEach(function(item) {
-                            processOutput(sess, item.data, item.compressed);
-                        });
+                    }).catch(function(err) {
+                        sess.term.writeln('\r\n\x1b[31m' + (err && err.message ? err.message : 'wing identity verification failed') + '\x1b[0m');
+                        ws.close();
                     });
                 } else {
                     sess.keyReady = true;

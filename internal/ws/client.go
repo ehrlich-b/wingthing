@@ -28,7 +28,9 @@ type TunnelHandler func(ctx context.Context, req TunnelRequest, write PTYWriteFu
 // PTYHandler is called when the wing receives a pty.start request.
 // It should spawn the agent in a PTY and manage I/O. The write function
 // sends messages back through the relay to the browser. The input channel
-// receives raw JSON messages (pty.input and pty.resize) from the browser.
+// receives raw JSON messages from the browser. Plaintext resize/kill messages
+// from the relay are rejected; remote controls arrive through the encrypted
+// tunnel, while trusted P2P controls use PushPTYInput.
 type PTYHandler func(ctx context.Context, start PTYStart, write PTYWriteFunc, input <-chan []byte)
 
 // Client is an outbound WebSocket client that connects a wing to the roost.
@@ -150,17 +152,17 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 
 	// Send registration — projects flow through E2E tunnel only, never through relay
 	reg := WingRegister{
-		Type:        TypeWingRegister,
-		WingID:      c.WingID,
-		Hostname:    c.Hostname,
-		Platform:    c.Platform,
-		Version:     c.Version,
-		Agents:      c.Agents,
-		Skills:      c.Skills,
-		Labels:      c.Labels,
-		Identities:  c.Identities,
-		Projects:    nil,
-		OrgSlug:     c.OrgSlug,
+		Type:         TypeWingRegister,
+		WingID:       c.WingID,
+		Hostname:     c.Hostname,
+		Platform:     c.Platform,
+		Version:      c.Version,
+		Agents:       c.Agents,
+		Skills:       c.Skills,
+		Labels:       c.Labels,
+		Identities:   c.Identities,
+		Projects:     nil,
+		OrgSlug:      c.OrgSlug,
 		RootDir:      c.RootDir,
 		PublicKey:    c.PublicKey,
 		Locked:       c.Locked,
@@ -224,8 +226,8 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				}()
 			}
 
-		case TypePTYAttach, TypePTYKill:
-			// Forward to existing session (attach for re-key, kill to terminate)
+		case TypePTYAttach:
+			// Forward attach to the existing session for re-key and local auth.
 			var partial struct {
 				SessionID string `json:"session_id"`
 			}
@@ -240,11 +242,9 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				case ch <- data:
 				default:
 				}
-			} else if env.Type == TypePTYKill && c.OnOrphanKill != nil {
-				go c.OnOrphanKill(ctx, partial.SessionID)
 			}
 
-		case TypePTYInput, TypePTYResize, TypePasskeyResponse, TypePTYMigrate:
+		case TypePTYInput, TypePTYAttentionAck, TypePasskeyResponse, TypePTYMigrate:
 			var partial struct {
 				SessionID string `json:"session_id"`
 			}
@@ -260,6 +260,9 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				default:
 				}
 			}
+
+		case TypePTYResize, TypePTYKill:
+			log.Printf("rejected plaintext %s from relay; encrypted tunnel control required", env.Type)
 
 		case TypeTunnelRequest:
 			var req TunnelRequest
@@ -331,12 +334,17 @@ func (c *Client) HasPTYSession(sessionID string) bool {
 	return ok
 }
 
-// RegisterPTYSession creates an input channel for a reclaimed session so pty.attach/input/resize/kill
-// messages from the relay get routed to it. Returns the input channel and a write function.
+// RegisterPTYSession creates an input channel for a reclaimed session so allowed
+// relay messages and trusted P2P controls can be routed to it. Plaintext relay
+// resize/kill messages are rejected in connectAndServe before reaching this channel.
+// Returns the input channel and a write function.
 // The caller must start a goroutine to handle the session and clean up when done.
 func (c *Client) RegisterPTYSession(ctx context.Context, sessionID string) (write PTYWriteFunc, input <-chan []byte, cleanup func()) {
 	inputCh := make(chan []byte, 64)
 	c.ptySessionsMu.Lock()
+	if c.ptySessions == nil {
+		c.ptySessions = make(map[string]chan []byte)
+	}
 	c.ptySessions[sessionID] = inputCh
 	c.ptySessionsMu.Unlock()
 

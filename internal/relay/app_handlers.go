@@ -99,6 +99,11 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
+		// Native wing discovery (wt wings, wt session sync) authenticates with
+		// the device token from wt login rather than a web session cookie.
+		user = s.tokenUser(r)
+	}
+	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}

@@ -18,8 +18,10 @@ func (s *Server) wingRegistrySummary() string {
 // canAccessWing returns true if userID can use this wing.
 // userOrgIDs are the user's org memberships from their session (works on edge nodes without DB).
 func (s *Server) canAccessWing(userID string, wing *ConnectedWing, userOrgIDs ...[]string) bool {
-	// Roost mode: all authenticated users can access all wings
-	if s.RoostMode {
+	// Roost mode makes the appliance's embedded service wing shared. External
+	// personal wings may also register with the gateway, but they keep ordinary
+	// owner/org isolation instead of inheriting appliance-wide access.
+	if s.RoostMode && wing.UserID == roostWingServiceUserID {
 		return true
 	}
 
@@ -105,6 +107,3 @@ func (s *Server) findAnyWingByWingID(wingID string) *ConnectedWing {
 	}
 	return nil
 }
-
-
-

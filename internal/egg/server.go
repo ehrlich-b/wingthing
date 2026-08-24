@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"google.golang.org/grpc"
@@ -55,6 +56,8 @@ type Session struct {
 	ID             string
 	PID            int
 	Agent          string
+	Kind           string
+	Command        []string
 	CWD            string
 	Network        string // summary: "none", "*", or comma-separated domains
 	RenderedConfig string // effective egg config as YAML (after merge/resolve)
@@ -87,14 +90,20 @@ type Session struct {
 
 // RunConfig holds everything needed to start a single egg session.
 type RunConfig struct {
-	Agent   string
-	CWD     string
-	Shell   string
-	FS      []string // "rw:./", "deny:~/.ssh"
-	Network []string // domain list
-	Env     map[string]string
-	Rows    uint32
-	Cols    uint32
+	Agent string
+	Kind  string
+	// Command replaces the agent entirely; AgentArgs extends the agent's own
+	// invocation and keeps the session an agent session. They are alternatives.
+	Command      []string
+	AgentArgs    []string
+	CWD          string
+	Shell        string
+	FS           []string // "rw:./", "deny:~/.ssh"
+	Network      []string // domain list
+	AgentDomains string   // ""/"merge" or "none"
+	Env          map[string]string
+	Rows         uint32
+	Cols         uint32
 
 	DangerouslySkipPermissions bool
 	CPULimit                   time.Duration
@@ -107,6 +116,7 @@ type RunConfig struct {
 	VTE                        bool          // use VTerm snapshot for reconnect instead of replay buffer
 	RenderedConfig             string        // effective egg config as YAML (after merge/resolve)
 	UserHome                   string        // per-user home directory (relay sessions only)
+	SkipHostAgentEnv           bool          // shared hosts keep provider credentials in UserHome
 	IdleTimeout                time.Duration // 0 = disabled; self-terminate after this much idle
 	ResumeSessionID            string        // agent session ID to resume (from chat.meta)
 	ToolNames                  []string      // names of privileged tools (for shim generation)
@@ -470,21 +480,49 @@ func stripMouseTracking(data []byte) []byte {
 func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	os.Setenv("GOTRACEBACK", "all")
 
-	name, args := agentCommand(rc.Agent, rc.DangerouslySkipPermissions, rc.ResumeSessionID)
-	if name == "" {
-		return fmt.Errorf("unsupported agent: %s", rc.Agent)
+	name, args := sessionCommand(rc)
+	if len(rc.Command) > 0 {
+		if rc.Kind == "" {
+			rc.Kind = "command"
+		}
+	} else {
+		if name == "" {
+			return fmt.Errorf("unsupported agent: %s", rc.Agent)
+		}
+		if rc.Kind == "" {
+			rc.Kind = "agent"
+		}
+	}
+
+	sessionPolicy := &EggConfig{
+		FS:        rc.FS,
+		Network:   NetworkField{Domains: rc.Network},
+		Resources: EggResources{MaxFDs: rc.MaxFDs, MaxPids: rc.PidLimit},
+		Trace:     rc.Trace,
+	}
+	if rc.CPULimit > 0 {
+		sessionPolicy.Resources.CPU = rc.CPULimit.String()
+	}
+	if rc.MemLimit > 0 {
+		sessionPolicy.Resources.Memory = strconv.FormatUint(rc.MemLimit, 10)
+	}
+	hasSandbox := RequiresSandbox(sessionPolicy, rc.Agent)
+	if hasSandbox {
+		if ok, help := sandbox.CheckCapability(); !ok {
+			return fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
+		}
 	}
 
 	binPath, err := exec.LookPath(name)
 	if err != nil {
-		return fmt.Errorf("agent %q not found: %v", name, err)
+		return fmt.Errorf("command %q not found: %v", name, err)
 	}
 	// Resolve symlinks so the real binary path works inside namespaces
 	// (e.g. ~/.local/bin/claude -> ~/.claude/bin/claude)
 	if resolved, err := filepath.EvalSymlinks(binPath); err == nil {
 		binPath = resolved
 	}
-	log.Printf("egg: agent binary: %s", binPath)
+	log.Printf("egg: command binary: %s", binPath)
 
 	// Build environment: always use rc.Env (caller filtered via BuildEnvMap).
 	// Merge agent profile required vars + essentials from host env if missing.
@@ -494,18 +532,20 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		envMap[k] = v
 	}
 	// Merge required env vars from agent profile
-	for _, k := range profile.EnvVars {
-		if _, ok := envMap[k]; !ok {
-			if v := os.Getenv(k); v != "" {
-				envMap[k] = v
+	if !rc.SkipHostAgentEnv {
+		for _, k := range profile.EnvVars {
+			if _, ok := envMap[k]; !ok {
+				if v := os.Getenv(k); v != "" {
+					envMap[k] = v
+				}
 			}
 		}
-	}
-	// Merge platform-specific env vars (e.g. macOS Keychain access for Claude)
-	for _, k := range profile.PlatformEnv {
-		if _, ok := envMap[k]; !ok {
-			if v := os.Getenv(k); v != "" {
-				envMap[k] = v
+		// Merge platform-specific env vars (e.g. macOS Keychain access for Claude)
+		for _, k := range profile.PlatformEnv {
+			if _, ok := envMap[k]; !ok {
+				if v := os.Getenv(k); v != "" {
+					envMap[k] = v
+				}
 			}
 		}
 	}
@@ -527,10 +567,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	if envMap["TERM"] == "" {
 		envMap["TERM"] = "xterm-256color"
 	}
-	// Prevent git from prompting on the TTY (password, username, etc.) — these
-	// interleave with agent output and produce garbled text.
-	if _, ok := envMap["GIT_TERMINAL_PROMPT"]; !ok {
-		envMap["GIT_TERMINAL_PROMPT"] = "0"
+	// Agent terminals should not get interleaved git credential prompts. Human
+	// shell/command sessions retain ordinary terminal behavior.
+	if rc.Kind == "agent" {
+		if _, ok := envMap["GIT_TERMINAL_PROMPT"]; !ok {
+			envMap["GIT_TERMINAL_PROMPT"] = "0"
+		}
 	}
 	// Per-user home override for relay sessions
 	if rc.UserHome != "" {
@@ -551,8 +593,15 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	// Snapshot agent config before session so we can restore on exit
 	configSnap := SnapshotAgentConfig(rc.Agent)
 
-	// Merge domains: user config + agent profile (dedup)
-	mergedDomains := mergeDomains(rc.Network, profile.Domains)
+	// Resolve declared, agent-profile, and provider-derived domains through the
+	// same policy path used by `wt egg explain`.
+	networkPolicy, err := ResolvePolicyWithProvider(&EggConfig{
+		Network: NetworkField{Domains: rc.Network, AgentDomains: rc.AgentDomains},
+	}, rc.Agent, envMap["HOME"], envMap["WT_PROVIDER_BASE_URL"])
+	if err != nil {
+		return err
+	}
+	mergedDomains := networkPolicy.Domains
 	netNeed := sandbox.NetworkNeedFromDomains(mergedDomains)
 
 	// Start domain-filtering proxy if we have specific domains (not "*" or empty)
@@ -620,7 +669,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	var sb sandbox.Sandbox
 	var cmd *exec.Cmd
 
-	hasSandbox := len(rc.FS) > 0 || netNeed < sandbox.NetworkFull
 	if hasSandbox {
 		home, _ := os.UserHomeDir()
 		// Use per-user home for ~ expansion when set, so FS rules like
@@ -759,6 +807,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		ID:             sessionID,
 		PID:            cmd.Process.Pid,
 		Agent:          rc.Agent,
+		Kind:           rc.Kind,
+		Command:        append([]string(nil), rc.Command...),
 		CWD:            rc.CWD,
 		Network:        networkSummary,
 		RenderedConfig: rc.RenderedConfig,
@@ -794,7 +844,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	s.session = sess
 	s.mu.Unlock()
 
-	log.Printf("egg: session %s agent=%s pid=%d network=%s fs=%d", sessionID, rc.Agent, cmd.Process.Pid, networkSummary, len(rc.FS))
+	log.Printf("egg: session %s kind=%s agent=%s command=%q pid=%d network=%s fs=%d", sessionID, rc.Kind, rc.Agent, rc.Command, cmd.Process.Pid, networkSummary, len(rc.FS))
 
 	// VTerm async processing goroutine — must start before readPTY
 	go runVTermLoop(sess.vterm, sess.vtermCh, sess.done)
@@ -860,7 +910,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 
 	// Write session metadata so the wing can read it on reclaim
 	metaPath := filepath.Join(s.dir, "egg.meta")
-	metaContent := fmt.Sprintf("agent=%s\ncwd=%s\nnetwork=%s\ncols=%d\nrows=%d\n", rc.Agent, rc.CWD, networkSummary, rc.Cols, rc.Rows)
+	isolationMode := "outer-boundary"
+	if hasSandbox {
+		isolationMode = "wingthing-sandbox"
+	}
+	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\n",
+		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix())
 	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
 	}
@@ -1311,48 +1366,32 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 	}
 }
 
-// agentCommand returns the command and args for an interactive terminal session.
-func agentCommand(agentName string, dangerouslySkip bool, resumeSessionID string) (string, []string) {
-	var name string
-	var args []string
+func formatCommand(command []string) string {
+	quoted := make([]string, 0, len(command))
+	for _, arg := range command {
+		quoted = append(quoted, strconv.Quote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
 
-	switch agentName {
-	case "claude":
-		name = "claude"
-		if dangerouslySkip {
-			args = append(args, "--dangerously-skip-permissions")
-		}
-	case "codex":
-		name = "codex"
-		if dangerouslySkip {
-			args = append(args, "--full-auto")
-		}
-	case "cursor":
-		name = "agent"
-		if dangerouslySkip {
-			args = append(args, "--yolo")
-		}
-	case "ollama":
-		name = "ollama"
-		args = []string{"run", "llama3.2"}
-	default:
+// agentCommand returns the command and args for an interactive agent session.
+func agentCommand(agentName string, dangerouslySkip bool, resumeSessionID string, extra ...string) (string, []string) {
+	name, args, ok := agentpkg.InteractiveInvocation(agentName, dangerouslySkip, resumeSessionID, extra...)
+	if !ok {
 		return "", nil
 	}
-
-	// Append resume flags if resuming a session
-	if resumeSessionID != "" {
-		profile := Profile(agentName)
-		if profile.ResumeFlag != "" {
-			if agentName == "codex" {
-				// Codex uses "resume" as a subcommand
-				args = append([]string{profile.ResumeFlag}, args...)
-			} else {
-				args = append(args, profile.ResumeFlag, resumeSessionID)
-			}
-		}
-	}
-
 	return name, args
+}
+
+// sessionCommand resolves what a session actually executes. An explicit Command
+// replaces the agent entirely and the session becomes an opaque command;
+// AgentArgs extends the agent's own invocation and the session stays an agent
+// session, keeping the agent's sandbox profile and resume semantics.
+func sessionCommand(rc RunConfig) (string, []string) {
+	if len(rc.Command) > 0 {
+		return rc.Command[0], append([]string(nil), rc.Command[1:]...)
+	}
+	return agentCommand(rc.Agent, rc.DangerouslySkipPermissions, rc.ResumeSessionID, rc.AgentArgs...)
 }
 
 // Recovery interceptors

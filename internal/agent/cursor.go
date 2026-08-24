@@ -28,8 +28,7 @@ func (c *Cursor) ContextWindow() int {
 }
 
 func (c *Cursor) Health() error {
-	cmd := exec.Command(c.command, "--version")
-	if err := cmd.Run(); err != nil {
+	if err := runHealthCheck(healthCheckTimeout, c.command, "--version"); err != nil {
 		return fmt.Errorf("cursor agent health check failed: %w", err)
 	}
 	return nil
@@ -47,12 +46,16 @@ func (c *Cursor) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 	} else {
 		cmd = exec.CommandContext(ctx, c.command, args...)
 	}
+	if opts.WorkDir != "" {
+		cmd.Dir = opts.WorkDir
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
+	diagnostics, err := startAgentCommand(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start cursor agent: %w", err)
 	}
 
@@ -70,7 +73,7 @@ func (c *Cursor) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 				stream.SetTokens(input, output)
 			}
 		}
-		err := cmd.Wait()
+		err := waitAgentCommand(cmd, diagnostics)
 		if scanErr := scanner.Err(); scanErr != nil && err == nil {
 			err = scanErr
 		}

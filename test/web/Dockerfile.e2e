@@ -1,0 +1,6 @@
+FROM node:22-bookworm
+WORKDIR /e2e
+RUN npm init -y >/dev/null 2>&1 && npm i playwright >/dev/null 2>&1 \
+    && npx playwright install --with-deps chromium >/dev/null 2>&1
+COPY orgmode.mjs /e2e/
+CMD ["node", "/e2e/orgmode.mjs"]

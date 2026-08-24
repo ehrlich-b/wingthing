@@ -1,210 +1,207 @@
-# Wingthing Security Model
+# Wingthing security model
 
-## Design Goal
+Reviewed: 2026-08-20
 
-The roost should never be able to read wing data. It routes encrypted bytes between browsers and wings without inspecting, logging, or tampering with them. This covers terminal I/O, directory listings, session history, audit recordings, egg configs, and passkey assertions. This document describes how that works, where the gaps are, and what happens if the roost is compromised.
+## Scope of the promise
 
-## Architecture
+Wingthing has three independent security boundaries:
 
-```
-Browser (app.wingthing.ai)
-    |
-    | WebSocket (TLS)
-    |
-Roost (wingthing.fly.dev)    <-- untrusted
-    |
-    | WebSocket (TLS)
-    |
-Wing (your machine, running `wt wing`)
-```
+1. The **egg sandbox** limits what an agent process can reach on the wing.
+2. The **wing access policy** decides which principal may operate a local resource.
+3. **Application-layer encryption** protects terminal and tunnel payloads while an
+   optional relay carries them.
 
-The roost sits between the browser and the wing. All connections use TLS, but TLS only protects the transport - the roost terminates both TLS connections and could read plaintext at the application layer. E2E encryption prevents this.
+Do not collapse those into one claim. E2E encryption does not constrain a
+same-user local process, and a local allowlist does not authenticate code served
+by a compromised web service.
 
-## Three Security Domains
+Local CLI and MCP access use authenticated Unix sockets and operating-system file
+permissions. SSH attach uses OpenSSH's authentication, encryption, and host-key
+verification. Neither path uses Wingthing's relay encryption.
 
-### The egg: protecting you from the agent
+## Hosted relay architecture
 
-Agents run inside an OS-level sandbox - Seatbelt on macOS, user namespaces + seccomp on Linux. The sandbox controls filesystem access, network reach, system calls, and resource usage (cgroups v2 for memory/PIDs, rlimits for CPU/FDs on Linux). A local CONNECT proxy enforces domain-level filtering so agents can only reach their own API. See `docs/egg-sandbox-design.md` for implementation details.
-
-### The wing: protecting you from the roost
-
-All traffic between browser and wing is E2E encrypted (X25519 + AES-GCM). The roost forwards ciphertext. Wings connect outbound only - no inbound ports, no static IP, works behind any NAT or firewall.
-
-Lock your wing (`wt wing lock`) and sessions also require passkey auth. The browser sends a WebAuthn assertion to the wing inside the encrypted channel. The roost forwards the blob but can't read or forge it. The wing verifies against its local allowlist and issues a boot-scoped nonce. A compromised roost can't start sessions on a locked wing.
-
-### The roost: controlling access
-
-The roost handles login (OAuth, device auth) and routes connections to the right wing. It stores passkey credential IDs and public keys so it can hand them to wings during `wt wing allow`. The actual WebAuthn verification happens on the wing, not the roost.
-
-## E2E Encryption
-
-### Two HKDF Domains
-
-| Domain | Browser key | Wing key | HKDF info | Carries |
-|--------|-------------|----------|-----------|---------|
-| PTY | Ephemeral per session | Persistent (`~/.wingthing/wing_key`) | `"wt-pty"` | Terminal I/O |
-| Tunnel | Ephemeral per tab (sessionStorage) | Persistent (`~/.wingthing/wing_key`) | `"wt-tunnel"` | Dir listings, session history, audit, egg config, passkey auth |
-
-Both derived keys are ephemeral. The wing's base key is persistent on disk, but the browser always generates a fresh key - per session for PTY, per tab for tunnel. Close the tab and the browser's private key is gone. Previous sessions can't be decrypted.
-
-### PTY Key Exchange
-
-Every PTY session does an ephemeral X25519 ECDH exchange between browser and wing. The roost forwards public keys but never has either private key.
-
-**Wing side** (`internal/auth/keypair.go`):
-- `wt wing` generates a persistent X25519 keypair at `~/.wingthing/wing_key` on first run
-- The public key is embedded in the wing's JWT during device auth
-- The private key never leaves the machine
-
-**Browser side** (`web/src/crypto.js`):
-- Each `connectPTY()` or `attachPTY()` call generates a fresh ephemeral X25519 keypair
-- The public key goes in the `pty.start` or `pty.attach` message
-- The private key lives in memory for the session duration only
-
-**Derivation** (`internal/auth/crypto.go`):
-```
-shared_secret = X25519(my_private, peer_public)
-aes_key = HKDF-SHA256(shared_secret, salt=zeros(32), info="wt-pty")
-cipher = AES-256-GCM(aes_key)
+```text
+browser/native client -- TLS --> wingthing.ai relay -- TLS --> wing
+              \____________ application ciphertext ___________/
 ```
 
-Both sides compute the same AES-256-GCM key independently. The roost can't derive the shared secret.
+The shipped relay forwards application ciphertext for terminal content and
+encrypted tunnel requests. During normal service operation it does not receive
+the plaintext of terminal I/O, directory listings, session history, audit data,
+egg configuration, or tunnel passkey assertions.
 
-### Tunnel Key Exchange
+The relay still sees and controls routing metadata. It terminates TLS, serves the
+browser application, authenticates accounts, and chooses which wing connection
+receives a message. The threat model below distinguishes an honest-but-curious
+relay from a fully compromised relay.
 
-Same ECDH + HKDF pattern, different info string. The browser's identity key lives in sessionStorage (ephemeral per tab):
+## Cryptography
 
+Wingthing uses X25519 ECDH, HKDF-SHA256, and AES-256-GCM in two domains:
+
+| Domain | Client key | Wing key | HKDF info | Content |
+|---|---|---|---|---|
+| PTY | Browser identity key, retained for the tab | Persistent `~/.wingthing/wing_key` | `wt-pty` | Keystrokes and terminal output |
+| Tunnel | Browser/native client identity key | Persistent `~/.wingthing/wing_key` | `wt-tunnel` | Wing APIs and encrypted PTY controls |
+
+Encrypted messages are `base64(nonce || ciphertext || GCM tag)`. A modified
+ciphertext fails authentication.
+
+The browser and native tunnel client pin the first public key seen for a wing ID
+and reject later changes. This is trust on first use (TOFU): it detects accidental
+rotation and later control-plane substitution while trusted client code is still
+running. It does not make a malicious first connection safe. Browser pins live in
+site storage; native CLI pins live in `~/.wingthing/known_wings.json`.
+
+### No forward-secrecy claim
+
+The client key changes, but the wing's X25519 key is persistent. Someone who
+records an old exchange and later steals `wing_key` can derive that old session's
+key. The current protocol therefore provides unique per-client/per-tab keys, but
+not forward secrecy against later wing-key compromise. Forward secrecy requires
+signed ephemeral wing session keys or an authenticated handshake such as Noise.
+
+### Encrypted and visible controls
+
+Terminal input/output, resize, and kill operations are encrypted. The wing rejects
+plaintext resize and kill messages received from a relay. P2P resize may travel
+directly over WebRTC's authenticated DTLS channel.
+
+Session start/attach routing, session IDs, timing, sizes, disconnects, and lifecycle
+messages remain visible to the relay. The protocol does not yet bind every envelope
+field into AEAD associated data or maintain a per-direction replay counter.
+
+## Locked-wing passkeys
+
+`wt wing lock` requires at least one valid passkey public key pinned in the local
+`wing.yaml`. If no key is present, the explicit local lock command fetches the
+logged-in user's registered key and pins it; locking fails if that cannot be done.
+Runtime relay envelopes never auto-enroll a key into a locked wing.
+
+Tunnel authentication uses a two-step ceremony:
+
+1. `passkey.auth.begin` asks the wing for a challenge.
+2. The wing creates a random one-time challenge bound to the relay user ID and the
+   client's X25519 public key.
+3. The browser performs a `webauthn.get` ceremony with user verification required.
+4. `passkey.auth.finish` returns the assertion through the encrypted tunnel.
+5. The wing consumes the challenge once and validates the challenge, type, origin,
+   RP ID hash, cross-origin flag, user-presence and user-verification flags, P-256
+   signature, and locally pinned key ownership.
+6. The issued token is bound to the same user ID and X25519 client key.
+
+PTY start and reattach use the same validation rules with fresh wing-generated
+challenges. Locked starts, controller reattaches, and spectator attaches are
+rejected when the relay user has no matching locally pinned key.
+
+Tokens are held only in wing memory. A restart revokes them; `auth_ttl` can impose
+an earlier expiry. A token issued to one browser key or relay user does not work
+for another.
+
+Manage local approval with:
+
+```bash
+wt wing lock
+wt wing allow --email user@example.com
+wt wing allow --all
+wt wing revoke user@example.com
+wt wing unlock
 ```
-shared_secret = X25519(browser_identity_priv, wing_pub)
-aes_key = HKDF-SHA256(shared_secret, salt=zeros(32), info="wt-tunnel")
-cipher = AES-256-GCM(aes_key)
-```
 
-Tunnel messages (`tunnel.req` / `tunnel.res` / `tunnel.stream`) carry encrypted inner payloads. The roost routes by `wing_id` and `request_id` but can't read the payload.
+The relay stores passkey public keys and credential IDs for account registration
+and explicit local approval flows. Public keys are not secrets, but key data read
+from the relay is trusted only when a person deliberately pins it locally. For a
+high-assurance deployment, verify the key over another trusted channel.
 
-### Message Format
+## Local CLI and MCP authority
 
-Every encrypted message is `base64(nonce[12] || ciphertext || tag[16])`. AES-GCM provides confidentiality and integrity - the roost can't modify ciphertext without detection.
+Each egg socket and token is readable only by the local OS user. Processes running
+as that user can bypass MCP and invoke `wt` directly, so local MCP principals are
+an accident-prevention and attribution boundary, not hostile same-UID isolation.
 
-### Session Reattach
+`wt mcp stdio --client NAME` records NAME on sessions it creates. Named MCP clients
+see and control only their sessions; the human CLI still sees all sessions. Every
+MCP tool call appends a timestamp, principal, tool, target, decision, and argument
+digest to `~/.wingthing/mcp-audit.log`. `~/.wingthing/clients.yaml` can require an
+explicit client, restrict grants, and bound sessions/spawns. Real isolation between
+hostile local clients still requires different OS users or client sandboxes.
 
-When a browser reconnects to an existing session (`pty.attach`):
+On a dedicated sandbox VM, `wt egg ... --unsandboxed` and
+`wt mcp stdio --unsandboxed` explicitly make the outer VM the agent boundary.
+Wingthing keeps terminal persistence and the control/audit plane but applies no
+nested filesystem, network, syscall, or resource restrictions. The MCP server
+announces `outer-boundary` mode and records it on every audit entry. Because the
+agent has the authority of the wing's OS user, it is a trusted endpoint for the
+encryption model: it may read Wingthing state or invoke local control paths. E2E
+encryption protects bytes from the relay, not from a compromised client or wing.
 
-1. Browser generates a new ephemeral keypair
-2. Sends the new public key in `pty.attach`
-3. Wing derives a new shared key with the new browser public key
-4. Wing replays buffered output encrypted with the new key
-5. All subsequent I/O uses the new key
+## What the relay observes
 
-A compromised previous session key doesn't help with future reattaches.
+The relay can observe:
 
-## Passkey Auth
+- Account, organization, device-token, and passkey registration records.
+- Wing ID/public key, org binding, lock state, and connection presence.
+- Session IDs, selected agent and working-directory metadata needed by PTY routing.
+- Start/attach/detach/exit timing, message sizes, and IP/network metadata.
+- Traffic availability: it can delay, drop, duplicate, or reroute messages.
 
-When a wing is locked (`wt wing lock`), browsers must prove they hold a passkey on the allowlist before the wing responds to anything.
+With the as-built trusted client and wing, the relay does not receive plaintext:
 
-**How it works:**
-1. Browser sends a tunnel request to a locked wing
-2. Wing replies with a `passkey.challenge` containing a random nonce
-3. Browser shows an "authenticate with passkey" button (no auto-prompt)
-4. User clicks, completes WebAuthn assertion via their password manager or platform authenticator
-5. Browser sends `passkey.response` back through the encrypted tunnel
-6. Wing verifies the signature against its local allowlist (`allow_keys` in `wing.yaml`)
-7. Wing issues a boot-scoped nonce - valid until the wing process restarts
+- Terminal keystrokes or output.
+- Encrypted resize/kill requests.
+- Tunnel directory/session/audit/config payloads.
+- Tunnel WebAuthn assertions and issued auth tokens.
 
-The nonce is shared between PTY and tunnel sessions. Configure `auth_ttl` in `wing.yaml` to force periodic re-authentication (default `0` means boot-scoped, no expiry). Wing restart revokes all nonces (in-memory cache).
+Plaintext terminal and task history exists on the wing for replay and durability.
+Wingthing does not currently provide application-level encryption at rest; use OS
+disk encryption when that threat matters.
 
-**Manage the allowlist:**
-```
-wt wing lock                         # require passkey auth
-wt wing allow --email user@co.com    # add a user
-wt wing revoke user@co.com           # remove a user
-wt wing unlock                       # disable passkey requirement
-```
+## Relay-compromise threat model
 
-The allowlist lives in `wing.yaml` on your machine. The roost stores passkey public keys and credential IDs so it can hand them to the wing during `wt wing allow`. The security model assumes the roost is not compromised at the moment you add a key - after that, verification happens entirely on the wing.
+An attacker controlling the hosted relay can:
 
-## What the Roost Can See
+- Read its database and all listed metadata.
+- Forge account/JWT/control-plane identity, impersonate a wing route, or cause DoS.
+- Present a false wing key on first use.
+- Serve modified browser JavaScript that reads plaintext before encryption or uses
+  an authenticated browser as a decryption oracle.
+- Start sessions on an unlocked wing as an account the relay claims is authorized.
 
-**CAN see** (even with E2E active):
-- Routing metadata: user ID, wing ID, session ID, agent name
-- Session lifecycle: when sessions start, attach, detach, exit
-- Message timing and sizes
-- Wing registration: machine ID, org membership, lock status. Agents, projects, labels, and hostname all travel through the encrypted tunnel (`wing.info`) - the roost never sees them
+Consequently, the hosted browser application does **not** provide a
+malicious-service-resistant E2EE guarantee. TOFU pinning and locked-wing passkeys
+meaningfully protect against later database/routing errors and a relay binary that
+cannot modify already trusted client code, but they cannot protect against malicious
+JavaScript served by the same compromised service.
 
-**CANNOT see** (with E2E active):
-- Terminal content (keystrokes in, agent output out)
-- File contents displayed in the terminal
-- Credentials typed or displayed
-- Directory listings, session history, audit recordings (tunnel-encrypted)
-- Egg config updates (tunnel-encrypted)
-- Passkey assertions (tunnel-encrypted)
+A native, reproducibly distributed client with an independently verified wing pin
+can make the malicious-relay boundary substantially stronger. Until that handshake
+and distribution story is complete, public wording should be "application-encrypted
+through the hosted relay," not a Signal-style server-compromise guarantee.
 
-## Roost Compromise Threat Model
+## Remaining protocol work
 
-If an attacker gains full control of the Fly.io deployment (SSH, deploy credentials, or Fly API token):
-
-### What they can do
-
-1. **Deploy a modified roost binary** that logs plaintext metadata, performs traffic analysis, drops sessions (DoS), or injects fake error messages.
-
-2. **Read the SQLite database** containing user accounts (emails, GitHub/Google IDs), device auth codes (not reusable after claim), JWT signing secret, and passkey public keys/credential IDs. Public keys can't be used to impersonate users. See the privacy policy for what a database leak means.
-
-3. **Forge wing auth JWTs** to impersonate a wing connection or route sessions to an attacker-controlled fake wing (MITM). The attacker's fake wing does its own key exchange with the browser, so it can decrypt traffic. The real wing never sees these sessions.
-
-4. **Serve a modified web app** that captures keystrokes into a fake terminal UI or establishes sessions with forged credentials.
-
-### How locking mitigates this
-
-On a locked wing, the attacker's fake wing can't produce a valid passkey assertion. The browser sends its WebAuthn challenge through the encrypted tunnel to the real wing. A fake wing would need a private key on the allowlist to pass verification - the roost only has public keys, which aren't enough.
-
-A modified web client is reduced to a phishing attack. It can capture what you type into a fake terminal, but it can't connect to your real wing (locked wings reject unknown keys), can't read existing session output (E2E encrypted), and can't hijack running sessions (already keyed to the real browser's ephemeral key).
-
-### What they cannot do
-
-1. **Decrypt existing E2E traffic** - the roost binary as-built can't read encrypted PTY data
-2. **Access wing machines** - the roost has no shell access to wings
-3. **Read wing private keys** - stored at `~/.wingthing/wing_key`, never transmitted
-4. **Access API keys** - env vars like `ANTHROPIC_API_KEY` exist only on the wing
-
-## Known Limitations
-
-### Web app served from roost
-The roost serves the JavaScript that runs in your browser. A compromised roost can serve modified JS that bypasses E2E. This is the fundamental limitation of any web-based E2E system (same as WhatsApp Web, ProtonMail, etc.). On a locked wing, this is reduced to phishing - the modified client can't connect to your wing.
-
-### Metadata is not encrypted
-Session metadata (who connects when, to which project, with which agent) is visible to the roost. Routing requires it.
-
-### Static zero salt in HKDF
-The HKDF derivation uses a 32-byte zero salt. HKDF is designed to be secure with a zero salt, but a random salt sent alongside the public key would add defense in depth.
-
-### pty.resize is not encrypted
-Terminal dimensions (cols, rows) are sent as plaintext control messages. The roost can see your terminal size. Low-risk but inconsistent with the rest of the PTY channel being encrypted. On the fix list.
-
-### Ring buffer stores plaintext on wing
-The wing keeps a plaintext ring buffer of recent terminal output for session reattach replay. If the wing machine itself is compromised, this is accessible.
-
-### Unlocked wings trust the roost for identity
-An unlocked wing accepts any session from a JWT-validated user. If the roost is compromised and the attacker forges a JWT, the wing has no second factor to reject it. Lock your wing to add passkey verification on top.
-
-### CONNECT proxy, not SNI filtering
-
-The egg routes agent traffic through a local HTTP CONNECT proxy (`internal/sandbox/proxy.go`). It checks the domain in the CONNECT request against the `egg.yaml` allowlist. Anything not on the list gets a 403.
-
-It's not airtight. The proxy ignores ports, so any port on an allowed domain is reachable. The tunnel is opaque after the 200 - the agent could speak non-TLS through it. Domain fronting is theoretically possible if an allowed domain shares CDN infrastructure (though the major CDNs killed this years ago). Wildcards like `*.anthropic.com` allow any subdomain.
-
-We looked at SNI filtering (inspecting the TLS ClientHello) and skipped it. It adds real complexity - ClientHello parsing, ECH, QUIC - and the bypasses above don't matter much. API endpoints only listen on 443. Raw TCP to them does nothing. The allowed domains are run by the agent providers.
-
-None of these matter as much as the obvious one: the agent can exfiltrate data through its own API, and no proxy design prevents that. The CONNECT filter covers everything else.
+- Signed ephemeral wing session keys for forward secrecy.
+- A user-verifiable pairing/fingerprint flow instead of TOFU alone.
+- AEAD associated data binding wing, session, message type, direction, and request ID.
+- Monotonic per-direction counters or another replay-defense construction.
+- Persisted WebAuthn signature counters if cloned-authenticator detection becomes
+  part of the passkey guarantee.
+- A trusted native/browser-extension client path if malicious web delivery is in scope.
+- At-rest protection for local history if Wingthing chooses to offer that guarantee.
 
 ## Reference
 
-| What | Protected? | How |
-|------|-----------|-----|
-| Terminal I/O | Yes | X25519 + AES-256-GCM, `wt-pty` domain, per-session keys |
-| Wing data (dirs, sessions, audit, config) | Yes | X25519 + AES-256-GCM, `wt-tunnel` domain, per-tab keys |
-| Passkey assertions | Yes | Encrypted inside tunnel, roost sees opaque bytes |
-| Session metadata | No | Needed for routing |
-| Wing auth (unlocked) | Partial | JWT forgeable if DB compromised |
-| Wing auth (locked) | Yes | Passkey verification on wing, roost can't forge assertions |
-| Web client integrity | Partial | Served from roost, but locked wings reduce compromise to phishing |
-| Wing machine access | Yes | Roost has no shell access |
+| Surface | Current protection |
+|---|---|
+| Local CLI/MCP | Same-OS-user permissions; named MCP guardrails and audit |
+| Trusted VM (`--unsandboxed`) | Outer VM/network policy; no nested Wingthing sandbox |
+| SSH attach | OpenSSH transport and host-key policy |
+| Terminal content through relay | X25519/HKDF/AES-GCM application encryption |
+| Tunnel wing APIs | X25519/HKDF/AES-GCM application encryption |
+| Resize/kill | Encrypted tunnel or direct WebRTC DTLS |
+| Locked-wing authentication | Wing-generated WebAuthn challenge, local key, client-bound token |
+| Relay metadata | Visible by design |
+| Browser code integrity | Trusted-service assumption |
+| Forward secrecy | Not currently provided |
+| Local history at rest | Plaintext on the wing |

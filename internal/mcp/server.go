@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,14 +38,43 @@ type CallObserver func(*http.Request, string, []string, egg.ToolResponse)
 // CallEnvFunc supplies trusted per-request identity variables to the privileged tool process.
 type CallEnvFunc func(*http.Request) map[string]string
 
+// Principal is the authenticated identity supplied to built-in control tools.
+// UserID owns created resources. ClientID identifies the acting MCP client.
+type Principal struct {
+	UserID   string
+	Email    string
+	ClientID string
+	Roles    []string
+}
+
+// PrincipalFunc resolves the authenticated caller from a request.
+type PrincipalFunc func(*http.Request) Principal
+
+// NativeTool is a typed in-process MCP operation. Native tools are available to
+// authenticated roost users independently of role-scoped executable tools.
+type NativeTool struct {
+	Name        string
+	Title       string
+	Description string
+	InputSchema map[string]any
+	Annotations map[string]any
+	Call        func(context.Context, Principal, json.RawMessage) (map[string]any, bool, error)
+}
+
+// NativeCallObserver receives the exact typed call envelope for audit logging.
+type NativeCallObserver func(*http.Request, string, json.RawMessage, map[string]any, bool)
+
 // Server is an MCP-over-HTTP (Streamable HTTP) endpoint over a shared ToolRunner, gated by
 // a per-role Policy.
 type Server struct {
-	runner  *egg.ToolRunner
-	policy  *Policy
-	rolesOf RolesFunc
-	observe CallObserver
-	callEnv CallEnvFunc
+	runner        *egg.ToolRunner
+	policy        *Policy
+	rolesOf       RolesFunc
+	observe       CallObserver
+	callEnv       CallEnvFunc
+	native        []NativeTool
+	principalOf   PrincipalFunc
+	observeNative NativeCallObserver
 }
 
 func NewServer(runner *egg.ToolRunner, policy *Policy, rolesOf RolesFunc) *Server {
@@ -54,6 +84,15 @@ func NewServer(runner *egg.ToolRunner, policy *Policy, rolesOf RolesFunc) *Serve
 func (s *Server) SetCallObserver(observer CallObserver) { s.observe = observer }
 
 func (s *Server) SetCallEnv(callEnv CallEnvFunc) { s.callEnv = callEnv }
+
+func (s *Server) SetNativeTools(tools []NativeTool, principalOf PrincipalFunc) {
+	s.native = append([]NativeTool(nil), tools...)
+	s.principalOf = principalOf
+}
+
+func (s *Server) SetNativeCallObserver(observer NativeCallObserver) { s.observeNative = observer }
+
+func (s *Server) HasNativeTools() bool { return len(s.native) > 0 }
 
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -114,7 +153,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	roles := s.rolesOf(r)
+	var roles []string
+	if s.rolesOf != nil {
+		roles = s.rolesOf(r)
+	}
 
 	switch req.Method {
 	case "initialize":
@@ -184,14 +226,17 @@ func OriginAllowed(r *http.Request) bool {
 // mcpTool is one entry in a tools/list result.
 type mcpTool struct {
 	Name        string         `json:"name"`
+	Title       string         `json:"title,omitempty"`
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"inputSchema"`
+	Annotations map[string]any `json:"annotations,omitempty"`
 }
 
 // genericSchema accepts positional string args for tools without parameter metadata.
 func genericSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":                 "object",
+		"additionalProperties": false,
 		"properties": map[string]any{
 			"args": map[string]any{
 				"type":        "array",
@@ -239,9 +284,20 @@ func parameterSchema(params []config.ToolParam) map[string]any {
 }
 
 func (s *Server) visibleTools(roles []string) []mcpTool {
-	tools := []mcpTool{}
+	tools := make([]mcpTool, 0, len(s.native))
+	nativeNames := make(map[string]bool, len(s.native))
+	for _, tool := range s.native {
+		nativeNames[tool.Name] = true
+		tools = append(tools, mcpTool{
+			Name: tool.Name, Title: tool.Title, Description: tool.Description,
+			InputSchema: tool.InputSchema, Annotations: tool.Annotations,
+		})
+	}
+	if s.runner == nil || s.policy == nil {
+		return tools
+	}
 	for _, t := range s.runner.List() {
-		if !s.policy.AllowedAny(roles, t.Name) {
+		if nativeNames[t.Name] || !s.policy.AllowedAny(roles, t.Name) {
 			continue
 		}
 		schema := genericSchema()
@@ -262,8 +318,34 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request, req rpcReque
 		writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "invalid params"}})
 		return
 	}
+	if len(params.Arguments) == 0 || bytes.Equal(bytes.TrimSpace(params.Arguments), []byte("null")) {
+		params.Arguments = json.RawMessage(`{}`)
+	}
+	for _, tool := range s.native {
+		if tool.Name != params.Name {
+			continue
+		}
+		if tool.Call == nil {
+			writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32603, Message: "tool handler unavailable"}})
+			return
+		}
+		principal := Principal{}
+		if s.principalOf != nil {
+			principal = s.principalOf(r)
+		}
+		data, isError, err := tool.Call(r.Context(), principal, params.Arguments)
+		if err != nil {
+			data = map[string]any{"error": err.Error()}
+			isError = true
+		}
+		if s.observeNative != nil {
+			s.observeNative(r, params.Name, params.Arguments, data, isError)
+		}
+		writeNativeToolResult(w, req.ID, data, isError)
+		return
+	}
 	// A tool the role may not see is treated as nonexistent — don't reveal it.
-	if !s.runner.Has(params.Name) || !s.policy.AllowedAny(roles, params.Name) {
+	if s.runner == nil || s.policy == nil || !s.runner.Has(params.Name) || !s.policy.AllowedAny(roles, params.Name) {
 		s.observeCall(r, params.Name, nil, egg.ToolResponse{Error: "not permitted"})
 		writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32602, Message: "unknown or not permitted tool: " + params.Name}})
 		return
@@ -283,6 +365,20 @@ func (s *Server) handleCall(w http.ResponseWriter, r *http.Request, req rpcReque
 	resp := s.runner.CallWithEnv(params.Name, args, extraEnv)
 	s.observeCall(r, params.Name, args, resp)
 	writeToolResult(w, req.ID, resp)
+}
+
+func writeNativeToolResult(w http.ResponseWriter, id json.RawMessage, data map[string]any, isError bool) {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		data = map[string]any{"error": "could not encode tool result"}
+		encoded = []byte(`{"error":"could not encode tool result"}`)
+		isError = true
+	}
+	writeRPC(w, rpcResponse{JSONRPC: "2.0", ID: id, Result: map[string]any{
+		"content":           []map[string]any{{"type": "text", "text": string(encoded)}},
+		"structuredContent": data,
+		"isError":           isError,
+	}})
 }
 
 func writeToolResult(w http.ResponseWriter, id json.RawMessage, resp egg.ToolResponse) {
@@ -307,7 +403,9 @@ func toolArguments(raw json.RawMessage, params []config.ToolParam) ([]string, er
 		if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			raw = json.RawMessage(`{}`)
 		}
-		if err := json.Unmarshal(raw, &arguments); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&arguments); err != nil || ensureJSONEOF(decoder) != nil {
 			return nil, fmt.Errorf("expected an object containing an optional string array named args")
 		}
 		return arguments.Args, nil

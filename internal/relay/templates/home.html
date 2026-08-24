@@ -103,7 +103,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </script>
 <div class="hero">
 <h1>your AI agents, reachable from anywhere</h1>
-<p class="tagline">Run Claude, Codex, Cursor, and Gemini in a sandbox on your machine. Access them from any device over an encrypted, passkey-protected relay that can't read your data.</p>
+<p class="tagline">Run Claude, Codex, Cursor, and Gemini in a sandbox on your machine. Access them from any device through an application-encrypted, passkey-protected relay.</p>
 {{if .User}}<div class="prompt-flow">
 <a href="{{if .LocalMode}}/app/{{else}}https://app.wingthing.ai{{end}}" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open app</span></a>
 </div>
@@ -143,7 +143,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </div>
 <div class="how-card">
 <h3>e2e encrypted</h3>
-<p>X25519 key exchange, AES-GCM. The roost is a dumb pipe, it never sees your wing's private data.</p>
+<p>X25519 key agreement and AES-GCM keep wing payloads opaque to the shipped roost during normal operation. Routing metadata remains visible, and the hosted web client is part of the trust boundary.</p>
 </div>
 <div class="how-card">
 <h3>self-hostable</h3>
@@ -155,7 +155,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </div>
 <div class="how-card">
 <h3>passkey auth</h3>
-<p>WebAuthn passkeys. 1Password, iCloud Keychain, Touch ID, Windows Hello. The roost never sees your credential.</p>
+<p>WebAuthn passkeys. One-time challenges and signature verification happen on your wing against a locally pinned public key.</p>
 </div>
 </div>
 </div>

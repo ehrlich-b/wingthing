@@ -483,7 +483,7 @@ Same JSON as relay WebSocket. Same E2E encryption. Messages on DC:
 |------|-----------|-------|
 | `pty.output` | wing → browser | Same format as relay (encrypted, optional gzip) |
 | `pty.input` | browser → wing | Same format as relay (encrypted) |
-| `pty.resize` | browser → wing | Same format as relay (plaintext cols/rows) |
+| `pty.resize` | browser → wing | Same authenticated application-encrypted inner message as the relay path |
 | `pty.exited` | wing → browser | Same format as relay |
 | `session.attention` | wing → browser | Bell notification |
 

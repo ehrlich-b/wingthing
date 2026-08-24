@@ -128,15 +128,33 @@ network:
 
 If they need ssh-agent but not raw key files, prefer passing just `SSH_AUTH_SOCK` with the default `deny:~/.ssh` still in place.
 
-### 6. `dangerously_skip_permissions: true` is the point
+### 6. Pin a custom provider to one host
+
+For OpenAI-compatible providers, make the provider URL the network source of
+truth:
+
+```yaml
+network:
+  domains: []
+  agent_domains: none
+env:
+  - OPENAI_API_KEY
+  - WT_PROVIDER_BASE_URL
+```
+
+Set `WT_PROVIDER_BASE_URL` to an HTTPS URL. Wingthing derives its exact host and
+shows it as `derived` in `wt egg explain`. HTTP is available for loopback model
+servers.
+
+### 7. `dangerously_skip_permissions: true` is the point
 
 When you have a properly configured sandbox, the agent's built-in permission system is redundant. The sandbox IS the permission boundary. Skip-permissions removes friction without reducing security. Recommend it when the sandbox config is tight.
 
-### 7. Don't use `base: none` unless you know exactly what you're doing
+### 8. Use `base: none` for fully specified policies
 
 Starting from a blank slate means you lose all deny rules, all env filtering, the read-only root mount. Only for advanced users building specialized sandbox profiles. The defaults are there for a reason.
 
-### 8. Audit mode for shared machines
+### 9. Audit mode for shared machines
 
 If multiple people access the wing, or sessions run unattended:
 
@@ -175,7 +193,8 @@ base:
 
 Merge rules:
 - **FS**: child appends to parent. Child's `rw:` or `ro:` overrides parent's `deny:` for the same path.
-- **Network**: union. `"*"` in either parent or child = full access.
+- **Network**: domain union. `"*"` in either parent or child = full access.
+  Mapping options use child values; this includes `agent_domains`.
 - **Env**: union. `"*"` in either = all vars.
 - **Resources**: child wins per-field.
 

@@ -1,0 +1,1 @@
+ALTER TABLE tasks ADD COLUMN principal TEXT NOT NULL DEFAULT '';

@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -116,6 +117,54 @@ func TestAuthzPersonalWingIsolation(t *testing.T) {
 			t.Errorf("user B sees %d wings, want 0", len(wings))
 		}
 	})
+}
+
+func TestRoostModeSharesOnlyEmbeddedServiceWing(t *testing.T) {
+	store := testStore(t)
+	s := NewServer(store, ServerConfig{})
+	s.RoostMode = true
+
+	shared := &ConnectedWing{UserID: roostWingServiceUserID, WingID: "shared-roost"}
+	personal := &ConnectedWing{UserID: "owner", WingID: "personal"}
+
+	if !s.canAccessWing("any-authenticated-user", shared) {
+		t.Fatal("roost users should be able to access the embedded service wing")
+	}
+	if !s.canAccessWing("owner", personal) {
+		t.Fatal("personal wing owner should retain access in roost mode")
+	}
+	if s.canAccessWing("other-user", personal) {
+		t.Fatal("roost mode must not expose an external personal wing to every user")
+	}
+}
+
+func TestWingRegistrationMustMatchCredential(t *testing.T) {
+	server := &Server{}
+	if !server.wingRegistrationAllowed("owner", "wing-a", "wing-a") {
+		t.Fatal("matching credential and registration IDs were rejected")
+	}
+	if server.wingRegistrationAllowed("owner", "wing-a", "wing-b") {
+		t.Fatal("credential registered as another wing")
+	}
+	if server.wingRegistrationAllowed("owner", "wing-a", "") {
+		t.Fatal("empty wing registration was accepted")
+	}
+	if server.wingRegistrationAllowed("owner", "wing-a", strings.Repeat("x", 201)) {
+		t.Fatal("oversized wing registration was accepted")
+	}
+
+	server.LocalMode = true
+	if !server.wingRegistrationAllowed("local", "local", "configured-wing") {
+		t.Fatal("embedded local wing token was rejected")
+	}
+	server.LocalMode = false
+	server.RoostMode = true
+	if !server.wingRegistrationAllowed(roostWingServiceUserID, "roost-wing", "configured-wing") {
+		t.Fatal("embedded roost service wing token was rejected")
+	}
+	if server.wingRegistrationAllowed("member", "member-wing", "victim-wing") {
+		t.Fatal("ordinary roost user registered a mismatched wing")
+	}
 }
 
 // --- Wing event notification tests ---

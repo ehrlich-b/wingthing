@@ -251,7 +251,7 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusSeeOther)
 		return
 	}
-	if len(s.mcpRolesForUser(user)) == 0 {
+	if !s.mcpUserCanAuthorize(user) {
 		s.deletePendingAuthorization(rid)
 		writeError(w, http.StatusForbidden, "MCP access is not enabled for this user")
 		return
@@ -286,7 +286,7 @@ func (s *Server) handleOAuthConsent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-	if len(s.mcpRolesForUser(user)) == 0 {
+	if !s.mcpUserCanAuthorize(user) {
 		writeError(w, http.StatusForbidden, "MCP access is not enabled for this user")
 		return
 	}
@@ -350,11 +350,11 @@ func (s *Server) renderMCPConsent(w http.ResponseWriter, rid string, pa pendingA
 		email = *user.Email
 	}
 	host := strings.TrimPrefix(strings.TrimPrefix(s.Config.BaseURL, "https://"), "http://")
-	policy := s.mcpPolicySnapshot()
+	roles := s.mcpRolesForUser(user)
 	data := mcpConsentData{
 		ClientName: name,
 		Email:      email,
-		Roles:      strings.Join(policy.EnabledRoles(policy.RolesForEmail(email)), ", "),
+		Roles:      strings.Join(roles, ", "),
 		Host:       host,
 		Redirect:   pa.redirectURI,
 		RID:        rid,
@@ -711,12 +711,23 @@ func (s *Server) mcpRolesForUser(user *User) []string {
 		return nil
 	}
 	policy := s.mcpPolicySnapshot()
+	if policy == nil {
+		return nil
+	}
 	return policy.EnabledRoles(policy.RolesForEmail(*user.Email))
+}
+
+func (s *Server) mcpUserCanAuthorize(user *User) bool {
+	if user == nil {
+		return false
+	}
+	server, _ := s.mcpSnapshot()
+	return len(s.mcpRolesForUser(user)) > 0 || (s.RoostMode && server != nil && server.HasNativeTools())
 }
 
 func (s *Server) mcpUserEnabled(userID string) bool {
 	user, _ := s.Store.GetUserByID(userID)
-	return len(s.mcpRolesForUser(user)) > 0
+	return s.mcpUserCanAuthorize(user)
 }
 
 func (s *Server) deletePendingAuthorization(rid string) {

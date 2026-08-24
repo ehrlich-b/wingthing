@@ -20,19 +20,66 @@ import (
 // PTYRoute is a minimal routing entry for wing→browser output forwarding.
 // No session metadata — the wing owns all session intelligence.
 type PTYRoute struct {
-	BrowserConn *websocket.Conn            // controller (can send input)
-	Viewers     map[string]*websocket.Conn // viewer_id → spectator conn (read-only)
-	UserID      string                     // bandwidth metering only
-	WingID      string                     // machine ID for offline notification
-	Agent       string                     // agent name for ntfy notifications
-	CWD         string                     // working directory for ntfy notifications
-	mu          sync.Mutex
+	BrowserConn       *websocket.Conn            // authorized controller (can send input)
+	PendingController *websocket.Conn            // attach awaiting wing authorization
+	PendingUserID     string                     // promoted with PendingController
+	Viewers           map[string]*websocket.Conn // viewer_id → spectator conn (read-only)
+	UserID            string                     // bandwidth metering only
+	WingID            string                     // machine ID for offline notification
+	Agent             string                     // agent name for ntfy notifications
+	CWD               string                     // working directory for ntfy notifications
+	Provisional       bool                       // route recreated by attach, not yet confirmed by wing
+	CreatedAt         time.Time                  // set on provisional creation, for cap/expiry sweeps
+	mu                sync.Mutex
 }
 
 // PTYRoutes tracks active PTY routing entries.
 type PTYRoutes struct {
 	mu     sync.RWMutex
 	routes map[string]*PTYRoute // session_id → route
+}
+
+type tunnelRequestKey struct {
+	WingID    string
+	RequestID string
+}
+
+type pendingTunnelRequest struct {
+	Browser   *websocket.Conn
+	CreatedAt time.Time
+}
+
+const (
+	maxPendingTunnelRequests = 4096
+	pendingTunnelRequestTTL  = 5 * time.Minute
+
+	// Provisional routes are created by attach for session IDs the wing has
+	// not confirmed. An unknown ID gets no wing response, so without a cap and
+	// expiry one authenticated browser could grow the route map without bound.
+	maxProvisionalRoutes = 1024
+	provisionalRouteTTL  = 2 * time.Minute
+
+	// One route's viewer map is also attacker-growable by re-attaching to the
+	// same (possibly nonexistent) session ID with fresh viewer IDs.
+	maxViewersPerRoute = 64
+)
+
+// admitProvisionalLocked sweeps expired provisional routes and reports whether
+// a new provisional route may be created. Caller holds r.mu.
+func (r *PTYRoutes) admitProvisionalLocked() bool {
+	now := time.Now()
+	provisional := 0
+	for id, route := range r.routes {
+		if !route.Provisional {
+			continue
+		}
+		if now.Sub(route.CreatedAt) > provisionalRouteTTL {
+			delete(r.routes, id)
+			continue
+		}
+		provisional++
+	}
+	return provisional < maxProvisionalRoutes
 }
 
 func NewPTYRoutes() *PTYRoutes {
@@ -59,20 +106,69 @@ func (r *PTYRoutes) Remove(sessionID string) {
 	delete(r.routes, sessionID)
 }
 
-// AddViewer adds a spectator connection to a session route.
-func (r *PTYRoutes) AddViewer(sessionID, viewerID string, conn *websocket.Conn) {
-	r.mu.RLock()
+// AddViewer adds a spectator connection to a session route, creating the
+// minimal route when the relay restarted after the egg was created.
+func (r *PTYRoutes) AddViewer(sessionID, viewerID, wingID string, conn *websocket.Conn) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	route := r.routes[sessionID]
-	r.mu.RUnlock()
 	if route == nil {
-		return
+		if !r.admitProvisionalLocked() {
+			return false
+		}
+		route = &PTYRoute{WingID: wingID, Provisional: true, CreatedAt: time.Now()}
+		r.routes[sessionID] = route
 	}
 	route.mu.Lock()
+	if route.WingID != "" && route.WingID != wingID {
+		route.mu.Unlock()
+		return false
+	}
+	if route.WingID == "" {
+		route.WingID = wingID
+	}
 	if route.Viewers == nil {
 		route.Viewers = make(map[string]*websocket.Conn)
 	}
+	if _, exists := route.Viewers[viewerID]; !exists && len(route.Viewers) >= maxViewersPerRoute {
+		route.mu.Unlock()
+		return false
+	}
 	route.Viewers[viewerID] = conn
 	route.mu.Unlock()
+	return true
+}
+
+func (r *PTYRoutes) SetPendingController(sessionID, wingID, userID string, conn *websocket.Conn) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	route := r.routes[sessionID]
+	if route == nil {
+		if !r.admitProvisionalLocked() {
+			return false
+		}
+		route = &PTYRoute{WingID: wingID, Provisional: true, CreatedAt: time.Now()}
+		r.routes[sessionID] = route
+	}
+	route.mu.Lock()
+	if route.WingID != "" && route.WingID != wingID {
+		route.mu.Unlock()
+		return false
+	}
+	// The wing's authorization response carries only the session ID. Keep one
+	// controller attach in flight so a second browser cannot replace the pending
+	// connection and receive the first browser's successful authorization.
+	if route.PendingController != nil {
+		route.mu.Unlock()
+		return false
+	}
+	if route.WingID == "" {
+		route.WingID = wingID
+	}
+	route.PendingController = conn
+	route.PendingUserID = userID
+	route.mu.Unlock()
+	return true
 }
 
 // RemoveViewer removes a spectator connection from a session route.
@@ -105,21 +201,88 @@ func (r *PTYRoutes) IsSpectator(conn *websocket.Conn) bool {
 	return false
 }
 
+// CanAuthenticate reports whether conn owns this route's controller attach or
+// the exact spectator viewer ID carried by a passkey response.
+func (r *PTYRoutes) CanAuthenticate(sessionID, viewerID string, conn *websocket.Conn) bool {
+	_, ok := r.AuthenticationWing(sessionID, viewerID, conn)
+	return ok
+}
+
+// AuthenticationWing returns the route's wing only when conn owns the attach
+// attempt identified by viewerID. Controller attempts use an empty viewer ID.
+func (r *PTYRoutes) AuthenticationWing(sessionID, viewerID string, conn *websocket.Conn) (string, bool) {
+	r.mu.RLock()
+	route := r.routes[sessionID]
+	r.mu.RUnlock()
+	if route == nil {
+		return "", false
+	}
+	route.mu.Lock()
+	defer route.mu.Unlock()
+	if viewerID == "" && (route.BrowserConn == conn || route.PendingController == conn) {
+		return route.WingID, route.WingID != ""
+	}
+	if viewerID != "" && route.Viewers[viewerID] == conn {
+		return route.WingID, route.WingID != ""
+	}
+	return "", false
+}
+
+// ControllerWing returns the route's wing only when conn is the controller the
+// wing has already authorized. Pending reattach attempts and spectators cannot
+// drive session input or lifecycle messages.
+func (r *PTYRoutes) ControllerWing(sessionID string, conn *websocket.Conn) (string, bool) {
+	r.mu.RLock()
+	route := r.routes[sessionID]
+	r.mu.RUnlock()
+	if route == nil {
+		return "", false
+	}
+	route.mu.Lock()
+	defer route.mu.Unlock()
+	if route.BrowserConn != conn || route.WingID == "" {
+		return "", false
+	}
+	return route.WingID, true
+}
+
 // ClearBrowser nils the BrowserConn and removes spectator entries for this connection.
 func (r *PTYRoutes) ClearBrowser(conn *websocket.Conn) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, route := range r.routes {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for sessionID, route := range r.routes {
 		route.mu.Lock()
 		if route.BrowserConn == conn {
 			route.BrowserConn = nil
+		}
+		if route.PendingController == conn {
+			route.PendingController = nil
+			route.PendingUserID = ""
 		}
 		for vid, vc := range route.Viewers {
 			if vc == conn {
 				delete(route.Viewers, vid)
 			}
 		}
+		remove := route.Provisional && route.BrowserConn == nil && route.PendingController == nil && len(route.Viewers) == 0
 		route.mu.Unlock()
+		if remove {
+			delete(r.routes, sessionID)
+		}
+	}
+}
+
+func (r *PTYRoutes) removeProvisionalIfEmpty(sessionID string, expected *PTYRoute) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	route := r.routes[sessionID]
+	if route == nil || route != expected {
+		return
+	}
+	route.mu.Lock()
+	defer route.mu.Unlock()
+	if route.Provisional && route.BrowserConn == nil && route.PendingController == nil && len(route.Viewers) == 0 {
+		delete(r.routes, sessionID)
 	}
 }
 
@@ -131,6 +294,7 @@ func (r *PTYRoutes) NotifyWingOffline(wingID string) {
 	for _, route := range r.routes {
 		route.mu.Lock()
 		bc := route.BrowserConn
+		pending := route.PendingController
 		wid := route.WingID
 		viewers := make([]*websocket.Conn, 0, len(route.Viewers))
 		for _, vc := range route.Viewers {
@@ -143,6 +307,9 @@ func (r *PTYRoutes) NotifyWingOffline(wingID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		if bc != nil {
 			bc.Write(ctx, websocket.MessageText, msg)
+		}
+		if pending != nil && pending != bc {
+			pending.Write(ctx, websocket.MessageText, msg)
 		}
 		for _, vc := range viewers {
 			vc.Write(ctx, websocket.MessageText, msg)
@@ -251,26 +418,15 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 
 	s.trackBrowser(conn)
 	defer s.untrackBrowser(conn)
+	defer s.clearTunnelRequests(conn)
 
 	ctx := r.Context()
 
 	// On browser disconnect: clear BrowserConn on all owned routes
 	defer s.PTY.ClearBrowser(conn)
 
-	// Wing ID from URL query param — used for all routing in this connection
+	// Wing ID from URL query param — used as the default for messages that do not carry one.
 	queryWingID := r.URL.Query().Get("wing_id")
-
-	// lookupWing resolves the wing for each message (handles wing reconnect)
-	lookupWing := func() *ConnectedWing {
-		if queryWingID == "" {
-			return nil
-		}
-		w := s.Wings.FindByID(queryWingID)
-		if w == nil {
-			w = s.findAnyWingByWingID(queryWingID)
-		}
-		return w
-	}
 
 	for {
 		_, data, err := conn.Read(ctx)
@@ -321,6 +477,8 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			start.UserID = userID
 			start.Email = userEmail
 			start.DisplayName = userDisplayName
+			start.OrgRole = ""
+			start.Passkeys = nil
 			if s.LocalMode || wing.UserID == userID {
 				start.OrgRole = "owner"
 			} else if wing.OrgID != "" && s.Store != nil {
@@ -332,7 +490,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 						start.Passkeys = append(start.Passkeys, base64.StdEncoding.EncodeToString(c.PublicKey))
 					}
 				}
-				}
+			}
 
 			s.PTY.Set(sessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID, Agent: start.Agent, CWD: start.CWD})
 
@@ -364,39 +522,70 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			attach.UserID = userID
+			attach.Email = userEmail
+			attach.OrgRole = ""
+			attach.Passkeys = nil
+			if s.LocalMode || wing.UserID == userID {
+				attach.OrgRole = "owner"
+			} else if wing.OrgID != "" && s.Store != nil {
+				attach.OrgRole = s.Store.GetOrgMemberRole(wing.OrgID, userID)
+			}
 
 			if attach.Spectate {
 				// Spectator mode: add as read-only viewer, don't overwrite controller.
-				// No passkey auth — spectate is opt-in via wing config. The only gate
-				// is canAccessWing (owner, org member, or roost mode).
+				// The relay records a pending viewer so wing challenges can be routed
+				// back to it. A locked wing still performs local passkey authorization
+				// before emitting any viewer-tagged terminal content.
 				viewerID := uuid.New().String()[:8]
 				attach.ViewerID = viewerID
-				attach.Email = userEmail
-				s.PTY.AddViewer(attach.SessionID, viewerID, conn)
+				if !s.PTY.AddViewer(attach.SessionID, viewerID, wing.WingID, conn) {
+					errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "session not found"})
+					conn.Write(ctx, websocket.MessageText, errMsg)
+					continue
+				}
 				log.Printf("pty session %s spectator added (viewer=%s user=%s)", attach.SessionID, viewerID, userID)
 			} else {
-				// Normal reattach: update controller conn, preserve spectators
-				route := s.PTY.Get(attach.SessionID)
-				if route != nil {
-					route.mu.Lock()
-					route.BrowserConn = conn
-					route.UserID = userID
-					route.mu.Unlock()
-				} else {
-					s.PTY.Set(attach.SessionID, &PTYRoute{BrowserConn: conn, UserID: userID, WingID: wing.WingID})
+				// Normal reattach remains pending until the wing returns pty.started.
+				// This prevents a caller who fails wing-local passkey policy from
+				// displacing the currently authorized controller at the relay.
+				if !s.PTY.SetPendingController(attach.SessionID, wing.WingID, userID, conn) {
+					errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "session not found"})
+					conn.Write(ctx, websocket.MessageText, errMsg)
+					continue
 				}
-				log.Printf("pty session %s reattached (user=%s)", attach.SessionID, userID)
+				log.Printf("pty session %s reattach pending wing authorization (user=%s)", attach.SessionID, userID)
 			}
 
 			fwd, _ := json.Marshal(attach)
 			wing.Conn.Write(ctx, websocket.MessageText, fwd)
 
-		case ws.TypePTYInput, ws.TypePTYResize, ws.TypePTYAttentionAck, ws.TypePasskeyResponse, ws.TypePTYMigrate:
-			// Drop input from spectators
-			if s.PTY.IsSpectator(conn) {
+		case ws.TypePTYInput, ws.TypePTYResize, ws.TypePTYAttentionAck, ws.TypePTYMigrate:
+			var control struct {
+				SessionID string `json:"session_id"`
+			}
+			if err := json.Unmarshal(data, &control); err != nil {
 				continue
 			}
-			wing := lookupWing()
+			routeWingID, allowed := s.PTY.ControllerWing(control.SessionID, conn)
+			if !allowed {
+				continue
+			}
+			wing := s.findAnyWingByWingID(routeWingID)
+			if wing == nil {
+				continue
+			}
+			wing.Conn.Write(ctx, websocket.MessageText, data)
+
+		case ws.TypePasskeyResponse:
+			var response ws.PasskeyResponse
+			if err := json.Unmarshal(data, &response); err != nil {
+				continue
+			}
+			routeWingID, allowed := s.PTY.AuthenticationWing(response.SessionID, response.ViewerID, conn)
+			if !allowed {
+				continue
+			}
+			wing := s.findAnyWingByWingID(routeWingID)
 			if wing == nil {
 				continue
 			}
@@ -424,15 +613,15 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			route.mu.Unlock()
 
 		case ws.TypePTYKill:
-			// Spectators cannot kill sessions
-			if s.PTY.IsSpectator(conn) {
-				continue
-			}
 			var kill ws.PTYKill
 			if err := json.Unmarshal(data, &kill); err != nil {
 				continue
 			}
-			wing := lookupWing()
+			routeWingID, allowed := s.PTY.ControllerWing(kill.SessionID, conn)
+			if !allowed {
+				continue
+			}
+			wing := s.findAnyWingByWingID(routeWingID)
 			if wing != nil {
 				fwd, _ := json.Marshal(kill)
 				wing.Conn.Write(ctx, websocket.MessageText, fwd)
@@ -452,6 +641,8 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			// Inject user identity into tunnel request envelope
 			req.SenderUserID = userID
 			req.SenderEmail = userEmail
+			req.SenderOrgRole = ""
+			req.SenderPasskeys = nil
 			if wing.UserID == userID {
 				req.SenderOrgRole = "owner"
 			} else if wing.OrgID != "" && s.Store != nil {
@@ -464,19 +655,28 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			s.tunnelMu.Lock()
-			s.tunnelRequests[req.RequestID] = conn
-			s.tunnelMu.Unlock()
+			if !s.registerTunnelRequest(wing.WingID, req.RequestID, conn) {
+				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid or duplicate tunnel request"})
+				conn.Write(ctx, websocket.MessageText, errMsg)
+				continue
+			}
 			fwdTunnel, _ := json.Marshal(req)
 			wing.Conn.Write(ctx, websocket.MessageText, fwdTunnel)
 		}
 	}
 }
 
-// forwardPTYToBrowser routes a PTY message from the wing to the browser.
-func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
+// forwardPTYToBrowser routes a PTY message only when it came from the wing recorded on
+// the route. Session IDs are routing metadata, not authorization credentials.
+func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte) {
 	route := s.PTY.Get(sessionID)
 	if route == nil {
+		return
+	}
+	route.mu.Lock()
+	routeWingID := route.WingID
+	route.mu.Unlock()
+	if routeWingID == "" || routeWingID != sourceWingID {
 		return
 	}
 
@@ -501,6 +701,7 @@ func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
 			vc := route.Viewers[viewerID]
 			delete(route.Viewers, viewerID)
 			route.mu.Unlock()
+			s.PTY.removeProvisionalIfEmpty(sessionID, route)
 			if vc != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				vc.Write(ctx, websocket.MessageText, data)
@@ -512,6 +713,7 @@ func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
 		// Controller exit: send to controller + all spectators, clean up route
 		route.mu.Lock()
 		bc := route.BrowserConn
+		pending := route.PendingController
 		userID := route.UserID
 		agent := route.Agent
 		cwd := route.CWD
@@ -525,6 +727,9 @@ func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
 		defer cancel()
 		if bc != nil {
 			bc.Write(ctx, websocket.MessageText, data)
+		}
+		if pending != nil && pending != bc {
+			pending.Write(ctx, websocket.MessageText, data)
 		}
 		for _, vc := range viewers {
 			vc.Write(ctx, websocket.MessageText, data)
@@ -557,13 +762,47 @@ func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
 		if json.Unmarshal(data, &started) == nil {
 			viewerID = started.ViewerID
 		}
+	case ws.TypePasskeyChallenge:
+		var challenge ws.PasskeyChallenge
+		if json.Unmarshal(data, &challenge) == nil {
+			viewerID = challenge.ViewerID
+		}
+	case ws.TypeError:
+		var protocolError ws.ErrorMsg
+		if json.Unmarshal(data, &protocolError) == nil {
+			viewerID = protocolError.ViewerID
+		}
+	}
+
+	// A successful controller reattach becomes authoritative only after the
+	// wing has completed its local authorization and key setup.
+	if env.Type == ws.TypePTYStarted && viewerID == "" {
+		route.mu.Lock()
+		if route.PendingController != nil {
+			route.BrowserConn = route.PendingController
+			route.UserID = route.PendingUserID
+			route.PendingController = nil
+			route.PendingUserID = ""
+			route.Provisional = false
+		}
+		route.mu.Unlock()
+	} else if env.Type == ws.TypePTYStarted && viewerID != "" {
+		route.mu.Lock()
+		route.Provisional = false
+		route.mu.Unlock()
 	}
 
 	// Route to specific spectator
 	if viewerID != "" {
 		route.mu.Lock()
 		vc := route.Viewers[viewerID]
+		if env.Type == ws.TypeError {
+			delete(route.Viewers, viewerID)
+		}
 		route.mu.Unlock()
+		if env.Type == ws.TypeError {
+			s.PTY.removeProvisionalIfEmpty(sessionID, route)
+		}
 		if vc == nil {
 			return
 		}
@@ -571,6 +810,28 @@ func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
 		defer cancel()
 		vc.Write(ctx, websocket.MessageText, data)
 		return
+	}
+
+	// Challenges and failures for a controller reattach belong to the pending
+	// connection, not the old authorized controller. A failure clears only the
+	// pending attempt and leaves the old controller in place.
+	if env.Type == ws.TypePasskeyChallenge || env.Type == ws.TypeError {
+		route.mu.Lock()
+		pending := route.PendingController
+		if env.Type == ws.TypeError {
+			route.PendingController = nil
+			route.PendingUserID = ""
+		}
+		route.mu.Unlock()
+		if env.Type == ws.TypeError {
+			s.PTY.removeProvisionalIfEmpty(sessionID, route)
+		}
+		if pending != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			pending.Write(ctx, websocket.MessageText, data)
+			return
+		}
 	}
 
 	// Route to controller (existing behavior)
@@ -606,4 +867,34 @@ func (s *Server) forwardPTYToBrowser(sessionID string, data []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	bc.Write(ctx, websocket.MessageText, data)
+}
+
+func (s *Server) registerTunnelRequest(wingID, requestID string, browser *websocket.Conn) bool {
+	if wingID == "" || requestID == "" || len(requestID) > 200 || browser == nil {
+		return false
+	}
+	now := time.Now()
+	s.tunnelMu.Lock()
+	defer s.tunnelMu.Unlock()
+	for key, pending := range s.tunnelRequests {
+		if now.Sub(pending.CreatedAt) > pendingTunnelRequestTTL {
+			delete(s.tunnelRequests, key)
+		}
+	}
+	key := tunnelRequestKey{WingID: wingID, RequestID: requestID}
+	if _, exists := s.tunnelRequests[key]; exists || len(s.tunnelRequests) >= maxPendingTunnelRequests {
+		return false
+	}
+	s.tunnelRequests[key] = pendingTunnelRequest{Browser: browser, CreatedAt: now}
+	return true
+}
+
+func (s *Server) clearTunnelRequests(browser *websocket.Conn) {
+	s.tunnelMu.Lock()
+	defer s.tunnelMu.Unlock()
+	for key, pending := range s.tunnelRequests {
+		if pending.Browser == browser {
+			delete(s.tunnelRequests, key)
+		}
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -21,7 +22,32 @@ func TestMain(m *testing.M) {
 		DenyInit(os.Args[2:])
 		return
 	}
+	if runtime.GOOS == "linux" {
+		missing := sandboxBatteryPrerequisites()
+		if len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "wingthing sandbox battery preflight failed: required commands missing from PATH: %s\n", strings.Join(missing, ", "))
+			os.Exit(2)
+		}
+	}
 	os.Exit(m.Run())
+}
+
+func sandboxBatteryPrerequisites() []string {
+	var missing []string
+	for _, command := range []string{"curl", "python3"} {
+		if _, err := exec.LookPath(command); err != nil {
+			missing = append(missing, command)
+		}
+	}
+	return missing
+}
+
+func TestSandboxBatteryPrerequisitesReportAllMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	missing := sandboxBatteryPrerequisites()
+	if strings.Join(missing, ",") != "curl,python3" {
+		t.Fatalf("missing prerequisites = %q", missing)
+	}
 }
 
 // runJail creates a sandbox and runs a shell command, returning stdout+stderr and error.
@@ -114,6 +140,46 @@ func TestJail_DenyPathBlocked(t *testing.T) {
 	}, "cat "+testFile)
 	if err == nil {
 		t.Fatal("read of denied path should fail")
+	}
+}
+
+func TestJail_DeniedFileMaskPreservesMountFlags(t *testing.T) {
+	secret := filepath.Join(t.TempDir(), "history")
+	if err := os.WriteFile(secret, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runJail(t, Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{secret},
+	}, "test ! -s "+secret+" && printf launched")
+	if err != nil {
+		t.Fatalf("sandbox rejected a read-only denied-file mask: output=%q error=%v", out, err)
+	}
+	if out != "launched" {
+		t.Fatalf("agent did not launch with a denied-file mask: %q", out)
+	}
+}
+
+func TestJail_MissingDenyPathPreparedBeforeReadonlyHome(t *testing.T) {
+	home := t.TempDir()
+	writable := filepath.Join(home, ".cache")
+	if err := os.MkdirAll(writable, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(home, ".aws")
+
+	out, err := runJail(t, Config{
+		NetworkNeed: NetworkFull,
+		UserHome:    home,
+		Mounts:      []Mount{{Source: writable, Target: writable}},
+		Deny:        []string{missing},
+	}, "test -d "+missing+" && ! touch "+missing+"/credential 2>/dev/null && printf launched")
+	if err != nil {
+		t.Fatalf("sandbox rejected an absent deny path under read-only HOME: output=%q error=%v", out, err)
+	}
+	if out != "launched" {
+		t.Fatalf("agent did not launch after deny mount preparation: %q", out)
 	}
 }
 
@@ -444,6 +510,75 @@ func TestJail_RootDeny_DevSetup(t *testing.T) {
 	}
 	if out != "ok" {
 		t.Errorf("output = %q, want ok", out)
+	}
+}
+
+func TestJail_RootDeny_HidesHostProcessEnvironments(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	hostProcess := exec.Command("/bin/sh", "-c", "sleep 30")
+	hostProcess.Env = append(os.Environ(), "WT_HOST_PROCESS_SECRET=must-stay-outside-jail")
+	if err := hostProcess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = hostProcess.Process.Kill()
+		_ = hostProcess.Wait()
+	}()
+
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/"},
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+		},
+	}
+	probe := fmt.Sprintf("tr '\\000' '\\n' < /proc/%d/environ 2>/dev/null | grep WT_HOST_PROCESS_SECRET || true", hostProcess.Process.Pid)
+	out, err := runJail(t, cfg, probe)
+	if err != nil {
+		t.Fatalf("host process visibility probe failed: %v (output: %s)", err, out)
+	}
+	if strings.Contains(out, "must-stay-outside-jail") {
+		t.Fatalf("jail exposed another host process environment through /proc: %s", out)
+	}
+}
+
+func TestJail_RootDeny_DoesNotFollowHomeSymlinkMounts(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("jail mode only on Linux")
+	}
+	root := t.TempDir()
+	home := filepath.Join(root, "agent-home")
+	hostSecrets := filepath.Join(root, "host-secrets")
+	if err := os.MkdirAll(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(hostSecrets, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostSecrets, "token"), []byte("must-stay-on-host"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(hostSecrets, filepath.Join(home, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{"/"},
+		UserHome:    home,
+		Mounts: []Mount{
+			{Source: "/usr", Target: "/usr", ReadOnly: true},
+			{Source: filepath.Join(home, ".claude"), Target: filepath.Join(home, ".claude")},
+		},
+	}
+	out, err := runJail(t, cfg, `cat "$HOME/.claude/token" 2>/dev/null || true`)
+	if err != nil {
+		t.Fatalf("home symlink probe failed: %v (output: %s)", err, out)
+	}
+	if strings.Contains(out, "must-stay-on-host") {
+		t.Fatalf("jail followed an owner-controlled HOME symlink to host state: %s", out)
 	}
 }
 

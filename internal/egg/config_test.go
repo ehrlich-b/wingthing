@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,7 +38,7 @@ func TestMergeEggConfig_NoBase(t *testing.T) {
 	// Child with no base merges on top of built-in default
 	child := &EggConfig{
 		FS:      []string{"ro:~/.ssh"},
-		Network: NetworkField{"api.anthropic.com"},
+		Network: NetworkField{Domains: []string{"api.anthropic.com"}},
 	}
 	parent := DefaultEggConfig()
 	merged := MergeEggConfig(parent, child)
@@ -70,7 +71,7 @@ func TestMergeEggConfig_NoBase(t *testing.T) {
 		t.Error("parent deny:~/.gnupg should survive merge")
 	}
 	// Network should include child's domains
-	if len(merged.Network) != 1 || merged.Network[0] != "api.anthropic.com" {
+	if len(merged.Network.Domains) != 1 || merged.Network.Domains[0] != "api.anthropic.com" {
 		t.Errorf("network = %v, want [api.anthropic.com]", merged.Network)
 	}
 }
@@ -149,7 +150,7 @@ network:
 		t.Error("parent deny:~/.aws should survive merge")
 	}
 	// Network should be union
-	if len(cfg.Network) != 1 || cfg.Network[0] != "api.anthropic.com" {
+	if len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "api.anthropic.com" {
 		t.Errorf("network = %v, want [api.anthropic.com]", cfg.Network)
 	}
 }
@@ -221,18 +222,21 @@ func TestResolveEggConfig_MaxDepth(t *testing.T) {
 }
 
 func TestMergeEggConfig_NetworkUnion(t *testing.T) {
-	parent := &EggConfig{Network: NetworkField{"api.anthropic.com"}}
-	child := &EggConfig{Network: NetworkField{"api.openai.com"}}
+	parent := &EggConfig{Network: NetworkField{Domains: []string{"api.anthropic.com"}, AgentDomains: "merge"}}
+	child := &EggConfig{Network: NetworkField{Domains: []string{"api.openai.com"}, AgentDomains: "none"}}
 	merged := MergeEggConfig(parent, child)
-	if len(merged.Network) != 2 {
+	if len(merged.Network.Domains) != 2 {
 		t.Errorf("network = %v, want 2 domains", merged.Network)
+	}
+	if merged.Network.AgentDomains != "none" {
+		t.Errorf("agent_domains = %q, want child value none", merged.Network.AgentDomains)
 	}
 
 	// Wildcard in either -> wildcard
-	parent2 := &EggConfig{Network: NetworkField{"*"}}
-	child2 := &EggConfig{Network: NetworkField{"api.openai.com"}}
+	parent2 := &EggConfig{Network: NetworkField{Domains: []string{"*"}}}
+	child2 := &EggConfig{Network: NetworkField{Domains: []string{"api.openai.com"}}}
 	merged2 := MergeEggConfig(parent2, child2)
-	if len(merged2.Network) != 1 || merged2.Network[0] != "*" {
+	if len(merged2.Network.Domains) != 1 || merged2.Network.Domains[0] != "*" {
 		t.Errorf("network = %v, want [*]", merged2.Network)
 	}
 }
@@ -339,9 +343,27 @@ func TestResolveEggConfig_FileNotFound(t *testing.T) {
 }
 
 func TestDiscoverEggConfig_FallsBackToDefault(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	cfg := DiscoverEggConfig("/nonexistent", nil)
 	if len(cfg.FS) == 0 {
 		t.Error("should fall back to default config")
+	}
+}
+
+func TestDiscoverEggConfig_GlobalDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	globalDir := filepath.Join(home, ".wingthing")
+	if err := os.MkdirAll(globalDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(globalDir, "egg.yaml"), []byte("base: none\nnetwork: '*'\nenv: '*'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := DiscoverEggConfig("/nonexistent", nil)
+	if RequiresSandbox(cfg, "claude") {
+		t.Fatal("global trusted-host config was not discovered")
 	}
 }
 
@@ -361,11 +383,30 @@ fs:
 func TestDiscoverEggConfig_WingDefault(t *testing.T) {
 	wingCfg := &EggConfig{
 		FS:      []string{"rw:./", "deny:~/.ssh"},
-		Network: NetworkField{"*"},
+		Network: NetworkField{Domains: []string{"*"}},
 	}
 	cfg := DiscoverEggConfig("/nonexistent", wingCfg)
-	if len(cfg.Network) != 1 || cfg.Network[0] != "*" {
+	if len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "*" {
 		t.Error("should use wing default when no project config")
+	}
+}
+
+func TestUnsandboxedEggConfig(t *testing.T) {
+	cfg := UnsandboxedEggConfig()
+	if RequiresSandbox(cfg, "claude") {
+		t.Fatal("trusted VM policy unexpectedly requires a nested sandbox")
+	}
+	if !cfg.IsAllEnv() {
+		t.Fatal("trusted VM policy does not pass the host environment")
+	}
+	if got := sandbox.NetworkNeedFromDomains(cfg.Network.Domains); got != sandbox.NetworkFull {
+		t.Fatalf("network need = %s, want full", got)
+	}
+
+	withLimit := *cfg
+	withLimit.Resources.Memory = "1GB"
+	if !RequiresSandbox(&withLimit, "claude") {
+		t.Fatal("resource policy must require the sandbox backend")
 	}
 }
 
@@ -551,7 +592,7 @@ func TestSectionMask_Combo(t *testing.T) {
 		t.Errorf("fs should be empty (masked none), got %v", cfg.FS)
 	}
 	// Network: from strict
-	if len(cfg.Network) != 1 || cfg.Network[0] != "api.internal.corp" {
+	if len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "api.internal.corp" {
 		t.Errorf("network should come from strict, got %v", cfg.Network)
 	}
 	// Env: from prod-env

@@ -84,11 +84,14 @@ func TestTunnelEncryptionRoundTrip(t *testing.T) {
 
 	requestID := uuid.New().String()[:8]
 	tunnelReq := ws.TunnelRequest{
-		Type:      ws.TypeTunnelRequest,
-		WingID:    "tunnel-wing-1",
-		RequestID: requestID,
-		SenderPub: browserPubB64,
-		Payload:   encPayload,
+		Type:           ws.TypeTunnelRequest,
+		WingID:         "tunnel-wing-1",
+		RequestID:      requestID,
+		SenderPub:      browserPubB64,
+		Payload:        encPayload,
+		SenderUserID:   "forged-user",
+		SenderOrgRole:  "admin",
+		SenderPasskeys: []string{"forged-passkey"},
 	}
 	if err := wsjson.Write(ctx, browserConn, tunnelReq); err != nil {
 		t.Fatalf("write tunnel.req: %v", err)
@@ -104,6 +107,12 @@ func TestTunnelEncryptionRoundTrip(t *testing.T) {
 	}
 	if wingReceived.RequestID != requestID {
 		t.Fatalf("request ID mismatch: want %s, got %s", requestID, wingReceived.RequestID)
+	}
+	if wingReceived.SenderUserID != "user-tunnel1" || wingReceived.SenderOrgRole != "owner" {
+		t.Fatalf("tunnel identity = user %q role %q", wingReceived.SenderUserID, wingReceived.SenderOrgRole)
+	}
+	if len(wingReceived.SenderPasskeys) != 0 {
+		t.Fatalf("browser-supplied tunnel passkeys reached wing: %#v", wingReceived.SenderPasskeys)
 	}
 
 	// Wing decrypts the payload

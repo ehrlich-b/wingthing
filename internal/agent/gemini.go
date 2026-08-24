@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strings"
 )
 
 type Gemini struct {
@@ -33,15 +32,20 @@ func (g *Gemini) ContextWindow() int {
 }
 
 func (g *Gemini) Health() error {
-	cmd := exec.Command(g.command, "--version")
-	if err := cmd.Run(); err != nil {
+	if err := runHealthCheck(healthCheckTimeout, g.command, "--version"); err != nil {
 		return fmt.Errorf("gemini health check failed: %w", err)
 	}
 	return nil
 }
 
 func (g *Gemini) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream, err error) {
-	args := []string{"-p", prompt}
+	args := []string{"-p", prompt, "--model", g.model}
+	// The Wingthing sandbox is already the approval and filesystem boundary.
+	// Headless Gemini otherwise cannot approve its own tool calls from a fresh
+	// home, so let it execute tools only when that outer boundary is present.
+	if opts.CmdFactory != nil {
+		args = append(args, "--yolo")
+	}
 
 	var cmd *exec.Cmd
 	if opts.CmdFactory != nil {
@@ -52,13 +56,15 @@ func (g *Gemini) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 	} else {
 		cmd = exec.CommandContext(ctx, g.command, args...)
 	}
-	cmd.Stdin = strings.NewReader(prompt)
-
+	if opts.WorkDir != "" {
+		cmd.Dir = opts.WorkDir
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
+	diagnostics, err := startAgentCommand(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start gemini: %w", err)
 	}
 
@@ -72,7 +78,7 @@ func (g *Gemini) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 				stream.send(Chunk{Text: line + "\n"})
 			}
 		}
-		err := cmd.Wait()
+		err := waitAgentCommand(cmd, diagnostics)
 		if scanErr := scanner.Err(); scanErr != nil && err == nil {
 			err = scanErr
 		}

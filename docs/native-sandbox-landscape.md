@@ -307,7 +307,7 @@ Capabilities trending toward native:
 The AI agent is a configuration, not the product. The product is:
 
 - **Sandboxed terminal sessions accessible from anywhere.** egg.yaml defines the sandbox. The thing running inside can be Claude, Cursor, Codex, bash, python, node, anything.
-- **Remote access via wing/relay.** E2E encrypted, passkey authenticated, P2P with relay fallback. Already built.
+- **Remote access via wing/relay.** Application-encrypted payloads, wing-verified passkeys, P2P with relay fallback. See `security.md` for the exact trust boundary.
 - **Audit.** Full session recording. Already built.
 - **Multi-user path ACLs.** Already built (v0.113.0: strict whitelist).
 - **Privilege broker pattern.** Give sandboxed processes access to specific APIs without exposing credentials. Already built (Slide shim pattern).

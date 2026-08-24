@@ -8,6 +8,32 @@
 - `wt start` -- connect your machine to the relay, access from app.wingthing.ai
 - `wt serve` -- relay server (web UI, WebSocket relay, skill registry), HTTP + SQLite
 
+## Current Push: AI-Usable API
+
+**An AI must be able to orchestrate wingthing as easily as a human can.** This is
+the primary focus of the current work. Anything a human can do from the terminal
+or the browser, a model must be able to do through a typed interface with the
+same authority model and the same audit trail.
+
+The rule: **if you ship a capability only a human can drive, it is unfinished.**
+
+- `wt mcp stdio` is the model-facing surface. Tools have closed JSON Schemas,
+  return structured content, and declare read-only/mutating/destructive intent.
+- CLI subcommands take `--json` for scripting. Human-readable output is a
+  rendering of structured data, never the only representation.
+- **Never treat a UI as an API.** No scraping the web UI, and no parsing a TUI's
+  screen when the underlying runtime can report the fact directly.
+- Terminal snapshots (`wt session read`) are raw ANSI state, not a conversation
+  transcript. Do not let callers pretend otherwise — agent-aware state belongs
+  in typed events above the PTY, sourced from agent hooks and protocols first
+  and screen heuristics only as a declared fallback.
+- Ambient authority is not accessibility. Every new model-reachable action needs
+  a principal, a grant, a bound (time/iterations/concurrency), and a log line.
+
+When adding a capability, the checklist is: runtime primitive → CLI verb with
+`--json` → MCP tool with a schema → tests at two tiers → doc line. See
+`docs/agent-meta-layer.md` for the object model.
+
 ## Design Philosophy
 
 **Curated > marketplace.** Skills live in `skills/` in this repo. They're reviewed, validated, and version-controlled. No storefront where anyone can publish prompt injections. Private skills go in `~/.wingthing/skills/`.
@@ -20,16 +46,42 @@
 
 ## Dogfooding
 
-**Always use wingthing's own tools and infrastructure.** If wingthing can do something, use wingthing to do it. Don't shell out to external scripts or paid APIs when the equivalent exists (or should exist) in the codebase.
+**Always use Wingthing's own tools and infrastructure.** Agent, terminal,
+sandbox, and orchestration work on this repository should run through Wingthing
+whenever it can perform the job.
 
-If you find yourself reaching for an external tool and wingthing _should_ handle it, that's a gap to fill in wingthing itself.
+Treat Wingthing friction as product work. When a real dogfood task is awkward or
+fails:
+
+1. reproduce the smallest underlying product gap;
+2. fix the runtime or typed contract, with a regression test;
+3. rebuild Wingthing and retry the original task through Wingthing; and
+4. record any remaining limitation in the relevant design document.
+
+Recursive fixes count toward the task. Fix the first genuine blocker before
+completing the parent task via terminal scraping, ad hoc scripts, or a second
+orchestration system. Leave working paths alone unless a real task exposes a
+problem.
+
+The destination is the shared roost: any useful local operation added while
+dogfooding must be designed as a reusable runtime primitive that can also be
+exposed through an authenticated, owner-scoped, typed, audited roost adapter.
+A local-only convenience is incomplete unless it is a deliberate intermediate
+step toward that parity.
+
+The only current real user workflow is Slide's shared roost in the web UI.
+Preserve it by default while iterating on other workflows. Breaking changes are
+allowed when they materially simplify or improve the product, but first present
+Bryan with the concrete benefit, affected workflow, and migration plan and get
+his agreement. Compatibility remains a conscious tradeoff.
 
 ## Architecture
 
 - `wt egg <agent>` -- spawns a per-session child process (`wt egg run`) with its own sandbox, PTY, and gRPC socket at `~/.wingthing/eggs/<session-id>/`
+- `wt attach [session-id]` -- list or reattach to local eggs; `--remote <ssh-host>` runs the same attach path over ordinary SSH
 - `wt wing` -- WebSocket client that connects outbound to the relay, handles PTY sessions and encrypted tunnel requests, spawns eggs for each session
-- `wt serve` -- relay server (web UI + WebSocket relay + skill registry), HTTP + SQLite. The relay is a dumb pipe for wing data -- it forwards encrypted blobs without reading them.
-- **The relay knows NOTHING about wings except their IDs and public keys.** `GET /api/app/wings` returns a list of wing UUIDs. All wing metadata (hostname, platform, agents, projects, labels) comes from the wing itself via encrypted tunnel requests (`wing.info`). The frontend must cache this metadata in localStorage and show cached data on page load while probing wings in the background.
+- `wt serve` -- relay server (web UI + WebSocket relay + skill registry), HTTP + SQLite. For encrypted terminal/tunnel payloads the relay is a router, but it still owns account/routing metadata and serves the browser code. See `docs/security.md` before making security claims.
+- The relay stores wing IDs/public keys, ownership/org binding, lock state, and connection metadata. Rich wing metadata (hostname, platform, agents, projects, labels) comes from the wing via encrypted tunnel requests (`wing.info`). The frontend caches this metadata in localStorage and shows cached data on page load while probing wings in the background.
 - `wt run` -- direct agent invocation for prompts and skills (the old `wt [prompt]`)
 - `wt roost` -- combined relay + wing in one process for self-hosted deployments
 - Agents are pluggable (claude, ollama, gemini, codex, cursor, opencode). `wt` calls them as child processes.
@@ -37,7 +89,7 @@ If you find yourself reaching for an external tool and wingthing _should_ handle
 
 ### Encrypted Tunnel Protocol
 
-All wing data (directory listings, session history, audit recordings, egg configs, passkey assertions) flows through an E2E encrypted tunnel. The relay cannot read any of it.
+Wing API payloads (directory listings, session history, audit recordings, egg configs, and tunnel passkey assertions) flow through an application-encrypted tunnel. The shipped relay does not receive their plaintext during normal operation. This is not a malicious-web-service guarantee: the relay serves the browser JavaScript, initial wing-key trust is TOFU, and routing metadata stays visible.
 
 | Message | Direction | Description |
 |---------|-----------|-------------|
@@ -54,7 +106,7 @@ Inner message types (inside encrypted payload): `dir.list`, `wing.info`, `webrtc
 | PTY session key | Per-session ephemeral X25519 | `"wt-pty"` | Terminal I/O encryption |
 | Tunnel key | Persistent identity X25519 | `"wt-tunnel"` | All non-PTY wing data |
 
-Browser identity key is stored in sessionStorage (ephemeral per tab, provides PFS). Passkey auth tokens are shared between PTY and tunnel, with configurable TTL via `auth_ttl` in wing.yaml. Wing restart revokes all sessions (in-memory cache).
+Browser identity key is stored in sessionStorage (ephemeral per tab). Because the wing key is persistent, this alone does **not** provide forward secrecy against later wing-key compromise. Passkey auth tokens are shared between PTY and tunnel but bound to relay user ID plus the client's X25519 key, with configurable TTL via `auth_ttl` in wing.yaml. Wing restart revokes all tokens (in-memory cache).
 
 ### Wing ID Scheme (IMPORTANT — two different IDs)
 
@@ -103,7 +155,7 @@ Wings can be shared via organizations. The relay has a full org system:
 ### Agents (brains)
 CLI tools detected by `wt doctor`:
 - `claude` CLI -- Anthropic Claude
-- `ollama` CLI -- local models (llama3.2 default)
+- `ollama` CLI -- local models (`qwen3:4b` default; native structured tools)
 - `gemini` CLI -- Google Gemini
 - `codex` CLI -- OpenAI Codex
 - `cursor` CLI (`agent` subcommand) -- Cursor
@@ -217,12 +269,55 @@ When `isolation` is `strict` or `standard` (no network), the sandbox automatical
 |---------|-------------|
 | `make check` | Run tests then build (the default verification step) |
 | `make build` | Build the `wt` binary |
-| `make test` | Run `go test ./...` |
+| `make test` | Unit tier — `go test ./...` |
+| `make test-integ` | Integration tier — relay/wing/PTY protocol with simulated endpoints |
+| `make test-linux` / `test-linux-ubuntu` | E2E tier — privileged Linux sandbox battery in Docker |
+| `make test-web` | Browser E2E tier — seeded shared-roost org-mode canary + Playwright in Docker (`test/web/`) |
+| `make test-provider-swap` | Opt-in real-harness/Ollama/LiteLLM release smoke matrix |
+| `make coverage` | Statement coverage report |
 | `make web` | Build vite output (`cd web && npm run build`) |
 | `make serve` | Build then run `wt serve` in foreground |
 | `make clean` | Remove built binary |
 
 Run `make check` to verify changes. Run `make web` before `make check` if you changed anything in `web/`.
+
+`make build` and the Go test targets seed a placeholder `web/dist` when it is
+missing, because `web/embed.go` embeds it and the built assets are gitignored.
+`make web` overwrites the placeholder with the real vite output.
+
+### Testing bar
+
+**Target: roughly half of the Go in this repo is test code.** As of 2026-08-09 it
+is 33% (17.7k test lines against 35.7k non-test). New work should close that gap,
+not widen it.
+
+This is a floor on how much testing effort a change deserves — **not** a license
+for coverage theater. A test that asserts a getter returns what the setter set is
+worth nothing and still inflates the ratio. Prefer tests that pin a real
+contract: an exact argv, a wire message, a sandbox denial, a reconnect.
+
+Three tiers, and every new capability lands with tests in **at least two**:
+
+| Tier | Command | Proves |
+|------|---------|--------|
+| Unit | `make test` | Exact contracts — argv, parsing, schemas, validation, config resolution |
+| Integration | `make test-integ` | Component protocol against simulated endpoints — no real agent, no network |
+| E2E | `make test-linux-ubuntu` | Real enforcement and real lifecycle on a real kernel |
+
+Rules:
+
+- **A mocked test proves our routing, not that a vendor kept its flags.** Agent
+  invocations need an exact-argv unit test so an upstream change is a test
+  failure, not a support ticket.
+- **Sandbox claims need E2E.** If a doc says a path is denied or a syscall is
+  blocked, a test must run in the sandbox and observe the denial. An enforcement
+  feature that is available but broken is a failure, never a skip.
+- **Skips must be capability-driven and explicit.** Missing kernel feature or
+  uninstalled real CLI may skip. Nothing else may.
+- **Both halves of the AI surface get tested.** A new MCP tool needs schema and
+  strict-argument-decoding tests plus one test that actually drives it.
+- Reach for a real e2e test before a clever unit test when the risk is lifecycle
+  (detach, reattach, restart, crash) rather than logic.
 
 ### CI
 
@@ -231,6 +326,15 @@ CI runs via **GitHub Actions** (`.github/workflows/ci.yml` on push/PR; `release.
 ### Development is LOCAL
 
 **Prod (wingthing.fly.dev) is Bryan's daily driver.** Do not deploy to Fly during development unless explicitly asked. All development and testing happens locally.
+
+### Vacation freeze: local-first branch only
+
+Through approximately 2026-08-20, treat `main` as frozen. Major runtime work
+belongs on `feature-local-first-terminal-routing`. Do not merge it to `main`,
+tag a version, create a release, deploy Fly, or change the Slide deployment.
+Build the repository binary and use an isolated `WINGTHING_DIR` for local
+dogfooding. See `docs/vacation-local-first.md` for the branch contract and
+post-vacation promotion gate.
 
 - `make serve` starts a local relay on `:8080`
 - `wt wing --relay http://localhost:8080` connects a wing to the local relay
@@ -252,9 +356,11 @@ After `make check`, restart the wing daemon with the local build: `./wt stop && 
 
 | Command | What it does |
 |---------|-------------|
-| `wt egg <agent>` | Run agent in sandboxed session (claude, codex, ollama, etc.) |
+| `wt egg <agent> [-- args]` | Run agent in sandboxed session; args after `--` pass through to the agent CLI (`wt egg codex -- -m gpt-5.6-terra`) |
 | `wt egg list` | List active egg sessions |
 | `wt egg stop <id>` | Stop an egg session |
+| `wt egg explain [agent]` | Show the effective sandbox policy and every auto-drilled agent hole (`--json`) |
+| `wt attach [id]` | List or attach to a live local session; add `--remote <ssh-host>` for SSH-native attach |
 | `wt wing` | Connect to relay, serve encrypted tunnel + PTY sessions |
 | `wt wing start` | Start wing as background daemon |
 | `wt wing stop` | Stop wing daemon |

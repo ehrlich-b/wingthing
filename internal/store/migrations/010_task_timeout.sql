@@ -1,0 +1,1 @@
+ALTER TABLE tasks ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 0;

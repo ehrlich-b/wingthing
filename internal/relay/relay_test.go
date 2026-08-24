@@ -2,6 +2,7 @@ package relay
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -243,6 +244,56 @@ func TestStaticFileServing(t *testing.T) {
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "text/html") {
 		t.Errorf("content-type = %q, want text/html", ct)
+	}
+}
+
+func TestPatternsPageDocumentsAvailability(t *testing.T) {
+	_, ts := testServer(t)
+
+	resp, err := http.Get(ts.URL + "/patterns")
+	if err != nil {
+		t.Fatalf("GET /patterns: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body := new(strings.Builder)
+	if _, err := io.Copy(body, resp.Body); err != nil {
+		t.Fatalf("read /patterns: %v", err)
+	}
+	for _, want := range []string{"use it as a local sandbox", "give your AI sandboxed sub-agents", "share a roost over the web", "orchestrate work on remote hosts"} {
+		if !strings.Contains(body.String(), want) {
+			t.Errorf("/patterns does not contain %q", want)
+		}
+	}
+}
+
+func TestPatternMarkdownRoutesServeCheckedInRecipes(t *testing.T) {
+	_, ts := testServer(t)
+	paths := []string{
+		"/patterns/SKILL.md",
+		"/patterns/local-sandbox/INSTRUCTIONS.md",
+		"/patterns/local-subagents/INSTRUCTIONS.md",
+		"/patterns/personal-remote-wing/INSTRUCTIONS.md",
+		"/patterns/shared-web-roost/INSTRUCTIONS.md",
+		"/patterns/shared-roost-agents/INSTRUCTIONS.md",
+		"/patterns/remote-orchestration/INSTRUCTIONS.md",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			resp, err := http.Get(ts.URL + path)
+			if err != nil {
+				t.Fatalf("GET %s: %v", path, err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			if got := resp.Header.Get("Content-Type"); got != "text/markdown; charset=utf-8" {
+				t.Fatalf("content type = %q", got)
+			}
+		})
 	}
 }
 

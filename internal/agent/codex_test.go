@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"context"
+	"os/exec"
+	"reflect"
 	"testing"
 )
 
@@ -23,6 +26,38 @@ func TestNewCodexCustomWindow(t *testing.T) {
 
 func TestCodexImplementsAgent(t *testing.T) {
 	var _ Agent = (*Codex)(nil)
+}
+
+func TestCodexRunCommandContract(t *testing.T) {
+	codex := NewCodex(0)
+	var gotName string
+	var gotArgs []string
+	stream, err := codex.Run(context.Background(), "hello codex", RunOpts{
+		Model: "gpt-5.6-terra",
+		CmdFactory: func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
+			gotName = name
+			gotArgs = append([]string(nil), args...)
+			return exec.CommandContext(ctx, "sh", "-c", `printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"codex output"}}'`), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, ok := stream.Next(); !ok {
+			break
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	wantArgs := []string{"exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.6-terra", "hello codex", "--json"}
+	if gotName != "codex" || !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("invocation = %q %q, want codex %q", gotName, gotArgs, wantArgs)
+	}
+	if got := stream.Text(); got != "codex output" {
+		t.Fatalf("output = %q", got)
+	}
 }
 
 func TestParseCodexEvent(t *testing.T) {

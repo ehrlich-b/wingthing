@@ -16,7 +16,7 @@ import (
 // TestAllAgentsPTYLifecycle verifies the full PTY lifecycle for every supported agent.
 // Each agent goes through: start → started → output → input → exited.
 func TestAllAgentsPTYLifecycle(t *testing.T) {
-	agents := []string{"claude", "codex", "cursor", "gemini", "ollama", "opencode"}
+	agents := []string{"claude", "codex", "cursor", "gemini", "hermes", "ollama", "opencode"}
 
 	for _, agent := range agents {
 		t.Run(agent, func(t *testing.T) {

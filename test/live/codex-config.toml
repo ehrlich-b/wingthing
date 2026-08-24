@@ -1,0 +1,12 @@
+model = "wingthing-local-8b"
+model_provider = "wingthing_litellm"
+model_context_window = 65536
+model_reasoning_effort = "none"
+model_reasoning_summary = "none"
+model_supports_reasoning_summaries = false
+
+[model_providers.wingthing_litellm]
+name = "Wingthing LiteLLM canary"
+base_url = "http://127.0.0.1:4000/v1"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"

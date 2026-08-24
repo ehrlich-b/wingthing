@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/coder/websocket"
@@ -16,19 +18,27 @@ import (
 
 // TunnelClient sends encrypted tunnel requests to a wing via the relay.
 type TunnelClient struct {
-	RelayURL    string           // HTTP base URL (e.g. "https://wingthing.ai")
-	DeviceToken string           // Bearer token for relay auth
-	PrivKey     *ecdh.PrivateKey // wing's own identity key
+	RelayURL       string           // HTTP base URL (e.g. "https://wingthing.ai")
+	DeviceToken    string           // Bearer token for relay auth
+	PrivKey        *ecdh.PrivateKey // native client's identity key
+	KnownWingsPath string           // optional TOFU identity pin store
 }
 
 // WingInfo holds the minimal info needed to connect to a wing.
 type WingInfo struct {
-	WingID    string `json:"wing_id"`
-	PublicKey string `json:"public_key"`
+	WingID        string `json:"wing_id"`
+	PublicKey     string `json:"public_key"`
+	LatestVersion string `json:"latest_version,omitempty"`
+	OrgID         string `json:"org_id,omitempty"`
+	UserID        string `json:"user_id,omitempty"`
+	Owner         string `json:"owner,omitempty"`
+	RemoteNode    string `json:"remote_node,omitempty"`
 }
 
-// DiscoverWing finds a wing's public key from the relay API.
-func (tc *TunnelClient) DiscoverWing(ctx context.Context, wingID string) (*WingInfo, error) {
+// ListWings returns the online wings the authenticated relay account may use.
+// The relay roster intentionally contains routing identity only; callers use an
+// encrypted wing.info request when they need host or capability details.
+func (tc *TunnelClient) ListWings(ctx context.Context) ([]WingInfo, error) {
 	url := strings.TrimRight(tc.RelayURL, "/") + "/api/app/wings"
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -50,13 +60,82 @@ func (tc *TunnelClient) DiscoverWing(ctx context.Context, wingID string) (*WingI
 	if err := json.NewDecoder(resp.Body).Decode(&wings); err != nil {
 		return nil, fmt.Errorf("decode wings: %w", err)
 	}
+	return wings, nil
+}
+
+// DiscoverWing finds and pins a wing's public key from the relay API.
+func (tc *TunnelClient) DiscoverWing(ctx context.Context, wingID string) (*WingInfo, error) {
+	wings, err := tc.ListWings(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, w := range wings {
 		if w.WingID == wingID {
+			if err := tc.VerifyWingIdentity(w); err != nil {
+				return nil, err
+			}
 			return &w, nil
 		}
 	}
 	return nil, fmt.Errorf("wing %s not found", wingID)
+}
+
+// VerifyWingIdentity applies the native client's TOFU policy to a relay roster
+// entry. Calls that may add several first-use pins should invoke this serially.
+func (tc *TunnelClient) VerifyWingIdentity(wing WingInfo) error {
+	if tc.KnownWingsPath == "" {
+		return nil
+	}
+	publicKey, err := base64.StdEncoding.DecodeString(wing.PublicKey)
+	if err != nil || len(publicKey) != 32 {
+		return fmt.Errorf("wing %s returned an invalid X25519 identity key", wing.WingID)
+	}
+	pins := map[string]string{}
+	data, err := os.ReadFile(tc.KnownWingsPath)
+	if err == nil {
+		if err := json.Unmarshal(data, &pins); err != nil {
+			return fmt.Errorf("parse known wing identities: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read known wing identities: %w", err)
+	}
+	if pinned := pins[wing.WingID]; pinned != "" {
+		if pinned != wing.PublicKey {
+			return fmt.Errorf("wing %s identity changed; verify the wing and remove its entry from %s before trusting the new key", wing.WingID, tc.KnownWingsPath)
+		}
+		return nil
+	}
+	pins[wing.WingID] = wing.PublicKey
+	encoded, err := json.MarshalIndent(pins, "", "  ")
+	if err != nil {
+		return err
+	}
+	directory := filepath.Dir(tc.KnownWingsPath)
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return fmt.Errorf("create known wing identity directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(directory, ".known-wings-*")
+	if err != nil {
+		return fmt.Errorf("create temporary known wing identities: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0600); err != nil {
+		temporary.Close()
+		return fmt.Errorf("protect temporary known wing identities: %w", err)
+	}
+	if _, err := temporary.Write(append(encoded, '\n')); err != nil {
+		temporary.Close()
+		return fmt.Errorf("write known wing identities: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close known wing identities: %w", err)
+	}
+	if err := os.Rename(temporaryPath, tc.KnownWingsPath); err != nil {
+		return fmt.Errorf("commit known wing identities: %w", err)
+	}
+	return nil
 }
 
 // Stream opens a WebSocket to the relay, sends an encrypted tunnel request,

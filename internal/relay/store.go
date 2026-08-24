@@ -19,6 +19,8 @@ type RelayStore struct {
 	db *sql.DB
 }
 
+const roostWingServiceUserID = "roost-wing-service"
+
 // DB returns the underlying database connection.
 func (s *RelayStore) DB() *sql.DB { return s.db }
 
@@ -389,15 +391,13 @@ func (s *RelayStore) CreateLocalUser() (*User, string, error) {
 // CreateServiceUser creates a service user for the roost wing goroutine.
 // Idempotent: returns existing user + token if already created.
 func (s *RelayStore) CreateServiceUser() (*User, string, error) {
-	const serviceUserID = "roost-wing-service"
-
 	u, err := s.GetUserByProvider("service", "roost-wing")
 	if err != nil {
 		return nil, "", err
 	}
 	if u == nil {
 		u = &User{
-			ID:          serviceUserID,
+			ID:          roostWingServiceUserID,
 			Provider:    "service",
 			ProviderID:  "roost-wing",
 			DisplayName: "roost-wing",

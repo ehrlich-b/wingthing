@@ -49,7 +49,7 @@ type Server struct {
 	DevTemplateDir string // if set, re-read templates from disk on each request
 	DevMode        bool   // if set, auto-claim device codes with test-user
 	LocalMode      bool   // if set, bypass auth — single-user, zero-config
-	RoostMode      bool   // if set, all authenticated users can access all wings (self-hosted)
+	RoostMode      bool   // if set, all authenticated users can access the embedded service wing
 	localUser      *User
 	Wings          *WingRegistry
 	PTY            *PTYRoutes
@@ -69,7 +69,7 @@ type Server struct {
 
 	// Tunnel request tracking (requestID → browser WebSocket)
 	tunnelMu       sync.Mutex
-	tunnelRequests map[string]*websocket.Conn
+	tunnelRequests map[tunnelRequestKey]pendingTunnelRequest
 
 	// Cluster routing (multi-node)
 	WingMap *WingMap
@@ -79,11 +79,13 @@ type Server struct {
 	sessionCache     *SessionCache
 	EntitlementCache *EntitlementCache
 
-	// MCP surface (roost mode): role-scoped remote MCP over the wing's tools, OAuth-gated.
-	mcpMu     sync.RWMutex
-	mcpServer *mcp.Server
-	mcpPolicy *mcp.Policy
-	mcpOAuth  *mcpOAuth
+	// MCP surface (roost mode): owner-scoped control operations plus optional
+	// role-scoped executable tools, all behind the same OAuth resource server.
+	mcpMu          sync.RWMutex
+	mcpServer      *mcp.Server
+	mcpPolicy      *mcp.Policy
+	mcpNativeTools []mcp.NativeTool
+	mcpOAuth       *mcpOAuth
 }
 
 func NewServer(store *RelayStore, cfg ServerConfig) *Server {
@@ -94,7 +96,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 		PTY:            NewPTYRoutes(),
 		mux:            http.NewServeMux(),
 		browserConns:   make(map[*websocket.Conn]struct{}),
-		tunnelRequests: make(map[string]*websocket.Conn),
+		tunnelRequests: make(map[tunnelRequestKey]pendingTunnelRequest),
 	}
 
 	// API routes
@@ -147,6 +149,9 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 	s.mux.HandleFunc("GET /login", s.handleLogin)
 	s.mux.HandleFunc("GET /install", s.handleInstallPage)
 	s.mux.HandleFunc("GET /docs", s.handleDocs)
+	s.mux.HandleFunc("GET /patterns", s.handlePatterns)
+	s.mux.HandleFunc("GET /patterns/SKILL.md", s.handlePatternSkill)
+	s.mux.HandleFunc("GET /patterns/{slug}/INSTRUCTIONS.md", s.handlePatternInstructions)
 	s.mux.HandleFunc("GET /terms", s.handleTerms)
 	s.mux.HandleFunc("GET /privacy", s.handlePrivacy)
 	s.mux.HandleFunc("GET /abuse", s.handleAbuse)
@@ -349,7 +354,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Default host: full site with caching
-	if r.Method == "GET" && (path == "/" || path == "/login" || path == "/docs" || path == "/terms" || path == "/privacy" || path == "/abuse") {
+	if r.Method == "GET" && (path == "/" || path == "/login" || path == "/docs" || path == "/patterns" || path == "/terms" || path == "/privacy" || path == "/abuse") {
 		if r.URL.RawQuery != "" {
 			w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
 		} else {

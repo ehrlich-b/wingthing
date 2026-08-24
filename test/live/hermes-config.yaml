@@ -1,0 +1,20 @@
+model:
+  default: "qwen3:8b"
+  provider: "custom"
+  base_url: "http://127.0.0.1:11434/v1"
+  context_length: 65536
+  ollama_num_ctx: 65536
+  max_tokens: 4096
+
+agent:
+  max_turns: 8
+
+terminal:
+  backend: "local"
+  cwd: "."
+  timeout: 180
+  home_mode: "profile"
+
+telemetry:
+  shared_metrics:
+    enabled: false

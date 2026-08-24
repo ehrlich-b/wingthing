@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,51 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 )
+
+func TestServerPublishesAndCallsNativeToolsWithoutRolePolicy(t *testing.T) {
+	srv := NewServer(nil, nil, nil)
+	srv.SetNativeTools([]NativeTool{{
+		Name: "terminal_list", Title: "List owned terminals", Description: "List the caller's terminals.",
+		InputSchema: map[string]any{"type": "object", "additionalProperties": false},
+		Annotations: map[string]any{"readOnlyHint": true},
+		Call: func(_ context.Context, principal Principal, arguments json.RawMessage) (map[string]any, bool, error) {
+			if principal.UserID != "user-1" || principal.ClientID != "client-1" {
+				t.Fatalf("principal = %+v", principal)
+			}
+			if string(arguments) != `{}` {
+				t.Fatalf("arguments = %s", arguments)
+			}
+			return map[string]any{"owner": principal.UserID}, false, nil
+		},
+	}}, func(*http.Request) Principal { return Principal{UserID: "user-1", ClientID: "client-1"} })
+
+	call := func(body string) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "https://wing.example/mcp", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("MCP-Protocol-Version", "2025-11-25")
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	listed := call(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	tools := listed["result"].(map[string]any)["tools"].([]any)
+	if len(tools) != 1 || tools[0].(map[string]any)["title"] != "List owned terminals" {
+		t.Fatalf("tools = %#v", tools)
+	}
+	result := call(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"terminal_list"}}`)["result"].(map[string]any)
+	if result["isError"] != false || result["structuredContent"].(map[string]any)["owner"] != "user-1" {
+		t.Fatalf("result = %#v", result)
+	}
+}
 
 func testMCPServer() *Server {
 	p := &Policy{Roles: map[string]*RolePolicy{
@@ -150,6 +196,9 @@ func TestServerPublishesOptionalNamedParameterSchema(t *testing.T) {
 	if _, ok := out.Result.Tools[0].InputSchema["properties"].(map[string]any)["args"]; !ok {
 		t.Fatalf("generic schema = %#v", out.Result.Tools[0].InputSchema)
 	}
+	if out.Result.Tools[0].InputSchema["additionalProperties"] != false {
+		t.Fatalf("generic schema allows extra properties: %#v", out.Result.Tools[0].InputSchema)
+	}
 	named := out.Result.Tools[1].InputSchema
 	if named["additionalProperties"] != false {
 		t.Fatalf("named schema allows extra properties: %#v", named)
@@ -162,6 +211,16 @@ func TestServerPublishesOptionalNamedParameterSchema(t *testing.T) {
 	method := properties["method"].(map[string]any)
 	if method["description"] != "Read-only request method" {
 		t.Fatalf("method schema = %#v", method)
+	}
+}
+
+func TestGenericToolArgumentsRejectUnknownProperties(t *testing.T) {
+	if _, err := toolArguments(json.RawMessage(`{"args":["ok"],"credential":"must-not-be-ignored"}`), nil); err == nil {
+		t.Fatal("generic tool arguments silently accepted an unknown property")
+	}
+	args, err := toolArguments(json.RawMessage(`{"args":["ok"]}`), nil)
+	if err != nil || len(args) != 1 || args[0] != "ok" {
+		t.Fatalf("valid generic tool arguments = %v, %v", args, err)
 	}
 }
 

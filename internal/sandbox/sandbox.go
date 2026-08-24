@@ -31,17 +31,17 @@ type Mount struct {
 
 // Config holds sandbox creation parameters.
 type Config struct {
-	Mounts      []Mount
-	Deny        []string    // paths to mask (e.g. ~/.ssh) — deny read+write
-	DenyWrite   []string    // paths to deny writes only (e.g. ./egg.yaml) — read allowed
-	NetworkNeed NetworkNeed // granular network access required by the agent
-	Domains     []string    // domain allowlist for proxy filtering
-	ProxyPort   int         // local domain-filtering proxy port (0 = no proxy)
-	CPULimit    time.Duration // RLIMIT_CPU (0 = backend default)
-	MemLimit    uint64        // RLIMIT_AS in bytes (0 = backend default)
-	MaxFDs      uint32        // RLIMIT_NOFILE (0 = backend default)
-	PidLimit    uint32        // cgroup pids.max (0 = no limit)
-	SessionID   string        // unique ID for cgroup naming
+	Mounts       []Mount
+	Deny         []string      // paths to mask (e.g. ~/.ssh) — deny read+write
+	DenyWrite    []string      // paths to deny writes only (e.g. ./egg.yaml) — read allowed
+	NetworkNeed  NetworkNeed   // granular network access required by the agent
+	Domains      []string      // domain allowlist for proxy filtering
+	ProxyPort    int           // local domain-filtering proxy port (0 = no proxy)
+	CPULimit     time.Duration // RLIMIT_CPU (0 = backend default)
+	MemLimit     uint64        // RLIMIT_AS in bytes (0 = backend default)
+	MaxFDs       uint32        // RLIMIT_NOFILE (0 = backend default)
+	PidLimit     uint32        // cgroup pids.max (0 = no limit)
+	SessionID    string        // unique ID for cgroup naming
 	UserHome     string        // per-user home override (empty = os.UserHomeDir)
 	Trace        bool          // wrap command with strace (Linux only)
 	AllowSockets []string      // Unix socket paths to allow outbound connections (macOS Seatbelt)
@@ -114,20 +114,9 @@ func platformHelp() string {
 		// Check if AppArmor is specifically blocking unprivileged user namespaces (Ubuntu 24.04+, kernel 6.1+).
 		if val, err := os.ReadFile("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"); err == nil {
 			if strings.TrimSpace(string(val)) == "1" {
-				exe, _ := os.Executable()
-				if exe == "" {
-					exe = "/usr/local/bin/wt"
-				}
-				return fmt.Sprintf("Linux: AppArmor is blocking unprivileged user namespaces (apparmor_restrict_unprivileged_userns=1). "+
-					"Fix: create an AppArmor profile for wt:\n"+
-					"  sudo tee /etc/apparmor.d/wingthing <<'EOF'\n"+
-					"  abi <abi/4.0>,\n"+
-					"  profile wingthing %s flags=(unconfined) {\n"+
-					"    userns,\n"+
-					"  }\n"+
-					"  EOF\n"+
-					"  sudo apparmor_parser -r /etc/apparmor.d/wingthing\n"+
-					"Or disable the restriction globally: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0", exe)
+				return "Linux: AppArmor is blocking the mount operations required inside unprivileged user namespaces " +
+					"(apparmor_restrict_unprivileged_userns=1). Install wt at the root-owned path /usr/local/bin/wt, " +
+					"then run: sudo /usr/local/bin/wt doctor --fix"
 			}
 		}
 		return "Linux: your system does not allow unprivileged user namespaces, which wt needs to sandbox agents. " +

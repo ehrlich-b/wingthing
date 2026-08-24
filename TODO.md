@@ -10,7 +10,12 @@ with live SIGHUP reload, `wt roost` for single-process self-hosted mode. Single 
 node (shared-cpu-2x, 512MB), horizontal scaling built and tested — edge nodes are one
 uncomment away in fly.toml.
 
-Org mode features are complete. Next up: VTE for proper reconnect, then P2P.
+VTE reconnect and browser P2P are implemented. The current architectural
+direction is to make the existing runtime local-first and client-agnostic, then
+layer collaboration on top; see `docs/local-first-architecture.md`. Major local
+work is isolated on `feature-local-first-terminal-routing` under the temporary
+freeze in `docs/vacation-local-first.md`; do not tag or deploy it before the
+post-vacation review.
 
 ---
 
@@ -66,8 +71,16 @@ The bar: someone new can use a wing without confusion or broken UX.
 ## 0.1 — Ship Week
 
 ### Core Features
-- [ ] Native shell — use a wing without any agent installed (plain bash/zsh PTY)
-- [ ] Egg reattach on CLI — resume existing sessions from terminal (`wt egg attach <id>`)
+- [x] Native shell and arbitrary persistent commands — `wt terminal` / `wt new`
+- [x] Egg reattach on CLI — `wt attach <id>` locally or `--remote <ssh-host>`;
+  next converge SSH, direct, P2P, and relay behind one attach protocol
+- [x] Human-readable session names, native picker, and local read/send/wait CLI
+- [x] Local MCP meta-access — terminal control, agent prompt runs, bounded loops,
+  dependency-DAG swarms, durable task output, and versioned prompt assets; see
+  `docs/agent-meta-layer.md`
+- [x] Trusted outer-boundary mode for dedicated AI VMs — local CLI and MCP can
+  keep durable sessions without requiring nested Ubuntu user namespaces; see
+  `docs/sandboxed-ai-vm.md`
 - [ ] PTY watch mode — multiple concurrent consumers of same PTY (pair programming, monitoring)
 
 ### Revenue
@@ -81,15 +94,14 @@ The bar: someone new can use a wing without confusion or broken UX.
   by signature only). Remove `CreateDeviceToken` call from JWT issuance, remove
   `ValidateToken` fallback from wing/PTY auth paths. Keep device_tokens for local mode
   UUID tokens and web session auth only. Can force re-login to flush old HS256 tokens.
-- [ ] Ubuntu 24.04 sandbox breakage — AppArmor 4.0 gates `CLONE_NEWUSER` behind
-  `userns_create` profile. `probeUserNamespace()` in `internal/sandbox/linux.go:87`
-  will fail, sandbox either errors out or falls back to no isolation. Options:
-  (a) ship an AppArmor profile for `wt` that allows `userns_create`,
-  (b) detect and guide user to `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`,
-  (c) document as known issue. Slide fleet is 22.04 today — no current exposure but
-  will bite on upgrade.
-- [ ] Encrypt pty.resize — cols/rows sent as plaintext, should go through E2E like pty.input
-- [ ] Tunnel passkey replay protection — `passkey.auth.begin`/`finish` protocol with server-generated nonce
+- [x] Ubuntu 24.04 AppArmor support — probe real user+mount namespace operations,
+  fail before agent launch, install an executable-scoped profile through
+  `wt doctor --fix`, verify effective mount state, and exercise a readable
+  denied-file canary as an unprivileged user on Ubuntu 24.04/kernel 6.8.
+- [x] Encrypt pty.resize and pty.kill through the tunnel; wing rejects plaintext relay controls
+- [x] Tunnel passkey replay protection — `passkey.auth.begin`/`finish`, one-time wing nonce, full WebAuthn context validation, client-bound token
+- [ ] Authenticated ephemeral wing handshakes — replace TOFU-only static-wing ECDH with verified pairing and forward secrecy
+- [ ] Bind encrypted envelopes to wing/session/type/direction/request with AEAD associated data and replay counters
 - [ ] Internal API trust boundary — mTLS or signed service tokens for node-to-node calls
 - [ ] Invite consume transaction ordering — race condition in `internal/relay/org.go`
 
@@ -244,6 +256,54 @@ account management, org settings, audit display.
 - [ ] Remove compile-time interface checks from runtime test functions
   (`var _ Agent = (*Gemini)(nil)` in gemini_test.go, ollama_test.go) — these
   don't execute at runtime
+
+### Cross-harness agent handoffs
+
+- [x] Prove a live Codex–Claude conversation using an owner-local mailbox and
+  exact-TTY notification while dogfooding the Arli workload.
+- [x] Add owner-scoped durable message objects and typed `message_send`,
+  `message_wait`, and `message_list` controls. Local stdio clients may declare
+  one owner with distinct actors; OAuth roost clients derive owner and actor
+  from authentication. Proved two-way Codex/Claude actor exchange, cursor
+  replies, blocking wait, cross-owner isolation, TTL bounds, and content-free
+  audit records through real stdio processes.
+
+### Narrow agent egress
+
+- [x] Add `network.agent_domains: none`, exact-host derivation from
+  `WT_PROVIDER_BASE_URL`, strict provider URL validation, and visible derived
+  and suppressed provenance in `wt egg explain`.
+- [ ] Run the same live egress conformance table on macOS and Linux: one allowed
+  provider connection, denied vendor domains, same-IP host separation, raw-IP
+  bypass, DNS behavior, loopback ports, observe mode, and the default-merge
+  compatibility row. Linux enforce mode depends on the netns proxy path in
+  `docs/sandbox-enhancement-design.md`.
+
+### Factory deploy environments
+
+- [ ] Add owner-scoped `environment_create`, `environment_status`,
+  `environment_stage`, `environment_run`, `environment_evidence`, and
+  `environment_destroy` controls with closed schemas, TTLs, resource bounds,
+  transaction IDs, and audit events.
+- [ ] Add a Proxmox provider adapter bounded to an operator-configured pool,
+  VMID range, template set, storage, bridge, and SSH bootstrap. Prove concurrent
+  ticket environments and exact-target cleanup.
+- [ ] Package the software-factory skill: PRD/context admission, ticket
+  workspace creation, Terra/Opus implementation and independent review loops,
+  immutable artifact digest, deploy evidence, stacked-PR preparation, and a
+  deliberate human publish/review step.
+- [ ] Move the Ubuntu factory canary from manual SSH/SCP into those roost
+  operations. Preserve the current denied-file negative control and include
+  one readable filesystem control in the evidence bundle.
+
+### Private roost proving ground
+
+- [ ] Dogfood a private roost on `ehrlich.dev`, with its Hopper as a real
+  owner-scoped workload target. Prove private enrollment, personal Codex and
+  Claude login homes, typed task control, sealed workspace access, model
+  selection, lifecycle supervision, and audit records end to end. Keep this as
+  the final proving ground for the programmable-roost route after the shared
+  roost foundations above are complete.
 
 ---
 

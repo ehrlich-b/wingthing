@@ -28,15 +28,28 @@ func (c *Codex) ContextWindow() int {
 }
 
 func (c *Codex) Health() error {
-	cmd := exec.Command(c.command, "--version")
-	if err := cmd.Run(); err != nil {
+	if err := runHealthCheck(healthCheckTimeout, c.command, "--version"); err != nil {
 		return fmt.Errorf("codex health check failed: %w", err)
 	}
 	return nil
 }
 
 func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream, err error) {
-	args := []string{"exec", prompt, "--json"}
+	// Wingthing tasks are valid in arbitrary working directories. Codex rejects
+	// non-repository directories by default, which made an otherwise healthy
+	// harness fail before the model was contacted.
+	args := []string{"exec", "--skip-git-repo-check"}
+	// Linux namespace sandboxes cannot be nested reliably. When Wingthing has
+	// supplied a command factory, Codex is already inside Wingthing's sandbox,
+	// so disable only Codex's inner sandbox. Privileged/direct calls retain the
+	// CLI's own protection because they have no command factory.
+	if opts.CmdFactory != nil {
+		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+	}
+	if opts.Model != "" {
+		args = append(args, "-m", opts.Model)
+	}
+	args = append(args, prompt, "--json")
 
 	var cmd *exec.Cmd
 	if opts.CmdFactory != nil {
@@ -47,12 +60,16 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 	} else {
 		cmd = exec.CommandContext(ctx, c.command, args...)
 	}
+	if opts.WorkDir != "" {
+		cmd.Dir = opts.WorkDir
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
+	diagnostics, err := startAgentCommand(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start codex: %w", err)
 	}
 
@@ -69,7 +86,7 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 				stream.SetTokens(input, output)
 			}
 		}
-		err := cmd.Wait()
+		err := waitAgentCommand(cmd, diagnostics)
 		if scanErr := scanner.Err(); scanErr != nil && err == nil {
 			err = scanErr
 		}
@@ -81,8 +98,8 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 
 // codexEvent represents a Codex CLI NDJSON event.
 type codexEvent struct {
-	Type string       `json:"type"`
-	Item *codexItem   `json:"item,omitempty"`
+	Type  string      `json:"type"`
+	Item  *codexItem  `json:"item,omitempty"`
 	Usage *codexUsage `json:"usage,omitempty"`
 }
 
