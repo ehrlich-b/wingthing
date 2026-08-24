@@ -381,6 +381,11 @@ func watchBrowserRequests(ctx context.Context, path, sessionID string, write ws.
 // tunnelKeys caches derived AES-GCM keys per sender public key.
 var tunnelKeys sync.Map // senderPub string → cipher.AEAD
 
+// wingCfgMu serializes tunnel-driven wing.yaml mutations. Tunnel requests run
+// on concurrent goroutines; unsynchronized admin edits could race each other
+// into a corrupt config.
+var wingCfgMu sync.Mutex
+
 // readEggOwner reads the creator user ID from an egg's owner file.
 func readEggOwner(dir string) string {
 	data, err := os.ReadFile(filepath.Join(dir, "egg.owner"))
@@ -1406,6 +1411,17 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		peerMgr.OnDC(func(senderPub, sessionID string, dc *pionwebrtc.DataChannel) {
 			if sessionID == "" {
 				log.Printf("[P2P] DC opened with no session ID from %s", senderPub[:8])
+				return
+			}
+			// The label is client-controlled; a DataChannel feeds the session's
+			// trusted input channel, so only the session owner's peer identity
+			// may bind one. Anything else could inject input or kill a session
+			// it does not own.
+			ident, ok := peerMgr.GetPeerIdentity(senderPub)
+			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", sessionID))
+			if !ok || owner == "" || ident.UserID != owner {
+				log.Printf("[P2P] rejected DC for session %s from %s: sender is not the session owner", sessionID, senderPub[:8])
+				dc.Close()
 				return
 			}
 			dcSessions.Store(sessionID, dc)
@@ -2683,6 +2699,28 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 	return out
 }
 
+// eggPidMatchesSession reports whether pid's command line is the egg runner
+// for sessionID. PIDs are recycled; a stale egg.pid can point at an unrelated
+// process (another user's egg, or any roost process), so a PID whose argv
+// cannot be confirmed is never signaled.
+func eggPidMatchesSession(pid int, sessionID string) bool {
+	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil {
+		argv := strings.Split(string(data), "\x00")
+		for i, a := range argv {
+			if a == "--session-id" && i+1 < len(argv) && argv[i+1] == sessionID {
+				return true
+			}
+		}
+		return false
+	}
+	// No /proc (darwin): fall back to ps.
+	out, psErr := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+	if psErr != nil {
+		return false
+	}
+	return strings.Contains(string(out), "--session-id "+sessionID)
+}
+
 // killOrphanEgg kills an egg session that has no active goroutine managing it.
 // This handles the case where a pty.kill arrives but the session was never reclaimed.
 func killOrphanEgg(cfg *config.Config, sessionID string) {
@@ -2692,11 +2730,12 @@ func killOrphanEgg(cfg *config.Config, sessionID string) {
 
 	ec, err := egg.Dial(sockPath, tokenPath)
 	if err != nil {
-		// Can't reach egg — try to kill by PID
+		// Can't reach egg — try to kill by PID, but only after confirming the
+		// PID still belongs to this session's egg runner.
 		pidPath := filepath.Join(dir, "egg.pid")
 		data, readErr := os.ReadFile(pidPath)
 		if readErr == nil {
-			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil {
+			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && eggPidMatchesSession(pid, sessionID) {
 				if proc, findErr := os.FindProcess(pid); findErr == nil {
 					proc.Signal(syscall.SIGTERM)
 				}
@@ -3484,6 +3523,10 @@ authDone:
 	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace, EggIdentity{
 		UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName,
 		OrgWing: wingCfg.Org != "", SharedHost: sharedHost,
+		// Browser terminals get the same allowlist jail as MCP agent runs; a
+		// shared-roost PTY without SealedFS would retain the default ro:/ rule
+		// and read the host home, wing.yaml keys, and other users' agent homes.
+		SealedFS:     sharedHost,
 		AllowedPaths: sharedAllowedPaths,
 	}, idleTimeout, spawnEggOpts{ToolNames: toolNames, ToolSocketPath: toolSocketPath})
 	if err != nil {
@@ -4388,6 +4431,12 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		streamAuditData(cfg, inner.SessionID, inner.Kind, gcm, req.RequestID, write)
 
 	case "egg.config_update":
+		// Rewrites the egg policy every session on this host runs under —
+		// wing-wide administration, not a per-path member capability.
+		if isMemberFiltered(req) {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			return
+		}
 		if inner.YAML == "" {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing yaml"}, write)
 			return
@@ -4438,6 +4487,11 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "wing.update":
+		// Replaces the host executable — wing-wide administration.
+		if isMemberFiltered(req) {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			return
+		}
 		log.Println("tunnel: remote update requested")
 		exe, exeErr := os.Executable()
 		if exeErr != nil {
@@ -4645,9 +4699,16 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing paths"}, write)
 			return
 		}
+		wingCfgMu.Lock()
 		wingCfg.Paths = config.PathList(inner.Paths)
 		wingCfg.Root = ""
-		config.SaveWingConfig(cfg.Dir, wingCfg)
+		saveErr := config.SaveWingConfig(cfg.Dir, wingCfg)
+		wingCfgMu.Unlock()
+		if saveErr != nil {
+			// The in-memory change would revert on restart; do not claim success.
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
+			return
+		}
 		log.Printf("paths.set: %d entries by %s", len(wingCfg.Paths), req.SenderUserID)
 		go killSessionsViolatingACLs(cfg, wingCfg.Paths, home)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
@@ -4663,6 +4724,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		found := false
 		emailLower := strings.ToLower(inner.Email)
+		wingCfgMu.Lock()
 		for i, e := range wingCfg.Paths {
 			if e.Path == inner.Path {
 				// Check duplicate
@@ -4681,10 +4743,16 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 		}
 		if !found {
+			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "path not found"}, write)
 			return
 		}
-		config.SaveWingConfig(cfg.Dir, wingCfg)
+		saveErr := config.SaveWingConfig(cfg.Dir, wingCfg)
+		wingCfgMu.Unlock()
+		if saveErr != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
+			return
+		}
 		log.Printf("paths.add_member: %s to %s by %s", inner.Email, inner.Path, req.SenderUserID)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
@@ -4699,8 +4767,17 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		found := false
 		emailLower := strings.ToLower(inner.Email)
+		wingCfgMu.Lock()
 		for i, e := range wingCfg.Paths {
 			if e.Path == inner.Path {
+				// An empty member list means a legacy open entry visible to every
+				// member, so removing the last member would silently make the
+				// path public instead of revoking access. Fail closed.
+				if len(e.Members) == 1 && strings.ToLower(e.Members[0]) == emailLower {
+					wingCfgMu.Unlock()
+					tunnelRespond(gcm, req.RequestID, map[string]string{"error": "cannot remove the last member — an empty list opens the path to everyone; remove the path entry instead"}, write)
+					return
+				}
 				for j, m := range e.Members {
 					if strings.ToLower(m) == emailLower {
 						wingCfg.Paths[i].Members = append(e.Members[:j], e.Members[j+1:]...)
@@ -4712,10 +4789,16 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 		}
 		if !found {
+			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "path or member not found"}, write)
 			return
 		}
-		config.SaveWingConfig(cfg.Dir, wingCfg)
+		saveErr := config.SaveWingConfig(cfg.Dir, wingCfg)
+		wingCfgMu.Unlock()
+		if saveErr != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
+			return
+		}
 		log.Printf("paths.remove_member: %s from %s by %s", inner.Email, inner.Path, req.SenderUserID)
 		go killSessionsViolatingACLs(cfg, wingCfg.Paths, home)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)

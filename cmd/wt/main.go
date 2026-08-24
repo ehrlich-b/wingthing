@@ -427,6 +427,16 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		runOpts.ReplaceSystemPrompt = true
 	}
 
+	// Privileged isolation runs directly under the host account with the full
+	// environment. On a shared host that would hand any OAuth caller the roost
+	// account's secrets and filesystem, so it fails closed regardless of how
+	// the agent's default isolation is configured.
+	if options.SharedHost && pr.Isolation == "privileged" {
+		msg := "privileged isolation is not available on a shared host"
+		s.SetTaskError(t.ID, msg)
+		return errors.New(msg)
+	}
+
 	if pr.Isolation != "privileged" {
 		home := options.UserHome
 		if home == "" {

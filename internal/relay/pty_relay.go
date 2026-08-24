@@ -29,6 +29,7 @@ type PTYRoute struct {
 	Agent             string                     // agent name for ntfy notifications
 	CWD               string                     // working directory for ntfy notifications
 	Provisional       bool                       // route recreated by attach, not yet confirmed by wing
+	CreatedAt         time.Time                  // set on provisional creation, for cap/expiry sweeps
 	mu                sync.Mutex
 }
 
@@ -51,7 +52,31 @@ type pendingTunnelRequest struct {
 const (
 	maxPendingTunnelRequests = 4096
 	pendingTunnelRequestTTL  = 5 * time.Minute
+
+	// Provisional routes are created by attach for session IDs the wing has
+	// not confirmed. An unknown ID gets no wing response, so without a cap and
+	// expiry one authenticated browser could grow the route map without bound.
+	maxProvisionalRoutes = 1024
+	provisionalRouteTTL  = 2 * time.Minute
 )
+
+// admitProvisionalLocked sweeps expired provisional routes and reports whether
+// a new provisional route may be created. Caller holds r.mu.
+func (r *PTYRoutes) admitProvisionalLocked() bool {
+	now := time.Now()
+	provisional := 0
+	for id, route := range r.routes {
+		if !route.Provisional {
+			continue
+		}
+		if now.Sub(route.CreatedAt) > provisionalRouteTTL {
+			delete(r.routes, id)
+			continue
+		}
+		provisional++
+	}
+	return provisional < maxProvisionalRoutes
+}
 
 func NewPTYRoutes() *PTYRoutes {
 	return &PTYRoutes{
@@ -84,7 +109,10 @@ func (r *PTYRoutes) AddViewer(sessionID, viewerID, wingID string, conn *websocke
 	defer r.mu.Unlock()
 	route := r.routes[sessionID]
 	if route == nil {
-		route = &PTYRoute{WingID: wingID, Provisional: true}
+		if !r.admitProvisionalLocked() {
+			return false
+		}
+		route = &PTYRoute{WingID: wingID, Provisional: true, CreatedAt: time.Now()}
 		r.routes[sessionID] = route
 	}
 	route.mu.Lock()
@@ -108,7 +136,10 @@ func (r *PTYRoutes) SetPendingController(sessionID, wingID, userID string, conn 
 	defer r.mu.Unlock()
 	route := r.routes[sessionID]
 	if route == nil {
-		route = &PTYRoute{WingID: wingID, Provisional: true}
+		if !r.admitProvisionalLocked() {
+			return false
+		}
+		route = &PTYRoute{WingID: wingID, Provisional: true, CreatedAt: time.Now()}
 		r.routes[sessionID] = route
 	}
 	route.mu.Lock()

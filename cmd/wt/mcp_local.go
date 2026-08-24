@@ -114,6 +114,7 @@ type localMCPServer struct {
 	maxSessions       int
 	maxSpawnsPerHour  int
 	spawnMu           sync.Mutex
+	admitMu           sync.Mutex // held across bounds check + spawn + record
 	spawnTimes        []time.Time
 	identity          EggIdentity
 	actor             string
@@ -1286,6 +1287,22 @@ func (s *localMCPServer) recordSpawn() {
 	s.spawnMu.Unlock()
 }
 
+// admitSpawn serializes bounds admission: the check, the spawn, and the
+// recording happen under one lock so concurrent tool calls cannot both observe
+// a free slot and together exceed max_sessions or max_spawns_per_hour.
+func (s *localMCPServer) admitSpawn(spawn func() error) error {
+	s.admitMu.Lock()
+	defer s.admitMu.Unlock()
+	if err := s.checkSpawnBounds(); err != nil {
+		return err
+	}
+	if err := spawn(); err != nil {
+		return err
+	}
+	s.recordSpawn()
+	return nil
+}
+
 func (s *localMCPServer) toolTerminalList(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
 	if err := requireEmptyObject(arguments); err != nil {
 		return nil, err
@@ -1427,9 +1444,6 @@ func (s *localMCPServer) toolTerminalStart(arguments json.RawMessage) (map[strin
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
 	}
-	if err := s.checkSpawnBounds(); err != nil {
-		return nil, err
-	}
 	resolvedCWD, err := s.resolveWorkingDirectory(args.CWD)
 	if err != nil {
 		return nil, err
@@ -1449,13 +1463,17 @@ func (s *localMCPServer) toolTerminalStart(arguments json.RawMessage) (map[strin
 		return nil, err
 	}
 	sessionID := uuid.NewString()[:8]
-	ec, err := spawnEgg(s.cfg, sessionID, "", eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
-		spawnEggOpts{Label: args.Label, Kind: kind, Command: args.Command, Principal: s.clientPrincipal()})
-	if err != nil {
+	if err := s.admitSpawn(func() error {
+		ec, spawnErr := spawnEgg(s.cfg, sessionID, "", eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
+			spawnEggOpts{Label: args.Label, Kind: kind, Command: args.Command, Principal: s.clientPrincipal()})
+		if spawnErr != nil {
+			return spawnErr
+		}
+		_ = ec.Close()
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	_ = ec.Close()
-	s.recordSpawn()
 	return map[string]any{
 		"session": sessionID, "label": args.Label, "kind": kind,
 		"command": args.Command, "cwd": args.CWD, "isolation": s.sessionIsolationMode(),
@@ -1476,9 +1494,6 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 	}
 	if args.Agent == "" {
 		return nil, errors.New("agent is required")
-	}
-	if err := s.checkSpawnBounds(); err != nil {
-		return nil, err
 	}
 	if _, ok := agentpkg.LookupDefinition(args.Agent); !ok {
 		return nil, fmt.Errorf("unsupported agent %q", args.Agent)
@@ -1506,13 +1521,17 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		eggCfg.DangerouslySkipPermissions = true
 	}
 	sessionID := uuid.NewString()[:8]
-	ec, err := spawnEgg(s.cfg, sessionID, args.Agent, eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
-		spawnEggOpts{Label: args.Label, Kind: "agent", AgentArgs: args.Args, Principal: s.clientPrincipal()})
-	if err != nil {
+	if err := s.admitSpawn(func() error {
+		ec, spawnErr := spawnEgg(s.cfg, sessionID, args.Agent, eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
+			spawnEggOpts{Label: args.Label, Kind: "agent", AgentArgs: args.Args, Principal: s.clientPrincipal()})
+		if spawnErr != nil {
+			return spawnErr
+		}
+		_ = ec.Close()
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	_ = ec.Close()
-	s.recordSpawn()
 	return map[string]any{
 		"session": sessionID, "label": args.Label, "agent": args.Agent,
 		"cwd": args.CWD, "args": args.Args, "isolation": s.sessionIsolationMode(),
@@ -1579,10 +1598,6 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, parentID *string) (ma
 	if err != nil {
 		return nil, err
 	}
-	if err := s.checkSpawnBounds(); err != nil {
-		return nil, err
-	}
-
 	var dependsOn *string
 	if parentID != nil {
 		encoded, _ := json.Marshal([]string{*parentID})
@@ -1600,20 +1615,23 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, parentID *string) (ma
 	if s.unsandboxed {
 		task.Isolation = "privileged"
 	}
-	taskStore, err := store.Open(s.cfg.DBPath())
-	if err != nil {
+	if err := s.admitSpawn(func() error {
+		taskStore, openErr := store.Open(s.cfg.DBPath())
+		if openErr != nil {
+			return openErr
+		}
+		defer taskStore.Close()
+		if createErr := taskStore.CreateTask(task); createErr != nil {
+			return createErr
+		}
+		if args.Label != "" {
+			label := args.Label
+			_ = taskStore.AppendLog(task.ID, "label", &label)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	if err := taskStore.CreateTask(task); err != nil {
-		taskStore.Close()
-		return nil, err
-	}
-	if args.Label != "" {
-		label := args.Label
-		_ = taskStore.AppendLog(task.ID, "label", &label)
-	}
-	taskStore.Close()
-	s.recordSpawn()
 	s.startAgentRun(task.ID, parentID)
 	data := agentRunStatusData(task)
 	data["run_id"] = task.ID
