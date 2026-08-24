@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -641,6 +642,33 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// detachSubmounts lazily detaches every mount strictly below dir, deepest
+// first, leaving the mount at dir itself in place.
+func detachSubmounts(dir string) error {
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return err
+	}
+	prefix := strings.TrimRight(dir, "/") + "/"
+	var below []string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		if mp := fields[4]; strings.HasPrefix(mp, prefix) {
+			below = append(below, mp)
+		}
+	}
+	sort.Slice(below, func(i, j int) bool { return len(below[i]) > len(below[j]) })
+	for _, mp := range below {
+		if err := unix.Unmount(mp, unix.MNT_DETACH); err != nil {
+			return fmt.Errorf("detach %s: %w", mp, err)
+		}
+	}
+	return nil
+}
+
 type expectedMount struct {
 	Path     string
 	FSType   string
@@ -898,6 +926,15 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 	}
 	if err := unix.Mount("/proc", procPath, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 		failEnforcement("bind jail /proc", "/proc", err)
+	}
+	// Strip the submounts the recursive bind copied (systemd's binfmt_misc
+	// autofs under /proc/sys/fs). This namespace created the copies, so they
+	// are detachable here — but once the nested agent namespace inherits them
+	// they become locked, and their presence makes the kernel refuse both the
+	// detach and a fresh PID-namespace procfs mount ("too revealing") there.
+	// A bare proc mount with no children keeps both constructions legal.
+	if err := detachSubmounts(procPath); err != nil {
+		failEnforcement("strip jail /proc submounts", procPath, err)
 	}
 	devPath := filepath.Join(newRoot, "dev")
 	if err := os.MkdirAll(devPath, 0755); err != nil {
