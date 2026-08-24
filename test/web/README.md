@@ -7,7 +7,9 @@ container driving three seeded users through the flows nothing else tests
 above the protocol level:
 
 - dashboard + shared wing visibility for admin and members, desktop and mobile
-- palette terminal launch into a role path (mock-agent installed as `claude`)
+- palette terminal launch into a role path (the static `canary-agent` echo
+  binary installed as `claude` — the sealed shared-host runtime refuses
+  scripts, so the stand-in must be a self-contained native executable)
 - the E2E identity lock (fail-closed key derivation, TOFU pinning)
 - terminal input/output round trip and resize-over-tunnel
 - detach + reattach with scrollback replay

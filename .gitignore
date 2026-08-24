@@ -20,5 +20,6 @@ test/linux/sandbox-tests
 test/linux/wt-tests
 __pycache__/
 test/web/wt
-test/web/mock-agent
+
 test/web/out/
+test/web/claude

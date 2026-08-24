@@ -112,7 +112,7 @@ WEB_TEST_ARCH ?= $(HOST_ARCH)
 build-web-e2e: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) go build -buildvcs=false \
 		-ldflags "-X main.version=test" -o test/web/wt ./cmd/wt
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) go build -o test/web/mock-agent ./test/mock-agent/
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) go build -o test/web/claude ./test/web/canary-agent/
 
 test-web: build-web-e2e
 	test/web/run.sh

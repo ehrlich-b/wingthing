@@ -3,10 +3,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       sqlite3 ca-certificates procps curl \
     && rm -rf /var/lib/apt/lists/*
 COPY wt /usr/local/bin/wt
-COPY mock-agent /usr/local/bin/mock-agent
 COPY claude /usr/local/bin/claude
 COPY wing.yaml egg.yaml /root/.wingthing/
 COPY entry.sh seed.sql /opt/canary/
-RUN chmod 0755 /usr/local/bin/wt /usr/local/bin/mock-agent /usr/local/bin/claude /opt/canary/entry.sh
+RUN chmod 0755 /usr/local/bin/wt /usr/local/bin/claude /opt/canary/entry.sh
 ENV HOME=/root
 CMD ["/opt/canary/entry.sh"]

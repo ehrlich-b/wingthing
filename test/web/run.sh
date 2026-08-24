@@ -6,8 +6,8 @@
 set -e
 cd "$(dirname "$0")"
 
-if [ ! -x ./wt ] || [ ! -x ./mock-agent ]; then
-  echo "missing ./wt or ./mock-agent — run: make test-web" >&2
+if [ ! -x ./wt ] || [ ! -x ./claude ]; then
+  echo "missing ./wt or ./claude — run: make test-web" >&2
   exit 2
 fi
 
@@ -23,7 +23,11 @@ echo "== building e2e image =="
 docker build -q -f Dockerfile.e2e -t wt-web-e2e .
 
 docker network create wt-web-net
+# --privileged: shared-roost browser terminals run inside the sealed Linux
+# jail, which needs user-namespace creation inside the container. Without it
+# eggs fail closed with "system blocked sandbox namespace creation".
 docker run -d --name wt-web-roost --network wt-web-net --network-alias roost \
+  --privileged \
   -e WT_BASE_URL=http://roost:8080 \
   -e GOOGLE_CLIENT_ID=canary-dummy-client \
   -e GOOGLE_CLIENT_SECRET=canary-dummy-secret \
