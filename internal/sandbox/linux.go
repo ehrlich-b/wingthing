@@ -320,11 +320,18 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 			return nil, fmt.Errorf("trace mode: strace not found in PATH")
 		}
 		traceLog := filepath.Join(s.tmpDir, "strace.log")
-		// --kill-on-exit sets PTRACE_O_EXITKILL so that when strace (the direct
-		// child here, holding the outer Pdeathsig) is killed, the kernel kills
-		// the sandbox wrapper and its whole jail too. Without it a hard-killed
-		// trace session could leave the jail namespace running detached.
-		traceArgs := []string{"-f", "--kill-on-exit", "-o", traceLog}
+		traceArgs := []string{"-f", "-o", traceLog}
+		// --kill-on-exit (strace >= 6.6) sets PTRACE_O_EXITKILL so that when
+		// strace (the direct child here, holding the outer Pdeathsig) is killed,
+		// the kernel kills the traced sandbox wrapper too, whose own Pdeathsig
+		// then tears the jail namespace down instead of leaving it detached. Add
+		// it only when supported — older strace rejects unknown options and would
+		// refuse to launch — so trace mode still works everywhere; where the flag
+		// is unavailable teardown falls back to prior (pre-branch) behavior. Trace
+		// is a debug-only opt-in, never set on production sealed sessions.
+		if straceSupportsKillOnExit(straceBin) {
+			traceArgs = append(traceArgs, "--kill-on-exit")
+		}
 		traceArgs = append(traceArgs, cmd.Path)
 		traceArgs = append(traceArgs, cmd.Args[1:]...)
 		cmd = exec.CommandContext(ctx, straceBin, traceArgs...)
@@ -341,6 +348,16 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 	}
 	cmd.SysProcAttr = attr
 	return cmd, nil
+}
+
+// straceSupportsKillOnExit reports whether the strace binary understands
+// --kill-on-exit (added in strace 6.6). `strace --help` lists it when present.
+func straceSupportsKillOnExit(bin string) bool {
+	out, err := exec.Command(bin, "--help").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "kill-on-exit")
 }
 
 // PostStart adds the sandboxed process to the cgroup (if available) then
