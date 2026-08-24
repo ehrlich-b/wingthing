@@ -20,28 +20,49 @@ import (
 )
 
 const jailAgentInitArg = "_jail_agent_init"
+const jailAgentDropArg = "_jail_agent_drop"
 
-// The allowlist jail initially bind-mounts the host procfs because the outer
-// wrapper still needs host PIDs while Go writes the nested user namespace's
-// uid_map. Once that child exists in its own PID namespace, this early re-exec
-// replaces the host procfs with one owned by the child's PID namespace before
-// any agent code runs.
+// The sealed jail runs the agent through two nested user-namespace stages so it
+// can both swap /proc AND run unprivileged:
+//
+//   _deny_init  -> clones _jail_agent_init into a new PID+user+mount namespace,
+//                  mapped to inner-UID 0 so it keeps CAP_SYS_ADMIN across execve.
+//   _jail_agent_init (stage 2, inner-root): replaces the temporarily visible
+//                  host procfs with one owned by this PID namespace, then clones
+//                  _jail_agent_drop into a further nested user namespace that
+//                  maps back to the real nonzero uid.
+//   _jail_agent_drop (stage 3, nonzero uid): installs seccomp and execs the
+//                  agent. It has no capabilities over the mount namespace, so the
+//                  sealed filesystem and private procfs stand, and Claude's
+//                  --dangerously-skip-permissions root guard is satisfied.
+//
+// Both re-execs pass the real uid/gid as argv so the drop stage knows its map.
+// Arg layout: <stage-arg> <uid> <gid> -- <command...>.
 func init() {
-	if len(os.Args) < 4 || os.Args[1] != jailAgentInitArg || os.Args[2] != "--" {
+	if len(os.Args) < 6 || os.Args[4] != "--" {
 		return
 	}
-	jailAgentInit(os.Args[3:])
+	switch os.Args[1] {
+	case jailAgentInitArg:
+		jailAgentInit(os.Args[2], os.Args[3], os.Args[5:])
+	case jailAgentDropArg:
+		jailAgentDrop(os.Args[2], os.Args[3], os.Args[5:])
+	}
 }
 
-func jailAgentInit(command []string) {
+// jailAgentInit (stage 2) runs as inner-UID 0, so it still holds CAP_SYS_ADMIN
+// over its mount namespace and can swap /proc. It never execs the agent itself:
+// after the swap it clones jailAgentDrop into a nested user namespace that maps
+// back to the real nonzero uid, so the agent runs unprivileged.
+func jailAgentInit(uidStr, gidStr string, command []string) {
 	if len(command) == 0 || command[0] == "" {
 		log.Fatal("_jail_agent_init: missing command")
 	}
 	// Detaching the host procfs is preferred, but a kernel may refuse it when
 	// the bound tree carries locked host submounts (binfmt_misc on 5.15).
 	// Mounting the PID-namespace procfs on top is equally sound: the host
-	// procfs is left shadowed and unreachable, the seccomp filter installed
-	// below denies the agent mount and umount, and verifyPrivateProcfs
+	// procfs is left shadowed and unreachable, the seccomp filter installed by
+	// the drop stage denies the agent mount and umount, and verifyPrivateProcfs
 	// asserts the visible /proc belongs to this PID namespace either way.
 	if err := unix.Unmount("/proc", unix.MNT_DETACH); err != nil {
 		log.Printf("_jail_agent_init: detach host procfs refused (%v); overmounting PID-namespace procfs", err)
@@ -52,6 +73,60 @@ func jailAgentInit(command []string) {
 	if err := verifyPrivateProcfs(); err != nil {
 		failEnforcement("verify PID-namespace procfs", "/proc/self/status", err)
 	}
+
+	// Drop to the real nonzero uid before the agent runs. We cannot
+	// unshare(CLONE_NEWUSER) in-process (the Go runtime is multithreaded), so
+	// re-exec with the clone flag. The nested user namespace maps our inner-UID
+	// 0 to the real uid; the drop stage keeps this PID + mount namespace (and so
+	// the private procfs), but holds no capability over the mount namespace.
+	uid, err := strconv.Atoi(uidStr)
+	if err != nil {
+		log.Fatalf("_jail_agent_init: bad uid %q: %v", uidStr, err)
+	}
+	gid, err := strconv.Atoi(gidStr)
+	if err != nil {
+		log.Fatalf("_jail_agent_init: bad gid %q: %v", gidStr, err)
+	}
+	dropArgs := append([]string{jailAgentDropArg, uidStr, gidStr, "--"}, command...)
+	drop := exec.Command("/proc/self/exe", dropArgs...)
+	drop.Stdin = os.Stdin
+	drop.Stdout = os.Stdout
+	drop.Stderr = os.Stderr
+	drop.Env = os.Environ()
+	drop.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags:  syscall.CLONE_NEWUSER,
+		UidMappings: []syscall.SysProcIDMap{{ContainerID: uid, HostID: 0, Size: 1}},
+		GidMappings: []syscall.SysProcIDMap{{ContainerID: gid, HostID: 0, Size: 1}},
+	}
+	if err := drop.Start(); err != nil {
+		log.Fatalf("_jail_agent_init: start drop stage: %v", err)
+	}
+	// This process is PID 1 of the jail's PID namespace; act as a minimal init —
+	// forward termination signals to the agent and exit with its status.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	go func() {
+		for sig := range sigCh {
+			drop.Process.Signal(sig)
+		}
+	}()
+	if err := drop.Wait(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		log.Fatalf("_jail_agent_init: wait drop stage: %v", err)
+	}
+	os.Exit(0)
+}
+
+// jailAgentDrop (stage 3) runs as the real nonzero uid in a nested user
+// namespace with no capability over the mount namespace. The sealed filesystem
+// and the private procfs the parent installed both stand; it only clamps
+// syscalls and execs the agent.
+func jailAgentDrop(uidStr, gidStr string, command []string) {
+	if len(command) == 0 || command[0] == "" {
+		log.Fatal("_jail_agent_drop: missing command")
+	}
 	logOutput := log.Writer()
 	log.SetOutput(io.Discard)
 	seccompErr := installSeccomp()
@@ -60,7 +135,7 @@ func jailAgentInit(command []string) {
 		failEnforcement("install seccomp", "agent process", seccompErr)
 	}
 	if err := syscall.Exec(command[0], command, os.Environ()); err != nil {
-		log.Fatalf("_jail_agent_init: exec agent: %v", err)
+		log.Fatalf("_jail_agent_drop: exec agent: %v", err)
 	}
 }
 
@@ -328,7 +403,7 @@ func DenyInit(args []string) {
 		// not search PATH and the host-side agent binary itself is intentionally
 		// absent there.
 		resolvedCommand := append([]string{cmd.Path}, cmdArgs[1:]...)
-		initArgs := append([]string{jailAgentInitArg, "--"}, resolvedCommand...)
+		initArgs := append([]string{jailAgentInitArg, strconv.Itoa(uid), strconv.Itoa(gid), "--"}, resolvedCommand...)
 		cmd = exec.Command("/proc/self/exe", initArgs...)
 	}
 	cmd.Stdin = os.Stdin
@@ -345,17 +420,23 @@ func DenyInit(args []string) {
 		// its own namespace the PID-namespace init cannot swap /proc at all —
 		// every mount call fails EPERM (observed on 5.15 shared hosts; masked
 		// on root runs, which skip CLONE_NEWUSER and keep full capabilities).
-		// Inside its own namespace the init may lazily detach the inherited
-		// procfs subtree wholesale, locked children included — the same
-		// operation the wrapper performs on the pivoted old root.
 		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS
+		// Jail mode maps the init to inner-UID 0 so it keeps CAP_SYS_ADMIN across
+		// execve and can swap /proc; _jail_agent_init then drops to the real
+		// nonzero uid via a further nested user namespace before the agent runs.
+		// Non-jail mode has no procfs swap and runs the agent directly, so it
+		// maps straight to the real uid.
+		initUID, initGID := uid, gid
+		if jailMode {
+			initUID, initGID = 0, 0
+		}
 		cmd.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{
-			ContainerID: uid,
+			ContainerID: initUID,
 			HostID:      0, // 0 in our namespace = real uid on host
 			Size:        1,
 		}}
 		cmd.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{
-			ContainerID: gid,
+			ContainerID: initGID,
 			HostID:      0,
 			Size:        1,
 		}}

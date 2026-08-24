@@ -24,6 +24,16 @@ var deniedSyscallsCommon = []uint32{
 	// Original set: filesystem/module/process
 	unix.SYS_MOUNT,
 	unix.SYS_UMOUNT2,
+	// The modern mount API can rearrange mounts too — move_mount in particular
+	// could slide the private /proc aside to reveal what it shadows. The sealed
+	// jail's agent has no capability over the mount namespace so these already
+	// fail EPERM, but deny them outright as defense-in-depth.
+	unix.SYS_MOVE_MOUNT,
+	unix.SYS_OPEN_TREE,
+	unix.SYS_FSOPEN,
+	unix.SYS_FSCONFIG,
+	unix.SYS_FSMOUNT,
+	unix.SYS_MOUNT_SETATTR,
 	unix.SYS_REBOOT,
 	unix.SYS_SWAPON,
 	unix.SYS_SWAPOFF,
