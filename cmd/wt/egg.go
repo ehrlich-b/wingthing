@@ -1423,10 +1423,20 @@ func setupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 		return
 	}
 	v, ok := envMap["ANTHROPIC_API_KEY"]
-	if !ok {
+	if ok {
+		delete(envMap, "ANTHROPIC_API_KEY")
+	} else {
+		// Shared-host mode strips provider creds from the agent env and skips
+		// injecting them into envMap, so the key never reaches this point via
+		// envMap. Source it straight from the roost's own environment: it lands
+		// only in the 0400 helper file below and still never enters the agent's
+		// environment. Without this, authenticated (shared-host) sessions get no
+		// credential and every user is forced to log in manually.
+		v = os.Getenv("ANTHROPIC_API_KEY")
+	}
+	if v == "" {
 		return
 	}
-	delete(envMap, "ANTHROPIC_API_KEY")
 	keyFile := filepath.Join(effectiveHome, ".anthropic_key")
 	os.Remove(keyFile) // remove old 0400 file so WriteFile can create fresh
 	os.WriteFile(keyFile, []byte(v), 0400)
