@@ -37,8 +37,14 @@ func jailAgentInit(command []string) {
 	if len(command) == 0 || command[0] == "" {
 		log.Fatal("_jail_agent_init: missing command")
 	}
+	// Detaching the host procfs is preferred, but a kernel may refuse it when
+	// the bound tree carries locked host submounts (binfmt_misc on 5.15).
+	// Mounting the PID-namespace procfs on top is equally sound: the host
+	// procfs is left shadowed and unreachable, the seccomp filter installed
+	// below denies the agent mount and umount, and verifyPrivateProcfs
+	// asserts the visible /proc belongs to this PID namespace either way.
 	if err := unix.Unmount("/proc", unix.MNT_DETACH); err != nil {
-		failEnforcement("detach host procfs", "/proc", err)
+		log.Printf("_jail_agent_init: detach host procfs refused (%v); overmounting PID-namespace procfs", err)
 	}
 	if err := unix.Mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
 		failEnforcement("mount PID-namespace procfs", "/proc", err)
@@ -872,16 +878,17 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 	// Go writes the nested user namespace's uid_map. The nested PID-namespace
 	// init replaces this mount before it executes the agent.
 	//
-	// Deliberately NOT recursive: a recursive bind drags the host's locked
-	// submounts along (systemd's binfmt_misc autofs under /proc/sys/fs), and a
-	// tree with locked children cannot be MNT_DETACHed inside the user
-	// namespace on older kernels (EPERM on 5.15/Ubuntu 22.04). The wrapper
-	// only needs top-level host PID entries.
+	// The bind must be recursive: the host's binfmt_misc autofs under
+	// /proc/sys/fs is a locked submount in this user namespace, and a
+	// non-recursive bind that would expose what locked mounts cover is
+	// refused (EPERM). Keeping the children also keeps procfs "fully
+	// visible", which the kernel requires before it lets the PID-namespace
+	// init mount a fresh proc.
 	procPath := filepath.Join(newRoot, "proc")
 	if err := os.MkdirAll(procPath, 0555); err != nil {
 		failEnforcement("create jail /proc", "/proc", err)
 	}
-	if err := unix.Mount("/proc", procPath, "", unix.MS_BIND, ""); err != nil {
+	if err := unix.Mount("/proc", procPath, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 		failEnforcement("bind jail /proc", "/proc", err)
 	}
 	devPath := filepath.Join(newRoot, "dev")
