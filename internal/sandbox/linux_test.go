@@ -48,58 +48,76 @@ func TestSeccompFilterStructure(t *testing.T) {
 	filter := buildSeccompFilter()
 	allDenied := append(deniedSyscallsCommon, deniedSyscallsArch...)
 	nDenied := len(allDenied)
+	denyIdx := len(filter) - 1
 
-	// Expected: 1 (load) + nDenied (jeq checks) + 1 (allow) + 1 (deny)
-	wantLen := nDenied + 3
-	if len(filter) != wantLen {
+	// Optional ABI prologue (present when seccompNativeArch != 0): load arch,
+	// allow the native arch through, deny everything else.
+	idx := 0
+	if seccompNativeArch != 0 {
+		if filter[0].Code != unix.BPF_LD|unix.BPF_W|unix.BPF_ABS || filter[0].K != 4 {
+			t.Errorf("filter[0] = code 0x%x K %d, want load of seccomp_data.arch (offset 4)", filter[0].Code, filter[0].K)
+		}
+		if filter[1].Code != unix.BPF_JMP|unix.BPF_JEQ|unix.BPF_K || filter[1].K != seccompNativeArch || filter[1].Jt != 1 {
+			t.Errorf("filter[1] should JEQ native arch 0x%x with Jt=1", seccompNativeArch)
+		}
+		if filter[2].Code != unix.BPF_RET|unix.BPF_K {
+			t.Errorf("filter[2] should deny on non-native arch")
+		}
+		idx = 3
+	}
+
+	// Load syscall number.
+	if filter[idx].Code != unix.BPF_LD|unix.BPF_W|unix.BPF_ABS || filter[idx].K != 0 {
+		t.Errorf("filter[%d] = code 0x%x K %d, want load of seccomp_data.nr (offset 0)", idx, filter[idx].Code, filter[idx].K)
+	}
+	idx++
+
+	// Optional x32 range rejection (present when seccompX32Bit != 0).
+	if seccompX32Bit != 0 {
+		x := filter[idx]
+		if x.Code != unix.BPF_JMP|unix.BPF_JGE|unix.BPF_K || x.K != seccompX32Bit {
+			t.Errorf("filter[%d] should JGE x32 bit 0x%x", idx, seccompX32Bit)
+		}
+		if x.Jt != uint8(denyIdx-idx-1) {
+			t.Errorf("filter[%d] x32 Jt = %d, want %d (jump to deny)", idx, x.Jt, denyIdx-idx-1)
+		}
+		idx++
+	}
+
+	// Each denied-syscall check jumps to the final deny on match.
+	for i := 0; i < nDenied; i++ {
+		p := idx + i
+		inst := filter[p]
+		if inst.Code != unix.BPF_JMP|unix.BPF_JEQ|unix.BPF_K {
+			t.Errorf("filter[%d] code = 0x%x, want BPF_JMP|BPF_JEQ|BPF_K", p, inst.Code)
+		}
+		if inst.K != allDenied[i] {
+			t.Errorf("filter[%d] K = %d, want syscall %d", p, inst.K, allDenied[i])
+		}
+		if inst.Jt != uint8(denyIdx-p-1) {
+			t.Errorf("filter[%d] Jt = %d, want %d (jump to deny)", p, inst.Jt, denyIdx-p-1)
+		}
+		if inst.Jf != 0 {
+			t.Errorf("filter[%d] Jf = %d, want 0 (fall through)", p, inst.Jf)
+		}
+	}
+
+	// Total: prologue (idx) + nDenied checks + allow + deny.
+	if wantLen := idx + nDenied + 2; len(filter) != wantLen {
 		t.Fatalf("filter length = %d, want %d", len(filter), wantLen)
 	}
 
-	// First instruction: load syscall number
-	load := filter[0]
-	if load.Code != unix.BPF_LD|unix.BPF_W|unix.BPF_ABS {
-		t.Errorf("load instruction code = 0x%x, want BPF_LD|BPF_W|BPF_ABS", load.Code)
-	}
-	if load.K != 0 {
-		t.Errorf("load offset = %d, want 0 (seccomp_data.nr)", load.K)
-	}
-
-	// Check each deny-check instruction
-	for i := 0; i < nDenied; i++ {
-		inst := filter[1+i]
-		if inst.Code != unix.BPF_JMP|unix.BPF_JEQ|unix.BPF_K {
-			t.Errorf("filter[%d] code = 0x%x, want BPF_JMP|BPF_JEQ|BPF_K", 1+i, inst.Code)
-		}
-		if inst.K != allDenied[i] {
-			t.Errorf("filter[%d] K = %d, want syscall %d", 1+i, inst.K, allDenied[i])
-		}
-		// Jt should jump to the deny instruction
-		wantJt := uint8(nDenied - i)
-		if inst.Jt != wantJt {
-			t.Errorf("filter[%d] Jt = %d, want %d", 1+i, inst.Jt, wantJt)
-		}
-		if inst.Jf != 0 {
-			t.Errorf("filter[%d] Jf = %d, want 0 (fall through)", 1+i, inst.Jf)
-		}
-	}
-
-	// Allow instruction (second to last)
+	// Allow instruction (second to last).
 	allow := filter[len(filter)-2]
-	if allow.Code != unix.BPF_RET|unix.BPF_K {
-		t.Errorf("allow code = 0x%x, want BPF_RET|BPF_K", allow.Code)
-	}
-	if allow.K != seccompRetAllow {
-		t.Errorf("allow K = 0x%x, want 0x%x", allow.K, seccompRetAllow)
+	if allow.Code != unix.BPF_RET|unix.BPF_K || allow.K != seccompRetAllow {
+		t.Errorf("allow = code 0x%x K 0x%x, want BPF_RET|BPF_K / 0x%x", allow.Code, allow.K, seccompRetAllow)
 	}
 
-	// Deny instruction (last)
-	deny := filter[len(filter)-1]
-	if deny.Code != unix.BPF_RET|unix.BPF_K {
-		t.Errorf("deny code = 0x%x, want BPF_RET|BPF_K", deny.Code)
-	}
+	// Deny instruction (last).
+	deny := filter[denyIdx]
 	wantDenyK := seccompRetErrno | uint32(unix.EPERM)
-	if deny.K != wantDenyK {
-		t.Errorf("deny K = 0x%x, want 0x%x", deny.K, wantDenyK)
+	if deny.Code != unix.BPF_RET|unix.BPF_K || deny.K != wantDenyK {
+		t.Errorf("deny = code 0x%x K 0x%x, want BPF_RET|BPF_K / 0x%x", deny.Code, deny.K, wantDenyK)
 	}
 }
 

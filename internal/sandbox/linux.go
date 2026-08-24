@@ -320,7 +320,11 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 			return nil, fmt.Errorf("trace mode: strace not found in PATH")
 		}
 		traceLog := filepath.Join(s.tmpDir, "strace.log")
-		traceArgs := []string{"-f", "-o", traceLog}
+		// --kill-on-exit sets PTRACE_O_EXITKILL so that when strace (the direct
+		// child here, holding the outer Pdeathsig) is killed, the kernel kills
+		// the sandbox wrapper and its whole jail too. Without it a hard-killed
+		// trace session could leave the jail namespace running detached.
+		traceArgs := []string{"-f", "--kill-on-exit", "-o", traceLog}
 		traceArgs = append(traceArgs, cmd.Path)
 		traceArgs = append(traceArgs, cmd.Args[1:]...)
 		cmd = exec.CommandContext(ctx, straceBin, traceArgs...)
