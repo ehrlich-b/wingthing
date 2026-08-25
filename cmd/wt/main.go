@@ -186,6 +186,7 @@ func runCmd() *cobra.Command {
 	var noRun bool
 	var unsandboxed bool
 	var configFlag string
+	var timeoutFlag time.Duration
 
 	cmd := &cobra.Command{
 		Use:   "run [prompt]",
@@ -240,6 +241,17 @@ func runCmd() *cobra.Command {
 			if agentFlag != "" {
 				t.Agent = agentFlag
 			}
+			if timeoutFlag < 0 {
+				return fmt.Errorf("--timeout must not be negative (got %s); omit it for no timeout", timeoutFlag)
+			}
+			if timeoutFlag > 0 {
+				t.TimeoutSeconds = int(timeoutFlag.Seconds())
+				if t.TimeoutSeconds == 0 {
+					// Sub-second durations would truncate to 0, which means
+					// "no timeout" -- refuse rather than silently unbound it.
+					return fmt.Errorf("--timeout must be at least 1s (got %s)", timeoutFlag)
+				}
+			}
 			if afterFlag != "" {
 				deps, _ := json.Marshal([]string{afterFlag})
 				d := string(deps)
@@ -262,6 +274,7 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&afterFlag, "after", "", "Task ID this task depends on")
 	cmd.Flags().StringVar(&configFlag, "config", "", "Path to egg config")
 	cmd.Flags().BoolVar(&noRun, "no-run", false, "Submit task without running it")
+	cmd.Flags().DurationVar(&timeoutFlag, "timeout", 0, "Kill the task after this long (e.g. 30m). Default: no timeout")
 	cmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "trust the host boundary; run with the full authority of the local OS user")
 	cmd.MarkFlagsMutuallyExclusive("config", "unsandboxed")
 	return cmd

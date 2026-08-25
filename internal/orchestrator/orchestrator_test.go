@@ -452,8 +452,40 @@ func TestBuildAdHocTaskNoMounts(t *testing.T) {
 	if len(result.Mounts) != 0 {
 		t.Errorf("ad-hoc task should have no mounts, got %v", result.Mounts)
 	}
-	if result.Timeout != 120*time.Second {
-		t.Errorf("timeout = %v, want default 120s", result.Timeout)
+	// An ad-hoc task must come back with NO timeout. The runner only arms a
+	// deadline when timeout > 0, so 0 is what keeps a long agent run alive.
+	if result.Timeout != 0 {
+		t.Errorf("timeout = %v, want 0 (no timeout) for an ad-hoc task", result.Timeout)
+	}
+}
+
+// Regression: `wt run <prompt>` is for long-running agent work. A non-zero
+// default here SIGKILLs every real task -- a 120s default silently capped the
+// whole agentic pipeline, and because only skill frontmatter could override it
+// there was no way to raise it from the command line.
+func TestResolveConfigAdHocHasNoTimeoutByDefault(t *testing.T) {
+	cfg := &config.Config{DefaultAgent: "claude"}
+	rc := ResolveConfig(nil, "", "", cfg)
+	if rc.Timeout != 0 {
+		t.Errorf("ad-hoc timeout = %v, want 0 (no timeout)", rc.Timeout)
+	}
+}
+
+// A skill that asks for a bound still gets one.
+func TestResolveConfigSkillTimeoutStillApplies(t *testing.T) {
+	cfg := &config.Config{DefaultAgent: "claude"}
+	rc := ResolveConfig(&skill.Skill{Timeout: "45s"}, "", "", cfg)
+	if rc.Timeout != 45*time.Second {
+		t.Errorf("skill timeout = %v, want 45s", rc.Timeout)
+	}
+}
+
+// An unparseable skill timeout must not silently inherit some other bound.
+func TestResolveConfigBadSkillTimeoutFallsBackToNoTimeout(t *testing.T) {
+	cfg := &config.Config{DefaultAgent: "claude"}
+	rc := ResolveConfig(&skill.Skill{Timeout: "not-a-duration"}, "", "", cfg)
+	if rc.Timeout != 0 {
+		t.Errorf("bad skill timeout = %v, want 0 (no timeout)", rc.Timeout)
 	}
 }
 
