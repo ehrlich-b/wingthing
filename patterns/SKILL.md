@@ -17,12 +17,15 @@ Choose a pattern first by who drives the work, then by where it executes.
   [shared web roost](shared-web-roost/INSTRUCTIONS.md).
 - LLM, shared host: read
   [shared roost agents](shared-roost-agents/INSTRUCTIONS.md).
-- Human or LLM, several independent remote roosts: read
+- LLM, several wings behind one coordinator: read
   [remote orchestration](remote-orchestration/INSTRUCTIONS.md).
+- Human or LLM, several independent self-hosted roosts: read
+  [independent roosts](independent-roosts/INSTRUCTIONS.md).
 
-The missing pattern is deliberate: an HTTP MCP client connected to a portal
-cannot yet select one of that portal's external wings. Do not present personal
-remote LLM control through `wingthing.ai` as shipped.
+Keep two remote contracts distinct. Native `wt mcp connect` can select external
+wings returned by one coordinator. An HTTP MCP client connected to a roost still
+controls only that roost's embedded wing. Independent roosts are separate named
+client targets; their directories do not federate.
 
 For every pattern, state these six placements before changing the host:
 

@@ -101,7 +101,7 @@ func CheckCapability() (bool, string) {
 	})
 	log.SetOutput(prev)
 	if err != nil {
-		return false, platformHelp()
+		return false, err.Error() + ". " + platformHelp()
 	}
 	s.Destroy()
 	return true, ""
@@ -124,8 +124,13 @@ func platformHelp() string {
 					"then run: sudo /usr/local/bin/wt doctor --fix"
 			}
 		}
-		return "Linux: your system does not allow unprivileged user namespaces, which wt needs to sandbox agents. " +
-			"Fix: sudo sysctl -w kernel.unprivileged_userns_clone=1 (or run: sudo wt egg claude)"
+		if val, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone"); err == nil && strings.TrimSpace(string(val)) != "1" {
+			return "Linux: unprivileged user namespaces are disabled. Fix: sudo sysctl -w kernel.unprivileged_userns_clone=1"
+		}
+		if val, err := os.ReadFile("/proc/sys/user/max_user_namespaces"); err == nil && strings.TrimSpace(string(val)) == "0" {
+			return "Linux: user.max_user_namespaces=0; raise that limit before running sandboxed agents"
+		}
+		return "Linux: a required namespace or mount operation was rejected; use the probe operation and OS error above to diagnose the host policy"
 	default:
 		return fmt.Sprintf("platform %s: no sandbox backend available", runtime.GOOS)
 	}

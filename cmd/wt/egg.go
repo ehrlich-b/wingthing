@@ -515,6 +515,12 @@ func explainPolicyWithProvider(cfg *egg.EggConfig, agentName, home, source, prov
 		Derived:      make([]explainedHole, 0, len(resolved.Derived)),
 		Suppressed:   make([]explainedHole, 0, len(resolved.Suppressed)),
 	}
+	if isolation == "outer-boundary" {
+		// There is no wingthing network namespace or proxy boundary in this
+		// mode. In particular, do not claim Linux proxy enforcement merely
+		// because the resolved (unconfined) policy asks for full networking.
+		p.Enforcement = "unrestricted"
+	}
 	if p.LocalPorts == nil {
 		p.LocalPorts = []int{}
 	}

@@ -30,6 +30,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestSharedHostAgentRunUsesSealedJail(t *testing.T) {
+	const providerKey = "shared-provider-key-canary"
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	stateDir := filepath.Join(root, "wingthing-state")
@@ -66,6 +67,7 @@ func TestSharedHostAgentRunUsesSealedJail(t *testing.T) {
 	}
 	t.Setenv("PATH", fixtureBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("WT_SHARED_HOST_SECRET", "must-not-cross-the-boundary")
+	t.Setenv("ANTHROPIC_API_KEY", providerKey)
 
 	cfg := &config.Config{Dir: stateDir, DefaultAgent: "claude", WingID: "fixture-wing"}
 	taskStore, err := store.Open(cfg.DBPath())
@@ -106,6 +108,10 @@ func TestSharedHostAgentRunUsesSealedJail(t *testing.T) {
 	}
 	if string(marker) != "workspace-visible" {
 		t.Fatalf("workspace marker = %q", marker)
+	}
+	helper, err := os.ReadFile(filepath.Join(userHome, ".anthropic_key"))
+	if err != nil || string(helper) != providerKey {
+		t.Fatalf("shared provider helper = %q, err=%v", helper, err)
 	}
 	stored, err := taskStore.GetTask(task.ID)
 	if err != nil {
@@ -157,6 +163,7 @@ func TestPrepareSharedAgentHomeCreatesOwnerOnlyParentTree(t *testing.T) {
 }
 
 func runSharedHostFixtureAgent(args []string) int {
+	const providerKey = "shared-provider-key-canary"
 	prompt := argumentValue(args, "-p")
 	workspace := promptFixtureValue(prompt, "workspace")
 	secretPath := promptFixtureValue(prompt, "secret")
@@ -173,6 +180,21 @@ func runSharedHostFixtureAgent(args []string) int {
 		}
 		if os.Getenv("WT_SHARED_HOST_SECRET") != "" {
 			result = "environment-leaked"
+		}
+		if os.Getenv("ANTHROPIC_API_KEY") != "" {
+			result = "provider-environment-leaked"
+		}
+		settingsData, settingsErr := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".claude", "settings.json"))
+		var settings map[string]any
+		if settingsErr != nil || json.Unmarshal(settingsData, &settings) != nil {
+			result = "provider-helper-settings-missing"
+		} else {
+			helper, _ := settings["apiKeyHelper"].(string)
+			wantHelper := "cat " + filepath.Join(os.Getenv("HOME"), ".anthropic_key")
+			key, keyErr := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".anthropic_key"))
+			if helper != wantHelper || keyErr != nil || string(key) != providerKey {
+				result = "provider-helper-unusable"
+			}
 		}
 		if err := os.WriteFile(filepath.Join(workspace, "agent-wrote-here"), []byte("workspace-visible"), 0o600); err != nil {
 			result = "workspace-read-only"

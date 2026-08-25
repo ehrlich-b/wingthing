@@ -78,8 +78,8 @@ type linuxSandbox struct {
 // newPlatform tries to create a namespace+seccomp sandbox.
 // Returns an error if capabilities are insufficient so the factory falls back.
 func newPlatform(cfg Config) (Sandbox, error) {
-	if !hasNamespaceCapability() {
-		return nil, fmt.Errorf("linux sandbox: required user, mount, PID, or network namespace operation is unavailable")
+	if err := namespaceCapabilityError(); err != nil {
+		return nil, fmt.Errorf("linux sandbox capability probe: %w", err)
 	}
 
 	dir, err := os.MkdirTemp("", "wt-sandbox-*")
@@ -97,9 +97,9 @@ func newPlatform(cfg Config) (Sandbox, error) {
 	return &linuxSandbox{cfg: cfg, tmpDir: dir, cgroup: cg}, nil
 }
 
-func hasNamespaceCapability() bool {
+func namespaceCapabilityError() error {
 	if os.Geteuid() == 0 {
-		return true
+		return nil
 	}
 	// Check CAP_SYS_ADMIN via capget. Use VERSION_1 which needs only one
 	// CapUserData struct (VERSION_3 requires [2]CapUserData — passing a single
@@ -111,13 +111,13 @@ func hasNamespaceCapability() bool {
 	hdr.Pid = 0 // current process
 	if err := unix.Capget(&hdr, &data); err == nil {
 		if data.Effective&(1<<unix.CAP_SYS_ADMIN) != 0 {
-			return true
+			return nil
 		}
 	}
 	// Check unprivileged user namespaces sysctl (fast reject if explicitly disabled).
 	if val, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone"); err == nil {
 		if strings.TrimSpace(string(val)) != "1" {
-			return false
+			return fmt.Errorf("kernel.unprivileged_userns_clone=%q", strings.TrimSpace(string(val)))
 		}
 		// Sysctl says enabled, but AppArmor may still block it (Ubuntu 24.04+,
 		// kernel 6.1+ with apparmor_restrict_unprivileged_userns=1).
@@ -151,16 +151,16 @@ func init() {
 // _deny_init, then asks the child to make the root private, create and remount
 // a read-only bind mask, and mount tmpfs. These are the filesystem primitives
 // the sandbox depends on for deny paths and write isolation.
-func probeMountNamespace() bool {
+func probeMountNamespace() error {
 	probeDir, err := os.MkdirTemp("", "wt-userns-probe-")
 	if err != nil {
-		return false
+		return fmt.Errorf("create probe directory: %w", err)
 	}
 	defer os.RemoveAll(probeDir)
 
 	exe, err := os.Executable()
 	if err != nil {
-		return false
+		return fmt.Errorf("resolve probe executable: %w", err)
 	}
 	cmd := exec.Command(exe, mountProbeArg, probeDir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -176,7 +176,15 @@ func probeMountNamespace() bool {
 			Size:        1,
 		}},
 	}
-	return cmd.Run() == nil
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			return fmt.Errorf("start user+mount+network namespace probe: %w", err)
+		}
+		return fmt.Errorf("user+mount+network namespace probe: %w: %s", err, detail)
+	}
+	return nil
 }
 
 func runMountProbe(probeDir string) error {

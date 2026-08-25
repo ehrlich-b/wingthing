@@ -24,6 +24,7 @@ wt attach
 ```
 
 The selected project and any untracked files must already exist on the remote
-machine. Wingthing does not synchronize them. The hosted HTTP MCP endpoint
-cannot yet select this external wing, so this is currently a human-driven
-pattern.
+machine. Wingthing does not synchronize them. The browser path is human-driven;
+a parent LLM can select the same external wing through the native direct-MCP
+connector described in the remote-wings pattern. The hosted HTTP MCP endpoint
+still controls only its own roost's embedded wing.

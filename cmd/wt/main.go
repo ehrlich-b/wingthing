@@ -390,6 +390,12 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		s.SetTaskError(t.ID, err.Error())
 		return err
 	}
+	agentDefinition, ok := agent.LookupDefinition(agentName)
+	if !ok {
+		err := fmt.Errorf("unsupported agent %q", agentName)
+		s.SetTaskError(t.ID, err.Error())
+		return err
+	}
 
 	// Create sandbox unless isolation is privileged
 	workDir := t.CWD
@@ -490,15 +496,19 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			return fmt.Errorf("prepare %s state: %w", agentName, stateErr)
 		}
 		if options.SharedHost {
-			agentBin, lookupErr := exec.LookPath(agentName)
+			agentBin, lookupErr := exec.LookPath(agentDefinition.Command)
 			if lookupErr != nil {
 				s.SetTaskError(t.ID, lookupErr.Error())
-				return fmt.Errorf("find shared-host %s runtime: %w", agentName, lookupErr)
+				return fmt.Errorf("find shared-host %s runtime: %w", agentDefinition.Command, lookupErr)
 			}
-			if installErr := installSharedAgentBinary(agentBin, home, agentName); installErr != nil {
+			if installErr := installSharedAgentBinary(agentBin, home, agentDefinition.Command); installErr != nil {
 				s.SetTaskError(t.ID, installErr.Error())
 				return fmt.Errorf("prepare shared-host %s runtime: %w", agentName, installErr)
 			}
+			// Shared-host tasks intentionally drop ambient provider credentials.
+			// Give Claude the same file-backed helper used by interactive org
+			// sessions so the secret never enters the agent environment.
+			setupAPIKeyHelper(agentName, map[string]string{}, home)
 		}
 
 		mountPaths := taskSandboxMountPaths(pr.Mounts, workDir, options)
@@ -535,7 +545,11 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		sandboxDiagnosticPath = sb.DiagLog()
 		agentEnv := directAgentEnvWithPolicy(agentName, home, sbCfg.ProxyPort, !options.SharedHost)
 		runOpts.CmdFactory = func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
-			cmd, execErr := sb.Exec(ctx, name, args)
+			executable, resolveErr := sandboxAgentExecutable(name, home, options.SharedHost)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			cmd, execErr := sb.Exec(ctx, executable, args)
 			if execErr != nil {
 				return nil, execErr
 			}

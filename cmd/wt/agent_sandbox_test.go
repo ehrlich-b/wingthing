@@ -236,6 +236,37 @@ func TestSharedHostDirectAgentEnvDropsAmbientProviderCredentials(t *testing.T) {
 	}
 }
 
+func TestSandboxAgentExecutableUsesOwnerScopedSharedRuntime(t *testing.T) {
+	home := t.TempDir()
+	command := filepath.Join(home, ".local", "bin", "claude")
+	if err := os.MkdirAll(filepath.Dir(command), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(command, []byte("fixture"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := sandboxAgentExecutable("claude", home, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != command {
+		t.Fatalf("shared executable = %q, want %q", got, command)
+	}
+	if _, err := sandboxAgentExecutable("missing", home, true); err == nil {
+		t.Fatal("missing shared runtime was accepted")
+	}
+}
+
+func TestSandboxAgentExecutableResolvesHostCommandForPersonalTask(t *testing.T) {
+	got, err := sandboxAgentExecutable("sh", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("personal executable = %q, want absolute path", got)
+	}
+}
+
 func TestSharedHostDirectAgentUsesAllowlistJail(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "")
 	home := t.TempDir()

@@ -1082,12 +1082,10 @@ func TestSealedJailNonRoot(t *testing.T) {
 		t.Skip("must run as root to su to the non-root test user")
 	}
 	testUser, testUserHome := configuredTestUser(t)
-	// Gate on the REAL namespace capability, not `wt doctor`: on kernel 6.8 hosts
-	// with userns enabled and no AppArmor profiles (bryan-wingthing and prod),
-	// `wt doctor` reports the sandbox NOT AVAILABLE even though unprivileged
-	// user+pid+mount namespaces work and real sessions launch — a doctor-probe
-	// false negative (tracked separately). If the host genuinely cannot create
-	// these namespaces, skip; the failure path is TestSandboxFailsWithClearError…
+	// Gate on the namespace primitive itself so container runtimes that reject
+	// non-root uid mappings skip this host-incompatible success path. Once the
+	// primitive works, any later `wt` preflight failure is a product regression
+	// and must fail below rather than being mistaken for a host limitation.
 	if !userCanCreateJailNamespaces(t, testUser) {
 		t.Skipf("%s cannot create user+pid+mount namespaces on this host; sealed-jail success path is not exercisable here", testUser)
 	}
@@ -1132,17 +1130,10 @@ func TestSealedJailNonRoot(t *testing.T) {
 	resultsPath := filepath.Join(cwd, "test-results.json")
 	data, readErr := os.ReadFile(resultsPath)
 	if readErr != nil {
-		// Distinguish a KNOWN separate bug from the regression this test guards.
-		// `wt egg run`'s pre-flight sandbox.CheckCapability() (hasNamespaceCapability
-		// -> probeMountNamespace) false-negatives for a non-root user invoking wt
-		// directly, refusing with "sandbox not available" even on hosts where the
-		// namespaces work and the roost daemon runs sealed sessions fine. That is a
-		// capability-probe defect, NOT the jail failing — skip rather than red-fail,
-		// and fix the probe to exercise this end-to-end here.
-		if strings.Contains(out, "sandbox not available") {
-			t.Skipf("blocked by the CheckCapability false-negative for direct non-root invocation (separate probe bug, not the jail):\n%s", out)
-		}
-		// Otherwise the agent genuinely never launched — the v0.144.0 failure mode.
+		// A failed preflight is part of the product path, not grounds to skip the
+		// isolation test. This caught bryan-wingthing's non-writable /tmp: the old
+		// generic userns message hid the real mkdir failure and this test silently
+		// skipped even though every new org-mode run was broken.
 		t.Fatalf("sealed jail agent never launched / wrote no results (the v0.144.0 failure mode)\nsu/wt err: %v\noutput:\n%s", runErr, out)
 	}
 	var results probeResults

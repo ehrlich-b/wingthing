@@ -7,6 +7,7 @@ Last reviewed: 2026-08-25
 Related designs:
 
 - [Direct agent manager and coordination-only free tier](direct-agent-manager-design.md)
+- [Bryan direct-control field report](bryan-wingthing-direct-control-field-report.md)
 - [Roost deployment model](roost_design.md)
 - [Local agent meta-layer](agent-meta-layer.md)
 - [MCP service accounts and API credentials](mcp-service-accounts-design.md)
@@ -106,6 +107,23 @@ Agent memory and project instructions should not accidentally depend on the fold
 from which a client was launched. Connecting to another wing can deliberately sync
 or mount declared context without copying secrets or unapproved files.
 
+## Slack-derived workflow map
+
+The current `/patterns` page turns the recurring requests into installable recipes.
+This table keeps the underlying asks and the honest current composition together.
+
+| Requested workflow | How to do it now | Pattern or gap |
+| --- | --- | --- |
+| One office VM and one home VM, durable Claude/Codex sessions, one parent-agent inventory | Register both wings with one coordinator; run `wt mcp connect`; call `wing_list`; qualify every operation with `wing_id`. | `remote-orchestration`; working direct MCP, physical two-host field canary still due. |
+| The same multi-machine view for a person, without trusting public payload relay | Run one private roost behind a VPN/tailnet and valid HTTPS, then register the wings with its gateway. Hosted free accounts get coordination/direct MCP; hosted browser relay is Pro/grandfathered. | `shared-web-roost`; browser-direct transport and roost federation remain gaps. |
+| Run shell setup, make a directory or Git worktree, then launch the chosen agent there | Use an existing idempotent setup script through `terminal_start`, wait for its completion canary, then call `agent_run` or `agent_start` with the resulting `cwd`. | Compose now; typed `workspace_prepare`/worktree lifecycle is P0. |
+| Let an outer agent supervise inner Claude, Codex, OpenCode, or another worker | Register local stdio MCP or the native direct connector; use semantic start/status/wait/result/steer/stop plus durable messages. | `local-subagents` and `remote-orchestration`; working. |
+| Choose agent configuration, nested sandbox, remote access, or an outer VM/container independently | Use ordinary egg policy for the nested boundary, or explicitly declare trusted outer-boundary mode when the VM/container is the sandbox. | `local-sandbox`; remote outer-boundary policy parity remains partial. |
+| Scheduled log/error review using Prometheus, Grafana, OpenSearch, or databases, followed by a Slack report | Put data access behind authenticated MCP tools. Local scheduled tasks exist, but remote schedule CRUD, revocable service identities, and typed delivery are not shipped. | P1 automation gap. |
+| Let local agents use governed Jira/log/database/context connectors | Add the authenticated roost/context-service HTTP MCP endpoint to the local client; keep connector ACLs and audit at that service. | `shared-roost-agents`; working for configured tools. |
+| Build and publish a dashboard or small internal app from the agent's result | Wingthing manages the agents, workspace, context, and evidence; hand the artifact to a separate internal hosting product. | Explicit non-goal for Wingthing itself. |
+| Pair independently administered home and office roosts once, then browse one merged inventory | Add them as separately named MCP servers today. True peer directory/identity federation is not implemented. | `independent-roosts`; federation gap. |
+
 ## Supported topology today
 
 The shortest viable private multi-machine topology is one gateway, not peer
@@ -132,7 +150,7 @@ and routing that do not exist yet.
 | --- | --- | --- |
 | Durable local Claude/Codex/OpenCode sessions | Working | Persistent PTYs and semantic agent runs survive client disconnects; the default idle timeout is disabled. |
 | Local agent orchestrates agents | Working | `wt mcp stdio` exposes typed terminal, agent-run, message, sandbox, prompt, loop, and swarm controls. |
-| Remote agent controls multiple wings | Implemented, not field-proven | `wt mcp connect` exposes an access-filtered roster and requires `wing_id` for wing-owned operations over direct WebRTC. Wing-local grants, member paths, owner scoping, and reconnect-resistant process bounds are enforced. A black-box JSON-RPC/two-WebRTC canary now proves qualified routing and reconnect persistence in one test process; there is no full two-host, published-client canary yet. |
+| Remote agent controls multiple wings | Field-proven on one real wing; two-wing routing proven in-process | `wt mcp connect` exposed Bryan through direct WebRTC to a real Claude Sonnet orchestrator. Terminal and semantic-run state survived connector and roost restarts. The black-box JSON-RPC/two-WebRTC canary proves qualified routing across two wings; a physical home-plus-office canary is still outstanding. |
 | Mixed agent backends | Working | Claude, Codex, Cursor, Gemini, Hermes, Ollama, and OpenCode adapters exist. |
 | Long-running semantic runs | Working | Start, status, events, wait, result, steer, and stop operations exist. |
 | Unified human browser | Entitled/self-hosted only | Pro, grandfathered, or private-roost users can retain the relay browser. A new hosted free account receives setup/readiness UI and no session inventory. |

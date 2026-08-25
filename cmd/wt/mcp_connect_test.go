@@ -152,7 +152,10 @@ func (h *connectMCPStdioHarness) tool(name string, arguments map[string]any) map
 	h.nextID++
 	request := map[string]any{
 		"jsonrpc": "2.0", "id": id, "method": "tools/call",
-		"params": map[string]any{"name": name, "arguments": arguments},
+		"params": map[string]any{
+			"name": name, "arguments": arguments,
+			"_meta": map[string]any{"progressToken": fmt.Sprintf("claude-%d", id)},
+		},
 	}
 	if err := json.NewEncoder(h.input).Encode(request); err != nil {
 		h.t.Fatal(err)

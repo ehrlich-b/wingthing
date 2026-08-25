@@ -262,7 +262,7 @@ func TestPatternsPageDocumentsAvailability(t *testing.T) {
 	if _, err := io.Copy(body, resp.Body); err != nil {
 		t.Fatalf("read /patterns: %v", err)
 	}
-	for _, want := range []string{"use it as a local sandbox", "give your AI sandboxed sub-agents", "share a roost over the web", "orchestrate work on remote hosts"} {
+	for _, want := range []string{"use it as a local sandbox", "give your AI sandboxed sub-agents", "share a roost over the web", "orchestrate work on remote wings", "scheduled log review -> Slack", "compose independent roosts"} {
 		if !strings.Contains(body.String(), want) {
 			t.Errorf("/patterns does not contain %q", want)
 		}
@@ -279,6 +279,7 @@ func TestPatternMarkdownRoutesServeCheckedInRecipes(t *testing.T) {
 		"/patterns/shared-web-roost/INSTRUCTIONS.md",
 		"/patterns/shared-roost-agents/INSTRUCTIONS.md",
 		"/patterns/remote-orchestration/INSTRUCTIONS.md",
+		"/patterns/independent-roosts/INSTRUCTIONS.md",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -457,10 +458,10 @@ func TestWSHostRouting(t *testing.T) {
 	token, _ := createTestToken(t, store, "dev1")
 
 	tests := []struct {
-		name   string
-		host   string
-		path   string
-		want   int
+		name string
+		host string
+		path string
+		want int
 	}{
 		{"ws host /health allowed", "ws.test.local", "/health", 200},
 		{"ws host /auth/check allowed", "ws.test.local", "/auth/check?token=" + token, 200},

@@ -1,28 +1,46 @@
-# Orchestrate work across remote roosts
+# Orchestrate work across remote wings
 
-This is client-side composition, not roost federation. Add each independent
-self-hosted roost as a separate MCP server. The MCP server name is the explicit
-execution target visible to the parent LLM.
+This pattern gives one parent LLM an access-filtered inventory of personal or
+organization wings registered with the same coordinator. MCP payloads travel
+over a direct WebRTC connection to the selected wing; the coordinator handles
+login, directory lookup, key exchange, and signaling.
 
-```sh
-codex mcp add build-roost --url https://build.example.com/mcp
-codex mcp add gpu-roost --url https://gpu.example.com/mcp
-codex mcp login build-roost
-codex mcp login gpu-roost
-```
-
-The same pattern works in Claude Code:
+Install Wingthing on every execution host, log each wing into the same portal,
+and keep the wing daemon running:
 
 ```sh
-claude mcp add --scope user --transport http build-roost https://build.example.com/mcp
-claude mcp add --scope user --transport http gpu-roost https://gpu.example.com/mcp
+curl -fsSL https://wingthing.ai/install.sh | sh
+wt login
+wt start
 ```
 
-Choose the roost by its MCP server name. Call `wingthing_capabilities` on that
-server before starting work. The authenticated user owns the work created
-through that connection.
+On the machine running the parent agent, log in once and register the native
+connector as a local MCP process.
 
-Each `cwd` must already exist on the selected roost's embedded wing. Wingthing
-does not discover peer roosts, copy workspaces, reconcile durable memory, or
-merge identities across portals. Use distinct names and treat each portal's
-OAuth identity, capabilities, and resource IDs as a separate trust boundary.
+```sh
+# Codex
+codex mcp add wingthing -- wt mcp connect --client codex
+
+# Claude Code
+claude mcp add --scope user wingthing -- wt mcp connect --client claude
+```
+
+Ask the parent to call `wing_list`. Every wing-owned tool call must include the
+returned `wing_id`; there is no mutable current-wing state. Use `agent_run` for
+a semantic headless result or `agent_start`/`terminal_start` for a persistent
+session that a person may later inspect.
+
+Each `cwd` must already exist on the selected wing. A parent can use a terminal
+to run a bounded project-setup or worktree script and then launch an agent in the
+resulting path, but Wingthing does not yet expose an atomic typed worktree object.
+It does not synchronize workspaces or durable memory between wings.
+
+The first native release expects a shared LAN or tailnet unless ICE servers are
+configured. It never silently falls back to hosted payload relay. Locked and
+per-user-passkey-protected wings reject native control until the connector has a
+passkey ceremony. A wing owner can require direct-only operation with:
+
+```sh
+wt wing config set hosted_relay=deny
+wt stop && wt start
+```

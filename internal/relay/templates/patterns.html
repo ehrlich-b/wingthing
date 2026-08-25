@@ -3,6 +3,7 @@
 <style>
 .patterns{max-width:980px;margin:0 auto;padding:18px 8px 40px}
 .patterns h1{font-size:28px;letter-spacing:-0.03em;margin-bottom:8px}
+.patterns h3{font-size:20px;letter-spacing:-0.02em;margin:34px 0 10px}
 .patterns .lead{max-width:760px;color:var(--text-dim);font-size:15px;line-height:1.7;margin-bottom:30px}
 .piece-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0 28px}
 .piece{background:var(--bg-card);border:1px solid var(--accent);border-radius:7px;padding:16px}
@@ -56,6 +57,21 @@
 <tr><td>human or LLM</td><td>several independent roosts</td><td>named client targets</td><td><span class="state shipped">client-side</span></td></tr>
 </table>
 
+<h3>the workflows people are asking for</h3>
+<p class="placement">These are separate compositions of the same pieces. The state is explicit so a recipe does not imply a feature that only exists in a design.</p>
+<table class="matrix">
+<tr><th>wanted workflow</th><th>how to do it now</th><th>state</th></tr>
+<tr><td>home + office agents, one LLM inventory</td><td>register both wings with one coordinator; use <code>wt mcp connect</code>, <code>wing_list</code>, and explicit <code>wing_id</code></td><td><span class="state shipped">shipped</span></td></tr>
+<tr><td>long-running Claude/Codex with human takeover</td><td>use <code>agent_run</code> for semantic work or <code>agent_start</code> for a durable attachable terminal</td><td><span class="state shipped">shipped</span></td></tr>
+<tr><td>create a directory/worktree, set it up, then launch</td><td>run the existing setup script in a terminal, wait for its canary, then launch with that <code>cwd</code></td><td><span class="state shipped">compose now</span></td></tr>
+<tr><td>private web UI behind VPN/tailnet</td><td>run one roost, terminate HTTPS at nginx/Caddy or a tailnet proxy, and register the wings with its gateway</td><td><span class="state shipped">shipped</span></td></tr>
+<tr><td>bring your own VM/container boundary</td><td>use trusted outer-boundary mode locally; keep the VM's egress and identity policy explicit</td><td><span class="state shipped">partial</span></td></tr>
+<tr><td>scheduled log review -> Slack</td><td>local scheduled tasks exist; remote schedule controls, service identities, and typed delivery are still required</td><td><span class="state gap">gap</span></td></tr>
+<tr><td>Jira/logs/DB/context for local agents</td><td>connect the agent to an authenticated roost/context-service HTTP MCP surface</td><td><span class="state shipped">shipped</span></td></tr>
+<tr><td>host the generated dashboard/app</td><td>publish through a separate internal hosting product; Wingthing manages the agents and context</td><td><span class="state gap">not Wingthing</span></td></tr>
+<tr><td>pair independent roosts into one browser</td><td>use separate named MCP targets today; peer directory federation remains unimplemented</td><td><span class="state gap">gap</span></td></tr>
+</table>
+
 <div class="pattern-list">
 <section class="pattern">
 <div class="pattern-num">01</div>
@@ -104,11 +120,20 @@
 
 <section class="pattern">
 <div class="pattern-num">06</div>
-<div class="pattern-tags"><span class="pattern-tag">human or LLM</span><span class="pattern-tag">several roosts</span></div>
-<div class="pattern-head"><h2>orchestrate work on remote hosts</h2></div>
+<div class="pattern-tags"><span class="pattern-tag">LLM</span><span class="pattern-tag">several wings</span></div>
+<div class="pattern-head"><h2>orchestrate work on remote wings</h2></div>
 <p>Run <code>wt mcp connect</code> once and let the parent agent call <code>wing_list</code>. Every remote operation names a <code>wing_id</code>; its payload travels over the direct peer connection to that machine.</p>
 <div class="flow">parent agent -> local connector -> selected wing -> durable agent</div>
 <div class="recipe-row"><a href="/patterns/remote-orchestration/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/remote-orchestration/INSTRUCTIONS.md">copy markdown</button></div>
+</section>
+
+<section class="pattern">
+<div class="pattern-num">07</div>
+<div class="pattern-tags"><span class="pattern-tag">human or LLM</span><span class="pattern-tag">several roosts</span></div>
+<div class="pattern-head"><h2>compose independent roosts</h2></div>
+<p>Add each roost as a separately named HTTP MCP target. This gives a parent agent explicit targets today; it is client-side composition, not peer directory federation or one browser inventory.</p>
+<div class="flow">parent agent -> named roost MCP -> embedded wing</div>
+<div class="recipe-row"><a href="/patterns/independent-roosts/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/independent-roosts/INSTRUCTIONS.md">copy markdown</button></div>
 </section>
 </div>
 </main>

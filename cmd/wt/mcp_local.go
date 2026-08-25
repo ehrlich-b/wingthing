@@ -178,6 +178,15 @@ type localMCPRequest struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
+// MCP clients may attach protocol metadata such as progress tokens to a tool
+// call. It is coordinator metadata, not a tool argument, so accept it at the
+// envelope boundary while keeping strict decoding for every other field.
+type localMCPToolCallParams struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+	Meta      json.RawMessage `json:"_meta,omitempty"`
+}
+
 type localMCPResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -284,10 +293,7 @@ func (s *localMCPServer) handle(ctx context.Context, request localMCPRequest) (l
 		}
 		response.Result = map[string]any{"tools": tools}
 	case "tools/call":
-		var call struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-		}
+		var call localMCPToolCallParams
 		if err := decodeStrict(request.Params, &call); err != nil {
 			response.Error = &localMCPError{Code: -32602, Message: "invalid tools/call params: " + err.Error()}
 			break

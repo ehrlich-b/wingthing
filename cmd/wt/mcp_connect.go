@@ -150,10 +150,7 @@ func (s *connectMCPServer) handle(ctx context.Context, request localMCPRequest) 
 	case "tools/list":
 		response.Result = map[string]any{"tools": control.Tools(control.SurfaceDirectMCP)}
 	case "tools/call":
-		var call struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-		}
+		var call localMCPToolCallParams
 		if err := decodeStrict(request.Params, &call); err != nil || call.Name == "" {
 			message := "name is required"
 			if err != nil {

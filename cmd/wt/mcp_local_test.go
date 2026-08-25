@@ -28,7 +28,7 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"wingthing_capabilities","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"wingthing_capabilities","arguments":{},"_meta":{"progressToken":"claude-code"}}}`,
 	}, "\n") + "\n"
 	var output bytes.Buffer
 	server := &localMCPServer{
@@ -129,6 +129,17 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	}
 	if got := len(contract["operations"].([]any)); got != len(listed.Result.Tools) {
 		t.Fatalf("capability operations = %d, listed tools = %d", got, len(listed.Result.Tools))
+	}
+}
+
+func TestMCPToolCallParamsStillRejectUnknownEnvelopeFields(t *testing.T) {
+	server := &localMCPServer{}
+	response, _ := server.handle(context.Background(), localMCPRequest{
+		JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/call",
+		Params: json.RawMessage(`{"name":"wingthing_capabilities","arguments":{},"_meta":{"progressToken":"ok"},"surprise":true}`),
+	})
+	if response.Error == nil || response.Error.Code != -32602 || !strings.Contains(response.Error.Message, `unknown field "surprise"`) {
+		t.Fatalf("unknown tool-call envelope field response = %#v", response)
 	}
 }
 

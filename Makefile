@@ -79,11 +79,15 @@ proto:
 	protoc -I proto --go_out=paths=source_relative:internal/egg/pb --go-grpc_out=paths=source_relative:internal/egg/pb proto/egg.proto
 
 # Deploy artifacts target the x86-64 shared hosts by default. Security tests use
-# the local machine's native architecture because qemu/Rosetta translate
-# syscall numbers below seccomp and produce invalid sandbox results.
+# the Docker daemon's native architecture because qemu/Rosetta translate
+# syscall numbers below seccomp and produce invalid sandbox results. The daemon
+# may differ from the CLI host (for example an amd64 Colima VM on an arm64 Mac).
 HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
 LINUX_ARCH ?= amd64
-LINUX_TEST_ARCH ?= $(HOST_ARCH)
+DOCKER_ARCH := $(shell arch=$$(docker info --format '{{.Architecture}}' 2>/dev/null); \
+	if [ -n "$$arch" ]; then echo "$$arch" | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/'; \
+	else echo $(HOST_ARCH); fi)
+LINUX_TEST_ARCH ?= $(DOCKER_ARCH)
 
 build-linux: | web/dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go build -buildvcs=false \
@@ -109,9 +113,7 @@ build-linux-wt-tests: | web/dist
 # (for example an arm64 Mac pointed at an amd64 Colima/remote daemon). Fall back
 # to the host only when Docker is unavailable; test-web itself will then report
 # the ordinary daemon error.
-WEB_TEST_ARCH ?= $(shell arch=$$(docker info --format '{{.Architecture}}' 2>/dev/null); \
-	if [ -n "$$arch" ]; then echo "$$arch" | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/'; \
-	else echo $(HOST_ARCH); fi)
+WEB_TEST_ARCH ?= $(DOCKER_ARCH)
 
 build-web-e2e: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) go build -buildvcs=false \
@@ -122,8 +124,8 @@ test-web: build-web-e2e
 	test/web/run.sh
 
 test-linux:
-	@if [ "$(LINUX_TEST_ARCH)" != "$(HOST_ARCH)" ]; then \
-		echo "cross-architecture seccomp tests are invalid (host=$(HOST_ARCH), requested=$(LINUX_TEST_ARCH)); run this battery on a native $(LINUX_TEST_ARCH) host"; \
+	@if [ "$(LINUX_TEST_ARCH)" != "$(DOCKER_ARCH)" ]; then \
+		echo "cross-architecture seccomp tests are invalid (docker=$(DOCKER_ARCH), requested=$(LINUX_TEST_ARCH)); run this battery on a native $(LINUX_TEST_ARCH) Docker daemon"; \
 		exit 1; \
 	fi
 	$(MAKE) LINUX_ARCH=$(LINUX_TEST_ARCH) build-linux build-mock-agent build-linux-tests build-linux-sandbox-tests build-linux-wt-tests
@@ -132,8 +134,8 @@ test-linux:
 		'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s'
 
 test-linux-ubuntu:
-	@if [ "$(LINUX_TEST_ARCH)" != "$(HOST_ARCH)" ]; then \
-		echo "cross-architecture seccomp tests are invalid (host=$(HOST_ARCH), requested=$(LINUX_TEST_ARCH)); run this battery on a native $(LINUX_TEST_ARCH) host"; \
+	@if [ "$(LINUX_TEST_ARCH)" != "$(DOCKER_ARCH)" ]; then \
+		echo "cross-architecture seccomp tests are invalid (docker=$(DOCKER_ARCH), requested=$(LINUX_TEST_ARCH)); run this battery on a native $(LINUX_TEST_ARCH) Docker daemon"; \
 		exit 1; \
 	fi
 	$(MAKE) LINUX_ARCH=$(LINUX_TEST_ARCH) build-linux build-mock-agent build-linux-tests build-linux-sandbox-tests build-linux-wt-tests
