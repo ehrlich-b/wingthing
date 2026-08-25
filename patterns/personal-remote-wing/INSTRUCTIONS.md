@@ -1,44 +1,85 @@
-# Open a remote agent session in your browser
+# Control a remote agent from a self-hosted browser
 
-Use this setup when you want to start or resume an agent terminal on a workstation
-or VM from a web browser. The project, agent process, and provider credentials stay
-on the remote computer. That computer connects outward, so it needs no inbound port.
+Run the Wingthing web app on the computer in front of you, then connect a remote
+computer to it through SSH. Claude or Codex runs on the remote computer; your
+browser stays pointed at `localhost`.
 
-## Before you start
-
-The shipped browser terminal uses a relay. You need one of:
-
-- Wingthing Pro hosted relay access;
-- temporary relay access on an existing grandfathered account; or
-- a self-hosted roost, where you operate the relay yourself.
-
-The new hosted free tier does not include browser-terminal relay. For free remote
-control by a parent AI, use the
-[several-computer AI setup](../remote-orchestration/INSTRUCTIONS.md) instead.
-
-## Connect the remote computer
-
-On the computer that has the project and will run the agent:
-
-```sh
-curl -fsSL https://wingthing.ai/install.sh | sh
-wt login
-wt start
-wt wing status
+```text
+localhost browser -> local roost -> SSH tunnel -> remote wing -> Claude or Codex
 ```
 
-Leave `wt start` running as a daemon. Then open `https://app.wingthing.ai`, select
-the computer, choose a project directory, and start or resume a session.
+This is the smallest self-hosted setup. It does not use wingthing.ai.
 
-## What persists
+## 1. Start the private web app
 
-Closing the browser does not stop the session. Reopen it from the browser later, or
-attach directly on the remote computer:
+On the computer where you will use the browser:
 
 ```sh
-wt attach
-wt attach <session-id-or-name>
+wt serve --local --addr 127.0.0.1:8080
 ```
 
-Wingthing does not copy projects between computers. The selected directory and any
-untracked files must already exist on the remote computer.
+Leave it running. `--local` is deliberately bound to loopback: it has no human
+login screen and must not be exposed to a LAN or the public internet.
+
+## 2. Carry it to the remote computer over SSH
+
+In a second terminal on the browser computer:
+
+```sh
+ssh -N \
+  -o ExitOnForwardFailure=yes \
+  -R 127.0.0.1:18743:127.0.0.1:8080 \
+  you@remote.example
+```
+
+This creates `127.0.0.1:18743` on the remote computer. Traffic sent there travels
+inside SSH to the private roost on your browser computer. It uses SSH access you
+already have; it does not open a new Wingthing service to the remote network.
+
+## 3. Start the remote wing
+
+On the remote computer, install Wingthing and the agent CLI you want to run. Log
+that wing into the roost through the forwarded port, then start it:
+
+```sh
+wt login --roost http://127.0.0.1:18743
+wt start \
+  --roost http://127.0.0.1:18743 \
+  --paths /path/to/project
+```
+
+The project directory and the Claude, Codex, or other provider login must already
+exist on the remote computer. Wingthing routes control; it does not copy the
+project or provider credentials between computers.
+
+## 4. Open the agent
+
+Open [http://127.0.0.1:8080/app/](http://127.0.0.1:8080/app/) in the browser. The
+remote wing appears in the machine list. Select it, select the project directory,
+and start Claude or Codex.
+
+Closing the browser does not stop the agent. Reopen the session from the same page,
+or attach from a terminal on the remote computer with `wt attach`.
+
+## What protects this setup
+
+- The roost listens only on the browser computer's loopback interface.
+- The forwarded port listens only on the remote computer's loopback interface.
+- SSH authenticates the two computers and encrypts the host-to-host connection.
+- The wing authenticates to the roost with its own device token.
+- Terminal payloads are additionally encrypted between the browser and the wing;
+  the roost handles routing metadata but not plaintext terminal contents.
+- Project files and provider credentials remain on the remote computer.
+
+`--local` trusts software that can reach its loopback port. Do not change either
+`127.0.0.1` binding to `0.0.0.0`. For an always-on URL or several human users, run
+an HTTPS roost with OAuth instead; see the
+[private team roost guide](../shared-web-roost/INSTRUCTIONS.md).
+
+## WSL note
+
+The same topology works when the wing runs in WSL. The least surprising setup is
+to SSH directly into WSL so its reverse-forwarded port is also WSL loopback. If SSH
+terminates in Windows instead, Windows must explicitly bridge that loopback port to
+the WSL virtual adapter and restrict the firewall rule to the WSL subnet. Never
+solve that extra hop by exposing a local-mode roost to the LAN.

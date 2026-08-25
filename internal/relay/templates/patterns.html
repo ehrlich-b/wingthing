@@ -72,14 +72,14 @@
 
 <section class="pattern">
 <div class="pattern-num">04</div>
-<div class="pattern-tags"><span class="pattern-tag">remote computer</span><span class="pattern-tag">browser</span><span class="pattern-tag">Pro or self-hosted</span></div>
-<h2>Open a remote agent session in your browser</h2>
-<p>Start or resume a terminal on your workstation or VM from a web browser while the code and agent credentials remain on that machine.</p>
+<div class="pattern-tags"><span class="pattern-tag">remote computer</span><span class="pattern-tag">browser</span><span class="pattern-tag">self-hosted</span></div>
+<h2>Control a remote agent from a localhost browser</h2>
+<p>Run the web app on the computer in front of you, carry it over SSH, and launch Claude or Codex on the remote computer.</p>
 <ul class="pattern-facts">
-<li><strong>You need:</strong> a self-hosted roost, hosted Pro relay access, or temporary existing-account relay access; the remote machine runs <code>wt start</code>.</li>
-<li><strong>You get:</strong> browser terminals and session reconnection without opening an inbound port on the remote machine.</li>
+<li><strong>You need:</strong> Wingthing on both computers, SSH access to the remote computer, and the agent already logged in there.</li>
+<li><strong>You get:</strong> a private <code>localhost</code> page for starting and resuming durable sessions on the remote computer, without using the hosted relay.</li>
 </ul>
-<div class="flow">browser -> authorized relay -> remote computer -> agent session</div>
+<div class="flow">localhost browser -> local roost -> SSH tunnel -> remote wing -> agent</div>
 <div class="recipe-row"><a href="/patterns/personal-remote-wing/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/personal-remote-wing/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 

@@ -267,12 +267,12 @@ func TestPatternsPageExplainsOnlySupportedSetups(t *testing.T) {
 		"Run a durable, sandboxed agent on this computer",
 		"Let your current AI launch local sub-agents",
 		"Let one AI manage agents on several computers",
-		"Open a remote agent session in your browser",
+		"Control a remote agent from a localhost browser",
 		"Give a team a private browser-based agent host",
 		"Let an AI control agents on your private roost",
 		"You need:",
 		"You get:",
-		"Pro or self-hosted",
+		"localhost browser -> local roost -> SSH tunnel -> remote wing -> agent",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("/patterns does not contain %q", want)
@@ -285,12 +285,41 @@ func TestPatternsPageExplainsOnlySupportedSetups(t *testing.T) {
 		"the workflows people are asking for",
 		"scheduled log review",
 		"client-side",
+		"grandfathered",
 		"compose independent roosts",
 		"peer directory federation",
 	} {
 		if strings.Contains(page, internal) {
 			t.Errorf("/patterns exposes internal product narration %q", internal)
 		}
+	}
+}
+
+func TestPersonalRemoteWingGuideIsSelfHostedFirst(t *testing.T) {
+	_, ts := testServer(t)
+	resp, err := http.Get(ts.URL + "/patterns/personal-remote-wing/INSTRUCTIONS.md")
+	if err != nil {
+		t.Fatalf("GET personal remote wing guide: %v", err)
+	}
+	defer resp.Body.Close()
+	body := new(strings.Builder)
+	if _, err := io.Copy(body, resp.Body); err != nil {
+		t.Fatalf("read personal remote wing guide: %v", err)
+	}
+	guide := body.String()
+	for _, want := range []string{
+		"This is the smallest self-hosted setup. It does not use wingthing.ai.",
+		"wt serve --local --addr 127.0.0.1:8080",
+		"-R 127.0.0.1:18743:127.0.0.1:8080",
+		"wt login --roost http://127.0.0.1:18743",
+		"Terminal payloads are additionally encrypted between the browser and the wing",
+	} {
+		if !strings.Contains(guide, want) {
+			t.Errorf("personal remote wing guide does not contain %q", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(guide), "grandfather") {
+		t.Error("personal remote wing guide discusses grandfathered access")
 	}
 }
 
