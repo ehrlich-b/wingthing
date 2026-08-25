@@ -2,7 +2,7 @@
 
 Date: 2026-08-25
 
-Status: Fly release v302 healthy; rollback releases and database backup retained
+Status: Fly release v303 healthy; rollback releases and database backup retained
 
 ## Initial v301 deployment identity
 
@@ -91,10 +91,35 @@ Post-deploy checks confirmed all six setup cards, their `You need`/`You get` sec
 and setup-guide actions are present. The internal narration and removed pattern are
 absent. Fly reports machine version 302 healthy with its one check passing.
 
+## v303 Self-host-first browser follow-up
+
+Fly release v303 deployed commit `20a3d7f`. Pattern 04 now leads with the smallest
+self-hosted browser topology instead of hosted entitlement tiers:
+
+```text
+localhost browser -> local roost -> SSH tunnel -> remote wing -> agent
+```
+
+The published recipe contains executable `wt serve --local`, SSH reverse-forward,
+`wt login --roost`, and `wt start --roost` commands. It states the loopback trust
+boundary, device authentication, browser-to-wing terminal encryption, and the rule
+that local mode must not be bound to a LAN or public interface. Public checks
+confirmed `/health`, `/patterns`, and the recipe all return HTTP 200 with the new
+content.
+
+Before deployment, the same topology was exercised locally against a real WSL2
+wing. A localhost-only roost on macOS was carried through an authenticated SSH
+reverse tunnel and a WSL-adapter-only bridge. The WSL wing authenticated with an
+isolated device token and launched the real Claude Code 2.1.185 binary in an
+isolated project directory. A macOS browser attached at a localhost session URL,
+the wing re-keyed the browser-to-wing channel, and its replay buffer delivered the
+live Claude terminal. No Wingthing listener was exposed to the LAN.
+
 ## Rollback
 
-Release v301 is the immediate rollback for the page-only v302 change, and v300 remains
-the pre-feature rollback in Fly's release history. After any rollback, verify
+Release v302 is the immediate rollback for the documentation-only v303 change, v301
+is the prior feature runtime, and v300 remains the pre-feature rollback in Fly's
+release history. After any rollback, verify
 `/health`, wing reconnection, and existing sessions. Use the pre-deploy SQLite backup
 only if the old runtime cannot safely read the current schema; restoring it would
 intentionally discard writes made after the backup and therefore requires a separate
