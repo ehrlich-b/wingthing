@@ -1,30 +1,44 @@
-# Reach a personal machine from the web
+# Open a remote agent session in your browser
 
-This pattern places execution, the workspace, provider credentials, and durable
-memory on a personal remote machine. The human uses the hosted browser portal
-as the display and control surface.
+Use this setup when you want to start or resume an agent terminal on a workstation
+or VM from a web browser. The project, agent process, and provider credentials stay
+on the remote computer. That computer connects outward, so it needs no inbound port.
 
-Install Wingthing on the machine that will run the agents:
+## Before you start
+
+The shipped browser terminal uses a relay. You need one of:
+
+- Wingthing Pro hosted relay access;
+- temporary relay access on an existing grandfathered account; or
+- a self-hosted roost, where you operate the relay yourself.
+
+The new hosted free tier does not include browser-terminal relay. For free remote
+control by a parent AI, use the
+[several-computer AI setup](../remote-orchestration/INSTRUCTIONS.md) instead.
+
+## Connect the remote computer
+
+On the computer that has the project and will run the agent:
 
 ```sh
 curl -fsSL https://wingthing.ai/install.sh | sh
 wt login
 wt start
+wt wing status
 ```
 
-Open `https://app.wingthing.ai`, select the wing, and start or resume a session.
-The wing connects outbound to the hosted gateway, so the machine needs no
-inbound port.
+Leave `wt start` running as a daemon. Then open `https://app.wingthing.ai`, select
+the computer, choose a project directory, and start or resume a session.
 
-Check the daemon and active sessions from the machine:
+## What persists
+
+Closing the browser does not stop the session. Reopen it from the browser later, or
+attach directly on the remote computer:
 
 ```sh
-wt wing status
 wt attach
+wt attach <session-id-or-name>
 ```
 
-The selected project and any untracked files must already exist on the remote
-machine. Wingthing does not synchronize them. The browser path is human-driven;
-a parent LLM can select the same external wing through the native direct-MCP
-connector described in the remote-wings pattern. The hosted HTTP MCP endpoint
-still controls only its own roost's embedded wing.
+Wingthing does not copy projects between computers. The selected directory and any
+untracked files must already exist on the remote computer.

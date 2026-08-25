@@ -1,9 +1,12 @@
-# Give a local LLM sandboxed sub-agents
+# Let your current AI launch local sub-agents
 
-This pattern keeps execution, workspace, credentials, and memory on the current
-machine. The parent LLM drives Wingthing through a local stdio MCP server.
+Use this setup when a parent Claude or Codex session should delegate work to other
+agents on the same computer. Wingthing gives the parent typed tools to start, wait
+for, inspect, steer, and stop those child agents.
 
-Install Wingthing, then add its MCP server to the client.
+## Add Wingthing to the parent AI
+
+Install Wingthing, then add its local MCP server.
 
 Codex:
 
@@ -17,25 +20,35 @@ Claude Code:
 claude mcp add --scope user wingthing -- wt mcp stdio --client claude
 ```
 
-Restart the client after adding the server. Ask it to call
-`wingthing_capabilities` before starting work. A useful first request is:
+Restart the parent client after adding the MCP server.
+
+## Try it
+
+Give the parent a concrete first request:
 
 ```text
-Use Wingthing to run a Codex agent in this project. Return the run ID, wait for
-completion, and summarize its result.
+Use Wingthing to run a Codex agent in this project. Return the run ID, wait for it
+to finish, and summarize its result.
 ```
 
-Agent runs accept a provider name, model, existing working directory, prompt,
-and label. The returned run ID supports status, wait, result, steering, and
-stop. Wingthing does not copy the workspace or durable memory to another host.
+The parent should call `wingthing_capabilities` before starting work. It can use:
 
-Keep project policy in `egg.yaml`. Check the resolved boundary with:
+- `agent_run` for a headless task with a final result; or
+- `agent_start` for a persistent terminal that a person can attach to.
+
+Each launch names an installed agent, optional model, existing working directory,
+prompt, and label. The returned run ID supports status, wait, result, events,
+steering, and stop.
+
+## Sandbox and storage
+
+Child agents use the local project's `egg.yaml` policy. Check the effective boundary
+with:
 
 ```sh
 wt doctor
 wt egg explain codex --json
 ```
 
-Use `agent_run` for a headless task. Use `agent_start` when a person should be
-able to attach to the persistent terminal. If the local wing is connected to a
-portal, that terminal appears in the browser; a headless run does not yet.
+Wingthing does not copy the project or durable agent memory to another computer.
+Headless runs do not yet appear in the human browser session list.

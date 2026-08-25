@@ -1,31 +1,30 @@
 ---
 name: patterns
-description: Select and set up a Wingthing pattern by choosing the driver, execution wing, workspace, display, credentials, and durable memory.
+description: Set up a supported Wingthing workflow for local agents, remote machines, or a private shared roost.
 ---
 
 # Wingthing patterns
 
-Choose a pattern first by who drives the work, then by where it executes.
+Choose the outcome the user wants. Only offer the supported setups below.
 
-- Human, current machine: read
+- Run a durable sandboxed agent on this computer: read
   [local sandbox](local-sandbox/INSTRUCTIONS.md).
-- LLM, current machine: read
+- Let the current Claude or Codex session launch local sub-agents: read
   [local sub-agents](local-subagents/INSTRUCTIONS.md).
-- Human, personal remote machine: read
-  [personal remote wing](personal-remote-wing/INSTRUCTIONS.md).
-- Human, shared host: read
-  [shared web roost](shared-web-roost/INSTRUCTIONS.md).
-- LLM, shared host: read
-  [shared roost agents](shared-roost-agents/INSTRUCTIONS.md).
-- LLM, several wings behind one coordinator: read
+- Let one AI manage agents on several computers: read
   [remote orchestration](remote-orchestration/INSTRUCTIONS.md).
-- Human or LLM, several independent self-hosted roosts: read
-  [independent roosts](independent-roosts/INSTRUCTIONS.md).
+- Open a remote agent session in a browser, with Pro, grandfathered, or
+  self-hosted relay access: read
+  [personal remote wing](personal-remote-wing/INSTRUCTIONS.md).
+- Give a team a private browser-based agent host: read
+  [shared web roost](shared-web-roost/INSTRUCTIONS.md).
+- Let an AI control agents on a private roost: read
+  [shared roost agents](shared-roost-agents/INSTRUCTIONS.md).
 
-Keep two remote contracts distinct. Native `wt mcp connect` can select external
-wings returned by one coordinator. An HTTP MCP client connected to a roost still
-controls only that roost's embedded wing. Independent roosts are separate named
-client targets; their directories do not federate.
+Do not present planned features as patterns. In particular, Wingthing does not
+currently merge independent roosts into one inventory, provide browser-direct free
+terminals, prepare Git worktrees atomically, or expose remote schedules and delivery
+targets.
 
 For every pattern, state these six placements before changing the host:
 

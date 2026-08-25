@@ -247,7 +247,7 @@ func TestStaticFileServing(t *testing.T) {
 	}
 }
 
-func TestPatternsPageDocumentsAvailability(t *testing.T) {
+func TestPatternsPageExplainsOnlySupportedSetups(t *testing.T) {
 	_, ts := testServer(t)
 
 	resp, err := http.Get(ts.URL + "/patterns")
@@ -262,9 +262,34 @@ func TestPatternsPageDocumentsAvailability(t *testing.T) {
 	if _, err := io.Copy(body, resp.Body); err != nil {
 		t.Fatalf("read /patterns: %v", err)
 	}
-	for _, want := range []string{"use it as a local sandbox", "give your AI sandboxed sub-agents", "share a roost over the web", "orchestrate work on remote wings", "scheduled log review -> Slack", "compose independent roosts"} {
-		if !strings.Contains(body.String(), want) {
+	page := body.String()
+	for _, want := range []string{
+		"Run a durable, sandboxed agent on this computer",
+		"Let your current AI launch local sub-agents",
+		"Let one AI manage agents on several computers",
+		"Open a remote agent session in your browser",
+		"Give a team a private browser-based agent host",
+		"Let an AI control agents on your private roost",
+		"You need:",
+		"You get:",
+		"Pro or self-hosted",
+	} {
+		if !strings.Contains(page, want) {
 			t.Errorf("/patterns does not contain %q", want)
+		}
+	}
+	if got := strings.Count(page, `<section class="pattern">`); got != 6 {
+		t.Errorf("/patterns contains %d setup cards, want 6", got)
+	}
+	for _, internal := range []string{
+		"the workflows people are asking for",
+		"scheduled log review",
+		"client-side",
+		"compose independent roosts",
+		"peer directory federation",
+	} {
+		if strings.Contains(page, internal) {
+			t.Errorf("/patterns exposes internal product narration %q", internal)
 		}
 	}
 }
@@ -279,7 +304,6 @@ func TestPatternMarkdownRoutesServeCheckedInRecipes(t *testing.T) {
 		"/patterns/shared-web-roost/INSTRUCTIONS.md",
 		"/patterns/shared-roost-agents/INSTRUCTIONS.md",
 		"/patterns/remote-orchestration/INSTRUCTIONS.md",
-		"/patterns/independent-roosts/INSTRUCTIONS.md",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -295,6 +319,18 @@ func TestPatternMarkdownRoutesServeCheckedInRecipes(t *testing.T) {
 				t.Fatalf("content type = %q", got)
 			}
 		})
+	}
+}
+
+func TestUnimplementedPatternsAreNotPublished(t *testing.T) {
+	_, ts := testServer(t)
+	resp, err := http.Get(ts.URL + "/patterns/independent-roosts/INSTRUCTIONS.md")
+	if err != nil {
+		t.Fatalf("GET removed pattern: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("removed pattern status = %d, want 404", resp.StatusCode)
 	}
 }
 

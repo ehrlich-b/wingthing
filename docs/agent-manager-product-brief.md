@@ -110,8 +110,10 @@ or mount declared context without copying secrets or unapproved files.
 
 ## Slack-derived workflow map
 
-The current `/patterns` page turns the recurring requests into installable recipes.
-This table keeps the underlying asks and the honest current composition together.
+This is an internal product-research map of the recurring requests. It deliberately
+does not appear on the public `/patterns` page. The public page contains only
+self-contained setup guides for behavior that ships today; gaps stay here until
+they become usable product workflows.
 
 | Requested workflow | How to do it now | Pattern or gap |
 | --- | --- | --- |
@@ -123,7 +125,7 @@ This table keeps the underlying asks and the honest current composition together
 | Scheduled log/error review using Prometheus, Grafana, OpenSearch, or databases, followed by a Slack report | Put data access behind authenticated MCP tools. Local scheduled tasks exist, but remote schedule CRUD, revocable service identities, and typed delivery are not shipped. | P1 automation gap. |
 | Let local agents use governed Jira/log/database/context connectors | Add the authenticated roost/context-service HTTP MCP endpoint to the local client; keep connector ACLs and audit at that service. | `shared-roost-agents`; working for configured tools. |
 | Build and publish a dashboard or small internal app from the agent's result | Wingthing manages the agents, workspace, context, and evidence; hand the artifact to a separate internal hosting product. | Explicit non-goal for Wingthing itself. |
-| Pair independently administered home and office roosts once, then browse one merged inventory | Add them as separately named MCP servers today. True peer directory/identity federation is not implemented. | `independent-roosts`; federation gap. |
+| Pair independently administered home and office roosts once, then browse one merged inventory | Add them as separately named MCP servers today. True peer directory/identity federation is not implemented. | Not a public pattern; federation gap. |
 
 ## Supported topology today
 
