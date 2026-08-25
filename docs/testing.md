@@ -89,6 +89,11 @@ The suite should consume generated schemas and capability data. Hard-coded tool
 counts such as `14`, `20`, or `27` should be replaced by an expected
 operation set for each adapter and version.
 
+The first contract checks now derive exact local and HTTP MCP operation sets
+from `internal/control`, verify adapter metadata and schemas, and compare
+`wing_list` with the browser's access-filtered roster. This is a useful unit
+boundary, not a substitute for the black-box cross-client suite above.
+
 ## Workspace and placement tests
 
 When logical workspaces are added, test state rather than copying a large home

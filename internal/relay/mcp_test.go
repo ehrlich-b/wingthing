@@ -83,6 +83,75 @@ func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testi
 	}
 }
 
+func TestPortalNativeMCPWingListMatchesBrowserRoster(t *testing.T) {
+	store := testStore(t)
+	srv := NewServer(store, ServerConfig{FlyMachineID: "login-node"})
+	srv.RoostMode = true
+	srv.WingMap = NewWingMap()
+	srv.latestVersion = "v-test"
+	srv.latestVersionAt = time.Now()
+	for _, userID := range []string{"alice", "bob", roostWingServiceUserID} {
+		if err := store.CreateUser(userID); err != nil {
+			t.Fatalf("create user %s: %v", userID, err)
+		}
+	}
+	srv.Wings.Add(&ConnectedWing{ID: "conn-shared", UserID: roostWingServiceUserID, WingID: "shared-roost", PublicKey: "shared-key"})
+	srv.Wings.Add(&ConnectedWing{ID: "conn-alice", UserID: "alice", WingID: "alice-wing", PublicKey: "alice-key"})
+	srv.Wings.Add(&ConnectedWing{ID: "conn-bob", UserID: "bob", WingID: "bob-wing", PublicKey: "bob-key"})
+	srv.WingMap.Register("remote-wing", WingLocation{MachineID: "edge-node", UserID: "alice", PublicKey: "remote-key"})
+
+	browserEntries := srv.appWingEntries("alice")
+	browserJSON, err := json.Marshal(browserEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tools := srv.PortalNativeMCPTools("shared-roost")
+	if len(tools) != 1 || tools[0].Name != "wing_list" {
+		t.Fatalf("portal tools = %#v", tools)
+	}
+	result, isError, err := tools[0].Call(context.Background(), mcp.Principal{UserID: "alice"}, json.RawMessage(`{}`))
+	if err != nil || isError {
+		t.Fatalf("wing_list error = %v, isError = %v", err, isError)
+	}
+	if result["control_scope"] != "embedded-wing-only" || result["embedded_wing_id"] != "shared-roost" {
+		t.Fatalf("wing_list control metadata = %#v", result)
+	}
+	entries, ok := result["wings"].([]map[string]any)
+	if !ok || len(entries) != 3 || result["count"] != 3 {
+		t.Fatalf("wing_list inventory = %#v", result)
+	}
+	for _, entry := range entries {
+		wingID, _ := entry["wing_id"].(string)
+		controllable, _ := entry["mcp_control"].(bool)
+		reason, _ := entry["mcp_control_reason"].(string)
+		if wingID == "bob-wing" {
+			t.Fatal("wing_list leaked an inaccessible wing")
+		}
+		if wingID == "shared-roost" {
+			if !controllable || reason != "embedded-wing" {
+				t.Fatalf("embedded wing metadata = %#v", entry)
+			}
+		} else if controllable || reason != "external-wing-routing-not-implemented" {
+			t.Fatalf("external wing metadata = %#v", entry)
+		}
+		delete(entry, "mcp_control")
+		delete(entry, "mcp_control_reason")
+	}
+	mcpJSON, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mcpJSON) != string(browserJSON) {
+		t.Fatalf("MCP roster differs from browser roster\nMCP:     %s\nbrowser: %s", mcpJSON, browserJSON)
+	}
+
+	_, isError, err = tools[0].Call(context.Background(), mcp.Principal{UserID: "alice"}, json.RawMessage(`{"wing_id":"shared-roost"}`))
+	if err == nil || !isError || err.Error() != "tool accepts no arguments" {
+		t.Fatalf("wing_list accepted undeclared selection: err = %v, isError = %v", err, isError)
+	}
+}
+
 // mcpTestServer builds a roost with the MCP surface enabled, one email'd user in role "eng"
 // (which is denied slide-db), and a web session for that user.
 func mcpTestServer(t *testing.T) (*Server, *httptest.Server, string) {

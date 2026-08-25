@@ -104,7 +104,8 @@ Two gaps remain:
 
 - headless MCP runs live in the wing task store but have no browser view; and
 - a self-hosted portal can display several registered wings, while its HTTP MCP
-  tools currently control only the embedded wing.
+  `wing_list` returns that same roster but runtime tools currently control only
+  the embedded wing.
 
 Independent self-hosted portals are not federated. A client selects one by URL,
 and an LLM can register several HTTP MCP servers under different names. See the

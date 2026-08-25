@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -270,7 +271,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	if err != nil {
 		return err
 	}
-	nativeTools := roostNativeMCPTools(cfg, hasAuth)
+	nativeTools := roostMCPControlTools(srv, cfg, hasAuth)
 	if hasAuth || policy != nil {
 		srv.EnableMCP(egg.NewToolRunner(tools), policy, nativeTools...)
 		roleCount := 0
@@ -358,6 +359,11 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	case err := <-wingErrCh:
 		return fmt.Errorf("wing: %w", err)
 	}
+}
+
+func roostMCPControlTools(srv *relay.Server, cfg *config.Config, sharedHost bool) []mcppkg.NativeTool {
+	tools := roostNativeMCPTools(cfg, sharedHost)
+	return append(tools, srv.PortalNativeMCPTools(cfg.WingID)...)
 }
 
 func loadRoostMCPConfig(configDir string) ([]*config.ToolConfig, *config.MCPConfig, error) {

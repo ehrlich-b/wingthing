@@ -28,6 +28,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"agent_run", "agent_status", "agent_wait", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
+		"wing_list",
 	}
 
 	if got := toolNames(Tools(SurfaceLocalMCP)); !reflect.DeepEqual(got, local) {
@@ -51,6 +52,9 @@ func TestRegistryDefinitionsAreComplete(t *testing.T) {
 		if tool.Grant == "" {
 			t.Errorf("%s has no grant", tool.Name)
 		}
+		if tool.Authority == "" {
+			t.Errorf("%s has no authority", tool.Name)
+		}
 		if tool.AuditArguments != AuditArgumentsDigest {
 			t.Errorf("%s audit arguments = %q, want digest", tool.Name, tool.AuditArguments)
 		}
@@ -70,9 +74,12 @@ func TestRegistryDefinitionsAreComplete(t *testing.T) {
 		}
 	}
 	for _, tool := range Tools(SurfaceHTTPMCP) {
-		if !seen[tool.Name] {
+		if tool.Authority == AuthorityWing && !seen[tool.Name] {
 			t.Errorf("HTTP operation %q is absent from the local contract", tool.Name)
 		}
+	}
+	if got := toolNames(ToolsForAuthority(SurfaceHTTPMCP, AuthorityPortal)); !reflect.DeepEqual(got, []string{"wing_list"}) {
+		t.Fatalf("portal operations = %v, want [wing_list]", got)
 	}
 }
 
@@ -83,7 +90,7 @@ func TestObjectKindsFollowSurfaceAvailability(t *testing.T) {
 		t.Fatalf("local objects = %v, want %v", got, want)
 	}
 	if got, want := ObjectKinds(SurfaceHTTPMCP), []string{
-		"terminal", "agent_run", "message", "sandbox_policy",
+		"wing", "terminal", "agent_run", "message", "sandbox_policy",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("HTTP objects = %v, want %v", got, want)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
+	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
@@ -136,7 +137,8 @@ func TestLocalAndHTTPMCPShareControlRegistry(t *testing.T) {
 	for _, tool := range localMCPTools() {
 		local[tool.Name] = tool
 	}
-	native := roostNativeMCPTools(&config.Config{}, false)
+	cfg := &config.Config{WingID: "embedded-wing"}
+	native := roostMCPControlTools(relay.NewServer(nil, relay.ServerConfig{}), cfg, false)
 	httpDefinitions := control.Tools(control.SurfaceHTTPMCP)
 	if len(native) != len(httpDefinitions) {
 		t.Fatalf("HTTP native tools = %d, registry = %d", len(native), len(httpDefinitions))
@@ -153,7 +155,7 @@ func TestLocalAndHTTPMCPShareControlRegistry(t *testing.T) {
 		if !reflect.DeepEqual(got.Annotations, want.Annotations) {
 			t.Errorf("%s HTTP annotations differ from registry", want.Name)
 		}
-		if !reflect.DeepEqual(local[want.Name].InputSchema, want.InputSchema) {
+		if want.Authority == control.AuthorityWing && !reflect.DeepEqual(local[want.Name].InputSchema, want.InputSchema) {
 			t.Errorf("%s local schema differs from registry", want.Name)
 		}
 	}

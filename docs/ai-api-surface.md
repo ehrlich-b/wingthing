@@ -10,13 +10,14 @@ why they do not add up to that goal, and what the target shape is.
 ## What exists today
 
 There are four surfaces. Local stdio MCP and authenticated shared-roost HTTP MCP
-now share the typed terminal, agent-run, sandbox, and message vocabulary. The
-REST and encrypted external-wing surfaces still use separate contracts.
+now share a versioned operation registry for typed terminal, agent-run,
+sandbox, message, and wing-inventory vocabulary. The REST and encrypted
+external-wing surfaces still use separate runtime contracts.
 
 | # | Surface | Transport | Auth | What it can do |
 |---|---------|-----------|------|----------------|
 | 1 | `wt mcp stdio` (`cmd/wt/mcp_local.go`) | stdio, local only | OS user plus optional owner, actor, grants, and bounds | Agent orchestration, terminals, messages, prompts, loops, swarms |
-| 2 | `POST /mcp` (`internal/relay/mcp.go`) | HTTP | OAuth 2.0, dynamic client registration, owner-scoped native controls, role-scoped executable tools, audit observer | Shared-roost terminals, agent runs, messages, sandbox explanation, and configured privileged tools |
+| 2 | `POST /mcp` (`internal/relay/mcp.go`) | HTTP | OAuth 2.0, dynamic client registration, owner-scoped native controls, role-scoped executable tools, audit observer | Authorized wing roster, shared-roost terminals, agent runs, messages, sandbox explanation, and configured privileged tools |
 | 3 | REST `/api/...` (`internal/relay/`) | HTTP | session cookie / bearer | Account, usage, passkeys, ntfy, orgs, and an authorized online-wing roster |
 | 4 | Encrypted tunnel (`internal/ws/`) | WebSocket, application-encrypted through relay | passkey + device token | `dir.list`, `sessions.list`, `sessions.history`, `pty.*`, `egg.config_update`, … |
 
@@ -36,11 +37,12 @@ cannot toggle it per call.
 
 ### The problems
 
-1. **Control semantics still live in the stdio adapter.** Surface 2 wraps the
-   same typed operations in-process and supplies authenticated owner/actor
-   identity, which proves shared-roost parity. Extracting `internal/control`
-   remains the maintainability step that gives CLI, stdio, HTTP, and future REST
-   one implementation.
+1. **Control handlers still live in the stdio adapter.** `internal/control`
+   now owns names, schemas, grants, annotations, transport availability,
+   authority, and audit targeting. Surface 2 wraps the wing-owned handlers
+   in-process and supplies authenticated owner/actor identity. Moving those
+   handlers behind a transport-independent service remains the maintainability
+   step that gives CLI, stdio, HTTP, and future REST one implementation.
 2. **There is no REST API for agent orchestration at all.** Surface 3 is account
    plumbing. `GET /api/app/wings` deliberately returns routing identity rather
    than host/project details, because the relay is a dumb pipe and knows nothing
@@ -55,9 +57,10 @@ cannot toggle it per call.
    the embedded runtime directly. A hosted relay connected to a separate wing
    still needs these operations carried through the encrypted tunnel.
 
-5. **The portal has two inventories.** Browser session lists aggregate the
-   authorized external-wing roster. HTTP MCP has no `wing_id` target and calls
-   only the embedded wing. Headless tasks have no browser inventory at all.
+5. **The portal has one wing roster but two runtime inventories.** Browser and
+   HTTP MCP now share the access-filtered wing roster. Browser session lists
+   aggregate those wings, while HTTP MCP has no `wing_id` target and calls only
+   the embedded wing. Headless tasks have no browser inventory at all.
 
 The remaining parity gap is one qualified session/run inventory, external-wing
 reachability, and extraction of the shared semantics into a

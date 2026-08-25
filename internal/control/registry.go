@@ -17,6 +17,16 @@ const (
 	ContractVersion         = "v1"
 )
 
+// Authority identifies the component that owns an operation's state and
+// handler. Portal operations use gateway inventory; wing operations use the
+// selected execution runtime.
+type Authority string
+
+const (
+	AuthorityWing   Authority = "wing"
+	AuthorityPortal Authority = "portal"
+)
+
 // AuditArgumentMode describes how an adapter may record tool arguments.
 type AuditArgumentMode string
 
@@ -40,8 +50,21 @@ type Tool struct {
 	Version         string            `json:"-"`
 	Grant           string            `json:"-"`
 	Surfaces        []Surface         `json:"-"`
+	Authority       Authority         `json:"-"`
 	AuditArguments  AuditArgumentMode `json:"-"`
 	AuditTargetKeys []string          `json:"-"`
+}
+
+// ToolsForAuthority returns the operations implemented by one authority and
+// exposed through the requested surface.
+func ToolsForAuthority(surface Surface, authority Authority) []Tool {
+	var tools []Tool
+	for _, tool := range Tools(surface) {
+		if tool.Authority == authority {
+			tools = append(tools, tool)
+		}
+	}
+	return tools
 }
 
 var catalog = buildTools()
@@ -75,6 +98,7 @@ func ObjectKinds(surface Surface) []string {
 		surfaces []Surface
 	}
 	objects := []objectKind{
+		{name: "wing", surfaces: []Surface{SurfaceHTTPMCP}},
 		{name: "terminal", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP}},
 		{name: "agent_run", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP}},
 		{name: "message", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP}},
@@ -447,9 +471,18 @@ func buildTools() []Tool {
 			}, "nodes"), Annotations: modelCall,
 			Grant: "prompt.run", Surfaces: local, AuditTargetKeys: []string{"name", "task_id"},
 		},
+		{
+			Name: "wing_list", Title: "List portal wings",
+			Description: "List every connected wing the authenticated portal user may access, including whether HTTP MCP can currently control it.",
+			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
+			Grant: "wing.read", Surfaces: []Surface{SurfaceHTTPMCP}, Authority: AuthorityPortal,
+		},
 	}
 	for index := range tools {
 		tools[index].Version = ContractVersion
+		if tools[index].Authority == "" {
+			tools[index].Authority = AuthorityWing
+		}
 		tools[index].AuditArguments = AuditArgumentsDigest
 	}
 	return tools

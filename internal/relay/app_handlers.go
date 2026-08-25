@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -107,8 +108,14 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
+	writeJSON(w, http.StatusOK, s.appWingEntries(user.ID))
+}
 
-	wings := s.listAccessibleWings(user.ID)
+// appWingEntries is the access-filtered portal wing inventory shared by the
+// browser API and the HTTP MCP surface. Callers may decorate a copied entry,
+// but must not bypass this method with the unfiltered registries.
+func (s *Server) appWingEntries(userID string) []map[string]any {
+	wings := s.listAccessibleWings(userID)
 	latestVer := s.getLatestVersion()
 
 	// Collect unique owner IDs and resolve display names
@@ -135,8 +142,8 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			// Check access: owner OR org member
-			if loc.UserID != user.ID {
-				if loc.OrgID == "" || s.Store == nil || !s.Store.IsOrgMember(loc.OrgID, user.ID) {
+			if loc.UserID != userID {
+				if loc.OrgID == "" || s.Store == nil || !s.Store.IsOrgMember(loc.OrgID, userID) {
 					continue
 				}
 			}
@@ -160,7 +167,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	ownerNames := make(map[string]string)
 	if s.Store != nil {
 		for uid := range ownerIDs {
-			if uid == user.ID {
+			if uid == userID {
 				continue
 			}
 			if u, err := s.Store.GetUserByID(uid); err == nil && u != nil {
@@ -179,7 +186,12 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, out)
+	sort.Slice(out, func(i, j int) bool {
+		left, _ := out[i]["wing_id"].(string)
+		right, _ := out[j]["wing_id"].(string)
+		return left < right
+	})
+	return out
 }
 
 // getLatestVersion returns the latest release version from cache, fetching from GitHub if stale.

@@ -316,7 +316,7 @@ func localMCPTools() []localMCPTool {
 // bearer-token verification and never accepted from tool arguments.
 func roostNativeMCPTools(cfg *config.Config, sharedHost bool) []mcppkg.NativeTool {
 	var tools []mcppkg.NativeTool
-	for _, localTool := range control.Tools(control.SurfaceHTTPMCP) {
+	for _, localTool := range control.ToolsForAuthority(control.SurfaceHTTPMCP, control.AuthorityWing) {
 		tool := localTool
 		tools = append(tools, mcppkg.NativeTool{
 			Name: tool.Name, Title: tool.Title, Description: tool.Description,

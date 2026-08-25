@@ -78,6 +78,8 @@ A roost gateway can register the embedded wing and external wings.
 
 - The browser receives its authorized wing roster, probes each wing through the
   encrypted tunnel, and can show sessions from several wings.
+- HTTP MCP `wing_list` receives that same access-filtered roster and marks only
+  the embedded wing as currently controllable.
 - `wt wings --roost URL` can query the same roster and encrypted wing metadata.
 - The roost's HTTP MCP endpoint currently calls only the embedded wing because
   its native tools have no `wing_id` target.

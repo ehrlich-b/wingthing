@@ -1,6 +1,6 @@
 # LLM-first architecture review
 
-Status: review and implementation proposal
+Status: review with first implementation slice
 
 Reviewed: 2026-08-24
 Repository snapshot: `c87a778`
@@ -14,8 +14,10 @@ exercise real agent harnesses.
 
 Those pieces don't yet form one portal. The browser, local MCP server, roost MCP
 server, and native CLI each expose a different subset of the same machine. They
-share some storage, but there is no single inventory, resource namespace,
-operation registry, or event stream.
+share some storage. The first implementation slice adds a shared operation
+registry and one access-filtered wing roster for the browser and roost HTTP MCP.
+There is still no single session/run inventory, resource namespace, or event
+stream.
 
 The next product boundary should be:
 
@@ -33,7 +35,7 @@ The current product has four partial views:
 
 | State | Authority | CLI | local MCP | roost HTTP MCP | web portal |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Connected wing roster | gateway memory/database | `wt wings` | no | no | yes |
+| Connected wing roster | gateway memory/database | `wt wings` | no | yes | yes |
 | Live egg/PTY sessions | wing `eggs/` directory and egg sockets | yes | yes | embedded wing only | every accessible registered wing |
 | Headless agent runs | wing `wt.db` task tables | limited | yes | embedded wing only | no |
 | Prompt assets, loops, and swarms | wing `wt.db` and prompt store | yes | yes | no | no |
@@ -47,9 +49,9 @@ This explains the current behavior:
   connected to a web portal, those sessions appear there.
 - `agent_run` creates a task record and a supervised headless process. It
   doesn't create an egg or PTY, so the browser never sees it.
-- A self-hosted roost can show its embedded wing and other registered wings in
-  the browser. Its HTTP MCP tools call the embedded wing's local state directly
-  and don't accept a `wing_id`.
+- A self-hosted roost returns the same authorized wing roster through the
+  browser and HTTP MCP `wing_list`. Runtime tools still call the embedded
+  wing's local state directly and don't accept a `wing_id`.
 - The hosted portal can show several personal or organization wings registered
   with its gateway. It can't see independent self-hosted roosts.
 - Registering several HTTP MCP servers gives an LLM several named targets, but
@@ -111,7 +113,9 @@ external wing, the same request travels through the application-encrypted
 tunnel. Local CLI and stdio MCP call the service over a wing-owned local socket.
 Transport changes don't create new semantics.
 
-An operation registry should define each capability once:
+The first implementation slice moves names, schemas, grants, annotations,
+surface availability, authority, and audit targeting into `internal/control`.
+The registry should ultimately define each capability once:
 
 - stable operation name and version;
 - request and response schemas;
@@ -123,8 +127,8 @@ An operation registry should define each capability once:
 
 Adapters render that registry as CLI JSON, MCP tools, portal HTTP resources, and
 browser actions. Contract tests compare every adapter with the registry. The
-current semantic implementation in `cmd/wt/mcp_local.go` should move to a
-transport-independent package before more tools are added.
+semantic handlers still live in `cmd/wt/mcp_local.go` and should move to a
+transport-independent package before more runtime tools are added.
 
 ## Resource identity and target selection
 
@@ -147,9 +151,10 @@ another portal. List and start operations accept a `wing_id`. Later operations
 return and accept the full resource reference. Human labels remain local aliases,
 not routing identity.
 
-The first multi-wing MCP slice needs only a small set of additions:
+The first read-only step is now present: `wing_list` returns the exact authorized
+browser roster and says which entry the current endpoint can control. The next
+multi-wing MCP slice needs a small set of additions:
 
-- `wing_list` returns the authorized roster and capabilities;
 - `session_list` and `run_list` can filter by wing or return the whole portal;
 - start calls require `wing_id` when more than one target is available;
 - returned session and run references retain their wing; and
@@ -327,8 +332,9 @@ The gaps now line up with the product gap:
    steering, stop, messages, or HTTP MCP.
 2. No test starts a session through MCP and then discovers and controls it in the
    browser, or does the reverse.
-3. No test connects two wings to one portal and proves that MCP lists, targets,
-   and isolates both.
+3. An in-process contract test now connects accessible and inaccessible wings,
+   compares MCP `wing_list` with the browser roster, and checks control
+   metadata. No black-box test targets and isolates runtime work on two wings.
 4. No test exposes headless runs in the browser because that product surface
    doesn't exist.
 5. The web E2E tier isn't part of `make test-e2e` or required CI.
@@ -352,7 +358,8 @@ hand back independently.
 The implementation stack should preserve this order:
 
 1. settle public terminology and add persistent portal identity;
-2. extract `internal/control` and generate adapter schemas from one registry;
+2. continue extracting semantic handlers behind the new `internal/control`
+   registry;
 3. add qualified resource references and cross-adapter conformance tests;
 4. put runs, messages, history, and sessions in one portal inventory;
 5. carry the control RPC through the encrypted tunnel to external wings;

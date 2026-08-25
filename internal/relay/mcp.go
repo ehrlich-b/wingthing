@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,67 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/mcp"
 )
+
+// PortalNativeMCPTools adapts the portal-owned portion of the shared control
+// contract. embeddedWingID names the one wing whose runtime is hosted by this
+// roost process; connected external wings remain inventory-only until routed
+// control is implemented.
+func (s *Server) PortalNativeMCPTools(embeddedWingID string) []mcp.NativeTool {
+	var tools []mcp.NativeTool
+	for _, definition := range control.ToolsForAuthority(control.SurfaceHTTPMCP, control.AuthorityPortal) {
+		tool := definition
+		tools = append(tools, mcp.NativeTool{
+			Name: tool.Name, Title: tool.Title, Description: tool.Description,
+			InputSchema: tool.InputSchema, Annotations: tool.Annotations,
+			Call: func(_ context.Context, principal mcp.Principal, arguments json.RawMessage) (map[string]any, bool, error) {
+				if principal.UserID == "" {
+					return nil, true, fmt.Errorf("authenticated user identity is required")
+				}
+				if err := requireEmptyMCPObject(arguments); err != nil {
+					return nil, true, err
+				}
+				switch tool.Name {
+				case "wing_list":
+					entries := s.appWingEntries(principal.UserID)
+					for _, entry := range entries {
+						wingID, _ := entry["wing_id"].(string)
+						controllable := embeddedWingID != "" && wingID == embeddedWingID
+						entry["mcp_control"] = controllable
+						if controllable {
+							entry["mcp_control_reason"] = "embedded-wing"
+						} else {
+							entry["mcp_control_reason"] = "external-wing-routing-not-implemented"
+						}
+					}
+					return map[string]any{
+						"wings":            entries,
+						"count":            len(entries),
+						"control_scope":    "embedded-wing-only",
+						"embedded_wing_id": embeddedWingID,
+					}, false, nil
+				default:
+					return nil, true, fmt.Errorf("portal control handler unavailable for %q", tool.Name)
+				}
+			},
+		})
+	}
+	return tools
+}
+
+func requireEmptyMCPObject(arguments json.RawMessage) error {
+	trimmed := bytes.TrimSpace(arguments)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return fmt.Errorf("tool arguments must be an object")
+	}
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &value); err != nil {
+		return err
+	}
+	if len(value) != 0 {
+		return fmt.Errorf("tool accepts no arguments")
+	}
+	return nil
+}
 
 type mcpIdentityKey struct{}
 
