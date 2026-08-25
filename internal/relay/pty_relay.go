@@ -415,6 +415,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		log.Printf("pty websocket accept: %v", err)
 		return
 	}
+	conn.SetReadLimit(512 * 1024) // match wing/client envelope cap; policy applies tighter purpose bounds
 	defer conn.CloseNow()
 
 	s.trackBrowser(conn)
@@ -477,6 +478,10 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
 			}
+			if !ws.HostedRelayAllowed(wing.HostedRelay) {
+				s.denyHostedRelay(ctx, conn, userID, wing.WingID, ws.TypePTYStart, "", "")
+				continue
+			}
 
 			sessionID := uuid.New().String()[:8]
 			start.SessionID = sessionID
@@ -529,6 +534,10 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if wing == nil || !s.canAccessWing(userID, wing, userOrgIDs) {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "wing not found"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
+				continue
+			}
+			if !ws.HostedRelayAllowed(wing.HostedRelay) {
+				s.denyHostedRelay(ctx, conn, userID, wing.WingID, ws.TypePTYAttach, "", attach.SessionID)
 				continue
 			}
 
@@ -585,6 +594,10 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if wing == nil {
 				continue
 			}
+			if !ws.HostedRelayAllowed(wing.HostedRelay) {
+				s.denyHostedRelay(ctx, conn, userID, wing.WingID, env.Type, "", control.SessionID)
+				continue
+			}
 			wing.Conn.Write(ctx, websocket.MessageText, data)
 
 		case ws.TypePasskeyResponse:
@@ -598,6 +611,10 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 			wing := s.findAnyWingByWingID(routeWingID)
 			if wing == nil {
+				continue
+			}
+			if !ws.HostedRelayAllowed(wing.HostedRelay) {
+				s.denyHostedRelay(ctx, conn, userID, wing.WingID, ws.TypePasskeyResponse, "", response.SessionID)
 				continue
 			}
 			wing.Conn.Write(ctx, websocket.MessageText, data)
@@ -633,17 +650,22 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			wing := s.findAnyWingByWingID(routeWingID)
-			if wing != nil {
-				fwd, _ := json.Marshal(kill)
-				wing.Conn.Write(ctx, websocket.MessageText, fwd)
+			if wing == nil {
+				continue
 			}
+			if !ws.HostedRelayAllowed(wing.HostedRelay) {
+				s.denyHostedRelay(ctx, conn, userID, wing.WingID, ws.TypePTYKill, "", kill.SessionID)
+				continue
+			}
+			fwd, _ := json.Marshal(kill)
+			wing.Conn.Write(ctx, websocket.MessageText, fwd)
 
 		case ws.TypeTunnelRequest:
 			var req ws.TunnelRequest
 			if err := json.Unmarshal(data, &req); err != nil {
 				continue
 			}
-			if !relayAccess.Allowed && (!ws.IsCoordinationTunnelPurpose(req.Purpose) || len(req.Payload) > 256*1024) {
+			if !relayAccess.Allowed && (!ws.IsCoordinationTunnelPurpose(req.Purpose) || len(req.Payload) > ws.MaxCoordinationTunnelPayload) {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{
 					Type: ws.TypeError, RequestID: req.RequestID,
 					Message: "hosted payload tunnels are not included on the free direct tier",
@@ -657,7 +679,11 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
 			}
-			if !relayAccess.Allowed && !wing.PurposeBinding {
+			if !ws.HostedRelayAllowed(wing.HostedRelay) && (!ws.IsCoordinationTunnelPurpose(req.Purpose) || len(req.Payload) > ws.MaxCoordinationTunnelPayload) {
+				s.denyHostedRelay(ctx, conn, userID, wing.WingID, ws.TypeTunnelRequest, req.RequestID, "")
+				continue
+			}
+			if (!relayAccess.Allowed || !ws.HostedRelayAllowed(wing.HostedRelay)) && !wing.PurposeBinding {
 				errMsg, _ := json.Marshal(ws.ErrorMsg{
 					Type: ws.TypeError, RequestID: req.RequestID,
 					Message: "wing must be upgraded before direct-tier coordination can be used safely",
@@ -689,6 +715,21 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			}
 			fwdTunnel, _ := json.Marshal(req)
 			wing.Conn.Write(ctx, websocket.MessageText, fwdTunnel)
+		}
+	}
+}
+
+func (s *Server) denyHostedRelay(ctx context.Context, conn *websocket.Conn, userID, wingID, operation, requestID, sessionID string) {
+	message, _ := json.Marshal(ws.ErrorMsg{
+		Type: ws.TypeError, RequestID: requestID, SessionID: sessionID,
+		Message: "hosted relay payload transport is disabled by this wing",
+	})
+	_ = conn.Write(ctx, websocket.MessageText, message)
+	detail := "wing=" + wingID + " operation=" + operation + " policy=deny"
+	log.Printf("[audit] hosted_relay_denied user=%s %s", userID, detail)
+	if s.Store != nil {
+		if err := s.Store.AppendAudit(userID, "hosted_relay_denied", &detail); err != nil {
+			log.Printf("hosted relay denial audit: %v", err)
 		}
 	}
 }

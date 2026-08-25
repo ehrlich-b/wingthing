@@ -54,6 +54,7 @@ type Client struct {
 
 	Locked       bool
 	AllowedCount int
+	HostedRelay  string
 
 	// RelayPubKey is the relay's EC P-256 public key (base64 DER), received during registration.
 	// Used for JWT verification in direct mode.
@@ -64,6 +65,7 @@ type Client struct {
 	OnOrphanKill        func(ctx context.Context, sessionID string) // kill egg with no active goroutine
 	OnReconnect         func(ctx context.Context)                   // called after re-registration with relay
 	OnPasskeyRegistered func(msg PasskeyRegistered)                 // called when a user registers a passkey
+	OnHostedRelayDenied func(operation string)                      // content-free local policy audit hook
 	OnStateChange       func(state string, err error)               // called on connection state transitions
 
 	// ptySessions tracks active PTY sessions for routing input/resize
@@ -168,6 +170,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		Locked:         c.Locked,
 		AllowedCount:   c.AllowedCount,
 		PurposeBinding: true,
+		HostedRelay:    c.HostedRelay,
 	}
 	if err := c.writeJSON(ctx, reg); err != nil {
 		return connected, fmt.Errorf("register: %w", err)
@@ -188,6 +191,16 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		var env Envelope
 		if err := json.Unmarshal(data, &env); err != nil {
 			log.Printf("bad message: %v", err)
+			continue
+		}
+		if denied := c.hostedRelayDenial(data, env.Type); denied != nil {
+			log.Printf("[audit] hosted_relay_denied operation=%s policy=deny", env.Type)
+			if c.OnHostedRelayDenied != nil {
+				c.OnHostedRelayDenied(env.Type)
+			}
+			if err := c.writeJSON(ctx, *denied); err != nil {
+				return connected, fmt.Errorf("write hosted relay denial: %w", err)
+			}
 			continue
 		}
 
@@ -312,6 +325,37 @@ func (c *Client) heartbeatLoop(ctx context.Context) {
 	}
 }
 
+func (c *Client) hostedRelayDenial(data []byte, messageType string) *ErrorMsg {
+	if HostedRelayAllowed(c.HostedRelay) {
+		return nil
+	}
+	denied := ErrorMsg{Type: TypeError, Message: "hosted relay payload transport is disabled by this wing"}
+	switch messageType {
+	case TypePTYStart, TypePTYAttach, TypePTYInput, TypePTYResize, TypePTYKill,
+		TypePTYAttentionAck, TypePTYMigrate, TypePasskeyResponse:
+		var metadata struct {
+			SessionID string `json:"session_id"`
+			ViewerID  string `json:"viewer_id"`
+		}
+		_ = json.Unmarshal(data, &metadata)
+		denied.SessionID = metadata.SessionID
+		denied.ViewerID = metadata.ViewerID
+		return &denied
+	case TypeTunnelRequest:
+		var req TunnelRequest
+		if err := json.Unmarshal(data, &req); err != nil {
+			return &denied
+		}
+		if IsCoordinationTunnelPurpose(req.Purpose) && len(req.Payload) <= MaxCoordinationTunnelPayload {
+			return nil
+		}
+		denied.RequestID = req.RequestID
+		return &denied
+	default:
+		return nil
+	}
+}
+
 // SendConfig pushes the wing's current lock state to the relay.
 func (c *Client) SendConfig(ctx context.Context) error {
 	return c.writeJSON(ctx, WingConfig{
@@ -319,11 +363,19 @@ func (c *Client) SendConfig(ctx context.Context) error {
 		WingID:       c.WingID,
 		Locked:       c.Locked,
 		AllowedCount: c.AllowedCount,
+		HostedRelay:  c.HostedRelay,
 	})
 }
 
 // SendAttention sends a session.attention message to the relay (bell detected).
 func (c *Client) SendAttention(ctx context.Context, sessionID string) error {
+	if !HostedRelayAllowed(c.HostedRelay) {
+		log.Printf("[audit] hosted_relay_denied operation=%s policy=deny", TypeSessionAttention)
+		if c.OnHostedRelayDenied != nil {
+			c.OnHostedRelayDenied(TypeSessionAttention)
+		}
+		return nil
+	}
 	return c.writeJSON(ctx, SessionAttention{Type: TypeSessionAttention, SessionID: sessionID})
 }
 

@@ -25,10 +25,16 @@ type connectMCPServer struct {
 	in       io.Reader
 	out      io.Writer
 	actor    string
-	tunnel   *ws.TunnelClient
+	tunnel   connectMCPTunnel
 	timeout  time.Duration
 	mu       sync.Mutex
 	controls map[string]*webrtcpkg.ControlClient
+}
+
+type connectMCPTunnel interface {
+	ListWings(ctx context.Context) ([]ws.WingInfo, error)
+	DiscoverWing(ctx context.Context, wingID string) (*ws.WingInfo, error)
+	Stream(ctx context.Context, wingID, wingPublicKey string, inner any, onChunk func([]byte) error) error
 }
 
 func connectMCPCmd() *cobra.Command {
@@ -193,10 +199,14 @@ func (s *connectMCPServer) callTool(ctx context.Context, name string, arguments 
 		}
 		entries := make([]map[string]any, 0, len(wings))
 		for _, wing := range wings {
+			hostedRelay := ws.HostedRelayDeny
+			if ws.HostedRelayAllowed(wing.HostedRelay) {
+				hostedRelay = ws.HostedRelayAllow
+			}
 			entries = append(entries, map[string]any{
 				"wing_id": wing.WingID, "public_key": wing.PublicKey,
 				"owner": wing.Owner, "org_id": wing.OrgID, "online": true,
-				"mcp_control": true, "mcp_transport": "direct-webrtc",
+				"mcp_control": true, "mcp_transport": "direct-webrtc", "hosted_relay": hostedRelay,
 			})
 		}
 		return map[string]any{"wings": entries, "count": len(entries), "control_scope": "qualified-direct"}, false, nil

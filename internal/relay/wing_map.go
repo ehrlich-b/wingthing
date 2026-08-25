@@ -18,6 +18,7 @@ type WingLocation struct {
 	PublicKey    string
 	Locked       bool
 	AllowedCount int
+	HostedRelay  string
 	RegisteredAt time.Time
 }
 
@@ -152,6 +153,7 @@ func (s *Server) registerWingWithLogin(wing *ConnectedWing) {
 		"public_key":    wing.PublicKey,
 		"locked":        wing.Locked,
 		"allowed_count": wing.AllowedCount,
+		"hosted_relay":  wing.HostedRelay,
 	})
 	client := &http.Client{Timeout: 3 * time.Second}
 	req, _ := http.NewRequest("POST", s.Config.LoginNodeAddr+"/internal/wing-register", bytes.NewReader(payload))
@@ -216,6 +218,7 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 		PublicKey    string `json:"public_key"`
 		Locked       bool   `json:"locked"`
 		AllowedCount int    `json:"allowed_count"`
+		HostedRelay  string `json:"hosted_relay"`
 	}
 	wings := make([]syncWing, len(local))
 	for i, w := range local {
@@ -226,6 +229,7 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 			PublicKey:    w.PublicKey,
 			Locked:       w.Locked,
 			AllowedCount: w.AllowedCount,
+			HostedRelay:  w.HostedRelay,
 		}
 	}
 

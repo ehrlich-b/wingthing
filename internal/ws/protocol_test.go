@@ -62,6 +62,7 @@ func TestWingRegisterFields(t *testing.T) {
 		Labels:         []string{"gpu", "home"},
 		Identities:     []string{"bryan", "team-ml"},
 		PurposeBinding: true,
+		HostedRelay:    HostedRelayDeny,
 	}
 
 	data, err := json.Marshal(reg)
@@ -85,5 +86,21 @@ func TestWingRegisterFields(t *testing.T) {
 	}
 	if !decoded.PurposeBinding {
 		t.Error("purpose binding capability was lost in registration")
+	}
+	if decoded.HostedRelay != HostedRelayDeny || HostedRelayAllowed(decoded.HostedRelay) {
+		t.Fatalf("hosted relay policy = %q allowed=%v", decoded.HostedRelay, HostedRelayAllowed(decoded.HostedRelay))
+	}
+}
+
+func TestHostedRelayWireCompatibility(t *testing.T) {
+	for policy, want := range map[string]bool{
+		"":               true, // N-1 wings omit the additive field.
+		HostedRelayAllow: true,
+		HostedRelayDeny:  false,
+		"future-value":   false, // unknown explicit policies fail closed.
+	} {
+		if got := HostedRelayAllowed(policy); got != want {
+			t.Errorf("HostedRelayAllowed(%q) = %v, want %v", policy, got, want)
+		}
 	}
 }

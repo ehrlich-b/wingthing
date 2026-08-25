@@ -253,6 +253,7 @@ func (s *Server) handleWingRegister(w http.ResponseWriter, r *http.Request) {
 		PublicKey    string `json:"public_key"`
 		Locked       bool   `json:"locked"`
 		AllowedCount int    `json:"allowed_count"`
+		HostedRelay  string `json:"hosted_relay"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -266,6 +267,7 @@ func (s *Server) handleWingRegister(w http.ResponseWriter, r *http.Request) {
 			PublicKey:    req.PublicKey,
 			Locked:       req.Locked,
 			AllowedCount: req.AllowedCount,
+			HostedRelay:  req.HostedRelay,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
@@ -317,6 +319,7 @@ func (s *Server) handleWingSync(w http.ResponseWriter, r *http.Request) {
 			PublicKey    string `json:"public_key"`
 			Locked       bool   `json:"locked"`
 			AllowedCount int    `json:"allowed_count"`
+			HostedRelay  string `json:"hosted_relay"`
 		} `json:"wings"`
 		Bandwidth map[string]int64 `json:"bandwidth,omitempty"`
 	}
@@ -343,6 +346,7 @@ func (s *Server) handleWingSync(w http.ResponseWriter, r *http.Request) {
 				PublicKey:    rw.PublicKey,
 				Locked:       rw.Locked,
 				AllowedCount: rw.AllowedCount,
+				HostedRelay:  rw.HostedRelay,
 			})
 		}
 		snapshotAt := time.Unix(req.SnapshotAt, 0)

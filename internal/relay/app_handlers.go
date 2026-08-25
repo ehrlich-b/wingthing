@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ehrlich-b/wingthing/internal/ntfy"
+	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 // tokenUser authenticates a request via Bearer token (CLI device auth).
@@ -135,6 +136,7 @@ func (s *Server) appWingEntries(userID string) []map[string]any {
 			"latest_version": latestVer,
 			"org_id":         wing.OrgID,
 			"user_id":        wing.UserID,
+			"hosted_relay":   effectiveHostedRelay(wing.HostedRelay),
 		}
 		out = append(out, entry)
 	}
@@ -159,6 +161,7 @@ func (s *Server) appWingEntries(userID string) []map[string]any {
 				"latest_version": latestVer,
 				"org_id":         loc.OrgID,
 				"user_id":        loc.UserID,
+				"hosted_relay":   effectiveHostedRelay(loc.HostedRelay),
 			}
 			if loc.MachineID != s.Config.FlyMachineID {
 				entry["remote_node"] = loc.MachineID
@@ -196,6 +199,13 @@ func (s *Server) appWingEntries(userID string) []map[string]any {
 		return left < right
 	})
 	return out
+}
+
+func effectiveHostedRelay(policy string) string {
+	if ws.HostedRelayAllowed(policy) {
+		return ws.HostedRelayAllow
+	}
+	return ws.HostedRelayDeny
 }
 
 // getLatestVersion returns the latest release version from cache, fetching from GitHub if stale.

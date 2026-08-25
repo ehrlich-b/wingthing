@@ -1184,10 +1184,9 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	}
 
 	// Load wing.yaml
-	wingCfg, err := config.LoadWingConfig(cfg.Dir)
+	wingCfg, err := loadWingConfigForStart(cfg.Dir)
 	if err != nil {
-		log.Printf("wing: load wing.yaml: %v (continuing with defaults)", err)
-		wingCfg = &config.WingConfig{}
+		return err
 	}
 
 	// Merge wing.yaml with CLI flags (CLI extends yaml)
@@ -1417,6 +1416,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	// P2P: track DataChannels and SwappableWriters per session
 	var dcSessions sync.Map // sessionID → *pionwebrtc.DataChannel
 	var swSessions sync.Map // sessionID → *webrtcpkg.SwappableWriter
+	directMCPAdmission := newMCPAdmissionState()
 
 	var client *ws.Client // declared early so peerMgr.OnDC closure can capture it
 
@@ -1429,7 +1429,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 					dc.Close()
 					return
 				}
-				serveDirectMCPChannel(cfg, wingCfg, home, allowedKeys, ident, dc)
+				serveDirectMCPChannel(cfg, wingCfg, home, sharedHost, allowedKeys, directMCPAdmission, ident, dc)
 				return
 			}
 			if sessionID == "" {
@@ -1480,6 +1480,12 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		RootDir:      rootDir,
 		Locked:       wingCfg.Locked,
 		AllowedCount: len(wingCfg.AllowKeys),
+		HostedRelay:  wingCfg.EffectiveHostedRelay(),
+	}
+	client.OnHostedRelayDenied = func(operation string) {
+		if err := appendHostedRelayPolicyAudit(cfg, operation); err != nil {
+			log.Printf("hosted relay policy audit: %v", err)
+		}
 	}
 
 	client.OnStateChange = func(state string, stateErr error) {
@@ -1573,6 +1579,10 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 
 	// Reclaim surviving egg sessions on every (re)connect
 	client.OnReconnect = func(rctx context.Context) {
+		if !wingCfg.HostedRelayAllowed() {
+			log.Printf("hosted relay payload transport disabled; skipping relay session reclaim")
+			return
+		}
 		var authTTL time.Duration // default 0 = boot-scoped, no expiry
 		if wingCfg.AuthTTL != "" {
 			if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil {
@@ -1602,10 +1612,15 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 						log.Printf("reload failed: %v", err)
 						continue
 					}
+					if err := validateDirectMCPGrantConfig(newCfg); err != nil {
+						log.Printf("reload failed: %v", err)
+						continue
+					}
 					wingCfg.Locked = newCfg.Locked
 					wingCfg.Spectate = newCfg.Spectate
 					wingCfg.AllowKeys = newCfg.AllowKeys
 					wingCfg.Admins = newCfg.Admins
+					wingCfg.DirectMCP = newCfg.DirectMCP
 					allowedKeys = append([]config.AllowKey{}, newCfg.AllowKeys...)
 					client.Locked = newCfg.Locked
 					client.AllowedCount = len(newCfg.AllowKeys)
@@ -1772,6 +1787,17 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		log.Printf("wing daemon exiting cleanly")
 	}
 	return err
+}
+
+func loadWingConfigForStart(dir string) (*config.WingConfig, error) {
+	wingCfg, err := config.LoadWingConfig(dir)
+	if err != nil {
+		return nil, fmt.Errorf("load wing.yaml: %w", err)
+	}
+	if err := validateDirectMCPGrantConfig(wingCfg); err != nil {
+		return nil, fmt.Errorf("load wing.yaml: %w", err)
+	}
+	return wingCfg, nil
 }
 
 func wingStopCmd() *cobra.Command {
@@ -2392,6 +2418,7 @@ func wingConfigCmd() *cobra.Command {
 			fmt.Printf("debug:      %v\n", wingCfg.Debug)
 			fmt.Printf("locked:     %v\n", wingCfg.Locked)
 			fmt.Printf("spectate:   %v\n", wingCfg.Spectate)
+			fmt.Printf("hosted_relay: %s\n", wingCfg.EffectiveHostedRelay())
 			authTTL := wingCfg.AuthTTL
 			if authTTL == "" {
 				authTTL = "0"
@@ -2422,7 +2449,7 @@ func wingConfigSetCmd() *cobra.Command {
 				return err
 			}
 
-			restartFields := map[string]bool{"org": true}
+			restartFields := map[string]bool{"org": true, "hosted_relay": true}
 			immutableFields := map[string]bool{"wing_id": true, "roost": true, "allow_keys": true}
 
 			var changedRestart []string
@@ -2464,6 +2491,11 @@ func wingConfigSetCmd() *cobra.Command {
 						return fmt.Errorf("spectate: expected true or false")
 					}
 					wingCfg.Spectate = b
+				case "hosted_relay":
+					if value != config.HostedRelayAllow && value != config.HostedRelayDeny {
+						return fmt.Errorf("hosted_relay: expected %q or %q", config.HostedRelayAllow, config.HostedRelayDeny)
+					}
+					wingCfg.HostedRelay = value
 				case "labels":
 					var labels []string
 					for _, l := range strings.Split(value, ",") {
@@ -4220,6 +4252,29 @@ func requestProjects(req ws.TunnelRequest, projects []ws.WingProject, userPaths 
 	return projects
 }
 
+func appendHostedRelayPolicyAudit(cfg *config.Config, operation string) error {
+	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(cfg.Dir, "policy-audit.log")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
+	record := map[string]string{
+		"time":      time.Now().UTC().Format(time.RFC3339Nano),
+		"event":     "hosted_relay_denied",
+		"operation": operation,
+		"transport": "hosted-relay",
+		"policy":    config.HostedRelayDeny,
+	}
+	return json.NewEncoder(file).Encode(record)
+}
+
 // handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
 func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, req ws.TunnelRequest, write ws.PTYWriteFunc,
 	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyChallenges *auth.ChallengeCache,
@@ -4363,6 +4418,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			"locked":        wingCfg.Locked,
 			"spectate":      wingCfg.Spectate,
 			"allowed_count": len(wingCfg.AllowKeys),
+			"hosted_relay":  wingCfg.EffectiveHostedRelay(),
 		}
 		if wingCfg.Label != "" {
 			resp["wing_label"] = wingCfg.Label

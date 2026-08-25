@@ -55,10 +55,40 @@ root-running Docker test alone can mask this failure class.
 | Human, local wing | unit plus Linux/macOS sandbox and native attach | real interactive agent startup | covered across separate tiers |
 | LLM, local wing | all 27 tool schemas, owner isolation, run lifecycle | Codex and Claude start/wait/result | provider smoke covers older prompt tools, not the current run lifecycle |
 | Human, personal remote wing | relay/tunnel plus browser session lifecycle | browser attaches to a real registered wing | shared-roost browser canary is the closest automated case |
-| LLM, personal remote wing | encrypted remote control RPC and target auth | real MCP client controls an external wing | product route doesn't exist |
+| LLM, personal remote wing | encrypted remote control RPC, target auth, qualified resources, grants, bounds, and two-wing connector reconnect | real MCP client controls two external wings without relay payloads | JSON-RPC stdio plus two real WebRTC peers is deterministic; full two-host process/client canary is missing |
 | Human, shared roost | two-user browser, path ACL, credential home, restart | canary shared deployment | current browser tier covers the main path |
-| LLM, shared roost | OAuth HTTP MCP, two owners, two actors, path bounds | Codex and Claude OAuth login and semantic run | only in-process HTTP MCP and manual dogfood evidence |
+| LLM, shared roost | OAuth HTTP MCP plus direct MCP, two owners, two actors, path bounds | Codex and Claude OAuth login and semantic run | HTTP is covered in-process; native direct org-mode and real-client evidence are missing |
 | Several portals | qualified IDs, independent auth, fan-out inventory | one client routes work to two real portals | target registry doesn't exist |
+
+## Compatibility matrix
+
+Wingthing has deployed users. Every transport, identity, entitlement, schema, or
+database change must identify and test the affected rows below. The organization-mode
+shared roost is a required promotion target, not an optional dogfood check.
+
+| Axis | Required rows |
+| --- | --- |
+| Component versions | N-1 wing / N gateway+browser; N wing / N-1 gateway+browser; all N |
+| Account cohort | existing grandfathered, new free, active Pro, self-hosted local user |
+| Deployment | public hosted, private split gateway, all-in-one roost, organization-mode shared roost |
+| Wing ownership | personal owner, org owner, org member, outsider |
+| Protection | unlocked, wing locked, owner passkey, member passkey, revoked credential |
+| Resource state | no sessions, active session, detached session, completed run, active run during upgrade |
+| Database | fresh database, each supported migration baseline, copy of deployed schema |
+| Client | current browser, N-1 browser assets where supported, stdio MCP, HTTP MCP OAuth, native direct MCP |
+
+For every changed protocol, record which mixed-version rows are supported. An
+unsupported combination must fail before mutation with an actionable upgrade message;
+it must not time out, partially create a resource, or fall back to a weaker policy.
+
+Database tests cover both embedded migration sets (`internal/store/migrations` and
+`internal/relay/migrations`). They assert data relationships, not only that startup
+returns nil: owners, org memberships and roles, wing registrations, passkeys, sessions,
+tasks/runs, entitlements, OAuth clients, and audit metadata must survive.
+
+Compatibility never means weakening a security negative control. When a new binary
+correctly rejects behavior an old binary allowed, the suite preserves the old fixture
+and asserts the explicit denial, remediation, and rollout contract.
 
 ## Cross-client conformance suite
 
@@ -84,6 +114,12 @@ The first scenarios should be:
    forever.
 7. Run the same tests once in sandbox mode and once with an explicit outer VM
    boundary. Every response and audit row reports the effective isolation.
+8. Seed sessions with the N-1 wing, upgrade the gateway first and wing second, and
+   repeat in reverse order. Reattach, wait, steer, stop, and verify ownership after
+   each step.
+9. Repeat the multi-wing scenarios as an org owner, org member, and outsider in
+   organization mode. The outsider cannot list or infer resources; the member remains
+   path-bounded; external personal wings never become shared service wings.
 
 The suite should consume generated schemas and capability data. Hard-coded tool
 counts such as `14`, `20`, or `27` should be replaced by an expected
@@ -124,6 +160,18 @@ A pull request should run the deterministic tiers affected by its boundary. A
 release candidate should add browser, native sandbox, real client, and provider
 evidence.
 
+Feature work is test-first at the contract boundary. Characterize deployed behavior
+before refactoring it, add a failing regression or acceptance test before the fix
+where practical, and retain both positive and negative controls afterward. A new
+happy-path test without denial, failure, timeout, or compatibility coverage is not
+sufficient for authorization, transport, persistence, or sandbox work.
+
+Do not chase a repository-wide coverage percentage. Require evidence for claims:
+owner access is paired with outsider denial, allowed egress with proxy bypass denial,
+fresh schema with deployed-schema upgrade, new/new components with N-1/N behavior,
+and successful lifecycle with cancellation/restart. Every dogfood bug gets the
+narrowest deterministic regression test that would have caught it.
+
 The CI shape should become:
 
 - required fast job: web build, unit tests, binary build, schema generation
@@ -131,6 +179,8 @@ The CI shape should become:
 - required protocol job: `make test-integ` plus adapter conformance;
 - required Linux jobs: Debian and Ubuntu native-architecture batteries;
 - required browser job: `make test-web`;
+- required compatibility job: migration fixtures plus mixed N-1/N protocol tests and
+  the three-user organization-mode suite;
 - scheduled or protected-environment job: published agent and hosted-model
   canaries; and
 - tag workflow: consume artifacts and evidence from an already approved commit

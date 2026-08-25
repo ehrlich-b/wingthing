@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testing.T) {
@@ -95,7 +96,7 @@ func TestPortalNativeMCPWingListMatchesBrowserRoster(t *testing.T) {
 			t.Fatalf("create user %s: %v", userID, err)
 		}
 	}
-	srv.Wings.Add(&ConnectedWing{ID: "conn-shared", UserID: roostWingServiceUserID, WingID: "shared-roost", PublicKey: "shared-key"})
+	srv.Wings.Add(&ConnectedWing{ID: "conn-shared", UserID: roostWingServiceUserID, WingID: "shared-roost", PublicKey: "shared-key", HostedRelay: ws.HostedRelayDeny})
 	srv.Wings.Add(&ConnectedWing{ID: "conn-alice", UserID: "alice", WingID: "alice-wing", PublicKey: "alice-key"})
 	srv.Wings.Add(&ConnectedWing{ID: "conn-bob", UserID: "bob", WingID: "bob-wing", PublicKey: "bob-key"})
 	srv.WingMap.Register("remote-wing", WingLocation{MachineID: "edge-node", UserID: "alice", PublicKey: "remote-key"})
@@ -127,6 +128,13 @@ func TestPortalNativeMCPWingListMatchesBrowserRoster(t *testing.T) {
 		reason, _ := entry["mcp_control_reason"].(string)
 		if wingID == "bob-wing" {
 			t.Fatal("wing_list leaked an inaccessible wing")
+		}
+		hostedRelay, _ := entry["hosted_relay"].(string)
+		if wingID == "shared-roost" && hostedRelay != ws.HostedRelayDeny {
+			t.Fatalf("explicit hosted relay policy missing from roster: %#v", entry)
+		}
+		if wingID != "shared-roost" && hostedRelay != ws.HostedRelayAllow {
+			t.Fatalf("legacy wing did not receive compatible effective policy: %#v", entry)
 		}
 		if wingID == "shared-roost" {
 			if !controllable || reason != "embedded-wing" {

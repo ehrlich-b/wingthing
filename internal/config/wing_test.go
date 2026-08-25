@@ -26,6 +26,111 @@ func TestSaveWingConfigRestrictsSigningKeyFile(t *testing.T) {
 	}
 }
 
+func TestLoadWingConfigDirectMCPIsAdditiveAndStrict(t *testing.T) {
+	t.Run("legacy config keeps implicit compatibility policy", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("wing_id: legacy\npaths: [~/repos]\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadWingConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.DirectMCP != nil {
+			t.Fatalf("legacy config unexpectedly gained direct_mcp: %#v", cfg.DirectMCP)
+		}
+	})
+
+	t.Run("valid restrictions load without changing old fields", func(t *testing.T) {
+		dir := t.TempDir()
+		body := `wing_id: current
+label: office
+direct_mcp:
+  allow_grants: [capabilities.read, terminal.read, terminal.read]
+  max_sessions: 4
+  max_spawns_per_hour: 20
+`
+		if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadWingConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Label != "office" || cfg.DirectMCP == nil {
+			t.Fatalf("loaded config = %#v", cfg)
+		}
+		if got := cfg.DirectMCP.AllowGrants; len(got) != 2 || got[0] != "capabilities.read" || got[1] != "terminal.read" {
+			t.Fatalf("normalized allow grants = %#v", got)
+		}
+	})
+
+	for name, direct := range map[string]string{
+		"unknown field":       "  surprise: true\n",
+		"allow and deny":      "  allow_grants: [terminal.read]\n  deny_grants: [terminal.stop]\n",
+		"negative sessions":   "  max_sessions: -1\n",
+		"negative spawn rate": "  max_spawns_per_hour: -1\n",
+		"empty grant":         "  allow_grants: ['']\n",
+	} {
+		t.Run(name+" fails closed", func(t *testing.T) {
+			dir := t.TempDir()
+			body := "direct_mcp:\n" + direct
+			if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadWingConfig(dir); err == nil {
+				t.Fatalf("LoadWingConfig accepted:\n%s", body)
+			}
+		})
+	}
+}
+
+func TestLoadWingConfigHostedRelayIsAdditiveAndStrict(t *testing.T) {
+	t.Run("legacy config keeps hosted relay compatibility", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("wing_id: legacy\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadWingConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.HostedRelay != "" || !cfg.HostedRelayAllowed() {
+			t.Fatalf("legacy hosted relay policy = %q allowed=%v", cfg.HostedRelay, cfg.HostedRelayAllowed())
+		}
+		if got := cfg.EffectiveHostedRelay(); got != HostedRelayAllow {
+			t.Fatalf("legacy effective policy = %q, want %q", got, HostedRelayAllow)
+		}
+	})
+
+	for _, policy := range []string{HostedRelayAllow, HostedRelayDeny} {
+		t.Run(policy+" loads", func(t *testing.T) {
+			dir := t.TempDir()
+			body := "hosted_relay: " + policy + "\n"
+			if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadWingConfig(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.EffectiveHostedRelay() != policy {
+				t.Fatalf("effective policy = %q, want %q", cfg.EffectiveHostedRelay(), policy)
+			}
+		})
+	}
+
+	t.Run("unknown policy fails closed", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("hosted_relay: sometimes\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadWingConfig(dir); err == nil {
+			t.Fatal("LoadWingConfig accepted an unknown hosted_relay policy")
+		}
+	})
+}
+
 func TestPathListUnmarshalMixed(t *testing.T) {
 	input := `
 paths:
@@ -94,7 +199,7 @@ func TestPathListStrings(t *testing.T) {
 
 func TestPathsForUser(t *testing.T) {
 	pl := PathList{
-		{Path: "~/docs"},                                            // open
+		{Path: "~/docs"}, // open
 		{Path: "~/repos/api", Members: []string{"Alice@Acme.com"}}, // ACLed
 		{Path: "~/repos/infra", Members: []string{"bob@acme.com"}}, // ACLed
 	}

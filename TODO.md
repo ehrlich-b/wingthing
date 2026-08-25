@@ -2,6 +2,12 @@
 
 **Your agentic swiss army knife.** One CLI, every backend, accessible from anywhere.
 
+The current product thesis, real user stories, implementation gaps, security
+invariants, release gates, and next coding slice are recorded in
+[`docs/agent-manager-product-brief.md`](docs/agent-manager-product-brief.md). Read
+that brief before continuing `feature/direct-control-free-tier`; this backlog alone
+does not describe the end-to-end agent-manager product.
+
 ## Where We Are
 
 Wings are live. PTY relay works end-to-end. E2E encryption, passkey auth, org support,

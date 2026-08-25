@@ -15,30 +15,153 @@ import (
 	pionwebrtc "github.com/pion/webrtc/v4"
 )
 
-func serveDirectMCPChannel(cfg *config.Config, wingCfg *config.WingConfig, home string, allowedKeys []config.AllowKey, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
+const (
+	defaultDirectMCPMaxSessions      = 8
+	defaultDirectMCPMaxSpawnsPerHour = 60
+)
+
+// Keep this list explicit: a new direct operation with a new grant must fail a
+// compatibility test until its default remote authority is consciously reviewed.
+var defaultDirectMCPGrants = []string{
+	"capabilities.read",
+	"message.send", "message.read",
+	"sandbox.read",
+	"terminal.read", "terminal.send", "terminal.start", "terminal.rename", "terminal.stop",
+	"agent.run", "agent.read", "agent.stop",
+}
+
+func knownDirectMCPGrants() map[string]bool {
+	known := make(map[string]bool, len(defaultDirectMCPGrants))
+	for _, grant := range defaultDirectMCPGrants {
+		known[grant] = true
+	}
+	return known
+}
+
+func validateDirectMCPGrantConfig(wingCfg *config.WingConfig) error {
+	if wingCfg == nil || wingCfg.DirectMCP == nil {
+		return nil
+	}
+	known := knownDirectMCPGrants()
+	for field, values := range map[string][]string{
+		"allow_grants": wingCfg.DirectMCP.AllowGrants,
+		"deny_grants":  wingCfg.DirectMCP.DenyGrants,
+	} {
+		for _, grant := range values {
+			if !known[grant] {
+				return fmt.Errorf("direct_mcp %s contains unknown direct grant %q", field, grant)
+			}
+		}
+	}
+	return nil
+}
+
+type directMCPPolicy struct {
+	role              string
+	grants            map[string]bool
+	maxSessions       int
+	maxSpawnsPerHour  int
+	allowedPaths      []string
+	enforcePathBounds bool
+	identity          EggIdentity
+}
+
+func resolveDirectMCPPolicy(wingCfg *config.WingConfig, home string, sharedHost bool, identity webrtcpkg.PeerIdentity) (directMCPPolicy, error) {
+	if wingCfg == nil {
+		return directMCPPolicy{}, fmt.Errorf("wing policy is unavailable")
+	}
+	if strings.TrimSpace(identity.UserID) == "" {
+		return directMCPPolicy{}, fmt.Errorf("authenticated user identity is required")
+	}
+	if wingCfg.DirectMCP != nil && wingCfg.DirectMCP.Disabled {
+		return directMCPPolicy{}, fmt.Errorf("direct MCP is disabled by this wing's local policy")
+	}
+
+	role := strings.TrimSpace(identity.OrgRole)
+	if wingCfg.IsAdmin(identity.Email) && (role == "" || role == "member") {
+		role = "admin"
+	}
+	if role == "" {
+		if !sharedHost {
+			return directMCPPolicy{}, fmt.Errorf("missing authenticated organization role")
+		}
+		// Existing OAuth roosts historically encode an ordinary shared-roost user
+		// with an empty org role. Preserve that deployment shape at member privilege.
+		role = "member"
+	}
+	if role != "owner" && role != "admin" && role != "member" {
+		return directMCPPolicy{}, fmt.Errorf("unsupported authenticated organization role %q", role)
+	}
+
+	if err := validateDirectMCPGrantConfig(wingCfg); err != nil {
+		return directMCPPolicy{}, err
+	}
+	knownGrants := knownDirectMCPGrants()
+	grants := make(map[string]bool, len(knownGrants))
+	for grant := range knownGrants {
+		grants[grant] = true
+	}
+	maxSessions := defaultDirectMCPMaxSessions
+	maxSpawnsPerHour := defaultDirectMCPMaxSpawnsPerHour
+	if configured := wingCfg.DirectMCP; configured != nil {
+		if configured.MaxSessions > 0 {
+			maxSessions = configured.MaxSessions
+		}
+		if configured.MaxSpawnsPerHour > 0 {
+			maxSpawnsPerHour = configured.MaxSpawnsPerHour
+		}
+		if len(configured.AllowGrants) > 0 {
+			grants = make(map[string]bool, len(configured.AllowGrants))
+			for _, grant := range configured.AllowGrants {
+				grants[grant] = true
+			}
+		}
+		for _, grant := range configured.DenyGrants {
+			delete(grants, grant)
+		}
+	}
+
+	member := role == "member"
+	paths := canonicalPaths(pathsForRequest(wingCfg.Paths, identity.Email, role, home))
+	sealedBoundary := sharedHost || member
+	return directMCPPolicy{
+		role: role, grants: grants,
+		maxSessions: maxSessions, maxSpawnsPerHour: maxSpawnsPerHour,
+		allowedPaths: paths, enforcePathBounds: member,
+		identity: EggIdentity{
+			UserID: identity.UserID, Email: identity.Email,
+			OrgWing: wingCfg.Org != "", SharedHost: sealedBoundary,
+			AllowedPaths: append([]string(nil), paths...), SealedFS: sealedBoundary,
+		},
+	}, nil
+}
+
+func serveDirectMCPChannel(cfg *config.Config, wingCfg *config.WingConfig, home string, sharedHost bool, allowedKeys []config.AllowKey, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
 	actor := strings.TrimPrefix(dc.Label(), control.DirectChannelPrefix)
 	if actor == dc.Label() || validateSessionName(actor) != nil || identity.UserID == "" {
 		log.Printf("[P2P] rejected direct MCP channel %q: invalid actor or identity", dc.Label())
 		_ = dc.Close()
 		return
 	}
-	member := isMemberRole(identity.OrgRole)
-	paths := canonicalPaths(pathsForRequest(wingCfg.Paths, identity.Email, identity.OrgRole, home))
+	policy, policyErr := resolveDirectMCPPolicy(wingCfg, home, sharedHost, identity)
 	server := &localMCPServer{
 		cfg: cfg, logs: os.Stderr,
 		principal:         roostSessionPrincipal(identity.UserID),
 		actor:             actor,
 		surface:           control.SurfaceDirectMCP,
-		allowedPaths:      paths,
-		enforcePathBounds: member,
-		identity: EggIdentity{
-			UserID: identity.UserID, Email: identity.Email,
-			OrgWing: identity.OrgRole != "", SharedHost: member,
-			AllowedPaths: append([]string(nil), paths...), SealedFS: member,
-		},
+		grants:            policy.grants,
+		maxSessions:       policy.maxSessions,
+		maxSpawnsPerHour:  policy.maxSpawnsPerHour,
+		admission:         admission,
+		allowedPaths:      policy.allowedPaths,
+		enforcePathBounds: policy.enforcePathBounds,
+		identity:          policy.identity,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	authorizationError := directMCPAuthorizationError(wingCfg, allowedKeys, identity.UserID)
+	if policyErr != nil {
+		authorizationError = policyErr.Error()
+	}
 	var sendMu sync.Mutex
 	send := func(response control.DirectResponse) {
 		payload, err := json.Marshal(response)

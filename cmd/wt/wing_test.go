@@ -63,6 +63,63 @@ func TestMemberSessionVisibilityFailsClosed(t *testing.T) {
 	}
 }
 
+func TestLoadWingConfigForStartFailsClosedWithoutBreakingLegacyAbsence(t *testing.T) {
+	t.Run("missing file remains the compatible zero-value policy", func(t *testing.T) {
+		cfg, err := loadWingConfigForStart(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg == nil || cfg.DirectMCP != nil {
+			t.Fatalf("default wing config = %#v", cfg)
+		}
+	})
+
+	for name, body := range map[string]string{
+		"malformed direct policy": "direct_mcp:\n  allow_grants: [terminal.read]\n  deny_grants: [terminal.stop]\n",
+		"unknown direct grant":    "direct_mcp:\n  allow_grants: [host.root]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadWingConfigForStart(dir); err == nil || !strings.Contains(err.Error(), "load wing.yaml") {
+				t.Fatalf("start config error = %v", err)
+			}
+		})
+	}
+}
+
+func TestHostedRelayPolicyAuditIsContentFreeAndPrivate(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{Dir: dir}
+	if err := appendHostedRelayPolicyAudit(cfg, ws.TypePTYStart); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "policy-audit.log")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]string
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record["event"] != "hosted_relay_denied" || record["operation"] != ws.TypePTYStart || record["policy"] != config.HostedRelayDeny {
+		t.Fatalf("audit record = %#v", record)
+	}
+	if len(record) != 5 {
+		t.Fatalf("audit record contains unexpected fields: %#v", record)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("policy audit mode = %o, want 600", got)
+	}
+}
+
 func TestSessionAttachOwnership(t *testing.T) {
 	if !canAttachSession("alice", "member", "alice") {
 		t.Fatal("member could not attach to their own session")

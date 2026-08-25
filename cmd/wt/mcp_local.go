@@ -119,12 +119,26 @@ type localMCPServer struct {
 	spawnMu           sync.Mutex
 	admitMu           sync.Mutex // held across bounds check + spawn + record
 	spawnTimes        []time.Time
+	admission         *mcpAdmissionState // shared by remote connections on one wing
 	identity          EggIdentity
 	actor             string
 	surface           control.Surface
 	allowedPaths      []string
 	enforcePathBounds bool
 	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error
+}
+
+// mcpAdmissionState keeps process-local spawn admission shared across reconnecting
+// remote MCP clients. The filesystem-backed max-sessions check is also serialized by
+// this lock, so two data channels cannot race through the final available slot.
+// This remains a guardrail rather than a durable quota across wing restarts.
+type mcpAdmissionState struct {
+	mu         sync.Mutex
+	spawnTimes map[string][]time.Time
+}
+
+func newMCPAdmissionState() *mcpAdmissionState {
+	return &mcpAdmissionState{spawnTimes: map[string][]time.Time{}}
 }
 
 type activeMCPAgentRun struct {
@@ -989,6 +1003,21 @@ func (s *localMCPServer) recordSpawn() {
 // recording happen under one lock so concurrent tool calls cannot both observe
 // a free slot and together exceed max_sessions or max_spawns_per_hour.
 func (s *localMCPServer) admitSpawn(spawn func() error) error {
+	if s.admission != nil {
+		s.admission.mu.Lock()
+		defer s.admission.mu.Unlock()
+		if err := s.checkSharedSpawnBounds(); err != nil {
+			return err
+		}
+		if err := spawn(); err != nil {
+			return err
+		}
+		if s.maxSpawnsPerHour > 0 {
+			principal := s.clientPrincipal()
+			s.admission.spawnTimes[principal] = append(s.admission.spawnTimes[principal], time.Now())
+		}
+		return nil
+	}
 	s.admitMu.Lock()
 	defer s.admitMu.Unlock()
 	if err := s.checkSpawnBounds(); err != nil {
@@ -998,6 +1027,45 @@ func (s *localMCPServer) admitSpawn(spawn func() error) error {
 		return err
 	}
 	s.recordSpawn()
+	return nil
+}
+
+// checkSharedSpawnBounds runs with admission.mu held.
+func (s *localMCPServer) checkSharedSpawnBounds() error {
+	if s.maxSessions > 0 {
+		sessions, err := discoverSessionRefs(s.cfg)
+		if err != nil {
+			return err
+		}
+		owned := 0
+		for _, session := range sessions {
+			if s.ownsSession(session) {
+				owned++
+			}
+		}
+		if owned >= s.maxSessions {
+			return fmt.Errorf("principal %q reached max_sessions=%d", s.clientPrincipal(), s.maxSessions)
+		}
+	}
+	if s.maxSpawnsPerHour > 0 {
+		principal := s.clientPrincipal()
+		cutoff := time.Now().Add(-time.Hour)
+		history := s.admission.spawnTimes[principal]
+		kept := history[:0]
+		for _, timestamp := range history {
+			if timestamp.After(cutoff) {
+				kept = append(kept, timestamp)
+			}
+		}
+		if len(kept) == 0 {
+			delete(s.admission.spawnTimes, principal)
+		} else {
+			s.admission.spawnTimes[principal] = kept
+		}
+		if len(kept) >= s.maxSpawnsPerHour {
+			return fmt.Errorf("principal %q reached max_spawns_per_hour=%d", principal, s.maxSpawnsPerHour)
+		}
+	}
 	return nil
 }
 

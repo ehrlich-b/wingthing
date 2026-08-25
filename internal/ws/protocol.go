@@ -56,6 +56,11 @@ const (
 	TunnelPurposeDiscovery = "wing-discovery"
 	TunnelPurposePasskey   = "passkey-auth"
 	TunnelPurposeControl   = "wing-control"
+
+	HostedRelayAllow = "allow"
+	HostedRelayDeny  = "deny"
+
+	MaxCoordinationTunnelPayload = 256 * 1024
 )
 
 // TunnelPurposeForInnerType declares the coordinator-visible class of an
@@ -83,12 +88,19 @@ func TunnelPurposeMatches(purpose, innerType string) bool {
 	return purpose == TunnelPurposeForInnerType(innerType)
 }
 
+// HostedRelayAllowed preserves compatibility with older wings that omit the
+// additive policy. Unknown explicit values fail closed.
+func HostedRelayAllowed(policy string) bool {
+	return policy == "" || policy == HostedRelayAllow
+}
+
 // WingConfig is sent by the wing when lock state changes (e.g. lock/unlock, allow/revoke).
 type WingConfig struct {
 	Type         string `json:"type"`
 	WingID       string `json:"wing_id"`
 	Locked       bool   `json:"locked"`
 	AllowedCount int    `json:"allowed_count"`
+	HostedRelay  string `json:"hosted_relay,omitempty"`
 }
 
 // Envelope wraps every WebSocket message with a type field for routing.
@@ -122,7 +134,8 @@ type WingRegister struct {
 	AllowedCount int           `json:"allowed_count,omitempty"` // number of allowed keys
 	// PurposeBinding means this wing verifies the coordinator-visible tunnel
 	// purpose against the decrypted inner message before dispatch.
-	PurposeBinding bool `json:"purpose_binding,omitempty"`
+	PurposeBinding bool   `json:"purpose_binding,omitempty"`
+	HostedRelay    string `json:"hosted_relay,omitempty"`
 }
 
 // WingHeartbeat is sent by the wing every 30s.

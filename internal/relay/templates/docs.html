@@ -163,7 +163,8 @@
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt wing config</span><span class="comment">                    # view current config</span><br>
 <span class="prompt">$ </span><span class="cmd">wt wing config set org=myteam</span><span class="comment">     # set a value</span><br>
-<span class="prompt">$ </span><span class="cmd">wt wing config set audit=true</span><span class="comment">     # enable session audit recording</span>
+<span class="prompt">$ </span><span class="cmd">wt wing config set audit=true</span><span class="comment">     # enable session audit recording</span><br>
+<span class="prompt">$ </span><span class="cmd">wt wing config set hosted_relay=deny</span><span class="comment"> # require direct payload transport</span>
 </div>
 <p>The daemon picks up changes via SIGHUP. See the reload column for what requires a restart.</p>
 
@@ -181,7 +182,11 @@
 <tr><td>audit</td><td>record session terminal output for replay</td><td>live</td></tr>
 <tr><td>debug</td><td>verbose daemon logging</td><td>live</td></tr>
 <tr><td>conv</td><td>conversation context file path</td><td>live</td></tr>
+<tr><td>direct_mcp</td><td>optional native-control policy: <code>disabled</code>, <code>allow_grants</code> or <code>deny_grants</code>, <code>max_sessions</code>, and <code>max_spawns_per_hour</code>. Omit it for compatible bounded defaults</td><td>live</td></tr>
+<tr><td>hosted_relay</td><td><code>allow</code> (compatible default) or <code>deny</code>. Deny overrides account entitlement and leaves only bounded direct-connection coordination on the gateway</td><td>restart</td></tr>
 </table>
+<p>Direct MCP policy is enforced by the wing after the coordinator-authenticated identity arrives. Grant and bound fields are not accepted from tool arguments. Malformed policy or unknown grant names fail closed instead of starting with unrestricted direct access.</p>
+<p>Hosted-relay denial is enforced before forwarding by a current gateway and again by the wing. The effective value appears in authorized capability metadata; audit records contain no command, path, terminal, or tunnel payload.</p>
 </div>
 
 <div class="docs-section" id="access-control">

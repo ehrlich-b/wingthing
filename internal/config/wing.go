@@ -9,26 +9,32 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	HostedRelayAllow = "allow"
+	HostedRelayDeny  = "deny"
+)
+
 // WingConfig holds wing-specific settings persisted in ~/.wingthing/wing.yaml.
 type WingConfig struct {
-	WingID    string     `yaml:"wing_id"`
-	Label     string     `yaml:"label,omitempty"` // display name shown in the web UI
-	Roost     string     `yaml:"roost,omitempty"`
-	Org       string     `yaml:"org,omitempty"`
-	Paths     PathList   `yaml:"paths,omitempty"`
-	Root      string     `yaml:"root,omitempty"` // compat: folded into Paths on load
-	Labels    []string   `yaml:"labels,omitempty"`
-	EggConfig string     `yaml:"egg_config,omitempty"`
-	Conv      string     `yaml:"conv,omitempty"`
-	Audit     bool       `yaml:"audit,omitempty"`
-	Debug     bool       `yaml:"debug,omitempty"`
-	Locked    bool       `yaml:"locked,omitempty"`     // explicit lock mode toggle
-	Spectate  bool       `yaml:"spectate,omitempty"`   // allow spectator (read-only) session viewing
-	AuthTTL   string     `yaml:"auth_ttl,omitempty"`   // passkey auth token duration (default "1h")
-	AllowKeys []AllowKey `yaml:"allow_keys,omitempty"`
-	Admins      []string   `yaml:"admins,omitempty"`       // emails with admin role (see all sessions, all paths)
-	IdleTimeout    string `yaml:"idle_timeout,omitempty"`    // kill sessions idle for this long (e.g. "4h")
-	ConnectionMode string `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
+	WingID         string     `yaml:"wing_id"`
+	Label          string     `yaml:"label,omitempty"` // display name shown in the web UI
+	Roost          string     `yaml:"roost,omitempty"`
+	Org            string     `yaml:"org,omitempty"`
+	Paths          PathList   `yaml:"paths,omitempty"`
+	Root           string     `yaml:"root,omitempty"` // compat: folded into Paths on load
+	Labels         []string   `yaml:"labels,omitempty"`
+	EggConfig      string     `yaml:"egg_config,omitempty"`
+	Conv           string     `yaml:"conv,omitempty"`
+	Audit          bool       `yaml:"audit,omitempty"`
+	Debug          bool       `yaml:"debug,omitempty"`
+	Locked         bool       `yaml:"locked,omitempty"`   // explicit lock mode toggle
+	Spectate       bool       `yaml:"spectate,omitempty"` // allow spectator (read-only) session viewing
+	AuthTTL        string     `yaml:"auth_ttl,omitempty"` // passkey auth token duration (default "1h")
+	AllowKeys      []AllowKey `yaml:"allow_keys,omitempty"`
+	Admins         []string   `yaml:"admins,omitempty"`          // emails with admin role (see all sessions, all paths)
+	IdleTimeout    string     `yaml:"idle_timeout,omitempty"`    // kill sessions idle for this long (e.g. "4h")
+	ConnectionMode string     `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
+	HostedRelay    string     `yaml:"hosted_relay,omitempty"`    // "allow" (default) or "deny"
 
 	// P2P / Direct mode settings
 	ICEServers []ICEServer `yaml:"ice_servers,omitempty"` // STUN/TURN servers for WebRTC
@@ -44,7 +50,8 @@ type WingConfig struct {
 	ToolsDir string `yaml:"tools_dir,omitempty"`
 
 	// MCP is the optional OAuth-gated remote surface over privileged tools.
-	MCP *MCPConfig `yaml:"mcp,omitempty"`
+	MCP       *MCPConfig       `yaml:"mcp,omitempty"`
+	DirectMCP *DirectMCPConfig `yaml:"direct_mcp,omitempty"`
 }
 
 // IsAdmin returns true if email is in the Admins list (case-insensitive).
@@ -56,6 +63,19 @@ func (c *WingConfig) IsAdmin(email string) bool {
 		}
 	}
 	return false
+}
+
+// EffectiveHostedRelay returns the additive hosted relay policy. Empty means
+// allow so existing wing.yaml files retain their current behavior.
+func (c *WingConfig) EffectiveHostedRelay() string {
+	if c.HostedRelay == "" {
+		return HostedRelayAllow
+	}
+	return c.HostedRelay
+}
+
+func (c *WingConfig) HostedRelayAllowed() bool {
+	return c.EffectiveHostedRelay() == HostedRelayAllow
 }
 
 // ICEServer is a STUN/TURN server configuration for WebRTC P2P connections.
@@ -183,6 +203,14 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 		if err := cfg.MCP.Validate(); err != nil {
 			return nil, fmt.Errorf("validate %s mcp config: %w", path, err)
 		}
+	}
+	if cfg.DirectMCP != nil {
+		if err := cfg.DirectMCP.Validate(); err != nil {
+			return nil, fmt.Errorf("validate %s direct_mcp config: %w", path, err)
+		}
+	}
+	if cfg.HostedRelay != "" && cfg.HostedRelay != HostedRelayAllow && cfg.HostedRelay != HostedRelayDeny {
+		return nil, fmt.Errorf("validate %s hosted_relay: expected %q or %q, got %q", path, HostedRelayAllow, HostedRelayDeny, cfg.HostedRelay)
 	}
 	// Migrate legacy root -> paths
 	if cfg.Root != "" && len(cfg.Paths) == 0 {

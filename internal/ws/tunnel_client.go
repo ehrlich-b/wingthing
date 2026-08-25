@@ -35,6 +35,7 @@ type WingInfo struct {
 	UserID        string `json:"user_id,omitempty"`
 	Owner         string `json:"owner,omitempty"`
 	RemoteNode    string `json:"remote_node,omitempty"`
+	HostedRelay   string `json:"hosted_relay,omitempty"`
 }
 
 // ListWings returns the online wings the authenticated relay account may use.

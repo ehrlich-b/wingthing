@@ -32,6 +32,7 @@ type ConnectedWing struct {
 	Locked         bool
 	AllowedCount   int
 	PurposeBinding bool
+	HostedRelay    string
 	Conn           *websocket.Conn
 	LastSeen       time.Time
 }
@@ -200,12 +201,13 @@ func (r *WingRegistry) Remove(id string) *ConnectedWing {
 }
 
 // UpdateConfig updates a wing's lock state. Returns the wing for event dispatch.
-func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int) *ConnectedWing {
+func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int, hostedRelay string) *ConnectedWing {
 	r.mu.Lock()
 	w := r.wings[id]
 	if w != nil {
 		w.Locked = locked
 		w.AllowedCount = allowedCount
+		w.HostedRelay = hostedRelay
 	}
 	r.mu.Unlock()
 	return w
@@ -382,6 +384,7 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		Locked:         reg.Locked,
 		AllowedCount:   reg.AllowedCount,
 		PurposeBinding: reg.PurposeBinding,
+		HostedRelay:    reg.HostedRelay,
 		Conn:           conn,
 		LastSeen:       time.Now(),
 	}
@@ -477,11 +480,15 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		case ws.TypeWingConfig:
 			var cfg ws.WingConfig
 			json.Unmarshal(data, &cfg)
-			if w := s.Wings.UpdateConfig(wing.ID, cfg.Locked, cfg.AllowedCount); w != nil {
+			if w := s.Wings.UpdateConfig(wing.ID, cfg.Locked, cfg.AllowedCount, cfg.HostedRelay); w != nil {
 				s.dispatchWingEvent("wing.config", w)
 			}
 
 		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge, ws.TypePTYPreview, ws.TypePTYBrowserOpen, ws.TypePTYMigrated, ws.TypePTYFallback, ws.TypeError:
+			if !ws.HostedRelayAllowed(wing.HostedRelay) {
+				log.Printf("[audit] hosted relay output dropped wing=%s operation=%s policy=deny", wing.WingID, msg.Type)
+				continue
+			}
 			// Extract session_id and forward to browser
 			var partial struct {
 				SessionID string `json:"session_id"`
@@ -500,6 +507,9 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			s.forwardTunnelToBrowser(wing.WingID, stream.RequestID, data, stream.Done)
 
 		case ws.TypeSessionAttention:
+			if !ws.HostedRelayAllowed(wing.HostedRelay) {
+				continue
+			}
 			var attn ws.SessionAttention
 			json.Unmarshal(data, &attn)
 			ev := WingEvent{
@@ -613,6 +623,7 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 				PublicKey:    wing.PublicKey,
 				Locked:       wing.Locked,
 				AllowedCount: wing.AllowedCount,
+				HostedRelay:  wing.HostedRelay,
 			})
 		case "wing.offline":
 			if s.findAnyWingByWingID(wing.WingID) == nil {

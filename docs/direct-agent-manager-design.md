@@ -2,6 +2,10 @@
 
 Status: implementation design for `feature/direct-control-free-tier`
 
+The broader product contract, Slack-derived use cases, gap audit, and ordered
+roadmap live in [Agent Manager Product Brief and Gap Audit](agent-manager-product-brief.md).
+This document remains the design for the direct transport and entitlement slice.
+
 ## Product thesis
 
 Wingthing is an agent manager for agents. It gives an agent one inventory of durable agent runs and terminals across every machine its owner can access, then lets that agent start, inspect, message, wait for, and take over those sessions. A browser and a human terminal are clients of the same control plane, not the center of the product.
@@ -76,6 +80,13 @@ The WebRTC control channel label is versioned and identifies the authenticated c
 
 `wing_id` selects the transport and is removed before the operation reaches the wing handler. The wing derives the user, organization role, and passkey attestations from the authenticated signaling exchange; those fields are never accepted from the MCP request. It applies the same grant checks, owner scoping, filesystem scoping, argument redaction, and audit policy as its HTTP MCP adapter.
 
+The branch now resolves an explicit wing-local policy for every direct connection.
+The compatible default operation set uses positive per-principal session/spawn bounds;
+`wing.yaml` may narrow grants, change bounds, or disable direct MCP. The rolling spawn
+window is shared across reconnecting data channels for the lifetime of the wing
+process. Invalid identity, organization role, or local direct policy fails before a
+tool handler runs.
+
 The first native transport targets host/LAN/tailnet candidates. Configured ICE servers can add broader NAT traversal. This first slice fails closed on locked or per-user passkey-protected wings; it returns an explicit error until the native connector can complete the same passkey-bound authorization ceremony used by the browser.
 
 ## Entitlements
@@ -89,6 +100,14 @@ The first native transport targets host/LAN/tailnet candidates. Configured ICE s
 | Hosted terminal/MCP payload relay | No | Yes | Temporary | Operator policy |
 
 Relay access is a server decision, returned as structured capability metadata and checked before a relayed terminal is started or attached. It is not inferred from client UI state. Grandfathering uses an explicit server cutoff timestamp, is observable in `/api/app/me`, and can later be removed without changing account tiers.
+
+The wing has the final transport decision. `hosted_relay: deny` overrides every
+account cohort, including Pro, grandfathered, and self-hosted relay access. The
+gateway rejects payload routing before forwarding and the wing independently rejects
+relayed PTY and general control messages. Omitted policy remains `allow` for N-1
+wings; unknown explicit values fail closed. Coordination purposes remain bounded and
+purpose-bound at the wing. Authorized roster and `wing.info` capability metadata show
+the effective value, and denial audit records exclude command, path, and payload.
 
 Small, purpose-specific signaling messages remain available to free users. The outer tunnel envelope declares a bounded coordination purpose, and the wing verifies that declaration against the decrypted inner message before responding. New free accounts cannot use the general encrypted control tunnel. Wings advertise purpose-binding support at registration, and the coordinator rejects direct-only signaling to older wings. A later protocol version can split these declarations into physically separate endpoints.
 
@@ -113,7 +132,14 @@ Steps 1-3 are the branch's first shippable vertical slice. Step 4 closes the rem
 7. Roost mode keeps working without a hosted subscription and can choose its own relay policy.
 8. Contract, connector, transport, authorization, and relay-policy behavior have unit/integration coverage and `make test` passes.
 9. Locked and per-user passkey-protected wings reject native direct MCP calls until a passkey ceremony is implemented; coordinator identity alone never bypasses the local lock.
+10. A wing with `hosted_relay: deny` rejects relayed payloads for owner and org member even when the account is otherwise entitled, while bounded discovery/signaling still works.
 
 ## Compatibility and deployment
 
 The existing HTTP MCP endpoint remains available during migration, and all existing hosted users can be grandfathered temporarily. No automatic Fly deployment is implied by a GitHub release: the production deployment must be performed and verified separately. Public docs and `/patterns` should be checked as part of the production rollout so the website does not advertise a contract older than the released binary.
+
+The deterministic connector canary now crosses JSON-RPC stdio and two independent
+real WebRTC data channels, verifies qualified `home`/`office` routing, reconnects, and
+checks that the coordinator handled signaling only. It remains an in-process network
+test; the release gate still requires the built `wt mcp connect` process and a real
+Codex/Claude client against two distinct hosts, including the WSL rig.

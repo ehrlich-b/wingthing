@@ -8,6 +8,83 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	maxDirectMCPSessions      = 4096
+	maxDirectMCPSpawnsPerHour = 100000
+)
+
+// DirectMCPConfig optionally narrows the built-in native direct-control policy.
+// A missing direct_mcp section preserves the compatible default operation set and
+// bounded quotas. Operators can disable the surface, select an allow/deny subset of
+// grant names, or override the positive bounds without configuring every user.
+type DirectMCPConfig struct {
+	Disabled         bool     `yaml:"disabled,omitempty"`
+	AllowGrants      []string `yaml:"allow_grants,omitempty"`
+	DenyGrants       []string `yaml:"deny_grants,omitempty"`
+	MaxSessions      int      `yaml:"max_sessions,omitempty"`
+	MaxSpawnsPerHour int      `yaml:"max_spawns_per_hour,omitempty"`
+}
+
+// UnmarshalYAML decodes the security-sensitive direct policy strictly even though
+// wing.yaml remains permissive at its compatibility-oriented top level.
+func (p *DirectMCPConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("direct_mcp must be a mapping")
+	}
+	if err := rejectUnknownYAMLKeys(value, map[string]bool{
+		"disabled": true, "allow_grants": true, "deny_grants": true,
+		"max_sessions": true, "max_spawns_per_hour": true,
+	}, "direct_mcp"); err != nil {
+		return err
+	}
+	type plainDirectMCPConfig DirectMCPConfig
+	var decoded plainDirectMCPConfig
+	if err := value.Decode(&decoded); err != nil {
+		return err
+	}
+	*p = DirectMCPConfig(decoded)
+	return nil
+}
+
+// Validate rejects ambiguous grant policy and nonsensical resource bounds. Grant
+// existence is checked against the direct operation registry by the wing so the
+// low-level config package does not own a second grant catalog.
+func (p *DirectMCPConfig) Validate() error {
+	if len(p.AllowGrants) > 0 && len(p.DenyGrants) > 0 {
+		return fmt.Errorf("direct_mcp cannot set both allow_grants and deny_grants")
+	}
+	var err error
+	if p.AllowGrants, err = normalizedDirectMCPGrants(p.AllowGrants, "allow_grants"); err != nil {
+		return err
+	}
+	if p.DenyGrants, err = normalizedDirectMCPGrants(p.DenyGrants, "deny_grants"); err != nil {
+		return err
+	}
+	if p.MaxSessions < 0 || p.MaxSessions > maxDirectMCPSessions {
+		return fmt.Errorf("direct_mcp max_sessions must be between 0 and %d", maxDirectMCPSessions)
+	}
+	if p.MaxSpawnsPerHour < 0 || p.MaxSpawnsPerHour > maxDirectMCPSpawnsPerHour {
+		return fmt.Errorf("direct_mcp max_spawns_per_hour must be between 0 and %d", maxDirectMCPSpawnsPerHour)
+	}
+	return nil
+}
+
+func normalizedDirectMCPGrants(values []string, field string) ([]string, error) {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("direct_mcp contains an empty %s entry", field)
+		}
+		if !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	return out, nil
+}
+
 // MCPRoleConfig controls which privileged tools one role may use over the remote MCP
 // surface. It does not affect tools available to in-wing agents.
 type MCPRoleConfig struct {

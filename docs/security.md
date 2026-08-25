@@ -149,6 +149,74 @@ digest to `~/.wingthing/mcp-audit.log`. `~/.wingthing/clients.yaml` can require 
 explicit client, restrict grants, and bound sessions/spawns. Real isolation between
 hostile local clients still requires different OS users or client sandboxes.
 
+## Native direct MCP authority
+
+The wing derives native direct authority from the coordinator-authenticated user,
+organization role, wing-local admin list, configured paths, and the local
+`direct_mcp` policy. The caller cannot supply its own principal, role, grants, or
+paths in a tool request.
+
+The compatible default grants every operation currently reviewed for the direct
+surface, but does so with a non-nil explicit grant set and positive wing-enforced
+bounds: eight live direct-MCP terminal sessions and sixty spawns per hour per
+principal. The rolling spawn window is shared across reconnecting data channels in
+one wing process. It is a process-lifetime guardrail, not a durable billing quota.
+
+Operators can narrow the direct surface in `wing.yaml`:
+
+```yaml
+direct_mcp:
+  allow_grants: [capabilities.read, terminal.read, agent.read]
+  max_sessions: 4
+  max_spawns_per_hour: 20
+```
+
+Use `deny_grants` instead of `allow_grants` to subtract from the compatible default,
+or set `disabled: true`. Allow and deny cannot be combined. Unknown fields, unknown
+grant names, negative or excessive bounds, and malformed policy fail wing startup or
+SIGHUP reload rather than falling back to unrestricted direct access. Omitting the
+entire section preserves existing `wing.yaml` files.
+
+Organization owners and wing-configured admins can use every configured path.
+Ordinary members see only legacy-open paths and paths tagged with their email; their
+sessions are owner-scoped and use the sealed shared-host boundary. Existing OAuth
+shared-roost identities with an empty organization role retain member privilege,
+while an empty role outside shared-roost mode fails closed.
+
+## Hosted relay opt-out
+
+Each wing can independently refuse hosted payload relay, even when its account is
+Pro, temporarily grandfathered, or connected to a self-hosted roost:
+
+```yaml
+hosted_relay: deny
+```
+
+Omitting the field is the compatibility value `allow`. The setting is restart-bound
+so registration, session reclaim, and message handling cannot observe different
+policies in one daemon run. Use `wt wing config set hosted_relay=deny`, then restart
+the wing.
+
+An honest gateway checks the advertised policy before forwarding terminal starts,
+attaches, input, terminal authentication/control, or general encrypted tunnel
+payloads. The wing client also suppresses outbound session-attention metadata. It
+enforces the same decision locally, so an old, stale, or
+modified coordinator cannot cause those handlers to run. Bounded WebRTC discovery,
+signaling, and passkey coordination remains available; the wing decrypts each request
+and verifies that the declared purpose matches the inner message type.
+
+Authorized wing roster entries and encrypted `wing.info` responses report the
+effective `hosted_relay` value. Gateway denials create a content-free audit entry with
+actor, wing, operation, and policy; wing-local denials append operation and policy to
+`~/.wingthing/policy-audit.log` with mode `0600`. Neither record includes command,
+working directory, terminal bytes, or tunnel payload.
+
+This opt-out prevents payload handling by conforming gateway and wing binaries. It
+does not make hosted browser JavaScript safe against a malicious service, and an old
+gateway can still observe a connection attempt before the new wing rejects it. Use a
+native client over a private network or a self-hosted coordinator when the hosted
+service itself is outside the trust boundary.
+
 On a dedicated sandbox VM, `wt egg ... --unsandboxed` and
 `wt mcp stdio --unsandboxed` explicitly make the outer VM the agent boundary.
 Wingthing keeps terminal persistence and the control/audit plane but applies no

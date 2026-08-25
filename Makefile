@@ -105,9 +105,13 @@ build-linux-wt-tests: | web/dist
 		-o test/linux/wt-tests ./cmd/wt/
 
 # Browser E2E tier: seeded shared-roost (org mode) + Playwright in Docker.
-# Binaries are built for the docker host's native arch so the container can
-# run them without emulation. Needs the real web dist (it tests the UI).
-WEB_TEST_ARCH ?= $(HOST_ARCH)
+# Binaries must match the Docker daemon, which may differ from the client host
+# (for example an arm64 Mac pointed at an amd64 Colima/remote daemon). Fall back
+# to the host only when Docker is unavailable; test-web itself will then report
+# the ordinary daemon error.
+WEB_TEST_ARCH ?= $(shell arch=$$(docker info --format '{{.Architecture}}' 2>/dev/null); \
+	if [ -n "$$arch" ]; then echo "$$arch" | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/'; \
+	else echo $(HOST_ARCH); fi)
 
 build-web-e2e: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) go build -buildvcs=false \

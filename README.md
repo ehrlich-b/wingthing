@@ -63,6 +63,25 @@ and carries the WebRTC offer/answer. MCP payloads travel directly to the selecte
 wing. The first native release expects a shared LAN or tailnet unless ICE servers
 are configured. It never silently falls back to the hosted relay.
 
+Direct control has explicit wing-side grants and per-principal spawn/session bounds.
+The compatible defaults require no config; operators can narrow grants, change bounds,
+or disable native control under `direct_mcp` in `wing.yaml`. Organization members
+remain owner- and path-scoped, while owners/admins retain all configured paths. See
+the [security model](docs/security.md#native-direct-mcp-authority) for the policy shape.
+
+Hosted terminal relay is a separate transport decision. Existing configs remain
+compatible, while a wing can refuse relayed payloads regardless of account
+entitlement:
+
+```bash
+wt wing config set hosted_relay=deny
+wt stop && wt start
+```
+
+Direct discovery/signaling still works; terminal and general control payloads must go
+directly to the wing. The effective setting appears in wing capability metadata and
+denials are audited without commands, paths, or payload content.
+
 ## Use the same runtime yourself
 
 ```bash
