@@ -2,9 +2,9 @@
 
 Date: 2026-08-25
 
-Status: Fly release v301 healthy; rollback and database backup retained
+Status: Fly release v302 healthy; rollback releases and database backup retained
 
-## Deployment identity
+## Initial v301 deployment identity
 
 - application: `wingthing`
 - Fly organization/account: the personal organization owned by
@@ -16,7 +16,7 @@ Status: Fly release v301 healthy; rollback and database backup retained
 - image manifest: `sha256:8892386e55d3d86f6d9e6459d2ead8bd0ad8ac0419f2b42efab76f9e17c41fe3`
 - region/process: one `login` machine in `ewr`, version 301, with its health check
   passing
-- prior application release: v300, retained as the immediate Fly rollback target
+- prior application release: v300, retained as the pre-feature Fly rollback target
 
 The deployment was built from a clean committed tree. It made the new product
 positioning and Patterns catalog public and changed the hosted default to
@@ -72,13 +72,33 @@ release follow-up.
 The existing public wing reconnected three seconds after the new service started.
 Startup and migration logs were clean, and the deployed machine remained healthy.
 
+## v302 Patterns clarity follow-up
+
+Fly release v302 deployed commit `d3d6024` after the first public review showed that
+the Patterns page mixed internal product research, unimplemented gaps, and setup
+guides. The current page contains six supported setups. Every card states the user
+outcome, prerequisites, and concrete result in ordinary language. The copied guides
+use the same framing.
+
+The v302 page removes:
+
+- the internal “workflows people are asking for” table;
+- implementation-state vocabulary such as “client-side” and “compose now”;
+- scheduled delivery, worktree, federation, and other unshipped items; and
+- the independent-roost pseudo-pattern, whose old recipe URL now returns 404.
+
+Post-deploy checks confirmed all six setup cards, their `You need`/`You get` sections,
+and setup-guide actions are present. The internal narration and removed pattern are
+absent. Fly reports machine version 302 healthy with its one check passing.
+
 ## Rollback
 
-Release v300 remains visible in Fly's release history. If the runtime must be rolled
-back, select v300 and verify `/health`, wing reconnection, and existing sessions. Use
-the pre-deploy SQLite backup only if the old runtime cannot safely read the current
-schema; restoring it would intentionally discard writes made after the backup and
-therefore requires a separate operator decision.
+Release v301 is the immediate rollback for the page-only v302 change, and v300 remains
+the pre-feature rollback in Fly's release history. After any rollback, verify
+`/health`, wing reconnection, and existing sessions. Use the pre-deploy SQLite backup
+only if the old runtime cannot safely read the current schema; restoring it would
+intentionally discard writes made after the backup and therefore requires a separate
+operator decision.
 
 ## Known canary limits
 

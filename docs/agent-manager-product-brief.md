@@ -578,8 +578,10 @@ migration or denial contract and record why the old behavior is no longer suppor
 At the time of this review:
 
 - branch: `feature/direct-control-free-tier`;
-- production canary: Fly release v301 from commit `db0dc78`, with v300 retained
-  as the application rollback release and a verified pre-deploy database backup;
+- production canary: the runtime shipped in Fly v301 from `db0dc78`; current release
+  v302 from `d3d6024` keeps that runtime and replaces the public Patterns page with
+  shipped-only, self-contained setup guides; v301 and v300 remain rollback releases,
+  along with a verified pre-deploy database backup;
 - the direct-control implementation and Linux egress fix have passed unit,
   integration, static, cross-build, and WSL sandbox testing;
 - the branch is not merged to main, but its committed runtime is deployed as the
