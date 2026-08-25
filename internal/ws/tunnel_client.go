@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/coder/websocket"
 	"github.com/ehrlich-b/wingthing/internal/auth"
@@ -22,6 +23,7 @@ type TunnelClient struct {
 	DeviceToken    string           // Bearer token for relay auth
 	PrivKey        *ecdh.PrivateKey // native client's identity key
 	KnownWingsPath string           // optional TOFU identity pin store
+	pinMu          sync.Mutex
 }
 
 // WingInfo holds the minimal info needed to connect to a wing.
@@ -82,11 +84,14 @@ func (tc *TunnelClient) DiscoverWing(ctx context.Context, wingID string) (*WingI
 }
 
 // VerifyWingIdentity applies the native client's TOFU policy to a relay roster
-// entry. Calls that may add several first-use pins should invoke this serially.
+// entry. First-use pin updates are serialized so concurrent wing connections do
+// not lose one another's entries.
 func (tc *TunnelClient) VerifyWingIdentity(wing WingInfo) error {
 	if tc.KnownWingsPath == "" {
 		return nil
 	}
+	tc.pinMu.Lock()
+	defer tc.pinMu.Unlock()
 	publicKey, err := base64.StdEncoding.DecodeString(wing.PublicKey)
 	if err != nil || len(publicKey) != 32 {
 		return fmt.Errorf("wing %s returned an invalid X25519 identity key", wing.WingID)
@@ -174,10 +179,13 @@ func (tc *TunnelClient) Stream(ctx context.Context, wingID, wingPubKey string, i
 	// Send tunnel.req
 	senderPub := base64.StdEncoding.EncodeToString(tc.PrivKey.PublicKey().Bytes())
 	requestID := generateRequestID()
+	var innerEnvelope Envelope
+	_ = json.Unmarshal(innerJSON, &innerEnvelope)
 	tunnelReq := TunnelRequest{
 		Type:      TypeTunnelRequest,
 		WingID:    wingID,
 		RequestID: requestID,
+		Purpose:   TunnelPurposeForInnerType(innerEnvelope.Type),
 		SenderPub: senderPub,
 		Payload:   payload,
 	}
@@ -196,6 +204,7 @@ func (tc *TunnelClient) Stream(ctx context.Context, wingID, wingPubKey string, i
 		var msg struct {
 			Type      string `json:"type"`
 			RequestID string `json:"request_id"`
+			Message   string `json:"message"`
 			Payload   string `json:"payload"`
 			Done      bool   `json:"done"`
 		}
@@ -204,6 +213,9 @@ func (tc *TunnelClient) Stream(ctx context.Context, wingID, wingPubKey string, i
 		}
 		if msg.RequestID != requestID {
 			continue
+		}
+		if msg.Type == TypeError {
+			return fmt.Errorf("relay: %s", msg.Message)
 		}
 
 		decrypted, err := auth.Decrypt(gcm, msg.Payload)

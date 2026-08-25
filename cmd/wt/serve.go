@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -89,27 +90,36 @@ func serveCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("jwt key: %w", err)
 			}
+			relayGrandfatherBefore := relay.DefaultRelayGrandfatherBefore
+			if raw := strings.TrimSpace(os.Getenv("WT_RELAY_GRANDFATHER_BEFORE")); raw != "" {
+				relayGrandfatherBefore, err = time.Parse(time.RFC3339, raw)
+				if err != nil {
+					return fmt.Errorf("WT_RELAY_GRANDFATHER_BEFORE must be RFC3339: %w", err)
+				}
+			}
 
 			srvCfg := relay.ServerConfig{
-				BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
-				AppHost:            os.Getenv("WT_APP_HOST"),
-				WSHost:             os.Getenv("WT_WS_HOST"),
-				JWTKey:             jwtKey,
-				GitHubClientID:     githubID,
-				GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-				GoogleClientID:     googleID,
-				GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-				SMTPHost:           smtpHost,
-				SMTPPort:           envOr("SMTP_PORT", "587"),
-				SMTPUser:           os.Getenv("SMTP_USER"),
-				SMTPPass:           os.Getenv("SMTP_PASS"),
-				SMTPFrom:           os.Getenv("SMTP_FROM"),
-				NodeRole:           nodeRole,
-				LoginNodeAddr:      loginAddr,
-				FlyMachineID:       flyMachineID,
-				FlyRegion:          flyRegion,
-				FlyAppName:         flyApp,
-				HeroVideo:          os.Getenv("WT_HERO_VIDEO"),
+				BaseURL:                envOr("WT_BASE_URL", "http://localhost:8080"),
+				AppHost:                os.Getenv("WT_APP_HOST"),
+				WSHost:                 os.Getenv("WT_WS_HOST"),
+				JWTKey:                 jwtKey,
+				GitHubClientID:         githubID,
+				GitHubClientSecret:     os.Getenv("GITHUB_CLIENT_SECRET"),
+				GoogleClientID:         googleID,
+				GoogleClientSecret:     os.Getenv("GOOGLE_CLIENT_SECRET"),
+				SMTPHost:               smtpHost,
+				SMTPPort:               envOr("SMTP_PORT", "587"),
+				SMTPUser:               os.Getenv("SMTP_USER"),
+				SMTPPass:               os.Getenv("SMTP_PASS"),
+				SMTPFrom:               os.Getenv("SMTP_FROM"),
+				NodeRole:               nodeRole,
+				LoginNodeAddr:          loginAddr,
+				FlyMachineID:           flyMachineID,
+				FlyRegion:              flyRegion,
+				FlyAppName:             flyApp,
+				HeroVideo:              os.Getenv("WT_HERO_VIDEO"),
+				RelayPolicy:            envOr("WT_RELAY_POLICY", relay.RelayPolicyDirectFree),
+				RelayGrandfatherBefore: relayGrandfatherBefore,
 			}
 
 			// JWT key: server mode requires WT_JWT_KEY env var.

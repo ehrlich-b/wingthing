@@ -254,14 +254,19 @@ When `isolation` is `strict` or `standard` (no network), the sandbox automatical
 
 | Agent | Network | What it opens |
 |-------|---------|---------------|
-| claude | HTTPS | **All outbound TCP 443/80 + DNS.** Required for api.anthropic.com. macOS seatbelt cannot filter by hostname or IP — only by port. |
+| claude | HTTPS | Provider domains through the local CONNECT proxy. Required for api.anthropic.com. |
 | codex | HTTPS | Same as claude (for api.openai.com) |
 | gemini | HTTPS | Same as claude (for googleapis.com) |
 | cursor | HTTPS | Same as claude |
 | ollama | Local | Localhost only (127.0.0.1, no external) |
 | opencode | HTTPS | Same as claude (for anthropic, openai, googleapis) |
 
-**Important:** `standard` isolation with a cloud agent (claude, codex, gemini, cursor) allows outbound HTTPS to **any host**, not just the agent's API. This is a platform limitation — macOS seatbelt cannot filter by domain or IP range. On Linux, the agent currently gets full network access (no port filtering in unprivileged namespaces). See `docs/egg-sandbox-design.md` for details and the roadmap for SNI-based domain filtering.
+**Important:** cloud-agent HTTPS is forced through a domain-filtering CONNECT
+proxy on both platforms. Linux keeps a route-less `CLONE_NEWNET` namespace and
+exposes the proxy through an inherited-FD loopback relay, so ignoring
+`HTTPS_PROXY` fails closed. Declared host-loopback ports use the same relay.
+The Linux relay currently covers TCP proxy/loopback traffic, not arbitrary UDP,
+ICMP, or non-proxied protocols. See `docs/egg-sandbox-design.md` for details.
 
 ## Key Packages
 

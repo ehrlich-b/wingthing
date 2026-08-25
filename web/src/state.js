@@ -53,6 +53,7 @@ export function initDOM() {
     DOM.headerTitle = document.getElementById('header-title');
     DOM.userInfo = document.getElementById('user-info');
     DOM.homeSection = document.getElementById('home-section');
+    DOM.directAgentSetup = document.getElementById('direct-agent-setup');
     DOM.wingStatusEl = document.getElementById('wing-status');
     DOM.sessionsList = document.getElementById('sessions-list');
     DOM.emptyState = document.getElementById('empty-state');

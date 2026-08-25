@@ -19,7 +19,7 @@ func TestLoopbackWebRTC(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	pm.OnDC(func(senderPub, sessionID string, dc *webrtc.DataChannel) {
+	pm.OnDC(func(senderPub, sessionID string, _ PeerIdentity, dc *webrtc.DataChannel) {
 		dcOpened.Store(true)
 		if sessionID != "test-session" {
 			t.Errorf("expected session_id 'test-session', got %q", sessionID)

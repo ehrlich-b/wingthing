@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -390,7 +391,7 @@ func TestJail_ProxyAllowedDomain(t *testing.T) {
 
 	// curl through the proxy to an allowed domain should succeed.
 	// ProxyPort tells seatbelt to allow the proxy's port instead of 443/80.
-	proxyURL := fmt.Sprintf("http://localhost:%d", proxy.Port())
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxy.Port())
 	out, err := runJail(t, Config{
 		NetworkNeed: NetworkHTTPS,
 		ProxyPort:   proxy.Port(),
@@ -408,13 +409,64 @@ func TestJail_ProxyBlockedDomain(t *testing.T) {
 	defer proxy.Close()
 
 	// curl through the proxy to a blocked domain should fail
-	proxyURL := fmt.Sprintf("http://localhost:%d", proxy.Port())
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxy.Port())
 	_, err = runJail(t, Config{
 		NetworkNeed: NetworkHTTPS,
 		ProxyPort:   proxy.Port(),
 	}, fmt.Sprintf("curl -s --max-time 5 --proxy %s https://evil.example.org", proxyURL))
 	if err == nil {
 		t.Fatal("curl to blocked domain through proxy should fail")
+	}
+}
+
+func TestJail_LinuxProxyBypassHasNoRoute(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux network namespace enforcement")
+	}
+	proxy, err := StartProxy([]string{"example.com"})
+	if err != nil {
+		t.Fatalf("StartProxy: %v", err)
+	}
+	defer proxy.Close()
+
+	// The agent deliberately removes every conventional proxy variable. A
+	// fresh CLONE_NEWNET namespace has no direct route, so bypassing policy must
+	// fail instead of reaching the host network.
+	_, err = runJail(t, Config{
+		NetworkNeed: NetworkHTTPS,
+		ProxyPort:   proxy.Port(),
+	}, "env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY curl --noproxy '*' -s --max-time 3 https://example.com")
+	if err == nil {
+		t.Fatal("direct egress succeeded after the agent removed HTTPS_PROXY")
+	}
+}
+
+func TestJail_LinuxDeclaredLoopbackPortForward(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux network namespace forwarding")
+	}
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+			_ = conn.Close()
+		}
+	}()
+	port := listener.Addr().(*net.TCPAddr).Port
+	out, err := runJail(t, Config{
+		NetworkNeed: NetworkLocal,
+		LocalPorts:  []int{port},
+	}, fmt.Sprintf("curl --noproxy '*' -s --max-time 3 http://127.0.0.1:%d", port))
+	if err != nil || out != "ok" {
+		t.Fatalf("declared loopback forward output=%q err=%v", out, err)
 	}
 }
 
@@ -808,7 +860,7 @@ func TestJail_ProxySeatbeltEnforced(t *testing.T) {
 	}
 
 	// But going through the proxy should work
-	proxyURL := fmt.Sprintf("http://localhost:%d", proxy.Port())
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxy.Port())
 	out, err := runJail(t, Config{
 		NetworkNeed: NetworkHTTPS,
 		ProxyPort:   proxy.Port(),

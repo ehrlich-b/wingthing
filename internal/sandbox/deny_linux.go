@@ -25,16 +25,16 @@ const jailAgentDropArg = "_jail_agent_drop"
 // The sealed jail runs the agent through two nested user-namespace stages so it
 // can both swap /proc AND run unprivileged:
 //
-//   _deny_init  -> clones _jail_agent_init into a new PID+user+mount namespace,
-//                  mapped to inner-UID 0 so it keeps CAP_SYS_ADMIN across execve.
-//   _jail_agent_init (stage 2, inner-root): replaces the temporarily visible
-//                  host procfs with one owned by this PID namespace, then clones
-//                  _jail_agent_drop into a further nested user namespace that
-//                  maps back to the real nonzero uid.
-//   _jail_agent_drop (stage 3, nonzero uid): installs seccomp and execs the
-//                  agent. It has no capabilities over the mount namespace, so the
-//                  sealed filesystem and private procfs stand, and Claude's
-//                  --dangerously-skip-permissions root guard is satisfied.
+//	_deny_init  -> clones _jail_agent_init into a new PID+user+mount namespace,
+//	               mapped to inner-UID 0 so it keeps CAP_SYS_ADMIN across execve.
+//	_jail_agent_init (stage 2, inner-root): replaces the temporarily visible
+//	               host procfs with one owned by this PID namespace, then clones
+//	               _jail_agent_drop into a further nested user namespace that
+//	               maps back to the real nonzero uid.
+//	_jail_agent_drop (stage 3, nonzero uid): installs seccomp and execs the
+//	               agent. It has no capabilities over the mount namespace, so the
+//	               sealed filesystem and private procfs stand, and Claude's
+//	               --dangerously-skip-permissions root guard is satisfied.
 //
 // Both re-execs pass the real uid/gid as argv so the drop stage knows its map.
 // Arg layout: <stage-arg> <uid> <gid> -- <command...>.
@@ -192,7 +192,9 @@ func verifyPrivateProcfs() error {
 // itself is NOT in a PID namespace — this keeps host /proc valid so Go can
 // write uid_map for the nested CLONE_NEWUSER without remounting /proc.
 //
-// Args format: --uid UID --gid GID [--log PATH] [--deny PATH...] [--home PATH] [--writable PATH...] [--mount-ro PATH...] [--overlay-prefix PREFIX...] -- CMD ARGS...
+// Args format: --uid UID --gid GID [--log PATH] [--net-relay-fd FD]
+// [--proxy-port PORT] [--local-port PORT...] [--deny PATH...] [--home PATH]
+// [--writable PATH...] [--mount-ro PATH...] [--overlay-prefix PREFIX...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
 	var denyWritePaths []string
@@ -202,6 +204,8 @@ func DenyInit(args []string) {
 	var home string
 	var logPath string
 	var uid, gid int
+	var netRelayFD, proxyPort int
+	var localPorts []int
 	var cmdStart int
 
 	for i := 0; i < len(args); i++ {
@@ -238,6 +242,16 @@ func DenyInit(args []string) {
 			case "--gid":
 				gid, _ = strconv.Atoi(args[i+1])
 				i++
+			case "--net-relay-fd":
+				netRelayFD, _ = strconv.Atoi(args[i+1])
+				i++
+			case "--proxy-port":
+				proxyPort, _ = strconv.Atoi(args[i+1])
+				i++
+			case "--local-port":
+				port, _ := strconv.Atoi(args[i+1])
+				localPorts = append(localPorts, port)
+				i++
 			}
 		}
 	}
@@ -252,6 +266,12 @@ func DenyInit(args []string) {
 
 	if cmdStart == 0 || cmdStart >= len(args) {
 		log.Fatal("_deny_init: missing -- separator or command")
+	}
+	if netRelayFD > 0 {
+		if err := startNamespaceRelays(netRelayFD, proxyPort, localPorts); err != nil {
+			failEnforcement("start network namespace relay", "127.0.0.1", err)
+		}
+		log.Printf("_deny_init: network namespace relay active (proxy=%d local_ports=%v)", proxyPort, localPorts)
 	}
 
 	// Make all mounts in this namespace private so bind mounts don't
@@ -897,11 +917,15 @@ func unescapeMountInfoPath(path string) string {
 }
 
 func failEnforcement(operation, path string, err error) {
+	if isWSL2Kernel() {
+		log.Fatalf("_deny_init: sandbox enforcement failed during %s at %q: %v (platform: WSL2; some WSL2 configurations reject required mount or namespace operations inside unprivileged user namespaces; use a privileged Linux container or VM as the outer sandbox boundary); refusing to launch agent",
+			operation, path, err)
+	}
 	profile := currentSecurityProfile()
 	if profile == "" {
 		profile = "unreported"
 	}
-	log.Fatalf("_deny_init: filesystem enforcement failed: %s %q: %v (security profile: %s); refusing to launch agent",
+	log.Fatalf("_deny_init: sandbox enforcement failed: %s %q: %v (security profile: %s); refusing to launch agent",
 		operation, path, err, profile)
 }
 

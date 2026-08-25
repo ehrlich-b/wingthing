@@ -100,6 +100,7 @@ type RunConfig struct {
 	Shell        string
 	FS           []string // "rw:./", "deny:~/.ssh"
 	Network      []string // domain list
+	LocalPorts   []int    // host loopback ports forwarded into the network namespace
 	AgentDomains string   // ""/"merge" or "none"
 	Env          map[string]string
 	Rows         uint32
@@ -496,7 +497,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 
 	sessionPolicy := &EggConfig{
 		FS:        rc.FS,
-		Network:   NetworkField{Domains: rc.Network},
+		Network:   NetworkField{Domains: rc.Network, LocalPorts: rc.LocalPorts},
 		Resources: EggResources{MaxFDs: rc.MaxFDs, MaxPids: rc.PidLimit},
 		Trace:     rc.Trace,
 	}
@@ -596,7 +597,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	// Resolve declared, agent-profile, and provider-derived domains through the
 	// same policy path used by `wt egg explain`.
 	networkPolicy, err := ResolvePolicyWithProvider(&EggConfig{
-		Network: NetworkField{Domains: rc.Network, AgentDomains: rc.AgentDomains},
+		Network: NetworkField{Domains: rc.Network, LocalPorts: rc.LocalPorts, AgentDomains: rc.AgentDomains},
 	}, rc.Agent, envMap["HOME"], envMap["WT_PROVIDER_BASE_URL"])
 	if err != nil {
 		return err
@@ -604,15 +605,16 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	mergedDomains := networkPolicy.Domains
 	netNeed := sandbox.NetworkNeedFromDomains(mergedDomains)
 
-	// Start domain-filtering proxy if we have specific domains (not "*" or empty)
+	// A sandboxed Linux process has no route except the inherited relay. Proxy
+	// setup therefore fails closed instead of degrading to advisory env vars.
 	var domainProxy *sandbox.DomainProxy
-	if netNeed == sandbox.NetworkHTTPS && len(mergedDomains) > 0 {
-		var err2 error
-		domainProxy, err2 = sandbox.StartProxy(mergedDomains)
-		if err2 != nil {
-			log.Printf("egg: warning: domain proxy failed, falling back to port-level filtering: %v", err2)
-		} else {
-			proxyURL := fmt.Sprintf("http://localhost:%d", domainProxy.Port())
+	if hasSandbox {
+		domainProxy, err = sandbox.StartPolicyProxy(netNeed, mergedDomains)
+		if err != nil {
+			return fmt.Errorf("start enforcing network proxy: %w", err)
+		}
+		if domainProxy != nil {
+			proxyURL := fmt.Sprintf("http://127.0.0.1:%d", domainProxy.Port())
 			envMap["HTTPS_PROXY"] = proxyURL
 			envMap["HTTP_PROXY"] = proxyURL
 			envMap["NODE_USE_ENV_PROXY"] = "1" // node 22.18+ native proxy support
@@ -742,6 +744,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			NetworkNeed:  netNeed,
 			Domains:      mergedDomains,
 			ProxyPort:    proxyPort,
+			LocalPorts:   append([]int(nil), networkPolicy.LocalPorts...),
 			CPULimit:     rc.CPULimit,
 			MemLimit:     rc.MemLimit,
 			MaxFDs:       rc.MaxFDs,
@@ -785,12 +788,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		if sb != nil {
 			sb.Destroy()
 		}
-		// Detect namespace creation failures that slip past the capability probe.
-		// The probe tests simple CLONE_NEWUSER but the sandbox uses CLONE_NEWUSER|NEWNS|NEWPID
-		// which can fail in restricted environments (containers, AppArmor, etc.).
+		// Detect namespace creation failures that race with or otherwise slip
+		// past the capability probe. Name the actual failed outer operation and
+		// let the sandbox package provide platform-specific (including WSL2)
+		// guidance rather than guessing at a security profile.
 		if strings.Contains(err.Error(), "operation not permitted") || strings.Contains(err.Error(), "permission denied") {
-			return fmt.Errorf("start pty: %v — your system blocked sandbox namespace creation. "+
-				"Fix: sudo sysctl -w kernel.unprivileged_userns_clone=1 (or run: sudo wt egg claude)", err)
+			return fmt.Errorf("start sandboxed PTY with user/mount/PID/network namespaces: %v. %s", err, sandbox.CapabilityFailureHelp())
 		}
 		return fmt.Errorf("start pty: %v", err)
 	}

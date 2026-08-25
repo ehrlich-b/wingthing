@@ -54,7 +54,7 @@
 </nav>
 <div class="docs-body">
 <h1>documentation</h1>
-<p class="lead">wingthing puts your agents behind one control plane for you and your LLM.</p>
+<p class="lead">wingthing is an agent manager for agents: one typed control plane for durable work across every machine, with human takeover when useful.</p>
 
 <div class="docs-section" id="quickstart">
 <h2>quickstart</h2>
@@ -76,6 +76,14 @@
 </div>
 <p>Restart the client, then ask it to call <code>wingthing_capabilities</code>. It can start persistent terminals or headless runs, wait for results, steer work, and stop it.</p>
 
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">give an agent access to all your remote wings</h3>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt login</span><br>
+<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp connect --client codex</span><br>
+<span class="comment"># or: claude mcp add --scope user wingthing -- wt mcp connect --client claude</span>
+</div>
+<p>The agent calls <code>wing_list</code>, then passes an explicit <code>wing_id</code> to every operation. The hosted service supplies the access-filtered directory and WebRTC signaling; MCP payloads travel directly between the connector and selected wing. The first release expects the peers to share a LAN or tailnet unless you configure ICE servers.</p>
+
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">optional browser access through wingthing.ai</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
@@ -90,7 +98,7 @@
 <span class="prompt">$ </span><span class="cmd">open localhost:8080</span>
 </div>
 
-<p>Your machine is a <strong>wing</strong>, the runtime that owns the processes and workspaces. A person can use it through the CLI or browser. An LLM can use the same runtime through MCP. Browser terminal and wing API payloads are application-encrypted through the hosted gateway.</p>
+<p>Your machine is a <strong>wing</strong>, the runtime that owns the processes and workspaces. An LLM manages it through MCP; a person can use the same runtime through the CLI or browser. The hosted service coordinates direct connections by default. Pro users can use its encrypted payload relay as a fallback.</p>
 </div>
 
 <div class="docs-section" id="overview">
@@ -105,19 +113,18 @@
 <tr><td>egg</td><td>The process, PTY, sandbox policy, and local control socket behind a session.</td></tr>
 <tr><td>roost</td><td>The self-hosted bundle started by <code>wt roost start</code>: a portal and gateway with an embedded wing. Other wings can register with its gateway.</td></tr>
 </table>
-<p><code>wingthing.ai</code> is the hosted portal and gateway. Personal wings connect outbound to it, so they need no inbound port. It is not a roost under the stricter self-hosted-bundle definition above.</p>
+<p><code>wingthing.ai</code> is the hosted identity, directory, and connection-coordination service. Think of it as a tailnet control plane for wings: it introduces authenticated peers, but the free/default data path is direct. The optional hosted relay carries encrypted payload bytes for Pro users. It is not a roost under the stricter self-hosted-bundle definition above.</p>
 </div>
 
 <div class="docs-section" id="agent-control">
 <h2>agent control</h2>
-<p>The local stdio MCP server lets a parent LLM discover and operate Wingthing without scraping terminal output. Use <code>agent_run</code> for semantic task state. Use <code>agent_start</code> when a person should be able to attach to the persistent terminal.</p>
+<p>The MCP server lets a parent LLM discover and operate Wingthing without scraping terminal output. Use <code>wt mcp stdio</code> for the same host and <code>wt mcp connect</code> for an explicitly selected remote wing. Use <code>agent_run</code> for semantic task state. Use <code>agent_start</code> when a person should be able to attach to the persistent terminal.</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
 <span class="prompt">$ </span><span class="cmd">claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
 </div>
 <p>The main operations are capability discovery, sandbox explanation, terminal lifecycle, agent run lifecycle, bounded loops and dependency graphs, and owner-scoped messages. Every model-reachable operation should have a principal, grant, bound, and audit record.</p>
-<p>Current state has two visible seams. A terminal started through MCP appears in the browser when both clients address the same wing, but headless runs have no browser view. A self-hosted portal can display several registered wings, but its HTTP MCP endpoint currently controls only its embedded wing.</p>
-<p>Independent portals do not discover or federate with one another. Register each HTTP MCP URL under a separate client name and select it explicitly. See <a href="https://github.com/ehrlich-b/wingthing/blob/main/docs/llm-first-review.md">the LLM-first architecture review</a> for the proposed qualified resource and placement model.</p>
+<p>Remote MCP has no mutable current wing: every wing-owned call requires <code>wing_id</code>, and results include the owning wing. The HTTP MCP endpoint remains available for self-hosted compatibility. Independent roost federation and native passkey ceremony for locked wings are still follow-up work.</p>
 </div>
 
 <div class="docs-section" id="installation">
@@ -320,7 +327,7 @@ idle_timeout: 4h
 <div class="docs-section" id="egg-configuration">
 <h2>egg configuration</h2>
 <p>Without an <code>egg.yaml</code>, the sandbox applies opinionated defaults: CWD is writable, home is read-only, sensitive directories (<code>~/.ssh</code>, <code>~/.gnupg</code>, <code>~/.aws</code>, etc.) are denied, and only essential env vars pass through. <code>~/.ssh/known_hosts</code> is preserved read-only so SSH can verify host keys without prompting (add <code>deny:~/.ssh/known_hosts</code> to disable this). Network is blocked except for exactly what your agent needs - each agent has a profile declaring its API domains, env vars, and config directories. Claude gets <code>api.anthropic.com</code>, Ollama gets <code>localhost</code>, etc. You don't configure any of this.</p>
-<p>A local <a href="https://en.wikipedia.org/wiki/HTTP_tunnel">CONNECT proxy</a> enforces domain-level filtering - agents can only reach their own API, not the entire internet. On macOS, Seatbelt forces all traffic through the proxy at the OS level. On Linux, the proxy is set via <code>HTTPS_PROXY</code>.</p>
+<p>A local <a href="https://en.wikipedia.org/wiki/HTTP_tunnel">CONNECT proxy</a> enforces domain-level filtering - agents can only reach their declared APIs, not the entire internet. On macOS, Seatbelt permits only the proxy endpoint. On Linux, every sandbox keeps a route-less network namespace and an inherited-FD relay exposes only the proxy and explicitly declared host-loopback ports. Removing <code>HTTPS_PROXY</code> does not create a route.</p>
 <p>Drop an <code>egg.yaml</code> in your project to customize. Configs are additive - you only declare what you're changing from the defaults.</p>
 <p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the <a href="/">sandbox builder</a> on the homepage to generate configs visually, or install the <a href="https://github.com/ehrlich-b/wingthing/tree/main/docs/skills/create-egg">Claude Code skill</a> for an interactive security interview that generates hardened configs.</p>
 <p>Example <code>egg.yaml</code>:</p>
@@ -458,7 +465,7 @@ WantedBy=multi-user.target
 <tr><td>deny paths (.ssh, .aws, etc.)</td><td>SBPL rules</td><td>tmpfs overlays</td></tr>
 <tr><td>write isolation (HOME read-only)</td><td>SBPL rules</td><td>bind-mount read-only + writable holes</td></tr>
 <tr><td>network deny</td><td>full block via SBPL</td><td>network namespace (CLONE_NEWNET)</td></tr>
-<tr><td>domain filtering</td><td>SBPL forces traffic through local CONNECT proxy; only whitelisted domains pass</td><td>CONNECT proxy via HTTPS_PROXY (cooperative)</td></tr>
+<tr><td>domain filtering</td><td>SBPL forces traffic through local CONNECT proxy; only whitelisted domains pass</td><td>CLONE_NEWNET + inherited-FD loopback relay forces the local CONNECT proxy</td></tr>
 <tr><td>seccomp syscall filter</td><td>n/a</td><td>blocks mount, ptrace, kexec, setns, unshare, bpf, open_by_handle_at, and 20+ more</td></tr>
 <tr><td>resource limits (CPU, mem, FDs)</td><td>not available</td><td>cgroups v2 (memory, PIDs) + rlimit(2) (CPU, virtual address space, FDs)</td></tr>
 <tr><td>PID isolation</td><td>n/a</td><td>CLONE_NEWPID</td></tr>
@@ -470,7 +477,7 @@ WantedBy=multi-user.target
 <h2>sandbox limits</h2>
 <p>The sandbox is not a container runtime. Known gaps:</p>
 <ul>
-<li><strong>Linux domain filtering is cooperative.</strong> The CONNECT proxy is set via <code>HTTPS_PROXY</code>. Agent harnesses that respect proxy env vars (Claude Code, Codex, most Node.js and Go tooling) route through it automatically. An agent that spawns raw sockets can skip it. On macOS, Seatbelt forces all traffic through the proxy at the OS level. If your agent's harness doesn't respect <code>HTTPS_PROXY</code>, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a>.</li>
+<li><strong>Linux protocol coverage is intentionally narrow.</strong> The agent has no default route. HTTPS reaches a domain-filtering CONNECT proxy through the one inherited relay, and declared <code>network.local_ports</code> reach only those host-loopback TCP ports. Arbitrary UDP, ICMP, and non-proxied TCP are unavailable; a client that ignores <code>HTTPS_PROXY</code> fails closed.</li>
 <li><strong>Agent credentials are readable.</strong> API keys and config files are mounted into the sandbox. The agent can read them, but domain filtering means the only place it can send them is the agent's own API.</li>
 <li><strong>HOME is readable.</strong> The agent reads your codebase. Add <code>"deny:~/.secrets"</code> to the <code>fs</code> list to hide sensitive directories.</li>
 <li><strong>Agent config is writable.</strong> <code>~/.claude/</code> and similar directories must be writable for the agent to function.</li>

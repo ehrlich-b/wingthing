@@ -80,12 +80,14 @@ A roost gateway can register the embedded wing and external wings.
   encrypted tunnel, and can show sessions from several wings.
 - HTTP MCP `wing_list` receives that same access-filtered roster and marks only
   the embedded wing as currently controllable.
+- Native `wt mcp connect` receives the roster and controls an explicitly selected
+  external wing over a direct WebRTC data channel.
 - `wt wings --roost URL` can query the same roster and encrypted wing metadata.
 - The roost's HTTP MCP endpoint currently calls only the embedded wing because
   its native tools have no `wing_id` target.
 
-The last item is the principal portal-parity gap. Adding an external wing to a
-roost does not make it selectable through HTTP MCP today.
+The HTTP adapter remains embedded-wing-only for compatibility. The native direct
+adapter is the multi-wing agent-manager path and has no mutable current wing.
 
 Independent roosts do not discover or federate with one another. A client
 selects a roost by URL. An LLM can register several HTTP MCP URLs under separate

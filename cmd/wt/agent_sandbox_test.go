@@ -194,8 +194,8 @@ func TestDirectAgentEnvPreservesHomeAndAddsProxy(t *testing.T) {
 	joined := "\n" + strings.Join(env, "\n") + "\n"
 	for _, want := range []string{
 		"\nHOME=" + home + "\n",
-		"\nHTTPS_PROXY=http://localhost:43210\n",
-		"\nHTTP_PROXY=http://localhost:43210\n",
+		"\nHTTPS_PROXY=http://127.0.0.1:43210\n",
+		"\nHTTP_PROXY=http://127.0.0.1:43210\n",
 		"\nNODE_USE_ENV_PROXY=1\n",
 		"\nGIT_TERMINAL_PROMPT=0\n",
 	} {

@@ -102,6 +102,7 @@ func mcpCmd() *cobra.Command {
 	stdioCmd.Flags().StringVar(&clientName, "client", "", "local MCP principal name (or WT_MCP_CLIENT)")
 	stdioCmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "trust an outer VM/container boundary for all sessions and prompt runs")
 	cmd.AddCommand(stdioCmd)
+	cmd.AddCommand(connectMCPCmd())
 	return cmd
 }
 

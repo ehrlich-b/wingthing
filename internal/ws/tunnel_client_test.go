@@ -6,9 +6,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/coder/websocket"
@@ -31,6 +34,37 @@ func TestTunnelClientPinsWingIdentity(t *testing.T) {
 	}
 	if err := tc.VerifyWingIdentity(WingInfo{WingID: "wing-1", PublicKey: keyB}); err == nil {
 		t.Fatal("changed identity must be rejected")
+	}
+}
+
+func TestTunnelClientPinsConcurrentWingIdentities(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_wings.json")
+	tc := &TunnelClient{KnownWingsPath: path}
+	var wg sync.WaitGroup
+	for index := range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			key := make([]byte, 32)
+			key[0] = byte(index)
+			if err := tc.VerifyWingIdentity(WingInfo{
+				WingID: fmt.Sprintf("wing-%d", index), PublicKey: base64.StdEncoding.EncodeToString(key),
+			}); err != nil {
+				t.Errorf("pin wing %d: %v", index, err)
+			}
+		}()
+	}
+	wg.Wait()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pins map[string]string
+	if err := json.Unmarshal(data, &pins); err != nil {
+		t.Fatal(err)
+	}
+	if len(pins) != 32 {
+		t.Fatalf("concurrent pins = %d, want 32", len(pins))
 	}
 }
 
@@ -123,6 +157,9 @@ func TestTunnelClient_Stream(t *testing.T) {
 
 		var req TunnelRequest
 		json.Unmarshal(data, &req)
+		if req.Purpose != TunnelPurposeControl {
+			t.Errorf("tunnel purpose = %q, want %q", req.Purpose, TunnelPurposeControl)
+		}
 
 		// Derive shared key as the wing would
 		gcm, err := auth.DeriveSharedKey(wingPriv, req.SenderPub, "wt-tunnel")

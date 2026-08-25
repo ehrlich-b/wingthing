@@ -33,14 +33,35 @@ func TestEnvelopeRouting(t *testing.T) {
 	}
 }
 
+func TestTunnelPurposeIsBoundToInnerType(t *testing.T) {
+	for innerType, want := range map[string]string{
+		"webrtc.offer":        TunnelPurposeSignal,
+		"wing.info":           TunnelPurposeDiscovery,
+		"passkey.auth.begin":  TunnelPurposePasskey,
+		"passkey.auth.finish": TunnelPurposePasskey,
+		"sessions.list":       TunnelPurposeControl,
+	} {
+		if got := TunnelPurposeForInnerType(innerType); got != want {
+			t.Errorf("purpose for %s = %q, want %q", innerType, got, want)
+		}
+		if !TunnelPurposeMatches(want, innerType) {
+			t.Errorf("purpose %q did not match %s", want, innerType)
+		}
+	}
+	if TunnelPurposeMatches(TunnelPurposeSignal, "audit.request") {
+		t.Fatal("signaling declaration matched a control payload")
+	}
+}
+
 func TestWingRegisterFields(t *testing.T) {
 	reg := WingRegister{
-		Type:       TypeWingRegister,
-		WingID:  "mac-A1B2",
-		Agents:     []string{"claude", "ollama"},
-		Skills:     []string{"compress", "scorer"},
-		Labels:     []string{"gpu", "home"},
-		Identities: []string{"bryan", "team-ml"},
+		Type:           TypeWingRegister,
+		WingID:         "mac-A1B2",
+		Agents:         []string{"claude", "ollama"},
+		Skills:         []string{"compress", "scorer"},
+		Labels:         []string{"gpu", "home"},
+		Identities:     []string{"bryan", "team-ml"},
+		PurposeBinding: true,
 	}
 
 	data, err := json.Marshal(reg)
@@ -61,5 +82,8 @@ func TestWingRegisterFields(t *testing.T) {
 	}
 	if len(decoded.Identities) != 2 || decoded.Identities[0] != "bryan" {
 		t.Errorf("identities = %v, want [bryan, team-ml]", decoded.Identities)
+	}
+	if !decoded.PurposeBinding {
+		t.Error("purpose binding capability was lost in registration")
 	}
 }

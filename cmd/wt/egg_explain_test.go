@@ -12,14 +12,9 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
 
-// TestExplainEnforcementReportsPlatformTruth pins the central defect from
-// docs/sandbox-enhancement-design.md: the same egg.yaml is a real boundary on
-// macOS and a suggestion on Linux. `wt egg explain` is worse than useless if it
-// hides that, so the enforcement label is per-platform and tested per-platform.
-//
-// The linux https/local rows are expected to flip to "proxy" when Phase 3 lands
-// (keep CLONE_NEWNET, force traffic through the proxy). This test failing after
-// that change is the change working.
+// TestExplainEnforcementReportsPlatformTruth pins the kernel-enforced network
+// boundary. Linux keeps CLONE_NEWNET and admits only inherited relays, so its
+// domain and loopback modes are no longer advisory.
 func TestExplainEnforcementReportsPlatformTruth(t *testing.T) {
 	tests := []struct {
 		goos string
@@ -31,9 +26,9 @@ func TestExplainEnforcementReportsPlatformTruth(t *testing.T) {
 		{"darwin", sandbox.NetworkHTTPS, "proxy"},
 		{"darwin", sandbox.NetworkFull, "unrestricted"},
 		{"linux", sandbox.NetworkNone, "none"},
-		{"linux", sandbox.NetworkLocal, "advisory"},
-		{"linux", sandbox.NetworkHTTPS, "advisory"},
-		{"linux", sandbox.NetworkFull, "unrestricted"},
+		{"linux", sandbox.NetworkLocal, "proxy"},
+		{"linux", sandbox.NetworkHTTPS, "proxy"},
+		{"linux", sandbox.NetworkFull, "proxy"},
 	}
 
 	for _, tc := range tests {

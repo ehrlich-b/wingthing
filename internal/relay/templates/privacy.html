@@ -14,9 +14,9 @@
 {{define "content"}}
 <div class="legal">
 <h1>privacy policy</h1>
-<p class="updated">Last updated: February 11, 2026</p>
+<p class="updated">Last updated: August 25, 2026</p>
 
-<div class="tldr">tl;dr - terminal and wing API payloads are application-encrypted through the hosted relay. The shipped service routes ciphertext during normal operation; it still sees routing metadata and serves the browser client.</div>
+<div class="tldr">tl;dr - free agent clients connect directly to their wings, so the hosted service coordinates identity, directory, and connection setup without carrying MCP payloads. Hosted browser-terminal and control relay access is Pro (with temporary migration access for existing accounts) and carries application-encrypted ciphertext. The service still sees routing metadata and serves the browser client.</div>
 
 <h2>1. what we collect</h2>
 <p>When you use the hosted service at wingthing.ai, we collect:</p>
@@ -28,14 +28,14 @@
 
 <h2>2. what we do not collect</h2>
 <ul>
-<li><strong>Terminal content:</strong> PTY content between the shipped browser client and wing is application-encrypted using X25519 and AES-GCM. During normal operation the roost relays ciphertext and does not log, inspect, store, or analyze terminal content. Because the roost serves the browser JavaScript and initial key trust is TOFU, this is not a guarantee against a fully compromised service.</li>
+<li><strong>Terminal and MCP content:</strong> Direct MCP payloads do not transit the hosted service. The hosted browser terminal is available only through Pro or temporary migration relay access; in that mode the service carries application-encrypted ciphertext and does not log, inspect, store, or analyze its content. Because the service distributes client code and initial key trust is TOFU, this is not a guarantee against a fully compromised service.</li>
 <li><strong>File contents:</strong> We do not access, read, or store any files on your machine. Your wing runs on your hardware.</li>
 <li><strong>Agent conversations:</strong> We do not see what you say to AI agents or what they say to you.</li>
-<li><strong>Keystrokes:</strong> Input is encrypted before it leaves your browser. We relay ciphertext.</li>
+<li><strong>Keystrokes:</strong> Browser-terminal input is application-encrypted before it leaves your browser. When you use the entitled hosted relay, it carries ciphertext only.</li>
 </ul>
 
 <h2>3. how we use your data</h2>
-<p>Account data authenticates your WebSocket connection to the roost. Session metadata (including IDs, selected agent and working directory, timestamps, sizes, and connection state) routes messages between your browser and wing. With the shipped trusted client, session content travels as application ciphertext and lives on your machine.</p>
+<p>Account data authenticates peers and filters the wing directory. Connection metadata helps peers establish a direct path. When relay fallback is entitled, session metadata (including IDs, selected agent and working directory, timestamps, sizes, and connection state) routes encrypted messages between client and wing. Session content lives on your machine.</p>
 <p>We do not sell, rent, or share your data with third parties. We do not use your data for advertising, analytics, or model training.</p>
 
 <h2>4. data storage</h2>

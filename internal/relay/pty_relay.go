@@ -363,6 +363,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	relayAccess := s.relayAccess(userID)
 
 	// Cross-node routing: if target wing is on another machine, fly-replay BEFORE WebSocket upgrade.
 	// Retries for up to 5s to handle wing reconnection after deploy.
@@ -441,6 +442,11 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 
 		switch env.Type {
 		case ws.TypePTYStart:
+			if !relayAccess.Allowed {
+				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "hosted relay is not included on the free direct tier; connect directly, use a self-hosted roost, or upgrade to Pro"})
+				_ = conn.Write(ctx, websocket.MessageText, errMsg)
+				continue
+			}
 			var start ws.PTYStart
 			if err := json.Unmarshal(data, &start); err != nil {
 				continue
@@ -500,6 +506,11 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			log.Printf("pty session %s started (user=%s wing=%s agent=%s)", sessionID, userID, wing.WingID, start.Agent)
 
 		case ws.TypePTYAttach:
+			if !relayAccess.Allowed {
+				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "hosted relay is not included on the free direct tier; connect directly, use a self-hosted roost, or upgrade to Pro"})
+				_ = conn.Write(ctx, websocket.MessageText, errMsg)
+				continue
+			}
 			var attach ws.PTYAttach
 			if err := json.Unmarshal(data, &attach); err != nil {
 				continue
@@ -632,10 +643,26 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(data, &req); err != nil {
 				continue
 			}
+			if !relayAccess.Allowed && (!ws.IsCoordinationTunnelPurpose(req.Purpose) || len(req.Payload) > 256*1024) {
+				errMsg, _ := json.Marshal(ws.ErrorMsg{
+					Type: ws.TypeError, RequestID: req.RequestID,
+					Message: "hosted payload tunnels are not included on the free direct tier",
+				})
+				_ = conn.Write(ctx, websocket.MessageText, errMsg)
+				continue
+			}
 			wing := s.findAnyWingByWingID(req.WingID)
 			if wing == nil || !s.canAccessWing(userID, wing, userOrgIDs) {
-				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "wing not found"})
+				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, RequestID: req.RequestID, Message: "wing not found"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
+				continue
+			}
+			if !relayAccess.Allowed && !wing.PurposeBinding {
+				errMsg, _ := json.Marshal(ws.ErrorMsg{
+					Type: ws.TypeError, RequestID: req.RequestID,
+					Message: "wing must be upgraded before direct-tier coordination can be used safely",
+				})
+				_ = conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
 			}
 			// Inject user identity into tunnel request envelope
@@ -656,7 +683,7 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if !s.registerTunnelRequest(wing.WingID, req.RequestID, conn) {
-				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid or duplicate tunnel request"})
+				errMsg, _ := json.Marshal(ws.ErrorMsg{Type: ws.TypeError, RequestID: req.RequestID, Message: "invalid or duplicate tunnel request"})
 				conn.Write(ctx, websocket.MessageText, errMsg)
 				continue
 			}

@@ -148,8 +148,10 @@ func (s *Server) handleWingsDebug(w http.ResponseWriter, r *http.Request) {
 
 // EntitlementEntry is a user's entitlement info for edge node caching.
 type EntitlementEntry struct {
-	UserID string `json:"user_id"`
-	Tier   string `json:"tier"`
+	UserID       string `json:"user_id"`
+	Tier         string `json:"tier"`
+	RelayAllowed bool   `json:"relay_allowed"`
+	RelayReason  string `json:"relay_reason"`
 }
 
 // handleInternalEntitlements returns all active entitlements (login node only).
@@ -160,10 +162,14 @@ func (s *Server) handleInternalEntitlements(w http.ResponseWriter, r *http.Reque
 	}
 
 	rows, err := s.Store.DB().Query(`
-		SELECT DISTINCT e.user_id,
-			CASE WHEN e.id IS NOT NULL THEN 'pro' ELSE 'free' END as tier
+		SELECT u.id,
+			CASE WHEN EXISTS (
+				SELECT 1
+				FROM entitlements e
+				JOIN subscriptions s ON s.id = e.subscription_id
+				WHERE e.user_id = u.id AND s.status = 'active'
+			) THEN 'pro' ELSE 'free' END as tier
 		FROM users u
-		LEFT JOIN entitlements e ON e.user_id = u.id
 	`)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -177,6 +183,9 @@ func (s *Server) handleInternalEntitlements(w http.ResponseWriter, r *http.Reque
 		if err := rows.Scan(&e.UserID, &e.Tier); err != nil {
 			continue
 		}
+		access := s.relayAccess(e.UserID)
+		e.RelayAllowed = access.Allowed
+		e.RelayReason = access.Reason
 		entries = append(entries, e)
 	}
 	if entries == nil {
@@ -187,10 +196,12 @@ func (s *Server) handleInternalEntitlements(w http.ResponseWriter, r *http.Reque
 
 // SessionValidation is the response from the session validation endpoint.
 type SessionValidation struct {
-	UserID      string   `json:"user_id"`
-	DisplayName string   `json:"display_name"`
-	Tier        string   `json:"tier"`
-	OrgIDs      []string `json:"org_ids"`
+	UserID       string   `json:"user_id"`
+	DisplayName  string   `json:"display_name"`
+	Tier         string   `json:"tier"`
+	RelayAllowed bool     `json:"relay_allowed"`
+	RelayReason  string   `json:"relay_reason"`
+	OrgIDs       []string `json:"org_ids"`
 }
 
 // handleInternalSession validates a session token and returns user info (login node only).
@@ -221,11 +232,14 @@ func (s *Server) handleInternalSession(w http.ResponseWriter, r *http.Request) {
 		orgIDs = []string{}
 	}
 
+	access := s.relayAccess(user.ID)
 	writeJSON(w, http.StatusOK, SessionValidation{
-		UserID:      user.ID,
-		DisplayName: user.DisplayName,
-		Tier:        tier,
-		OrgIDs:      orgIDs,
+		UserID:       user.ID,
+		DisplayName:  user.DisplayName,
+		Tier:         tier,
+		RelayAllowed: access.Allowed,
+		RelayReason:  access.Reason,
+		OrgIDs:       orgIDs,
 	})
 }
 

@@ -13,12 +13,12 @@
 {{define "content"}}
 <div class="legal">
 <h1>terms of service</h1>
-<p class="updated">Last updated: February 11, 2026</p>
+<p class="updated">Last updated: August 25, 2026</p>
 
 <p>These Terms of Service ("Terms") govern your use of the wingthing software and service ("Service") operated by Bryan Ehrlich ("we", "us", "our"). By using the Service, you agree to be bound by these Terms. If you do not agree, do not use the Service.</p>
 
 <h2>1. the service</h2>
-<p>wingthing provides a command-line tool and relay infrastructure for running AI agent sessions on your own hardware and accessing them remotely. The Service includes the <code>wt</code> CLI, the relay server ("roost"), and the web interface at wingthing.ai and app.wingthing.ai.</p>
+<p>wingthing provides an agent manager, command-line tool, connection-coordination service, and optional relay infrastructure for running AI agent sessions on your own hardware. The Service includes the <code>wt</code> CLI, self-hosted roost, and the interfaces at wingthing.ai and app.wingthing.ai.</p>
 
 <h2>2. acceptable use</h2>
 <p>You agree not to use the Service to:</p>
@@ -33,7 +33,7 @@
 </ul>
 
 <h2>3. your content and data</h2>
-<p>You retain ownership of all content you create, transmit, or store through the Service. We do not claim any rights to your code, terminal sessions, or data. The shipped browser and wing application-encrypt PTY content through the roost; during normal operation the roost routes ciphertext rather than terminal plaintext. Routing metadata and the browser-code trust limitation are described in the security documentation.</p>
+<p>You retain ownership of all content you create, transmit, or store through the Service. We do not claim any rights to your code, terminal sessions, or data. Free agent clients send MCP payloads directly to their wings. Hosted browser-terminal and control relay access is an entitled service; when it is used, clients application-encrypt payloads and the service routes ciphertext rather than plaintext. Routing metadata and the client-code trust limitation are described in the security documentation.</p>
 
 <h2>4. termination</h2>
 <p>We may suspend or terminate your access to the Service at any time, for any reason, with or without notice. You may stop using the Service at any time. Upon termination, your right to use the Service ceases immediately. Self-hosted instances are yours to run indefinitely under the MIT license.</p>

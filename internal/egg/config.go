@@ -217,7 +217,7 @@ func DefaultEggConfig() *EggConfig {
 func UnsandboxedEggConfig() *EggConfig {
 	return &EggConfig{
 		Base:    BaseField{Name: "none"},
-		Network: NetworkField{Domains: []string{"*"}},
+		Network: NetworkField{Domains: []string{"*"}, AgentDomains: "none"},
 		Env:     EnvField{"*"},
 	}
 }

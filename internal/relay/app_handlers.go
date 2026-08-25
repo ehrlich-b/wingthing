@@ -82,17 +82,21 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 	}
 	hasPersonalSub := s.Store.HasPersonalSubscription(user.ID)
 	creds, _ := s.Store.ListPasskeyCredentials(user.ID)
+	relayAccess := s.relayAccess(user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":               user.ID,
-		"display_name":     user.DisplayName,
-		"provider":         user.Provider,
-		"avatar_url":       user.AvatarURL,
-		"is_pro":           tier == "pro",
-		"tier":             tier,
-		"email":            user.Email,
-		"personal_pro":     hasPersonalSub,
-		"roost_mode":       s.RoostMode,
-		"has_passkeys":     len(creds) > 0,
+		"id":                user.ID,
+		"display_name":      user.DisplayName,
+		"provider":          user.Provider,
+		"avatar_url":        user.AvatarURL,
+		"is_pro":            tier == "pro",
+		"tier":              tier,
+		"email":             user.Email,
+		"personal_pro":      hasPersonalSub,
+		"roost_mode":        s.RoostMode,
+		"has_passkeys":      len(creds) > 0,
+		"relay_allowed":     relayAccess.Allowed,
+		"relay_reason":      relayAccess.Reason,
+		"default_transport": "direct",
 	})
 }
 
@@ -254,7 +258,6 @@ func (s *Server) fetchLatestVersion() {
 	s.latestVersionMu.Unlock()
 	log.Printf("latest release version: %s", ver)
 }
-
 
 // handleAppWS is a dashboard WebSocket that pushes wing.online/wing.offline events.
 func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {

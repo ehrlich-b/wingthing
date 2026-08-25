@@ -22,25 +22,27 @@ import (
 )
 
 type ServerConfig struct {
-	BaseURL            string
-	AppHost            string // e.g. "app.wingthing.ai" — serve SPA at root
-	WSHost             string // e.g. "ws.wingthing.ai" — WebSocket only
-	JWTKey             string // PEM or base64-DER EC P-256 private key; overrides DB-stored key
-	GitHubClientID     string
-	GitHubClientSecret string
-	GoogleClientID     string
-	GoogleClientSecret string
-	SMTPHost           string
-	SMTPPort           string
-	SMTPUser           string
-	SMTPPass           string
-	SMTPFrom           string
-	NodeRole           string // "login", "edge", or "" (single node)
-	LoginNodeAddr      string // internal address of login node (for edge nodes)
-	FlyMachineID       string // from FLY_MACHINE_ID env var
-	FlyRegion          string // from FLY_REGION env var
-	FlyAppName         string // from FLY_APP_NAME env var
-	HeroVideo          string // path to hero video file on disk (not embedded)
+	BaseURL                string
+	AppHost                string // e.g. "app.wingthing.ai" — serve SPA at root
+	WSHost                 string // e.g. "ws.wingthing.ai" — WebSocket only
+	JWTKey                 string // PEM or base64-DER EC P-256 private key; overrides DB-stored key
+	GitHubClientID         string
+	GitHubClientSecret     string
+	GoogleClientID         string
+	GoogleClientSecret     string
+	SMTPHost               string
+	SMTPPort               string
+	SMTPUser               string
+	SMTPPass               string
+	SMTPFrom               string
+	NodeRole               string // "login", "edge", or "" (single node)
+	LoginNodeAddr          string // internal address of login node (for edge nodes)
+	FlyMachineID           string // from FLY_MACHINE_ID env var
+	FlyRegion              string // from FLY_REGION env var
+	FlyAppName             string // from FLY_APP_NAME env var
+	HeroVideo              string // path to hero video file on disk (not embedded)
+	RelayPolicy            string // "legacy" or "direct-free"
+	RelayGrandfatherBefore time.Time
 }
 
 type Server struct {

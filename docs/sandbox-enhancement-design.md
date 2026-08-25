@@ -1,7 +1,7 @@
 # Sandbox enhancement design
 
-Status: design
-Reviewed: 2026-08-09
+Status: partially implemented on `feature/direct-control-free-tier`
+Reviewed: 2026-08-25
 
 Consolidates what we learned from building the egg sandbox, from the jailbreak
 testing in `egg-sandbox-design.md`, and from evaluating Anthropic's
@@ -29,10 +29,11 @@ macOS enforces domain filtering: when the proxy is up, `apple.go` emits
 `(deny network*)` and allows only `localhost:<proxyPort>`. Egress is genuinely
 constrained.
 
-Linux does not. `linux.go:341` strips `CLONE_NEWNET` whenever
-`NetworkNeed >= NetworkLocal`, so any agent needing HTTPS gets the **full host
-network**. The proxy still starts and `HTTPS_PROXY` is still exported, but nothing
-enforces it. A `curl` that ignores the variable reaches anything.
+Linux formerly stripped `CLONE_NEWNET` whenever an agent needed connectivity, so
+any agent needing HTTPS received the **full host network**. The proxy still
+started and `HTTPS_PROXY` was exported, but nothing enforced it. A `curl` that
+ignored the variable reached anything. Section 3.1 is now implemented; this
+paragraph records the defect that motivated it.
 
 So the same `egg.yaml` produces a real boundary on one platform and a suggestion
 on the other. Documentation calls this "by design"; it is a defect with a
@@ -115,10 +116,13 @@ network:
 
 ### 3.1 Linux egress: keep the namespace, force the proxy
 
-Reverse `cloneFlags()`. Retain `CLONE_NEWNET` for every level below
-`NetworkFull`, leaving the jail with loopback and no route out. Egress becomes a
-Unix socket bind-mounted into the jail, connected to `DomainProxy` on the host
-side. An in-jail forwarder listens on loopback and relays over that socket.
+`cloneFlags()` now retains `CLONE_NEWNET` for every network level, including
+`NetworkFull`, leaving the jail with loopback and no route out. Before clone, the
+parent creates a Unix socketpair beside `DomainProxy`. The child inherits only
+one endpoint, raises loopback, and listens on the proxy and declared local ports.
+Accepted TCP sockets cross the socketpair with `SCM_RIGHTS`; the host validates
+the requested listener before dialing. The bridge FD is close-on-exec before the
+agent starts.
 
 This is the design srt shipped, confirming the approach. Two deliberate
 divergences: we do the relay in-process in Go rather than depending on `socat`,
@@ -139,9 +143,9 @@ localhost become unreachable.
 That would break the `ollama` profile, the provider-substitution work on this
 branch, and `make test-provider-swap` — our release gate.
 
-The fix is the same mechanism as egress: for each declared local port, bind-mount
-a Unix socket and run an in-jail forwarder listening on `127.0.0.1:<port>` that
-relays to the host's port. Declared ports only; nothing implicit.
+The fix is the same inherited-FD mechanism as egress: for each declared local
+port, `_deny_init` listens on `127.0.0.1:<port>` and relays to that exact host
+loopback port. Declared ports only; nothing implicit.
 
 For backwards compatibility, when `network:` is a plain domain list containing
 loopback literals (`localhost`, `127.0.0.1`, `::1`) — which is exactly what the
@@ -304,7 +308,7 @@ so it is the canary for the loopback trap.
 ## Open questions
 
 - srt's exact `AF_UNIX` allow/deny split (source read required).
-- Whether the in-jail forwarder should be a separate static helper or a re-exec of
-  `wt` like `_deny_init` — the latter is fewer artifacts but a larger process.
+- SOCKS5 or another explicit protocol path for non-HTTP TCP without weakening
+  the route-less namespace guarantee.
 - Whether `observe` should be time-boxed, so a session cannot sit unenforced
   forever because someone forgot to flip it.

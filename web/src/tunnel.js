@@ -169,7 +169,14 @@ function openConn(wingId) {
         };
         ws.onmessage = function(e) {
             var msg = JSON.parse(e.data);
-            if (msg.type === 'tunnel.res') {
+            if (msg.type === 'error' && msg.request_id) {
+                var denied = conn.pending[msg.request_id];
+                if (denied) {
+                    delete conn.pending[msg.request_id];
+                    denied.reject(new Error(msg.message || 'tunnel request denied'));
+                    checkIdle(wingId, conn);
+                }
+            } else if (msg.type === 'tunnel.res') {
                 var h = conn.pending[msg.request_id];
                 if (h) {
                     delete conn.pending[msg.request_id];
@@ -266,6 +273,7 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
 
     var requestId = randomUUID();
     var payload = tunnelEncrypt(key, JSON.stringify(innerMsg));
+    var purpose = tunnelPurpose(innerMsg.type);
 
     var conn = await acquireConn(wingId);
 
@@ -275,6 +283,7 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
             type: 'tunnel.req',
             wing_id: wingId,
             request_id: requestId,
+            purpose: purpose,
             sender_pub: identityPubKey,
             payload: payload
         }));
@@ -337,6 +346,7 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
 
     var requestId = randomUUID();
     var payload = tunnelEncrypt(key, JSON.stringify(innerMsg));
+    var purpose = tunnelPurpose(innerMsg.type);
 
     var conn = await acquireConn(wingId);
 
@@ -356,6 +366,7 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
             type: 'tunnel.req',
             wing_id: wingId,
             request_id: requestId,
+            purpose: purpose,
             sender_pub: identityPubKey,
             payload: payload
         }));
@@ -367,6 +378,13 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
             }
         }, 120000);
     });
+}
+
+function tunnelPurpose(innerType) {
+    if (innerType === 'webrtc.offer') return 'webrtc-signal';
+    if (innerType === 'wing.info') return 'wing-discovery';
+    if (innerType === 'passkey.auth.begin' || innerType === 'passkey.auth.finish') return 'passkey-auth';
+    return 'wing-control';
 }
 
 async function handleTunnelPasskey(wingId) {

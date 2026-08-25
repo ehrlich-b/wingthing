@@ -402,6 +402,9 @@ func TestUnsandboxedEggConfig(t *testing.T) {
 	if got := sandbox.NetworkNeedFromDomains(cfg.Network.Domains); got != sandbox.NetworkFull {
 		t.Fatalf("network need = %s, want full", got)
 	}
+	if cfg.Network.AgentDomains != "none" {
+		t.Fatalf("agent domains = %q, want none for the explicit outer-boundary policy", cfg.Network.AgentDomains)
+	}
 
 	withLimit := *cfg
 	withLimit.Resources.Memory = "1GB"

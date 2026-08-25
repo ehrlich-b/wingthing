@@ -1,9 +1,11 @@
 package webrtc
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/pion/webrtc/v4"
@@ -17,13 +19,17 @@ type PeerIdentity struct {
 	Passkeys []string
 }
 
-// DCHandler is called when a new DataChannel opens on a peer connection.
-type DCHandler func(senderPub, sessionID string, dc *webrtc.DataChannel)
+// DCHandler is called as soon as a remote DataChannel is announced, before it
+// opens. Identity is the coordinator-authenticated identity captured by this
+// exact offer; it must not be looked up later by a reusable sender key because
+// several simultaneous offers can share that key. Handlers must install
+// OnMessage callbacks synchronously so the first message cannot race setup.
+type DCHandler func(senderPub, sessionID string, identity PeerIdentity, dc *webrtc.DataChannel)
 
 // PeerManager manages per-sender WebRTC peer connections.
 type PeerManager struct {
 	mu         sync.Mutex
-	peers      map[string]*webrtc.PeerConnection // senderPub → PC
+	peers      map[string]*webrtc.PeerConnection // senderPub + offer digest → PC
 	identities map[string]PeerIdentity           // senderPub → identity
 	iceServers []webrtc.ICEServer
 	dcHandler  DCHandler
@@ -49,6 +55,12 @@ func (pm *PeerManager) OnDC(handler DCHandler) {
 // HandleOffer processes a WebRTC offer from a browser, creating a PeerConnection
 // and returning the answer SDP. Identity is cached from the relay-injected signaling.
 func (pm *PeerManager) HandleOffer(senderPub, userID, email, orgRole string, passkeys []string, sdpOffer string) (string, error) {
+	identity := PeerIdentity{
+		UserID:   userID,
+		Email:    email,
+		OrgRole:  orgRole,
+		Passkeys: append([]string(nil), passkeys...),
+	}
 	config := webrtc.Configuration{
 		ICEServers: pm.iceServers,
 	}
@@ -59,17 +71,16 @@ func (pm *PeerManager) HandleOffer(senderPub, userID, email, orgRole string, pas
 	}
 
 	pm.mu.Lock()
-	// Close any existing peer connection for this sender
-	if old, ok := pm.peers[senderPub]; ok {
+	// A native installation has one persistent identity key but may run several
+	// MCP clients at once. Key connections by offer while retaining identity by
+	// sender, so Codex and Claude do not evict one another.
+	offerDigest := sha256.Sum256([]byte(sdpOffer))
+	peerKey := fmt.Sprintf("%s\x00%x", senderPub, offerDigest[:12])
+	if old, ok := pm.peers[peerKey]; ok {
 		old.Close()
 	}
-	pm.peers[senderPub] = pc
-	pm.identities[senderPub] = PeerIdentity{
-		UserID:   userID,
-		Email:    email,
-		OrgRole:  orgRole,
-		Passkeys: passkeys,
-	}
+	pm.peers[peerKey] = pc
+	pm.identities[senderPub] = identity
 	pm.mu.Unlock()
 
 	// Handle incoming data channels
@@ -81,14 +92,15 @@ func (pm *PeerManager) HandleOffer(senderPub, userID, email, orgRole string, pas
 			sessionID = label[4:]
 		}
 
+		pm.mu.Lock()
+		handler := pm.dcHandler
+		pm.mu.Unlock()
+		if handler != nil {
+			handler(senderPub, sessionID, identity, dc)
+		}
+
 		dc.OnOpen(func() {
 			log.Printf("[P2P] data channel %q opened for sender %s", label, senderPub[:8])
-			pm.mu.Lock()
-			handler := pm.dcHandler
-			pm.mu.Unlock()
-			if handler != nil {
-				handler(senderPub, sessionID, dc)
-			}
 		})
 	})
 
@@ -96,9 +108,11 @@ func (pm *PeerManager) HandleOffer(senderPub, userID, email, orgRole string, pas
 		log.Printf("[P2P] peer %s connection state: %s", senderPub[:8], state.String())
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
 			pm.mu.Lock()
-			if pm.peers[senderPub] == pc {
-				delete(pm.peers, senderPub)
-				delete(pm.identities, senderPub)
+			if pm.peers[peerKey] == pc {
+				delete(pm.peers, peerKey)
+				if !pm.hasSenderPeerLocked(senderPub) {
+					delete(pm.identities, senderPub)
+				}
 			}
 			pm.mu.Unlock()
 		}
@@ -150,14 +164,29 @@ func (pm *PeerManager) GetPeerIdentity(senderPub string) (PeerIdentity, bool) {
 // Returns nil if no matching DC exists.
 func (pm *PeerManager) GetDC(senderPub, sessionID string) *webrtc.DataChannel {
 	pm.mu.Lock()
-	pc, ok := pm.peers[senderPub]
+	var pc *webrtc.PeerConnection
+	for key, candidate := range pm.peers {
+		if strings.HasPrefix(key, senderPub+"\x00") {
+			pc = candidate
+			break
+		}
+	}
 	pm.mu.Unlock()
-	if !ok || pc == nil {
+	if pc == nil {
 		return nil
 	}
 	// DataChannels are browser-created — we can't enumerate them from the Go side.
 	// The caller should track DCs via the OnDC callback instead.
 	return nil
+}
+
+func (pm *PeerManager) hasSenderPeerLocked(senderPub string) bool {
+	for key := range pm.peers {
+		if strings.HasPrefix(key, senderPub+"\x00") {
+			return true
+		}
+	}
+	return false
 }
 
 // Close shuts down all peer connections.

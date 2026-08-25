@@ -29,6 +29,25 @@ make deploy
 
 This runs `make check` first (tests + build), then `fly deploy`.
 
+### Hosted relay policy
+
+Hosted `wt relay` defaults to `WT_RELAY_POLICY=direct-free`: new free accounts
+may use login, the wing directory, key exchange, bounded discovery/passkey
+messages, and WebRTC signaling, but PTY and general control payload relay is
+denied. Pro users retain relay access.
+
+Accounts created before `2026-08-26T00:00:00Z` receive temporary grandfathered
+relay parity by default. To move the migration boundary deliberately, set the
+same RFC3339 value on every login and edge process:
+
+```text
+WT_RELAY_GRANDFATHER_BEFORE=2026-08-26T00:00:00Z
+```
+
+Set `WT_RELAY_POLICY=legacy` only as an explicit rollback. The logged-in API
+reports `relay_allowed` and `relay_reason`, and edge entitlement sync carries the
+same decision made by the login node.
+
 ## Scale
 
 ### Add edge nodes to a region

@@ -14,6 +14,7 @@ import (
 type EntitlementCache struct {
 	mu        sync.RWMutex
 	tiers     map[string]string // userID → tier
+	relay     map[string]RelayAccess
 	loginAddr string
 	client    *http.Client
 }
@@ -21,9 +22,22 @@ type EntitlementCache struct {
 func NewEntitlementCache(loginAddr string) *EntitlementCache {
 	return &EntitlementCache{
 		tiers:     make(map[string]string),
+		relay:     make(map[string]RelayAccess),
 		loginAddr: loginAddr,
 		client:    &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+// GetRelayAccess returns the login node's cached hosted relay decision. A
+// missing entry fails closed while directory and signaling remain available.
+func (c *EntitlementCache) GetRelayAccess(userID string) RelayAccess {
+	c.mu.RLock()
+	access, ok := c.relay[userID]
+	c.mu.RUnlock()
+	if !ok {
+		return RelayAccess{Allowed: false, Reason: "entitlement-unavailable"}
+	}
+	return access
 }
 
 // GetTier returns the cached tier for a user, defaulting to "free".
@@ -85,12 +99,15 @@ func (c *EntitlementCache) fetch(ctx context.Context) {
 	}
 
 	newTiers := make(map[string]string, len(entries))
+	newRelay := make(map[string]RelayAccess, len(entries))
 	for _, e := range entries {
 		newTiers[e.UserID] = e.Tier
+		newRelay[e.UserID] = RelayAccess{Allowed: e.RelayAllowed, Reason: e.RelayReason}
 	}
 
 	c.mu.Lock()
 	c.tiers = newTiers
+	c.relay = newRelay
 	c.mu.Unlock()
 
 	log.Printf("entitlement cache: synced %d entries", len(entries))

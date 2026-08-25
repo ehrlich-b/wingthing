@@ -6,17 +6,23 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 // connectWing creates and registers a wing WebSocket. Returns the conn and assigned connection ID.
 func connectWing(t *testing.T, tsURL, token, wingID string, agents []string) *websocket.Conn {
+	return connectWingWithPurposeBinding(t, tsURL, token, wingID, agents, true)
+}
+
+func connectWingWithPurposeBinding(t *testing.T, tsURL, token, wingID string, agents []string, purposeBinding bool) *websocket.Conn {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -27,10 +33,11 @@ func connectWing(t *testing.T, tsURL, token, wingID string, agents []string) *we
 	}
 
 	reg := ws.WingRegister{
-		Type:     ws.TypeWingRegister,
-		WingID:   wingID,
-		Hostname: "testhost",
-		Agents:   agents,
+		Type:           ws.TypeWingRegister,
+		WingID:         wingID,
+		Hostname:       "testhost",
+		Agents:         agents,
+		PurposeBinding: purposeBinding,
 	}
 	if err := wsjson.Write(ctx, conn, reg); err != nil {
 		conn.CloseNow()
@@ -204,6 +211,96 @@ func TestPTYRoutingNoWingConnected(t *testing.T) {
 	}
 	if errMsg.Message != "no wing connected" {
 		t.Errorf("message = %q, want %q", errMsg.Message, "no wing connected")
+	}
+}
+
+func TestDirectOnlyFreeTierRejectsRelayBeforeWingStart(t *testing.T) {
+	srv, ts, store := testRelayAndWS(t)
+	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
+	srv.Config.RelayGrandfatherBefore = time.Now().Add(-time.Hour)
+	token, userID := createTestUser(t, store, "direct-only")
+
+	wingConn := connectWing(t, wsURL(ts), token, "wing-direct-only", []string{"claude"})
+	defer wingConn.CloseNow()
+	browser := connectBrowser(t, wsURL(ts), token, "wing-direct-only")
+	defer browser.CloseNow()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := wsjson.Write(ctx, browser, ws.PTYStart{
+		Type: ws.TypePTYStart, Agent: "claude", WingID: "wing-direct-only", Cols: 80, Rows: 24,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var denied ws.ErrorMsg
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.Type != ws.TypeError || !strings.Contains(denied.Message, "free direct tier") {
+		t.Fatalf("relay denial = %#v", denied)
+	}
+	if err := wsjson.Write(ctx, browser, ws.TunnelRequest{
+		Type: ws.TypeTunnelRequest, WingID: "wing-direct-only", RequestID: "blocked-control",
+		Purpose: ws.TunnelPurposeControl, Payload: "opaque",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.RequestID != "blocked-control" || !strings.Contains(denied.Message, "payload tunnels") {
+		t.Fatalf("control tunnel denial = %#v", denied)
+	}
+	if err := wsjson.Write(ctx, browser, ws.TunnelRequest{
+		Type: ws.TypeTunnelRequest, WingID: "wing-direct-only", RequestID: "allowed-signal",
+		Purpose: ws.TunnelPurposeSignal, Payload: "opaque",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var signal ws.TunnelRequest
+	if err := wsjson.Read(ctx, wingConn, &signal); err != nil {
+		t.Fatal(err)
+	}
+	if signal.Type != ws.TypeTunnelRequest || signal.RequestID != "allowed-signal" || signal.Purpose != ws.TunnelPurposeSignal {
+		t.Fatalf("coordination tunnel = %#v", signal)
+	}
+	if signal.SenderUserID != userID || signal.SenderOrgRole != "owner" {
+		t.Fatalf("relay identity = user %q role %q, want user %q role owner", signal.SenderUserID, signal.SenderOrgRole, userID)
+	}
+}
+
+func TestDirectOnlyFreeTierRequiresPurposeBindingWing(t *testing.T) {
+	srv, ts, store := testRelayAndWS(t)
+	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
+	srv.Config.RelayGrandfatherBefore = time.Now().Add(-time.Hour)
+	token, _ := createTestUser(t, store, "direct-only-old-wing")
+
+	wingConn := connectWingWithPurposeBinding(t, wsURL(ts), token, "wing-direct-only-old", []string{"claude"}, false)
+	defer wingConn.CloseNow()
+	browser := connectBrowser(t, wsURL(ts), token, "wing-direct-only-old")
+	defer browser.CloseNow()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := wsjson.Write(ctx, browser, ws.TunnelRequest{
+		Type: ws.TypeTunnelRequest, WingID: "wing-direct-only-old", RequestID: "unsafe-signal",
+		Purpose: ws.TunnelPurposeSignal, Payload: "opaque",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var denied ws.ErrorMsg
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.RequestID != "unsafe-signal" || !strings.Contains(denied.Message, "upgraded") {
+		t.Fatalf("legacy wing denial = %#v", denied)
+	}
+
+	wingReadCtx, wingReadCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer wingReadCancel()
+	var unexpected ws.TunnelRequest
+	if err := wsjson.Read(wingReadCtx, wingConn, &unexpected); err == nil {
+		t.Fatalf("unsafe coordination reached legacy wing: %#v", unexpected)
 	}
 }
 

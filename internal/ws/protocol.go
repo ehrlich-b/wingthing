@@ -51,7 +51,37 @@ const (
 	TypeRelayRestart = "relay.restart" // relay → all: server shutting down, reconnect
 	TypeWingOffline  = "wing.offline"  // relay → PTY browsers: wing disconnected
 	TypeError        = "error"
+
+	TunnelPurposeSignal    = "webrtc-signal"
+	TunnelPurposeDiscovery = "wing-discovery"
+	TunnelPurposePasskey   = "passkey-auth"
+	TunnelPurposeControl   = "wing-control"
 )
+
+// TunnelPurposeForInnerType declares the coordinator-visible class of an
+// otherwise encrypted tunnel request. Direct-only accounts may use only the
+// bounded coordination classes; the wing verifies the declaration after it
+// decrypts the inner type.
+func TunnelPurposeForInnerType(innerType string) string {
+	switch innerType {
+	case "webrtc.offer":
+		return TunnelPurposeSignal
+	case "wing.info":
+		return TunnelPurposeDiscovery
+	case "passkey.auth.begin", "passkey.auth.finish":
+		return TunnelPurposePasskey
+	default:
+		return TunnelPurposeControl
+	}
+}
+
+func IsCoordinationTunnelPurpose(purpose string) bool {
+	return purpose == TunnelPurposeSignal || purpose == TunnelPurposeDiscovery || purpose == TunnelPurposePasskey
+}
+
+func TunnelPurposeMatches(purpose, innerType string) bool {
+	return purpose == TunnelPurposeForInnerType(innerType)
+}
 
 // WingConfig is sent by the wing when lock state changes (e.g. lock/unlock, allow/revoke).
 type WingConfig struct {
@@ -90,6 +120,9 @@ type WingRegister struct {
 	PublicKey    string        `json:"public_key,omitempty"`    // wing's X25519 identity key (base64)
 	Locked       bool          `json:"locked"`                  // explicit locked flag from wing.yaml
 	AllowedCount int           `json:"allowed_count,omitempty"` // number of allowed keys
+	// PurposeBinding means this wing verifies the coordinator-visible tunnel
+	// purpose against the decrypted inner message before dispatch.
+	PurposeBinding bool `json:"purpose_binding,omitempty"`
 }
 
 // WingHeartbeat is sent by the wing every 30s.
@@ -110,6 +143,7 @@ type RegisteredMsg struct {
 type ErrorMsg struct {
 	Type      string `json:"type"`
 	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	ViewerID  string `json:"viewer_id,omitempty"`
 }
@@ -245,6 +279,7 @@ type TunnelRequest struct {
 	Type           string   `json:"type"`
 	WingID         string   `json:"wing_id"`
 	RequestID      string   `json:"request_id"`
+	Purpose        string   `json:"purpose,omitempty"`
 	SenderPub      string   `json:"sender_pub,omitempty"`      // browser X25519 identity pubkey
 	Payload        string   `json:"payload"`                   // base64(AES-GCM encrypted)
 	SenderUserID   string   `json:"sender_user_id,omitempty"`  // relay-injected user ID

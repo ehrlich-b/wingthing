@@ -336,6 +336,17 @@ async function _loadHomeInner() {
     if (S.activeView === 'wing-detail' && S.currentWingId) renderWingDetailPage(S.currentWingId);
     if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
 
+    // Direct-only hosted accounts get coordination and wing readiness here,
+    // not the encrypted browser control tunnel. Do not keep rendering stale
+    // terminal cache entries or probe a capability the server will deny.
+    if (S.currentUser && S.currentUser.relay_allowed === false) {
+        S.sessionsData = [];
+        setCachedSessions([]);
+        renderSidebar();
+        if (S.activeView === 'home') renderDashboard();
+        return;
+    }
+
     // Step 8: Fetch sessions from accessible wings in parallel
     var accessibleWings = onlineWings.filter(function(w) { return !w.tunnel_error; });
     var allResults = await Promise.all(accessibleWings.map(function(w) {

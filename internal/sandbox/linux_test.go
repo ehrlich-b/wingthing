@@ -23,24 +23,24 @@ func TestCloneFlagsNoNetwork(t *testing.T) {
 func TestCloneFlagsLocal(t *testing.T) {
 	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkLocal}}
 	flags := s.cloneFlags()
-	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
 	if flags != want {
 		t.Errorf("NetworkLocal cloneFlags = 0x%x, want 0x%x", flags, want)
 	}
-	if flags&syscall.CLONE_NEWNET != 0 {
-		t.Error("NetworkLocal should not set CLONE_NEWNET")
+	if flags&syscall.CLONE_NEWNET == 0 {
+		t.Error("NetworkLocal should set CLONE_NEWNET")
 	}
 }
 
 func TestCloneFlagsFull(t *testing.T) {
 	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkFull}}
 	flags := s.cloneFlags()
-	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
 	if flags != want {
 		t.Errorf("NetworkFull cloneFlags = 0x%x, want 0x%x", flags, want)
 	}
-	if flags&syscall.CLONE_NEWNET != 0 {
-		t.Error("NetworkFull should not set CLONE_NEWNET")
+	if flags&syscall.CLONE_NEWNET == 0 {
+		t.Error("NetworkFull should set CLONE_NEWNET")
 	}
 }
 
@@ -199,9 +199,9 @@ func TestSysProcAttrCloneflags(t *testing.T) {
 		want uintptr
 	}{
 		{NetworkNone, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
-		{NetworkLocal, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
-		{NetworkHTTPS, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
-		{NetworkFull, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
+		{NetworkLocal, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
+		{NetworkHTTPS, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
+		{NetworkFull, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
 	}
 	// sysProcAttr adds CLONE_NEWUSER for non-root
 	var extra uintptr
@@ -218,25 +218,11 @@ func TestSysProcAttrCloneflags(t *testing.T) {
 	}
 }
 
-func TestNetworkNeedClearsNewnet(t *testing.T) {
-	tests := []struct {
-		need    NetworkNeed
-		wantNet bool // true = CLONE_NEWNET should be absent
-	}{
-		{NetworkNone, false},
-		{NetworkLocal, true},
-		{NetworkHTTPS, true},
-		{NetworkFull, true},
-	}
-	for _, tt := range tests {
-		s := &linuxSandbox{cfg: Config{NetworkNeed: tt.need}}
-		flags := s.cloneFlags()
-		hasNewnet := flags&syscall.CLONE_NEWNET != 0
-		if tt.wantNet && hasNewnet {
-			t.Errorf("NetworkNeed %v should clear CLONE_NEWNET", tt.need)
-		}
-		if !tt.wantNet && !hasNewnet {
-			t.Errorf("NetworkNeed %v should keep CLONE_NEWNET", tt.need)
+func TestEveryNetworkNeedKeepsNewnet(t *testing.T) {
+	for _, need := range []NetworkNeed{NetworkNone, NetworkLocal, NetworkHTTPS, NetworkFull} {
+		s := &linuxSandbox{cfg: Config{NetworkNeed: need}}
+		if s.cloneFlags()&syscall.CLONE_NEWNET == 0 {
+			t.Errorf("NetworkNeed %v should keep CLONE_NEWNET", need)
 		}
 	}
 }

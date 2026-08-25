@@ -2429,3 +2429,16 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 #canvas-viewport.create-mode { cursor: crosshair; }
 #canvas-viewport.create-mode .canvas-terminal-body { pointer-events: none; }
 #canvas-viewport.create-mode .canvas-terminal { cursor: crosshair; }
+#direct-agent-setup {
+    margin: 18px auto 26px;
+    max-width: 760px;
+    padding: 22px;
+    border: 1px solid var(--border);
+    background: var(--surface, rgba(255,255,255,0.025));
+}
+#direct-agent-setup h2 { margin: 5px 0 10px; font-size: 20px; }
+#direct-agent-setup p { line-height: 1.55; }
+.direct-agent-kicker { color: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.direct-agent-command { display: flex; align-items: center; gap: 10px; margin: 10px 0; padding: 10px; background: rgba(0,0,0,.22); overflow-x: auto; }
+.direct-agent-command code { flex: 1; white-space: nowrap; }
+.direct-agent-command button { border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; padding: 5px 9px; }

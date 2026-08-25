@@ -137,7 +137,7 @@ Egg says:                          Agent needs:
   env: ANTHROPIC_API_KEY             env: ANTHROPIC_API_KEY + essentials
 
 Result:
-  network: HTTPS outbound (443/80) + DNS only (macOS); full network (Linux — see limitations)
+  network: declared HTTPS domains through an enforced CONNECT proxy
   writes:  ~/scratch/jail + ~/.claude* + ~/.cache/claude — not all of HOME
   denies:  ~/.ssh, ~/.gnupg, ~/.aws (takes precedence over everything)
   env:     union of egg allowlist + agent profile + essentials (HOME, PATH, TERM, LANG)
@@ -162,8 +162,10 @@ Uses CLONE_NEWUSER for unprivileged isolation. Architecture:
 
 ```
 Parent process (wt egg run)
-  └─ CLONE_NEWUSER + CLONE_NEWNS [+ CLONE_NEWNET]
+  ├─ host DomainProxy + inherited socketpair endpoint
+  └─ CLONE_NEWUSER + CLONE_NEWNS + CLONE_NEWNET
        └─ _deny_init wrapper (runs as UID 0 in namespace)
+            ├─ raise lo + listen only on declared relay ports
             ├─ mount tmpfs over deny paths
             ├─ bind-mount HOME read-only, writable sub-mounts
             ├─ install seccomp BPF filter
@@ -171,7 +173,7 @@ Parent process (wt egg run)
                  └─ agent (runs as real UID, PID 1 in namespace)
 ```
 
-**Network:** CLONE_NEWNET isolates network completely. Stripped for agents that need network via NetworkNeed enum. **No port-level filtering** — Linux can't do iptables in unprivileged user namespaces (needs CAP_NET_ADMIN). Agents that need HTTPS get full network.
+**Network:** `CLONE_NEWNET` is retained for every `NetworkNeed`. The namespace has no default route. Before clone, the parent creates a Unix socketpair beside `DomainProxy`; `_deny_init` raises `lo` and listens only on the proxy port and explicitly declared local ports. Accepted TCP sockets cross the socketpair by `SCM_RIGHTS`, and the host validates the requested listener before dialing. The bridge FD is close-on-exec before the agent starts, so the agent can use the declared listeners but cannot forge new targets. An agent that removes `HTTPS_PROXY` has no route.
 
 **Filesystem:** Deny paths via tmpfs overlays (empty, read-only). Write isolation via bind-mount HOME read-only, then bind-mount specific writable dirs/files. Prefix matching: for writable path `~/.claude`, automatically bind-mounts adjacent files like `~/.claude.json`.
 
@@ -215,19 +217,16 @@ env: { allow: [ANTHROPIC_API_KEY, PATH, HOME, TERM] }
 
 These are architectural constraints of the platform, not bugs. Each has a clear fix path.
 
-#### 1. Linux: Full network when agent needs HTTPS
+#### 1. Linux egress protocol coverage
 
-**What happens:** `isolation: standard` creates CLONE_NEWNET, but Claude's agent profile declares `NetworkHTTPS`. Linux strips CLONE_NEWNET entirely because unprivileged user namespaces can't do port-level filtering (no CAP_NET_ADMIN for iptables).
+**What happens:** Linux now retains `CLONE_NEWNET` and exposes only the inherited
+CONNECT-proxy and declared host-loopback TCP listeners. This fixes the former raw
+bypass: curl, wget, SSH, or custom sockets that ignore the proxy have no route.
 
-**Result:** curl, wget, ping, ssh, raw sockets all work inside the sandbox on Linux.
-
-**macOS comparison:** macOS enforces port-level filtering — only TCP 443/80 + mDNSResponder allowed. Non-HTTPS traffic is blocked.
-
-**Risk:** Combined with the agent's own credentials (finding below), a malicious task could exfiltrate data. This is the highest-priority limitation.
-
-**Fix path:** Create a veth pair, move one end into the network namespace, add iptables rules to restrict to ports 443/80 + DNS 53. Requires a helper binary with CAP_NET_ADMIN or a running daemon. Tracked as a v1 goal.
-
-**Mitigation until fixed:** For tasks that don't need network, use `isolation: strict` (or use macOS). For untrusted tasks on Linux, acknowledge that network isolation is incomplete.
+**Remaining limit:** The relay does not provide general UDP, ICMP, or arbitrary
+domain-filtered TCP. `network: "*"` means any HTTP CONNECT destination, not a
+general routed interface. Add an explicit protocol-aware relay before claiming
+support for those workloads.
 
 #### 2. Agent credentials are accessible to the task
 
@@ -237,9 +236,9 @@ These are architectural constraints of the platform, not bugs. Each has a clear 
 
 **Why it's by design:** The agent IS Claude. It needs its credentials to make API calls. The sandbox runs the agent, and the agent uses its credentials. You can't hide the agent's credentials from the agent.
 
-**Risk:** Combined with network access, a malicious task could exfiltrate these tokens. Without network (macOS strict, or Linux with CLONE_NEWNET), this is theoretical only.
+**Risk:** A malicious task can use the agent's allowed provider destinations. Domain enforcement narrows egress but does not make readable credentials harmless.
 
-**Mitigation:** Network isolation is the primary defense here. On macOS (port-filtered), only HTTPS exfil is possible, which is detectable. On Linux (full network), this is the motivation for fixing finding #1.
+**Mitigation:** Network isolation is the primary defense here. Both platforms force declared HTTPS through the local CONNECT proxy; Linux raw-socket bypasses have no route.
 
 #### 3. HOME is readable (read-only, not denied)
 
@@ -389,7 +388,7 @@ DNS resolution goes through `/private/var/run/mDNSResponder` (Unix domain socket
 
 ### High priority
 
-1. **Linux network pinholes** - veth pair + iptables in namespace for port-level filtering. This closes the biggest gap between macOS and Linux security. Without it, Linux lockdown mode has full network for any agent that needs HTTPS.
+1. **Additional Linux relay protocols** - add a protocol-aware path for explicitly declared non-HTTP TCP and UDP workloads without creating a general route. The current CONNECT/local-port relay is enforced but intentionally TCP-only.
 
 2. **CLONE_INTO_CGROUP** - eliminate the PostStart race by cloning the child directly into the cgroup (Linux 5.7+, requires CAP_SYS_ADMIN). Currently the child runs briefly before cgroup limits apply.
 

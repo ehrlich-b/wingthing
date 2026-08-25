@@ -75,14 +75,15 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 	}
 
 	result := sandbox.Config{
-		Mounts:   mounts,
-		Domains:  domains,
-		CPULimit: declared.CPULimit,
-		MemLimit: declared.MemLimit,
-		MaxFDs:   declared.MaxFDs,
-		PidLimit: declared.PidLimit,
-		UserHome: home,
-		Trace:    declared.Trace,
+		Mounts:     mounts,
+		Domains:    domains,
+		LocalPorts: append([]int(nil), policy.LocalPorts...),
+		CPULimit:   declared.CPULimit,
+		MemLimit:   declared.MemLimit,
+		MaxFDs:     declared.MaxFDs,
+		PidLimit:   declared.PidLimit,
+		UserHome:   home,
+		Trace:      declared.Trace,
 	}
 	if sharedHost {
 		result.Deny = []string{"/"}
@@ -187,7 +188,7 @@ func directAgentEnvWithPolicy(agentName, home string, proxyPort int, inheritHost
 	}
 	envMap["GIT_TERMINAL_PROMPT"] = "0"
 	if proxyPort > 0 {
-		proxyURL := "http://localhost:" + strconv.Itoa(proxyPort)
+		proxyURL := "http://127.0.0.1:" + strconv.Itoa(proxyPort)
 		envMap["HTTPS_PROXY"] = proxyURL
 		envMap["HTTP_PROXY"] = proxyURL
 		envMap["NODE_USE_ENV_PROXY"] = "1"

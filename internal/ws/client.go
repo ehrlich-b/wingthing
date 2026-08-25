@@ -152,21 +152,22 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 
 	// Send registration — projects flow through E2E tunnel only, never through relay
 	reg := WingRegister{
-		Type:         TypeWingRegister,
-		WingID:       c.WingID,
-		Hostname:     c.Hostname,
-		Platform:     c.Platform,
-		Version:      c.Version,
-		Agents:       c.Agents,
-		Skills:       c.Skills,
-		Labels:       c.Labels,
-		Identities:   c.Identities,
-		Projects:     nil,
-		OrgSlug:      c.OrgSlug,
-		RootDir:      c.RootDir,
-		PublicKey:    c.PublicKey,
-		Locked:       c.Locked,
-		AllowedCount: c.AllowedCount,
+		Type:           TypeWingRegister,
+		WingID:         c.WingID,
+		Hostname:       c.Hostname,
+		Platform:       c.Platform,
+		Version:        c.Version,
+		Agents:         c.Agents,
+		Skills:         c.Skills,
+		Labels:         c.Labels,
+		Identities:     c.Identities,
+		Projects:       nil,
+		OrgSlug:        c.OrgSlug,
+		RootDir:        c.RootDir,
+		PublicKey:      c.PublicKey,
+		Locked:         c.Locked,
+		AllowedCount:   c.AllowedCount,
+		PurposeBinding: true,
 	}
 	if err := c.writeJSON(ctx, reg); err != nil {
 		return connected, fmt.Errorf("register: %w", err)

@@ -69,16 +69,17 @@ var deniedSyscallsCommon = []uint32{
 }
 
 type linuxSandbox struct {
-	cfg    Config
-	tmpDir string
-	cgroup *cgroupManager
+	cfg           Config
+	tmpDir        string
+	cgroup        *cgroupManager
+	networkBridge *networkBridge
 }
 
 // newPlatform tries to create a namespace+seccomp sandbox.
 // Returns an error if capabilities are insufficient so the factory falls back.
 func newPlatform(cfg Config) (Sandbox, error) {
 	if !hasNamespaceCapability() {
-		return nil, fmt.Errorf("linux sandbox: required user and mount namespace operations are unavailable")
+		return nil, fmt.Errorf("linux sandbox: required user, mount, PID, or network namespace operation is unavailable")
 	}
 
 	dir, err := os.MkdirTemp("", "wt-sandbox-*")
@@ -163,7 +164,7 @@ func probeMountNamespace() bool {
 	}
 	cmd := exec.Command(exe, mountProbeArg, probeDir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET,
 		UidMappings: []syscall.SysProcIDMap{{
 			ContainerID: 0,
 			HostID:      os.Getuid(),
@@ -249,7 +250,8 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		}
 	}
 
-	needsWrapper := len(s.cfg.Deny) > 0 || len(s.cfg.DenyWrite) > 0 || len(writablePaths) > 0
+	needsNetworkRelay := s.cfg.ProxyPort > 0 || len(s.cfg.LocalPorts) > 0
+	needsWrapper := len(s.cfg.Deny) > 0 || len(s.cfg.DenyWrite) > 0 || len(writablePaths) > 0 || needsNetworkRelay
 	if needsWrapper {
 		// Wrap through _sandbox_init to apply deny paths (tmpfs overmounts)
 		// and write isolation (HOME read-only + writable sub-mounts).
@@ -266,6 +268,15 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 			"--uid", fmt.Sprintf("%d", uid),
 			"--gid", fmt.Sprintf("%d", gid),
 			"--log", logPath,
+		}
+		if needsNetworkRelay {
+			wrapArgs = append(wrapArgs, "--net-relay-fd", "3")
+			if s.cfg.ProxyPort > 0 {
+				wrapArgs = append(wrapArgs, "--proxy-port", fmt.Sprintf("%d", s.cfg.ProxyPort))
+			}
+			for _, port := range s.cfg.LocalPorts {
+				wrapArgs = append(wrapArgs, "--local-port", fmt.Sprintf("%d", port))
+			}
 		}
 		for _, d := range s.cfg.Deny {
 			wrapArgs = append(wrapArgs, "--deny", d)
@@ -347,6 +358,17 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		attr.Cloneflags &^= syscall.CLONE_NEWPID
 	}
 	cmd.SysProcAttr = attr
+	if needsNetworkRelay {
+		if s.networkBridge != nil {
+			return nil, fmt.Errorf("network relay already initialized")
+		}
+		bridge, child, err := newNetworkBridge(s.cfg.ProxyPort, s.cfg.LocalPorts)
+		if err != nil {
+			return nil, fmt.Errorf("create network relay: %w", err)
+		}
+		s.networkBridge = bridge
+		cmd.ExtraFiles = append(cmd.ExtraFiles, child)
+	}
 	return cmd, nil
 }
 
@@ -369,6 +391,9 @@ func straceSupportsKillOnExit(bin string) bool {
 // prlimit covers the gap. CLONE_INTO_CGROUP (Linux 5.7+) would eliminate
 // this race but requires CAP_SYS_ADMIN.
 func (s *linuxSandbox) PostStart(pid int) error {
+	if s.networkBridge != nil {
+		s.networkBridge.closeChild()
+	}
 	// Cgroup first — real memory (RSS) and PID tree limits
 	if s.cgroup != nil {
 		if err := s.cgroup.AddPID(pid); err != nil {
@@ -397,6 +422,10 @@ func (s *linuxSandbox) TraceLog() string {
 }
 
 func (s *linuxSandbox) Destroy() error {
+	if s.networkBridge != nil {
+		s.networkBridge.Close()
+		s.networkBridge = nil
+	}
 	if s.cgroup != nil {
 		if err := s.cgroup.Destroy(); err != nil {
 			log.Printf("linux sandbox: cgroup destroy: %v", err)
@@ -431,7 +460,13 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 		uid := os.Getuid()
 		gid := os.Getgid()
 
-		needsRoot := len(s.cfg.Deny) > 0 || len(s.cfg.Mounts) > 0
+		// The network relay wrapper also needs to be UID 0 inside the new user
+		// namespace. It raises the isolated loopback interface and then creates
+		// the nested UID mapping used to launch the unprivileged agent. Mapping
+		// the wrapper directly to the caller's non-zero UID makes both operations
+		// fail even though CLONE_NEWNET itself succeeded.
+		needsRoot := len(s.cfg.Deny) > 0 || len(s.cfg.Mounts) > 0 ||
+			s.cfg.ProxyPort > 0 || len(s.cfg.LocalPorts) > 0
 		if needsRoot {
 			// Wrapper needs CAP_SYS_ADMIN for mounts → map to UID 0.
 			// The wrapper drops to real UID via nested user namespace
@@ -464,16 +499,11 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 	return attr
 }
 
-// cloneFlags returns namespace clone flags based on NetworkNeed.
+// cloneFlags always creates a fresh network namespace. Network-enabled modes
+// receive only explicitly inherited relay paths; without the relay there is no
+// interface or route an agent can use to bypass its policy.
 func (s *linuxSandbox) cloneFlags() uintptr {
-	flags := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
-	// Strip network namespace for agents that need network access.
-	// Linux can't do port-level filtering in userns without iptables,
-	// so HTTPS and Full both get full network. Local gets it too (localhost).
-	if s.cfg.NetworkNeed >= NetworkLocal {
-		flags &^= syscall.CLONE_NEWNET
-	}
-	return flags
+	return uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
 }
 
 // rlimits returns resource limits for the sandboxed process.

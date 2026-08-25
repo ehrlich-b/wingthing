@@ -171,3 +171,17 @@ func TestFallbackDestroy(t *testing.T) {
 		t.Errorf("tmpdir should be removed after Destroy, got err: %v", err)
 	}
 }
+
+func TestWSLKernelReleaseDetection(t *testing.T) {
+	for _, release := range []string{
+		"6.6.87.2-microsoft-standard-WSL2",
+		"4.4.0-Microsoft",
+	} {
+		if !isWSLKernelRelease(release) {
+			t.Errorf("WSL release %q was not detected", release)
+		}
+	}
+	if isWSLKernelRelease("6.8.0-52-generic") {
+		t.Fatal("ordinary Linux kernel was detected as WSL")
+	}
+}

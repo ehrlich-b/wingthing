@@ -37,6 +37,7 @@ type Config struct {
 	NetworkNeed  NetworkNeed   // granular network access required by the agent
 	Domains      []string      // domain allowlist for proxy filtering
 	ProxyPort    int           // local domain-filtering proxy port (0 = no proxy)
+	LocalPorts   []int         // host loopback ports forwarded into a Linux network namespace
 	CPULimit     time.Duration // RLIMIT_CPU (0 = backend default)
 	MemLimit     uint64        // RLIMIT_AS in bytes (0 = backend default)
 	MaxFDs       uint32        // RLIMIT_NOFILE (0 = backend default)
@@ -73,7 +74,7 @@ func New(cfg Config) (Sandbox, error) {
 
 func newEnforcementError(cfg Config, platformErr error) *EnforcementError {
 	var gaps []string
-	if cfg.NetworkNeed < NetworkFull {
+	if cfg.NetworkNeed < NetworkFull || runtime.GOOS == "linux" {
 		gaps = append(gaps, "network isolation")
 	}
 	gaps = append(gaps, "filesystem isolation")
@@ -111,6 +112,10 @@ func platformHelp() string {
 	case "darwin":
 		return "macOS: requires sandbox-exec (built into macOS)"
 	case "linux":
+		if isWSL2Kernel() {
+			return "Linux/WSL2: this WSL2 configuration rejected a mount or namespace operation wt needs for isolation. " +
+				"Run wt inside a privileged Linux container or VM and treat that outer boundary (including its egress policy) as the sandbox"
+		}
 		// Check if AppArmor is specifically blocking unprivileged user namespaces (Ubuntu 24.04+, kernel 6.1+).
 		if val, err := os.ReadFile("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"); err == nil {
 			if strings.TrimSpace(string(val)) == "1" {
@@ -124,4 +129,23 @@ func platformHelp() string {
 	default:
 		return fmt.Sprintf("platform %s: no sandbox backend available", runtime.GOOS)
 	}
+}
+
+// CapabilityFailureHelp describes the platform-specific outer operation that
+// may prevent the sandbox from starting. Callers use it only after reporting
+// the exact failed operation and underlying OS error.
+func CapabilityFailureHelp() string {
+	return platformHelp()
+}
+
+func isWSL2Kernel() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	release, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	return err == nil && isWSLKernelRelease(string(release))
+}
+
+func isWSLKernelRelease(release string) bool {
+	return strings.Contains(strings.ToLower(release), "microsoft")
 }

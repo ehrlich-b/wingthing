@@ -34,8 +34,8 @@
 {{end}}
 {{define "content"}}
 <main class="patterns">
-<h1>place the work, then run it</h1>
-<p class="lead">Wingthing gives a person and an LLM the same execution layer. Pick who drives the work and which wing runs it. Then make workspace, display, credentials, and durable memory placement explicit.</p>
+<h1>manage agents where the work lives</h1>
+<p class="lead">Wingthing gives an agent one inventory and control plane for durable agents across machines. Pick the wing explicitly, run the work there, and let a person inspect or take over the same session when useful.</p>
 <div class="recipe-row skill-row"><a href="/patterns/SKILL.md">open the patterns skill</a><button class="copy-recipe" data-copy="/patterns/SKILL.md">copy skill markdown</button></div>
 
 <div class="piece-row">
@@ -52,7 +52,7 @@
 <tr><td>LLM</td><td>local wing</td><td>stdio MCP</td><td><span class="state shipped">shipped</span></td></tr>
 <tr><td>human</td><td>external wing through a portal</td><td>browser</td><td><span class="state shipped">shipped</span></td></tr>
 <tr><td>LLM</td><td>self-hosted roost's embedded wing</td><td>HTTP MCP</td><td><span class="state shipped">shipped</span></td></tr>
-<tr><td>LLM</td><td>external wing selected through a portal</td><td>HTTP MCP</td><td><span class="state gap">not yet</span></td></tr>
+<tr><td>LLM</td><td>external wing selected through the coordinator</td><td>direct MCP</td><td><span class="state shipped">shipped</span></td></tr>
 <tr><td>human or LLM</td><td>several independent roosts</td><td>named client targets</td><td><span class="state shipped">client-side</span></td></tr>
 </table>
 
@@ -106,8 +106,8 @@
 <div class="pattern-num">06</div>
 <div class="pattern-tags"><span class="pattern-tag">human or LLM</span><span class="pattern-tag">several roosts</span></div>
 <div class="pattern-head"><h2>orchestrate work on remote hosts</h2></div>
-<p>Register each independent roost under a distinct client name. Choose that name explicitly; Wingthing does not discover or federate peer roosts.</p>
-<div class="flow">client target -> one roost -> its embedded wing</div>
+<p>Run <code>wt mcp connect</code> once and let the parent agent call <code>wing_list</code>. Every remote operation names a <code>wing_id</code>; its payload travels over the direct peer connection to that machine.</p>
+<div class="flow">parent agent -> local connector -> selected wing -> durable agent</div>
 <div class="recipe-row"><a href="/patterns/remote-orchestration/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/remote-orchestration/INSTRUCTIONS.md">copy markdown</button></div>
 </section>
 </div>

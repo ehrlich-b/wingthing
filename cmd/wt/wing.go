@@ -32,6 +32,7 @@ import (
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	directpkg "github.com/ehrlich-b/wingthing/internal/direct"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -1394,10 +1395,12 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		return fmt.Errorf("load private key: %w", privKeyErr)
 	}
 
-	// P2P: initialize PeerManager if connection mode supports it
+	// WebRTC backs both opt-in browser PTY migration and native direct MCP.
+	// Keep the manager available in ordinary relay mode for native control, but
+	// advertise browser P2P only for its existing p2p/p2p_only modes below.
 	var peerMgr *webrtcpkg.PeerManager
-	p2pEnabled := wingCfg.ConnectionMode == "p2p" || wingCfg.ConnectionMode == "p2p_only"
-	if p2pEnabled {
+	peerManagerEnabled := wingCfg.ConnectionMode != "direct"
+	if peerManagerEnabled {
 		var iceServers []pionwebrtc.ICEServer
 		for _, s := range wingCfg.ICEServers {
 			iceServers = append(iceServers, pionwebrtc.ICEServer{
@@ -1419,7 +1422,16 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 
 	// P2P: wire up DataChannel message routing when DCs open
 	if peerMgr != nil {
-		peerMgr.OnDC(func(senderPub, sessionID string, dc *pionwebrtc.DataChannel) {
+		peerMgr.OnDC(func(senderPub, sessionID string, ident webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
+			if strings.HasPrefix(dc.Label(), control.DirectChannelPrefix) {
+				if ident.UserID == "" {
+					log.Printf("[P2P] rejected direct MCP channel from %s: missing authenticated identity", senderPub[:8])
+					dc.Close()
+					return
+				}
+				serveDirectMCPChannel(cfg, wingCfg, home, allowedKeys, ident, dc)
+				return
+			}
 			if sessionID == "" {
 				log.Printf("[P2P] DC opened with no session ID from %s", senderPub[:8])
 				return
@@ -1428,9 +1440,8 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			// trusted input channel, so only the session owner's peer identity
 			// may bind one. Anything else could inject input or kill a session
 			// it does not own.
-			ident, ok := peerMgr.GetPeerIdentity(senderPub)
 			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", sessionID))
-			if !ok || owner == "" || ident.UserID != owner {
+			if ident.UserID == "" || owner == "" || ident.UserID != owner {
 				log.Printf("[P2P] rejected DC for session %s from %s: sender is not the session owner", sessionID, senderPub[:8])
 				dc.Close()
 				return
@@ -4251,6 +4262,11 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		log.Printf("tunnel %s: bad inner JSON: %v", req.RequestID, err)
 		return
 	}
+	if req.Purpose != "" && !ws.TunnelPurposeMatches(req.Purpose, inner.Type) {
+		log.Printf("tunnel %s: declared purpose %q does not match inner type %q", req.RequestID, req.Purpose, inner.Type)
+		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "tunnel purpose mismatch"}, write)
+		return
+	}
 
 	isPasskeyCeremony := inner.Type == "passkey.auth.begin" || inner.Type == "passkey.auth.finish"
 	subject := passkeySubject(req.SenderUserID, req.SenderPub)
@@ -4351,13 +4367,14 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		if wingCfg.Label != "" {
 			resp["wing_label"] = wingCfg.Label
 		}
-		// P2P: tell browser whether this wing supports P2P
-		if peerMgr != nil {
+		// Browser PTY migration remains opt-in even though the same PeerManager is
+		// available in relay mode for native direct MCP control.
+		if peerMgr != nil && (wingCfg.ConnectionMode == "p2p" || wingCfg.ConnectionMode == "p2p_only") {
 			resp["p2p"] = true
 			resp["connection_mode"] = wingCfg.ConnectionMode
-			if len(wingCfg.ICEServers) > 0 {
-				resp["ice_servers"] = wingCfg.ICEServers
-			}
+		}
+		if peerMgr != nil && len(wingCfg.ICEServers) > 0 {
+			resp["ice_servers"] = wingCfg.ICEServers
 		}
 		// Report which well-known API keys are set in the wing's environment
 		var globalKeys []string

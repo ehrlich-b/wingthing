@@ -37,6 +37,19 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 	if got := toolNames(Tools(SurfaceHTTPMCP)); !reflect.DeepEqual(got, http) {
 		t.Fatalf("HTTP MCP operations changed:\n got: %v\nwant: %v", got, http)
 	}
+	if got := toolNames(Tools(SurfaceDirectMCP)); !reflect.DeepEqual(got, http) {
+		t.Fatalf("direct MCP operations changed:\n got: %v\nwant: %v", got, http)
+	}
+	for _, tool := range ToolsForAuthority(SurfaceDirectMCP, AuthorityWing) {
+		properties := tool.InputSchema["properties"].(map[string]any)
+		if _, ok := properties["wing_id"]; !ok {
+			t.Errorf("direct operation %s has no wing_id", tool.Name)
+		}
+		required := tool.InputSchema["required"].([]string)
+		if len(required) == 0 || required[0] != "wing_id" {
+			t.Errorf("direct operation %s required = %v", tool.Name, required)
+		}
+	}
 }
 
 func TestRegistryDefinitionsAreComplete(t *testing.T) {
@@ -93,6 +106,11 @@ func TestObjectKindsFollowSurfaceAvailability(t *testing.T) {
 		"wing", "terminal", "agent_run", "message", "sandbox_policy",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("HTTP objects = %v, want %v", got, want)
+	}
+	if got, want := ObjectKinds(SurfaceDirectMCP), []string{
+		"wing", "terminal", "agent_run", "message", "sandbox_policy",
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("direct objects = %v, want %v", got, want)
 	}
 }
 

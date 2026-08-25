@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -416,6 +417,20 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		}
 		workDir = canonicalWorkDir
 	}
+	var resolvedEggCfg *egg.EggConfig
+	if pr.Isolation == "privileged" {
+		// Privileged means the discovered/configured sandbox policy is not in
+		// force. Use the explicit outer-boundary policy for both execution
+		// metadata and the durable egress audit.
+		resolvedEggCfg = egg.UnsandboxedEggConfig()
+	} else {
+		var configErr error
+		resolvedEggCfg, configErr = taskEggConfig(t, workDir)
+		if configErr != nil {
+			s.SetTaskError(t.ID, configErr.Error())
+			return configErr
+		}
+	}
 	var runOpts agent.RunOpts
 	var sandboxDiagnosticPath string
 	runOpts.WorkDir = workDir
@@ -435,6 +450,20 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		msg := "privileged isolation is not available on a shared host"
 		s.SetTaskError(t.ID, msg)
 		return errors.New(msg)
+	}
+	if pr.Isolation == "privileged" {
+		home, _ := os.UserHomeDir()
+		policy, policyErr := egg.ResolvePolicyWithProvider(resolvedEggCfg, agentName, home, os.Getenv("WT_PROVIDER_BASE_URL"))
+		if policyErr != nil {
+			s.SetTaskError(t.ID, policyErr.Error())
+			return fmt.Errorf("resolve unconfined network policy: %w", policyErr)
+		}
+		detail, auditErr := appendNetworkEnforcementAudit(s, t.ID, "unconfined_egress", "outer-boundary", policy.NetworkNeed, policy.Domains, policy.LocalPorts)
+		if auditErr != nil {
+			s.SetTaskError(t.ID, auditErr.Error())
+			return fmt.Errorf("record unconfined egress audit: %w", auditErr)
+		}
+		log.Printf("SECURITY: task %s is unsandboxed; %s", t.ID, detail)
 	}
 
 	if pr.Isolation != "privileged" {
@@ -473,27 +502,29 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		}
 
 		mountPaths := taskSandboxMountPaths(pr.Mounts, workDir, options)
-		eggCfg, configErr := taskEggConfig(t, workDir)
-		if configErr != nil {
-			s.SetTaskError(t.ID, configErr.Error())
-			return configErr
-		}
-		sbCfg, policyErr := directAgentSandboxConfigForTask(eggCfg, agentName, pr.Isolation, home, workDir, mountPaths, options.SharedHost)
+		sbCfg, policyErr := directAgentSandboxConfigForTask(resolvedEggCfg, agentName, pr.Isolation, home, workDir, mountPaths, options.SharedHost)
 		if policyErr != nil {
 			s.SetTaskError(t.ID, policyErr.Error())
 			return fmt.Errorf("resolve sandbox network policy: %w", policyErr)
 		}
 		sbCfg.SessionID = t.ID
-		var domainProxy *sandbox.DomainProxy
-		if sbCfg.NetworkNeed == sandbox.NetworkHTTPS && len(sbCfg.Domains) > 0 {
-			domainProxy, err = sandbox.StartProxy(sbCfg.Domains)
-			if err != nil {
-				s.AppendLog(t.ID, "domain_proxy_unavailable", nil)
-			} else {
-				defer domainProxy.Close()
-				sbCfg.ProxyPort = domainProxy.Port()
-			}
+		domainProxy, proxyErr := sandbox.StartPolicyProxy(sbCfg.NetworkNeed, sbCfg.Domains)
+		if proxyErr != nil {
+			detail := proxyErr.Error()
+			s.AppendLog(t.ID, "domain_proxy_unavailable", &detail)
+			s.SetTaskError(t.ID, detail)
+			return fmt.Errorf("start enforcing network proxy: %w", proxyErr)
 		}
+		if domainProxy != nil {
+			defer domainProxy.Close()
+			sbCfg.ProxyPort = domainProxy.Port()
+		}
+		detail, auditErr := appendNetworkEnforcementAudit(s, t.ID, "sandbox_enforcement", explainEnforcement(sbCfg.NetworkNeed, runtime.GOOS), sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.LocalPorts)
+		if auditErr != nil {
+			s.SetTaskError(t.ID, auditErr.Error())
+			return fmt.Errorf("record sandbox enforcement audit: %w", auditErr)
+		}
+		log.Printf("task %s sandbox: %s", t.ID, detail)
 
 		sb, sbErr := sandbox.New(sbCfg)
 		if sbErr != nil {
@@ -574,6 +605,15 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 
 	return nil
+}
+
+func networkEnforcementDetail(enforcement string, need sandbox.NetworkNeed, domains []string, localPorts []int) string {
+	return fmt.Sprintf("network=%s enforcement=%s domains=%d local_ports=%v", need, enforcement, len(domains), localPorts)
+}
+
+func appendNetworkEnforcementAudit(s *store.Store, taskID, event, enforcement string, need sandbox.NetworkNeed, domains []string, localPorts []int) (string, error) {
+	detail := networkEnforcementDetail(enforcement, need, domains, localPorts)
+	return detail, s.AppendLog(taskID, event, &detail)
 }
 
 func taskSandboxMountPaths(promptMounts []string, workDir string, options taskRunOptions) []string {

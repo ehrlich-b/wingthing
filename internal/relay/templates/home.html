@@ -103,7 +103,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </script>
 <div class="hero">
 <h1>all your agents, one place</h1>
-<p class="tagline">Run Claude, Codex, Cursor, and Gemini behind one local control plane. Use it yourself from a terminal or browser, or let an LLM start and supervise agents through MCP.</p>
+<p class="tagline">Wingthing is an agent manager for agents. Give Codex, Claude, or another parent agent one typed control plane for starting and supervising durable agents across all your machines. Take over from a terminal or browser when a person belongs in the loop.</p>
 {{if .User}}<div class="prompt-flow">
 <a href="{{if .LocalMode}}/app/{{else}}https://app.wingthing.ai{{end}}" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open app</span></a>
 </div>
@@ -121,7 +121,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <div class="how-grid">
 <div class="how-card">
 <h3>portal</h3>
-<p>The inventory and controls for your agents. A person uses the browser or CLI. An LLM uses typed MCP operations.</p>
+<p>The unified inventory and controls for your agents. An LLM uses typed MCP operations; a person can inspect or take over the same sessions.</p>
 </div>
 <div class="how-card">
 <h3>wing</h3>
@@ -142,8 +142,8 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <p>Define what agents can reach in <code>egg.yaml</code>, then let them run unattended. Seatbelt on macOS, namespaces on Linux.</p>
 </div>
 <div class="how-card">
-<h3>e2e encrypted</h3>
-<p>X25519 key agreement and AES-GCM keep wing payloads opaque to the shipped gateway during normal operation. Routing metadata remains visible, and the hosted web client is part of the trust boundary.</p>
+<h3>direct by default</h3>
+<p>The hosted service coordinates identity, wing discovery, keys, and connection setup. Free agent clients send MCP payloads directly to their wing; the hosted encrypted terminal and control relay is a Pro feature.</p>
 </div>
 <div class="how-card">
 <h3>self-hostable</h3>

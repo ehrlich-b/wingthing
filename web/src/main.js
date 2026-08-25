@@ -27,13 +27,36 @@ async function init() {
         DOM.userInfo.textContent = S.currentUser.display_name || 'user';
     } catch (e) { loginRedirect(); return; }
 
+    if (S.currentUser.relay_allowed === false && DOM.directAgentSetup) {
+        DOM.directAgentSetup.style.display = '';
+        DOM.newSessionBtn.style.display = 'none';
+        var canvasButton = document.getElementById('canvas-toggle-btn');
+        if (canvasButton) canvasButton.style.display = 'none';
+        DOM.directAgentSetup.querySelectorAll('[data-copy-command]').forEach(function(button) {
+            button.addEventListener('click', function() {
+                navigator.clipboard.writeText(button.dataset.copyCommand);
+                button.textContent = 'copied';
+                setTimeout(function() { button.textContent = 'copy'; }, 1500);
+            });
+        });
+    }
+
     if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account') && location.hash !== '#canvas') {
         history.replaceState({ view: 'home' }, '', location.pathname);
     }
 
     // Event handlers
     DOM.homeBtn.addEventListener('click', showHome);
-    DOM.newSessionBtn.addEventListener('click', showPalette);
+    function showTerminalLauncher() {
+        if (S.currentUser && S.currentUser.relay_allowed === false) {
+            showHome();
+            if (DOM.directAgentSetup) DOM.directAgentSetup.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            return;
+        }
+        showPalette();
+    }
+
+    DOM.newSessionBtn.addEventListener('click', showTerminalLauncher);
     DOM.userInfo.addEventListener('click', function() { navigateToAccount(); });
     DOM.userInfo.style.cursor = 'pointer';
     DOM.headerTitle.addEventListener('click', function() {
@@ -175,7 +198,7 @@ async function init() {
                         canvasSpawnAtCenter(agent, cwd, wingId);
                     });
                 }
-                showPalette();
+                showTerminalLauncher();
             } else {
                 hidePalette();
             }
@@ -188,7 +211,7 @@ async function init() {
                     toggleCanvasMode();
                     return;
                 }
-                showPalette();
+                showTerminalLauncher();
             }
         }
         if (e.key === 'Escape' && DOM.commandPalette.style.display !== 'none') {
@@ -318,21 +341,28 @@ async function init() {
     // Deep links
     var hashMatch = location.hash.match(/^#s\/(.+)$/);
     if (hashMatch) {
-        var deepSessionId = hashMatch[1];
-        history.replaceState({ view: 'terminal', sessionId: deepSessionId }, '', '#s/' + deepSessionId);
-        showTerminal();
-        attachPTY(deepSessionId);
+        if (S.currentUser && S.currentUser.relay_allowed === false) {
+            history.replaceState({ view: 'home' }, '', location.pathname);
+            showHome(false);
+        } else {
+            var deepSessionId = hashMatch[1];
+            history.replaceState({ view: 'terminal', sessionId: deepSessionId }, '', '#s/' + deepSessionId);
+            showTerminal();
+            attachPTY(deepSessionId);
+        }
     }
     var wingMatch = location.hash.match(/^#w\/(.+)$/);
     if (wingMatch) {
-        navigateToWingDetail(wingMatch[1]);
+        if (S.currentUser && S.currentUser.relay_allowed === false) showHome(false);
+        else navigateToWingDetail(wingMatch[1]);
     }
     var accountMatch = location.hash.match(/^#account(?:\/(.+))?$/);
     if (accountMatch) {
         navigateToAccount(true, accountMatch[1] || null);
     }
     if (location.hash === '#canvas') {
-        showCanvas(false);
+        if (S.currentUser && S.currentUser.relay_allowed === false) showHome(false);
+        else showCanvas(false);
     }
 }
 
@@ -340,6 +370,11 @@ async function init() {
 window.addEventListener('hashchange', function() {
     var hashMatch = location.hash.match(/^#s\/(.+)$/);
     if (hashMatch) {
+        if (S.currentUser && S.currentUser.relay_allowed === false) {
+            history.replaceState({ view: 'home' }, '', location.pathname);
+            showHome(false);
+            return;
+        }
         history.replaceState({ view: 'terminal', sessionId: hashMatch[1] }, '', '#s/' + hashMatch[1]);
         showTerminal();
         attachPTY(hashMatch[1]);
@@ -347,6 +382,10 @@ window.addEventListener('hashchange', function() {
     }
     var wingMatch = location.hash.match(/^#w\/(.+)$/);
     if (wingMatch) {
+        if (S.currentUser && S.currentUser.relay_allowed === false) {
+            showHome(false);
+            return;
+        }
         navigateToWingDetail(wingMatch[1]);
         return;
     }
@@ -356,7 +395,8 @@ window.addEventListener('hashchange', function() {
         return;
     }
     if (location.hash === '#canvas') {
-        showCanvas(false);
+        if (S.currentUser && S.currentUser.relay_allowed === false) showHome(false);
+        else showCanvas(false);
     }
 });
 
@@ -371,13 +411,16 @@ window.addEventListener('popstate', function(e) {
     if (!state || state.view === 'home') {
         showHome(false);
     } else if (state.view === 'terminal' && state.sessionId) {
-        switchToSession(state.sessionId, false);
+        if (S.currentUser && S.currentUser.relay_allowed === false) showHome(false);
+        else switchToSession(state.sessionId, false);
     } else if (state.view === 'wing-detail' && state.wingId) {
-        navigateToWingDetail(state.wingId, false);
+        if (S.currentUser && S.currentUser.relay_allowed === false) showHome(false);
+        else navigateToWingDetail(state.wingId, false);
     } else if (state.view === 'account') {
         navigateToAccount(false, state.orgSlug || null);
     } else if (state.view === 'canvas') {
-        showCanvas(false);
+        if (S.currentUser && S.currentUser.relay_allowed === false) showHome(false);
+        else showCanvas(false);
     }
 });
 

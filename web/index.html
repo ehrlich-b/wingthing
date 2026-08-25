@@ -44,6 +44,14 @@
             </div>
 
             <section id="home-section">
+                <div id="direct-agent-setup" style="display:none;">
+                    <div class="direct-agent-kicker">your agent manager is ready</div>
+                    <h2>connect your agent to every wing</h2>
+                    <p>Wingthing uses this service for login, wing discovery, and direct connection setup. Your agent's MCP requests go straight between the connector and your wing; the free tier does not use the hosted browser-terminal relay.</p>
+                    <div class="direct-agent-command"><code>codex mcp add wingthing -- wt mcp connect --client codex</code><button data-copy-command="codex mcp add wingthing -- wt mcp connect --client codex">copy</button></div>
+                    <div class="direct-agent-command"><code>claude mcp add --scope user wingthing -- wt mcp connect --client claude</code><button data-copy-command="claude mcp add --scope user wingthing -- wt mcp connect --client claude">copy</button></div>
+                    <p class="hint">On each machine you want to manage, run <code>wt login</code> and <code>wt start</code>. Keep both peers on the same LAN or tailnet for the first direct release. Hosted relay fallback is a Pro feature; self-hosting remains unrestricted.</p>
+                </div>
                 <div id="wing-status"></div>
                 <div id="sessions-list"></div>
                 <div id="empty-state" style="display:none;">

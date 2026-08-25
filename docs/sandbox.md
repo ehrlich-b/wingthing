@@ -65,7 +65,7 @@ rejected.
 | Deny paths (.ssh, .aws, etc.) | SBPL rules | tmpfs overlays |
 | Write isolation (HOME read-only) | SBPL rules | bind-mount read-only + writable holes |
 | Network deny | SBPL `(deny network*)` | CLONE_NEWNET |
-| Domain filtering | SBPL forces traffic through local CONNECT proxy | CONNECT proxy via HTTPS_PROXY (cooperative) |
+| Domain filtering | SBPL forces traffic through local CONNECT proxy | CLONE_NEWNET + inherited-FD loopback relay to CONNECT proxy |
 | PID isolation | n/a | CLONE_NEWPID |
 
 ### Seccomp (Linux only)
@@ -106,11 +106,22 @@ macOS Seatbelt does not support resource limits.
 
 ## Known Limitations
 
-### Linux: Full network when agent needs HTTPS
+### Network protocol coverage
 
-`isolation: standard` creates CLONE_NEWNET, but cloud agents (Claude, Codex, etc.) need HTTPS. Linux strips CLONE_NEWNET entirely because unprivileged user namespaces can't do port-level filtering. A CONNECT proxy provides cooperative domain filtering.
+Linux keeps `CLONE_NEWNET` for every network mode. The namespace has no default
+route and receives only declared loopback listeners: an HTTP CONNECT proxy for
+domain-filtered HTTPS and explicit `network.local_ports` forwards for host-local
+services. Removing `HTTPS_PROXY` therefore does not restore network access.
 
-macOS enforces port-level filtering at the OS level: TCP 443/80 + mDNSResponder.
+The inherited relay currently carries TCP only. Domain-filtered arbitrary TCP,
+UDP, ICMP, and other protocols are not yet available. `network: "*"` permits any
+HTTP CONNECT destination, but it still does not create a general routed network
+interface.
+
+On WSL2 the same namespace relay is supported. If a particular WSL kernel rejects
+one of the filesystem bind mounts, Wingthing names the failed operation and
+refuses to launch; run inside a privileged Linux container or VM when an outer
+filesystem boundary is required.
 
 ### Agent credentials are accessible
 

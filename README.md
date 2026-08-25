@@ -2,9 +2,10 @@
 
 [![ci](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml/badge.svg)](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml)
 
-Run Claude Code, Codex, Cursor, Gemini, Hermes, Ollama, and OpenCode behind one
-local control plane. A person can use it from a terminal or browser. An LLM can
-start, supervise, steer, and stop work through MCP.
+Wingthing is an agent manager for agents. Give Codex, Claude, or another parent
+agent one typed control plane for starting and supervising durable agents across
+all your machines. A person can inspect or take over the same sessions from a
+terminal or browser.
 
 The agents run where the code and hardware already live. Wingthing keeps their
 terminals alive, records semantic runs as durable tasks, applies sandbox policy,
@@ -43,6 +44,25 @@ ownership and audit attribution inside Wingthing, not a new operating-system
 security boundary. Optional grants and spawn bounds live in
 `~/.wingthing/clients.yaml`.
 
+To give the parent agent one qualified inventory across remote wings, log in on
+the client machine and use the direct connector instead:
+
+```bash
+wt login
+
+# Codex
+codex mcp add wingthing -- wt mcp connect --client codex
+
+# Claude Code
+claude mcp add --scope user wingthing -- wt mcp connect --client claude
+```
+
+The agent calls `wing_list`, then supplies `wing_id` to every wing-owned tool.
+`wingthing.ai` authenticates the peers, returns the access-filtered directory,
+and carries the WebRTC offer/answer. MCP payloads travel directly to the selected
+wing. The first native release expects a shared LAN or tailnet unless ICE servers
+are configured. It never silently falls back to the hosted relay.
+
 ## Use the same runtime yourself
 
 ```bash
@@ -73,44 +93,40 @@ done because a string appeared on screen. Use `agent_run`, `agent_wait`, and
 
 ## The runtime model
 
-The product is easier to understand as a portal over runtimes:
+The product is an agent control plane over runtimes:
 
 ```text
-person: CLI or browser --\
-                         +--> portal/control surface --> wing --> sessions + runs
-LLM: MCP ---------------/
+parent agent: MCP --> agent manager --> selected wing --> sessions + runs
+                                      ^
+person: CLI or browser ----------------/  (inspect or take over)
 ```
 
 | Term | Meaning |
 | --- | --- |
-| **Portal** | A client-facing view and control surface. The hosted browser is at `app.wingthing.ai`; a self-hosted deployment serves its own browser and HTTP MCP endpoint. |
+| **Portal** | The unified inventory and controls exposed to an agent through MCP or to a person through the browser. |
 | **Wing** | One machine running Wingthing. It owns the authoritative egg, terminal, and task state on that machine. |
 | **Session** | A persistent interactive PTY for an agent, shell, or command. A person or model can detach and reattach. |
 | **Run** | A supervised headless agent task with semantic status, events, output, and error data. It is separate from a PTY session. |
 | **Egg** | The per-session execution boundary: process, PTY, sandbox policy, and local control socket. |
 | **Roost** | The self-hosted bundle started by `wt roost start`: a portal/gateway and an embedded wing in one process. Other wings may register with its gateway. |
 
-`wingthing.ai` is the hosted portal and gateway. Personal wings may register
-with it for browser reachability. It doesn't run those agents and isn't required
-for local, MCP, or SSH use.
+`wingthing.ai` is the hosted identity, directory, key-exchange, and connection
+coordination service—roughly the control plane in a tailnet. It does not run the
+agents. New free accounts use direct remote MCP; Pro adds the encrypted hosted
+terminal and control relay. Local MCP, SSH, and self-hosted roosts do not require
+it.
 
-### Current convergence boundary
+### Shared control contract
 
-The browser and MCP surfaces share live session state when they address the same
-wing. A terminal created with MCP appears in the web portal, and either client
-can operate the same egg subject to ownership policy.
+Local stdio, authenticated HTTP, and direct remote MCP derive their tool schemas
+from one registry. The remote surface has no mutable current wing: every
+wing-owned call requires `wing_id`, while `wing_list` is coordinator-owned. A
+terminal created with MCP is the same durable egg a browser or CLI can inspect.
 
-Two gaps remain:
-
-- headless MCP runs live in the wing task store but have no browser view; and
-- a self-hosted portal can display several registered wings, while its HTTP MCP
-  `wing_list` returns that same roster but runtime tools currently control only
-  the embedded wing.
-
-Independent self-hosted portals are not federated. A client selects one by URL,
-and an LLM can register several HTTP MCP servers under different names. See the
-[LLM-first architecture review](docs/llm-first-review.md) for the proposed
-single control contract and target model.
+Headless runs do not yet have a browser view, locked wings still need a native
+passkey ceremony, and independent self-hosted roosts do not yet federate their
+directories. See the [direct agent manager design](docs/direct-agent-manager-design.md)
+for the rollout and security boundary.
 
 ## Sandbox
 
@@ -145,7 +161,7 @@ outer VM as the security boundary. Wingthing still provides persistence and the
 control plane, reports `outer-boundary` to MCP clients, and records that mode in
 the audit log.
 
-## Browser access
+## Browser and hosted service
 
 Browser access is optional:
 
@@ -155,11 +171,13 @@ wt start
 open https://app.wingthing.ai
 ```
 
-The wing connects outbound, so it needs no inbound port. Terminal and wing API
-payloads are application-encrypted between the shipped browser and wing. The
-gateway sees routing metadata, and the hosted browser trusts JavaScript served
-by the service. Read [security.md](docs/security.md) before making a stronger
-claim.
+The wing connects outbound, so it needs no public inbound port. New free
+accounts use the hosted site to register the wing and set up direct remote MCP;
+the hosted browser terminal is not part of that free path. Pro and temporarily
+grandfathered accounts may use the application-encrypted hosted terminal and
+control relay. The coordinator sees account, routing, and connection metadata,
+and the hosted browser still trusts JavaScript served by the service. Read
+[security.md](docs/security.md) before making a stronger claim.
 
 A portal may have several wings. The native CLI can query the same authorized
 roster and probe each wing through the encrypted tunnel:
@@ -173,8 +191,9 @@ WINGTHING_DIR=~/.wingthing-lab wt login --roost https://lab.example.com
 WINGTHING_DIR=~/.wingthing-lab wt wings --roost https://lab.example.com --json
 ```
 
-The browser and native client select a wing by its stable `wing_id`. There is no
-peer-roost discovery or cross-portal session aggregation today.
+The browser and native client select a wing by its stable `wing_id`. The hosted
+directory aggregates every wing registered to the account or its organizations.
+Peer-roost federation remains follow-up work.
 
 ## Shared roost
 

@@ -1,6 +1,6 @@
 # Wingthing security model
 
-Reviewed: 2026-08-20
+Reviewed: 2026-08-25
 
 ## Scope of the promise
 
@@ -8,8 +8,8 @@ Wingthing has three independent security boundaries:
 
 1. The **egg sandbox** limits what an agent process can reach on the wing.
 2. The **wing access policy** decides which principal may operate a local resource.
-3. **Application-layer encryption** protects terminal and tunnel payloads while an
-   optional relay carries them.
+3. **Transport encryption and signaling integrity** protect direct WebRTC payloads;
+   application-layer encryption protects payloads when an optional relay carries them.
 
 Do not collapse those into one claim. E2E encryption does not constrain a
 same-user local process, and a local allowlist does not authenticate code served
@@ -19,15 +19,29 @@ Local CLI and MCP access use authenticated Unix sockets and operating-system fil
 permissions. SSH attach uses OpenSSH's authentication, encryption, and host-key
 verification. Neither path uses Wingthing's relay encryption.
 
-## Hosted relay architecture
+## Hosted connection architecture
+
+The free/default path uses the hosted service only for identity, the
+access-filtered wing directory, and encrypted WebRTC signaling:
+
+```text
+native client ===== authenticated WebRTC/DTLS ===== wing
+       \------ wingthing.ai coordination only -----/
+```
+
+The WebRTC certificate fingerprints are inside the offer/answer exchanged
+through the X25519-encrypted, TOFU-pinned signaling tunnel. MCP request and
+result bytes then travel on the DataChannel, not through `wingthing.ai`.
+
+Pro, temporarily grandfathered, and self-hosted policies may use the relay path:
 
 ```text
 browser/native client -- TLS --> wingthing.ai relay -- TLS --> wing
               \____________ application ciphertext ___________/
 ```
 
-The shipped relay forwards application ciphertext for terminal content and
-encrypted tunnel requests. During normal service operation it does not receive
+When entitled, the shipped relay forwards application ciphertext for terminal
+content and encrypted tunnel requests. During normal service operation it does not receive
 the plaintext of terminal I/O, directory listings, session history, audit data,
 egg configuration, or tunnel passkey assertions.
 
@@ -43,7 +57,8 @@ Wingthing uses X25519 ECDH, HKDF-SHA256, and AES-256-GCM in two domains:
 | Domain | Client key | Wing key | HKDF info | Content |
 |---|---|---|---|---|
 | PTY | Browser identity key, retained for the tab | Persistent `~/.wingthing/wing_key` | `wt-pty` | Keystrokes and terminal output |
-| Tunnel | Browser/native client identity key | Persistent `~/.wingthing/wing_key` | `wt-tunnel` | Wing APIs and encrypted PTY controls |
+| Tunnel/signaling | Browser/native client identity key | Persistent `~/.wingthing/wing_key` | `wt-tunnel` | Wing APIs, encrypted PTY controls, and WebRTC SDP |
+| Direct control | Ephemeral WebRTC certificate negotiated in pinned signaling | Ephemeral WebRTC certificate | WebRTC DTLS | Remote MCP operations and results |
 
 Encrypted messages are `base64(nonce || ciphertext || GCM tag)`. A modified
 ciphertext fails authentication.
@@ -71,6 +86,13 @@ directly over WebRTC's authenticated DTLS channel.
 Session start/attach routing, session IDs, timing, sizes, disconnects, and lifecycle
 messages remain visible to the relay. The protocol does not yet bind every envelope
 field into AEAD associated data or maintain a per-direction replay counter.
+
+For a direct-only hosted account, the relay accepts only bounded tunnel purposes
+for wing discovery, WebRTC signaling, and passkey authentication. The wing checks
+the coordinator-visible purpose against the decrypted inner message before it
+responds. General tunnel control and PTY start/attach are denied before forwarding.
+The wing advertises this purpose-binding capability at registration; direct-only
+coordination to an older wing is denied with an upgrade error.
 
 ## Locked-wing passkeys
 
@@ -138,15 +160,16 @@ encryption protects bytes from the relay, not from a compromised client or wing.
 
 ## What the relay observes
 
-The relay can observe:
+The coordinator can observe:
 
 - Account, organization, device-token, and passkey registration records.
 - Wing ID/public key, org binding, lock state, and connection presence.
-- Session IDs, selected agent and working-directory metadata needed by PTY routing.
-- Start/attach/detach/exit timing, message sizes, and IP/network metadata.
+- WebRTC signaling size/timing, candidate network metadata, and IP/network metadata.
+- For entitled relay sessions only: session IDs, selected agent and working-directory
+  routing metadata plus start/attach/detach/exit timing and message sizes.
 - Traffic availability: it can delay, drop, duplicate, or reroute messages.
 
-With the as-built trusted client and wing, the relay does not receive plaintext:
+With the as-built trusted client and wing, the coordinator does not receive plaintext:
 
 - Terminal keystrokes or output.
 - Encrypted resize/kill requests.
@@ -176,8 +199,9 @@ JavaScript served by the same compromised service.
 
 A native, reproducibly distributed client with an independently verified wing pin
 can make the malicious-relay boundary substantially stronger. Until that handshake
-and distribution story is complete, public wording should be "application-encrypted
-through the hosted relay," not a Signal-style server-compromise guarantee.
+and distribution story is complete, direct-path wording must still disclose the
+hosted client-distribution and first-use trust boundaries rather than imply a
+Signal-style server-compromise guarantee.
 
 ## Remaining protocol work
 
@@ -188,6 +212,7 @@ through the hosted relay," not a Signal-style server-compromise guarantee.
 - Persisted WebAuthn signature counters if cloned-authenticator detection becomes
   part of the passkey guarantee.
 - A trusted native/browser-extension client path if malicious web delivery is in scope.
+- A native passkey ceremony before direct control of locked wings.
 - At-rest protection for local history if Wingthing chooses to offer that guarantee.
 
 ## Reference
@@ -197,6 +222,7 @@ through the hosted relay," not a Signal-style server-compromise guarantee.
 | Local CLI/MCP | Same-OS-user permissions; named MCP guardrails and audit |
 | Trusted VM (`--unsandboxed`) | Outer VM/network policy; no nested Wingthing sandbox |
 | SSH attach | OpenSSH transport and host-key policy |
+| Direct remote MCP | WebRTC DTLS; offer/answer protected by pinned encrypted signaling |
 | Terminal content through relay | X25519/HKDF/AES-GCM application encryption |
 | Tunnel wing APIs | X25519/HKDF/AES-GCM application encryption |
 | Resize/kill | Encrypted tunnel or direct WebRTC DTLS |

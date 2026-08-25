@@ -69,6 +69,7 @@ func (sc *SessionCache) Validate(token, loginAddr string) *User {
 	user := &User{
 		ID:          sv.UserID,
 		DisplayName: sv.DisplayName,
+		Tier:        sv.Tier,
 		OrgIDs:      sv.OrgIDs,
 	}
 

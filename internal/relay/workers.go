@@ -24,15 +24,16 @@ var ntfySentNonces sync.Map // nonce → bool
 
 // ConnectedWing represents a wing connected via WebSocket.
 type ConnectedWing struct {
-	ID           string
-	UserID       string
-	WingID       string
-	PublicKey    string
-	OrgID        string // org ID this wing serves
-	Locked       bool
-	AllowedCount int
-	Conn         *websocket.Conn
-	LastSeen     time.Time
+	ID             string
+	UserID         string
+	WingID         string
+	PublicKey      string
+	OrgID          string // org ID this wing serves
+	Locked         bool
+	AllowedCount   int
+	PurposeBinding bool
+	Conn           *websocket.Conn
+	LastSeen       time.Time
 }
 
 // WingEvent is sent to dashboard subscribers for wing/session lifecycle events.
@@ -373,15 +374,16 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wing := &ConnectedWing{
-		ID:           uuid.New().String(),
-		UserID:       userID,
-		WingID:       reg.WingID,
-		PublicKey:    wingPublicKey,
-		OrgID:        reg.OrgSlug,
-		Locked:       reg.Locked,
-		AllowedCount: reg.AllowedCount,
-		Conn:         conn,
-		LastSeen:     time.Now(),
+		ID:             uuid.New().String(),
+		UserID:         userID,
+		WingID:         reg.WingID,
+		PublicKey:      wingPublicKey,
+		OrgID:          reg.OrgSlug,
+		Locked:         reg.Locked,
+		AllowedCount:   reg.AllowedCount,
+		PurposeBinding: reg.PurposeBinding,
+		Conn:           conn,
+		LastSeen:       time.Now(),
 	}
 
 	// Validate org membership if org specified (accepts slug or ID)

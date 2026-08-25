@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -46,9 +47,36 @@ func StartProxy(domains []string) (*DomainProxy, error) {
 	return StartProxyWithOptions(ProxyOptions{Domains: domains})
 }
 
+// StartPolicyProxy starts the host-side HTTP CONNECT endpoint needed by a
+// network-isolated sandbox. Local-only policies use explicit loopback port
+// forwarding instead. On Linux, NetworkFull keeps the route-less namespace but
+// permits any CONNECT destination through the inherited relay. On macOS it
+// preserves the existing unrestricted Seatbelt network policy.
+func StartPolicyProxy(need NetworkNeed, domains []string) (*DomainProxy, error) {
+	switch need {
+	case NetworkNone, NetworkLocal:
+		return nil, nil
+	case NetworkHTTPS:
+		if len(domains) == 0 {
+			return nil, fmt.Errorf("HTTPS network policy has no allowed domains")
+		}
+		return StartProxy(domains)
+	case NetworkFull:
+		if runtime.GOOS != "linux" {
+			return nil, nil
+		}
+		return StartProxy([]string{"*"})
+	default:
+		return nil, fmt.Errorf("unknown network policy %d", need)
+	}
+}
+
 // StartProxyWithOptions starts a proxy with explicit options.
 func StartProxyWithOptions(opts ProxyOptions) (*DomainProxy, error) {
-	lis, err := net.Listen("tcp", "localhost:0")
+	// The namespace side deliberately binds only 127.0.0.1. Keep the host side
+	// deterministic too: on systems where localhost resolves to ::1 first, a
+	// relay that dials 127.0.0.1 must not depend on dual-stack listener quirks.
+	lis, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("proxy listen: %w", err)
 	}
@@ -120,6 +148,9 @@ func (p *DomainProxy) Observing() bool { return p.observe }
 
 // allowed checks if a domain is in the allowlist.
 func (p *DomainProxy) allowed(host string) bool {
+	if p.domains["*"] {
+		return true
+	}
 	// Strip port if present
 	domain := host
 	if h, _, err := net.SplitHostPort(host); err == nil {

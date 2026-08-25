@@ -14,7 +14,11 @@ type Surface string
 const (
 	SurfaceLocalMCP Surface = "local-mcp"
 	SurfaceHTTPMCP  Surface = "http-mcp"
-	ContractVersion         = "v1"
+	// SurfaceDirectMCP is the native multi-wing adapter. Portal operations are
+	// local to the coordinator, while every wing-owned operation carries an
+	// explicit wing_id used to select a peer-to-peer transport.
+	SurfaceDirectMCP Surface = "direct-mcp"
+	ContractVersion          = "v1"
 )
 
 // Authority identifies the component that owns an operation's state and
@@ -74,6 +78,9 @@ func Tools(surface Surface) []Tool {
 	tools := make([]Tool, 0, len(catalog))
 	for _, tool := range catalog {
 		if tool.Supports(surface) {
+			if surface == SurfaceDirectMCP && tool.Authority == AuthorityWing {
+				tool.InputSchema = withWingTarget(tool.InputSchema)
+			}
 			tools = append(tools, tool)
 		}
 	}
@@ -98,15 +105,15 @@ func ObjectKinds(surface Surface) []string {
 		surfaces []Surface
 	}
 	objects := []objectKind{
-		{name: "wing", surfaces: []Surface{SurfaceHTTPMCP}},
-		{name: "terminal", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP}},
-		{name: "agent_run", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP}},
-		{name: "message", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP}},
+		{name: "wing", surfaces: []Surface{SurfaceHTTPMCP, SurfaceDirectMCP}},
+		{name: "terminal", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
+		{name: "agent_run", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
+		{name: "message", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "prompt_asset", surfaces: []Surface{SurfaceLocalMCP}},
 		{name: "task", surfaces: []Surface{SurfaceLocalMCP}},
 		{name: "loop", surfaces: []Surface{SurfaceLocalMCP}},
 		{name: "swarm", surfaces: []Surface{SurfaceLocalMCP}},
-		{name: "sandbox_policy", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP}},
+		{name: "sandbox_policy", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
 	}
 	var names []string
 	for _, object := range objects {
@@ -184,7 +191,7 @@ func buildTools() []Tool {
 	mutating := map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false}
 	modelCall := map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true}
 	destructive := map[string]any{"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false}
-	both := []Surface{SurfaceLocalMCP, SurfaceHTTPMCP}
+	both := []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}
 	local := []Surface{SurfaceLocalMCP}
 
 	tools := []Tool{
@@ -475,7 +482,7 @@ func buildTools() []Tool {
 			Name: "wing_list", Title: "List portal wings",
 			Description: "List every connected wing the authenticated portal user may access, including whether HTTP MCP can currently control it.",
 			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
-			Grant: "wing.read", Surfaces: []Surface{SurfaceHTTPMCP}, Authority: AuthorityPortal,
+			Grant: "wing.read", Surfaces: []Surface{SurfaceHTTPMCP, SurfaceDirectMCP}, Authority: AuthorityPortal,
 		},
 	}
 	for index := range tools {
@@ -486,4 +493,28 @@ func buildTools() []Tool {
 		tools[index].AuditArguments = AuditArgumentsDigest
 	}
 	return tools
+}
+
+func withWingTarget(schema map[string]any) map[string]any {
+	copy := make(map[string]any, len(schema))
+	for key, value := range schema {
+		copy[key] = value
+	}
+	properties := map[string]any{}
+	if current, ok := schema["properties"].(map[string]any); ok {
+		for key, value := range current {
+			properties[key] = value
+		}
+	}
+	properties["wing_id"] = map[string]any{
+		"type": "string", "minLength": 1,
+		"description": "Stable ID of the wing that owns this operation",
+	}
+	copy["properties"] = properties
+	required := []string{"wing_id"}
+	if current, ok := schema["required"].([]string); ok {
+		required = append(required, current...)
+	}
+	copy["required"] = required
+	return copy
 }

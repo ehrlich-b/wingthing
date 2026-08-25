@@ -173,7 +173,8 @@ This records terminal I/O for replay. Useful for compliance and debugging, costs
 - No seccomp. No syscall filtering.
 
 ### Linux (Namespaces + Seccomp)
-- Domain filtering via `HTTPS_PROXY` is cooperative — well-behaved agents (Claude Code, Codex, most Node.js/Go) respect it. Raw sockets can bypass.
+- Every mode retains `CLONE_NEWNET`. Domain-filtered HTTPS reaches the host CONNECT proxy only through an inherited-FD loopback relay; raw sockets and clients that remove `HTTPS_PROXY` have no route.
+- Explicit `network.local_ports` are the only host-loopback services forwarded into the namespace. The relay currently supports TCP, not arbitrary UDP/ICMP protocols.
 - Resource limits work: CPU time, memory (4GB floor for JIT), max FDs.
 - PID isolation: agent is PID 1, can't see host processes.
 - Seccomp blocks: `mount`, `umount`, `ptrace`, `reboot`, `swapon/off`, `kexec_load`, `init_module/finit_module/delete_module`, `pivot_root`. Agent can't escape deny mounts or introspect the parent.

@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -31,6 +32,24 @@ func TestProxyStartAndClose(t *testing.T) {
 	p.Close()
 	// Double close should be safe
 	p.Close()
+}
+
+func TestPolicyProxyPreservesPlatformFullNetworkSemantics(t *testing.T) {
+	p, err := StartPolicyProxy(NetworkFull, []string{"*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "linux" {
+		if p == nil {
+			t.Fatal("Linux NetworkFull needs the wildcard relay inside CLONE_NEWNET")
+		}
+		p.Close()
+		return
+	}
+	if p != nil {
+		p.Close()
+		t.Fatalf("%s NetworkFull should preserve unrestricted platform networking", runtime.GOOS)
+	}
 }
 
 func TestProxyAllowed(t *testing.T) {

@@ -79,6 +79,7 @@ func eggRunCmd() *cobra.Command {
 		cols                       uint32
 		fsFlag                     []string
 		networkFlag                []string
+		localPortFlag              []int
 		agentDomainsFlag           string
 		envFlag                    []string
 		envFileRequired            bool
@@ -154,6 +155,7 @@ func eggRunCmd() *cobra.Command {
 				Shell:                      shell,
 				FS:                         fsFlag,
 				Network:                    networkFlag,
+				LocalPorts:                 localPortFlag,
 				AgentDomains:               agentDomainsFlag,
 				Env:                        envMap,
 				Rows:                       rows,
@@ -203,6 +205,7 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&cols, "cols", 80, "terminal cols")
 	cmd.Flags().StringArrayVar(&fsFlag, "fs", nil, "filesystem rules (rw:./, deny:~/.ssh)")
 	cmd.Flags().StringArrayVar(&networkFlag, "network", nil, "network domains (api.anthropic.com, *, none)")
+	cmd.Flags().IntSliceVar(&localPortFlag, "local-port", nil, "host loopback port forwarded into the network namespace")
 	cmd.Flags().StringVar(&agentDomainsFlag, "agent-domains", "", "agent domain policy: merge or none (internal)")
 	cmd.Flags().StringArrayVar(&envFlag, "env", nil, "environment variables (KEY=VAL)")
 	cmd.Flags().BoolVar(&envFileRequired, "env-file-required", false, "require the internal environment payload")
@@ -454,23 +457,23 @@ func fileExists(path string) bool {
 	return err == nil && !st.IsDir()
 }
 
-// explainEnforcement reports how the network policy is actually held, which is
-// not the same on both platforms. macOS denies all egress in the seatbelt
-// profile and allows only the proxy port. Linux strips CLONE_NEWNET for any
-// need above NetworkNone, so HTTPS_PROXY is the only thing steering traffic and
-// the sandboxed process is free to ignore it. Saying "proxy" there would be a
-// lie, and this command exists to stop the sandbox being unauditable.
+// explainEnforcement reports how the network policy is actually held. macOS
+// Seatbelt allows only the proxy endpoint. Linux keeps CLONE_NEWNET and exposes
+// only inherited proxy/loopback relays, so ignoring HTTPS_PROXY fails closed.
 func explainEnforcement(need sandbox.NetworkNeed, goos string) string {
 	switch need {
 	case sandbox.NetworkNone:
 		return "none"
 	case sandbox.NetworkFull:
+		if goos == "linux" {
+			return "proxy"
+		}
 		return "unrestricted"
 	}
-	if goos == "linux" {
-		return "advisory"
-	}
 	if need == sandbox.NetworkHTTPS {
+		return "proxy"
+	}
+	if goos == "linux" {
 		return "proxy"
 	}
 	return "kernel"
@@ -1046,6 +1049,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	for _, d := range eggCfg.Network.Domains {
 		args = append(args, "--network", d)
+	}
+	for _, port := range eggCfg.Network.LocalPorts {
+		args = append(args, "--local-port", strconv.Itoa(port))
 	}
 	if eggCfg.Network.AgentDomains != "" {
 		args = append(args, "--agent-domains", eggCfg.Network.AgentDomains)
