@@ -8,12 +8,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
@@ -59,8 +61,8 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Result.Tools) != 27 {
-		t.Fatalf("tools = %d, want 27", len(listed.Result.Tools))
+	if want := len(control.Tools(control.SurfaceLocalMCP)); len(listed.Result.Tools) != want {
+		t.Fatalf("tools = %d, want %d from the control registry", len(listed.Result.Tools), want)
 	}
 	names := make(map[string]bool)
 	for _, tool := range listed.Result.Tools {
@@ -119,6 +121,78 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	}
 	if len(capabilities.Result.StructuredContent["agents"].([]any)) != 7 {
 		t.Fatalf("agents = %#v", capabilities.Result.StructuredContent["agents"])
+	}
+	contract := capabilities.Result.StructuredContent["control_contract"].(map[string]any)
+	if contract["surface"] != string(control.SurfaceLocalMCP) || contract["version"] != control.ContractVersion {
+		t.Fatalf("local control contract = %#v", contract)
+	}
+	if got := len(contract["operations"].([]any)); got != len(listed.Result.Tools) {
+		t.Fatalf("capability operations = %d, listed tools = %d", got, len(listed.Result.Tools))
+	}
+}
+
+func TestLocalAndHTTPMCPShareControlRegistry(t *testing.T) {
+	local := make(map[string]localMCPTool)
+	for _, tool := range localMCPTools() {
+		local[tool.Name] = tool
+	}
+	native := roostNativeMCPTools(&config.Config{}, false)
+	httpDefinitions := control.Tools(control.SurfaceHTTPMCP)
+	if len(native) != len(httpDefinitions) {
+		t.Fatalf("HTTP native tools = %d, registry = %d", len(native), len(httpDefinitions))
+	}
+	for index, want := range httpDefinitions {
+		got := native[index]
+		if got.Name != want.Name || got.Title != want.Title || got.Description != want.Description {
+			t.Errorf("HTTP tool %d metadata = %q/%q/%q, want %q/%q/%q",
+				index, got.Name, got.Title, got.Description, want.Name, want.Title, want.Description)
+		}
+		if !reflect.DeepEqual(got.InputSchema, want.InputSchema) {
+			t.Errorf("%s HTTP schema differs from registry", want.Name)
+		}
+		if !reflect.DeepEqual(got.Annotations, want.Annotations) {
+			t.Errorf("%s HTTP annotations differ from registry", want.Name)
+		}
+		if !reflect.DeepEqual(local[want.Name].InputSchema, want.InputSchema) {
+			t.Errorf("%s local schema differs from registry", want.Name)
+		}
+	}
+}
+
+func TestRoostCapabilitiesReportHTTPContract(t *testing.T) {
+	dir := t.TempDir()
+	workspace := t.TempDir()
+	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
+	if err := config.SaveWingConfig(dir, &config.WingConfig{
+		Paths: config.PathList{{Path: workspace}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var capabilities mcppkg.NativeTool
+	for _, tool := range roostNativeMCPTools(cfg, true) {
+		if tool.Name == "wingthing_capabilities" {
+			capabilities = tool
+			break
+		}
+	}
+	if capabilities.Call == nil {
+		t.Fatal("roost capabilities tool is missing")
+	}
+	result, isError, err := capabilities.Call(context.Background(), mcppkg.Principal{
+		UserID: "alice", Email: "alice@example.com", ClientID: "codex",
+	}, json.RawMessage(`{}`))
+	if err != nil || isError {
+		t.Fatalf("capabilities = %#v isError=%v err=%v", result, isError, err)
+	}
+	contract := result["control_contract"].(map[string]any)
+	if contract["surface"] != string(control.SurfaceHTTPMCP) || contract["version"] != control.ContractVersion {
+		t.Fatalf("HTTP control contract = %#v", contract)
+	}
+	if got, want := contract["operations"], control.OperationNames(control.SurfaceHTTPMCP); !reflect.DeepEqual(got, want) {
+		t.Fatalf("HTTP operations = %#v, want %#v", got, want)
+	}
+	if got, want := result["objects"], control.ObjectKinds(control.SurfaceHTTPMCP); !reflect.DeepEqual(got, want) {
+		t.Fatalf("HTTP objects = %#v, want %#v", got, want)
 	}
 }
 

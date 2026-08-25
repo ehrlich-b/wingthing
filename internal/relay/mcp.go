@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/mcp"
 )
@@ -148,11 +149,8 @@ func (s *Server) auditNativeMCPCall(r *http.Request, tool string, arguments json
 	}
 	sum := sha256.Sum256(arguments)
 	detail["argument_sha256"] = hex.EncodeToString(sum[:])
-	for _, key := range []string{"session", "run_id", "task_id", "message_id"} {
-		if value, ok := result[key].(string); ok && value != "" {
-			detail["target"] = value
-			break
-		}
+	if target := control.AuditTarget(tool, arguments, result); target != "" {
+		detail["target"] = target
 	}
 	raw, _ := json.Marshal(detail)
 	s.Store.AppendAudit(identity.UserID, "mcp_control_call", strPtr(string(raw)))

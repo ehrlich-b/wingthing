@@ -45,36 +45,6 @@ func loadLocalMCPClientsConfig(cfg *config.Config) (localMCPClientsConfig, error
 	return clients, nil
 }
 
-var localMCPToolGrants = map[string]string{
-	"wingthing_capabilities": "capabilities.read",
-	"sandbox_explain":        "sandbox.read",
-	"terminal_list":          "terminal.read",
-	"terminal_read":          "terminal.read",
-	"terminal_wait":          "terminal.read",
-	"terminal_send":          "terminal.send",
-	"terminal_start":         "terminal.start",
-	"agent_start":            "terminal.start",
-	"agent_run":              "agent.run",
-	"agent_status":           "agent.read",
-	"agent_wait":             "agent.read",
-	"agent_result":           "agent.read",
-	"agent_events":           "agent.read",
-	"agent_steer":            "agent.run",
-	"agent_stop":             "agent.stop",
-	"message_list":           "message.read",
-	"message_wait":           "message.read",
-	"message_send":           "message.send",
-	"terminal_rename":        "terminal.rename",
-	"terminal_stop":          "terminal.stop",
-	"prompt_list":            "prompt.read",
-	"prompt_get":             "prompt.read",
-	"task_get":               "prompt.read",
-	"prompt_save":            "prompt.save",
-	"prompt_run":             "prompt.run",
-	"prompt_loop":            "prompt.run",
-	"swarm_run":              "prompt.run",
-}
-
 func grantSet(grants []string) map[string]bool {
 	set := make(map[string]bool, len(grants))
 	for _, grant := range grants {

@@ -32,7 +32,7 @@ func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testi
 		t.Fatal(err)
 	}
 	srv.EnableMCP(nil, nil, mcp.NativeTool{
-		Name: "terminal_list", Title: "List owned terminals",
+		Name: "terminal_send", Title: "Send terminal input",
 		InputSchema: map[string]any{"type": "object", "additionalProperties": false},
 		Call: func(_ context.Context, principal mcp.Principal, _ json.RawMessage) (map[string]any, bool, error) {
 			return map[string]any{"owner_id": principal.UserID, "actor_id": principal.ClientID}, false, nil
@@ -45,11 +45,11 @@ func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testi
 	code := oauthAuthorize(t, ts.URL, clientID, "http://localhost:9999/cb",
 		base64.RawURLEncoding.EncodeToString(sum[:]), "sess-carol")
 	token := oauthToken(t, ts.URL, clientID, "http://localhost:9999/cb", code, verifier)
-	if names := mcpToolNames(t, ts.URL, token); !names["terminal_list"] {
+	if names := mcpToolNames(t, ts.URL, token); !names["terminal_send"] {
 		t.Fatalf("native control tool missing: %v", names)
 	}
 
-	body := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"terminal_list","arguments":{}}}`
+	body := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"terminal_send","arguments":{"session":"session-1","input":"private input"}}}`
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -77,6 +77,9 @@ func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testi
 	}
 	if !strings.Contains(audit, `"owner_id":"carol"`) || !strings.Contains(audit, `"actor_id":"`+clientID+`"`) {
 		t.Fatalf("native audit = %s", audit)
+	}
+	if !strings.Contains(audit, `"target":"session-1"`) || strings.Contains(audit, "private input") {
+		t.Fatalf("native audit target or redaction = %s", audit)
 	}
 }
 
