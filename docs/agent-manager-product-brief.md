@@ -8,6 +8,7 @@ Related designs:
 
 - [Direct agent manager and coordination-only free tier](direct-agent-manager-design.md)
 - [Bryan direct-control field report](bryan-wingthing-direct-control-field-report.md)
+- [wingthing.ai production canary](wingthing-ai-production-canary-2026-08-25.md)
 - [Roost deployment model](roost_design.md)
 - [Local agent meta-layer](agent-meta-layer.md)
 - [MCP service accounts and API credentials](mcp-service-accounts-design.md)
@@ -575,13 +576,18 @@ migration or denial contract and record why the old behavior is no longer suppor
 At the time of this review:
 
 - branch: `feature/direct-control-free-tier`;
+- production canary: Fly release v301 from commit `db0dc78`, with v300 retained
+  as the application rollback release and a verified pre-deploy database backup;
 - the direct-control implementation and Linux egress fix have passed unit,
   integration, static, cross-build, and WSL sandbox testing;
-- the branch has no upstream and has not been pushed or deployed;
-- the public site still presents the relay-centered brand and documentation;
-- `/patterns` is not deployed;
-- the configured hosted-account migration cutoff is near the intended deployment
-  date and must not be treated as correct merely because it exists in source.
+- the branch is not merged to main, but its committed runtime is deployed as the
+  public canary;
+- the public site now presents Wingthing as an agent manager and `/patterns` is live;
+- all 25 accounts present at deployment are before the configured
+  `2026-08-26T00:00:00Z` grandfather cutoff; new accounts after that instant receive
+  coordination/direct control only unless entitled; and
+- the public HTTP surfaces and anonymous native-MCP fail-closed path passed their
+  post-deploy canaries. Fresh authenticated enrollment remains outstanding.
 
 Recheck every item before relying on this snapshot. Git history, live deployment,
 and account state can change independently.

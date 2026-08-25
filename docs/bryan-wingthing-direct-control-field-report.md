@@ -1,6 +1,6 @@
 # Bryan Wingthing Direct-Control Field Report
 
-Status: feature branch proven on a real shared roost; not publicly deployed
+Status: feature branch proven on a real shared roost; public canary deployed
 
 Date: 2026-08-25
 
@@ -24,9 +24,10 @@ The core product loop works:
 5. With `hosted_relay: deny`, legacy hosted terminal and tunnel payload requests are
    rejected even though direct control continues to work.
 
-No Fly application, `wingthing.ai` production service, or public main-site asset was
-changed during this exercise. In particular, this report is not evidence that the
-new free portal or Patterns UI is deployed publicly.
+After the Bryan exercise and full regression gates passed, the same committed tree
+was deployed to `wingthing.ai` as Fly release v301. The production deployment has its
+own evidence and rollback record in
+[wingthing-ai-production-canary-2026-08-25.md](wingthing-ai-production-canary-2026-08-25.md).
 
 ## Field topology
 
@@ -58,6 +59,7 @@ yet by two separately administered physical machines.
 | Sandboxed artifact write | Pass | The inner agent wrote `inner-sonnet-5bcaa8e.txt`; SHA-256 was `db13a3ab18d317662c5d14adb1cba918d90fdcba06a3da11598e4848b3739f54`. |
 | Durable owner message | Pass | A fresh outer agent sent message `msg-77d372dd-3094-46b4-8bb4-db3fac8cf8ec` on channel `dogfood`. |
 | HTTPS | Pass | Native MCP and WebSocket canaries used the public HTTPS name with the installed valid certificate. |
+| Exact committed build | Pass | Final binary reports `feature-direct-db0dc78`; its SHA-256 matches the locally cross-compiled artifact, and a fresh direct connector reached `wingthing_capabilities` over WebRTC. |
 
 The outer and inner model selection was explicitly `sonnet`; no Opus agent was used.
 
@@ -156,9 +158,15 @@ agents or local Ollama skipped explicitly rather than weakening a required gate.
 
 ## Operator state and rollback
 
-At the end of field testing, Bryan intentionally remains on the feature build with
-`hosted_relay: deny`. The long-running direct test terminal and its small dogfood
-workspace remain available for inspection. They are test resources, not user data.
+At the end of field testing, Bryan intentionally remains on the exact committed
+feature build `feature-direct-db0dc78` with `hosted_relay: deny`. The installed
+binary SHA-256 is
+`306644f6a24750ad60da694c0aca8905e498098aabbc5e8d5678c8f47c26a3ef`.
+After the final install and restart, all three tracked session PIDs (`128260`,
+`178503`, and `504140`) were still alive, `wt doctor` reported the Linux sandbox
+available, and the direct capability response identified the same build. The
+long-running direct test terminal and its small dogfood workspace remain available
+for inspection. They are test resources, not user data.
 
 Rollback artifacts on Bryan:
 
@@ -192,12 +200,13 @@ The direct manager is credible but not yet a polished default:
   not yet federate. The desired home-roost/office-roost peer topology remains a
   separate directory, authorization, revocation, and conflict-resolution project.
 - A physical two-machine field canary and an N-1 published-client compatibility
-  canary remain before public rollout.
+  canary remain before broad rollout or merging the feature to main.
 
 ## Release recommendation
 
 Keep this on the feature branch while adding the fresh-human enrollment and physical
-two-wing canaries. It is ready for continued dogfooding on Bryan and another private
-wing. Do not treat the current branch deployment as a public release, and do not
-enable the new hosted free-tier behavior on `wingthing.ai` until those enrollment,
-upgrade, rollback, and browser-readiness paths are explicitly exercised.
+two-wing canaries. The public v301 deployment is an explicit, reversible production
+canary: existing accounts retain temporary relay parity, while newly created free
+accounts receive the direct-control posture. Do not merge to main or broaden claims
+until enrollment, upgrade, rollback, and browser-readiness paths are explicitly
+exercised.
