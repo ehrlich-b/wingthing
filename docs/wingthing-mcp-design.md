@@ -1,5 +1,15 @@
 # Remote MCP surface
 
+Status: privileged executable-tool design, extended by native agent control
+
+Reviewed: 2026-08-24
+
+This document describes the configured executable-tool half of the HTTP MCP
+endpoint. The endpoint now also publishes owner-scoped native controls for its
+embedded wing. It cannot yet select external wings shown by the browser portal.
+See [the AI API surface](ai-api-surface.md) and
+[the LLM-first architecture review](llm-first-review.md).
+
 A roost can expose its privileged tools to remote MCP clients at `POST /mcp`. The endpoint
 uses OAuth authorization-code flow with PKCE and applies a role policy before listing or
 calling a tool. It is disabled unless `wing.yaml` explicitly enables it.

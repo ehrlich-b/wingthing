@@ -2,13 +2,18 @@
 
 ## What This Is
 
-`wt` runs AI agents sandboxed on your machine, accessible from anywhere. The primary use case is `wt egg <agent>` (sandboxed agent sessions) and `wt wing` (remote access via relay). Skills are a secondary feature.
+`wt` puts AI agent runtimes behind one local control plane. A person uses that
+runtime through the CLI or browser. An LLM uses it through MCP. The primary use
+case is all of a person's agents in one inventory, for that person and their
+agents to operate together. Skills are a secondary feature.
 
 - `wt egg claude` -- run Claude Code in a per-session sandbox with PTY persistence
+- `wt mcp stdio --client codex` -- let a local LLM start and supervise agents
 - `wt start` -- connect your machine to the relay, access from app.wingthing.ai
-- `wt serve` -- relay server (web UI, WebSocket relay, skill registry), HTTP + SQLite
+- `wt roost start` -- self-hosted portal/gateway plus an embedded wing
+- `wt serve` -- gateway only (web UI, WebSocket relay, skill registry), HTTP + SQLite
 
-## Current Push: AI-Usable API
+## Current Push: One Portal for People and LLMs
 
 **An AI must be able to orchestrate wingthing as easily as a human can.** This is
 the primary focus of the current work. Anything a human can do from the terminal
@@ -16,6 +21,26 @@ or the browser, a model must be able to do through a typed interface with the
 same authority model and the same audit trail.
 
 The rule: **if you ship a capability only a human can drive, it is unfinished.**
+
+"One portal" means one resource inventory, authority model, and lifecycle
+contract. It does not mean every process or file moves to one machine.
+
+- A **portal** is the client-facing inventory and control surface.
+- A **wing** is the execution runtime and source of truth for local state.
+- A **session** is a persistent interactive terminal.
+- A **run** is a supervised headless task with semantic state.
+- An **egg** is the per-session process, PTY, and sandbox boundary.
+- A **roost** is the self-hosted bundle from `wt roost start`: portal/gateway
+  plus an embedded wing.
+
+Browser and MCP adapters must address the same qualified resources. Cross-wing
+resources need stable portal, wing, kind, and object IDs. Do not add mutable
+"current wing" state to a server-side MCP session.
+
+Every remote workflow must place execution, workspace, display, credentials,
+and durable memory explicitly. Current `cwd` values refer to existing paths on
+the selected wing. Wingthing does not yet synchronize code or memory between
+wings, and docs must not imply that it does.
 
 - `wt mcp stdio` is the model-facing surface. Tools have closed JSON Schemas,
   return structured content, and declare read-only/mutating/destructive intent.
@@ -63,9 +88,10 @@ completing the parent task via terminal scraping, ad hoc scripts, or a second
 orchestration system. Leave working paths alone unless a real task exposes a
 problem.
 
-The destination is the shared roost: any useful local operation added while
-dogfooding must be designed as a reusable runtime primitive that can also be
-exposed through an authenticated, owner-scoped, typed, audited roost adapter.
+The destination is one wing-owned control contract: any useful local operation
+added while dogfooding must be a reusable runtime primitive that can also be
+exposed through authenticated, owner-scoped, typed, audited browser and MCP
+adapters.
 A local-only convenience is incomplete unless it is a deliberate intermediate
 step toward that parity.
 
@@ -181,7 +207,8 @@ Single resolution path for all contexts: **CLI flag (`--agent`) > skill frontmat
 
 ## Skill System
 
-Skills are the core abstraction. Markdown files with YAML frontmatter and a prompt template body.
+Skills are portable workflow inputs, not the core runtime abstraction. They are
+Markdown files with YAML frontmatter and a prompt template body.
 
 ### Philosophy
 - **Repo skills** (`skills/`) are the validated library -- curated, tested, checked in

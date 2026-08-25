@@ -3,11 +3,19 @@
 <style>
 .patterns{max-width:980px;margin:0 auto;padding:18px 8px 40px}
 .patterns h1{font-size:28px;letter-spacing:-0.03em;margin-bottom:8px}
-.patterns .lead{max-width:720px;color:var(--text-dim);font-size:15px;line-height:1.7;margin-bottom:30px}
-.piece-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0 40px}
+.patterns .lead{max-width:760px;color:var(--text-dim);font-size:15px;line-height:1.7;margin-bottom:30px}
+.piece-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0 28px}
 .piece{background:var(--bg-card);border:1px solid var(--accent);border-radius:7px;padding:16px}
 .piece h2{font-family:var(--mono);font-size:15px;color:var(--action);margin-bottom:6px}
 .piece p{color:var(--text-dim);font-size:13px;line-height:1.55}
+.matrix{width:100%;border-collapse:collapse;margin:0 0 36px;font-size:13px}
+.matrix th,.matrix td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--accent)}
+.matrix th{font-family:var(--mono);font-size:11px;color:var(--text-dim);font-weight:400}
+.matrix td:first-child{font-family:var(--mono);color:var(--text)}
+.state{font-family:var(--mono);font-size:10px;border:1px solid var(--accent);border-radius:10px;padding:2px 8px;white-space:nowrap}
+.state.shipped{color:var(--action)}
+.state.gap{color:var(--text-dim)}
+.placement{color:var(--text-dim);font-size:13px;line-height:1.6;margin:-16px 0 20px}
 .pattern-list{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
 .pattern{position:relative;background:var(--bg-card);border:1px solid var(--accent);border-radius:7px;padding:22px 22px 20px}
 .pattern-head{display:flex;justify-content:space-between;gap:16px;align-items:baseline;margin-bottom:8px}
@@ -21,46 +29,58 @@
 .recipe-row a,.copy-recipe{color:var(--text-dim);background:none;border:none;padding:0;font:inherit;cursor:pointer;text-decoration:none}
 .recipe-row a:hover,.copy-recipe:hover{color:var(--action)}
 .skill-row{margin:-16px 0 30px}
-@media(max-width:700px){.piece-row,.pattern-list{grid-template-columns:1fr}.pattern-head{display:block}}
+@media(max-width:700px){.piece-row,.pattern-list{grid-template-columns:1fr}.pattern-head{display:block}.matrix{font-size:11px}.matrix th,.matrix td{padding:7px 5px}}
 </style>
 {{end}}
 {{define "content"}}
 <main class="patterns">
-<h1>ways to use wingthing</h1>
-<p class="lead">Wingthing provides three pieces you can compose. A roost coordinates access, a wing supplies a machine, and an egg wraps one durable agent session. The patterns change who drives the egg and where it runs.</p>
+<h1>place the work, then run it</h1>
+<p class="lead">Wingthing gives a person and an LLM the same execution layer. Pick who drives the work and which wing runs it. Then make workspace, display, credentials, and durable memory placement explicit.</p>
 <div class="recipe-row skill-row"><a href="/patterns/SKILL.md">open the patterns skill</a><button class="copy-recipe" data-copy="/patterns/SKILL.md">copy skill markdown</button></div>
 
 <div class="piece-row">
-<section class="piece"><h2>roost</h2><p>Login, identity, policy, and routing for people and agent clients that share infrastructure.</p></section>
-<section class="piece"><h2>wing</h2><p>A machine that runs eggs. It can connect to a hosted roost or live inside a self-hosted one.</p></section>
-<section class="piece"><h2>egg</h2><p>An owner-scoped agent or terminal with a PTY, sandbox policy, and durable lifecycle.</p></section>
+<section class="piece"><h2>portal</h2><p>The inventory and controls a person sees in the browser or an LLM sees through MCP.</p></section>
+<section class="piece"><h2>wing</h2><p>The execution runtime. A wing owns processes, workspaces, agent homes, and sessions.</p></section>
+<section class="piece"><h2>roost</h2><p>The self-hosted bundle from <code>wt roost start</code>: a portal and gateway with an embedded wing.</p></section>
 </div>
+
+<p class="placement">A session is a persistent terminal. A run is a headless task with a semantic result. An egg is the per-session sandboxed process behind a terminal.</p>
+
+<table class="matrix">
+<tr><th>driver</th><th>execution</th><th>surface</th><th>state</th></tr>
+<tr><td>human</td><td>local wing</td><td>CLI or browser</td><td><span class="state shipped">shipped</span></td></tr>
+<tr><td>LLM</td><td>local wing</td><td>stdio MCP</td><td><span class="state shipped">shipped</span></td></tr>
+<tr><td>human</td><td>external wing through a portal</td><td>browser</td><td><span class="state shipped">shipped</span></td></tr>
+<tr><td>LLM</td><td>self-hosted roost's embedded wing</td><td>HTTP MCP</td><td><span class="state shipped">shipped</span></td></tr>
+<tr><td>LLM</td><td>external wing selected through a portal</td><td>HTTP MCP</td><td><span class="state gap">not yet</span></td></tr>
+<tr><td>human or LLM</td><td>several independent roosts</td><td>named client targets</td><td><span class="state shipped">client-side</span></td></tr>
+</table>
 
 <div class="pattern-list">
 <section class="pattern">
 <div class="pattern-num">01</div>
 <div class="pattern-tags"><span class="pattern-tag">human</span><span class="pattern-tag">local</span></div>
 <div class="pattern-head"><h2>use it as a local sandbox</h2></div>
-<p>Start Claude, Codex, or another agent inside an egg on the current machine. The egg applies the project sandbox policy and keeps running across terminal disconnects.</p>
-<div class="flow">you → wt egg → sandboxed agent</div>
+<p>Start Claude, Codex, or another agent on the current machine. The session applies project policy and survives terminal disconnects.</p>
+<div class="flow">you -> local wing -> sandboxed session</div>
 <div class="recipe-row"><a href="/patterns/local-sandbox/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/local-sandbox/INSTRUCTIONS.md">copy markdown</button></div>
 </section>
 
 <section class="pattern">
 <div class="pattern-num">02</div>
-<div class="pattern-tags"><span class="pattern-tag">agent</span><span class="pattern-tag">local</span></div>
+<div class="pattern-tags"><span class="pattern-tag">LLM</span><span class="pattern-tag">local</span></div>
 <div class="pattern-head"><h2>give your AI sandboxed sub-agents</h2></div>
-<p>Connect a main Codex or Claude session to Wingthing's typed interface. It can launch owner-scoped eggs, select a model, wait for completion, and read semantic results.</p>
-<div class="flow">your AI → local MCP → owned egg → result</div>
+<p>Connect a parent Codex or Claude session to the local MCP server. It can launch runs or attachable sessions, steer them, wait, and read results.</p>
+<div class="flow">parent LLM -> stdio MCP -> local wing -> result</div>
 <div class="recipe-row"><a href="/patterns/local-subagents/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/local-subagents/INSTRUCTIONS.md">copy markdown</button></div>
 </section>
 
 <section class="pattern">
 <div class="pattern-num">03</div>
 <div class="pattern-tags"><span class="pattern-tag">human</span><span class="pattern-tag">remote</span></div>
-<div class="pattern-head"><h2>reach your machine from the web</h2></div>
-<p>Run a wing on a workstation and connect it outbound to the hosted roost. Open and resume its eggs from a browser without an inbound port.</p>
-<div class="flow">browser → hosted roost → your wing → egg</div>
+<div class="pattern-head"><h2>reach a personal machine</h2></div>
+<p>Connect a workstation to the hosted portal. Pick its wing in the browser and open or resume sessions without exposing an inbound port.</p>
+<div class="flow">browser -> hosted portal -> personal wing -> session</div>
 <div class="recipe-row"><a href="/patterns/personal-remote-wing/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/personal-remote-wing/INSTRUCTIONS.md">copy markdown</button></div>
 </section>
 
@@ -68,26 +88,26 @@
 <div class="pattern-num">04</div>
 <div class="pattern-tags"><span class="pattern-tag">team</span><span class="pattern-tag">shared host</span></div>
 <div class="pattern-head"><h2>share a roost over the web</h2></div>
-<p>Several people log into one roost and run agents on its hardware. Each egg has an owner. A ticket workspace can be shared separately when the work calls for it.</p>
-<div class="flow">team browsers → shared roost → owner-scoped eggs</div>
+<p>Several people use one portal and its embedded wing. Each person gets owner-scoped sessions and an agent home on the shared host.</p>
+<div class="flow">team browsers -> roost -> embedded wing -> sessions</div>
 <div class="recipe-row"><a href="/patterns/shared-web-roost/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/shared-web-roost/INSTRUCTIONS.md">copy markdown</button></div>
 </section>
 
 <section class="pattern">
 <div class="pattern-num">05</div>
-<div class="pattern-tags"><span class="pattern-tag">agent</span><span class="pattern-tag">shared host</span></div>
-<div class="pattern-head"><h2>let your AI use a shared roost</h2></div>
-<p>Codex or Claude authenticates with the person's Wingthing login and orchestrates that person's eggs on shared hardware. The provider login stays in the owner's agent home.</p>
-<div class="flow">your AI → roost MCP → your eggs → results</div>
+<div class="pattern-tags"><span class="pattern-tag">LLM</span><span class="pattern-tag">shared host</span></div>
+<div class="pattern-head"><h2>let an LLM use a shared roost</h2></div>
+<p>Authenticate a local Codex or Claude client to a self-hosted roost. Its HTTP MCP endpoint controls that roost's embedded wing.</p>
+<div class="flow">parent LLM -> HTTP MCP -> embedded wing -> result</div>
 <div class="recipe-row"><a href="/patterns/shared-roost-agents/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/shared-roost-agents/INSTRUCTIONS.md">copy markdown</button></div>
 </section>
 
 <section class="pattern">
 <div class="pattern-num">06</div>
-<div class="pattern-tags"><span class="pattern-tag">human or agent</span><span class="pattern-tag">remote hosts</span></div>
+<div class="pattern-tags"><span class="pattern-tag">human or LLM</span><span class="pattern-tag">several roosts</span></div>
 <div class="pattern-head"><h2>orchestrate work on remote hosts</h2></div>
-<p>Select a roost or wing, launch work near the required code and hardware, and supervise it through the same typed operations used locally.</p>
-<div class="flow">you or your AI → remote runtime → owned eggs</div>
+<p>Register each independent roost under a distinct client name. Choose that name explicitly; Wingthing does not discover or federate peer roosts.</p>
+<div class="flow">client target -> one roost -> its embedded wing</div>
 <div class="recipe-row"><a href="/patterns/remote-orchestration/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/remote-orchestration/INSTRUCTIONS.md">copy markdown</button></div>
 </section>
 </div>

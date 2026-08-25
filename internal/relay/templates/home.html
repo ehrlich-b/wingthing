@@ -1,4 +1,4 @@
-{{define "title"}}wt - your AI agents, reachable from anywhere{{end}}
+{{define "title"}}wt - one place for you and your agents{{end}}
 {{define "head"}}
 <style>
 .hero{padding:40px 0 24px;text-align:center}
@@ -102,8 +102,8 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 })();
 </script>
 <div class="hero">
-<h1>your AI agents, reachable from anywhere</h1>
-<p class="tagline">Run Claude, Codex, Cursor, and Gemini in a sandbox on your machine. Access them from any device through an application-encrypted, passkey-protected relay.</p>
+<h1>all your agents, one place</h1>
+<p class="tagline">Run Claude, Codex, Cursor, and Gemini behind one local control plane. Use it yourself from a terminal or browser, or let an LLM start and supervise agents through MCP.</p>
 {{if .User}}<div class="prompt-flow">
 <a href="{{if .LocalMode}}/app/{{else}}https://app.wingthing.ai{{end}}" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open app</span></a>
 </div>
@@ -120,16 +120,16 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <h2>how it works</h2>
 <div class="how-grid">
 <div class="how-card">
+<h3>portal</h3>
+<p>The inventory and controls for your agents. A person uses the browser or CLI. An LLM uses typed MCP operations.</p>
+</div>
+<div class="how-card">
 <h3>wing</h3>
-<p>Daemon that runs on your machine. <code>wt login</code>, <code>wt start</code>, and it encrypts the connection to the relay so your eggs are reachable.</p>
+<p>The execution runtime on a laptop, container, or VM. It owns the processes, workspaces, agent homes, and sessions.</p>
 </div>
 <div class="how-card">
-<h3>roost</h3>
-<p>The relay. Wings connect outbound to it, so you don't need to open ports or have a static IP. Use ours or <a href="/docs#self-hosting">host your own</a>.</p>
-</div>
-<div class="how-card">
-<h3>egg</h3>
-<p>Wraps each agent in a sandbox with a PTY and internal domain-filtered proxy. Survives disconnects. Claude Code, Codex, Cursor, Gemini.</p>
+<h3>session or run</h3>
+<p>Use a persistent terminal when a person may attach. Use a headless run when an LLM needs a semantic result.</p>
 </div>
 </div>
 <div class="how-grid">
@@ -143,15 +143,15 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </div>
 <div class="how-card">
 <h3>e2e encrypted</h3>
-<p>X25519 key agreement and AES-GCM keep wing payloads opaque to the shipped roost during normal operation. Routing metadata remains visible, and the hosted web client is part of the trust boundary.</p>
+<p>X25519 key agreement and AES-GCM keep wing payloads opaque to the shipped gateway during normal operation. Routing metadata remains visible, and the hosted web client is part of the trust boundary.</p>
 </div>
 <div class="how-card">
 <h3>self-hostable</h3>
-<p><code>wt serve</code> runs the roost on your machine. No account needed, no dependency on us.</p>
+<p><code>wt roost start</code> runs a portal, gateway, and embedded wing on your machine. No hosted account needed.</p>
 </div>
 <div class="how-card">
 <h3>any agent</h3>
-<p><code>wt egg claude</code>, <code>wt egg ollama</code>, <code>wt egg gemini</code>. Switch the agent, keep your sandbox config.</p>
+<p><code>wt egg claude</code>, <code>wt egg codex</code>, <code>wt egg gemini</code>. Switch the provider, keep the execution contract and sandbox config.</p>
 </div>
 <div class="how-card">
 <h3>passkey auth</h3>
@@ -205,7 +205,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <div class="sb-preview">
 <button class="sb-copy" id="sb-copy-btn" onclick="sbCopy()" disabled>nothing to copy yet</button>
 <pre id="sb-yaml"></pre>
-<div class="sb-tip">save as egg.yaml in your project root — wt egg claude reads it automatically<br>eggs are standalone sandboxes — no wing, no relay, no account needed</div>
+<div class="sb-tip">save as egg.yaml in your project root; wt egg claude reads it automatically<br>eggs are standalone sandboxes; no wing, gateway, or account needed</div>
 </div>
 </div>
 </div>
@@ -478,7 +478,7 @@ window.sbRender=function(){
       pv.push({text:'  - "'+r.mode+':'+r.path+'"',cls:'y-user'});
     });
   }else{
-    // base.fs: none — no defaults
+    // base.fs: none, no defaults
     var showFS=ap||userFS.length;
     if(showFS){
       pv.push({text:'fs:',cls:userFS.length?'y-user':'y-agent'});

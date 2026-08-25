@@ -1,7 +1,13 @@
 # Local-first runtime architecture
 
-Status: direction proposal and first implementation slice  
-Reviewed: 2026-08-08
+Status: adopted direction, with control-plane convergence in progress
+
+Reviewed: 2026-08-24
+
+This document establishes the wing as the runtime authority. The current
+LLM-first follow-up defines the portal, qualified resource identity, and remote
+workspace placement in
+[the LLM-first architecture review](llm-first-review.md).
 
 ## Decision in one sentence
 
@@ -10,6 +16,11 @@ Reviewed: 2026-08-08
 Wingthing should start locally, require no account, keep real terminal processes alive, and be useful from the terminal where the user already works. `wingthing.ai` is an optional browser client, rendezvous service, and relay fallback. It is not the place the work conceptually lives.
 
 That framing resolves the apparent conflict between “everyone goes to the roost” and “wingthing.ai routes to every wing.” They are different deployment stories built from the same layers, not competing definitions of the product.
+
+The next question is not simply local versus remote. Every workflow places five
+things: execution, workspace, display, credentials, and durable memory. The
+wing owns execution. The portal presents inventory and controls. Neither term
+implies that code or memory has been copied between machines.
 
 ## What Herdr got right
 

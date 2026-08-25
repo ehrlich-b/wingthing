@@ -1,11 +1,11 @@
 # The AI API surface
 
 Status: implemented local slice and target design
-Reviewed: 2026-08-21
+Reviewed: 2026-08-24
 
 The goal from `CLAUDE.md`: **an AI must be able to orchestrate wingthing as easily
-as a human can.** This doc answers three questions honestly — what surfaces exist
-today, why they do not add up to that goal, and what the target shape is.
+as a human can.** This doc answers three questions: what surfaces exist today,
+why they do not add up to that goal, and what the target shape is.
 
 ## What exists today
 
@@ -55,19 +55,22 @@ cannot toggle it per call.
    the embedded runtime directly. A hosted relay connected to a separate wing
    still needs these operations carried through the encrypted tunnel.
 
-The remaining parity gap is external-wing reachability plus extraction of the
-shared semantics into a transport-independent package.
+5. **The portal has two inventories.** Browser session lists aggregate the
+   authorized external-wing roster. HTTP MCP has no `wing_id` target and calls
+   only the embedded wing. Headless tasks have no browser inventory at all.
+
+The remaining parity gap is one qualified session/run inventory, external-wing
+reachability, and extraction of the shared semantics into a
+transport-independent package.
 
 ## Target shape
 
 One control plane, three adapters, one vocabulary.
 
 ```text
-                   ┌──────────────────────────────────┐
-   CLI (--json) ──▶│                                  │
-   MCP (stdio+HTTP)│   wing control plane (semantics) │──▶ eggs / tasks / prompts
-   REST (/api/v1) ─▶│   principals · grants · bounds   │
-                   └──────────────────────────────────┘
+CLI --json --------\
+MCP stdio or HTTP --+--> wing control plane --> sessions / runs / prompts
+REST /api/v1 ------/       principal + grant + bound + audit
 ```
 
 The rule: **a capability is defined once in the control plane and exposed by all
@@ -88,9 +91,37 @@ They are not redundant; they serve different callers.
   ordinary status codes, pagination, and no session handshake.
 
 The web UI should migrate onto the same REST surface it exposes to everyone else.
-That is the forcing function that keeps the two honest — surface 4's tunnel
+That is the forcing function that keeps the two honest: surface 4's tunnel
 messages become REST resources carried over the encrypted transport, rather than
 a private protocol.
+
+### Qualified resources and placement
+
+Every cross-wing object needs an immutable reference:
+
+```json
+{
+  "portal_id": "lab",
+  "wing_id": "01J...",
+  "kind": "session",
+  "id": "01K..."
+}
+```
+
+Listing may aggregate across authorized wings. A mutating start operation must
+require `wing_id` when a portal has more than one wing. Later operations should
+accept the qualified reference rather than depend on a mutable current-wing
+selection.
+
+Execution target is not enough for a remote run. The contract must eventually
+name the workspace replica, preview destination, credential reference, and
+durable-memory source. Until those objects exist, `cwd` means an existing path
+on the selected wing; Wingthing does not copy it there.
+
+Several independent portals should remain explicit client targets in the first
+version. Give each URL a local name, pin its identity, keep its OAuth and
+capability cache separate, and fan out read-only lists in the client. Do not
+merge identities by email or build peer-roost federation first.
 
 ### One auth model
 
@@ -100,8 +131,8 @@ control plane rather than living only on the privileged-tool path.
 
 Every model-reachable action needs a principal, a grant, a bound (time,
 iterations, concurrency), and a log line. Local stdio keeps its
-local-user-authority shortcut, but it must be the same *authorization* code path
-with the principal pre-resolved — not a separate ungoverned door.
+   local-user-authority shortcut, but it must be the same *authorization* code path
+   with the principal pre-resolved, not a separate ungoverned door.
 
 ## Sequencing
 
@@ -109,9 +140,13 @@ with the principal pre-resolved — not a separate ungoverned door.
    both the CLI and the servers call.
 2. Put it behind the wing-owned local socket (P1 in `local-first-architecture.md`),
    so clients stop doing per-egg filesystem discovery.
-3. Add `/api/v1` over the same core; migrate one tunnel message at a time.
-4. Serve MCP over HTTP from the same core, reusing surface 2's OAuth and policy.
-5. Retire the bespoke tunnel inner-message vocabulary as REST covers it.
+3. Define the operation registry once: schema, grant, bound, annotations, audit
+   redaction, and supported transports.
+4. Carry the same contract through the encrypted external-wing tunnel.
+5. Add qualified portal, wing, session, and run references.
+6. Migrate the browser to the shared session/run inventory.
+7. Add `/api/v1` over the same core and retire bespoke tunnel messages as each
+   resource is covered.
 
 Nothing here requires new product surface. It is the same capabilities reachable
 by callers who are not a browser.
