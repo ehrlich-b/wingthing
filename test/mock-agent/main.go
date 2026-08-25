@@ -28,7 +28,27 @@ type ProbeResults struct {
 	Network   NetworkProbe      `json:"network"`
 	Seccomp   SeccompProbe      `json:"seccomp"`
 	Namespace NamespaceProbe    `json:"namespace"`
+	Identity  IdentityProbe     `json:"identity"`
+	Isolation IsolationProbe    `json:"isolation"`
 	PTY       PTYProbe          `json:"pty"`
+}
+
+// IdentityProbe reports the effective credentials the agent runs under. In the
+// sealed jail the agent must run as a NON-root uid (the double-clone drop) —
+// Claude's --dangerously-skip-permissions refuses to run as root, so a
+// root-uid here means the jail regressed to running the agent privileged.
+type IdentityProbe struct {
+	Uid int `json:"uid"`
+	Gid int `json:"gid"`
+}
+
+// IsolationProbe reports cross-tenant / host visibility. In a correctly sealed
+// jail (private PID namespace + private procfs) the agent sees only its own
+// namespace's processes and cannot read another process's environment — so it
+// cannot find a secret planted in the roost/host process environment.
+type IsolationProbe struct {
+	VisiblePids       int  `json:"visible_pids"`        // count of /proc/<pid> entries visible
+	HostSecretVisible bool `json:"host_secret_visible"` // WT_TEST_HOST_SECRET found in another process's environ
 }
 
 type FSProbe struct {
@@ -115,6 +135,8 @@ func main() {
 	results.Probes.Network = probeNetwork()
 	results.Probes.Seccomp = probeSeccomp()
 	results.Probes.Namespace = probeNamespace()
+	results.Probes.Identity = probeIdentity()
+	results.Probes.Isolation = probeIsolation()
 	results.Probes.PTY = probePTY()
 
 	// Write results to $HOME/.claude/test-results.json
@@ -274,6 +296,10 @@ func probeNetwork() NetworkProbe {
 	}
 
 	return p
+}
+
+func probeIdentity() IdentityProbe {
+	return IdentityProbe{Uid: os.Getuid(), Gid: os.Getgid()}
 }
 
 func probePTY() PTYProbe {

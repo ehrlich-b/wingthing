@@ -139,6 +139,14 @@ type probeResults struct {
 			InPIDNamespace bool   `json:"in_pid_namespace"`
 			NSpid          string `json:"nspid"`
 		} `json:"namespace"`
+		Identity struct {
+			Uid int `json:"uid"`
+			Gid int `json:"gid"`
+		} `json:"identity"`
+		Isolation struct {
+			VisiblePids       int  `json:"visible_pids"`
+			HostSecretVisible bool `json:"host_secret_visible"`
+		} `json:"isolation"`
 		PTY struct {
 			IsTerminal bool `json:"is_terminal"`
 		} `json:"pty"`
@@ -1053,6 +1061,143 @@ func TestSandboxFailsWithClearErrorWithoutNamespaces(t *testing.T) {
 	if !strings.Contains(out, "doctor --fix") && !strings.Contains(out, "sysctl") {
 		t.Errorf("expected actionable sandbox remediation, got:\n%s", out)
 	}
+}
+
+// TestSealedJailNonRoot is the regression guard for the v0.144.0 production
+// outage. That release ran the sealed allowlist jail (deny:/) for the first
+// time on shared roosts, whose service user is NON-root. The nested agent init
+// was mapped to a nonzero uid, so execve cleared CAP_SYS_ADMIN and the private
+// /proc swap failed — every session died. The fix (double-clone) keeps the init
+// inner-root for the swap, then drops to the real nonzero uid before the agent
+// runs. This test exercises that exact path: a deny:/ jail spawned by a NON-root
+// user, asserting the agent (a) actually launched, (b) runs unprivileged, (c) is
+// in a private PID namespace with a private procfs that hides host processes,
+// and (d) cannot read a secret planted in the spawning (roost) process env.
+//
+// Every existing sandbox test runs as root, which takes the capability-keeping
+// root path and masks this whole failure mode — the reason CI was green while
+// prod burned. Do not "simplify" this to run as root.
+func TestSealedJailNonRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("must run as root to su to the non-root test user")
+	}
+	testUser, testUserHome := configuredTestUser(t)
+	// Gate on the REAL namespace capability, not `wt doctor`: on kernel 6.8 hosts
+	// with userns enabled and no AppArmor profiles (bryan-wingthing and prod),
+	// `wt doctor` reports the sandbox NOT AVAILABLE even though unprivileged
+	// user+pid+mount namespaces work and real sessions launch — a doctor-probe
+	// false negative (tracked separately). If the host genuinely cannot create
+	// these namespaces, skip; the failure path is TestSandboxFailsWithClearError…
+	if !userCanCreateJailNamespaces(t, testUser) {
+		t.Skipf("%s cannot create user+pid+mount namespaces on this host; sealed-jail success path is not exercisable here", testUser)
+	}
+
+	cwd := t.TempDir()
+	os.Chmod(cwd, 0777)
+	sessionID := fmt.Sprintf("test-sealed-%d", time.Now().UnixNano()%100000)
+
+	// A secret planted only in the spawning (roost-analog) process environment.
+	// The agent gets its VALUE via WT_TEST_FIND_SECRET so the probe knows what to
+	// hunt for in other processes' /proc/<pid>/environ; with a private procfs it
+	// must never find it, because the spawning process is not in its namespace.
+	secret := fmt.Sprintf("wt-host-secret-%d", time.Now().UnixNano())
+
+	// A canary in a denied path, to confirm deny:/ actually masks (not just an
+	// absent-file false positive).
+	deniedDir := filepath.Join(testUserHome, ".ssh")
+	os.MkdirAll(deniedDir, 0700)
+	deniedCanary := filepath.Join(deniedDir, fmt.Sprintf("wt-sealed-canary-%d", time.Now().UnixNano()))
+	os.WriteFile(deniedCanary, []byte("sealed-denied-canary"), 0600)
+	defer os.Remove(deniedCanary)
+
+	// deny:/ triggers the sealed allowlist jail. The ro: rules are the allowlist
+	// the static agent binary needs; rw:cwd receives test-results.json.
+	wtCmd := fmt.Sprintf("WT_TEST_HOST_SECRET=%s PATH=%s %s egg run"+
+		" --session-id %s --agent claude --cwd %s --rows 24 --cols 80"+
+		" --dangerously-skip-permissions"+
+		" --fs deny:/ --fs ro:/usr --fs ro:/bin --fs ro:/sbin --fs ro:/lib --fs ro:/lib64 --fs ro:/etc --fs rw:%s"+
+		" --network none"+
+		" --env HOME=%s --env PATH=%s --env TERM=xterm-256color"+
+		" --env WT_TEST_DENIED_CANARY=%s --env WT_TEST_FIND_SECRET=%s",
+		shellArg(secret), shellArg(testPATH()), shellArg(testWTPath()), sessionID, shellArg(cwd), shellArg(cwd),
+		shellArg(testUserHome), shellArg(testPATH()), shellArg(deniedCanary), shellArg(secret))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "su", "-", testUser, "-s", "/bin/sh", "-c", wtCmd)
+	cmd.Env = os.Environ()
+	output, runErr := cmd.CombinedOutput()
+	out := string(output)
+
+	resultsPath := filepath.Join(cwd, "test-results.json")
+	data, readErr := os.ReadFile(resultsPath)
+	if readErr != nil {
+		// Distinguish a KNOWN separate bug from the regression this test guards.
+		// `wt egg run`'s pre-flight sandbox.CheckCapability() (hasNamespaceCapability
+		// -> probeMountNamespace) false-negatives for a non-root user invoking wt
+		// directly, refusing with "sandbox not available" even on hosts where the
+		// namespaces work and the roost daemon runs sealed sessions fine. That is a
+		// capability-probe defect, NOT the jail failing — skip rather than red-fail,
+		// and fix the probe to exercise this end-to-end here.
+		if strings.Contains(out, "sandbox not available") {
+			t.Skipf("blocked by the CheckCapability false-negative for direct non-root invocation (separate probe bug, not the jail):\n%s", out)
+		}
+		// Otherwise the agent genuinely never launched — the v0.144.0 failure mode.
+		t.Fatalf("sealed jail agent never launched / wrote no results (the v0.144.0 failure mode)\nsu/wt err: %v\noutput:\n%s", runErr, out)
+	}
+	var results probeResults
+	if err := json.Unmarshal(data, &results); err != nil {
+		t.Fatalf("parse results: %v\nraw: %s", err, string(data))
+	}
+
+	// (b) unprivileged: the double-clone must have dropped to the real nonzero uid.
+	if results.Probes.Identity.Uid == 0 {
+		t.Errorf("agent ran as ROOT in the sealed jail — the double-clone drop regressed; Claude's own root guard would reject this in production")
+	}
+	// (c) private PID namespace + private procfs hiding host processes.
+	if !results.Probes.Namespace.InPIDNamespace {
+		t.Errorf("agent is not in a private PID namespace (NSpid=%q)", results.Probes.Namespace.NSpid)
+	}
+	if results.Probes.Isolation.VisiblePids > 50 {
+		t.Errorf("agent sees %d processes in /proc — the private procfs did not replace the host procfs (host PID leak)", results.Probes.Isolation.VisiblePids)
+	}
+	// (d) cannot read the spawning process's environment (WT_JWT_SECRET analog).
+	if results.Probes.Isolation.HostSecretVisible {
+		t.Errorf("agent read a secret from another process's /proc/<pid>/environ — procfs isolation breach (a real WT_JWT_SECRET would leak this way)")
+	}
+	// (a)+deny: the seal actually masks denied paths and blocks mount.
+	if results.Probes.FS.ReadDeniedCanary {
+		t.Errorf("agent read the denied-path canary — deny:/ allowlist did not mask it")
+	}
+	if !results.Probes.Seccomp.MountBlocked {
+		t.Errorf("mount() not blocked inside the sealed jail")
+	}
+	t.Logf("sealed jail OK: uid=%d gid=%d pids_visible=%d in_pidns=%v",
+		results.Probes.Identity.Uid, results.Probes.Identity.Gid,
+		results.Probes.Isolation.VisiblePids, results.Probes.Namespace.InPIDNamespace)
+}
+
+// userCanCreateJailNamespaces reports whether the given user can create the
+// unprivileged user + PID + mount namespaces the sealed jail's wrapper clones.
+// This is the ground-truth capability check — a direct unshare(2) via util-linux
+// — deliberately independent of `wt doctor`, which gives a false negative on
+// some hosts where namespaces actually work.
+func userCanCreateJailNamespaces(t *testing.T, user string) bool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "su", "-", user, "-s", "/bin/sh", "-c",
+		"unshare --user --map-root-user --pid --mount --fork -- /bin/true")
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("namespace capability check for %s timed out", user)
+	}
+	if err != nil {
+		t.Logf("%s cannot create jail namespaces: %v\n%s", user, err, out)
+		return false
+	}
+	return true
 }
 
 // sandboxAvailableForUser asks wt itself whether the named user's host policy

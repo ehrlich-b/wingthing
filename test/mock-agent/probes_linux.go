@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"unsafe"
 
@@ -30,6 +31,43 @@ func probeSeccomp() SeccompProbe {
 	)
 	p.MountBlocked = (err != 0)
 
+	return p
+}
+
+// probeIsolation scans the procfs the agent can see. In a sealed jail this is
+// a private procfs for a private PID namespace, so only the jail's own few
+// processes are visible and no other process's environ is readable — in
+// particular a secret planted in the roost/host process env (WT_TEST_HOST_SECRET,
+// whose value the runner also passes to us as WT_TEST_FIND_SECRET) must NOT be
+// findable in any /proc/<pid>/environ other than our own. If the host procfs
+// leaked through, both the pid count would be large and the secret would appear.
+func probeIsolation() IsolationProbe {
+	var p IsolationProbe
+	self := os.Getpid()
+	needle := os.Getenv("WT_TEST_FIND_SECRET")
+
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return p
+	}
+	for _, e := range entries {
+		pid, perr := strconv.Atoi(e.Name())
+		if perr != nil {
+			continue // not a /proc/<pid> entry
+		}
+		p.VisiblePids++
+		if needle == "" || pid == self {
+			continue
+		}
+		// A leaked host procfs lets us read other processes' environ.
+		data, rerr := os.ReadFile("/proc/" + e.Name() + "/environ")
+		if rerr != nil {
+			continue // expected: not permitted / not our namespace
+		}
+		if strings.Contains(string(data), needle) {
+			p.HostSecretVisible = true
+		}
+	}
 	return p
 }
 

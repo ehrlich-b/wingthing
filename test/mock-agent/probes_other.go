@@ -9,3 +9,7 @@ func probeSeccomp() SeccompProbe {
 func probeNamespace() NamespaceProbe {
 	return NamespaceProbe{}
 }
+
+func probeIsolation() IsolationProbe {
+	return IsolationProbe{}
+}
