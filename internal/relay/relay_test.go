@@ -311,6 +311,9 @@ func TestPersonalRemoteWingGuideIsSelfHostedFirst(t *testing.T) {
 		"This is the smallest self-hosted setup. It does not use wingthing.ai.",
 		"wt serve --local --addr 127.0.0.1:8080",
 		"-R 127.0.0.1:18743:127.0.0.1:8080",
+		"claude auth status",
+		"paste travels through the encrypted",
+		"the roost cannot read it",
 		"wt login --roost http://127.0.0.1:18743",
 		"Terminal payloads are additionally encrypted between the browser and the wing",
 	} {

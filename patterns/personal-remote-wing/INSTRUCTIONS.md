@@ -38,8 +38,25 @@ already have; it does not open a new Wingthing service to the remote network.
 
 ## 3. Start the remote wing
 
-On the remote computer, install Wingthing and the agent CLI you want to run. Log
-that wing into the roost through the forwarded port, then start it:
+On the remote computer, install Wingthing and the agent CLI you want to run. The
+durable provider credential belongs to this computer; Wingthing never copies a
+Claude or Codex token from the browser computer.
+
+For Claude, verify the remote login before starting the wing:
+
+```sh
+claude auth status
+claude auth login  # run this if the login is missing or expired
+```
+
+On a headless host, Claude prints a one-time HTTPS page that you may open in any
+browser, then asks you to paste the resulting code back into the remote terminal.
+If that terminal is open in Wingthing, the paste travels through the encrypted
+browser-to-wing terminal channel; the roost cannot read it. Claude redeems the code
+and stores the durable credential on the remote host. Codex and other agents follow
+the same rule using their own login commands.
+
+Now log the wing into the roost through the forwarded port and start it:
 
 ```sh
 wt login --roost http://127.0.0.1:18743
@@ -48,9 +65,9 @@ wt start \
   --paths /path/to/project
 ```
 
-The project directory and the Claude, Codex, or other provider login must already
-exist on the remote computer. Wingthing routes control; it does not copy the
-project or provider credentials between computers.
+The project directory must also already exist on the remote computer. Wingthing
+routes control; it does not copy the project or provider credentials between
+computers.
 
 ## 4. Open the agent
 
