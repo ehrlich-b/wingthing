@@ -15,11 +15,22 @@ This is the smallest self-hosted setup. It does not use wingthing.ai.
 On the computer where you will use the browser:
 
 ```sh
-wt serve --local --addr 127.0.0.1:8080
+wt serve --local --https
 ```
 
-Leave it running. `--local` is deliberately bound to loopback: it has no human
-login screen and must not be exposed to a LAN or the public internet.
+On first use, WT explains and performs a local trust ceremony:
+
+- it creates a localhost-only CA and server certificate on demand in
+  `~/.wingthing/local-tls`;
+- both private keys remain mode `0600` on this browser computer and are never
+  copied to the remote wing or installed in a trust store; and
+- it installs only the public CA certificate in this computer user's trust store.
+
+The CA itself is name-constrained to localhost and loopback IPs. Leave the server
+running. HTTPS mode binds both of its listeners to loopback: the browser uses
+`https://localhost:8443`, while the wing reaches the private HTTP endpoint on
+`127.0.0.1:8080` through SSH. Local mode has no human login screen, so neither
+listener may be exposed to a LAN or the public internet.
 
 ## 2. Carry it to the remote computer over SSH
 
@@ -71,7 +82,7 @@ computers.
 
 ## 4. Open the agent
 
-Open [http://127.0.0.1:8080/app/](http://127.0.0.1:8080/app/) in the browser. The
+Open [https://localhost:8443/app/](https://localhost:8443/app/) in the browser. The
 remote wing appears in the machine list. Select it, select the project directory,
 and start Claude or Codex.
 
@@ -81,6 +92,8 @@ or attach from a terminal on the remote computer with `wt attach`.
 ## What protects this setup
 
 - The roost listens only on the browser computer's loopback interface.
+- The browser connection uses a locally trusted HTTPS certificate. Only its public
+  CA is added to this user's trust store; the CA private key stays on this computer.
 - The forwarded port listens only on the remote computer's loopback interface.
 - SSH authenticates the two computers and encrypts the host-to-host connection.
 - The wing authenticates to the roost with its own device token.
@@ -92,6 +105,11 @@ or attach from a terminal on the remote computer with `wt attach`.
 `127.0.0.1` binding to `0.0.0.0`. For an always-on URL or several human users, run
 an HTTPS roost with OAuth instead; see the
 [private team roost guide](../shared-web-roost/INSTRUCTIONS.md).
+
+Inspect the local certificate at any time with `wt local-cert status`. To remove
+its public CA from this user's trust store, run `wt local-cert remove`. Removal
+leaves the private files on this computer so WT cannot silently orphan and replace
+a root that was previously trusted.
 
 ## WSL note
 

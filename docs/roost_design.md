@@ -24,25 +24,34 @@ with it.
 ## Start a roost
 
 ```bash
-wt roost start
-open http://localhost:8080
+wt roost start --https
+open https://localhost:8443
 ```
 
 The command starts the gateway, waits for it to become ready, then starts an
 embedded wing against the local gateway. Both share one process lifecycle and
-log stream.
+log stream. `--https` creates a localhost-only CA and leaf certificate on demand.
+The CA private key remains mode `0600` in `~/.wingthing/local-tls` and never leaves
+the host. WT installs only the public CA certificate in the current user's trust
+store. Port 8443 is for the browser; the embedded wing uses the separate
+loopback-only HTTP endpoint on port 8080.
 
 Common operations:
 
 ```bash
-wt roost start
+wt roost start --https
 wt roost status
 wt roost stop
-wt roost start --foreground
+wt roost start --foreground --https
+wt local-cert status
+wt local-cert remove
 ```
 
-Without OAuth configuration, the portal uses local single-user mode. With a
-public HTTPS URL and an OAuth provider, it becomes a multi-user shared runtime:
+Without OAuth configuration, the portal uses local single-user mode. Local HTTPS
+is opt-in; omitting `--https` preserves the previous HTTP listener.
+
+With a public HTTPS URL and an OAuth provider, it becomes a multi-user shared
+runtime:
 
 ```bash
 WT_BASE_URL=https://lab.example.com \
@@ -50,6 +59,9 @@ GITHUB_CLIENT_ID=... \
 GITHUB_CLIENT_SECRET=... \
 wt roost start --addr :8080
 ```
+
+That public/shared command does not create or install a local CA. Its existing
+external TLS ingress and OAuth configuration are unchanged.
 
 Set project roots, labels, sandbox defaults, and audit policy through the same
 wing configuration used by a standalone wing.

@@ -681,6 +681,13 @@ func TestPasskeyRPURLPrefersPublicBaseURL(t *testing.T) {
 	if standalone.RPID != "roost.example.test" {
 		t.Fatalf("standalone policy = %#v", standalone)
 	}
+	// Local HTTPS presents localhost to the browser while the embedded wing
+	// deliberately keeps using the separate loopback HTTP listener. Existing
+	// localhost development origins remain accepted for backward compatibility.
+	localHTTPS := passkeyPolicyForRoost(passkeyRPURL("http://127.0.0.1:8080", "https://localhost:8443"))
+	if localHTTPS.RPID != "localhost" || len(localHTTPS.Origins) != 3 || localHTTPS.Origins[0] != "https://localhost:8443" {
+		t.Fatalf("local HTTPS policy = %#v", localHTTPS)
+	}
 }
 
 func TestPasskeysForSubjectNeverTrustsAnotherUser(t *testing.T) {

@@ -84,6 +84,7 @@ func main() {
 		toolCallCmd(),
 		toolListCmd(),
 		mcpCmd(),
+		localCertCmd(),
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -94,8 +94,8 @@
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">run your own</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span><br>
-<span class="prompt">$ </span><span class="cmd">wt roost start</span><span class="comment">        # server + wing, one command</span><br>
-<span class="prompt">$ </span><span class="cmd">open localhost:8080</span>
+<span class="prompt">$ </span><span class="cmd">wt roost start --https</span><span class="comment"> # server + wing, trusted localhost HTTPS</span><br>
+<span class="prompt">$ </span><span class="cmd">open https://localhost:8443</span>
 </div>
 
 <p>Your machine is a <strong>wing</strong>, the runtime that owns the processes and workspaces. An LLM manages it through MCP; a person can use the same runtime through the CLI or browser. The hosted service coordinates direct connections by default. Pro users can use its encrypted payload relay as a fallback.</p>
@@ -370,9 +370,10 @@ dangerously_skip_permissions: true
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">quick start</h3>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">wt roost start</span>
+<span class="prompt">$ </span><span class="cmd">wt roost start --https</span>
 </div>
-<p>Open <a href="http://localhost:8080">localhost:8080</a>. Server and wing in one process, no login page, no config.</p>
+<p>Open <a href="https://localhost:8443">https://localhost:8443</a>. On first use, WT creates a localhost-only CA and server certificate under <code>~/.wingthing/local-tls</code>. Both private keys stay mode <code>0600</code> on this machine. WT installs only the public CA certificate in the current user's trust store. The browser uses HTTPS on port 8443; the embedded wing uses a separate loopback-only HTTP endpoint on port 8080.</p>
+<p>Use <code>wt local-cert status</code> to inspect it and <code>wt local-cert remove</code> to remove the public CA from this user's trust store. Omit <code>--https</code> to keep the previous localhost HTTP behavior.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">multi-user</h3>
 <p>Same command, add OAuth env vars. Now multiple people can log in.</p>
@@ -380,6 +381,7 @@ dangerously_skip_permissions: true
 <span class="prompt">$ </span><span class="cmd">GITHUB_CLIENT_ID=xxx GITHUB_CLIENT_SECRET=yyy wt roost start</span>
 </div>
 <p>Or use Google OAuth with <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>. Connect additional wings from other machines with <code>wt login --roost https://my-roost.example.com</code> and <code>wt start --roost https://my-roost.example.com</code>. Or set <code>roost_url</code> in <code>~/.wingthing/config.yaml</code> to avoid passing the flag every time.</p>
+<p>Public/shared and organization roosts keep their existing externally provisioned HTTPS. Do not add the local <code>--https</code> flag to an OAuth roost; terminate its public TLS at Caddy, nginx, your VPN proxy, Fly, or another ingress.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">running separately</h3>
 <p>If you need the server and wing on different machines, run them as separate processes:</p>

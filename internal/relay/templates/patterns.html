@@ -77,7 +77,7 @@
 <p>Run the web app on the computer in front of you, carry it over SSH, and launch Claude or Codex on the remote computer.</p>
 <ul class="pattern-facts">
 <li><strong>You need:</strong> Wingthing on both computers, SSH access to the remote computer, and the agent already logged in there.</li>
-<li><strong>You get:</strong> a private <code>localhost</code> page for starting and resuming durable sessions on the remote computer, without using the hosted relay.</li>
+<li><strong>You get:</strong> a private <code>https://localhost</code> page for starting and resuming durable sessions on the remote computer, without using the hosted relay. WT creates a localhost-only certificate on demand, installs only its public CA for your user, and keeps the private key on this computer.</li>
 </ul>
 <div class="flow">localhost browser -> local roost -> SSH tunnel -> remote wing -> agent</div>
 <div class="recipe-row"><a href="/patterns/personal-remote-wing/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/personal-remote-wing/INSTRUCTIONS.md">copy setup guide</button></div>

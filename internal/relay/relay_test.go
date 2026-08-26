@@ -309,7 +309,10 @@ func TestPersonalRemoteWingGuideIsSelfHostedFirst(t *testing.T) {
 	guide := body.String()
 	for _, want := range []string{
 		"This is the smallest self-hosted setup. It does not use wingthing.ai.",
-		"wt serve --local --addr 127.0.0.1:8080",
+		"wt serve --local --https",
+		"https://localhost:8443/app/",
+		"both private keys remain mode `0600` on this browser computer",
+		"installs only the public CA certificate",
 		"-R 127.0.0.1:18743:127.0.0.1:8080",
 		"claude auth status",
 		"paste travels through the encrypted",

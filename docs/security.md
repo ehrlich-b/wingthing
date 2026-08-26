@@ -19,6 +19,42 @@ Local CLI and MCP access use authenticated Unix sockets and operating-system fil
 permissions. SSH attach uses OpenSSH's authentication, encryption, and host-key
 verification. Neither path uses Wingthing's relay encryption.
 
+## Local self-hosted HTTPS
+
+`wt serve --local --https` and `wt roost start --https` add an HTTPS browser
+listener at `https://localhost:8443`. The flag is explicit because it performs a
+local trust-store change:
+
+1. WT creates a private ECDSA P-256 CA key and localhost server key on demand in
+   `~/.wingthing/local-tls`.
+2. The directory is mode `0700`; both private keys are mode `0600`.
+3. The CA is name-constrained to `localhost`, `127.0.0.0/8`, and `::1`.
+4. WT installs only the public CA certificate in the current user's trust store.
+   Neither private key is passed to a trust command, copied to a wing, or sent over
+   the network.
+
+On macOS this is the user's login keychain and macOS displays its native
+Certificate Trust Settings authorization dialog. On Windows it is the current
+user's root store. On Linux WT uses the current user's Chromium NSS database;
+`certutil` must be available from the distribution's `libnss3-tools` or
+`nss-tools` package. These operations do not require a system-wide root store.
+
+Use `wt local-cert status` to inspect the paths and trust marker. Use
+`wt local-cert remove` to remove the public root from the current user's trust
+store. Removal deliberately leaves the local key material intact so WT does not
+silently replace a previously trusted authority.
+
+HTTPS mode refuses wildcard, LAN, and public listener addresses. It uses two
+loopback listeners: port 8443 for the browser and HTTP port 8080 for embedded
+wings or wings arriving through an SSH reverse tunnel. That HTTP hop never leaves
+loopback; the SSH tunnel protects the host-to-host segment, and Wingthing's
+application encryption still protects browser-to-wing terminal payloads.
+
+This device-local CA is not used by hosted, organization, or public shared-roost
+deployments. Those retain their existing externally provisioned HTTPS termination
+and OAuth behavior. Local HTTPS is opt-in, so existing HTTP self-hosted commands
+also remain unchanged.
+
 ## Hosted connection architecture
 
 The free/default path uses the hosted service only for identity, the

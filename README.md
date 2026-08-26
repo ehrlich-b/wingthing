@@ -219,14 +219,33 @@ Peer-roost federation remains follow-up work.
 Run a self-hosted portal, gateway, and embedded wing in one process:
 
 ```bash
-wt roost start
-open http://localhost:8080
+wt roost start --https
+open https://localhost:8443
 ```
+
+`--https` is an explicit, one-time local trust ceremony. WT creates a
+localhost-only CA and server certificate on demand under
+`~/.wingthing/local-tls`, keeps both private keys mode `0600` on this machine,
+and installs only the public CA certificate in the current user's trust store.
+The CA is name-constrained to localhost and loopback IPs. Inspect or undo the
+trust change with `wt local-cert status` and `wt local-cert remove`.
+macOS shows its native Certificate Trust Settings authorization dialog. Linux
+uses the current user's Chromium NSS database and requires `certutil` from
+`libnss3-tools` or `nss-tools`.
+See [the local HTTPS design](docs/local_https.md) for the listener topology,
+certificate lifecycle, and compatibility matrix.
+
+Port 8443 is the browser listener. WT also keeps a loopback-only HTTP listener
+on port 8080 for local wings and wings arriving through an SSH reverse tunnel;
+it is not exposed to the LAN. Omit `--https` to preserve the previous local
+HTTP behavior.
 
 With an OAuth provider and public HTTPS URL, the same deployment becomes a
 multi-user shared host. Each terminal and run has an owner, each OAuth client
 has a separate actor ID, workspaces are bounded by `wing.yaml`, and provider
-credentials live in the owner's agent home.
+credentials live in the owner's agent home. Public/shared deployments continue
+to terminate their externally provisioned HTTPS at Caddy, nginx, a VPN proxy,
+Fly, or another ingress; they do not use WT's device-local CA.
 
 An LLM connects to its HTTP MCP endpoint:
 

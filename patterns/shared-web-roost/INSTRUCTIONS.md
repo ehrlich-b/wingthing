@@ -32,6 +32,11 @@ wt roost start --addr :8080
 Terminate HTTPS at the reverse proxy and forward the hostname to port 8080. Users
 then open `WT_BASE_URL` and sign in.
 
+Do not add `--https` to this public/shared command. That flag is deliberately for
+a single-user localhost roost: it creates a device-local CA and refuses public
+listeners. Shared and organization deployments retain their existing externally
+provisioned HTTPS and OAuth behavior.
+
 Declare the project roots the roost may browse in `~/.wingthing/wing.yaml`:
 
 ```yaml

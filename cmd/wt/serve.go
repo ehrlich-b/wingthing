@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -28,6 +27,8 @@ func serveCmd() *cobra.Command {
 	var addrFlag string
 	var devFlag bool
 	var localFlag bool
+	var httpsFlag bool
+	var httpsAddrFlag string
 
 	cmd := &cobra.Command{
 		Use:     "relay",
@@ -86,6 +87,17 @@ func serveCmd() *cobra.Command {
 				localFlag = true
 				fmt.Println("no auth providers configured — enabling local mode")
 			}
+			if err := validateLocalHTTPSMode(httpsFlag, localFlag, isEdge); err != nil {
+				return err
+			}
+			var localHTTPS *localHTTPSConfig
+			if httpsFlag {
+				localHTTPS, err = prepareLocalHTTPS(cmd.Context(), cfg.Dir, addrFlag, httpsAddrFlag, cmd.Flags().Changed("addr"))
+				if err != nil {
+					return err
+				}
+				addrFlag = localHTTPS.HTTPAddr
+			}
 			jwtKey, err := jwtKeyFromEnvironment()
 			if err != nil {
 				return fmt.Errorf("jwt key: %w", err)
@@ -99,7 +111,7 @@ func serveCmd() *cobra.Command {
 			}
 
 			srvCfg := relay.ServerConfig{
-				BaseURL:                envOr("WT_BASE_URL", "http://localhost:8080"),
+				BaseURL:                defaultBaseURL(localHTTPS),
 				AppHost:                os.Getenv("WT_APP_HOST"),
 				WSHost:                 os.Getenv("WT_WS_HOST"),
 				JWTKey:                 jwtKey,
@@ -211,10 +223,7 @@ func serveCmd() *cobra.Command {
 				fmt.Println("local mode: single-user, no login required")
 			}
 
-			httpSrv := &http.Server{
-				Addr:    addrFlag,
-				Handler: srv,
-			}
+			listeners := newRelayListeners(srv, addrFlag, localHTTPS)
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -235,22 +244,32 @@ func serveCmd() *cobra.Command {
 				srv.EntitlementCache.StartSync(ctx, 60*time.Second)
 			}
 
-			errCh := make(chan error, 1)
-			go func() {
+			if localHTTPS != nil {
+				fmt.Printf("wt serve wing endpoint (loopback HTTP): %s\n", localHTTPURL(addrFlag))
+				fmt.Printf("wt serve browser UI (local HTTPS): %s\n", localHTTPS.URL)
+			} else {
 				fmt.Printf("wt serve listening on %s\n", addrFlag)
-				if localFlag {
-					fmt.Println()
-					fmt.Println("next: wt start --local")
+			}
+			if localFlag {
+				fmt.Println()
+				fmt.Println("next: wt start --local")
+				if localHTTPS != nil {
+					fmt.Printf("then: open %s\n", localHTTPS.URL)
+				} else {
 					fmt.Println("then: open http://localhost:8080")
 				}
-				errCh <- httpSrv.ListenAndServe()
-			}()
+			}
+			listeners.Start(localHTTPS)
 
 			select {
 			case <-ctx.Done():
 				fmt.Println("graceful shutdown (sending relay.restart to all connections)...")
-				return srv.GracefulShutdown(httpSrv, 8*time.Second)
-			case err := <-errCh:
+				return listeners.Shutdown(srv, 8*time.Second)
+			case result := <-listeners.errCh:
+				err := listenerResult(result)
+				if err != nil {
+					_ = listeners.Shutdown(srv, 8*time.Second)
+				}
 				return err
 			}
 		},
@@ -259,6 +278,8 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&addrFlag, "addr", ":8080", "listen address")
 	cmd.Flags().BoolVar(&devFlag, "dev", false, "reload templates from disk on each request")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "single-user mode, no login required")
+	cmd.Flags().BoolVar(&httpsFlag, "https", false, "serve the local browser UI over HTTPS using an on-demand, device-local CA")
+	cmd.Flags().StringVar(&httpsAddrFlag, "https-addr", defaultLocalHTTPSAddr, "loopback HTTPS address for the local browser UI")
 
 	return cmd
 }

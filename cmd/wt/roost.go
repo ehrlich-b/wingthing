@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -40,6 +39,8 @@ func roostStartCmd() *cobra.Command {
 	// Relay flags
 	var addrFlag string
 	var devFlag bool
+	var httpsFlag bool
+	var httpsAddrFlag string
 	// Wing flags
 	var labelsFlag string
 	var pathsFlag string
@@ -55,16 +56,33 @@ func roostStartCmd() *cobra.Command {
 		Short: "Start roost (relay + wing)",
 		Long:  "Start a roost — relay server and local wing in one process. Daemonizes by default. Use --foreground for debugging or systemd.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateLocalHTTPSMode(httpsFlag, !authProvidersConfigured(), false); err != nil {
+				return err
+			}
+			if !foregroundFlag {
+				// Check before the trust ceremony so a failed duplicate start has
+				// no certificate or trust-store side effects.
+				if pid, err := readPidFrom(roostPidPath()); err == nil {
+					return fmt.Errorf("roost daemon already running (pid %d)", pid)
+				}
+				if pid, err := readPidFrom(wingPidPath()); err == nil {
+					return fmt.Errorf("wing daemon already running (pid %d) — stop it first with: wt stop", pid)
+				}
+			}
+			var localHTTPS *localHTTPSConfig
+			if httpsFlag {
+				cfg, err := config.Load()
+				if err != nil {
+					return err
+				}
+				localHTTPS, err = prepareLocalHTTPS(cmd.Context(), cfg.Dir, addrFlag, httpsAddrFlag, cmd.Flags().Changed("addr"))
+				if err != nil {
+					return err
+				}
+				addrFlag = localHTTPS.HTTPAddr
+			}
 			if foregroundFlag {
-				return runRoostForeground(addrFlag, devFlag, labelsFlag, pathsFlag, eggConfigFlag, orgFlag, auditFlag, debugFlag)
-			}
-
-			// Daemon mode: check for existing daemon
-			if pid, err := readPidFrom(roostPidPath()); err == nil {
-				return fmt.Errorf("roost daemon already running (pid %d)", pid)
-			}
-			if pid, err := readPidFrom(wingPidPath()); err == nil {
-				return fmt.Errorf("wing daemon already running (pid %d) — stop it first with: wt stop", pid)
+				return runRoostForeground(addrFlag, devFlag, labelsFlag, pathsFlag, eggConfigFlag, orgFlag, auditFlag, debugFlag, localHTTPS)
 			}
 
 			exe, err := os.Executable()
@@ -80,6 +98,9 @@ func roostStartCmd() *cobra.Command {
 			}
 			if devFlag {
 				childArgs = append(childArgs, "--dev")
+			}
+			if httpsFlag {
+				childArgs = append(childArgs, "--https", "--https-addr", httpsAddrFlag)
 			}
 			if labelsFlag != "" {
 				childArgs = append(childArgs, "--labels", labelsFlag)
@@ -129,7 +150,11 @@ func roostStartCmd() *cobra.Command {
 			fmt.Printf("roost daemon started (pid %d)\n", child.Process.Pid)
 			fmt.Printf("  log: %s\n", roostLogPath())
 			fmt.Println()
-			fmt.Printf("open http://localhost%s to start a terminal\n", addrFlag)
+			if localHTTPS != nil {
+				fmt.Printf("open %s to start a terminal\n", localHTTPS.URL)
+			} else {
+				fmt.Printf("open %s to start a terminal\n", localHTTPURL(addrFlag))
+			}
 			return nil
 		},
 	}
@@ -137,6 +162,8 @@ func roostStartCmd() *cobra.Command {
 	// Relay flags
 	cmd.Flags().StringVar(&addrFlag, "addr", ":8080", "listen address")
 	cmd.Flags().BoolVar(&devFlag, "dev", false, "reload templates from disk on each request")
+	cmd.Flags().BoolVar(&httpsFlag, "https", false, "serve the local browser UI over HTTPS using an on-demand, device-local CA")
+	cmd.Flags().StringVar(&httpsAddrFlag, "https-addr", defaultLocalHTTPSAddr, "loopback HTTPS address for the local browser UI")
 	// Wing flags
 	cmd.Flags().StringVar(&labelsFlag, "labels", "", "comma-separated wing labels")
 	cmd.Flags().StringVar(&pathsFlag, "paths", "", "comma-separated directories the wing can browse")
@@ -150,7 +177,7 @@ func roostStartCmd() *cobra.Command {
 	return cmd
 }
 
-func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eggConfigFlag, orgFlag string, auditFlag, debugFlag bool) error {
+func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eggConfigFlag, orgFlag string, auditFlag, debugFlag bool, localHTTPS *localHTTPSConfig) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -184,7 +211,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	}
 
 	srvCfg := relay.ServerConfig{
-		BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
+		BaseURL:            defaultBaseURL(localHTTPS),
 		AppHost:            os.Getenv("WT_APP_HOST"),
 		WSHost:             os.Getenv("WT_WS_HOST"),
 		JWTKey:             jwtKey,
@@ -288,10 +315,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		DeviceID: "local",
 	})
 
-	httpSrv := &http.Server{
-		Addr:    addrFlag,
-		Handler: srv,
-	}
+	listeners := newRelayListeners(srv, addrFlag, localHTTPS)
 
 	// --- Signal handling: single owner ---
 
@@ -333,19 +357,22 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 
 	// --- Start relay ---
 
-	relayErrCh := make(chan error, 1)
-	go func() {
+	if localHTTPS != nil {
+		fmt.Printf("wt roost wing endpoint (loopback HTTP): %s\n", localHTTPURL(addrFlag))
+		fmt.Println()
+		fmt.Printf("open %s to start a terminal\n", localHTTPS.URL)
+	} else {
 		fmt.Printf("wt roost listening on %s\n", addrFlag)
 		fmt.Println()
-		fmt.Printf("open http://localhost%s to start a terminal\n", addrFlag)
-		relayErrCh <- httpSrv.ListenAndServe()
-	}()
+		fmt.Printf("open %s to start a terminal\n", localHTTPURL(addrFlag))
+	}
+	listeners.Start(localHTTPS)
 
 	// --- Start wing (local=true, roost URL = localhost) ---
 
 	wingErrCh := make(chan error, 1)
 	go func() {
-		wingErrCh <- runWingWithContext(ctx, sighupCh, "http://localhost"+addrFlag, labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth)
+		wingErrCh <- runWingWithContext(ctx, sighupCh, localHTTPURL(addrFlag), labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth)
 	}()
 
 	// --- Wait for shutdown ---
@@ -353,10 +380,15 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	select {
 	case <-ctx.Done():
 		log.Println("roost shutting down...")
-		return srv.GracefulShutdown(httpSrv, 8*time.Second)
-	case err := <-relayErrCh:
-		return fmt.Errorf("relay: %w", err)
+		return listeners.Shutdown(srv, 8*time.Second)
+	case result := <-listeners.errCh:
+		err := listenerResult(result)
+		if err != nil {
+			_ = listeners.Shutdown(srv, 8*time.Second)
+		}
+		return err
 	case err := <-wingErrCh:
+		_ = listeners.Shutdown(srv, 8*time.Second)
 		return fmt.Errorf("wing: %w", err)
 	}
 }
