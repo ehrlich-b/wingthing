@@ -2,7 +2,7 @@
 
 Date: 2026-08-25
 
-Status: Fly release v303 healthy; rollback releases and database backup retained
+Status: Fly release v304 healthy; rollback releases and database backup retained
 
 ## Initial v301 deployment identity
 
@@ -115,11 +115,27 @@ isolated project directory. A macOS browser attached at a localhost session URL,
 the wing re-keyed the browser-to-wing channel, and its replay buffer delivered the
 live Claude terminal. No Wingthing listener was exposed to the LAN.
 
+## v304 Sealed provider-login follow-up
+
+The WSL canary then exposed an expired Claude OAuth token. The remote Claude CLI's
+supported headless flow produced a one-time HTTPS authorization page and accepted
+the resulting code on WSL. This is the intended trust boundary: when login runs in
+a Wingthing terminal, the one-time code travels inside the browser-to-wing encrypted
+terminal stream, the roost cannot read it, and Claude redeems and stores the durable
+credential only on the wing.
+
+After login, a real Claude run inside the Wingthing Linux sandbox returned the exact
+probe `WSL_WINGTHING_OK`. Its logs showed the allowlisted Claude domain proxy active
+and an unrelated Datadog destination blocked. Fly release v304 deployed commit
+`cde1eae`, which adds this verified provider-login step and trust explanation to the
+public recipe. `/health` and the published Markdown recipe both returned HTTP 200
+with the new content.
+
 ## Rollback
 
-Release v302 is the immediate rollback for the documentation-only v303 change, v301
-is the prior feature runtime, and v300 remains the pre-feature rollback in Fly's
-release history. After any rollback, verify
+Release v303 is the immediate rollback for the documentation-only v304 change, v302
+and v301 are the prior feature releases, and v300 remains the pre-feature rollback
+in Fly's release history. After any rollback, verify
 `/health`, wing reconnection, and existing sessions. Use the pre-deploy SQLite backup
 only if the old runtime cannot safely read the current schema; restoring it would
 intentionally discard writes made after the backup and therefore requires a separate
