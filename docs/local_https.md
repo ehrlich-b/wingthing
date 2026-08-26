@@ -55,7 +55,7 @@ WT creates these files under `WINGTHING_DIR/local-tls`:
 | `ca.pem` | public self-signed CA certificate | `0644` |
 | `localhost-key.pem` | ECDSA P-256 server private key | `0600` |
 | `localhost.pem` | public server certificate | `0644` |
-| `trusted` | successful user trust-store marker | `0600` |
+| `trusted` | successful, platform-verified user trust-store marker | `0600` |
 
 The directory is mode `0700`. Writes use a temporary file and atomic rename.
 Existing CA material is never silently replaced: incomplete, corrupt, mismatched,
@@ -87,18 +87,24 @@ Platform destinations are:
 
 | Platform | Current-user destination |
 | --- | --- |
-| macOS | login keychain user trust settings |
+| macOS | explicitly selected `~/Library/Keychains/login.keychain-db` user trust settings |
 | Windows | current-user Root certificate store |
 | Linux | Chromium NSS database at `~/.pki/nssdb` |
 
 Linux needs `certutil` from `libnss3-tools` or `nss-tools`. WT initializes a
 missing Chromium NSS database without a password and without root.
 
-The successful marker prevents a daemon or temporarily locked macOS login
-keychain from reopening the ceremony on every start. `wt local-cert remove`
-removes this precise public root and clears the marker. It leaves the keys on the
-box so a running listener is not broken and WT cannot silently replace an
-authority that was previously trusted.
+WT checks the platform destination before writing the successful marker. On
+macOS it evaluates the generated leaf with the SSL policy, the `localhost` name,
+and the explicit login keychain. Windows and Linux confirm the precise root in
+their current-user browser stores. A failed check is never recorded as trusted.
+Markers made by older builds are reinstalled and upgraded once. The verified
+marker then prevents a daemon or temporarily locked macOS login keychain from
+reopening the ceremony on every start. `wt local-cert remove` removes this
+precise public root and clears either marker version. On macOS removal clears
+both the trust setting and the public certificate. It leaves the keys on the box
+so a running listener is not broken and WT cannot silently replace an authority
+that was previously trusted.
 
 ## Address and mode safety
 
@@ -140,9 +146,10 @@ are application-encrypted.
 
 The automated battery covers certificate constraints, SANs, chain verification,
 root reuse, leaf rotation, corrupt-state behavior, expiry behavior, permissions,
-symlink refusal, atomic trust markers, failed trust commands, idempotence, all
-platform command arguments, Linux NSS initialization, and the invariant that no
-trust command receives a private-key path.
+symlink refusal, atomic trust markers, failed install and verification commands,
+legacy-marker migration, idempotence, macOS trust-rule and certificate removal,
+all platform command arguments, Linux NSS initialization, and the invariant that
+no trust command receives a private-key path.
 
 Listener tests cover unsafe-address refusal before key creation, default address
 rewriting, loopback alias collisions, ordinary HTTP and HTTPS handler parity,

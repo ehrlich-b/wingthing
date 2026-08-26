@@ -232,6 +232,9 @@ trust change with `wt local-cert status` and `wt local-cert remove`.
 macOS shows its native Certificate Trust Settings authorization dialog. Linux
 uses the current user's Chromium NSS database and requires `certutil` from
 `libnss3-tools` or `nss-tools`.
+WT verifies the trust-store result before reporting the CA as installed; on
+macOS it evaluates the generated leaf under the `localhost` SSL policy. A
+failed or incomplete trust change is not cached as success.
 See [the local HTTPS design](docs/local_https.md) for the listener topology,
 certificate lifecycle, and compatibility matrix.
 

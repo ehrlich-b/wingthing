@@ -39,7 +39,7 @@ user's root store. On Linux WT uses the current user's Chromium NSS database;
 `certutil` must be available from the distribution's `libnss3-tools` or
 `nss-tools` package. These operations do not require a system-wide root store.
 
-Use `wt local-cert status` to inspect the paths and trust marker. Use
+Use `wt local-cert status` to inspect the paths and verified trust marker. Use
 `wt local-cert remove` to remove the public root from the current user's trust
 store. Removal deliberately leaves the local key material intact so WT does not
 silently replace a previously trusted authority.

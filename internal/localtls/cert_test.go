@@ -267,9 +267,15 @@ func TestEnsureRefusesIncompleteCAAndSymlinks(t *testing.T) {
 }
 
 type recordingRunner struct {
+	name  string
+	args  []string
+	err   error
+	calls []runnerCall
+}
+
+type runnerCall struct {
 	name string
 	args []string
-	err  error
 }
 
 func TestSystemRunnerConnectsTrustCommandToCurrentStdin(t *testing.T) {
@@ -282,6 +288,7 @@ func TestSystemRunnerConnectsTrustCommandToCurrentStdin(t *testing.T) {
 func (r *recordingRunner) Run(_ context.Context, name string, args ...string) error {
 	r.name = name
 	r.args = append([]string(nil), args...)
+	r.calls = append(r.calls, runnerCall{name: name, args: append([]string(nil), args...)})
 	return r.err
 }
 
@@ -328,7 +335,11 @@ func TestTrustCommandsNeverReceivePrivateKeyPaths(t *testing.T) {
 			if info, err := os.Stat(m.MarkerPath); err != nil || info.Mode().Perm() != 0600 {
 				t.Fatalf("trust marker mode = %v, %v", info, err)
 			}
-			joined := strings.Join(runner.args, " ")
+			var allArgs []string
+			for _, call := range runner.calls {
+				allArgs = append(allArgs, call.args...)
+			}
+			joined := strings.Join(allArgs, " ")
 			if !strings.Contains(joined, m.CACertPath) {
 				t.Fatalf("install args omit public CA: %q", joined)
 			}
@@ -337,7 +348,7 @@ func TestTrustCommandsNeverReceivePrivateKeyPaths(t *testing.T) {
 			}
 
 			// The marker makes install idempotent.
-			runner.name, runner.args = "", nil
+			runner.name, runner.args, runner.calls = "", nil, nil
 			installed, err = store.Install(context.Background(), m)
 			if err != nil || installed || runner.name != "" {
 				t.Fatalf("second install = (%v, %v), command=%q", installed, err, runner.name)
@@ -354,18 +365,219 @@ func TestTrustCommandsNeverReceivePrivateKeyPaths(t *testing.T) {
 	}
 }
 
+func TestDarwinTrustUsesExplicitLoginKeychainAndVerifiesLocalhost(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	runner := &recordingRunner{}
+	installed, err := (TrustStore{GOOS: "darwin", HomeDir: home, Runner: runner}).Install(context.Background(), m)
+	if err != nil || !installed {
+		t.Fatalf("Install = (%v, %v)", installed, err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls = %v, want install + verification", runner.calls)
+	}
+	wantKeychain := filepath.Join(home, "Library", "Keychains", "login.keychain-db")
+	installArgs := strings.Join(runner.calls[0].args, " ")
+	if runner.calls[0].name != "security" || !strings.Contains(installArgs, "add-trusted-cert") || !strings.Contains(installArgs, "-k "+wantKeychain) {
+		t.Fatalf("install call = %#v", runner.calls[0])
+	}
+	if strings.Contains(installArgs, "-p ssl") {
+		t.Fatalf("macOS install used ineffective policy-scoped trust: %#v", runner.calls[0])
+	}
+	verifyArgs := strings.Join(runner.calls[1].args, " ")
+	if runner.calls[1].name != "security" || !strings.Contains(verifyArgs, "verify-cert") || !strings.Contains(verifyArgs, "-n localhost") || !strings.Contains(verifyArgs, "-k "+wantKeychain) || !strings.Contains(verifyArgs, m.CertPath) {
+		t.Fatalf("verification call = %#v", runner.calls[1])
+	}
+}
+
+func TestDarwinRemovalClearsTrustRuleAndPublicCertificate(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	if err := os.WriteFile(m.MarkerPath, []byte("darwin\n"+m.Fingerprint+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	removed, err := (TrustStore{GOOS: "darwin", HomeDir: home, Runner: runner}).Remove(context.Background(), m)
+	if err != nil || !removed {
+		t.Fatalf("Remove = (%v, %v)", removed, err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls = %v, want trust-rule removal + certificate deletion", runner.calls)
+	}
+	if runner.calls[0].name != "security" || !slices.Equal(runner.calls[0].args, []string{"remove-trusted-cert", m.CACertPath}) {
+		t.Fatalf("trust-rule removal = %#v", runner.calls[0])
+	}
+	wantKeychain := filepath.Join(home, "Library", "Keychains", "login.keychain-db")
+	deleteArgs := strings.Join(runner.calls[1].args, " ")
+	if runner.calls[1].name != "security" || !strings.Contains(deleteArgs, "delete-certificate -Z") || !strings.HasSuffix(deleteArgs, wantKeychain) {
+		t.Fatalf("certificate deletion = %#v", runner.calls[1])
+	}
+	if _, err := os.Stat(m.MarkerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker remains after removal: %v", err)
+	}
+}
+
+func TestLegacyTrustMarkerIsReinstalledAndUpgraded(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := "darwin\n" + m.Fingerprint + "\n"
+	if err := os.WriteFile(m.MarkerPath, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	installed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Install(context.Background(), m)
+	if err != nil || !installed {
+		t.Fatalf("Install = (%v, %v)", installed, err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("legacy marker skipped install: calls = %v", runner.calls)
+	}
+	b, err := os.ReadFile(m.MarkerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(b), trustMarkerVersion+"\n") {
+		t.Fatalf("marker was not upgraded: %q", b)
+	}
+}
+
+func TestTrustedRequiresVerifiedMarkerForThisPlatformAndCA(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := TrustStore{GOOS: "darwin"}
+	tests := []struct {
+		name   string
+		marker string
+		want   bool
+	}{
+		{name: "missing"},
+		{name: "legacy", marker: "darwin\n" + m.Fingerprint + "\n"},
+		{name: "malformed", marker: trustMarkerVersion + "\ndarwin\n"},
+		{name: "wrong platform", marker: trustMarkerVersion + "\nlinux\n" + m.Fingerprint + "\n"},
+		{name: "wrong CA", marker: trustMarkerVersion + "\ndarwin\nnot-the-fingerprint\n"},
+		{name: "verified", marker: trustMarkerVersion + "\ndarwin\n" + m.Fingerprint + "\n", want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.Remove(m.MarkerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			if tc.marker != "" {
+				if err := os.WriteFile(m.MarkerPath, []byte(tc.marker), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := store.Trusted(m)
+			if err != nil || got != tc.want {
+				t.Fatalf("Trusted = (%v, %v), want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestTrustStoreRequiresRunnerOnlyWhenItMustChangeState(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := TrustStore{GOOS: "darwin", HomeDir: t.TempDir()}
+	if _, err := store.Install(context.Background(), m); err == nil || !strings.Contains(err.Error(), "runner") {
+		t.Fatalf("Install error = %v", err)
+	}
+	removed, err := store.Remove(context.Background(), m)
+	if err != nil || removed {
+		t.Fatalf("unmarked Remove = (%v, %v)", removed, err)
+	}
+}
+
+func TestFailedDarwinRemovalPreservesMarkerForRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		errs []error
+	}{
+		{name: "trust rule", errs: []error{errors.New("denied")}},
+		{name: "public certificate", errs: []error{nil, errors.New("keychain locked")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := Ensure(t.TempDir(), time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			marker := trustMarkerVersion + "\ndarwin\n" + m.Fingerprint + "\n"
+			if err := os.WriteFile(m.MarkerPath, []byte(marker), 0600); err != nil {
+				t.Fatal(err)
+			}
+			runner := &sequenceRunner{errs: tc.errs}
+			removed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Remove(context.Background(), m)
+			if err == nil || removed {
+				t.Fatalf("Remove = (%v, %v)", removed, err)
+			}
+			b, readErr := os.ReadFile(m.MarkerPath)
+			if readErr != nil || string(b) != marker {
+				t.Fatalf("recovery marker = %q, %v", b, readErr)
+			}
+		})
+	}
+}
+
+func TestTrustCommandsRejectMissingHomeAndUnsupportedVerification(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, goos := range []string{"darwin", "linux"} {
+		if _, _, err := trustCommand(goos, "install", m, ""); err == nil || !strings.Contains(err.Error(), "home directory is empty") {
+			t.Fatalf("%s install error = %v", goos, err)
+		}
+		if _, err := trustRemovalCommands(goos, m, ""); err == nil || !strings.Contains(err.Error(), "home directory is empty") {
+			t.Fatalf("%s removal error = %v", goos, err)
+		}
+		if _, _, err := trustVerificationCommand(goos, m, ""); err == nil || !strings.Contains(err.Error(), "home directory is empty") {
+			t.Fatalf("%s verification error = %v", goos, err)
+		}
+	}
+	if _, _, err := trustVerificationCommand("plan9", m, t.TempDir()); err == nil || !strings.Contains(err.Error(), "not yet supported") {
+		t.Fatalf("unsupported verification error = %v", err)
+	}
+}
+
 func TestTrustStoreDoesNotMarkFailedInstall(t *testing.T) {
 	m, err := Ensure(t.TempDir(), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner := &recordingRunner{err: errors.New("denied")}
-	_, err = (TrustStore{GOOS: "darwin", Runner: runner}).Install(context.Background(), m)
+	_, err = (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Install(context.Background(), m)
 	if err == nil {
 		t.Fatal("Install succeeded")
 	}
 	if _, statErr := os.Stat(m.MarkerPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("marker exists after failed install: %v", statErr)
+	}
+}
+
+func TestTrustStoreDoesNotMarkFailedVerification(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &sequenceRunner{errs: []error{nil, errors.New("not trusted")}}
+	_, err = (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Install(context.Background(), m)
+	if err == nil || !strings.Contains(err.Error(), "verify Wingthing localhost certificate") {
+		t.Fatalf("Install error = %v", err)
+	}
+	if _, statErr := os.Stat(m.MarkerPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("marker exists after failed verification: %v", statErr)
 	}
 }
 
@@ -381,8 +593,8 @@ func TestLinuxTrustStoreIsInitializedWithoutRoot(t *testing.T) {
 	if err != nil || !installed {
 		t.Fatalf("Install = (%v, %v)", installed, err)
 	}
-	if runner.calls != 2 {
-		t.Fatalf("Linux install ran %d commands, want NSS initialize + public CA install", runner.calls)
+	if runner.calls != 3 {
+		t.Fatalf("Linux install ran %d commands, want NSS initialize + public CA install + verification", runner.calls)
 	}
 	info, err := os.Stat(filepath.Join(home, ".pki", "nssdb"))
 	if err != nil || info.Mode().Perm() != 0700 {
