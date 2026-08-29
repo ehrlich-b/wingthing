@@ -41,6 +41,21 @@ func TestLocalHTTPSRewritesOnlyTheImplicitWildcardDefault(t *testing.T) {
 	}
 }
 
+func TestUnauthenticatedLocalHTTPDefaultsToLoopbackAndRejectsExposure(t *testing.T) {
+	got, err := prepareLocalHTTPAddress(":8080", false)
+	if err != nil || got != defaultLocalHTTPAddr {
+		t.Fatalf("implicit local address = %q, %v", got, err)
+	}
+	for _, addr := range []string{":8080", "0.0.0.0:8080", "192.168.1.20:8080"} {
+		if _, err := prepareLocalHTTPAddress(addr, true); err == nil {
+			t.Errorf("explicit unauthenticated bind %q was accepted", addr)
+		}
+	}
+	if got, err := prepareLocalHTTPAddress("[::1]:8080", true); err != nil || got != "[::1]:8080" {
+		t.Fatalf("explicit IPv6 loopback = %q, %v", got, err)
+	}
+}
+
 func TestPrepareLocalHTTPSRejectsUnsafeAddressesBeforeCreatingAKey(t *testing.T) {
 	for _, tc := range []struct {
 		httpAddr  string
@@ -50,6 +65,7 @@ func TestPrepareLocalHTTPSRejectsUnsafeAddressesBeforeCreatingAKey(t *testing.T)
 		{"0.0.0.0:8080", defaultLocalHTTPSAddr, true},
 		{":8080", defaultLocalHTTPSAddr, true},
 		{defaultLocalHTTPAddr, "192.168.1.20:8443", true},
+		{defaultLocalHTTPAddr, "127.0.0.2:8443", true},
 		{"127.0.0.1:8443", "127.1.2.3:8443", true},
 	} {
 		dir := t.TempDir()
@@ -69,7 +85,7 @@ func TestBrowserHTTPSURL(t *testing.T) {
 	}{
 		{"127.0.0.1:8443", "https://localhost:8443"},
 		{"localhost:443", "https://localhost"},
-		{"[::1]:9443", "https://localhost:9443"},
+		{"[::1]:9443", "https://[::1]:9443"},
 	} {
 		got, err := browserHTTPSURL(tc.addr)
 		if err != nil || got != tc.want {
@@ -152,6 +168,18 @@ func TestListenerResultIgnoresServerClosedOnly(t *testing.T) {
 	}
 }
 
+func TestRelayListenersBoundRequestHeadersWithoutTimingOutWebSockets(t *testing.T) {
+	listeners := newRelayListeners(http.NotFoundHandler(), "127.0.0.1:8080", &localHTTPSConfig{HTTPSAddr: "127.0.0.1:8443"})
+	for name, server := range map[string]*http.Server{"http": listeners.http, "https": listeners.https} {
+		if server.ReadHeaderTimeout != relayReadHeaderTimeout || server.IdleTimeout != relayIdleTimeout || server.MaxHeaderBytes != relayMaxHeaderBytes {
+			t.Errorf("%s limits = header %s idle %s bytes %d", name, server.ReadHeaderTimeout, server.IdleTimeout, server.MaxHeaderBytes)
+		}
+		if server.ReadTimeout != 0 || server.WriteTimeout != 0 {
+			t.Errorf("%s has whole-connection timeout that would terminate long-lived WebSockets: read=%s write=%s", name, server.ReadTimeout, server.WriteTimeout)
+		}
+	}
+}
+
 func TestRelayListenersServeSameHandlerOverLoopbackHTTPAndHTTPS(t *testing.T) {
 	m, err := localtls.Ensure(t.TempDir(), time.Now())
 	if err != nil {
@@ -170,7 +198,9 @@ func TestRelayListenersServeSameHandlerOverLoopbackHTTPAndHTTPS(t *testing.T) {
 		Material:  m,
 	}
 	listeners := newRelayListeners(handler, httpAddr, localHTTPS)
-	listeners.Start(localHTTPS)
+	if err := listeners.Start(localHTTPS); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -193,9 +223,49 @@ func TestRelayListenersServeSameHandlerOverLoopbackHTTPAndHTTPS(t *testing.T) {
 
 	untrustedClient := &http.Client{Timeout: time.Second}
 	if response, err := untrustedClient.Get("https://" + httpsAddr + "/untrusted"); err == nil {
-		response.Body.Close()
+		closeForTest(t, "unexpected untrusted response body", response.Body)
 		t.Fatal("locally generated CA was unexpectedly trusted before installation")
 	}
+}
+
+func TestRelayListenersFailAtomicallyWhenHTTPSAddressIsOccupied(t *testing.T) {
+	m, err := localtls.Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpAddr := unusedLoopbackAddress(t)
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeForTest(t, "occupied listener", occupied)
+	localHTTPS := &localHTTPSConfig{HTTPSAddr: occupied.Addr().String(), Material: m}
+	listeners := newRelayListeners(http.NotFoundHandler(), httpAddr, localHTTPS)
+	if err := listeners.Start(localHTTPS); err == nil || !strings.Contains(err.Error(), "browser HTTPS") {
+		t.Fatalf("Start error = %v, want browser HTTPS bind failure", err)
+	}
+
+	// The first listener must be closed again when the second bind fails. A
+	// partially running roost is especially confusing because its printed HTTPS
+	// URL can never become usable.
+	rebound, err := net.Listen("tcp", httpAddr)
+	if err != nil {
+		t.Fatalf("wing HTTP listener leaked after HTTPS failure: %v", err)
+	}
+	_ = rebound.Close()
+}
+
+func TestRelayListenersRejectMissingHTTPSMaterialBeforeBinding(t *testing.T) {
+	httpAddr := unusedLoopbackAddress(t)
+	listeners := newRelayListeners(http.NotFoundHandler(), httpAddr, &localHTTPSConfig{HTTPSAddr: unusedLoopbackAddress(t)})
+	if err := listeners.Start(nil); err == nil || !strings.Contains(err.Error(), "certificate material") {
+		t.Fatalf("Start error = %v", err)
+	}
+	rebound, err := net.Listen("tcp", httpAddr)
+	if err != nil {
+		t.Fatalf("listener bound before certificate validation: %v", err)
+	}
+	_ = rebound.Close()
 }
 
 func unusedLoopbackAddress(t *testing.T) string {
@@ -221,7 +291,7 @@ func assertEventuallyResponse(t *testing.T, client *http.Client, rawURL, want st
 		response, err := client.Get(rawURL)
 		if err == nil {
 			body, readErr := io.ReadAll(response.Body)
-			response.Body.Close()
+			closeForTest(t, "eventual response body", response.Body)
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
@@ -276,6 +346,65 @@ func TestAuthProvidersConfiguredMatchesRoostAuthModes(t *testing.T) {
 				t.Fatalf("%s was ignored", key)
 			}
 		})
+	}
+
+	t.Setenv("GITHUB_CLIENT_ID", " \t ")
+	t.Setenv("GOOGLE_CLIENT_ID", "")
+	t.Setenv("SMTP_HOST", "")
+	if authProvidersConfigured() {
+		t.Fatal("whitespace-only auth environment detected")
+	}
+}
+
+func TestValidateAuthProviderEnvironmentRejectsPartialOAuthPairs(t *testing.T) {
+	for _, key := range []string{
+		"GITHUB_CLIENT_ID",
+		"GITHUB_CLIENT_SECRET",
+		"GOOGLE_CLIENT_ID",
+		"GOOGLE_CLIENT_SECRET",
+	} {
+		t.Run(key, func(t *testing.T) {
+			for _, env := range []string{
+				"GITHUB_CLIENT_ID",
+				"GITHUB_CLIENT_SECRET",
+				"GOOGLE_CLIENT_ID",
+				"GOOGLE_CLIENT_SECRET",
+			} {
+				t.Setenv(env, "")
+			}
+			t.Setenv(key, "configured")
+			if err := validateAuthProviderEnvironment(); err == nil || !strings.Contains(err.Error(), "incomplete") {
+				t.Fatalf("partial %s configuration error = %v", key, err)
+			}
+		})
+	}
+}
+
+func TestValidateAuthProviderEnvironmentAcceptsCompleteAndSMTPModes(t *testing.T) {
+	for _, env := range []string{
+		"GITHUB_CLIENT_ID",
+		"GITHUB_CLIENT_SECRET",
+		"GOOGLE_CLIENT_ID",
+		"GOOGLE_CLIENT_SECRET",
+		"SMTP_HOST",
+	} {
+		t.Setenv(env, "")
+	}
+	if err := validateAuthProviderEnvironment(); err != nil {
+		t.Fatalf("empty local mode: %v", err)
+	}
+
+	t.Setenv("GITHUB_CLIENT_ID", "id")
+	t.Setenv("GITHUB_CLIENT_SECRET", "secret")
+	if err := validateAuthProviderEnvironment(); err != nil {
+		t.Fatalf("complete GitHub mode: %v", err)
+	}
+
+	t.Setenv("GITHUB_CLIENT_ID", "")
+	t.Setenv("GITHUB_CLIENT_SECRET", "")
+	t.Setenv("SMTP_HOST", "smtp.example.com")
+	if err := validateAuthProviderEnvironment(); err != nil {
+		t.Fatalf("SMTP mode: %v", err)
 	}
 }
 

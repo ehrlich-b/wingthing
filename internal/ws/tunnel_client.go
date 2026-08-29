@@ -7,14 +7,25 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/fsutil"
+)
+
+const (
+	maxWingRosterBytes        = 1 << 20
+	maxTunnelInnerBytes       = 1 << 20
+	maxTunnelWireMessageBytes = 2 << 20
 )
 
 // TunnelClient sends encrypted tunnel requests to a wing via the relay.
@@ -23,19 +34,24 @@ type TunnelClient struct {
 	DeviceToken    string           // Bearer token for relay auth
 	PrivKey        *ecdh.PrivateKey // native client's identity key
 	KnownWingsPath string           // optional TOFU identity pin store
+	HTTPClient     *http.Client     // optional roster client; defaults to a bounded client
 	pinMu          sync.Mutex
 }
 
 // WingInfo holds the minimal info needed to connect to a wing.
 type WingInfo struct {
-	WingID        string `json:"wing_id"`
-	PublicKey     string `json:"public_key"`
-	LatestVersion string `json:"latest_version,omitempty"`
-	OrgID         string `json:"org_id,omitempty"`
-	UserID        string `json:"user_id,omitempty"`
-	Owner         string `json:"owner,omitempty"`
-	RemoteNode    string `json:"remote_node,omitempty"`
-	HostedRelay   string `json:"hosted_relay,omitempty"`
+	WingID         string `json:"wing_id"`
+	PublicKey      string `json:"public_key"`
+	LatestVersion  string `json:"latest_version,omitempty"`
+	OrgID          string `json:"org_id,omitempty"`
+	UserID         string `json:"user_id,omitempty"`
+	Owner          string `json:"owner,omitempty"`
+	RemoteNode     string `json:"remote_node,omitempty"`
+	Locked         bool   `json:"locked,omitempty"`
+	AllowedCount   int    `json:"allowed_count,omitempty"`
+	PurposeBinding bool   `json:"purpose_binding,omitempty"`
+	DirectMCP      bool   `json:"direct_mcp,omitempty"`
+	HostedRelay    string `json:"hosted_relay,omitempty"`
 }
 
 // ListWings returns the online wings the authenticated relay account may use.
@@ -49,18 +65,29 @@ func (tc *TunnelClient) ListWings(ctx context.Context) ([]WingInfo, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+tc.DeviceToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := tc.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("wings API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("wings API: status %d", resp.StatusCode)
 	}
 
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxWingRosterBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read wings: %w", err)
+	}
+	if len(body) > maxWingRosterBytes {
+		return nil, fmt.Errorf("decode wings: response exceeds %d bytes", maxWingRosterBytes)
+	}
 	var wings []WingInfo
-	if err := json.NewDecoder(resp.Body).Decode(&wings); err != nil {
+	if err := json.Unmarshal(body, &wings); err != nil {
 		return nil, fmt.Errorf("decode wings: %w", err)
 	}
 	return wings, nil
@@ -97,6 +124,25 @@ func (tc *TunnelClient) VerifyWingIdentity(wing WingInfo) error {
 	if err != nil || len(publicKey) != 32 {
 		return fmt.Errorf("wing %s returned an invalid X25519 identity key", wing.WingID)
 	}
+	directory := filepath.Dir(tc.KnownWingsPath)
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return fmt.Errorf("create known wing identity directory: %w", err)
+	}
+	// pinMu covers goroutines sharing this client. The advisory file lock also
+	// serializes independent Claude/Codex connector processes using the same WT
+	// profile, so each update rereads the latest complete pin set before commit.
+	lock, err := os.OpenFile(tc.KnownWingsPath+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return fmt.Errorf("open known wing identity lock: %w", err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := lock.Chmod(0600); err != nil {
+		return fmt.Errorf("protect known wing identity lock: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("lock known wing identities: %w", err)
+	}
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
 	pins := map[string]string{}
 	data, err := os.ReadFile(tc.KnownWingsPath)
 	if err == nil {
@@ -117,29 +163,32 @@ func (tc *TunnelClient) VerifyWingIdentity(wing WingInfo) error {
 	if err != nil {
 		return err
 	}
-	directory := filepath.Dir(tc.KnownWingsPath)
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return fmt.Errorf("create known wing identity directory: %w", err)
-	}
 	temporary, err := os.CreateTemp(directory, ".known-wings-*")
 	if err != nil {
 		return fmt.Errorf("create temporary known wing identities: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err := temporary.Chmod(0600); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return fmt.Errorf("protect temporary known wing identities: %w", err)
 	}
 	if _, err := temporary.Write(append(encoded, '\n')); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return fmt.Errorf("write known wing identities: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("sync known wing identities: %w", err)
 	}
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close known wing identities: %w", err)
 	}
 	if err := os.Rename(temporaryPath, tc.KnownWingsPath); err != nil {
 		return fmt.Errorf("commit known wing identities: %w", err)
+	}
+	if err := fsutil.SyncDirectory(directory); err != nil {
+		return fmt.Errorf("persist known wing identities: %w", err)
 	}
 	return nil
 }
@@ -153,9 +202,19 @@ func (tc *TunnelClient) Stream(ctx context.Context, wingID, wingPubKey string, i
 	if err != nil {
 		return fmt.Errorf("derive key: %w", err)
 	}
+	// Validate and bound caller-controlled input before opening a coordinator
+	// connection. The encrypted/base64 wire envelope is larger and has its own
+	// read-side cap below.
+	innerJSON, err := json.Marshal(inner)
+	if err != nil {
+		return fmt.Errorf("marshal inner: %w", err)
+	}
+	if len(innerJSON) > maxTunnelInnerBytes {
+		return fmt.Errorf("marshal inner: request exceeds %d bytes", maxTunnelInnerBytes)
+	}
 
 	// Build relay WebSocket URL
-	wsURL := tc.relayWSURL() + "/ws/relay?wing_id=" + wingID
+	wsURL := tc.relayWSURL() + "/ws/relay?" + url.Values{"wing_id": []string{wingID}}.Encode()
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+tc.DeviceToken)
 
@@ -165,13 +224,10 @@ func (tc *TunnelClient) Stream(ctx context.Context, wingID, wingPubKey string, i
 	if err != nil {
 		return fmt.Errorf("websocket dial: %w", err)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "done")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+	conn.SetReadLimit(maxTunnelWireMessageBytes)
 
 	// Encrypt inner message
-	innerJSON, err := json.Marshal(inner)
-	if err != nil {
-		return fmt.Errorf("marshal inner: %w", err)
-	}
 	payload, err := auth.Encrypt(gcm, innerJSON)
 	if err != nil {
 		return fmt.Errorf("encrypt: %w", err)
@@ -181,7 +237,9 @@ func (tc *TunnelClient) Stream(ctx context.Context, wingID, wingPubKey string, i
 	senderPub := base64.StdEncoding.EncodeToString(tc.PrivKey.PublicKey().Bytes())
 	requestID := generateRequestID()
 	var innerEnvelope Envelope
-	_ = json.Unmarshal(innerJSON, &innerEnvelope)
+	if err := json.Unmarshal(innerJSON, &innerEnvelope); err != nil {
+		return fmt.Errorf("decode inner envelope: %w", err)
+	}
 	tunnelReq := TunnelRequest{
 		Type:      TypeTunnelRequest,
 		WingID:    wingID,
@@ -190,7 +248,10 @@ func (tc *TunnelClient) Stream(ctx context.Context, wingID, wingPubKey string, i
 		SenderPub: senderPub,
 		Payload:   payload,
 	}
-	reqJSON, _ := json.Marshal(tunnelReq)
+	reqJSON, err := json.Marshal(tunnelReq)
+	if err != nil {
+		return fmt.Errorf("marshal tunnel request: %w", err)
+	}
 	if err := conn.Write(ctx, websocket.MessageText, reqJSON); err != nil {
 		return fmt.Errorf("send tunnel.req: %w", err)
 	}
@@ -228,7 +289,9 @@ func (tc *TunnelClient) Stream(ctx context.Context, wingID, wingPubKey string, i
 		case TypeTunnelResponse:
 			// Single response (might be an error)
 			var result map[string]any
-			json.Unmarshal(decrypted, &result)
+			if err := json.Unmarshal(decrypted, &result); err != nil {
+				return fmt.Errorf("decode tunnel response: %w", err)
+			}
 			if errMsg, ok := result["error"].(string); ok {
 				return fmt.Errorf("wing error: %s", errMsg)
 			}
@@ -259,7 +322,17 @@ func (tc *TunnelClient) relayWSURL() string {
 }
 
 func generateRequestID() string {
+	id, err := generateRequestIDFrom(crand.Reader)
+	if err != nil {
+		panic(fmt.Sprintf("crypto/rand failed while generating a tunnel request ID: %v", err))
+	}
+	return id
+}
+
+func generateRequestIDFrom(reader io.Reader) (string, error) {
 	b := make([]byte, 16)
-	crand.Read(b)
-	return fmt.Sprintf("%x", b)
+	if _, err := io.ReadFull(reader, b); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", b), nil
 }

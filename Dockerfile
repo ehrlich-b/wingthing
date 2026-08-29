@@ -5,7 +5,7 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.26.6-alpine AS build
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -19,5 +19,10 @@ WORKDIR /app
 COPY --from=build /app/wt .
 COPY hero.mp4 .
 ENV WT_HERO_VIDEO=/app/hero.mp4
+ENV HOME=/data
 EXPOSE 8080
-CMD ["sh", "-c", "mkdir -p /data/.wingthing && exec ./wt serve --addr :8080"]
+# The standalone image defaults to the same loopback-only, no-login gateway as
+# `wt serve` on a host. Fly's authenticated process command explicitly replaces
+# the listener with :8080. Container users can opt into host networking (as the
+# self-host docs show) or supply OAuth and an explicit public listener.
+CMD ["sh", "-c", "umask 077 && mkdir -p /data/.wingthing && exec ./wt serve"]

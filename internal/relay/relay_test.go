@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"bytes"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,13 +12,45 @@ import (
 	"time"
 )
 
+func mustTest(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustTestExec(t *testing.T, db *sql.DB, query string, args ...any) {
+	t.Helper()
+	if _, err := db.Exec(query, args...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func closeTestBody(t *testing.T, closer io.Closer) {
+	t.Helper()
+	if err := closer.Close(); err != nil {
+		t.Errorf("close response body: %v", err)
+	}
+}
+
+func decodeTestJSON(t *testing.T, reader io.Reader, value any) {
+	t.Helper()
+	if err := json.NewDecoder(reader).Decode(value); err != nil {
+		t.Fatalf("decode JSON response: %v", err)
+	}
+}
+
 func testStore(t *testing.T) *RelayStore {
 	t.Helper()
 	s, err := OpenRelay(":memory:")
 	if err != nil {
 		t.Fatalf("open relay store: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close relay store: %v", err)
+		}
+	})
 	return s
 }
 
@@ -134,16 +168,41 @@ func TestHealthEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /health: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 
 	if resp.StatusCode != 200 {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
 
 	var body map[string]bool
-	json.NewDecoder(resp.Body).Decode(&body)
+	decodeTestJSON(t, resp.Body, &body)
 	if !body["ok"] {
 		t.Error("expected ok=true")
+	}
+}
+
+func TestEdgeProxiesHTMLAndHashedAssetsToOneRelease(t *testing.T) {
+	srv := NewServer(nil, ServerConfig{NodeRole: "edge"})
+	proxied := make(map[string]int)
+	srv.SetLoginProxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxied[r.URL.Path]++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for _, path := range []string{"/", "/docs", "/app/", "/assets/current-hash.js", "/api/app/me"} {
+		response := httptest.NewRecorder()
+		srv.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusNoContent || proxied[path] != 1 {
+			t.Errorf("edge request %s: status=%d proxied=%d", path, response.Code, proxied[path])
+		}
+	}
+
+	for _, path := range []string{"/health", "/internal/status", "/ws/pty"} {
+		response := httptest.NewRecorder()
+		srv.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if proxied[path] != 0 {
+			t.Errorf("connection-local edge request %s was proxied", path)
+		}
 	}
 }
 
@@ -157,7 +216,7 @@ func TestAuthDeviceFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST /auth/device: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != 200 {
 		t.Fatalf("device code status = %d", resp.StatusCode)
 	}
@@ -169,7 +228,7 @@ func TestAuthDeviceFlow(t *testing.T) {
 		Interval        int    `json:"interval"`
 		VerificationURL string `json:"verification_url"`
 	}
-	json.NewDecoder(resp.Body).Decode(&dcResp)
+	decodeTestJSON(t, resp.Body, &dcResp)
 	if dcResp.DeviceCode == "" || dcResp.UserCode == "" {
 		t.Fatal("expected device_code and user_code")
 	}
@@ -184,8 +243,8 @@ func TestAuthDeviceFlow(t *testing.T) {
 		t.Fatalf("POST /auth/token: %v", err)
 	}
 	var tokenResp map[string]any
-	json.NewDecoder(resp2.Body).Decode(&tokenResp)
-	resp2.Body.Close()
+	decodeTestJSON(t, resp2.Body, &tokenResp)
+	closeTestBody(t, resp2.Body)
 	if tokenResp["token"] == nil || tokenResp["token"] == "" {
 		t.Errorf("expected JWT token in response, got %v", tokenResp)
 	}
@@ -197,6 +256,29 @@ func TestAuthDeviceFlow(t *testing.T) {
 	}
 	if tokenResp["expires_at"] == nil {
 		t.Error("expected expires_at in response")
+	}
+	if token, ok := tokenResp["token"].(string); ok {
+		var storedExpiry sql.NullTime
+		if err := srv.Store.DB().QueryRow("SELECT expires_at FROM device_tokens WHERE token = ?", token).Scan(&storedExpiry); err != nil {
+			t.Fatal(err)
+		}
+		if !storedExpiry.Valid {
+			t.Fatal("issued JWT was stored as a non-expiring compatibility token")
+		}
+	}
+
+	// The approved device code is a one-time grant. Replaying it must not mint
+	// another token.
+	replay, err := http.Post(ts.URL+"/auth/token", "application/json",
+		strings.NewReader(`{"device_code":"`+dcResp.DeviceCode+`"}`))
+	if err != nil {
+		t.Fatalf("replay POST /auth/token: %v", err)
+	}
+	defer closeTestBody(t, replay.Body)
+	var replayResp map[string]string
+	decodeTestJSON(t, replay.Body, &replayResp)
+	if replayResp["error"] != "invalid_code" {
+		t.Fatalf("replayed device code response = %#v, want invalid_code", replayResp)
 	}
 }
 
@@ -212,8 +294,8 @@ func TestAuthDeviceFlowNonDevMode(t *testing.T) {
 	var dcResp struct {
 		DeviceCode string `json:"device_code"`
 	}
-	json.NewDecoder(resp.Body).Decode(&dcResp)
-	resp.Body.Close()
+	decodeTestJSON(t, resp.Body, &dcResp)
+	closeTestBody(t, resp.Body)
 
 	resp2, err := http.Post(ts.URL+"/auth/token", "application/json",
 		strings.NewReader(`{"device_code":"`+dcResp.DeviceCode+`"}`))
@@ -221,8 +303,8 @@ func TestAuthDeviceFlowNonDevMode(t *testing.T) {
 		t.Fatalf("POST /auth/token: %v", err)
 	}
 	var pendingResp map[string]string
-	json.NewDecoder(resp2.Body).Decode(&pendingResp)
-	resp2.Body.Close()
+	decodeTestJSON(t, resp2.Body, &pendingResp)
+	closeTestBody(t, resp2.Body)
 	if pendingResp["error"] != "authorization_pending" {
 		t.Errorf("expected authorization_pending, got %q", pendingResp["error"])
 	}
@@ -235,7 +317,7 @@ func TestStaticFileServing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /app/: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 
 	if resp.StatusCode != 200 {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
@@ -254,7 +336,7 @@ func TestPatternsPageExplainsOnlySupportedSetups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /patterns: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -270,9 +352,11 @@ func TestPatternsPageExplainsOnlySupportedSetups(t *testing.T) {
 		"Control a remote agent from a localhost browser",
 		"Give a team a private browser-based agent host",
 		"Let an AI control agents on your private roost",
+		"an exact email enrollment list",
+		"an enrolled account on a roost",
 		"You need:",
 		"You get:",
-		"localhost browser -> local roost -> SSH tunnel -> remote wing -> agent",
+		"localhost browser -> local portal -> SSH tunnel -> remote wing -> agent",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("/patterns does not contain %q", want)
@@ -301,7 +385,7 @@ func TestPersonalRemoteWingGuideIsSelfHostedFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET personal remote wing guide: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	body := new(strings.Builder)
 	if _, err := io.Copy(body, resp.Body); err != nil {
 		t.Fatalf("read personal remote wing guide: %v", err)
@@ -329,6 +413,47 @@ func TestPersonalRemoteWingGuideIsSelfHostedFirst(t *testing.T) {
 	}
 }
 
+func TestSignedInDocumentationUsesThisRoostAppURL(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		config  ServerConfig
+		wantURL string
+	}{
+		{name: "single host", config: ServerConfig{}, wantURL: "/app/"},
+		{name: "split host", config: ServerConfig{BaseURL: "https://login.example.test", AppHost: "app.example.test"}, wantURL: "https://app.example.test/"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := NewServer(nil, test.config)
+			server.LocalMode = true
+			server.SetLocalUser(&User{ID: "local", DisplayName: "Local User"})
+			request := httptest.NewRequest(http.MethodGet, "http://localhost/docs", nil)
+			request.Host = "localhost"
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, request)
+			if !strings.Contains(recorder.Body.String(), `href="`+test.wantURL+`" class="nav-cta"`) {
+				t.Fatalf("documentation nav did not use app URL %q: %q", test.wantURL, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestSignedInHomeUsesConfiguredAppURLForLinkAndShortcut(t *testing.T) {
+	var body bytes.Buffer
+	err := homeTmpl.ExecuteTemplate(&body, "base", pageData{
+		User: &User{ID: "signed-in", DisplayName: "Signed In"}, AppURL: "https://app.example.test/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := body.String()
+	if !strings.Contains(rendered, `href="https://app.example.test/" class="prompt-line" id="prompt-app"`) {
+		t.Fatalf("signed-in home omitted configured app link: %q", rendered)
+	}
+	if strings.Contains(rendered, "h==='wingthing.ai'") || !strings.Contains(rendered, "app?app.href:'/login'") {
+		t.Fatalf("home keyboard shortcut is not driven by the configured app link: %q", rendered)
+	}
+}
+
 func TestPatternMarkdownRoutesServeCheckedInRecipes(t *testing.T) {
 	_, ts := testServer(t)
 	paths := []string{
@@ -346,7 +471,7 @@ func TestPatternMarkdownRoutesServeCheckedInRecipes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GET %s: %v", path, err)
 			}
-			defer resp.Body.Close()
+			defer closeTestBody(t, resp.Body)
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("status = %d, want 200", resp.StatusCode)
 			}
@@ -363,7 +488,7 @@ func TestUnimplementedPatternsAreNotPublished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET removed pattern: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("removed pattern status = %d, want 404", resp.StatusCode)
 	}
@@ -376,7 +501,7 @@ func TestStaticSW(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /app/sw.js: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 
 	if resp.StatusCode != 200 {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
@@ -390,16 +515,14 @@ func TestStaticManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /app/manifest.json: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 
 	if resp.StatusCode != 200 {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
 
 	var body map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Errorf("manifest.json is not valid JSON: %v", err)
-	}
+	decodeTestJSON(t, resp.Body, &body)
 	if body["name"] != "wingthing" {
 		t.Errorf("manifest name = %q, want wingthing", body["name"])
 	}
@@ -411,7 +534,7 @@ func TestAuthCheckReturnsUserInfo(t *testing.T) {
 
 	// Create a user with profile data
 	token, userID := createTestToken(t, srv.Store, "dev1")
-	srv.Store.DB().Exec("UPDATE users SET display_name = ?, email = ?, provider = ? WHERE id = ?",
+	mustTestExec(t, srv.Store.DB(), "UPDATE users SET display_name = ?, email = ?, provider = ? WHERE id = ?",
 		"Phil Heckel", "phil@test.com", "github", userID)
 
 	req, _ := http.NewRequest("GET", ts.URL+"/auth/check", nil)
@@ -420,13 +543,13 @@ func TestAuthCheckReturnsUserInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /auth/check: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != 200 {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
 	var body map[string]any
-	json.NewDecoder(resp.Body).Decode(&body)
+	decodeTestJSON(t, resp.Body, &body)
 	if body["ok"] != true {
 		t.Errorf("ok = %v, want true", body["ok"])
 	}
@@ -453,7 +576,7 @@ func TestAuthCheckUnauthorized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /auth/check: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != 401 {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
@@ -466,7 +589,7 @@ func TestAuthCheckNoAuthHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /auth/check: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != 401 {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
@@ -485,12 +608,12 @@ func TestAuthTokenReturnsUserInfo(t *testing.T) {
 	var dcResp struct {
 		DeviceCode string `json:"device_code"`
 	}
-	json.NewDecoder(resp.Body).Decode(&dcResp)
-	resp.Body.Close()
+	decodeTestJSON(t, resp.Body, &dcResp)
+	closeTestBody(t, resp.Body)
 
 	// Set user profile on the auto-created dev user before polling for token
 	// Dev mode creates user with ID = "test-user"
-	srv.Store.DB().Exec("UPDATE users SET display_name = ?, email = ?, provider = ? WHERE id = ?",
+	mustTestExec(t, srv.Store.DB(), "UPDATE users SET display_name = ?, email = ?, provider = ? WHERE id = ?",
 		"Bryan Ehrlich", "bryan@test.com", "google", "test-user")
 
 	// Poll for token
@@ -500,8 +623,8 @@ func TestAuthTokenReturnsUserInfo(t *testing.T) {
 		t.Fatalf("POST /auth/token: %v", err)
 	}
 	var tokenResp map[string]any
-	json.NewDecoder(resp2.Body).Decode(&tokenResp)
-	resp2.Body.Close()
+	decodeTestJSON(t, resp2.Body, &tokenResp)
+	closeTestBody(t, resp2.Body)
 
 	if tokenResp["token"] == nil || tokenResp["token"] == "" {
 		t.Fatal("expected token in response")
@@ -554,5 +677,88 @@ func TestWSHostRouting(t *testing.T) {
 				t.Errorf("%s %s: status = %d, want %d", tt.host, tt.path, w.Code, tt.want)
 			}
 		})
+	}
+}
+
+func TestWingRegistryPublishesImmutablePolicySnapshots(t *testing.T) {
+	registry := NewWingRegistry()
+	original := &ConnectedWing{
+		ID: "connection", WingID: "wing", Locked: false,
+		AllowedCount: 1, DirectMCP: true, HostedRelay: "allow",
+	}
+	stored := registry.Add(original)
+	if stored.Revision != 1 {
+		t.Fatalf("initial registry revision = %d, want 1", stored.Revision)
+	}
+	original.HostedRelay = "deny"
+	if got := registry.FindByID("wing"); got.HostedRelay != "allow" {
+		t.Fatalf("registry retained caller-owned mutable entry: %#v", got)
+	}
+
+	updated := registry.UpdateConfig("connection", true, 2, false, "deny")
+	if updated == nil || !updated.Locked || updated.AllowedCount != 2 || updated.DirectMCP || updated.HostedRelay != "deny" {
+		t.Fatalf("updated entry = %#v", updated)
+	}
+	if updated.Revision != 2 {
+		t.Fatalf("updated registry revision = %d, want 2", updated.Revision)
+	}
+	if stored.Locked || stored.AllowedCount != 1 || !stored.DirectMCP || stored.HostedRelay != "allow" {
+		t.Fatalf("policy update mutated a previously published snapshot: %#v", stored)
+	}
+
+	beforeTouch := updated.LastSeen
+	registry.Touch("connection")
+	if !updated.LastSeen.Equal(beforeTouch) {
+		t.Fatal("heartbeat mutated a previously published snapshot")
+	}
+	if current := registry.FindByID("wing"); !current.LastSeen.After(beforeTouch) {
+		t.Fatalf("heartbeat was not published: before=%v current=%v", beforeTouch, current.LastSeen)
+	}
+}
+
+func TestWingRegistryFindByIDPrefersFreshestConnection(t *testing.T) {
+	registry := NewWingRegistry()
+	older := time.Now().Add(-time.Minute)
+	newer := time.Now()
+	registry.Add(&ConnectedWing{ID: "old-connection", WingID: "same-wing", ConnectedAt: older, LastSeen: newer.Add(time.Minute)})
+	registry.Add(&ConnectedWing{ID: "new-connection", WingID: "same-wing", ConnectedAt: newer, LastSeen: newer})
+
+	if got := registry.FindByID("same-wing"); got == nil || got.ID != "new-connection" {
+		t.Fatalf("selected connection = %#v", got)
+	}
+}
+
+func TestWingRegistryActivationSupersedesReconnectWithoutFalseOffline(t *testing.T) {
+	registry := NewWingRegistry()
+	base := time.Now()
+	old, stale, active := registry.Activate(&ConnectedWing{ID: "old", WingID: "wing", ConnectedAt: base})
+	if !active || len(stale) != 0 || old.ID != "old" {
+		t.Fatalf("first activation = old=%#v stale=%#v active=%v", old, stale, active)
+	}
+	current, stale, active := registry.Activate(&ConnectedWing{ID: "current", WingID: "wing", ConnectedAt: base.Add(time.Second)})
+	if !active || current.ID != "current" || len(stale) != 1 || stale[0].ID != "old" {
+		t.Fatalf("replacement activation = current=%#v stale=%#v active=%v", current, stale, active)
+	}
+	if removed, offline := registry.RemoveConnection("old"); removed != nil || offline {
+		t.Fatalf("superseded removal = removed=%#v offline=%v", removed, offline)
+	}
+	if removed, offline := registry.RemoveConnection("current"); removed == nil || !offline {
+		t.Fatalf("current removal = removed=%#v offline=%v", removed, offline)
+	}
+}
+
+func TestWingRegistryActivationCannotEvictAnotherOwner(t *testing.T) {
+	registry := NewWingRegistry()
+	base := time.Now()
+	original, stale, active := registry.Activate(&ConnectedWing{ID: "alice-connection", UserID: "alice", WingID: "shared-id", ConnectedAt: base})
+	if !active || len(stale) != 0 || original.UserID != "alice" {
+		t.Fatalf("first activation = original=%#v stale=%#v active=%v", original, stale, active)
+	}
+	intruder, stale, active := registry.Activate(&ConnectedWing{ID: "mallory-connection", UserID: "mallory", WingID: "shared-id", ConnectedAt: base.Add(time.Second)})
+	if active || len(stale) != 0 || intruder.UserID != "mallory" {
+		t.Fatalf("cross-owner activation = intruder=%#v stale=%#v active=%v", intruder, stale, active)
+	}
+	if got := registry.FindByID("shared-id"); got == nil || got.ID != "alice-connection" || got.UserID != "alice" {
+		t.Fatalf("cross-owner collision replaced legitimate wing: %#v", got)
 	}
 }

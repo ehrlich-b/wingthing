@@ -26,6 +26,57 @@ func TestSaveWingConfigRestrictsSigningKeyFile(t *testing.T) {
 	}
 }
 
+func TestSaveWingConfigAtomicallyReplacesSymlinkWithoutFollowingIt(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "unrelated")
+	if err := os.WriteFile(target, []byte("do not overwrite"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "wing.yaml")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveWingConfig(dir, &WingConfig{WingID: "new-wing"}); err != nil {
+		t.Fatalf("SaveWingConfig: %v", err)
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "do not overwrite" {
+		t.Fatalf("symlink target changed: data=%q err=%v", data, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("wing.yaml remained a symlink")
+	}
+	cfg, err := LoadWingConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WingID != "new-wing" {
+		t.Fatalf("wing ID = %q, want new-wing", cfg.WingID)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, ".wing.yaml-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary config files remain: %v", matches)
+	}
+}
+
+func TestSaveWingConfigReportsDirectoryCreationFailure(t *testing.T) {
+	parent := t.TempDir()
+	blocker := filepath.Join(parent, "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWingConfig(filepath.Join(blocker, "child"), &WingConfig{}); err == nil {
+		t.Fatal("SaveWingConfig unexpectedly ignored directory creation failure")
+	}
+}
+
 func TestLoadWingConfigDirectMCPIsAdditiveAndStrict(t *testing.T) {
 	t.Run("legacy config keeps implicit compatibility policy", func(t *testing.T) {
 		dir := t.TempDir()
@@ -316,4 +367,39 @@ func containsHelper(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestWingConfigCloneIsDeep(t *testing.T) {
+	original := &WingConfig{
+		Labels:    []string{"one"},
+		AllowKeys: []AllowKey{{UserID: "user-one"}},
+		Admins:    []string{"admin@example.com"},
+		Paths:     PathList{{Path: "/work", Members: []string{"member@example.com"}}},
+		ICEServers: []ICEServer{{
+			URLs: []string{"stun:one.example"},
+		}},
+		DirectMCP: &DirectMCPConfig{AllowGrants: []string{"terminal.read"}},
+		MCP: &MCPConfig{Roles: map[string]*MCPRoleConfig{
+			"member": {Allow: []string{"read"}, Members: []string{"member@example.com"}},
+		}},
+	}
+	clone := original.Clone()
+	clone.Labels[0] = "two"
+	clone.AllowKeys[0].UserID = "user-two"
+	clone.Admins[0] = "other@example.com"
+	clone.Paths[0].Members[0] = "other@example.com"
+	clone.ICEServers[0].URLs[0] = "stun:two.example"
+	clone.DirectMCP.AllowGrants[0] = "terminal.start"
+	clone.MCP.Roles["member"].Allow[0] = "write"
+	clone.MCP.Roles["member"].Members[0] = "other@example.com"
+
+	if original.Labels[0] != "one" || original.AllowKeys[0].UserID != "user-one" ||
+		original.Admins[0] != "admin@example.com" || original.Paths[0].Members[0] != "member@example.com" ||
+		original.ICEServers[0].URLs[0] != "stun:one.example" || original.DirectMCP.AllowGrants[0] != "terminal.read" ||
+		original.MCP.Roles["member"].Allow[0] != "read" || original.MCP.Roles["member"].Members[0] != "member@example.com" {
+		t.Fatalf("clone mutation changed original: %#v", original)
+	}
+	if (*WingConfig)(nil).Clone() != nil {
+		t.Fatal("nil config clone was not nil")
+	}
 }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +31,8 @@ import (
 )
 
 const localMCPProtocolVersion = "2025-11-25"
+
+const maxConcurrentLocalMCPCalls = 64
 
 func mcpCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -202,10 +205,13 @@ type localMCPError struct {
 type localMCPTool = control.Tool
 
 func (s *localMCPServer) serve(ctx context.Context) error {
+	callCtx, cancelCalls := context.WithCancel(ctx)
+	defer cancelCalls()
 	scanner := bufio.NewScanner(s.in)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	encoder := json.NewEncoder(s.out)
 	var calls sync.WaitGroup
+	requestSlots := make(chan struct{}, maxConcurrentLocalMCPCalls)
 	var encodeMu sync.Mutex
 	var encodeErr error
 	writeResponse := func(response localMCPResponse) {
@@ -216,15 +222,18 @@ func (s *localMCPServer) serve(ctx context.Context) error {
 		}
 	}
 	dispatch := func(request localMCPRequest) {
-		response, respond := s.handle(ctx, request)
+		response, respond := s.handle(callCtx, request)
 		if respond {
 			writeResponse(response)
 		}
 	}
+	contextCanceled := false
+scanLoop:
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			contextCanceled = true
+			break scanLoop
 		default:
 		}
 
@@ -240,20 +249,46 @@ func (s *localMCPServer) serve(ctx context.Context) error {
 		// independently lets the same stdio client send agent_stop, steering,
 		// and status calls while another request is waiting.
 		if request.Method == "tools/call" {
+			if !acquireLocalMCPCallSlot(requestSlots) {
+				if len(request.ID) > 0 {
+					writeResponse(localMCPResponse{
+						JSONRPC: "2.0", ID: request.ID,
+						Error: &localMCPError{Code: -32000, Message: "too many concurrent tool calls"},
+					})
+				}
+				continue
+			}
 			calls.Add(1)
 			go func() {
 				defer calls.Done()
+				defer func() { <-requestSlots }()
 				dispatch(request)
 			}()
 			continue
 		}
 		dispatch(request)
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read MCP request: %w", err)
-	}
+	scanErr := scanner.Err()
+	// stdin EOF means the owning MCP client is gone. Cancel bounded waits and
+	// transport calls, but not the durable sessions/runs they were observing.
+	cancelCalls()
 	calls.Wait()
+	if scanErr != nil {
+		return fmt.Errorf("read MCP request: %w", scanErr)
+	}
+	if contextCanceled {
+		return ctx.Err()
+	}
 	return encodeErr
+}
+
+func acquireLocalMCPCallSlot(slots chan struct{}) bool {
+	select {
+	case slots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *localMCPServer) handle(ctx context.Context, request localMCPRequest) (localMCPResponse, bool) {
@@ -321,7 +356,7 @@ func (s *localMCPServer) handle(ctx context.Context, request localMCPRequest) (l
 }
 
 func (s *localMCPServer) mcpInstructions() string {
-	base := "Wingthing is a local-first runtime. Use terminal tools for persistent PTYs, agent_run for supervised semantic work, prompt_loop for bounded iteration, and swarm_run for a dependency DAG."
+	base := "Wingthing is an agent manager for agents. Use terminal tools for persistent PTYs, agent_run for supervised semantic work, prompt_loop for bounded iteration, and swarm_run for a dependency DAG."
 	if s.unsandboxed {
 		return base + " This server trusts an outer VM/container boundary: spawned processes have the full authority of the local OS user."
 	}
@@ -337,6 +372,7 @@ func localMCPTools() []localMCPTool {
 // bearer-token verification and never accepted from tool arguments.
 func roostNativeMCPTools(cfg *config.Config, sharedHost bool) []mcppkg.NativeTool {
 	var tools []mcppkg.NativeTool
+	admission := newMCPAdmissionState()
 	for _, localTool := range control.ToolsForAuthority(control.SurfaceHTTPMCP, control.AuthorityWing) {
 		tool := localTool
 		tools = append(tools, mcppkg.NativeTool{
@@ -350,18 +386,7 @@ func roostNativeMCPTools(cfg *config.Config, sharedHost bool) []mcppkg.NativeToo
 				if err != nil {
 					return nil, true, err
 				}
-				server := &localMCPServer{
-					cfg: cfg, logs: os.Stderr,
-					principal:         roostSessionPrincipal(principal.UserID),
-					actor:             principal.ClientID,
-					surface:           control.SurfaceHTTPMCP,
-					allowedPaths:      paths,
-					enforcePathBounds: true,
-					identity: EggIdentity{
-						UserID: principal.UserID, Email: principal.Email, SharedHost: sharedHost,
-						AllowedPaths: append([]string(nil), paths...), SealedFS: sharedHost,
-					},
-				}
+				server := newRoostNativeMCPServer(cfg, sharedHost, admission, principal, paths)
 				data, isError, protocolErr := server.callTool(ctx, tool.Name, arguments)
 				if protocolErr != nil {
 					return map[string]any{"error": protocolErr.Message}, true, nil
@@ -371,6 +396,29 @@ func roostNativeMCPTools(cfg *config.Config, sharedHost bool) []mcppkg.NativeToo
 		})
 	}
 	return tools
+}
+
+func newRoostNativeMCPServer(cfg *config.Config, sharedHost bool, admission *mcpAdmissionState, principal mcppkg.Principal, paths []string) *localMCPServer {
+	grants := grantSet(defaultDirectMCPGrants)
+	if portalTool, ok := control.Lookup("wing_list"); ok {
+		grants[portalTool.Grant] = true
+	}
+	return &localMCPServer{
+		cfg: cfg, logs: os.Stderr,
+		principal:         roostSessionPrincipal(principal.UserID),
+		actor:             principal.ClientID,
+		surface:           control.SurfaceHTTPMCP,
+		grants:            grants,
+		maxSessions:       defaultDirectMCPMaxSessions,
+		maxSpawnsPerHour:  defaultDirectMCPMaxSpawnsPerHour,
+		admission:         admission,
+		allowedPaths:      append([]string(nil), paths...),
+		enforcePathBounds: true,
+		identity: EggIdentity{
+			UserID: principal.UserID, Email: principal.Email, SharedHost: sharedHost,
+			AllowedPaths: append([]string(nil), paths...), SealedFS: sharedHost,
+		},
+	}
 }
 
 func roostSessionPrincipal(userID string) string {
@@ -422,11 +470,17 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 			decision = "error"
 		}
 		if auditErr := s.auditToolCall(name, arguments, data, decision); auditErr != nil {
-			fmt.Fprintf(s.logs, "wingthing MCP audit: %v\n", auditErr)
+			if logErr := writef(s.logs, "wingthing MCP audit: %v\n", auditErr); logErr != nil {
+				log.Printf("write MCP audit failure: %v", logErr)
+			}
 		}
 	}()
+	tool, known := control.Lookup(name)
+	if !known || !tool.Supports(s.controlSurface()) {
+		err = fmt.Errorf("unknown tool: %s", name)
+		return nil, false, &localMCPError{Code: -32602, Message: err.Error()}
+	}
 	if !s.toolAllowed(name) {
-		tool, _ := control.Lookup(name)
 		err = fmt.Errorf("principal %q lacks grant %q", s.clientPrincipal(), tool.Grant)
 		return map[string]any{"error": err.Error()}, true, nil
 	}
@@ -486,17 +540,19 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 	case "swarm_run":
 		data, isError, err = s.toolSwarmRun(ctx, arguments)
 	default:
-		err = fmt.Errorf("unknown tool: %s", name)
-		return nil, false, &localMCPError{Code: -32602, Message: "unknown tool: " + name}
+		err = fmt.Errorf("tool %q has no handler on %s", name, s.controlSurface())
+		return nil, false, &localMCPError{Code: -32603, Message: err.Error()}
 	}
 	if err != nil {
-		fmt.Fprintf(s.logs, "wingthing MCP %s: %v\n", name, err)
+		if logErr := writef(s.logs, "wingthing MCP %s: %v\n", name, err); logErr != nil {
+			log.Printf("write MCP failure: %v", logErr)
+		}
 		return map[string]any{"error": err.Error()}, true, nil
 	}
 	return data, isError, nil
 }
 
-func (s *localMCPServer) auditToolCall(tool string, arguments json.RawMessage, result map[string]any, decision string) error {
+func (s *localMCPServer) auditToolCall(tool string, arguments json.RawMessage, result map[string]any, decision string) (resultErr error) {
 	if s.cfg == nil || s.cfg.Dir == "" {
 		return nil
 	}
@@ -524,7 +580,11 @@ func (s *localMCPServer) auditToolCall(tool string, arguments json.RawMessage, r
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close MCP audit log: %w", err))
+		}
+	}()
 	if err := file.Chmod(0600); err != nil {
 		return err
 	}
@@ -649,7 +709,7 @@ func (s *localMCPServer) toolMessageSend(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer closeWithLog("message store", db)
 	if err := db.PurgeExpiredMessages(); err != nil {
 		return nil, err
 	}
@@ -687,7 +747,7 @@ func (s *localMCPServer) toolMessageList(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer closeWithLog("message store", db)
 	if err := db.PurgeExpiredMessages(); err != nil {
 		return nil, err
 	}
@@ -710,7 +770,7 @@ func (s *localMCPServer) toolMessageWait(ctx context.Context, arguments json.Raw
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer closeWithLog("message store", db)
 	if err := db.PurgeExpiredMessages(); err != nil {
 		return nil, err
 	}
@@ -823,7 +883,7 @@ func normalizeMessageID(id, field string) (string, error) {
 		return "", fmt.Errorf("%s is not a Wingthing message ID", field)
 	}
 	for _, r := range id {
-		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
 			return "", fmt.Errorf("%s is not a Wingthing message ID", field)
 		}
 	}
@@ -832,7 +892,7 @@ func normalizeMessageID(id, field string) (string, error) {
 
 func (s *localMCPServer) openMessageStore() (*store.Store, error) {
 	if s.cfg == nil || s.cfg.Dir == "" {
-		return nil, errors.New("Wingthing state directory is required for messages")
+		return nil, errors.New("wingthing state directory is required for messages")
 	}
 	if err := os.MkdirAll(s.cfg.Dir, 0700); err != nil {
 		return nil, err
@@ -900,7 +960,10 @@ func (s *localMCPServer) toolSandboxExplain(arguments json.RawMessage) (map[stri
 	}
 	var eggCfg *egg.EggConfig
 	var source string
-	if s.unsandboxed && args.Config == "" {
+	if s.unsandboxed && args.Config != "" {
+		return nil, errors.New("sandbox_explain config cannot be combined with MCP server --unsandboxed; spawned processes use the outer host boundary")
+	}
+	if s.unsandboxed {
 		eggCfg = egg.UnsandboxedEggConfig()
 		source = "MCP server --unsandboxed"
 	} else {
@@ -1132,18 +1195,19 @@ func (s *localMCPServer) toolTerminalSend(ctx context.Context, arguments json.Ra
 		return nil, errors.New("session is required")
 	}
 	input := []byte(args.Input)
-	if args.Enter {
-		input = append(input, '\r')
-	}
 	owned, err := s.resolveOwnedSession(ctx, args.Session)
 	if err != nil {
 		return nil, err
 	}
-	session, err := sendSessionBytes(ctx, s.cfg, owned.ID, input)
+	session, err := sendSessionInput(ctx, s.cfg, owned.ID, input, args.Enter)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"session": session.ID, "bytes_sent": len(input)}, nil
+	bytesSent := len(input)
+	if args.Enter {
+		bytesSent++
+	}
+	return map[string]any{"session": session.ID, "bytes_sent": bytesSent}, nil
 }
 
 func (s *localMCPServer) toolTerminalWait(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
@@ -1188,7 +1252,7 @@ func (s *localMCPServer) toolTerminalWait(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return nil, err
 	}
-	defer ec.Close()
+	defer closeWithLog("egg client", ec)
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -1234,14 +1298,14 @@ func (s *localMCPServer) toolTerminalStart(arguments json.RawMessage) (map[strin
 	if err != nil {
 		return nil, err
 	}
-	sessionID := uuid.NewString()[:8]
+	sessionID := newRuntimeID()
 	if err := s.admitSpawn(func() error {
 		ec, spawnErr := spawnEgg(s.cfg, sessionID, "", eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
 			spawnEggOpts{Label: args.Label, Kind: kind, Command: args.Command, Principal: s.clientPrincipal()})
 		if spawnErr != nil {
 			return spawnErr
 		}
-		_ = ec.Close()
+		closeWithLog("spawned terminal egg client", ec)
 		return nil
 	}); err != nil {
 		return nil, err
@@ -1292,14 +1356,14 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		eggCfg = &copyCfg
 		eggCfg.DangerouslySkipPermissions = true
 	}
-	sessionID := uuid.NewString()[:8]
+	sessionID := newRuntimeID()
 	if err := s.admitSpawn(func() error {
 		ec, spawnErr := spawnEgg(s.cfg, sessionID, args.Agent, eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
 			spawnEggOpts{Label: args.Label, Kind: "agent", AgentArgs: args.Args, Principal: s.clientPrincipal()})
 		if spawnErr != nil {
 			return spawnErr
 		}
-		_ = ec.Close()
+		closeWithLog("spawned agent egg client", ec)
 		return nil
 	}); err != nil {
 		return nil, err
@@ -1336,6 +1400,13 @@ type agentRunArgs struct {
 	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
+type agentRunFollowup struct {
+	parentID  string
+	direction string
+}
+
+const maxAgentSteerPriorResultChars = 200000
+
 func (s *localMCPServer) toolAgentRun(arguments json.RawMessage) (map[string]any, error) {
 	var args agentRunArgs
 	if err := decodeStrict(arguments, &args); err != nil {
@@ -1344,7 +1415,7 @@ func (s *localMCPServer) toolAgentRun(arguments json.RawMessage) (map[string]any
 	return s.submitAgentRun(args, nil)
 }
 
-func (s *localMCPServer) submitAgentRun(args agentRunArgs, parentID *string) (map[string]any, error) {
+func (s *localMCPServer) submitAgentRun(args agentRunArgs, followup *agentRunFollowup) (map[string]any, error) {
 	if strings.TrimSpace(args.Prompt) == "" {
 		return nil, errors.New("prompt is required")
 	}
@@ -1371,10 +1442,13 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, parentID *string) (ma
 		return nil, err
 	}
 	var dependsOn *string
-	if parentID != nil {
-		encoded, _ := json.Marshal([]string{*parentID})
+	var parentID *string
+	if followup != nil {
+		encoded, _ := json.Marshal([]string{followup.parentID})
 		value := string(encoded)
 		dependsOn = &value
+		parent := followup.parentID
+		parentID = &parent
 	}
 	now := time.Now().UTC()
 	task := &store.Task{
@@ -1392,19 +1466,21 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, parentID *string) (ma
 		if openErr != nil {
 			return openErr
 		}
-		defer taskStore.Close()
+		defer closeWithLog("task store", taskStore)
 		if createErr := taskStore.CreateTask(task); createErr != nil {
 			return createErr
 		}
 		if args.Label != "" {
 			label := args.Label
-			_ = taskStore.AppendLog(task.ID, "label", &label)
+			if labelErr := taskStore.AppendLog(task.ID, "label", &label); labelErr != nil {
+				log.Printf("record label for agent run %s: %v", task.ID, labelErr)
+			}
 		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	s.startAgentRun(task.ID, parentID)
+	s.startAgentRun(task.ID, followup)
 	data := agentRunStatusData(task)
 	data["run_id"] = task.ID
 	if args.Label != "" {
@@ -1413,38 +1489,51 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, parentID *string) (ma
 	return data, nil
 }
 
-func (s *localMCPServer) startAgentRun(runID string, parentID *string) {
+func (s *localMCPServer) startAgentRun(runID string, followup *agentRunFollowup) {
+	options, optionsErr := s.agentTaskRunOptions()
+	if optionsErr != nil {
+		s.setAgentRunError(runID, optionsErr)
+		return
+	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	key := s.agentRunKey(runID)
 	done := make(chan struct{})
 	activeMCPAgentRuns.Store(key, activeMCPAgentRun{principal: s.clientPrincipal(), cancel: cancel, done: done})
-	options := s.agentTaskRunOptions()
 	go func() {
 		defer close(done)
 		defer cancel()
 		defer activeMCPAgentRuns.Delete(key)
-		if parentID != nil {
-			if err := s.waitForAgentRunTerminal(runCtx, *parentID); err != nil {
+		var resolvedFollowupPrompt string
+		if followup != nil {
+			if err := s.waitForAgentRunTerminal(runCtx, followup.parentID); err != nil {
 				s.setAgentRunError(runID, err)
 				return
 			}
-			parent, parentStore, err := s.ownedAgentRun(*parentID)
+			parent, parentStore, err := s.ownedAgentRun(followup.parentID)
 			if err != nil {
 				s.setAgentRunError(runID, err)
 				return
 			}
-			parentStore.Close()
+			if err := parentStore.Close(); err != nil {
+				s.setAgentRunError(runID, fmt.Errorf("close parent task store: %w", err))
+				return
+			}
 			if parent.Status != "done" {
 				s.setAgentRunError(runID, fmt.Errorf("parent agent run %s finished with status %s", parent.ID, parent.Status))
 				return
 			}
+			var parentResult string
+			if parent.Output != nil {
+				parentResult = *parent.Output
+			}
+			resolvedFollowupPrompt = agentSteerPrompt(parent.What, parentResult, followup.direction)
 		}
 		taskStore, err := store.Open(s.cfg.DBPath())
 		if err != nil {
 			s.setAgentRunError(runID, err)
 			return
 		}
-		defer taskStore.Close()
+		defer closeWithLog("task store", taskStore)
 		task, err := taskStore.GetTask(runID)
 		if err != nil || task == nil {
 			if err == nil {
@@ -1453,15 +1542,26 @@ func (s *localMCPServer) startAgentRun(runID string, parentID *string) {
 			s.setAgentRunError(runID, err)
 			return
 		}
+		if followup != nil {
+			if err := taskStore.SetTaskWhat(runID, resolvedFollowupPrompt); err != nil {
+				s.setAgentRunError(runID, fmt.Errorf("record resolved follow-up prompt: %w", err))
+				return
+			}
+			task.What = resolvedFollowupPrompt
+		}
+		var runErr error
 		if s.runAgentTask != nil {
-			_ = s.runAgentTask(runCtx, s.cfg, taskStore, task, options)
+			runErr = s.runAgentTask(runCtx, s.cfg, taskStore, task, options)
 		} else {
-			_ = runTaskToWithOptions(runCtx, s.cfg, taskStore, task, io.Discard, options)
+			runErr = runTaskToWithOptions(runCtx, s.cfg, taskStore, task, io.Discard, options)
+		}
+		if runErr != nil {
+			s.setAgentRunError(runID, runErr)
 		}
 	}()
 }
 
-func (s *localMCPServer) agentTaskRunOptions() taskRunOptions {
+func (s *localMCPServer) agentTaskRunOptions() (taskRunOptions, error) {
 	options := taskRunOptions{
 		SharedHost:   s.identity.SharedHost,
 		AllowedPaths: append([]string(nil), s.identity.AllowedPaths...),
@@ -1469,10 +1569,12 @@ func (s *localMCPServer) agentTaskRunOptions() taskRunOptions {
 	if s.identity.UserID != "" && (s.identity.SharedHost || s.identity.OrgWing) {
 		options.UserHome = filepath.Join(s.cfg.Dir, "user-homes", userHash(s.identity.UserID))
 		if !s.identity.SharedHost {
-			_ = os.MkdirAll(options.UserHome, 0700)
+			if err := os.MkdirAll(options.UserHome, 0700); err != nil {
+				return taskRunOptions{}, fmt.Errorf("create isolated agent home: %w", err)
+			}
 		}
 	}
-	return options
+	return options, nil
 }
 
 func (s *localMCPServer) setAgentRunError(runID string, runErr error) {
@@ -1480,9 +1582,13 @@ func (s *localMCPServer) setAgentRunError(runID string, runErr error) {
 		return
 	}
 	taskStore, err := store.Open(s.cfg.DBPath())
-	if err == nil {
-		defer taskStore.Close()
-		_ = taskStore.SetTaskError(runID, runErr.Error())
+	if err != nil {
+		log.Printf("record agent run %s failure: open store: %v", runID, err)
+		return
+	}
+	defer closeWithLog("task store", taskStore)
+	if err := taskStore.SetTaskError(runID, runErr.Error()); err != nil {
+		log.Printf("record agent run %s failure: %v", runID, err)
 	}
 }
 
@@ -1500,19 +1606,21 @@ func (s *localMCPServer) ownedAgentRun(runID string) (*store.Task, *store.Store,
 	}
 	task, err := taskStore.GetTask(runID)
 	if err != nil {
-		taskStore.Close()
-		return nil, nil, err
+		return nil, nil, closeAndJoin("task store", taskStore, err)
 	}
 	if task == nil || task.Type != "agent_run" || !s.ownsTask(task) {
-		taskStore.Close()
-		return nil, nil, fmt.Errorf("agent run %q not found or not owned by caller", runID)
+		return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("agent run %q not found or not owned by caller", runID))
 	}
 	if (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !ownedProcessIsAlive(task.RunnerPID) {
-		_ = taskStore.SetTaskError(task.ID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID))
+		if err := taskStore.SetTaskError(task.ID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID)); err != nil {
+			return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("mark orphaned agent run failed: %w", err))
+		}
 		task, err = taskStore.GetTask(runID)
 		if err != nil {
-			taskStore.Close()
-			return nil, nil, err
+			return nil, nil, closeAndJoin("task store", taskStore, err)
+		}
+		if task == nil {
+			return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("agent run %q disappeared after orphan cleanup", runID))
 		}
 	}
 	return task, taskStore, nil
@@ -1549,7 +1657,7 @@ func (s *localMCPServer) toolAgentStatus(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	return agentRunStatusData(task), nil
 }
 
@@ -1574,7 +1682,7 @@ func (s *localMCPServer) toolAgentWait(ctx context.Context, arguments json.RawMe
 	if loadErr != nil {
 		return nil, loadErr
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	data := agentRunStatusData(task)
 	if errors.Is(err, context.DeadlineExceeded) {
 		data["timed_out"] = true
@@ -1588,7 +1696,7 @@ func (s *localMCPServer) waitForAgentRunTerminal(ctx context.Context, runID stri
 	if err != nil {
 		return err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	if agentRunTerminal(task.Status) {
 		return nil
 	}
@@ -1632,7 +1740,7 @@ func (s *localMCPServer) toolAgentResult(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	data := agentRunStatusData(task)
 	data["ready"] = agentRunTerminal(task.Status)
 	if task.Output != nil {
@@ -1669,12 +1777,11 @@ func (s *localMCPServer) toolAgentEvents(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	rows, err := taskStore.DB().Query(`SELECT timestamp, event, COALESCE(detail, '') FROM task_log WHERE task_id = ? ORDER BY id DESC LIMIT ?`, args.RunID, args.Limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var events []map[string]any
 	for rows.Next() {
 		var timestamp, event, detail string
@@ -1687,7 +1794,13 @@ func (s *localMCPServer) toolAgentEvents(arguments json.RawMessage) (map[string]
 		}
 		events = append(events, entry)
 	}
-	return map[string]any{"run_id": args.RunID, "events": events}, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"run_id": args.RunID, "events": events}, nil
 }
 
 func (s *localMCPServer) toolAgentSteer(arguments json.RawMessage) (map[string]any, error) {
@@ -1706,7 +1819,9 @@ func (s *localMCPServer) toolAgentSteer(arguments json.RawMessage) (map[string]a
 	if err != nil {
 		return nil, err
 	}
-	taskStore.Close()
+	if err := taskStore.Close(); err != nil {
+		return nil, fmt.Errorf("close task store: %w", err)
+	}
 	model := args.Model
 	if model == "" {
 		model = parent.Model
@@ -1716,7 +1831,15 @@ func (s *localMCPServer) toolAgentSteer(arguments json.RawMessage) (map[string]a
 		Prompt: "Prior request:\n" + parent.What + "\n\nNew direction:\n" + args.Prompt,
 		Agent:  parent.Agent, Model: model,
 		CWD: parent.CWD, Label: "followup-" + parent.ID, TimeoutSeconds: parent.TimeoutSeconds,
-	}, &parentID)
+	}, &agentRunFollowup{parentID: parentID, direction: args.Prompt})
+}
+
+func agentSteerPrompt(parentRequest, parentResult, direction string) string {
+	resultRunes := []rune(parentResult)
+	if len(resultRunes) > maxAgentSteerPriorResultChars {
+		parentResult = string(resultRunes[:maxAgentSteerPriorResultChars]) + "\n\n[Wingthing truncated the prior result for this follow-up.]"
+	}
+	return "Prior request:\n" + parentRequest + "\n\nPrior result:\n" + parentResult + "\n\nNew direction:\n" + direction
 }
 
 func (s *localMCPServer) toolAgentStop(arguments json.RawMessage) (map[string]any, error) {
@@ -1730,13 +1853,23 @@ func (s *localMCPServer) toolAgentStop(arguments json.RawMessage) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	if agentRunTerminal(task.Status) {
 		return agentRunStatusData(task), nil
 	}
 	activeValue, ok := activeMCPAgentRuns.Load(s.agentRunKey(args.RunID))
 	active, valid := activeValue.(activeMCPAgentRun)
 	if !ok || !valid || active.principal != s.clientPrincipal() {
+		// The runner can finish between the first database read and the active
+		// map lookup. Reload before reporting a detached run so an idempotent
+		// stop never turns a successful completion race into an error.
+		latest, reloadErr := taskStore.GetTask(args.RunID)
+		if reloadErr != nil {
+			return nil, reloadErr
+		}
+		if latest != nil && agentRunTerminal(latest.Status) {
+			return agentRunStatusData(latest), nil
+		}
 		return nil, errors.New("run is no longer attached to this Wingthing process")
 	}
 	active.cancel()
@@ -1805,7 +1938,7 @@ func (s *localMCPServer) toolTerminalStop(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return nil, err
 	}
-	defer ec.Close()
+	defer closeWithLog("egg client", ec)
 	if err := ec.Kill(ctx, session.ID); err != nil {
 		return nil, err
 	}
@@ -1937,7 +2070,7 @@ func (s *localMCPServer) toolTaskGet(arguments json.RawMessage) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	task, err := taskStore.GetTask(args.TaskID)
 	if err != nil {
 		return nil, err
@@ -1973,7 +2106,7 @@ func (s *localMCPServer) executePrompt(ctx context.Context, prompt, agentName, c
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	task := &store.Task{
 		ID: genTaskID(), Type: "prompt", What: prompt, Agent: agentName,
 		RunAt: time.Now().UTC(), ParentID: parentID, DependsOn: dependsOn, CWD: cwd,
@@ -2031,7 +2164,9 @@ func (s *localMCPServer) toolPromptLoop(ctx context.Context, arguments json.RawM
 	if err != nil {
 		return nil, false, err
 	}
-	rootStore.Close()
+	if err := rootStore.Close(); err != nil {
+		return nil, false, fmt.Errorf("close root task store: %w", err)
+	}
 	results := make([]map[string]any, 0, args.MaxIterations)
 	var previousTaskID string
 	failed := false
@@ -2132,7 +2267,7 @@ func (s *localMCPServer) toolSwarmRun(ctx context.Context, arguments json.RawMes
 	if err != nil {
 		return nil, false, err
 	}
-	defer rootStore.Close()
+	defer closeWithLog("root task store", rootStore)
 
 	taskIDs := make(map[string]string, len(args.Nodes))
 	byID := make(map[string]swarmNodeSpec, len(args.Nodes))
@@ -2199,8 +2334,13 @@ func (s *localMCPServer) toolSwarmRun(ctx context.Context, arguments json.RawMes
 			}
 			if dependencyFailed {
 				message := "one or more dependencies failed"
-				_ = rootStore.SetTaskError(taskIDs[node.ID], message)
-				skipped, _ := rootStore.GetTask(taskIDs[node.ID])
+				if err := rootStore.SetTaskError(taskIDs[node.ID], message); err != nil {
+					return nil, true, fmt.Errorf("mark blocked swarm node %s failed: %w", node.ID, err)
+				}
+				skipped, err := rootStore.GetTask(taskIDs[node.ID])
+				if err != nil {
+					return nil, true, fmt.Errorf("reload blocked swarm node %s: %w", node.ID, err)
+				}
 				results[node.ID] = skipped
 				state[node.ID] = "blocked"
 				continue
@@ -2235,11 +2375,15 @@ func (s *localMCPServer) toolSwarmRun(ctx context.Context, arguments json.RawMes
 					resultCh <- swarmNodeResult{logicalID: node.ID, err: openErr}
 					return
 				}
-				defer taskStore.Close()
+				defer closeWithLog("task store", taskStore)
 				task, getErr := taskStore.GetTask(taskIDs[node.ID])
 				if getErr == nil && task != nil {
-					getErr = runTaskTo(ctx, s.cfg, taskStore, task, io.Discard)
-					task, _ = taskStore.GetTask(task.ID)
+					runErr := runTaskTo(ctx, s.cfg, taskStore, task, io.Discard)
+					refreshed, refreshErr := taskStore.GetTask(task.ID)
+					if refreshErr == nil {
+						task = refreshed
+					}
+					getErr = errors.Join(runErr, refreshErr)
 				}
 				resultCh <- swarmNodeResult{logicalID: node.ID, task: task, err: getErr}
 			}()
@@ -2356,12 +2500,10 @@ func (s *localMCPServer) createMetaTask(kind, what, agentName, cwd string) (*sto
 		RunAt: time.Now().UTC(), Status: "pending", CWD: cwd, Principal: s.clientPrincipal(),
 	}
 	if err := taskStore.CreateTask(task); err != nil {
-		taskStore.Close()
-		return nil, nil, err
+		return nil, nil, closeAndJoin("task store", taskStore, err)
 	}
 	if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
-		taskStore.Close()
-		return nil, nil, err
+		return nil, nil, closeAndJoin("task store", taskStore, err)
 	}
 	return task, taskStore, nil
 }
@@ -2371,7 +2513,7 @@ func (s *localMCPServer) finishMetaTask(taskID, status string, data map[string]a
 	if err != nil {
 		return err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		return err

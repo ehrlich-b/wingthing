@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -23,8 +24,8 @@ func TestRelayAccessPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := NewServer(store, ServerConfig{RelayPolicy: RelayPolicyDirectFree, RelayGrandfatherBefore: cutoff})
-	if access := server.relayAccess("existing"); !access.Allowed || access.Reason != "temporary-grandfather" {
+	server := NewServer(store, ServerConfig{RelayPolicy: RelayPolicyDirectFree, RelayMigrationBefore: cutoff})
+	if access := server.relayAccess("existing"); !access.Allowed || access.Reason != "temporary-migration" {
 		t.Fatalf("existing access = %#v", access)
 	}
 	if access := server.relayAccess("new"); access.Allowed || access.Reason != "direct-only-free" {
@@ -40,6 +41,17 @@ func TestRelayAccessPolicy(t *testing.T) {
 	}
 	if access := server.relayAccess("new"); !access.Allowed || access.Reason != "pro" {
 		t.Fatalf("pro access = %#v", access)
+	}
+}
+
+func TestDirectFreeHasNoImplicitMigrationCohort(t *testing.T) {
+	store := testStore(t)
+	if err := store.CreateUser("existing"); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(store, ServerConfig{RelayPolicy: RelayPolicyDirectFree})
+	if access := server.relayAccess("existing"); access.Allowed || access.Reason != "direct-only-free" {
+		t.Fatalf("implicit migration access = %#v", access)
 	}
 }
 
@@ -71,6 +83,24 @@ func TestRelayAccessPrefersLoginNodeCacheOnEdge(t *testing.T) {
 	}
 	if access := server.relayAccess("not-synced"); access.Allowed || access.Reason != "entitlement-unavailable" {
 		t.Fatalf("edge unsynced access = %#v", access)
+	}
+}
+
+func TestDeniedRelayNotificationBookkeepingIsBounded(t *testing.T) {
+	store := testStore(t)
+	if err := store.CreateUser("free"); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(store, ServerConfig{RelayPolicy: RelayPolicyDirectFree})
+	server.browserConns[nil] = &browserConnection{userID: "free", relayNotified: make(map[string]bool)}
+	for index := range maxRelayNotificationResources * 3 {
+		allowed, notify := server.browserRelayPayloadAccess(nil, fmt.Sprintf("request:%d", index))
+		if allowed || !notify {
+			t.Fatalf("denial %d = allowed %v notify %v", index, allowed, notify)
+		}
+	}
+	if got := len(server.browserConns[nil].relayNotified); got > maxRelayNotificationResources {
+		t.Fatalf("notification resources = %d, max %d", got, maxRelayNotificationResources)
 	}
 }
 

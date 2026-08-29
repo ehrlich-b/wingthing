@@ -1,6 +1,7 @@
 # TODO — wingthing
 
-**Your agentic swiss army knife.** One CLI, every backend, accessible from anywhere.
+**An agent manager for agents.** One control plane for durable agents across the
+machines where their code and credentials already live.
 
 The current product thesis, real user stories, implementation gaps, security
 invariants, release gates, and next coding slice are recorded in
@@ -12,16 +13,20 @@ does not describe the end-to-end agent-manager product.
 
 Wings are live. PTY relay works end-to-end. E2E encryption, passkey auth, org support,
 per-process egg sandbox, folder-based ACLs (per-path member lists), `wt wing config`
-with live SIGHUP reload, `wt roost` for single-process self-hosted mode. Single Fly
-node (shared-cpu-2x, 512MB), horizontal scaling built and tested — edge nodes are one
-uncomment away in fly.toml.
+with live SIGHUP reload, and `wt roost` for single-process self-hosted mode. Production
+currently uses one Fly `login` machine (shared-cpu-2x, 512MB) with the SQLite volume;
+horizontal scaling is built and tested, while the `edge` process remains disabled and
+scaled to zero in `fly.toml`.
 
-VTE reconnect and browser P2P are implemented. The current architectural
-direction is to make the existing runtime local-first and client-agnostic, then
-layer collaboration on top; see `docs/local-first-architecture.md`. Major local
-work is isolated on `feature-local-first-terminal-routing` under the temporary
-freeze in `docs/vacation-local-first.md`; do not tag or deploy it before the
-post-vacation review.
+VTE reconnect and opt-in browser WebRTC migration are implemented, with legacy
+replay and terminal-specific cleanup still present. Browser-direct transport is not
+the free hosted terminal path: free remote MCP is direct, while browser terminal
+startup still requires relay entitlement or a self-hosted roost. The current
+architectural direction is to make the existing runtime local-first and
+client-agnostic, then layer collaboration on top; see
+`docs/local-first-architecture.md`. The former August vacation freeze is an expired
+historical record; current scope and promotion gates live in the agent-manager
+product brief and CI workflows.
 
 ---
 
@@ -46,7 +51,8 @@ The bar: someone new can use a wing without confusion or broken UX.
 ### Docs
 - [x] Update docs for orgs, passkeys, wing config, allow/revoke, lock/unlock
 - [x] Self-hosting guide: `wt serve` on your own box, what you get, how sandbox works
-- [x] Architecture overview: relay is a dumb pipe, wing owns all data, E2E encryption
+- [x] Architecture overview: gateway/wing responsibilities, visible routing
+  metadata, wing-owned session state, and application payload encryption
 
 ### UX Polish
 - [ ] Split org and personal wings in dashboard UI — personal vs work icon when tabbing through wings
@@ -69,7 +75,8 @@ The bar: someone new can use a wing without confusion or broken UX.
 ### Self-Hosting First Class
 - [x] `wt serve` should work standalone with zero config for single-user self-hosted
 - [x] Local user mode: auto-grant pro tier, no bandwidth cap for self-hosted
-- [ ] Hide orgs UI in self-hosted mode — orgs are a hosted-relay concept
+- [x] Hide orgs UI in self-hosted roost mode — covered by the organization-mode
+  browser E2E suite
 - [x] Uniform 3 Mbit/s rate for all tiers, only monthly cap differentiates free vs pro
 
 ---
@@ -108,24 +115,31 @@ The bar: someone new can use a wing without confusion or broken UX.
 - [x] Tunnel passkey replay protection — `passkey.auth.begin`/`finish`, one-time wing nonce, full WebAuthn context validation, client-bound token
 - [ ] Authenticated ephemeral wing handshakes — replace TOFU-only static-wing ECDH with verified pairing and forward secrecy
 - [ ] Bind encrypted envelopes to wing/session/type/direction/request with AEAD associated data and replay counters
-- [ ] Internal API trust boundary — mTLS or signed service tokens for node-to-node calls
-- [ ] Invite consume transaction ordering — race condition in `internal/relay/org.go`
+- [x] Internal API baseline — Fly nodes require a cluster-private source and
+  production-shaped Fly server config; non-Fly split deployments require a distinct
+  `WT_INTERNAL_SECRET`, which every built-in node client propagates. JWT signing
+  material is never accepted as an HTTP secret.
+- [ ] Add cryptographic Fly node identity (mTLS or signed service tokens) so a split
+  deployment need not trust every application on the Fly organization's 6PN. Until
+  then, set `WT_INTERNAL_SECRET` on Fly when that network trust is too broad.
+- [x] Invite consume transaction ordering — invite claim, membership, seat check, and
+  entitlement grant commit in one transaction, with rollback regressions.
 
 ---
 
-## Next Targets — Prove the Concept
+## Shipped foundations that still need cleanup
 
 ### VTE: Server-Side Virtual Terminal Emulator
-Replace the 2MB replay buffer with a real terminal state machine (`charmbracelet/x/vt`).
-On reconnect, paint the current screen (50 lines) instead of replaying megabytes of raw bytes.
-Eliminates `findSafeCut`, `trackCursorPos`, `agentPreamble` hacks. Makes wingthing
-"tailscale + tmux on the web" — nobody else has remote access + VTE + web terminal together.
-See `docs/vt_design.md` for full design.
+The VTE snapshot reconnect path is shipped. The 2MB raw replay path and
+`findSafeCut`, `trackCursorPos`, and `agentPreamble` compatibility code remain for
+fallback and older modes; remove them only after the VTE path has enough field time.
+See `docs/vte/README.md` for the current phased cleanup plan.
 
 ### P2P: WebRTC Direct Connection for Same-LAN Wings
-Bypass the relay entirely when browser and wing are on the same network.
-WebRTC data channels for PTY I/O, encrypted tunnel stays E2E.
-See `docs/webrtc-p2p-design.md` for full design.
+Opt-in `p2p`/`p2p_only` browser migration and the native direct-MCP WebRTC transport
+are shipped. Browser P2P still begins from entitled or self-hosted signaling and is
+not a browser-direct free hosted terminal. See `docs/p2p_design.md` for the current
+transport design.
 
 ---
 
@@ -133,43 +147,13 @@ See `docs/webrtc-p2p-design.md` for full design.
 
 ### PTY: UTF-8 boundary safety in replay buffer trim and chunking
 
-Replay buffer trimming and replay chunking are not UTF-8 aware. Multi-byte
-sequences (emoji, box-drawing chars, CJK) that straddle a cut/chunk boundary
-get split, producing permanent xterm rendering corruption (garbled status lines,
-misplaced characters, mojibake).
-
-**Where it happens:**
-
-1. **`findSafeCut()` in `internal/egg/server.go` (~line 369)**
-   Searches for safe trim points (sync frames, CRLF) but never checks if the
-   chosen offset lands mid-UTF-8 sequence. The fallback returns `minOffset`
-   raw, which can land anywhere. A 4-byte emoji split at byte 2 = broken
-   decoder state in xterm.
-
-2. **`sendReplayChunked()` in `cmd/wt/wing.go` (~line 138)**
-   Splits replay data at fixed 128KB byte boundaries. Same problem — chunk
-   boundary can bisect a multi-byte character. Each chunk is gzipped
-   independently, so the halves never recombine. Only affects the web relay
-   path (browser reattach), not local egg sessions.
-
-3. **Browser gzip decompression in `web/src/pty.js` (~line 105)**
-   If a corrupted chunk fails to decompress, the error handler silently drops
-   it (`catch → null`). No logging, no user feedback — just a gap in the
-   replay stream.
-
-**Fix approach (when ready):**
-- Add `isUTF8Boundary(buf, offset)` helper — check if byte at offset is a
-  valid UTF-8 start byte (high bits 0xxxxxxx or 11xxxxxx, not 10xxxxxx)
-- In `findSafeCut()`: after finding a cut point, walk backward (max 3 bytes)
-  until on a UTF-8 boundary
-- In `sendReplayChunked()`: same — adjust chunk end backward to nearest
-  UTF-8 boundary before slicing
-- Low risk per-fix, but touching the trim path is dangerous in aggregate —
-  defer until we can test replay trim thoroughly
-
-**Severity:** Cosmetic jank, not data loss. Observed as garbled Claude Code
-status line after pasting unusual UTF-8 into an egg session. Self-heals on
-full screen redraw but annoying.
+- [x] Replay-buffer trimming and independently compressed web replay chunks now
+  move a proposed cut back at most one UTF-8 sequence. Focused tests place a
+  four-byte emoji across each former boundary and retain bounded behavior for
+  arbitrary invalid PTY bytes.
+- [ ] Surface browser replay decompression errors instead of silently dropping a
+  failed chunk. UTF-8 splitting no longer creates that failure, but corrupted or
+  truncated compressed data should still produce visible diagnostics.
 
 ---
 
@@ -213,19 +197,16 @@ verification, attention state, project discovery, and log rotation.
 - [ ] Remove `goto authDone` in PTY passkey auth — restructure into early-return
   or extracted function
 
-### Go: Relay race conditions
+### Go: Relay concurrency follow-up
 
-- [ ] `bandwidth.go` month-boundary race — two goroutines calling `counter()`
-  at month rollover both reset `b.counters`, second nuke first's data. Fix:
-  double-check under lock after acquiring it
-- [ ] `workers.go` `WingRegistry.UpdateConfig()` returns mutable `*ConnectedWing`
-  pointer from inside the lock — callers can race on fields. Return a copy or
-  use accessor methods
-- [ ] PTY route orphan cleanup — sessions register on `pty.start`, unregister
-  only on `pty.exited`. Crashed wings leave zombie entries forever. Add a sweep
-  goroutine with TTL
-- [ ] `ntfySentNonces` global `sync.Map` grows unbounded — entries never deleted.
-  Add TTL or clear on session end
+- [x] `bandwidth.go` month rollover is serialized under the meter lock.
+- [x] `WingRegistry` publishes immutable connection snapshots; config and heartbeat
+  updates replace rather than mutate a previously returned entry.
+- [x] Unconfirmed PTY routes and viewers are bounded and expired; browser disconnect
+  cleanup and wing-offline notification preserve reconnect behavior without an
+  attacker-growable provisional map.
+- [x] Notification nonce dedup is server-scoped, per-user, and bounded to 10,000
+  insertion-ordered entries.
 
 ### JS: Split render.js (2,135 lines)
 
@@ -238,9 +219,10 @@ account management, org settings, audit display.
   `addEventListener` on every tab without removing old listeners, so after N
   re-renders each tab has N click handlers. Use event delegation on the
   container instead
-- [ ] Investigate `nav.js:49` session switching guard — `if (sess && !sess.swept) return`
-  appears to bail when the session IS valid (preventing switch to active sessions).
-  Either inverted logic or compensated elsewhere — needs investigation
+- [x] Investigated the session switching guard: `swept` means confirmed by the
+  latest wing inventory sweep. The guard intentionally refuses cached sessions after
+  a wing goes offline; tests cover the reconciliation state. Rename the field in a
+  later UI cleanup if the terminology continues to confuse readers.
 
 ### JS: Async correctness
 
@@ -249,14 +231,14 @@ account management, org settings, audit display.
 - [ ] `bytesToB64()` in `helpers.js` uses O(n²) string concatenation in a loop
   on every encrypt/decrypt — use `String.fromCharCode.apply(null, bytes)` or
   typed array approach
-- [ ] `terminal.js` `saveTermBuffer()` fires every 500ms serializing up to 200KB
-  to localStorage with no quota checking. 100 sessions = 20MB. Add cleanup on
-  session deletion and consider debouncing
+- [ ] `terminal.js` `saveTermBuffer()` debounces at 500ms and clears a session's
+  buffer on deletion, but still serializes up to 200KB per retained session with no
+  global quota. Add oldest-entry eviction or a total storage budget.
 
 ### Tests
 
-- [ ] Add tests for `internal/config/` (0% coverage) — config loading, wing ID
-  generation, var resolution, missing config fallback
+- [x] Add config regressions for loading, concurrent wing-ID creation, variable
+  resolution, missing-config fallback, atomic persistence, and additive wing policy.
 - [ ] Add tests for agent adapters — `claude.go` (145 lines, 0%), `codex.go`
   (119 lines, 0%), `cursor.go` (81 lines, 0%). At minimum test stream parsing
 - [ ] Remove compile-time interface checks from runtime test functions

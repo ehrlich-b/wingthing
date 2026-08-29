@@ -14,9 +14,9 @@
 {{define "content"}}
 <div class="legal">
 <h1>privacy policy</h1>
-<p class="updated">Last updated: August 25, 2026</p>
+<p class="updated">Last updated: August 28, 2026</p>
 
-<div class="tldr">tl;dr - free agent clients connect directly to their wings, so the hosted service coordinates identity, directory, and connection setup without carrying MCP payloads. Hosted browser-terminal and control relay access is Pro (with temporary migration access for existing accounts) and carries application-encrypted ciphertext. The service still sees routing metadata and serves the browser client.</div>
+<div class="tldr">tl;dr - free agent clients connect directly to their wings, so the hosted service coordinates identity, directory, and connection setup without carrying MCP payloads. Hosted browser-terminal and control relay access is an entitled service and carries application-encrypted ciphertext. The service still sees routing metadata and serves the browser client.</div>
 
 <h2>1. what we collect</h2>
 <p>When you use the hosted service at wingthing.ai, we collect:</p>
@@ -28,18 +28,19 @@
 
 <h2>2. what we do not collect</h2>
 <ul>
-<li><strong>Terminal and MCP content:</strong> Direct MCP payloads do not transit the hosted service. The hosted browser terminal is available only through Pro or temporary migration relay access; in that mode the service carries application-encrypted ciphertext and does not log, inspect, store, or analyze its content. Because the service distributes client code and initial key trust is TOFU, this is not a guarantee against a fully compromised service.</li>
+<li><strong>Terminal and MCP content:</strong> Direct MCP payloads do not transit the hosted service. The hosted browser terminal is available only to accounts with relay access; in that mode the service carries application-encrypted ciphertext and does not log, inspect, store, or analyze its content. Because the service distributes client code and initial key trust is TOFU, this is not a guarantee against a fully compromised service.</li>
 <li><strong>File contents:</strong> We do not access, read, or store any files on your machine. Your wing runs on your hardware.</li>
 <li><strong>Agent conversations:</strong> We do not see what you say to AI agents or what they say to you.</li>
 <li><strong>Keystrokes:</strong> Browser-terminal input is application-encrypted before it leaves your browser. When you use the entitled hosted relay, it carries ciphertext only.</li>
 </ul>
 
 <h2>3. how we use your data</h2>
-<p>Account data authenticates peers and filters the wing directory. Connection metadata helps peers establish a direct path. When relay fallback is entitled, session metadata (including IDs, selected agent and working directory, timestamps, sizes, and connection state) routes encrypted messages between client and wing. Session content lives on your machine.</p>
+<p>Account data authenticates peers and filters the wing directory. Connection metadata helps peers establish a direct path. When hosted relay access is used, session metadata (including IDs, selected agent and working directory, timestamps, sizes, and connection state) routes encrypted messages between browser and wing. Session content lives on your machine.</p>
 <p>We do not sell, rent, or share your data with third parties. We do not use your data for advertising, analytics, or model training.</p>
 
 <h2>4. data storage</h2>
-<p>The roost database contains accounts (emails, usernames), org membership, device auth tokens, and passkey public keys and credential IDs used for <code>wt wing allow</code>. No terminal data, no files, no session content. If the database leaked, an attacker would get emails and passkey public keys - but public keys can't be used to impersonate you, and locked wings verify passkey signatures locally.</p>
+<p>The gateway database contains account and organization records, login and device credentials, passkey public keys and credential IDs, entitlement and usage records, content-free audit metadata, OAuth client registrations, and operational configuration. It does not store terminal bytes, files, or session recordings. In an all-in-one self-hosted roost, the embedded wing separately keeps local session and task state on that operator-controlled host. A gateway-database leak would expose identity and routing metadata, but passkey public data alone cannot create a valid signature; locked wings verify assertions locally.</p>
+<p>The browser application caches up to 200,000 serialized terminal characters and a WebP terminal thumbnail per session in plaintext local storage for fast restore and session cards. This cache stays in that browser profile and is not written to the gateway database, but extensions, other users of the browser profile, and any script with access to the site's origin may be able to read it. Clearing the site's browser data removes the cache.</p>
 
 <h2>5. self-hosted instances</h2>
 <p>If you self-host wingthing, your data never touches our servers. You control everything. This privacy policy applies only to the hosted service at wingthing.ai.</p>

@@ -6,11 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/pion/webrtc/v4"
 )
+
+const maxControlMessageBytes = 1 << 20
 
 // ControlClient is the initiating half of Wingthing's direct MCP transport.
 // Signaling is performed by the caller; operation payloads use the DataChannel.
@@ -36,7 +39,7 @@ func NewControlClient(actor string, iceServers []webrtc.ICEServer) (*ControlClie
 	}
 	dc, err := pc.CreateDataChannel(control.DirectChannelPrefix+actor, nil)
 	if err != nil {
-		pc.Close()
+		_ = pc.Close()
 		return nil, fmt.Errorf("create control channel: %w", err)
 	}
 	client := &ControlClient{
@@ -46,6 +49,10 @@ func NewControlClient(actor string, iceServers []webrtc.ICEServer) (*ControlClie
 	dc.OnOpen(func() { client.readyMu.Do(func() { close(client.ready) }) })
 	dc.OnClose(func() { client.fail(fmt.Errorf("direct control channel closed")) })
 	dc.OnMessage(func(message webrtc.DataChannelMessage) {
+		if len(message.Data) > maxControlMessageBytes {
+			client.fail(fmt.Errorf("direct control response exceeds %d bytes", maxControlMessageBytes))
+			return
+		}
 		var response control.DirectResponse
 		if json.Unmarshal(message.Data, &response) != nil || response.ID == "" {
 			return
@@ -133,6 +140,9 @@ func (c *ControlClient) Call(ctx context.Context, tool string, arguments json.Ra
 	if err != nil {
 		return nil, true, err
 	}
+	if len(payload) > maxControlMessageBytes {
+		return nil, true, fmt.Errorf("direct control request exceeds %d bytes", maxControlMessageBytes)
+	}
 	if err := c.dc.Send(payload); err != nil {
 		return nil, true, fmt.Errorf("send direct control request: %w", err)
 	}
@@ -145,6 +155,9 @@ func (c *ControlClient) Call(ctx context.Context, tool string, arguments json.Ra
 		c.mu.Unlock()
 		return nil, true, err
 	case response := <-waiter:
+		if response.Version != control.ContractVersion {
+			return nil, true, fmt.Errorf("direct control: unsupported response contract version %q", response.Version)
+		}
 		if response.Error != "" {
 			return response.Result, true, fmt.Errorf("direct control: %s", response.Error)
 		}
@@ -178,7 +191,17 @@ func (c *ControlClient) Close() error {
 }
 
 func randomControlID() string {
+	id, err := randomControlIDFrom(crand.Reader)
+	if err != nil {
+		panic(fmt.Sprintf("crypto/rand failed while generating a control request ID: %v", err))
+	}
+	return id
+}
+
+func randomControlIDFrom(reader io.Reader) (string, error) {
 	value := make([]byte, 16)
-	_, _ = crand.Read(value)
-	return hex.EncodeToString(value)
+	if _, err := io.ReadFull(reader, value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
 }

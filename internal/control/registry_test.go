@@ -127,6 +127,75 @@ func TestAuditTargetUsesOnlyDeclaredResourceFields(t *testing.T) {
 	}
 }
 
+func TestRegistryReturnsDeeplyIndependentDefinitions(t *testing.T) {
+	first := Tools(SurfaceLocalMCP)
+	first[0].Annotations["readOnlyHint"] = false
+	first[0].InputSchema["type"] = "mutated"
+	first[0].Surfaces[0] = Surface("mutated")
+	messageProperties := first[1].InputSchema["properties"].(map[string]any)
+	messageProperties["content"].(map[string]any)["description"] = "mutated"
+
+	second := Tools(SurfaceLocalMCP)
+	if second[0].Annotations["readOnlyHint"] != true || second[0].InputSchema["type"] != "object" || second[0].Surfaces[0] != SurfaceLocalMCP {
+		t.Fatalf("tool registry shared top-level storage: %#v", second[0])
+	}
+	secondProperties := second[1].InputSchema["properties"].(map[string]any)
+	if secondProperties["content"].(map[string]any)["description"] == "mutated" {
+		t.Fatal("tool registry shared nested schema storage")
+	}
+	lookedUp, ok := Lookup("message_send")
+	if !ok || lookedUp.InputSchema["type"] != "object" {
+		t.Fatalf("Lookup observed a prior mutation: %#v", lookedUp)
+	}
+}
+
+func TestRegistryPreservesDeployedEmptyArrayDefaults(t *testing.T) {
+	checks := []struct {
+		tool string
+		path []string
+	}{
+		{tool: "terminal_start", path: []string{"command"}},
+		{tool: "agent_start", path: []string{"args"}},
+		{tool: "prompt_save", path: []string{"variables"}},
+		{tool: "swarm_run", path: []string{"nodes", "items", "properties", "depends_on"}},
+	}
+	for _, check := range checks {
+		t.Run(check.tool, func(t *testing.T) {
+			tool, ok := Lookup(check.tool)
+			if !ok {
+				t.Fatalf("Lookup(%q) failed", check.tool)
+			}
+			value := any(tool.InputSchema["properties"])
+			for _, component := range check.path {
+				mapping, ok := value.(map[string]any)
+				if !ok {
+					t.Fatalf("schema path %v reached %T, want object", check.path, value)
+				}
+				value = mapping[component]
+			}
+			property, ok := value.(map[string]any)
+			if !ok {
+				t.Fatalf("schema path %v reached %T, want property", check.path, value)
+			}
+			defaultValue, ok := property["default"].([]string)
+			if !ok || defaultValue == nil || len(defaultValue) != 0 {
+				t.Fatalf("default at %v = %#v (%T), want non-nil empty []string", check.path, property["default"], property["default"])
+			}
+			encoded, err := json.Marshal(property)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if string(wire["default"]) != "[]" {
+				t.Fatalf("wire default at %v = %s, want []", check.path, wire["default"])
+			}
+		})
+	}
+}
+
 func toolNames(tools []Tool) []string {
 	names := make([]string, len(tools))
 	for index, tool := range tools {

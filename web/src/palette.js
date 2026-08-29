@@ -46,6 +46,10 @@ export function cyclePaletteAgent(dir) {
 }
 
 export function showPalette() {
+    if (S.currentUser && S.currentUser.relay_allowed === false) {
+        DOM.commandPalette.style.display = 'none';
+        return false;
+    }
     DOM.commandPalette.style.display = '';
     DOM.paletteSearch.value = '';
     DOM.paletteSearch.focus();
@@ -61,6 +65,7 @@ export function showPalette() {
             }
         }).catch(function() {});
     }
+    return true;
 }
 
 export function updatePaletteState(isOpen) {
@@ -92,7 +97,7 @@ export function updatePaletteState(isOpen) {
         DOM.paletteResults.innerHTML = '<div class="palette-waiting-msg">' +
             '<div class="waiting-dot"></div>' +
             '<div>no wings online</div>' +
-            '<div class="palette-waiting-hint"><a href="https://wingthing.ai/install" target="_blank">install wt</a>, then <code>wt login</code> and <code>wt start</code></div>' +
+            '<div class="palette-waiting-hint"><a href="https://wingthing.ai/install" target="_blank" rel="noopener noreferrer">install wt</a>, then <code>wt login</code> and <code>wt start</code></div>' +
         '</div>';
     }
 }
@@ -333,7 +338,7 @@ export function launchFromPalette(cwd) {
         cb(agent, validCwd, wingId);
         return;
     }
-    showTerminal();
+    if (!showTerminal()) return;
     connectPTY(agent, validCwd, wingId);
 }
 

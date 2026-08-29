@@ -18,7 +18,7 @@ const (
 	// local to the coordinator, while every wing-owned operation carries an
 	// explicit wing_id used to select a peer-to-peer transport.
 	SurfaceDirectMCP Surface = "direct-mcp"
-	ContractVersion          = "v1"
+	ContractVersion  string  = "v1"
 )
 
 // Authority identifies the component that owns an operation's state and
@@ -78,6 +78,7 @@ func Tools(surface Surface) []Tool {
 	tools := make([]Tool, 0, len(catalog))
 	for _, tool := range catalog {
 		if tool.Supports(surface) {
+			tool = cloneTool(tool)
 			if surface == SurfaceDirectMCP && tool.Authority == AuthorityWing {
 				tool.InputSchema = withWingTarget(tool.InputSchema)
 			}
@@ -131,10 +132,52 @@ func ObjectKinds(surface Surface) []string {
 func Lookup(name string) (Tool, bool) {
 	for _, tool := range catalog {
 		if tool.Name == name {
-			return tool, true
+			return cloneTool(tool), true
 		}
 	}
 	return Tool{}, false
+}
+
+func cloneTool(tool Tool) Tool {
+	tool.InputSchema = cloneContractMap(tool.InputSchema)
+	tool.Annotations = cloneContractMap(tool.Annotations)
+	tool.Surfaces = append([]Surface(nil), tool.Surfaces...)
+	tool.AuditTargetKeys = append([]string(nil), tool.AuditTargetKeys...)
+	return tool
+}
+
+func cloneContractMap(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = cloneContractValue(value)
+	}
+	return result
+}
+
+func cloneContractValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneContractMap(typed)
+	case []any:
+		result := make([]any, len(typed))
+		for index, item := range typed {
+			result[index] = cloneContractValue(item)
+		}
+		return result
+	case []string:
+		// Preserve the distinction between an explicitly declared empty array
+		// and nil. JSON Schema clients observe that distinction: [] is a valid
+		// default for an array property, while null violates the property's
+		// declared type and changed the already-deployed MCP contract.
+		result := make([]string, len(typed))
+		copy(result, typed)
+		return result
+	default:
+		return value
+	}
 }
 
 // Supports reports whether an operation is exposed by the adapter surface.
@@ -480,7 +523,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "wing_list", Title: "List portal wings",
-			Description: "List every connected wing the authenticated portal user may access, including whether HTTP MCP can currently control it.",
+			Description: "List every connected wing the authenticated portal user may access, including whether the current MCP adapter can control it.",
 			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
 			Grant: "wing.read", Surfaces: []Surface{SurfaceHTTPMCP, SurfaceDirectMCP}, Authority: AuthorityPortal,
 		},

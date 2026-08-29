@@ -96,23 +96,31 @@ func setupBuilder(t *testing.T, memDir, skillsDir string, threadContent string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 
 	// Register an agent
-	s.UpsertAgent(&store.Agent{
+	if err := s.UpsertAgent(&store.Agent{
 		Name:             "claude",
 		Adapter:          "claude",
 		Command:          "claude",
 		ContextWindow:    200000,
 		DefaultIsolation: "standard",
-	})
-	s.UpsertAgent(&store.Agent{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertAgent(&store.Agent{
 		Name:             "gemini",
 		Adapter:          "gemini",
 		Command:          "gemini",
 		ContextWindow:    100000,
 		DefaultIsolation: "standard",
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := &config.Config{
 		Dir:          filepath.Dir(memDir), // parent of memory
@@ -126,14 +134,26 @@ func setupBuilder(t *testing.T, memDir, skillsDir string, threadContent string) 
 	// So set Dir to parent of skills dir, then create skills subdir
 	// Easier: just set Dir to a temp dir and copy skills there
 	wtDir := t.TempDir()
-	os.MkdirAll(filepath.Join(wtDir, "skills"), 0755)
-	os.MkdirAll(filepath.Join(wtDir, "memory"), 0755)
+	if err := os.MkdirAll(filepath.Join(wtDir, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(wtDir, "memory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Copy skill files
-	entries, _ := os.ReadDir(skillsDir)
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, e := range entries {
-		data, _ := os.ReadFile(filepath.Join(skillsDir, e.Name()))
-		os.WriteFile(filepath.Join(wtDir, "skills", e.Name()), data, 0644)
+		data, err := os.ReadFile(filepath.Join(skillsDir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wtDir, "skills", e.Name()), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	cfg.Dir = wtDir
@@ -581,10 +601,14 @@ func TestBuildWithThread(t *testing.T) {
 func TestCompressSkillE2E(t *testing.T) {
 	// Set up memory dir with index + feeds
 	memDir := t.TempDir()
-	os.WriteFile(filepath.Join(memDir, "index.md"), []byte("# Memory Index\n"), 0644)
-	os.WriteFile(filepath.Join(memDir, "feeds.md"), []byte(
+	if err := os.WriteFile(filepath.Join(memDir, "index.md"), []byte("# Memory Index\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "feeds.md"), []byte(
 		"# Feeds\n\n- https://hnrss.org/frontpage\n- https://feeds.arstechnica.com/arstechnica/index\n",
-	), 0644)
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set up skills dir with compress skill
 	skillsDir := t.TempDir()
@@ -609,7 +633,9 @@ For each article, compress the full text down to a maximum of 1024 characters.
 
 For each article, output exactly this structure:
 `
-	os.WriteFile(filepath.Join(skillsDir, "compress.md"), []byte(compressSkill), 0644)
+	if err := os.WriteFile(filepath.Join(skillsDir, "compress.md"), []byte(compressSkill), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	b, s := setupBuilder(t, memDir, skillsDir, "")
 

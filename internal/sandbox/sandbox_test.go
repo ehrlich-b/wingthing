@@ -78,7 +78,11 @@ func TestFallbackExecEcho(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newFallback error: %v", err)
 	}
-	defer sb.Destroy()
+	defer func() {
+		if err := sb.Destroy(); err != nil {
+			t.Errorf("destroy sandbox: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 	cmd, err := sb.Exec(ctx, "echo", []string{"hello"})
@@ -101,7 +105,11 @@ func TestFallbackRestrictedEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newFallback error: %v", err)
 	}
-	defer sb.Destroy()
+	defer func() {
+		if err := sb.Destroy(); err != nil {
+			t.Errorf("destroy sandbox: %v", err)
+		}
+	}()
 
 	fb := sb.(*fallbackSandbox)
 	env := fb.buildEnv()
@@ -127,7 +135,11 @@ func TestFallbackWorkingDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newFallback error: %v", err)
 	}
-	defer sb.Destroy()
+	defer func() {
+		if err := sb.Destroy(); err != nil {
+			t.Errorf("destroy sandbox: %v", err)
+		}
+	}()
 
 	ctx := context.Background()
 	cmd, err := sb.Exec(ctx, "pwd", nil)

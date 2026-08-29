@@ -107,22 +107,22 @@ func sessionSendCmd() *cobra.Command {
 			if len(input) == 0 && !enterFlag {
 				return fmt.Errorf("provide text, --stdin, or --enter")
 			}
-			if enterFlag {
-				input = append(input, '\r')
-			}
-
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			session, err := sendSessionBytes(cmd.Context(), cfg, args[0], input)
+			session, err := sendSessionInput(cmd.Context(), cfg, args[0], input, enterFlag)
 			if err != nil {
 				return err
 			}
-			if jsonFlag {
-				return writeSessionJSON(map[string]any{"session": session.ID, "bytes_sent": len(input)})
+			bytesSent := len(input)
+			if enterFlag {
+				bytesSent++
 			}
-			fmt.Printf("sent %d bytes to %s\n", len(input), session.ID)
+			if jsonFlag {
+				return writeSessionJSON(map[string]any{"session": session.ID, "bytes_sent": bytesSent})
+			}
+			fmt.Printf("sent %d bytes to %s\n", bytesSent, session.ID)
 			return nil
 		},
 	}
@@ -177,7 +177,7 @@ func sessionWaitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer ec.Close()
+			defer closeWithLog("egg client", ec)
 			ticker := time.NewTicker(200 * time.Millisecond)
 			defer ticker.Stop()
 			for {
@@ -264,7 +264,7 @@ func sessionKillCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer ec.Close()
+			defer closeWithLog("egg client", ec)
 			if err := ec.Kill(cmd.Context(), session.ID); err != nil {
 				return fmt.Errorf("kill session %s: %w", session.ID, err)
 			}
@@ -405,7 +405,9 @@ func sessionSyncCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&fromFlag, "from", "", "source wing ID")
-	cmd.MarkFlagRequired("from")
+	if err := cmd.MarkFlagRequired("from"); err != nil {
+		panic(err)
+	}
 	return cmd
 }
 

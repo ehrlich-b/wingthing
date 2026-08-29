@@ -79,7 +79,7 @@
 <li><strong>You need:</strong> Wingthing on both computers, SSH access to the remote computer, and the agent already logged in there.</li>
 <li><strong>You get:</strong> a private <code>https://localhost</code> page for starting and resuming durable sessions on the remote computer, without using the hosted relay. WT creates a localhost-only certificate on demand, installs only its public CA for your user, and keeps the private key on this computer.</li>
 </ul>
-<div class="flow">localhost browser -> local roost -> SSH tunnel -> remote wing -> agent</div>
+<div class="flow">localhost browser -> local portal -> SSH tunnel -> remote wing -> agent</div>
 <div class="recipe-row"><a href="/patterns/personal-remote-wing/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/personal-remote-wing/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
@@ -89,7 +89,7 @@
 <h2>Give a team a private browser-based agent host</h2>
 <p>Run Wingthing on one shared server so several people can launch and resume their own agent sessions through a private web UI.</p>
 <ul class="pattern-facts">
-<li><strong>You need:</strong> a server, HTTPS hostname, OAuth login, and project directories on that server.</li>
+<li><strong>You need:</strong> a server, HTTPS hostname, OAuth login, an exact email enrollment list, and project directories on that server.</li>
 <li><strong>You get:</strong> a self-hosted portal, per-user sessions, and separate per-user agent homes on the shared host.</li>
 </ul>
 <div class="flow">team browsers -> private roost -> agents on the shared server</div>
@@ -102,7 +102,7 @@
 <h2>Let an AI control agents on your private roost</h2>
 <p>Connect a local Claude or Codex client to your self-hosted Wingthing server and let it manage work there.</p>
 <ul class="pattern-facts">
-<li><strong>You need:</strong> a roost with HTTPS and OAuth, plus its HTTP MCP endpoint added to the parent AI client.</li>
+<li><strong>You need:</strong> an enrolled account on a roost with HTTPS and OAuth, plus its HTTP MCP endpoint added to the parent AI client.</li>
 <li><strong>You get:</strong> authenticated control of that user's agent runs and persistent sessions on the roost server.</li>
 </ul>
 <div class="flow">parent AI -> private roost MCP -> agents on the roost server</div>

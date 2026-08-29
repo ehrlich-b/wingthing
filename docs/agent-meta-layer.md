@@ -3,7 +3,7 @@
 Status: implemented local and self-hosted slices, with portal convergence in
 design
 
-Reviewed: 2026-08-24
+Reviewed: 2026-08-28
 
 ## Thesis
 
@@ -72,6 +72,8 @@ The current implementation proves part of this:
   selected portal;
 - self-hosted HTTP MCP calls the roost's embedded wing with authenticated
   owner and actor identity; and
+- native direct MCP selects external wings explicitly and carries the shared
+  terminal, run, message, and sandbox operation subset over WebRTC; and
 - the browser can aggregate sessions from several external wings registered to
   one gateway.
 
@@ -92,7 +94,7 @@ It implements MCP JSON-RPC over stdin and stdout. Protocol messages use standard
 output; diagnostics use standard error. Tools use closed JSON Schemas and
 return structured content plus a serialized text fallback.
 
-The current local surface has 27 tools:
+The current local operation set is defined and tested in `internal/control`:
 
 | Group | Tools |
 | --- | --- |
@@ -196,15 +198,16 @@ qualified resource model is in
 
 ## Next work
 
-1. Extract one transport-independent wing control package from the MCP adapter.
-2. Define each operation once with schema, grant, bound, annotations, and audit
-   redaction.
-3. Put the contract behind a wing-owned local socket.
-4. Carry the same request and response through the encrypted external-wing
-   tunnel.
-5. Add explicit `portal_id` and `wing_id` resource references.
-6. Give the browser a combined session and run inventory.
-7. Add workspace, preview, credential, and durable-memory references without
+1. Continue extracting the handlers themselves into a transport-independent wing
+   control package. The shared registry already owns operation metadata and schemas.
+2. Put the contract behind a wing-owned local socket.
+3. Converge the native direct WebRTC subset and the browser's bespoke encrypted
+   tunnel onto one wing-owned request/response service.
+4. Extend the direct connector's explicit `wing_id` qualification into one shared
+   portal/session/run resource model; add `portal_id` when several portals can be
+   aggregated by one client.
+5. Give the browser a combined session and run inventory.
+6. Add workspace, preview, credential, and durable-memory references without
    turning Wingthing into a mandatory file-sync product.
 
 The product test is concrete: can an LLM operate Wingthing without scraping the

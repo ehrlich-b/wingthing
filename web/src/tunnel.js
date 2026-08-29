@@ -186,8 +186,12 @@ function openConn(wingId) {
             } else if (msg.type === 'tunnel.stream') {
                 var h = conn.pending[msg.request_id];
                 if (h && h.onStream) {
-                    h.onStream(msg);
-                    if (msg.done) {
+                    var streamErr = h.onStream(msg);
+                    if (streamErr) {
+                        delete conn.pending[msg.request_id];
+                        h.reject(streamErr);
+                        checkIdle(wingId, conn);
+                    } else if (msg.done) {
                         delete conn.pending[msg.request_id];
                         h.resolve(msg);
                         checkIdle(wingId, conn);
@@ -354,12 +358,17 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
         conn.pending[requestId] = {
             resolve: resolve,
             reject: reject,
-            onStream: async function(msg) {
+            onStream: function(msg) {
                 try {
                     var decrypted = tunnelDecrypt(key, msg.payload);
                     var chunk = JSON.parse(decrypted);
+                    if (chunk && chunk.error) return new Error(chunk.error);
                     onChunk(chunk);
-                } catch (e) { console.error('tunnel stream decrypt error:', e); }
+                    return null;
+                } catch (e) {
+                    console.error('tunnel stream decrypt error:', e);
+                    return e;
+                }
             }
         };
         conn.ws.send(JSON.stringify({

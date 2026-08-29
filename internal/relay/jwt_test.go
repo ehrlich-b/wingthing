@@ -69,7 +69,8 @@ func TestDeriveECKeyStringFromSecretIsStableAndDomainSafe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derived key is not a valid P-256 private key: %v", err)
 	}
-	if key.Curve != elliptic.P256() || key.D.Sign() <= 0 {
+	raw, rawErr := key.Bytes()
+	if key.Curve != elliptic.P256() || rawErr != nil || len(raw) != 32 {
 		t.Fatal("derived key has invalid P-256 parameters")
 	}
 	if _, err := DeriveECKeyStringFromSecret("too-short"); err == nil {

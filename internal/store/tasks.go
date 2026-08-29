@@ -86,7 +86,7 @@ func (s *Store) ListPending(now time.Time) ([]*Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list pending: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanTasks(rows)
 }
 
@@ -97,7 +97,7 @@ func (s *Store) ListRecent(n int) ([]*Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list recent: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanTasks(rows)
 }
 
@@ -115,13 +115,15 @@ func (s *Store) ListReady(now time.Time) ([]*Task, error) {
 		}
 		var depIDs []string
 		if err := json.Unmarshal([]byte(*t.DependsOn), &depIDs); err != nil {
-			ready = append(ready, t)
-			continue
+			return nil, fmt.Errorf("decode dependencies for task %s: %w", t.ID, err)
 		}
 		allDone := true
 		for _, depID := range depIDs {
 			dep, err := s.GetTask(depID)
-			if err != nil || dep == nil || dep.Status != "done" {
+			if err != nil {
+				return nil, fmt.Errorf("load dependency %s for task %s: %w", depID, t.ID, err)
+			}
+			if dep == nil || dep.Status != "done" {
 				allDone = false
 				break
 			}
@@ -158,6 +160,14 @@ func (s *Store) SetTaskResolved(id, agent, isolation string) error {
 	return err
 }
 
+// SetTaskWhat records the final prompt used to execute a task. Some task
+// types, such as queued agent follow-ups, cannot assemble their complete
+// prompt until a dependency has finished.
+func (s *Store) SetTaskWhat(id, what string) error {
+	_, err := s.db.Exec("UPDATE tasks SET what = ? WHERE id = ?", what, id)
+	return err
+}
+
 func (s *Store) SetTaskOutput(id, output string) error {
 	_, err := s.db.Exec("UPDATE tasks SET output = ? WHERE id = ?", output, id)
 	return err
@@ -176,7 +186,7 @@ func (s *Store) ListRecurring() ([]*Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list recurring: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanTasks(rows)
 }
 

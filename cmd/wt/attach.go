@@ -5,15 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"google.golang.org/grpc/codes"
@@ -83,14 +84,7 @@ func attachCmd() *cobra.Command {
 }
 
 func validateSessionID(sessionID string) error {
-	if sessionID == "" || sessionID == "." || sessionID == ".." || filepath.Base(sessionID) != sessionID {
-		return fmt.Errorf("invalid session ID %q", sessionID)
-	}
-	for _, r := range sessionID {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
-			continue
-		}
+	if !ws.ValidSessionID(sessionID) {
 		return fmt.Errorf("invalid session ID %q", sessionID)
 	}
 	return nil
@@ -188,7 +182,7 @@ func attachLocal(ctx context.Context, cfg *config.Config, sessionID string) (boo
 	if err != nil {
 		return false, err
 	}
-	defer ec.Close()
+	defer closeWithLog("egg client", ec)
 	sessionID = resolved.ID
 
 	fd := int(os.Stdin.Fd())
@@ -210,7 +204,11 @@ func attachLocal(ctx context.Context, cfg *config.Config, sessionID string) (boo
 		if rawErr != nil {
 			return false, fmt.Errorf("put terminal in raw mode: %w", rawErr)
 		}
-		defer term.Restore(fd, oldState)
+		defer func() {
+			if err := term.Restore(fd, oldState); err != nil {
+				log.Printf("restore terminal: %v", err)
+			}
+		}()
 	}
 
 	winchCh := make(chan os.Signal, 1)

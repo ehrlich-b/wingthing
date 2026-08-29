@@ -9,12 +9,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -30,7 +30,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/skill"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/thread"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -44,12 +43,30 @@ func main() {
 		return
 	}
 
+	root := newRootCommand()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := root.ExecuteContext(ctx); err != nil {
+		var exitErr *commandExitError
+		if errors.As(err, &exitErr) {
+			if exitErr.message != "" {
+				_, _ = fmt.Fprintln(os.Stderr, exitErr.message)
+			}
+			os.Exit(exitErr.code)
+		}
+		_, _ = fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
+}
+
+func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:          "wt",
-		Short:        "wingthing — persistent, sandboxed agent terminals",
-		Long:         "A local-first runtime for persistent, sandboxed agent terminals. Attach locally, over SSH, or through the optional browser gateway.",
-		Version:      version,
-		SilenceUsage: true,
+		Use:           "wt",
+		Short:         "wingthing — an agent manager for agents",
+		Long:          "An agent manager for agents: one typed control plane for durable agent runs and terminals across your machines, with human inspection and takeover when useful.",
+		Version:       version,
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
 
 	root.AddCommand(
@@ -86,12 +103,7 @@ func main() {
 		mcpCmd(),
 		localCertCmd(),
 	)
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := root.ExecuteContext(ctx); err != nil {
-		os.Exit(1)
-	}
+	return root
 }
 
 func startCmd() *cobra.Command {
@@ -158,19 +170,22 @@ func stopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the daemon (alias for wt wing stop / wt daemon stop)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pid, err := readPid()
+			lifecycleLock, lockErr := acquireDaemonLifecycleLock()
+			if lockErr != nil {
+				return lockErr
+			}
+			defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+			pid, kind, err := readDaemon()
 			if err != nil {
 				return fmt.Errorf("no wing daemon running")
 			}
-			proc, _ := os.FindProcess(pid)
-			if err := proc.Signal(syscall.SIGTERM); err != nil {
-				return fmt.Errorf("kill pid %d: %w", pid, err)
+			if err := stopDaemonAndWait(pid, kind, 5*time.Second); err != nil {
+				return err
 			}
 			// Clean up both wing and roost pid/args files
-			os.Remove(wingPidPath())
-			os.Remove(wingArgsPath())
-			os.Remove(roostPidPath())
-			os.Remove(roostArgsPath())
+			if err := removeFiles(wingPidPath(), wingArgsPath(), roostPidPath(), roostArgsPath()); err != nil {
+				return fmt.Errorf("remove daemon metadata: %w", err)
+			}
 			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
 			return nil
 		},
@@ -178,7 +193,7 @@ func stopCmd() *cobra.Command {
 }
 
 func genTaskID() string {
-	return fmt.Sprintf("t-%s-%s", time.Now().Format("20060102-150405"), uuid.NewString()[:8])
+	return fmt.Sprintf("t-%s-%s", time.Now().Format("20060102-150405"), newRuntimeID())
 }
 
 func runCmd() *cobra.Command {
@@ -205,7 +220,7 @@ func runCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer s.Close()
+			defer closeWithLog("store", s)
 
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -337,18 +352,28 @@ type taskRunOptions struct {
 	AllowedPaths []string
 }
 
-func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Store, t *store.Task, destination io.Writer, options taskRunOptions) error {
-	s.UpdateTaskStatus(t.ID, "running")
-	s.AppendLog(t.ID, "started", nil)
+func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Store, t *store.Task, destination io.Writer, options taskRunOptions) (runErr error) {
+	if err := s.UpdateTaskStatus(t.ID, "running"); err != nil {
+		return fmt.Errorf("mark task running: %w", err)
+	}
+	defer func() {
+		if runErr == nil {
+			return
+		}
+		if err := s.SetTaskError(t.ID, runErr.Error()); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("record task failure: %w", err))
+		}
+	}()
+	if err := s.AppendLog(t.ID, "started", nil); err != nil {
+		return fmt.Errorf("record task start: %w", err)
+	}
 	if options.SharedHost && runtime.GOOS != "linux" {
 		err := errors.New("shared-host credential isolation requires the Linux filesystem jail")
-		s.SetTaskError(t.ID, err.Error())
 		return err
 	}
 	if options.SharedHost {
 		_, canonical, err := sharedHostFilesystemRules(cfg, options.AllowedPaths)
 		if err != nil {
-			s.SetTaskError(t.ID, err.Error())
 			return err
 		}
 		options.AllowedPaths = canonical
@@ -370,31 +395,29 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 
 	pr, err := builder.Build(ctx, t.ID)
 	if err != nil {
-		s.SetTaskError(t.ID, err.Error())
 		return fmt.Errorf("build prompt: %w", err)
 	}
 	if err := s.SetTaskResolved(t.ID, pr.Agent, pr.Isolation); err != nil {
-		s.SetTaskError(t.ID, err.Error())
 		return fmt.Errorf("record resolved task: %w", err)
 	}
 	t.Agent = pr.Agent
 	t.Isolation = pr.Isolation
 
 	promptDetail := pr.Prompt
-	s.AppendLog(t.ID, "prompt_built", &promptDetail)
+	if err := s.AppendLog(t.ID, "prompt_built", &promptDetail); err != nil {
+		return fmt.Errorf("record built prompt: %w", err)
+	}
 
 	// Use the agent resolved by the builder (respects CLI flag > skill > config)
 	agentName := pr.Agent
 	a, ok := agents[agentName]
 	if !ok {
 		err := fmt.Errorf("unsupported agent %q", agentName)
-		s.SetTaskError(t.ID, err.Error())
 		return err
 	}
 	agentDefinition, ok := agent.LookupDefinition(agentName)
 	if !ok {
 		err := fmt.Errorf("unsupported agent %q", agentName)
-		s.SetTaskError(t.ID, err.Error())
 		return err
 	}
 
@@ -403,7 +426,6 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	if workDir == "" {
 		workDir, err = os.Getwd()
 		if err != nil {
-			s.SetTaskError(t.ID, err.Error())
 			return fmt.Errorf("resolve working directory: %w", err)
 		}
 	}
@@ -412,14 +434,12 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		if statErr == nil {
 			statErr = fmt.Errorf("not a directory")
 		}
-		s.SetTaskError(t.ID, statErr.Error())
 		return fmt.Errorf("working directory %q: %w", workDir, statErr)
 	}
 	if options.SharedHost {
 		canonicalWorkDir := canonicalSessionPath(workDir)
 		if len(options.AllowedPaths) == 0 || !isUnderPaths(canonicalWorkDir, options.AllowedPaths) {
 			err := fmt.Errorf("working directory %q is outside this user's roost paths", workDir)
-			s.SetTaskError(t.ID, err.Error())
 			return err
 		}
 		workDir = canonicalWorkDir
@@ -434,7 +454,6 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		var configErr error
 		resolvedEggCfg, configErr = taskEggConfig(t, workDir)
 		if configErr != nil {
-			s.SetTaskError(t.ID, configErr.Error())
 			return configErr
 		}
 	}
@@ -455,19 +474,16 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	// the agent's default isolation is configured.
 	if options.SharedHost && pr.Isolation == "privileged" {
 		msg := "privileged isolation is not available on a shared host"
-		s.SetTaskError(t.ID, msg)
 		return errors.New(msg)
 	}
 	if pr.Isolation == "privileged" {
 		home, _ := os.UserHomeDir()
 		policy, policyErr := egg.ResolvePolicyWithProvider(resolvedEggCfg, agentName, home, os.Getenv("WT_PROVIDER_BASE_URL"))
 		if policyErr != nil {
-			s.SetTaskError(t.ID, policyErr.Error())
 			return fmt.Errorf("resolve unconfined network policy: %w", policyErr)
 		}
 		detail, auditErr := appendNetworkEnforcementAudit(s, t.ID, "unconfined_egress", "outer-boundary", policy.NetworkNeed, policy.Domains, policy.LocalPorts)
 		if auditErr != nil {
-			s.SetTaskError(t.ID, auditErr.Error())
 			return fmt.Errorf("record unconfined egress audit: %w", auditErr)
 		}
 		log.Printf("SECURITY: task %s is unsandboxed; %s", t.ID, detail)
@@ -479,7 +495,6 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			var homeErr error
 			home, homeErr = os.UserHomeDir()
 			if homeErr != nil {
-				s.SetTaskError(t.ID, homeErr.Error())
 				return fmt.Errorf("resolve user home: %w", homeErr)
 			}
 		}
@@ -493,56 +508,57 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			stateErr = prepareDirectAgentState(agentName, home)
 		}
 		if stateErr != nil {
-			s.SetTaskError(t.ID, stateErr.Error())
 			return fmt.Errorf("prepare %s state: %w", agentName, stateErr)
 		}
 		if options.SharedHost {
 			agentBin, lookupErr := exec.LookPath(agentDefinition.Command)
 			if lookupErr != nil {
-				s.SetTaskError(t.ID, lookupErr.Error())
 				return fmt.Errorf("find shared-host %s runtime: %w", agentDefinition.Command, lookupErr)
 			}
 			if installErr := installSharedAgentBinary(agentBin, home, agentDefinition.Command); installErr != nil {
-				s.SetTaskError(t.ID, installErr.Error())
 				return fmt.Errorf("prepare shared-host %s runtime: %w", agentName, installErr)
 			}
 			// Shared-host tasks intentionally drop ambient provider credentials.
 			// Give Claude the same file-backed helper used by interactive org
 			// sessions so the secret never enters the agent environment.
-			setupAPIKeyHelper(agentName, map[string]string{}, home)
+			if err := setupAPIKeyHelper(agentName, map[string]string{}, home); err != nil {
+				return fmt.Errorf("prepare shared-host credential helper: %w", err)
+			}
 		}
 
 		mountPaths := taskSandboxMountPaths(pr.Mounts, workDir, options)
 		sbCfg, policyErr := directAgentSandboxConfigForTask(resolvedEggCfg, agentName, pr.Isolation, home, workDir, mountPaths, options.SharedHost)
 		if policyErr != nil {
-			s.SetTaskError(t.ID, policyErr.Error())
 			return fmt.Errorf("resolve sandbox network policy: %w", policyErr)
 		}
 		sbCfg.SessionID = t.ID
-		domainProxy, proxyErr := sandbox.StartPolicyProxy(sbCfg.NetworkNeed, sbCfg.Domains)
+		domainProxy, proxyErr := sandbox.StartPolicyProxyWithMode(sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.NetworkMode)
 		if proxyErr != nil {
 			detail := proxyErr.Error()
-			s.AppendLog(t.ID, "domain_proxy_unavailable", &detail)
-			s.SetTaskError(t.ID, detail)
+			if err := s.AppendLog(t.ID, "domain_proxy_unavailable", &detail); err != nil {
+				return errors.Join(fmt.Errorf("start enforcing network proxy: %w", proxyErr), fmt.Errorf("record proxy failure: %w", err))
+			}
 			return fmt.Errorf("start enforcing network proxy: %w", proxyErr)
 		}
 		if domainProxy != nil {
 			defer domainProxy.Close()
 			sbCfg.ProxyPort = domainProxy.Port()
 		}
-		detail, auditErr := appendNetworkEnforcementAudit(s, t.ID, "sandbox_enforcement", explainEnforcement(sbCfg.NetworkNeed, runtime.GOOS), sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.LocalPorts)
+		detail, auditErr := appendNetworkEnforcementAudit(s, t.ID, "sandbox_enforcement", explainEnforcement(sbCfg.NetworkNeed, runtime.GOOS, sbCfg.NetworkMode), sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.LocalPorts)
 		if auditErr != nil {
-			s.SetTaskError(t.ID, auditErr.Error())
 			return fmt.Errorf("record sandbox enforcement audit: %w", auditErr)
 		}
 		log.Printf("task %s sandbox: %s", t.ID, detail)
 
 		sb, sbErr := sandbox.New(sbCfg)
 		if sbErr != nil {
-			s.SetTaskError(t.ID, sbErr.Error())
 			return fmt.Errorf("create sandbox: %w", sbErr)
 		}
-		defer sb.Destroy()
+		defer func() {
+			if err := sb.Destroy(); err != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("destroy sandbox: %w", err))
+			}
+		}()
 		sandboxDiagnosticPath = sb.DiagLog()
 		agentEnv := directAgentEnvWithPolicy(agentName, home, sbCfg.ProxyPort, !options.SharedHost)
 		runOpts.CmdFactory = func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
@@ -571,7 +587,6 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 	stream, err := a.Run(runCtx, pr.Prompt, runOpts)
 	if err != nil {
-		s.SetTaskError(t.ID, err.Error())
 		return fmt.Errorf("run agent: %w", err)
 	}
 
@@ -581,42 +596,56 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		if !ok {
 			break
 		}
-		fmt.Fprint(destination, chunk.Text)
+		if _, err := fmt.Fprint(destination, chunk.Text); err != nil {
+			return fmt.Errorf("write agent output: %w", err)
+		}
 	}
-	fmt.Fprintln(destination)
+	if _, err := fmt.Fprintln(destination); err != nil {
+		return fmt.Errorf("finish agent output: %w", err)
+	}
 
 	if err := stream.Err(); err != nil {
 		diagnostics := mergeAgentFailureDiagnostics(err, readSandboxDiagnostics(sandboxDiagnosticPath))
-		_ = s.SetTaskOutput(t.ID, mergeAgentFailureOutput(stream.Text(), diagnostics))
-		s.SetTaskError(t.ID, err.Error())
+		if outputErr := s.SetTaskOutput(t.ID, mergeAgentFailureOutput(stream.Text(), diagnostics)); outputErr != nil {
+			return errors.Join(fmt.Errorf("agent error: %w", err), fmt.Errorf("record failed agent output: %w", outputErr))
+		}
 		if diagnostics != "" {
-			fmt.Fprintln(destination, diagnostics)
+			if _, writeErr := fmt.Fprintln(destination, diagnostics); writeErr != nil {
+				return errors.Join(fmt.Errorf("agent error: %w", err), fmt.Errorf("write agent diagnostics: %w", writeErr))
+			}
 		}
 		return fmt.Errorf("agent error: %w", err)
 	}
 	if err := runCtx.Err(); err != nil {
-		s.SetTaskError(t.ID, err.Error())
 		return fmt.Errorf("agent run ended after cancellation: %w", err)
 	}
 
 	// Store result
 	output := stream.Text()
-	s.SetTaskOutput(t.ID, output)
-	s.UpdateTaskStatus(t.ID, "done")
-	s.AppendLog(t.ID, "done", nil)
+	if err := s.SetTaskOutput(t.ID, output); err != nil {
+		return fmt.Errorf("record task output: %w", err)
+	}
+	if err := s.UpdateTaskStatus(t.ID, "done"); err != nil {
+		return fmt.Errorf("mark task done: %w", err)
+	}
+	if err := s.AppendLog(t.ID, "done", nil); err != nil {
+		return fmt.Errorf("record task completion: %w", err)
+	}
 
 	// Record tokens in thread
 	inputTok, outputTok := stream.Tokens()
 	totalTok := inputTok + outputTok
 	if totalTok > 0 {
-		s.AppendThread(&store.ThreadEntry{
+		if err := s.AppendThread(&store.ThreadEntry{
 			TaskID:     &t.ID,
 			WingID:     cfg.WingID,
 			Agent:      &agentName,
 			UserInput:  &t.What,
 			Summary:    truncate(output, 200),
 			TokensUsed: &totalTok,
-		})
+		}); err != nil {
+			return fmt.Errorf("record task thread entry: %w", err)
+		}
 	}
 
 	return nil
@@ -701,7 +730,7 @@ func timelineCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer s.Close()
+			defer closeWithLog("store", s)
 
 			tasks, err := s.ListRecent(20)
 			if err != nil {
@@ -712,16 +741,19 @@ func timelineCmd() *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tSTATUS\tAGENT\tWHAT\tRUN AT")
+			if _, err := fmt.Fprintln(w, "ID\tSTATUS\tAGENT\tWHAT\tRUN AT"); err != nil {
+				return err
+			}
 			for _, t := range tasks {
 				what := t.What
 				if len(what) > 50 {
 					what = what[:47] + "..."
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, t.Agent, what, t.RunAt.Format(time.RFC3339))
+				if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, t.Agent, what, t.RunAt.Format(time.RFC3339)); err != nil {
+					return err
+				}
 			}
-			w.Flush()
-			return nil
+			return w.Flush()
 		},
 	}
 }
@@ -740,7 +772,7 @@ func threadCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer s.Close()
+			defer closeWithLog("store", s)
 
 			date := time.Now().UTC()
 			if yesterday {
@@ -775,20 +807,33 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer s.Close()
+			defer closeWithLog("store", s)
 
 			var pending, running int
-			s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'pending'").Scan(&pending)
-			s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'running'").Scan(&running)
-			agents, _ := s.ListAgents()
+			if err := s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'pending'").Scan(&pending); err != nil {
+				return fmt.Errorf("count pending tasks: %w", err)
+			}
+			if err := s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'running'").Scan(&running); err != nil {
+				return fmt.Errorf("count running tasks: %w", err)
+			}
+			agents, err := s.ListAgents()
+			if err != nil {
+				return fmt.Errorf("list agents: %w", err)
+			}
 
 			now := time.Now().UTC()
 			todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 			weekStart := todayStart.AddDate(0, 0, -6)
 			tomorrow := todayStart.AddDate(0, 0, 1)
 
-			tokensToday, _ := s.SumTokensByDateRange(todayStart, tomorrow)
-			tokensWeek, _ := s.SumTokensByDateRange(weekStart, tomorrow)
+			tokensToday, err := s.SumTokensByDateRange(todayStart, tomorrow)
+			if err != nil {
+				return fmt.Errorf("sum today's tokens: %w", err)
+			}
+			tokensWeek, err := s.SumTokensByDateRange(weekStart, tomorrow)
+			if err != nil {
+				return fmt.Errorf("sum weekly tokens: %w", err)
+			}
 
 			fmt.Printf("pending: %d\nrunning: %d\nagents:  %d\ntokens:  %d today / %d this week\n", pending, running, len(agents), tokensToday, tokensWeek)
 			return nil
@@ -812,7 +857,7 @@ func logCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer s.Close()
+			defer closeWithLog("store", s)
 
 			taskID := ""
 			if len(args) > 0 {
@@ -874,7 +919,7 @@ func agentCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer s.Close()
+			defer closeWithLog("store", s)
 
 			agents, err := s.ListAgents()
 			if err != nil {
@@ -885,16 +930,19 @@ func agentCmd() *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tADAPTER\tHEALTHY\tCONTEXT")
+			if _, err := fmt.Fprintln(w, "NAME\tADAPTER\tHEALTHY\tCONTEXT"); err != nil {
+				return err
+			}
 			for _, a := range agents {
 				healthy := "no"
 				if a.Healthy {
 					healthy = "yes"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", a.Name, a.Adapter, healthy, a.ContextWindow)
+				if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", a.Name, a.Adapter, healthy, a.ContextWindow); err != nil {
+					return err
+				}
 			}
-			w.Flush()
-			return nil
+			return w.Flush()
 		},
 	})
 	return ag
@@ -917,7 +965,7 @@ func scheduleCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer s.Close()
+			defer closeWithLog("store", s)
 
 			tasks, err := s.ListRecurring()
 			if err != nil {
@@ -928,7 +976,9 @@ func scheduleCmd() *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tSTATUS\tCRON\tWHAT\tNEXT RUN")
+			if _, err := fmt.Fprintln(w, "ID\tSTATUS\tCRON\tWHAT\tNEXT RUN"); err != nil {
+				return err
+			}
 			for _, t := range tasks {
 				what := t.What
 				if len(what) > 40 {
@@ -938,10 +988,11 @@ func scheduleCmd() *cobra.Command {
 				if t.Cron != nil {
 					cronExpr = *t.Cron
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, cronExpr, what, t.RunAt.Format(time.RFC3339))
+				if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Status, cronExpr, what, t.RunAt.Format(time.RFC3339)); err != nil {
+					return err
+				}
 			}
-			w.Flush()
-			return nil
+			return w.Flush()
 		},
 	})
 	sc.AddCommand(&cobra.Command{
@@ -957,7 +1008,7 @@ func scheduleCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer s.Close()
+			defer closeWithLog("store", s)
 
 			t, err := s.GetTask(args[0])
 			if err != nil {
@@ -990,7 +1041,7 @@ func retryCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer s.Close()
+			defer closeWithLog("store", s)
 
 			t, err := s.GetTask(args[0])
 			if err != nil {
@@ -1051,14 +1102,22 @@ func initCmd() *cobra.Command {
 
 			// Seed index.md
 			indexPath := filepath.Join(cfg.MemoryDir(), "index.md")
-			if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-				os.WriteFile(indexPath, []byte("# Memory Index\n\nThis file is always loaded into every prompt.\n"), 0644)
+			if _, err := os.Stat(indexPath); errors.Is(err, os.ErrNotExist) {
+				if err := os.WriteFile(indexPath, []byte("# Memory Index\n\nThis file is always loaded into every prompt.\n"), 0644); err != nil {
+					return fmt.Errorf("seed memory index: %w", err)
+				}
+			} else if err != nil {
+				return fmt.Errorf("inspect memory index: %w", err)
 			}
 
 			// Seed identity.md
 			idPath := filepath.Join(cfg.MemoryDir(), "identity.md")
-			if _, err := os.Stat(idPath); os.IsNotExist(err) {
-				os.WriteFile(idPath, []byte("---\nname: \"\"\n---\n# Identity\n\nEdit this file with your name, role, and preferences.\n"), 0644)
+			if _, err := os.Stat(idPath); errors.Is(err, os.ErrNotExist) {
+				if err := os.WriteFile(idPath, []byte("---\nname: \"\"\n---\n# Identity\n\nEdit this file with your name, role, and preferences.\n"), 0644); err != nil {
+					return fmt.Errorf("seed identity: %w", err)
+				}
+			} else if err != nil {
+				return fmt.Errorf("inspect identity: %w", err)
 			}
 
 			// Init database
@@ -1066,7 +1125,9 @@ func initCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("init db: %w", err)
 			}
-			s.Close()
+			if err := s.Close(); err != nil {
+				return fmt.Errorf("close initialized database: %w", err)
+			}
 
 			// Detect agents
 			fmt.Println("initialized:", cfg.Dir)
@@ -1106,9 +1167,16 @@ func loginCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if ts.IsValid(existing) {
+			reusable, err := reusableLoginForTarget(ts, existing, roostFlag, auth.ValidateTokenRemote)
+			if err != nil {
+				return err
+			}
+			if reusable {
 				fmt.Println("already logged in")
 				return nil
+			}
+			if ts.IsValid(existing) && roostFlag != "" {
+				fmt.Println("existing login is not accepted by the requested roost; starting a new device login")
 			}
 
 			if cfg.RoostURL == "" {
@@ -1128,12 +1196,16 @@ func loginCmd() *cobra.Command {
 
 			fmt.Printf("Visit: %s\n", dcr.VerificationURL)
 
-			// Try to open browser, fail silently
+			// Opening the browser is a convenience; the printed URL remains usable.
 			switch runtime.GOOS {
 			case "darwin":
-				exec.Command("open", dcr.VerificationURL).Start()
+				if err := exec.Command("open", dcr.VerificationURL).Start(); err != nil {
+					log.Printf("open login URL: %v", err)
+				}
 			case "linux":
-				exec.Command("xdg-open", dcr.VerificationURL).Start()
+				if err := exec.Command("xdg-open", dcr.VerificationURL).Start(); err != nil {
+					log.Printf("open login URL: %v", err)
+				}
 			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -1173,6 +1245,23 @@ func loginCmd() *cobra.Command {
 	return cmd
 }
 
+func reusableLoginForTarget(store *auth.TokenStore, existing *auth.DeviceToken, explicitTarget string, validate func(string, string) error) (bool, error) {
+	if !store.IsValid(existing) {
+		return false, nil
+	}
+	if explicitTarget == "" {
+		return true, nil
+	}
+	target := strings.TrimRight(explicitTarget, "/")
+	if err := validate(target, existing.Token); err != nil {
+		if errors.Is(err, auth.ErrAuthFailed) {
+			return false, nil
+		}
+		return false, fmt.Errorf("verify existing login with requested roost: %w", err)
+	}
+	return true, nil
+}
+
 func logoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
@@ -1183,23 +1272,21 @@ func logoutCmd() *cobra.Command {
 				return err
 			}
 
+			lifecycleLock, lockErr := acquireDaemonLifecycleLock()
+			if lockErr != nil {
+				return lockErr
+			}
+			defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+
 			// Stop wing daemon if running (prevents orphaned daemon with revoked token)
-			if pid, pidErr := readPid(); pidErr == nil {
+			if pid, kind, pidErr := readDaemon(); pidErr == nil {
 				fmt.Printf("stopping wing daemon (pid %d)...\n", pid)
-				if proc, findErr := os.FindProcess(pid); findErr == nil {
-					proc.Signal(syscall.SIGTERM)
-					// Wait briefly for clean shutdown before deleting token
-					for i := 0; i < 10; i++ {
-						time.Sleep(200 * time.Millisecond)
-						if !ownedProcessIsAlive(pid) {
-							break // process exited
-						}
-					}
+				if stopErr := stopDaemonAndWait(pid, kind, 5*time.Second); stopErr != nil {
+					return fmt.Errorf("refusing to delete login while daemon is still running: %w", stopErr)
 				}
-				os.Remove(wingPidPath())
-				os.Remove(wingArgsPath())
-				os.Remove(roostPidPath())
-				os.Remove(roostArgsPath())
+				if err := removeFiles(wingPidPath(), wingArgsPath(), roostPidPath(), roostArgsPath()); err != nil {
+					return fmt.Errorf("remove stopped daemon metadata: %w", err)
+				}
 			}
 
 			ts := auth.NewTokenStore(cfg.Dir)
@@ -1216,9 +1303,18 @@ func logoutCmd() *cobra.Command {
 // restartWingDaemonIfRunning stops the running wing daemon and starts a new one
 // with the same args so it picks up the new auth token.
 func restartWingDaemonIfRunning() error {
-	pid, err := readPid()
+	lifecycleLock, lockErr := acquireDaemonLifecycleLock()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+
+	pid, err := readPidFrom(wingPidPath(), wingDaemon)
 	if err != nil {
-		return nil // no daemon running, nothing to do
+		if daemonAbsentError(err) {
+			return nil // no standalone wing daemon running, nothing to do
+		}
+		return fmt.Errorf("inspect wing daemon state: %w", err)
 	}
 
 	// Read saved args so we can restart with same flags
@@ -1226,22 +1322,19 @@ func restartWingDaemonIfRunning() error {
 	if err != nil {
 		return fmt.Errorf("can't read wing.args (stop and restart manually: wt stop && wt start): %w", err)
 	}
-	savedArgs := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+	savedArgs, err := parseSavedDaemonArgs(argsData, wingDaemon)
+	if err != nil {
+		return fmt.Errorf("can't use wing.args (stop and restart manually: wt stop && wt start): %w", err)
+	}
 
 	// Stop the old daemon
 	fmt.Printf("restarting wing daemon (pid %d)...\n", pid)
-	if proc, findErr := os.FindProcess(pid); findErr == nil {
-		proc.Signal(syscall.SIGTERM)
-		for i := 0; i < 15; i++ {
-			time.Sleep(200 * time.Millisecond)
-			if !ownedProcessIsAlive(pid) {
-				break
-			}
-		}
+	if err := stopDaemonAndWait(pid, wingDaemon, 5*time.Second); err != nil {
+		return fmt.Errorf("refusing to start a competing daemon: %w", err)
 	}
-	os.Remove(wingPidPath())
-	os.Remove(wingArgsPath())
-	os.Remove(wingStatusPath())
+	if err := removeFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+		return fmt.Errorf("remove stopped daemon metadata: %w", err)
+	}
 
 	// Start new daemon with same args
 	exe, err := os.Executable()
@@ -1249,13 +1342,19 @@ func restartWingDaemonIfRunning() error {
 		return fmt.Errorf("find executable: %w", err)
 	}
 
-	rotateLog(wingLogPath())
+	if err := rotateLog(wingLogPath()); err != nil {
+		return err
+	}
 	logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return fmt.Errorf("open log: %w", err)
 	}
 
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		closeWithLog("wing log", logFile)
+		return fmt.Errorf("resolve user home: %w", err)
+	}
 	child := exec.Command(exe, savedArgs...)
 	child.Dir = home
 	child.Stdout = logFile
@@ -1263,13 +1362,15 @@ func restartWingDaemonIfRunning() error {
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := child.Start(); err != nil {
-		logFile.Close()
+		closeWithLog("wing log", logFile)
 		return fmt.Errorf("start daemon: %w", err)
 	}
-	logFile.Close()
+	closeWithLog("wing log", logFile)
 
-	os.WriteFile(wingPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644)
-	os.WriteFile(wingArgsPath(), argsData, 0644)
+	if err := writeDaemonMetadata(wingPidPath(), wingArgsPath(), child.Process.Pid, savedArgs); err != nil {
+		abandonStartedDaemon(child)
+		return fmt.Errorf("restart daemon: %w", err)
+	}
 
 	result := waitForWingStatus(child.Process.Pid, 5*time.Second)
 	switch result {
@@ -1277,10 +1378,17 @@ func restartWingDaemonIfRunning() error {
 		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
 		fmt.Printf("  relay: connected\n")
 	case "auth_failed":
-		fmt.Printf("wing daemon restarted but auth failed — run: wt logout && wt login\n")
+		abandonStartedDaemon(child)
+		if err := removeFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+			return errors.Join(fmt.Errorf("wing daemon restarted but auth failed — run: wt logout && wt login"), fmt.Errorf("remove failed daemon metadata: %w", err))
+		}
+		return fmt.Errorf("wing daemon restarted but auth failed — run: wt logout && wt login")
 	default:
 		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
 		fmt.Printf("  relay: connecting...\n")
+	}
+	if err := child.Process.Release(); err != nil {
+		log.Printf("warning: failed to release restarted daemon process handle: %v", err)
 	}
 	return nil
 }
@@ -1296,14 +1404,116 @@ func resolveRelayHTTPURL(cfg *config.Config) string {
 	if relayURL == "" {
 		relayURL = "https://ws.wingthing.ai"
 	}
+	return normalizeRelayHTTPURL(relayURL)
+}
+
+// normalizeRelayHTTPURL converts a wing/coordinator URL to an HTTP base URL.
+func normalizeRelayHTTPURL(relayURL string) string {
+	if relayURL == "" {
+		return ""
+	}
 	relayURL = strings.TrimRight(relayURL, "/")
 	relayURL = strings.Replace(relayURL, "wss://", "https://", 1)
 	relayURL = strings.Replace(relayURL, "ws://", "http://", 1)
-	// Ensure we have a scheme — bare hostnames break http.Client
 	if !strings.HasPrefix(relayURL, "http://") && !strings.HasPrefix(relayURL, "https://") {
 		relayURL = "https://" + relayURL
 	}
 	return relayURL
+}
+
+// relayMetadataURL removes URL components that must not be persisted or copied
+// into support bundles. Coordinator API routing can retain a path prefix, but
+// userinfo, queries, and fragments are never part of the coordinator identity.
+func relayMetadataURL(relayURL string) string {
+	normalized := normalizeRelayHTTPURL(relayURL)
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed.Hostname() == "" {
+		return ""
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/")
+}
+
+// resolveWingRelayHTTPURL mirrors the daemon's precedence: explicit flag,
+// wing.yaml, local default, config.yaml, then the hosted coordinator.
+func resolveWingRelayHTTPURL(cfg *config.Config, explicit string, local bool) string {
+	relayURL := explicit
+	if relayURL == "" && cfg != nil {
+		if wingCfg, err := config.LoadWingConfig(cfg.Dir); err == nil {
+			relayURL = wingCfg.Roost
+		}
+	}
+	if relayURL == "" && local {
+		relayURL = "http://localhost:8080"
+	}
+	if relayURL == "" && cfg != nil {
+		relayURL = cfg.RoostURL
+	}
+	if relayURL == "" {
+		relayURL = "https://ws.wingthing.ai"
+	}
+	return normalizeRelayHTTPURL(relayURL)
+}
+
+// roostBrowserURL returns the UI served by the selected coordinator. The
+// public service has split ws/app hosts; a self-hosted roost serves its app at
+// /app/ on the same origin.
+func roostBrowserURL(roostURL string) string {
+	httpURL := normalizeRelayHTTPURL(roostURL)
+	parsed, err := url.Parse(httpURL)
+	if err != nil || parsed.Hostname() == "" {
+		return httpURL
+	}
+	// The browser destination is display output. Never echo URL credentials,
+	// even if a caller supplied a credentialed coordinator URL.
+	parsed.User = nil
+	switch strings.ToLower(parsed.Hostname()) {
+	case "ws.wingthing.ai", "wingthing.ai", "app.wingthing.ai":
+		parsed.Scheme = "https"
+		parsed.Host = "app.wingthing.ai"
+		parsed.Path = "/"
+	default:
+		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/app/"
+	}
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func wingRoostFlags(args []string) (roost string, local bool) {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--local":
+			local = true
+		case arg == "--roost" && index+1 < len(args):
+			index++
+			roost = args[index]
+		case strings.HasPrefix(arg, "--roost="):
+			roost = strings.TrimPrefix(arg, "--roost=")
+		}
+	}
+	return roost, local
+}
+
+// activeWingRelayHTTPURL uses the exact coordinator recorded by a new daemon,
+// then falls back to saved launch args for an already-running older daemon.
+func activeWingRelayHTTPURL(cfg *config.Config, status *wingStatus) string {
+	if status != nil && status.RoostURL != "" {
+		if relayURL := relayMetadataURL(status.RoostURL); relayURL != "" {
+			return relayURL
+		}
+	}
+	if data, err := os.ReadFile(wingArgsPath()); err == nil {
+		if args, parseErr := parseSavedDaemonArgs(data, wingDaemon); parseErr == nil {
+			roost, local := wingRoostFlags(args)
+			return resolveWingRelayHTTPURL(cfg, roost, local)
+		}
+	}
+	return resolveWingRelayHTTPURL(cfg, "", false)
 }
 
 // formatUserIdentity formats a user identity string from auth.UserInfo.
@@ -1363,7 +1573,7 @@ func supportCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "support",
 		Short: "Collect diagnostic bundle for troubleshooting",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -1375,9 +1585,17 @@ func supportCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("create zip: %w", err)
 			}
-			defer f.Close()
+			defer func() {
+				if err := f.Close(); err != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("close support bundle: %w", err))
+				}
+			}()
 			zw := zip.NewWriter(f)
-			defer zw.Close()
+			defer func() {
+				if err := zw.Close(); err != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("finalize support bundle: %w", err))
+				}
+			}()
 
 			// meta.json
 			hostname, _ := os.Hostname()
@@ -1396,70 +1614,96 @@ func supportCmd() *cobra.Command {
 				meta["token_expires_at"] = tok.ExpiresAt
 				meta["token_device_id"] = tok.DeviceID
 			}
-			if s, sErr := readWingStatus(); sErr == nil {
-				meta["wing_status"] = s.State
-				if s.Error != "" {
-					meta["wing_status_error"] = s.Error
+			var currentWingStatus *wingStatus
+			if status, statusErr := readWingStatus(); statusErr == nil {
+				currentWingStatus = status
+				meta["wing_status"] = status.State
+				if roostURL := relayMetadataURL(status.RoostURL); roostURL != "" {
+					meta["wing_status_roost"] = roostURL
+				}
+				if status.Error != "" {
+					meta["wing_status_error"] = status.Error
 				}
 			}
 			// Try whoami
 			if tok != nil {
-				relayURL := resolveRelayHTTPURL(cfg)
+				relayURL := activeWingRelayHTTPURL(cfg, currentWingStatus)
 				if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
 					meta["account"] = formatUserIdentity(info)
 				} else {
 					meta["account_error"] = infoErr.Error()
 				}
 			}
-			metaJSON, _ := json.MarshalIndent(meta, "", "  ")
-			addZipFile(zw, "meta.json", metaJSON)
+			metaJSON, err := json.MarshalIndent(meta, "", "  ")
+			if err != nil {
+				return fmt.Errorf("encode support metadata: %w", err)
+			}
+			if err := addZipFile(zw, "meta.json", metaJSON); err != nil {
+				return err
+			}
 
 			// wing.log (last 10000 lines)
-			addZipTail(zw, "wing.log", wingLogPath(), 10000)
+			if err := addZipTail(zw, "wing.log", wingLogPath(), 10000); err != nil {
+				return err
+			}
 
 			// egg.log (last 1000 lines)
-			addZipTail(zw, "egg.log", filepath.Join(cfg.Dir, "egg.log"), 1000)
+			if err := addZipTail(zw, "egg.log", filepath.Join(cfg.Dir, "egg.log"), 1000); err != nil {
+				return err
+			}
 
 			// Session logs (preserved from ~/.wingthing/logs/)
 			logsDir := filepath.Join(cfg.Dir, "logs")
 			if logEntries, logErr := os.ReadDir(logsDir); logErr == nil {
 				for _, e := range logEntries {
-					addZipTail(zw, "logs/"+e.Name(), filepath.Join(logsDir, e.Name()), 500)
+					if err := addZipTail(zw, "logs/"+e.Name(), filepath.Join(logsDir, e.Name()), 500); err != nil {
+						return err
+					}
 				}
 			}
 
 			// wing.yaml (redact secrets)
-			addZipRedacted(zw, "wing.yaml", filepath.Join(cfg.Dir, "wing.yaml"),
-				[]string{"jwt_key:", "allow_keys:", "- public_key:"})
+			if err := addZipRedacted(zw, "wing.yaml", filepath.Join(cfg.Dir, "wing.yaml"),
+				[]string{"jwt_key:", "allow_keys:", "- public_key:"}); err != nil {
+				return err
+			}
 
 			// wing.status
-			addZipCopy(zw, "wing.status", wingStatusPath())
+			if err := addZipCopy(zw, "wing.status", wingStatusPath()); err != nil {
+				return err
+			}
 
 			// doctor output
 			if doctorOut, doctorErr := exec.Command(os.Args[0], "doctor").CombinedOutput(); doctorErr == nil {
-				addZipFile(zw, "doctor.txt", doctorOut)
+				if err := addZipFile(zw, "doctor.txt", doctorOut); err != nil {
+					return err
+				}
 			}
 
-			zw.Close()
-			f.Close()
 			fmt.Printf("diagnostic bundle: %s\n", zipPath)
 			return nil
 		},
 	}
 }
 
-func addZipFile(zw *zip.Writer, name string, data []byte) {
+func addZipFile(zw *zip.Writer, name string, data []byte) error {
 	w, err := zw.Create(name)
 	if err != nil {
-		return
+		return fmt.Errorf("create support bundle entry %s: %w", name, err)
 	}
-	w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		return fmt.Errorf("write support bundle entry %s: %w", name, err)
+	}
+	return nil
 }
 
-func addZipRedacted(zw *zip.Writer, name, srcPath string, redactPrefixes []string) {
+func addZipRedacted(zw *zip.Writer, name, srcPath string, redactPrefixes []string) error {
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
-		return
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read support source %s: %w", srcPath, err)
 	}
 	var out []string
 	for _, line := range strings.Split(string(data), "\n") {
@@ -1476,23 +1720,29 @@ func addZipRedacted(zw *zip.Writer, name, srcPath string, redactPrefixes []strin
 			out = append(out, line)
 		}
 	}
-	addZipFile(zw, name, []byte(strings.Join(out, "\n")))
+	return addZipFile(zw, name, []byte(strings.Join(out, "\n")))
 }
 
-func addZipCopy(zw *zip.Writer, name, srcPath string) {
+func addZipCopy(zw *zip.Writer, name, srcPath string) error {
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
-		return
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read support source %s: %w", srcPath, err)
 	}
-	addZipFile(zw, name, data)
+	return addZipFile(zw, name, data)
 }
 
-func addZipTail(zw *zip.Writer, name, srcPath string, maxLines int) {
+func addZipTail(zw *zip.Writer, name, srcPath string, maxLines int) error {
 	f, err := os.Open(srcPath)
 	if err != nil {
-		return
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("open support source %s: %w", srcPath, err)
 	}
-	defer f.Close()
+	defer closeWithLog("support source", f)
 
 	var lines []string
 	scanner := bufio.NewScanner(f)
@@ -1503,12 +1753,18 @@ func addZipTail(zw *zip.Writer, name, srcPath string, maxLines int) {
 			lines = lines[1:]
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan support source %s: %w", srcPath, err)
+	}
 
 	w, err := zw.Create(name)
 	if err != nil {
-		return
+		return fmt.Errorf("create support bundle entry %s: %w", name, err)
 	}
 	for _, line := range lines {
-		io.WriteString(w, line+"\n")
+		if _, err := io.WriteString(w, line+"\n"); err != nil {
+			return fmt.Errorf("write support bundle entry %s: %w", name, err)
+		}
 	}
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
@@ -18,6 +19,10 @@ import (
 const (
 	defaultDirectMCPMaxSessions      = 8
 	defaultDirectMCPMaxSpawnsPerHour = 60
+	// Coordinator-derived organization identity is a lease, not a permanent
+	// capability. Closing direct channels periodically forces a new access check
+	// and signaling exchange without interrupting the durable agent itself.
+	directMCPIdentityLease = 15 * time.Minute
 )
 
 // Keep this list explicit: a new direct operation with a new grant must fail a
@@ -137,49 +142,49 @@ func resolveDirectMCPPolicy(wingCfg *config.WingConfig, home string, sharedHost 
 }
 
 func serveDirectMCPChannel(cfg *config.Config, wingCfg *config.WingConfig, home string, sharedHost bool, allowedKeys []config.AllowKey, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
+	serveDirectMCPChannelWithPolicySource(cfg, home, sharedHost, admission, identity, dc, func() (*config.WingConfig, []config.AllowKey) {
+		return wingCfg.Clone(), append([]config.AllowKey(nil), allowedKeys...)
+	})
+}
+
+func serveDirectMCPChannelWithPolicySource(cfg *config.Config, home string, sharedHost bool, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey)) {
+	serveDirectMCPChannelWithPolicySourceAndLease(cfg, home, sharedHost, admission, identity, dc, policySource, directMCPIdentityLease)
+}
+
+func serveDirectMCPChannelWithPolicySourceAndLease(cfg *config.Config, home string, sharedHost bool, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey), identityLease time.Duration) {
 	actor := strings.TrimPrefix(dc.Label(), control.DirectChannelPrefix)
-	if actor == dc.Label() || validateSessionName(actor) != nil || identity.UserID == "" {
+	if actor == dc.Label() || validateSessionName(actor) != nil || identity.UserID == "" || identityLease <= 0 {
 		log.Printf("[P2P] rejected direct MCP channel %q: invalid actor or identity", dc.Label())
 		_ = dc.Close()
 		return
 	}
-	policy, policyErr := resolveDirectMCPPolicy(wingCfg, home, sharedHost, identity)
-	server := &localMCPServer{
-		cfg: cfg, logs: os.Stderr,
-		principal:         roostSessionPrincipal(identity.UserID),
-		actor:             actor,
-		surface:           control.SurfaceDirectMCP,
-		grants:            policy.grants,
-		maxSessions:       policy.maxSessions,
-		maxSpawnsPerHour:  policy.maxSpawnsPerHour,
-		admission:         admission,
-		allowedPaths:      policy.allowedPaths,
-		enforcePathBounds: policy.enforcePathBounds,
-		identity:          policy.identity,
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	authorizationError := directMCPAuthorizationError(wingCfg, allowedKeys, identity.UserID)
-	if policyErr != nil {
-		authorizationError = policyErr.Error()
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), identityLease)
 	var sendMu sync.Mutex
+	requestSlots := make(chan struct{}, maxConcurrentDirectMCPRequests)
 	send := func(response control.DirectResponse) {
-		payload, err := json.Marshal(response)
-		if err != nil {
-			return
-		}
+		payload := marshalDirectMCPResponse(response)
 		sendMu.Lock()
-		err = dc.Send(payload)
+		err := dc.Send(payload)
 		sendMu.Unlock()
 		if err != nil {
 			log.Printf("[P2P] direct MCP response: %v", err)
 		}
 	}
 	dc.OnClose(cancel)
+	go func() {
+		<-ctx.Done()
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("[P2P] direct MCP identity lease expired for actor %q; reconnecting revalidates access", actor)
+			_ = dc.Close()
+		}
+	}()
 	dc.OnMessage(func(message pionwebrtc.DataChannelMessage) {
+		if ctx.Err() != nil {
+			return
+		}
 		// Keep the control plane bounded independently of SCTP implementation
 		// limits. Large terminal snapshots belong in a future stream protocol.
-		if len(message.Data) > 1024*1024 {
+		if len(message.Data) > maxDirectMCPEnvelopeBytes {
 			send(control.DirectResponse{Version: control.ContractVersion, Error: "request exceeds 1 MiB"})
 			return
 		}
@@ -188,8 +193,22 @@ func serveDirectMCPChannel(cfg *config.Config, wingCfg *config.WingConfig, home 
 			send(control.DirectResponse{Version: control.ContractVersion, Error: "invalid control request"})
 			return
 		}
+		if !acquireDirectMCPRequestSlot(requestSlots) {
+			send(control.DirectResponse{Version: control.ContractVersion, ID: request.ID, Error: "too many concurrent direct control requests"})
+			return
+		}
 		go func() {
+			defer func() { <-requestSlots }()
+			if ctx.Err() != nil {
+				return
+			}
 			response := control.DirectResponse{Version: control.ContractVersion, ID: request.ID}
+			wingCfg, allowedKeys := policySource()
+			policy, policyErr := resolveDirectMCPPolicy(wingCfg, home, sharedHost, identity)
+			authorizationError := directMCPAuthorizationError(wingCfg, allowedKeys, identity.UserID)
+			if policyErr != nil {
+				authorizationError = policyErr.Error()
+			}
 			if authorizationError != "" {
 				response.Error = authorizationError
 				send(response)
@@ -200,6 +219,19 @@ func serveDirectMCPChannel(cfg *config.Config, wingCfg *config.WingConfig, home 
 				response.Error = fmt.Sprintf("unsupported %s control operation %q", request.Version, request.Tool)
 				send(response)
 				return
+			}
+			server := &localMCPServer{
+				cfg: cfg, logs: os.Stderr,
+				principal:         roostSessionPrincipal(identity.UserID),
+				actor:             actor,
+				surface:           control.SurfaceDirectMCP,
+				grants:            policy.grants,
+				maxSessions:       policy.maxSessions,
+				maxSpawnsPerHour:  policy.maxSpawnsPerHour,
+				admission:         admission,
+				allowedPaths:      policy.allowedPaths,
+				enforcePathBounds: policy.enforcePathBounds,
+				identity:          policy.identity,
 			}
 			arguments := request.Arguments
 			if len(arguments) == 0 {
@@ -216,7 +248,42 @@ func serveDirectMCPChannel(cfg *config.Config, wingCfg *config.WingConfig, home 
 	})
 }
 
+const (
+	maxConcurrentDirectMCPRequests = 32
+	maxDirectMCPEnvelopeBytes      = 1024 * 1024
+)
+
+func marshalDirectMCPResponse(response control.DirectResponse) []byte {
+	payload, err := json.Marshal(response)
+	if err == nil && len(payload) <= maxDirectMCPEnvelopeBytes {
+		return payload
+	}
+	message := "response exceeds 1 MiB"
+	if err != nil {
+		message = "response could not be encoded"
+	}
+	fallback, _ := json.Marshal(control.DirectResponse{
+		Version: control.ContractVersion,
+		ID:      response.ID,
+		IsError: true,
+		Error:   message,
+	})
+	return fallback
+}
+
+func acquireDirectMCPRequestSlot(slots chan struct{}) bool {
+	select {
+	case slots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
 func directMCPAuthorizationError(wingCfg *config.WingConfig, allowedKeys []config.AllowKey, userID string) string {
+	if wingCfg == nil {
+		return "wing policy is unavailable"
+	}
 	protectedUser := len(passkeysForSubject(allowedKeys, userID)) > 0
 	if wingCfg.Locked && !protectedUser {
 		return "direct MCP access denied by this wing's local lock policy"

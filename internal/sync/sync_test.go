@@ -16,13 +16,23 @@ func TestBuildManifest(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create some .md files
-	os.WriteFile(filepath.Join(dir, "identity.md"), []byte("# Identity\nI am a test."), 0o644)
-	os.WriteFile(filepath.Join(dir, "goals.md"), []byte("# Goals\nShip stuff."), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "identity.md"), []byte("# Identity\nI am a test."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "goals.md"), []byte("# Goals\nShip stuff."), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// Non-md file should be ignored
-	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignored"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignored"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// .conflicts dir should be skipped
-	os.MkdirAll(filepath.Join(dir, ".conflicts"), 0o755)
-	os.WriteFile(filepath.Join(dir, ".conflicts", "old.md"), []byte("conflict"), 0o644)
+	if err := os.MkdirAll(filepath.Join(dir, ".conflicts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".conflicts", "old.md"), []byte("conflict"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	m, err := BuildManifest(dir, "mac-01")
 	if err != nil {
@@ -70,9 +80,9 @@ func TestDiffManifests(t *testing.T) {
 	remote := &Manifest{
 		WingID: "wsl",
 		Files: []FileEntry{
-			{Path: "shared.md", SHA256: "aaa"},         // same hash, no diff
-			{Path: "remote-only.md", SHA256: "ddd"},     // add
-			{Path: "changed.md", SHA256: "eee"},         // update
+			{Path: "shared.md", SHA256: "aaa"},      // same hash, no diff
+			{Path: "remote-only.md", SHA256: "ddd"}, // add
+			{Path: "changed.md", SHA256: "eee"},     // update
 		},
 	}
 
@@ -114,7 +124,7 @@ func TestApplyDiffs(t *testing.T) {
 
 	eng := &Engine{
 		MemoryDir: dir,
-		WingID: "mac-01",
+		WingID:    "mac-01",
 	}
 
 	diffs := []FileDiff{
@@ -156,11 +166,13 @@ func TestConflictLogging(t *testing.T) {
 	dir := t.TempDir()
 
 	// Write an existing file that will be overwritten
-	os.WriteFile(filepath.Join(dir, "existing.md"), []byte("local content"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "existing.md"), []byte("local content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	eng := &Engine{
 		MemoryDir: dir,
-		WingID: "mac-01",
+		WingID:    "mac-01",
 	}
 
 	diffs := []FileDiff{
@@ -225,7 +237,7 @@ func openTestStore(t *testing.T) *store.Store {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -238,26 +250,34 @@ func TestExportImportThreadEntries(t *testing.T) {
 
 	// Create a task in s1 so FK constraint is satisfied
 	now := time.Now().UTC().Truncate(time.Second)
-	s1.CreateTask(&store.Task{
+	if err := s1.CreateTask(&store.Task{
 		ID: taskID, Type: "prompt", What: "test", RunAt: now, Agent: "claude",
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Append thread entries to s1
 	ts1 := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
 	ts2 := time.Date(2026, 2, 1, 11, 0, 0, 0, time.UTC)
 
-	s1.AppendThreadAt(&store.ThreadEntry{
+	if err := s1.AppendThreadAt(&store.ThreadEntry{
 		TaskID: &taskID, WingID: wingID, Summary: "first entry",
-	}, ts1)
-	s1.AppendThreadAt(&store.ThreadEntry{
+	}, ts1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.AppendThreadAt(&store.ThreadEntry{
 		TaskID: &taskID, WingID: wingID, Summary: "second entry",
-	}, ts2)
+	}, ts2); err != nil {
+		t.Fatal(err)
+	}
 
 	// Also add an entry from a different machine that should NOT be exported
 	otherWing := "wsl-01"
-	s1.AppendThreadAt(&store.ThreadEntry{
+	if err := s1.AppendThreadAt(&store.ThreadEntry{
 		TaskID: &taskID, WingID: otherWing, Summary: "other wing",
-	}, ts1)
+	}, ts1); err != nil {
+		t.Fatal(err)
+	}
 
 	eng1 := &Engine{Store: s1, WingID: wingID}
 
@@ -271,9 +291,11 @@ func TestExportImportThreadEntries(t *testing.T) {
 	}
 
 	// Create the task in s2 so FK is satisfied
-	s2.CreateTask(&store.Task{
+	if err := s2.CreateTask(&store.Task{
 		ID: taskID, Type: "prompt", What: "test", RunAt: now, Agent: "claude",
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	eng2 := &Engine{Store: s2, WingID: "wsl-01"}
 
@@ -306,7 +328,7 @@ func TestExportImportThreadEntries(t *testing.T) {
 
 func TestManifestJSON(t *testing.T) {
 	m := &Manifest{
-		WingID: "mac-01",
+		WingID:    "mac-01",
 		CreatedAt: 1707300000,
 		Files: []FileEntry{
 			{Path: "identity.md", SHA256: "abc123", Size: 42, ModTime: 1707300000, WingID: "mac-01"},

@@ -3,6 +3,7 @@ package relay
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,40 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func (s *Server) grantOrgEntitlement(orgID, userID string) {
-	sub, _ := s.Store.GetActiveOrgSubscription(orgID)
-	if sub == nil {
-		return
-	}
-	used, _ := s.Store.CountEntitlementsBySub(sub.ID)
-	if used >= sub.Seats {
-		return
-	}
-	if err := s.Store.CreateEntitlement(&Entitlement{ID: uuid.New().String(), UserID: userID, SubscriptionID: sub.ID}); err != nil {
-		log.Printf("grant org entitlement: %v", err)
-		return
-	}
-	s.Store.UpdateUserTier(userID, "pro")
-	if s.Bandwidth != nil {
-		s.Bandwidth.InvalidateUser(userID)
-	}
-}
-
-func (s *Server) revokeOrgEntitlement(orgID, userID string) {
-	sub, _ := s.Store.GetActiveOrgSubscription(orgID)
-	if sub == nil {
-		return
-	}
-	s.Store.DeleteEntitlementByUserAndSub(userID, sub.ID)
-	tier := "free"
-	if s.Store.IsUserPro(userID) {
-		tier = "pro"
-	}
-	s.Store.UpdateUserTier(userID, tier)
-	if s.Bandwidth != nil {
-		s.Bandwidth.InvalidateUser(userID)
-	}
-}
+const maxOrgInviteBatch = 100
 
 var slugRegexp = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$`)
 
@@ -92,11 +60,6 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	owned, _ := s.Store.CountOrgsOwnedByUser(user.ID)
-	if owned >= 5 {
-		writeError(w, http.StatusForbidden, "you can create up to 5 organizations")
-		return
-	}
 	slug := req.Slug
 	if slug == "" {
 		slug = slugify(req.Name)
@@ -107,7 +70,11 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := uuid.New().String()
-	if err := s.Store.CreateOrg(id, req.Name, slug, user.ID); err != nil {
+	if err := s.Store.CreateOrgForOwnerLimited(id, req.Name, slug, user.ID, 1, 5); err != nil {
+		if errors.Is(err, ErrOrgLimitReached) {
+			writeError(w, http.StatusForbidden, "you can create up to 5 organizations")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -297,6 +264,10 @@ func (s *Server) handleOrgInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	if len(req.Emails) > maxOrgInviteBatch {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("at most %d email addresses may be invited at once", maxOrgInviteBatch))
+		return
+	}
 	inviteRole := req.Role
 	if inviteRole == "" {
 		inviteRole = "member"
@@ -310,16 +281,37 @@ func (s *Server) handleOrgInvite(w http.ResponseWriter, r *http.Request) {
 		Email string `json:"email"`
 		Link  string `json:"link"`
 	}
-	var created []inviteResult
-	for _, email := range req.Emails {
-		email = strings.TrimSpace(strings.ToLower(email))
-		if email == "" {
+	emails := make([]string, 0, len(req.Emails))
+	seenEmails := make(map[string]struct{}, len(req.Emails))
+	for _, rawEmail := range req.Emails {
+		if strings.TrimSpace(rawEmail) == "" {
 			continue
 		}
+		email, err := normalizeBareEmail(strings.ToLower(rawEmail))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid email address")
+			return
+		}
+		if _, duplicate := seenEmails[email]; duplicate {
+			continue
+		}
+		seenEmails[email] = struct{}{}
+		emails = append(emails, email)
+	}
+	var created []inviteResult
+	for _, email := range emails {
 		token := generateToken()
 		id := uuid.New().String()
 		if err := s.Store.CreateOrgInvite(id, org.ID, email, token, user.ID, inviteRole); err != nil {
-			continue // skip dupes
+			if errors.Is(err, ErrOrgInviteExists) {
+				continue
+			}
+			if errors.Is(err, ErrOrgMutationUnauthorized) {
+				writeError(w, http.StatusForbidden, "only owners and admins can invite")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "create invite: "+err.Error())
+			return
 		}
 		link := s.Config.BaseURL + "/invite/" + token
 		// Send invite email if SMTP configured
@@ -334,7 +326,7 @@ func (s *Server) handleOrgInvite(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sendInviteEmail(to, orgName, link string) {
 	from := s.Config.SMTPFrom
-	subject := "You're invited to " + orgName + " on wingthing"
+	subject := smtpHeaderValue("You're invited to " + orgName + " on wingthing")
 	body := fmt.Sprintf("You've been invited to join %s on wingthing.\n\nClick here to accept:\n\n%s\n\nThis link does not expire.", orgName, link)
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s", from, to, subject, body)
 
@@ -350,6 +342,10 @@ func (s *Server) handleOrgUpgrade(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+	if !s.selfServicePlansEnabled() {
+		writeError(w, http.StatusForbidden, "self-service plan changes are unavailable on this deployment")
 		return
 	}
 	orgID := r.PathValue("orgID")
@@ -378,62 +374,70 @@ func (s *Server) handleOrgUpgrade(w http.ResponseWriter, r *http.Request) {
 		req.Seats = 5
 	}
 
-	existing, _ := s.Store.GetActiveOrgSubscription(org.ID)
+	s.planMu.Lock()
+	defer s.planMu.Unlock()
+
+	existing, err := s.Store.GetActiveOrgSubscription(org.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read active subscription: "+err.Error())
+		return
+	}
+	members, err := s.Store.ListOrgMembers(org.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list members: "+err.Error())
+		return
+	}
 	if existing != nil {
 		if req.Seats <= existing.Seats {
 			writeError(w, http.StatusBadRequest, "contact support to reduce seats")
 			return
 		}
-		// Increase seats on existing subscription
-		s.Store.UpdateSubscriptionSeats(existing.ID, req.Seats)
-		s.Store.SetOrgMaxSeats(org.ID, req.Seats)
-
-		// Grant entitlements to existing members who don't have one yet
-		members, _ := s.Store.ListOrgMembers(org.ID)
-		granted := 0
+		entitlements := make([]*Entitlement, 0, len(members))
 		for _, m := range members {
-			used, _ := s.Store.CountEntitlementsBySub(existing.ID)
-			if used >= req.Seats {
-				break
+			entitlements = append(entitlements, &Entitlement{ID: uuid.New().String(), UserID: m.UserID, SubscriptionID: existing.ID})
+		}
+		granted, err := s.Store.ExpandOrgSubscription(existing.ID, org.ID, req.Seats, entitlements)
+		if err != nil {
+			if errors.Is(err, ErrOrgSeatsNotIncreased) {
+				writeError(w, http.StatusBadRequest, "contact support to reduce seats")
+				return
 			}
-			if s.Store.CreateEntitlement(&Entitlement{ID: uuid.New().String(), UserID: m.UserID, SubscriptionID: existing.ID}) == nil {
-				s.Store.UpdateUserTier(m.UserID, "pro")
-				if s.Bandwidth != nil {
-					s.Bandwidth.InvalidateUser(m.UserID)
-				}
-				granted++
+			writeError(w, http.StatusInternalServerError, "expand org subscription: "+err.Error())
+			return
+		}
+		if s.Bandwidth != nil {
+			for _, userID := range granted {
+				s.Bandwidth.InvalidateUser(userID)
 			}
 		}
 
-		log.Printf("org %s seats increased: %d -> %d, granted=%d", org.Slug, existing.Seats, req.Seats, granted)
+		log.Printf("org %s seats increased: %d -> %d, granted=%d", org.Slug, existing.Seats, req.Seats, len(granted))
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "plan": existing.Plan, "seats": req.Seats})
 		return
 	}
 
 	subID := uuid.New().String()
 	sub := &Subscription{ID: subID, OrgID: &org.ID, Plan: req.Plan, Status: "active", Seats: req.Seats}
-	if err := s.Store.CreateSubscription(sub); err != nil {
-		writeError(w, http.StatusInternalServerError, "create subscription: "+err.Error())
+	entitlements := make([]*Entitlement, 0, len(members))
+	for _, m := range members {
+		entitlements = append(entitlements, &Entitlement{ID: uuid.New().String(), UserID: m.UserID, SubscriptionID: subID})
+	}
+	granted, err := s.Store.ActivateOrgSubscription(sub, org.ID, entitlements)
+	if err != nil {
+		if errors.Is(err, ErrActiveOrgSubscription) {
+			writeError(w, http.StatusConflict, "organization subscription changed; retry the request")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "activate org subscription: "+err.Error())
 		return
 	}
-	s.Store.SetOrgMaxSeats(org.ID, req.Seats)
-
-	members, _ := s.Store.ListOrgMembers(org.ID)
-	granted := 0
-	for _, m := range members {
-		if granted >= req.Seats {
-			break
-		}
-		if s.Store.CreateEntitlement(&Entitlement{ID: uuid.New().String(), UserID: m.UserID, SubscriptionID: subID}) == nil {
-			s.Store.UpdateUserTier(m.UserID, "pro")
-			if s.Bandwidth != nil {
-				s.Bandwidth.InvalidateUser(m.UserID)
-			}
-			granted++
+	if s.Bandwidth != nil {
+		for _, userID := range granted {
+			s.Bandwidth.InvalidateUser(userID)
 		}
 	}
 
-	log.Printf("org %s upgraded: plan=%s seats=%d granted=%d", org.Slug, req.Plan, req.Seats, granted)
+	log.Printf("org %s upgraded: plan=%s seats=%d granted=%d", org.Slug, req.Plan, req.Seats, len(granted))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "plan": req.Plan, "seats": req.Seats})
 }
 
@@ -455,20 +459,25 @@ func (s *Server) handleOrgCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sub, _ := s.Store.GetActiveOrgSubscription(org.ID)
+	s.planMu.Lock()
+	defer s.planMu.Unlock()
+
+	sub, err := s.Store.GetActiveOrgSubscription(org.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read active subscription: "+err.Error())
+		return
+	}
 	if sub == nil {
 		writeError(w, http.StatusBadRequest, "no active subscription")
 		return
 	}
 
-	s.Store.UpdateSubscriptionStatus(sub.ID, "canceled")
-	affectedUsers, _ := s.Store.DeleteEntitlementsBySub(sub.ID)
+	affectedUsers, err := s.Store.CancelOrgSubscription(sub.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "cancel subscription: "+err.Error())
+		return
+	}
 	for _, uid := range affectedUsers {
-		tier := "free"
-		if s.Store.IsUserPro(uid) {
-			tier = "pro"
-		}
-		s.Store.UpdateUserTier(uid, tier)
 		if s.Bandwidth != nil {
 			s.Bandwidth.InvalidateUser(uid)
 		}
@@ -506,11 +515,22 @@ func (s *Server) handleRemoveOrgMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.Store.RemoveOrgMember(org.ID, targetUserID); err != nil {
+	revoked, err := s.Store.RemoveOrgMemberAuthorized(org.ID, user.ID, targetUserID)
+	if err != nil {
+		if errors.Is(err, ErrOrgMutationUnauthorized) {
+			writeError(w, http.StatusForbidden, "not authorized")
+			return
+		}
+		if errors.Is(err, ErrOrgOwnerRemoval) {
+			writeError(w, http.StatusBadRequest, "cannot remove org owner")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.revokeOrgEntitlement(org.ID, targetUserID)
+	if revoked && s.Bandwidth != nil {
+		s.Bandwidth.InvalidateUser(targetUserID)
+	}
 	s.refreshUserOrgSubs(targetUserID)
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -533,14 +553,34 @@ func (s *Server) handleDeleteOrg(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "only the org owner can delete")
 		return
 	}
-	sub, _ := s.Store.GetActiveOrgSubscription(org.ID)
+
+	s.planMu.Lock()
+	defer s.planMu.Unlock()
+
+	sub, err := s.Store.GetActiveOrgSubscription(org.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read active subscription: "+err.Error())
+		return
+	}
 	if sub != nil {
 		writeError(w, http.StatusBadRequest, "cancel the subscription first")
 		return
 	}
-	if err := s.Store.DeleteOrg(org.ID); err != nil {
+	members, err := s.Store.ListOrgMembers(org.ID)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if err := s.Store.DeleteOrg(org.ID); err != nil {
+		if errors.Is(err, ErrActiveOrgSubscription) {
+			writeError(w, http.StatusBadRequest, "cancel the subscription first")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, member := range members {
+		s.refreshUserOrgSubs(member.UserID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -581,15 +621,9 @@ func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 
 	// Not logged in — store token in cookie, show login prompt
 	if user == nil {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "invite_token",
-			Value:    token,
-			Path:     "/",
-			Domain:   s.cookieDomain(),
-			MaxAge:   3600,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-		})
+		// Invite state is consumed on the login host, so it must not be writable
+		// by the app host or any other sibling subdomain.
+		s.setAuthFlowCookie(w, "invite_token", token, "/", 3600)
 		s.renderInviteLoginPage(w, inv, org)
 		return
 	}
@@ -633,23 +667,23 @@ func (s *Server) handleConsumeInvite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "email mismatch", http.StatusForbidden)
 		return
 	}
-	email, orgID, invRole, err := s.Store.ConsumeOrgInvite(token)
+	orgID, _, granted, err := s.Store.AcceptOrgInvite(token, user.ID, *user.Email, uuid.New().String())
 	if err != nil {
 		http.Error(w, "invite already used or expired", http.StatusBadRequest)
 		return
 	}
-	_ = email // validated above
-
-	s.Store.AddOrgMember(orgID, user.ID, invRole)
-	s.grantOrgEntitlement(orgID, user.ID)
-	s.refreshUserOrgSubs(user.ID)
-	http.SetCookie(w, &http.Cookie{Name: "invite_token", Path: "/", MaxAge: -1})
-
-	appURL := "/"
-	if s.Config.AppHost != "" {
-		appURL = "https://" + s.Config.AppHost + "/"
+	if granted && s.Bandwidth != nil {
+		s.Bandwidth.InvalidateUser(user.ID)
 	}
-	http.Redirect(w, r, appURL+"#account/"+orgID, http.StatusSeeOther)
+	s.refreshUserOrgSubs(user.ID)
+	s.expireAuthFlowCookie(w, "invite_token", "/")
+	// Also remove the parent-domain cookie emitted by older releases. A split
+	// deployment can otherwise keep presenting stale invite state after upgrade.
+	if s.cookieDomain() != "" {
+		s.expireCookie(w, "invite_token", "/")
+	}
+
+	http.Redirect(w, r, s.appURL()+"#account/"+orgID, http.StatusSeeOther)
 }
 
 // refreshUserOrgSubs updates a user's org subscriptions in the WingRegistry
@@ -660,7 +694,11 @@ func (s *Server) refreshUserOrgSubs(userID string) {
 		return
 	}
 	var orgIDs []string
-	orgs, _ := s.Store.ListOrgsForUser(userID)
+	orgs, err := s.Store.ListOrgsForUser(userID)
+	if err != nil {
+		log.Printf("refresh org subscriptions: %v", err)
+		return
+	}
 	for _, org := range orgs {
 		orgIDs = append(orgIDs, org.ID)
 	}
@@ -669,10 +707,14 @@ func (s *Server) refreshUserOrgSubs(userID string) {
 	}
 	// Broadcast org.changed to edges so they update their subscribers
 	if s.IsLogin() && s.WingMap != nil {
-		payload, _ := json.Marshal(map[string]any{
+		payload, err := json.Marshal(map[string]any{
 			"type":    "org.changed",
 			"user_id": userID,
 		})
+		if err != nil {
+			log.Printf("marshal org changed event: %v", err)
+			return
+		}
 		go s.broadcastToEdges(payload)
 	}
 }
@@ -689,7 +731,7 @@ func (s *Server) renderInviteStatusPage(w http.ResponseWriter, inv *OrgInvite, o
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html>
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>invite — %s</title>
@@ -717,13 +759,13 @@ func (s *Server) renderInviteStatusPage(w http.ResponseWriter, inv *OrgInvite, o
 	)
 
 	if inv.ClaimedAt == nil {
-		fmt.Fprintf(w, `
+		_, _ = fmt.Fprintf(w, `
 <form method="POST" action="/api/orgs/%s/invites/%s/revoke" onsubmit="return confirm('Revoke this invite?')">
 <button type="submit" class="btn btn-revoke">revoke</button>
 </form>`, escapeHTML(org.ID), escapeHTML(inv.Token))
 	}
 
-	fmt.Fprint(w, `
+	_, _ = fmt.Fprint(w, `
 </div>
 </div>
 </body></html>`)
@@ -769,7 +811,7 @@ p{font-size:14px;color:#888;margin:8px 0}
 
 func (s *Server) renderInviteAcceptPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html>
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>join %s — wingthing</title><style>%s</style></head><body>
 <div class="card">
@@ -787,7 +829,7 @@ func (s *Server) renderInviteAcceptPage(w http.ResponseWriter, inv *OrgInvite, o
 
 func (s *Server) renderInviteLoginPage(w http.ResponseWriter, inv *OrgInvite, org *Org) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html>
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>join %s — wingthing</title><style>%s</style></head><body>
 <div class="card">
@@ -808,7 +850,7 @@ func (s *Server) renderInviteLoginPage(w http.ResponseWriter, inv *OrgInvite, or
 func (s *Server) renderInviteErrorPage(w http.ResponseWriter, inviteEmail, userEmail string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
-	fmt.Fprintf(w, `<!DOCTYPE html>
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>invite — wingthing</title><style>%s</style></head><body>
 <div class="card">
@@ -842,18 +884,23 @@ func (s *Server) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := r.PathValue("token")
-	if err := s.Store.RevokeOrgInvite(token); err != nil {
+	revoked, err := s.Store.RevokeOrgInviteAuthorized(org.ID, token, user.ID)
+	if err != nil {
+		if errors.Is(err, ErrOrgMutationUnauthorized) {
+			writeError(w, http.StatusForbidden, "only owners and admins can revoke invites")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !revoked {
+		writeError(w, http.StatusNotFound, "pending invite not found")
 		return
 	}
 
 	// If this was a form POST (from the invite status page), redirect back
 	if r.Header.Get("Content-Type") != "application/json" {
-		appURL := "/"
-		if s.Config.AppHost != "" {
-			appURL = "https://" + s.Config.AppHost + "/"
-		}
-		http.Redirect(w, r, appURL+"#account/"+org.ID, http.StatusSeeOther)
+		http.Redirect(w, r, s.appURL()+"#account/"+org.ID, http.StatusSeeOther)
 		return
 	}
 

@@ -35,6 +35,7 @@ type Config struct {
 	Deny         []string      // paths to mask (e.g. ~/.ssh) — deny read+write
 	DenyWrite    []string      // paths to deny writes only (e.g. ./egg.yaml) — read allowed
 	NetworkNeed  NetworkNeed   // granular network access required by the agent
+	NetworkMode  string        // ""/"enforce" or "observe" for domain decisions
 	Domains      []string      // domain allowlist for proxy filtering
 	ProxyPort    int           // local domain-filtering proxy port (0 = no proxy)
 	LocalPorts   []int         // host loopback ports forwarded into a Linux network namespace
@@ -103,7 +104,9 @@ func CheckCapability() (bool, string) {
 	if err != nil {
 		return false, err.Error() + ". " + platformHelp()
 	}
-	s.Destroy()
+	if err := s.Destroy(); err != nil {
+		return false, "sandbox cleanup failed: " + err.Error() + ". " + platformHelp()
+	}
 	return true, ""
 }
 

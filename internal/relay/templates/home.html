@@ -91,12 +91,8 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
         if(t==='INPUT'||t==='TEXTAREA'||t==='SELECT')return;
         if(e.key==='.'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
             e.preventDefault();
-            if(document.getElementById('prompt-flow')){
-                window.location.href='/login';
-                return;
-            }
-            var h=window.location.hostname;
-            window.location.href=(h==='wingthing.ai'||h==='www.wingthing.ai')?'https://app.wingthing.ai':'/app/';
+            var app=document.getElementById('prompt-app');
+            window.location.href=app?app.href:'/login';
         }
     });
 })();
@@ -105,7 +101,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <h1>all your agents, one place</h1>
 <p class="tagline">Wingthing is an agent manager for agents. Give Codex, Claude, or another parent agent one typed control plane for starting and supervising durable agents across all your machines. Take over from a terminal or browser when a person belongs in the loop.</p>
 {{if .User}}<div class="prompt-flow">
-<a href="{{if .LocalMode}}/app/{{else}}https://app.wingthing.ai{{end}}" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open app</span></a>
+<a href="{{.AppURL}}" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open app</span></a>
 </div>
 {{else}}<div class="prompt-flow" id="prompt-flow">
 <div class="prompt-line"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to start</span></div>
@@ -135,7 +131,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <div class="how-grid">
 <div class="how-card">
 <h3>single binary</h3>
-<p>curl install, SQLite, nothing else to install. MIT licensed. Runs on macOS and Linux, x64 and arm64.</p>
+<p>The Wingthing runtime and SQLite storage ship in one binary. MIT licensed. Runs on macOS and Linux, x64 and arm64. Agent CLIs are separate; trusted localhost HTTPS on Linux also needs <code>certutil</code>.</p>
 </div>
 <div class="how-card">
 <h3>sandbox-first</h3>

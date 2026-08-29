@@ -28,6 +28,10 @@ codex mcp add wingthing -- wt mcp stdio --client codex
 claude mcp add --scope user wingthing -- wt mcp stdio --client claude
 ```
 
+The installer verifies the release checksum and confirms that the downloaded
+binary implements the command surface shown by the website before replacing an
+existing installation.
+
 Restart the client after registration. Ask it to call
 `wingthing_capabilities` before it starts work. The model can then:
 
@@ -159,6 +163,11 @@ environment, and allow only the network domains required by the selected agent.
 - A local CONNECT proxy applies domain rules. Linux enforcement limits are
   documented in the [security model](docs/security.md).
 
+On Linux, even `network: "*"` uses the route-less namespace and permits any TCP
+target presented through HTTP CONNECT; it is not a general routed interface for
+ordinary raw-socket clients, UDP, or programs that ignore proxy configuration.
+CONNECT policies filter hosts rather than ports. See [sandbox limitations](docs/sandbox.md#network-protocol-coverage).
+
 Project policy is additive:
 
 ```yaml
@@ -190,12 +199,12 @@ wt start
 open https://app.wingthing.ai
 ```
 
-The wing connects outbound, so it needs no public inbound port. New free
-accounts use the hosted site to register the wing and set up direct remote MCP;
-the hosted browser terminal is not part of that free path. Pro and temporarily
-grandfathered accounts may use the application-encrypted hosted terminal and
-control relay. The coordinator sees account, routing, and connection metadata,
-and the hosted browser still trusts JavaScript served by the service. Read
+The wing connects outbound, so it needs no public inbound port. Free accounts
+use the hosted site to register the wing and set up direct remote MCP; the
+hosted browser terminal is not part of that free path. Accounts with hosted
+relay access may use the application-encrypted browser terminal and control
+relay. The coordinator sees account, routing, and connection metadata, and the
+hosted browser still trusts JavaScript served by the service. Read
 [security.md](docs/security.md) before making a stronger claim.
 
 A portal may have several wings. The native CLI can query the same authorized
@@ -240,8 +249,16 @@ certificate lifecycle, and compatibility matrix.
 
 Port 8443 is the browser listener. WT also keeps a loopback-only HTTP listener
 on port 8080 for local wings and wings arriving through an SSH reverse tunnel;
-it is not exposed to the LAN. Omit `--https` to preserve the previous local
-HTTP behavior.
+it is not exposed to the LAN. Omit `--https` to keep an HTTP browser origin, but
+single-user/no-login mode still rewrites the implicit listener to
+`127.0.0.1:8080` and refuses an explicitly non-loopback address. Authenticated
+organization and hosted listeners keep their configured bind behavior.
+
+Because local mode deliberately has no human login, WT also rejects non-loopback
+Host headers, cross-origin browser mutations, and cross-origin browser WebSocket
+handshakes. Native wings and CLI clients without browser Origin headers remain
+compatible. These checks are defense in depth around the loopback-only bind, not
+permission to publish a local-mode listener.
 
 With an OAuth provider and public HTTPS URL, the same deployment becomes a
 multi-user shared host. Each terminal and run has an owner, each OAuth client
@@ -249,6 +266,18 @@ has a separate actor ID, workspaces are bounded by `wing.yaml`, and provider
 credentials live in the owner's agent home. Public/shared deployments continue
 to terminate their externally provisioned HTTPS at Caddy, nginx, a VPN proxy,
 Fly, or another ingress; they do not use WT's device-local CA.
+
+OAuth proves identity; it does not decide who belongs on a private roost. Set an
+exact email enrollment list on every shared roost:
+
+```bash
+export WT_ROOST_ALLOWED_EMAILS=alice@example.com,bob@example.com
+```
+
+Only those accounts may finish login, use tokens, see wings, or authorize MCP.
+If the list is empty, any account accepted by the configured OAuth provider can
+enroll. Set the list on every internet-reachable private roost unless the
+provider or ingress already enforces the same membership boundary.
 
 An LLM connects to its HTTP MCP endpoint:
 
@@ -288,7 +317,7 @@ promotion policy.
 curl -fsSL https://wingthing.ai/install.sh | sh
 ```
 
-Or build from source with Go 1.25+ and Node.js:
+Or build from source with Go 1.26.6+ and Node.js:
 
 ```bash
 git clone https://github.com/ehrlich-b/wingthing.git
@@ -302,7 +331,7 @@ Update an installed binary with `wt update`.
 
 - [Choose a usage pattern](https://wingthing.ai/patterns)
 - [Web documentation](https://wingthing.ai/docs)
-- [LLM-first architecture review](docs/llm-first-review.md)
+- [Historical LLM-first architecture review](docs/llm-first-review.md)
 - [Test strategy and commands](docs/testing.md)
 - [Agent meta-layer](docs/agent-meta-layer.md)
 - [AI API surface](docs/ai-api-surface.md)

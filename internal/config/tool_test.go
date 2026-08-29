@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+func writeToolTestFile(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoadToolsDir_Valid(t *testing.T) {
 	dir := t.TempDir()
 	yaml := `name: echo-test
@@ -21,7 +28,7 @@ timeout: 5s
 env:
   FOO: bar
 `
-	os.WriteFile(filepath.Join(dir, "echo.yaml"), []byte(yaml), 0600)
+	writeToolTestFile(t, dir, "echo.yaml", yaml)
 	tools, err := LoadToolsDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -65,7 +72,7 @@ func TestLoadToolsDir_MissingDir(t *testing.T) {
 
 func TestLoadToolsDir_MissingName(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte("run: echo hi\n"), 0600)
+	writeToolTestFile(t, dir, "bad.yaml", "run: echo hi\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
 		t.Fatal("expected error for missing name")
@@ -74,7 +81,7 @@ func TestLoadToolsDir_MissingName(t *testing.T) {
 
 func TestLoadToolsDir_MissingRun(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte("name: test\n"), 0600)
+	writeToolTestFile(t, dir, "bad.yaml", "name: test\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
 		t.Fatal("expected error for missing run")
@@ -83,8 +90,8 @@ func TestLoadToolsDir_MissingRun(t *testing.T) {
 
 func TestLoadToolsDir_SkipsNonYAML(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("not yaml"), 0600)
-	os.WriteFile(filepath.Join(dir, "tool.yaml"), []byte("name: t\nrun: echo\n"), 0600)
+	writeToolTestFile(t, dir, "readme.txt", "not yaml")
+	writeToolTestFile(t, dir, "tool.yaml", "name: t\nrun: echo\n")
 	tools, err := LoadToolsDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -96,8 +103,8 @@ func TestLoadToolsDir_SkipsNonYAML(t *testing.T) {
 
 func TestLoadToolsDir_MultipleFiles(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("name: alpha\nrun: echo a\n"), 0600)
-	os.WriteFile(filepath.Join(dir, "b.yml"), []byte("name: beta\nrun: echo b\n"), 0600)
+	writeToolTestFile(t, dir, "a.yaml", "name: alpha\nrun: echo a\n")
+	writeToolTestFile(t, dir, "b.yml", "name: beta\nrun: echo b\n")
 	tools, err := LoadToolsDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -109,7 +116,7 @@ func TestLoadToolsDir_MultipleFiles(t *testing.T) {
 
 func TestLoadToolsDir_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte(":::invalid\n"), 0600)
+	writeToolTestFile(t, dir, "bad.yaml", ":::invalid\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
@@ -151,7 +158,7 @@ func TestToolConfig_TimeoutDuration(t *testing.T) {
 
 func TestLoadToolsDir_PathTraversalName(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "evil.yaml"), []byte("name: ../evil\nrun: echo\n"), 0600)
+	writeToolTestFile(t, dir, "evil.yaml", "name: ../evil\nrun: echo\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
 		t.Fatal("expected error for path traversal name")
@@ -160,7 +167,7 @@ func TestLoadToolsDir_PathTraversalName(t *testing.T) {
 
 func TestLoadToolsDir_ShellMetacharName(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte("name: \"foo;rm\"\nrun: echo\n"), 0600)
+	writeToolTestFile(t, dir, "bad.yaml", "name: \"foo;rm\"\nrun: echo\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
 		t.Fatal("expected error for shell metachar name")
@@ -169,8 +176,8 @@ func TestLoadToolsDir_ShellMetacharName(t *testing.T) {
 
 func TestLoadToolsDir_ValidNameChars(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("name: slide-db\nrun: echo\n"), 0600)
-	os.WriteFile(filepath.Join(dir, "b.yaml"), []byte("name: my_tool2\nrun: echo\n"), 0600)
+	writeToolTestFile(t, dir, "a.yaml", "name: slide-db\nrun: echo\n")
+	writeToolTestFile(t, dir, "b.yaml", "name: my_tool2\nrun: echo\n")
 	tools, err := LoadToolsDir(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -182,8 +189,8 @@ func TestLoadToolsDir_ValidNameChars(t *testing.T) {
 
 func TestLoadToolsDir_DuplicateName(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("name: echo\nrun: echo a\n"), 0600)
-	os.WriteFile(filepath.Join(dir, "b.yaml"), []byte("name: echo\nrun: echo b\n"), 0600)
+	writeToolTestFile(t, dir, "a.yaml", "name: echo\nrun: echo a\n")
+	writeToolTestFile(t, dir, "b.yaml", "name: echo\nrun: echo b\n")
 	_, err := LoadToolsDir(dir)
 	if err == nil {
 		t.Fatal("expected error for duplicate tool name")

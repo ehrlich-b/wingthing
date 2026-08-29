@@ -11,9 +11,11 @@ func strPtr(s string) *string { return &s }
 
 func createTestTask(t *testing.T, s *store.Store, id string) {
 	t.Helper()
-	s.CreateTask(&store.Task{
+	if err := s.CreateTask(&store.Task{
 		ID: id, Type: "prompt", What: "test", RunAt: time.Now().UTC(), Agent: "claude",
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestMergeThreadEntries_BasicMerge(t *testing.T) {
@@ -26,9 +28,11 @@ func TestMergeThreadEntries_BasicMerge(t *testing.T) {
 	createTestTask(t, s, taskID)
 
 	// Insert a local entry from mac
-	s.AppendThreadAt(&store.ThreadEntry{
+	if err := s.AppendThreadAt(&store.ThreadEntry{
 		TaskID: &taskID, WingID: "mac", Summary: "local work",
-	}, ts1)
+	}, ts1); err != nil {
+		t.Fatal(err)
+	}
 
 	// Merge remote entries from wsl
 	remote := []*store.ThreadEntry{
@@ -151,9 +155,11 @@ func TestMergeThreadEntries_Ordering(t *testing.T) {
 	ts3 := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
 
 	// Insert a local entry in the middle
-	s.AppendThreadAt(&store.ThreadEntry{
+	if err := s.AppendThreadAt(&store.ThreadEntry{
 		WingID: "mac", Summary: "local middle", Agent: strPtr("claude"),
-	}, ts2)
+	}, ts2); err != nil {
+		t.Fatal(err)
+	}
 
 	// Merge remote entries before and after
 	remote := []*store.ThreadEntry{

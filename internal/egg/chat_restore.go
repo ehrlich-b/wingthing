@@ -24,19 +24,22 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 	if agentSessionID == "" {
 		return "", fmt.Errorf("chat.meta missing agent_session_id")
 	}
+	if filepath.Base(agentSessionID) != agentSessionID || agentSessionID == "." || agentSessionID == ".." || strings.ContainsRune(agentSessionID, 0) || len(agentSessionID) > 240 {
+		return "", fmt.Errorf("chat.meta contains invalid agent_session_id")
+	}
 
 	gzPath := filepath.Join(eggDir, "chat.jsonl.gz")
 	gzFile, err := os.Open(gzPath)
 	if err != nil {
 		return "", fmt.Errorf("open chat.jsonl.gz: %w", err)
 	}
-	defer gzFile.Close()
+	defer func() { _ = gzFile.Close() }()
 
 	gr, err := gzip.NewReader(gzFile)
 	if err != nil {
 		return "", fmt.Errorf("decompress: %w", err)
 	}
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 
 	profile := Profile(agent)
 	if profile.SessionDir == "" {
@@ -50,15 +53,35 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 	}
 
 	dstPath := filepath.Join(dstDir, dstFile)
-	out, err := os.Create(dstPath)
+	out, err := os.CreateTemp(dstDir, ".session-restore-*.tmp")
 	if err != nil {
 		return agentSessionID, fmt.Errorf("create dest: %w", err)
 	}
-	defer out.Close()
+	temporaryPath := out.Name()
+	committed := false
+	defer func() {
+		_ = out.Close()
+		if !committed {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err := out.Chmod(0o600); err != nil {
+		return agentSessionID, fmt.Errorf("protect dest: %w", err)
+	}
 
 	if _, err := io.Copy(out, gr); err != nil {
 		return agentSessionID, fmt.Errorf("write: %w", err)
 	}
+	if err := out.Sync(); err != nil {
+		return agentSessionID, fmt.Errorf("sync dest: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return agentSessionID, fmt.Errorf("close dest: %w", err)
+	}
+	if err := os.Rename(temporaryPath, dstPath); err != nil {
+		return agentSessionID, fmt.Errorf("replace dest: %w", err)
+	}
+	committed = true
 
 	return agentSessionID, nil
 }

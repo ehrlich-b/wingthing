@@ -2,7 +2,7 @@
 
 Status: implemented
 
-Reviewed: 2026-08-24
+Reviewed: 2026-08-27
 
 ## Terminology
 
@@ -48,7 +48,9 @@ wt local-cert remove
 ```
 
 Without OAuth configuration, the portal uses local single-user mode. Local HTTPS
-is opt-in; omitting `--https` preserves the previous HTTP listener.
+is opt-in. Omitting `--https` keeps HTTP, while the single-user/no-login default
+binds to `127.0.0.1:8080` and explicitly non-loopback local addresses are refused.
+Authenticated shared-roost listeners retain their configured bind behavior.
 
 With a public HTTPS URL and an OAuth provider, it becomes a multi-user shared
 runtime:
@@ -57,11 +59,15 @@ runtime:
 WT_BASE_URL=https://lab.example.com \
 GITHUB_CLIENT_ID=... \
 GITHUB_CLIENT_SECRET=... \
+WT_ROOST_ALLOWED_EMAILS=alice@example.com,bob@example.com \
 wt roost start --addr :8080
 ```
 
 That public/shared command does not create or install a local CA. Its existing
-external TLS ingress and OAuth configuration are unchanged.
+external TLS ingress and OAuth configuration are unchanged. OAuth proves account
+identity; the exact email list is the application enrollment boundary. If it is
+omitted, any account accepted by the provider can enroll, so an equivalent
+membership restriction is required at the provider or ingress.
 
 Set project roots, labels, sandbox defaults, and audit policy through the same
 wing configuration used by a standalone wing.
@@ -120,7 +126,7 @@ read the wing's files, process memory, workspaces, and provider credentials.
 Application encryption protects the route and network boundary; it cannot
 protect a user from the host or hypervisor administrator.
 
-On a shared host, Wingthing gives each authenticated owner a separate agent home
+On a shared host, Wingthing gives each enrolled owner a separate agent home
 and enforces owner-scoped resources. This is useful multi-user policy, not a
 claim of protection from root.
 

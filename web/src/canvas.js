@@ -4,7 +4,7 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 import { gcm } from '@noble/ciphers/aes.js';
 import { S, DOM } from './state.js';
 import { deriveE2EKey, identityPubKey } from './crypto.js';
-import { b64ToBytes, bytesToB64, wingDisplayName, agentIcon } from './helpers.js';
+import { b64ToBytes, bytesToB64, wingDisplayName, agentWithIcon } from './helpers.js';
 import { onlineWings, showPalette, setCanvasLaunchCallback } from './palette.js';
 import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { checkForNotification, setNotification, clearNotification } from './notify.js';
@@ -170,7 +170,7 @@ export function renderCanvasToolbar() {
     if (!DOM.canvasToolbar) return;
     var wing = currentCanvasWing();
     DOM.ctWing.textContent = wing ? wingDisplayName(wing) : 'no wings online';
-    DOM.ctAgent.innerHTML = agentIcon(currentCanvasAgent()) + ' ' + currentCanvasAgent();
+    DOM.ctAgent.innerHTML = agentWithIcon(currentCanvasAgent());
 
     // Auto-pick cwd from wing's first project if not set
     if (!canvasCwd && wing) {
@@ -1286,7 +1286,9 @@ export function showCanvasView() {
 export function hideCanvasView() {
     active = false;
     setCanvasMode('use');
-    if (DOM.newSessionBtn) DOM.newSessionBtn.style.display = '';
+    if (DOM.newSessionBtn) {
+        DOM.newSessionBtn.style.display = S.currentUser && S.currentUser.relay_allowed === false ? 'none' : '';
+    }
     DOM.canvasSection.style.display = 'none';
     DOM.canvasViewport.removeEventListener('mousedown', onViewportMouseDown);
     DOM.canvasViewport.removeEventListener('wheel', onViewportWheel);

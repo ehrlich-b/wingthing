@@ -22,14 +22,23 @@ import (
 )
 
 type connectMCPServer struct {
-	in       io.Reader
-	out      io.Writer
-	actor    string
-	tunnel   connectMCPTunnel
-	timeout  time.Duration
-	mu       sync.Mutex
-	controls map[string]*webrtcpkg.ControlClient
+	in         io.Reader
+	out        io.Writer
+	actor      string
+	tunnel     connectMCPTunnel
+	timeout    time.Duration
+	mu         sync.Mutex
+	controls   map[string]*webrtcpkg.ControlClient
+	connecting map[string]*controlConnectAttempt
 }
+
+type controlConnectAttempt struct {
+	done   chan struct{}
+	client *webrtcpkg.ControlClient
+	err    error
+}
+
+const maxConcurrentConnectMCPCalls = 64
 
 type connectMCPTunnel interface {
 	ListWings(ctx context.Context) ([]ws.WingInfo, error)
@@ -90,10 +99,13 @@ func connectMCPCmd() *cobra.Command {
 }
 
 func (s *connectMCPServer) serve(ctx context.Context) error {
+	callCtx, cancelCalls := context.WithCancel(ctx)
+	defer cancelCalls()
 	scanner := bufio.NewScanner(s.in)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	encoder := json.NewEncoder(s.out)
 	var calls sync.WaitGroup
+	requestSlots := make(chan struct{}, maxConcurrentConnectMCPCalls)
 	var encodeMu sync.Mutex
 	var encodeErr error
 	write := func(response localMCPResponse) {
@@ -104,28 +116,54 @@ func (s *connectMCPServer) serve(ctx context.Context) error {
 		}
 	}
 	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			cancelCalls()
+			calls.Wait()
+			return ctx.Err()
+		default:
+		}
 		var request localMCPRequest
 		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
 			write(localMCPResponse{JSONRPC: "2.0", Error: &localMCPError{Code: -32700, Message: "parse error"}})
 			continue
 		}
 		dispatch := func() {
-			response, respond := s.handle(ctx, request)
+			response, respond := s.handle(callCtx, request)
 			if respond {
 				write(response)
 			}
 		}
 		if request.Method == "tools/call" {
+			select {
+			case requestSlots <- struct{}{}:
+			default:
+				if len(request.ID) > 0 {
+					write(localMCPResponse{
+						JSONRPC: "2.0", ID: request.ID,
+						Error: &localMCPError{Code: -32000, Message: "too many concurrent tool calls"},
+					})
+				}
+				continue
+			}
 			calls.Add(1)
-			go func() { defer calls.Done(); dispatch() }()
+			go func() {
+				defer calls.Done()
+				defer func() { <-requestSlots }()
+				dispatch()
+			}()
 		} else {
 			dispatch()
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read MCP request: %w", err)
-	}
+	scanErr := scanner.Err()
+	// The parent MCP process closing stdin is a transport disconnect. Cancel
+	// outstanding waits/connection attempts without stopping durable wing work.
+	cancelCalls()
 	calls.Wait()
+	if scanErr != nil {
+		return fmt.Errorf("read MCP request: %w", scanErr)
+	}
 	return encodeErr
 }
 
@@ -200,11 +238,19 @@ func (s *connectMCPServer) callTool(ctx context.Context, name string, arguments 
 			if ws.HostedRelayAllowed(wing.HostedRelay) {
 				hostedRelay = ws.HostedRelayAllow
 			}
-			entries = append(entries, map[string]any{
+			entry := map[string]any{
 				"wing_id": wing.WingID, "public_key": wing.PublicKey,
 				"owner": wing.Owner, "org_id": wing.OrgID, "online": true,
-				"mcp_control": true, "mcp_transport": "direct-webrtc", "hosted_relay": hostedRelay,
-			})
+				"mcp_control": wing.PurposeBinding && wing.DirectMCP && !wing.Locked, "mcp_transport": "direct-webrtc", "hosted_relay": hostedRelay,
+			}
+			if !wing.PurposeBinding {
+				entry["mcp_control_reason"] = "wing-upgrade-required"
+			} else if !wing.DirectMCP {
+				entry["mcp_control_reason"] = "wing-direct-control-disabled"
+			} else if wing.Locked {
+				entry["mcp_control_reason"] = "native-passkey-not-supported"
+			}
+			entries = append(entries, entry)
 		}
 		return map[string]any{"wings": entries, "count": len(entries), "control_scope": "qualified-direct"}, false, nil
 	}
@@ -214,7 +260,7 @@ func (s *connectMCPServer) callTool(ctx context.Context, name string, arguments 
 	}
 	client, err := s.controlClient(ctx, wingID)
 	if err != nil {
-		return nil, true, fmt.Errorf("direct connection to %s failed: %w; put both peers on the same LAN/tailnet, configure ICE, use SSH or a self-hosted roost, or enable Pro relay", wingID, err)
+		return nil, true, fmt.Errorf("direct connection to %s failed: %w; the native connector does not use the hosted relay—put both peers on the same LAN/tailnet, configure ICE, use SSH, or connect through a self-hosted roost", wingID, err)
 	}
 	result, isError, err := client.Call(ctx, name, forwarded)
 	if err != nil {
@@ -227,23 +273,68 @@ func (s *connectMCPServer) callTool(ctx context.Context, name string, arguments 
 }
 
 func (s *connectMCPServer) controlClient(ctx context.Context, wingID string) (*webrtcpkg.ControlClient, error) {
-	s.mu.Lock()
-	if existing := s.controls[wingID]; existing != nil {
-		if !existing.Closed() {
+	for {
+		s.mu.Lock()
+		if existing := s.controls[wingID]; existing != nil {
+			if !existing.Closed() {
+				s.mu.Unlock()
+				return existing, nil
+			}
+			delete(s.controls, wingID)
 			s.mu.Unlock()
-			return existing, nil
+			_ = existing.Close()
+			continue
 		}
-		delete(s.controls, wingID)
+		if attempt := s.connecting[wingID]; attempt != nil {
+			s.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-attempt.done:
+				return attempt.client, attempt.err
+			}
+		}
+		if s.connecting == nil {
+			s.connecting = make(map[string]*controlConnectAttempt)
+		}
+		attempt := &controlConnectAttempt{done: make(chan struct{})}
+		s.connecting[wingID] = attempt
 		s.mu.Unlock()
-		_ = existing.Close()
-	} else {
+
+		client, err := s.establishControlClient(ctx, wingID)
+		attempt.client = client
+		attempt.err = err
+		s.mu.Lock()
+		if s.connecting[wingID] == attempt {
+			delete(s.connecting, wingID)
+		}
+		if err == nil {
+			if s.controls == nil {
+				s.controls = make(map[string]*webrtcpkg.ControlClient)
+			}
+			s.controls[wingID] = client
+		}
+		close(attempt.done)
 		s.mu.Unlock()
+		return client, err
 	}
+}
+
+func (s *connectMCPServer) establishControlClient(ctx context.Context, wingID string) (*webrtcpkg.ControlClient, error) {
 	connectCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	wing, err := s.tunnel.DiscoverWing(connectCtx, wingID)
 	if err != nil {
 		return nil, err
+	}
+	if !wing.PurposeBinding {
+		return nil, fmt.Errorf("wing does not advertise purpose-bound signaling; upgrade wt on the wing before using native direct MCP")
+	}
+	if !wing.DirectMCP {
+		return nil, fmt.Errorf("wing does not have its WebRTC direct-control endpoint enabled; change connection_mode from direct or use that wing's configured direct endpoint")
+	}
+	if wing.Locked {
+		return nil, fmt.Errorf("wing requires passkey authentication, which native direct MCP does not support in this release")
 	}
 	var wingDetails struct {
 		ICEServers []config.ICEServer `json:"ice_servers"`
@@ -282,23 +373,8 @@ func (s *connectMCPServer) controlClient(ctx context.Context, wingID string) (*w
 		}
 	}
 	if err != nil {
-		client.Close()
+		closeWithLog("WebRTC client", client)
 		return nil, err
-	}
-	// Concurrent calls to different wings establish independently. If two
-	// first calls race for the same wing, keep the first ready transport and
-	// discard the redundant connection without replaying either operation.
-	s.mu.Lock()
-	if existing := s.controls[wingID]; existing != nil && !existing.Closed() {
-		s.mu.Unlock()
-		_ = client.Close()
-		return existing, nil
-	}
-	replaced := s.controls[wingID]
-	s.controls[wingID] = client
-	s.mu.Unlock()
-	if replaced != nil {
-		_ = replaced.Close()
 	}
 	return client, nil
 }

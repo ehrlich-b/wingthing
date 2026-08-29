@@ -1,5 +1,10 @@
 # Egg Config Inheritance
 
+> **Status: implemented design record.** The `base` chain and additive merge are
+> shipped. References below to “today” and “after” describe the implementation
+> transition, not two selectable current behaviors. Use the
+> [sandbox reference](sandbox.md) for the current user contract.
+
 ## Problem
 
 Default egg.yaml blocks `~/.ssh`, port 22, and other sensitive paths. This is correct. But the only way to poke a hole today is to write a full replacement config that redeclares every deny rule, every mount, everything. You can't say "defaults + SSH."
@@ -277,9 +282,15 @@ func mergeFS(parent, child []string) []string {
 
 ### Network port granularity
 
-Current `NetworkNeed` is a coarse enum (None/Local/HTTPS/Full). The `*:22` syntax needs per-port support.
+> **Deferred; this syntax is not implemented.** The current user contract is a
+> host allowlist plus explicit host-loopback `network.local_ports`. CONNECT may
+> carry TCP to any port on an allowed host; `domain:port` and `*:port` are not accepted policy forms.
+> See the [sandbox reference](sandbox.md).
 
-New network entry format: `domain`, `domain:port`, `*:port`, `*`, `none`, `localhost`.
+The design considered replacing the coarse `NetworkNeed` enum
+(None/Local/HTTPS/Full) with per-port support:
+
+Proposed network entry format: `domain`, `domain:port`, `*:port`, `*`, `none`, `localhost`.
 
 ```go
 type NetworkNeed struct {
@@ -288,7 +299,10 @@ type NetworkNeed struct {
 }
 ```
 
-macOS seatbelt already filters by port (443/80 for HTTPS). Adding 22 is one more `(allow network-outbound (remote tcp "*:22"))` rule. Linux needs iptables in the namespace or an extension to the current approach.
+macOS Seatbelt can filter by port. The Linux implementation instead keeps a
+route-less namespace and exposes a host-policy CONNECT relay; implementing this
+proposal would require port checks in that relay as well as the corresponding
+macOS policy.
 
 ## Migration
 

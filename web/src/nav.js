@@ -16,7 +16,12 @@ function hideCanvasChrome() {
     if (canvasBtn) canvasBtn.classList.remove('active');
 }
 
+function hostedRelayUnavailable() {
+    return S.currentUser && S.currentUser.relay_allowed === false;
+}
+
 export function showCanvas(pushHistory) {
+    if (hostedRelayUnavailable()) { showHome(pushHistory); return false; }
     if (window.innerWidth < 768) { showHome(pushHistory); return; }
     S.activeView = 'canvas';
     stopChatPolling();
@@ -37,6 +42,7 @@ export function showCanvas(pushHistory) {
     if (pushHistory !== false) {
         history.pushState({ view: 'canvas' }, '', '#canvas');
     }
+    return true;
 }
 
 export function showHome(pushHistory) {
@@ -68,6 +74,7 @@ export function showHome(pushHistory) {
 }
 
 export function showTerminal() {
+    if (hostedRelayUnavailable()) { showHome(); return false; }
     S.activeView = 'terminal';
     hideCanvasChrome();
     var canvasBtn = document.getElementById('canvas-toggle-btn');
@@ -86,20 +93,24 @@ export function showTerminal() {
         S.fitAddon.fit();
         S.term.focus();
     }
+    return true;
 }
 
 export function switchToSession(sessionId, pushHistory) {
+    if (hostedRelayUnavailable()) { showHome(pushHistory); return false; }
     var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
     if (sess && !sess.swept) return;
     detachPTY();
-    showTerminal();
+    if (!showTerminal()) return false;
     attachPTY(sessionId);
     if (pushHistory !== false) {
         history.pushState({ view: 'terminal', sessionId: sessionId }, '', '#s/' + sessionId);
     }
+    return true;
 }
 
 export function navigateToWingDetail(wingId, pushHistory) {
+    if (hostedRelayUnavailable()) { showHome(pushHistory); return false; }
     S.activeView = 'wing-detail';
     S.currentWingId = wingId;
     stopChatPolling();
@@ -118,6 +129,7 @@ export function navigateToWingDetail(wingId, pushHistory) {
     if (pushHistory !== false) {
         history.pushState({ view: 'wing-detail', wingId: wingId }, '', '#w/' + wingId);
     }
+    return true;
 }
 
 export function navigateToAccount(pushHistory, orgSlug) {
@@ -143,7 +155,7 @@ export function navigateToAccount(pushHistory, orgSlug) {
     }
 }
 
-export function deleteSession(sessionId) {
+export function deleteSession(sessionId, skipKill) {
     var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
     var wingId = '';
     if (sess) {
@@ -157,7 +169,7 @@ export function deleteSession(sessionId) {
     delete S.sessionNotifications[sessionId];
     if (S.activeView === 'home') renderDashboard();
     renderSidebar();
-    if (wingId) {
+    if (wingId && !skipKill) {
         sendTunnelRequest(wingId, { type: 'pty.kill', session_id: sessionId })
             .then(function() { loadHome(); })
             .catch(function() { loadHome(); });

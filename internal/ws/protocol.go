@@ -63,6 +63,25 @@ const (
 	MaxCoordinationTunnelPayload = 256 * 1024
 )
 
+// ValidSessionID reports whether an ID is safe to use as one filesystem path
+// component and as a bounded in-memory routing key. Relay-created IDs are
+// compact UUID-derived values, while the broader character set preserves
+// compatibility with older short local sessions and human-readable
+// test/automation IDs.
+func ValidSessionID(sessionID string) bool {
+	if sessionID == "" || sessionID == "." || sessionID == ".." || len(sessionID) > 128 {
+		return false
+	}
+	for _, r := range sessionID {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // TunnelPurposeForInnerType declares the coordinator-visible class of an
 // otherwise encrypted tunnel request. Direct-only accounts may use only the
 // bounded coordination classes; the wing verifies the declaration after it
@@ -100,6 +119,7 @@ type WingConfig struct {
 	WingID       string `json:"wing_id"`
 	Locked       bool   `json:"locked"`
 	AllowedCount int    `json:"allowed_count"`
+	DirectMCP    bool   `json:"direct_mcp,omitempty"`
 	HostedRelay  string `json:"hosted_relay,omitempty"`
 }
 
@@ -135,6 +155,7 @@ type WingRegister struct {
 	// PurposeBinding means this wing verifies the coordinator-visible tunnel
 	// purpose against the decrypted inner message before dispatch.
 	PurposeBinding bool   `json:"purpose_binding,omitempty"`
+	DirectMCP      bool   `json:"direct_mcp,omitempty"`
 	HostedRelay    string `json:"hosted_relay,omitempty"`
 }
 
@@ -146,9 +167,11 @@ type WingHeartbeat struct {
 
 // RegisteredMsg is the relay's acknowledgment of a successful wing registration.
 type RegisteredMsg struct {
-	Type        string `json:"type"`
-	WingID      string `json:"wing_id"`
-	RelayPubKey string `json:"relay_pub_key,omitempty"` // base64 DER EC P-256 public key for JWT verification
+	Type           string   `json:"type"`
+	WingID         string   `json:"wing_id"`
+	RelayPubKey    string   `json:"relay_pub_key,omitempty"` // base64 DER EC P-256 public key for JWT verification
+	PasskeyRPID    string   `json:"passkey_rp_id,omitempty"`
+	PasskeyOrigins []string `json:"passkey_origins,omitempty"`
 }
 
 // ErrorMsg is sent for protocol/session errors. Session and viewer IDs let a

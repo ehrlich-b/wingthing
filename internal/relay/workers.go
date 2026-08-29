@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -18,10 +19,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
-// ntfySentNonces tracks nonces already sent via ntfy (dedup).
-// Same nonce = same attention episode → skip. Cleared on session end.
-var ntfySentNonces sync.Map // nonce → bool
-
 // ConnectedWing represents a wing connected via WebSocket.
 type ConnectedWing struct {
 	ID             string
@@ -32,21 +29,30 @@ type ConnectedWing struct {
 	Locked         bool
 	AllowedCount   int
 	PurposeBinding bool
+	DirectMCP      bool
 	HostedRelay    string
-	Conn           *websocket.Conn
-	LastSeen       time.Time
+	// Revision is local to one connection generation. It starts at one and
+	// increases whenever policy/capability state changes, allowing split-node
+	// snapshots and real-time events to be ordered without comparing host clocks.
+	Revision    uint64
+	Conn        *websocket.Conn
+	ConnectedAt time.Time
+	LastSeen    time.Time
 }
 
 // WingEvent is sent to dashboard subscribers for wing/session lifecycle events.
 type WingEvent struct {
-	Type         string `json:"type"` // "wing.online", "wing.offline", "session.attention"
-	WingID       string `json:"wing_id"`
-	PublicKey    string `json:"public_key,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	Locked       *bool  `json:"locked,omitempty"`
-	AllowedCount *int   `json:"allowed_count,omitempty"`
-	UserID       string `json:"user_id,omitempty"`
-	Owner        string `json:"owner,omitempty"`
+	Type           string  `json:"type"` // "wing.online", "wing.offline", "session.attention"
+	WingID         string  `json:"wing_id"`
+	PublicKey      string  `json:"public_key,omitempty"`
+	SessionID      string  `json:"session_id,omitempty"`
+	Locked         *bool   `json:"locked,omitempty"`
+	AllowedCount   *int    `json:"allowed_count,omitempty"`
+	PurposeBinding *bool   `json:"purpose_binding,omitempty"`
+	DirectMCP      *bool   `json:"direct_mcp,omitempty"`
+	HostedRelay    *string `json:"hosted_relay,omitempty"`
+	UserID         string  `json:"user_id,omitempty"`
+	Owner          string  `json:"owner,omitempty"`
 }
 
 // eventSub is a dashboard subscriber with its org memberships.
@@ -186,44 +192,127 @@ func (r *WingRegistry) notifyWing(ownerID, orgID string, ev WingEvent) {
 	}
 }
 
-func (r *WingRegistry) Add(w *ConnectedWing) {
+func (r *WingRegistry) Add(w *ConnectedWing) *ConnectedWing {
+	stored := *w
+	if stored.ConnectedAt.IsZero() {
+		stored.ConnectedAt = stored.LastSeen
+	}
+	if stored.Revision == 0 {
+		stored.Revision = 1
+	}
 	r.mu.Lock()
-	r.wings[w.ID] = w
+	r.wings[w.ID] = &stored
 	r.mu.Unlock()
+	return &stored
+}
+
+// Activate publishes a connection and removes older overlapping sockets for
+// the same stable wing ID. Reconnects can briefly overlap; only the newest
+// generation may publish policy or runtime events.
+func (r *WingRegistry) Activate(w *ConnectedWing) (*ConnectedWing, []*ConnectedWing, bool) {
+	stored := *w
+	if stored.ConnectedAt.IsZero() {
+		stored.ConnectedAt = time.Now()
+	}
+	if stored.LastSeen.IsZero() {
+		stored.LastSeen = stored.ConnectedAt
+	}
+	if stored.Revision == 0 {
+		stored.Revision = 1
+	}
+	r.mu.Lock()
+	// Device enrollment lets each account choose its local stable wing ID. A
+	// reconnect may replace only another socket authenticated as the same owner;
+	// otherwise a user who learns somebody else's wing ID could evict it without
+	// ever passing that wing's access checks.
+	for _, candidate := range r.wings {
+		if candidate.WingID == stored.WingID && candidate.UserID != stored.UserID {
+			r.mu.Unlock()
+			return &stored, nil, false
+		}
+	}
+	r.wings[stored.ID] = &stored
+	newest := &stored
+	for _, candidate := range r.wings {
+		if candidate.WingID == stored.WingID && (candidate.ConnectedAt.After(newest.ConnectedAt) ||
+			(candidate.ConnectedAt.Equal(newest.ConnectedAt) && candidate.ID > newest.ID)) {
+			newest = candidate
+		}
+	}
+	var superseded []*ConnectedWing
+	for connectionID, candidate := range r.wings {
+		if candidate.WingID == stored.WingID && connectionID != newest.ID {
+			superseded = append(superseded, candidate)
+			delete(r.wings, connectionID)
+		}
+	}
+	r.mu.Unlock()
+	return &stored, superseded, newest.ID == stored.ID
 }
 
 func (r *WingRegistry) Remove(id string) *ConnectedWing {
-	r.mu.Lock()
-	w := r.wings[id]
-	delete(r.wings, id)
-	r.mu.Unlock()
+	w, _ := r.RemoveConnection(id)
 	return w
 }
 
-// UpdateConfig updates a wing's lock state. Returns the wing for event dispatch.
-func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int, hostedRelay string) *ConnectedWing {
+// RemoveConnection reports whether removing this socket took the stable wing
+// offline, as opposed to completing an old side of a reconnect overlap.
+func (r *WingRegistry) RemoveConnection(id string) (*ConnectedWing, bool) {
 	r.mu.Lock()
 	w := r.wings[id]
+	delete(r.wings, id)
+	logicalOffline := w != nil
 	if w != nil {
-		w.Locked = locked
-		w.AllowedCount = allowedCount
-		w.HostedRelay = hostedRelay
+		for _, candidate := range r.wings {
+			if candidate.WingID == w.WingID {
+				logicalOffline = false
+				break
+			}
+		}
 	}
 	r.mu.Unlock()
-	return w
+	return w, logicalOffline
+}
+
+// UpdateConfig updates a wing's lock state. Returns the wing for event dispatch.
+func (r *WingRegistry) UpdateConfig(id string, locked bool, allowedCount int, directMCP bool, hostedRelay string) *ConnectedWing {
+	r.mu.Lock()
+	current := r.wings[id]
+	var updated *ConnectedWing
+	if current != nil {
+		copy := *current
+		copy.Locked = locked
+		copy.AllowedCount = allowedCount
+		copy.DirectMCP = directMCP
+		copy.HostedRelay = hostedRelay
+		copy.Revision++
+		updated = &copy
+		r.wings[id] = updated
+	}
+	r.mu.Unlock()
+	return updated
 }
 
 func (r *WingRegistry) FindByID(wingID string) *ConnectedWing {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.wings[wingID]
+	var newest *ConnectedWing
+	for _, wing := range r.wings {
+		if wing.WingID == wingID && (newest == nil || wing.ConnectedAt.After(newest.ConnectedAt) ||
+			(wing.ConnectedAt.Equal(newest.ConnectedAt) && wing.ID > newest.ID)) {
+			newest = wing
+		}
+	}
+	return newest
 }
 
-func (r *WingRegistry) Touch(wingID string) {
+func (r *WingRegistry) Touch(connectionID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if w, ok := r.wings[wingID]; ok {
-		w.LastSeen = time.Now()
+	if w, ok := r.wings[connectionID]; ok {
+		copy := *w
+		copy.LastSeen = time.Now()
+		r.wings[connectionID] = &copy
 	}
 }
 
@@ -275,7 +364,9 @@ func (r *WingRegistry) BroadcastAll(ctx context.Context, data []byte) {
 
 	for _, w := range wings {
 		writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		w.Conn.Write(writeCtx, websocket.MessageText, data)
+		if err := w.Conn.Write(writeCtx, websocket.MessageText, data); err != nil {
+			log.Printf("broadcast to wing %s: %v", w.WingID, err)
+		}
 		cancel()
 	}
 }
@@ -290,7 +381,9 @@ func (r *WingRegistry) CloseAll() {
 	r.mu.RUnlock()
 
 	for _, w := range wings {
-		w.Conn.Close(websocket.StatusGoingAway, "server shutting down")
+		if err := w.Conn.Close(websocket.StatusGoingAway, "server shutting down"); err != nil {
+			log.Printf("close wing %s during shutdown: %v", w.WingID, err)
+		}
 	}
 }
 
@@ -332,16 +425,21 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}
+	if !s.roostUserIDAllowed(userID) {
+		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
+		return
+	}
 
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
-	})
+	// Wings are native clients and send no Origin header. Keep the library's
+	// default Origin enforcement so an arbitrary web page cannot turn a leaked
+	// or browser-visible device credential into a cross-site wing connection.
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		log.Printf("websocket accept: %v", err)
 		return
 	}
 	conn.SetReadLimit(512 * 1024) // 512KB — replay chunks can be large
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 
 	ctx := r.Context()
 
@@ -365,8 +463,9 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.wingRegistrationAllowed(userID, credentialWingID, reg.WingID) {
 		errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "wing ID does not match credential"}
-		data, _ := json.Marshal(errMsg)
-		conn.Write(ctx, websocket.MessageText, data)
+		if err := writeWebSocketJSON(ctx, conn, errMsg); err != nil {
+			log.Printf("report rejected wing registration: %v", err)
+		}
 		return
 	}
 
@@ -384,8 +483,10 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		Locked:         reg.Locked,
 		AllowedCount:   reg.AllowedCount,
 		PurposeBinding: reg.PurposeBinding,
+		DirectMCP:      reg.DirectMCP,
 		HostedRelay:    reg.HostedRelay,
 		Conn:           conn,
+		ConnectedAt:    time.Now(),
 		LastSeen:       time.Now(),
 	}
 
@@ -396,21 +497,34 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			org, orgErr := s.Store.ResolveOrg(wing.OrgID, userID)
 			if orgErr != nil {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: orgErr.Error()}
-				data, _ := json.Marshal(errMsg)
-				conn.Write(ctx, websocket.MessageText, data)
+				if err := writeWebSocketJSON(ctx, conn, errMsg); err != nil {
+					log.Printf("report org resolution failure: %v", err)
+				}
 				return
 			}
 			if org == nil && s.RoostMode {
-				// Self-hosted: auto-create org on first connection
-				if err := s.Store.CreateOrg(wing.OrgID, wing.OrgID, wing.OrgID, userID); err == nil {
-					s.Store.DB().Exec("UPDATE orgs SET max_seats = 9999 WHERE id = ?", wing.OrgID)
-					org, _ = s.Store.ResolveOrg(wing.OrgID, userID)
+				// Self-hosted: find an existing shared org without requiring prior
+				// membership, or create it atomically on first connection.
+				org, orgErr = s.Store.GetOrgByID(wing.OrgID)
+				if orgErr == nil && org == nil {
+					org, orgErr = s.Store.GetOrgBySlug(wing.OrgID)
+				}
+				if orgErr == nil && org == nil {
+					createErr := s.Store.CreateOrgWithSeats(wing.OrgID, wing.OrgID, wing.OrgID, userID, 9999)
+					org, orgErr = s.Store.GetOrgByID(wing.OrgID)
+					if orgErr == nil && org == nil {
+						orgErr = createErr
+					}
+				}
+				if orgErr != nil {
+					log.Printf("prepare roost org %s: %v", wing.OrgID, orgErr)
 				}
 			}
 			if org == nil {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org not found: " + wing.OrgID}
-				data, _ := json.Marshal(errMsg)
-				conn.Write(ctx, websocket.MessageText, data)
+				if err := writeWebSocketJSON(ctx, conn, errMsg); err != nil {
+					log.Printf("report missing wing org: %v", err)
+				}
 				return
 			}
 			// Store the resolved org ID (not the slug)
@@ -418,13 +532,17 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			role := s.Store.GetOrgMemberRole(org.ID, userID)
 			if role == "" && s.RoostMode {
 				// Self-hosted: all authenticated users are org members
-				s.Store.AddOrgMember(org.ID, userID, "member")
-				role = "member"
+				if err := s.Store.AddOrgMember(org.ID, userID, "member"); err != nil {
+					log.Printf("add user %s to roost org %s: %v", userID, org.ID, err)
+				} else {
+					role = s.Store.GetOrgMemberRole(org.ID, userID)
+				}
 			}
 			if role == "" {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "not a member of org: " + org.Name}
-				data, _ := json.Marshal(errMsg)
-				conn.Write(ctx, websocket.MessageText, data)
+				if err := writeWebSocketJSON(ctx, conn, errMsg); err != nil {
+					log.Printf("report rejected org membership: %v", err)
+				}
 				return
 			}
 		} else if s.Config.LoginNodeAddr != "" {
@@ -432,18 +550,34 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			resolvedID, ok := s.validateOrgViaLogin(ctx, wing.OrgID, userID)
 			if !ok {
 				errMsg := ws.ErrorMsg{Type: ws.TypeError, Message: "org validation failed for: " + wing.OrgID}
-				data, _ := json.Marshal(errMsg)
-				conn.Write(ctx, websocket.MessageText, data)
+				if err := writeWebSocketJSON(ctx, conn, errMsg); err != nil {
+					log.Printf("report edge org validation failure: %v", err)
+				}
 				return
 			}
 			wing.OrgID = resolvedID
 		}
 	}
 
-	s.Wings.Add(wing)
+	var superseded []*ConnectedWing
+	var active bool
+	wing, superseded, active = s.Wings.Activate(wing)
+	for _, stale := range superseded {
+		if stale.Conn != nil {
+			if err := stale.Conn.CloseNow(); err != nil {
+				log.Printf("close superseded wing %s: %v", stale.WingID, err)
+			}
+		}
+	}
+	if !active {
+		if err := writeWebSocketJSON(ctx, conn, ws.ErrorMsg{Type: ws.TypeError, Message: "wing ID is already active for another authenticated owner or newer connection"}); err != nil {
+			log.Printf("report duplicate wing registration: %v", err)
+		}
+		return
+	}
 	s.dispatchWingEvent("wing.online", wing)
 	defer func() {
-		if w := s.Wings.Remove(wing.ID); w != nil {
+		if w, logicalOffline := s.Wings.RemoveConnection(wing.ID); w != nil && logicalOffline {
 			s.dispatchWingEvent("wing.offline", w)
 		}
 	}()
@@ -452,13 +586,16 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 
 	// Send ack (include relay public key for JWT verification in direct mode)
 	ack := ws.RegisteredMsg{Type: ws.TypeRegistered, WingID: wing.ID}
+	ack.PasskeyRPID, ack.PasskeyOrigins = s.passkeyRelyingParty()
 	if s.JWTPubKey() != nil {
 		if pubStr, err := MarshalECPublicKey(s.JWTPubKey()); err == nil {
 			ack.RelayPubKey = pubStr
 		}
 	}
-	ackData, _ := json.Marshal(ack)
-	conn.Write(ctx, websocket.MessageText, ackData)
+	if err := writeWebSocketJSON(ctx, conn, ack); err != nil {
+		log.Printf("acknowledge wing %s registration: %v", wing.WingID, err)
+		return
+	}
 
 	// Read loop — forward messages, never inspect content
 	for {
@@ -479,12 +616,16 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 
 		case ws.TypeWingConfig:
 			var cfg ws.WingConfig
-			json.Unmarshal(data, &cfg)
-			if w := s.Wings.UpdateConfig(wing.ID, cfg.Locked, cfg.AllowedCount, cfg.HostedRelay); w != nil {
-				s.dispatchWingEvent("wing.config", w)
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				log.Printf("decode config from wing %s: %v", wing.WingID, err)
+				continue
+			}
+			if updated := s.Wings.UpdateConfig(wing.ID, cfg.Locked, cfg.AllowedCount, cfg.DirectMCP, cfg.HostedRelay); updated != nil {
+				wing = updated
+				s.dispatchWingEvent("wing.config", updated)
 			}
 
-		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge, ws.TypePTYPreview, ws.TypePTYBrowserOpen, ws.TypePTYMigrated, ws.TypePTYFallback, ws.TypeError:
+		case ws.TypePTYStarted, ws.TypePTYOutput, ws.TypePTYExited, ws.TypePasskeyChallenge, ws.TypePTYPreview, ws.TypePTYBrowserOpen, ws.TypePTYMigrated, ws.TypePTYFallback:
 			if !ws.HostedRelayAllowed(wing.HostedRelay) {
 				log.Printf("[audit] hosted relay output dropped wing=%s operation=%s policy=deny", wing.WingID, msg.Type)
 				continue
@@ -493,17 +634,42 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 			var partial struct {
 				SessionID string `json:"session_id"`
 			}
-			json.Unmarshal(data, &partial)
+			if err := json.Unmarshal(data, &partial); err != nil {
+				log.Printf("decode PTY message from wing %s: %v", wing.WingID, err)
+				continue
+			}
 			s.forwardPTYToBrowser(partial.SessionID, wing.WingID, data)
+
+		case ws.TypeError:
+			var message ws.ErrorMsg
+			if err := json.Unmarshal(data, &message); err != nil {
+				log.Printf("decode error message from wing %s: %v", wing.WingID, err)
+				continue
+			}
+			if message.RequestID != "" {
+				s.forwardTunnelToBrowser(wing.WingID, message.RequestID, data, true)
+				continue
+			}
+			if !ws.HostedRelayAllowed(wing.HostedRelay) {
+				log.Printf("[audit] hosted relay output dropped wing=%s operation=%s policy=deny", wing.WingID, msg.Type)
+				continue
+			}
+			s.forwardPTYToBrowser(message.SessionID, wing.WingID, data)
 
 		case ws.TypeTunnelResponse:
 			var resp ws.TunnelResponse
-			json.Unmarshal(data, &resp)
+			if err := json.Unmarshal(data, &resp); err != nil {
+				log.Printf("decode tunnel response from wing %s: %v", wing.WingID, err)
+				continue
+			}
 			s.forwardTunnelToBrowser(wing.WingID, resp.RequestID, data, true)
 
 		case ws.TypeTunnelStream:
 			var stream ws.TunnelStream
-			json.Unmarshal(data, &stream)
+			if err := json.Unmarshal(data, &stream); err != nil {
+				log.Printf("decode tunnel stream from wing %s: %v", wing.WingID, err)
+				continue
+			}
 			s.forwardTunnelToBrowser(wing.WingID, stream.RequestID, data, stream.Done)
 
 		case ws.TypeSessionAttention:
@@ -511,32 +677,47 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			var attn ws.SessionAttention
-			json.Unmarshal(data, &attn)
+			if err := json.Unmarshal(data, &attn); err != nil {
+				log.Printf("decode attention event from wing %s: %v", wing.WingID, err)
+				continue
+			}
 			ev := WingEvent{
 				Type:      "session.attention",
 				WingID:    wing.WingID,
 				SessionID: attn.SessionID,
 			}
 			if s.IsEdge() && s.Config.LoginNodeAddr != "" {
-				payload, _ := json.Marshal(map[string]any{
-					"type":       "session.attention",
-					"wing_id":    wing.WingID,
-					"user_id":    wing.UserID,
-					"org_id":     wing.OrgID,
-					"session_id": attn.SessionID,
+				payload, err := json.Marshal(map[string]any{
+					"type":          "session.attention",
+					"wing_id":       wing.WingID,
+					"connection_id": wing.ID,
+					"machine_id":    s.Config.FlyMachineID,
+					"user_id":       wing.UserID,
+					"org_id":        wing.OrgID,
+					"session_id":    attn.SessionID,
 				})
-				go s.forwardPayloadToLogin(payload)
+				if err != nil {
+					log.Printf("encode attention event for login: %v", err)
+				} else {
+					go s.forwardPayloadToLogin(payload)
+				}
 			} else {
 				s.Wings.notifyWing(wing.UserID, wing.OrgID, ev)
 				if s.IsLogin() && s.WingMap != nil {
-					payload, _ := json.Marshal(map[string]any{
-						"type":       "session.attention",
-						"wing_id":    wing.WingID,
-						"user_id":    wing.UserID,
-						"org_id":     wing.OrgID,
-						"session_id": attn.SessionID,
+					payload, err := json.Marshal(map[string]any{
+						"type":          "session.attention",
+						"wing_id":       wing.WingID,
+						"connection_id": wing.ID,
+						"machine_id":    s.Config.FlyMachineID,
+						"user_id":       wing.UserID,
+						"org_id":        wing.OrgID,
+						"session_id":    attn.SessionID,
 					})
-					go s.broadcastToEdges(payload)
+					if err != nil {
+						log.Printf("encode attention event for edges: %v", err)
+					} else {
+						go s.broadcastToEdges(payload)
+					}
 				}
 			}
 			// Push notification via ntfy (nonce-deduped)
@@ -570,15 +751,16 @@ func (s *Server) wingRegistrationAllowed(userID, credentialWingID, registrationW
 func (s *Server) validateOrgViaLogin(ctx context.Context, orgRef, userID string) (string, bool) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		s.Config.LoginNodeAddr+"/internal/org-check/"+orgRef+"/"+userID, nil)
+		strings.TrimRight(s.Config.LoginNodeAddr, "/")+"/internal/org-check/"+url.PathEscape(orgRef)+"/"+url.PathEscape(userID), nil)
 	if err != nil {
 		return "", false
 	}
+	s.authorizeInternalRequest(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", false
 	}
@@ -586,7 +768,7 @@ func (s *Server) validateOrgViaLogin(ctx context.Context, orgRef, userID string)
 		OK    bool   `json:"ok"`
 		OrgID string `json:"org_id"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeInternalJSONResponse(resp.Body, &result); err != nil {
 		return "", false
 	}
 	return result.OrgID, result.OK
@@ -617,13 +799,18 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 		switch eventType {
 		case "wing.online", "wing.config":
 			s.WingMap.Register(wing.WingID, WingLocation{
-				MachineID:    s.Config.FlyMachineID,
-				UserID:       wing.UserID,
-				OrgID:        wing.OrgID,
-				PublicKey:    wing.PublicKey,
-				Locked:       wing.Locked,
-				AllowedCount: wing.AllowedCount,
-				HostedRelay:  wing.HostedRelay,
+				MachineID:      s.Config.FlyMachineID,
+				ConnectionID:   wing.ID,
+				UserID:         wing.UserID,
+				OrgID:          wing.OrgID,
+				PublicKey:      wing.PublicKey,
+				Locked:         wing.Locked,
+				AllowedCount:   wing.AllowedCount,
+				PurposeBinding: wing.PurposeBinding,
+				DirectMCP:      wing.DirectMCP,
+				HostedRelay:    wing.HostedRelay,
+				GenerationAt:   wing.ConnectedAt,
+				Revision:       wing.Revision,
 			})
 		case "wing.offline":
 			if s.findAnyWingByWingID(wing.WingID) == nil {
@@ -650,90 +837,205 @@ func (s *Server) dispatchWingEvent(eventType string, wing *ConnectedWing) {
 	} else {
 		locked := wing.Locked
 		allowedCount := wing.AllowedCount
+		purposeBinding := wing.PurposeBinding
+		directMCP := wing.DirectMCP
+		hostedRelay := wing.HostedRelay
 		ev = WingEvent{
-			Type:         eventType,
-			WingID:       wing.WingID,
-			PublicKey:    wing.PublicKey,
-			Locked:       &locked,
-			AllowedCount: &allowedCount,
-			UserID:       wing.UserID,
-			Owner:        ownerName,
+			Type:           eventType,
+			WingID:         wing.WingID,
+			PublicKey:      wing.PublicKey,
+			Locked:         &locked,
+			AllowedCount:   &allowedCount,
+			PurposeBinding: &purposeBinding,
+			DirectMCP:      &directMCP,
+			HostedRelay:    &hostedRelay,
+			UserID:         wing.UserID,
+			Owner:          ownerName,
 		}
 	}
 	s.Wings.notifyWing(wing.UserID, wing.OrgID, ev)
 
 	// Login: broadcast to all edges
 	if s.IsLogin() && s.WingMap != nil {
-		payload, _ := json.Marshal(map[string]any{
-			"type":          eventType,
-			"wing_id":       wing.WingID,
-			"user_id":       wing.UserID,
-			"org_id":        wing.OrgID,
-			"public_key":    wing.PublicKey,
-			"locked":        wing.Locked,
-			"allowed_count": wing.AllowedCount,
+		payload, err := json.Marshal(map[string]any{
+			"type":                   eventType,
+			"wing_id":                wing.WingID,
+			"connection_id":          wing.ID,
+			"machine_id":             s.Config.FlyMachineID,
+			"user_id":                wing.UserID,
+			"org_id":                 wing.OrgID,
+			"public_key":             wing.PublicKey,
+			"locked":                 wing.Locked,
+			"allowed_count":          wing.AllowedCount,
+			"purpose_binding":        wing.PurposeBinding,
+			"direct_mcp":             wing.DirectMCP,
+			"hosted_relay":           wing.HostedRelay,
+			"connected_at_unix_nano": unixNanoOrZero(wing.ConnectedAt),
+			"revision":               wing.Revision,
 		})
-		go s.broadcastToEdges(payload)
+		if err != nil {
+			log.Printf("encode wing event for edges: %v", err)
+		} else {
+			go s.broadcastToEdges(payload)
+		}
 	}
 }
 
 // forwardWingEvent POSTs a wing event to the login node for cluster-wide propagation.
 func (s *Server) forwardWingEvent(eventType string, wing *ConnectedWing) {
-	payload, _ := json.Marshal(map[string]any{
-		"type":          eventType,
-		"wing_id":       wing.WingID,
-		"user_id":       wing.UserID,
-		"org_id":        wing.OrgID,
-		"public_key":    wing.PublicKey,
-		"locked":        wing.Locked,
-		"allowed_count": wing.AllowedCount,
+	payload, err := json.Marshal(map[string]any{
+		"type":                   eventType,
+		"wing_id":                wing.WingID,
+		"connection_id":          wing.ID,
+		"machine_id":             s.Config.FlyMachineID,
+		"user_id":                wing.UserID,
+		"org_id":                 wing.OrgID,
+		"public_key":             wing.PublicKey,
+		"locked":                 wing.Locked,
+		"allowed_count":          wing.AllowedCount,
+		"purpose_binding":        wing.PurposeBinding,
+		"direct_mcp":             wing.DirectMCP,
+		"hosted_relay":           wing.HostedRelay,
+		"connected_at_unix_nano": unixNanoOrZero(wing.ConnectedAt),
+		"revision":               wing.Revision,
 	})
+	if err != nil {
+		log.Printf("encode wing event for login: %v", err)
+		return
+	}
 	s.forwardPayloadToLogin(payload)
 }
 
 // forwardPayloadToLogin POSTs a raw JSON payload to the login node's wing-event endpoint.
 func (s *Server) forwardPayloadToLogin(payload []byte) {
 	client := &http.Client{Timeout: 3 * time.Second}
-	req, _ := http.NewRequest("POST", s.Config.LoginNodeAddr+"/internal/wing-event", bytes.NewReader(payload))
-	if req == nil {
+	req, err := http.NewRequest("POST", s.Config.LoginNodeAddr+"/internal/wing-event", bytes.NewReader(payload))
+	if err != nil {
+		log.Printf("build wing event request: %v", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	s.authorizeInternalRequest(req)
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("forward wing event to login: %v", err)
 		return
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		log.Printf("close wing event response: %v", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("forward wing event to login: unexpected status %s", resp.Status)
+	}
 }
 
 // forwardTunnelToBrowser routes an encrypted tunnel response from its source wing to the
 // originating browser. The source binding prevents one connected wing from consuming or
 // injecting another wing's pending request by reusing its request ID.
 func (s *Server) forwardTunnelToBrowser(wingID, requestID string, data []byte, done bool) {
-	bc := s.pendingTunnelBrowser(wingID, requestID, done)
-	if bc == nil {
+	pending, overBudget := s.takePendingTunnelResponse(wingID, requestID, len(data), done)
+	if pending == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	bc.Write(ctx, websocket.MessageText, data)
+	if overBudget {
+		message := ws.ErrorMsg{
+			Type: ws.TypeError, RequestID: requestID,
+			Message: "coordination response exceeded the hosted signaling limit",
+		}
+		if err := writeWebSocketJSON(ctx, pending.Browser, message); err != nil {
+			log.Printf("report oversized coordination response: %v", err)
+		}
+		return
+	}
+	if pending.Coordination {
+		if !s.writeCoordinationPayload(ctx, pending.Browser, data) {
+			// A closed browser or exhausted sustained-rate deadline cannot consume the rest
+			// of this response. Remove the request immediately so a modified
+			// wing cannot keep making the relay rate-limit or notify dead clients
+			// until the normal request TTL expires.
+			s.discardTunnelRequest(wingID, requestID)
+		}
+		return
+	}
+	wing := s.findAnyWingByWingID(wingID)
+	if wing == nil || !ws.HostedRelayAllowed(wing.HostedRelay) {
+		s.discardTunnelRequest(wingID, requestID)
+		s.denyHostedRelay(ctx, pending.Browser, s.browserUserID(pending.Browser), wingID, ws.TypeTunnelResponse, requestID, "")
+		return
+	}
+	s.writeRelayPayload(ctx, pending.Browser, data, "", requestID)
 }
 
-func (s *Server) pendingTunnelBrowser(wingID, requestID string, done bool) *websocket.Conn {
+func (s *Server) discardTunnelRequest(wingID, requestID string) {
+	s.tunnelMu.Lock()
+	delete(s.tunnelRequests, tunnelRequestKey{WingID: wingID, RequestID: requestID})
+	s.tunnelMu.Unlock()
+}
+
+func (s *Server) pendingTunnelBrowser(wingID, requestID string, done bool) *pendingTunnelRequest {
+	pending, _ := s.takePendingTunnelResponse(wingID, requestID, 0, done)
+	return pending
+}
+
+func (s *Server) takePendingTunnelResponse(wingID, requestID string, responseBytes int, done bool) (*pendingTunnelRequest, bool) {
 	s.tunnelMu.Lock()
 	key := tunnelRequestKey{WingID: wingID, RequestID: requestID}
 	pending, ok := s.tunnelRequests[key]
 	if ok && time.Since(pending.CreatedAt) > pendingTunnelRequestTTL {
 		delete(s.tunnelRequests, key)
 		ok = false
-	} else if done {
-		delete(s.tunnelRequests, key)
+	} else if ok {
+		if pending.Coordination && responseBytes > 0 {
+			pending.ResponseBytes += responseBytes
+			pending.ResponseMessages++
+			if pending.ResponseBytes > maxCoordinationResponseBytes || pending.ResponseMessages > maxCoordinationResponseMessages {
+				delete(s.tunnelRequests, key)
+				s.tunnelMu.Unlock()
+				return &pending, true
+			}
+			s.tunnelRequests[key] = pending
+		}
+		if done {
+			delete(s.tunnelRequests, key)
+		}
 	}
 	s.tunnelMu.Unlock()
 	if !ok {
-		return nil
+		return nil, false
 	}
-	return pending.Browser
+	return &pending, false
+}
+
+const maxNtfyDedupNonces = 10000
+
+// markNtfyNonce reports whether this is a new per-user notification episode.
+// The insertion-order cache is deliberately bounded; nonces are only a
+// best-effort duplicate suppression mechanism, not authorization state.
+func (s *Server) markNtfyNonce(userID, nonce string) bool {
+	if nonce == "" {
+		return true
+	}
+	key := userID + "\x00" + nonce
+	s.ntfyNonceMu.Lock()
+	defer s.ntfyNonceMu.Unlock()
+	if s.ntfyNonceSeen == nil {
+		s.ntfyNonceSeen = make(map[string]bool)
+	}
+	if s.ntfyNonceSeen[key] {
+		return false
+	}
+	if len(s.ntfyNonceOrder) >= maxNtfyDedupNonces {
+		oldest := s.ntfyNonceOrder[s.ntfyNonceNext]
+		delete(s.ntfyNonceSeen, oldest)
+		s.ntfyNonceOrder[s.ntfyNonceNext] = key
+		s.ntfyNonceNext = (s.ntfyNonceNext + 1) % maxNtfyDedupNonces
+	} else {
+		s.ntfyNonceOrder = append(s.ntfyNonceOrder, key)
+	}
+	s.ntfyNonceSeen[key] = true
+	return true
 }
 
 // trySendNtfy deduplicates by nonce and sends an ntfy push notification.
@@ -744,18 +1046,20 @@ func (s *Server) trySendNtfy(nonce, userID string, send func(c *ntfy.Client)) {
 		return
 	}
 	// Nonce dedup: never refire the same nonce
-	if nonce != "" {
-		if _, loaded := ntfySentNonces.LoadOrStore(nonce, true); loaded {
-			log.Printf("ntfy: skipping duplicate nonce=%s", nonce)
-			return
-		}
+	if !s.markNtfyNonce(userID, nonce) {
+		log.Printf("ntfy: skipping duplicate nonce=%s", nonce)
+		return
 	}
 	cfg, err := s.Store.GetNtfyConfig(userID)
 	if err != nil || cfg.Topic == "" {
 		return
 	}
 	log.Printf("ntfy: sending push for user=%s nonce=%s", userID, nonce)
-	c := ntfy.New(cfg.Topic, cfg.Token, cfg.Events)
+	c, err := s.newNtfyClient(cfg.Topic, cfg.Token, cfg.Events)
+	if err != nil {
+		log.Printf("ntfy: refusing unsafe endpoint for user=%s: %v", userID, err)
+		return
+	}
 	go send(c)
 }
 

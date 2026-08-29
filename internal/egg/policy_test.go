@@ -150,10 +150,23 @@ func TestInferLocalPorts(t *testing.T) {
 		want        []int
 	}{
 		{
-			name:  "ollama profile implies its default port",
-			yaml:  "network: [localhost]",
+			name:  "ollama profile alone implies its default port",
+			yaml:  "{}",
 			agent: "ollama",
 			want:  []int{11434},
+		},
+		{
+			name:  "suppressing the ollama profile suppresses its port",
+			yaml:  "network:\n  agent_domains: none",
+			agent: "ollama",
+			want:  nil,
+		},
+		{
+			name:        "unsupported provider URL does not drill a port",
+			yaml:        "network:\n  agent_domains: none",
+			agent:       "ollama",
+			providerURL: "http://localhost:4000/v1",
+			want:        nil,
 		},
 		{
 			name:        "provider base url on loopback is forwarded",

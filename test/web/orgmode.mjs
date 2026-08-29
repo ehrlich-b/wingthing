@@ -1,7 +1,6 @@
-// Org-mode layout canary for the wingthing feature-local-first-terminal-routing branch.
-// Drives the containerized shared roost (RoostMode + org "slide") as three seeded
-// users through the flows the branch touched: dashboard layout, palette terminal
-// launch, E2E identity lock, detach/reattach, path ACLs, account/org page, mobile.
+// Organization-mode compatibility canary. Drives the containerized shared roost
+// as three enrolled principals plus one outsider through dashboard layout, terminal
+// lifecycle, encryption, path ACLs, enrollment, account/org, and mobile behavior.
 import { chromium } from 'playwright';
 import fs from 'fs';
 
@@ -11,6 +10,7 @@ const TOKENS = {
   alice: 'canary-alice-session-token-0000000001',
   bob: 'canary-bob-session-token-000000000002',
   carol: 'canary-carol-session-token-0000000003',
+  dave: 'canary-dave-session-token-00000000004',
 };
 
 const results = { base: BASE, steps: [], consoleErrors: [], pageErrors: [], failedRequests: [] };
@@ -198,6 +198,51 @@ try {
     }
     await shot(p, 'alice-reattach');
 
+    // Audit is enabled for this roost. Exercise browser-Back cleanup for both
+    // keylog and replay so hidden overlays cannot retain xterm instances,
+    // playback timers, or late stream callbacks.
+    try {
+      await p.click('#home-btn');
+      await p.waitForSelector('#home-section', { state: 'visible', timeout: 10000 });
+      await p.locator('#wing-status .wing-box').first().click();
+      await p.waitForSelector('#wing-detail-section', { state: 'visible', timeout: 10000 });
+      const keylog = p.locator('.wd-session-row .wd-keylog-btn').first();
+      await keylog.waitFor({ state: 'visible', timeout: 10000 });
+      await keylog.click();
+      await p.waitForSelector('#audit-overlay', { state: 'visible', timeout: 10000 });
+      await p.evaluate(() => history.back());
+      await p.waitForSelector('#audit-overlay', { state: 'hidden', timeout: 10000 });
+      await p.waitForTimeout(500);
+      const keylogClosed = await p.evaluate(() => {
+        const overlay = document.getElementById('audit-overlay');
+        return !overlay._auditTerm && !overlay._playTimer &&
+          document.getElementById('audit-download').style.display === 'none' &&
+          document.getElementById('audit-play').style.display === '' &&
+          document.getElementById('audit-speed').style.display === '';
+      });
+      record('alice: browser Back fully cleans up audit keylog', keylogClosed);
+
+      const replay = p.locator('.wd-session-row .wd-replay-btn').first();
+      await replay.waitFor({ state: 'visible', timeout: 10000 });
+      await replay.click();
+      await p.waitForSelector('#audit-overlay', { state: 'visible', timeout: 10000 });
+      await p.waitForFunction(() => document.getElementById('audit-play').textContent !== 'loading...', null, { timeout: 10000 });
+      const replayButton = p.locator('#audit-play');
+      if (await replayButton.isEnabled()) {
+        await replayButton.click();
+        await p.waitForTimeout(100);
+      }
+      await p.evaluate(() => history.back());
+      await p.waitForSelector('#audit-overlay', { state: 'hidden', timeout: 10000 });
+      const replayClosed = await p.evaluate(() => {
+        const overlay = document.getElementById('audit-overlay');
+        return !overlay._auditTerm && !overlay._playTimer;
+      });
+      record('alice: browser Back disposes audit replay and playback timer', replayClosed);
+    } catch (e) {
+      record('alice: audit overlay browser-Back lifecycle', false, String(e).slice(0, 200));
+    }
+
     // account page: in roost mode the org section is hidden BY DESIGN
     // (the roost is the org) — assert the page renders and stays hidden.
     try {
@@ -302,14 +347,72 @@ try {
     record('api: /api/orgs returns org slide for alice', !!slide, JSON.stringify(orgs).slice(0, 200));
   }
 
+  // ---------- Enrollment negative control ----------
+  {
+    const dave = await newUser(browser, 'dave', { width: 1280, height: 800 });
+    const resp = await dave.ctx.request.get(BASE + '/api/app/me');
+    record('outsider: pre-existing cookie cannot bypass roost enrollment', resp.status() === 401,
+      `status=${resp.status()}`);
+    const errorsBeforePageLoad = results.consoleErrors.length;
+    await dave.page.goto(BASE + '/app/', { waitUntil: 'domcontentloaded' });
+    await dave.page.waitForTimeout(1000);
+    const outsiderConsoleErrors = results.consoleErrors.slice(errorsBeforePageLoad);
+    if (outsiderConsoleErrors.length === 1 &&
+        outsiderConsoleErrors[0].who === 'dave' &&
+        outsiderConsoleErrors[0].text.includes('401 (Unauthorized)')) {
+      outsiderConsoleErrors[0].expected = true;
+    }
+    const wingCount = await dave.page.locator('#wing-status .wing-box').count();
+    record('outsider: private roost wing inventory is hidden', wingCount === 0,
+      `${wingCount} wing box(es)`);
+    await dave.ctx.close();
+  }
+
+  // ---------- End-session lifecycle ----------
+  {
+    const p = alice.page;
+    await p.goto(BASE + '/app/', { waitUntil: 'domcontentloaded' });
+    const tab = p.locator('#session-tabs .session-tab').first();
+    try {
+      await tab.waitFor({ state: 'visible', timeout: 15000 });
+      const endedSessionID = await tab.getAttribute('data-sid');
+      await tab.click();
+      await p.waitForSelector('#session-close-btn', { state: 'visible', timeout: 15000 });
+      await p.click('#session-close-btn');
+      await p.click('#session-close-btn');
+      await p.waitForFunction((sessionID) => !Array.from(document.querySelectorAll('#session-tabs .session-tab'))
+        .some((candidate) => candidate.dataset.sid === sessionID), endedSessionID, { timeout: 15000 });
+      // A reload proves the wing's durable session inventory agrees; another
+      // user's visible session must not make this assertion fail.
+      await p.waitForTimeout(1000);
+      await p.reload({ waitUntil: 'domcontentloaded' });
+      await p.waitForSelector('#wing-status .wing-box', { timeout: 15000 });
+      await p.waitForTimeout(1500);
+      const restored = await p.locator('#session-tabs .session-tab').evaluateAll(
+        (candidates, sessionID) => candidates.some((candidate) => candidate.dataset.sid === sessionID), endedSessionID);
+      if (restored) throw new Error(`ended session ${endedSessionID} returned after reload`);
+      record('alice: end-session removes the durable terminal from the UI', true);
+    } catch (e) {
+      record('alice: end-session removes the durable terminal from the UI', false, String(e).slice(0, 200));
+    }
+  }
+
   await alice.ctx.close();
   await bob.ctx.close();
 } finally {
   await browser.close();
   const failed = results.steps.filter((s) => !s.ok).length;
-  results.summary = { total: results.steps.length, failed };
+  const unexpectedConsoleErrors = results.consoleErrors.filter((error) => !error.expected);
+  results.summary = {
+    total: results.steps.length,
+    failed,
+    unexpectedConsoleErrors: unexpectedConsoleErrors.length,
+    pageErrors: results.pageErrors.length,
+    failedRequests: results.failedRequests.length,
+  };
   fs.writeFileSync(`${OUT}/results.json`, JSON.stringify(results, null, 2));
   console.log(`\n${results.steps.length - failed}/${results.steps.length} steps passed; ` +
-    `${results.consoleErrors.length} console error(s), ${results.pageErrors.length} page error(s)`);
-  process.exit(failed > 0 ? 1 : 0);
+    `${unexpectedConsoleErrors.length} unexpected console error(s), ` +
+    `${results.pageErrors.length} page error(s), ${results.failedRequests.length} failed request(s)`);
+  process.exit(failed || unexpectedConsoleErrors.length || results.pageErrors.length || results.failedRequests.length ? 1 : 0);
 }

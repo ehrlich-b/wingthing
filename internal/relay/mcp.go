@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -178,12 +179,12 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, _ := s.Store.GetUserByID(claims.Subject)
-	if u == nil {
+	if !s.roostUserAllowed(u) {
 		writeError(w, http.StatusForbidden, "MCP access is not enabled for this user")
 		return
 	}
 	roles := s.mcpRolesForUser(u)
-	if len(roles) == 0 && !(s.RoostMode && server.HasNativeTools()) {
+	if len(roles) == 0 && (!s.RoostMode || !server.HasNativeTools()) {
 		writeError(w, http.StatusForbidden, "MCP access is not enabled for this user")
 		return
 	}
@@ -214,8 +215,14 @@ func (s *Server) auditNativeMCPCall(r *http.Request, tool string, arguments json
 	if target := control.AuditTarget(tool, arguments, result); target != "" {
 		detail["target"] = target
 	}
-	raw, _ := json.Marshal(detail)
-	s.Store.AppendAudit(identity.UserID, "mcp_control_call", strPtr(string(raw)))
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		log.Printf("marshal MCP control audit: %v", err)
+		return
+	}
+	if err := s.Store.AppendAudit(identity.UserID, "mcp_control_call", strPtr(string(raw))); err != nil {
+		log.Printf("write MCP control audit: %v", err)
+	}
 }
 
 func (s *Server) auditMCPCall(r *http.Request, tool string, args []string, resp egg.ToolResponse) {
@@ -231,11 +238,21 @@ func (s *Server) auditMCPCall(r *http.Request, tool string, args []string, resp 
 		"is_error":   resp.ExitCode != 0 || resp.Error != "",
 		"args_count": len(args),
 	}
-	rawArgs, _ := json.Marshal(args)
+	rawArgs, err := json.Marshal(args)
+	if err != nil {
+		log.Printf("marshal MCP tool arguments for audit: %v", err)
+		return
+	}
 	sum := sha256.Sum256(rawArgs)
 	detail["args_sha256"] = hex.EncodeToString(sum[:])
-	raw, _ := json.Marshal(detail)
-	s.Store.AppendAudit(identity.UserID, "mcp_tool_call", strPtr(string(raw)))
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		log.Printf("marshal MCP tool audit: %v", err)
+		return
+	}
+	if err := s.Store.AppendAudit(identity.UserID, "mcp_tool_call", strPtr(string(raw))); err != nil {
+		log.Printf("write MCP tool audit: %v", err)
+	}
 }
 
 // mcpBearerClaims accepts only a dedicated, audience-bound MCP JWT. General wing and

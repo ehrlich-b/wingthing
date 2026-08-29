@@ -1,8 +1,16 @@
 # WebRTC P2P Data Channels for PTY Sessions
 
+Status: historical implementation design for the browser PTY migration path.
+Current product and trust claims live in
+[the agent-manager product brief](agent-manager-product-brief.md) and
+[security model](security.md).
+
 ## Context
 
-All PTY traffic currently round-trips through the Fly relay, even when browser and wing are on the same LAN. WebRTC data channels enable direct browser-to-wing communication, eliminating relay latency entirely for same-LAN users. The relay becomes a signaling server and fallback transport.
+When this design was written, all PTY traffic round-tripped through the Fly
+relay even when browser and wing were on the same LAN. The design introduced
+WebRTC data channels for eligible browser sessions while retaining signaling and
+an entitled relay transport.
 
 ## Architecture
 

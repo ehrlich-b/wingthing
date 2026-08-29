@@ -2,6 +2,7 @@ package ws
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -62,6 +63,7 @@ func TestWingRegisterFields(t *testing.T) {
 		Labels:         []string{"gpu", "home"},
 		Identities:     []string{"bryan", "team-ml"},
 		PurposeBinding: true,
+		DirectMCP:      true,
 		HostedRelay:    HostedRelayDeny,
 	}
 
@@ -87,8 +89,31 @@ func TestWingRegisterFields(t *testing.T) {
 	if !decoded.PurposeBinding {
 		t.Error("purpose binding capability was lost in registration")
 	}
+	if !decoded.DirectMCP {
+		t.Error("direct MCP capability was lost in registration")
+	}
 	if decoded.HostedRelay != HostedRelayDeny || HostedRelayAllowed(decoded.HostedRelay) {
 		t.Fatalf("hosted relay policy = %q allowed=%v", decoded.HostedRelay, HostedRelayAllowed(decoded.HostedRelay))
+	}
+}
+
+func TestRegisteredMessageCarriesAdditivePasskeyPolicy(t *testing.T) {
+	message := RegisteredMsg{
+		Type:           TypeRegistered,
+		WingID:         "connection-1",
+		PasskeyRPID:    "roost.example.test",
+		PasskeyOrigins: []string{"https://app.roost.example.test"},
+	}
+	data, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded RegisteredMsg
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.PasskeyRPID != message.PasskeyRPID || len(decoded.PasskeyOrigins) != 1 || decoded.PasskeyOrigins[0] != message.PasskeyOrigins[0] {
+		t.Fatalf("registered passkey policy = %#v", decoded)
 	}
 }
 
@@ -101,6 +126,22 @@ func TestHostedRelayWireCompatibility(t *testing.T) {
 	} {
 		if got := HostedRelayAllowed(policy); got != want {
 			t.Errorf("HostedRelayAllowed(%q) = %v, want %v", policy, got, want)
+		}
+	}
+}
+
+func TestValidSessionIDIsSingleBoundedPathComponent(t *testing.T) {
+	for _, valid := range []string{"deadbeef", "session-1", "agent_one", "a.b"} {
+		if !ValidSessionID(valid) {
+			t.Errorf("ValidSessionID(%q) = false", valid)
+		}
+	}
+	for _, invalid := range []string{
+		"", ".", "..", "../egg", "a/b", `a\b`, "two words", "x\ncommand",
+		strings.Repeat("a", 129),
+	} {
+		if ValidSessionID(invalid) {
+			t.Errorf("ValidSessionID(%q) = true", invalid)
 		}
 	}
 }

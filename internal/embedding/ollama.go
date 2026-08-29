@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 )
@@ -57,9 +56,9 @@ func (o *Ollama) Embed(texts []string) ([][]float32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("embedding: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readEmbeddingResponse(resp.Body, resp.ContentLength)
 	if err != nil {
 		return nil, fmt.Errorf("embedding: read response: %w", err)
 	}

@@ -6,6 +6,9 @@ The OAuth HTTP MCP and embedded-wing control slice described here shipped. The
 next architecture step is the cross-wing portal contract in
 [the LLM-first architecture review](llm-first-review.md). That review also
 supersedes this document's loose use of "roost" as both shared host and runtime.
+Private OAuth roosts now optionally enforce exact email enrollment with
+`WT_ROOST_ALLOWED_EMAILS`; references to authenticated users below assume that
+deployment boundary.
 A roost is now the self-hosted portal/gateway plus its embedded wing; the wing
 is the runtime authority.
 

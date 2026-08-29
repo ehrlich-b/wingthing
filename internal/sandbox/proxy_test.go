@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bufio"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -52,6 +53,20 @@ func TestPolicyProxyPreservesPlatformFullNetworkSemantics(t *testing.T) {
 	}
 }
 
+func TestPolicyProxyObserveModeIsExplicit(t *testing.T) {
+	p, err := StartPolicyProxyWithMode(NetworkHTTPS, []string{"allowed.example"}, "observe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if !p.Observing() {
+		t.Fatal("observe mode created an enforcing proxy")
+	}
+	if _, err := StartPolicyProxyWithMode(NetworkHTTPS, []string{"allowed.example"}, "unknown"); err == nil {
+		t.Fatal("unknown mode was accepted")
+	}
+}
+
 func TestProxyAllowed(t *testing.T) {
 	tests := []struct {
 		domains []string
@@ -60,6 +75,7 @@ func TestProxyAllowed(t *testing.T) {
 	}{
 		{[]string{"example.com"}, "example.com", true},
 		{[]string{"example.com"}, "example.com:443", true},
+		{[]string{"Example.COM"}, "EXAMPLE.com.:443", true},
 		{[]string{"example.com"}, "evil.com", false},
 		{[]string{"example.com"}, "evil.com:443", false},
 		{[]string{"*.anthropic.com"}, "api.anthropic.com", true},
@@ -81,6 +97,32 @@ func TestProxyAllowed(t *testing.T) {
 	}
 }
 
+func TestProxyRejectsNegativeConnectionLimit(t *testing.T) {
+	if _, err := StartProxyWithOptions(ProxyOptions{
+		Domains:        []string{"example.com"},
+		MaxConnections: -1,
+	}); err == nil {
+		t.Fatal("negative connection limit was accepted")
+	}
+}
+
+func TestProxyEventBufferDropsExactlyTheOldestEvent(t *testing.T) {
+	p := &DomainProxy{}
+	for i := 0; i <= maxEgressEvents; i++ {
+		p.record(EgressEvent{Host: fmt.Sprintf("host-%d", i)})
+	}
+	events := p.Events()
+	if len(events) != maxEgressEvents {
+		t.Fatalf("event count = %d, want %d", len(events), maxEgressEvents)
+	}
+	if events[0].Host != "host-1" {
+		t.Fatalf("oldest retained event = %q, want host-1", events[0].Host)
+	}
+	if events[len(events)-1].Host != fmt.Sprintf("host-%d", maxEgressEvents) {
+		t.Fatalf("newest retained event = %q", events[len(events)-1].Host)
+	}
+}
+
 func TestProxyRejectsNonCONNECT(t *testing.T) {
 	p, err := StartProxy([]string{"example.com"})
 	if err != nil {
@@ -92,7 +134,9 @@ func TestProxyRejectsNonCONNECT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("GET status = %d, want %d", resp.StatusCode, http.StatusMethodNotAllowed)
 	}
@@ -110,16 +154,115 @@ func TestProxyBlocksDeniedDomain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
-	fmt.Fprintf(conn, "CONNECT evil.com:443 HTTP/1.1\r\nHost: evil.com:443\r\n\r\n")
+	if _, err := fmt.Fprintf(conn, "CONNECT evil.com:443 HTTP/1.1\r\nHost: evil.com:443\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil {
 		t.Fatalf("read response: %v", err)
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("CONNECT to denied domain status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+	}
+}
+
+func TestProxyBlocksAllowedNameThatRebindsToLoopback(t *testing.T) {
+	p, err := StartProxy([]string{"rebind.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	p.lookupIP = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	}
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", p.Port()), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_, _ = fmt.Fprint(conn, "CONNECT rebind.example:443 HTTP/1.1\r\nHost: rebind.example:443\r\n\r\n")
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("rebound CONNECT status = %d, want forbidden", response.StatusCode)
+	}
+	events := p.Events()
+	if len(events) != 1 || !events[0].Matched || !events[0].Blocked {
+		t.Fatalf("rebound egress events = %#v", events)
+	}
+}
+
+func TestObserveProxyRecordsButAllowsNamedLoopbackTarget(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			connection, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			_ = connection.Close()
+		}
+	}()
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := StartProxyWithOptions(ProxyOptions{Domains: []string{"observe.example"}, Observe: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	p.lookupIP = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	}
+
+	if code := connectVia(t, p.Port(), net.JoinHostPort("observe.example", port)); code != http.StatusOK {
+		t.Fatalf("observe rebound CONNECT status = %d, want OK", code)
+	}
+	events := p.Events()
+	if len(events) != 1 || !events[0].Matched || events[0].Blocked {
+		t.Fatalf("observe rebound egress events = %#v", events)
+	}
+}
+
+func TestProxyTargetAddressPolicyPreservesExplicitLocalhostCompatibility(t *testing.T) {
+	for _, test := range []struct {
+		ip                string
+		allowUnsafeTarget bool
+		want              bool
+	}{
+		{ip: "127.0.0.1", want: false},
+		{ip: "::1", want: false},
+		{ip: "169.254.169.254", want: false},
+		{ip: "10.0.0.5", want: false},
+		{ip: "172.16.0.5", want: false},
+		{ip: "192.168.0.5", want: false},
+		{ip: "100.64.0.5", want: false},
+		{ip: "fd00::5", want: false},
+		{ip: "127.0.0.1", allowUnsafeTarget: true, want: true},
+		{ip: "169.254.169.254", allowUnsafeTarget: true, want: true},
+		{ip: "10.0.0.5", allowUnsafeTarget: true, want: true},
+		{ip: "100.64.0.5", allowUnsafeTarget: true, want: true},
+		{ip: "203.0.113.5", want: true},
+	} {
+		if got := proxyTargetIPAllowed(net.ParseIP(test.ip), test.allowUnsafeTarget); got != test.want {
+			t.Errorf("proxyTargetIPAllowed(%s, %v) = %v, want %v", test.ip, test.allowUnsafeTarget, got, test.want)
+		}
 	}
 }
 
@@ -139,16 +282,16 @@ func TestProxyCONNECTFlush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen TLS server: %v", err)
 	}
-	defer tlsLis.Close()
+	defer func() { _ = tlsLis.Close() }()
 	_, echoPort, _ := net.SplitHostPort(tlsLis.Addr().String())
 
 	// Serve a simple HTTP response over TLS
 	go func() {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("ok"))
+			_, _ = w.Write([]byte("ok"))
 		})
-		http.Serve(tlsLis, mux)
+		_ = http.Serve(tlsLis, mux)
 	}()
 
 	// Start proxy allowing localhost
@@ -177,8 +320,11 @@ func TestProxyCONNECTFlush(t *testing.T) {
 		// was never flushed, so the Go HTTP client would wait forever.
 		t.Fatalf("GET through proxy failed (this is the flush bug): %v", err)
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(body) != "ok" {
 		t.Errorf("body = %q, want %q", body, "ok")
 	}
@@ -192,7 +338,7 @@ func TestProxyCONNECTRawTCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer echoLis.Close()
+	defer func() { _ = echoLis.Close() }()
 	echoAddr := echoLis.Addr().String()
 
 	go func() {
@@ -200,9 +346,9 @@ func TestProxyCONNECTRawTCP(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
-		conn.SetDeadline(time.Now().Add(5 * time.Second))
-		io.Copy(conn, conn)
+		defer func() { _ = conn.Close() }()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		_, _ = io.Copy(conn, conn)
 	}()
 
 	host, _, _ := net.SplitHostPort(echoAddr)
@@ -216,11 +362,15 @@ func TestProxyCONNECTRawTCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	defer func() { _ = conn.Close() }()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 
 	// Send CONNECT
-	fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echoAddr, echoAddr)
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echoAddr, echoAddr); err != nil {
+		t.Fatal(err)
+	}
 
 	// Read 200 response — the flush bug would cause this to hang
 	reader := bufio.NewReader(conn)
@@ -234,7 +384,9 @@ func TestProxyCONNECTRawTCP(t *testing.T) {
 
 	// Now the connection is a raw tunnel — send data through
 	testData := "hello through tunnel\n"
-	fmt.Fprint(conn, testData)
+	if _, err := fmt.Fprint(conn, testData); err != nil {
+		t.Fatal(err)
+	}
 
 	line, err := reader.ReadString('\n')
 	if err != nil {
@@ -257,16 +409,22 @@ func TestProxyCONNECTBadGateway(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	defer func() { _ = conn.Close() }()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 
 	// CONNECT to a port nothing is listening on
-	fmt.Fprintf(conn, "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\n\r\n")
+	if _, err := fmt.Fprintf(conn, "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil {
 		t.Fatalf("read response: %v", err)
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("CONNECT to unreachable status = %d, want %d", resp.StatusCode, http.StatusBadGateway)
 	}
@@ -278,7 +436,7 @@ func TestProxyConcurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer echoLis.Close()
+	defer func() { _ = echoLis.Close() }()
 	echoAddr := echoLis.Addr().String()
 
 	// Accept multiple connections
@@ -289,9 +447,9 @@ func TestProxyConcurrent(t *testing.T) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
-				c.SetDeadline(time.Now().Add(5 * time.Second))
-				io.Copy(c, c)
+				defer func() { _ = c.Close() }()
+				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+				_, _ = io.Copy(c, c)
 			}(conn)
 		}
 	}()
@@ -312,10 +470,16 @@ func TestProxyConcurrent(t *testing.T) {
 				errs <- fmt.Errorf("conn %d: dial: %v", id, err)
 				return
 			}
-			defer conn.Close()
-			conn.SetDeadline(time.Now().Add(5 * time.Second))
+			defer func() { _ = conn.Close() }()
+			if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				errs <- fmt.Errorf("conn %d: deadline: %v", id, err)
+				return
+			}
 
-			fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echoAddr, echoAddr)
+			if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echoAddr, echoAddr); err != nil {
+				errs <- fmt.Errorf("conn %d: CONNECT write: %v", id, err)
+				return
+			}
 			reader := bufio.NewReader(conn)
 			resp, err := http.ReadResponse(reader, nil)
 			if err != nil {
@@ -328,7 +492,10 @@ func TestProxyConcurrent(t *testing.T) {
 			}
 
 			msg := fmt.Sprintf("msg-%d\n", id)
-			fmt.Fprint(conn, msg)
+			if _, err := fmt.Fprint(conn, msg); err != nil {
+				errs <- fmt.Errorf("conn %d: echo write: %v", id, err)
+				return
+			}
 			line, err := reader.ReadString('\n')
 			if err != nil {
 				errs <- fmt.Errorf("conn %d: read echo: %v", id, err)
@@ -349,6 +516,90 @@ func TestProxyConcurrent(t *testing.T) {
 	}
 }
 
+func TestProxyBoundsAndClosesActiveTunnels(t *testing.T) {
+	echoLis, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = echoLis.Close() }()
+	echoAddr := echoLis.Addr().String()
+	accepted := make(chan net.Conn, 2)
+	go func() {
+		for {
+			connection, acceptErr := echoLis.Accept()
+			if acceptErr != nil {
+				return
+			}
+			accepted <- connection
+		}
+	}()
+
+	host, _, _ := net.SplitHostPort(echoAddr)
+	p, err := StartProxyWithOptions(ProxyOptions{
+		Domains:        []string{host},
+		MaxConnections: 1,
+	})
+	if err != nil {
+		t.Fatalf("StartProxyWithOptions: %v", err)
+	}
+	defer p.Close()
+
+	first, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", p.Port()), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial first proxy connection: %v", err)
+	}
+	defer func() { _ = first.Close() }()
+	if err := first.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(first, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echoAddr, echoAddr); err != nil {
+		t.Fatal(err)
+	}
+	firstResp, err := http.ReadResponse(bufio.NewReader(first), nil)
+	if err != nil {
+		t.Fatalf("read first CONNECT response: %v", err)
+	}
+	if firstResp.StatusCode != http.StatusOK {
+		t.Fatalf("first CONNECT status = %d, want %d", firstResp.StatusCode, http.StatusOK)
+	}
+	var upstream net.Conn
+	select {
+	case upstream = <-accepted:
+		defer func() { _ = upstream.Close() }()
+	case <-time.After(2 * time.Second):
+		t.Fatal("proxy did not establish first upstream connection")
+	}
+
+	second, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", p.Port()), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial second proxy connection: %v", err)
+	}
+	defer func() { _ = second.Close() }()
+	if err := second.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(second, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echoAddr, echoAddr); err != nil {
+		t.Fatal(err)
+	}
+	secondResp, err := http.ReadResponse(bufio.NewReader(second), nil)
+	if err != nil {
+		t.Fatalf("read second CONNECT response: %v", err)
+	}
+	if secondResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("second CONNECT status = %d, want %d", secondResp.StatusCode, http.StatusServiceUnavailable)
+	}
+
+	p.Close()
+	_ = first.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := first.Read(make([]byte, 1)); err == nil {
+		t.Fatal("active tunnel remained open after proxy close")
+	}
+	_ = upstream.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := upstream.Read(make([]byte, 1)); err == nil {
+		t.Fatal("upstream tunnel remained open after proxy close")
+	}
+}
+
 // TestProxySNIFiltering simulates SNI-based domain filtering through the proxy.
 // The proxy allows/denies based on the CONNECT host, but this test verifies
 // the TLS SNI the server sees matches what the client requested — proving the
@@ -358,7 +609,6 @@ func TestProxySNIFiltering(t *testing.T) {
 	// TLS server that records the SNI ServerName from each handshake
 	type sniResult struct {
 		serverName string
-		err        error
 	}
 	sniCh := make(chan sniResult, 10)
 
@@ -373,7 +623,7 @@ func TestProxySNIFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen TLS: %v", err)
 	}
-	defer tlsLis.Close()
+	defer func() { _ = tlsLis.Close() }()
 	_, tlsPort, _ := net.SplitHostPort(tlsLis.Addr().String())
 
 	// Accept connections — must complete TLS handshake before closing
@@ -384,10 +634,10 @@ func TestProxySNIFiltering(t *testing.T) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				if tc, ok := c.(*tls.Conn); ok {
-					tc.SetDeadline(time.Now().Add(5 * time.Second))
-					tc.Handshake()
+					_ = tc.SetDeadline(time.Now().Add(5 * time.Second))
+					_ = tc.Handshake()
 				}
 			}(conn)
 		}
@@ -411,12 +661,16 @@ func TestProxySNIFiltering(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial proxy: %v", err)
 		}
-		defer conn.Close()
-		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		defer func() { _ = conn.Close() }()
+		if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
 
 		// CONNECT to localhost (the actual port) with the allowed domain
 		target := fmt.Sprintf("localhost:%s", tlsPort)
-		fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+		if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
+			t.Fatal(err)
+		}
 		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 		if err != nil {
 			t.Fatalf("CONNECT response: %v", err)
@@ -430,8 +684,10 @@ func TestProxySNIFiltering(t *testing.T) {
 			ServerName:         "api.anthropic.com",
 			InsecureSkipVerify: true,
 		})
-		defer tlsConn.Close()
-		tlsConn.SetDeadline(time.Now().Add(3 * time.Second))
+		defer func() { _ = tlsConn.Close() }()
+		if err := tlsConn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
 		err = tlsConn.Handshake()
 		if err != nil {
 			t.Fatalf("TLS handshake: %v", err)
@@ -454,10 +710,14 @@ func TestProxySNIFiltering(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial proxy: %v", err)
 		}
-		defer conn.Close()
-		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		defer func() { _ = conn.Close() }()
+		if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
 
-		fmt.Fprintf(conn, "CONNECT evil.com:443 HTTP/1.1\r\nHost: evil.com:443\r\n\r\n")
+		if _, err := fmt.Fprintf(conn, "CONNECT evil.com:443 HTTP/1.1\r\nHost: evil.com:443\r\n\r\n"); err != nil {
+			t.Fatal(err)
+		}
 		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 		if err != nil {
 			t.Fatalf("CONNECT response: %v", err)
@@ -499,15 +759,15 @@ func TestProxySNIFiltering(t *testing.T) {
 				Certificates: []tls.Certificate{httpsCert},
 			},
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Write([]byte("hello-from-" + r.Host))
+				_, _ = w.Write([]byte("hello-from-" + r.Host))
 			}),
 		}
 		httpsLis, err := tls.Listen("tcp", "localhost:0", httpsSrv.TLSConfig)
 		if err != nil {
 			t.Fatalf("listen: %v", err)
 		}
-		defer httpsLis.Close()
-		go httpsSrv.Serve(httpsLis)
+		defer func() { _ = httpsLis.Close() }()
+		go func() { _ = httpsSrv.Serve(httpsLis) }()
 		_, httpsPort, _ := net.SplitHostPort(httpsLis.Addr().String())
 
 		client := &http.Client{
@@ -524,8 +784,11 @@ func TestProxySNIFiltering(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET: %v", err)
 		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
+		defer func() { _ = resp.Body.Close() }()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if resp.StatusCode != 200 {
 			t.Errorf("status = %d, want 200", resp.StatusCode)
 		}

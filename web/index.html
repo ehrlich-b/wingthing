@@ -50,7 +50,7 @@
                     <p>Wingthing uses this service for login, wing discovery, and direct connection setup. Your agent's MCP requests go straight between the connector and your wing; the free tier does not use the hosted browser-terminal relay.</p>
                     <div class="direct-agent-command"><code>codex mcp add wingthing -- wt mcp connect --client codex</code><button data-copy-command="codex mcp add wingthing -- wt mcp connect --client codex">copy</button></div>
                     <div class="direct-agent-command"><code>claude mcp add --scope user wingthing -- wt mcp connect --client claude</code><button data-copy-command="claude mcp add --scope user wingthing -- wt mcp connect --client claude">copy</button></div>
-                    <p class="hint">On each machine you want to manage, run <code>wt login</code> and <code>wt start</code>. Keep both peers on the same LAN or tailnet for the first direct release. Hosted relay fallback is a Pro feature; self-hosting remains unrestricted.</p>
+                    <p class="hint">On each machine you want to manage, run <code>wt login</code> and <code>wt start</code>. Keep both peers on the same LAN or tailnet for the first direct release. Pro includes the hosted browser terminal and control relay. The native connector never silently changes from direct transport to relay transport.</p>
                 </div>
                 <div id="wing-status"></div>
                 <div id="sessions-list"></div>
@@ -63,8 +63,8 @@
                         <p id="empty-signed-in" class="hint" style="margin-top:12px;opacity:0.5;display:none;"></p>
                     </div>
                     <div id="empty-no-sessions" style="display:none;">
-                        <p>no active sessions</p>
-                        <p class="hint">press <kbd>.</kbd> to start</p>
+                        <p id="empty-no-sessions-title">no active sessions</p>
+                        <p class="hint" id="empty-no-sessions-hint">press <kbd>.</kbd> to start</p>
                     </div>
                 </div>
             </section>
@@ -86,12 +86,13 @@
                         <span id="preview-url-bar" style="display:none;">
                             <span id="preview-url"></span>
                             <button id="preview-copy-btn">copy</button>
-                            <a id="preview-open-btn" target="_blank">open</a>
+                            <button id="preview-load-btn">load preview</button>
+                            <a id="preview-open-btn" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">open</a>
                         </span>
                         <button id="preview-download-btn" style="display:none;">download</button>
                         <button id="preview-close-btn">&times;</button>
                     </div>
-                    <iframe id="preview-iframe" sandbox="allow-scripts allow-same-origin"></iframe>
+                    <iframe id="preview-iframe" sandbox="" referrerpolicy="no-referrer"></iframe>
                 </div>
                 <div id="replay-overlay" style="display:none;">
                     <div id="replay-bar"><div id="replay-fill"></div></div>

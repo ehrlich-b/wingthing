@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -13,11 +14,25 @@ import (
 	"github.com/charmbracelet/x/vt"
 )
 
+func closeTerminalForTest(t *testing.T, closer io.Closer) {
+	t.Helper()
+	if err := closer.Close(); err != nil {
+		t.Errorf("close terminal: %v", err)
+	}
+}
+
+func writeTerminalForTest(t *testing.T, writer io.Writer, data []byte) {
+	t.Helper()
+	if _, err := writer.Write(data); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestVTermBasicOutput(t *testing.T) {
 	v := NewVTerm(80, 24)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
-	v.Write([]byte("hello world"))
+	writeTerminalForTest(t, v, []byte("hello world"))
 	snap := v.Snapshot()
 	if !strings.Contains(string(snap), "hello world") {
 		t.Errorf("snapshot missing basic output, got:\n%s", snap)
@@ -26,12 +41,12 @@ func TestVTermBasicOutput(t *testing.T) {
 
 func TestVTermScrollbackCapture(t *testing.T) {
 	v := NewVTerm(80, 10)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Write 50 lines to a 10-row terminal — each \r\n at the bottom scrolls.
 	// First scroll happens at line 9's \r\n, last at line 49's \r\n = 41 scrolls.
 	for i := range 50 {
-		v.Write([]byte(fmt.Sprintf("line %d\r\n", i)))
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("line %d\r\n", i)))
 	}
 
 	if got := v.ScrollbackLen(); got != 41 {
@@ -41,14 +56,14 @@ func TestVTermScrollbackCapture(t *testing.T) {
 
 func TestVTermScrollbackRingWrap(t *testing.T) {
 	v := NewVTerm(80, 10)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Write enough lines to exceed the 50k ring cap.
 	// 60000 lines on 10-row terminal = 59991 scroll events.
 	// Ring cap 50000 keeps last 50000.
 	total := maxScrollbackLines + 10000
 	for i := range total {
-		v.Write([]byte(fmt.Sprintf("line %06d\r\n", i)))
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("line %06d\r\n", i)))
 	}
 
 	if got := v.ScrollbackLen(); got != maxScrollbackLines {
@@ -69,11 +84,11 @@ func TestVTermScrollbackRingWrap(t *testing.T) {
 
 func TestVTermANSIColors(t *testing.T) {
 	v := NewVTerm(80, 10)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Write colored text that scrolls off
 	for i := range 15 {
-		v.Write([]byte(fmt.Sprintf("\x1b[31mred line %d\x1b[m\r\n", i)))
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("\x1b[31mred line %d\x1b[m\r\n", i)))
 	}
 
 	snap := string(v.Snapshot())
@@ -85,10 +100,10 @@ func TestVTermANSIColors(t *testing.T) {
 
 func TestVTermCursorPosition(t *testing.T) {
 	v := NewVTerm(80, 24)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Move cursor to row 5, col 10 (1-based in ANSI: \x1b[5;10H)
-	v.Write([]byte("\x1b[5;10H"))
+	writeTerminalForTest(t, v, []byte("\x1b[5;10H"))
 	snap := string(v.Snapshot())
 
 	// Snapshot should restore cursor at same position
@@ -99,16 +114,16 @@ func TestVTermCursorPosition(t *testing.T) {
 
 func TestVTermScreenClear(t *testing.T) {
 	v := NewVTerm(80, 10)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Write lines that scroll into scrollback
 	for i := range 20 {
-		v.Write([]byte(fmt.Sprintf("line %d\r\n", i)))
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("line %d\r\n", i)))
 	}
 	sbBefore := v.ScrollbackLen()
 
 	// ESC[2J clears the grid but NOT scrollback
-	v.Write([]byte("\x1b[2J"))
+	writeTerminalForTest(t, v, []byte("\x1b[2J"))
 
 	if got := v.ScrollbackLen(); got != sbBefore {
 		t.Errorf("ESC[2J changed scrollback len from %d to %d", sbBefore, got)
@@ -117,17 +132,17 @@ func TestVTermScreenClear(t *testing.T) {
 
 func TestVTermScrollbackClear(t *testing.T) {
 	v := NewVTerm(80, 10)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	for i := range 20 {
-		v.Write([]byte(fmt.Sprintf("line %d\r\n", i)))
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("line %d\r\n", i)))
 	}
 	if v.ScrollbackLen() == 0 {
 		t.Fatal("scrollback should have lines before clear")
 	}
 
 	// ESC[3J clears scrollback
-	v.Write([]byte("\x1b[3J"))
+	writeTerminalForTest(t, v, []byte("\x1b[3J"))
 
 	if got := v.ScrollbackLen(); got != 0 {
 		t.Errorf("scrollback len after ESC[3J = %d, want 0", got)
@@ -136,17 +151,17 @@ func TestVTermScrollbackClear(t *testing.T) {
 
 func TestVTermFullReset(t *testing.T) {
 	v := NewVTerm(80, 10)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	for i := range 20 {
-		v.Write([]byte(fmt.Sprintf("line %d\r\n", i)))
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("line %d\r\n", i)))
 	}
 	if v.ScrollbackLen() == 0 {
 		t.Fatal("scrollback should have lines before reset")
 	}
 
 	// ESC c (RIS) clears everything including scrollback
-	v.Write([]byte("\x1bc"))
+	writeTerminalForTest(t, v, []byte("\x1bc"))
 
 	if got := v.ScrollbackLen(); got != 0 {
 		t.Errorf("scrollback len after ESC c = %d, want 0", got)
@@ -155,20 +170,20 @@ func TestVTermFullReset(t *testing.T) {
 
 func TestVTermAltScreen(t *testing.T) {
 	v := NewVTerm(80, 10)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Write lines that scroll into scrollback
 	for i := range 15 {
-		v.Write([]byte(fmt.Sprintf("line %d\r\n", i)))
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("line %d\r\n", i)))
 	}
 	sbBefore := v.ScrollbackLen()
 
 	// Enter alt screen
-	v.Write([]byte("\x1b[?1049h"))
+	writeTerminalForTest(t, v, []byte("\x1b[?1049h"))
 
 	// Write more lines that scroll — should NOT be captured
 	for i := range 20 {
-		v.Write([]byte(fmt.Sprintf("alt %d\r\n", i)))
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("alt %d\r\n", i)))
 	}
 
 	if got := v.ScrollbackLen(); got != sbBefore {
@@ -176,7 +191,7 @@ func TestVTermAltScreen(t *testing.T) {
 	}
 
 	// Exit alt screen
-	v.Write([]byte("\x1b[?1049l"))
+	writeTerminalForTest(t, v, []byte("\x1b[?1049l"))
 
 	// Scrollback should still be from before alt screen
 	if got := v.ScrollbackLen(); got != sbBefore {
@@ -186,11 +201,11 @@ func TestVTermAltScreen(t *testing.T) {
 
 func TestVTermResize(t *testing.T) {
 	v := NewVTerm(80, 24)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
-	v.Write([]byte("before resize\r\n"))
+	writeTerminalForTest(t, v, []byte("before resize\r\n"))
 	v.Resize(120, 40)
-	v.Write([]byte("after resize"))
+	writeTerminalForTest(t, v, []byte("after resize"))
 
 	snap := string(v.Snapshot())
 	if !strings.Contains(snap, "before resize") {
@@ -203,17 +218,17 @@ func TestVTermResize(t *testing.T) {
 
 func TestVTermCursorVisibility(t *testing.T) {
 	v := NewVTerm(80, 24)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Hide cursor
-	v.Write([]byte("\x1b[?25l"))
+	writeTerminalForTest(t, v, []byte("\x1b[?25l"))
 	snap := string(v.Snapshot())
 	if !strings.Contains(snap, "\x1b[?25l") {
 		t.Error("snapshot should contain cursor hide when cursor is hidden")
 	}
 
 	// Show cursor
-	v.Write([]byte("\x1b[?25h"))
+	writeTerminalForTest(t, v, []byte("\x1b[?25h"))
 	snap = string(v.Snapshot())
 	if !strings.Contains(snap, "\x1b[?25h") {
 		t.Error("snapshot should contain cursor show when cursor is visible")
@@ -222,20 +237,20 @@ func TestVTermCursorVisibility(t *testing.T) {
 
 func TestVTermRoundTrip(t *testing.T) {
 	v1 := NewVTerm(80, 24)
-	defer v1.Close()
+	defer closeTerminalForTest(t, v1)
 
 	// Write content that creates scrollback + active grid
 	for i := range 40 {
-		v1.Write([]byte(fmt.Sprintf("line %02d: some content here\r\n", i)))
+		writeTerminalForTest(t, v1, []byte(fmt.Sprintf("line %02d: some content here\r\n", i)))
 	}
-	v1.Write([]byte("\x1b[5;10Hcursor here"))
+	writeTerminalForTest(t, v1, []byte("\x1b[5;10Hcursor here"))
 
 	snap := v1.Snapshot()
 
 	// Feed snapshot to a fresh VTerm — grid should match
 	v2 := NewVTerm(80, 24)
-	defer v2.Close()
-	v2.Write(snap)
+	defer closeTerminalForTest(t, v2)
+	writeTerminalForTest(t, v2, snap)
 
 	// Compare grid renders
 	v1.mu.Lock()
@@ -253,14 +268,14 @@ func TestVTermRoundTrip(t *testing.T) {
 
 func TestVTermMultiLineScroll(t *testing.T) {
 	v := NewVTerm(80, 5)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Single large write that scrolls many lines at once
 	var buf strings.Builder
 	for i := range 20 {
 		fmt.Fprintf(&buf, "bulk line %d\r\n", i)
 	}
-	v.Write([]byte(buf.String()))
+	writeTerminalForTest(t, v, []byte(buf.String()))
 
 	// Should have 15 lines in scrollback (20 written - 5 visible rows)
 	// The exact count depends on how many lines the VTE considers scrolled off
@@ -271,7 +286,7 @@ func TestVTermMultiLineScroll(t *testing.T) {
 
 func TestVTermEmptySnapshot(t *testing.T) {
 	v := NewVTerm(80, 24)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Snapshot of fresh terminal should not panic and should contain grid
 	snap := v.Snapshot()
@@ -290,11 +305,11 @@ func TestVTermEmptySnapshot(t *testing.T) {
 
 func TestVTermSnapshotFormat(t *testing.T) {
 	v := NewVTerm(80, 5)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Write enough to get scrollback
 	for i := range 10 {
-		v.Write([]byte(fmt.Sprintf("line %d\r\n", i)))
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("line %d\r\n", i)))
 	}
 
 	snap := string(v.Snapshot())
@@ -307,14 +322,14 @@ func TestVTermSnapshotFormat(t *testing.T) {
 
 func TestVTermConcurrentWriteResize(t *testing.T) {
 	v := NewVTerm(80, 24)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	done := make(chan struct{})
 
 	// Concurrent writes
 	go func() {
 		for i := range 1000 {
-			v.Write([]byte(fmt.Sprintf("line %d\r\n", i)))
+			writeTerminalForTest(t, v, []byte(fmt.Sprintf("line %d\r\n", i)))
 		}
 		close(done)
 	}()
@@ -334,16 +349,48 @@ func TestVTermConcurrentWriteResize(t *testing.T) {
 	}
 }
 
+func TestReplayBackpressureCountsRetriedWriteOnce(t *testing.T) {
+	replay := newReplayBuffer("")
+	reader := replay.Register(0)
+	defer replay.Unregister(reader)
+	replay.Write(make([]byte, maxReplaySize))
+
+	done := make(chan struct{})
+	go func() {
+		replay.Write([]byte("x"))
+		close(done)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for replay.Stats().Written != int64(maxReplaySize+1) {
+		if time.Now().After(deadline) {
+			t.Fatal("overflowing write did not enter backpressure")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if data, _ := replay.ReadAfter(reader); len(data) != maxReplaySize {
+		t.Fatalf("reader received %d bytes before retry, want %d", len(data), maxReplaySize)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("backpressured write did not resume")
+	}
+	if got := replay.Stats().Written; got != int64(maxReplaySize+1) {
+		t.Fatalf("total written after retry = %d, want %d", got, maxReplaySize+1)
+	}
+}
+
 // TestVTermSnapshotGridMatchesEmulator verifies the snapshot grid section
 // matches what the underlying emulator renders.
 func TestVTermSnapshotGridMatchesEmulator(t *testing.T) {
 	v := NewVTerm(40, 10)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Write content that stays on grid (no scrollback)
-	v.Write([]byte("row 1 content\r\n"))
-	v.Write([]byte("row 2 content\r\n"))
-	v.Write([]byte("\x1b[31mcolored row 3\x1b[m"))
+	writeTerminalForTest(t, v, []byte("row 1 content\r\n"))
+	writeTerminalForTest(t, v, []byte("row 2 content\r\n"))
+	writeTerminalForTest(t, v, []byte("\x1b[31mcolored row 3\x1b[m"))
 
 	v.mu.Lock()
 	gridRender := v.emu.Render()
@@ -361,20 +408,20 @@ func TestVTermSnapshotGridMatchesEmulator(t *testing.T) {
 // and verifies it produces a correct grid. This simulates what xterm.js would do.
 func TestVTermWithRealVT(t *testing.T) {
 	v := NewVTerm(80, 24)
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Create a session with scrollback
 	for i := range 30 {
-		v.Write([]byte(fmt.Sprintf("history line %d\r\n", i)))
+		writeTerminalForTest(t, v, []byte(fmt.Sprintf("history line %d\r\n", i)))
 	}
-	v.Write([]byte("current prompt $ "))
+	writeTerminalForTest(t, v, []byte("current prompt $ "))
 
 	snap := v.Snapshot()
 
 	// Feed to a plain vt.Emulator (simulating xterm.js)
 	emu := vt.NewEmulator(80, 24)
-	defer emu.Close()
-	emu.Write(snap)
+	defer closeTerminalForTest(t, emu)
+	writeTerminalForTest(t, emu, snap)
 
 	grid := emu.Render()
 	if !strings.Contains(grid, "current prompt $") {
@@ -394,13 +441,13 @@ func TestVTermAuditReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open audit: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gr, err := gzip.NewReader(f)
 	if err != nil {
 		t.Fatalf("gzip reader: %v", err)
 	}
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 
 	buf := make([]byte, 64*1024)
 	var allData []byte
@@ -434,7 +481,7 @@ func TestVTermAuditReplay(t *testing.T) {
 
 	// Create VTerm with recorded dimensions
 	v := NewVTerm(int(cols), int(rows))
-	defer v.Close()
+	defer closeTerminalForTest(t, v)
 
 	// Replay frames
 	var frameCount, resizeCount int
@@ -480,7 +527,7 @@ func TestVTermAuditReplay(t *testing.T) {
 			resizeCount++
 		} else {
 			// Output frame
-			v.Write(chunk)
+			writeTerminalForTest(t, v, chunk)
 			frameCount++
 		}
 	}
@@ -504,8 +551,8 @@ func TestVTermAuditReplay(t *testing.T) {
 	v.mu.Unlock()
 
 	emu := vt.NewEmulator(origCols, origRows)
-	defer emu.Close()
-	emu.Write(snap)
+	defer closeTerminalForTest(t, emu)
+	writeTerminalForTest(t, emu, snap)
 
 	snapRender := emu.Render()
 	snapPos := emu.CursorPosition()

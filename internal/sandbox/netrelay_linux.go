@@ -23,11 +23,15 @@ import (
 // host validates the requested listener and connects it either to DomainProxy
 // or to one explicitly allowed host-loopback port.
 type networkBridge struct {
-	parent    *os.File
-	child     *os.File
-	targets   map[uint16]string
-	closeOnce sync.Once
-	childOnce sync.Once
+	parent      *os.File
+	child       *os.File
+	targets     map[uint16]string
+	connections chan struct{}
+	mu          sync.Mutex
+	closed      bool
+	active      map[net.Conn]struct{}
+	closeOnce   sync.Once
+	childOnce   sync.Once
 }
 
 func newNetworkBridge(proxyPort int, localPorts []int) (*networkBridge, *os.File, error) {
@@ -62,9 +66,11 @@ func newNetworkBridge(proxyPort int, localPorts []int) (*networkBridge, *os.File
 		return nil, nil, fmt.Errorf("socketpair: %w", err)
 	}
 	bridge := &networkBridge{
-		parent:  os.NewFile(uintptr(pair[0]), "wt-net-relay-parent"),
-		child:   os.NewFile(uintptr(pair[1]), "wt-net-relay-child"),
-		targets: targets,
+		parent:      os.NewFile(uintptr(pair[0]), "wt-net-relay-parent"),
+		child:       os.NewFile(uintptr(pair[1]), "wt-net-relay-child"),
+		targets:     targets,
+		connections: make(chan struct{}, defaultNetworkConnectionLimit),
+		active:      make(map[net.Conn]struct{}),
 	}
 	go bridge.serve()
 	return bridge, bridge.child, nil
@@ -80,29 +86,74 @@ func (b *networkBridge) closeChild() {
 
 func (b *networkBridge) Close() {
 	b.closeOnce.Do(func() {
+		b.mu.Lock()
+		b.closed = true
+		active := make([]net.Conn, 0, len(b.active))
+		for connection := range b.active {
+			active = append(active, connection)
+		}
+		b.mu.Unlock()
+
 		b.closeChild()
 		if b.parent != nil {
 			_ = b.parent.Close()
 		}
+		for _, connection := range active {
+			_ = connection.Close()
+		}
 	})
+}
+
+func (b *networkBridge) acquireConnection() bool {
+	b.mu.Lock()
+	closed := b.closed
+	b.mu.Unlock()
+	if closed {
+		return false
+	}
+	select {
+	case b.connections <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *networkBridge) trackConnections(client, upstream net.Conn) (func(), bool) {
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return nil, false
+	}
+	b.active[client] = struct{}{}
+	b.active[upstream] = struct{}{}
+	b.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			_ = client.Close()
+			_ = upstream.Close()
+			b.mu.Lock()
+			delete(b.active, client)
+			delete(b.active, upstream)
+			b.mu.Unlock()
+			<-b.connections
+		})
+	}, true
 }
 
 func (b *networkBridge) serve() {
 	data := make([]byte, 2)
 	oob := make([]byte, unix.CmsgSpace(4))
 	for {
-		n, oobn, _, _, err := unix.Recvmsg(int(b.parent.Fd()), data, oob, 0)
+		n, oobn, flags, _, err := unix.Recvmsg(int(b.parent.Fd()), data, oob, unix.MSG_CMSG_CLOEXEC)
 		if err != nil {
 			if !errors.Is(err, os.ErrClosed) && !errors.Is(err, unix.EBADF) && !errors.Is(err, unix.ECONNRESET) {
 				log.Printf("linux network relay: receive: %v", err)
 			}
 			return
 		}
-		if n != len(data) {
-			continue
-		}
-		port := binary.BigEndian.Uint16(data)
-		target, allowed := b.targets[port]
 		messages, parseErr := unix.ParseSocketControlMessage(oob[:oobn])
 		if parseErr != nil {
 			continue
@@ -117,6 +168,19 @@ func (b *networkBridge) serve() {
 		if len(received) == 0 {
 			continue
 		}
+		// File descriptors are installed in this process as soon as recvmsg
+		// succeeds, even when the data portion of the packet is malformed. Close
+		// every received descriptor before rejecting such a packet. MSG_CTRUNC is
+		// also fatal: accepting a partially described rights message would make
+		// descriptor ownership ambiguous.
+		if n != len(data) || flags&unix.MSG_CTRUNC != 0 {
+			for _, fd := range received {
+				_ = unix.Close(fd)
+			}
+			continue
+		}
+		port := binary.BigEndian.Uint16(data)
+		target, allowed := b.targets[port]
 		for _, extra := range received[1:] {
 			_ = unix.Close(extra)
 		}
@@ -125,11 +189,22 @@ func (b *networkBridge) serve() {
 			log.Printf("linux network relay: rejected undeclared target port %d", port)
 			continue
 		}
-		go bridgeRelayConnection(received[0], target)
+		if !b.acquireConnection() {
+			_ = unix.Close(received[0])
+			log.Printf("linux network relay: connection limit reached")
+			continue
+		}
+		go b.relayConnection(received[0], target)
 	}
 }
 
-func bridgeRelayConnection(receivedFD int, target string) {
+func (b *networkBridge) relayConnection(receivedFD int, target string) {
+	releaseConnection := true
+	defer func() {
+		if releaseConnection {
+			<-b.connections
+		}
+	}()
 	file := os.NewFile(uintptr(receivedFD), "wt-net-relay-connection")
 	client, err := net.FileConn(file)
 	_ = file.Close()
@@ -141,17 +216,20 @@ func bridgeRelayConnection(receivedFD int, target string) {
 		_ = client.Close()
 		return
 	}
-	closeBoth := func() {
+	cleanup, tracked := b.trackConnections(client, upstream)
+	if !tracked {
 		_ = client.Close()
 		_ = upstream.Close()
+		return
 	}
+	releaseConnection = false
 	go func() {
 		_, _ = io.Copy(upstream, client)
-		closeBoth()
+		cleanup()
 	}()
 	go func() {
 		_, _ = io.Copy(client, upstream)
-		closeBoth()
+		cleanup()
 	}()
 }
 

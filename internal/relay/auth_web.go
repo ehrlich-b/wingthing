@@ -1,28 +1,77 @@
 package relay
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"net/netip"
 	"net/smtp"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/net/publicsuffix"
 )
 
 const (
-	sessionCookieName = "wt_session"
-	sessionDuration   = 30 * 24 * time.Hour
+	sessionCookieName             = "wt_session"
+	sessionDuration               = 30 * 24 * time.Hour
+	maxOAuthProviderResponseBytes = 1 << 20
 )
 
+func (s *Server) oauthClient() *http.Client {
+	if s.oauthHTTPClient != nil {
+		return s.oauthHTTPClient
+	}
+	return newOAuthHTTPClient()
+}
+
+func newOAuthHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		// Provider URLs are fixed by the application. Refusing redirects keeps a
+		// 307/308 from forwarding the token-exchange body (and client secret) to
+		// a different endpoint and makes provider endpoint changes explicit.
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return fmt.Errorf("OAuth provider redirect refused")
+		},
+	}
+}
+
+func decodeOAuthProviderJSON(resp *http.Response, dst any) error {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("provider returned %s", resp.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxOAuthProviderResponseBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > maxOAuthProviderResponseBytes {
+		return fmt.Errorf("provider response exceeds %d bytes", maxOAuthProviderResponseBytes)
+	}
+	return json.Unmarshal(data, dst)
+}
+
 func generateToken() string {
+	token, err := generateTokenFrom(rand.Reader)
+	if err != nil {
+		panic(fmt.Sprintf("crypto/rand failed while generating an authentication token: %v", err))
+	}
+	return token
+}
+
+func generateTokenFrom(reader io.Reader) (string, error) {
 	b := make([]byte, 32)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	if _, err := io.ReadFull(reader, b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func (s *Server) sessionUser(r *http.Request) *User {
@@ -35,7 +84,11 @@ func (s *Server) sessionUser(r *http.Request) *User {
 	}
 	// Edge node: validate session via login node
 	if s.IsEdge() && s.sessionCache != nil {
-		return s.sessionCache.Validate(c.Value, s.Config.LoginNodeAddr)
+		user := s.sessionCache.Validate(c.Value, s.Config.LoginNodeAddr)
+		if user == nil || !s.roostUserIDAllowed(user.ID) {
+			return nil
+		}
+		return user
 	}
 	if s.Store == nil {
 		return nil
@@ -44,25 +97,142 @@ func (s *Server) sessionUser(r *http.Request) *User {
 	if err != nil {
 		return nil
 	}
+	if !s.roostUserAllowed(user) {
+		return nil
+	}
 	return user
 }
 
-// cookieDomain returns the domain for cross-subdomain cookies.
-// When AppHost is configured (e.g. app.wingthing.ai), returns ".wingthing.ai"
-// so cookies set on the main domain also work on subdomains.
+func (s *Server) roostUserAllowed(user *User) bool {
+	if user == nil {
+		return false
+	}
+	if s.LocalMode || len(s.Config.RoostAllowedEmails) == 0 || user.ID == roostWingServiceUserID {
+		return true
+	}
+	if user.Email == nil {
+		return false
+	}
+	return s.roostEmailAllowed(*user.Email)
+}
+
+func (s *Server) roostEmailAllowed(email string) bool {
+	if s.LocalMode || len(s.Config.RoostAllowedEmails) == 0 {
+		return true
+	}
+	email = strings.TrimSpace(email)
+	for _, allowed := range s.Config.RoostAllowedEmails {
+		if strings.EqualFold(email, strings.TrimSpace(allowed)) {
+			return true
+		}
+	}
+	return false
+}
+
+// roostProviderEmailAllowed is the OAuth enrollment boundary. Operators that
+// configure an email list are relying on the identity provider to prove the
+// current address, so an unverified or missing provider email must fail closed.
+// Roosts without a list retain their historical accept-authenticated behavior.
+func (s *Server) roostProviderEmailAllowed(email string, verified bool) bool {
+	if s.LocalMode || len(s.Config.RoostAllowedEmails) == 0 {
+		return true
+	}
+	return verified && s.roostEmailAllowed(email)
+}
+
+func (s *Server) clearDeniedOAuthEnrollment(user *User) error {
+	if user == nil {
+		return nil
+	}
+	if err := s.Store.ClearUserEmail(user.ID); err != nil {
+		return err
+	}
+	user.Email = nil
+	return nil
+}
+
+func (s *Server) roostUserIDAllowed(userID string) bool {
+	if s.LocalMode || len(s.Config.RoostAllowedEmails) == 0 || userID == roostWingServiceUserID {
+		return true
+	}
+	// Edge stores contain process-local plumbing, not authoritative users. Reuse
+	// the login node's synchronized per-user decision instead of denying every
+	// enrolled account because it is absent from the edge database. A cache miss
+	// fails closed until the first successful synchronization.
+	if s.IsEdge() {
+		if s.EntitlementCache == nil {
+			return false
+		}
+		allowed, known := s.EntitlementCache.GetEnrollment(userID)
+		return known && allowed
+	}
+	if s.Store == nil {
+		return false
+	}
+	user, _ := s.Store.GetUserByID(userID)
+	return s.roostUserAllowed(user)
+}
+
+// cookieDomain returns the longest safe DNS suffix shared by the login and app
+// hosts. Host-only cookies are safer whenever the hosts do not share one (or
+// are localhost/IP addresses). In particular, never scope a cookie to a public
+// suffix such as co.uk or unnecessarily widen login.roost.example.com and
+// app.roost.example.com to all of example.com.
 func (s *Server) cookieDomain() string {
 	if s.Config.AppHost == "" {
 		return "" // single host, no cross-subdomain needed
 	}
-	u, err := url.Parse(s.Config.BaseURL)
-	if err != nil {
+	baseURL, err := url.Parse(s.Config.BaseURL)
+	if err != nil || baseURL.Hostname() == "" {
 		return ""
 	}
-	return "." + u.Hostname()
+	appURL, err := url.Parse("//" + s.Config.AppHost)
+	if err != nil || appURL.Hostname() == "" {
+		return ""
+	}
+
+	baseHost := strings.ToLower(strings.TrimSuffix(baseURL.Hostname(), "."))
+	appHost := strings.ToLower(strings.TrimSuffix(appURL.Hostname(), "."))
+	if baseHost == "localhost" || appHost == "localhost" {
+		return ""
+	}
+	if _, err := netip.ParseAddr(baseHost); err == nil {
+		return ""
+	}
+	if _, err := netip.ParseAddr(appHost); err == nil {
+		return ""
+	}
+
+	if baseHost == appHost {
+		return ""
+	}
+	candidate := longestSharedDNSName(baseHost, appHost)
+	if candidate == "" {
+		return ""
+	}
+	if _, err := publicsuffix.EffectiveTLDPlusOne(candidate); err != nil {
+		return ""
+	}
+	return "." + candidate
+}
+
+func longestSharedDNSName(first, second string) string {
+	firstLabels := strings.Split(strings.ToLower(strings.TrimSuffix(first, ".")), ".")
+	secondLabels := strings.Split(strings.ToLower(strings.TrimSuffix(second, ".")), ".")
+	firstIndex := len(firstLabels) - 1
+	secondIndex := len(secondLabels) - 1
+	for firstIndex >= 0 && secondIndex >= 0 && firstLabels[firstIndex] == secondLabels[secondIndex] {
+		firstIndex--
+		secondIndex--
+	}
+	shared := firstLabels[firstIndex+1:]
+	if len(shared) == 0 {
+		return ""
+	}
+	return strings.Join(shared, ".")
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, token string) {
-	secure := strings.HasPrefix(s.Config.BaseURL, "https")
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
@@ -70,9 +240,40 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, token string) {
 		Domain:   s.cookieDomain(),
 		MaxAge:   int(sessionDuration.Seconds()),
 		HttpOnly: true,
-		Secure:   secure,
+		Secure:   s.secureBrowserOrigin(),
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+func (s *Server) expireCookie(w http.ResponseWriter, name, path string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Path:     path,
+		Domain:   s.cookieDomain(),
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   s.secureBrowserOrigin(),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// setAuthFlowCookie keeps short-lived OAuth state on the login host. Unlike the
+// session cookie, these values never need to reach AppHost; parent-domain scope
+// would let any sibling subdomain inject or replace an in-progress login flow.
+func (s *Server) setAuthFlowCookie(w http.ResponseWriter, name, value, path string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     path,
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   s.secureBrowserOrigin(),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (s *Server) expireAuthFlowCookie(w http.ResponseWriter, name, path string) {
+	s.setAuthFlowCookie(w, name, "", path, -1)
 }
 
 // handleDevLogin creates a session for the dev user. Only works in dev mode.
@@ -90,20 +291,30 @@ func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request, user *User) {
+	if !s.roostUserAllowed(user) {
+		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
+		return
+	}
 	token := generateToken()
 	if err := s.Store.CreateSession(token, user.ID, time.Now().Add(sessionDuration)); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.setSessionCookie(w, token)
-
 	// Roost mode: auto-grant pro to all OAuth users (self-hosted = unlimited)
 	if s.RoostMode && !s.Store.IsUserPro(user.ID) {
 		subID := uuid.New().String()
-		s.Store.CreateSubscription(&Subscription{ID: subID, UserID: &user.ID, Plan: "roost", Status: "active", Seats: 1})
-		s.Store.CreateEntitlement(&Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID})
-		s.Store.UpdateUserTier(user.ID, "pro")
+		sub := &Subscription{ID: subID, UserID: &user.ID, Plan: "roost", Status: "active", Seats: 1}
+		_, _, err := s.Store.EnsurePersonalSubscription(
+			sub,
+			&Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID},
+		)
+		if err != nil {
+			_ = s.Store.DeleteSession(token)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 	}
+	s.setSessionCookie(w, token)
 
 	// Check for pending org invite token — redirect to invite page for explicit accept
 	if c, err := r.Cookie("invite_token"); err == nil && c.Value != "" {
@@ -113,7 +324,7 @@ func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request
 
 	// Respect ?next= redirect (stored in oauth_next cookie during OAuth flow)
 	if c, err := r.Cookie("oauth_next"); err == nil && c.Value != "" {
-		http.SetCookie(w, &http.Cookie{Name: "oauth_next", Path: "/auth", MaxAge: -1})
+		s.expireAuthFlowCookie(w, "oauth_next", "/auth")
 		if isSafeRedirect(c.Value) {
 			http.Redirect(w, r, c.Value, http.StatusSeeOther)
 			return
@@ -121,29 +332,38 @@ func (s *Server) createSessionAndRedirect(w http.ResponseWriter, r *http.Request
 	}
 	// Default: send to app dashboard if AppHost is configured, otherwise /
 	if s.Config.AppHost != "" {
-		proto := "https"
-		if strings.HasPrefix(s.Config.BaseURL, "http://") {
-			proto = "http"
-		}
+		proto := s.browserOriginScheme()
 		http.Redirect(w, r, proto+"://"+s.Config.AppHost+"/", http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (s *Server) browserOriginScheme() string {
+	parsed, err := url.Parse(s.Config.BaseURL)
+	if err == nil {
+		switch strings.ToLower(parsed.Scheme) {
+		case "http":
+			return "http"
+		case "https":
+			return "https"
+		}
+	}
+	// Hosted/split deployments have historically defaulted the app host to
+	// HTTPS when BaseURL is absent or malformed.
+	return "https"
+}
+
+func (s *Server) secureBrowserOrigin() bool {
+	parsed, err := url.Parse(s.Config.BaseURL)
+	return err == nil && strings.EqualFold(parsed.Scheme, "https")
+}
+
 // OAuth state CSRF
 
 func (s *Server) setOAuthState(w http.ResponseWriter) string {
 	state := generateToken()
-	http.SetCookie(w, &http.Cookie{
-		Name:     "oauth_state",
-		Value:    state,
-		Path:     "/auth",
-		Domain:   s.cookieDomain(),
-		MaxAge:   600,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	s.setAuthFlowCookie(w, "oauth_state", state, "/auth", 600)
 	return state
 }
 
@@ -152,11 +372,7 @@ func (s *Server) validateOAuthState(w http.ResponseWriter, r *http.Request) bool
 	if err != nil {
 		return false
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:   "oauth_state",
-		Path:   "/auth",
-		MaxAge: -1,
-	})
+	s.expireAuthFlowCookie(w, "oauth_state", "/auth")
 	return c.Value == r.URL.Query().Get("state")
 }
 
@@ -194,41 +410,49 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		"client_secret": {s.Config.GitHubClientSecret},
 		"code":          {code},
 	}
-	req, _ := http.NewRequest("POST", "https://github.com/login/oauth/access_token", strings.NewReader(body.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "https://github.com/login/oauth/access_token", strings.NewReader(body.Encode()))
 	if err != nil {
 		http.Error(w, "token exchange failed", http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := s.oauthClient().Do(req)
+	if err != nil {
+		http.Error(w, "token exchange failed", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
 
 	var tokenData struct {
 		AccessToken string `json:"access_token"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenData); err != nil || tokenData.AccessToken == "" {
+	if err := decodeOAuthProviderJSON(resp, &tokenData); err != nil || tokenData.AccessToken == "" {
 		http.Error(w, "invalid token response", http.StatusInternalServerError)
 		return
 	}
 
 	// Fetch user info
-	userReq, _ := http.NewRequest("GET", "https://api.github.com/user", nil)
-	userReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
-	userResp, err := http.DefaultClient.Do(userReq)
+	userReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://api.github.com/user", nil)
 	if err != nil {
 		http.Error(w, "failed to fetch user", http.StatusInternalServerError)
 		return
 	}
-	defer userResp.Body.Close()
+	userReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	userResp, err := s.oauthClient().Do(userReq)
+	if err != nil {
+		http.Error(w, "failed to fetch user", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = userResp.Body.Close() }()
 
 	var ghUser struct {
 		ID        int    `json:"id"`
 		Login     string `json:"login"`
 		AvatarURL string `json:"avatar_url"`
 	}
-	if err := json.NewDecoder(userResp.Body).Decode(&ghUser); err != nil {
+	if err := decodeOAuthProviderJSON(userResp, &ghUser); err != nil || ghUser.ID == 0 {
 		http.Error(w, "invalid user response", http.StatusInternalServerError)
 		return
 	}
@@ -239,7 +463,8 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	if user == nil {
+	existingUser := user != nil
+	if !existingUser {
 		user = &User{
 			ID:         uuid.New().String(),
 			Provider:   "github",
@@ -249,35 +474,60 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	user.DisplayName = ghUser.Login
 	avatarURL := ghUser.AvatarURL
 	user.AvatarURL = &avatarURL
+
+	// Fetch the current primary verified email. A configured enrollment list
+	// must never fall back to a stale email already stored for this provider ID.
+	ghEmail := s.fetchGitHubEmail(r.Context(), tokenData.AccessToken)
+	if !s.roostProviderEmailAllowed(ghEmail, ghEmail != "") {
+		// The current provider response no longer proves an enrolled identity.
+		// Clear the old address before returning so previously issued cookies and
+		// device tokens stop authorizing this account. Do not try to store the new
+		// unlisted address: it may collide with another account's unique email and
+		// accidentally leave the stale allowed address in place.
+		if existingUser {
+			if err := s.clearDeniedOAuthEnrollment(user); err != nil {
+				http.Error(w, "db error", http.StatusInternalServerError)
+				return
+			}
+		}
+		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
+		return
+	}
+	if ghEmail != "" {
+		user.Email = &ghEmail
+	}
 	if err := s.Store.UpsertUser(user); err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-
-	// Fetch email from GitHub API
-	if ghEmail := s.fetchGitHubEmail(tokenData.AccessToken); ghEmail != "" {
-		s.Store.UpdateUserEmail(user.ID, ghEmail)
-		user.Email = &ghEmail
+	if user.Email != nil {
+		if err := s.Store.UpdateUserEmail(user.ID, *user.Email); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	s.createSessionAndRedirect(w, r, user)
 }
 
 // fetchGitHubEmail fetches the primary verified email from GitHub.
-func (s *Server) fetchGitHubEmail(accessToken string) string {
-	req, _ := http.NewRequest("GET", "https://api.github.com/user/emails", nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	resp, err := http.DefaultClient.Do(req)
+func (s *Server) fetchGitHubEmail(ctx context.Context, accessToken string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user/emails", nil)
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := s.oauthClient().Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
 	var emails []struct {
 		Email    string `json:"email"`
 		Primary  bool   `json:"primary"`
 		Verified bool   `json:"verified"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&emails); err != nil {
+	if err := decodeOAuthProviderJSON(resp, &emails); err != nil {
 		return ""
 	}
 	for _, e := range emails {
@@ -324,41 +574,50 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		"grant_type":    {"authorization_code"},
 		"redirect_uri":  {s.Config.BaseURL + "/auth/google/callback"},
 	}
-	req, _ := http.NewRequest("POST", "https://oauth2.googleapis.com/token", strings.NewReader(body.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := http.DefaultClient.Do(req)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "https://oauth2.googleapis.com/token", strings.NewReader(body.Encode()))
 	if err != nil {
 		http.Error(w, "token exchange failed", http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := s.oauthClient().Do(req)
+	if err != nil {
+		http.Error(w, "token exchange failed", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
 
 	var tokenData struct {
 		AccessToken string `json:"access_token"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenData); err != nil || tokenData.AccessToken == "" {
+	if err := decodeOAuthProviderJSON(resp, &tokenData); err != nil || tokenData.AccessToken == "" {
 		http.Error(w, "invalid token response", http.StatusInternalServerError)
 		return
 	}
 
 	// Fetch user info
-	userReq, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
-	userReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
-	userResp, err := http.DefaultClient.Do(userReq)
+	userReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://www.googleapis.com/oauth2/v2/userinfo", nil)
 	if err != nil {
 		http.Error(w, "failed to fetch user", http.StatusInternalServerError)
 		return
 	}
-	defer userResp.Body.Close()
+	userReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	userResp, err := s.oauthClient().Do(userReq)
+	if err != nil {
+		http.Error(w, "failed to fetch user", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = userResp.Body.Close() }()
 
 	var gUser struct {
-		ID      string `json:"id"`
-		Email   string `json:"email"`
-		Name    string `json:"name"`
-		Picture string `json:"picture"`
+		ID            string `json:"id"`
+		Email         string `json:"email"`
+		VerifiedEmail bool   `json:"verified_email"`
+		Name          string `json:"name"`
+		Picture       string `json:"picture"`
 	}
-	if err := json.NewDecoder(userResp.Body).Decode(&gUser); err != nil {
+	if err := decodeOAuthProviderJSON(userResp, &gUser); err != nil || gUser.ID == "" {
 		http.Error(w, "invalid user response", http.StatusInternalServerError)
 		return
 	}
@@ -368,7 +627,8 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-	if user == nil {
+	existingUser := user != nil
+	if !existingUser {
 		user = &User{
 			ID:         uuid.New().String(),
 			Provider:   "google",
@@ -383,15 +643,31 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	if gUser.Picture != "" {
 		user.AvatarURL = &gUser.Picture
 	}
+	if !s.roostProviderEmailAllowed(gUser.Email, gUser.VerifiedEmail) {
+		if existingUser {
+			if err := s.clearDeniedOAuthEnrollment(user); err != nil {
+				http.Error(w, "db error", http.StatusInternalServerError)
+				return
+			}
+		}
+		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
+		return
+	}
+	// Preserve the historical non-enrollment behavior for operators without an
+	// allowlist. When an allowlist is active, the check above requires this same
+	// address to have been provider-verified.
+	if gUser.Email != "" {
+		user.Email = &gUser.Email
+	}
 	if err := s.Store.UpsertUser(user); err != nil {
 		http.Error(w, "db error", http.StatusInternalServerError)
 		return
 	}
-
-	// Store email
-	if gUser.Email != "" {
-		s.Store.UpdateUserEmail(user.ID, gUser.Email)
-		user.Email = &gUser.Email
+	if user.Email != nil {
+		if err := s.Store.UpdateUserEmail(user.ID, *user.Email); err != nil {
+			http.Error(w, "db error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	s.createSessionAndRedirect(w, r, user)
@@ -404,9 +680,13 @@ func (s *Server) handleMagicLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "email login not configured", http.StatusNotFound)
 		return
 	}
-	email := r.FormValue("email")
-	if email == "" {
-		http.Error(w, "email required", http.StatusBadRequest)
+	email, err := normalizeBareEmail(r.FormValue("email"))
+	if err != nil {
+		http.Error(w, "valid email required", http.StatusBadRequest)
+		return
+	}
+	if !s.roostEmailAllowed(email) {
+		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
 		return
 	}
 
@@ -429,6 +709,10 @@ func (s *Server) handleMagicLink(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sendMagicLinkEmail(to, link string) error {
+	to, err := normalizeBareEmail(to)
+	if err != nil {
+		return err
+	}
 	from := s.Config.SMTPFrom
 	subject := "Your wingthing login link"
 	body := fmt.Sprintf("Click here to log in:\n\n%s\n\nThis link expires in 15 minutes.", link)
@@ -451,6 +735,10 @@ func (s *Server) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid or expired link", http.StatusBadRequest)
 		return
 	}
+	if !s.roostEmailAllowed(email) {
+		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
+		return
+	}
 
 	user, err := s.Store.GetOrCreateUserByEmail(email)
 	if err != nil {
@@ -465,13 +753,11 @@ func (s *Server) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie(sessionCookieName)
-	if err == nil {
-		s.Store.DeleteSession(c.Value)
+	if err == nil && s.Store != nil {
+		if err := s.Store.DeleteSession(c.Value); err != nil {
+			log.Printf("logout: delete session: %v", err)
+		}
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:   sessionCookieName,
-		Path:   "/",
-		MaxAge: -1,
-	})
+	s.expireCookie(w, sessionCookieName, "/")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

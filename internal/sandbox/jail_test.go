@@ -144,6 +144,101 @@ func TestJail_DenyPathBlocked(t *testing.T) {
 	}
 }
 
+func TestJail_DenySocketBlocksDirectConnection(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is required to exercise Unix socket connectivity")
+	}
+	// Darwin's sockaddr_un path is limited to 104 bytes. testing.T.TempDir uses
+	// a long per-user path there, so put only this disposable socket fixture
+	// under the short, system-owned temporary root.
+	socketDir, err := os.MkdirTemp("/tmp", "wt-deny-socket-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "agent.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := os.Chmod(socketPath, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	command := fmt.Sprintf(`python3 -c 'import socket; s=socket.socket(socket.AF_UNIX); s.connect(%q)'`, socketPath)
+	for _, test := range []struct {
+		name string
+		deny string
+	}{
+		{name: "exact socket", deny: socketPath},
+		{name: "parent directory", deny: socketDir},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output, runErr := runJail(t, Config{NetworkNeed: NetworkFull, Deny: []string{test.deny}}, command)
+			if runErr == nil {
+				t.Fatalf("sandbox connected to denied SSH-agent-style socket (output: %s)", output)
+			}
+		})
+	}
+}
+
+func TestJail_MacOSAllowedSocketSurvivesProxyNetworkDeny(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Seatbelt socket allow")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is required to exercise Unix socket connectivity")
+	}
+	socketDir, err := os.MkdirTemp("/tmp", "wt-allow-socket-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "agent.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := os.Chmod(socketPath, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	command := fmt.Sprintf(`python3 -c 'import socket; s=socket.socket(socket.AF_UNIX); s.connect(%q)'`, socketPath)
+	output, runErr := runJail(t, Config{
+		NetworkNeed:  NetworkHTTPS,
+		ProxyPort:    1,
+		AllowSockets: []string{socketPath},
+	}, command)
+	if runErr != nil {
+		t.Fatalf("explicitly allowed SSH-agent-style socket was blocked (output: %s): %v", output, runErr)
+	}
+}
+
+func TestJail_MacOSDenyPathOverridesWritableMount(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Seatbelt enforcement")
+	}
+	denied := t.TempDir()
+	testFile := filepath.Join(denied, "secret.txt")
+	if err := os.WriteFile(testFile, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runJail(t, Config{
+		NetworkNeed: NetworkFull,
+		Mounts:      []Mount{{Source: denied, Target: denied}},
+		Deny:        []string{denied},
+	}, "cat "+testFile+"; printf overwritten > "+testFile)
+	if err == nil {
+		t.Fatal("Seatbelt writable mount overrode an explicit deny")
+	}
+	data, readErr := os.ReadFile(testFile)
+	if readErr != nil || string(data) != "secret" {
+		t.Fatalf("denied file changed: data=%q err=%v", data, readErr)
+	}
+}
+
 func TestJail_DeniedFileMaskPreservesMountFlags(t *testing.T) {
 	secret := filepath.Join(t.TempDir(), "history")
 	if err := os.WriteFile(secret, []byte("secret"), 0600); err != nil {
@@ -163,6 +258,9 @@ func TestJail_DeniedFileMaskPreservesMountFlags(t *testing.T) {
 }
 
 func TestJail_MissingDenyPathPreparedBeforeReadonlyHome(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("absent deny mountpoint preparation is a Linux mount-namespace operation")
+	}
 	home := t.TempDir()
 	writable := filepath.Join(home, ".cache")
 	if err := os.MkdirAll(writable, 0o755); err != nil {
@@ -181,6 +279,24 @@ func TestJail_MissingDenyPathPreparedBeforeReadonlyHome(t *testing.T) {
 	}
 	if out != "launched" {
 		t.Fatalf("agent did not launch after deny mount preparation: %q", out)
+	}
+}
+
+func TestJail_MacOSMissingDenyPathCannotBeCreated(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Seatbelt enforcement")
+	}
+	parent := t.TempDir()
+	missing := filepath.Join(parent, ".aws")
+	_, err := runJail(t, Config{
+		NetworkNeed: NetworkFull,
+		Deny:        []string{missing},
+	}, "mkdir "+missing)
+	if err == nil {
+		t.Fatal("Seatbelt allowed creation of an absent denied path")
+	}
+	if _, statErr := os.Stat(missing); !os.IsNotExist(statErr) {
+		t.Fatalf("denied path was created: %v", statErr)
 	}
 }
 

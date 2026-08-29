@@ -2,6 +2,7 @@ package webrtc
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -35,7 +36,7 @@ func TestLoopbackWebRTC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("browser PC: %v", err)
 	}
-	defer browserPC.Close()
+	defer func() { _ = browserPC.Close() }()
 
 	dc, err := browserPC.CreateDataChannel("pty:test-session", nil)
 	if err != nil {
@@ -106,6 +107,159 @@ func TestLoopbackWebRTC(t *testing.T) {
 	}
 }
 
+func TestInvalidReplacementOfferDoesNotEvictHealthyPeer(t *testing.T) {
+	pm := NewPeerManager(nil)
+	defer pm.Close()
+
+	browserPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = browserPC.Close() }()
+	if _, err := browserPC.CreateDataChannel("pty:session", nil); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := browserPC.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gathered := webrtc.GatheringCompletePromise(browserPC)
+	if err := browserPC.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	<-gathered
+	if _, err := pm.HandleOffer("sender-pub-key", "user1", "user@test.com", "owner", nil, browserPC.LocalDescription().SDP); err != nil {
+		t.Fatalf("valid offer: %v", err)
+	}
+	pm.mu.Lock()
+	if len(pm.peers) != 1 {
+		got := len(pm.peers)
+		pm.mu.Unlock()
+		t.Fatalf("healthy peers = %d, want 1", got)
+	}
+	var healthy *webrtc.PeerConnection
+	for _, peer := range pm.peers {
+		healthy = peer
+	}
+	pm.mu.Unlock()
+
+	if _, err := pm.HandleOffer("sender-pub-key", "user1", "user@test.com", "owner", nil, "not valid SDP"); err == nil {
+		t.Fatal("malformed replacement offer was accepted")
+	}
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if len(pm.peers) != 1 {
+		t.Fatalf("malformed replacement changed peer count to %d", len(pm.peers))
+	}
+	for _, peer := range pm.peers {
+		if peer != healthy {
+			t.Fatal("malformed replacement evicted the healthy peer")
+		}
+	}
+}
+
+func TestPeerManagerBoundsConcurrentOffersDeterministically(t *testing.T) {
+	pm := NewPeerManager(nil)
+	pm.maxPeers = 3
+	pm.maxPerPeer = 2
+	defer pm.Close()
+
+	add := func(sender, suffix string) {
+		t.Helper()
+		pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !pm.installPeer(sender+"\x00"+suffix, sender, PeerIdentity{UserID: sender}, pc) {
+			t.Fatal("valid peer was not installed")
+		}
+	}
+	add("sender-a", "1")
+	add("sender-a", "2")
+	add("sender-a", "3")
+
+	pm.mu.Lock()
+	if got := len(pm.peers); got != 2 {
+		pm.mu.Unlock()
+		t.Fatalf("peers after per-sender eviction = %d, want 2", got)
+	}
+	if _, exists := pm.peers["sender-a\x001"]; exists {
+		pm.mu.Unlock()
+		t.Fatal("oldest per-sender peer was not evicted")
+	}
+	pm.mu.Unlock()
+
+	add("sender-b", "1")
+	add("sender-b", "2")
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if got := len(pm.peers); got != 3 {
+		t.Fatalf("total peers = %d, want 3", got)
+	}
+	if _, exists := pm.peers["sender-a\x002"]; exists {
+		t.Fatal("oldest total peer was not evicted")
+	}
+	if _, exists := pm.identities["sender-a"]; !exists {
+		t.Fatal("sender identity was removed while another peer remained")
+	}
+}
+
+func TestPeerManagerDoesNotInstallClosedPeer(t *testing.T) {
+	pm := NewPeerManager(nil)
+	defer pm.Close()
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if pm.installPeer("sender\x00closed", "sender", PeerIdentity{UserID: "user"}, pc) {
+		t.Fatal("closed peer was installed")
+	}
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if len(pm.peers) != 0 || len(pm.identities) != 0 {
+		t.Fatalf("closed peer left manager state: peers=%d identities=%d", len(pm.peers), len(pm.identities))
+	}
+}
+
+func TestPeerManagerCloseRejectsLateAndFutureInstalls(t *testing.T) {
+	pm := NewPeerManager(nil)
+	pm.Close()
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pm.installPeer("sender\x00late", "sender", PeerIdentity{UserID: "user"}, pc) {
+		t.Fatal("peer installed after manager shutdown")
+	}
+	if _, err := pm.HandleOffer("sender", "user", "", "member", nil, "v=0\r\n"); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("post-close offer error = %v", err)
+	}
+}
+
+func TestPeerManagerBoundsOfferInputAndWorkInFlight(t *testing.T) {
+	pm := NewPeerManager(nil)
+	defer pm.Close()
+
+	if _, err := pm.HandleOffer("short", "user", "", "member", nil, strings.Repeat("x", maxSDPOfferBytes+1)); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized SDP error = %v", err)
+	}
+	for range cap(pm.offerSlots) {
+		pm.offerSlots <- struct{}{}
+	}
+	if _, err := pm.HandleOffer("short", "user", "", "member", nil, "v=0\r\n"); err == nil || !strings.Contains(err.Error(), "too many") {
+		t.Fatalf("saturated offer error = %v", err)
+	}
+	for range cap(pm.offerSlots) {
+		<-pm.offerSlots
+	}
+	if got := logPrefix("tiny"); got != "tiny" {
+		t.Fatalf("short log prefix = %q", got)
+	}
+}
+
 func TestSwappableWriterOrdering(t *testing.T) {
 	var messages []string
 	var mu sync.Mutex
@@ -121,7 +275,9 @@ func TestSwappableWriterOrdering(t *testing.T) {
 	sw := NewSwappableWriter(relayWrite)
 
 	// Write via relay
-	sw.Write(map[string]string{"msg": "1"})
+	if err := sw.Write(map[string]string{"msg": "1"}); err != nil {
+		t.Fatal(err)
+	}
 	if sw.Mode() != "relay" {
 		t.Errorf("mode = %s, want relay", sw.Mode())
 	}
@@ -140,20 +296,28 @@ func TestSwappableWriterOrdering(t *testing.T) {
 	// Migrate — this sends pty.migrated via relay and swaps
 	// We can't use MigrateToDC (needs real DC), so test the write swap manually
 	sw.mu.Lock()
-	sw.relayWrite(map[string]string{"type": "pty.migrated", "session_id": "s1"})
+	if err := sw.relayWrite(map[string]string{"type": "pty.migrated", "session_id": "s1"}); err != nil {
+		t.Fatal(err)
+	}
 	sw.dcWrite = mockDCWrite
 	sw.mode = "p2p"
 	sw.mu.Unlock()
 
 	// Write via DC
-	sw.Write(map[string]string{"msg": "2"})
+	if err := sw.Write(map[string]string{"msg": "2"}); err != nil {
+		t.Fatal(err)
+	}
 	if sw.Mode() != "p2p" {
 		t.Errorf("mode = %s, want p2p", sw.Mode())
 	}
 
 	// Fallback
-	sw.FallbackToRelay("s1")
-	sw.Write(map[string]string{"msg": "3"})
+	if err := sw.FallbackToRelay("s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sw.Write(map[string]string{"msg": "3"}); err != nil {
+		t.Fatal(err)
+	}
 	if sw.Mode() != "relay" {
 		t.Errorf("mode = %s, want relay", sw.Mode())
 	}

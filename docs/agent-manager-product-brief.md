@@ -2,7 +2,7 @@
 
 Status: working source of truth for `feature/direct-control-free-tier`
 
-Last reviewed: 2026-08-25
+Last reviewed: 2026-08-28
 
 Related designs:
 
@@ -117,8 +117,8 @@ they become usable product workflows.
 
 | Requested workflow | How to do it now | Pattern or gap |
 | --- | --- | --- |
-| One office VM and one home VM, durable Claude/Codex sessions, one parent-agent inventory | Register both wings with one coordinator; run `wt mcp connect`; call `wing_list`; qualify every operation with `wing_id`. | `remote-orchestration`; working direct MCP, physical two-host field canary still due. |
-| The same multi-machine view for a person, without trusting public payload relay | Run one private roost behind a VPN/tailnet and valid HTTPS, then register the wings with its gateway. Hosted free accounts get coordination/direct MCP; hosted browser relay is Pro/grandfathered. | `shared-web-roost`; browser-direct transport and roost federation remain gaps. |
+| One office VM and one home VM, durable Claude/Codex sessions, one parent-agent inventory | Register both wings with one coordinator; run `wt mcp connect`; call `wing_list`; qualify every operation with `wing_id`. | `remote-orchestration`; working direct MCP, including the 2026-08-28 Mac-plus-Bryan physical two-host canary. |
+| The same multi-machine view for a person, without trusting public payload relay | Run one private roost behind a VPN/tailnet and valid HTTPS, enroll exact account emails, then register the wings with its gateway. The private roost supplies the browser relay inside the operator's trust boundary. | `shared-web-roost`; browser-direct hosted transport and roost federation remain gaps. |
 | Run shell setup, make a directory or Git worktree, then launch the chosen agent there | Use an existing idempotent setup script through `terminal_start`, wait for its completion canary, then call `agent_run` or `agent_start` with the resulting `cwd`. | Compose now; typed `workspace_prepare`/worktree lifecycle is P0. |
 | Let an outer agent supervise inner Claude, Codex, OpenCode, or another worker | Register local stdio MCP or the native direct connector; use semantic start/status/wait/result/steer/stop plus durable messages. | `local-subagents` and `remote-orchestration`; working. |
 | Choose agent configuration, nested sandbox, remote access, or an outer VM/container independently | Use ordinary egg policy for the nested boundary, or explicitly declare trusted outer-boundary mode when the VM/container is the sandbox. | `local-sandbox`; remote outer-boundary policy parity remains partial. |
@@ -147,20 +147,20 @@ home roost and an office roost are paired once and thereafter expose one invento
 requires a peer directory, conflict rules, cross-roost authorization, revocation,
 and routing that do not exist yet.
 
-## Implementation truth as of 2026-08-25
+## Implementation truth as of 2026-08-28
 
 | User need | State | What is actually true |
 | --- | --- | --- |
 | Durable local Claude/Codex/OpenCode sessions | Working | Persistent PTYs and semantic agent runs survive client disconnects; the default idle timeout is disabled. |
 | Local agent orchestrates agents | Working | `wt mcp stdio` exposes typed terminal, agent-run, message, sandbox, prompt, loop, and swarm controls. |
-| Remote agent controls multiple wings | Field-proven on one real wing; two-wing routing proven in-process | `wt mcp connect` exposed Bryan through direct WebRTC to a real Claude Sonnet orchestrator. Terminal and semantic-run state survived connector and roost restarts. The black-box JSON-RPC/two-WebRTC canary proves qualified routing across two wings; a physical home-plus-office canary is still outstanding. |
+| Remote agent controls multiple wings | Field-proven across two physical wings | `wt mcp connect` listed an external macOS wing and Bryan simultaneously, reported `direct-webrtc` for both, started real Codex and Claude sessions on the qualified targets, received distinct exact responses, and stopped only the returned session IDs. A real Claude Sonnet orchestrator separately exercised the richer lifecycle on Bryan. |
 | Mixed agent backends | Working | Claude, Codex, Cursor, Gemini, Hermes, Ollama, and OpenCode adapters exist. |
 | Long-running semantic runs | Working | Start, status, events, wait, result, steer, and stop operations exist. |
-| Unified human browser | Entitled/self-hosted only | Pro, grandfathered, or private-roost users can retain the relay browser. A new hosted free account receives setup/readiness UI and no session inventory. |
+| Unified human browser | Entitled/self-hosted only | Accounts with hosted relay access and enrolled private-roost users can use the relay browser. A hosted direct-only free account receives setup/readiness UI and no session inventory. |
 | Direct browser terminal | Missing | Browser-direct transport is explicitly outside the current slice. |
 | Secure direct access to a protected wing | Missing | Native direct MCP rejects locked and per-user-passkey-protected wings because it cannot complete the passkey ceremony. |
-| User-selectable direct-only policy | Working on branch | `hosted_relay: deny` overrides Pro, grandfathered, and private-roost relay entitlement at the honest gateway and again at the wing. Omitted policy remains `allow` for deployed wings. |
-| Hosted Pro fallback for native MCP | Missing | The connector tells users to enable relay after direct failure, but it has no native relay fallback path. |
+| User-selectable direct-only policy | Working on branch | `hosted_relay: deny` overrides hosted and private-roost relay entitlement at the honest gateway and again at the wing. Omitted policy remains `allow` for deployed wings. |
+| Hosted relay for native MCP | Deliberate non-feature in this slice | The connector is direct-only and says so on failure. Hosted relay access applies to the browser/control-relay surface; the native connector never silently changes transports. |
 | First-class workspace/worktree preparation | Partial | `terminal_start` accepts argv and `agent_start` accepts `cwd`; no typed one-shot execution, worktree object, setup hook, or atomic prepare-and-launch operation exists. |
 | Prompt assets, loops, and swarms remotely | Missing | These registry tools remain local-MCP-only. |
 | Recurring automation through MCP | Missing | Internal cron support and schedule parsing exist, but there are no schedule create/list/remove MCP tools or delivery targets. |
@@ -178,7 +178,7 @@ These are release requirements, not aspirational documentation.
 1. **Coordinator identity is not local consent.** Compromise of a hosted account or
    coordinator must not silently bypass a wing's lock or passkey policy.
 2. **Direct-only must be enforceable.** A wing owner can disable hosted payload
-   relay even when an account is Pro or temporarily grandfathered.
+   relay even when an account has hosted relay access.
 3. **One authorization model.** Direct MCP receives explicit grants, owner scoping,
    path scoping, spawn/session bounds, and audit policy derived from authenticated
    identity. Nil policy must never accidentally mean unrestricted remote access.
@@ -215,13 +215,15 @@ The following deployed contracts remain supported while this branch rolls out:
 - existing personal wings and org-bound wings registered with the hosted gateway;
 - organization owner/member/outsider visibility and role derivation;
 - the shared roost's embedded service wing without exposing an external personal
-  wing to every authenticated roost user;
+  wing to every enrolled roost user;
 - folder-based ACLs and canonical-path enforcement for organization members;
 - separate provider login homes and owner-scoped sessions on a shared host;
 - existing passkeys, wing allow/revoke records, lock state, and browser ceremonies;
 - durable sessions and database records created by the currently deployed binary;
 - local self-hosted mode without OAuth, and private OAuth roost deployments that
   intentionally retain relay behavior; and
+- exact-email enrollment for private OAuth roosts, while an omitted enrollment
+  list preserves the prior accept-any-authenticated-account behavior;
 - configuration files that omit newly introduced keys.
 
 Compatibility rules:
@@ -263,12 +265,13 @@ These are cases where behavior or prose currently says more than the system does
 ### Direct protection and authorization
 
 The nil-grants/unbounded direct-server discrepancy is closed on this branch. Every
-direct channel now receives an explicit wing-resolved grant set, configured-path
-scope, positive session/spawn bounds, and process-shared admission state. Optional
-strict `direct_mcp` configuration can narrow grants, change bounds, or disable the
-surface; malformed policy fails startup/reload rather than falling back to full
-authority. Deterministic, real-data-channel, repeat, race, integration, Linux-build,
-and three-user organization-mode browser gates cover the slice.
+direct request receives an explicit wing-resolved grant set, configured-path scope,
+positive session/spawn bounds, and process-shared admission state. Already-open
+channels re-resolve that policy after `SIGHUP`. Optional strict `direct_mcp`
+configuration can narrow grants, change bounds, or disable the surface; malformed
+policy fails startup/reload rather than falling back to full authority.
+Deterministic, real-data-channel, repeat, race, integration, Linux-build, and
+four-principal organization-mode browser gates cover the slice.
 
 The direct connector fails closed when a wing is locked or has a passkey for the
 user. This is the correct temporary failure behavior, but it means secure enrollment
@@ -282,12 +285,12 @@ agent setup instructions. It is not a unified human view. Headless semantic agen
 runs also do not have a complete browser inventory. The product needs either a
 browser-direct client or precise positioning that hosted free is agent-only.
 
-### Relay fallback is described before it exists
+### Native transport positioning is now explicit
 
-Native `wt mcp connect` only establishes a direct control client. When it fails, the
-message points to Pro relay, but no code performs that fallback. Until implemented,
-docs and errors must say that Pro preserves the hosted browser relay, not imply that
-the native MCP connector automatically falls back.
+Native `wt mcp connect` establishes a direct control client only. The command,
+failure remediation, public website, patterns, and security docs now say that the
+native connector does not silently use the hosted relay. Pro describes the hosted
+browser-terminal/control relay surface, not an unimplemented native fallback.
 
 ### Workspace setup is possible only through PTY composition
 
@@ -303,19 +306,30 @@ Prompt assets, bounded loops, and swarms are local-only registry surfaces. Cron 
 no MCP surface. Therefore “everything a person can do, an LLM can do remotely” is
 not yet an accurate claim.
 
-### Public and private relay policy are coupled
+### Public and private relay policy are separated
 
-The `wt relay` command defaults OAuth deployments to the public `direct-free` policy.
-That is appropriate for `wingthing.ai`, but surprising for a private split gateway
-whose operator expects relay access. Public entitlement policy and private gateway
-defaults need distinct, explicit configuration.
+The `wt serve` gateway defaults to backward-compatible `legacy` behavior for private
+gateways. The checked-in Fly deployment explicitly selects `direct-free` and an
+RFC3339 migration boundary. The older cutoff variable remains a compatibility alias,
+conflicting values fail startup, and no account receives migration access from a
+compile-time timestamp.
 
-### Result qualification is shallow
+### Private OAuth identity needed enrollment
 
-The direct connector adds a top-level `wing_id`, but nested sessions or runs are not
-necessarily qualified individually. The contract promises every returned wing-owned
-object is self-identifying. Either deepen qualification or define envelopes so the
-promise is unambiguous.
+Completing OAuth historically enrolled any provider account in a private gateway or
+all-in-one roost. Both deployment shapes can now set exact emails with
+`WT_ROOST_ALLOWED_EMAILS`; the boundary is rechecked for login completion, existing
+cookies, device tokens, inventory, relay, and MCP. Omitting the variable retains
+existing deployment behavior, so current docs require the list unless the provider
+or ingress already restricts membership.
+
+### Result qualification is explicit
+
+Every direct wing-owned result has a top-level `wing_id`. Resource objects returned
+by the current list/send operations (sessions and messages) also carry their own
+`wing_id`, so retaining one object outside its response does not create mutable
+"current wing" state. Connector tests cover nested qualification and verify that the
+wing-side source result is not mutated.
 
 ## Ordered implementation plan
 
@@ -327,7 +341,7 @@ promise is unambiguous.
    remote nil-grants/full-access sentinel.
 3. **Done:** cover grant denial, owner/member/admin/outsider roles, member paths,
    maximum sessions, reconnect-resistant spawn rate, lock rejection, real WebRTC,
-   race detection, and the existing three-user shared-roost browser canary.
+   race detection, and the existing shared-roost browser canary.
 4. Extend the policy with an explicit outer-boundary permission and decide/test audit
    failure behavior for remote mutations.
 5. Specify and implement the native passkey challenge/response using the existing
@@ -370,8 +384,8 @@ two-host, actual-binary/client, NAT, or WSL promotion gate.
 Treat the current shared-roost browser canary and org authorization tests as the
 floor, then extend them for this branch:
 
-1. Run the shared-roost browser suite with an org owner, ordinary member, and
-   outsider. Prove wing roster, project visibility, path denial, session launch,
+1. Run the shared-roost browser suite with an org owner, two ordinary members, and
+   a non-enrolled outsider. Prove wing roster, project visibility, path denial, session launch,
    encrypted attach, detach/reattach, rename/stop, account/org pages, and mobile.
 2. For owner and member, exercise native direct MCP against the same org wing. Derive
    role and paths at the wing; never accept them from tool arguments or signaling
@@ -389,7 +403,7 @@ floor, then extend them for this branch:
    result, and stop behavior.
 7. Upgrade copies of both relay and runtime databases from every supported migration
    baseline. Compare row counts and owner/org/resource relationships before and after.
-8. Exercise new-free, grandfathered, Pro, legacy private gateway, local roost, and
+8. Exercise new-free, temporary-migration, Pro, legacy private gateway, local roost, and
    OAuth private roost policies. No cohort can acquire broader access from a missing
    timestamp, cache miss, or default branch.
 9. Canary a separate deployment with copied non-secret configuration and synthetic
@@ -432,17 +446,22 @@ prepared workspace appears without restarting the wing.
 
 ### P0: make packaging and claims honest
 
-1. Either implement native Pro relay fallback or correct the connector error, pricing,
-   and docs to describe only the relay paths that exist.
-2. Separate hosted `wingthing.ai` entitlement defaults from private `wt serve` and
-   `wt roost` defaults.
-3. Replace the compile-time migration timestamp with an explicit deploy-time cutoff
-   or migration record. Verify the affected account set before production rollout.
-4. Publish the agent-manager setup page and new docs together. A production check must
-   include `/`, `/docs`, `/patterns`, capability metadata, a new free account, an old
-   account, and a self-hosted roost.
-5. State plainly whether free hosted accounts receive an agent-only control path or a
-   human session UI. Do not use “unified view” for the readiness page.
+1. **Done on branch:** the connector error, pricing copy, and docs describe the native
+   direct-only path and only the relay paths that exist.
+2. **Done on branch:** private `wt serve` defaults to `legacy`; the checked-in
+   `wingthing.ai` Fly configuration explicitly selects `direct-free`.
+3. **Done on branch:** migration access has an explicit deploy-time cutoff with a
+   deprecated variable alias; no compile-time date grants access.
+4. **Done on branch:** release artifacts contain checksums, the installer and updater
+   verify them and reject binaries missing the public command contract, and tag
+   publication waits for Linux, macOS, race, integration, and browser gates.
+5. **Done on branch; production recheck required:** publish the agent-manager setup
+   page and new docs together. A production check must include `/`, `/docs`,
+   `/patterns`, capability metadata, a new free account, an old account, and a
+   self-hosted roost.
+6. **Done on branch:** state plainly that hosted direct-only free accounts receive an
+   agent control path, not a human session UI. The readiness page does not call
+   itself a unified human view.
 
 ### P1: complete the agent-manager product loop
 
@@ -493,9 +512,8 @@ This slice is implemented and verified on 2026-08-25.
 
 Evidence: focused policy/config tests; real WebRTC grant and org-path tests; ten
 repeat runs; race detector; `make test`; `make test-integ`; `make check`; Linux amd64
-cross-build; and the seeded organization-mode Docker browser canary (15/15, no
-browser errors). The canary also fixed its architecture selection to use the Docker
-daemon rather than assuming the client host matches it.
+cross-build; and the seeded organization-mode Docker browser canary. The canary also
+uses the Docker daemon's architecture rather than assuming the client host matches it.
 
 ## Completed coding slice: local hosted-relay opt-out
 
@@ -519,10 +537,27 @@ operation, and policy metadata.
 Compatibility is deliberate: an N-1 wing omits the field and remains `allow`; an N
 wing talking to an N-1 gateway still enforces `deny` locally; unknown explicit wire
 values fail closed. Real WebSocket integration covers org owner/member denial plus
-continued discovery forwarding, while the existing three-user organization browser
+continued discovery forwarding, while the organization browser
 canary covers the omitted/default path. Explicit integration cohorts cover new-free
-account denial, a Pro owner, a grandfathered org member, and a private-roost owner;
+account denial, a Pro owner, a temporary-migration org member, and a private-roost owner;
 the local `deny` wins for every otherwise-entitled cohort.
+
+## Scope of this merge candidate
+
+This branch's mergeable product slice is the direct multi-wing MCP connector,
+coordination-only hosted free tier, wing-local hosted-relay opt-out, rootless Linux
+egress enforcement, self-hosted localhost HTTPS, private-roost enrollment, and the
+release/documentation contract around those features.
+
+Typed workspace preparation, native passkey ceremonies, browser-direct free terminal
+transport, schedule MCP tools, service identities, delivery targets, and peer-roost
+federation remain roadmap work. They are not advertised as shipped behavior and do
+not become merge blockers for this bounded slice. The current connector fails closed
+for passkey-protected wings, and the public patterns page contains only workflows that
+can be run with the current binary.
+
+That de-scoping is not a claim that the full dream is complete. It distinguishes a
+safe additive merge from a production/product acceptance test for later capabilities.
 
 ### Test-first working rule
 
@@ -538,7 +573,7 @@ layer and at the boundary it changes:
   restart, and idempotent retry;
 - transport changes cross a real process boundary and include mixed-version behavior;
 - database changes use fresh and upgrade fixtures and assert preserved relationships;
-- browser-visible changes extend the three-user organization-mode Playwright canary;
+- browser-visible changes extend the four-principal organization-mode Playwright canary;
 - sandbox claims are verified from inside the sandbox on the claimed operating system;
   mocks alone cannot establish enforcement; and
 - every bug found while dogfooding receives a regression test that would have caught
@@ -549,25 +584,31 @@ means every important claim has a positive control, a negative control, and evid
 at the boundary where the claim could fail. Tests must remain deterministic by
 default; live providers and shared rigs are separate, explicit promotion gates.
 
-## Release gates
+## Merge and production gates
 
-The branch is not production-ready until all P0 items have owners or explicit
-de-scoping, and the shipped prose matches that scope. At minimum:
+The bounded slice above is merge-ready only when:
 
-- all repository tests and checks pass;
-- Linux cross-build passes;
-- the WSL sandbox negative-control battery passes;
-- the real two-wing native connector canary passes;
-- locked/passkey policy cannot be bypassed;
-- remote grants and bounds have negative tests;
-- the N-1/N component compatibility matrix passes for every changed protocol;
-- fresh and deployed-schema database migration tests pass for both SQLite stores;
-- the three-user organization-mode browser and direct-MCP canary passes, including
-  path ACLs, owner isolation, provider homes, passkeys, and upgrade/reconnect;
-- new free, Pro, grandfathered, and private-roost entitlements are verified against
-  a deploy-time migration boundary;
-- a private one-gateway/two-wing setup has a short, tested HTTPS/VPN guide;
-- production pages and binaries describe the same product.
+- the full Go suite, vet, race detector, web build, and diff/doc checks pass;
+- integration, Debian and Ubuntu privileged sandbox, macOS Seatbelt, and
+  organization-mode browser suites pass;
+- locked/passkey policy fails closed and remote grants, bounds, ownership, path ACLs,
+  provider homes, enrollment, detach/reattach, and stop have negative controls;
+- current compatibility fixtures prove omitted new fields retain N-1 behavior and
+  old relay-cutoff configuration remains accepted;
+- fresh and upgrade fixtures pass for both SQLite stores;
+- release artifacts carry checksums and the exact binary passes the website command
+  contract before a tag can publish it; and
+- public, operator, architecture, security, and testing docs agree about what is
+  shipped, direct-only, entitled, self-hosted, or still roadmap work.
+
+Production promotion is a separate gate. It additionally requires a matching GitHub
+release before the website advertises its commands, the real WSL/physical-wing
+canary, an enrolled OAuth private-roost user plus a denied outsider, a fresh
+post-boundary hosted free account, a Pro account, a temporary-migration account, and
+a private-roost account. Upgrade/reconnect and rollback checks run on a synthetic
+canary before the organization deployment. These credentialed and physical-host
+checks cannot be replaced by an in-process test and are recorded in the production
+canary log rather than silently treated as repository unit coverage.
 
 No test is removed or weakened merely because a product path is being repositioned.
 If an assertion represented obsolete behavior, replace it with a test of the explicit
@@ -578,18 +619,22 @@ migration or denial contract and record why the old behavior is no longer suppor
 At the time of this review:
 
 - branch: `feature/direct-control-free-tier`;
-- production canary: the runtime shipped in Fly v301 from `db0dc78`; current release
-  v302 from `d3d6024` keeps that runtime and replaces the public Patterns page with
-  shipped-only, self-contained setup guides; v301 and v300 remain rollback releases,
-  along with a verified pre-deploy database backup;
+- Fly status was rechecked on 2026-08-27: release v306 is healthy on the single
+  `login` machine in `ewr`, with one of one checks passing. It runs image
+  `wingthing:deployment-01M0Z236DFZZGPMREMW4NH4P7R`; v305 and earlier releases and
+  the verified pre-feature database backup remain rollback inputs;
 - the direct-control implementation and Linux egress fix have passed unit,
   integration, static, cross-build, and WSL sandbox testing;
+- a real `wt mcp connect` process controlled two physical wings through Bryan's
+  coordination plane without hosted payload relay, and real Codex and Claude
+  sessions on the two targets returned distinct canary responses;
 - the branch is not merged to main, but its committed runtime is deployed as the
-  public canary;
+  v306 public canary. The authorization, private-policy-default, release-contract,
+  and documentation changes made after `d1610e6` are not deployed;
 - the public site now presents Wingthing as an agent manager and `/patterns` is live;
-- all 25 accounts present at deployment are before the configured
-  `2026-08-26T00:00:00Z` grandfather cutoff; new accounts after that instant receive
-  coordination/direct control only unless entitled; and
+- all 25 accounts measured at the initial deployment were on the temporary-migration
+  side of `2026-08-26T00:00:00Z`; later direct-only accounts must be measured again
+  before promotion; and
 - the public HTTP surfaces and anonymous native-MCP fail-closed path passed their
   post-deploy canaries. Fresh authenticated enrollment remains outstanding.
 

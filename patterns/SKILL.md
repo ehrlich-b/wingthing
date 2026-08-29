@@ -13,7 +13,7 @@ Choose the outcome the user wants. Only offer the supported setups below.
   [local sub-agents](local-subagents/INSTRUCTIONS.md).
 - Let one AI manage agents on several computers: read
   [remote orchestration](remote-orchestration/INSTRUCTIONS.md).
-- Control a remote agent from a localhost browser through a self-hosted roost and
+- Control a remote agent from a localhost browser through a self-hosted portal and
   SSH tunnel: read
   [personal remote wing](personal-remote-wing/INSTRUCTIONS.md).
 - Give a team a private browser-based agent host: read

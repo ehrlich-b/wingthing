@@ -3,7 +3,10 @@ package relay
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -52,23 +55,47 @@ func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deviceCode := uuid.New().String()
-	userCode := generateUserCode(6)
 	expiresAt := time.Now().Add(deviceCodeExpiry)
-
-	if err := s.Store.CreateDeviceCodeWithKey(deviceCode, userCode, req.WingID, req.PublicKey, expiresAt); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	var deviceCode, userCode string
+	for attempt := 0; attempt < 10; attempt++ {
+		deviceCode = uuid.New().String()
+		var err error
+		userCode, err = generateUserCode(6)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "generate secure device code")
+			return
+		}
+		err = s.Store.CreateDeviceCodeWithKey(deviceCode, userCode, req.WingID, req.PublicKey, expiresAt)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, ErrDeviceUserCodeExists) {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		deviceCode = ""
+	}
+	if deviceCode == "" {
+		writeError(w, http.StatusServiceUnavailable, "could not allocate a device login code; retry")
 		return
 	}
 
 	// In dev/local mode, auto-claim so login works without OAuth
 	if s.DevMode {
 		devUser, err := s.Store.CreateUserDev()
-		if err == nil {
-			s.Store.ClaimDeviceCode(deviceCode, devUser.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := s.Store.ClaimDeviceCode(deviceCode, devUser.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	} else if s.LocalMode && s.localUser != nil {
-		s.Store.ClaimDeviceCode(deviceCode, s.localUser.ID)
+		if err := s.Store.ClaimDeviceCode(deviceCode, s.localUser.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
 	verificationURL := fmt.Sprintf("%s/auth/claim?code=%s", s.Config.BaseURL, userCode)
@@ -116,6 +143,10 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"error": "authorization_pending"})
 		return
 	}
+	if !s.roostUserIDAllowed(*dc.UserID) {
+		writeError(w, http.StatusForbidden, "this account is not enrolled in this roost")
+		return
+	}
 
 	// Issue JWT instead of UUID token
 	if s.jwtKey == nil {
@@ -134,10 +165,22 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Also store in device_tokens for backward compat with social API auth
-	s.Store.CreateDeviceToken(token, *dc.UserID, dc.DeviceID, nil)
+	// Also store in device_tokens for backward compat with social API auth.
+	// Consuming the grant in the same transaction makes approval one-shot even
+	// when two polling clients race.
+	exchanged, err := s.Store.ExchangeClaimedDeviceCode(dc.Code, token, *dc.UserID, dc.DeviceID, &exp)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "store token: "+err.Error())
+		return
+	}
+	if !exchanged {
+		writeJSON(w, http.StatusOK, map[string]string{"error": "invalid_code"})
+		return
+	}
 
-	s.Store.AppendAudit(*dc.UserID, "jwt_issued", strPtr(fmt.Sprintf("device=%s", dc.DeviceID)))
+	if err := s.Store.AppendAudit(*dc.UserID, "jwt_issued", strPtr(fmt.Sprintf("device=%s", dc.DeviceID))); err != nil {
+		log.Printf("audit jwt issuance: %v", err)
+	}
 
 	tokenResp := map[string]any{
 		"token":      token,
@@ -188,7 +231,12 @@ func (s *Server) handleAuthClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.Store.AppendAudit(user.ID, "device_claimed", strPtr(fmt.Sprintf("code=%s user_code=%s", dc.Code, userCode)))
+	// Device and user codes are bearer credentials until redemption. Do not
+	// retain either value in the durable audit log, even though this claim makes
+	// them one-shot; the non-secret device identifier is sufficient metadata.
+	if err := s.Store.AppendAudit(user.ID, "device_claimed", strPtr(fmt.Sprintf("device=%s", dc.DeviceID))); err != nil {
+		log.Printf("audit device claim: %v", err)
+	}
 
 	http.Redirect(w, r, s.appURL(), http.StatusSeeOther)
 }
@@ -223,7 +271,7 @@ func (s *Server) handleClaimPage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) appURL() string {
 	if s.Config.AppHost != "" {
-		return "https://" + s.Config.AppHost + "/"
+		return s.browserOriginScheme() + "://" + s.Config.AppHost + "/"
 	}
 	return "/app/"
 }
@@ -239,7 +287,9 @@ func (s *Server) renderClaimPage(w http.ResponseWriter, userCode, errMsg string)
 
 	t := s.template(claimTmpl, "claim.html")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	t.Execute(w, data)
+	if err := t.Execute(w, data); err != nil {
+		log.Printf("render claim page: %v", err)
+	}
 }
 
 func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
@@ -260,20 +310,20 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
-
-	// Delete old token, issue new one
-	if err := s.Store.DeleteToken(req.Token); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if !s.roostUserIDAllowed(userID) {
+		writeError(w, http.StatusForbidden, "this account is not enrolled in this roost")
 		return
 	}
 
 	newToken := uuid.New().String()
-	if err := s.Store.CreateDeviceToken(newToken, userID, deviceID, nil); err != nil {
+	if err := s.Store.RotateDeviceToken(req.Token, newToken, userID, deviceID, nil); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	s.Store.AppendAudit(userID, "token_refreshed", strPtr(fmt.Sprintf("device=%s", deviceID)))
+	if err := s.Store.AppendAudit(userID, "token_refreshed", strPtr(fmt.Sprintf("device=%s", deviceID))); err != nil {
+		log.Printf("audit token refresh: %v", err)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      newToken,
@@ -286,29 +336,32 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("encode JSON response: %v", err)
+	}
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 
-func generateUserCode(n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(userCodeChars))))
-		b[i] = userCodeChars[idx.Int64()]
-	}
-	return string(b)
+func generateUserCode(n int) (string, error) {
+	return generateUserCodeFrom(rand.Reader, n)
 }
 
-// requireUser checks session cookie first, then Bearer token.
-// Returns userID or writes 401 and returns empty string.
-func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) string {
-	if u := s.sessionUser(r); u != nil {
-		return u.ID
+func generateUserCodeFrom(reader io.Reader, n int) (string, error) {
+	if n <= 0 {
+		return "", fmt.Errorf("device code length must be positive")
 	}
-	return s.requireToken(w, r)
+	b := make([]byte, n)
+	for i := range b {
+		idx, err := rand.Int(reader, big.NewInt(int64(len(userCodeChars))))
+		if err != nil {
+			return "", fmt.Errorf("read crypto randomness: %w", err)
+		}
+		b[i] = userCodeChars[idx.Int64()]
+	}
+	return string(b), nil
 }
 
 // requireToken extracts and validates a Bearer token (JWT or DB) from the Authorization header.
@@ -328,6 +381,10 @@ func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 	// Try JWT first
 	if s.JWTPubKey() != nil {
 		if claims, err := ValidateWingJWT(s.JWTPubKey(), token); err == nil {
+			if !s.roostUserIDAllowed(claims.Subject) {
+				writeError(w, http.StatusForbidden, "this account is not enrolled in this roost")
+				return ""
+			}
 			return claims.Subject
 		}
 	}
@@ -336,6 +393,10 @@ func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 	userID, _, err := s.Store.ValidateToken(token)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return ""
+	}
+	if !s.roostUserIDAllowed(userID) {
+		writeError(w, http.StatusForbidden, "this account is not enrolled in this roost")
 		return ""
 	}
 	return userID

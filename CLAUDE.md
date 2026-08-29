@@ -95,11 +95,12 @@ adapters.
 A local-only convenience is incomplete unless it is a deliberate intermediate
 step toward that parity.
 
-The only current real user workflow is Slide's shared roost in the web UI.
-Preserve it by default while iterating on other workflows. Breaking changes are
-allowed when they materially simplify or improve the product, but first present
-Bryan with the concrete benefit, affected workflow, and migration plan and get
-his agreement. Compatibility remains a conscious tradeoff.
+The Slide shared roost is the highest-risk compatibility canary, and personal
+local/remote wings plus native direct MCP are also real workflows. Preserve all
+deployed contracts by default while iterating. Breaking changes are allowed when
+they materially simplify or improve the product, but first present Bryan with the
+concrete benefit, affected workflow, and migration plan and get his agreement.
+Compatibility remains a conscious tradeoff.
 
 ## Architecture
 
@@ -171,7 +172,7 @@ Wings can be shared via organizations. The relay has a full org system:
 
 `wt roost` runs relay + wing in one process for self-hosted deployments. See `docs/roost_design.md`.
 
-- Two auth modes: local (no OAuth, single user auto-created) and roost (with OAuth, all authenticated users access wings)
+- Two auth modes: local (no OAuth, single user auto-created) and roost (with OAuth, enrolled users access the embedded wing). Private OAuth roosts should set exact emails in `WT_ROOST_ALLOWED_EMAILS`; empty retains the historical accept-any-authenticated-account behavior.
 - Daemon mode with `~/.wingthing/roost.pid` and `~/.wingthing/roost.log`
 - `wt roost start/stop/status` subcommands
 - **Key file:** `cmd/wt/roost.go`
@@ -359,14 +360,13 @@ CI runs via **GitHub Actions** (`.github/workflows/ci.yml` on push/PR; `release.
 
 **Prod (wingthing.fly.dev) is Bryan's daily driver.** Do not deploy to Fly during development unless explicitly asked. All development and testing happens locally.
 
-### Vacation freeze: local-first branch only
+### Release and deployment discipline
 
-Through approximately 2026-08-20, treat `main` as frozen. Major runtime work
-belongs on `feature-local-first-terminal-routing`. Do not merge it to `main`,
-tag a version, create a release, deploy Fly, or change the Slide deployment.
-Build the repository binary and use an isolated `WINGTHING_DIR` for local
-dogfooding. See `docs/vacation-local-first.md` for the branch contract and
-post-vacation promotion gate.
+The August local-first vacation freeze has expired and is historical. Use the
+current product brief plus CI/release workflows for promotion gates. Do not merge,
+tag, deploy Fly, or change the Slide deployment unless the active task explicitly
+authorizes that state change. Build the repository binary and use an isolated
+`WINGTHING_DIR` for local dogfooding.
 
 - `make serve` starts a local relay on `:8080`
 - `wt wing --relay http://localhost:8080` connects a wing to the local relay

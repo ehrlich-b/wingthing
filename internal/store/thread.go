@@ -51,8 +51,15 @@ func (s *Store) ListThreadByDate(date time.Time) ([]*ThreadEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list thread by date: %w", err)
 	}
-	defer rows.Close()
-	return scanThreadEntries(rows)
+	entries, scanErr := scanThreadEntries(rows)
+	closeErr := rows.Close()
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close thread rows: %w", closeErr)
+	}
+	return entries, nil
 }
 
 func (s *Store) ListRecentThread(n int) ([]*ThreadEntry, error) {
@@ -61,8 +68,15 @@ func (s *Store) ListRecentThread(n int) ([]*ThreadEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list recent thread: %w", err)
 	}
-	defer rows.Close()
-	return scanThreadEntries(rows)
+	entries, scanErr := scanThreadEntries(rows)
+	closeErr := rows.Close()
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close recent thread rows: %w", closeErr)
+	}
+	return entries, nil
 }
 
 func (s *Store) DeleteThreadOlderThan(ts time.Time) (int64, error) {

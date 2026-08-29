@@ -14,7 +14,7 @@ func TestUnconfinedEgressAuditIsDurable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer taskStore.Close()
+	defer closeForTest(t, "task store", taskStore)
 	task := &store.Task{ID: "unconfined-audit", Type: "prompt", What: "test", RunAt: time.Now(), Agent: "claude"}
 	if err := taskStore.CreateTask(task); err != nil {
 		t.Fatal(err)

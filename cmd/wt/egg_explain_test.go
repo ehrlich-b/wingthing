@@ -33,10 +33,13 @@ func TestExplainEnforcementReportsPlatformTruth(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.goos+"/"+tc.need.String(), func(t *testing.T) {
-			if got := explainEnforcement(tc.need, tc.goos); got != tc.want {
+			if got := explainEnforcement(tc.need, tc.goos, ""); got != tc.want {
 				t.Errorf("explainEnforcement(%v, %q) = %q, want %q", tc.need, tc.goos, got, tc.want)
 			}
 		})
+	}
+	if got := explainEnforcement(sandbox.NetworkHTTPS, "linux", "observe"); got != "proxy-observe" {
+		t.Fatalf("Linux observe enforcement = %q", got)
 	}
 }
 

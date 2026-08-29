@@ -1,6 +1,6 @@
 # Wingthing security model
 
-Reviewed: 2026-08-25
+Reviewed: 2026-08-28
 
 ## Scope of the promise
 
@@ -52,8 +52,38 @@ application encryption still protects browser-to-wing terminal payloads.
 
 This device-local CA is not used by hosted, organization, or public shared-roost
 deployments. Those retain their existing externally provisioned HTTPS termination
-and OAuth behavior. Local HTTPS is opt-in, so existing HTTP self-hosted commands
-also remain unchanged.
+and OAuth behavior. Local HTTPS is opt-in. Without it, a single-user/no-login
+portal remains HTTP but its implicit listener is loopback-only and an explicit
+LAN or wildcard address is rejected; authenticated deployments retain their
+configured listener behavior.
+
+Local mode also accepts only localhost/loopback Host headers. Browser WebSockets
+must be same-origin, and unsafe browser methods with an Origin header must match
+the exact HTTP or HTTPS origin. Requests marked cross-site by browser fetch
+metadata are rejected even if Origin is absent. Native wing and CLI calls do not
+send browser Origin metadata and remain available over the loopback transport.
+These are DNS-rebinding and browser-CSRF defenses; they do not make a no-login
+listener safe to expose beyond loopback.
+
+## Browser-local state and agent previews
+
+For fast terminal restore and session-card thumbnails, the browser stores up to
+200,000 serialized terminal characters and a WebP thumbnail per session in
+plaintext origin `localStorage`. It also caches inventory, layout, and wing-key
+pins there. This data does not go into the gateway database, but it is readable by
+the browser profile, extensions with site access, and any script that can execute
+in the portal origin. Clear the site's browser data to remove it. Local wing
+history is a separate plaintext-at-rest store described below.
+
+Agent-authored Markdown previews are rendered as network-inert text: raw HTML is
+escaped, links are not active, image syntax does not fetch, scripts are disabled,
+and the iframe has no normal origin. An agent-authored absolute HTTP(S) preview URL
+is displayed without being requested. Every new URL requires the user to choose
+**load preview** or **open**. Once chosen, the request originates from the browser
+and is outside the egg's network allowlist; the destination sees the request and
+network metadata. The embedded iframe uses `allow-scripts` without
+`allow-same-origin` and a no-referrer policy so an agent-selected page or redirect
+cannot become same-origin with the portal.
 
 ## Hosted connection architecture
 
@@ -69,11 +99,11 @@ The WebRTC certificate fingerprints are inside the offer/answer exchanged
 through the X25519-encrypted, TOFU-pinned signaling tunnel. MCP request and
 result bytes then travel on the DataChannel, not through `wingthing.ai`.
 
-Pro, temporarily grandfathered, and self-hosted policies may use the relay path:
+Accounts with hosted relay access and self-hosted policies may use the browser relay path:
 
 ```text
-browser/native client -- TLS --> wingthing.ai relay -- TLS --> wing
-              \____________ application ciphertext ___________/
+browser -- TLS --> wingthing.ai relay -- TLS --> wing
+        \_________ application ciphertext ________/
 ```
 
 When entitled, the shipped relay forwards application ciphertext for terminal
@@ -219,10 +249,32 @@ sessions are owner-scoped and use the sealed shared-host boundary. Existing OAut
 shared-roost identities with an empty organization role retain member privilege,
 while an empty role outside shared-roost mode fails closed.
 
+Coordinator-derived user and organization identity has a 15-minute maximum lifetime
+on a direct data channel. The wing closes the channel when that lease expires, so
+continued use requires a fresh access-filtered discovery and signaling exchange.
+This bounds the effect of organization membership revocation. Wing-local lock,
+passkey, grant, path, and bound changes are evaluated on every request, including on
+an already-open channel after a successful `SIGHUP` reload.
+
+The authenticated shared-roost HTTP MCP adapter uses the same explicit reviewed
+wing-operation grant set and the same default per-user bounds. Its admission state is
+shared across OAuth clients and requests in the roost process, so reconnecting or
+switching between Codex and Claude does not reset the spawn window.
+
+For a private OAuth gateway or all-in-one roost, `WT_ROOST_ALLOWED_EMAILS` is a
+separate enrollment boundary. Exact, case-insensitive email matches are enforced when a browser login
+finishes and again for cookies, device tokens, the wing inventory, relay access,
+and MCP authorization. OAuth login requires the provider's current verified email
+to match. OAuth proves that a provider controls an identity; it does not make every
+identity accepted by that provider a roost member. If the list is empty, any
+identity accepted by the provider can enroll. Internet-reachable roosts therefore
+need either an explicit list or an equivalent restriction at the provider or
+ingress.
+
 ## Hosted relay opt-out
 
-Each wing can independently refuse hosted payload relay, even when its account is
-Pro, temporarily grandfathered, or connected to a self-hosted roost:
+Each wing can independently refuse hosted payload relay, even when its account has
+hosted relay access or is connected to a self-hosted roost:
 
 ```yaml
 hosted_relay: deny
@@ -252,6 +304,13 @@ does not make hosted browser JavaScript safe against a malicious service, and an
 gateway can still observe a connection attempt before the new wing rejects it. Use a
 native client over a private network or a self-hosted coordinator when the hosted
 service itself is outside the trust boundary.
+
+`hosted_relay: deny` is not a downgrade-compatible security policy. A wing binary
+from before this field existed ignores it and resumes the historical relay behavior.
+Do not roll such a wing back while this setting is part of the security boundary:
+stop the wing or isolate it from the coordinator until a conforming binary is
+restored. Rolling back only the gateway is different—the current wing still enforces
+the denial locally, although the old gateway can observe the attempted connection.
 
 On a dedicated sandbox VM, `wt egg ... --unsandboxed` and
 `wt mcp stdio --unsandboxed` explicitly make the outer VM the agent boundary.

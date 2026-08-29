@@ -10,25 +10,31 @@ import (
 	"testing"
 )
 
-// TestCopyFileDoesNotFollowSymlink verifies that copyFile writing to a symlink
-// destination follows the symlink (this is the DEFAULT behavior we need to guard
-// against in the persist function).
-func TestCopyFileFollowsSymlink(t *testing.T) {
+func TestCopyFileDoesNotFollowDestinationSymlink(t *testing.T) {
 	dir := t.TempDir()
 	outside := filepath.Join(dir, "outside.txt")
-	os.WriteFile(outside, []byte("old"), 0644)
+	if err := os.WriteFile(outside, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	src := filepath.Join(dir, "src.txt")
-	os.WriteFile(src, []byte("new"), 0644)
+	if err := os.WriteFile(src, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	link := filepath.Join(dir, "link.txt")
-	os.Symlink(outside, link)
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 
 	if err := copyFile(src, link); err != nil {
 		t.Fatalf("copyFile: %v", err)
 	}
-	// copyFile follows the symlink — outside.txt was overwritten
-	data, _ := os.ReadFile(outside)
-	if string(data) != "new" {
-		t.Errorf("outside.txt = %q, want %q (copyFile should follow symlink)", string(data), "new")
+	data, err := os.ReadFile(outside)
+	if err != nil || string(data) != "old" {
+		t.Fatalf("outside.txt = %q, %v; want unchanged", data, err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("copy destination = %v, %v; want regular file", info, err)
 	}
 }
 
@@ -129,6 +135,57 @@ func TestPersistDirRemovesSymlinks(t *testing.T) {
 	data, _ = os.ReadFile(outsideFile)
 	if string(data) != "shared" {
 		t.Errorf("outsideFile = %q, want %q", string(data), "shared")
+	}
+}
+
+func TestPersistDirDoesNotFollowDestinationDirectorySymlink(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src-dir")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "settings.json"), []byte("per-user"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(dir, "outside-dir")
+	if err := os.MkdirAll(outside, 0755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst-dir")
+	if err := os.Symlink(outside, dst); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	persistDir(src, dst)
+	if _, err := os.Stat(filepath.Join(outside, "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("persistence escaped through directory symlink: %v", err)
+	}
+	info, err := os.Lstat(dst)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("destination = %v, %v; want real directory", info, err)
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "settings.json"))
+	if err != nil || string(data) != "per-user" {
+		t.Fatalf("persisted settings = %q, %v", data, err)
+	}
+}
+
+func TestCopyFileRejectsSourceSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "outside")
+	if err := os.WriteFile(outside, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "source-link")
+	if err := os.Symlink(outside, source); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	destination := filepath.Join(dir, "destination")
+	if err := copyFile(source, destination); err == nil {
+		t.Fatal("source symlink was persisted")
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("source symlink created destination: %v", err)
 	}
 }
 
@@ -261,6 +318,43 @@ func TestCopyFilePreservesMode(t *testing.T) {
 	info, _ := os.Stat(dst)
 	if info.Mode().Perm() != 0755 {
 		t.Errorf("dst perm = %v, want 0755", info.Mode().Perm())
+	}
+}
+
+func TestPrepareWritableMountpointPreservesExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "browser-requests")
+	if err := os.WriteFile(source, []byte("request\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := prepareWritableMountpoint(source, source); err != nil {
+		t.Fatalf("prepareWritableMountpoint: %v", err)
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("writable file became %s", info.Mode())
+	}
+	data, err := os.ReadFile(source)
+	if err != nil || string(data) != "request\n" {
+		t.Fatalf("writable file contents = %q, %v", data, err)
+	}
+}
+
+func TestPrepareWritableMountpointCreatesMissingDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache", "agent")
+	if err := prepareWritableMountpoint(path, path); err != nil {
+		t.Fatalf("prepareWritableMountpoint: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("missing writable path became %s, want directory", info.Mode())
 	}
 }
 

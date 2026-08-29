@@ -1,7 +1,12 @@
 # Evaluating Anthropic's sandbox-runtime (srt)
 
-Status: decision doc
-Reviewed: 2026-08-09
+Status: historical decision record; the route-less Linux network design described here is implemented
+Reviewed: 2026-08-27
+
+The vendor comparison is preserved as the input to the decision. Current
+Wingthing behavior is authoritative in [the sandbox reference](sandbox.md): Linux
+now retains `CLONE_NEWNET`, has no default route, and exposes only an inherited-FD
+loopback relay plus declared local ports.
 
 ## Verdict
 
@@ -40,8 +45,8 @@ Against the matrix in `native-sandbox-landscape.md`:
 | Capability | wingthing | srt |
 |---|---|---|
 | FS ro/rw/deny | yes, per-file + regex | yes |
-| Network domain filter | macOS yes (proxy); **Linux no** | yes, both |
-| Non-HTTP TCP filtering | no (HTTP CONNECT only) | yes (SOCKS5) |
+| Network domain filter | yes on macOS and Linux | yes, both |
+| TCP tunnel filtering | yes (HTTP CONNECT; client support required) | yes (CONNECT + SOCKS5) |
 | Network port filter | yes (macOS seatbelt) | no |
 | Env var allowlist | yes | **no** |
 | CPU / memory limits | yes (cgroups v2 + prlimit) | **no** |
@@ -56,8 +61,11 @@ Against the matrix in `native-sandbox-landscape.md`:
 | Windows | no | yes (WFP) |
 | Install footprint | one static Go binary | Node + 3 system packages |
 
-We are ahead on eight rows and behind on three. The three we are behind on are all
-network, and all fixable without taking the dependency.
+At the snapshot, the remaining gaps were network-related. The route-less Linux
+egress path has since closed the domain-filter enforcement gap without taking the
+dependency. CONNECT can carry arbitrary TCP bytes, but there is no SOCKS or
+general routed transport for clients that do not speak CONNECT; UDP and other
+non-TCP protocols remain outside the current contract.
 
 ## Why not adopt the runtime
 
@@ -103,11 +111,12 @@ two enforcement paths to test across the whole e2e matrix, and the weaker path
 machine that happens to have Node installed. The testing bar in `CLAUDE.md` makes
 this expensive, and the payoff is a capability we can build directly.
 
-## What we should take
+## What we took
 
 **The network architecture.** Keep `CLONE_NEWNET` instead of stripping it, give
 the jail no route out, and bind-mount a Unix socket to `DomainProxy` running on
-the host side. This is what `linux.go:341` currently gives up on:
+the host side. This is the removed behavior that `linux.go` gave up on at the
+time of the review:
 
 ```go
 // Strip network namespace for agents that need network access.
@@ -118,12 +127,14 @@ if s.cfg.NetworkNeed >= NetworkLocal {
 
 We already have the pieces: `DomainProxy` with wildcard matching, socket
 bind-mounts into the jail (commit `51b00c5`), and `AllowSockets` for the macOS
-side. Go can do the socket relay in-process — **socat is not needed**, which is
+side. Go now carries the inherited-FD relay in-process — **socat is not needed**, which is
 one fewer dependency than srt requires.
 
-**SOCKS5 alongside HTTP CONNECT.** Our proxy only speaks HTTP CONNECT, so
-non-HTTP TCP has no filtered path. srt runs both. Worth adding once egress is
-actually forced through the proxy, otherwise it is a filter nobody has to use.
+**SOCKS5 alongside HTTP CONNECT.** Our proxy's CONNECT tunnel can carry arbitrary
+TCP bytes, but applications must either honor the HTTP proxy variables or speak
+CONNECT themselves. srt also exposes SOCKS5, which supports a wider set of
+off-the-shelf clients. That remains a useful compatibility addition, not a
+stronger kernel boundary.
 
 **The Unix-socket attack surface.** srt ships a seccomp filter specifically to
 restrict Unix domain socket creation. Our filter denies 27 syscalls and **none of

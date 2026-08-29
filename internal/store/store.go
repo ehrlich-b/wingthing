@@ -1,13 +1,16 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 //go:embed migrations/*.sql
@@ -29,23 +32,38 @@ func Open(dsn string) (*Store, error) {
 	// SQLite otherwise fails immediately when another writer briefly owns the
 	// lock. A bounded busy timeout turns that expected contention into waiting.
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+	if err := execPragmaWithBusyRetry(db, "PRAGMA journal_mode=WAL", 5*time.Second); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return s, nil
+}
+
+func execPragmaWithBusyRetry(db *sql.DB, statement string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		_, err := db.Exec(statement)
+		if err == nil {
+			return nil
+		}
+		var sqliteErr *sqlite.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != 5 || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func (s *Store) Close() error {
@@ -78,34 +96,50 @@ func (s *Store) migrate() error {
 	sort.Strings(files)
 
 	for _, f := range files {
-		var applied int
-		err := s.db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version = ?", f).Scan(&applied)
-		if err != nil {
-			return fmt.Errorf("check migration %s: %w", f, err)
-		}
-		if applied > 0 {
-			continue
-		}
-
 		content, err := migrationsFS.ReadFile("migrations/" + f)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", f, err)
 		}
 
-		tx, err := s.db.Begin()
+		conn, err := s.db.Conn(context.Background())
 		if err != nil {
+			return fmt.Errorf("reserve connection for %s: %w", f, err)
+		}
+		if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+			_ = conn.Close()
 			return fmt.Errorf("begin tx for %s: %w", f, err)
 		}
-		if _, err := tx.Exec(string(content)); err != nil {
-			tx.Rollback()
+		rollback := func() {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+			_ = conn.Close()
+		}
+		var applied int
+		if err := conn.QueryRowContext(
+			context.Background(), "SELECT COUNT(*) FROM schema_migrations WHERE version = ?", f,
+		).Scan(&applied); err != nil {
+			rollback()
+			return fmt.Errorf("check migration %s: %w", f, err)
+		}
+		if applied > 0 {
+			rollback()
+			continue
+		}
+		if _, err := conn.ExecContext(context.Background(), string(content)); err != nil {
+			rollback()
 			return fmt.Errorf("exec migration %s: %w", f, err)
 		}
-		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES (?)", f); err != nil {
-			tx.Rollback()
+		if _, err := conn.ExecContext(
+			context.Background(), "INSERT INTO schema_migrations (version) VALUES (?)", f,
+		); err != nil {
+			rollback()
 			return fmt.Errorf("record migration %s: %w", f, err)
 		}
-		if err := tx.Commit(); err != nil {
+		if _, err := conn.ExecContext(context.Background(), "COMMIT"); err != nil {
+			rollback()
 			return fmt.Errorf("commit migration %s: %w", f, err)
+		}
+		if err := conn.Close(); err != nil {
+			return fmt.Errorf("release migration connection %s: %w", f, err)
 		}
 	}
 	return nil

@@ -587,9 +587,12 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 			continue
 		}
 		realPath := filepath.Join(realHome, rel)
-		// Ensure mount target exists in the overlay merged view.
-		if err := os.MkdirAll(p, 0755); err != nil {
-			log.Printf("_deny_init: mkdir writable %s: %v", p, err)
+		// Ensure both sides have compatible mountpoints. Writable rules may
+		// name a single file (the browser-request inbox is intentionally one
+		// such file), so blindly using MkdirAll turns that valid policy into a
+		// fatal "not a directory" error.
+		if err := prepareWritableMountpoint(realPath, p); err != nil {
+			log.Printf("_deny_init: prepare writable %s: %v", p, err)
 			bindFailed = true
 			break
 		}
@@ -669,7 +672,7 @@ func setupReadonlyHome(home string, writablePaths []string) error {
 	// Bind-mount each writable path BEFORE remounting HOME read-only.
 	var expected []expectedMount
 	for _, p := range writablePaths {
-		if err := os.MkdirAll(p, 0755); err != nil {
+		if err := prepareWritableMountpoint(p, p); err != nil {
 			return fmt.Errorf("create writable mountpoint %s: %w", p, err)
 		}
 		if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
@@ -716,23 +719,84 @@ func setupReadonlyHome(home string, writablePaths []string) error {
 	return nil
 }
 
+// prepareWritableMountpoint makes target suitable for a bind mount of source.
+// Historically writable rules were directories and an absent source therefore
+// still means "create this directory". Existing non-directories are preserved
+// as file/socket mountpoints instead of being passed to MkdirAll.
+func prepareWritableMountpoint(source, target string) error {
+	info, err := os.Stat(source)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.MkdirAll(source, 0o755); err != nil {
+			return err
+		}
+		info, err = os.Stat(source)
+		if err != nil {
+			return err
+		}
+	}
+	if info.IsDir() {
+		return os.MkdirAll(target, 0o755)
+	}
+
+	targetInfo, err := os.Stat(target)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		return file.Close()
+	}
+	if targetInfo.IsDir() {
+		return fmt.Errorf("source is not a directory but target is")
+	}
+	return nil
+}
+
 // persistDir recursively copies directory contents from overlay upper to real HOME.
 func persistDir(src, dst string) {
+	sourceInfo, err := os.Lstat(src)
+	if err != nil || !sourceInfo.IsDir() || sourceInfo.Mode()&os.ModeSymlink != 0 {
+		return
+	}
+	if destinationInfo, statErr := os.Lstat(dst); statErr == nil {
+		if !destinationInfo.IsDir() || destinationInfo.Mode()&os.ModeSymlink != 0 {
+			if removeErr := os.RemoveAll(dst); removeErr != nil {
+				log.Printf("_deny_init: replace unsafe persistence directory %s: %v", dst, removeErr)
+				return
+			}
+		}
+	} else if !os.IsNotExist(statErr) {
+		return
+	}
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return
 	}
-	os.MkdirAll(dst, 0755)
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return
+	}
 	for _, e := range entries {
 		s := filepath.Join(src, e.Name())
 		d := filepath.Join(dst, e.Name())
+		entryInfo, err := os.Lstat(s)
+		if err != nil || entryInfo.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
 		if e.IsDir() {
 			persistDir(s, d)
 			continue
 		}
-		// Remove symlinks so we don't follow them outside per-user home.
-		if fi, err := os.Lstat(d); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-			os.Remove(d)
+		if !entryInfo.Mode().IsRegular() {
+			continue
 		}
 		if err := copyFile(s, d); err != nil {
 			log.Printf("_deny_init: persist %s: %v", d, err)
@@ -744,6 +808,22 @@ func persistDir(src, dst string) {
 
 // copyFile copies src to dst, preserving permissions.
 func copyFile(src, dst string) error {
+	sourceInfo, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if !sourceInfo.Mode().IsRegular() || sourceInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing non-regular persistence source %s", src)
+	}
+	if destinationInfo, err := os.Lstat(dst); err == nil {
+		if destinationInfo.Mode()&os.ModeSymlink != 0 || !destinationInfo.Mode().IsRegular() {
+			if err := os.RemoveAll(dst); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -755,7 +835,7 @@ func copyFile(src, dst string) error {
 		return err
 	}
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return err
 	}

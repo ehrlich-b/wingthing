@@ -2,6 +2,7 @@ package egg
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -178,13 +179,20 @@ type vtermFenceResult struct {
 // in a dedicated goroutine. Exits when done is closed. The channel ch is
 // NEVER closed — it is GC'd when all references are dropped after session end.
 func runVTermLoop(vt *VTerm, ch <-chan vtermMsg, done <-chan struct{}) {
-	defer vt.Close()
+	defer func() {
+		if err := vt.Close(); err != nil {
+			log.Printf("egg: close virtual terminal: %v", err)
+		}
+	}()
 	var lastOffset int64
 	for {
 		select {
 		case msg := <-ch:
 			if msg.data != nil {
-				vt.Write(msg.data)
+				if _, err := vt.Write(msg.data); err != nil {
+					log.Printf("egg: virtual terminal write: %v", err)
+					return
+				}
 				lastOffset = msg.offset
 			}
 			if msg.resize != nil {

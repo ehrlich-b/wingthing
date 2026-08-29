@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
+	"net/http"
 	"sync"
 	"time"
 
@@ -20,6 +20,7 @@ const (
 	heartbeatInterval = 30 * time.Second
 	writeTimeout      = 10 * time.Second
 	maxReconnectDelay = 10 * time.Second
+	maxTunnelHandlers = 64
 )
 
 // TunnelHandler is called when the wing receives an encrypted tunnel request.
@@ -54,6 +55,7 @@ type Client struct {
 
 	Locked       bool
 	AllowedCount int
+	DirectMCP    bool
 	HostedRelay  string
 
 	// RelayPubKey is the relay's EC P-256 public key (base64 DER), received during registration.
@@ -65,6 +67,7 @@ type Client struct {
 	OnOrphanKill        func(ctx context.Context, sessionID string) // kill egg with no active goroutine
 	OnReconnect         func(ctx context.Context)                   // called after re-registration with relay
 	OnPasskeyRegistered func(msg PasskeyRegistered)                 // called when a user registers a passkey
+	OnRegistered        func(msg RegisteredMsg)                     // additive coordinator runtime policy
 	OnHostedRelayDenied func(operation string)                      // content-free local policy audit hook
 	OnStateChange       func(state string, err error)               // called on connection state transitions
 
@@ -74,7 +77,72 @@ type Client struct {
 
 	conn *websocket.Conn
 	mu   sync.Mutex
+
+	configMu sync.RWMutex
+
+	tunnelHandlerOnce sync.Once
+	tunnelHandlers    chan struct{}
 }
+
+func (c *Client) acquireTunnelHandler() bool {
+	c.tunnelHandlerOnce.Do(func() {
+		c.tunnelHandlers = make(chan struct{}, maxTunnelHandlers)
+	})
+	select {
+	case c.tunnelHandlers <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) releaseTunnelHandler() {
+	<-c.tunnelHandlers
+}
+
+type clientRuntimeConfig struct {
+	Labels         []string
+	RootDir        string
+	Locked         bool
+	AllowedCount   int
+	DirectMCP      bool
+	HostedRelay    string
+	RelayPublicKey string
+}
+
+func (c *Client) runtimeConfig() clientRuntimeConfig {
+	c.configMu.RLock()
+	defer c.configMu.RUnlock()
+	return clientRuntimeConfig{
+		Labels: append([]string(nil), c.Labels...), RootDir: c.RootDir,
+		Locked: c.Locked, AllowedCount: c.AllowedCount,
+		DirectMCP: c.DirectMCP, HostedRelay: c.HostedRelay,
+		RelayPublicKey: c.RelayPubKey,
+	}
+}
+
+// UpdateRuntimeConfig atomically publishes the hot-reloadable registration
+// fields so reconnect and config-push goroutines never observe a torn policy.
+func (c *Client) UpdateRuntimeConfig(locked bool, allowedCount int, directMCP bool, labels []string, rootDir string) {
+	c.configMu.Lock()
+	c.Locked = locked
+	c.AllowedCount = allowedCount
+	c.DirectMCP = directMCP
+	c.Labels = append([]string(nil), labels...)
+	c.RootDir = rootDir
+	c.configMu.Unlock()
+}
+
+// UpdateAccessConfig publishes lock/allowlist changes made by a tunnel request.
+func (c *Client) UpdateAccessConfig(locked bool, allowedCount int) {
+	c.configMu.Lock()
+	c.Locked = locked
+	c.AllowedCount = allowedCount
+	c.configMu.Unlock()
+}
+
+// RelayPublicKey returns the last coordinator signing key received at registration.
+func (c *Client) RelayPublicKey() string { return c.runtimeConfig().RelayPublicKey }
 
 // Run connects to the relay and processes tasks until ctx is cancelled.
 // Automatically reconnects on disconnect with exponential backoff.
@@ -88,7 +156,7 @@ func (c *Client) Run(ctx context.Context) error {
 			c.notifyState("disconnected", ctx.Err())
 			return ctx.Err()
 		}
-		if isAuthError(err) {
+		if errors.Is(err, ErrAuthRejected) {
 			c.notifyState("auth_failed", err)
 			return ErrAuthRejected
 		}
@@ -118,30 +186,24 @@ func (c *Client) notifyState(state string, err error) {
 	}
 }
 
-// isAuthError returns true if the error indicates a 401 handshake rejection.
-func isAuthError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "401")
-}
-
 func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error) {
 	opts := &websocket.DialOptions{
 		HTTPHeader: make(map[string][]string),
 	}
 	opts.HTTPHeader.Set("Authorization", "Bearer "+c.Token)
 
-	conn, _, dialErr := websocket.Dial(ctx, c.RoostURL, opts)
+	conn, response, dialErr := websocket.Dial(ctx, c.RoostURL, opts)
 	if dialErr != nil {
+		if response != nil && response.StatusCode == http.StatusUnauthorized {
+			return false, fmt.Errorf("%w: %v", ErrAuthRejected, dialErr)
+		}
 		return false, fmt.Errorf("dial: %w", dialErr)
 	}
 	conn.SetReadLimit(512 * 1024) // 512KB — match relay limit
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	connected = true
 
 	// Preserve PTY sessions across reconnects — running processes survive relay outages.
@@ -153,6 +215,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 	c.ptySessionsMu.Unlock()
 
 	// Send registration — projects flow through E2E tunnel only, never through relay
+	runtimeConfig := c.runtimeConfig()
 	reg := WingRegister{
 		Type:           TypeWingRegister,
 		WingID:         c.WingID,
@@ -161,16 +224,17 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		Version:        c.Version,
 		Agents:         c.Agents,
 		Skills:         c.Skills,
-		Labels:         c.Labels,
+		Labels:         runtimeConfig.Labels,
 		Identities:     c.Identities,
 		Projects:       nil,
 		OrgSlug:        c.OrgSlug,
-		RootDir:        c.RootDir,
+		RootDir:        runtimeConfig.RootDir,
 		PublicKey:      c.PublicKey,
-		Locked:         c.Locked,
-		AllowedCount:   c.AllowedCount,
+		Locked:         runtimeConfig.Locked,
+		AllowedCount:   runtimeConfig.AllowedCount,
 		PurposeBinding: true,
-		HostedRelay:    c.HostedRelay,
+		DirectMCP:      runtimeConfig.DirectMCP,
+		HostedRelay:    runtimeConfig.HostedRelay,
 	}
 	if err := c.writeJSON(ctx, reg); err != nil {
 		return connected, fmt.Errorf("register: %w", err)
@@ -207,9 +271,17 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 		switch env.Type {
 		case TypeRegistered:
 			var msg RegisteredMsg
-			json.Unmarshal(data, &msg)
+			if err := json.Unmarshal(data, &msg); err != nil {
+				log.Printf("bad registered message: %v", err)
+				continue
+			}
 			if msg.RelayPubKey != "" {
+				c.configMu.Lock()
 				c.RelayPubKey = msg.RelayPubKey
+				c.configMu.Unlock()
+			}
+			if c.OnRegistered != nil {
+				c.OnRegistered(msg)
 			}
 			log.Printf("registered with relay as wing %s", msg.WingID)
 			c.notifyState("connected", nil)
@@ -223,17 +295,24 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				log.Printf("bad pty.start: %v", err)
 				continue
 			}
+			if !ValidSessionID(start.SessionID) {
+				log.Printf("rejected pty.start with invalid session ID %q", start.SessionID)
+				if err := c.writeJSON(ctx, ErrorMsg{Type: TypeError, Message: "invalid session ID"}); err != nil {
+					return connected, fmt.Errorf("report invalid PTY session ID: %w", err)
+				}
+				continue
+			}
 			if c.OnPTY != nil {
 				inputCh := make(chan []byte, 64)
-				c.ptySessionsMu.Lock()
-				c.ptySessions[start.SessionID] = inputCh
-				c.ptySessionsMu.Unlock()
+				if !c.registerPTYSession(start.SessionID, inputCh) {
+					log.Printf("rejected duplicate pty.start for active session %s", start.SessionID)
+					if err := c.writeJSON(ctx, ErrorMsg{Type: TypeError, SessionID: start.SessionID, Message: "session is already active"}); err != nil {
+						return connected, fmt.Errorf("report duplicate PTY session: %w", err)
+					}
+					continue
+				}
 				go func() {
-					defer func() {
-						c.ptySessionsMu.Lock()
-						delete(c.ptySessions, start.SessionID)
-						c.ptySessionsMu.Unlock()
-					}()
+					defer c.unregisterPTYSession(start.SessionID, inputCh)
 					c.OnPTY(ctx, start, func(v any) error {
 						return c.writeJSON(ctx, v)
 					}, inputCh)
@@ -246,6 +325,9 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				SessionID string `json:"session_id"`
 			}
 			if err := json.Unmarshal(data, &partial); err != nil {
+				continue
+			}
+			if !ValidSessionID(partial.SessionID) {
 				continue
 			}
 			c.ptySessionsMu.Lock()
@@ -263,6 +345,9 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				SessionID string `json:"session_id"`
 			}
 			if err := json.Unmarshal(data, &partial); err != nil {
+				continue
+			}
+			if !ValidSessionID(partial.SessionID) {
 				continue
 			}
 			c.ptySessionsMu.Lock()
@@ -285,14 +370,29 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				continue
 			}
 			if c.OnTunnel != nil {
-				go c.OnTunnel(ctx, req, func(v any) error {
-					return c.writeJSON(ctx, v)
-				})
+				if !c.acquireTunnelHandler() {
+					if err := c.writeJSON(ctx, ErrorMsg{
+						Type: TypeError, RequestID: req.RequestID,
+						Message: "wing has too many concurrent control requests",
+					}); err != nil {
+						return connected, fmt.Errorf("report tunnel concurrency limit: %w", err)
+					}
+					continue
+				}
+				go func() {
+					defer c.releaseTunnelHandler()
+					c.OnTunnel(ctx, req, func(v any) error {
+						return c.writeJSON(ctx, v)
+					})
+				}()
 			}
 
 		case TypePasskeyRegistered:
 			var msg PasskeyRegistered
-			json.Unmarshal(data, &msg)
+			if err := json.Unmarshal(data, &msg); err != nil {
+				log.Printf("bad passkey.registered: %v", err)
+				continue
+			}
 			log.Printf("passkey.registered: user %s (%s) registered a passkey", msg.UserID, msg.Email)
 			if c.OnPasskeyRegistered != nil {
 				go c.OnPasskeyRegistered(msg)
@@ -300,7 +400,10 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 
 		case TypeError:
 			var msg ErrorMsg
-			json.Unmarshal(data, &msg)
+			if err := json.Unmarshal(data, &msg); err != nil {
+				log.Printf("bad relay error message: %v", err)
+				continue
+			}
 			log.Printf("relay error: %s", msg.Message)
 
 		default:
@@ -326,7 +429,7 @@ func (c *Client) heartbeatLoop(ctx context.Context) {
 }
 
 func (c *Client) hostedRelayDenial(data []byte, messageType string) *ErrorMsg {
-	if HostedRelayAllowed(c.HostedRelay) {
+	if HostedRelayAllowed(c.runtimeConfig().HostedRelay) {
 		return nil
 	}
 	denied := ErrorMsg{Type: TypeError, Message: "hosted relay payload transport is disabled by this wing"}
@@ -358,18 +461,20 @@ func (c *Client) hostedRelayDenial(data []byte, messageType string) *ErrorMsg {
 
 // SendConfig pushes the wing's current lock state to the relay.
 func (c *Client) SendConfig(ctx context.Context) error {
+	runtimeConfig := c.runtimeConfig()
 	return c.writeJSON(ctx, WingConfig{
 		Type:         TypeWingConfig,
 		WingID:       c.WingID,
-		Locked:       c.Locked,
-		AllowedCount: c.AllowedCount,
-		HostedRelay:  c.HostedRelay,
+		Locked:       runtimeConfig.Locked,
+		AllowedCount: runtimeConfig.AllowedCount,
+		DirectMCP:    runtimeConfig.DirectMCP,
+		HostedRelay:  runtimeConfig.HostedRelay,
 	})
 }
 
 // SendAttention sends a session.attention message to the relay (bell detected).
 func (c *Client) SendAttention(ctx context.Context, sessionID string) error {
-	if !HostedRelayAllowed(c.HostedRelay) {
+	if !HostedRelayAllowed(c.runtimeConfig().HostedRelay) {
 		log.Printf("[audit] hosted_relay_denied operation=%s policy=deny", TypeSessionAttention)
 		if c.OnHostedRelayDenied != nil {
 			c.OnHostedRelayDenied(TypeSessionAttention)
@@ -392,30 +497,58 @@ func (c *Client) HasPTYSession(sessionID string) bool {
 // resize/kill messages are rejected in connectAndServe before reaching this channel.
 // Returns the input channel and a write function.
 // The caller must start a goroutine to handle the session and clean up when done.
-func (c *Client) RegisterPTYSession(ctx context.Context, sessionID string) (write PTYWriteFunc, input <-chan []byte, cleanup func()) {
-	inputCh := make(chan []byte, 64)
-	c.ptySessionsMu.Lock()
-	if c.ptySessions == nil {
-		c.ptySessions = make(map[string]chan []byte)
+func (c *Client) RegisterPTYSession(ctx context.Context, sessionID string) (write PTYWriteFunc, input <-chan []byte, cleanup func(), registered bool) {
+	if !ValidSessionID(sessionID) {
+		log.Printf("refusing to register invalid PTY session ID %q", sessionID)
+		closed := make(chan []byte)
+		close(closed)
+		return func(any) error { return fmt.Errorf("invalid session ID") }, closed, func() {}, false
 	}
-	c.ptySessions[sessionID] = inputCh
-	c.ptySessionsMu.Unlock()
+	inputCh := make(chan []byte, 64)
+	if !c.registerPTYSession(sessionID, inputCh) {
+		closed := make(chan []byte)
+		close(closed)
+		return func(any) error { return fmt.Errorf("session is already active") }, closed, func() {}, false
+	}
 
 	writeFn := func(v any) error {
 		return c.writeJSON(ctx, v)
 	}
 	cleanupFn := func() {
-		c.ptySessionsMu.Lock()
-		delete(c.ptySessions, sessionID)
-		c.ptySessionsMu.Unlock()
+		c.unregisterPTYSession(sessionID, inputCh)
 	}
-	return writeFn, inputCh, cleanupFn
+	return writeFn, inputCh, cleanupFn, true
+}
+
+func (c *Client) registerPTYSession(sessionID string, inputCh chan []byte) bool {
+	c.ptySessionsMu.Lock()
+	defer c.ptySessionsMu.Unlock()
+	if c.ptySessions == nil {
+		c.ptySessions = make(map[string]chan []byte)
+	}
+	if c.ptySessions[sessionID] != nil {
+		return false
+	}
+	c.ptySessions[sessionID] = inputCh
+	return true
+}
+
+func (c *Client) unregisterPTYSession(sessionID string, inputCh chan []byte) {
+	c.ptySessionsMu.Lock()
+	defer c.ptySessionsMu.Unlock()
+	if c.ptySessions[sessionID] == inputCh {
+		delete(c.ptySessions, sessionID)
+	}
 }
 
 // PushPTYInput pushes raw data into a session's input channel from outside the WebSocket read loop.
 // Used by P2P DataChannels to route messages into the session handler.
 // Returns true if the session exists and the message was delivered.
 func (c *Client) PushPTYInput(sessionID string, data []byte) bool {
+	if !ValidSessionID(sessionID) {
+		log.Printf("[P2P] PushPTYInput: invalid session ID %q", sessionID)
+		return false
+	}
 	c.ptySessionsMu.Lock()
 	ch := c.ptySessions[sessionID]
 	c.ptySessionsMu.Unlock()

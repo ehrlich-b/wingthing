@@ -6,8 +6,20 @@ import { updatePaletteState } from './palette.js';
 import { tunnelCloseWing } from './tunnel.js';
 import { setNotification } from './notify.js';
 import { isCanvasActive, canvasSetAttention, renderCanvasToolbar } from './canvas.js';
+import { applyWingEventMetadata } from './wing-event.js';
+import { shouldFetchWingSessions } from './session-merge.js';
 
 var reconnectBannerTimer = null;
+
+// Wing IDs come from remote registration data. Dataset comparison avoids
+// interpolating them into a CSS selector, where quotes would change selector
+// meaning or throw a DOMException.
+function wingCardByID(wingId) {
+    if (!DOM.wingStatusEl) return null;
+    return Array.from(DOM.wingStatusEl.querySelectorAll('.wing-box')).find(function(card) {
+        return card.dataset.wingId === wingId;
+    }) || null;
+}
 
 export function showReconnectBanner(text, showRetry) {
     if (reconnectBannerTimer) { clearTimeout(reconnectBannerTimer); reconnectBannerTimer = null; }
@@ -71,10 +83,8 @@ function applyWingEvent(ev) {
         S.wingsData.forEach(function(w) {
             if (w.wing_id === ev.wing_id) {
                 w.online = true;
-                w.public_key = ev.public_key || w.public_key;
+                applyWingEventMetadata(w, ev);
                 if (ev.locked !== undefined) {
-                    w.locked = ev.locked;
-                    w.allowed_count = ev.allowed_count || 0;
                     if (!ev.locked) delete w.tunnel_error;
                 }
                 found = true;
@@ -98,6 +108,7 @@ function applyWingEvent(ev) {
                 user_id: ev.user_id,
                 owner: ev.owner,
             };
+            applyWingEventMetadata(newWing, ev);
             // Add to wingsData immediately so sendTunnelRequest can find it
             S.wingsData.push(newWing);
             needsFullRender = true;
@@ -105,12 +116,10 @@ function applyWingEvent(ev) {
     } else if (ev.type === 'wing.config') {
         S.wingsData.forEach(function(w) {
             if (w.wing_id === ev.wing_id) {
+                applyWingEventMetadata(w, ev);
                 if (ev.locked !== undefined) {
-                    w.locked = ev.locked;
-                    w.allowed_count = ev.allowed_count || 0;
                     if (!ev.locked) delete w.tunnel_error;
                 }
-                if (ev.public_key) w.public_key = ev.public_key;
             }
         });
     } else if (ev.type === 'wing.offline') {
@@ -158,7 +167,7 @@ function applyWingEvent(ev) {
                 renderWingDetailPage(ev.wing_id);
             if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
 
-            if (!evWing.tunnel_error) {
+            if (shouldFetchWingSessions(S.currentUser, evWing)) {
                 fetchWingSessions(ev.wing_id).then(function(sessions) {
                     if (sessions) {
                         mergeWingSessions(ev.wing_id, sessions);
@@ -173,7 +182,7 @@ function applyWingEvent(ev) {
 
 export function pingWingDot(wingId) {
     requestAnimationFrame(function() {
-        var card = DOM.wingStatusEl.querySelector('.wing-box[data-wing-id="' + wingId + '"]');
+        var card = wingCardByID(wingId);
         if (!card) return;
         var dot = card.querySelector('.wing-dot');
         if (!dot) return;
@@ -184,7 +193,7 @@ export function pingWingDot(wingId) {
 }
 
 export function updateWingCardStatus(wingId) {
-    var card = DOM.wingStatusEl.querySelector('.wing-box[data-wing-id="' + wingId + '"]');
+    var card = wingCardByID(wingId);
     if (!card) {
         renderDashboard();
         return;

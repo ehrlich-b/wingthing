@@ -14,7 +14,7 @@ ROOST_PID=$!
 
 DB=/root/.wingthing/roost.db
 seeded=0
-for i in $(seq 1 90); do
+for _attempt in $(seq 1 90); do
   if [ -f "$DB" ] && [ "$(sqlite3 "$DB" "SELECT count(*) FROM orgs WHERE slug='slide';" 2>/dev/null)" = "1" ]; then
     sqlite3 "$DB" < /opt/canary/seed.sql
     seeded=1

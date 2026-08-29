@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -92,6 +93,32 @@ func TestAuthCacheBindsTokenToSubject(t *testing.T) {
 	}
 }
 
+func TestAuthCacheIsBoundedAndIsolatesPublicKeys(t *testing.T) {
+	cache := NewAuthCache()
+	key := []byte("key")
+	for index := 0; index < maxAuthCacheEntries; index++ {
+		cache.Put(fmt.Sprintf("token-%d", index), key, "subject")
+	}
+	key[0] = 'X'
+	cache.Put("overflow", []byte("new"), "subject")
+
+	if _, ok := cache.Check("token-0", 0, "subject"); ok {
+		t.Fatal("oldest auth token was not evicted")
+	}
+	got, ok := cache.Check("token-1", 0, "subject")
+	if !ok || string(got) != "key" {
+		t.Fatalf("cached key = %q, valid = %v", got, ok)
+	}
+	got[0] = 'Y'
+	again, ok := cache.Check("token-1", 0, "subject")
+	if !ok || string(again) != "key" {
+		t.Fatalf("caller mutated cached key: %q, valid = %v", again, ok)
+	}
+	if got := len(cache.tokens); got != maxAuthCacheEntries {
+		t.Fatalf("auth cache entries = %d, want %d", got, maxAuthCacheEntries)
+	}
+}
+
 func TestChallengeCacheIsBoundAndOneTime(t *testing.T) {
 	cache := NewChallengeCache()
 	id, challenge, err := cache.Put("user-1\x00client-key-1", time.Minute)
@@ -118,5 +145,25 @@ func TestChallengeCacheIsBoundAndOneTime(t *testing.T) {
 	}
 	if _, ok := cache.Consume(id, "user-1\x00client-key-1"); ok {
 		t.Fatal("challenge replay must fail")
+	}
+}
+
+func TestChallengeCacheIsBoundedAndEvictsOldestChallenge(t *testing.T) {
+	cache := NewChallengeCache()
+	firstID := ""
+	for index := 0; index <= maxChallengeCacheEntries; index++ {
+		id, _, err := cache.Put("subject", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			firstID = id
+		}
+	}
+	if _, ok := cache.Consume(firstID, "subject"); ok {
+		t.Fatal("oldest challenge was not evicted")
+	}
+	if got := len(cache.challenges); got != maxChallengeCacheEntries {
+		t.Fatalf("challenge cache entries = %d, want %d", got, maxChallengeCacheEntries)
 	}
 }

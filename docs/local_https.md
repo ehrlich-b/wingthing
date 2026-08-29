@@ -2,7 +2,7 @@
 
 Status: implemented
 
-Reviewed: 2026-08-25
+Reviewed: 2026-08-27
 
 ## Outcome
 
@@ -117,17 +117,26 @@ When `--https` is selected:
 - the browser-facing base URL becomes `https://localhost:8443`; and
 - a stale public `WT_BASE_URL` cannot change that local origin.
 
-Compatibility is deliberately opt-in:
+The certificate ceremony is deliberately opt-in. Local listener hardening also
+applies to the HTTP-only form of the same no-login mode:
 
 | Deployment | Result |
 | --- | --- |
 | Existing `wt serve` / Fly edge or login node | unchanged |
-| Existing local HTTP serve/roost | unchanged unless `--https` is added |
+| Existing single-user local HTTP serve/roost | stays HTTP; implicit `:8080` becomes `127.0.0.1:8080`, explicit non-loopback binds are rejected |
 | OAuth, organization, or public shared roost | keeps external HTTPS; local CA mode is rejected |
 | Single-user local serve/roost with `--https` | dual loopback listeners and local trust ceremony |
 
 Hosted `WT_BASE_URL=https://...` remains authoritative whenever local HTTPS is
 not selected.
+
+The relay independently rejects non-loopback Host headers in local mode, so a DNS
+rebinding hostname cannot turn the loopback service into its own origin. Browser
+WebSocket upgrades must be same-origin. Unsafe browser requests must carry the
+same exact scheme, host, and port when they include Origin, and requests marked
+cross-site by `Sec-Fetch-Site` are rejected. Origin-less native wing and CLI
+requests remain compatible. Authenticated hosted and organization topologies keep
+their existing cross-host WebSocket behavior.
 
 ## Security boundary
 
@@ -152,9 +161,10 @@ all platform command arguments, Linux NSS initialization, and the invariant that
 no trust command receives a private-key path.
 
 Listener tests cover unsafe-address refusal before key creation, default address
-rewriting, loopback alias collisions, ordinary HTTP and HTTPS handler parity,
-trusted and untrusted TLS clients, local passkey origins, hosted base URL
-preservation, opt-in flags, and mode rejection.
+rewriting in both HTTP and HTTPS local modes, loopback alias collisions, ordinary
+HTTP and HTTPS handler parity, trusted and untrusted TLS clients, local passkey
+origins, Host-header/DNS-rebinding refusal, same-origin mutation and WebSocket
+rules, hosted base URL preservation, opt-in flags, and mode rejection.
 
 The ordinary full repository gate and Docker-backed shared-roost browser battery
 remain required. The shared-roost battery exercises multiple users, role paths,

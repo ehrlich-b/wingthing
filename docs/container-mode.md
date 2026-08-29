@@ -6,7 +6,7 @@ Thinking out loud about what it would look like if `egg.yaml` could define a Doc
 
 ## Why bother
 
-The current sandbox is a deny list. Even with `base: none`, the host filesystem is visible - on macOS seatbelt starts with `(allow default)`, and on Linux the agent inherits the parent's mount namespace. You restrict access by denying specific paths. A container inverts this: start with an empty image, explicitly mount what you need. The agent can't see `~/.bash_history` because it doesn't exist in the container, not because we remembered to deny it.
+The current sandbox is a deny list. Even with `base: none`, the host filesystem is visible - on macOS Seatbelt starts with `(allow default)`, and on Linux a fresh mount namespace starts with a cloned view of the host mounts. You restrict access by denying specific paths and narrow HOME writes with writable holes; OS-user-writable locations outside HOME are not a filesystem allowlist. A container inverts this: start with an empty image, explicitly mount what you need. The agent can't see `~/.bash_history` because it doesn't exist in the container, not because we remembered to deny it.
 
 Secondary: reproducible environments. A Dockerfile pins the exact toolchain. "Works on my machine" for agent sessions.
 

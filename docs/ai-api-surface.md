@@ -1,7 +1,7 @@
 # The AI API surface
 
 Status: implemented local slice and target design
-Reviewed: 2026-08-24
+Reviewed: 2026-08-28
 
 The goal from `CLAUDE.md`: **an AI must be able to orchestrate wingthing as easily
 as a human can.** This doc answers three questions: what surfaces exist today,
@@ -9,10 +9,10 @@ why they do not add up to that goal, and what the target shape is.
 
 ## What exists today
 
-There are four surfaces. Local stdio MCP and authenticated shared-roost HTTP MCP
+There are five surfaces. Local stdio MCP, native direct MCP, and authenticated shared-roost HTTP MCP
 now share a versioned operation registry for typed terminal, agent-run,
 sandbox, message, and wing-inventory vocabulary. The REST and encrypted
-external-wing surfaces still use separate runtime contracts.
+browser-tunnel surfaces still use separate runtime contracts.
 
 | # | Surface | Transport | Auth | What it can do |
 |---|---------|-----------|------|----------------|
@@ -20,13 +20,14 @@ external-wing surfaces still use separate runtime contracts.
 | 2 | `POST /mcp` (`internal/relay/mcp.go`) | HTTP | OAuth 2.0, dynamic client registration, owner-scoped native controls, role-scoped executable tools, audit observer | Authorized wing roster, shared-roost terminals, agent runs, messages, sandbox explanation, and configured privileged tools |
 | 3 | REST `/api/...` (`internal/relay/`) | HTTP | session cookie / bearer | Account, usage, passkeys, ntfy, orgs, and an authorized online-wing roster |
 | 4 | Encrypted tunnel (`internal/ws/`) | WebSocket, application-encrypted through relay | passkey + device token | `dir.list`, `sessions.list`, `sessions.history`, `pty.*`, `egg.config_update`, … |
+| 5 | `wt mcp connect` (`cmd/wt/mcp_connect.go`) | stdio to the parent agent, authenticated WebRTC/DTLS to selected wings | device login, coordinator-filtered roster, wing-derived owner/role/grants/bounds | Qualified multi-wing terminal, run, message, and sandbox controls on unlocked wings |
 
 For pre-isolated VMs, the CLI and local MCP adapters share an explicit trusted
 outer-boundary mode. It is selected at CLI/MCP-server startup, reported through
 capabilities and session JSON, and included in the MCP audit trail; a model
 cannot toggle it per call.
 
-### The 27 local MCP tools (surface 1)
+### Local MCP operations (surface 1)
 
 `wingthing_capabilities`, `message_send`, `message_list`, `message_wait`,
 `sandbox_explain`, `terminal_list`, `terminal_read`,
@@ -53,17 +54,19 @@ cannot toggle it per call.
    lifecycle, session history, and configuration are still bespoke encrypted
    messages rather than a supported general CLI/API surface. That is still a
    UI-shaped API.
-4. **External wings still lack the typed control transport.** Shared roosts call
-   the embedded runtime directly. A hosted relay connected to a separate wing
-   still needs these operations carried through the encrypted tunnel.
+4. **External wings now have a typed native control transport, but adapters still
+   diverge.** `wt mcp connect` requires `wing_id` and carries registry operations
+   directly over WebRTC. Shared-roost HTTP MCP still calls only its embedded runtime,
+   and the browser still uses bespoke encrypted tunnel messages. Locked/passkey wings
+   intentionally reject native direct control until that client has a ceremony.
 
 5. **The portal has one wing roster but two runtime inventories.** Browser and
    HTTP MCP now share the access-filtered wing roster. Browser session lists
    aggregate those wings, while HTTP MCP has no `wing_id` target and calls only
    the embedded wing. Headless tasks have no browser inventory at all.
 
-The remaining parity gap is one qualified session/run inventory, external-wing
-reachability, and extraction of the shared semantics into a
+The remaining parity gap is one qualified session/run inventory across browser,
+HTTP MCP, and native MCP, plus extraction of the shared semantics into a
 transport-independent package.
 
 ## Target shape
@@ -139,14 +142,19 @@ iterations, concurrency), and a log line. Local stdio keeps its
 
 ## Sequencing
 
-1. Extract the control-plane semantics out of `cmd/wt/mcp_local.go` into a package
-   both the CLI and the servers call.
-2. Put it behind the wing-owned local socket (P1 in `local-first-architecture.md`),
-   so clients stop doing per-egg filesystem discovery.
-3. Define the operation registry once: schema, grant, bound, annotations, audit
-   redaction, and supported transports.
-4. Carry the same contract through the encrypted external-wing tunnel.
-5. Add qualified portal, wing, session, and run references.
+1. **In progress:** continue extracting the control handlers themselves from
+   `cmd/wt/mcp_local.go`; operation names, schemas, grants, annotations, authority,
+   transport availability, and audit targeting already live in `internal/control`.
+2. Put the contract behind the wing-owned local socket (P1 in
+   `local-first-architecture.md`), so clients stop doing per-egg filesystem discovery.
+3. **Done for the current MCP adapters:** define the operation registry once and
+   derive local, HTTP, and direct schemas from it.
+4. **Done for the native remote subset:** carry the registry operations through an
+   authenticated direct WebRTC channel. The browser still uses its bespoke encrypted
+   tunnel contract.
+5. **Partial:** direct MCP qualifies every wing-owned operation and result with
+   `wing_id`; a single qualified session/run inventory shared by every adapter is
+   still missing.
 6. Migrate the browser to the shared session/run inventory.
 7. Add `/api/v1` over the same core and retire bespoke tunnel messages as each
    resource is covered.

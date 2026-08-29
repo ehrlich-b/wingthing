@@ -8,7 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -33,34 +33,52 @@ func (u *webauthnUser) WebAuthnName() string                       { return u.na
 func (u *webauthnUser) WebAuthnDisplayName() string                { return u.displayName }
 func (u *webauthnUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 
-// passkeySessionStore holds in-flight WebAuthn registration sessions.
-var passkeySessionStore = struct {
-	mu       sync.Mutex
-	sessions map[string]*webauthn.SessionData // userID → session
-}{sessions: make(map[string]*webauthn.SessionData)}
+const (
+	passkeyRegistrationTTL      = 10 * time.Minute
+	maxPasskeyRegistrationUsers = 1000
+)
 
-func (s *Server) newWebAuthn() (*webauthn.WebAuthn, error) {
-	rpID := "localhost"
-	origins := []string{"http://localhost:5173", "http://localhost:8080"}
+type passkeyRegistrationSession struct {
+	data      *webauthn.SessionData
+	expiresAt time.Time
+}
 
-	if s.Config.AppHost != "" {
-		// Production: app.wingthing.ai
-		rpID = "wingthing.ai"
-		origins = []string{"https://app.wingthing.ai"}
-		if s.Config.BaseURL != "" {
-			origins = append(origins, s.Config.BaseURL)
-		}
-	} else if s.Config.BaseURL != "" {
-		// Self-hosted: derive RPID from BaseURL hostname
-		if u, err := url.Parse(s.Config.BaseURL); err == nil && u.Hostname() != "" {
-			rpID = u.Hostname()
-			origins = []string{s.Config.BaseURL}
-			// Keep localhost dev origins if BaseURL is localhost
-			if rpID == "localhost" {
-				origins = append(origins, "http://localhost:5173")
-			}
+func (s *Server) storePasskeyRegistration(userID string, session *webauthn.SessionData, now time.Time) bool {
+	s.passkeyMu.Lock()
+	defer s.passkeyMu.Unlock()
+	if s.passkeySessions == nil {
+		s.passkeySessions = make(map[string]passkeyRegistrationSession)
+	}
+	for id, pending := range s.passkeySessions {
+		if !pending.expiresAt.After(now) {
+			delete(s.passkeySessions, id)
 		}
 	}
+	if _, replacing := s.passkeySessions[userID]; !replacing && len(s.passkeySessions) >= maxPasskeyRegistrationUsers {
+		return false
+	}
+	s.passkeySessions[userID] = passkeyRegistrationSession{
+		data:      session,
+		expiresAt: now.Add(passkeyRegistrationTTL),
+	}
+	return true
+}
+
+func (s *Server) takePasskeyRegistration(userID string, now time.Time) (*webauthn.SessionData, bool) {
+	s.passkeyMu.Lock()
+	defer s.passkeyMu.Unlock()
+	pending, ok := s.passkeySessions[userID]
+	if ok {
+		delete(s.passkeySessions, userID)
+	}
+	if !ok || !pending.expiresAt.After(now) || pending.data == nil {
+		return nil, false
+	}
+	return pending.data, true
+}
+
+func (s *Server) newWebAuthn() (*webauthn.WebAuthn, error) {
+	rpID, origins := s.passkeyRelyingParty()
 
 	return webauthn.New(&webauthn.Config{
 		RPDisplayName: "Wingthing",
@@ -70,6 +88,66 @@ func (s *Server) newWebAuthn() (*webauthn.WebAuthn, error) {
 			UserVerification: protocol.VerificationRequired,
 		},
 	})
+}
+
+// passkeyRelyingParty derives one policy for both account registration and the
+// connected wing's assertion verification. AppHost is not assumed to belong to
+// wingthing.ai: custom organization deployments use their configured hosts.
+func (s *Server) passkeyRelyingParty() (string, []string) {
+	rpID := "localhost"
+	origins := []string{"http://localhost:5173", "http://localhost:8080", "https://localhost:8443"}
+
+	var baseOrigin, baseHost, baseScheme string
+	if parsed, err := url.Parse(s.Config.BaseURL); err == nil && parsed.Hostname() != "" &&
+		(parsed.Scheme == "http" || parsed.Scheme == "https") {
+		baseHost = strings.ToLower(parsed.Hostname())
+		baseScheme = parsed.Scheme
+		baseOrigin = parsed.Scheme + "://" + parsed.Host
+		rpID = baseHost
+		origins = []string{baseOrigin}
+		if baseHost == "localhost" {
+			origins = appendUniqueStrings(origins, "http://localhost:5173", "http://localhost:8080", "https://localhost:8443")
+		}
+	}
+
+	if s.Config.AppHost == "" {
+		return rpID, origins
+	}
+	appURL, err := url.Parse("//" + s.Config.AppHost)
+	if err != nil || appURL.Hostname() == "" {
+		return rpID, origins
+	}
+	appHost := strings.ToLower(appURL.Hostname())
+	if baseScheme == "" {
+		baseScheme = "https"
+	}
+	appOrigin := baseScheme + "://" + appURL.Host
+	// Prefer the base host when it is a valid RP parent of AppHost (the hosted
+	// wingthing.ai/app.wingthing.ai layout). Otherwise scope the RP exactly to
+	// AppHost; the relay acknowledgement tells wings the same result.
+	if baseHost == "" || (appHost != baseHost && !strings.HasSuffix(appHost, "."+baseHost)) {
+		rpID = appHost
+		origins = []string{appOrigin}
+		return rpID, origins
+	}
+	origins = appendUniqueStrings([]string{appOrigin}, baseOrigin)
+	return rpID, origins
+}
+
+func appendUniqueStrings(values []string, additions ...string) []string {
+	seen := make(map[string]bool, len(values)+len(additions))
+	for _, value := range values {
+		if value != "" {
+			seen[value] = true
+		}
+	}
+	for _, value := range additions {
+		if value != "" && !seen[value] {
+			values = append(values, value)
+			seen[value] = true
+		}
+	}
+	return values
 }
 
 // handlePasskeyRegisterBegin starts WebAuthn registration.
@@ -115,12 +193,12 @@ func (s *Server) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	passkeySessionStore.mu.Lock()
-	passkeySessionStore.sessions[user.ID] = session
-	passkeySessionStore.mu.Unlock()
+	if !s.storePasskeyRegistration(user.ID, session, time.Now()) {
+		http.Error(w, "too many passkey registrations in progress", http.StatusTooManyRequests)
+		return
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(options)
+	writeJSON(w, http.StatusOK, options)
 }
 
 // handlePasskeyRegisterFinish completes WebAuthn registration.
@@ -138,13 +216,7 @@ func (s *Server) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	passkeySessionStore.mu.Lock()
-	session, ok := passkeySessionStore.sessions[user.ID]
-	if ok {
-		delete(passkeySessionStore.sessions, user.ID)
-	}
-	passkeySessionStore.mu.Unlock()
-
+	session, ok := s.takePasskeyRegistration(user.ID, time.Now())
 	if !ok {
 		http.Error(w, "no registration session", http.StatusBadRequest)
 		return
@@ -186,8 +258,7 @@ func (s *Server) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Requ
 
 	pubKeyB64 := base64.StdEncoding.EncodeToString(rawPubKey)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	writeJSON(w, http.StatusOK, map[string]string{
 		"id":         id,
 		"public_key": pubKeyB64,
 		"label":      label,
@@ -237,8 +308,7 @@ func (s *Server) handlePasskeyList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.Store == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("[]"))
+		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
 
@@ -271,8 +341,7 @@ func (s *Server) handlePasskeyList(w http.ResponseWriter, r *http.Request) {
 		result = []credJSON{}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 // handlePasskeyDelete removes a passkey credential.
@@ -304,18 +373,24 @@ func (s *Server) handlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 // notifyPasskeyRegistered sends a lightweight passkey.registered event to wings
 // owned by or in the same org as the user who just registered a passkey.
 func (s *Server) notifyPasskeyRegistered(userID, email string) {
-	msg, _ := json.Marshal(ws.PasskeyRegistered{
+	msg, err := json.Marshal(ws.PasskeyRegistered{
 		Type:   ws.TypePasskeyRegistered,
 		UserID: userID,
 		Email:  email,
 	})
+	if err != nil {
+		log.Printf("passkey.registered: marshal event: %v", err)
+		return
+	}
 
 	// Find wings owned by this user directly
 	sent := map[string]bool{}
 	for _, w := range s.Wings.All() {
 		if w.UserID == userID {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			w.Conn.Write(ctx, websocket.MessageText, msg)
+			if err := w.Conn.Write(ctx, websocket.MessageText, msg); err != nil {
+				log.Printf("passkey.registered: notify wing %s: %v", w.WingID, err)
+			}
 			cancel()
 			sent[w.ID] = true
 		}
@@ -323,12 +398,18 @@ func (s *Server) notifyPasskeyRegistered(userID, email string) {
 
 	// Find wings in orgs the user belongs to
 	if s.Store != nil {
-		orgs, _ := s.Store.ListOrgsForUser(userID)
+		orgs, err := s.Store.ListOrgsForUser(userID)
+		if err != nil {
+			log.Printf("passkey.registered: list orgs: %v", err)
+			return
+		}
 		for _, org := range orgs {
 			for _, w := range s.Wings.All() {
 				if w.OrgID == org.ID && !sent[w.ID] {
 					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					w.Conn.Write(ctx, websocket.MessageText, msg)
+					if err := w.Conn.Write(ctx, websocket.MessageText, msg); err != nil {
+						log.Printf("passkey.registered: notify org wing %s: %v", w.WingID, err)
+					}
 					cancel()
 					sent[w.ID] = true
 				}

@@ -11,10 +11,12 @@ disagree about which sessions exist.
 | --- | --- | --- |
 | `make test` | Go unit and package tests | tagged integration tests, browser, real provider harnesses |
 | `make check` | web build, `make test`, binary build | every tagged and external E2E tier |
+| `make test-vuln` | pinned `govulncheck` plus npm's current advisory database | unreachable vulnerable Go symbols and non-Go/npm dependencies |
 | `make test-integ` | in-process relay, PTY routing, P2P, tunnel, and synthetic agent lifecycle | native sandbox enforcement and browser rendering |
+| `make test-compat` | real last-release and candidate binaries: historical migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup, and rollback reopen | third-party wrappers and unsupported pre-baseline releases |
 | `make test-linux` | Debian container with privileged Linux sandbox, CLI, and namespace batteries | Ubuntu-specific behavior |
 | `make test-linux-ubuntu` | Ubuntu 24.04 version of the Linux battery | macOS and browser |
-| `make test-web` | seeded shared-roost Docker deployment driven by Playwright | local MCP, headless runs, real OAuth provider |
+| `make test-web` | seeded organization-mode roost, empty-enrollment legacy org canary, and hosted direct-free/relay-entitlement deployments driven by Playwright | local MCP, headless runs, real OAuth provider |
 | `make test-provider-swap` | real supported CLIs against local models, direct and through Wingthing | hosted models and shared-roost HTTP MCP |
 | `make test-e2e` | both Linux batteries plus `make test-integ` | `make test-web` and `make test-provider-swap` |
 
@@ -48,16 +50,26 @@ process visibility, and denied-secret visibility from inside the sandbox. The
 non-root sealed-jail regression added in `2795bd3` is the reference shape; a
 root-running Docker test alone can mask this failure class.
 
+When a native battery is copied to a remote host, preserve ordinary executable
+mode (`0755`) and stage it on the native Linux filesystem. A root-launched test
+binary owned by another host user and copied as `0700` cannot re-exec itself after
+the test deliberately drops capabilities in a nested user namespace; that is the
+kernel enforcing the requested boundary, not a product failure. Cross-user CWD
+fixtures must likewise have a traversable parent owned by the selected test user.
+For PID isolation, compare the outer and inner `/proc/self/ns/pid` identities:
+`NSpid` may contain only one value once procfs has correctly been remounted inside
+the private namespace.
+
 ## Pattern acceptance matrix
 
 | Pattern | Required deterministic gate | Required live gate | Current gap |
 | --- | --- | --- | --- |
 | Human, local wing | unit plus Linux/macOS sandbox and native attach | real interactive agent startup | covered across separate tiers |
-| LLM, local wing | all 27 tool schemas, owner isolation, run lifecycle | Codex and Claude start/wait/result | provider smoke covers older prompt tools, not the current run lifecycle |
+| LLM, local wing | registry-defined local tool schemas, owner isolation, run lifecycle | Codex and Claude start/wait/result | provider smoke covers older prompt tools, not the current run lifecycle |
 | Human, personal remote wing | relay/tunnel plus browser session lifecycle | browser attaches to a real registered wing | shared-roost browser canary is the closest automated case |
-| LLM, personal remote wing | encrypted remote control RPC, target auth, qualified resources, grants, bounds, and two-wing connector reconnect | real MCP client controls two external wings without relay payloads | JSON-RPC stdio plus two real WebRTC peers is deterministic; full two-host process/client canary is missing |
-| Human, shared roost | two-user browser, path ACL, credential home, restart | canary shared deployment | current browser tier covers the main path |
-| LLM, shared roost | OAuth HTTP MCP plus direct MCP, two owners, two actors, path bounds | Codex and Claude OAuth login and semantic run | HTTP is covered in-process; native direct org-mode and real-client evidence are missing |
+| LLM, personal remote wing | encrypted remote control RPC, target auth, qualified resources, grants, bounds, and two-wing connector reconnect | real MCP client controls two external wings without relay payloads | Passed on an external macOS wing plus Bryan: one built connector listed both direct targets, launched real Codex and Claude sessions, observed distinct responses, and stopped the qualified sessions. Fresh-user production enrollment remains a separate gate. |
+| Human, shared roost | two-user browser, path ACL, credential home, restart | canary shared deployment | automated tier plus Bryan's 17/17 public HTTPS org canary cover the main path |
+| LLM, shared roost | OAuth HTTP MCP plus direct MCP, two owners, two actors, path bounds | Codex and Claude OAuth login and semantic run | native local MCP launched and controlled real Claude on Bryan; real OAuth-client semantic runs remain missing |
 | Several portals | qualified IDs, independent auth, fan-out inventory | one client routes work to two real portals | target registry doesn't exist |
 
 ## Compatibility matrix
@@ -69,7 +81,7 @@ shared roost is a required promotion target, not an optional dogfood check.
 | Axis | Required rows |
 | --- | --- |
 | Component versions | N-1 wing / N gateway+browser; N wing / N-1 gateway+browser; all N |
-| Account cohort | existing grandfathered, new free, active Pro, self-hosted local user |
+| Account cohort | temporary migration entitlement, new free, active Pro, self-hosted local user |
 | Deployment | public hosted, private split gateway, all-in-one roost, organization-mode shared roost |
 | Wing ownership | personal owner, org owner, org member, outsider |
 | Protection | unlocked, wing locked, owner passkey, member passkey, revoked credential |
@@ -120,6 +132,10 @@ The first scenarios should be:
 9. Repeat the multi-wing scenarios as an org owner, org member, and outsider in
    organization mode. The outsider cannot list or infer resources; the member remains
    path-bounded; external personal wings never become shared service wings.
+
+Session termination assertions must wait for process exit and disappearance from
+the active inventory. Interactive shells may ignore SIGTERM; a command that merely
+accepted the signal request is not evidence that the session stopped.
 
 The suite should consume generated schemas and capability data. Hard-coded tool
 counts such as `14`, `20`, or `27` should be replaced by an expected
@@ -172,15 +188,17 @@ fresh schema with deployed-schema upgrade, new/new components with N-1/N behavio
 and successful lifecycle with cancellation/restart. Every dogfood bug gets the
 narrowest deterministic regression test that would have caught it.
 
-The CI shape should become:
+The current CI shape is:
 
 - required fast job: web build, unit tests, binary build, schema generation
   check, and `git diff --check`;
 - required protocol job: `make test-integ` plus adapter conformance;
 - required Linux jobs: Debian and Ubuntu native-architecture batteries;
 - required browser job: `make test-web`;
-- required compatibility job: migration fixtures plus mixed N-1/N protocol tests and
-  the three-user organization-mode suite;
+- required compatibility job: immutable historical migrations, CLI/flag surface,
+  task-store round trips, and live N-1/N gateway-wing PTY tests in both upgrade
+  orders; the browser job adds the four-principal organization-mode and legacy
+  enrollment suites;
 - scheduled or protected-environment job: published agent and hosted-model
   canaries; and
 - tag workflow: consume artifacts and evidence from an already approved commit

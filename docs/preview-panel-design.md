@@ -1,15 +1,21 @@
 # Preview Panel: Live App Preview in Terminal View
 
-**Status:** Idea / design sketch
-**Date:** 2026-02-18
+**Status:** Implemented; this document records the shipped contract and remaining follow-up work
+**Reviewed:** 2026-08-28
 
 ---
 
 ## The Idea
 
-When a sandboxed agent builds a web app (or any URL-accessible artifact), it drops a well-known file inside the egg session directory. The wingthing frontend detects this file via the encrypted tunnel and renders the URL in an iframe panel alongside the terminal --- like Claude Desktop's "preview" tab, but for any agent, any app, running on your own machine.
+When a sandboxed agent builds a web app (or any URL-accessible artifact), it
+writes the per-session file named by `WT_PREVIEW_FILE` in its working directory.
+The wing session supervisor consumes this file and sends the preview through the
+encrypted terminal channel. Markdown renders immediately; a URL appears for review
+and requires the user to choose **load preview** before the browser fetches it.
 
-The user never copies a URL. The user never opens a new tab. The dashboard appears next to the conversation that created it.
+The user does not have to copy a URL or open a new tab. The address and an inert
+disclosure appear next to the conversation that created it; the user decides
+whether the browser should load the page.
 
 ## Why This Matters
 
@@ -28,10 +34,13 @@ With preview panel:
 1. Sales rep: "track my partner's orders"
 2. Sonnet builds the app, deploys it
 3. Sonnet writes the well-known file
-4. Dashboard appears RIGHT THERE in a split panel next to the terminal
+4. A split panel shows the URL; the user reviews it and chooses **load preview**
 ```
 
-Step 4 happens automatically. No copy-paste. No context switch. The user sees their app come to life in real time as the conversation produces it.
+The panel opening happens automatically. The network request does not: the user
+reviews the address and chooses **load preview** or **open**. This preserves the
+no-copy-paste workflow without letting a network-confined agent silently use the
+attached browser as an egress path.
 
 ## The Well-Known File
 
@@ -43,7 +52,7 @@ Step 4 happens automatically. No copy-paste. No context switch. The user sees th
 
 The agent writes this in its normal writable start directory (e.g. `~/sales/` in the Slide deployment). No sandbox changes needed --- it's already writable. The per-session suffix prevents collisions when multiple sessions share a working directory.
 
-### Format: Two modes
+### Format: Three forms
 
 The file contents determine what the preview panel shows:
 
@@ -53,9 +62,17 @@ The file contents determine what the preview panel shows:
 url:https://wingthing.slide.tech/apps/sarah/order-tracker/
 ```
 
-Frontend loads this in an iframe. The URL is displayed prominently with a copy button. This is the "here's your live dashboard" mode.
+The frontend displays the URL with load, copy, and open controls. It does not load
+the iframe until the user chooses **load preview**. This is the "here's your live
+dashboard" mode.
 
-**Mode 2: Markdown preview** --- anything else
+**Mode 2: named text content** --- file starts with `file:<name>`
+
+The remainder of the file is displayed as Markdown when the sanitized filename
+has a Markdown extension, or as escaped source otherwise. A download button uses
+that filename and its derived content type.
+
+**Mode 3: Markdown preview** --- anything else
 
 ```markdown
 # Backup Health Report
@@ -64,25 +81,36 @@ Frontend loads this in an iframe. The URL is displayed prominently with a copy b
 |---------|-------------|--------|
 | Acme Corp | 2 hours ago | OK |
 | Initech | 14 hours ago | WARNING |
-
-![chart](https://wingthing.slide.tech/apps/sarah/chart.png)
 ```
 
-If the contents don't start with `url:`, they're treated as markdown. The frontend renders this in a sandboxed iframe --- markdown only, images allowed, **no raw HTML**. This lets agents show quick reports, tables, status summaries without deploying a whole web app.
+If the contents don't start with `url:`, they're treated as markdown. The frontend
+renders this in a sandboxed, network-inert iframe: raw HTML is escaped, links are
+shown as text, and image syntax becomes a text label instead of a browser request.
+This lets agents show quick reports, tables, and status summaries without deploying
+a web app or turning the user's browser into an egress path.
 
-**Why not JSON?** Because the agent can just `cat > .wt-preview` a markdown blob without worrying about escaping quotes in JSON. The `url:` prefix is unambiguous and trivial to detect.
+**Why not JSON?** Because the agent can write a markdown blob to
+`$WT_PREVIEW_DIR/$WT_PREVIEW_FILE` without escaping quotes in JSON. The `url:`
+and `file:` prefixes are unambiguous and trivial to detect.
 
 ### The consume-on-read trick
 
-**The egg process watches for `.wt-preview` and consumes it (deletes the file) as soon as it reads it.** This is the key design choice:
+**The wing session supervisor watches the file named by `WT_PREVIEW_FILE` and
+consumes it (deletes it) after it forwards the preview.** This is the key design
+choice:
 
-1. Agent writes `.wt-preview` in its working directory
-2. Egg detects the file (fsnotify or polling the working dir)
-3. Egg reads the contents, deletes the file, forwards the preview data up to the wing
-4. Wing sends it through the encrypted tunnel to the frontend
-5. Frontend opens the preview panel (iframe for URLs, rendered markdown otherwise)
+1. Agent writes `$WT_PREVIEW_FILE` in its working directory.
+2. The wing's session watcher detects the file using filesystem notifications
+   with bounded polling as a fallback.
+3. The watcher reads and validates the file.
+4. The wing encrypts the bounded preview payload, sends `pty.preview` through
+   the session transport.
+5. After the send succeeds, the wing deletes the file. The frontend opens the
+   preview panel. Markdown renders without network access;
+   URLs wait for explicit user activation.
 
-**The file disappearing IS the signal to the agent that the preview is showing.** The CLAUDE.md instructions say: "After you write `.wt-preview`, it will disappear --- that means the frontend picked it up and is displaying it."
+**The file disappearing tells the agent that Wingthing accepted the preview.** It
+does not mean the user loaded an agent-authored URL.
 
 This solves three problems at once:
 - **No sandbox hole needed** --- agent writes in its normal writable directory
@@ -91,28 +119,35 @@ This solves three problems at once:
 
 ### Updating the preview
 
-Agent writes `.wt-preview` again. Egg consumes it again. Frontend updates the panel. Same flow every time. Can switch between URL and markdown modes freely.
+The agent writes `$WT_PREVIEW_FILE` again. The watcher consumes it and the frontend
+updates the panel. Every new URL returns to the explicit-load state.
 
 ### Clearing the preview
 
-Agent writes `.wt-preview` with just a blank line or empty content. Egg consumes it, sends null upstream, frontend closes the panel.
+The agent writes `$WT_PREVIEW_FILE` with just a blank line or empty content. The
+watcher consumes it and the frontend closes the panel.
 
-## Detection: Egg Watches the Working Directory
+## Detection: the wing watches the working directory
 
-The egg process already manages the agent's working directory and PTY. Adding a file watch is natural:
+The wing's session controller already manages the agent's working directory and PTY:
 
-1. **Egg watches** the agent's working directory for `.wt-preview` creation (fsnotify or tight poll --- the egg is local, this is cheap)
-2. **Egg reads + deletes** the file atomically
-3. **Egg sends** the preview data to the wing process via the existing egg<->wing channel (gRPC or direct, depending on session type)
-4. **Wing forwards** through the encrypted tunnel to the frontend as a new inner message type:
+1. **Wing watches** the working directory for the session-specific filename.
+2. **Wing reads a bounded regular file and deletes it.** The read rejects symlinks,
+   non-regular files, oversized content, and file swaps between inspection and open.
+3. **Wing encrypts and forwards** the preview to the frontend as `pty.preview`:
 
 | Inner type | Direction | Payload |
 |-----------|-----------|---------|
-| `preview.update` | wing -> browser | `{session_id, mode: "url", url: "..."}` or `{session_id, mode: "markdown", content: "..."}` or `{session_id, mode: null}` (close) |
+| `pty.preview` | wing -> browser | encrypted `{mode: "url", url: "..."}`, `{mode: "markdown", content: "..."}`, or `{mode: null}` associated with `session_id` |
 
-Egg parses the file: starts with `url:` → mode "url" with the URL. Otherwise → mode "markdown" with the raw content. Empty/blank → mode null (close panel).
+The wing parses the file: `url:` selects validated URL mode; `file:<name>` sends
+the remaining text with a sanitized download filename and derived content type;
+anything else is Markdown. Empty or blank content closes the panel.
 
-This is a push model, not polling. The egg watches locally (fast, no tunnel overhead), and only sends a message when something changes. The frontend never polls for previews --- it just listens for `preview.update` messages on the tunnel stream.
+This is a push model. The wing watches locally with filesystem notifications and
+bounded polling as a fallback, and sends only when the session-specific file
+changes. The frontend does not poll for previews; it listens for encrypted
+`pty.preview` messages on the terminal transport.
 
 ## Frontend UI
 
@@ -124,9 +159,9 @@ When a preview URL is active, the terminal view splits:
 +-------------------------------------------+
 |  Terminal (xterm.js)  |  Preview panel     |
 |                       |                    |
-|  $ sonnet is typing   | [Order Tracker] X  |
+|  $ sonnet is typing   | [Preview]       X  |
 |  ...                  | https://wingth...  |
-|                       | [copy] [open]      |
+|                       | [load][copy][open] |
 |                       | +--------------+   |
 |                       | | Dashboard    |   |
 |                       | | content      |   |
@@ -140,11 +175,13 @@ When a preview URL is active, the terminal view splits:
 
 The header bar above the iframe is the **main thing the user interacts with**. It must make the URL obvious and copyable --- this is a preview of a real, permanent, shareable URL.
 
-- **Title** (from `.wt-preview`): e.g. "Order Tracker"
+- **Title:** "Preview" in URL mode, or the sanitized filename in content mode.
 - **Full URL displayed prominently**: `https://wingthing.slide.tech/apps/sarah/order-tracker/` --- not truncated, not hidden behind a tooltip. This is a real link they can share.
 - **Copy button** right next to the URL. One click, URL in clipboard, brief "Copied!" confirmation. This is how they grab the link to send to a coworker, paste in Slack, bookmark, etc.
-- **Open in new tab button** (external link icon). Opens the URL in a real browser tab.
-- **Refresh button** to reload the iframe.
+- **Load preview button.** The iframe remains network-inert until the user reviews
+  the address and chooses this button. Every replacement URL requires a fresh click.
+- **Open in new tab button** (external link icon). Opens the URL in a real browser tab
+  only when the user clicks it.
 - **Collapse/close button** to dismiss the panel and go full-width terminal.
 
 The copy button is the star. The whole point is: agent builds it, user sees it live, user copies the URL and runs off to show someone. The preview panel is a launchpad, not a cage.
@@ -160,17 +197,21 @@ Full-width terminal. No empty panel. No placeholder. The preview panel only appe
 
 ### iframe considerations (URL mode)
 
-- Same-origin if the app is on the same domain (wingthing.slide.tech) --- works perfectly
-- Cross-origin apps need appropriate CORS/X-Frame-Options headers
-- The agent-built apps (Node.js behind nginx) are same-origin by default --- this just works
-- For localhost URLs during development, the wing could proxy through the tunnel
+- Receiving the agent message does not navigate or fetch. The user must explicitly
+  load each URL.
+- Loaded pages run in an opaque sandbox origin. Cross-origin pages must permit iframe
+  embedding through their own response headers. The iframe and open link use a
+  no-referrer policy.
+- For localhost URLs during development, the browser's localhost is not the remote
+  wing. A future wing-side HTTP tunnel could bridge that gap.
 
 ### Markdown rendering
 
 - Use a markdown library (marked, markdown-it, etc.) to render to HTML
-- Render into a sandboxed iframe: `<iframe sandbox="allow-same-origin">`  --- no `allow-scripts`
-- **Images allowed** --- agents can reference charts, screenshots, generated PNGs
-- **No raw HTML passthrough** --- strip all HTML tags from the markdown before rendering. Markdown only.
+- Render into an iframe with an empty sandbox policy: no scripts and no normal origin.
+- **No image fetches or active links** --- their labels and targets remain readable text.
+- **No raw HTML passthrough** --- escape agent-authored HTML before rendering the
+  small supported Markdown surface.
 - The preview panel header in markdown mode shows "Preview" (no URL bar, no copy button --- there's no URL to copy)
 
 ## Agent Integration
@@ -185,13 +226,13 @@ Add to the CLAUDE.md template:
 You can show content in a preview panel next to the terminal. Two modes:
 
 **Show a URL (deployed app, dashboard, etc.):**
-echo 'url:https://wingthing.slide.tech/apps/$WT_USER/<app-name>/' > .wt-preview
+printf '%s\n' 'url:https://wingthing.slide.tech/apps/$WT_USER/<app-name>/' > "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE"
 
-The user sees the page in a panel with a prominent copy button for the URL.
-They can grab it and share it with anyone.
+The user sees the URL with load, copy, and open controls. Wingthing does not fetch
+it until the user chooses load or open.
 
 **Show markdown (quick report, table, status summary):**
-cat > .wt-preview << 'EOF'
+cat > "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE" << 'EOF'
 # Backup Status
 
 | Partner | Last Backup | Status |
@@ -200,13 +241,14 @@ cat > .wt-preview << 'EOF'
 | Initech | 14h ago | WARNING |
 EOF
 
-The user sees rendered markdown in the panel. Images are supported.
+The user sees rendered Markdown in the panel. Links and image syntax remain
+readable text and perform no network requests.
 
-The file will disappear after the system reads it --- that's expected. It means the
-preview is showing. To update the preview, write .wt-preview again.
+The file disappears after Wingthing accepts it. To update the preview, write
+`$WT_PREVIEW_DIR/$WT_PREVIEW_FILE` again.
 
 To close the preview panel, write an empty file:
-echo '' > .wt-preview
+printf '\n' > "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE"
 ```
 
 ### What about local dev (no nginx)?
@@ -221,25 +263,38 @@ Two options:
 
 ## Security
 
-- The agent writes `.wt-preview` in its normal writable directory --- no new permissions
-- The egg consumes (deletes) the file immediately --- no lingering artifacts
-- **URL mode:** iframe sandbox `allow-scripts allow-same-origin`. URL must match a whitelist pattern (same domain, or localhost) to prevent previewing arbitrary external sites.
-- **Markdown mode:** iframe sandbox `allow-same-origin` only (NO `allow-scripts`). All raw HTML stripped before rendering. Only markdown syntax + images allowed. This prevents XSS via agent-generated content.
+- The agent writes the file named by `WT_PREVIEW_FILE` in its normal writable
+  directory --- no new permissions.
+- The wing consumes (deletes) the file immediately --- no lingering artifact.
+- **URL mode:** only absolute HTTP(S) URLs without embedded credentials are
+  accepted. Merely receiving a URL performs no network request; the user must
+  explicitly load it. Once loaded, the iframe may run scripts but has an opaque
+  sandbox origin (`allow-scripts` without `allow-same-origin`), so an
+  agent-selected page or redirect cannot become same-origin with the Wingthing
+  portal. The browser repeats URL validation so older wings cannot send
+  executable URL schemes.
+- **Markdown mode:** an empty iframe sandbox permits neither scripts nor a normal
+  origin. Raw HTML is escaped, and links and images are network-inert text. This
+  prevents both XSS and browser-assisted egress through agent-authored Markdown.
 - Passkey auth on the wing session already gates access --- no new auth surface
 
 ## Scope / Phasing
 
 ### v0 (ship with Slide sandbox)
-- Single `.wt-preview` file, two modes: `url:` prefix for URLs, raw content for markdown
-- Egg watches working dir, consumes file, pushes `preview.update` through tunnel
-- URL mode: 50/50 split panel with prominent URL + copy button + open-in-new-tab
-- Markdown mode: rendered markdown panel, images only, no scripts, no raw HTML
-- Same-origin URLs only (wingthing.slide.tech/apps/*)
+- One session-specific preview file with URL, named text-content, and raw
+  Markdown forms
+- Wing watches the working directory, consumes the file, and pushes encrypted
+  `pty.preview` through the terminal transport
+- URL mode: 50/50 split panel with prominent URL, explicit load, copy, and
+  open-in-new-tab controls
+- Markdown mode: rendered network-inert Markdown, no scripts, image fetches, active
+  links, or raw HTML
+- Absolute HTTP(S) URLs without embedded credentials; no automatic fetch
 - Agent writes the file after deploying to nginx (URL mode) or anytime (markdown mode)
 
 ### v1
 - Tunnel HTTP proxy for localhost URLs (live dev preview)
-- Auto-refresh iframe when agent writes `.wt-preview` again (hot reload)
+- Optional refresh control for an already loaded iframe
 - Multiple preview tabs
 
 ### v2
@@ -250,12 +305,13 @@ Two options:
 ## Relation to Existing Architecture
 
 This feature touches:
-- **Egg:** Watches agent working directory for `.wt-preview`, consumes (reads + deletes) the file, parses mode (url vs markdown), forwards preview data to wing. This is the new piece.
-- **Wing side:** Receives preview data from egg, wraps it in a `preview.update` tunnel inner message, sends to frontend
-- **Frontend:** New React component (preview panel). URL mode: iframe + URL bar + copy button. Markdown mode: rendered markdown in sandboxed iframe. Split layout logic, tunnel message handler for `preview.update`.
-- **CLAUDE.md templates:** New section telling the agent about `.wt-preview`, both modes, and the "disappear means it's showing" contract
+- **Wing session controller:** Watches the agent working directory, validates and
+  consumes the preview file, encrypts the bounded payload, and sends `pty.preview`.
+- **Frontend modules:** URL mode provides explicit load, copy, and open controls;
+  Markdown mode renders network-inert content in a sandboxed iframe.
+- **Agent environment:** `WT_PREVIEW_FILE` supplies the collision-free filename.
 
 Does NOT require changes to:
-- Relay (dumb pipe, doesn't care about preview data)
-- Sandbox/egg.yaml (agent's working directory is already writable)
+- Relay policy (the relay routes the encrypted PTY envelope)
+- Sandbox/egg.yaml (the agent's working directory is already writable)
 - Auth (session auth already covers this)

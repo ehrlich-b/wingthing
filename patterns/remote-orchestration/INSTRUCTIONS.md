@@ -73,6 +73,19 @@ result or `agent_start` for a persistent terminal a person can attach to later.
   connector supports their passkey ceremony.
 - The connector does not silently fall back to hosted payload relay.
 
+If the two computers cannot reach one another on a LAN or tailnet, add your STUN
+or TURN service to `~/.wingthing/wing.yaml` on each execution computer and restart
+the wing. The coordinator returns this configuration only to an authorized direct
+client; use short-lived TURN credentials where your provider supports them.
+
+```yaml
+ice_servers:
+  - urls: ["stun:stun.example.com:3478"]
+  - urls: ["turns:turn.example.com:5349"]
+    username: "<turn-username>"
+    credential: "<turn-credential>"
+```
+
 To require this computer to accept direct control only:
 
 ```sh

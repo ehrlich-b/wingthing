@@ -12,9 +12,68 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestConcurrentFirstUseCreatesOneCoherentAuthority(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	const callers = 32
+	start := make(chan struct{})
+	results := make(chan *Material, callers)
+	errors := make(chan error, callers)
+	var group sync.WaitGroup
+	for index := 0; index < callers; index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			material, err := Ensure(dir, now)
+			if err != nil {
+				errors <- err
+				return
+			}
+			results <- material
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(results)
+	close(errors)
+	for err := range errors {
+		t.Errorf("concurrent Ensure: %v", err)
+	}
+	var fingerprint string
+	for material := range results {
+		if fingerprint == "" {
+			fingerprint = material.Fingerprint
+		}
+		if material.Fingerprint != fingerprint {
+			t.Errorf("concurrent authority fingerprint = %s, want %s", material.Fingerprint, fingerprint)
+		}
+	}
+	if fingerprint == "" {
+		t.Fatal("no concurrent Ensure call succeeded")
+	}
+	material, err := Ensure(dir, now)
+	if err != nil {
+		t.Fatalf("reload coherent authority: %v", err)
+	}
+	if material.Fingerprint != fingerprint || !publicKeysEqual(material.CACert.PublicKey, mustReadECPrivateKey(t, material.CAKeyPath)) {
+		t.Fatal("persisted CA certificate and key are not the concurrently returned authority")
+	}
+}
+
+func mustReadECPrivateKey(t *testing.T, path string) *ecdsa.PublicKey {
+	t.Helper()
+	key, err := readECPrivateKey(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &key.PublicKey
+}
 
 func TestEnsureCreatesConstrainedCAAndLocalhostLeaf(t *testing.T) {
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
@@ -231,6 +290,50 @@ func TestEnsureRefusesExpiredCARatherThanReplacingTrustedRoot(t *testing.T) {
 	}
 }
 
+func TestEnsureAndLoadRefuseAnUnconstrainedReplacementCA(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	material, err := Ensure(dir, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(99),
+		NotBefore:             now.Add(-time.Minute),
+		NotAfter:              now.Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		MaxPathLen:            0,
+		MaxPathLenZero:        true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writePEMAtomic(material.CACertPath, 0644, "CERTIFICATE", der); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePEMAtomic(material.CAKeyPath, 0600, "PRIVATE KEY", keyDER); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Ensure(dir, now); err == nil || !strings.Contains(err.Error(), "valid self-signed CA") {
+		t.Fatalf("Ensure unconstrained CA error = %v", err)
+	}
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "not constrained") {
+		t.Fatalf("Load unconstrained CA error = %v", err)
+	}
+}
+
 func TestEnsureRefusesIncompleteCAAndSymlinks(t *testing.T) {
 	t.Run("incomplete CA", func(t *testing.T) {
 		dir := t.TempDir()
@@ -347,11 +450,12 @@ func TestTrustCommandsNeverReceivePrivateKeyPaths(t *testing.T) {
 				t.Fatalf("private key leaked to trust command: %q", joined)
 			}
 
-			// The marker makes install idempotent.
+			// A verified marker makes install idempotent, while the real trust
+			// store is still checked in case another tool removed the CA.
 			runner.name, runner.args, runner.calls = "", nil, nil
 			installed, err = store.Install(context.Background(), m)
-			if err != nil || installed || runner.name != "" {
-				t.Fatalf("second install = (%v, %v), command=%q", installed, err, runner.name)
+			if err != nil || installed || len(runner.calls) != 1 {
+				t.Fatalf("second install = (%v, %v), calls=%#v", installed, err, runner.calls)
 			}
 			removed, err := store.Remove(context.Background(), m)
 			if err != nil || !removed {
@@ -362,6 +466,31 @@ func TestTrustCommandsNeverReceivePrivateKeyPaths(t *testing.T) {
 				t.Fatalf("private key leaked to remove command: %q", joined)
 			}
 		})
+	}
+}
+
+func TestTrustMarkerAtomicWriteDoesNotFollowExistingSymlink(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("do not change"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, m.MarkerPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	runner := &recordingRunner{}
+	installed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Install(context.Background(), m)
+	if err != nil || !installed {
+		t.Fatalf("Install = (%v, %v)", installed, err)
+	}
+	if info, err := os.Lstat(m.MarkerPath); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+		t.Fatalf("marker = %v, %v", info, err)
+	}
+	if data, err := os.ReadFile(outside); err != nil || string(data) != "do not change" {
+		t.Fatalf("symlink target changed: %q, %v", data, err)
 	}
 }
 
@@ -423,6 +552,39 @@ func TestDarwinRemovalClearsTrustRuleAndPublicCertificate(t *testing.T) {
 	}
 }
 
+func TestRemovalRecoversWhenTrustMarkerWasLost(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	removed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Remove(context.Background(), m)
+	if err != nil || !removed {
+		t.Fatalf("Remove = (%v, %v)", removed, err)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("calls = %v, want verification + trust-rule removal + certificate deletion", runner.calls)
+	}
+	if got := strings.Join(runner.calls[0].args, " "); !strings.Contains(got, "verify-cert") || !strings.Contains(got, m.CertPath) {
+		t.Fatalf("markerless removal did not verify the exact local certificate: %#v", runner.calls[0])
+	}
+}
+
+func TestMarkerlessRemovalDoesNotDeleteAnUnverifiedCertificate(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &sequenceRunner{errs: []error{errors.New("not present")}}
+	removed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Remove(context.Background(), m)
+	if err != nil || removed {
+		t.Fatalf("Remove = (%v, %v)", removed, err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("markerless removal ran %d commands, want verification only", runner.calls)
+	}
+}
+
 func TestLegacyTrustMarkerIsReinstalledAndUpgraded(t *testing.T) {
 	m, err := Ensure(t.TempDir(), time.Now())
 	if err != nil {
@@ -454,7 +616,8 @@ func TestTrustedRequiresVerifiedMarkerForThisPlatformAndCA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := TrustStore{GOOS: "darwin"}
+	runner := &recordingRunner{}
+	store := TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}
 	tests := []struct {
 		name   string
 		marker string
@@ -469,6 +632,7 @@ func TestTrustedRequiresVerifiedMarkerForThisPlatformAndCA(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			runner.calls = nil
 			if err := os.Remove(m.MarkerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				t.Fatal(err)
 			}
@@ -477,11 +641,33 @@ func TestTrustedRequiresVerifiedMarkerForThisPlatformAndCA(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			got, err := store.Trusted(m)
+			got, err := store.Trusted(context.Background(), m)
 			if err != nil || got != tc.want {
 				t.Fatalf("Trusted = (%v, %v), want %v", got, err, tc.want)
 			}
+			if tc.want && len(runner.calls) != 1 {
+				t.Fatalf("verified marker did not check the platform store: %#v", runner.calls)
+			}
 		})
+	}
+}
+
+func TestStaleVerifiedMarkerReinstallsPlatformTrust(t *testing.T) {
+	m, err := Ensure(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := trustMarkerVersion + "\ndarwin\n" + m.Fingerprint + "\n"
+	if err := os.WriteFile(m.MarkerPath, []byte(marker), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &sequenceRunner{errs: []error{errors.New("certificate missing"), nil, nil}}
+	installed, err := (TrustStore{GOOS: "darwin", HomeDir: t.TempDir(), Runner: runner}).Install(context.Background(), m)
+	if err != nil || !installed {
+		t.Fatalf("stale marker reinstall = (%v, %v)", installed, err)
+	}
+	if runner.calls != 3 {
+		t.Fatalf("stale marker ran %d calls, want check + install + verify", runner.calls)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/ehrlich-b/wingthing/internal/fsutil"
 )
 
 // Runner exists so trust-store behavior can be tested without mutating the
@@ -54,7 +56,7 @@ func SystemTrustStore() TrustStore {
 // idempotent. Markers written before platform verification was added are
 // deliberately migrated by running the install ceremony once more.
 func (t TrustStore) Install(ctx context.Context, m *Material) (bool, error) {
-	trusted, err := markerMatches(m, t.GOOS)
+	trusted, err := t.Trusted(ctx, m)
 	if err != nil {
 		return false, err
 	}
@@ -82,11 +84,8 @@ func (t TrustStore) Install(ctx context.Context, m *Material) (bool, error) {
 		return false, fmt.Errorf("verify Wingthing localhost certificate in %s user trust store: %w", t.GOOS, err)
 	}
 	marker := trustMarkerVersion + "\n" + t.GOOS + "\n" + m.Fingerprint + "\n"
-	if err := os.WriteFile(m.MarkerPath, []byte(marker), 0600); err != nil {
+	if err := writeFileAtomic(m.MarkerPath, 0600, []byte(marker)); err != nil {
 		return false, fmt.Errorf("record local CA trust: %w", err)
-	}
-	if err := os.Chmod(m.MarkerPath, 0600); err != nil {
-		return false, fmt.Errorf("secure local CA trust marker: %w", err)
 	}
 	return true, nil
 }
@@ -95,12 +94,26 @@ func (t TrustStore) Install(ctx context.Context, m *Material) (bool, error) {
 // store. It deliberately leaves the on-disk key material in place so a running
 // server is not broken and a later install does not create an orphaned root.
 func (t TrustStore) Remove(ctx context.Context, m *Material) (bool, error) {
-	trusted, err := markerIdentifies(m, t.GOOS)
+	identified, err := markerIdentifies(m, t.GOOS)
 	if err != nil {
 		return false, err
 	}
-	if !trusted {
-		return false, nil
+	if !identified {
+		// The marker is recovery metadata, not the trust-store authority. If it
+		// was lost or corrupted, still remove the exact generated CA when the
+		// platform store proves that it is present. With no runner there is no
+		// safe way to make or verify a trust-store change, so preserve the old
+		// read-only no-op behavior used by callers that only inspect state.
+		if t.Runner == nil {
+			return false, nil
+		}
+		present, verifyErr := t.platformTrusted(ctx, m)
+		if verifyErr != nil {
+			return false, verifyErr
+		}
+		if !present {
+			return false, nil
+		}
 	}
 	commands, err := trustRemovalCommands(t.GOOS, m, t.HomeDir)
 	if err != nil {
@@ -117,11 +130,35 @@ func (t TrustStore) Remove(ctx context.Context, m *Material) (bool, error) {
 	if err := os.Remove(m.MarkerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, fmt.Errorf("remove local CA trust marker: %w", err)
 	}
+	if err := fsutil.SyncDirectory(m.Dir); err != nil {
+		return false, fmt.Errorf("persist local CA trust marker removal: %w", err)
+	}
 	return true, nil
 }
 
-func (t TrustStore) Trusted(m *Material) (bool, error) {
-	return markerMatches(m, t.GOOS)
+func (t TrustStore) Trusted(ctx context.Context, m *Material) (bool, error) {
+	marked, err := markerMatches(m, t.GOOS)
+	if err != nil || !marked {
+		return false, err
+	}
+	return t.platformTrusted(ctx, m)
+}
+
+func (t TrustStore) platformTrusted(ctx context.Context, m *Material) (bool, error) {
+	if t.Runner == nil {
+		return false, fmt.Errorf("local trust runner is not configured")
+	}
+	name, args, err := trustVerificationCommand(t.GOOS, m, t.HomeDir)
+	if err != nil {
+		return false, err
+	}
+	// A marker records what WT successfully installed, but the user or another
+	// tool may remove that trust entry later. Recheck the actual platform store
+	// on every status/start and reinstall if it has gone stale.
+	if err := t.Runner.Run(ctx, name, args...); err != nil {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (t TrustStore) prepare(ctx context.Context) error {

@@ -35,7 +35,7 @@ Before generating a config, ask about:
 ```yaml
 # These are the built-in defaults — you get these for free
 fs:
-  - "ro:/"                    # root filesystem read-only
+  - "ro:/"                    # host filesystem readable; HOME writes are narrowed below
   - "rw:./"                   # project CWD writable
   - "rw:~/.cache/"            # build caches
   - "rw:~/Library/Caches/"    # macOS build caches
@@ -126,7 +126,7 @@ network:
   - "github.com"       # or your git host
 ```
 
-If they need ssh-agent but not raw key files, prefer passing just `SSH_AUTH_SOCK` with the default `deny:~/.ssh` still in place.
+If they need ssh-agent but not raw key files, explicitly list `SSH_AUTH_SOCK` while keeping the default `deny:~/.ssh`. That exact name is a deliberate opt-in. A wildcard environment policy does not opt in: Wingthing removes the variable and masks the live agent socket so it cannot be rediscovered under `/tmp` or the user runtime directory.
 
 ### 6. Pin a custom provider to one host
 
@@ -152,7 +152,7 @@ When you have a properly configured sandbox, the agent's built-in permission sys
 
 ### 8. Use `base: none` for fully specified policies
 
-Starting from a blank slate means you lose all deny rules, all env filtering, the read-only root mount. Only for advanced users building specialized sandbox profiles. The defaults are there for a reason.
+Starting from a blank slate means you lose all deny rules, env filtering, and HOME write isolation. The native sandbox is not a filesystem allowlist: host files remain readable unless denied, and Linux still permits writes outside HOME wherever the OS user already has permission (for example `/tmp`). Only use `base: none` when building a fully specified specialized policy.
 
 ### 9. Audit mode for shared machines
 
@@ -167,13 +167,15 @@ This records terminal I/O for replay. Useful for compliance and debugging, costs
 ## Platform Differences (Explain These Proactively)
 
 ### macOS (Seatbelt)
+- The host filesystem remains readable unless a path is explicitly denied. When writable mounts are present, HOME becomes read-only except for those writable holes; temporary directories remain writable.
 - Domain filtering is enforced at OS level via SBPL → CONNECT proxy. Agents cannot bypass it.
 - No resource limits (no CPU/memory/FD caps). Agents can consume all system resources.
 - No PID isolation. Agent can see other processes.
 - No seccomp. No syscall filtering.
 
 ### Linux (Namespaces + Seccomp)
-- Every mode retains `CLONE_NEWNET`. Domain-filtered HTTPS reaches the host CONNECT proxy only through an inherited-FD loopback relay; raw sockets and clients that remove `HTTPS_PROXY` have no route.
+- The fresh mount namespace starts with a cloned view of the host filesystem. HOME becomes read-only except for declared writable holes; explicitly denied paths are masked. This is not a root-filesystem allowlist, and OS-user-writable locations outside HOME remain writable.
+- Every mode retains `CLONE_NEWNET`. Domain-filtered TCP tunnels reach the host CONNECT proxy only through an inherited-FD loopback relay; clients must use CONNECT, and removing `HTTPS_PROXY` creates no route. Host policy is by destination name, not port.
 - Explicit `network.local_ports` are the only host-loopback services forwarded into the namespace. The relay currently supports TCP, not arbitrary UDP/ICMP protocols.
 - Resource limits work: CPU time, memory (4GB floor for JIT), max FDs.
 - PID isolation: agent is PID 1, can't see host processes.

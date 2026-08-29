@@ -13,7 +13,8 @@ You need:
 
 - a server with Wingthing installed;
 - a public or VPN-resolvable HTTPS hostname;
-- an OAuth application for GitHub or Google login; and
+- an OAuth application for GitHub or Google login;
+- the exact email addresses allowed to use the roost; and
 - one or more project directories on the server.
 
 The TLS reverse proxy may be nginx, Caddy, or your tailnet/VPN's HTTPS proxy.
@@ -26,11 +27,20 @@ Configure the public URL and one login provider:
 export WT_BASE_URL=https://roost.example.com
 export GITHUB_CLIENT_ID=<github-oauth-client-id>
 export GITHUB_CLIENT_SECRET=<github-oauth-client-secret>
+export WT_ROOST_ALLOWED_EMAILS=alice@example.com,bob@example.com
 wt roost start --addr :8080
 ```
 
 Terminate HTTPS at the reverse proxy and forward the hostname to port 8080. Users
-then open `WT_BASE_URL` and sign in.
+then open `WT_BASE_URL` and sign in. The email list is the roost's enrollment
+boundary: other OAuth accounts receive a denial and cannot use old cookies,
+tokens, the wing inventory, or MCP. Use exact comma-separated addresses.
+
+OAuth by itself proves an account's identity; it does not make every account at
+GitHub or Google a member of your roost. If `WT_ROOST_ALLOWED_EMAILS` is empty,
+any account accepted by that provider can enroll. Set it on every
+internet-reachable private roost unless your OAuth provider or ingress already
+enforces the same membership boundary.
 
 Do not add `--https` to this public/shared command. That flag is deliberately for
 a single-user localhost roost: it creates a device-local CA and refuses public

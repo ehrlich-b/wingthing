@@ -56,12 +56,50 @@ func SplitWingTarget(arguments json.RawMessage) (string, json.RawMessage, error)
 }
 
 // QualifyResult makes the owning wing part of the result envelope so clients
-// never need mutable "current wing" state to interpret an object ID.
+// never need mutable "current wing" state to interpret an object ID. Resource
+// objects returned by current list/send operations are qualified individually
+// as well, so retaining one object outside its response cannot lose its wing.
 func QualifyResult(wingID string, result map[string]any) map[string]any {
-	qualified := make(map[string]any, len(result)+1)
-	for key, value := range result {
-		qualified[key] = value
+	qualified := cloneResultMap(result)
+	for _, key := range []string{"sessions", "messages", "message"} {
+		qualifyNestedResources(wingID, qualified[key])
 	}
 	qualified["wing_id"] = wingID
 	return qualified
+}
+
+func cloneResultMap(source map[string]any) map[string]any {
+	cloned := make(map[string]any, len(source)+1)
+	for key, value := range source {
+		cloned[key] = cloneResultValue(value)
+	}
+	return cloned
+}
+
+func cloneResultValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneResultMap(typed)
+	case []any:
+		items := make([]any, len(typed))
+		for index, item := range typed {
+			items[index] = cloneResultValue(item)
+		}
+		return items
+	default:
+		return value
+	}
+}
+
+func qualifyNestedResources(wingID string, value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		typed["wing_id"] = wingID
+	case []any:
+		for _, item := range typed {
+			if object, ok := item.(map[string]any); ok {
+				object["wing_id"] = wingID
+			}
+		}
+	}
 }

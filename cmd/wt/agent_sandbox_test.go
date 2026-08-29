@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
@@ -264,6 +265,20 @@ func TestSandboxAgentExecutableResolvesHostCommandForPersonalTask(t *testing.T) 
 	}
 	if !filepath.IsAbs(got) {
 		t.Fatalf("personal executable = %q, want absolute path", got)
+	}
+}
+
+func TestAgentRuntimeCommandMatchesSupportedAgentCatalog(t *testing.T) {
+	for _, definition := range agent.Definitions() {
+		if got := agentRuntimeCommand(definition.Name); got != definition.Command {
+			t.Errorf("agentRuntimeCommand(%q) = %q, want %q", definition.Name, got, definition.Command)
+		}
+	}
+	if got := agentRuntimeCommand("cursor"); got != "agent" {
+		t.Fatalf("Cursor isolated runtime command = %q, want agent", got)
+	}
+	if got := agentRuntimeCommand("custom-command"); got != "custom-command" {
+		t.Fatalf("unknown command fallback = %q", got)
 	}
 }
 

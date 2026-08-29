@@ -11,6 +11,7 @@ import { wingDisplayName, b64urlToBytes, bytesToB64url, bytesToB64 } from './hel
 import { saveTunnelAuthTokens, sendTunnelRequest } from './tunnel.js';
 import { handlePreview, closePreview } from './preview.js';
 import { initWebRTC, completeMigration, cleanupPeer, cleanupSession, dcActive, sendViaDC } from './webrtc.js';
+import { safePreviewURL } from './security.js';
 
 function showBrowserOpenToast(url, sessionId) {
     var existing = document.getElementById('browser-open-toast');
@@ -19,9 +20,30 @@ function showBrowserOpenToast(url, sessionId) {
     var toast = document.createElement('div');
     toast.id = 'browser-open-toast';
     toast.className = 'browser-open-toast';
-    toast.innerHTML = '<span class="browser-open-text">session wants to open:</span> ' +
-        '<a href="' + url.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener">' + url.replace(/</g, '&lt;') + '</a>' +
-        '<button class="browser-open-dismiss">&times;</button>';
+    var label = document.createElement('span');
+    label.className = 'browser-open-text';
+    label.textContent = 'session wants to open: ';
+    toast.appendChild(label);
+
+    var safeURL = safePreviewURL(url);
+    if (safeURL) {
+        var anchor = document.createElement('a');
+        anchor.href = safeURL;
+        anchor.target = '_blank';
+        anchor.rel = 'noopener noreferrer';
+        anchor.textContent = url;
+        toast.appendChild(anchor);
+    } else {
+        var blocked = document.createElement('span');
+        blocked.className = 'browser-open-blocked';
+        blocked.textContent = url + ' (unsupported URL scheme)';
+        toast.appendChild(blocked);
+    }
+
+    var dismiss = document.createElement('button');
+    dismiss.className = 'browser-open-dismiss';
+    dismiss.textContent = '\u00d7';
+    toast.appendChild(dismiss);
     document.body.appendChild(toast);
 
     var dismissTimer = setTimeout(function() { toast.remove(); }, 15000);
@@ -31,10 +53,13 @@ function showBrowserOpenToast(url, sessionId) {
         toast.remove();
     });
 
-    toast.querySelector('a').addEventListener('click', function() {
-        clearTimeout(dismissTimer);
-        toast.remove();
-    });
+    var anchor = toast.querySelector('a');
+    if (anchor) {
+        anchor.addEventListener('click', function() {
+            clearTimeout(dismissTimer);
+            toast.remove();
+        });
+    }
 }
 
 function sessionTitle(agent, wingId) {
@@ -381,7 +406,9 @@ function setupPTYHandlers(ws, reattach) {
                     DOM.ptyStatus.textContent = 'exited';
                     S.term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
                 }
-                if (msg.session_id) window._deleteSession(msg.session_id);
+                // The wing already exited; remove local state without sending a
+                // redundant pty.kill back to it.
+                if (msg.session_id) window._deleteSession(msg.session_id, true);
                 renderSidebar();
                 loadHome();
                 break;
@@ -579,8 +606,10 @@ export function disconnectPTY() {
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
     if (S.ptySessionId) cleanupSession(S.ptySessionId);
     if (S.ptyWingId) cleanupPeer(S.ptyWingId);
+    var killFinished = Promise.resolve();
     if (S.ptyWingId && S.ptySessionId) {
-        sendTunnelRequest(S.ptyWingId, { type: 'pty.kill', session_id: S.ptySessionId }).catch(function() {});
+        killFinished = sendTunnelRequest(S.ptyWingId, { type: 'pty.kill', session_id: S.ptySessionId })
+            .catch(function() {});
     }
     if (S.ptyWs) { S.ptyWs.close(); S.ptyWs = null; }
     S.ptySessionId = null;
@@ -591,6 +620,7 @@ export function disconnectPTY() {
     DOM.ptyStatus.textContent = '';
     DOM.headerTitle.textContent = '';
     DOM.sessionCloseBtn.style.display = 'none';
+    return killFinished;
 }
 
 var MAX_RECONNECT_ATTEMPTS = 10;

@@ -134,7 +134,7 @@ func (s *Store) ListMessages(ownerID, actor, channel, afterMessageID string, lim
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var messages []*Message
 	for rows.Next() {

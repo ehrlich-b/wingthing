@@ -106,15 +106,16 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 	}
 
 	result := sandbox.Config{
-		Mounts:     mounts,
-		Domains:    domains,
-		LocalPorts: append([]int(nil), policy.LocalPorts...),
-		CPULimit:   declared.CPULimit,
-		MemLimit:   declared.MemLimit,
-		MaxFDs:     declared.MaxFDs,
-		PidLimit:   declared.PidLimit,
-		UserHome:   home,
-		Trace:      declared.Trace,
+		Mounts:      mounts,
+		NetworkMode: policy.Mode,
+		Domains:     domains,
+		LocalPorts:  append([]int(nil), policy.LocalPorts...),
+		CPULimit:    declared.CPULimit,
+		MemLimit:    declared.MemLimit,
+		MaxFDs:      declared.MaxFDs,
+		PidLimit:    declared.PidLimit,
+		UserHome:    home,
+		Trace:       declared.Trace,
 	}
 	if sharedHost {
 		result.Deny = []string{"/"}

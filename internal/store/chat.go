@@ -44,16 +44,16 @@ func (s *Store) ListChatSessions() ([]*ChatSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []*ChatSession
 	for rows.Next() {
 		var cs ChatSession
 		if err := rows.Scan(&cs.ID, &cs.Agent, &cs.Title, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
-			continue
+			return nil, err
 		}
 		result = append(result, &cs)
 	}
-	return result, nil
+	return result, rows.Err()
 }
 
 func (s *Store) DeleteChatSession(id string) error {
@@ -83,14 +83,14 @@ func (s *Store) ListChatMessages(sessionID string) ([]*ChatMsg, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []*ChatMsg
 	for rows.Next() {
 		var m ChatMsg
 		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.CreatedAt); err != nil {
-			continue
+			return nil, err
 		}
 		result = append(result, &m)
 	}
-	return result, nil
+	return result, rows.Err()
 }

@@ -1,9 +1,14 @@
 # LLM-first architecture review
 
-Status: review with first implementation slice
+Status: historical architecture snapshot at `c87a778`; later direct-control work is not reflected throughout
 
 Reviewed: 2026-08-24
 Repository snapshot: `c87a778`
+
+For current implementation state, gaps, and promotion gates, read the
+[Agent Manager Product Brief](agent-manager-product-brief.md). This review is kept
+to explain the decisions that led to the shared operation registry; statements
+using “current” below refer to the recorded snapshot.
 
 ## Verdict
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -222,12 +223,22 @@ func TestDirectMCPMaxSessionsIsSharedAcrossConnections(t *testing.T) {
 }
 
 func connectDirectMCPTestClient(t *testing.T, cfg *config.Config, wingCfg *config.WingConfig, home string, sharedHost bool, identity webrtcpkg.PeerIdentity) (*webrtcpkg.ControlClient, context.Context) {
+	return connectDirectMCPTestClientWithPolicySource(t, cfg, home, sharedHost, identity, func() (*config.WingConfig, []config.AllowKey) {
+		return wingCfg.Clone(), nil
+	})
+}
+
+func connectDirectMCPTestClientWithPolicySource(t *testing.T, cfg *config.Config, home string, sharedHost bool, identity webrtcpkg.PeerIdentity, policySource func() (*config.WingConfig, []config.AllowKey)) (*webrtcpkg.ControlClient, context.Context) {
+	return connectDirectMCPTestClientWithPolicySourceAndLease(t, cfg, home, sharedHost, identity, policySource, directMCPIdentityLease)
+}
+
+func connectDirectMCPTestClientWithPolicySourceAndLease(t *testing.T, cfg *config.Config, home string, sharedHost bool, identity webrtcpkg.PeerIdentity, policySource func() (*config.WingConfig, []config.AllowKey), identityLease time.Duration) (*webrtcpkg.ControlClient, context.Context) {
 	t.Helper()
 	manager := webrtcpkg.NewPeerManager(nil)
 	t.Cleanup(manager.Close)
 	admission := newMCPAdmissionState()
 	manager.OnDC(func(_ string, _ string, authenticated webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
-		serveDirectMCPChannel(cfg, wingCfg, home, sharedHost, nil, admission, authenticated, dc)
+		serveDirectMCPChannelWithPolicySourceAndLease(cfg, home, sharedHost, admission, authenticated, dc, policySource, identityLease)
 	})
 	client, err := webrtcpkg.NewControlClient("codex", nil)
 	if err != nil {
@@ -251,6 +262,21 @@ func connectDirectMCPTestClient(t *testing.T, cfg *config.Config, wingCfg *confi
 		t.Fatal(err)
 	}
 	return client, ctx
+}
+
+func TestDirectMCPIdentityIsALimitedCoordinatorLease(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}
+	wingCfg := &config.WingConfig{}
+	client, _ := connectDirectMCPTestClientWithPolicySourceAndLease(t, cfg, t.TempDir(), false, webrtcpkg.PeerIdentity{
+		UserID: "leased-user", Email: "owner@example.com", OrgRole: "owner",
+	}, func() (*config.WingConfig, []config.AllowKey) { return wingCfg.Clone(), nil }, 200*time.Millisecond)
+	deadline := time.Now().Add(3 * time.Second)
+	for !client.Closed() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !client.Closed() {
+		t.Fatal("direct channel remained usable after its coordinator identity lease expired")
+	}
 }
 
 func TestDirectMCPTransportAppliesConfiguredGrants(t *testing.T) {
@@ -330,5 +356,68 @@ func TestDirectMCPFailsClosedForLockedWing(t *testing.T) {
 	_, _, err := client.Call(ctx, "wingthing_capabilities", json.RawMessage(`{}`))
 	if err == nil || !strings.Contains(err.Error(), "local lock policy") {
 		t.Fatalf("locked direct call error = %v", err)
+	}
+}
+
+func TestDirectMCPExistingChannelRechecksLiveWingPolicy(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}
+	var policyMu sync.Mutex
+	wingCfg := &config.WingConfig{}
+	policySource := func() (*config.WingConfig, []config.AllowKey) {
+		policyMu.Lock()
+		defer policyMu.Unlock()
+		return wingCfg.Clone(), nil
+	}
+	client, ctx := connectDirectMCPTestClientWithPolicySource(t, cfg, t.TempDir(), false, webrtcpkg.PeerIdentity{
+		UserID: "user-direct", Email: "owner@example.com", OrgRole: "owner",
+	}, policySource)
+	if _, isError, err := client.Call(ctx, "wingthing_capabilities", json.RawMessage(`{}`)); err != nil || isError {
+		t.Fatalf("initial direct call = isError %v, err %v", isError, err)
+	}
+
+	policyMu.Lock()
+	wingCfg.DirectMCP = &config.DirectMCPConfig{Disabled: true}
+	policyMu.Unlock()
+	_, _, err := client.Call(ctx, "wingthing_capabilities", json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "disabled by this wing's local policy") {
+		t.Fatalf("live-disabled direct call error = %v", err)
+	}
+
+	policyMu.Lock()
+	wingCfg.DirectMCP = nil
+	wingCfg.Locked = true
+	policyMu.Unlock()
+	_, _, err = client.Call(ctx, "wingthing_capabilities", json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "local lock policy") {
+		t.Fatalf("live-locked direct call error = %v", err)
+	}
+}
+
+func TestDirectMCPResponseEnvelopeIsBoundedAndCorrelated(t *testing.T) {
+	for name, response := range map[string]control.DirectResponse{
+		"oversized": {
+			Version: control.ContractVersion,
+			ID:      "large-request",
+			Result:  map[string]any{"output": strings.Repeat("x", maxDirectMCPEnvelopeBytes)},
+		},
+		"unencodable": {
+			Version: control.ContractVersion,
+			ID:      "invalid-request",
+			Result:  map[string]any{"invalid": make(chan struct{})},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload := marshalDirectMCPResponse(response)
+			if len(payload) > maxDirectMCPEnvelopeBytes {
+				t.Fatalf("response envelope = %d bytes", len(payload))
+			}
+			var decoded control.DirectResponse
+			if err := json.Unmarshal(payload, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if decoded.ID != response.ID || !decoded.IsError || decoded.Error == "" || decoded.Result != nil {
+				t.Fatalf("bounded response = %#v", decoded)
+			}
+		})
 	}
 }

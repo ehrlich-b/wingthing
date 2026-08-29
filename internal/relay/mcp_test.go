@@ -59,16 +59,14 @@ func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	var result struct {
 		Result struct {
 			Structured map[string]any `json:"structuredContent"`
 			IsError    bool           `json:"isError"`
 		} `json:"result"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatal(err)
-	}
+	decodeTestJSON(t, resp.Body, &result)
 	if result.Result.IsError || result.Result.Structured["owner_id"] != "carol" || result.Result.Structured["actor_id"] != clientID {
 		t.Fatalf("native result = %#v", result.Result)
 	}
@@ -201,7 +199,7 @@ func TestMCPOAuthFlowAndScoping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated /mcp = %d, want 401", resp.StatusCode)
 	}
@@ -309,7 +307,7 @@ func TestMCPOAuthLoginBounce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("unauth authorize = %d, want 303 to login", resp.StatusCode)
 	}
@@ -335,7 +333,7 @@ func TestMCPOAuthLoginBounce(t *testing.T) {
 		t.Fatal(err)
 	}
 	buf, _ := io.ReadAll(resp2.Body)
-	resp2.Body.Close()
+	closeTestBody(t, resp2.Body)
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("resume authorize = %d, want 200 consent", resp2.StatusCode)
 	}
@@ -411,7 +409,7 @@ func TestMCPOAuthRejectsWrongResourceAndUnsafeRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("unsafe redirect registration = %d, want 400", resp.StatusCode)
 	}
@@ -428,7 +426,7 @@ func TestMCPOAuthRejectsWrongResourceAndUnsafeRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("wrong resource authorize = %d, want 400", resp.StatusCode)
 	}
@@ -441,7 +439,7 @@ func TestMCPOAuthRejectsWrongResourceAndUnsafeRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("malformed PKCE challenge authorize = %d, want 400", resp.StatusCode)
 	}
@@ -469,10 +467,46 @@ func TestMCPOAuthClientRegistrationSurvivesMemoryReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("authorize after memory reset = %d: %s", resp.StatusCode, body)
+	}
+}
+
+func TestMCPClientRegistrationCapacityIsTransactionalAndReclaimsExpired(t *testing.T) {
+	store := testStore(t)
+	now := time.Now().UTC()
+	if err := store.SaveMCPClientRegistration(MCPClientRegistration{
+		ClientID: "expired", RedirectURIs: []string{"http://localhost/callback"}, ExpiresAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first := MCPClientRegistration{
+		ClientID: "first", RedirectURIs: []string{"http://localhost/callback"}, ExpiresAt: now.Add(time.Hour),
+	}
+	stored, err := store.SaveMCPClientRegistrationLimited(first, now, 1)
+	if err != nil || !stored {
+		t.Fatalf("store first registration = %v, %v", stored, err)
+	}
+	second := MCPClientRegistration{
+		ClientID: "second", RedirectURIs: []string{"http://localhost/callback"}, ExpiresAt: now.Add(time.Hour),
+	}
+	stored, err = store.SaveMCPClientRegistrationLimited(second, now, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored {
+		t.Fatal("registration exceeded durable capacity")
+	}
+	if reg, err := store.GetMCPClientRegistration("expired", now); err != nil || reg != nil {
+		t.Fatalf("expired registration was not pruned: %#v, %v", reg, err)
+	}
+	if reg, err := store.GetMCPClientRegistration("first", now); err != nil || reg == nil {
+		t.Fatalf("accepted registration missing: %#v, %v", reg, err)
+	}
+	if reg, err := store.GetMCPClientRegistration("second", now); err != nil || reg != nil {
+		t.Fatalf("rejected registration was stored: %#v, %v", reg, err)
 	}
 }
 
@@ -522,6 +556,10 @@ func TestMCPRateLimitCoverage(t *testing.T) {
 		{http.MethodGet, "/oauth/authorize"},
 		{http.MethodPost, "/oauth/token"},
 		{http.MethodPost, "/mcp"},
+		{http.MethodPost, "/api/orgs"},
+		{http.MethodPut, "/api/app/wings/wing-1/label"},
+		{http.MethodPatch, "/api/future-resource"},
+		{http.MethodDelete, "/api/orgs/org-1/members/user-1"},
 	} {
 		if !s.shouldRateLimit(tc.method, tc.path) {
 			t.Errorf("%s %s is not rate limited", tc.method, tc.path)
@@ -529,6 +567,9 @@ func TestMCPRateLimitCoverage(t *testing.T) {
 	}
 	if s.shouldRateLimit(http.MethodGet, "/mcp") {
 		t.Error("nonexistent GET /mcp should not consume the MCP call limit")
+	}
+	if s.shouldRateLimit(http.MethodGet, "/api/app/wings") {
+		t.Error("read-only API request should not consume the mutation limit")
 	}
 }
 
@@ -547,7 +588,7 @@ func TestMCPRejectsGeneralWingJWT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wing JWT at MCP endpoint = %d, want 401", resp.StatusCode)
 	}
@@ -564,7 +605,7 @@ func TestMCPRejectsCrossOriginBeforeAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-origin unauthenticated MCP request = %d, want 403", resp.StatusCode)
 	}
@@ -611,7 +652,7 @@ func TestMCPOAuthRejectsUserWithOnlyDisabledRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("disabled-only authorize = %d, want 403", resp.StatusCode)
 	}
@@ -635,14 +676,14 @@ func oauthRegister(t *testing.T, base, redirect string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("register = %d", resp.StatusCode)
 	}
 	var out struct {
 		ClientID string `json:"client_id"`
 	}
-	json.NewDecoder(resp.Body).Decode(&out)
+	decodeTestJSON(t, resp.Body, &out)
 	if out.ClientID == "" {
 		t.Fatal("no client_id from registration")
 	}
@@ -685,7 +726,7 @@ func oauthConsentPage(t *testing.T, base, clientID, redirect, challenge, session
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("authorize consent = %d, want 200 (session not honored?)", resp.StatusCode)
 	}
@@ -709,7 +750,7 @@ func oauthDecide(t *testing.T, base, rid, session, action string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("consent %s = %d, want 303", action, resp.StatusCode)
 	}
@@ -737,12 +778,12 @@ func oauthTokenPair(t *testing.T, base, clientID, redirect, code, verifier strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("token = %d", resp.StatusCode)
 	}
 	var out oauthTokens
-	json.NewDecoder(resp.Body).Decode(&out)
+	decodeTestJSON(t, resp.Body, &out)
 	if out.TokenType != "Bearer" {
 		t.Errorf("token_type = %q, want Bearer", out.TokenType)
 	}
@@ -762,16 +803,14 @@ func oauthRefresh(t *testing.T, base, clientID, refreshToken string, wantStatus 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != wantStatus {
 		buf, _ := io.ReadAll(resp.Body)
 		t.Fatalf("refresh = %d, want %d: %s", resp.StatusCode, wantStatus, buf)
 	}
 	var out oauthTokens
 	if wantStatus == http.StatusOK {
-		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-			t.Fatal(err)
-		}
+		decodeTestJSON(t, resp.Body, &out)
 	}
 	return out
 }
@@ -786,12 +825,12 @@ func mcpRPC(t *testing.T, base, token, body string) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("authenticated /mcp = %d", resp.StatusCode)
 	}
 	var out map[string]any
-	json.NewDecoder(resp.Body).Decode(&out)
+	decodeTestJSON(t, resp.Body, &out)
 	return out
 }
 

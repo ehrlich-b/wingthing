@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -90,6 +91,7 @@ type pageData struct {
 	User      *User
 	LocalMode bool
 	HeroVideo bool
+	AppURL    string
 }
 
 type loginPageData struct {
@@ -107,8 +109,8 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app/", http.StatusSeeOther)
 		return
 	}
-	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, HeroVideo: s.Config.HeroVideo != ""}
-	s.template(homeTmpl, "base.html", "home.html").ExecuteTemplate(w, "base", data)
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, HeroVideo: s.Config.HeroVideo != "", AppURL: s.appURL()}
+	s.executePageTemplate(w, s.template(homeTmpl, "base.html", "home.html"), data)
 }
 
 func (s *Server) handleHeroVideo(w http.ResponseWriter, r *http.Request) {
@@ -121,13 +123,13 @@ func (s *Server) handleHeroVideo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
-	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
-	s.template(docsTmpl, "base.html", "docs.html").ExecuteTemplate(w, "base", data)
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, AppURL: s.appURL()}
+	s.executePageTemplate(w, s.template(docsTmpl, "base.html", "docs.html"), data)
 }
 
 func (s *Server) handlePatterns(w http.ResponseWriter, r *http.Request) {
-	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
-	s.template(patternsTmpl, "base.html", "patterns.html").ExecuteTemplate(w, "base", data)
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, AppURL: s.appURL()}
+	s.executePageTemplate(w, s.template(patternsTmpl, "base.html", "patterns.html"), data)
 }
 
 func (s *Server) handlePatternSkill(w http.ResponseWriter, _ *http.Request) {
@@ -150,28 +152,28 @@ func (s *Server) servePatternMarkdown(w http.ResponseWriter, name string) {
 }
 
 func (s *Server) handleTerms(w http.ResponseWriter, r *http.Request) {
-	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
-	s.template(termsTmpl, "base.html", "terms.html").ExecuteTemplate(w, "base", data)
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, AppURL: s.appURL()}
+	s.executePageTemplate(w, s.template(termsTmpl, "base.html", "terms.html"), data)
 }
 
 func (s *Server) handlePrivacy(w http.ResponseWriter, r *http.Request) {
-	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
-	s.template(privacyTmpl, "base.html", "privacy.html").ExecuteTemplate(w, "base", data)
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, AppURL: s.appURL()}
+	s.executePageTemplate(w, s.template(privacyTmpl, "base.html", "privacy.html"), data)
 }
 
 func (s *Server) handleAbuse(w http.ResponseWriter, r *http.Request) {
-	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
-	s.template(abuseTmpl, "base.html", "abuse.html").ExecuteTemplate(w, "base", data)
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, AppURL: s.appURL()}
+	s.executePageTemplate(w, s.template(abuseTmpl, "base.html", "abuse.html"), data)
 }
 
 func (s *Server) handleInstallPage(w http.ResponseWriter, r *http.Request) {
-	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode}
-	s.template(installTmpl, "base.html", "install.html").ExecuteTemplate(w, "base", data)
+	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, AppURL: s.appURL()}
+	s.executePageTemplate(w, s.template(installTmpl, "base.html", "install.html"), data)
 }
 
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(installScript)
+	_, _ = w.Write(installScript)
 }
 
 // isSafeRedirect returns true if dest is a relative path (no open redirect).
@@ -179,12 +181,19 @@ func isSafeRedirect(dest string) bool {
 	if dest == "" {
 		return false
 	}
-	// Block protocol-relative (//evil.com) and absolute URLs
-	if strings.HasPrefix(dest, "//") || strings.Contains(dest, "://") {
+	if strings.ContainsAny(dest, "\\\r\n") {
 		return false
 	}
-	// Must start with /
-	return strings.HasPrefix(dest, "/")
+	parsed, err := url.Parse(dest)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil {
+		return false
+	}
+	// Inspect the decoded path as well as the raw spelling. Browsers normalize
+	// encoded slashes and backslashes before navigation, so /%2f/example or
+	// /%5cexample must not become a protocol-relative redirect after validation.
+	return strings.HasPrefix(parsed.Path, "/") &&
+		!strings.HasPrefix(parsed.Path, "//") &&
+		!strings.Contains(parsed.Path, "\\")
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -207,23 +216,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	// Store next redirect in cookie so it survives OAuth round-trip
 	if next != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "oauth_next",
-			Value:    next,
-			Path:     "/auth",
-			Domain:   s.cookieDomain(),
-			MaxAge:   600,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-		})
+		s.setAuthFlowCookie(w, "oauth_next", next, "/auth", 600)
 	} else {
 		// Clear stale oauth_next cookie from previous flows
-		http.SetCookie(w, &http.Cookie{
-			Name:   "oauth_next",
-			Path:   "/auth",
-			Domain: s.cookieDomain(),
-			MaxAge: -1,
-		})
+		s.expireAuthFlowCookie(w, "oauth_next", "/auth")
 	}
 	data := loginPageData{
 		User:      s.sessionUser(r),
@@ -233,5 +229,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		HasGoogle: s.Config.GoogleClientID != "",
 		HasSMTP:   s.Config.SMTPHost != "",
 	}
-	s.template(loginTmpl, "base.html", "login.html").ExecuteTemplate(w, "base", data)
+	s.executePageTemplate(w, s.template(loginTmpl, "base.html", "login.html"), data)
+}
+
+func (s *Server) executePageTemplate(w http.ResponseWriter, tmpl *template.Template, data any) {
+	if err := tmpl.ExecuteTemplate(w, "base", data); err != nil {
+		log.Printf("render page template: %v", err)
+	}
 }

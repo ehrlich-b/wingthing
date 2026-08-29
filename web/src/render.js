@@ -9,6 +9,8 @@ import { setLastTermAgent, getLastTermAgent, setWingOrder, setEggOrder, getCache
 import { rebuildAgentLists } from './dashboard.js';
 import { openAuditReplay, openAuditKeylog, downloadChatHistory } from './audit.js';
 import { showTerminal } from './nav.js';
+import { safeTerminalThumbnail } from './security.js';
+import { shouldFetchWingSessions } from './session-merge.js';
 
 function wingNameById(wingId) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
@@ -41,7 +43,7 @@ export function renderSidebar() {
         if (needsAttention) dotClass = 'dot-attention';
         return '<button class="session-tab' + (isActive ? ' active' : '') + '" ' +
             'title="' + escapeHtml(name + ' \u00b7 ' + (s.agent || '?')) + '" ' +
-            'data-sid="' + s.id + '">' +
+            'data-sid="' + escapeHtml(s.id) + '">' +
             '<span class="tab-letter">' + escapeHtml(letter) + '</span>' +
             '<span class="tab-dot ' + dotClass + '"></span>' +
         '</button>';
@@ -290,7 +292,11 @@ export function renderAccountPage() {
 
     if (!S.currentUser.roost_mode) {
         if (tier === 'free') {
-            html += '<button class="btn-sm btn-accent" id="account-upgrade">give me pro</button>';
+            if (S.currentUser.self_service_plans) {
+                html += '<button class="btn-sm btn-accent" id="account-upgrade">give me pro</button>';
+            } else {
+                html += '<span class="text-dim" id="account-plan-note" style="font-size:12px">free uses direct control. hosted relay is provisioned separately.</span>';
+            }
         } else if (S.currentUser.personal_pro) {
             html += '<button class="btn-sm" id="account-downgrade" style="color:var(--text-dim)">cancel pro</button>';
         } else {
@@ -595,8 +601,8 @@ function ntfyWizardStep1(container) {
             '<div class="ac-ntfy-step">step 1 of 3</div>' +
             '<div style="margin:8px 0 12px;">install the <strong>ntfy</strong> app on your phone</div>' +
             '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
-                '<a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" class="btn-sm btn-accent">android</a>' +
-                '<a href="https://apps.apple.com/us/app/ntfy/id1625396347" target="_blank" class="btn-sm btn-accent">iOS</a>' +
+                '<a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener noreferrer" class="btn-sm btn-accent">android</a>' +
+                '<a href="https://apps.apple.com/us/app/ntfy/id1625396347" target="_blank" rel="noopener noreferrer" class="btn-sm btn-accent">iOS</a>' +
             '</div>' +
             '<div style="display:flex;gap:8px;">' +
                 '<button class="btn-sm btn-accent" id="ac-ntfy-next1">done, next</button>' +
@@ -619,7 +625,7 @@ function ntfyWizardStep2(container) {
             '<div style="margin:8px 0 4px;">generate a private notification channel</div>' +
             '<div class="text-dim" style="font-size:11px;margin-bottom:12px;">' +
                 'this creates a random topic name on ntfy.sh — the name is the secret, so don\'t share it. ' +
-                'if you have a <a href="https://ntfy.sh/#pricing" target="_blank" style="color:var(--accent)">paid ntfy account</a> with a reserved topic, you can enter it instead.' +
+                'if you have a <a href="https://ntfy.sh/#pricing" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">paid ntfy account</a> with a reserved topic, you can enter it instead.' +
             '</div>' +
             '<div id="ac-ntfy-topic-area">' +
                 '<button class="btn-sm btn-accent" id="ac-ntfy-gen">generate topic</button>' +
@@ -780,29 +786,35 @@ function renderOrgDetail(org) {
     }
 
     if (!org.has_subscription) {
-        html += '<div class="detail-row"><span class="detail-val text-dim">no active plan</span></div>' +
-            '<div class="ac-form-row">' +
-                '<input type="number" class="ac-input ac-input-sm" id="org-seats-input-' + oid + '" min="1" value="5">' +
-                '<span class="ac-hint">seats</span>' +
-                '<div class="ac-plan-toggle" id="org-plan-toggle-' + oid + '">' +
-                    '<button class="ac-plan-opt active" data-plan="team_yearly">yearly</button>' +
-                    '<button class="ac-plan-opt" data-plan="team_monthly">monthly</button>' +
+        html += '<div class="detail-row"><span class="detail-val text-dim">no active hosted relay plan</span></div>';
+        if (S.currentUser.self_service_plans) {
+            html += '<div class="ac-form-row">' +
+                    '<input type="number" class="ac-input ac-input-sm" id="org-seats-input-' + oid + '" min="1" value="5">' +
+                    '<span class="ac-hint">seats</span>' +
+                    '<div class="ac-plan-toggle" id="org-plan-toggle-' + oid + '">' +
+                        '<button class="ac-plan-opt active" data-plan="team_yearly">yearly</button>' +
+                        '<button class="ac-plan-opt" data-plan="team_monthly">monthly</button>' +
+                    '</div>' +
+                    '<button class="btn-sm btn-accent org-give-seats-btn" data-oid="' + oid + '">give me seats</button>' +
                 '</div>' +
-                '<button class="btn-sm btn-accent org-give-seats-btn" data-oid="' + oid + '">give me seats</button>' +
-            '</div>' +
-            '<div class="ac-hint" style="margin-top:4px">1 seat includes you. each additional seat adds one team member.</div>' +
-            '<div class="ac-cancel-row"><button class="btn-sm org-delete-btn" data-oid="' + oid + '">delete org</button></div>';
+                '<div class="ac-hint" style="margin-top:4px">1 seat includes you. each additional seat adds one team member.</div>';
+        } else {
+            html += '<div class="ac-hint">organizations can use direct control; hosted relay seats are provisioned separately.</div>';
+        }
+        html += '<div class="ac-cancel-row"><button class="btn-sm org-delete-btn" data-oid="' + oid + '">delete org</button></div>';
         return html;
     }
 
     html += '<div class="detail-row"><span class="detail-key">plan</span><span class="detail-val">' + escapeHtml(org.plan || 'team') + '</span></div>' +
         '<div class="detail-row"><span class="detail-key">seats</span><span class="detail-val">' + (org.seats_used || 0) + '/' + (org.seats_total || 0) + ' used</span></div>';
 
-    html += '<div class="ac-form-row">' +
-        '<input type="number" class="ac-input ac-input-sm" id="org-add-seats-input-' + oid + '" min="' + ((org.seats_total || 0) + 1) + '" value="' + ((org.seats_total || 0) + 1) + '">' +
-        '<span class="ac-hint">new total</span>' +
-        '<button class="btn-sm btn-accent org-add-seats-btn" data-oid="' + oid + '">add seats</button>' +
-    '</div>';
+    if (S.currentUser.self_service_plans) {
+        html += '<div class="ac-form-row">' +
+            '<input type="number" class="ac-input ac-input-sm" id="org-add-seats-input-' + oid + '" min="' + ((org.seats_total || 0) + 1) + '" value="' + ((org.seats_total || 0) + 1) + '">' +
+            '<span class="ac-hint">new total</span>' +
+            '<button class="btn-sm btn-accent org-add-seats-btn" data-oid="' + oid + '">add seats</button>' +
+        '</div>';
+    }
 
     html += '<div class="ac-form-row">' +
         '<input type="email" class="ac-input" id="org-invite-email-' + oid + '" placeholder="email">' +
@@ -1279,13 +1291,14 @@ export function renderWingDetailPage(wingId) {
                 })
                 .then(function() {
                     renderWingDetailPage(wingId);
-                    fetchWingSessions(w.wing_id).then(function(sessions) {
-                        if (sessions.length > 0) {
-                            var other = S.sessionsData.filter(function(s) { return s.wing_id !== w.wing_id; });
-                            mergeWingSessions(other.concat(sessions));
-                            renderSidebar();
-                        }
-                    });
+                    if (shouldFetchWingSessions(S.currentUser, w)) {
+                        fetchWingSessions(w.wing_id).then(function(sessions) {
+                            if (sessions !== null) {
+                                mergeWingSessions(w.wing_id, sessions);
+                                renderSidebar();
+                            }
+                        });
+                    }
                 })
                 .catch(function(e) {
                     if (e.message && e.message.indexOf('not_allowed') !== -1) {
@@ -1396,17 +1409,18 @@ function renderActiveSessionRows(sessions) {
         var sName = projectName(s.cwd);
         var sDot = s.status === 'active' ? 'live' : 'detached';
         var kind = s.kind || 'terminal';
+        var sid = escapeHtml(s.id);
         var auditBadge = s.audit ? '<span class="wd-audit-badge">audit</span>' : '';
         var auditBtns = s.audit
-            ? '<button class="btn-sm wd-replay-btn" data-sid="' + s.id + '">replay</button>' +
-              '<button class="btn-sm wd-keylog-btn" data-sid="' + s.id + '">keylog</button>'
+            ? '<button class="btn-sm wd-replay-btn" data-sid="' + sid + '">replay</button>' +
+              '<button class="btn-sm wd-keylog-btn" data-sid="' + sid + '">keylog</button>'
             : '';
-        return '<div class="wd-session-row" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+        return '<div class="wd-session-row" data-sid="' + sid + '" data-kind="' + escapeHtml(kind) + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<span class="session-dot ' + sDot + '"></span>' +
             '<span class="wd-session-name">' + escapeHtml(sName) + ' \u00b7 ' + agentWithIcon(s.agent || '?') + '</span>' +
             auditBadge +
             auditBtns +
-            '<button class="wd-kill-btn" data-sid="' + s.id + '" title="kill session">x</button>' +
+            '<button class="wd-kill-btn" data-sid="' + sid + '" title="kill session">x</button>' +
         '</div>';
     }).join('');
 }
@@ -1670,7 +1684,7 @@ function setupWingPalette(wing) {
         var agent = currentAgent();
         var validCwd = (cwd && cwd.charAt(0) === '/') ? cwd : '';
         setLastTermAgent(agent);
-        showTerminal();
+        if (!showTerminal()) return;
         connectPTY(agent, validCwd, wing.wing_id);
     }
 
@@ -2192,14 +2206,15 @@ export function renderDashboard() {
                             delete w.tunnel_error;
                             rebuildAgentLists();
                             renderDashboard();
-                            // Immediately fetch sessions from this wing
-                            fetchWingSessions(mid).then(function(sessions) {
-                                if (sessions) {
-                                    mergeWingSessions(mid, sessions);
-                                    renderSidebar();
-                                    renderDashboard();
-                                }
-                            });
+                            if (shouldFetchWingSessions(S.currentUser, w)) {
+                                fetchWingSessions(mid).then(function(sessions) {
+                                    if (sessions) {
+                                        mergeWingSessions(mid, sessions);
+                                        renderSidebar();
+                                        renderDashboard();
+                                    }
+                                });
+                            }
                         })
                         .catch(function() {
                             w.tunnel_error = 'passkey_failed';
@@ -2253,20 +2268,22 @@ export function renderDashboard() {
         var previewHtml = '';
         var thumbUrl = '';
         try { thumbUrl = localStorage.getItem(TERM_THUMB_PREFIX + s.id) || ''; } catch(e) {}
+        thumbUrl = safeTerminalThumbnail(thumbUrl);
         if (thumbUrl) previewHtml = '<img src="' + thumbUrl + '" alt="">';
         var wingName = '';
         if (s.wing_id) {
             var wing = S.wingsData.find(function(w) { return w.wing_id === s.wing_id; });
             if (wing) wingName = wingDisplayName(wing);
         }
-        return '<div class="egg-box" data-sid="' + s.id + '" data-kind="' + kind + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
+        var sid = escapeHtml(s.id);
+        return '<div class="egg-box" data-sid="' + sid + '" data-kind="' + escapeHtml(kind) + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
             '<div class="egg-preview">' + previewHtml + '</div>' +
             '<div class="egg-footer">' +
                 '<span class="session-dot ' + dotClass + '"></span>' +
                 '<span class="egg-label">' + escapeHtml(name) + ' \u00b7 ' + agentWithIcon(s.agent || '?') +
                     (needsAttention ? ' \u00b7 !' : '') + '</span>' +
                 '<button class="box-menu-btn" title="details">\u22ef</button>' +
-                '<button class="btn-sm btn-danger egg-delete" data-sid="' + s.id + '">x</button>' +
+                '<button class="btn-sm btn-danger egg-delete" data-sid="' + sid + '">x</button>' +
             '</div>' +
             (wingName ? '<div class="egg-wing">' + escapeHtml(wingName) + '</div>' : '') +
         '</div>';

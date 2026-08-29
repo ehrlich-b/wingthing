@@ -1,6 +1,13 @@
 # Process Group Transition Plan
 
-## Current State (prod)
+Status: historical pre-v301 migration plan. Production crossed this transition on
+2026-08-25 and now runs the `login` process group with the SQLite volume attached.
+Use [fly-ops.md](fly-ops.md) for current operations and
+[wingthing-ai-production-canary-2026-08-25.md](wingthing-ai-production-canary-2026-08-25.md)
+for the deployment record. The commands and unchecked boxes below are retained only
+as the original risk analysis; they are not a current deploy runbook.
+
+## Historical starting state
 
 - Single Fly machine in ewr, no process groups
 - Volume `wt_data` mounted at `/data` with no process group scope
@@ -96,7 +103,10 @@ fly deploy --image <previous-image-ref>
 # to remove the process group and go back to single-machine mode
 ```
 
-## TODO before deploying
+## Historical pre-deploy checklist
+
+This checklist was written before the process-group deployment. Do not use it to
+infer current production state.
 
 - [ ] Run staging test plan above
 - [ ] Verify Fly handles volume reassignment to process group

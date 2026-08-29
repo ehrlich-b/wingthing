@@ -2,6 +2,8 @@
 
 Status: implementation design for `feature/direct-control-free-tier`
 
+Reviewed: 2026-08-27
+
 The broader product contract, Slack-derived use cases, gap audit, and ordered
 roadmap live in [Agent Manager Product Brief and Gap Audit](agent-manager-product-brief.md).
 This document remains the design for the direct transport and entitlement slice.
@@ -12,7 +14,10 @@ Wingthing is an agent manager for agents. It gives an agent one inventory of dur
 
 `wingthing.ai` is the coordination service, analogous to a tailnet control plane. It authenticates identities, publishes an access-filtered wing directory, exchanges connection metadata, and helps peers establish encrypted direct connections. In this first slice it does not carry free-tier MCP payload bytes; the hosted browser terminal remains an entitled relay feature until browser-direct transport ships.
 
-The hosted relay is an optional paid fallback. A self-hosted roost combines coordination, an optional relay, and an optional local wing without making that embedded wing special.
+The hosted browser-terminal/control relay is an optional paid transport. The
+native connector in this slice is direct-only and does not silently fall back to
+it. A self-hosted roost combines coordination, an operator-controlled relay, and
+an optional local wing without making that embedded wing special.
 
 ## Components and trust boundaries
 
@@ -22,7 +27,7 @@ The hosted relay is an optional paid fallback. A self-hosted roost combines coor
 | `wt mcp connect` | Present one MCP server containing explicitly qualified resources from accessible remote wings | Yes, on the client |
 | Wing | Own durable sessions and execute authorized control operations | Yes, for its own sessions |
 | Coordinator (`wingthing.ai`) | Login, device identity, ACL-filtered wing directory, key exchange, and WebRTC signaling | No direct MCP payloads |
-| Hosted relay | Paid fallback when direct connectivity fails | Yes, encrypted transit bytes only |
+| Hosted relay | Entitled browser-terminal and control transport | Yes, encrypted transit bytes only |
 | Roost | Self-hosted coordinator, optional relay, and optional embedded wing | Chosen by operator |
 
 The JavaScript and native clients distributed by a hosted coordinator remain a supply-chain trust boundary even when payloads travel directly. Encryption in transit does not remove the need to trust the client executable.
@@ -59,13 +64,21 @@ agent -> wt mcp connect -> encrypted WebRTC data channel -> selected wing
 
 The connector logs in once, lists accessible wings, pins each wing's long-term key, and uses the coordinator to exchange a WebRTC offer and answer. MCP requests and results then travel on the peer-to-peer data channel. If a direct path cannot be established, the free connector returns an actionable error; it does not silently proxy the request.
 
-### Hosted relay fallback
+### Hosted relay access
 
-Pro users may explicitly or automatically fall back to the hosted encrypted relay. Users that existed before the configured migration cutoff receive a temporary grandfathered relay entitlement so the release preserves current behavior while the direct path rolls out.
+Accounts with relay access may use the hosted encrypted browser terminal and
+control relay. Accounts on the temporary side of the deployment's explicit
+migration boundary retain that path during rollout. `wt mcp connect` does not
+switch to this transport after a direct failure.
 
 ### Self-hosted roost
 
-A roost may allow relay traffic according to its operator policy. HTTPS for a private roost is an operator/deployment concern: use a real domain and ACME, or place the roost behind an HTTPS-capable tailnet/VPN reverse proxy. Local MCP needs neither public DNS nor HTTPS.
+A roost may allow relay traffic according to its operator policy. For one user on
+one machine, `wt roost start --https` creates a localhost-only CA and leaf on demand,
+installs only the public CA in that user's trust store, and keeps both private keys
+on the host. A shared or remotely reachable roost still needs a real domain and
+externally terminated HTTPS, such as ACME or a tailnet/VPN reverse proxy. Local MCP
+needs neither public DNS nor HTTPS.
 
 ## Direct control protocol
 
@@ -80,12 +93,19 @@ The WebRTC control channel label is versioned and identifies the authenticated c
 
 `wing_id` selects the transport and is removed before the operation reaches the wing handler. The wing derives the user, organization role, and passkey attestations from the authenticated signaling exchange; those fields are never accepted from the MCP request. It applies the same grant checks, owner scoping, filesystem scoping, argument redaction, and audit policy as its HTTP MCP adapter.
 
-The branch now resolves an explicit wing-local policy for every direct connection.
-The compatible default operation set uses positive per-principal session/spawn bounds;
-`wing.yaml` may narrow grants, change bounds, or disable direct MCP. The rolling spawn
-window is shared across reconnecting data channels for the lifetime of the wing
-process. Invalid identity, organization role, or local direct policy fails before a
-tool handler runs.
+The branch now resolves an explicit wing-local policy for every direct request,
+including requests on already-open channels after a `SIGHUP` reload. The compatible
+default operation set uses positive per-principal session/spawn bounds; `wing.yaml`
+may narrow grants, change bounds, or disable direct MCP. The rolling spawn window is
+shared across reconnecting data channels for the lifetime of the wing process.
+Invalid identity, organization role, or local direct policy fails before a tool
+handler runs.
+
+Coordinator-derived user and organization identity is leased for 15 minutes. The
+wing closes the data channel at expiry, and the connector transparently performs a
+new access-filtered discovery and signaling exchange on the next request. Wing-local
+lock, passkey, path, and grant changes are stricter: they are checked on every
+request and therefore do not wait for lease expiry.
 
 The first native transport targets host/LAN/tailnet candidates. Configured ICE servers can add broader NAT traversal. This first slice fails closed on locked or per-user passkey-protected wings; it returns an explicit error until the native connector can complete the same passkey-bound authorization ceremony used by the browser.
 
@@ -97,12 +117,12 @@ The first native transport targets host/LAN/tailnet candidates. Configured ICE s
 | Local MCP | Yes | Yes | Yes | Yes |
 | Direct native MCP connection | Yes on unlocked wings | Yes on unlocked wings | Yes on unlocked wings | Yes on unlocked wings |
 | Direct browser terminal | Not in this slice | Not in this slice | Not in this slice | Not in this slice |
-| Hosted terminal/MCP payload relay | No | Yes | Temporary | Operator policy |
+| Hosted browser terminal/control relay | No | Yes | Temporary | Operator policy |
 
-Relay access is a server decision, returned as structured capability metadata and checked before a relayed terminal is started or attached. It is not inferred from client UI state. Grandfathering uses an explicit server cutoff timestamp, is observable in `/api/app/me`, and can later be removed without changing account tiers.
+Relay access is a server decision, returned as structured capability metadata and checked before a relayed terminal is started or attached. It is not inferred from client UI state. Temporary migration access uses an explicit deployment cutoff timestamp, is observable in `/api/app/me`, and can later be removed without changing account tiers.
 
 The wing has the final transport decision. `hosted_relay: deny` overrides every
-account cohort, including Pro, grandfathered, and self-hosted relay access. The
+account cohort, including Pro, temporary-migration, and self-hosted relay access. The
 gateway rejects payload routing before forwarding and the wing independently rejects
 relayed PTY and general control messages. Omitted policy remains `allow` for N-1
 wings; unknown explicit values fail closed. Coordination purposes remain bounded and
@@ -114,12 +134,15 @@ Small, purpose-specific signaling messages remain available to free users. The o
 ## Rollout
 
 1. Add the qualified direct MCP contract, native connector, and wing-side WebRTC control handler.
-2. Add relay entitlement metadata and deny new free terminal relay starts/attaches while grandfathering existing accounts.
+2. Add relay entitlement metadata and deny new free terminal relay starts/attaches while preserving explicit temporary migration access.
 3. Put direct-agent setup at the center of the logged-in free page; preserve the current terminal UI for entitled users.
-4. Move browser setup to direct-first signaling, then restrict the opaque generic tunnel for new free users.
-5. Add optional hosted relay fallback to the native connector and multi-roost peer directory exchange.
+4. Restrict the opaque generic tunnel for new free users to purpose-bound discovery,
+   signaling, and passkey coordination. Browser-direct transport remains a separate
+   later slice.
+5. Evaluate an explicit native relay transport separately, and design multi-roost peer directory exchange.
 
-Steps 1-3 are the branch's first shippable vertical slice. Step 4 closes the remaining coordinator opacity loophole. Step 5 is deliberately compatible with the resource and entitlement model above.
+Steps 1-4 are implemented on this branch. Step 5 is deliberately compatible with
+the resource and entitlement model above but remains future work.
 
 ## Acceptance criteria
 
@@ -128,7 +151,7 @@ Steps 1-3 are the branch's first shippable vertical slice. Step 4 closes the rem
 3. A call addressed to wing A cannot execute on wing B, and returned resources are qualified with A.
 4. A successful direct MCP call sends no MCP request/result bytes through the relay.
 5. A new free user is denied before a hosted relayed terminal starts or attaches, with direct/self-host/pro remediation.
-6. Pro and explicitly grandfathered users retain the current relay behavior.
+6. Pro and explicit temporary-migration accounts retain the current relay behavior.
 7. Roost mode keeps working without a hosted subscription and can choose its own relay policy.
 8. Contract, connector, transport, authorization, and relay-policy behavior have unit/integration coverage and `make test` passes.
 9. Locked and per-user passkey-protected wings reject native direct MCP calls until a passkey ceremony is implemented; coordinator identity alone never bypasses the local lock.
@@ -136,10 +159,13 @@ Steps 1-3 are the branch's first shippable vertical slice. Step 4 closes the rem
 
 ## Compatibility and deployment
 
-The existing HTTP MCP endpoint remains available during migration, and all existing hosted users can be grandfathered temporarily. No automatic Fly deployment is implied by a GitHub release: the production deployment must be performed and verified separately. Public docs and `/patterns` should be checked as part of the production rollout so the website does not advertise a contract older than the released binary.
+The existing HTTP MCP endpoint remains available during migration, and the deployment can grant a measured existing-account cohort temporary access. No automatic Fly deployment is implied by a GitHub release: the production deployment must be performed and verified separately. Public docs and `/patterns` should be checked as part of the production rollout so the website does not advertise a contract older than the released binary.
 
 The deterministic connector canary now crosses JSON-RPC stdio and two independent
 real WebRTC data channels, verifies qualified `home`/`office` routing, reconnects, and
-checks that the coordinator handled signaling only. It remains an in-process network
-test; the release gate still requires the built `wt mcp connect` process and a real
-Codex/Claude client against two distinct hosts, including the WSL rig.
+checks that the coordinator handled signaling only. The compatibility gate separately
+runs real N-1 and candidate binaries in both gateway/wing upgrade orders, starts a PTY
+through the old browser message shape, and proves the old binary can reopen candidate
+state. The direct-MCP canary remains an in-process network test; the release gate still
+requires the built `wt mcp connect` process and a real Codex/Claude client against two
+distinct hosts, including the WSL rig.

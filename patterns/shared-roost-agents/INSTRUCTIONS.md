@@ -6,8 +6,10 @@ on the roost server.
 
 ## Before you start
 
-The roost must have a valid HTTPS URL and OAuth login. This guide controls the agent
-runtime built into that roost; it does not select unrelated external wings.
+The roost must have a valid HTTPS URL and OAuth login. Your account must be enrolled:
+normally its exact email is listed in `WT_ROOST_ALLOWED_EMAILS`, or the OAuth
+provider or ingress enforces the same membership boundary. This guide controls the
+agent runtime built into that roost; it does not select unrelated external wings.
 
 ## Add the roost to the parent AI
 

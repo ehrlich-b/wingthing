@@ -1,5 +1,11 @@
 # Egg Sandbox Design: Auto-Drilled Agent Holes
 
+> **Status: historical design and implementation record.** The proposed
+> permissive default below did not ship as the current contract. Wingthing now
+> defaults to a restrictive project-writable, home-read-only policy with common
+> credential directories denied and only agent-required domains added. Use the
+> [sandbox reference](sandbox.md) for current behavior.
+
 ## Core Principle
 
 All sandbox rules are implicitly "AND what the tool needs to run."
@@ -137,7 +143,7 @@ Egg says:                          Agent needs:
   env: ANTHROPIC_API_KEY             env: ANTHROPIC_API_KEY + essentials
 
 Result:
-  network: declared HTTPS domains through an enforced CONNECT proxy
+  network: declared hosts through an enforced CONNECT proxy
   writes:  ~/scratch/jail + ~/.claude* + ~/.cache/claude — not all of HOME
   denies:  ~/.ssh, ~/.gnupg, ~/.aws (takes precedence over everything)
   env:     union of egg allowlist + agent profile + essentials (HOME, PATH, TERM, LANG)
@@ -223,10 +229,11 @@ These are architectural constraints of the platform, not bugs. Each has a clear 
 CONNECT-proxy and declared host-loopback TCP listeners. This fixes the former raw
 bypass: curl, wget, SSH, or custom sockets that ignore the proxy have no route.
 
-**Remaining limit:** The relay does not provide general UDP, ICMP, or arbitrary
-domain-filtered TCP. `network: "*"` means any HTTP CONNECT destination, not a
-general routed interface. Add an explicit protocol-aware relay before claiming
-support for those workloads.
+**Remaining limit:** CONNECT can carry arbitrary TCP bytes to any port on an
+allowed host, but software must honor the HTTP proxy variables or explicitly
+speak CONNECT. The relay provides neither SOCKS nor a general routed interface,
+and does not carry UDP, ICMP, or other non-TCP protocols. `network: "*"` means
+any TCP target presented through CONNECT.
 
 #### 2. Agent credentials are accessible to the task
 
@@ -269,9 +276,9 @@ deny:
 
 **Result:** A sandboxed task can make outbound SSH connections — including `git` over SSH — using the user's SSH identity, despite `deny:~/.ssh`. If `StrictHostKeyChecking` triggers, the user sees an interactive host-key prompt they didn't expect.
 
-**Fix (v0.10.4+):** `BuildEnv` strips `SSH_AUTH_SOCK` from the environment whenever any FS deny rule covers `~/.ssh`. Denying the key directory implies denying agent auth.
+**Fix (v0.10.4+):** When an FS deny rule covers `~/.ssh`, `BuildEnv` strips an implicitly inherited `SSH_AUTH_SOCK` and the sandbox masks the live socket path itself. Stripping the variable alone is insufficient because common socket paths can be rediscovered under `/tmp` or the user runtime directory. Explicitly listing `SSH_AUTH_SOCK` is the opt-in for agent-backed SSH without raw key access; wildcard environment inheritance is not.
 
-**Why not the reverse:** If users explicitly need git-over-SSH inside a sandbox (e.g., `network:*` + no deny on `~/.ssh`), `SSH_AUTH_SOCK` passes through normally. The stripping only happens when `deny:~/.ssh` is present.
+**Shared hosts:** Host SSH agents are never forwarded to isolated shared-host users, even if a session policy tries to list the variable explicitly.
 
 #### 5. Agent config dir enables persistence attacks
 
@@ -388,7 +395,7 @@ DNS resolution goes through `/private/var/run/mDNSResponder` (Unix domain socket
 
 ### High priority
 
-1. **Additional Linux relay protocols** - add a protocol-aware path for explicitly declared non-HTTP TCP and UDP workloads without creating a general route. The current CONNECT/local-port relay is enforced but intentionally TCP-only.
+1. **Additional Linux relay protocols** - add SOCKS support for TCP clients that cannot use CONNECT, and a protocol-aware path for explicitly declared UDP workloads, without creating a general route. The current CONNECT/local-port relay is enforced but intentionally TCP-only.
 
 2. **CLONE_INTO_CGROUP** - eliminate the PostStart race by cloning the child directly into the cgroup (Linux 5.7+, requires CAP_SYS_ADMIN). Currently the child runs briefly before cgroup limits apply.
 

@@ -27,6 +27,11 @@ import (
 const (
 	sessionNameFile      = "session.name"
 	sessionPrincipalFile = "session.principal"
+	// Interactive TUIs such as Claude Code distinguish pasted text from a
+	// separately pressed Enter. Writing both in one PTY frame can leave the
+	// text in the editor instead of submitting it. Preserve the terminal-send
+	// contract by separating Enter from a non-empty text write.
+	sessionEnterDelay = 50 * time.Millisecond
 )
 
 type localSession struct {
@@ -327,7 +332,9 @@ func printActiveSessions(ctx context.Context, cfg *config.Config, jsonOutput boo
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tID\tKIND\tPROCESS\tISOLATION\tREADERS\tUPTIME\tIDLE\tCWD")
+	if _, err := fmt.Fprintln(w, "NAME\tID\tKIND\tPROCESS\tISOLATION\tREADERS\tUPTIME\tIDLE\tCWD"); err != nil {
+		return err
+	}
 	for _, session := range sessions {
 		name := session.Name
 		if name == "" {
@@ -344,12 +351,14 @@ func printActiveSessions(ctx context.Context, cfg *config.Config, jsonOutput boo
 		if isolation == "" {
 			isolation = "unknown"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
 			name, session.ID, session.Kind, process, isolation, session.Readers,
 			humanDuration(time.Duration(session.UptimeSecs)*time.Second),
 			humanDuration(time.Duration(session.IdleSecs)*time.Second),
 			shortenPath(session.CWD),
-		)
+		); err != nil {
+			return err
+		}
 	}
 	return w.Flush()
 }
@@ -411,7 +420,7 @@ func readSessionSnapshot(ctx context.Context, cfg *config.Config, ref string) (l
 	if err != nil {
 		return localSession{}, nil, err
 	}
-	defer ec.Close()
+	defer closeWithLog("egg client", ec)
 	stream, err := ec.AttachSession(ctx, session.ID)
 	if err != nil {
 		return localSession{}, nil, fmt.Errorf("read session %s: %w", session.ID, err)
@@ -429,12 +438,23 @@ func readSessionSnapshot(ctx context.Context, cfg *config.Config, ref string) (l
 	return session, payload.Output, nil
 }
 
-func sendSessionBytes(ctx context.Context, cfg *config.Config, ref string, input []byte) (localSession, error) {
+func sessionInputChunks(input []byte, enter bool) [][]byte {
+	chunks := make([][]byte, 0, 2)
+	if len(input) > 0 {
+		chunks = append(chunks, input)
+	}
+	if enter {
+		chunks = append(chunks, []byte{'\r'})
+	}
+	return chunks
+}
+
+func sendSessionInput(ctx context.Context, cfg *config.Config, ref string, input []byte, enter bool) (localSession, error) {
 	session, ec, err := openLocalEgg(ctx, cfg, ref)
 	if err != nil {
 		return localSession{}, err
 	}
-	defer ec.Close()
+	defer closeWithLog("egg client", ec)
 	stream, err := ec.AttachSession(ctx, session.ID)
 	if err != nil {
 		return localSession{}, fmt.Errorf("send to session %s: %w", session.ID, err)
@@ -444,8 +464,22 @@ func sendSessionBytes(ctx context.Context, cfg *config.Config, ref string, input
 	if _, err := stream.Recv(); err != nil {
 		return localSession{}, fmt.Errorf("send to session %s: %w", session.ID, err)
 	}
-	if err := stream.Send(&pb.SessionMsg{SessionId: session.ID, Payload: &pb.SessionMsg_Input{Input: input}}); err != nil {
-		return localSession{}, fmt.Errorf("send to session %s: %w", session.ID, err)
+	chunks := sessionInputChunks(input, enter)
+	for index, chunk := range chunks {
+		if index > 0 && len(input) > 0 {
+			timer := time.NewTimer(sessionEnterDelay)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return localSession{}, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err := stream.Send(&pb.SessionMsg{SessionId: session.ID, Payload: &pb.SessionMsg_Input{Input: chunk}}); err != nil {
+			return localSession{}, fmt.Errorf("send to session %s: %w", session.ID, err)
+		}
 	}
 	_ = stream.Send(&pb.SessionMsg{SessionId: session.ID, Payload: &pb.SessionMsg_Detach{Detach: true}})
 	_ = stream.CloseSend()
@@ -457,7 +491,7 @@ func waitForSessionText(ctx context.Context, cfg *config.Config, ref, needle str
 	if err != nil {
 		return localSession{}, err
 	}
-	defer ec.Close()
+	defer closeWithLog("egg client", ec)
 	stream, err := ec.AttachSession(ctx, session.ID)
 	if err != nil {
 		return localSession{}, fmt.Errorf("wait for session %s: %w", session.ID, err)

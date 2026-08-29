@@ -62,7 +62,7 @@ func connectWingWithPolicy(t *testing.T, tsURL, token, wingID string, agents []s
 func TestWingHostedRelayDenyOverridesOwnerAndOrgMemberRelayAccess(t *testing.T) {
 	srv, ts, store := testRelayAndWS(t)
 	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
-	srv.Config.RelayGrandfatherBefore = time.Now().Add(time.Hour)
+	srv.Config.RelayMigrationBefore = time.Now().Add(time.Hour)
 	ownerToken, ownerID := createTestUser(t, store, "relay-policy-owner")
 	memberToken, memberID := createTestUser(t, store, "relay-policy-member")
 	ownerRef := ownerID
@@ -162,6 +162,145 @@ func TestWingHostedRelayDenyOverridesOwnerAndOrgMemberRelayAccess(t *testing.T) 
 	}
 	if count != 6 {
 		t.Fatalf("hosted relay denial audit count = %d, want 6", count)
+	}
+}
+
+func TestActiveBrowserConnectionObservesRelayEntitlementRevocation(t *testing.T) {
+	srv, ts, store := testRelayAndWS(t)
+	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
+	token, userID := createTestUser(t, store, "live-entitlement")
+	userRef := userID
+	const subID = "live-entitlement-pro"
+	if err := store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &userRef, Plan: "pro", Status: "active", Seats: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEntitlement(&relay.Entitlement{ID: "live-entitlement-row", UserID: userID, SubscriptionID: subID}); err != nil {
+		t.Fatal(err)
+	}
+
+	wing := connectWing(t, wsURL(ts), token, "live-entitlement-wing", []string{"claude"})
+	defer wing.CloseNow()
+	browser := connectBrowser(t, wsURL(ts), token, "live-entitlement-wing")
+	defer browser.CloseNow()
+	sessionID := startSession(t, browser, wing, "claude", "live-entitlement-wing")
+
+	if err := store.UpdateSubscriptionStatus(subID, "canceled"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := wsjson.Write(ctx, wing, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: "must-not-forward"}); err != nil {
+		t.Fatal(err)
+	}
+	var denied ws.ErrorMsg
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.Type != ws.TypeError || denied.SessionID != sessionID || !strings.Contains(denied.Message, "not included") {
+		t.Fatalf("outbound revocation response = %#v", denied)
+	}
+	if err := wsjson.Write(ctx, browser, ws.PTYInput{Type: ws.TypePTYInput, SessionID: sessionID, Data: "must-not-forward"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.Type != ws.TypeError || denied.SessionID != sessionID || !strings.Contains(denied.Message, "not included") {
+		t.Fatalf("revocation response = %#v", denied)
+	}
+
+	wingReadCtx, wingReadCancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer wingReadCancel()
+	var input ws.PTYInput
+	if err := wsjson.Read(wingReadCtx, wing, &input); err == nil {
+		t.Fatalf("revoked relay input was forwarded: %#v", input)
+	}
+}
+
+func TestInFlightGeneralTunnelObservesRevocationWhileCoordinationSurvives(t *testing.T) {
+	srv, ts, store := testRelayAndWS(t)
+	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
+	token, userID := createTestUser(t, store, "tunnel-revocation")
+	userRef := userID
+	const subID = "tunnel-revocation-pro"
+	if err := store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &userRef, Plan: "pro", Status: "active", Seats: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEntitlement(&relay.Entitlement{ID: "tunnel-revocation-row", UserID: userID, SubscriptionID: subID}); err != nil {
+		t.Fatal(err)
+	}
+
+	wing := connectWing(t, wsURL(ts), token, "tunnel-revocation-wing", []string{"claude"})
+	defer wing.CloseNow()
+	browser := connectBrowser(t, wsURL(ts), token, "tunnel-revocation-wing")
+	defer browser.CloseNow()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	controlRequest := ws.TunnelRequest{
+		Type: ws.TypeTunnelRequest, WingID: "tunnel-revocation-wing", RequestID: "general-before-revoke",
+		Purpose: ws.TunnelPurposeControl, Payload: "opaque-control",
+	}
+	if err := wsjson.Write(ctx, browser, controlRequest); err != nil {
+		t.Fatal(err)
+	}
+	var forwarded ws.TunnelRequest
+	if err := wsjson.Read(ctx, wing, &forwarded); err != nil || forwarded.RequestID != controlRequest.RequestID {
+		t.Fatalf("general request forwarding = %#v err=%v", forwarded, err)
+	}
+	if err := store.UpdateSubscriptionStatus(subID, "canceled"); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Write(ctx, wing, ws.TunnelResponse{Type: ws.TypeTunnelResponse, RequestID: controlRequest.RequestID, Payload: "must-not-forward"}); err != nil {
+		t.Fatal(err)
+	}
+	var denied ws.ErrorMsg
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.Type != ws.TypeError || denied.RequestID != controlRequest.RequestID || !strings.Contains(denied.Message, "not included") {
+		t.Fatalf("in-flight tunnel revocation = %#v", denied)
+	}
+
+	discovery := ws.TunnelRequest{
+		Type: ws.TypeTunnelRequest, WingID: "tunnel-revocation-wing", RequestID: "coordination-after-revoke",
+		Purpose: ws.TunnelPurposeDiscovery, Payload: "opaque-discovery",
+	}
+	if err := wsjson.Write(ctx, browser, discovery); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, wing, &forwarded); err != nil || forwarded.RequestID != discovery.RequestID {
+		t.Fatalf("coordination request forwarding = %#v err=%v", forwarded, err)
+	}
+	coordinationResponse := ws.TunnelResponse{Type: ws.TypeTunnelResponse, RequestID: discovery.RequestID, Payload: "opaque-answer"}
+	if err := wsjson.Write(ctx, wing, coordinationResponse); err != nil {
+		t.Fatal(err)
+	}
+	var received ws.TunnelResponse
+	if err := wsjson.Read(ctx, browser, &received); err != nil || received.RequestID != discovery.RequestID || received.Payload != "opaque-answer" {
+		t.Fatalf("coordination response = %#v err=%v", received, err)
+	}
+}
+
+func TestWingReconnectSupersedesOldSocketWithoutLosingRouting(t *testing.T) {
+	_, ts, store := testRelayAndWS(t)
+	token, _ := createTestUser(t, store, "reconnect-overlap")
+	oldWing := connectWing(t, wsURL(ts), token, "reconnect-wing", []string{"claude"})
+	defer oldWing.CloseNow()
+	newWing := connectWing(t, wsURL(ts), token, "reconnect-wing", []string{"claude"})
+	defer newWing.CloseNow()
+
+	oldReadCtx, oldReadCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer oldReadCancel()
+	var staleMessage map[string]any
+	if err := wsjson.Read(oldReadCtx, oldWing, &staleMessage); err == nil {
+		t.Fatalf("superseded wing socket remained active: %#v", staleMessage)
+	}
+
+	browser := connectBrowser(t, wsURL(ts), token, "reconnect-wing")
+	defer browser.CloseNow()
+	if sessionID := startSession(t, browser, newWing, "claude", "reconnect-wing"); sessionID == "" {
+		t.Fatal("replacement wing did not receive the routed session")
 	}
 }
 
@@ -352,7 +491,7 @@ func TestPTYRoutingNoWingConnected(t *testing.T) {
 func TestDirectOnlyFreeTierRejectsRelayBeforeWingStart(t *testing.T) {
 	srv, ts, store := testRelayAndWS(t)
 	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
-	srv.Config.RelayGrandfatherBefore = time.Now().Add(-time.Hour)
+	srv.Config.RelayMigrationBefore = time.Now().Add(-time.Hour)
 	token, userID := createTestUser(t, store, "direct-only")
 
 	wingConn := connectWing(t, wsURL(ts), token, "wing-direct-only", []string{"claude"})
@@ -407,7 +546,7 @@ func TestDirectOnlyFreeTierRejectsRelayBeforeWingStart(t *testing.T) {
 func TestDirectOnlyFreeTierRequiresPurposeBindingWing(t *testing.T) {
 	srv, ts, store := testRelayAndWS(t)
 	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
-	srv.Config.RelayGrandfatherBefore = time.Now().Add(-time.Hour)
+	srv.Config.RelayMigrationBefore = time.Now().Add(-time.Hour)
 	token, _ := createTestUser(t, store, "direct-only-old-wing")
 
 	wingConn := connectWingWithPurposeBinding(t, wsURL(ts), token, "wing-direct-only-old", []string{"claude"}, false)

@@ -5,6 +5,7 @@ import { rebuildAgentLists, updateHeaderStatus } from './dashboard.js';
 import { updatePaletteState } from './palette.js';
 import { sendTunnelRequest, saveTunnelAuthTokens } from './tunnel.js';
 import { setNotification, clearNotification } from './notify.js';
+import { reconcileWingSessions } from './session-merge.js';
 
 // localStorage CRUD
 
@@ -113,10 +114,20 @@ function showCryptoToast(message) {
     var toast = document.createElement('div');
     toast.id = 'crypto-error-toast';
     toast.className = 'crypto-error-toast';
-    toast.innerHTML = '<span class="crypto-error-label">crypto error</span> ' +
-        '<span class="crypto-error-count">(' + _cryptoToastCount + ')</span> ' +
-        '<span class="crypto-error-msg">' + message.replace(/</g, '&lt;') + '</span>' +
-        '<button class="crypto-error-dismiss">&times;</button>';
+    var label = document.createElement('span');
+    label.className = 'crypto-error-label';
+    label.textContent = 'crypto error';
+    var count = document.createElement('span');
+    count.className = 'crypto-error-count';
+    count.textContent = '(' + _cryptoToastCount + ')';
+    var msg = document.createElement('span');
+    msg.className = 'crypto-error-msg';
+    msg.textContent = String(message);
+    var dismiss = document.createElement('button');
+    dismiss.className = 'crypto-error-dismiss';
+    dismiss.type = 'button';
+    dismiss.textContent = '\u00d7';
+    toast.append(label, ' ', count, ' ', msg, dismiss);
     document.body.appendChild(toast);
     toast.querySelector('.crypto-error-dismiss').addEventListener('click', function() { dismissCryptoToast(); });
     _cryptoToastTimer = setTimeout(function() { dismissCryptoToast(); }, 30000);
@@ -199,35 +210,7 @@ export async function fetchWingSessions(wingId) {
 }
 
 export function mergeWingSessions(wingId, remoteSessions) {
-    var remoteMap = {};
-    remoteSessions.forEach(function(s) { remoteMap[s.id] = s; });
-    var kept = [];
-    S.sessionsData.forEach(function(s) {
-        if (s.wing_id === wingId) {
-            var remote = remoteMap[s.id];
-            if (remote) {
-                s.agent = remote.agent;
-                s.cwd = remote.cwd;
-                s.needs_attention = remote.needs_attention;
-                s.audit = remote.audit;
-                s.user_id = remote.user_id;
-                s.email = remote.email;
-                s.swept = true;
-                kept.push(s);
-                delete remoteMap[s.id];
-            }
-            // Wing says gone — drop it
-        } else {
-            kept.push(s);
-        }
-    });
-    // Append new sessions from remote
-    Object.keys(remoteMap).forEach(function(id) {
-        var s = remoteMap[id];
-        s.swept = true;
-        kept.push(s);
-    });
-    S.sessionsData = sortSessionsByOrder(kept);
+    S.sessionsData = sortSessionsByOrder(reconcileWingSessions(S.sessionsData, wingId, remoteSessions));
     setEggOrder(S.sessionsData.map(function(s) { return s.id; }));
     saveSessionCache();
 }
@@ -241,6 +224,12 @@ export async function loadHome() {
 }
 
 async function _loadHomeInner() {
+    // Never render a relayed terminal cache to an account whose current policy
+    // denies browser payload transport, even briefly while wing probes run.
+    if (S.currentUser && S.currentUser.relay_allowed === false) {
+        S.sessionsData = [];
+        setCachedSessions([]);
+    }
     // Step 1: Hydrate wings from cache if empty (online=undefined for gray dots)
     if (S.wingsData.length === 0) {
         var cached = getCachedWings();
@@ -248,7 +237,7 @@ async function _loadHomeInner() {
     }
 
     // Step 1b: Hydrate sessions from cache if empty
-    if (S.sessionsData.length === 0) {
+    if (S.sessionsData.length === 0 && !(S.currentUser && S.currentUser.relay_allowed === false)) {
         var cachedSessions = getCachedSessions();
         if (cachedSessions.length > 0) {
             cachedSessions.forEach(function(s) { s.status = 'detached'; s.swept = true; });
@@ -336,9 +325,9 @@ async function _loadHomeInner() {
     if (S.activeView === 'wing-detail' && S.currentWingId) renderWingDetailPage(S.currentWingId);
     if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);
 
-    // Direct-only hosted accounts get coordination and wing readiness here,
-    // not the encrypted browser control tunnel. Do not keep rendering stale
-    // terminal cache entries or probe a capability the server will deny.
+    // Direct-only hosted accounts get coordination and bounded wing.info probes
+    // here, not browser terminal/session relaying. Do not render stale terminal
+    // cache entries or request the session APIs that the server will deny.
     if (S.currentUser && S.currentUser.relay_allowed === false) {
         S.sessionsData = [];
         setCachedSessions([]);

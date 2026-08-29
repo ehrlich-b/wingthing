@@ -1,24 +1,31 @@
 package relay
 
-import "time"
-
 const (
 	RelayPolicyLegacy     = "legacy"
 	RelayPolicyDirectFree = "direct-free"
 )
-
-// DefaultRelayGrandfatherBefore is the hosted migration boundary. Accounts
-// created before this instant keep temporary relay parity when the hosted
-// direct-free policy is enabled. Operators can override it explicitly.
-var DefaultRelayGrandfatherBefore = time.Date(2026, 8, 26, 0, 0, 0, 0, time.UTC)
 
 type RelayAccess struct {
 	Allowed bool   `json:"allowed"`
 	Reason  string `json:"reason"`
 }
 
+// selfServicePlansEnabled reports whether the historical, billing-free plan
+// mutation endpoints are part of this deployment. They remain available to
+// legacy and self-hosted installs for compatibility, but must not let users on
+// the public direct-free tier grant themselves hosted-relay access.
+func (s *Server) selfServicePlansEnabled() bool {
+	return s.LocalMode || s.RoostMode || s.Config.RelayPolicy != RelayPolicyDirectFree
+}
+
 func (s *Server) relayAccess(userID string) RelayAccess {
-	if s.LocalMode || s.RoostMode {
+	if s.LocalMode {
+		return RelayAccess{Allowed: true, Reason: "self-hosted"}
+	}
+	if !s.roostUserIDAllowed(userID) {
+		return RelayAccess{Allowed: false, Reason: "roost-enrollment-required"}
+	}
+	if s.RoostMode {
 		return RelayAccess{Allowed: true, Reason: "self-hosted"}
 	}
 	if s.Config.RelayPolicy != RelayPolicyDirectFree {
@@ -27,7 +34,7 @@ func (s *Server) relayAccess(userID string) RelayAccess {
 	// Edge nodes open a local store for process plumbing, but account truth
 	// lives on the login node. Prefer its synchronized decision whenever the
 	// cache is installed; consulting the empty edge DB would incorrectly turn
-	// every Pro and grandfathered user into direct-only free.
+	// every Pro and temporary-migration user into direct-only free.
 	if s.EntitlementCache != nil {
 		return s.EntitlementCache.GetRelayAccess(userID)
 	}
@@ -36,8 +43,8 @@ func (s *Server) relayAccess(userID string) RelayAccess {
 			return RelayAccess{Allowed: true, Reason: "pro"}
 		}
 		user, _ := s.Store.GetUserByID(userID)
-		if user != nil && !s.Config.RelayGrandfatherBefore.IsZero() && !user.CreatedAt.After(s.Config.RelayGrandfatherBefore) {
-			return RelayAccess{Allowed: true, Reason: "temporary-grandfather"}
+		if user != nil && !s.Config.RelayMigrationBefore.IsZero() && !user.CreatedAt.After(s.Config.RelayMigrationBefore) {
+			return RelayAccess{Allowed: true, Reason: "temporary-migration"}
 		}
 		return RelayAccess{Allowed: false, Reason: "direct-only-free"}
 	}

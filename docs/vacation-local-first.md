@@ -1,8 +1,13 @@
 # Vacation local-first development window
 
-Status: active branch policy  
+Status: historical, expired branch policy
 Branch: `feature-local-first-terminal-routing`  
 Window: 2026-08-08 through approximately 2026-08-20
+
+This freeze is no longer in force. It is retained as a record of the development
+window, not as current merge, tag, or deployment instruction. Use the current
+[agent-manager product brief](agent-manager-product-brief.md) and CI/release
+workflows for present promotion gates.
 
 ## The contract
 

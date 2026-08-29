@@ -5,7 +5,7 @@ computer to it through SSH. Claude or Codex runs on the remote computer; your
 browser stays pointed at `localhost`.
 
 ```text
-localhost browser -> local roost -> SSH tunnel -> remote wing -> Claude or Codex
+localhost browser -> local portal -> SSH tunnel -> remote wing -> Claude or Codex
 ```
 
 This is the smallest self-hosted setup. It does not use wingthing.ai.
@@ -30,7 +30,9 @@ The CA itself is name-constrained to localhost and loopback IPs. Leave the serve
 running. HTTPS mode binds both of its listeners to loopback: the browser uses
 `https://localhost:8443`, while the wing reaches the private HTTP endpoint on
 `127.0.0.1:8080` through SSH. Local mode has no human login screen, so neither
-listener may be exposed to a LAN or the public internet.
+listener may be exposed to a LAN or the public internet. WT refuses a non-loopback
+local bind, rejects non-loopback Host headers, and requires same-origin browser
+mutations and WebSocket handshakes.
 
 ## 2. Carry it to the remote computer over SSH
 
@@ -44,7 +46,7 @@ ssh -N \
 ```
 
 This creates `127.0.0.1:18743` on the remote computer. Traffic sent there travels
-inside SSH to the private roost on your browser computer. It uses SSH access you
+inside SSH to the private portal on your browser computer. It uses SSH access you
 already have; it does not open a new Wingthing service to the remote network.
 
 ## 3. Start the remote wing
@@ -67,7 +69,7 @@ browser-to-wing terminal channel; the roost cannot read it. Claude redeems the c
 and stores the durable credential on the remote host. Codex and other agents follow
 the same rule using their own login commands.
 
-Now log the wing into the roost through the forwarded port and start it:
+Now log the wing into the portal through the forwarded port and start it:
 
 ```sh
 wt login --roost http://127.0.0.1:18743
@@ -92,18 +94,21 @@ or attach from a terminal on the remote computer with `wt attach`.
 ## What protects this setup
 
 - The roost listens only on the browser computer's loopback interface.
+- Host, browser-mutation Origin, and WebSocket Origin checks defend the no-login
+  loopback service against DNS rebinding and hostile web pages.
 - The browser connection uses a locally trusted HTTPS certificate. Only its public
   CA is added to this user's trust store; the CA private key stays on this computer.
 - The forwarded port listens only on the remote computer's loopback interface.
 - SSH authenticates the two computers and encrypts the host-to-host connection.
-- The wing authenticates to the roost with its own device token.
+- The wing authenticates to the portal with its own device token.
 - Terminal payloads are additionally encrypted between the browser and the wing;
-  the roost handles routing metadata but not plaintext terminal contents.
+  the portal handles routing metadata but not plaintext terminal contents.
 - Project files and provider credentials remain on the remote computer.
 
 `--local` trusts software that can reach its loopback port. Do not change either
-`127.0.0.1` binding to `0.0.0.0`. For an always-on URL or several human users, run
-an HTTPS roost with OAuth instead; see the
+`127.0.0.1` binding to `0.0.0.0`. This guide uses `wt serve`, so it runs a portal
+and gateway without adding an embedded local wing. For an always-on URL or several
+human users, run an HTTPS roost with OAuth instead; see the
 [private team roost guide](../shared-web-roost/INSTRUCTIONS.md).
 
 Inspect the local certificate at any time with `wt local-cert status`. To remove

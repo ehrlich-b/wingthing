@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/url"
 	"sync"
 	"time"
@@ -96,12 +95,11 @@ func VerifyPasskeyAssertion(allowedKey, challenge, authenticatorData, clientData
 	if len(allowedKey) != 64 {
 		return errors.New("invalid key length: expected 64 bytes")
 	}
-	pubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     new(big.Int).SetBytes(allowedKey[:32]),
-		Y:     new(big.Int).SetBytes(allowedKey[32:]),
-	}
-	if !pubKey.Curve.IsOnCurve(pubKey.X, pubKey.Y) {
+	encodedKey := make([]byte, 65)
+	encodedKey[0] = 4 // SEC 1 uncompressed point marker
+	copy(encodedKey[1:], allowedKey)
+	pubKey, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), encodedKey)
+	if err != nil {
 		return errors.New("invalid P-256 public key")
 	}
 
@@ -184,7 +182,11 @@ type authEntry struct {
 type AuthCache struct {
 	mu     sync.Mutex
 	tokens map[string]authEntry // token → entry
+	order  []string
+	next   int
 }
+
+const maxAuthCacheEntries = 10_000
 
 // NewAuthCache creates a new boot-scoped in-memory auth cache.
 func NewAuthCache() *AuthCache {
@@ -197,7 +199,20 @@ func NewAuthCache() *AuthCache {
 func (c *AuthCache) Put(token string, pubKey []byte, subject string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.tokens[token] = authEntry{pubKey: pubKey, subject: subject, createdAt: time.Now()}
+	entry := authEntry{pubKey: append([]byte(nil), pubKey...), subject: subject, createdAt: time.Now()}
+	if _, exists := c.tokens[token]; exists {
+		c.tokens[token] = entry
+		return
+	}
+	if len(c.order) < maxAuthCacheEntries {
+		c.order = append(c.order, token)
+	} else {
+		evicted := c.order[c.next]
+		delete(c.tokens, evicted)
+		c.order[c.next] = token
+		c.next = (c.next + 1) % maxAuthCacheEntries
+	}
+	c.tokens[token] = entry
 }
 
 // Check returns the public key for a valid token. If ttl > 0, expired tokens
@@ -217,7 +232,7 @@ func (c *AuthCache) Check(token string, ttl time.Duration, subject string) ([]by
 	if subject == "" || entry.subject != subject {
 		return nil, false
 	}
-	return entry.pubKey, true
+	return append([]byte(nil), entry.pubKey...), true
 }
 
 type challengeEntry struct {
@@ -232,7 +247,11 @@ type challengeEntry struct {
 type ChallengeCache struct {
 	mu         sync.Mutex
 	challenges map[string]challengeEntry
+	order      []string
+	next       int
 }
+
+const maxChallengeCacheEntries = 10_000
 
 func NewChallengeCache() *ChallengeCache {
 	return &ChallengeCache{challenges: make(map[string]challengeEntry)}
@@ -259,10 +278,13 @@ func (c *ChallengeCache) Put(subject string, ttl time.Duration) (string, []byte,
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
-	for key, entry := range c.challenges {
-		if now.After(entry.expiresAt) {
-			delete(c.challenges, key)
-		}
+	if len(c.order) < maxChallengeCacheEntries {
+		c.order = append(c.order, id)
+	} else {
+		evicted := c.order[c.next]
+		delete(c.challenges, evicted)
+		c.order[c.next] = id
+		c.next = (c.next + 1) % maxChallengeCacheEntries
 	}
 	c.challenges[id] = challengeEntry{
 		challenge: append([]byte(nil), challenge...),

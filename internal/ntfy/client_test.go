@@ -1,6 +1,8 @@
 package ntfy
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,6 +24,48 @@ func TestNewFullURL(t *testing.T) {
 	}
 	if c.token != "tok123" {
 		t.Fatalf("got token %q", c.token)
+	}
+}
+
+func TestNewHostedRequiresSafeHTTPSEndpoint(t *testing.T) {
+	for _, endpoint := range []string{
+		"http://ntfy.example.com/topic",
+		"https://user:password@ntfy.example.com/topic",
+		"https:///missing-host",
+	} {
+		if _, err := NewHosted(endpoint, "", "attention"); err == nil {
+			t.Errorf("NewHosted(%q) succeeded", endpoint)
+		}
+	}
+	client, err := NewHosted("reserved-topic", "token", "attention")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.url != "https://ntfy.sh/reserved-topic" {
+		t.Fatalf("hosted bare topic URL = %q", client.url)
+	}
+}
+
+func TestHostedDialRejectsNonPublicAddresses(t *testing.T) {
+	for _, address := range []string{
+		"127.0.0.1:443",
+		"[::1]:443",
+		"10.0.0.1:443",
+		"169.254.169.254:443",
+		"100.64.0.1:443",
+	} {
+		if conn, err := dialPublicContext(context.Background(), "tcp", address); err == nil {
+			_ = conn.Close()
+			t.Errorf("hosted dial accepted %s", address)
+		}
+	}
+}
+
+func TestPublicDestinationIP(t *testing.T) {
+	for _, address := range []string{"8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"} {
+		if !publicDestinationIP(net.ParseIP(address)) {
+			t.Errorf("publicDestinationIP(%s) = false", address)
+		}
 	}
 }
 
@@ -217,7 +261,9 @@ func TestNoAuthHeaderWithoutToken(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "", "attention,exit")
-	c.SendTest()
+	if err := c.SendTest(); err != nil {
+		t.Fatal(err)
+	}
 	if gotAuth != "" {
 		t.Fatalf("expected no auth header, got %q", gotAuth)
 	}

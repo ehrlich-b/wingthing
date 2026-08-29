@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -16,6 +17,13 @@ func sandboxExecAvailable(t *testing.T) {
 	cmd := exec.Command("sandbox-exec", "-p", "(version 1)(allow default)", "/bin/echo", "ok")
 	if err := cmd.Run(); err != nil {
 		t.Skip("sandbox-exec unavailable (nested sandbox or SIP): ", err)
+	}
+}
+
+func destroySandboxForTest(t *testing.T, sb Sandbox) {
+	t.Helper()
+	if err := sb.Destroy(); err != nil {
+		t.Errorf("destroy sandbox: %v", err)
 	}
 }
 
@@ -44,6 +52,81 @@ func TestBuildProfileDenyPaths(t *testing.T) {
 	}
 	if !strings.Contains(profile, home+"/.gnupg") {
 		t.Errorf("profile should deny .gnupg, got:\n%s", profile)
+	}
+}
+
+func TestBuildProfileDenyPathCoversExactMissingPathAndDescendants(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), ".aws")
+	canonical, err := canonicalSandboxPath(missing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := buildProfile(Config{Deny: []string{missing}})
+	for _, want := range []string{
+		`(deny file-read* file-write* (literal "` + canonical + `"))`,
+		`(deny file-read* file-write* (subpath "` + canonical + `"))`,
+		`(deny network-outbound (literal "` + canonical + `"))`,
+		`(deny network-outbound (subpath "` + canonical + `"))`,
+	} {
+		if !strings.Contains(profile, want) {
+			t.Errorf("profile missing %s:\n%s", want, profile)
+		}
+	}
+}
+
+func TestBuildProfileDenyPathOverridesAllowedSocket(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "agent.sock")
+	canonical, err := canonicalSandboxPath(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := buildProfile(Config{
+		NetworkNeed:  NetworkFull,
+		AllowSockets: []string{socket},
+		Deny:         []string{socket},
+	})
+	allow := `(allow network-outbound (literal "` + canonical + `"))`
+	deny := `(deny network-outbound (literal "` + canonical + `"))`
+	allowIndex := strings.Index(profile, allow)
+	denyIndex := strings.Index(profile, deny)
+	if allowIndex < 0 || denyIndex < 0 || denyIndex < allowIndex {
+		t.Fatalf("socket deny must follow overlapping allow: allow=%d deny=%d\n%s", allowIndex, denyIndex, profile)
+	}
+}
+
+func TestBuildProfileDenyPathOverridesWritableMount(t *testing.T) {
+	denied := t.TempDir()
+	canonical, err := canonicalSandboxPath(denied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := buildProfile(Config{
+		Mounts: []Mount{{Source: denied, Target: denied}},
+		Deny:   []string{denied},
+	})
+	allow := `(allow file-write* (subpath "` + canonical + `"))`
+	deny := `(deny file-read* file-write* (subpath "` + canonical + `"))`
+	allowIndex := strings.Index(profile, allow)
+	denyIndex := strings.Index(profile, deny)
+	if allowIndex < 0 || denyIndex < 0 || denyIndex < allowIndex {
+		t.Fatalf("deny must follow overlapping writable mount allow: allow=%d deny=%d\n%s", allowIndex, denyIndex, profile)
+	}
+}
+
+func TestCanonicalSandboxPathResolvesMissingPathThroughSymlinkedAncestor(t *testing.T) {
+	parent := t.TempDir()
+	realParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(parent, "missing", "credential")
+	got, err := canonicalSandboxPath(missing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(realParent, "missing", "credential")
+	if got != want {
+		t.Fatalf("canonicalSandboxPath(%q) = %q, want %q", missing, got, want)
 	}
 }
 
@@ -130,7 +213,11 @@ func TestSeatbeltNetworkBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newPlatform: %v", err)
 	}
-	defer sb.Destroy()
+	defer func() {
+		if err := sb.Destroy(); err != nil {
+			t.Errorf("destroy sandbox: %v", err)
+		}
+	}()
 
 	cmd, err := sb.Exec(context.Background(), "/usr/bin/curl", []string{"-s", "--max-time", "3", "https://example.com"})
 	if err != nil {
@@ -151,7 +238,11 @@ func TestSeatbeltNetworkAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newPlatform: %v", err)
 	}
-	defer sb.Destroy()
+	defer func() {
+		if err := sb.Destroy(); err != nil {
+			t.Errorf("destroy sandbox: %v", err)
+		}
+	}()
 
 	// Just verify the process runs — don't actually hit the network in tests
 	cmd, err := sb.Exec(context.Background(), "/bin/echo", []string{"network-ok"})
@@ -173,7 +264,9 @@ func TestSeatbeltDenyPathBlocked(t *testing.T) {
 	// Create a temp file, deny access to its directory
 	tmpDir := t.TempDir()
 	testFile := tmpDir + "/secret.txt"
-	os.WriteFile(testFile, []byte("secret"), 0644)
+	if err := os.WriteFile(testFile, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	sb, err := newPlatform(Config{
 		NetworkNeed: NetworkFull,
@@ -182,7 +275,7 @@ func TestSeatbeltDenyPathBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newPlatform: %v", err)
 	}
-	defer sb.Destroy()
+	defer destroySandboxForTest(t, sb)
 
 	cmd, err := sb.Exec(context.Background(), "/bin/cat", []string{testFile})
 	if err != nil {
@@ -197,9 +290,51 @@ func TestSeatbeltDenyPathBlocked(t *testing.T) {
 	}
 }
 
+func TestSeatbeltSSHKnownHostsExceptionSurvivesExactDirectoryDeny(t *testing.T) {
+	sandboxExecAvailable(t)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshDir := filepath.Join(home, ".ssh")
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+	if _, err := os.Stat(knownHosts); err != nil {
+		t.Skip("no SSH known_hosts file to exercise: ", err)
+	}
+
+	allowed, err := newPlatform(Config{NetworkNeed: NetworkFull, Deny: []string{sshDir}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destroySandboxForTest(t, allowed)
+	cmd, err := allowed.Exec(context.Background(), "/usr/bin/head", []string{"-c", "1", knownHosts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("known_hosts exception was blocked by exact directory deny: %v", err)
+	}
+
+	blocked, err := newPlatform(Config{NetworkNeed: NetworkFull, Deny: []string{sshDir, knownHosts}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destroySandboxForTest(t, blocked)
+	cmd, err = blocked.Exec(context.Background(), "/usr/bin/head", []string{"-c", "1", knownHosts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Run(); err == nil {
+		t.Fatal("explicit known_hosts deny was bypassed")
+	}
+}
+
 func TestSeatbeltWriteRestriction(t *testing.T) {
 	sandboxExecAvailable(t)
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	jail := t.TempDir()
 
 	sb, err := newPlatform(Config{
@@ -211,7 +346,7 @@ func TestSeatbeltWriteRestriction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newPlatform: %v", err)
 	}
-	defer sb.Destroy()
+	defer destroySandboxForTest(t, sb)
 
 	// Write inside mount should succeed
 	cmd, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", "echo ok > " + jail + "/test.txt"})
@@ -221,7 +356,9 @@ func TestSeatbeltWriteRestriction(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("write to mount path should succeed: %v", err)
 	}
-	os.Remove(jail + "/test.txt")
+	if err := os.Remove(jail + "/test.txt"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Write outside mount (in home) should fail
 	target := home + "/wt-sandbox-test-delete-me"
@@ -230,7 +367,9 @@ func TestSeatbeltWriteRestriction(t *testing.T) {
 		t.Fatalf("Exec: %v", err)
 	}
 	err = cmd2.Run()
-	os.Remove(target) // clean up in case it leaked
+	if removeErr := os.Remove(target); removeErr != nil && !os.IsNotExist(removeErr) { // clean up in case it leaked
+		t.Fatal(removeErr)
+	}
 	if err == nil {
 		t.Fatal("expected write outside mount to fail, but it succeeded")
 	}
@@ -244,7 +383,9 @@ func TestSeatbeltDenyWriteBlocksWrite(t *testing.T) {
 	// Without the mount, deny-write trivially works (no competing allow rule).
 	tmpDir := t.TempDir()
 	protectedFile := tmpDir + "/egg.yaml"
-	os.WriteFile(protectedFile, []byte("original content"), 0644)
+	if err := os.WriteFile(protectedFile, []byte("original content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	sb, err := newPlatform(Config{
 		NetworkNeed: NetworkFull,
@@ -254,7 +395,7 @@ func TestSeatbeltDenyWriteBlocksWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newPlatform: %v", err)
 	}
-	defer sb.Destroy()
+	defer destroySandboxForTest(t, sb)
 
 	// Read should succeed
 	cmd, err := sb.Exec(context.Background(), "/bin/cat", []string{protectedFile})

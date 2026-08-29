@@ -1,8 +1,8 @@
 # wingthing.ai Production Canary
 
-Date: 2026-08-25
+Date: 2026-08-25 through 2026-08-27
 
-Status: Fly release v304 healthy; rollback releases and database backup retained
+Status: Fly release v306 healthy; rollback releases and database backup retained
 
 ## Initial v301 deployment identity
 
@@ -37,7 +37,7 @@ The Fly volume also retained its automatic snapshots. After deployment:
 
 - `PRAGMA integrity_check` returned `ok`;
 - the database contained 25 users and 8 entitlement rows; and
-- all 25 existing users were created before the configured grandfather cutoff of
+- all 25 existing users were created before the configured migration boundary of
   `2026-08-26T00:00:00Z`; none fell on the new-free side of the boundary.
 
 No `WT_RELAY_POLICY` secret overrides the runtime policy, so the public OAuth
@@ -131,10 +131,27 @@ and an unrelated Datadog destination blocked. Fly release v304 deployed commit
 public recipe. `/health` and the published Markdown recipe both returned HTTP 200
 with the new content.
 
+## v305-v306 Local HTTPS follow-up
+
+Fly release v305 deployed `6c4746a`, adding the opt-in device-local HTTPS flow for
+`wt roost start --https` and `wt serve --local --https`. The generated CA is
+name-constrained to localhost/loopback, private keys remain under the local
+Wingthing state directory, and only the public CA enters the current user's trust
+store.
+
+Fly release v306 deployed `d1610e6`, which verifies the platform trust result before
+recording installation success and fixes the macOS trust ceremony exposed during
+the field E2E. On 2026-08-27, `fly status -a wingthing` reported the single `login`
+machine in `ewr` started at version 306 with one of one health checks passing. Its
+image is `wingthing:deployment-01M0Z236DFZZGPMREMW4NH4P7R`.
+
+These releases updated the hosted documentation and binary used by the self-hosted
+walkthrough; they did not make the device-local CA part of public Fly TLS.
+
 ## Rollback
 
-Release v303 is the immediate rollback for the documentation-only v304 change, v302
-and v301 are the prior feature releases, and v300 remains the pre-feature rollback
+Release v305 is the immediate rollback for v306, v304-v301 are prior feature
+releases, and v300 remains the pre-feature rollback
 in Fly's release history. After any rollback, verify
 `/health`, wing reconnection, and existing sessions. Use the pre-deploy SQLite backup
 only if the old runtime cannot safely read the current schema; restoring it would
@@ -155,6 +172,13 @@ checks are:
 
 Bryan remains the deeper organization-mode and real-Sonnet field canary; see the
 [Bryan field report](bryan-wingthing-direct-control-field-report.md).
+
+As rechecked on 2026-08-27, the latest GitHub release remains `v0.144.1`, which
+predates `wt mcp connect` and local `--https` even though the Fly website documents
+them. Do not treat the current `curl .../install.sh | sh` path as a successful
+feature install until a matching GitHub release is published. This branch makes the
+installer fail safely in that state and adds a checksum/command contract plus
+release-workflow gates; those changes are not present in Fly v306.
 
 After v301 was deployed, Bryan was pinned to the exact `db0dc78` runtime. A fresh
 authenticated native connector listed its one authorized wing and fetched

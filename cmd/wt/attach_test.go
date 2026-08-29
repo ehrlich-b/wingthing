@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -50,7 +51,7 @@ func TestValidateSessionID(t *testing.T) {
 			t.Errorf("validateSessionID(%q): %v", valid, err)
 		}
 	}
-	for _, invalid := range []string{"", ".", "..", "../egg", "a/b", "two words", "x\ncommand"} {
+	for _, invalid := range []string{"", ".", "..", "../egg", "a/b", `a\b`, "two words", "x\ncommand", strings.Repeat("a", 129)} {
 		if err := validateSessionID(invalid); err == nil {
 			t.Errorf("validateSessionID(%q) unexpectedly succeeded", invalid)
 		}

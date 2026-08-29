@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,6 +35,23 @@ func TestCreateTaskWithDependsOn(t *testing.T) {
 	}
 	if *got.DependsOn != depsStr {
 		t.Errorf("depends_on = %q, want %q", *got.DependsOn, depsStr)
+	}
+}
+
+func TestListReadyRejectsMalformedDependencies(t *testing.T) {
+	s := openTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	malformed := `{"not":"a task id list"}`
+	task := &Task{
+		ID: "t-corrupt-deps", What: "must not run", RunAt: now.Add(-time.Minute),
+		Agent: "claude", DependsOn: &malformed,
+	}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := s.ListReady(now)
+	if err == nil || !strings.Contains(err.Error(), task.ID) {
+		t.Fatalf("ready=%#v err=%v, want a task-scoped dependency error", ready, err)
 	}
 }
 
@@ -161,9 +179,15 @@ func TestListReadyDiamond(t *testing.T) {
 	// A is done, B is pending -> C should not be ready
 	a := &Task{ID: "t-a", Type: "prompt", What: "a", RunAt: now.Add(-3 * time.Minute), Agent: "claude"}
 	b := &Task{ID: "t-b", Type: "prompt", What: "b", RunAt: now.Add(-2 * time.Minute), Agent: "claude"}
-	s.CreateTask(a)
-	s.CreateTask(b)
-	s.UpdateTaskStatus("t-a", "done")
+	if err := s.CreateTask(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateTask(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTaskStatus("t-a", "done"); err != nil {
+		t.Fatal(err)
+	}
 
 	deps, _ := json.Marshal([]string{"t-a", "t-b"})
 	depsStr := string(deps)
@@ -175,7 +199,9 @@ func TestListReadyDiamond(t *testing.T) {
 		Agent:     "claude",
 		DependsOn: &depsStr,
 	}
-	s.CreateTask(c)
+	if err := s.CreateTask(c); err != nil {
+		t.Fatal(err)
+	}
 
 	ready, err := s.ListReady(now)
 	if err != nil {
@@ -188,7 +214,9 @@ func TestListReadyDiamond(t *testing.T) {
 	}
 
 	// Now mark B as done, C should become ready
-	s.UpdateTaskStatus("t-b", "done")
+	if err := s.UpdateTaskStatus("t-b", "done"); err != nil {
+		t.Fatal(err)
+	}
 	ready, err = s.ListReady(now)
 	if err != nil {
 		t.Fatalf("list ready after b done: %v", err)

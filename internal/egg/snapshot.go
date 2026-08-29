@@ -51,17 +51,24 @@ func (s *ConfigSnapshot) Restore() {
 	for path, data := range s.files {
 		if data == nil {
 			// File didn't exist before — remove if agent created it
-			if _, err := os.Stat(path); err == nil {
+			if _, err := os.Lstat(path); err == nil {
 				log.Printf("egg: snapshot: removing agent-created config %s", path)
-				os.Remove(path)
+				if err := os.Remove(path); err != nil {
+					log.Printf("egg: snapshot: remove %s: %v", path, err)
+				}
 			}
 		} else {
 			current, err := os.ReadFile(path)
 			if err != nil || string(current) != string(data) {
 				log.Printf("egg: snapshot: restoring %s", path)
 				dir := filepath.Dir(path)
-				os.MkdirAll(dir, 0700)
-				os.WriteFile(path, data, 0600)
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					log.Printf("egg: snapshot: create directory %s: %v", dir, err)
+					continue
+				}
+				if err := atomicWritePrivate(path, data); err != nil {
+					log.Printf("egg: snapshot: restore %s: %v", path, err)
+				}
 			}
 		}
 	}

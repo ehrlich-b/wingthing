@@ -68,6 +68,13 @@ rejected.
 | Domain filtering | SBPL forces traffic through local CONNECT proxy | CLONE_NEWNET + inherited-FD loopback relay to CONNECT proxy |
 | PID isolation | n/a | CLONE_NEWPID |
 
+On macOS, every `deny:` path emits both filesystem-denial and Unix-socket
+`network-outbound` rules. This matters for discoverable SSH-agent and control
+sockets: blocking reads of the socket pathname alone does not block `connect(2)`
+to an already-open endpoint. Explicit socket allows are emitted first, so an
+overlapping mandatory deny still wins. Linux masks denied socket paths inside
+the mount namespace.
+
 ### Seccomp (Linux only)
 
 BPF filter blocks 27+ syscalls across these categories:
@@ -110,18 +117,41 @@ macOS Seatbelt does not support resource limits.
 
 Linux keeps `CLONE_NEWNET` for every network mode. The namespace has no default
 route and receives only declared loopback listeners: an HTTP CONNECT proxy for
-domain-filtered HTTPS and explicit `network.local_ports` forwards for host-local
-services. Removing `HTTPS_PROXY` therefore does not restore network access.
+domain-filtered tunnels and explicit `network.local_ports` forwards for
+host-local services. Removing `HTTPS_PROXY` therefore does not restore network
+access.
 
-The inherited relay currently carries TCP only. Domain-filtered arbitrary TCP,
-UDP, ICMP, and other protocols are not yet available. `network: "*"` permits any
-HTTP CONNECT destination, but it still does not create a general routed network
-interface.
+CONNECT can carry arbitrary TCP bytes to any port on an allowed host; the
+current policy filters the destination host, not its port. Software must honor
+the HTTP proxy variables or explicitly speak CONNECT. There is no SOCKS proxy or
+general routed interface for ordinary raw-socket clients, and UDP, ICMP, and
+other non-TCP protocols are unavailable. `network: "*"` permits any TCP target
+presented through CONNECT, but still creates no general route. Host-side CONNECT
+and loopback relays are capped at 256 simultaneous
+tunnels per sandbox; CONNECT headers and upstream dials also have finite timeouts.
+Destroying the sandbox closes its inherited bridge and active proxy tunnels.
+To prevent an allowed public hostname from becoming an SSRF route through DNS
+rebinding, named domains may not resolve to loopback, link-local, RFC1918, IPv6
+ULA, or CGNAT/tailnet space. An operator who intentionally needs a private
+destination can list its IP literal; host-loopback services should use
+`network.local_ports`.
 
 On WSL2 the same namespace relay is supported. If a particular WSL kernel rejects
 one of the filesystem bind mounts, Wingthing names the failed operation and
 refuses to launch; run inside a privileged Linux container or VM when an outer
 filesystem boundary is required.
+
+#### Linux upgrade note
+
+Older Linux releases did not keep the network namespace for every policy. After
+upgrading, a workload that depended on raw sockets, UDP/ICMP, or an undeclared
+destination will fail closed. `network: "*"` restores any-destination CONNECT
+traffic, but intentionally does not restore a general route. A workload that
+needs a service on the host loopback must declare its TCP port under
+`network.local_ports`; listing only `localhost` does not forward every host
+port. Use `wt egg explain <agent>` and, temporarily, `network.mode: observe` to
+diagnose missing CONNECT destinations. Observe mode does not restore raw
+network protocols.
 
 ### Agent credentials are accessible
 

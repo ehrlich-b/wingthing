@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -38,6 +39,9 @@ func prepareLocalHTTPS(ctx context.Context, configDir, httpAddr, httpsAddr strin
 	if err := requireLoopbackAddress("browser HTTPS", httpsAddr); err != nil {
 		return nil, err
 	}
+	if err := requireLocalCertificateAddress(httpsAddr); err != nil {
+		return nil, err
+	}
 	if sameAddress(httpAddr, httpsAddr) {
 		return nil, fmt.Errorf("wing HTTP and browser HTTPS listeners must use different addresses")
 	}
@@ -65,7 +69,7 @@ func prepareLocalHTTPS(ctx context.Context, configDir, httpAddr, httpsAddr strin
 
 func installLocalTrust(ctx context.Context, m *localtls.Material) (bool, error) {
 	store := localtls.SystemTrustStore()
-	trusted, err := store.Trusted(m)
+	trusted, err := store.Trusted(ctx, m)
 	if err != nil {
 		return false, err
 	}
@@ -80,6 +84,14 @@ func localHTTPAddrForHTTPS(addr string, explicit bool) string {
 		return defaultLocalHTTPAddr
 	}
 	return addr
+}
+
+func prepareLocalHTTPAddress(addr string, explicit bool) (string, error) {
+	addr = localHTTPAddrForHTTPS(addr, explicit)
+	if err := requireLoopbackAddress("local roost HTTP", addr); err != nil {
+		return "", err
+	}
+	return addr, nil
 }
 
 func printTrustPrompt(m *localtls.Material) {
@@ -123,6 +135,17 @@ func requireLoopbackAddress(label, addr string) error {
 	return nil
 }
 
+func requireLocalCertificateAddress(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("browser HTTPS address %q: %w", addr, err)
+	}
+	if strings.EqualFold(host, "localhost") || host == "127.0.0.1" || host == "::1" {
+		return nil
+	}
+	return fmt.Errorf("browser HTTPS address %q is not covered by the localhost certificate; use localhost, 127.0.0.1, or ::1", addr)
+}
+
 func sameAddress(a, b string) bool {
 	aHost, aPort, aErr := net.SplitHostPort(a)
 	bHost, bPort, bErr := net.SplitHostPort(b)
@@ -158,14 +181,21 @@ func normalizeLoopbackHost(host string) string {
 }
 
 func browserHTTPSURL(addr string) (string, error) {
-	_, port, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return "", fmt.Errorf("browser HTTPS address %q: %w", addr, err)
 	}
-	if port == "443" {
-		return "https://localhost", nil
+	if err := requireLocalCertificateAddress(addr); err != nil {
+		return "", err
 	}
-	return "https://" + net.JoinHostPort("localhost", port), nil
+	browserHost := "localhost"
+	if host == "::1" {
+		browserHost = "[::1]"
+	}
+	if port == "443" {
+		return "https://" + browserHost, nil
+	}
+	return "https://" + net.JoinHostPort(strings.Trim(browserHost, "[]"), port), nil
 }
 
 func localHTTPURL(addr string) string {
@@ -199,9 +229,34 @@ func validateLocalHTTPSMode(requested, localMode, edgeMode bool) error {
 }
 
 func authProvidersConfigured() bool {
-	return os.Getenv("GITHUB_CLIENT_ID") != "" ||
-		os.Getenv("GOOGLE_CLIENT_ID") != "" ||
-		os.Getenv("SMTP_HOST") != ""
+	return strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID")) != "" ||
+		strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")) != "" ||
+		strings.TrimSpace(os.Getenv("SMTP_HOST")) != ""
+}
+
+func validateAuthProviderEnvironment() error {
+	for _, provider := range []struct {
+		name      string
+		idEnv     string
+		secretEnv string
+	}{
+		{name: "GitHub", idEnv: "GITHUB_CLIENT_ID", secretEnv: "GITHUB_CLIENT_SECRET"},
+		{name: "Google", idEnv: "GOOGLE_CLIENT_ID", secretEnv: "GOOGLE_CLIENT_SECRET"},
+	} {
+		hasID := strings.TrimSpace(os.Getenv(provider.idEnv)) != ""
+		hasSecret := strings.TrimSpace(os.Getenv(provider.secretEnv)) != ""
+		if hasID == hasSecret {
+			continue
+		}
+		missing := provider.idEnv
+		present := provider.secretEnv
+		if hasID {
+			missing = provider.secretEnv
+			present = provider.idEnv
+		}
+		return fmt.Errorf("incomplete %s OAuth configuration: %s is required when %s is set", provider.name, missing, present)
+	}
+	return nil
 }
 
 type relayListeners struct {
@@ -215,33 +270,72 @@ type namedServerError struct {
 	err      error
 }
 
+const (
+	relayReadHeaderTimeout = 10 * time.Second
+	relayIdleTimeout       = 2 * time.Minute
+	relayMaxHeaderBytes    = 1 << 20
+)
+
+func newRelayHTTPServer(handler http.Handler, address string) *http.Server {
+	return &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		ReadHeaderTimeout: relayReadHeaderTimeout,
+		IdleTimeout:       relayIdleTimeout,
+		MaxHeaderBytes:    relayMaxHeaderBytes,
+	}
+}
+
 func newRelayListeners(handler http.Handler, httpAddr string, localHTTPS *localHTTPSConfig) *relayListeners {
 	count := 1
 	if localHTTPS != nil {
 		count++
 	}
 	listeners := &relayListeners{
-		http:  &http.Server{Addr: httpAddr, Handler: handler},
+		http:  newRelayHTTPServer(handler, httpAddr),
 		errCh: make(chan namedServerError, count),
 	}
 	if localHTTPS != nil {
-		listeners.https = &http.Server{Addr: localHTTPS.HTTPSAddr, Handler: handler}
+		listeners.https = newRelayHTTPServer(handler, localHTTPS.HTTPSAddr)
 	}
 	return listeners
 }
 
-func (l *relayListeners) Start(localHTTPS *localHTTPSConfig) {
+func (l *relayListeners) Start(localHTTPS *localHTTPSConfig) error {
+	if l.https != nil {
+		if localHTTPS == nil || localHTTPS.Material == nil {
+			return fmt.Errorf("browser HTTPS listener is missing certificate material")
+		}
+		if _, err := tls.LoadX509KeyPair(localHTTPS.Material.CertPath, localHTTPS.Material.KeyPath); err != nil {
+			return fmt.Errorf("browser HTTPS certificate: %w", err)
+		}
+	}
+
+	httpListener, err := net.Listen("tcp", l.http.Addr)
+	if err != nil {
+		return listenerResult(namedServerError{listener: "wing HTTP", err: err})
+	}
+	var httpsListener net.Listener
+	if l.https != nil {
+		httpsListener, err = net.Listen("tcp", l.https.Addr)
+		if err != nil {
+			_ = httpListener.Close()
+			return listenerResult(namedServerError{listener: "browser HTTPS", err: err})
+		}
+	}
+
 	go func() {
-		l.errCh <- namedServerError{listener: "wing HTTP", err: l.http.ListenAndServe()}
+		l.errCh <- namedServerError{listener: "wing HTTP", err: l.http.Serve(httpListener)}
 	}()
 	if l.https != nil {
 		go func() {
 			l.errCh <- namedServerError{
 				listener: "browser HTTPS",
-				err:      l.https.ListenAndServeTLS(localHTTPS.Material.CertPath, localHTTPS.Material.KeyPath),
+				err:      l.https.ServeTLS(httpsListener, localHTTPS.Material.CertPath, localHTTPS.Material.KeyPath),
 			}
 		}()
 	}
+	return nil
 }
 
 func (l *relayListeners) Shutdown(srv *relay.Server, timeout time.Duration) error {
@@ -338,7 +432,7 @@ func localCertCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			trusted, err := localtls.SystemTrustStore().Trusted(m)
+			trusted, err := localtls.SystemTrustStore().Trusted(cmd.Context(), m)
 			if err != nil {
 				return err
 			}

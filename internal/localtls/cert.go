@@ -21,15 +21,18 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/fsutil"
 )
 
 const (
-	directoryName = "local-tls"
-	caCertName    = "ca.pem"
-	caKeyName     = "ca-key.pem"
-	leafCertName  = "localhost.pem"
-	leafKeyName   = "localhost-key.pem"
-	markerName    = "trusted"
+	directoryName    = "local-tls"
+	caCertName       = "ca.pem"
+	caKeyName        = "ca-key.pem"
+	leafCertName     = "localhost.pem"
+	leafKeyName      = "localhost-key.pem"
+	markerName       = "trusted"
+	materialLockName = ".material.lock"
 )
 
 // ErrNotFound means WT has not created local TLS material in this profile.
@@ -62,6 +65,11 @@ func Ensure(configDir string, now time.Time) (*Material, error) {
 	if err := ensurePrivateDir(m.Dir); err != nil {
 		return nil, err
 	}
+	lock, err := acquireMaterialLock(m.Dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = lock.Close() }()
 
 	caCert, caKey, created, err := ensureCA(m, now)
 	if err != nil {
@@ -78,6 +86,23 @@ func Ensure(configDir string, now time.Time) (*Material, error) {
 	m.Cert = leaf
 	m.CreatedLeaf = created
 	return m, nil
+}
+
+func acquireMaterialLock(dir string) (*os.File, error) {
+	path := filepath.Join(dir, materialLockName)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open local TLS material lock: %w", err)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("protect local TLS material lock: %w", err)
+	}
+	if err := lockMaterialFile(file); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("lock local TLS material: %w", err)
+	}
+	return file, nil
 }
 
 // Load returns the existing CA without creating or rotating any files. This is
@@ -109,8 +134,8 @@ func Load(configDir string) (*Material, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read existing local CA certificate: %w", err)
 	}
-	if !cert.IsCA || cert.CheckSignatureFrom(cert) != nil {
-		return nil, fmt.Errorf("existing local CA certificate is not a valid self-signed CA")
+	if err := validateLocalCA(cert); err != nil {
+		return nil, fmt.Errorf("existing local CA certificate: %w", err)
 	}
 	m.CACert = cert
 	m.Fingerprint = certificateFingerprint(cert)
@@ -173,7 +198,7 @@ func ensureCA(m *Material, now time.Time) (*x509.Certificate, *ecdsa.PrivateKey,
 		if err != nil {
 			return nil, nil, false, fmt.Errorf("read existing local CA private key: %w", err)
 		}
-		if !cert.IsCA || cert.CheckSignatureFrom(cert) != nil || !publicKeysEqual(cert.PublicKey, &key.PublicKey) {
+		if validateLocalCA(cert) != nil || !publicKeysEqual(cert.PublicKey, &key.PublicKey) {
 			return nil, nil, false, fmt.Errorf("existing local CA certificate and private key do not form a valid self-signed CA")
 		}
 		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
@@ -231,6 +256,31 @@ func ensureCA(m *Material, now time.Time) (*x509.Certificate, *ecdsa.PrivateKey,
 		return nil, nil, false, fmt.Errorf("write local CA certificate: %w", err)
 	}
 	return cert, key, true, nil
+}
+
+func validateLocalCA(cert *x509.Certificate) error {
+	if cert == nil || !cert.IsCA || !cert.BasicConstraintsValid || cert.CheckSignatureFrom(cert) != nil {
+		return fmt.Errorf("is not a valid self-signed CA")
+	}
+	if !cert.MaxPathLenZero || cert.MaxPathLen != 0 {
+		return fmt.Errorf("does not prohibit subordinate certificate authorities")
+	}
+	if cert.KeyUsage&x509.KeyUsageCertSign == 0 {
+		return fmt.Errorf("cannot sign localhost certificates")
+	}
+	if !cert.PermittedDNSDomainsCritical || len(cert.PermittedDNSDomains) != 1 || cert.PermittedDNSDomains[0] != "localhost" {
+		return fmt.Errorf("is not constrained to the localhost DNS name")
+	}
+	wantRanges := map[string]bool{"127.0.0.0/8": true, "::1/128": true}
+	if len(cert.PermittedIPRanges) != len(wantRanges) {
+		return fmt.Errorf("is not constrained to loopback IP addresses")
+	}
+	for _, network := range cert.PermittedIPRanges {
+		if network == nil || !wantRanges[network.String()] {
+			return fmt.Errorf("is not constrained to loopback IP addresses")
+		}
+	}
+	return nil
 }
 
 func ensureLeaf(m *Material, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, now time.Time) (*x509.Certificate, bool, error) {
@@ -371,23 +421,55 @@ func writePEMAtomic(path string, mode os.FileMode, blockType string, der []byte)
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := pem.Encode(tmp, &pem.Block{Type: blockType, Bytes: der}); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return fsutil.SyncDirectory(dir)
+}
+
+func writeFileAtomic(path string, mode os.FileMode, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return fsutil.SyncDirectory(dir)
 }
 
 func certificateFingerprint(cert *x509.Certificate) string {

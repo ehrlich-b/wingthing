@@ -6,20 +6,27 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
 
 // WingLocation tracks where a wing is connected across the cluster.
 type WingLocation struct {
-	MachineID    string
-	UserID       string
-	OrgID        string
-	PublicKey    string
-	Locked       bool
-	AllowedCount int
-	HostedRelay  string
-	RegisteredAt time.Time
+	MachineID      string
+	ConnectionID   string
+	UserID         string
+	OrgID          string
+	PublicKey      string
+	Locked         bool
+	AllowedCount   int
+	PurposeBinding bool
+	DirectMCP      bool
+	HostedRelay    string
+	GenerationAt   time.Time
+	Revision       uint64
+	RegisteredAt   time.Time
 }
 
 // WingMap is the global registry of all wings, stored on the login node.
@@ -36,12 +43,42 @@ func NewWingMap() *WingMap {
 	}
 }
 
-func (m *WingMap) Register(wingID string, loc WingLocation) {
-	loc.RegisteredAt = time.Now()
+// Register publishes one real-time wing generation. Current nodes include a
+// connection ID, edge-local generation time, and per-connection revision. Use
+// those fields to keep a delayed request from an older socket or config update
+// from rolling the login-node directory backward. N-1 requests omit the
+// connection ID and retain their last-arrival behavior during rolling upgrades.
+func (m *WingMap) Register(wingID string, loc WingLocation) bool {
+	now := time.Now()
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, exists := m.wings[wingID]; exists {
+		// A wing ID is chosen by the wing, so a second account that learns one
+		// must not be able to evict the live owner merely by connecting through a
+		// different edge. Empty owners retain the N-1 compatibility behavior, and
+		// an expired edge may be healed by a new authoritative registration.
+		if current.MachineID != loc.MachineID && current.UserID != "" && loc.UserID != "" &&
+			current.UserID != loc.UserID {
+			if seen, alive := m.edges[current.MachineID]; alive && now.Sub(seen) < 30*time.Second {
+				return false
+			}
+		}
+		if current.MachineID == loc.MachineID && current.ConnectionID != "" && loc.ConnectionID != "" {
+			if current.ConnectionID == loc.ConnectionID {
+				if current.Revision > 0 && (loc.Revision == 0 || loc.Revision < current.Revision) {
+					return false
+				}
+			} else if !current.GenerationAt.IsZero() {
+				if loc.GenerationAt.IsZero() || !loc.GenerationAt.After(current.GenerationAt) {
+					return false
+				}
+			}
+		}
+	}
+	loc.RegisteredAt = now
 	m.wings[wingID] = loc
-	m.edges[loc.MachineID] = time.Now()
-	m.mu.Unlock()
+	m.edges[loc.MachineID] = now
+	return true
 }
 
 func (m *WingMap) Deregister(wingID string) {
@@ -50,11 +87,47 @@ func (m *WingMap) Deregister(wingID string) {
 	m.mu.Unlock()
 }
 
+// DeregisterConnection removes a wing only when the event belongs to the
+// currently published socket generation. Empty connection IDs preserve the
+// legacy unconditional behavior during rolling upgrades.
+func (m *WingMap) DeregisterConnection(wingID, connectionID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	loc, ok := m.wings[wingID]
+	if !ok || (connectionID != "" && loc.ConnectionID != connectionID) {
+		return false
+	}
+	delete(m.wings, wingID)
+	return true
+}
+
 func (m *WingMap) Locate(wingID string) (WingLocation, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	loc, ok := m.wings[wingID]
 	return loc, ok
+}
+
+// IsCurrentEvent checks that a current-node lifecycle event still belongs to
+// the directory generation installed by its preceding registration. Legacy
+// events omit connectionID and remain accepted during rolling upgrades.
+func (m *WingMap) IsCurrentEvent(wingID, machineID, connectionID string, revision uint64, exactRevision bool) bool {
+	if connectionID == "" {
+		return true
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	current, ok := m.wings[wingID]
+	if !ok || current.ConnectionID != connectionID {
+		return false
+	}
+	if machineID != "" && current.MachineID != machineID {
+		return false
+	}
+	if exactRevision && revision > 0 && current.Revision > 0 && current.Revision != revision {
+		return false
+	}
+	return true
 }
 
 // ReconcileFull replaces wing state for a machine using the edge's authoritative snapshot.
@@ -66,6 +139,69 @@ func (m *WingMap) ReconcileFull(machineID string, activeWings map[string]bool, s
 	for wid, loc := range m.wings {
 		if loc.MachineID == machineID && !activeWings[wid] && !loc.RegisteredAt.After(snapshotAt) {
 			delete(m.wings, wid)
+		}
+	}
+}
+
+// ReconcileSnapshot applies one edge's authoritative snapshot without letting
+// it steal a wing that has since registered on another machine or overwrite a
+// same-machine connection/config generation established after the snapshot
+// began. Current edges provide GenerationAt and Revision from their own clock
+// and registry; RegisteredAt remains only as an N-1 compatibility fallback.
+func (m *WingMap) ReconcileSnapshot(machineID string, activeWings map[string]WingLocation, snapshotAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	m.edges[machineID] = now
+	for wingID, incoming := range activeWings {
+		current, exists := m.wings[wingID]
+		if exists && current.MachineID != machineID {
+			// A live edge owns its published generation. If it disappeared without
+			// sending an offline event, let another edge's repeated snapshots heal
+			// the map once the old edge lease has expired.
+			if seen, alive := m.edges[current.MachineID]; alive && now.Sub(seen) < 30*time.Second {
+				continue
+			}
+		}
+		if exists && current.MachineID == machineID {
+			if current.ConnectionID != "" && incoming.ConnectionID != "" {
+				if current.ConnectionID == incoming.ConnectionID {
+					// Revisions are comparable only within one connection generation.
+					// Once current metadata exists, omission is not a legacy signal:
+					// deployed N-1 snapshots omit the connection ID as well.
+					if current.Revision > 0 && (incoming.Revision == 0 || current.Revision > incoming.Revision) {
+						continue
+					}
+				} else if !current.GenerationAt.IsZero() {
+					// Both timestamps came from this edge, so unlike login receive times
+					// they remain comparable even when edge and login clocks differ.
+					if incoming.GenerationAt.IsZero() || !incoming.GenerationAt.After(current.GenerationAt) {
+						continue
+					}
+				}
+			} else if current.RegisteredAt.After(snapshotAt) {
+				// N-1 edges omit generation/revision. Preserve their deployed
+				// best-effort timestamp fence during a rolling upgrade.
+				continue
+			}
+		}
+		incoming.MachineID = machineID
+		if exists && current.ConnectionID == incoming.ConnectionID && current.Revision == incoming.Revision {
+			incoming.RegisteredAt = current.RegisteredAt
+		} else {
+			incoming.RegisteredAt = now
+		}
+		m.wings[wingID] = incoming
+	}
+	for wingID, current := range m.wings {
+		if current.MachineID == machineID {
+			newerGeneration := !current.GenerationAt.IsZero() && current.GenerationAt.After(snapshotAt)
+			if current.GenerationAt.IsZero() {
+				newerGeneration = current.RegisteredAt.After(snapshotAt)
+			}
+			if _, active := activeWings[wingID]; !active && !newerGeneration {
+				delete(m.wings, wingID)
+			}
 		}
 	}
 }
@@ -125,11 +261,16 @@ func (s *Server) locateWing(wingID string) (string, bool) {
 // locateWingViaLogin asks the login node where a wing is connected.
 func (s *Server) locateWingViaLogin(wingID string) (string, bool) {
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(s.Config.LoginNodeAddr + "/internal/wing-locate/" + wingID)
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(s.Config.LoginNodeAddr, "/")+"/internal/wing-locate/"+url.PathEscape(wingID), nil)
 	if err != nil {
 		return "", false
 	}
-	defer resp.Body.Close()
+	s.authorizeInternalRequest(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", false
 	}
@@ -137,7 +278,7 @@ func (s *Server) locateWingViaLogin(wingID string) (string, bool) {
 		MachineID string `json:"machine_id"`
 		Found     bool   `json:"found"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeInternalJSONResponse(resp.Body, &result); err != nil {
 		return "", false
 	}
 	return result.MachineID, result.Found
@@ -146,14 +287,19 @@ func (s *Server) locateWingViaLogin(wingID string) (string, bool) {
 // registerWingWithLogin tells login to add a wing to the global map.
 func (s *Server) registerWingWithLogin(wing *ConnectedWing) {
 	payload, _ := json.Marshal(map[string]any{
-		"wing_id":       wing.WingID,
-		"machine_id":    s.Config.FlyMachineID,
-		"user_id":       wing.UserID,
-		"org_id":        wing.OrgID,
-		"public_key":    wing.PublicKey,
-		"locked":        wing.Locked,
-		"allowed_count": wing.AllowedCount,
-		"hosted_relay":  wing.HostedRelay,
+		"wing_id":                wing.WingID,
+		"connection_id":          wing.ID,
+		"machine_id":             s.Config.FlyMachineID,
+		"user_id":                wing.UserID,
+		"org_id":                 wing.OrgID,
+		"public_key":             wing.PublicKey,
+		"locked":                 wing.Locked,
+		"allowed_count":          wing.AllowedCount,
+		"purpose_binding":        wing.PurposeBinding,
+		"direct_mcp":             wing.DirectMCP,
+		"hosted_relay":           wing.HostedRelay,
+		"connected_at_unix_nano": unixNanoOrZero(wing.ConnectedAt),
+		"revision":               wing.Revision,
 	})
 	client := &http.Client{Timeout: 3 * time.Second}
 	req, _ := http.NewRequest("POST", s.Config.LoginNodeAddr+"/internal/wing-register", bytes.NewReader(payload))
@@ -161,6 +307,7 @@ func (s *Server) registerWingWithLogin(wing *ConnectedWing) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	s.authorizeInternalRequest(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("registerWingWithLogin %s: %v", wing.WingID, err)
@@ -169,27 +316,9 @@ func (s *Server) registerWingWithLogin(wing *ConnectedWing) {
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("registerWingWithLogin %s: status %d", wing.WingID, resp.StatusCode)
 	}
-	resp.Body.Close()
-}
-
-// deregisterWingWithLogin tells login to remove a wing from the global map.
-func (s *Server) deregisterWingWithLogin(wingID string) {
-	payload, _ := json.Marshal(map[string]string{"wing_id": wingID})
-	client := &http.Client{Timeout: 3 * time.Second}
-	req, _ := http.NewRequest("POST", s.Config.LoginNodeAddr+"/internal/wing-deregister", bytes.NewReader(payload))
-	if req == nil {
-		return
+	if err := resp.Body.Close(); err != nil {
+		log.Printf("registerWingWithLogin %s: close response: %v", wing.WingID, err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("deregisterWingWithLogin %s: %v", wingID, err)
-		return
-	}
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("deregisterWingWithLogin %s: status %d", wingID, resp.StatusCode)
-	}
-	resp.Body.Close()
 }
 
 // StartEdgeSync runs the edge-to-login reconcile loop.
@@ -212,24 +341,34 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 	snapshotAt := time.Now()
 	local := s.Wings.All()
 	type syncWing struct {
-		WingID       string `json:"wing_id"`
-		UserID       string `json:"user_id"`
-		OrgID        string `json:"org_id"`
-		PublicKey    string `json:"public_key"`
-		Locked       bool   `json:"locked"`
-		AllowedCount int    `json:"allowed_count"`
-		HostedRelay  string `json:"hosted_relay"`
+		WingID         string `json:"wing_id"`
+		ConnectionID   string `json:"connection_id,omitempty"`
+		UserID         string `json:"user_id"`
+		OrgID          string `json:"org_id"`
+		PublicKey      string `json:"public_key"`
+		Locked         bool   `json:"locked"`
+		AllowedCount   int    `json:"allowed_count"`
+		PurposeBinding bool   `json:"purpose_binding"`
+		DirectMCP      bool   `json:"direct_mcp"`
+		HostedRelay    string `json:"hosted_relay"`
+		ConnectedAtNS  int64  `json:"connected_at_unix_nano,omitempty"`
+		Revision       uint64 `json:"revision,omitempty"`
 	}
 	wings := make([]syncWing, len(local))
 	for i, w := range local {
 		wings[i] = syncWing{
-			WingID:       w.WingID,
-			UserID:       w.UserID,
-			OrgID:        w.OrgID,
-			PublicKey:    w.PublicKey,
-			Locked:       w.Locked,
-			AllowedCount: w.AllowedCount,
-			HostedRelay:  w.HostedRelay,
+			WingID:         w.WingID,
+			ConnectionID:   w.ID,
+			UserID:         w.UserID,
+			OrgID:          w.OrgID,
+			PublicKey:      w.PublicKey,
+			Locked:         w.Locked,
+			AllowedCount:   w.AllowedCount,
+			PurposeBinding: w.PurposeBinding,
+			DirectMCP:      w.DirectMCP,
+			HostedRelay:    w.HostedRelay,
+			ConnectedAtNS:  unixNanoOrZero(w.ConnectedAt),
+			Revision:       w.Revision,
 		}
 	}
 
@@ -246,10 +385,11 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 	}
 
 	body, err := json.Marshal(map[string]any{
-		"machine_id":  s.Config.FlyMachineID,
-		"snapshot_at": snapshotAt.Unix(),
-		"wings":       wings,
-		"bandwidth":   bw,
+		"machine_id":            s.Config.FlyMachineID,
+		"snapshot_at":           snapshotAt.Unix(),
+		"snapshot_at_unix_nano": snapshotAt.UnixNano(),
+		"wings":                 wings,
+		"bandwidth":             bw,
 	})
 	if err != nil {
 		requeue()
@@ -263,13 +403,14 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	s.authorizeInternalRequest(req)
 
 	resp, err := client.Do(req)
 	if err != nil {
 		requeue()
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		requeue()
@@ -279,7 +420,7 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 	var syncResp struct {
 		BannedUsers []string `json:"banned_users"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
+	if err := decodeInternalJSONResponse(resp.Body, &syncResp); err != nil {
 		requeue()
 		return
 	}
@@ -287,4 +428,11 @@ func (s *Server) edgeSync(ctx context.Context, loginAddr string) {
 	if s.Bandwidth != nil {
 		s.Bandwidth.SetExceeded(syncResp.BannedUsers)
 	}
+}
+
+func unixNanoOrZero(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
+	}
+	return value.UnixNano()
 }
