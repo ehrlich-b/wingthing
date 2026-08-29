@@ -496,8 +496,9 @@ func TestSignedInHomeUsesConfiguredAppURLForLinkAndShortcut(t *testing.T) {
 	}
 }
 
-func TestPublicHomeLeadsWithLocalAgentFirstRoutes(t *testing.T) {
-	_, ts := testServer(t)
+func TestPublicHomeLeadsWithConciseLocalAgentIntro(t *testing.T) {
+	server, ts := testServer(t)
+	server.Config.HeroVideo = "hero.mp4"
 	resp, err := http.Get(ts.URL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
@@ -508,32 +509,11 @@ func TestPublicHomeLeadsWithLocalAgentFirstRoutes(t *testing.T) {
 		t.Fatalf("read /: %v", err)
 	}
 	page := body.String()
-	previous := -1
-	for _, route := range []string{
-		`href="/patterns/local-subagents/INSTRUCTIONS.md" data-route="local-agent"`,
-		`href="/patterns/local-sandbox/INSTRUCTIONS.md" data-route="local-human"`,
-		`href="/patterns/remote-orchestration/INSTRUCTIONS.md" data-route="direct-remote"`,
-		`href="/patterns/personal-remote-wing/INSTRUCTIONS.md" data-route="self-hosted-browser"`,
-		`href="/patterns/hosted-browser-wing/INSTRUCTIONS.md" data-route="hosted-relay"`,
-	} {
-		index := strings.Index(page, route)
-		if index < 0 {
-			t.Fatalf("home is missing route %q", route)
-		}
-		if index <= previous {
-			t.Fatalf("home route %q is out of local-agent-first order", route)
-		}
-		previous = index
+	if strings.Contains(page, `data-route=`) {
+		t.Fatal("home includes detailed route-map links")
 	}
 	for _, contract := range []string{
-		"wt mcp stdio",
-		"no account or daemon",
-		"wt egg",
-		"wt mcp connect",
-		"direct remote MCP to an explicit wing",
-		"wt serve --local --https",
-		"self-host first",
-		"requires hosted-relay entitlement and an allowing wing",
+		`href="/patterns">choose a route</a>`,
 		`href="/install" class="nav-cta">install locally`,
 		`href="/login">login`,
 		`href="/install" class="prompt-line" id="prompt-app"`,
@@ -541,6 +521,18 @@ func TestPublicHomeLeadsWithLocalAgentFirstRoutes(t *testing.T) {
 		if !strings.Contains(page, contract) {
 			t.Errorf("home does not contain hierarchy contract %q", contract)
 		}
+	}
+	const intro = `<p class="tagline">Give an agent typed control of local coding agents, using the code and provider login already on this machine.</p>`
+	if got := strings.Count(page, intro); got != 1 {
+		t.Fatalf("home contains %d concise agent-first intros, want 1", got)
+	}
+	if !strings.Contains(page, intro+"\n"+`<div class="hero-video"`) {
+		t.Fatal("home video does not immediately follow the agent-first intro")
+	}
+	video := strings.Index(page, `<div class="hero-video"`)
+	install := strings.Index(page, `<div class="prompt-flow" id="prompt-flow">`)
+	if video < 0 || install <= video {
+		t.Fatalf("home hero order video=%d install=%d, want video then install", video, install)
 	}
 	for _, forbidden := range []string{">hosted app</a>", ">hosted login</a>"} {
 		if strings.Contains(page, forbidden) {
