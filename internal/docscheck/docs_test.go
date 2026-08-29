@@ -116,7 +116,7 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 		"patterns/shared-web-roost/INSTRUCTIONS.md":    {"WT_ROOST_ALLOWED_EMAILS", "OAuth by itself proves"},
 		"patterns/hosted-browser-wing/INSTRUCTIONS.md": {"Account access and wing policy are independent", "wt login", "wt start", "self-hosted roost", "application-encrypted"},
 		"internal/relay/templates/base.html":           {`href="/install" class="nav-cta">install locally`, `href="/login">login`, ">open app</a>"},
-		"internal/relay/templates/home.html":           {"local-first control for coding agents", "wt mcp stdio", "wt egg", "wt mcp connect", "wt serve --local --https", "optional hosted browser"},
+		"internal/relay/templates/home.html":           {"local-first control for coding agents", "Give an agent typed control of local coding agents", `href="/patterns">choose a route</a>`},
 		"internal/relay/templates/docs.html":           {"WT_BASE_URL=https://roost.example.com", "WT_ROOST_ALLOWED_EMAILS", "wt roost start --addr :8080", "wt serve --addr :8080", "never silently changes", "gateway database contains", "does not let an account grant itself relay access", "no request happens until you choose load or open", "200,000 serialized terminal characters", "a wing binary from before", "stop or isolate the wing", "Remote execution through direct MCP or the hosted browser needs a running wing", "do not require a separate wing daemon", "connector token", "wt login", "wt start"},
 		"internal/relay/templates/patterns.html":       {"/patterns/hosted-browser-wing/INSTRUCTIONS.md", "account with hosted-relay access", "hosted browser -> encrypted relay -> selected wing", "authorization for the connector account", "parent/connector needs"},
 		"internal/relay/templates/privacy.html":        {"gateway database contains", "embedded wing separately keeps", "200,000 serialized terminal characters", "Clearing the site's browser data removes"},
@@ -178,6 +178,29 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 	}
 }
 
+func TestPublicHomeStaysConciseAndVideoFirst(t *testing.T) {
+	root := repositoryRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "internal/relay/templates/home.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := string(data)
+
+	const intro = `<p class="tagline">Give an agent typed control of local coding agents, using the code and provider login already on this machine.</p>`
+	if got := strings.Count(home, intro); got != 1 {
+		t.Fatalf("homepage contains %d concise agent-first intros, want 1", got)
+	}
+	if !strings.Contains(home, intro+"\n"+`{{if .HeroVideo}}<div class="hero-video"`) {
+		t.Fatal("homepage hero video does not immediately follow the concise agent-first intro")
+	}
+	if !strings.Contains(home, `{{end}}`+"\n"+`{{if .User}}<div class="prompt-flow">`) {
+		t.Fatal("homepage install/app prompt does not immediately follow the hero video")
+	}
+	if strings.Contains(home, `data-route=`) {
+		t.Fatal("homepage must not contain the detailed data-route map")
+	}
+}
+
 func TestPublicEntryPointsKeepLocalAgentFirstHierarchy(t *testing.T) {
 	root := repositoryRoot(t)
 	read := func(rel string) string {
@@ -213,7 +236,6 @@ func TestPublicEntryPointsKeepLocalAgentFirstHierarchy(t *testing.T) {
 		},
 	}
 	for _, rel := range []string{
-		"internal/relay/templates/home.html",
 		"internal/relay/templates/docs.html",
 		"internal/relay/templates/install.html",
 		"internal/relay/templates/patterns.html",
@@ -250,13 +272,6 @@ func TestPublicEntryPointsKeepLocalAgentFirstHierarchy(t *testing.T) {
 			"It never silently falls back to the hosted relay",
 			"run the browser portal locally first",
 			"already has hosted-relay access",
-		},
-		"internal/relay/templates/home.html": {
-			"<code>wt mcp stdio</code> · no account or daemon",
-			"<code>wt egg</code> · sandboxed and attachable",
-			"direct remote MCP to an explicit wing",
-			"<code>wt serve --local --https</code> · self-host first",
-			"requires hosted-relay entitlement and an allowing wing",
 		},
 		"internal/relay/templates/docs.html": {
 			"existing project directories and the current OS user's existing provider logins",

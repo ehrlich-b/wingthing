@@ -31,13 +31,33 @@ try {
   const publicPage = await publicContext.newPage();
   await publicPage.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   const publicState = await publicPage.evaluate(() => {
+    const text = (element) => element ? element.textContent.trim().replace(/\s+/g, ' ') : '';
+    const isVisible = (element) => {
+      if (!element) return false;
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    };
+    const comesBefore = (first, second) => Boolean(first && second &&
+      (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING));
     const nav = document.querySelector('nav.site-nav');
     const logo = nav.querySelector('.logo').getBoundingClientRect();
     const links = nav.querySelector('.nav-links');
     const linkElements = Array.from(links.querySelectorAll('a'));
     const linkRects = linkElements.map((link) => link.getBoundingClientRect());
-    const routeElements = Array.from(document.querySelectorAll('.route-map [data-route]'));
-    const selfHosted = routeElements.find((route) => route.dataset.route === 'self-hosted-browser');
+    const hero = document.querySelector('.container > .hero');
+    const heroLinks = hero ? Array.from(hero.querySelectorAll('a[href]')) : [];
+    const heroVideo = hero ? hero.querySelector('video, iframe[title*="video" i], [data-hero-video]') : null;
+    const installCTA = heroLinks.find((link) => /\binstall\b/i.test(text(link)));
+    const patternsLink = Array.from(document.querySelectorAll('a[href]')).find((link) => {
+      const url = new URL(link.getAttribute('href'), location.href);
+      return url.origin === location.origin && url.pathname.replace(/\/$/, '') === '/patterns' &&
+        text(link).toLowerCase() === 'patterns';
+    });
+    const introElements = hero ? Array.from(hero.children)
+      .filter((element) => element.matches('h1, p.tagline')) : [];
+    const introEnd = introElements[introElements.length - 1];
+    const introText = introElements.map(text).join(' ');
     return {
       navLabels: linkElements.map((link) => link.textContent.trim()),
       ctaLabels: linkElements.filter((link) => link.classList.contains('nav-cta')).map((link) => link.textContent.trim()),
@@ -45,9 +65,20 @@ try {
       linksBelowLogo: links.getBoundingClientRect().top >= logo.bottom,
       linksInsideViewport: linkRects.every((rect) => rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 0.5),
       noHorizontalOverflow: document.documentElement.scrollWidth <= innerWidth,
-      routes: routeElements.map((route) => route.dataset.route),
-      selfHostedHref: selfHosted ? selfHosted.getAttribute('href') : '',
-      selfHostedText: selfHosted ? selfHosted.textContent : '',
+      headingCount: introElements.filter((element) => element.matches('h1')).length,
+      introText,
+      routeMapCount: document.querySelectorAll('.route-map').length,
+      dataRouteCount: document.querySelectorAll('[data-route]').length,
+      patternsHref: patternsLink ? new URL(patternsLink.getAttribute('href'), location.href).pathname : '',
+      patternsVisible: isVisible(patternsLink),
+      heroConfigured: Boolean(heroVideo),
+      heroVisible: isVisible(heroVideo),
+      introBeforeHero: comesBefore(introEnd, heroVideo),
+      heroBeforeInstall: comesBefore(heroVideo, installCTA),
+      introBeforeInstall: comesBefore(introEnd, installCTA),
+      installCTAText: text(installCTA),
+      installCTAHref: installCTA ? installCTA.getAttribute('href') : '',
+      installCTAVisible: isVisible(installCTA),
     };
   });
   record('public mobile: nav wraps below the logo without clipping and keeps neutral actions',
@@ -56,14 +87,19 @@ try {
       publicState.flexWrap === 'wrap' && publicState.linksBelowLogo &&
       publicState.linksInsideViewport && publicState.noHorizontalOverflow,
     JSON.stringify(publicState));
-  record('public mobile: home renders the required hierarchy with a coherent self-hosted recipe',
-    JSON.stringify(publicState.routes) === JSON.stringify([
-      'local-agent', 'local-human', 'direct-remote', 'self-hosted-browser', 'hosted-relay',
-    ]) &&
-      publicState.selfHostedHref === '/patterns/personal-remote-wing/INSTRUCTIONS.md' &&
-      publicState.selfHostedText.includes('wt serve --local --https') &&
-      !publicState.selfHostedText.includes('wt roost start --https'),
+  record('public mobile: home keeps the concise local-agent hierarchy without the detailed route map',
+    publicState.headingCount === 1 &&
+      /\blocal\b/i.test(publicState.introText) && /\bagents?\b/i.test(publicState.introText) &&
+      publicState.routeMapCount === 0 && publicState.dataRouteCount === 0 &&
+      publicState.patternsHref === '/patterns' && publicState.patternsVisible &&
+      (!publicState.heroConfigured || (publicState.heroVisible && publicState.introBeforeHero && publicState.heroBeforeInstall)) &&
+      publicState.introBeforeInstall && publicState.installCTAVisible &&
+      /\binstall\b/i.test(publicState.installCTAText) && Boolean(publicState.installCTAHref),
     JSON.stringify(publicState));
+  const patternsResponse = await publicContext.request.get(BASE + publicState.patternsHref);
+  record('public mobile: patterns remains the reachable detailed-route destination',
+    publicState.patternsHref === '/patterns' && patternsResponse.ok(),
+    JSON.stringify({ href: publicState.patternsHref, status: patternsResponse.status() }));
   await publicPage.screenshot({ path: `${OUT}/public-mobile-nav.png`, fullPage: false });
   await publicContext.close();
 

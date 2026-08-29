@@ -4,13 +4,6 @@
 .hero{padding:40px 0 24px;text-align:center}
 .hero h1{font-size:28px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
 .hero .tagline{color:var(--text-dim);font-size:15px;line-height:1.6;max-width:720px;margin:0 auto 24px}
-.route-map{max-width:900px;margin:0 auto 22px;text-align:left;display:grid;gap:8px}
-.route-map a{display:grid;grid-template-columns:34px 220px 1fr;gap:12px;align-items:baseline;background:var(--bg-card);border:1px solid var(--accent);border-radius:6px;padding:10px 14px;text-decoration:none;color:var(--text)}
-.route-map a:hover{border-color:var(--action)}
-.route-num{font-family:var(--mono);font-size:11px;color:var(--action)}
-.route-title{font-weight:600;font-size:13px}
-.route-detail{font-size:12px;color:var(--text-dim)}
-.route-detail code{color:var(--text)}
 .prompt-flow{font-family:var(--mono);font-size:18px;margin-top:8px}
 .prompt-line{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0}
 .prompt-dim{color:var(--text-dim)}
@@ -81,8 +74,6 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 .sb-tip{font-family:var(--mono);font-size:11px;color:var(--text-dim);line-height:1.6;margin-top:12px;padding:0 4px}
 @media(max-width:700px){
   .hero h1{font-size:22px}
-  .route-map a{grid-template-columns:28px 1fr;gap:4px 8px}
-  .route-detail{grid-column:2}
   .how-grid{grid-template-columns:1fr}
   .sb-layout{grid-template-columns:1fr}
   .install{font-size:11px;padding:12px 14px}
@@ -108,21 +99,14 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </script>
 <div class="hero">
 <h1>local-first control for coding agents</h1>
-<p class="tagline">Give an agent typed control of local agents on the code and provider login already on this machine. Move to direct remote MCP only when execution moves to another machine, and add a browser only when a person needs one.</p>
-<div class="route-map" aria-label="Wingthing setup routes">
-<a href="/patterns/local-subagents/INSTRUCTIONS.md" data-route="local-agent"><span class="route-num">01</span><span class="route-title">agent controls local agents</span><span class="route-detail"><code>wt mcp stdio</code> · no account or daemon</span></a>
-<a href="/patterns/local-sandbox/INSTRUCTIONS.md" data-route="local-human"><span class="route-num">02</span><span class="route-title">person starts a local agent terminal</span><span class="route-detail"><code>wt egg</code> · sandboxed and attachable</span></a>
-<a href="/patterns/remote-orchestration/INSTRUCTIONS.md" data-route="direct-remote"><span class="route-num">03</span><span class="route-title">machines differ</span><span class="route-detail"><code>wt mcp connect</code> · direct remote MCP to an explicit wing</span></a>
-<a href="/patterns/personal-remote-wing/INSTRUCTIONS.md" data-route="self-hosted-browser"><span class="route-num">04</span><span class="route-title">person needs a browser</span><span class="route-detail"><code>wt serve --local --https</code> · self-host first</span></a>
-<a href="/patterns/hosted-browser-wing/INSTRUCTIONS.md" data-route="hosted-relay"><span class="route-num">05</span><span class="route-title">optional hosted browser</span><span class="route-detail">requires hosted-relay entitlement and an allowing wing</span></a>
-</div>
+<p class="tagline">Give an agent typed control of local coding agents, using the code and provider login already on this machine.</p>
+{{if .HeroVideo}}<div class="hero-video" onclick="(function(){var v=document.getElementById('hero-vid');if(v.requestFullscreen)v.requestFullscreen();else if(v.webkitRequestFullscreen)v.webkitRequestFullscreen()})()"><video id="hero-vid" src="/hero.mp4" autoplay muted loop playsinline onloadedmetadata="this.playbackRate=0.8"></video><button class="hero-fs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button></div>{{end}}
 {{if .User}}<div class="prompt-flow">
 <a href="{{.AppURL}}" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open optional hosted app</span></a>
 </div>
 {{else}}<div class="prompt-flow" id="prompt-flow">
 <a href="/install" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">install locally</span></a>
 </div>{{end}}
-{{if .HeroVideo}}<div class="hero-video" onclick="(function(){var v=document.getElementById('hero-vid');if(v.requestFullscreen)v.requestFullscreen();else if(v.webkitRequestFullscreen)v.webkitRequestFullscreen()})()"><video id="hero-vid" src="/hero.mp4" autoplay muted loop playsinline onloadedmetadata="this.playbackRate=0.8"></video><button class="hero-fs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button></div>{{end}}
 </div>
 <div class="tab-bar">
 <button class="active" onclick="switchTab('how')">how it works</button>
