@@ -174,19 +174,3 @@ func (s *MemoryStore) Frontmatter(name string) map[string]any {
 	}
 	return mf.frontmatter
 }
-
-func (s *MemoryStore) tags(name string) []string {
-	mf, ok := s.cache[name]
-	if !ok {
-		return nil
-	}
-	return mf.tags
-}
-
-func (s *MemoryStore) headings(name string) []string {
-	mf, ok := s.cache[name]
-	if !ok {
-		return nil
-	}
-	return mf.headings
-}

@@ -19,22 +19,23 @@ func TestNetworkFieldAcceptsAllThreeForms(t *testing.T) {
 		wantDomains      []string
 		wantPorts        []int
 		wantMode         string
+		wantLog          *bool
 		wantAgentDomains string
 	}{
-		{"scalar none", "network: none", nil, nil, "", ""},
-		{"scalar empty", `network: ""`, nil, nil, "", ""},
-		{"scalar wildcard", `network: "*"`, []string{"*"}, nil, "", ""},
-		{"scalar single domain", "network: api.anthropic.com", []string{"api.anthropic.com"}, nil, "", ""},
-		{"list", "network:\n  - a.example\n  - b.example", []string{"a.example", "b.example"}, nil, "", ""},
+		{"scalar none", "network: none", nil, nil, "", nil, ""},
+		{"scalar empty", `network: ""`, nil, nil, "", nil, ""},
+		{"scalar wildcard", `network: "*"`, []string{"*"}, nil, "", nil, ""},
+		{"scalar single domain", "network: api.anthropic.com", []string{"api.anthropic.com"}, nil, "", nil, ""},
+		{"list", "network:\n  - a.example\n  - b.example", []string{"a.example", "b.example"}, nil, "", nil, ""},
 		{
 			"mapping",
-			"network:\n  domains: [a.example]\n  local_ports: [11434]\n  mode: observe\n  agent_domains: none",
-			[]string{"a.example"}, []int{11434}, "observe", "none",
+			"network:\n  domains: [a.example]\n  local_ports: [11434]\n  mode: observe\n  log: false\n  agent_domains: none",
+			[]string{"a.example"}, []int{11434}, "observe", boolPointer(false), "none",
 		},
 		{
 			"mapping domains only",
 			"network:\n  domains: [a.example]",
-			[]string{"a.example"}, nil, "", "",
+			[]string{"a.example"}, nil, "", nil, "",
 		},
 	}
 
@@ -53,6 +54,9 @@ func TestNetworkFieldAcceptsAllThreeForms(t *testing.T) {
 			if cfg.Network.Mode != tc.wantMode {
 				t.Errorf("mode = %q, want %q", cfg.Network.Mode, tc.wantMode)
 			}
+			if !reflect.DeepEqual(cfg.Network.Log, tc.wantLog) {
+				t.Errorf("log = %v, want %v", cfg.Network.Log, tc.wantLog)
+			}
 			if cfg.Network.AgentDomains != tc.wantAgentDomains {
 				t.Errorf("agent_domains = %q, want %q", cfg.Network.AgentDomains, tc.wantAgentDomains)
 			}
@@ -60,10 +64,49 @@ func TestNetworkFieldAcceptsAllThreeForms(t *testing.T) {
 	}
 }
 
+func TestNetworkFieldLegacyLogRoundTripsAndMerges(t *testing.T) {
+	parent, err := LoadEggConfigFromYAML("network:\n  domains: [a.example]\n  log: true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := LoadEggConfigFromYAML("network:\n  domains: [b.example]\n  log: false")
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := MergeEggConfig(parent, child)
+	if merged.Network.Log == nil || *merged.Network.Log {
+		t.Fatalf("child network.log override was not preserved: %v", merged.Network.Log)
+	}
+	rendered, err := yaml.Marshal(merged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(string(rendered), "log: false") {
+		t.Fatalf("legacy network.log disappeared during render:\n%s", rendered)
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }
+
 func TestNetworkFieldRejectsUnknownAgentDomainsMode(t *testing.T) {
 	_, err := LoadEggConfigFromYAML("network:\n  domains: [a.example]\n  agent_domains: replace")
 	if err == nil || !contains(err.Error(), "agent_domains must be merge or none") {
 		t.Fatalf("error = %v, want agent_domains validation", err)
+	}
+}
+
+func TestNetworkFieldRejectsUnknownFieldsModesAndPorts(t *testing.T) {
+	for name, body := range map[string]string{
+		"unknown field": "network:\n  domains: [a.example]\n  local_port: 11434",
+		"unknown mode":  "network:\n  domains: [a.example]\n  mode: maybe",
+		"zero port":     "network:\n  domains: [localhost]\n  local_ports: [0]",
+		"large port":    "network:\n  domains: [localhost]\n  local_ports: [65536]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := LoadEggConfigFromYAML(body); err == nil {
+				t.Fatalf("accepted invalid network policy:\n%s", body)
+			}
+		})
 	}
 }
 
@@ -128,7 +171,21 @@ func TestToSandboxConfigUnchangedForLegacyForms(t *testing.T) {
 			if !reflect.DeepEqual(sc.Domains, tc.wantDoms) {
 				t.Errorf("Domains = %v, want %v", sc.Domains, tc.wantDoms)
 			}
+			if len(sc.LocalPorts) != 0 || sc.NetworkMode != "" {
+				t.Errorf("legacy mapping-only fields changed: ports=%v mode=%q", sc.LocalPorts, sc.NetworkMode)
+			}
 		})
+	}
+}
+
+func TestToSandboxConfigCarriesMappingOnlyNetworkPolicy(t *testing.T) {
+	cfg, err := LoadEggConfigFromYAML("network:\n  domains: [a.example]\n  local_ports: [11434]\n  mode: observe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sandboxConfig := cfg.ToSandboxConfig("/home/test")
+	if sandboxConfig.NetworkMode != "observe" || !reflect.DeepEqual(sandboxConfig.LocalPorts, []int{11434}) {
+		t.Fatalf("sandbox network mapping = mode %q ports %v", sandboxConfig.NetworkMode, sandboxConfig.LocalPorts)
 	}
 }
 

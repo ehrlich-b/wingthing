@@ -27,7 +27,7 @@ func (s *Store) ListLogByTask(taskID string) ([]*LogEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list log by task: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var entries []*LogEntry
 	for rows.Next() {
 		e := &LogEntry{}

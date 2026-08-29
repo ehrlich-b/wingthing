@@ -25,16 +25,16 @@ const jailAgentDropArg = "_jail_agent_drop"
 // The sealed jail runs the agent through two nested user-namespace stages so it
 // can both swap /proc AND run unprivileged:
 //
-//   _deny_init  -> clones _jail_agent_init into a new PID+user+mount namespace,
-//                  mapped to inner-UID 0 so it keeps CAP_SYS_ADMIN across execve.
-//   _jail_agent_init (stage 2, inner-root): replaces the temporarily visible
-//                  host procfs with one owned by this PID namespace, then clones
-//                  _jail_agent_drop into a further nested user namespace that
-//                  maps back to the real nonzero uid.
-//   _jail_agent_drop (stage 3, nonzero uid): installs seccomp and execs the
-//                  agent. It has no capabilities over the mount namespace, so the
-//                  sealed filesystem and private procfs stand, and Claude's
-//                  --dangerously-skip-permissions root guard is satisfied.
+//	_deny_init  -> clones _jail_agent_init into a new PID+user+mount namespace,
+//	               mapped to inner-UID 0 so it keeps CAP_SYS_ADMIN across execve.
+//	_jail_agent_init (stage 2, inner-root): replaces the temporarily visible
+//	               host procfs with one owned by this PID namespace, then clones
+//	               _jail_agent_drop into a further nested user namespace that
+//	               maps back to the real nonzero uid.
+//	_jail_agent_drop (stage 3, nonzero uid): installs seccomp and execs the
+//	               agent. It has no capabilities over the mount namespace, so the
+//	               sealed filesystem and private procfs stand, and Claude's
+//	               --dangerously-skip-permissions root guard is satisfied.
 //
 // Both re-execs pass the real uid/gid as argv so the drop stage knows its map.
 // Arg layout: <stage-arg> <uid> <gid> -- <command...>.
@@ -192,7 +192,9 @@ func verifyPrivateProcfs() error {
 // itself is NOT in a PID namespace — this keeps host /proc valid so Go can
 // write uid_map for the nested CLONE_NEWUSER without remounting /proc.
 //
-// Args format: --uid UID --gid GID [--log PATH] [--deny PATH...] [--home PATH] [--writable PATH...] [--mount-ro PATH...] [--overlay-prefix PREFIX...] -- CMD ARGS...
+// Args format: --uid UID --gid GID [--log PATH] [--net-relay-fd FD]
+// [--proxy-port PORT] [--local-port PORT...] [--deny PATH...] [--home PATH]
+// [--writable PATH...] [--mount-ro PATH...] [--overlay-prefix PREFIX...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
 	var denyWritePaths []string
@@ -202,6 +204,8 @@ func DenyInit(args []string) {
 	var home string
 	var logPath string
 	var uid, gid int
+	var netRelayFD, proxyPort int
+	var localPorts []int
 	var cmdStart int
 
 	for i := 0; i < len(args); i++ {
@@ -238,6 +242,16 @@ func DenyInit(args []string) {
 			case "--gid":
 				gid, _ = strconv.Atoi(args[i+1])
 				i++
+			case "--net-relay-fd":
+				netRelayFD, _ = strconv.Atoi(args[i+1])
+				i++
+			case "--proxy-port":
+				proxyPort, _ = strconv.Atoi(args[i+1])
+				i++
+			case "--local-port":
+				port, _ := strconv.Atoi(args[i+1])
+				localPorts = append(localPorts, port)
+				i++
 			}
 		}
 	}
@@ -252,6 +266,12 @@ func DenyInit(args []string) {
 
 	if cmdStart == 0 || cmdStart >= len(args) {
 		log.Fatal("_deny_init: missing -- separator or command")
+	}
+	if netRelayFD > 0 {
+		if err := startNamespaceRelays(netRelayFD, proxyPort, localPorts); err != nil {
+			failEnforcement("start network namespace relay", "127.0.0.1", err)
+		}
+		log.Printf("_deny_init: network namespace relay active (proxy=%d local_ports=%v)", proxyPort, localPorts)
 	}
 
 	// Make all mounts in this namespace private so bind mounts don't
@@ -567,9 +587,12 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 			continue
 		}
 		realPath := filepath.Join(realHome, rel)
-		// Ensure mount target exists in the overlay merged view.
-		if err := os.MkdirAll(p, 0755); err != nil {
-			log.Printf("_deny_init: mkdir writable %s: %v", p, err)
+		// Ensure both sides have compatible mountpoints. Writable rules may
+		// name a single file (the browser-request inbox is intentionally one
+		// such file), so blindly using MkdirAll turns that valid policy into a
+		// fatal "not a directory" error.
+		if err := prepareWritableMountpoint(realPath, p); err != nil {
+			log.Printf("_deny_init: prepare writable %s: %v", p, err)
 			bindFailed = true
 			break
 		}
@@ -649,7 +672,7 @@ func setupReadonlyHome(home string, writablePaths []string) error {
 	// Bind-mount each writable path BEFORE remounting HOME read-only.
 	var expected []expectedMount
 	for _, p := range writablePaths {
-		if err := os.MkdirAll(p, 0755); err != nil {
+		if err := prepareWritableMountpoint(p, p); err != nil {
 			return fmt.Errorf("create writable mountpoint %s: %w", p, err)
 		}
 		if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
@@ -696,23 +719,84 @@ func setupReadonlyHome(home string, writablePaths []string) error {
 	return nil
 }
 
+// prepareWritableMountpoint makes target suitable for a bind mount of source.
+// Historically writable rules were directories and an absent source therefore
+// still means "create this directory". Existing non-directories are preserved
+// as file/socket mountpoints instead of being passed to MkdirAll.
+func prepareWritableMountpoint(source, target string) error {
+	info, err := os.Stat(source)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.MkdirAll(source, 0o755); err != nil {
+			return err
+		}
+		info, err = os.Stat(source)
+		if err != nil {
+			return err
+		}
+	}
+	if info.IsDir() {
+		return os.MkdirAll(target, 0o755)
+	}
+
+	targetInfo, err := os.Stat(target)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		return file.Close()
+	}
+	if targetInfo.IsDir() {
+		return fmt.Errorf("source is not a directory but target is")
+	}
+	return nil
+}
+
 // persistDir recursively copies directory contents from overlay upper to real HOME.
 func persistDir(src, dst string) {
+	sourceInfo, err := os.Lstat(src)
+	if err != nil || !sourceInfo.IsDir() || sourceInfo.Mode()&os.ModeSymlink != 0 {
+		return
+	}
+	if destinationInfo, statErr := os.Lstat(dst); statErr == nil {
+		if !destinationInfo.IsDir() || destinationInfo.Mode()&os.ModeSymlink != 0 {
+			if removeErr := os.RemoveAll(dst); removeErr != nil {
+				log.Printf("_deny_init: replace unsafe persistence directory %s: %v", dst, removeErr)
+				return
+			}
+		}
+	} else if !os.IsNotExist(statErr) {
+		return
+	}
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return
 	}
-	os.MkdirAll(dst, 0755)
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return
+	}
 	for _, e := range entries {
 		s := filepath.Join(src, e.Name())
 		d := filepath.Join(dst, e.Name())
+		entryInfo, err := os.Lstat(s)
+		if err != nil || entryInfo.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
 		if e.IsDir() {
 			persistDir(s, d)
 			continue
 		}
-		// Remove symlinks so we don't follow them outside per-user home.
-		if fi, err := os.Lstat(d); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-			os.Remove(d)
+		if !entryInfo.Mode().IsRegular() {
+			continue
 		}
 		if err := copyFile(s, d); err != nil {
 			log.Printf("_deny_init: persist %s: %v", d, err)
@@ -724,6 +808,22 @@ func persistDir(src, dst string) {
 
 // copyFile copies src to dst, preserving permissions.
 func copyFile(src, dst string) error {
+	sourceInfo, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if !sourceInfo.Mode().IsRegular() || sourceInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing non-regular persistence source %s", src)
+	}
+	if destinationInfo, err := os.Lstat(dst); err == nil {
+		if destinationInfo.Mode()&os.ModeSymlink != 0 || !destinationInfo.Mode().IsRegular() {
+			if err := os.RemoveAll(dst); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -735,7 +835,7 @@ func copyFile(src, dst string) error {
 		return err
 	}
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return err
 	}
@@ -897,11 +997,15 @@ func unescapeMountInfoPath(path string) string {
 }
 
 func failEnforcement(operation, path string, err error) {
+	if isWSL2Kernel() {
+		log.Fatalf("_deny_init: sandbox enforcement failed during %s at %q: %v (platform: WSL2; some WSL2 configurations reject required mount or namespace operations inside unprivileged user namespaces; use a privileged Linux container or VM as the outer sandbox boundary); refusing to launch agent",
+			operation, path, err)
+	}
 	profile := currentSecurityProfile()
 	if profile == "" {
 		profile = "unreported"
 	}
-	log.Fatalf("_deny_init: filesystem enforcement failed: %s %q: %v (security profile: %s); refusing to launch agent",
+	log.Fatalf("_deny_init: sandbox enforcement failed: %s %q: %v (security profile: %s); refusing to launch agent",
 		operation, path, err, profile)
 }
 

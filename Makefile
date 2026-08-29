@@ -1,7 +1,7 @@
-.PHONY: build test coverage check clean web serve release proto deploy deploy-edge scale status jail \
+.PHONY: build test coverage check clean web serve release release-contract proto deploy deploy-edge scale status jail \
 	build-linux build-mock-agent build-linux-tests build-linux-sandbox-tests test-linux test-linux-ubuntu test-integ test-e2e \
 	build-linux-wt-tests \
-	test-provider-swap build-web-e2e test-web
+	test-provider-swap build-web-e2e test-web test-vuln test-compat
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -22,6 +22,14 @@ build: | web/dist
 test: | web/dist
 	go test ./...
 
+# Pin the scanner for reproducible parsing while intentionally consulting the
+# current Go vulnerability database. This is a promotion gate, not part of the
+# offline `make check` path.
+GOVULNCHECK_VERSION ?= v1.7.0
+test-vuln: | web/dist
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	cd web && npm audit --audit-level=high
+
 COVERAGE_OUT ?= /tmp/wingthing-coverage.out
 coverage: | web/dist
 	go test -coverprofile=$(COVERAGE_OUT) ./...
@@ -30,7 +38,7 @@ coverage: | web/dist
 check: web test build
 
 web:
-	cd web && npm ci && npm run build
+	cd web && npm ci && npm test && npm run build
 
 serve: build
 	./wt serve
@@ -38,19 +46,29 @@ serve: build
 release: web
 	@echo "Building $(VERSION) for all platforms..."
 	@mkdir -p dist
-	@for platform in $(PLATFORMS); do \
+	@set -e; for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; \
 		arch=$${platform#*/}; \
 		output="dist/wt-$$os-$$arch"; \
+		tmp="$$output.tmp"; \
 		echo "  $$os/$$arch"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -buildvcs=false -ldflags="$(LDFLAGS)" -o $$output ./cmd/wt; \
+		rm -f "$$tmp"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -buildvcs=false -ldflags="$(LDFLAGS)" -o "$$tmp" ./cmd/wt; \
+		mv "$$tmp" "$$output"; \
 	done
+	@CGO_ENABLED=0 go build -buildvcs=false -ldflags="$(LDFLAGS)" -o dist/wt-contract ./cmd/wt
+	@scripts/check-release-contract.sh dist/wt-contract
+	@rm -f dist/wt-contract
+	@cd dist && set -e; assets="wt-linux-amd64 wt-linux-arm64 wt-darwin-amd64 wt-darwin-arm64"; if command -v sha256sum >/dev/null 2>&1; then sha256sum $$assets > SHA256SUMS.tmp; else shasum -a 256 $$assets > SHA256SUMS.tmp; fi; mv SHA256SUMS.tmp SHA256SUMS
 	@echo "Built $(VERSION) -> dist/ (publish via gh release create)"
+
+release-contract: build
+	scripts/check-release-contract.sh ./wt
 
 jail: build
 	go test -tags integration -v ./internal/sandbox/ -run TestJail
 
-deploy: check
+deploy: check release-contract test-compat
 	fly deploy
 
 # Add edge nodes to a region. Usage: make deploy-edge REGIONS=nrt,lhr COUNT=1
@@ -79,11 +97,15 @@ proto:
 	protoc -I proto --go_out=paths=source_relative:internal/egg/pb --go-grpc_out=paths=source_relative:internal/egg/pb proto/egg.proto
 
 # Deploy artifacts target the x86-64 shared hosts by default. Security tests use
-# the local machine's native architecture because qemu/Rosetta translate
-# syscall numbers below seccomp and produce invalid sandbox results.
+# the Docker daemon's native architecture because qemu/Rosetta translate
+# syscall numbers below seccomp and produce invalid sandbox results. The daemon
+# may differ from the CLI host (for example an amd64 Colima VM on an arm64 Mac).
 HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
 LINUX_ARCH ?= amd64
-LINUX_TEST_ARCH ?= $(HOST_ARCH)
+DOCKER_ARCH := $(shell arch=$$(docker info --format '{{.Architecture}}' 2>/dev/null); \
+	if [ -n "$$arch" ]; then echo "$$arch" | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/'; \
+	else echo $(HOST_ARCH); fi)
+LINUX_TEST_ARCH ?= $(DOCKER_ARCH)
 
 build-linux: | web/dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go build -buildvcs=false \
@@ -105,9 +127,11 @@ build-linux-wt-tests: | web/dist
 		-o test/linux/wt-tests ./cmd/wt/
 
 # Browser E2E tier: seeded shared-roost (org mode) + Playwright in Docker.
-# Binaries are built for the docker host's native arch so the container can
-# run them without emulation. Needs the real web dist (it tests the UI).
-WEB_TEST_ARCH ?= $(HOST_ARCH)
+# Binaries must match the Docker daemon, which may differ from the client host
+# (for example an arm64 Mac pointed at an amd64 Colima/remote daemon). Fall back
+# to the host only when Docker is unavailable; test-web itself will then report
+# the ordinary daemon error.
+WEB_TEST_ARCH ?= $(DOCKER_ARCH)
 
 build-web-e2e: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) go build -buildvcs=false \
@@ -118,8 +142,8 @@ test-web: build-web-e2e
 	test/web/run.sh
 
 test-linux:
-	@if [ "$(LINUX_TEST_ARCH)" != "$(HOST_ARCH)" ]; then \
-		echo "cross-architecture seccomp tests are invalid (host=$(HOST_ARCH), requested=$(LINUX_TEST_ARCH)); run this battery on a native $(LINUX_TEST_ARCH) host"; \
+	@if [ "$(LINUX_TEST_ARCH)" != "$(DOCKER_ARCH)" ]; then \
+		echo "cross-architecture seccomp tests are invalid (docker=$(DOCKER_ARCH), requested=$(LINUX_TEST_ARCH)); run this battery on a native $(LINUX_TEST_ARCH) Docker daemon"; \
 		exit 1; \
 	fi
 	$(MAKE) LINUX_ARCH=$(LINUX_TEST_ARCH) build-linux build-mock-agent build-linux-tests build-linux-sandbox-tests build-linux-wt-tests
@@ -128,8 +152,8 @@ test-linux:
 		'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s'
 
 test-linux-ubuntu:
-	@if [ "$(LINUX_TEST_ARCH)" != "$(HOST_ARCH)" ]; then \
-		echo "cross-architecture seccomp tests are invalid (host=$(HOST_ARCH), requested=$(LINUX_TEST_ARCH)); run this battery on a native $(LINUX_TEST_ARCH) host"; \
+	@if [ "$(LINUX_TEST_ARCH)" != "$(DOCKER_ARCH)" ]; then \
+		echo "cross-architecture seccomp tests are invalid (docker=$(DOCKER_ARCH), requested=$(LINUX_TEST_ARCH)); run this battery on a native $(LINUX_TEST_ARCH) Docker daemon"; \
 		exit 1; \
 	fi
 	$(MAKE) LINUX_ARCH=$(LINUX_TEST_ARCH) build-linux build-mock-agent build-linux-tests build-linux-sandbox-tests build-linux-wt-tests
@@ -139,6 +163,11 @@ test-linux-ubuntu:
 
 test-integ: | web/dist
 	go test -count=1 -tags e2e -v -timeout 120s ./test/integ/...
+
+# Black-box rolling-upgrade and rollback gate against the last published
+# release. Requires the baseline tag to be available in the local clone.
+test-compat: | web/dist
+	scripts/test-backward-compat.sh
 
 test-e2e: test-linux test-linux-ubuntu test-integ
 

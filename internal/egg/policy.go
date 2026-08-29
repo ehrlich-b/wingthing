@@ -174,7 +174,7 @@ func providerDomain(profile AgentProfile, raw string) (string, bool, error) {
 	}
 	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
 	loopback := isLoopbackDomain(host)
-	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopback) {
+	if parsed.Scheme != "https" && (parsed.Scheme != "http" || !loopback) {
 		return "", false, fmt.Errorf("WT_PROVIDER_BASE_URL must use https; http is allowed only for loopback")
 	}
 	if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
@@ -218,9 +218,16 @@ var defaultAgentPorts = map[string]int{
 // network.local_ports entries are always honored.
 func InferLocalPorts(cfg *EggConfig, agent, providerURL string) []int {
 	ports := append([]int(nil), cfg.Network.LocalPorts...)
+	profile := Profile(agent)
+	_, hasProviderOverride, _ := providerDomain(profile, providerURL)
 	providerPort, hasProviderPort := loopbackPortFromURL(providerURL)
+	// A provider URL only affects an agent whose profile declares support for
+	// WT_PROVIDER_BASE_URL. Otherwise forwarding it would drill an unexplained
+	// loopback hole for a value the agent does not consume.
+	hasProviderPort = hasProviderOverride && hasProviderPort
+	profileDeclaresLoopback := !hasProviderOverride && cfg.Network.AgentDomains != "none" && declaresLoopback(profile.Domains)
 
-	if declaresLoopback(cfg.Network.Domains) || len(cfg.Network.LocalPorts) > 0 || hasProviderPort {
+	if profileDeclaresLoopback || declaresLoopback(cfg.Network.Domains) || len(cfg.Network.LocalPorts) > 0 || hasProviderPort {
 		if port, ok := defaultAgentPorts[agent]; ok {
 			ports = append(ports, port)
 		}

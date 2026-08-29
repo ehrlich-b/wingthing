@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,20 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"gopkg.in/yaml.v3"
 )
+
+func writeEggConfigTestFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func makeEggConfigTestDir(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestDefaultEggConfig(t *testing.T) {
 	cfg := DefaultEggConfig()
@@ -80,11 +95,11 @@ func TestMergeEggConfig_BaseNone(t *testing.T) {
 	// base: none means empty slate
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")
-	os.WriteFile(path, []byte(`base: none
+	writeEggConfigTestFile(t, path, `base: none
 fs:
   - rw:./
   - ro:~/.ssh
-`), 0644)
+`)
 
 	cfg, err := ResolveEggConfig(path)
 	if err != nil {
@@ -104,29 +119,27 @@ fs:
 func TestMergeEggConfig_NamedBase(t *testing.T) {
 	// Create a named base in a temp dir
 	home := t.TempDir()
-	old := os.Getenv("HOME")
-	os.Setenv("HOME", home)
-	defer os.Setenv("HOME", old)
+	t.Setenv("HOME", home)
 
 	basesDir := filepath.Join(home, ".wingthing", "bases")
-	os.MkdirAll(basesDir, 0755)
-	os.WriteFile(filepath.Join(basesDir, "strict.yaml"), []byte(`base: none
+	makeEggConfigTestDir(t, basesDir)
+	writeEggConfigTestFile(t, filepath.Join(basesDir, "strict.yaml"), `base: none
 fs:
   - rw:./
   - deny:~/.ssh
   - deny:~/.aws
 network: none
-`), 0644)
+`)
 
 	// Project config references the named base
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")
-	os.WriteFile(path, []byte(`base: strict
+	writeEggConfigTestFile(t, path, `base: strict
 fs:
   - ro:~/.ssh
 network:
   - api.anthropic.com
-`), 0644)
+`)
 
 	cfg, err := ResolveEggConfig(path)
 	if err != nil {
@@ -160,18 +173,18 @@ func TestMergeEggConfig_RelativePath(t *testing.T) {
 
 	// Create a base config in a subdirectory
 	basesDir := filepath.Join(dir, "bases")
-	os.MkdirAll(basesDir, 0755)
-	os.WriteFile(filepath.Join(basesDir, "ci.yaml"), []byte(`base: none
+	makeEggConfigTestDir(t, basesDir)
+	writeEggConfigTestFile(t, filepath.Join(basesDir, "ci.yaml"), `base: none
 fs:
   - rw:./
-`), 0644)
+`)
 
 	// Project config with relative base path
 	path := filepath.Join(dir, "egg.yaml")
-	os.WriteFile(path, []byte(`base: ./bases/ci.yaml
+	writeEggConfigTestFile(t, path, `base: ./bases/ci.yaml
 fs:
   - deny:~/.ssh
-`), 0644)
+`)
 
 	cfg, err := ResolveEggConfig(path)
 	if err != nil {
@@ -186,8 +199,8 @@ func TestResolveEggConfig_CircularReference(t *testing.T) {
 	dir := t.TempDir()
 
 	// a.yaml -> b.yaml -> a.yaml (circular)
-	os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("base: ./b.yaml\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "b.yaml"), []byte("base: ./a.yaml\n"), 0644)
+	writeEggConfigTestFile(t, filepath.Join(dir, "a.yaml"), "base: ./b.yaml\n")
+	writeEggConfigTestFile(t, filepath.Join(dir, "b.yaml"), "base: ./a.yaml\n")
 
 	_, err := ResolveEggConfig(filepath.Join(dir, "a.yaml"))
 	if err == nil {
@@ -206,9 +219,9 @@ func TestResolveEggConfig_MaxDepth(t *testing.T) {
 		name := filepath.Join(dir, "level"+string(rune('a'+i))+".yaml")
 		if i <= maxBaseDepth {
 			next := filepath.Join(dir, "level"+string(rune('a'+i+1))+".yaml")
-			os.WriteFile(name, []byte("base: "+next+"\n"), 0644)
+			writeEggConfigTestFile(t, name, "base: "+next+"\n")
 		} else {
-			os.WriteFile(name, []byte("base: none\n"), 0644)
+			writeEggConfigTestFile(t, name, "base: none\n")
 		}
 	}
 
@@ -315,9 +328,9 @@ func TestParseFSRules_DenyWrite(t *testing.T) {
 func TestResolveEggConfig_NoBase_MergesDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")
-	os.WriteFile(path, []byte(`fs:
+	writeEggConfigTestFile(t, path, `fs:
   - ro:~/.ssh
-`), 0644)
+`)
 
 	cfg, err := ResolveEggConfig(path)
 	if err != nil {
@@ -369,10 +382,10 @@ func TestDiscoverEggConfig_GlobalDefault(t *testing.T) {
 
 func TestDiscoverEggConfig_ProjectConfig(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "egg.yaml"), []byte(`base: none
+	writeEggConfigTestFile(t, filepath.Join(dir, "egg.yaml"), `base: none
 fs:
   - rw:./
-`), 0644)
+`)
 
 	cfg := DiscoverEggConfig(dir, nil)
 	if len(cfg.FS) != 1 {
@@ -402,11 +415,39 @@ func TestUnsandboxedEggConfig(t *testing.T) {
 	if got := sandbox.NetworkNeedFromDomains(cfg.Network.Domains); got != sandbox.NetworkFull {
 		t.Fatalf("network need = %s, want full", got)
 	}
+	if cfg.Network.AgentDomains != "none" {
+		t.Fatalf("agent domains = %q, want none for the explicit outer-boundary policy", cfg.Network.AgentDomains)
+	}
 
 	withLimit := *cfg
 	withLimit.Resources.Memory = "1GB"
 	if !RequiresSandbox(&withLimit, "claude") {
 		t.Fatal("resource policy must require the sandbox backend")
+	}
+}
+
+func TestWildcardNetworkAloneDoesNotDisableSandbox(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *EggConfig
+	}{
+		{"filtered environment", &EggConfig{Network: NetworkField{Domains: []string{"*"}}, Env: EnvField{"PATH"}}},
+		{"forwarded local port", &EggConfig{Network: NetworkField{Domains: []string{"*"}, LocalPorts: []int{11434}}, Env: EnvField{"*"}}},
+		{"network mode", &EggConfig{Network: NetworkField{Domains: []string{"*"}, Mode: "observe"}, Env: EnvField{"*"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !RequiresSandbox(tt.cfg, "claude") {
+				t.Fatal("partial policy silently selected the trusted outer boundary")
+			}
+		})
+	}
+
+	// This exact legacy config remains the configuration-file spelling of an
+	// unrestricted trusted host. New command-line callers use --unsandboxed.
+	legacy := &EggConfig{Network: NetworkField{Domains: []string{"*"}}, Env: EnvField{"*"}}
+	if RequiresSandbox(legacy, "claude") {
+		t.Fatal("fully unrestricted legacy trusted-host policy lost compatibility")
 	}
 }
 
@@ -470,7 +511,7 @@ func TestBaseField_MarshalRoundTrip(t *testing.T) {
 func TestSectionMask_None(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")
-	os.WriteFile(path, []byte("base:\n  fs: none\n"), 0644)
+	writeEggConfigTestFile(t, path, "base:\n  fs: none\n")
 
 	cfg, err := ResolveEggConfig(path)
 	if err != nil {
@@ -495,10 +536,10 @@ func TestSectionMask_None(t *testing.T) {
 func TestSectionMask_FileRef(t *testing.T) {
 	dir := t.TempDir()
 	// Create a base config with specific env
-	os.WriteFile(filepath.Join(dir, "prod-env.yaml"), []byte("base: none\nenv:\n  - PROD_KEY\n  - DB_URL\n"), 0644)
+	writeEggConfigTestFile(t, filepath.Join(dir, "prod-env.yaml"), "base: none\nenv:\n  - PROD_KEY\n  - DB_URL\n")
 	// Project references it for env only
 	path := filepath.Join(dir, "egg.yaml")
-	os.WriteFile(path, []byte("base:\n  env: ./prod-env.yaml\n"), 0644)
+	writeEggConfigTestFile(t, path, "base:\n  env: ./prod-env.yaml\n")
 
 	cfg, err := ResolveEggConfig(path)
 	if err != nil {
@@ -532,18 +573,16 @@ func TestSectionMask_FileRef(t *testing.T) {
 
 func TestSectionMask_FallThrough(t *testing.T) {
 	home := t.TempDir()
-	old := os.Getenv("HOME")
-	os.Setenv("HOME", home)
-	defer os.Setenv("HOME", old)
+	t.Setenv("HOME", home)
 
 	basesDir := filepath.Join(home, ".wingthing", "bases")
-	os.MkdirAll(basesDir, 0755)
+	makeEggConfigTestDir(t, basesDir)
 	// team-env has no fs of its own, just env. Its base resolves defaults, so fs comes from defaults.
-	os.WriteFile(filepath.Join(basesDir, "team-env.yaml"), []byte("env:\n  - TEAM_KEY\n"), 0644)
+	writeEggConfigTestFile(t, filepath.Join(basesDir, "team-env.yaml"), "env:\n  - TEAM_KEY\n")
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")
-	os.WriteFile(path, []byte("base:\n  env: team-env\n"), 0644)
+	writeEggConfigTestFile(t, path, "base:\n  env: team-env\n")
 
 	cfg, err := ResolveEggConfig(path)
 	if err != nil {
@@ -570,18 +609,16 @@ func TestSectionMask_FallThrough(t *testing.T) {
 
 func TestSectionMask_Combo(t *testing.T) {
 	home := t.TempDir()
-	old := os.Getenv("HOME")
-	os.Setenv("HOME", home)
-	defer os.Setenv("HOME", old)
+	t.Setenv("HOME", home)
 
 	basesDir := filepath.Join(home, ".wingthing", "bases")
-	os.MkdirAll(basesDir, 0755)
-	os.WriteFile(filepath.Join(basesDir, "strict.yaml"), []byte("base: none\nfs:\n  - rw:./\nnetwork:\n  - api.internal.corp\n"), 0644)
+	makeEggConfigTestDir(t, basesDir)
+	writeEggConfigTestFile(t, filepath.Join(basesDir, "strict.yaml"), "base: none\nfs:\n  - rw:./\nnetwork:\n  - api.internal.corp\n")
 
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "prod-env.yaml"), []byte("base: none\nenv:\n  - PROD_KEY\n"), 0644)
+	writeEggConfigTestFile(t, filepath.Join(dir, "prod-env.yaml"), "base: none\nenv:\n  - PROD_KEY\n")
 	path := filepath.Join(dir, "egg.yaml")
-	os.WriteFile(path, []byte("base:\n  name: strict\n  fs: none\n  env: ./prod-env.yaml\n"), 0644)
+	writeEggConfigTestFile(t, path, "base:\n  name: strict\n  fs: none\n  env: ./prod-env.yaml\n")
 
 	cfg, err := ResolveEggConfig(path)
 	if err != nil {
@@ -604,8 +641,8 @@ func TestSectionMask_Combo(t *testing.T) {
 func TestSectionMask_CycleDetection(t *testing.T) {
 	dir := t.TempDir()
 	// a.yaml references b.yaml for env, b.yaml references a.yaml
-	os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("base:\n  env: ./b.yaml\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "b.yaml"), []byte("base: ./a.yaml\n"), 0644)
+	writeEggConfigTestFile(t, filepath.Join(dir, "a.yaml"), "base:\n  env: ./b.yaml\n")
+	writeEggConfigTestFile(t, filepath.Join(dir, "b.yaml"), "base: ./a.yaml\n")
 
 	_, err := ResolveEggConfig(filepath.Join(dir, "a.yaml"))
 	if err == nil {
@@ -619,7 +656,7 @@ func TestSectionMask_CycleDetection(t *testing.T) {
 func TestSectionMask_WithBaseNone_Error(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")
-	os.WriteFile(path, []byte("base:\n  name: none\n  fs: none\n"), 0644)
+	writeEggConfigTestFile(t, path, "base:\n  name: none\n  fs: none\n")
 
 	_, err := ResolveEggConfig(path)
 	if err == nil {
@@ -635,7 +672,7 @@ func TestBaseField_BackwardCompat(t *testing.T) {
 
 	// String "none" should work exactly as before
 	pathNone := filepath.Join(dir, "none.yaml")
-	os.WriteFile(pathNone, []byte("base: none\nfs:\n  - rw:./\n"), 0644)
+	writeEggConfigTestFile(t, pathNone, "base: none\nfs:\n  - rw:./\n")
 	cfg, err := ResolveEggConfig(pathNone)
 	if err != nil {
 		t.Fatal(err)
@@ -646,15 +683,13 @@ func TestBaseField_BackwardCompat(t *testing.T) {
 
 	// String base with named ref should work
 	home := t.TempDir()
-	old := os.Getenv("HOME")
-	os.Setenv("HOME", home)
-	defer os.Setenv("HOME", old)
+	t.Setenv("HOME", home)
 	basesDir := filepath.Join(home, ".wingthing", "bases")
-	os.MkdirAll(basesDir, 0755)
-	os.WriteFile(filepath.Join(basesDir, "strict.yaml"), []byte("base: none\nfs:\n  - rw:./\n"), 0644)
+	makeEggConfigTestDir(t, basesDir)
+	writeEggConfigTestFile(t, filepath.Join(basesDir, "strict.yaml"), "base: none\nfs:\n  - rw:./\n")
 
 	pathStrict := filepath.Join(dir, "strict.yaml")
-	os.WriteFile(pathStrict, []byte("base: strict\nenv:\n  - CUSTOM_VAR\n"), 0644)
+	writeEggConfigTestFile(t, pathStrict, "base: strict\nenv:\n  - CUSTOM_VAR\n")
 	cfg2, err := ResolveEggConfig(pathStrict)
 	if err != nil {
 		t.Fatal(err)
@@ -732,6 +767,124 @@ func TestBuildEnv_SSHAuthSockStrippedWhenSSHDenied(t *testing.T) {
 	}
 	if !found {
 		t.Error("SSH_AUTH_SOCK should not be stripped when ~/.ssh is not denied")
+	}
+}
+
+func TestBuildEnv_ExplicitSSHAuthSockOptsIntoAgentOnlyAccess(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/fake-ssh-agent.sock")
+	cfg := &EggConfig{
+		FS:  []string{"deny:~/.ssh"},
+		Env: []string{"HOME", "SSH_AUTH_SOCK"},
+	}
+	found := false
+	for _, entry := range cfg.BuildEnv("") {
+		if entry == "SSH_AUTH_SOCK=/tmp/fake-ssh-agent.sock" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("explicit SSH_AUTH_SOCK opt-in was stripped")
+	}
+}
+
+func TestSSHAgentSocketDenyPathsMasksDiscoverableSocket(t *testing.T) {
+	socketDir, err := os.MkdirTemp("/tmp", "wt-ssh-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(socketDir); err != nil {
+			t.Errorf("remove socket directory: %v", err)
+		}
+	})
+	socketPath := filepath.Join(socketDir, "agent.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := listener.Close(); err != nil {
+			t.Errorf("close SSH agent socket: %v", err)
+		}
+	})
+	t.Setenv("SSH_AUTH_SOCK", socketPath)
+	resolvedSocketPath, err := filepath.EvalSymlinks(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	implicit := &EggConfig{FS: []string{"deny:~/.ssh"}, Env: []string{"*"}}
+	if got := implicit.SSHAgentSocketDenyPaths("", false); len(got) != 1 || got[0] != resolvedSocketPath {
+		t.Fatalf("implicit socket deny paths = %v, want [%s]", got, resolvedSocketPath)
+	}
+	if got := implicit.ToSandboxConfig("").Deny; len(got) < 2 || got[len(got)-1] != resolvedSocketPath {
+		t.Fatalf("sandbox deny paths = %v, want live socket last", got)
+	}
+
+	explicit := &EggConfig{FS: []string{"deny:~/.ssh"}, Env: []string{"SSH_AUTH_SOCK"}}
+	if got := explicit.SSHAgentSocketDenyPaths("", false); len(got) != 0 {
+		t.Fatalf("explicit opt-in socket deny paths = %v", got)
+	}
+	if got := explicit.SSHAgentSocketDenyPaths("", true); len(got) != 1 || got[0] != resolvedSocketPath {
+		t.Fatalf("shared-host forced socket deny paths = %v, want [%s]", got, resolvedSocketPath)
+	}
+}
+
+func TestSandboxAllowedSocketsIncludesOnlyFilteredLiveSSHAgent(t *testing.T) {
+	socketDir, err := os.MkdirTemp("/tmp", "wt-allowed-ssh-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "agent.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	resolved, err := filepath.EvalSymlinks(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	toolSocket := filepath.Join(t.TempDir(), "tool.sock")
+	got := sandboxAllowedSockets(toolSocket, map[string]string{"SSH_AUTH_SOCK": socketPath})
+	if len(got) != 2 || got[0] != toolSocket || got[1] != resolved {
+		t.Fatalf("allowed sockets = %v, want [%s %s]", got, toolSocket, resolved)
+	}
+	if got := sandboxAllowedSockets(resolved, map[string]string{"SSH_AUTH_SOCK": socketPath}); len(got) != 1 || got[0] != resolved {
+		t.Fatalf("deduplicated allowed sockets = %v, want [%s]", got, resolved)
+	}
+	for name, value := range map[string]string{
+		"relative": "agent.sock",
+		"missing":  filepath.Join(socketDir, "missing.sock"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := sandboxAllowedSockets("", map[string]string{"SSH_AUTH_SOCK": value}); len(got) != 0 {
+				t.Fatalf("allowed sockets = %v", got)
+			}
+		})
+	}
+}
+
+func TestSSHAgentSocketDenyPathsIgnoresNonSocketAndRelativeValues(t *testing.T) {
+	cfg := &EggConfig{FS: []string{"deny:~/.ssh"}, Env: []string{"*"}}
+	for name, value := range map[string]string{
+		"relative": "agent.sock",
+		"regular file": func() string {
+			path := filepath.Join(t.TempDir(), "not-a-socket")
+			if err := os.WriteFile(path, []byte("not a socket"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return path
+		}(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("SSH_AUTH_SOCK", value)
+			if got := cfg.SSHAgentSocketDenyPaths("", false); len(got) != 0 {
+				t.Fatalf("deny paths = %v", got)
+			}
+		})
 	}
 }
 
@@ -835,6 +988,7 @@ func TestParseFSRules_TildeExpandsToUserHome(t *testing.T) {
 }
 
 func TestToSandboxConfig_RespectsCustomHome(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
 	cfg := &EggConfig{
 		FS: []string{"deny:~/.ssh", "rw:~/.cache"},
 	}
@@ -890,7 +1044,7 @@ func TestBuildEnv_RespectsCustomHome(t *testing.T) {
 func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "egg.yaml")
-	os.WriteFile(path, []byte("base:\n  env: none\nenv:\n  - CUSTOM_ONLY\n"), 0644)
+	writeEggConfigTestFile(t, path, "base:\n  env: none\nenv:\n  - CUSTOM_ONLY\n")
 
 	cfg, err := ResolveEggConfig(path)
 	if err != nil {

@@ -2,215 +2,340 @@
 
 [![ci](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml/badge.svg)](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml)
 
-Persistent, sandboxed agent terminals on machines you control. Use them locally,
-reattach from your terminal over SSH, or opt into encrypted browser access.
+Wingthing is an agent manager for agents. Give Codex, Claude, or another parent
+agent one typed control plane for starting and supervising durable agents across
+all your machines. A person can inspect or take over the same sessions from a
+terminal or browser.
+
+The agents run where the code and hardware already live. Wingthing keeps their
+terminals alive, records semantic runs as durable tasks, applies sandbox policy,
+and gives each caller an owner, actor, grant set, bound, and audit trail.
 
 https://github.com/user-attachments/assets/f1f04caf-4b07-4298-ba76-db5b226c38f2
 
+## Give an agent access to your agents
 
+Install Wingthing, then register its local MCP server with the agent that will
+coordinate the work:
+
+```bash
+curl -fsSL https://wingthing.ai/install.sh | sh
+
+# Codex
+codex mcp add wingthing -- wt mcp stdio --client codex
+
+# Claude Code
+claude mcp add --scope user wingthing -- wt mcp stdio --client claude
 ```
-wt terminal --name work              # persistent sandboxed shell
-wt terminal --name api -- npm run dev # persistent arbitrary command
-wt egg claude --name research        # persistent sandboxed agent
-# Ctrl+B Q detaches without stopping it
-wt attach                             # list live local sessions
-wt attach --select                    # choose interactively
-wt attach research                    # names or immutable IDs both work
-wt attach research --remote box       # reattach over ordinary SSH
+
+The installer verifies the release checksum and confirms that the downloaded
+binary implements the command surface shown by the website before replacing an
+existing installation.
+
+Restart the client after registration. Ask it to call
+`wingthing_capabilities` before it starts work. The model can then:
+
+- discover installed agent CLIs and their runtime requirements;
+- start a persistent agent terminal that a person can reattach to;
+- submit a headless `agent_run` with a provider and model, then wait for its
+  semantic result without parsing terminal output;
+- coordinate bounded prompt loops and dependency graphs;
+- exchange owner-scoped messages with another authenticated agent client; and
+- inspect the effective sandbox before launching anything.
+
+The local server uses the current OS user's authority. `--client` supplies
+ownership and audit attribution inside Wingthing, not a new operating-system
+security boundary. Optional grants and spawn bounds live in
+`~/.wingthing/clients.yaml`.
+
+To give the parent agent one qualified inventory across remote wings, log in on
+the client machine and use the direct connector instead:
+
+```bash
+wt login
+
+# Codex
+codex mcp add wingthing -- wt mcp connect --client codex
+
+# Claude Code
+claude mcp add --scope user wingthing -- wt mcp connect --client claude
 ```
 
-No account or hosted service is required. If you want browser access from
-anywhere, `wt start` connects your machine outbound to the optional
-`app.wingthing.ai` relay.
+The agent calls `wing_list`, then supplies `wing_id` to every wing-owned tool.
+`wingthing.ai` authenticates the peers, returns the access-filtered directory,
+and carries the WebRTC offer/answer. MCP payloads travel directly to the selected
+wing. The first native release expects a shared LAN or tailnet unless ICE servers
+are configured. It never silently falls back to the hosted relay.
 
-## Runtime and security domains
+Direct control has explicit wing-side grants and per-principal spawn/session bounds.
+The compatible defaults require no config; operators can narrow grants, change bounds,
+or disable native control under `direct_mcp` in `wing.yaml`. Organization members
+remain owner- and path-scoped, while owners/admins retain all configured paths. See
+the [security model](docs/security.md#native-direct-mcp-authority) for the policy shape.
 
-**The egg** is a sandboxed agent session on your machine. Each `wt egg <agent>` spawns a child process inside an OS-level sandbox (Seatbelt on macOS, user namespaces + seccomp on Linux). Same idea as containers but lighter weight. Filesystem access, network reach, system calls, and resource usage are all controlled.
+Hosted terminal relay is a separate transport decision. Existing configs remain
+compatible, while a wing can refuse relayed payloads regardless of account
+entitlement:
 
-**The wing** is the durable runtime on your machine. It owns eggs and their
-session state even when no client is attached. Local and SSH clients do not need
-a hosted service. When browser access is enabled, terminal and wing API payloads
-are application-encrypted (X25519 + AES-GCM) through the relay. The shipped relay
-forwards ciphertext during normal operation; routing metadata remains visible,
-and the hosted web client still trusts the service that delivers its JavaScript.
-See the precise [security model](docs/security.md).
+```bash
+wt wing config set hosted_relay=deny
+wt stop && wt start
+```
 
-**A roost** is a deployment bundle: a wing plus the gateway and web service in
-one process. Self-host one with `wt roost start` for a shared workstation, team
-appliance, or homelab. `wingthing.ai` offers the gateway/web side as an optional
-hosted service; it is not required for local or SSH use.
+Direct discovery/signaling still works; terminal and general control payloads must go
+directly to the wing. The effective setting appears in wing capability metadata and
+denials are audited without commands, paths, or payload content.
+
+## Use the same runtime yourself
+
+```bash
+wt terminal --name work               # persistent sandboxed shell
+wt terminal --name api -- npm run dev  # persistent arbitrary command
+wt egg claude --name research         # persistent sandboxed agent
+
+# Ctrl+B Q detaches without stopping the process
+wt attach                              # list live sessions
+wt attach research                     # reattach by name or ID
+wt attach research --remote box        # reattach over ordinary SSH
+```
+
+The CLI exposes the raw terminal layer for scripts:
+
+```bash
+wt session ps --json
+wt session read api --json
+wt session send api r --enter --json
+wt session wait api --contains ready --json
+wt session rename api frontend --json
+wt session kill frontend --json
+```
+
+Terminal snapshots are ANSI state. Wingthing doesn't infer that an agent is
+done because a string appeared on screen. Use `agent_run`, `agent_wait`, and
+`agent_result` when the caller needs semantic task state.
+
+## The runtime model
+
+The product is an agent control plane over runtimes:
+
+```text
+parent agent: MCP --> agent manager --> selected wing --> sessions + runs
+                                      ^
+person: CLI or browser ----------------/  (inspect or take over)
+```
+
+| Term | Meaning |
+| --- | --- |
+| **Portal** | The unified inventory and controls exposed to an agent through MCP or to a person through the browser. |
+| **Wing** | One machine running Wingthing. It owns the authoritative egg, terminal, and task state on that machine. |
+| **Session** | A persistent interactive PTY for an agent, shell, or command. A person or model can detach and reattach. |
+| **Run** | A supervised headless agent task with semantic status, events, output, and error data. It is separate from a PTY session. |
+| **Egg** | The per-session execution boundary: process, PTY, sandbox policy, and local control socket. |
+| **Roost** | The self-hosted bundle started by `wt roost start`: a portal/gateway and an embedded wing in one process. Other wings may register with its gateway. |
+
+`wingthing.ai` is the hosted identity, directory, key-exchange, and connection
+coordination service—roughly the control plane in a tailnet. It does not run the
+agents. New free accounts use direct remote MCP; Pro adds the encrypted hosted
+terminal and control relay. Local MCP, SSH, and self-hosted roosts do not require
+it.
+
+### Shared control contract
+
+Local stdio, authenticated HTTP, and direct remote MCP derive their tool schemas
+from one registry. The remote surface has no mutable current wing: every
+wing-owned call requires `wing_id`, while `wing_list` is coordinator-owned. A
+terminal created with MCP is the same durable egg a browser or CLI can inspect.
+
+Headless runs do not yet have a browser view, locked wings still need a native
+passkey ceremony, and independent self-hosted roosts do not yet federate their
+directories. See the [direct agent manager design](docs/direct-agent-manager-design.md)
+for the rollout and security boundary.
 
 ## Sandbox
 
-Out of the box, the sandbox is opinionated: CWD is writable, home is read-only, sensitive directories (`~/.ssh`, `~/.gnupg`, `~/.aws`, etc.) are denied, and only essential env vars are passed through. A local [CONNECT proxy](https://en.wikipedia.org/wiki/HTTP_tunnel) enforces domain-level filtering - agents can only reach their own API, not the entire internet. Claude gets `api.anthropic.com`, Ollama gets `localhost`, Gemini gets `*.googleapis.com`. Agent binaries, config directories, network rules, and env vars are all auto-detected.
+Each egg resolves an `egg.yaml` policy. The defaults make the working directory
+writable, mount home read-only, deny common credential directories, strip the
+environment, and allow only the network domains required by the selected agent.
 
-Drop an `egg.yaml` in your project to customize. Configs are additive - you only declare what you're changing from the defaults. Put one at `~/.wingthing/egg.yaml` to use it as the default across projects.
+- macOS uses Seatbelt.
+- Linux uses user and PID namespaces, mount isolation, seccomp, and cgroups when
+  available.
+- A local CONNECT proxy applies domain rules. Linux enforcement limits are
+  documented in the [security model](docs/security.md).
+
+On Linux, even `network: "*"` uses the route-less namespace and permits any TCP
+target presented through HTTP CONNECT; it is not a general routed interface for
+ordinary raw-socket clients, UDP, or programs that ignore proxy configuration.
+CONNECT policies filter hosts rather than ports. See [sandbox limitations](docs/sandbox.md#network-protocol-coverage).
+
+Project policy is additive:
 
 ```yaml
 # egg.yaml
 fs:
-  - "ro:~/.ssh"       # overrides the default deny for ~/.ssh
+  - "ro:~/.ssh"        # override the default deny for ~/.ssh
 network:
-  - "github.com"      # add a domain on top of agent defaults
+  - "github.com"       # add a domain to the agent profile
 env:
-  - SSH_AUTH_SOCK      # pass SSH agent socket
+  - SSH_AUTH_SOCK       # pass the SSH agent socket
 ```
 
-Use `base: none` for a blank slate. Use the [sandbox builder](https://wingthing.ai) on the homepage to generate configs visually.
+Use `wt egg explain <agent> --json` or the MCP `sandbox_explain` tool to inspect
+the resolved boundary before launch. Put a default policy at
+`~/.wingthing/egg.yaml`, or use `base: none` for a blank slate.
 
-If the machine is already a disposable or access-segregated VM, use
-`--unsandboxed` to make that outer VM the boundary. Wingthing still provides the
-durable PTY, attach, CLI, and MCP control plane, but it does not apply nested
-filesystem, network, syscall, or resource restrictions. See the
-[sandboxed AI VM recipe](docs/sandboxed-ai-vm.md).
+If the machine is already an access-segregated VM, `--unsandboxed` declares the
+outer VM as the security boundary. Wingthing still provides persistence and the
+control plane, reports `outer-boundary` to MCP clients, and records that mode in
+the audit log.
 
-## Native reattach
+## Browser and hosted service
 
-`wt terminal` starts a shell or any command in the same durable PTY runtime used
-for agents. Detach from `wt terminal` or `wt egg` with `Ctrl+B`, then `Q`. The
-egg keeps running in its own process session.
+Browser access is optional:
 
 ```bash
-wt terminal --name work
-wt terminal --name dev-server -- npm run dev
-wt egg claude --name research
-
-wt attach                         # list local sessions
-wt attach --select                # native interactive picker
-wt attach work                    # attach by name or ID
-wt attach work --remote box       # `box` comes from ~/.ssh/config
+wt login
+wt start
+open https://app.wingthing.ai
 ```
 
-The remote host needs `wt` installed. SSH keeps ownership of authentication,
-host verification, bastions, ports, and VPN/tailnet routing. Use
-`--remote-binary /path/to/wt` if it is not on the remote `PATH`.
+The wing connects outbound, so it needs no public inbound port. Free accounts
+use the hosted site to register the wing and set up direct remote MCP; the
+hosted browser terminal is not part of that free path. Accounts with hosted
+relay access may use the application-encrypted browser terminal and control
+relay. The coordinator sees account, routing, and connection metadata, and the
+hosted browser still trusts JavaScript served by the service. Read
+[security.md](docs/security.md) before making a stronger claim.
 
-The local terminal API is also scriptable:
+A portal may have several wings. The native CLI can query the same authorized
+roster and probe each wing through the encrypted tunnel:
 
 ```bash
-wt session ps --json
-wt session read dev-server --json
-wt session send dev-server r --enter --json
-wt session wait dev-server --contains ready --json
-wt session rename dev-server frontend --json
-wt session kill frontend --json
-wt terminal --name worker --json -- make worker
-```
-
-LLMs and editor clients can use the same local runtime through MCP:
-
-```bash
-wt mcp stdio --client claude-code
-```
-
-It exposes typed tools for terminal start/list/read/send/wait/rename/stop,
-persistent agent start,
-versioned prompt templates, one-shot runs, durable task inspection, bounded
-loops, and dependency-aware swarms. It is local-user access: no account,
-browser, or hosted router is involved. Named clients own the sessions they create,
-and calls are attributed in `~/.wingthing/mcp-audit.log`. Optional grants and
-spawn bounds live in `~/.wingthing/clients.yaml`; these guard against accidental
-same-user interference, not a hostile process that can invoke `wt` directly.
-See [the agent meta-layer design](docs/agent-meta-layer.md) and the
-[supported-agent evidence matrix](docs/agent-support.md).
-
-For an agent running inside an already-isolated VM, register the trusted-host
-mode explicitly:
-
-```bash
-claude mcp add wingthing -- wt mcp stdio --client claude-code --unsandboxed
-wt egg claude --name claude --unsandboxed -- --permission-mode bypassPermissions
-```
-
-The MCP server reports this mode to the model and records
-`"isolation":"outer-boundary"` on every MCP audit entry. The model cannot toggle
-the mode per tool call.
-
-The opt-in release smoke battery model-swaps Claude Code, Codex, Hermes, and
-OpenCode onto local Qwen models, runs each directly and through Wingthing, then
-exercises MCP prompt, saved-prompt, loop, and swarm paths. It asserts exact
-artifacts rather than trusting exit codes: see [live release E2E](docs/release-e2e.md).
-
-Named prompts are ordinary local assets with immutable content revisions:
-
-```bash
-wt prompt save review --file review.prompt --variable target --agent codex --cwd "$PWD"
-wt prompt list
-wt prompt run review --var target=internal/parser
-```
-
-## Optional browser access
-
-```
-wt login                   # authenticate with GitHub or Google
-wt start                   # background daemon
-wt status                  # check it
-wt stop                    # stop it
-```
-
-Open [app.wingthing.ai](https://app.wingthing.ai) to browse your wings, start
-sessions, and view history. Lock your wing with `wt wing lock` to require
-passkey auth before sessions start.
-
-The native CLI can use the same authenticated roster as a wing finder. It then
-probes each wing through the application-encrypted tunnel, so host and project
-details do not become relay metadata:
-
-```bash
-wt wings                    # alias: wt find
+wt wings
 wt wings --json
 
-# Keep a separate login/key profile for a private or team roost.
-WINGTHING_DIR=~/.wingthing-slide wt login --roost https://roost.example.com
-WINGTHING_DIR=~/.wingthing-slide wt wings --roost https://roost.example.com --json
+# Keep a separate state and login profile for another portal.
+WINGTHING_DIR=~/.wingthing-lab wt login --roost https://lab.example.com
+WINGTHING_DIR=~/.wingthing-lab wt wings --roost https://lab.example.com --json
 ```
 
-Use `--no-probe` when only the relay's online wing IDs are needed. Native TOFU
-identity pins are stored in the selected profile's `known_wings.json`.
+The browser and native client select a wing by its stable `wing_id`. The hosted
+directory aggregates every wing registered to the account or its organizations.
+Peer-roost federation remains follow-up work.
 
-## Agents
+## Shared roost
 
-`wt doctor` shows what's installed. Swap agents per-session.
+Run a self-hosted portal, gateway, and embedded wing in one process:
+
+```bash
+wt roost start --https
+open https://localhost:8443
+```
+
+`--https` is an explicit, one-time local trust ceremony. WT creates a
+localhost-only CA and server certificate on demand under
+`~/.wingthing/local-tls`, keeps both private keys mode `0600` on this machine,
+and installs only the public CA certificate in the current user's trust store.
+The CA is name-constrained to localhost and loopback IPs. Inspect or undo the
+trust change with `wt local-cert status` and `wt local-cert remove`.
+macOS shows its native Certificate Trust Settings authorization dialog. Linux
+uses the current user's Chromium NSS database and requires `certutil` from
+`libnss3-tools` or `nss-tools`.
+WT verifies the trust-store result before reporting the CA as installed; on
+macOS it evaluates the generated leaf under the `localhost` SSL policy. A
+failed or incomplete trust change is not cached as success.
+See [the local HTTPS design](docs/local_https.md) for the listener topology,
+certificate lifecycle, and compatibility matrix.
+
+Port 8443 is the browser listener. WT also keeps a loopback-only HTTP listener
+on port 8080 for local wings and wings arriving through an SSH reverse tunnel;
+it is not exposed to the LAN. Omit `--https` to keep an HTTP browser origin, but
+single-user/no-login mode still rewrites the implicit listener to
+`127.0.0.1:8080` and refuses an explicitly non-loopback address. Authenticated
+organization and hosted listeners keep their configured bind behavior.
+
+Because local mode deliberately has no human login, WT also rejects non-loopback
+Host headers, cross-origin browser mutations, and cross-origin browser WebSocket
+handshakes. Native wings and CLI clients without browser Origin headers remain
+compatible. These checks are defense in depth around the loopback-only bind, not
+permission to publish a local-mode listener.
+
+With an OAuth provider and public HTTPS URL, the same deployment becomes a
+multi-user shared host. Each terminal and run has an owner, each OAuth client
+has a separate actor ID, workspaces are bounded by `wing.yaml`, and provider
+credentials live in the owner's agent home. Public/shared deployments continue
+to terminate their externally provisioned HTTPS at Caddy, nginx, a VPN proxy,
+Fly, or another ingress; they do not use WT's device-local CA.
+
+OAuth proves identity; it does not decide who belongs on a private roost. Set an
+exact email enrollment list on every shared roost:
+
+```bash
+export WT_ROOST_ALLOWED_EMAILS=alice@example.com,bob@example.com
+```
+
+Only those accounts may finish login, use tokens, see wings, or authorize MCP.
+If the list is empty, any account accepted by the configured OAuth provider can
+enroll. Set the list on every internet-reachable private roost unless the
+provider or ingress already enforces the same membership boundary.
+
+An LLM connects to its HTTP MCP endpoint:
+
+```bash
+codex mcp add lab --url https://lab.example.com/mcp
+codex mcp login lab
+```
+
+This command shape follows the current
+[Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp). Claude Code
+uses `claude mcp add --scope user --transport http lab
+https://lab.example.com/mcp`.
+
+## Supported agents
+
+`wt doctor` reports what is installed. Interactive sessions support:
 
 | Agent | CLI |
-|-------|-----|
+| --- | --- |
 | Claude Code | `claude` |
 | Codex | `codex` |
 | Cursor Agent | `agent` |
-| Gemini | `gemini` |
+| Gemini CLI | `gemini` |
 | Hermes Agent | `hermes` |
 | Ollama | `ollama` (`qwen3:4b` default) |
 | OpenCode | `opencode` |
 
-## Install
+Support has several evidence levels: catalog, exact headless invocation,
+synthetic PTY lifecycle, real sandbox startup, live model completion, and MCP
+orchestration. See [supported agent evidence](docs/agent-support.md) for the
+latest checked-in verification snapshot and [testing](docs/testing.md) for the
+promotion policy.
+
+## Install and build
 
 ```bash
 curl -fsSL https://wingthing.ai/install.sh | sh
 ```
 
-Or build from source (Go 1.25+, Node.js):
+Or build from source with Go 1.26.6+ and Node.js:
 
 ```bash
 git clone https://github.com/ehrlich-b/wingthing.git
-cd wingthing && make check
+cd wingthing
+make check
 ```
 
-Update with `wt update`.
+Update an installed binary with `wt update`.
 
-## Self-hosting
+## Documentation
 
-Single binary, SQLite, no external deps.
-
-```bash
-wt roost start             # server + wing, one command
-open localhost:8080         # start sessions
-```
-
-For multi-user, add GitHub or Google OAuth env vars. See the [docs](https://wingthing.ai/docs#self-hosting).
-
-## Docs
-
-[wingthing.ai/docs](https://wingthing.ai/docs)
+- [Choose a usage pattern](https://wingthing.ai/patterns)
+- [Web documentation](https://wingthing.ai/docs)
+- [Historical LLM-first architecture review](docs/llm-first-review.md)
+- [Test strategy and commands](docs/testing.md)
+- [Agent meta-layer](docs/agent-meta-layer.md)
+- [AI API surface](docs/ai-api-surface.md)
+- [Security model](docs/security.md)
 
 ## License
 

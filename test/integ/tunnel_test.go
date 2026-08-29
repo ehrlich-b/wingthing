@@ -21,13 +21,26 @@ import (
 
 func TestTunnelEncryptionRoundTrip(t *testing.T) {
 	_, ts, store := testRelayAndWS(t)
-	token, _ := createTestUser(t, store, "tunnel1")
+	wingToken, ownerID := createTestUser(t, store, "tunnel-owner")
+	browserToken, memberID := createTestUser(t, store, "tunnel-member")
+	if err := store.UpdateUserEmail(memberID, "member@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateOrg("tunnel-org-id", "Tunnel Org", "tunnel-org", ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().Exec("UPDATE orgs SET max_seats = 10 WHERE id = ?", "tunnel-org-id"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember("tunnel-org-id", memberID, "member"); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Connect wing WebSocket and register
-	wingConn, _, err := websocket.Dial(ctx, wsURL(ts)+"/ws/wing?token="+token, nil)
+	wingConn, _, err := websocket.Dial(ctx, wsURL(ts)+"/ws/wing?token="+wingToken, nil)
 	if err != nil {
 		t.Fatalf("dial wing ws: %v", err)
 	}
@@ -46,6 +59,7 @@ func TestTunnelEncryptionRoundTrip(t *testing.T) {
 		Hostname:  "testhost",
 		Agents:    []string{"claude"},
 		PublicKey: wingPubB64,
+		OrgSlug:   "tunnel-org",
 	}
 	if err := wsjson.Write(ctx, wingConn, reg); err != nil {
 		t.Fatalf("write wing.register: %v", err)
@@ -58,7 +72,7 @@ func TestTunnelEncryptionRoundTrip(t *testing.T) {
 	}
 
 	// Connect browser WebSocket (PTY path handles tunnel.req)
-	browserConn, _, err := websocket.Dial(ctx, wsURL(ts)+"/ws/pty?token="+token+"&wing_id=tunnel-wing-1", nil)
+	browserConn, _, err := websocket.Dial(ctx, wsURL(ts)+"/ws/pty?token="+browserToken+"&wing_id=tunnel-wing-1", nil)
 	if err != nil {
 		t.Fatalf("dial browser ws: %v", err)
 	}
@@ -108,8 +122,8 @@ func TestTunnelEncryptionRoundTrip(t *testing.T) {
 	if wingReceived.RequestID != requestID {
 		t.Fatalf("request ID mismatch: want %s, got %s", requestID, wingReceived.RequestID)
 	}
-	if wingReceived.SenderUserID != "user-tunnel1" || wingReceived.SenderOrgRole != "owner" {
-		t.Fatalf("tunnel identity = user %q role %q", wingReceived.SenderUserID, wingReceived.SenderOrgRole)
+	if wingReceived.SenderUserID != memberID || wingReceived.SenderEmail != "member@example.com" || wingReceived.SenderOrgRole != "member" {
+		t.Fatalf("tunnel identity = user %q email %q role %q", wingReceived.SenderUserID, wingReceived.SenderEmail, wingReceived.SenderOrgRole)
 	}
 	if len(wingReceived.SenderPasskeys) != 0 {
 		t.Fatalf("browser-supplied tunnel passkeys reached wing: %#v", wingReceived.SenderPasskeys)

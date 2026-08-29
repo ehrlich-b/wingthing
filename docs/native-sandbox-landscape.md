@@ -1,5 +1,12 @@
 # Native Agent Sandbox Landscape & Translation Strategy
 
+Status: historical vendor landscape with an active translation roadmap
+
+Reviewed: 2026-08-27
+
+Vendor details below are a dated comparison, not a current support guarantee.
+Wingthing's current enforcement contract is in [the sandbox reference](sandbox.md).
+
 ## Context
 
 Every major AI coding agent now ships built-in OS-level sandboxing. They're all converging on the same primitives wingthing already uses (seatbelt on macOS, landlock/seccomp/bwrap on Linux). This doc catalogs what each agent can and can't do natively, compares against egg.yaml's capabilities, and outlines the path toward wingthing as a sandbox orchestrator rather than a standalone sandbox.
@@ -289,7 +296,8 @@ Capabilities that will likely ALWAYS need wingthing enforcement:
 
 Capabilities trending toward native:
 - **Filesystem isolation** — all agents handle this, with varying granularity
-- **Network domain filtering** — Claude Code and Cursor are ahead of wingthing here
+- **Network domain filtering** — Wingthing now enforces the same core domain-list
+  boundary on macOS and Linux; vendor-specific protocol coverage still varies
 - **Env var filtering** — Codex is ahead, others will likely follow
 
 ### Implementation Phases
@@ -307,7 +315,7 @@ Capabilities trending toward native:
 The AI agent is a configuration, not the product. The product is:
 
 - **Sandboxed terminal sessions accessible from anywhere.** egg.yaml defines the sandbox. The thing running inside can be Claude, Cursor, Codex, bash, python, node, anything.
-- **Remote access via wing/relay.** Application-encrypted payloads, wing-verified passkeys, P2P with relay fallback. See `security.md` for the exact trust boundary.
+- **Remote access via wing/relay.** Application-encrypted payloads, wing-verified passkeys, direct transport where available, and an entitled relay transport. See `security.md` for the exact trust boundary.
 - **Audit.** Full session recording. Already built.
 - **Multi-user path ACLs.** Already built (v0.113.0: strict whitelist).
 - **Privilege broker pattern.** Give sandboxed processes access to specific APIs without exposing credentials. Already built (Slide shim pattern).

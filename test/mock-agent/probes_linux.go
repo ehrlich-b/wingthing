@@ -73,6 +73,9 @@ func probeIsolation() IsolationProbe {
 
 func probeNamespace() NamespaceProbe {
 	var p NamespaceProbe
+	if namespace, err := os.Readlink("/proc/self/ns/pid"); err == nil {
+		p.PIDNamespace = namespace
+	}
 
 	data, err := os.ReadFile("/proc/self/status")
 	if err != nil {
@@ -84,10 +87,18 @@ func probeNamespace() NamespaceProbe {
 			val := strings.TrimPrefix(line, "NSpid:")
 			val = strings.TrimSpace(val)
 			p.NSpid = val
-			// Multiple tab-separated entries means we're in a PID namespace
-			p.InPIDNamespace = strings.Contains(val, "\t")
 			break
 		}
+	}
+
+	// A private procfs intentionally reports NSpid only from the namespace in
+	// which it was mounted, so a single value does not mean "host namespace".
+	// Compare namespace inode identities captured outside and inside instead.
+	// Keep the old NSpid fallback for standalone uses of the mock agent.
+	if hostNamespace := os.Getenv("WT_TEST_HOST_PID_NAMESPACE"); hostNamespace != "" && p.PIDNamespace != "" {
+		p.InPIDNamespace = p.PIDNamespace != hostNamespace
+	} else {
+		p.InPIDNamespace = strings.Contains(p.NSpid, "\t")
 	}
 
 	return p

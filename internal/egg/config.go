@@ -16,13 +16,14 @@ import (
 // NetworkField handles YAML unmarshaling of network: string | []string | mapping.
 // The scalar and list forms are a frozen contract: "none"/"" → no network,
 // "*" → unrestricted, list → domain allowlist. The mapping form is additive and
-// carries the loopback forwarding, enforcement mode, and egress logging options
-// described in docs/sandbox-enhancement-design.md.
+// carries the loopback forwarding, enforcement mode, and legacy egress-logging
+// option described in docs/sandbox-enhancement-design.md. Log is retained as a
+// frozen config contract; policy decisions are audited independently of it.
 type NetworkField struct {
 	Domains      []string `yaml:"domains,omitempty"`
 	LocalPorts   []int    `yaml:"local_ports,omitempty"`
-	Mode         string   `yaml:"mode,omitempty"` // "" (default) | "observe" | "enforce"
-	Log          *bool    `yaml:"log,omitempty"`
+	Mode         string   `yaml:"mode,omitempty"`          // "" (default) | "observe" | "enforce"
+	Log          *bool    `yaml:"log,omitempty"`           // legacy compatibility; policy-decision auditing is always on
 	AgentDomains string   `yaml:"agent_domains,omitempty"` // ""/"merge" (default) | "none"
 }
 
@@ -37,6 +38,15 @@ func (n *NetworkField) UnmarshalYAML(value *yaml.Node) error {
 		*n = NetworkField{Domains: []string{s}}
 		return nil
 	case yaml.MappingNode:
+		allowed := map[string]bool{
+			"domains": true, "local_ports": true, "mode": true, "log": true, "agent_domains": true,
+		}
+		for index := 0; index+1 < len(value.Content); index += 2 {
+			key := value.Content[index].Value
+			if !allowed[key] {
+				return fmt.Errorf("network contains unknown field %q", key)
+			}
+		}
 		type plain NetworkField
 		var p plain
 		if err := value.Decode(&p); err != nil {
@@ -45,6 +55,21 @@ func (n *NetworkField) UnmarshalYAML(value *yaml.Node) error {
 		if err := validateAgentDomainsMode(p.AgentDomains); err != nil {
 			return err
 		}
+		if p.Mode != "" && p.Mode != "enforce" && p.Mode != "observe" {
+			return fmt.Errorf("network.mode must be enforce or observe, got %q", p.Mode)
+		}
+		seenPorts := make(map[int]bool, len(p.LocalPorts))
+		var normalizedPorts []int
+		for _, port := range p.LocalPorts {
+			if port < 1 || port > 65535 {
+				return fmt.Errorf("network.local_ports contains invalid port %d", port)
+			}
+			if !seenPorts[port] {
+				seenPorts[port] = true
+				normalizedPorts = append(normalizedPorts, port)
+			}
+		}
+		p.LocalPorts = normalizedPorts
 		*n = NetworkField(p)
 		return nil
 	default:
@@ -217,15 +242,17 @@ func DefaultEggConfig() *EggConfig {
 func UnsandboxedEggConfig() *EggConfig {
 	return &EggConfig{
 		Base:    BaseField{Name: "none"},
-		Network: NetworkField{Domains: []string{"*"}},
+		Network: NetworkField{Domains: []string{"*"}, AgentDomains: "none"},
 		Env:     EnvField{"*"},
 	}
 }
 
 // RequiresSandbox reports whether cfg asks the runtime to enforce any policy.
-// Agent network requirements are included because they are drilled into the
-// effective policy at launch. Keep this predicate aligned with RunSession: the
-// CLI uses it to avoid demanding user namespaces for an explicitly trusted VM.
+// Trusted-host compatibility is intentionally recognized only when every
+// relevant boundary is wide open. In particular, a wildcard network policy by
+// itself must not silently disable filesystem, syscall, and resource isolation.
+// Keep this predicate aligned with the explicit OuterBoundary marker passed to
+// the egg subprocess by spawnEgg.
 func RequiresSandbox(cfg *EggConfig, agentName string) bool {
 	if cfg == nil {
 		return true
@@ -234,11 +261,14 @@ func RequiresSandbox(cfg *EggConfig, agentName string) bool {
 		cfg.Resources.Memory != "" || cfg.Resources.MaxFDs > 0 || cfg.Resources.MaxPids > 0 {
 		return true
 	}
+	if !cfg.IsAllEnv() || len(cfg.Network.LocalPorts) > 0 || cfg.Network.Mode != "" || cfg.Network.Log != nil {
+		return true
+	}
 	domains := append([]string(nil), cfg.Network.Domains...)
 	if agentName != "" && cfg.Network.AgentDomains != "none" {
 		domains = mergeStringSet(domains, Profile(agentName).Domains)
 	}
-	return sandbox.NetworkNeedFromDomains(domains) < sandbox.NetworkFull
+	return len(domains) != 1 || domains[0] != "*" || sandbox.NetworkNeedFromDomains(domains) != sandbox.NetworkFull
 }
 
 // LoadEggConfig reads and parses an egg.yaml file.
@@ -531,9 +561,9 @@ func firstNonEmpty(values ...string) string {
 }
 
 func firstNonNilBool(values ...*bool) *bool {
-	for _, v := range values {
-		if v != nil {
-			return v
+	for _, value := range values {
+		if value != nil {
+			return value
 		}
 	}
 	return nil
@@ -620,6 +650,7 @@ func (c *EggConfig) ToSandboxConfig(home string) sandbox.Config {
 		home, _ = os.UserHomeDir()
 	}
 	mounts, deny, denyWrite := ParseFSRules(c.FS, home)
+	deny = append(deny, c.SSHAgentSocketDenyPaths(home, false)...)
 	netNeed := sandbox.NetworkNeedFromDomains(c.Network.Domains)
 
 	return sandbox.Config{
@@ -627,7 +658,9 @@ func (c *EggConfig) ToSandboxConfig(home string) sandbox.Config {
 		Deny:        deny,
 		DenyWrite:   denyWrite,
 		NetworkNeed: netNeed,
+		NetworkMode: c.Network.Mode,
 		Domains:     c.Network.Domains,
+		LocalPorts:  append([]int(nil), c.Network.LocalPorts...),
 		CPULimit:    c.Resources.CPUDuration(),
 		MemLimit:    c.Resources.MemBytes(),
 		MaxFDs:      c.Resources.MaxFDs,
@@ -669,13 +702,49 @@ func (c *EggConfig) sshDirDenied(home string) bool {
 	return false
 }
 
+func (c *EggConfig) explicitlyAllowsEnv(name string) bool {
+	for _, entry := range c.Env {
+		if entry == name {
+			return true
+		}
+	}
+	return false
+}
+
+// SSHAgentSocketDenyPaths returns the live SSH agent endpoint that must be
+// masked alongside ~/.ssh. Removing SSH_AUTH_SOCK from the child environment
+// is not sufficient: an agent can discover common socket paths under /tmp or
+// the user runtime directory and connect to them directly.
+//
+// Listing SSH_AUTH_SOCK explicitly (rather than via env: ["*"]) is a deliberate
+// opt-in to agent-backed SSH without exposing raw key files. Shared-host callers
+// pass force=true because they never forward host authentication agents.
+func (c *EggConfig) SSHAgentSocketDenyPaths(home string, force bool) []string {
+	if !c.sshDirDenied(home) || (!force && c.explicitlyAllowsEnv("SSH_AUTH_SOCK")) {
+		return nil
+	}
+	path := strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK"))
+	if path == "" || !filepath.IsAbs(path) {
+		return nil
+	}
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return nil
+	}
+	return []string{path}
+}
+
 // BuildEnv filters the host environment based on the config.
 // SSH_AUTH_SOCK is stripped when ~/.ssh is denied — otherwise the agent can
 // still make outbound SSH connections via the forwarded socket despite the
 // filesystem deny, causing unexpected host-key prompts inside the egg.
 // If home is non-empty it is used to expand ~ in FS rules; otherwise os.UserHomeDir().
 func (c *EggConfig) BuildEnv(home string) []string {
-	stripSSHAgent := c.sshDirDenied(home)
+	stripSSHAgent := c.sshDirDenied(home) && !c.explicitlyAllowsEnv("SSH_AUTH_SOCK")
 
 	filter := func(env []string) []string {
 		out := env[:0:0]

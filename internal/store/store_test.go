@@ -1,8 +1,11 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,7 +33,7 @@ func TestConcurrentStoreHandlesWaitForSQLiteWriter(t *testing.T) {
 				errs <- err
 				return
 			}
-			defer s.Close()
+			defer func() { _ = s.Close() }()
 			<-start
 			errs <- s.CreateTask(&Task{
 				ID: fmt.Sprintf("t-concurrent-%d", i), Type: "prompt", What: "test",
@@ -48,13 +51,64 @@ func TestConcurrentStoreHandlesWaitForSQLiteWriter(t *testing.T) {
 	}
 }
 
+func TestConcurrentStoreHandlesMigrateFirstUse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "concurrent-first-use.db")
+	const workers = 8
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			s, err := Open(path)
+			if s != nil {
+				_ = s.Close()
+			}
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent first open: %v", err)
+		}
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	var applied int
+	if err := s.DB().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&applied); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := migrationsFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			want++
+		}
+	}
+	if applied != want {
+		t.Fatalf("applied migrations = %d, want %d", applied, want)
+	}
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	s, err := Open(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -240,7 +294,9 @@ func TestSetTaskOutput(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	task := &Task{ID: "t-out", Type: "prompt", What: "test", RunAt: now, Agent: "claude"}
-	s.CreateTask(task)
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := s.SetTaskOutput("t-out", "the output"); err != nil {
 		t.Fatalf("set output: %v", err)
@@ -251,12 +307,32 @@ func TestSetTaskOutput(t *testing.T) {
 	}
 }
 
+func TestSetTaskWhat(t *testing.T) {
+	s := openTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	task := &Task{ID: "t-what", Type: "prompt", What: "initial", RunAt: now, Agent: "claude"}
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetTaskWhat("t-what", "resolved prompt"); err != nil {
+		t.Fatalf("set what: %v", err)
+	}
+	got, _ := s.GetTask("t-what")
+	if got.What != "resolved prompt" {
+		t.Errorf("what = %q, want %q", got.What, "resolved prompt")
+	}
+}
+
 func TestSetTaskError(t *testing.T) {
 	s := openTestStore(t)
 	now := time.Now().UTC().Truncate(time.Second)
 
 	task := &Task{ID: "t-err", Type: "prompt", What: "test", RunAt: now, Agent: "claude"}
-	s.CreateTask(task)
+	if err := s.CreateTask(task); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := s.SetTaskError("t-err", "something broke"); err != nil {
 		t.Fatalf("set error: %v", err)
@@ -302,10 +378,12 @@ func TestListRecentThread(t *testing.T) {
 	s := openTestStore(t)
 
 	for i := 0; i < 5; i++ {
-		s.AppendThread(&ThreadEntry{
+		if err := s.AppendThread(&ThreadEntry{
 			WingID:  "test",
 			Summary: fmt.Sprintf("entry %d", i),
-		})
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	recent, err := s.ListRecentThread(3)
@@ -324,8 +402,12 @@ func TestDeleteThreadOlderThan(t *testing.T) {
 	cutoff := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	recent := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
 
-	s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "old"}, old)
-	s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "new"}, recent)
+	if err := s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "old"}, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendThreadAt(&ThreadEntry{WingID: "test", Summary: "new"}, recent); err != nil {
+		t.Fatal(err)
+	}
 
 	deleted, err := s.DeleteThreadOlderThan(cutoff)
 	if err != nil {
@@ -394,8 +476,12 @@ func TestGetAgentNotFound(t *testing.T) {
 
 func TestListAgents(t *testing.T) {
 	s := openTestStore(t)
-	s.UpsertAgent(&Agent{Name: "claude", Adapter: "claude", Command: "claude", ContextWindow: 200000})
-	s.UpsertAgent(&Agent{Name: "ollama", Adapter: "ollama", Command: "ollama run llama3.2", ContextWindow: 128000})
+	if err := s.UpsertAgent(&Agent{Name: "claude", Adapter: "claude", Command: "claude", ContextWindow: 200000}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertAgent(&Agent{Name: "ollama", Adapter: "ollama", Command: "ollama run llama3.2", ContextWindow: 128000}); err != nil {
+		t.Fatal(err)
+	}
 
 	agents, err := s.ListAgents()
 	if err != nil {
@@ -410,7 +496,9 @@ func TestUpdateAgentHealth(t *testing.T) {
 	s := openTestStore(t)
 	now := time.Now().UTC().Truncate(time.Second)
 
-	s.UpsertAgent(&Agent{Name: "claude", Adapter: "claude", Command: "claude", ContextWindow: 200000})
+	if err := s.UpsertAgent(&Agent{Name: "claude", Adapter: "claude", Command: "claude", ContextWindow: 200000}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := s.UpdateAgentHealth("claude", true, now); err != nil {
 		t.Fatalf("update health: %v", err)
@@ -428,7 +516,9 @@ func TestAppendAndListLog(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	// need a task for FK
-	s.CreateTask(&Task{ID: "t-log", Type: "prompt", What: "test", RunAt: now, Agent: "claude"})
+	if err := s.CreateTask(&Task{ID: "t-log", Type: "prompt", What: "test", RunAt: now, Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
 
 	detail := "full prompt content here"
 	if err := s.AppendLog("t-log", "prompt_built", &detail); err != nil {
@@ -480,5 +570,140 @@ func TestAllTablesExist(t *testing.T) {
 		if count != 1 {
 			t.Errorf("table %s not found", name)
 		}
+	}
+}
+
+func TestUpgradeEveryStoreMigrationBaselinePreservesData(t *testing.T) {
+	entries, err := migrationsFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migrations []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			migrations = append(migrations, entry.Name())
+		}
+	}
+	sort.Strings(migrations)
+	if len(migrations) == 0 {
+		t.Fatal("no embedded store migrations")
+	}
+
+	for baseline := 1; baseline <= len(migrations); baseline++ {
+		baseline := baseline
+		t.Run(fmt.Sprintf("through_%s", migrations[baseline-1]), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "store.db")
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`CREATE TABLE schema_migrations (
+				version TEXT PRIMARY KEY,
+				applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			)`); err != nil {
+				t.Fatal(err)
+			}
+			for index := 0; index < baseline; index++ {
+				contents, err := migrationsFS.ReadFile("migrations/" + migrations[index])
+				if err != nil {
+					t.Fatal(err)
+				}
+				tx, err := db.Begin()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := tx.Exec(string(contents)); err != nil {
+					_ = tx.Rollback()
+					t.Fatalf("apply %s: %v", migrations[index], err)
+				}
+				if _, err := tx.Exec("INSERT INTO schema_migrations(version) VALUES (?)", migrations[index]); err != nil {
+					_ = tx.Rollback()
+					t.Fatal(err)
+				}
+				if err := tx.Commit(); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			wingColumn := "machine_id"
+			if baseline >= 5 {
+				wingColumn = "wing_id"
+			}
+			if _, err := db.Exec(fmt.Sprintf(
+				`INSERT INTO tasks (id, what, run_at, agent, %s) VALUES (?, ?, ?, ?, ?)`, wingColumn,
+			), "upgrade-task", "preserve me", "2026-08-20 12:00:00", "claude", "upgrade-wing"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(fmt.Sprintf(
+				`INSERT INTO thread_entries (task_id, %s, summary, tokens_used) VALUES (?, ?, ?, ?)`, wingColumn,
+			), "upgrade-task", "upgrade-wing", "durable summary", 42); err != nil {
+				t.Fatal(err)
+			}
+			if baseline >= 4 {
+				if _, err := db.Exec("INSERT INTO chat_sessions(id, agent, title) VALUES ('upgrade-chat', 'claude', 'Durable chat')"); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.Exec("INSERT INTO chat_messages(session_id, role, content) VALUES ('upgrade-chat', 'user', 'keep this')"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if baseline >= 12 {
+				if _, err := db.Exec(`INSERT INTO messages
+					(message_id, owner_id, sender_actor, recipient_actor, channel, content, expires_at)
+					VALUES ('upgrade-message', 'owner', 'sender', 'recipient', 'review', 'keep this too', '2030-01-01 00:00:00')`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			store, err := Open(path)
+			if err != nil {
+				t.Fatalf("open upgraded store: %v", err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			task, err := store.GetTask("upgrade-task")
+			if err != nil || task == nil {
+				t.Fatalf("upgraded task = %#v, %v", task, err)
+			}
+			if task.What != "preserve me" || task.WingID == nil || *task.WingID != "upgrade-wing" {
+				t.Fatalf("upgraded task data = %#v", task)
+			}
+			thread, err := store.ListRecentThread(10)
+			if err != nil || len(thread) != 1 || thread[0].Summary != "durable summary" || thread[0].WingID != "upgrade-wing" {
+				t.Fatalf("upgraded thread = %#v, %v", thread, err)
+			}
+			if baseline >= 4 {
+				messages, err := store.ListChatMessages("upgrade-chat")
+				if err != nil || len(messages) != 1 || messages[0].Content != "keep this" {
+					t.Fatalf("upgraded chat = %#v, %v", messages, err)
+				}
+			}
+			if baseline >= 12 {
+				message, err := store.GetMessage("owner", "upgrade-message")
+				if err != nil || message == nil || message.Content != "keep this too" {
+					t.Fatalf("upgraded durable message = %#v, %v", message, err)
+				}
+			}
+			var applied int
+			if err := store.DB().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&applied); err != nil {
+				t.Fatal(err)
+			}
+			if applied != len(migrations) {
+				t.Fatalf("applied migrations = %d, want %d", applied, len(migrations))
+			}
+			rows, err := store.DB().Query("PRAGMA foreign_key_check")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = rows.Close() }()
+			if rows.Next() {
+				t.Fatal("upgraded store has a foreign-key violation")
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

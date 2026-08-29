@@ -94,12 +94,16 @@ wt login
 wt start
 ```
 
-The wing then makes an outbound connection to `wingthing.ai`, and the hosted web
-client can reach the VM without opening another inbound port. Terminal and wing
-API payloads are application-encrypted between the client and wing; the relay
-routes ciphertext while still seeing routing/account metadata. The hosted
-service also delivers the browser JavaScript, so this is not a guarantee against
-a fully compromised service delivering a malicious client.
+The wing then makes an outbound connection to `wingthing.ai` without opening a
+static inbound port. A free account uses that connection for authenticated
+directory lookup and direct native MCP setup with `wt mcp connect`; MCP request
+and result bytes travel over WebRTC directly to the VM and never fall back to
+the hosted payload relay. An account with hosted-relay access can also use the
+hosted browser terminal. In that mode terminal and wing API payloads are
+application-encrypted between the browser and wing; the relay routes ciphertext
+while still seeing routing/account metadata. The hosted service also delivers
+the browser JavaScript, so this is not a guarantee against a fully compromised
+service delivering a malicious client.
 
 `--unsandboxed` does not weaken encryption in transit, because sandboxing and
 relay encryption are separate boundaries. It does mean the agent is part of the

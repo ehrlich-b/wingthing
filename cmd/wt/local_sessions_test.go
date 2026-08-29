@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,32 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 )
+
+func TestSessionInputChunksSeparatesEnterFromPastedText(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []byte
+		enter bool
+		want  [][]byte
+	}{
+		{name: "text only", input: []byte("hello"), want: [][]byte{[]byte("hello")}},
+		{name: "enter only", enter: true, want: [][]byte{{'\r'}}},
+		{name: "text and enter", input: []byte("hello"), enter: true, want: [][]byte{[]byte("hello"), {'\r'}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := sessionInputChunks(test.input, test.enter)
+			if len(got) != len(test.want) {
+				t.Fatalf("chunks = %#v, want %#v", got, test.want)
+			}
+			for index := range got {
+				if !bytes.Equal(got[index], test.want[index]) {
+					t.Fatalf("chunk %d = %q, want %q", index, got[index], test.want[index])
+				}
+			}
+		})
+	}
+}
 
 func TestValidateSessionName(t *testing.T) {
 	for _, valid := range []string{"", "work", "dev-server", "api_2", "repo.main"} {

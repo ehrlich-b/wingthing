@@ -8,7 +8,6 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -97,7 +96,7 @@ func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd s
 		}
 	}
 
-	sessionID := uuid.New().String()[:8]
+	sessionID := newRuntimeID()
 	ec, err := spawnEgg(
 		cfg,
 		sessionID,

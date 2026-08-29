@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY wt /usr/local/bin/wt
 COPY claude /usr/local/bin/claude
 COPY wing.yaml egg.yaml /root/.wingthing/
-COPY entry.sh seed.sql /opt/canary/
-RUN chmod 0755 /usr/local/bin/wt /usr/local/bin/claude /opt/canary/entry.sh
+COPY entry.sh entry-direct.sh seed.sql seed-direct.sql /opt/canary/
+RUN chmod 0755 /usr/local/bin/wt /usr/local/bin/claude /opt/canary/entry.sh /opt/canary/entry-direct.sh
 ENV HOME=/root
 CMD ["/opt/canary/entry.sh"]

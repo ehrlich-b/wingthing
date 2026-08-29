@@ -46,14 +46,17 @@ func promptListCmd() *cobra.Command {
 				return writePromptJSON(cmd.OutOrStdout(), assets)
 			}
 			if len(assets) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "no saved prompts")
-				return nil
+				return writeln(cmd.OutOrStdout(), "no saved prompts")
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tREVISION\tAGENT\tVARIABLES\tDESCRIPTION")
+			if err := writeln(w, "NAME\tREVISION\tAGENT\tVARIABLES\tDESCRIPTION"); err != nil {
+				return err
+			}
 			for _, asset := range assets {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", asset.Name, asset.Revision, asset.Agent,
-					strings.Join(asset.Variables, ","), asset.Description)
+				if err := writef(w, "%s\t%s\t%s\t%s\t%s\n", asset.Name, asset.Revision, asset.Agent,
+					strings.Join(asset.Variables, ","), asset.Description); err != nil {
+					return err
+				}
 			}
 			return w.Flush()
 		},
@@ -81,21 +84,31 @@ func promptShowCmd() *cobra.Command {
 			if jsonOutput {
 				return writePromptJSON(cmd.OutOrStdout(), asset)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s@%s\n", asset.Name, asset.Revision)
+			out := cmd.OutOrStdout()
+			if err := writef(out, "%s@%s\n", asset.Name, asset.Revision); err != nil {
+				return err
+			}
 			if asset.Description != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "description: %s\n", asset.Description)
+				if err := writef(out, "description: %s\n", asset.Description); err != nil {
+					return err
+				}
 			}
 			if asset.Agent != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "agent: %s\n", asset.Agent)
+				if err := writef(out, "agent: %s\n", asset.Agent); err != nil {
+					return err
+				}
 			}
 			if asset.CWD != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "cwd: %s\n", asset.CWD)
+				if err := writef(out, "cwd: %s\n", asset.CWD); err != nil {
+					return err
+				}
 			}
 			if len(asset.Variables) > 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "variables: %s\n", strings.Join(asset.Variables, ", "))
+				if err := writef(out, "variables: %s\n", strings.Join(asset.Variables, ", ")); err != nil {
+					return err
+				}
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "\n%s\n", asset.Template)
-			return nil
+			return writef(out, "\n%s\n", asset.Template)
 		},
 	}
 	cmd.Flags().StringVar(&revision, "revision", "", "Read an immutable historical revision")
@@ -154,8 +167,7 @@ func promptSaveCmd() *cobra.Command {
 			if jsonOutput {
 				return writePromptJSON(cmd.OutOrStdout(), asset)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "saved: %s@%s\n", asset.Name, asset.Revision)
-			return nil
+			return writef(cmd.OutOrStdout(), "saved: %s@%s\n", asset.Name, asset.Revision)
 		},
 	}
 	cmd.Flags().StringVar(&description, "description", "", "Human-readable purpose")
@@ -207,7 +219,7 @@ func promptRunCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer taskStore.Close()
+			defer closeWithLog("prompt task store", taskStore)
 			task := &store.Task{
 				ID: genTaskID(), Type: "prompt", What: rendered, Agent: agentName,
 				RunAt: time.Now().UTC(), CWD: cwd, PromptName: asset.Name, PromptRevision: asset.Revision,
@@ -215,7 +227,9 @@ func promptRunCmd() *cobra.Command {
 			if err := taskStore.CreateTask(task); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "submitted: %s (%s@%s)\n", task.ID, asset.Name, asset.Revision)
+			if err := writef(cmd.OutOrStdout(), "submitted: %s (%s@%s)\n", task.ID, asset.Name, asset.Revision); err != nil {
+				return err
+			}
 			return runTaskTo(cmd.Context(), cfg, taskStore, task, cmd.OutOrStdout())
 		},
 	}

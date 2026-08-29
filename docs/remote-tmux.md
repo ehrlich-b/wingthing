@@ -29,11 +29,18 @@ All three give you a single terminal connection. Want to check on a long-running
 
 The VTE also maintains a 50,000-line scrollback ring buffer. Lines that scroll off the top of the terminal grid are captured and stored, same as a local terminal emulator like ghostty or iTerm. On reconnect, scrollback is included in the snapshot. Start a build, go to lunch, come back, scroll up to see what happened.
 
-**Forward secrecy on every reattach.** Each reattach does a fresh X25519 key exchange. The browser generates a new ephemeral keypair per tab (stored in sessionStorage), so old sessions can't be decrypted even if keys are later compromised.
+**Fresh client keys, without a forward-secrecy claim.** Each browser tab generates
+a fresh X25519 keypair in session storage, but the wing's X25519 key is persistent.
+Later theft of that wing key can therefore expose previously recorded exchanges.
+The exact current boundary is documented in [security.md](security.md#no-forward-secrecy-claim).
 
 **Passkey auth.** A passkey is just a P-256 keypair where the private key never leaves your device. The wing stores your public key. On reattach, the wing sends a 32-byte random challenge, the browser calls `navigator.credentials.get()` (biometric/PIN prompt), and the device signs the challenge with ECDSA-SHA256. The wing verifies the signature against the stored public key. Same concept as SSH keys, but the key lives in your device's secure enclave instead of `~/.ssh/`, and you unlock it with a fingerprint instead of a passphrase.
 
-After verification, the wing issues an auth token (64 random hex bytes) cached in the browser's sessionStorage. Subsequent reattaches present the token instead of re-prompting. Tokens are boot-scoped by default (cleared on wing restart) with optional TTL via `auth_ttl` in wing.yaml.
+After verification, the wing issues an auth token made from 32 random bytes and
+encoded as 64 hexadecimal characters, cached in the browser's sessionStorage.
+Subsequent reattaches present the token instead of re-prompting. Tokens are
+boot-scoped by default (cleared on wing restart) with optional TTL via `auth_ttl`
+in wing.yaml.
 
 Tunnel challenges, assertions, and tokens travel inside the application-encrypted tunnel; PTY ceremonies use fresh wing challenges on the PTY control path. The wing verifies a locally pinned public key and binds tokens to the client key and relay user. This prevents the as-built relay from minting a locked-wing token, but a compromised hosted service can still replace the browser JavaScript; see `security.md`.
 
@@ -51,7 +58,7 @@ The terminal stack has three layers that don't know about each other. Changes to
 
 **Session state (egg).** The VTE in the egg process is the source of truth for terminal state. It captures the grid, cursor, modes, scrollback. It produces snapshots on reconnect and passes raw bytes through for the live path. This is independent of how those bytes reach the browser.
 
-**Transport (relay).** Today, all bytes flow through the roost via WebSocket. Its normal forwarding path carries application ciphertext. The transport could change to P2P (WebRTC DataChannel for browsers, QUIC for CLI clients) without touching the VTE or the renderer. The payload encryption is transport-independent - same ECDH key agreement and AES-GCM, whether bytes flow through the roost or directly between peers.
+**Transport (relay).** Today, entitled hosted browser terminals and self-hosted browser terminals flow through their gateway via WebSocket. Its normal forwarding path carries application ciphertext. Free native MCP is separate and connects directly to a wing after coordination; browser-direct terminal transport has not shipped. The browser transport could later change to WebRTC DataChannels without touching the VTE or renderer. The payload encryption is transport-independent - the same ECDH key agreement and AES-GCM can protect bytes whether they flow through a gateway or directly between peers.
 
 ## What's missing
 
@@ -96,7 +103,11 @@ The audit recording feature already writes session output to disk. Extending thi
 
 This is orthogonal to session management but worth noting.
 
-The roost transits all traffic today. It can't read the ciphertext, but every byte flows through it. This adds latency and makes the roost a bottleneck.
+Entitled hosted and self-hosted browser terminals transit their gateway today. The
+gateway cannot read normal terminal ciphertext, but every browser-terminal byte
+flows through it, which adds latency and makes that gateway a bottleneck. Native
+remote MCP is already direct after coordination and is not part of this proposed
+browser transport change.
 
 Tailscale's DERP relays work the same way and solve it with NAT traversal - try to establish a direct connection, fall back to relay when it fails. wingthing could do the same. The roost handles signaling and auth, and falls back to relaying only when hole punching fails.
 

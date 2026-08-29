@@ -10,14 +10,24 @@ func (s *Server) wingRegistrySummary() string {
 	}
 	result := fmt.Sprintf("[%d wings:", len(all))
 	for _, w := range all {
-		result += fmt.Sprintf(" %s(conn=%s,user=%s)", w.WingID, w.ID[:8], w.UserID[:8])
+		result += fmt.Sprintf(" %s(conn=%s,user=%s)", w.WingID, summaryPrefix(w.ID), summaryPrefix(w.UserID))
 	}
 	return result + "]"
+}
+
+func summaryPrefix(value string) string {
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
 }
 
 // canAccessWing returns true if userID can use this wing.
 // userOrgIDs are the user's org memberships from their session (works on edge nodes without DB).
 func (s *Server) canAccessWing(userID string, wing *ConnectedWing, userOrgIDs ...[]string) bool {
+	if !s.roostUserIDAllowed(userID) {
+		return false
+	}
 	// Roost mode makes the appliance's embedded service wing shared. External
 	// personal wings may also register with the gateway, but they keep ordinary
 	// owner/org isolation instead of inheriting appliance-wide access.
@@ -87,11 +97,9 @@ func (s *Server) isWingOwner(userID string, wing *ConnectedWing) bool {
 
 // findWingByWingID finds a connected wing by wing_id that the user can access.
 func (s *Server) findWingByWingID(userID, wingID string) *ConnectedWing {
-	all := s.Wings.All()
-	for _, w := range all {
-		if w.WingID == wingID && s.canAccessWing(userID, w) {
-			return w
-		}
+	wing := s.Wings.FindByID(wingID)
+	if wing != nil && s.canAccessWing(userID, wing) {
+		return wing
 	}
 	return nil
 }
@@ -99,11 +107,5 @@ func (s *Server) findWingByWingID(userID, wingID string) *ConnectedWing {
 // findAnyWingByWingID finds a connected wing by wing_id without access check.
 // Used for routing and tunnel dispatch — the wing itself handles authz via E2E tunnel.
 func (s *Server) findAnyWingByWingID(wingID string) *ConnectedWing {
-	all := s.Wings.All()
-	for _, w := range all {
-		if w.WingID == wingID {
-			return w
-		}
-	}
-	return nil
+	return s.Wings.FindByID(wingID)
 }

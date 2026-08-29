@@ -24,8 +24,8 @@ func keygenCmd() *cobra.Command {
 			}
 
 			fmt.Println(encoded)
-			fmt.Fprintf(cmd.ErrOrStderr(), "\npublic key: %s\n", pubKey)
-			return nil
+			_, err = fmt.Fprintf(cmd.ErrOrStderr(), "\npublic key: %s\n", pubKey)
+			return err
 		},
 	}
 }

@@ -11,22 +11,22 @@ import (
 )
 
 type FileEntry struct {
-	Path      string `json:"path"`
-	SHA256    string `json:"sha256"`
-	Size      int64  `json:"size"`
-	ModTime   int64  `json:"mod_time"`
-	WingID string `json:"wing_id"`
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256"`
+	Size    int64  `json:"size"`
+	ModTime int64  `json:"mod_time"`
+	WingID  string `json:"wing_id"`
 }
 
 type Manifest struct {
-	WingID string      `json:"wing_id"`
+	WingID    string      `json:"wing_id"`
 	Files     []FileEntry `json:"files"`
 	CreatedAt int64       `json:"created_at"`
 }
 
 func BuildManifest(dir string, wingID string) (*Manifest, error) {
 	m := &Manifest{
-		WingID: wingID,
+		WingID:    wingID,
 		CreatedAt: time.Now().UTC().Unix(),
 	}
 
@@ -58,11 +58,11 @@ func BuildManifest(dir string, wingID string) (*Manifest, error) {
 		hash := sha256.Sum256(data)
 
 		m.Files = append(m.Files, FileEntry{
-			Path:      rel,
-			SHA256:    hex.EncodeToString(hash[:]),
-			Size:      info.Size(),
-			ModTime:   info.ModTime().UTC().Unix(),
-			WingID: wingID,
+			Path:    rel,
+			SHA256:  hex.EncodeToString(hash[:]),
+			Size:    info.Size(),
+			ModTime: info.ModTime().UTC().Unix(),
+			WingID:  wingID,
 		})
 		return nil
 	})

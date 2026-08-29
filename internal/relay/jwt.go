@@ -66,10 +66,11 @@ func DeriveECKeyStringFromSecret(secret string) (string, error) {
 	if d == nil {
 		return "", fmt.Errorf("derive P-256 key from WT_JWT_SECRET")
 	}
-	x, y := curve.ScalarBaseMult(d.Bytes())
-	key := &ecdsa.PrivateKey{
-		PublicKey: ecdsa.PublicKey{Curve: curve, X: x, Y: y},
-		D:         d,
+	raw := make([]byte, (curve.Params().N.BitLen()+7)/8)
+	d.FillBytes(raw)
+	key, err := ecdsa.ParseRawPrivateKey(curve, raw)
+	if err != nil {
+		return "", fmt.Errorf("parse derived EC key: %w", err)
 	}
 	der, err := x509.MarshalECPrivateKey(key)
 	if err != nil {

@@ -1,7 +1,17 @@
-# Let an AI use a shared roost
+# Let an AI control agents on your private roost
 
-The roost needs a public HTTPS URL and OAuth login. Add its Streamable HTTP MCP
-endpoint to the local AI client.
+Use this setup when a local Claude or Codex session should manage agents on your
+self-hosted Wingthing server. Workspaces, child-agent credentials, and processes stay
+on the roost server.
+
+## Before you start
+
+The roost must have a valid HTTPS URL and OAuth login. Your account must be enrolled:
+normally its exact email is listed in `WT_ROOST_ALLOWED_EMAILS`, or the OAuth
+provider or ingress enforces the same membership boundary. This guide controls the
+agent runtime built into that roost; it does not select unrelated external wings.
+
+## Add the roost to the parent AI
 
 Codex:
 
@@ -16,17 +26,22 @@ Claude Code:
 claude mcp add --scope user --transport http wingthing-roost https://roost.example.com/mcp
 ```
 
-Complete the browser login as the person who will own the eggs. The AI can then
-start and supervise that person's runs on the shared host. Provider login is
-separate: if Claude or Codex reports `auth_required`, open the returned login egg
-and complete the provider login there.
+Complete the browser login as the person who should own the work. Then ask the
+parent to call `wingthing_capabilities` and use a working directory allowed by the
+roost. Use the same Wingthing account that completed the child provider login on
+this roost. Separate Wingthing accounts deliberately have separate provider homes.
 
-Select models through the `model` field on an agent run, such as `opus` or
-`gpt-5.6-terra`.
+## Use it
 
-Clients logged in as the same person can coordinate through durable roost
-messages. Use `message_send` with a shared `channel`; omit `to_actor` to reach
-the owner's other clients. The receiving client calls `message_wait`, then
-passes `next_after_id` as `after_id` on its next wait. `wingthing_capabilities`
-returns the current owner and actor IDs. Message bodies stay out of audit logs;
-the audit records actor, operation, target message ID, and an argument digest.
+The parent AI can start and supervise that person's durable runs and terminals on
+the roost server. If a child agent reports `auth_required`, open the returned login
+session and complete that provider's login there.
+
+Model choice is an `agent_run` parameter. Clients logged in as the same person can
+also exchange durable Wingthing messages: send with `message_send`, wait with
+`message_wait`, and carry the returned cursor into the next wait. Message bodies stay
+out of audit logs.
+
+The HTTP MCP endpoint controls only this roost's built-in agent runtime. To let one
+parent select several external computers registered with a coordinator, use the
+[several-computer AI setup](../remote-orchestration/INSTRUCTIONS.md).

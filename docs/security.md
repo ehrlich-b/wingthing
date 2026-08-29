@@ -1,6 +1,6 @@
 # Wingthing security model
 
-Reviewed: 2026-08-20
+Reviewed: 2026-08-28
 
 ## Scope of the promise
 
@@ -8,8 +8,8 @@ Wingthing has three independent security boundaries:
 
 1. The **egg sandbox** limits what an agent process can reach on the wing.
 2. The **wing access policy** decides which principal may operate a local resource.
-3. **Application-layer encryption** protects terminal and tunnel payloads while an
-   optional relay carries them.
+3. **Transport encryption and signaling integrity** protect direct WebRTC payloads;
+   application-layer encryption protects payloads when an optional relay carries them.
 
 Do not collapse those into one claim. E2E encryption does not constrain a
 same-user local process, and a local allowlist does not authenticate code served
@@ -19,15 +19,95 @@ Local CLI and MCP access use authenticated Unix sockets and operating-system fil
 permissions. SSH attach uses OpenSSH's authentication, encryption, and host-key
 verification. Neither path uses Wingthing's relay encryption.
 
-## Hosted relay architecture
+## Local self-hosted HTTPS
+
+`wt serve --local --https` and `wt roost start --https` add an HTTPS browser
+listener at `https://localhost:8443`. The flag is explicit because it performs a
+local trust-store change:
+
+1. WT creates a private ECDSA P-256 CA key and localhost server key on demand in
+   `~/.wingthing/local-tls`.
+2. The directory is mode `0700`; both private keys are mode `0600`.
+3. The CA is name-constrained to `localhost`, `127.0.0.0/8`, and `::1`.
+4. WT installs only the public CA certificate in the current user's trust store.
+   Neither private key is passed to a trust command, copied to a wing, or sent over
+   the network.
+
+On macOS this is the user's login keychain and macOS displays its native
+Certificate Trust Settings authorization dialog. On Windows it is the current
+user's root store. On Linux WT uses the current user's Chromium NSS database;
+`certutil` must be available from the distribution's `libnss3-tools` or
+`nss-tools` package. These operations do not require a system-wide root store.
+
+Use `wt local-cert status` to inspect the paths and verified trust marker. Use
+`wt local-cert remove` to remove the public root from the current user's trust
+store. Removal deliberately leaves the local key material intact so WT does not
+silently replace a previously trusted authority.
+
+HTTPS mode refuses wildcard, LAN, and public listener addresses. It uses two
+loopback listeners: port 8443 for the browser and HTTP port 8080 for embedded
+wings or wings arriving through an SSH reverse tunnel. That HTTP hop never leaves
+loopback; the SSH tunnel protects the host-to-host segment, and Wingthing's
+application encryption still protects browser-to-wing terminal payloads.
+
+This device-local CA is not used by hosted, organization, or public shared-roost
+deployments. Those retain their existing externally provisioned HTTPS termination
+and OAuth behavior. Local HTTPS is opt-in. Without it, a single-user/no-login
+portal remains HTTP but its implicit listener is loopback-only and an explicit
+LAN or wildcard address is rejected; authenticated deployments retain their
+configured listener behavior.
+
+Local mode also accepts only localhost/loopback Host headers. Browser WebSockets
+must be same-origin, and unsafe browser methods with an Origin header must match
+the exact HTTP or HTTPS origin. Requests marked cross-site by browser fetch
+metadata are rejected even if Origin is absent. Native wing and CLI calls do not
+send browser Origin metadata and remain available over the loopback transport.
+These are DNS-rebinding and browser-CSRF defenses; they do not make a no-login
+listener safe to expose beyond loopback.
+
+## Browser-local state and agent previews
+
+For fast terminal restore and session-card thumbnails, the browser stores up to
+200,000 serialized terminal characters and a WebP thumbnail per session in
+plaintext origin `localStorage`. It also caches inventory, layout, and wing-key
+pins there. This data does not go into the gateway database, but it is readable by
+the browser profile, extensions with site access, and any script that can execute
+in the portal origin. Clear the site's browser data to remove it. Local wing
+history is a separate plaintext-at-rest store described below.
+
+Agent-authored Markdown previews are rendered as network-inert text: raw HTML is
+escaped, links are not active, image syntax does not fetch, scripts are disabled,
+and the iframe has no normal origin. An agent-authored absolute HTTP(S) preview URL
+is displayed without being requested. Every new URL requires the user to choose
+**load preview** or **open**. Once chosen, the request originates from the browser
+and is outside the egg's network allowlist; the destination sees the request and
+network metadata. The embedded iframe uses `allow-scripts` without
+`allow-same-origin` and a no-referrer policy so an agent-selected page or redirect
+cannot become same-origin with the portal.
+
+## Hosted connection architecture
+
+The free/default path uses the hosted service only for identity, the
+access-filtered wing directory, and encrypted WebRTC signaling:
 
 ```text
-browser/native client -- TLS --> wingthing.ai relay -- TLS --> wing
-              \____________ application ciphertext ___________/
+native client ===== authenticated WebRTC/DTLS ===== wing
+       \------ wingthing.ai coordination only -----/
 ```
 
-The shipped relay forwards application ciphertext for terminal content and
-encrypted tunnel requests. During normal service operation it does not receive
+The WebRTC certificate fingerprints are inside the offer/answer exchanged
+through the X25519-encrypted, TOFU-pinned signaling tunnel. MCP request and
+result bytes then travel on the DataChannel, not through `wingthing.ai`.
+
+Accounts with hosted relay access and self-hosted policies may use the browser relay path:
+
+```text
+browser -- TLS --> wingthing.ai relay -- TLS --> wing
+        \_________ application ciphertext ________/
+```
+
+When entitled, the shipped relay forwards application ciphertext for terminal
+content and encrypted tunnel requests. During normal service operation it does not receive
 the plaintext of terminal I/O, directory listings, session history, audit data,
 egg configuration, or tunnel passkey assertions.
 
@@ -43,7 +123,8 @@ Wingthing uses X25519 ECDH, HKDF-SHA256, and AES-256-GCM in two domains:
 | Domain | Client key | Wing key | HKDF info | Content |
 |---|---|---|---|---|
 | PTY | Browser identity key, retained for the tab | Persistent `~/.wingthing/wing_key` | `wt-pty` | Keystrokes and terminal output |
-| Tunnel | Browser/native client identity key | Persistent `~/.wingthing/wing_key` | `wt-tunnel` | Wing APIs and encrypted PTY controls |
+| Tunnel/signaling | Browser/native client identity key | Persistent `~/.wingthing/wing_key` | `wt-tunnel` | Wing APIs, encrypted PTY controls, and WebRTC SDP |
+| Direct control | Ephemeral WebRTC certificate negotiated in pinned signaling | Ephemeral WebRTC certificate | WebRTC DTLS | Remote MCP operations and results |
 
 Encrypted messages are `base64(nonce || ciphertext || GCM tag)`. A modified
 ciphertext fails authentication.
@@ -71,6 +152,13 @@ directly over WebRTC's authenticated DTLS channel.
 Session start/attach routing, session IDs, timing, sizes, disconnects, and lifecycle
 messages remain visible to the relay. The protocol does not yet bind every envelope
 field into AEAD associated data or maintain a per-direction replay counter.
+
+For a direct-only hosted account, the relay accepts only bounded tunnel purposes
+for wing discovery, WebRTC signaling, and passkey authentication. The wing checks
+the coordinator-visible purpose against the decrypted inner message before it
+responds. General tunnel control and PTY start/attach are denied before forwarding.
+The wing advertises this purpose-binding capability at registration; direct-only
+coordination to an older wing is denied with an upgrade error.
 
 ## Locked-wing passkeys
 
@@ -127,6 +215,103 @@ digest to `~/.wingthing/mcp-audit.log`. `~/.wingthing/clients.yaml` can require 
 explicit client, restrict grants, and bound sessions/spawns. Real isolation between
 hostile local clients still requires different OS users or client sandboxes.
 
+## Native direct MCP authority
+
+The wing derives native direct authority from the coordinator-authenticated user,
+organization role, wing-local admin list, configured paths, and the local
+`direct_mcp` policy. The caller cannot supply its own principal, role, grants, or
+paths in a tool request.
+
+The compatible default grants every operation currently reviewed for the direct
+surface, but does so with a non-nil explicit grant set and positive wing-enforced
+bounds: eight live direct-MCP terminal sessions and sixty spawns per hour per
+principal. The rolling spawn window is shared across reconnecting data channels in
+one wing process. It is a process-lifetime guardrail, not a durable billing quota.
+
+Operators can narrow the direct surface in `wing.yaml`:
+
+```yaml
+direct_mcp:
+  allow_grants: [capabilities.read, terminal.read, agent.read]
+  max_sessions: 4
+  max_spawns_per_hour: 20
+```
+
+Use `deny_grants` instead of `allow_grants` to subtract from the compatible default,
+or set `disabled: true`. Allow and deny cannot be combined. Unknown fields, unknown
+grant names, negative or excessive bounds, and malformed policy fail wing startup or
+SIGHUP reload rather than falling back to unrestricted direct access. Omitting the
+entire section preserves existing `wing.yaml` files.
+
+Organization owners and wing-configured admins can use every configured path.
+Ordinary members see only legacy-open paths and paths tagged with their email; their
+sessions are owner-scoped and use the sealed shared-host boundary. Existing OAuth
+shared-roost identities with an empty organization role retain member privilege,
+while an empty role outside shared-roost mode fails closed.
+
+Coordinator-derived user and organization identity has a 15-minute maximum lifetime
+on a direct data channel. The wing closes the channel when that lease expires, so
+continued use requires a fresh access-filtered discovery and signaling exchange.
+This bounds the effect of organization membership revocation. Wing-local lock,
+passkey, grant, path, and bound changes are evaluated on every request, including on
+an already-open channel after a successful `SIGHUP` reload.
+
+The authenticated shared-roost HTTP MCP adapter uses the same explicit reviewed
+wing-operation grant set and the same default per-user bounds. Its admission state is
+shared across OAuth clients and requests in the roost process, so reconnecting or
+switching between Codex and Claude does not reset the spawn window.
+
+For a private OAuth gateway or all-in-one roost, `WT_ROOST_ALLOWED_EMAILS` is a
+separate enrollment boundary. Exact, case-insensitive email matches are enforced when a browser login
+finishes and again for cookies, device tokens, the wing inventory, relay access,
+and MCP authorization. OAuth login requires the provider's current verified email
+to match. OAuth proves that a provider controls an identity; it does not make every
+identity accepted by that provider a roost member. If the list is empty, any
+identity accepted by the provider can enroll. Internet-reachable roosts therefore
+need either an explicit list or an equivalent restriction at the provider or
+ingress.
+
+## Hosted relay opt-out
+
+Each wing can independently refuse hosted payload relay, even when its account has
+hosted relay access or is connected to a self-hosted roost:
+
+```yaml
+hosted_relay: deny
+```
+
+Omitting the field is the compatibility value `allow`. The setting is restart-bound
+so registration, session reclaim, and message handling cannot observe different
+policies in one daemon run. Use `wt wing config set hosted_relay=deny`, then restart
+the wing.
+
+An honest gateway checks the advertised policy before forwarding terminal starts,
+attaches, input, terminal authentication/control, or general encrypted tunnel
+payloads. The wing client also suppresses outbound session-attention metadata. It
+enforces the same decision locally, so an old, stale, or
+modified coordinator cannot cause those handlers to run. Bounded WebRTC discovery,
+signaling, and passkey coordination remains available; the wing decrypts each request
+and verifies that the declared purpose matches the inner message type.
+
+Authorized wing roster entries and encrypted `wing.info` responses report the
+effective `hosted_relay` value. Gateway denials create a content-free audit entry with
+actor, wing, operation, and policy; wing-local denials append operation and policy to
+`~/.wingthing/policy-audit.log` with mode `0600`. Neither record includes command,
+working directory, terminal bytes, or tunnel payload.
+
+This opt-out prevents payload handling by conforming gateway and wing binaries. It
+does not make hosted browser JavaScript safe against a malicious service, and an old
+gateway can still observe a connection attempt before the new wing rejects it. Use a
+native client over a private network or a self-hosted coordinator when the hosted
+service itself is outside the trust boundary.
+
+`hosted_relay: deny` is not a downgrade-compatible security policy. A wing binary
+from before this field existed ignores it and resumes the historical relay behavior.
+Do not roll such a wing back while this setting is part of the security boundary:
+stop the wing or isolate it from the coordinator until a conforming binary is
+restored. Rolling back only the gateway is different—the current wing still enforces
+the denial locally, although the old gateway can observe the attempted connection.
+
 On a dedicated sandbox VM, `wt egg ... --unsandboxed` and
 `wt mcp stdio --unsandboxed` explicitly make the outer VM the agent boundary.
 Wingthing keeps terminal persistence and the control/audit plane but applies no
@@ -138,15 +323,16 @@ encryption protects bytes from the relay, not from a compromised client or wing.
 
 ## What the relay observes
 
-The relay can observe:
+The coordinator can observe:
 
 - Account, organization, device-token, and passkey registration records.
 - Wing ID/public key, org binding, lock state, and connection presence.
-- Session IDs, selected agent and working-directory metadata needed by PTY routing.
-- Start/attach/detach/exit timing, message sizes, and IP/network metadata.
+- WebRTC signaling size/timing, candidate network metadata, and IP/network metadata.
+- For entitled relay sessions only: session IDs, selected agent and working-directory
+  routing metadata plus start/attach/detach/exit timing and message sizes.
 - Traffic availability: it can delay, drop, duplicate, or reroute messages.
 
-With the as-built trusted client and wing, the relay does not receive plaintext:
+With the as-built trusted client and wing, the coordinator does not receive plaintext:
 
 - Terminal keystrokes or output.
 - Encrypted resize/kill requests.
@@ -176,8 +362,9 @@ JavaScript served by the same compromised service.
 
 A native, reproducibly distributed client with an independently verified wing pin
 can make the malicious-relay boundary substantially stronger. Until that handshake
-and distribution story is complete, public wording should be "application-encrypted
-through the hosted relay," not a Signal-style server-compromise guarantee.
+and distribution story is complete, direct-path wording must still disclose the
+hosted client-distribution and first-use trust boundaries rather than imply a
+Signal-style server-compromise guarantee.
 
 ## Remaining protocol work
 
@@ -188,6 +375,7 @@ through the hosted relay," not a Signal-style server-compromise guarantee.
 - Persisted WebAuthn signature counters if cloned-authenticator detection becomes
   part of the passkey guarantee.
 - A trusted native/browser-extension client path if malicious web delivery is in scope.
+- A native passkey ceremony before direct control of locked wings.
 - At-rest protection for local history if Wingthing chooses to offer that guarantee.
 
 ## Reference
@@ -197,6 +385,7 @@ through the hosted relay," not a Signal-style server-compromise guarantee.
 | Local CLI/MCP | Same-OS-user permissions; named MCP guardrails and audit |
 | Trusted VM (`--unsandboxed`) | Outer VM/network policy; no nested Wingthing sandbox |
 | SSH attach | OpenSSH transport and host-key policy |
+| Direct remote MCP | WebRTC DTLS; offer/answer protected by pinned encrypted signaling |
 | Terminal content through relay | X25519/HKDF/AES-GCM application encryption |
 | Tunnel wing APIs | X25519/HKDF/AES-GCM application encryption |
 | Resize/kill | Encrypted tunnel or direct WebRTC DTLS |

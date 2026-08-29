@@ -86,7 +86,9 @@ func embedCmd() *cobra.Command {
 				}
 			case "raw":
 				for _, v := range vecs {
-					os.Stdout.Write(embedding.VecAsBytes(v))
+					if _, err := os.Stdout.Write(embedding.VecAsBytes(v)); err != nil {
+						return fmt.Errorf("write raw embedding: %w", err)
+					}
 				}
 			default:
 				return fmt.Errorf("unknown format %q — use json or raw", formatFlag)

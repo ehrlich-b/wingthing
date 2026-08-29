@@ -5,6 +5,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -74,10 +76,10 @@ func TestNormalizeZero(t *testing.T) {
 func TestTopN(t *testing.T) {
 	query := []float32{1, 0, 0}
 	candidates := [][]float32{
-		{0, 1, 0},  // orthogonal
-		{1, 0, 0},  // identical
+		{0, 1, 0},     // orthogonal
+		{1, 0, 0},     // identical
 		{0.5, 0.5, 0}, // partial
-		{-1, 0, 0}, // opposite
+		{-1, 0, 0},    // opposite
 	}
 	got := TopN(query, candidates, 2)
 	if len(got) != 2 {
@@ -169,7 +171,9 @@ func TestOpenAIEmbed(t *testing.T) {
 		resp.Data[0].Embedding[0] = 0.2 // index 1
 		resp.Data[1].Embedding[0] = 0.1 // index 0
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode OpenAI response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -197,7 +201,7 @@ func TestOpenAIEmbed(t *testing.T) {
 func TestOpenAIEmbedError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":"rate limited"}`))
+		_, _ = w.Write([]byte(`{"error":"rate limited"}`))
 	}))
 	defer srv.Close()
 
@@ -240,7 +244,9 @@ func TestOllamaEmbed(t *testing.T) {
 		vec[512] = 0.99 // should be truncated
 		resp := ollamaResponse{Embeddings: [][]float32{vec}}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode Ollama response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -266,7 +272,7 @@ func TestOllamaEmbed(t *testing.T) {
 func TestOllamaEmbedError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`model not found`))
+		_, _ = w.Write([]byte(`model not found`))
 	}))
 	defer srv.Close()
 
@@ -274,6 +280,19 @@ func TestOllamaEmbedError(t *testing.T) {
 	_, err := o.Embed([]string{"hello"})
 	if err == nil {
 		t.Fatal("ollama: expected error on 500")
+	}
+}
+
+func TestEmbeddingProvidersRejectOversizedResponses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(maxEmbeddingResponseBytes+1))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	provider := NewOllama("test", server.URL)
+	if _, err := provider.Embed([]string{"hello"}); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized embedding response error = %v", err)
 	}
 }
 

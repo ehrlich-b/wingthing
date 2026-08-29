@@ -6,17 +6,27 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 // connectWing creates and registers a wing WebSocket. Returns the conn and assigned connection ID.
 func connectWing(t *testing.T, tsURL, token, wingID string, agents []string) *websocket.Conn {
+	return connectWingWithPurposeBinding(t, tsURL, token, wingID, agents, true)
+}
+
+func connectWingWithPurposeBinding(t *testing.T, tsURL, token, wingID string, agents []string, purposeBinding bool) *websocket.Conn {
+	return connectWingWithPolicy(t, tsURL, token, wingID, agents, purposeBinding, "", "")
+}
+
+func connectWingWithPolicy(t *testing.T, tsURL, token, wingID string, agents []string, purposeBinding bool, hostedRelay, org string) *websocket.Conn {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -27,10 +37,13 @@ func connectWing(t *testing.T, tsURL, token, wingID string, agents []string) *we
 	}
 
 	reg := ws.WingRegister{
-		Type:     ws.TypeWingRegister,
-		WingID:   wingID,
-		Hostname: "testhost",
-		Agents:   agents,
+		Type:           ws.TypeWingRegister,
+		WingID:         wingID,
+		Hostname:       "testhost",
+		Agents:         agents,
+		PurposeBinding: purposeBinding,
+		HostedRelay:    hostedRelay,
+		OrgSlug:        org,
 	}
 	if err := wsjson.Write(ctx, conn, reg); err != nil {
 		conn.CloseNow()
@@ -44,6 +57,274 @@ func connectWing(t *testing.T, tsURL, token, wingID string, agents []string) *we
 	}
 
 	return conn
+}
+
+func TestWingHostedRelayDenyOverridesOwnerAndOrgMemberRelayAccess(t *testing.T) {
+	srv, ts, store := testRelayAndWS(t)
+	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
+	srv.Config.RelayMigrationBefore = time.Now().Add(time.Hour)
+	ownerToken, ownerID := createTestUser(t, store, "relay-policy-owner")
+	memberToken, memberID := createTestUser(t, store, "relay-policy-member")
+	ownerRef := ownerID
+	if err := store.CreateSubscription(&relay.Subscription{ID: "relay-policy-pro", UserID: &ownerRef, Plan: "pro", Status: "active", Seats: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEntitlement(&relay.Entitlement{ID: "relay-policy-pro-entitlement", UserID: ownerID, SubscriptionID: "relay-policy-pro"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateOrg("relay-policy-org", "Relay Policy Org", "relay-policy-org", ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().Exec("UPDATE orgs SET max_seats = 10 WHERE id = ?", "relay-policy-org"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember("relay-policy-org", memberID, "member"); err != nil {
+		t.Fatal(err)
+	}
+
+	wingConn := connectWingWithPolicy(t, wsURL(ts), ownerToken, "wing-relay-deny", []string{"claude"}, true, ws.HostedRelayDeny, "relay-policy-org")
+	defer wingConn.CloseNow()
+
+	for name, actor := range map[string]struct {
+		token  string
+		userID string
+	}{
+		"owner":  {token: ownerToken, userID: ownerID},
+		"member": {token: memberToken, userID: memberID},
+	} {
+		t.Run(name, func(t *testing.T) {
+			browser := connectBrowser(t, wsURL(ts), actor.token, "wing-relay-deny")
+			defer browser.CloseNow()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if err := wsjson.Write(ctx, browser, ws.PTYStart{Type: ws.TypePTYStart, WingID: "wing-relay-deny", Agent: "claude", CWD: "/secret"}); err != nil {
+				t.Fatal(err)
+			}
+			var denied ws.ErrorMsg
+			if err := wsjson.Read(ctx, browser, &denied); err != nil {
+				t.Fatal(err)
+			}
+			if denied.Type != ws.TypeError || !strings.Contains(denied.Message, "disabled by this wing") {
+				t.Fatalf("PTY denial = %#v", denied)
+			}
+
+			if err := wsjson.Write(ctx, browser, ws.TunnelRequest{Type: ws.TypeTunnelRequest, WingID: "wing-relay-deny", RequestID: name + "-control", Purpose: ws.TunnelPurposeControl, Payload: "secret-payload"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := wsjson.Read(ctx, browser, &denied); err != nil {
+				t.Fatal(err)
+			}
+			if denied.RequestID != name+"-control" || !strings.Contains(denied.Message, "disabled by this wing") {
+				t.Fatalf("tunnel denial = %#v", denied)
+			}
+			if err := wsjson.Write(ctx, browser, ws.TunnelRequest{Type: ws.TypeTunnelRequest, WingID: "wing-relay-deny", RequestID: name + "-oversized", Purpose: ws.TunnelPurposeDiscovery, Payload: strings.Repeat("x", ws.MaxCoordinationTunnelPayload+1)}); err != nil {
+				t.Fatal(err)
+			}
+			if err := wsjson.Read(ctx, browser, &denied); err != nil {
+				t.Fatal(err)
+			}
+			if denied.RequestID != name+"-oversized" || !strings.Contains(denied.Message, "disabled by this wing") {
+				t.Fatalf("oversized coordination denial = %#v", denied)
+			}
+
+			if err := wsjson.Write(ctx, browser, ws.TunnelRequest{Type: ws.TypeTunnelRequest, WingID: "wing-relay-deny", RequestID: name + "-discovery", Purpose: ws.TunnelPurposeDiscovery, Payload: "opaque"}); err != nil {
+				t.Fatal(err)
+			}
+			var forwarded ws.TunnelRequest
+			if err := wsjson.Read(ctx, wingConn, &forwarded); err != nil {
+				t.Fatal(err)
+			}
+			if forwarded.RequestID != name+"-discovery" || forwarded.SenderUserID != actor.userID {
+				t.Fatalf("coordination request = %#v", forwarded)
+			}
+		})
+	}
+
+	rows, err := store.DB().Query("SELECT user_id, detail FROM audit_log WHERE event = 'hosted_relay_denied' ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var userID, detail string
+		if err := rows.Scan(&userID, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(detail, "wing=wing-relay-deny") || strings.Contains(detail, "/secret") || strings.Contains(detail, "secret-payload") {
+			t.Fatalf("non-content-free audit detail = %q", detail)
+		}
+		if userID != ownerID && userID != memberID {
+			t.Fatalf("unexpected audit actor %q", userID)
+		}
+		count++
+	}
+	if count != 6 {
+		t.Fatalf("hosted relay denial audit count = %d, want 6", count)
+	}
+}
+
+func TestActiveBrowserConnectionObservesRelayEntitlementRevocation(t *testing.T) {
+	srv, ts, store := testRelayAndWS(t)
+	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
+	token, userID := createTestUser(t, store, "live-entitlement")
+	userRef := userID
+	const subID = "live-entitlement-pro"
+	if err := store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &userRef, Plan: "pro", Status: "active", Seats: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEntitlement(&relay.Entitlement{ID: "live-entitlement-row", UserID: userID, SubscriptionID: subID}); err != nil {
+		t.Fatal(err)
+	}
+
+	wing := connectWing(t, wsURL(ts), token, "live-entitlement-wing", []string{"claude"})
+	defer wing.CloseNow()
+	browser := connectBrowser(t, wsURL(ts), token, "live-entitlement-wing")
+	defer browser.CloseNow()
+	sessionID := startSession(t, browser, wing, "claude", "live-entitlement-wing")
+
+	if err := store.UpdateSubscriptionStatus(subID, "canceled"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := wsjson.Write(ctx, wing, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: "must-not-forward"}); err != nil {
+		t.Fatal(err)
+	}
+	var denied ws.ErrorMsg
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.Type != ws.TypeError || denied.SessionID != sessionID || !strings.Contains(denied.Message, "not included") {
+		t.Fatalf("outbound revocation response = %#v", denied)
+	}
+	if err := wsjson.Write(ctx, browser, ws.PTYInput{Type: ws.TypePTYInput, SessionID: sessionID, Data: "must-not-forward"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.Type != ws.TypeError || denied.SessionID != sessionID || !strings.Contains(denied.Message, "not included") {
+		t.Fatalf("revocation response = %#v", denied)
+	}
+
+	wingReadCtx, wingReadCancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer wingReadCancel()
+	var input ws.PTYInput
+	if err := wsjson.Read(wingReadCtx, wing, &input); err == nil {
+		t.Fatalf("revoked relay input was forwarded: %#v", input)
+	}
+}
+
+func TestInFlightGeneralTunnelObservesRevocationWhileCoordinationSurvives(t *testing.T) {
+	srv, ts, store := testRelayAndWS(t)
+	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
+	token, userID := createTestUser(t, store, "tunnel-revocation")
+	userRef := userID
+	const subID = "tunnel-revocation-pro"
+	if err := store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &userRef, Plan: "pro", Status: "active", Seats: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateEntitlement(&relay.Entitlement{ID: "tunnel-revocation-row", UserID: userID, SubscriptionID: subID}); err != nil {
+		t.Fatal(err)
+	}
+
+	wing := connectWing(t, wsURL(ts), token, "tunnel-revocation-wing", []string{"claude"})
+	defer wing.CloseNow()
+	browser := connectBrowser(t, wsURL(ts), token, "tunnel-revocation-wing")
+	defer browser.CloseNow()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	controlRequest := ws.TunnelRequest{
+		Type: ws.TypeTunnelRequest, WingID: "tunnel-revocation-wing", RequestID: "general-before-revoke",
+		Purpose: ws.TunnelPurposeControl, Payload: "opaque-control",
+	}
+	if err := wsjson.Write(ctx, browser, controlRequest); err != nil {
+		t.Fatal(err)
+	}
+	var forwarded ws.TunnelRequest
+	if err := wsjson.Read(ctx, wing, &forwarded); err != nil || forwarded.RequestID != controlRequest.RequestID {
+		t.Fatalf("general request forwarding = %#v err=%v", forwarded, err)
+	}
+	if err := store.UpdateSubscriptionStatus(subID, "canceled"); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Write(ctx, wing, ws.TunnelResponse{Type: ws.TypeTunnelResponse, RequestID: controlRequest.RequestID, Payload: "must-not-forward"}); err != nil {
+		t.Fatal(err)
+	}
+	var denied ws.ErrorMsg
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.Type != ws.TypeError || denied.RequestID != controlRequest.RequestID || !strings.Contains(denied.Message, "not included") {
+		t.Fatalf("in-flight tunnel revocation = %#v", denied)
+	}
+
+	discovery := ws.TunnelRequest{
+		Type: ws.TypeTunnelRequest, WingID: "tunnel-revocation-wing", RequestID: "coordination-after-revoke",
+		Purpose: ws.TunnelPurposeDiscovery, Payload: "opaque-discovery",
+	}
+	if err := wsjson.Write(ctx, browser, discovery); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, wing, &forwarded); err != nil || forwarded.RequestID != discovery.RequestID {
+		t.Fatalf("coordination request forwarding = %#v err=%v", forwarded, err)
+	}
+	coordinationResponse := ws.TunnelResponse{Type: ws.TypeTunnelResponse, RequestID: discovery.RequestID, Payload: "opaque-answer"}
+	if err := wsjson.Write(ctx, wing, coordinationResponse); err != nil {
+		t.Fatal(err)
+	}
+	var received ws.TunnelResponse
+	if err := wsjson.Read(ctx, browser, &received); err != nil || received.RequestID != discovery.RequestID || received.Payload != "opaque-answer" {
+		t.Fatalf("coordination response = %#v err=%v", received, err)
+	}
+}
+
+func TestWingReconnectSupersedesOldSocketWithoutLosingRouting(t *testing.T) {
+	_, ts, store := testRelayAndWS(t)
+	token, _ := createTestUser(t, store, "reconnect-overlap")
+	oldWing := connectWing(t, wsURL(ts), token, "reconnect-wing", []string{"claude"})
+	defer oldWing.CloseNow()
+	newWing := connectWing(t, wsURL(ts), token, "reconnect-wing", []string{"claude"})
+	defer newWing.CloseNow()
+
+	oldReadCtx, oldReadCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer oldReadCancel()
+	var staleMessage map[string]any
+	if err := wsjson.Read(oldReadCtx, oldWing, &staleMessage); err == nil {
+		t.Fatalf("superseded wing socket remained active: %#v", staleMessage)
+	}
+
+	browser := connectBrowser(t, wsURL(ts), token, "reconnect-wing")
+	defer browser.CloseNow()
+	if sessionID := startSession(t, browser, newWing, "claude", "reconnect-wing"); sessionID == "" {
+		t.Fatal("replacement wing did not receive the routed session")
+	}
+}
+
+func TestSelfHostedRoostRespectsWingHostedRelayDeny(t *testing.T) {
+	srv, ts, store := testRelayAndWS(t)
+	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
+	srv.RoostMode = true
+	token, _ := createTestUser(t, store, "private-roost-policy")
+	wing := connectWingWithPolicy(t, wsURL(ts), token, "private-roost-wing", []string{"claude"}, true, ws.HostedRelayDeny, "")
+	defer wing.CloseNow()
+	browser := connectBrowser(t, wsURL(ts), token, "private-roost-wing")
+	defer browser.CloseNow()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := wsjson.Write(ctx, browser, ws.PTYStart{Type: ws.TypePTYStart, WingID: "private-roost-wing", Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	var denied ws.ErrorMsg
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(denied.Message, "disabled by this wing") {
+		t.Fatalf("private roost denial = %#v", denied)
+	}
 }
 
 // connectBrowser creates a browser WebSocket connected to a wing.
@@ -204,6 +485,96 @@ func TestPTYRoutingNoWingConnected(t *testing.T) {
 	}
 	if errMsg.Message != "no wing connected" {
 		t.Errorf("message = %q, want %q", errMsg.Message, "no wing connected")
+	}
+}
+
+func TestDirectOnlyFreeTierRejectsRelayBeforeWingStart(t *testing.T) {
+	srv, ts, store := testRelayAndWS(t)
+	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
+	srv.Config.RelayMigrationBefore = time.Now().Add(-time.Hour)
+	token, userID := createTestUser(t, store, "direct-only")
+
+	wingConn := connectWing(t, wsURL(ts), token, "wing-direct-only", []string{"claude"})
+	defer wingConn.CloseNow()
+	browser := connectBrowser(t, wsURL(ts), token, "wing-direct-only")
+	defer browser.CloseNow()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := wsjson.Write(ctx, browser, ws.PTYStart{
+		Type: ws.TypePTYStart, Agent: "claude", WingID: "wing-direct-only", Cols: 80, Rows: 24,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var denied ws.ErrorMsg
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.Type != ws.TypeError || !strings.Contains(denied.Message, "free direct tier") {
+		t.Fatalf("relay denial = %#v", denied)
+	}
+	if err := wsjson.Write(ctx, browser, ws.TunnelRequest{
+		Type: ws.TypeTunnelRequest, WingID: "wing-direct-only", RequestID: "blocked-control",
+		Purpose: ws.TunnelPurposeControl, Payload: "opaque",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.RequestID != "blocked-control" || !strings.Contains(denied.Message, "payload tunnels") {
+		t.Fatalf("control tunnel denial = %#v", denied)
+	}
+	if err := wsjson.Write(ctx, browser, ws.TunnelRequest{
+		Type: ws.TypeTunnelRequest, WingID: "wing-direct-only", RequestID: "allowed-signal",
+		Purpose: ws.TunnelPurposeSignal, Payload: "opaque",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var signal ws.TunnelRequest
+	if err := wsjson.Read(ctx, wingConn, &signal); err != nil {
+		t.Fatal(err)
+	}
+	if signal.Type != ws.TypeTunnelRequest || signal.RequestID != "allowed-signal" || signal.Purpose != ws.TunnelPurposeSignal {
+		t.Fatalf("coordination tunnel = %#v", signal)
+	}
+	if signal.SenderUserID != userID || signal.SenderOrgRole != "owner" {
+		t.Fatalf("relay identity = user %q role %q, want user %q role owner", signal.SenderUserID, signal.SenderOrgRole, userID)
+	}
+}
+
+func TestDirectOnlyFreeTierRequiresPurposeBindingWing(t *testing.T) {
+	srv, ts, store := testRelayAndWS(t)
+	srv.Config.RelayPolicy = relay.RelayPolicyDirectFree
+	srv.Config.RelayMigrationBefore = time.Now().Add(-time.Hour)
+	token, _ := createTestUser(t, store, "direct-only-old-wing")
+
+	wingConn := connectWingWithPurposeBinding(t, wsURL(ts), token, "wing-direct-only-old", []string{"claude"}, false)
+	defer wingConn.CloseNow()
+	browser := connectBrowser(t, wsURL(ts), token, "wing-direct-only-old")
+	defer browser.CloseNow()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := wsjson.Write(ctx, browser, ws.TunnelRequest{
+		Type: ws.TypeTunnelRequest, WingID: "wing-direct-only-old", RequestID: "unsafe-signal",
+		Purpose: ws.TunnelPurposeSignal, Payload: "opaque",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var denied ws.ErrorMsg
+	if err := wsjson.Read(ctx, browser, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied.RequestID != "unsafe-signal" || !strings.Contains(denied.Message, "upgraded") {
+		t.Fatalf("legacy wing denial = %#v", denied)
+	}
+
+	wingReadCtx, wingReadCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer wingReadCancel()
+	var unexpected ws.TunnelRequest
+	if err := wsjson.Read(wingReadCtx, wingConn, &unexpected); err == nil {
+		t.Fatalf("unsafe coordination reached legacy wing: %#v", unexpected)
 	}
 }
 

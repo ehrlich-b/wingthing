@@ -3,14 +3,24 @@ import { FitAddon } from '@xterm/addon-fit';
 import { formatAuditTime } from './helpers.js';
 import { sendTunnelStream } from './tunnel.js';
 
-export function closeAuditOverlay() {
-    var overlay = document.getElementById('audit-overlay');
-    if (overlay.style.display === 'none') return;
-    overlay.style.display = 'none';
-    document.getElementById('audit-download').style.display = 'none';
+function resetAuditOverlay(overlay) {
     var auditTerm = overlay._auditTerm;
     if (auditTerm) { auditTerm.dispose(); overlay._auditTerm = null; }
     if (overlay._playTimer) { clearTimeout(overlay._playTimer); overlay._playTimer = null; }
+    document.getElementById('audit-download').style.display = 'none';
+    document.getElementById('audit-play').style.display = '';
+    document.getElementById('audit-speed').style.display = '';
+    document.getElementById('audit-speed-label').style.display = '';
+    document.getElementById('audit-time').style.display = '';
+}
+
+export function closeAuditOverlay() {
+    var overlay = document.getElementById('audit-overlay');
+    // The stream itself is not cancellable, so invalidate its callbacks before
+    // hiding the overlay. A late completion must not resurrect stale controls.
+    overlay._auditGeneration = (overlay._auditGeneration || 0) + 1;
+    resetAuditOverlay(overlay);
+    overlay.style.display = 'none';
 }
 
 export function openAuditReplay(wingId, sessionId) {
@@ -22,11 +32,18 @@ export function openAuditReplay(wingId, sessionId) {
     var speedLabel = document.getElementById('audit-speed-label');
     var downloadBtn = document.getElementById('audit-download');
     var closeBtn = document.getElementById('audit-close');
+    resetAuditOverlay(overlay);
+    var generation = (overlay._auditGeneration || 0) + 1;
+    overlay._auditGeneration = generation;
+    function isCurrent() {
+        return overlay._auditGeneration === generation && overlay.style.display !== 'none';
+    }
 
     history.pushState({ view: 'audit' }, '');
     overlay.style.display = '';
     termEl.innerHTML = '';
 
+    playBtn.style.display = '';
     speedInput.style.display = '';
     speedLabel.style.display = '';
     timeEl.style.display = '';
@@ -46,6 +63,7 @@ export function openAuditReplay(wingId, sessionId) {
     function initTerm() {
         if (auditTerm) return;
         auditTerm = new Terminal({ fontSize: 14, cols: auditCols, rows: auditRows, theme: { background: '#0d0d1a' }, convertEol: false });
+        overlay._auditTerm = auditTerm;
         auditFit = new FitAddon();
         auditTerm.loadAddon(auditFit);
         auditTerm.open(termEl);
@@ -54,8 +72,8 @@ export function openAuditReplay(wingId, sessionId) {
     playBtn.textContent = 'loading...';
     playBtn.disabled = true;
 
-    var auditStreamDone = false;
     sendTunnelStream(wingId, { type: 'audit.request', session_id: sessionId, kind: 'pty' }, function(chunk) {
+        if (!isCurrent()) return;
         if (Array.isArray(chunk)) {
             frames.push(chunk);
         } else if (chunk.width) {
@@ -64,7 +82,7 @@ export function openAuditReplay(wingId, sessionId) {
             ndjsonHeader = JSON.stringify(chunk);
         }
     }).then(function() {
-        auditStreamDone = true;
+        if (!isCurrent()) return;
         if (frames.length > 0) {
             playBtn.textContent = 'play';
             playBtn.disabled = false;
@@ -74,7 +92,7 @@ export function openAuditReplay(wingId, sessionId) {
             playBtn.disabled = true;
         }
     }).catch(function() {
-        auditStreamDone = true;
+        if (!isCurrent()) return;
         playBtn.textContent = 'error';
     });
 
@@ -86,6 +104,7 @@ export function openAuditReplay(wingId, sessionId) {
     }
 
     function playFrame() {
+        if (!isCurrent()) return;
         if (frameIndex >= frames.length) {
             playing = false;
             playBtn.textContent = 'replay';
@@ -113,8 +132,10 @@ export function openAuditReplay(wingId, sessionId) {
             var delay = (frames[frameIndex][0] - f[0]) * 1000 / speed;
             delay = Math.min(delay, 2000);
             playTimer = setTimeout(playFrame, delay);
+            overlay._playTimer = playTimer;
         } else {
             playing = false;
+            overlay._playTimer = null;
             playBtn.textContent = 'replay';
         }
     }
@@ -123,6 +144,7 @@ export function openAuditReplay(wingId, sessionId) {
         if (playing) {
             playing = false;
             clearTimeout(playTimer);
+            overlay._playTimer = null;
             playBtn.textContent = 'play';
         } else {
             if (frameIndex >= frames.length) {
@@ -154,12 +176,7 @@ export function openAuditReplay(wingId, sessionId) {
     };
 
     closeBtn.onclick = function() {
-        playing = false;
-        clearTimeout(playTimer);
-        overlay._playTimer = null;
-        if (auditTerm) { auditTerm.dispose(); overlay._auditTerm = null; }
-        downloadBtn.style.display = 'none';
-        overlay.style.display = 'none';
+        closeAuditOverlay();
         history.back();
     };
 
@@ -213,6 +230,12 @@ export function openAuditKeylog(wingId, sessionId) {
     var speedLabel = document.getElementById('audit-speed-label');
     var downloadBtn = document.getElementById('audit-download');
     var closeBtn = document.getElementById('audit-close');
+    resetAuditOverlay(overlay);
+    var generation = (overlay._auditGeneration || 0) + 1;
+    overlay._auditGeneration = generation;
+    function isCurrent() {
+        return overlay._auditGeneration === generation && overlay.style.display !== 'none';
+    }
 
     history.pushState({ view: 'audit' }, '');
     overlay.style.display = '';
@@ -225,15 +248,18 @@ export function openAuditKeylog(wingId, sessionId) {
     downloadBtn.style.display = 'none';
 
     sendTunnelStream(wingId, { type: 'audit.request', session_id: sessionId, kind: 'keylog' }, function(chunk) {
+        if (!isCurrent()) return;
         if (chunk.data) pre.textContent += chunk.data + '\n';
         else if (typeof chunk === 'string') pre.textContent += chunk + '\n';
     }).then(function() {
+        if (!isCurrent()) return;
         if (!pre.textContent) {
             pre.textContent = 'no keylog data';
         } else {
             downloadBtn.style.display = '';
         }
     }).catch(function() {
+        if (!isCurrent()) return;
         if (!pre.textContent) pre.textContent = 'error loading keylog';
     });
 
@@ -247,12 +273,7 @@ export function openAuditKeylog(wingId, sessionId) {
     };
 
     closeBtn.onclick = function() {
-        downloadBtn.style.display = 'none';
-        overlay.style.display = 'none';
-        playBtn.style.display = '';
-        speedInput.style.display = '';
-        speedLabel.style.display = '';
-        timeEl.style.display = '';
+        closeAuditOverlay();
         history.back();
     };
     document.getElementById('audit-backdrop').onclick = closeBtn.onclick;

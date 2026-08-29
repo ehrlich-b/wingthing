@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
@@ -194,8 +195,8 @@ func TestDirectAgentEnvPreservesHomeAndAddsProxy(t *testing.T) {
 	joined := "\n" + strings.Join(env, "\n") + "\n"
 	for _, want := range []string{
 		"\nHOME=" + home + "\n",
-		"\nHTTPS_PROXY=http://localhost:43210\n",
-		"\nHTTP_PROXY=http://localhost:43210\n",
+		"\nHTTPS_PROXY=http://127.0.0.1:43210\n",
+		"\nHTTP_PROXY=http://127.0.0.1:43210\n",
 		"\nNODE_USE_ENV_PROXY=1\n",
 		"\nGIT_TERMINAL_PROMPT=0\n",
 	} {
@@ -233,6 +234,51 @@ func TestSharedHostDirectAgentEnvDropsAmbientProviderCredentials(t *testing.T) {
 	}
 	if !strings.Contains(joined, "\nHOME=") || !strings.Contains(joined, "\nPATH=") {
 		t.Fatalf("shared-host environment lost essentials: %s", joined)
+	}
+}
+
+func TestSandboxAgentExecutableUsesOwnerScopedSharedRuntime(t *testing.T) {
+	home := t.TempDir()
+	command := filepath.Join(home, ".local", "bin", "claude")
+	if err := os.MkdirAll(filepath.Dir(command), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(command, []byte("fixture"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := sandboxAgentExecutable("claude", home, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != command {
+		t.Fatalf("shared executable = %q, want %q", got, command)
+	}
+	if _, err := sandboxAgentExecutable("missing", home, true); err == nil {
+		t.Fatal("missing shared runtime was accepted")
+	}
+}
+
+func TestSandboxAgentExecutableResolvesHostCommandForPersonalTask(t *testing.T) {
+	got, err := sandboxAgentExecutable("sh", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("personal executable = %q, want absolute path", got)
+	}
+}
+
+func TestAgentRuntimeCommandMatchesSupportedAgentCatalog(t *testing.T) {
+	for _, definition := range agent.Definitions() {
+		if got := agentRuntimeCommand(definition.Name); got != definition.Command {
+			t.Errorf("agentRuntimeCommand(%q) = %q, want %q", definition.Name, got, definition.Command)
+		}
+	}
+	if got := agentRuntimeCommand("cursor"); got != "agent" {
+		t.Fatalf("Cursor isolated runtime command = %q, want agent", got)
+	}
+	if got := agentRuntimeCommand("custom-command"); got != "custom-command" {
+		t.Fatalf("unknown command fallback = %q", got)
 	}
 }
 

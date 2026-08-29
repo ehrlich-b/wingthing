@@ -1,8 +1,15 @@
 # Virtual Terminal Emulator (VTE) — "Pseudo-Pseudo Terminal"
 
+> **Status: historical implementation design.** Remote wing sessions now use
+> VTerm snapshots and bounded scrollback by default; `--raw-replay` retains the
+> compatibility path. Local one-shot `wt egg` sessions still use raw replay.
+> Current behavior is summarized in [remote-tmux.md](remote-tmux.md).
+
 ## Context
 
-Wingthing currently streams raw PTY bytes through a 2MB bounded replay buffer (`internal/egg/server.go`). On reconnect, the entire buffer is replayed to xterm.js in the browser. This works but requires dirty hacks:
+When this design was written, Wingthing streamed raw PTY bytes through a 2MB
+bounded replay buffer (`internal/egg/server.go`). On reconnect, the entire buffer
+was replayed to xterm.js in the browser. That path required dirty hacks:
 
 - `findSafeCut()` searches for sync-frame boundaries to avoid mid-sequence trims
 - `trackCursorPos()` parses CSI sequences to re-inject cursor position after trim

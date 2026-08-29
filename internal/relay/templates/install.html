@@ -31,7 +31,7 @@
 {{define "content"}}
 <div class="inst-hero">
 <h1>install wt</h1>
-<p>One command. Single binary, no dependencies. macOS and Linux, x64 and arm64.</p>
+<p>One command installs the Wingthing runtime. macOS and Linux, x64 and arm64.</p>
 </div>
 
 <div class="inst-platforms">
@@ -60,16 +60,21 @@
 </div>
 </li>
 <li>
-<h3>optionally enable browser access</h3>
-<p>Authenticate and connect your machine outbound only if you want the hosted web client.</p>
+<h3>optionally run your own browser portal</h3>
+<p>No Wingthing account is required. This creates and trusts a localhost-only certificate for your current user; Linux needs <code>certutil</code> from <code>libnss3-tools</code> or <code>nss-tools</code> for that trust step.</p>
 <div class="inst-code">
-<span class="prompt">$ </span><span class="cmd">wt login</span><br>
-<span class="prompt">$ </span><span class="cmd">wt start</span><span class="comment">                  # alias for wt wing start</span>
+<span class="prompt">$ </span><span class="cmd">wt roost start --https</span><br>
+<span class="prompt">$ </span><span class="cmd">open https://localhost:8443</span>
 </div>
 </li>
 <li>
-<h3>open the web client</h3>
-<p>Press <code>.</code> or <code>+</code> in the web app to open the command palette and start a session on your machine.</p>
+<h3>optionally connect a parent agent to remote wings</h3>
+<p>Run <code>wt login</code> and <code>wt start</code> on every execution machine, then register <code>wt mcp connect</code> with the parent Claude or Codex client. Free MCP payloads travel directly to the selected wing; the hosted browser terminal and control relay require relay access.</p>
+<div class="inst-code">
+<span class="prompt">$ </span><span class="cmd">wt login</span><br>
+<span class="prompt">$ </span><span class="cmd">wt start</span><br>
+<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp connect --client codex</span>
+</div>
 </li>
 </ol>
 </div>

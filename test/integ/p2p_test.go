@@ -159,7 +159,7 @@ func TestP2PLoopbackWithPeerManager(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	pm.OnDC(func(senderPub, sessionID string, dc *pionwebrtc.DataChannel) {
+	pm.OnDC(func(senderPub, sessionID string, _ rtc.PeerIdentity, dc *pionwebrtc.DataChannel) {
 		dcSessionID = sessionID
 		dc.OnMessage(func(msg pionwebrtc.DataChannelMessage) {
 			receivedData = msg.Data
@@ -243,18 +243,15 @@ func TestP2PLoopbackWithPeerManager(t *testing.T) {
 	}
 }
 
-// TestP2PPeerReplacement verifies that a second offer from the same sender
-// replaces the first peer connection cleanly.
-func TestP2PPeerReplacement(t *testing.T) {
+// TestP2PMultipleConnectionsPerSender verifies that multiple MCP clients may
+// share one installation identity without evicting one another.
+func TestP2PMultipleConnectionsPerSender(t *testing.T) {
 	pm := rtc.NewPeerManager(nil)
 	defer pm.Close()
 
-	var dcCount int
-	var mu sync.Mutex
-	pm.OnDC(func(senderPub, sessionID string, dc *pionwebrtc.DataChannel) {
-		mu.Lock()
-		dcCount++
-		mu.Unlock()
+	identities := make(chan string, 2)
+	pm.OnDC(func(_ string, sessionID string, identity rtc.PeerIdentity, _ *pionwebrtc.DataChannel) {
+		identities <- sessionID + ":" + identity.UserID
 	})
 
 	// First connection
@@ -272,7 +269,7 @@ func TestP2PPeerReplacement(t *testing.T) {
 	}
 	pc1.SetRemoteDescription(pionwebrtc.SessionDescription{Type: pionwebrtc.SDPTypeAnswer, SDP: answer1})
 
-	// Second connection from same sender — should replace first
+	// Second connection from the same installation identity remains independent.
 	pc2, _ := pionwebrtc.NewPeerConnection(pionwebrtc.Configuration{})
 	defer pc2.Close()
 	pc2.CreateDataChannel("pty:s2", nil)
@@ -281,18 +278,33 @@ func TestP2PPeerReplacement(t *testing.T) {
 	pc2.SetLocalDescription(offer2)
 	<-g2
 
-	answer2, err := pm.HandleOffer("same-sender", "u1", "u@test.com", "", nil, pc2.LocalDescription().SDP)
+	answer2, err := pm.HandleOffer("same-sender", "u2", "other@test.com", "", nil, pc2.LocalDescription().SDP)
 	if err != nil {
 		t.Fatalf("second offer: %v", err)
 	}
 	pc2.SetRemoteDescription(pionwebrtc.SessionDescription{Type: pionwebrtc.SDPTypeAnswer, SDP: answer2})
 
-	// Identity should still be valid (updated, not corrupted)
+	// Each channel gets the identity captured by its own offer even though the
+	// persistent installation key is reused and the compatibility cache now
+	// contains the most recent identity.
+	got := make(map[string]bool)
+	for range 2 {
+		select {
+		case value := <-identities:
+			got[value] = true
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for both data channels")
+		}
+	}
+	if !got["s1:u1"] || !got["s2:u2"] {
+		t.Fatalf("offer-scoped identities = %v", got)
+	}
+
 	id, ok := pm.GetPeerIdentity("same-sender")
 	if !ok {
 		t.Fatal("identity lost after replacement")
 	}
-	if id.UserID != "u1" {
+	if id.UserID != "u2" {
 		t.Errorf("userID = %q after replacement", id.UserID)
 	}
 }

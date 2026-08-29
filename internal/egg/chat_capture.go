@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +11,8 @@ import (
 )
 
 // CaptureSessionHistory copies the agent's native session history (e.g. Claude's JSONL)
-// into the egg directory as chat.jsonl.gz + chat.meta. Best-effort: errors are logged, never fatal.
+// into the egg directory as chat.jsonl.gz + chat.meta. Callers may choose to
+// treat capture failures as best-effort, but this function reports them.
 func CaptureSessionHistory(agent, cwd, eggDir, home string, startedAfter time.Time) error {
 	profile := Profile(agent)
 	if profile.SessionDir == "" {
@@ -27,49 +27,93 @@ func CaptureSessionHistory(agent, cwd, eggDir, home string, startedAfter time.Ti
 		return nil
 	}
 
-	// Atomic write: temp file + rename
-	tmpPath := filepath.Join(eggDir, "chat.jsonl.gz.tmp")
+	// Atomic private write: the captured chat may contain secrets, and replacing
+	// the final path must never follow a stale or attacker-created symlink.
 	dstPath := filepath.Join(eggDir, "chat.jsonl.gz")
 
 	src, err := os.Open(sessionFile)
 	if err != nil {
 		return fmt.Errorf("open session file: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
-	tmp, err := os.Create(tmpPath)
+	tmp, err := os.CreateTemp(eggDir, ".chat-jsonl-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		_ = tmp.Close()
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		return fmt.Errorf("protect temp file: %w", err)
 	}
 
 	gw := gzip.NewWriter(tmp)
 	if _, err := io.Copy(gw, src); err != nil {
-		gw.Close()
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = gw.Close()
 		return fmt.Errorf("compress: %w", err)
 	}
 	if err := gw.Close(); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
 		return fmt.Errorf("gzip close: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync temp: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
 		return fmt.Errorf("close temp: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, dstPath); err != nil {
-		os.Remove(tmpPath)
 		return fmt.Errorf("rename: %w", err)
 	}
+	committed = true
 
-	// Write metadata
+	// Write metadata with the same no-symlink, private replacement semantics as
+	// the compressed transcript. The session directory can be agent-writable.
 	meta := fmt.Sprintf("agent_session_id=%s\nagent=%s\nformat=jsonl\ncwd=%s\n", agentSessionID, agent, cwd)
-	if err := os.WriteFile(filepath.Join(eggDir, "chat.meta"), []byte(meta), 0644); err != nil {
-		log.Printf("egg: chat.meta write failed: %v", err)
+	if err := atomicWritePrivate(filepath.Join(eggDir, "chat.meta"), []byte(meta)); err != nil {
+		return fmt.Errorf("write chat metadata: %w", err)
 	}
 
+	return nil
+}
+
+func atomicWritePrivate(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".chat-meta-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		_ = tmp.Close()
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 

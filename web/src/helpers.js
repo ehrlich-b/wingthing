@@ -1,17 +1,35 @@
 // Pure utility functions — no app imports
 
+import { escapeMarkup } from './security.js';
+
 export function escapeHtml(str) {
-    var div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return escapeMarkup(str);
 }
 
-export function loginRedirect() {
-    var host = window.location.hostname.replace(/^app\./, '');
-    var port = window.location.port ? ':' + window.location.port : '';
-    var loginUrl = window.location.protocol + '//' + host + port +
-        '/login?next=' + encodeURIComponent(window.location.origin + '/');
-    window.location.href = loginUrl;
+export function buildLoginURL(configuredBaseURL, browserLocation) {
+    var location = browserLocation || window.location;
+    var base = '';
+    if (typeof configuredBaseURL === 'string' && configuredBaseURL.length <= 8192) {
+        try {
+            var parsed = new URL(configuredBaseURL);
+            if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+                    !parsed.username && !parsed.password) {
+                base = parsed.origin;
+            }
+        } catch (e) {}
+    }
+    // Mixed-version fallback: older relays do not advertise their login URL.
+    // Preserve the historical app.wingthing.ai -> wingthing.ai behavior.
+    if (!base) {
+        var host = location.hostname.replace(/^app\./, '');
+        var port = location.port ? ':' + location.port : '';
+        base = location.protocol + '//' + host + port;
+    }
+    return base + '/login?next=' + encodeURIComponent(location.origin + '/');
+}
+
+export function loginRedirect(configuredBaseURL) {
+    window.location.href = buildLoginURL(configuredBaseURL, window.location);
 }
 
 export function setupCopyable(container) {

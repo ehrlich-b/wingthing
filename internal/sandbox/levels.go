@@ -46,9 +46,9 @@ type NetworkNeed int
 
 const (
 	NetworkNone  NetworkNeed = iota // fully isolated
-	NetworkLocal                    // localhost only (e.g. ollama)
-	NetworkHTTPS                    // outbound 443/80 + DNS 53
-	NetworkFull                     // no restrictions
+	NetworkLocal                    // explicit host-loopback TCP forwards only
+	NetworkHTTPS                    // domain-filtered TCP through HTTP CONNECT
+	NetworkFull                     // any destination supported by the platform transport
 )
 
 func (n NetworkNeed) String() string {

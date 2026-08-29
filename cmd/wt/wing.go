@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -8,12 +9,14 @@ import (
 	"crypto/ecdh"
 	crand "crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,10 +31,12 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	directpkg "github.com/ehrlich-b/wingthing/internal/direct"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -67,6 +72,12 @@ var sessionStates sync.Map // sessionID -> *sessionIdleState
 
 const attentionCooldown = 30 * time.Second
 
+func writePTYMessage(write ws.PTYWriteFunc, message any) {
+	if err := write(message); err != nil {
+		log.Printf("send PTY message %T: %v", message, err)
+	}
+}
+
 // checkAndSendAttention fires session.attention if the cooldown has elapsed.
 // Returns true if the attention was sent.
 func checkAndSendAttention(sessionID, agent, cwd string, write ws.PTYWriteFunc) bool {
@@ -76,11 +87,15 @@ func checkAndSendAttention(sessionID, agent, cwd string, write ws.PTYWriteFunc) 
 			return false
 		}
 	}
-	wingAttention.Store(sessionID, true)
-	wingAttentionCooldown.Store(sessionID, now)
 	// Reuse nonce for the same attention episode; relay deduplicates by nonce.
 	nonce, _ := wingAttentionNonce.LoadOrStore(sessionID, generateAttentionNonce())
-	write(ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: sessionID, Agent: agent, CWD: cwd, Nonce: nonce.(string)})
+	message := ws.SessionAttention{Type: ws.TypeSessionAttention, SessionID: sessionID, Agent: agent, CWD: cwd, Nonce: nonce.(string)}
+	if err := write(message); err != nil {
+		log.Printf("send attention for session %s: %v", sessionID, err)
+		return false
+	}
+	wingAttention.Store(sessionID, true)
+	wingAttentionCooldown.Store(sessionID, now)
 	return true
 }
 
@@ -95,6 +110,12 @@ func clearAttentionCooldown(sessionID string) {
 	} else {
 		wingAttentionCooldown.Delete(sessionID)
 	}
+}
+
+func forgetAttentionState(sessionID string) {
+	wingAttention.Delete(sessionID)
+	wingAttentionCooldown.Delete(sessionID)
+	wingAttentionNonce.Delete(sessionID)
 }
 
 // generateAttentionNonce returns a random 8-byte hex nonce.
@@ -212,6 +233,24 @@ func previewFilename(name string) string {
 	return name
 }
 
+// previewURL accepts only absolute HTTP(S) URLs without embedded credentials.
+// The browser repeats this validation for compatibility with older wings, but
+// rejecting unsafe schemes here keeps them out of the encrypted protocol too.
+func previewURL(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 8192 {
+		return "", false
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil {
+		return "", false
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return "", false
+	}
+	return parsed.String(), true
+}
+
 // parsePreviewFile parses a .wt-preview file into a mode/url/content map.
 //
 // First line "url:<url>"   → URL mode.
@@ -231,7 +270,9 @@ func parsePreviewFile(data []byte) map[string]string {
 	}
 	firstLine = strings.TrimRight(firstLine, "\r")
 	if strings.HasPrefix(firstLine, "url:") {
-		return map[string]string{"mode": "url", "url": strings.TrimSpace(firstLine[4:])}
+		if previewURL, ok := previewURL(firstLine[4:]); ok {
+			return map[string]string{"mode": "url", "url": previewURL}
+		}
 	}
 	// "file:" header: everything after the header line is content.
 	if strings.HasPrefix(firstLine, "file:") {
@@ -256,17 +297,90 @@ func parsePreviewFile(data []byte) map[string]string {
 	}
 }
 
+const (
+	maxPreviewFileBytes = 1 << 20
+	// Wing and relay WebSockets cap envelopes at 512 KiB. Leave room for GCM
+	// nonce/tag, base64 expansion, and the outer pty.preview JSON envelope.
+	maxPreviewJSONBytes = 350 << 10
+)
+
+var (
+	errPreviewNotRegular = errors.New("preview path is not a regular file")
+	errPreviewTooLarge   = errors.New("preview exceeds size limit")
+)
+
+func readPreviewFileBounded(path string) ([]byte, error) {
+	return readPreviewFileBoundedWithOpen(path, os.Open)
+}
+
+func readPreviewFileBoundedWithOpen(path string, open func(string) (*os.File, error)) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	// Reject symlinks, sockets, devices, and FIFOs. Besides preventing host-file
+	// reads through a symlink, this keeps a named pipe from blocking a watcher
+	// goroutine forever while it waits for a writer.
+	if !info.Mode().IsRegular() {
+		return nil, errPreviewNotRegular
+	}
+	file, err := open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer closeWithLog("preview file", file)
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	// Bind the pathname check to the file descriptor we actually read. An
+	// agent can rename and replace files in its writable workspace between
+	// Lstat and Open; reject that swap rather than following a newly installed
+	// symlink with the host wing's broader filesystem authority.
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return nil, errPreviewNotRegular
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxPreviewFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxPreviewFileBytes {
+		return nil, errPreviewTooLarge
+	}
+	return data, nil
+}
+
+func marshalPreviewFile(data []byte) ([]byte, error) {
+	jsonBytes, err := json.Marshal(parsePreviewFile(data))
+	if err != nil {
+		return nil, err
+	}
+	if len(jsonBytes) > maxPreviewJSONBytes {
+		return nil, errPreviewTooLarge
+	}
+	return jsonBytes, nil
+}
+
 // consumeAndSendPreview reads a .wt-preview file, deletes it, encrypts the content, and sends it.
 func consumeAndSendPreview(path, sessionID string, mu *sync.Mutex, gcm *cipher.AEAD, write ws.PTYWriteFunc) {
-	data, err := os.ReadFile(path)
+	data, err := readPreviewFileBounded(path)
 	if err != nil {
+		if errors.Is(err, errPreviewNotRegular) || errors.Is(err, errPreviewTooLarge) {
+			log.Printf("pty session %s: discard preview: %v", sessionID, err)
+			if removeErr := removeIfExists(path); removeErr != nil {
+				log.Printf("pty session %s: remove rejected preview: %v", sessionID, removeErr)
+			}
+		}
 		return
 	}
-	os.Remove(path)
-
-	parsed := parsePreviewFile(data)
-	jsonBytes, err := json.Marshal(parsed)
+	jsonBytes, err := marshalPreviewFile(data)
 	if err != nil {
+		if errors.Is(err, errPreviewTooLarge) {
+			log.Printf("pty session %s: discard preview: %v", sessionID, err)
+			if removeErr := removeIfExists(path); removeErr != nil {
+				log.Printf("pty session %s: remove rejected preview: %v", sessionID, removeErr)
+			}
+		}
 		return
 	}
 
@@ -282,7 +396,13 @@ func consumeAndSendPreview(path, sessionID string, mu *sync.Mutex, gcm *cipher.A
 		log.Printf("pty session %s: preview encrypt error: %v", sessionID, err)
 		return
 	}
-	write(ws.PTYPreview{Type: ws.TypePTYPreview, SessionID: sessionID, Data: encrypted})
+	if err := write(ws.PTYPreview{Type: ws.TypePTYPreview, SessionID: sessionID, Data: encrypted}); err != nil {
+		log.Printf("pty session %s: preview send error: %v", sessionID, err)
+		return
+	}
+	if err := removeIfExists(path); err != nil {
+		log.Printf("pty session %s: remove consumed preview: %v", sessionID, err)
+	}
 }
 
 // watchPreviewFile watches for the session-specific preview file in the given directory.
@@ -293,12 +413,17 @@ func watchPreviewFile(ctx context.Context, cwd, sessionID string, mu *sync.Mutex
 	// Try fsnotify first
 	watcher, err := fsnotify.NewWatcher()
 	if err == nil {
-		defer watcher.Close()
+		defer closeWithLog("preview watcher", watcher)
 		if addErr := watcher.Add(cwd); addErr != nil {
 			log.Printf("pty session %s: fsnotify add failed, falling back to polling: %v", sessionID, addErr)
 			goto poll
 		}
 		var debounce *time.Timer
+		defer func() {
+			if debounce != nil {
+				debounce.Stop()
+			}
+		}()
 		for {
 			select {
 			case ev, ok := <-watcher.Events:
@@ -315,6 +440,11 @@ func watchPreviewFile(ctx context.Context, cwd, sessionID string, mu *sync.Mutex
 					debounce.Stop()
 				}
 				debounce = time.AfterFunc(50*time.Millisecond, func() {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
 					consumeAndSendPreview(previewPath, sessionID, mu, gcm, write)
 				})
 			case _, ok := <-watcher.Errors:
@@ -342,9 +472,44 @@ poll:
 	}
 }
 
+const (
+	maxBrowserRequestReadBytes = 64 << 10
+	maxBrowserOpenURLBytes     = 4096
+)
+
+// consumeBrowserRequestChunk extracts complete, bounded lines. An agent owns
+// the request file, so a line without a newline must not grow host memory
+// without bound. When a line crosses the cap, discard it through its newline.
+func consumeBrowserRequestChunk(data []byte, pending *string, discarding *bool, emit func(string)) {
+	combined := *pending + string(data)
+	*pending = ""
+	parts := strings.Split(combined, "\n")
+	for _, raw := range parts[:len(parts)-1] {
+		if *discarding {
+			*discarding = false
+			continue
+		}
+		line := strings.TrimSpace(raw)
+		if line != "" && len(line) <= maxBrowserOpenURLBytes {
+			emit(line)
+		}
+	}
+	tail := parts[len(parts)-1]
+	if *discarding {
+		return
+	}
+	if len(tail) > maxBrowserOpenURLBytes {
+		*discarding = true
+		return
+	}
+	*pending = tail
+}
+
 // watchBrowserRequests polls for new lines in the browser-requests file and forwards them as PTYBrowserOpen messages.
 func watchBrowserRequests(ctx context.Context, path, sessionID string, write ws.PTYWriteFunc) {
 	var lastOffset int64
+	var pending string
+	var discarding bool
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -355,31 +520,97 @@ func watchBrowserRequests(ctx context.Context, path, sessionID string, write ws.
 				continue
 			}
 			info, err := f.Stat()
-			if err != nil || info.Size() <= lastOffset {
-				f.Close()
+			if err != nil {
+				closeWithLog("browser request file", f)
 				continue
 			}
-			f.Seek(lastOffset, io.SeekStart)
-			data, err := io.ReadAll(f)
-			f.Close()
+			if info.Size() < lastOffset {
+				lastOffset = 0
+				pending = ""
+				discarding = false
+			}
+			if info.Size() == lastOffset {
+				closeWithLog("browser request file", f)
+				continue
+			}
+			if unread := info.Size() - lastOffset; unread > maxBrowserRequestReadBytes {
+				lastOffset = info.Size() - maxBrowserRequestReadBytes
+				pending = ""
+				discarding = true // the retained window may begin in the middle of a line
+			}
+			if _, err := f.Seek(lastOffset, io.SeekStart); err != nil {
+				closeWithLog("browser request file", f)
+				log.Printf("seek browser request file for session %s: %v", sessionID, err)
+				continue
+			}
+			data, err := io.ReadAll(io.LimitReader(f, maxBrowserRequestReadBytes))
+			closeErr := f.Close()
 			if err != nil || len(data) == 0 {
 				continue
 			}
-			lastOffset += int64(len(data))
-			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" {
-					write(ws.PTYBrowserOpen{Type: ws.TypePTYBrowserOpen, SessionID: sessionID, URL: line})
-				}
+			if closeErr != nil {
+				log.Printf("close browser request file for session %s: %v", sessionID, closeErr)
+				continue
 			}
+			lastOffset += int64(len(data))
+			consumeBrowserRequestChunk(data, &pending, &discarding, func(line string) {
+				writePTYMessage(write, ws.PTYBrowserOpen{Type: ws.TypePTYBrowserOpen, SessionID: sessionID, URL: line})
+			})
 		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-// tunnelKeys caches derived AES-GCM keys per sender public key.
-var tunnelKeys sync.Map // senderPub string → cipher.AEAD
+const maxTunnelKeyCacheEntries = 1024
+
+// tunnelKeyCache bounds derived AES-GCM keys per sender public key. Direct-free
+// users may send coordination tunnels, so a process-lifetime sync.Map would let
+// an authenticated caller grow the wing indefinitely by rotating X25519 keys.
+type tunnelKeyCache struct {
+	mu      sync.Mutex
+	max     int
+	entries map[string]cipher.AEAD
+	order   []string
+}
+
+func newTunnelKeyCache(max int) *tunnelKeyCache {
+	return &tunnelKeyCache{max: max, entries: make(map[string]cipher.AEAD)}
+}
+
+func (c *tunnelKeyCache) Get(senderPub string) (cipher.AEAD, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key, ok := c.entries[senderPub]
+	return key, ok
+}
+
+func (c *tunnelKeyCache) Put(senderPub string, key cipher.AEAD) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.entries[senderPub]; exists {
+		c.entries[senderPub] = key
+		return
+	}
+	if c.max <= 0 {
+		return
+	}
+	for len(c.entries) >= c.max && len(c.order) > 0 {
+		oldest := c.order[0]
+		c.order = c.order[1:]
+		delete(c.entries, oldest)
+	}
+	c.entries[senderPub] = key
+	c.order = append(c.order, senderPub)
+}
+
+func (c *tunnelKeyCache) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries)
+}
+
+var tunnelKeys = newTunnelKeyCache(maxTunnelKeyCacheEntries)
 
 // wingCfgMu serializes tunnel-driven wing.yaml mutations. Tunnel requests run
 // on concurrent goroutines; unsynchronized admin edits could race each other
@@ -491,7 +722,7 @@ func sendPTYOutputTagged(sessionID, viewerID string, data []byte, gcm cipher.AEA
 			log.Printf("pty session %s: encrypt error: %v", sessionID, err)
 			return
 		}
-		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, ViewerID: viewerID})
+		writePTYMessage(write, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, ViewerID: viewerID})
 		return
 	}
 	for sent := 0; sent < len(data); {
@@ -504,7 +735,7 @@ func sendPTYOutputTagged(sessionID, viewerID string, data []byte, gcm cipher.AEA
 			log.Printf("pty session %s: chunk encrypt error: %v", sessionID, err)
 			return
 		}
-		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, ViewerID: viewerID})
+		writePTYMessage(write, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, ViewerID: viewerID})
 		sent = end
 	}
 }
@@ -518,15 +749,27 @@ func sendPTYOutput(sessionID string, data []byte, gcm cipher.AEAD, write ws.PTYW
 // gzip stream so the browser can decompress them individually.
 const replayChunkSize = 128 * 1024 // 128KB raw → compresses well under WS limit
 
+func replayChunkEnd(raw []byte, start int) int {
+	end := start + replayChunkSize
+	if end >= len(raw) {
+		return len(raw)
+	}
+	adjusted := end
+	for steps := 0; steps < utf8.UTFMax-1 && adjusted > start && !utf8.RuneStart(raw[adjusted]); steps++ {
+		adjusted--
+	}
+	if adjusted > start && utf8.RuneStart(raw[adjusted]) {
+		return adjusted
+	}
+	return end
+}
+
 func sendReplayChunkedTagged(sessionID, viewerID string, raw []byte, gcm cipher.AEAD, write ws.PTYWriteFunc) {
 	sent := 0
 	chunks := 0
 	totalCompressed := 0
 	for sent < len(raw) {
-		end := sent + replayChunkSize
-		if end > len(raw) {
-			end = len(raw)
-		}
+		end := replayChunkEnd(raw, sent)
 		chunk := raw[sent:end]
 		compressed, gzErr := gzipData(chunk)
 		if gzErr != nil {
@@ -538,7 +781,7 @@ func sendReplayChunkedTagged(sessionID, viewerID string, raw []byte, gcm cipher.
 			log.Printf("pty session %s: replay chunk encrypt error: %v", sessionID, encErr)
 			return
 		}
-		write(ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed, ViewerID: viewerID})
+		writePTYMessage(write, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed, ViewerID: viewerID})
 		totalCompressed += len(compressed)
 		sent = end
 		chunks++
@@ -584,6 +827,34 @@ func filterProjectsByPaths(projects []ws.WingProject, resolvedPaths []string) []
 	return out
 }
 
+// discoverWingProjects returns the project metadata a wing may advertise.
+// Explicit path configuration is a disclosure boundary: never supplement it
+// with projects found beneath the process cwd.
+func discoverWingProjects(resolvedPaths []string, cwd string) []ws.WingProject {
+	scanPaths := resolvedPaths
+	maxDepth := 3
+	if len(scanPaths) == 0 {
+		if cwd == "" {
+			return nil
+		}
+		scanPaths = []string{cwd}
+		maxDepth = 2
+	}
+
+	seen := make(map[string]bool)
+	var projects []ws.WingProject
+	for _, scanPath := range scanPaths {
+		for _, project := range discoverProjects(scanPath, maxDepth) {
+			if seen[project.Path] {
+				continue
+			}
+			seen[project.Path] = true
+			projects = append(projects, project)
+		}
+	}
+	return projects
+}
+
 // isUnderPaths returns true if path is equal to or under one of the resolved paths.
 func isUnderPaths(path string, resolvedPaths []string) bool {
 	cleaned := filepath.Clean(path)
@@ -617,22 +888,10 @@ func isExactPath(path string, paths []string) bool {
 	return false
 }
 
-// isMemberRole returns true if the org role is "member" or empty (not owner/admin).
+// isMemberRole grants elevated behavior only to the two coordinator roles the
+// wing understands. Empty, legacy, and unexpected values stay least-privilege.
 func isMemberRole(orgRole string) bool {
-	return orgRole == "member" || orgRole == ""
-}
-
-// isPathMember returns true if email matches any member in any path entry.
-func isPathMember(paths config.PathList, email string) bool {
-	emailLower := strings.ToLower(email)
-	for _, e := range paths {
-		for _, m := range e.Members {
-			if strings.ToLower(m) == emailLower {
-				return true
-			}
-		}
-	}
-	return false
+	return orgRole != "owner" && orgRole != "admin"
 }
 
 // discoverProjects scans dir for git repositories up to maxDepth levels deep.
@@ -783,34 +1042,51 @@ const maxLogSize = 1 << 20 // 1MB
 
 // rotateLog rotates path when it exceeds maxLogSize.
 // Chain: .log -> .log.1 -> .log.2.gz -> deleted
-func rotateLog(path string) {
+func rotateLog(path string) error {
 	info, err := os.Stat(path)
-	if err != nil || info.Size() < maxLogSize {
-		return
+	if errors.Is(err, os.ErrNotExist) || (err == nil && info.Size() < maxLogSize) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect log for rotation: %w", err)
 	}
 
 	// Delete oldest (.log.2.gz)
-	os.Remove(path + ".2.gz")
+	if err := removeIfExists(path + ".2.gz"); err != nil {
+		return fmt.Errorf("remove oldest rotated log: %w", err)
+	}
 
 	// Compress .log.1 -> .log.2.gz
 	if data, err := os.ReadFile(path + ".1"); err == nil {
 		if gz, err := os.Create(path + ".2.gz"); err == nil {
 			w := gzip.NewWriter(gz)
 			if _, werr := w.Write(data); werr != nil {
-				log.Printf("rotateLog: gzip write failed: %v", werr)
+				closeWithLog("rotated gzip stream", w)
+				closeWithLog("rotated log", gz)
+				return fmt.Errorf("compress rotated log: %w", werr)
 			}
 			if err := w.Close(); err != nil {
-				log.Printf("rotateLog: gzip close failed: %v", err)
+				closeWithLog("rotated log", gz)
+				return fmt.Errorf("finish rotated log compression: %w", err)
 			}
 			if err := gz.Close(); err != nil {
-				log.Printf("rotateLog: file close failed: %v", err)
+				return fmt.Errorf("close rotated log: %w", err)
 			}
-			os.Remove(path + ".1")
+			if err := removeIfExists(path + ".1"); err != nil {
+				return fmt.Errorf("remove compressed source log: %w", err)
+			}
+		} else {
+			return fmt.Errorf("create compressed rotated log: %w", err)
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read rotated log: %w", err)
 	}
 
 	// Rotate current -> .log.1
-	os.Rename(path, path+".1")
+	if err := os.Rename(path, path+".1"); err != nil {
+		return fmt.Errorf("rotate current log: %w", err)
+	}
+	return nil
 }
 
 func wingArgsPath() string {
@@ -842,19 +1118,33 @@ func wingStatusPath() string {
 
 // wingStatus is the JSON schema for wing.status.
 type wingStatus struct {
-	State string `json:"state"` // connecting, connected, auth_failed, disconnected
-	Error string `json:"error,omitempty"`
-	TS    string `json:"ts"`
+	State    string `json:"state"` // connecting, connected, auth_failed, disconnected
+	Error    string `json:"error,omitempty"`
+	TS       string `json:"ts"`
+	RoostURL string `json:"roost_url,omitempty"`
 }
 
 func writeWingStatus(state, lastErr string) {
-	s := wingStatus{State: state, Error: lastErr, TS: time.Now().UTC().Format(time.RFC3339)}
-	data, _ := json.Marshal(s)
-	tmp := wingStatusPath() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	writeWingStatusForRoost(state, lastErr, "")
+}
+
+func writeWingStatusForRoost(state, lastErr, roostURL string) {
+	s := wingStatus{
+		State:    state,
+		Error:    lastErr,
+		TS:       time.Now().UTC().Format(time.RFC3339),
+		RoostURL: relayMetadataURL(roostURL),
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		log.Printf("encode wing status: %v", err)
 		return
 	}
-	os.Rename(tmp, wingStatusPath())
+	// A custom coordinator URL can itself carry deployment metadata. Keep the
+	// status private just like the saved daemon arguments that selected it.
+	if err := writeAtomicMetadataFile(wingStatusPath(), data, 0600); err != nil {
+		log.Printf("write wing status: %v", err)
+	}
 }
 
 func readWingStatus() (*wingStatus, error) {
@@ -920,29 +1210,275 @@ func roostLogPath() string {
 	return filepath.Join(home, ".wingthing", "roost.log")
 }
 
-// readPidFrom reads a PID from a specific file and checks the process is alive.
-func readPidFrom(path string) (int, error) {
+func writeDaemonMetadata(pidPath, argsPath string, pid int, args []string) error {
+	if err := writeAtomicMetadataFile(argsPath, []byte(strings.Join(args, "\n")), 0600); err != nil {
+		return fmt.Errorf("write daemon args: %w", err)
+	}
+	if err := writeAtomicMetadataFile(pidPath, []byte(strconv.Itoa(pid)), 0644); err != nil {
+		_ = os.Remove(argsPath)
+		return fmt.Errorf("write daemon pid: %w", err)
+	}
+	return nil
+}
+
+func writeAtomicMetadataFile(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".wt-daemon-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer removeWithLog(tmpPath)
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer closeWithLog("metadata directory", dir)
+	return dir.Sync()
+}
+
+func acquireDaemonLifecycleLock() (*os.File, error) {
+	return acquireDaemonLifecycleLockAt(filepath.Join(filepath.Dir(wingPidPath()), "daemon.lock"))
+}
+
+func acquireDaemonLifecycleLockAt(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("open daemon lifecycle lock: %w", err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = file.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, fmt.Errorf("another daemon start/stop is already in progress")
+		}
+		return nil, fmt.Errorf("lock daemon lifecycle: %w", err)
+	}
+	return file, nil
+}
+
+// abandonStartedDaemon terminates and reaps a child whose startup could not be
+// committed to disk. This prevents a successful exec from becoming an
+// invisible daemon when readiness or metadata persistence fails.
+func abandonStartedDaemon(child *exec.Cmd) {
+	if child == nil || child.Process == nil {
+		return
+	}
+	_ = child.Process.Signal(syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		_ = child.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		_ = child.Process.Kill()
+		<-done
+	}
+}
+
+type daemonKind string
+
+const (
+	wingDaemon  daemonKind = "wing"
+	roostDaemon daemonKind = "roost"
+)
+
+var (
+	errNoDaemonRunning = errors.New("no daemon running")
+	errStaleDaemonPID  = errors.New("stale daemon pid")
+)
+
+// readPidFrom reads a PID from a specific file and verifies that it still
+// identifies the expected wt foreground daemon. PIDs are recycled, so merely
+// finding a live same-UID process is not enough before callers send signals.
+func readPidFrom(path string, kind daemonKind) (int, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {
-		return 0, err
+		_ = os.Remove(path)
+		return 0, fmt.Errorf("%w: invalid PID: %v", errStaleDaemonPID, err)
 	}
 	if !ownedProcessIsAlive(pid) {
-		os.Remove(path)
-		return 0, fmt.Errorf("stale pid")
+		_ = os.Remove(path)
+		return 0, errStaleDaemonPID
+	}
+	matches, inspectErr := inspectDaemonPid(pid, kind)
+	if inspectErr != nil {
+		return 0, inspectErr
+	}
+	if !matches {
+		_ = os.Remove(path)
+		return 0, errStaleDaemonPID
 	}
 	return pid, nil
 }
 
+// daemonPidMatches confirms the command shape emitted by wingStartCmd or
+// roostStartCmd. Failure to inspect argv fails closed: a status check may call
+// a daemon stopped, but stop/update will never signal an unconfirmed process.
+func inspectDaemonPid(pid int, kind daemonKind) (bool, error) {
+	argv, err := processArgv(pid)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect %s daemon pid %d: %w", kind, pid, err)
+	}
+	return daemonArgvMatches(argv, kind), nil
+}
+
+func daemonArgvMatches(argv []string, kind daemonKind) bool {
+	if len(argv) < 4 || argv[2] != "start" {
+		return false
+	}
+	switch kind {
+	case wingDaemon:
+		if argv[1] != "wing" && argv[1] != "daemon" {
+			return false
+		}
+	case roostDaemon:
+		if argv[1] != "roost" {
+			return false
+		}
+	default:
+		return false
+	}
+	for _, arg := range argv[3:] {
+		if arg == "--foreground" {
+			return true
+		}
+	}
+	return false
+}
+
+func parseSavedDaemonArgs(data []byte, kind daemonKind) ([]string, error) {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return nil, fmt.Errorf("empty daemon args")
+	}
+	args := strings.Split(trimmed, "\n")
+	argv := append([]string{"wt"}, args...)
+	if !daemonArgvMatches(argv, kind) {
+		return nil, fmt.Errorf("saved args do not describe a %s foreground daemon", kind)
+	}
+	return args, nil
+}
+
+// readDaemon returns the one live daemon represented by local metadata. A
+// healthy installation cannot run a standalone wing and a roost at once. If
+// both metadata files identify live daemons, fail closed so lifecycle commands
+// do not stop an arbitrary half of the conflicting installation.
+func readDaemon() (int, daemonKind, error) {
+	wingPID, wingErr := readPidFrom(wingPidPath(), wingDaemon)
+	roostPID, roostErr := readPidFrom(roostPidPath(), roostDaemon)
+	if wingErr == nil && roostErr == nil {
+		return 0, "", fmt.Errorf("both wing (pid %d) and roost (pid %d) daemons are running", wingPID, roostPID)
+	}
+	if wingErr == nil {
+		if !daemonAbsentError(roostErr) {
+			return 0, "", roostErr
+		}
+		return wingPID, wingDaemon, nil
+	}
+	if roostErr == nil {
+		if !daemonAbsentError(wingErr) {
+			return 0, "", wingErr
+		}
+		return roostPID, roostDaemon, nil
+	}
+	if !daemonAbsentError(wingErr) {
+		return 0, "", wingErr
+	}
+	if !daemonAbsentError(roostErr) {
+		return 0, "", roostErr
+	}
+	return 0, "", errNoDaemonRunning
+}
+
+func daemonAbsentError(err error) bool {
+	return os.IsNotExist(err) || errors.Is(err, errStaleDaemonPID)
+}
+
 // readPid tries wing.pid first, then roost.pid. Returns the first live daemon PID.
 func readPid() (int, error) {
-	if pid, err := readPidFrom(wingPidPath()); err == nil {
-		return pid, nil
+	pid, _, err := readDaemon()
+	return pid, err
+}
+
+// stopDaemonAndWait revalidates the daemon command immediately before
+// signaling it, then waits until that specific daemon identity is gone. This
+// keeps the lifecycle lock meaningful: callers must not delete metadata and
+// allow a replacement to start while the old listener is still shutting down.
+func stopDaemonAndWait(pid int, kind daemonKind, timeout time.Duration) error {
+	if !ownedProcessIsAlive(pid) {
+		return nil
 	}
-	return readPidFrom(roostPidPath())
+	matches, inspectErr := inspectDaemonPid(pid, kind)
+	if inspectErr != nil {
+		return inspectErr
+	}
+	if !matches {
+		return nil
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("find %s daemon pid %d: %w", kind, pid, err)
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		if !ownedProcessIsAlive(pid) {
+			return nil
+		}
+		matches, inspectErr = inspectDaemonPid(pid, kind)
+		if inspectErr != nil {
+			return inspectErr
+		}
+		if !matches {
+			return nil
+		}
+		return fmt.Errorf("stop %s daemon pid %d: %w", kind, pid, err)
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if !ownedProcessIsAlive(pid) {
+			return nil
+		}
+		matches, inspectErr = inspectDaemonPid(pid, kind)
+		if inspectErr != nil {
+			return inspectErr
+		}
+		if !matches {
+			return nil
+		}
+		select {
+		case <-deadline.C:
+			return fmt.Errorf("%s daemon pid %d did not stop within %s", kind, pid, timeout)
+		case <-ticker.C:
+		}
+	}
 }
 
 func wingCmd() *cobra.Command {
@@ -988,10 +1524,17 @@ func wingStartCmd() *cobra.Command {
 			if foregroundFlag {
 				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag, !rawReplayFlag)
 			}
+			lifecycleLock, err := acquireDaemonLifecycleLock()
+			if err != nil {
+				return err
+			}
+			defer closeWithLog("daemon lifecycle lock", lifecycleLock)
 
 			// Daemon mode (default): re-exec detached, write PID file, return
-			if pid, err := readPid(); err == nil {
+			if pid, _, err := readDaemon(); err == nil {
 				return fmt.Errorf("wing daemon already running (pid %d)", pid)
+			} else if !errors.Is(err, errNoDaemonRunning) {
+				return fmt.Errorf("inspect daemon state: %w", err)
 			}
 
 			// Pre-flight auth probe: catch expired tokens before spawning daemon
@@ -1003,26 +1546,8 @@ func wingStartCmd() *cobra.Command {
 					if tokErr != nil || !ts.IsValid(tok) {
 						return fmt.Errorf("not logged in — run: wt login")
 					}
-					// Mirror the daemon's relay URL resolution: flag → wing.yaml → config → default
-					relayURL := roostFlag
-					if relayURL == "" {
-						if wc, wcErr := config.LoadWingConfig(cfg.Dir); wcErr == nil && wc.Roost != "" {
-							relayURL = wc.Roost
-						}
-					}
-					if localFlag && relayURL == "" {
-						relayURL = "http://localhost:8080"
-					}
-					if relayURL == "" {
-						relayURL = cfg.RoostURL
-					}
-					if relayURL == "" {
-						relayURL = "https://ws.wingthing.ai"
-					}
-					// Ensure HTTP scheme for the auth probe (roost URLs may use wss://)
-					relayURL = strings.TrimRight(relayURL, "/")
-					relayURL = strings.Replace(relayURL, "wss://", "https://", 1)
-					relayURL = strings.Replace(relayURL, "ws://", "http://", 1)
+					// Use the same precedence and normalization as the child daemon.
+					relayURL := resolveWingRelayHTTPURL(cfg, roostFlag, localFlag)
 					if err := auth.ValidateTokenRemote(relayURL, tok.Token); err != nil {
 						if errors.Is(err, auth.ErrAuthFailed) {
 							return fmt.Errorf("login expired — run: wt login")
@@ -1076,15 +1601,23 @@ func wingStartCmd() *cobra.Command {
 			}
 
 			// Remove stale status from previous run
-			os.Remove(wingStatusPath())
+			if err := removeIfExists(wingStatusPath()); err != nil {
+				return fmt.Errorf("remove stale wing status: %w", err)
+			}
 
-			rotateLog(wingLogPath())
+			if err := rotateLog(wingLogPath()); err != nil {
+				return err
+			}
 			logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 			if err != nil {
 				return fmt.Errorf("open log: %w", err)
 			}
 
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil {
+				closeWithLog("wing log", logFile)
+				return fmt.Errorf("resolve user home: %w", err)
+			}
 
 			child := exec.Command(exe, childArgs...)
 			child.Dir = home
@@ -1093,16 +1626,17 @@ func wingStartCmd() *cobra.Command {
 			child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 			if err := child.Start(); err != nil {
-				logFile.Close()
+				closeWithLog("wing log", logFile)
 				return fmt.Errorf("start daemon: %w", err)
 			}
-			logFile.Close()
-
-			if err := os.WriteFile(wingPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644); err != nil {
-				log.Printf("warning: failed to write PID file: %v", err)
+			if err := logFile.Close(); err != nil {
+				abandonStartedDaemon(child)
+				return fmt.Errorf("close wing log: %w", err)
 			}
-			if err := os.WriteFile(wingArgsPath(), []byte(strings.Join(childArgs, "\n")), 0644); err != nil {
-				log.Printf("warning: failed to write args file: %v", err)
+
+			if err := writeDaemonMetadata(wingPidPath(), wingArgsPath(), child.Process.Pid, childArgs); err != nil {
+				abandonStartedDaemon(child)
+				return fmt.Errorf("start daemon: %w", err)
 			}
 
 			// Wait for daemon to report initial connection state
@@ -1110,12 +1644,10 @@ func wingStartCmd() *cobra.Command {
 			switch startupResult {
 			case "auth_failed":
 				// Kill daemon, clean up
-				if proc, findErr := os.FindProcess(child.Process.Pid); findErr == nil {
-					proc.Signal(syscall.SIGTERM)
+				abandonStartedDaemon(child)
+				if err := removeFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+					return errors.Join(fmt.Errorf("login expired — run: wt login"), fmt.Errorf("remove failed daemon metadata: %w", err))
 				}
-				os.Remove(wingPidPath())
-				os.Remove(wingArgsPath())
-				os.Remove(wingStatusPath())
 				return fmt.Errorf("login expired — run: wt login")
 			case "connected":
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
@@ -1125,9 +1657,12 @@ func wingStartCmd() *cobra.Command {
 				fmt.Printf("wing daemon started (pid %d)\n", child.Process.Pid)
 				fmt.Printf("  relay: connecting...\n")
 			}
+			if err := child.Process.Release(); err != nil {
+				log.Printf("warning: failed to release daemon process handle: %v", err)
+			}
 			// Show account identity
 			if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
-				relayURL := resolveRelayHTTPURL(cfgLoaded)
+				relayURL := resolveWingRelayHTTPURL(cfgLoaded, roostFlag, localFlag)
 				if tok, tokErr := auth.NewTokenStore(cfgLoaded.Dir).Load(); tokErr == nil && tok != nil {
 					if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
 						fmt.Printf("  account: %s\n", formatUserIdentity(info))
@@ -1136,14 +1671,16 @@ func wingStartCmd() *cobra.Command {
 			}
 			fmt.Printf("  log: %s\n", wingLogPath())
 			fmt.Println()
-			if localFlag {
-				localURL := roostFlag
-				if localURL == "" {
-					localURL = "http://localhost:8080"
-				}
-				fmt.Printf("open %s to start a terminal\n", localURL)
+			if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
+				browserURL := roostBrowserURL(resolveWingRelayHTTPURL(cfgLoaded, roostFlag, localFlag))
+				fmt.Printf("open %s for wing status and direct-agent setup\n", browserURL)
+			} else if localFlag {
+				fmt.Println("open http://localhost:8080/app/ for wing status and direct-agent setup")
 			} else {
-				fmt.Println("open https://app.wingthing.ai to start a terminal")
+				fmt.Println("open https://app.wingthing.ai/ for wing status and direct-agent setup")
+			}
+			if !localFlag {
+				fmt.Println("hosted browser terminals require relay access")
 			}
 			return nil
 		},
@@ -1168,25 +1705,25 @@ func wingStartCmd() *cobra.Command {
 func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte bool) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	defer os.Remove(wingStatusPath())
+	defer removeWithLog(wingStatusPath())
 
 	sighupCh := make(chan os.Signal, 1)
 	signal.Notify(sighupCh, syscall.SIGHUP)
+	defer signal.Stop(sighupCh)
 
-	return runWingWithContext(ctx, sighupCh, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debug, audit, local, vte, false)
+	return runWingWithContext(ctx, sighupCh, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debug, audit, local, vte, false, nil)
 }
 
-func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte, sharedHost bool) error {
+func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte, sharedHost bool, tokenOverride *auth.DeviceToken) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 
 	// Load wing.yaml
-	wingCfg, err := config.LoadWingConfig(cfg.Dir)
+	wingCfg, err := loadWingConfigForStart(cfg.Dir)
 	if err != nil {
-		log.Printf("wing: load wing.yaml: %v (continuing with defaults)", err)
-		wingCfg = &config.WingConfig{}
+		return err
 	}
 
 	// Merge wing.yaml with CLI flags (CLI extends yaml)
@@ -1291,16 +1828,21 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	if roostURL == "" {
 		roostURL = "https://ws.wingthing.ai"
 	}
-	passkeyPolicy := passkeyPolicyForRoost(passkeyRPURL(roostURL, os.Getenv("WT_BASE_URL")))
+	var passkeyPolicyLive atomic.Value
+	passkeyPolicyLive.Store(passkeyPolicyForRoost(passkeyRPURL(roostURL, os.Getenv("WT_BASE_URL"))))
+	currentPasskeyPolicy := func() auth.PasskeyPolicy {
+		return passkeyPolicyLive.Load().(auth.PasskeyPolicy)
+	}
 	// Convert HTTP URL to WebSocket URL
 	wsURL := strings.Replace(roostURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
 	wsURL = strings.TrimRight(wsURL, "/") + "/ws/wing"
 
-	// Load auth token
-	ts := auth.NewTokenStore(cfg.Dir)
-	tok, err := ts.Load()
-	if err != nil || !ts.IsValid(tok) {
+	// An all-in-one roost passes its embedded service credential in memory. It
+	// must not overwrite device_token.yaml: that file may hold the operator's
+	// independent wingthing.ai identity for standalone wings on this machine.
+	tok, err := wingConnectionToken(cfg.Dir, local, tokenOverride)
+	if err != nil {
 		if local {
 			return fmt.Errorf("no device token — run: wt serve --local")
 		}
@@ -1338,26 +1880,12 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		rootDir = resolvedPaths[0]
 	}
 
-	// Scan for git projects in each path
+	// Scan only within explicitly configured paths. When no paths are configured,
+	// preserve the legacy cwd discovery behavior. A detached daemon starts in the
+	// user's home directory, so adding cwd to an explicit --paths scan would
+	// disclose unrelated project names and paths to the coordinator.
 	cwd, _ := os.Getwd()
-	seen := make(map[string]bool)
-	var projects []ws.WingProject
-	for _, sp := range resolvedPaths {
-		for _, p := range discoverProjects(sp, 3) {
-			if !seen[p.Path] {
-				seen[p.Path] = true
-				projects = append(projects, p)
-			}
-		}
-	}
-	if cwd != "" {
-		for _, p := range discoverProjects(cwd, 2) {
-			if !seen[p.Path] {
-				seen[p.Path] = true
-				projects = append(projects, p)
-			}
-		}
-	}
+	projects := discoverWingProjects(resolvedPaths, cwd)
 
 	fmt.Printf("connecting to %s\n", wsURL)
 	fmt.Printf("  agents: %v\n", agents)
@@ -1375,11 +1903,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		fmt.Printf("  access control enabled: %d pinned + %d ephemeral keys\n", pinnedCount, ephemeralCount)
 	}
 	fmt.Println()
-	if local || strings.Contains(roostURL, "localhost") {
-		fmt.Printf("open %s to start a terminal\n", strings.TrimRight(roostURL, "/"))
-	} else {
-		fmt.Println("open https://app.wingthing.ai to start a terminal")
-	}
+	fmt.Printf("open %s to start a terminal\n", roostBrowserURL(roostURL))
 
 	// Reap dead egg directories on startup
 	reapDeadEggs(cfg)
@@ -1394,10 +1918,12 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		return fmt.Errorf("load private key: %w", privKeyErr)
 	}
 
-	// P2P: initialize PeerManager if connection mode supports it
+	// WebRTC backs both opt-in browser PTY migration and native direct MCP.
+	// Keep the manager available in ordinary relay mode for native control, but
+	// advertise browser P2P only for its existing p2p/p2p_only modes below.
 	var peerMgr *webrtcpkg.PeerManager
-	p2pEnabled := wingCfg.ConnectionMode == "p2p" || wingCfg.ConnectionMode == "p2p_only"
-	if p2pEnabled {
+	peerManagerEnabled := wingCfg.ConnectionMode != "direct"
+	if peerManagerEnabled {
 		var iceServers []pionwebrtc.ICEServer
 		for _, s := range wingCfg.ICEServers {
 			iceServers = append(iceServers, pionwebrtc.ICEServer{
@@ -1414,39 +1940,72 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	// P2P: track DataChannels and SwappableWriters per session
 	var dcSessions sync.Map // sessionID → *pionwebrtc.DataChannel
 	var swSessions sync.Map // sessionID → *webrtcpkg.SwappableWriter
+	directMCPAdmission := newMCPAdmissionState()
 
 	var client *ws.Client // declared early so peerMgr.OnDC closure can capture it
+	var directSrv *directpkg.Server
 
 	// P2P: wire up DataChannel message routing when DCs open
 	if peerMgr != nil {
-		peerMgr.OnDC(func(senderPub, sessionID string, dc *pionwebrtc.DataChannel) {
+		peerMgr.OnDC(func(senderPub, sessionID string, ident webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
+			if strings.HasPrefix(dc.Label(), control.DirectChannelPrefix) {
+				if ident.UserID == "" {
+					log.Printf("[P2P] rejected direct MCP channel from %s: missing authenticated identity", shortLogValue(senderPub))
+					if err := dc.Close(); err != nil {
+						log.Printf("[P2P] close rejected direct MCP channel: %v", err)
+					}
+					return
+				}
+				serveDirectMCPChannelWithPolicySource(cfg, home, sharedHost, directMCPAdmission, ident, dc, func() (*config.WingConfig, []config.AllowKey) {
+					wingCfgMu.Lock()
+					defer wingCfgMu.Unlock()
+					return wingCfg.Clone(), append([]config.AllowKey(nil), allowedKeys...)
+				})
+				return
+			}
 			if sessionID == "" {
-				log.Printf("[P2P] DC opened with no session ID from %s", senderPub[:8])
+				log.Printf("[P2P] DC opened with no session ID from %s", shortLogValue(senderPub))
+				return
+			}
+			if !ws.ValidSessionID(sessionID) {
+				log.Printf("[P2P] rejected DC with invalid session ID %q from %s", sessionID, shortLogValue(senderPub))
+				if err := dc.Close(); err != nil {
+					log.Printf("[P2P] close invalid session channel: %v", err)
+				}
 				return
 			}
 			// The label is client-controlled; a DataChannel feeds the session's
 			// trusted input channel, so only the session owner's peer identity
 			// may bind one. Anything else could inject input or kill a session
 			// it does not own.
-			ident, ok := peerMgr.GetPeerIdentity(senderPub)
 			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", sessionID))
-			if !ok || owner == "" || ident.UserID != owner {
-				log.Printf("[P2P] rejected DC for session %s from %s: sender is not the session owner", sessionID, senderPub[:8])
-				dc.Close()
+			if ident.UserID == "" || owner == "" || ident.UserID != owner {
+				log.Printf("[P2P] rejected DC for session %s from %s: sender is not the session owner", sessionID, shortLogValue(senderPub))
+				if err := dc.Close(); err != nil {
+					log.Printf("[P2P] close rejected session channel: %v", err)
+				}
 				return
 			}
 			dcSessions.Store(sessionID, dc)
-			log.Printf("[P2P] DC stored for session %s from %s", sessionID, senderPub[:8])
+			log.Printf("[P2P] DC stored for session %s from %s", sessionID, shortLogValue(senderPub))
 
 			dc.OnMessage(func(msg pionwebrtc.DataChannelMessage) {
+				if !currentDataChannel(&dcSessions, sessionID, dc) {
+					return
+				}
 				client.PushPTYInput(sessionID, msg.Data)
 			})
 			dc.OnClose(func() {
-				dcSessions.Delete(sessionID)
+				if !dcSessions.CompareAndDelete(sessionID, dc) {
+					log.Printf("[P2P] stale DC closed for session %s", sessionID)
+					return
+				}
 				// Trigger fallback to relay if session still active
 				if swVal, ok := swSessions.Load(sessionID); ok {
 					sessionSW := swVal.(*webrtcpkg.SwappableWriter)
-					sessionSW.FallbackToRelay(sessionID)
+					if err := sessionSW.FallbackToRelay(sessionID); err != nil {
+						log.Printf("[P2P] fall back session %s to relay: %v", sessionID, err)
+					}
 				}
 				log.Printf("[P2P] DC closed for session %s", sessionID)
 			})
@@ -1469,6 +2028,28 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		RootDir:      rootDir,
 		Locked:       wingCfg.Locked,
 		AllowedCount: len(wingCfg.AllowKeys),
+		DirectMCP:    directMCPEnabled(peerMgr != nil, wingCfg),
+		HostedRelay:  wingCfg.EffectiveHostedRelay(),
+	}
+	client.OnRegistered = func(msg ws.RegisteredMsg) {
+		if policy, ok := passkeyPolicyFromRegistration(msg); ok {
+			passkeyPolicyLive.Store(policy)
+			log.Printf("passkey relying-party policy synchronized (rp_id=%s origins=%d)", policy.RPID, len(policy.Origins))
+		}
+		if directSrv != nil && msg.RelayPubKey != "" {
+			pubKey, err := relaypkg.ParseECPublicKey(msg.RelayPubKey)
+			if err != nil {
+				log.Printf("[direct] reject relay public key: %v", err)
+			} else {
+				directSrv.SetRelayPublicKey(pubKey)
+				log.Printf("[direct] relay public key synchronized for JWT verification")
+			}
+		}
+	}
+	client.OnHostedRelayDenied = func(operation string) {
+		if err := appendHostedRelayPolicyAudit(cfg, operation); err != nil {
+			log.Printf("hosted relay policy audit: %v", err)
+		}
 	}
 
 	client.OnStateChange = func(state string, stateErr error) {
@@ -1476,7 +2057,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		if stateErr != nil {
 			errMsg = stateErr.Error()
 		}
-		writeWingStatus(state, errMsg)
+		writeWingStatusForRoost(state, errMsg, roostURL)
 		switch state {
 		case "auth_failed":
 			log.Printf("FATAL: relay rejected authentication — run: wt logout && wt login && wt start")
@@ -1492,14 +2073,18 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	}
 
 	client.OnPTY = func(ctx context.Context, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte) {
+		wingCfgMu.Lock()
+		sessionWingCfg := wingCfg.Clone()
+		sessionAllowedKeys := append([]config.AllowKey(nil), allowedKeys...)
+		wingCfgMu.Unlock()
 		// Wing-level admin override: admins get full access regardless of org role
-		if wingCfg.IsAdmin(start.Email) && isMemberRole(start.OrgRole) {
+		if sessionWingCfg.IsAdmin(start.Email) && isMemberRole(start.OrgRole) {
 			start.OrgRole = "admin"
 		}
 		// Per-user path ACLs: members only see their tagged folders
-		userPaths := pathsForRequest(wingCfg.Paths, start.Email, start.OrgRole, home)
+		userPaths := pathsForRequest(sessionWingCfg.Paths, start.Email, start.OrgRole, home)
 		if isMemberRole(start.OrgRole) && len(userPaths) == 0 {
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no accessible folders on this machine"})
+			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no accessible folders on this machine"})
 			return
 		}
 		// Clamp CWD to exact configured paths (not subdirectories).
@@ -1511,9 +2096,9 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			}
 		}
 		// Members require egg.yaml in CWD (sandbox jail)
-		if isMemberRole(start.OrgRole) && len(wingCfg.Paths) > 0 {
+		if isMemberRole(start.OrgRole) && len(sessionWingCfg.Paths) > 0 {
 			if _, err := os.Stat(filepath.Join(start.CWD, "egg.yaml")); os.IsNotExist(err) {
-				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no egg.yaml in " + start.CWD + " — ask the wing owner to add a sandbox config"})
+				writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no egg.yaml in " + start.CWD + " — ask the wing owner to add a sandbox config"})
 				return
 			}
 		}
@@ -1525,14 +2110,14 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			eggCfg.Audit = true
 		}
 		var authTTL time.Duration // default 0 = boot-scoped, no expiry
-		if wingCfg.AuthTTL != "" {
-			if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil {
+		if sessionWingCfg.AuthTTL != "" {
+			if d, err := time.ParseDuration(sessionWingCfg.AuthTTL); err == nil {
 				authTTL = d
 			}
 		}
 		var idleTimeout time.Duration
-		if wingCfg.IdleTimeout != "" {
-			if d, err := time.ParseDuration(wingCfg.IdleTimeout); err == nil {
+		if sessionWingCfg.IdleTimeout != "" {
+			if d, err := time.ParseDuration(sessionWingCfg.IdleTimeout); err == nil {
 				idleTimeout = d
 			}
 		}
@@ -1546,14 +2131,14 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			sw = webrtcpkg.NewSwappableWriter(webrtcpkg.WriteFn(write))
 			swSessions.Store(start.SessionID, sw)
 			defer swSessions.Delete(start.SessionID)
-			handlePTYSession(ctx, cfg, wingCfg, start, sw.Write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, passkeyPolicy, authTTL, idleTimeout, sw, &dcSessions, sessionTools, sharedHost)
+			handlePTYSession(ctx, cfg, sessionWingCfg, start, sw.Write, input, eggCfg, debugLive.Load(), vte, &sessionAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, idleTimeout, sw, &dcSessions, sessionTools, sharedHost)
 		} else {
-			handlePTYSession(ctx, cfg, wingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &allowedKeys, passkeyCache, passkeyPolicy, authTTL, idleTimeout, nil, nil, sessionTools, sharedHost)
+			handlePTYSession(ctx, cfg, sessionWingCfg, start, write, input, eggCfg, debugLive.Load(), vte, &sessionAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, idleTimeout, nil, nil, sessionTools, sharedHost)
 		}
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
-		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, passkeyChallenges, passkeyPolicy, privKey, home, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client, peerMgr, &dcSessions)
+		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, passkeyChallenges, currentPasskeyPolicy(), privKey, home, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client, peerMgr, &dcSessions)
 	}
 
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
@@ -1562,16 +2147,24 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 
 	// Reclaim surviving egg sessions on every (re)connect
 	client.OnReconnect = func(rctx context.Context) {
+		wingCfgMu.Lock()
+		reconnectWingCfg := wingCfg.Clone()
+		reconnectAllowedKeys := append([]config.AllowKey(nil), allowedKeys...)
+		wingCfgMu.Unlock()
+		if !reconnectWingCfg.HostedRelayAllowed() {
+			log.Printf("hosted relay payload transport disabled; skipping relay session reclaim")
+			return
+		}
 		var authTTL time.Duration // default 0 = boot-scoped, no expiry
-		if wingCfg.AuthTTL != "" {
-			if d, err := time.ParseDuration(wingCfg.AuthTTL); err == nil {
+		if reconnectWingCfg.AuthTTL != "" {
+			if d, err := time.ParseDuration(reconnectWingCfg.AuthTTL); err == nil {
 				authTTL = d
 			}
 		}
 		wingToolsMu.Lock()
 		reclaimTools := append([]*config.ToolConfig{}, wingTools...)
 		wingToolsMu.Unlock()
-		reclaimEggSessions(rctx, cfg, client, wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, reclaimTools)
+		reclaimEggSessions(rctx, cfg, client, reconnectWingCfg, reconnectAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, reclaimTools)
 	}
 
 	// SIGHUP reload goroutine — caller owns SIGTERM/SIGINT via ctx cancellation
@@ -1591,13 +2184,17 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 						log.Printf("reload failed: %v", err)
 						continue
 					}
+					if err := validateDirectMCPGrantConfig(newCfg); err != nil {
+						log.Printf("reload failed: %v", err)
+						continue
+					}
+					wingCfgMu.Lock()
 					wingCfg.Locked = newCfg.Locked
 					wingCfg.Spectate = newCfg.Spectate
 					wingCfg.AllowKeys = newCfg.AllowKeys
 					wingCfg.Admins = newCfg.Admins
+					wingCfg.DirectMCP = newCfg.DirectMCP
 					allowedKeys = append([]config.AllowKey{}, newCfg.AllowKeys...)
-					client.Locked = newCfg.Locked
-					client.AllowedCount = len(newCfg.AllowKeys)
 
 					// Hot-reload audit + debug (atomic, read at session start)
 					auditLive.Store(newCfg.Audit)
@@ -1610,15 +2207,14 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 
 					// Hot-reload labels
 					wingCfg.Labels = newCfg.Labels
-					client.Labels = newCfg.Labels
 
 					// Hot-reload paths
 					wingCfg.Paths = newCfg.Paths
 					resolvedPaths = resolvePathStrings(newCfg.Paths.Strings(), home)
 					if len(resolvedPaths) > 0 {
-						client.RootDir = resolvedPaths[0]
+						rootDir = resolvedPaths[0]
 					} else {
-						client.RootDir = home
+						rootDir = home
 					}
 
 					// Hot-reload egg config (if path changed)
@@ -1636,6 +2232,8 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 							log.Printf("egg config reloaded from %s", eggPath)
 						}
 					}
+					client.UpdateRuntimeConfig(newCfg.Locked, len(newCfg.AllowKeys), directMCPEnabled(peerMgr != nil, newCfg), newCfg.Labels, rootDir)
+					wingCfgMu.Unlock()
 
 					// Hot-reload tools
 					newToolsDir := config.ResolveToolsDir(cfg.Dir, newCfg.ToolsDir)
@@ -1648,7 +2246,9 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 						log.Printf("tools reload failed: %v", tErr)
 					}
 
-					client.SendConfig(ctx)
+					if err := client.SendConfig(ctx); err != nil {
+						log.Printf("send reloaded wing config: %v", err)
+					}
 					log.Printf("config reloaded: locked=%v allowed=%d audit=%v debug=%v", newCfg.Locked, len(newCfg.AllowKeys), newCfg.Audit, newCfg.Debug)
 				}
 			}
@@ -1666,9 +2266,12 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 				return
 			case <-ticker.C:
 			}
+			wingCfgMu.Lock()
+			idleTimeoutValue := wingCfg.IdleTimeout
+			wingCfgMu.Unlock()
 			var idleTimeout time.Duration
-			if wingCfg.IdleTimeout != "" {
-				if d, parseErr := time.ParseDuration(wingCfg.IdleTimeout); parseErr == nil {
+			if idleTimeoutValue != "" {
+				if d, parseErr := time.ParseDuration(idleTimeoutValue); parseErr == nil {
 					idleTimeout = d
 				}
 			}
@@ -1705,7 +2308,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 							}
 						}
 						pollCancel()
-						ec.Close()
+						closeWithLog("idle-check egg client", ec)
 					}
 				}
 
@@ -1714,8 +2317,10 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 					sockPath := filepath.Join(eggDir, "egg.sock")
 					tokenPath := filepath.Join(eggDir, "egg.token")
 					if ec, dialErr := egg.Dial(sockPath, tokenPath); dialErr == nil {
-						ec.Kill(ctx, sid)
-						ec.Close()
+						if err := ec.Kill(ctx, sid); err != nil {
+							log.Printf("idle reaper: kill session %s: %v", sid, err)
+						}
+						closeWithLog("idle-reaper egg client", ec)
 					}
 					sessionStates.Delete(sid)
 				}
@@ -1723,35 +2328,23 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			})
 		}
 	}()
-	if wingCfg.IdleTimeout != "" {
-		log.Printf("idle reaper enabled: timeout=%s", wingCfg.IdleTimeout)
+	wingCfgMu.Lock()
+	initialIdleTimeout := wingCfg.IdleTimeout
+	wingCfgMu.Unlock()
+	if initialIdleTimeout != "" {
+		log.Printf("idle reaper enabled: timeout=%s", initialIdleTimeout)
 	}
 
 	// Direct mode: start a local WebSocket server for direct browser connections
 	if wingCfg.ConnectionMode == "direct" && wingCfg.DirectPort > 0 {
-		directSrv := &directpkg.Server{
+		directSrv = &directpkg.Server{
 			OnPTY: client.OnPTY,
 		}
-		go func() {
-			addr := fmt.Sprintf(":%d", wingCfg.DirectPort)
-			if err := directSrv.Start(addr); err != nil {
-				log.Printf("[direct] server error: %v", err)
-			}
-		}()
-		defer directSrv.Close()
-
-		// Cache relay public key once available (set after registration)
-		go func() {
-			// Wait a bit for registration to complete
-			time.Sleep(3 * time.Second)
-			if client.RelayPubKey != "" {
-				pubKey, err := relaypkg.ParseECPublicKey(client.RelayPubKey)
-				if err == nil {
-					directSrv.RelayPubKey = pubKey
-					log.Printf("[direct] relay public key cached for JWT verification")
-				}
-			}
-		}()
+		addr := fmt.Sprintf(":%d", wingCfg.DirectPort)
+		if err := directSrv.StartAsync(addr); err != nil {
+			return fmt.Errorf("start direct server: %w", err)
+		}
+		defer closeWithLog("direct server", directSrv)
 	}
 
 	err = client.Run(ctx)
@@ -1763,22 +2356,88 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	return err
 }
 
+func currentDataChannel(sessions *sync.Map, sessionID string, candidate *pionwebrtc.DataChannel) bool {
+	current, ok := sessions.Load(sessionID)
+	return ok && current == candidate
+}
+
+func wingConnectionToken(configDir string, local bool, tokenOverride *auth.DeviceToken) (*auth.DeviceToken, error) {
+	store := auth.NewTokenStore(configDir)
+	if tokenOverride != nil {
+		copy := *tokenOverride
+		if !store.IsValid(&copy) {
+			return nil, fmt.Errorf("embedded wing token is expired")
+		}
+		return &copy, nil
+	}
+	if local {
+		localStore := auth.NewLocalTokenStore(configDir)
+		token, err := localStore.Load()
+		if err != nil {
+			return nil, err
+		}
+		if localStore.IsValid(token) {
+			return token, nil
+		}
+		if token != nil {
+			return nil, fmt.Errorf("local device token is expired")
+		}
+		// Compatibility with releases that wrote the local credential into the
+		// ordinary token path. The next `wt serve --local` start writes the new
+		// dedicated file without replacing this fallback.
+	}
+	token, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+	if !store.IsValid(token) {
+		return nil, fmt.Errorf("device token is missing or expired")
+	}
+	return token, nil
+}
+
+func loadWingConfigForStart(dir string) (*config.WingConfig, error) {
+	wingCfg, err := config.LoadWingConfig(dir)
+	if err != nil {
+		return nil, fmt.Errorf("load wing.yaml: %w", err)
+	}
+	if err := validateDirectMCPGrantConfig(wingCfg); err != nil {
+		return nil, fmt.Errorf("load wing.yaml: %w", err)
+	}
+	return wingCfg, nil
+}
+
+func directMCPEnabled(hasPeerManager bool, wingCfg *config.WingConfig) bool {
+	return hasPeerManager && wingCfg != nil && (wingCfg.DirectMCP == nil || !wingCfg.DirectMCP.Disabled)
+}
+
+func shortLogValue(value string) string {
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
+}
+
 func wingStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the wing daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pid, err := readPid()
+			lifecycleLock, lockErr := acquireDaemonLifecycleLock()
+			if lockErr != nil {
+				return lockErr
+			}
+			defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+			pid, kind, err := readDaemon()
 			if err != nil {
 				return fmt.Errorf("no wing daemon running")
 			}
-			proc, _ := os.FindProcess(pid)
-			if err := proc.Signal(syscall.SIGTERM); err != nil {
-				return fmt.Errorf("kill pid %d: %w", pid, err)
+			if err := stopDaemonAndWait(pid, kind, 5*time.Second); err != nil {
+				return err
 			}
-			os.Remove(wingPidPath())
-			os.Remove(wingArgsPath())
-			os.Remove(wingStatusPath())
+			if err := removeFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+				return fmt.Errorf("remove wing daemon metadata: %w", err)
+			}
 			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
 			return nil
 		},
@@ -1792,17 +2451,21 @@ func wingStatusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pid, err := readPid()
 			if err != nil {
-				fmt.Println("wing daemon is not running")
-				return nil
+				if errors.Is(err, errNoDaemonRunning) {
+					fmt.Println("wing daemon is not running")
+					return nil
+				}
+				return fmt.Errorf("inspect daemon state: %w", err)
 			}
 			fmt.Printf("wing daemon is running (pid %d)\n", pid)
 
 			cfg, _ := config.Load()
+			status, _ := readWingStatus()
 
 			// Show account identity and relay verification
 			var relayVerified bool
 			if cfg != nil {
-				relayURL := resolveRelayHTTPURL(cfg)
+				relayURL := activeWingRelayHTTPURL(cfg, status)
 				if tok, tokErr := auth.NewTokenStore(cfg.Dir).Load(); tokErr == nil && tok != nil {
 					if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
 						fmt.Printf("  account: %s\n", formatUserIdentity(info))
@@ -1816,8 +2479,8 @@ func wingStatusCmd() *cobra.Command {
 			}
 
 			// Show relay connection state
-			if s, statusErr := readWingStatus(); statusErr == nil {
-				switch s.State {
+			if status != nil {
+				switch status.State {
 				case "connected":
 					if relayVerified {
 						fmt.Println("  relay: connected (verified)")
@@ -1829,13 +2492,13 @@ func wingStatusCmd() *cobra.Command {
 				case "connecting":
 					fmt.Println("  relay: connecting...")
 				case "disconnected":
-					if s.Error != "" {
-						fmt.Printf("  relay: disconnected (%s)\n", s.Error)
+					if status.Error != "" {
+						fmt.Printf("  relay: disconnected (%s)\n", status.Error)
 					} else {
 						fmt.Println("  relay: disconnected")
 					}
 				default:
-					fmt.Printf("  relay: %s\n", s.State)
+					fmt.Printf("  relay: %s\n", status.State)
 				}
 			}
 
@@ -1872,13 +2535,16 @@ func resolveEmail(cfg *config.Config, email string) (string, string, error) {
 	if err != nil || !ts.IsValid(tok) {
 		return "", "", fmt.Errorf("not logged in — run: wt login")
 	}
-	req, _ := http.NewRequest("GET", strings.TrimRight(roostURL, "/")+"/api/app/resolve-email?email="+email, nil)
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(roostURL, "/")+"/api/app/resolve-email?email="+url.QueryEscape(email), nil)
+	if err != nil {
+		return "", "", fmt.Errorf("build email lookup request: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+tok.Token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cliHTTPClient.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve email: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeWithLog("email lookup response", resp.Body)
 	if resp.StatusCode != 200 {
 		return "", "", fmt.Errorf("no user found with email: %s", email)
 	}
@@ -1886,7 +2552,9 @@ func resolveEmail(cfg *config.Config, email string) (string, string, error) {
 		UserID      string `json:"user_id"`
 		DisplayName string `json:"display_name"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := decodeCLIAPIResponse(resp.Body, &result); err != nil {
+		return "", "", fmt.Errorf("parse email lookup response: %w", err)
+	}
 	return result.UserID, result.DisplayName, nil
 }
 
@@ -1910,18 +2578,18 @@ func fetchCurrentPasskey(cfg *config.Config) (config.AllowKey, error) {
 		return config.AllowKey{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok.Token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cliHTTPClient.Do(req)
 	if err != nil {
 		return config.AllowKey{}, fmt.Errorf("fetch passkeys: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeWithLog("passkey response", resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return config.AllowKey{}, fmt.Errorf("fetch passkeys: HTTP %d", resp.StatusCode)
 	}
 	var credentials []struct {
 		PublicKey string `json:"public_key"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&credentials); err != nil {
+	if err := decodeCLIAPIResponse(resp.Body, &credentials); err != nil {
 		return config.AllowKey{}, fmt.Errorf("parse passkeys: %w", err)
 	}
 	for _, credential := range credentials {
@@ -1996,13 +2664,16 @@ func wingAllowCmd() *cobra.Command {
 				base := strings.TrimRight(roostURL, "/")
 
 				// Resolve org slug to ID via GET /api/orgs
-				orgsReq, _ := http.NewRequest("GET", base+"/api/orgs", nil)
+				orgsReq, err := http.NewRequest(http.MethodGet, base+"/api/orgs", nil)
+				if err != nil {
+					return fmt.Errorf("build org lookup request: %w", err)
+				}
 				orgsReq.Header.Set("Authorization", "Bearer "+tok.Token)
-				orgsResp, err := http.DefaultClient.Do(orgsReq)
+				orgsResp, err := cliHTTPClient.Do(orgsReq)
 				if err != nil {
 					return fmt.Errorf("fetch orgs: %w", err)
 				}
-				defer orgsResp.Body.Close()
+				defer closeWithLog("org lookup response", orgsResp.Body)
 				if orgsResp.StatusCode != 200 {
 					return fmt.Errorf("fetch orgs: HTTP %d", orgsResp.StatusCode)
 				}
@@ -2010,7 +2681,7 @@ func wingAllowCmd() *cobra.Command {
 					ID   string `json:"id"`
 					Slug string `json:"slug"`
 				}
-				if err := json.NewDecoder(orgsResp.Body).Decode(&orgs); err != nil {
+				if err := decodeCLIAPIResponse(orgsResp.Body, &orgs); err != nil {
 					return fmt.Errorf("parse orgs: %w", err)
 				}
 				var orgID string
@@ -2025,13 +2696,16 @@ func wingAllowCmd() *cobra.Command {
 				}
 
 				// Fetch members via GET /api/orgs/{id}/members
-				req, _ := http.NewRequest("GET", base+"/api/orgs/"+orgID+"/members", nil)
+				req, err := http.NewRequest(http.MethodGet, base+"/api/orgs/"+url.PathEscape(orgID)+"/members", nil)
+				if err != nil {
+					return fmt.Errorf("build org member request: %w", err)
+				}
 				req.Header.Set("Authorization", "Bearer "+tok.Token)
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := cliHTTPClient.Do(req)
 				if err != nil {
 					return fmt.Errorf("fetch org members: %w", err)
 				}
-				defer resp.Body.Close()
+				defer closeWithLog("org member response", resp.Body)
 				if resp.StatusCode != 200 {
 					return fmt.Errorf("fetch org members: HTTP %d", resp.StatusCode)
 				}
@@ -2043,7 +2717,7 @@ func wingAllowCmd() *cobra.Command {
 						PasskeyPubKey string `json:"passkey_public_key"`
 					} `json:"members"`
 				}
-				if err := json.NewDecoder(resp.Body).Decode(&membersResp); err != nil {
+				if err := decodeCLIAPIResponse(resp.Body, &membersResp); err != nil {
 					return fmt.Errorf("parse org members: %w", err)
 				}
 				members := membersResp.Members
@@ -2087,7 +2761,9 @@ func wingAllowCmd() *cobra.Command {
 					if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 						return err
 					}
-					signalDaemon(syscall.SIGHUP)
+					if err := signalDaemon(syscall.SIGHUP); err != nil {
+						return err
+					}
 				}
 				if skipped > 0 {
 					fmt.Printf("skipped %d members without passkeys\n", skipped)
@@ -2161,8 +2837,7 @@ func wingAllowCmd() *cobra.Command {
 				display = keyB64[:12] + "..."
 			}
 			fmt.Printf("allowed %s\n", display)
-			signalDaemon(syscall.SIGHUP)
-			return nil
+			return signalDaemon(syscall.SIGHUP)
 		},
 	}
 	cmd.Flags().StringVar(&userIDFlag, "user-id", "", "relay user ID to allow")
@@ -2199,8 +2874,7 @@ func wingRevokeCmd() *cobra.Command {
 					return err
 				}
 				fmt.Printf("revoked all %d entries\n", count)
-				signalDaemon(syscall.SIGHUP)
-				return nil
+				return signalDaemon(syscall.SIGHUP)
 			}
 
 			if len(args) == 0 {
@@ -2248,21 +2922,29 @@ func wingRevokeCmd() *cobra.Command {
 				display = removed.Key[:12] + "..."
 			}
 			fmt.Printf("revoked: %s\n", display)
-			signalDaemon(syscall.SIGHUP)
-			return nil
+			return signalDaemon(syscall.SIGHUP)
 		},
 	}
 	cmd.Flags().Bool("all", false, "Revoke all entries from the allowlist")
 	return cmd
 }
 
-func signalDaemon(sig os.Signal) {
+func signalDaemon(sig os.Signal) error {
 	pid, err := readPid()
 	if err != nil {
-		return
+		if daemonAbsentError(err) {
+			return nil
+		}
+		return fmt.Errorf("find daemon to signal: %w", err)
 	}
-	proc, _ := os.FindProcess(pid)
-	proc.Signal(sig)
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("find daemon process %d: %w", pid, err)
+	}
+	if err := proc.Signal(sig); err != nil {
+		return fmt.Errorf("signal daemon process %d: %w", pid, err)
+	}
+	return nil
 }
 
 func wingLockCmd() *cobra.Command {
@@ -2312,7 +2994,9 @@ func wingLockCmd() *cobra.Command {
 			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 				return err
 			}
-			signalDaemon(syscall.SIGHUP)
+			if err := signalDaemon(syscall.SIGHUP); err != nil {
+				return err
+			}
 			fmt.Println("wing locked")
 			return nil
 		},
@@ -2340,7 +3024,9 @@ func wingUnlockCmd() *cobra.Command {
 			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 				return err
 			}
-			signalDaemon(syscall.SIGHUP)
+			if err := signalDaemon(syscall.SIGHUP); err != nil {
+				return err
+			}
 			fmt.Println("wing unlocked")
 			return nil
 		},
@@ -2381,6 +3067,7 @@ func wingConfigCmd() *cobra.Command {
 			fmt.Printf("debug:      %v\n", wingCfg.Debug)
 			fmt.Printf("locked:     %v\n", wingCfg.Locked)
 			fmt.Printf("spectate:   %v\n", wingCfg.Spectate)
+			fmt.Printf("hosted_relay: %s\n", wingCfg.EffectiveHostedRelay())
 			authTTL := wingCfg.AuthTTL
 			if authTTL == "" {
 				authTTL = "0"
@@ -2411,7 +3098,7 @@ func wingConfigSetCmd() *cobra.Command {
 				return err
 			}
 
-			restartFields := map[string]bool{"org": true}
+			restartFields := map[string]bool{"org": true, "hosted_relay": true}
 			immutableFields := map[string]bool{"wing_id": true, "roost": true, "allow_keys": true}
 
 			var changedRestart []string
@@ -2453,6 +3140,11 @@ func wingConfigSetCmd() *cobra.Command {
 						return fmt.Errorf("spectate: expected true or false")
 					}
 					wingCfg.Spectate = b
+				case "hosted_relay":
+					if value != config.HostedRelayAllow && value != config.HostedRelayDeny {
+						return fmt.Errorf("hosted_relay: expected %q or %q", config.HostedRelayAllow, config.HostedRelayDeny)
+					}
+					wingCfg.HostedRelay = value
 				case "labels":
 					var labels []string
 					for _, l := range strings.Split(value, ",") {
@@ -2524,7 +3216,9 @@ func wingConfigSetCmd() *cobra.Command {
 				return err
 			}
 
-			signalDaemon(syscall.SIGHUP)
+			if err := signalDaemon(syscall.SIGHUP); err != nil {
+				return err
+			}
 
 			for _, key := range changedRestart {
 				fmt.Printf("%s: will take effect next restart\n", key)
@@ -2630,24 +3324,29 @@ func reapDeadEggs(cfg *config.Config) {
 // cleanEggDir removes the files in an egg session directory, then the directory itself.
 // If audit files or chat history exist, preserves egg.meta, egg.owner, and data (only removes runtime files).
 func cleanEggDir(dir string) {
-	os.Remove(filepath.Join(dir, "egg.sock"))
-	os.Remove(filepath.Join(dir, "egg.token"))
-	os.Remove(filepath.Join(dir, "egg.pid"))
+	removeWithLog(filepath.Join(dir, "egg.sock"))
+	removeWithLog(filepath.Join(dir, "egg.token"))
+	removeWithLog(filepath.Join(dir, "egg.pid"))
 	// Preserve egg.log — the parent process reads it via readEggCrashInfo
 	// after this child exits. Deleting it here causes a race where the
 	// crash message is lost ("egg process crashed (no log available)").
 	// The log is small and the parent's cleanEggDir call cleans it up later.
 	// Keep egg.meta, egg.owner, and dir if audit recordings or chat history exist
-	_, hasPty := os.Stat(filepath.Join(dir, "audit.pty.gz"))
-	_, hasLog := os.Stat(filepath.Join(dir, "audit.log"))
-	_, hasChat := os.Stat(filepath.Join(dir, "chat.jsonl.gz"))
-	if hasPty == nil || hasLog == nil || hasChat == nil {
-		return
+	for _, name := range []string{"audit.pty.gz", "audit.log", "chat.jsonl.gz"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			// An unreadable recording must never be mistaken for an absent one.
+			log.Printf("egg: preserve %s after stat failure: %v", dir, err)
+			return
+		}
 	}
-	os.Remove(filepath.Join(dir, "egg.meta"))
-	os.Remove(filepath.Join(dir, "egg.owner"))
-	os.Remove(filepath.Join(dir, "session.name"))
-	os.Remove(dir)
+	// The egg copies its diagnostic log to the persistent log directory before
+	// normal shutdown. Remove the whole transient directory so crash logs and
+	// partially-created files do not leave an unreapable directory forever.
+	if err := os.RemoveAll(dir); err != nil {
+		log.Printf("egg: remove transient session directory %s: %v", dir, err)
+	}
 }
 
 // listAliveEggSessions scans ~/.wingthing/eggs/ for alive egg processes.
@@ -2685,7 +3384,7 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		if dialErr != nil {
 			continue
 		}
-		ec.Close()
+		closeWithLog("egg health-check client", ec)
 
 		agent, sessionCWD := readEggMeta(dir)
 		info := ws.SessionInfo{
@@ -2735,6 +3434,10 @@ func eggPidMatchesSession(pid int, sessionID string) bool {
 // killOrphanEgg kills an egg session that has no active goroutine managing it.
 // This handles the case where a pty.kill arrives but the session was never reclaimed.
 func killOrphanEgg(cfg *config.Config, sessionID string) {
+	if err := validateSessionID(sessionID); err != nil {
+		log.Printf("refuse to kill invalid egg session: %v", err)
+		return
+	}
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 	sockPath := filepath.Join(dir, "egg.sock")
 	tokenPath := filepath.Join(dir, "egg.token")
@@ -2744,25 +3447,41 @@ func killOrphanEgg(cfg *config.Config, sessionID string) {
 		// Can't reach egg — try to kill by PID, but only after confirming the
 		// PID still belongs to this session's egg runner.
 		pidPath := filepath.Join(dir, "egg.pid")
+		terminationRequested := false
 		data, readErr := os.ReadFile(pidPath)
 		if readErr == nil {
 			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && eggPidMatchesSession(pid, sessionID) {
-				if proc, findErr := os.FindProcess(pid); findErr == nil {
-					proc.Signal(syscall.SIGTERM)
+				if proc, findErr := os.FindProcess(pid); findErr != nil {
+					log.Printf("pty session %s: find orphan egg process %d: %v", sessionID, pid, findErr)
+				} else if signalErr := proc.Signal(syscall.SIGTERM); signalErr != nil {
+					log.Printf("pty session %s: terminate orphan egg process %d: %v", sessionID, pid, signalErr)
+				} else {
+					terminationRequested = true
 				}
 			}
 		}
-		cleanEggDir(dir)
-		log.Printf("pty session %s: orphan killed (pid)", sessionID)
+		if terminationRequested {
+			// Leave runtime files in place until the egg exits and performs its
+			// own cleanup. Reaping them now can break an in-flight shutdown.
+			log.Printf("pty session %s: orphan termination requested (pid)", sessionID)
+		} else {
+			cleanEggDir(dir)
+			log.Printf("pty session %s: stale orphan metadata cleaned", sessionID)
+		}
 		return
 	}
-	ec.Kill(context.Background(), sessionID)
-	ec.Close()
-	cleanEggDir(dir)
-	log.Printf("pty session %s: orphan killed (grpc)", sessionID)
+	if killErr := ec.Kill(context.Background(), sessionID); killErr != nil {
+		log.Printf("pty session %s: terminate orphan over gRPC: %v", sessionID, killErr)
+	} else {
+		log.Printf("pty session %s: orphan termination requested (gRPC)", sessionID)
+	}
+	closeWithLog("orphan egg client", ec)
 }
 
-func resizeEgg(cfg *config.Config, sessionID string, rows, cols uint32) error {
+func resizeEgg(cfg *config.Config, sessionID string, rows, cols uint32) (result error) {
+	if err := validateSessionID(sessionID); err != nil {
+		return err
+	}
 	if rows == 0 || cols == 0 || rows > 1000 || cols > 1000 {
 		return fmt.Errorf("invalid terminal dimensions")
 	}
@@ -2771,7 +3490,7 @@ func resizeEgg(cfg *config.Config, sessionID string, rows, cols uint32) error {
 	if err != nil {
 		return fmt.Errorf("open session: %w", err)
 	}
-	defer ec.Close()
+	defer func() { result = closeAndJoin("egg resize client", ec, result) }()
 	resizeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := ec.Resize(resizeCtx, sessionID, rows, cols); err != nil {
@@ -2969,10 +3688,15 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		log.Printf("egg: reclaiming session %s (pid %d agent=%s)", sessionID, pid, agent)
 
 		// Set up input routing for this session
-		write, input, cleanup := wsClient.RegisterPTYSession(ctx, sessionID)
+		write, input, cleanup, registered := wsClient.RegisterPTYSession(ctx, sessionID)
+		if !registered {
+			closeWithLog("duplicate reclaimed egg client", ec)
+			log.Printf("egg: session %s became active during reclaim, skipping", sessionID)
+			continue
+		}
 		go func(sid string, ec *egg.Client, dir string) {
 			defer cleanup()
-			defer ec.Close()
+			defer closeWithLog("reclaimed egg client", ec)
 			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, tools)
 		}(sessionID, ec, dir)
 	}
@@ -2988,7 +3712,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
 	if privKeyErr != nil {
 		log.Printf("pty session %s: FATAL: load private key: %v (reclaim aborted)", sessionID, privKeyErr)
-		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: 1, Error: "E2E encryption required but wing private key missing"})
+		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: 1, Error: "E2E encryption required but wing private key missing"})
 		return
 	}
 	wingPubKeyB64 := base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
@@ -3001,6 +3725,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	}
 	sessionStates.Store(sessionID, reclaimIdleState)
 	defer sessionStates.Delete(sessionID)
+	defer forgetAttentionState(sessionID)
 
 	// Recreate the tool socket listener. It was owned by the previous daemon
 	// process and died with it, but the surviving egg still points at this path
@@ -3015,7 +3740,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				log.Printf("pty session %s: reclaim tool listener failed: %v", sessionID, tlErr)
 			} else {
 				log.Printf("pty session %s: reclaim tool listener restarted (%d tools)", sessionID, len(tools))
-				defer tl.Close()
+				defer closeWithLog("reclaimed egg tool listener", tl)
 			}
 		}
 	}
@@ -3067,7 +3792,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				sendPTYOutput(sessionID, p.Output, currentGCM, write)
 			case *pb.SessionMsg_ExitCode:
 				log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
-				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
+				writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
 				clearAttentionCooldown(sessionID)
 				sessionCancel()
 				return
@@ -3093,7 +3818,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 			case <-pendingAuth.timeout():
 				for _, pending := range pendingAuth.expire(time.Now()) {
 					log.Printf("pty session %s: reattach passkey timed out", sessionID)
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
 				}
 				continue
 			case inputData, ok := <-input:
@@ -3122,12 +3847,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				signature, _ := base64.StdEncoding.DecodeString(response.Signature)
 				rawKey, verifyErr := verifySubjectPasskey(allowedKeys, pending.attach.UserID, pending.challenge, authData, clientData, signature, passkeyPolicy)
 				if verifyErr != nil {
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
 					continue
 				}
 				token, tokenErr := auth.GenerateAuthToken()
 				if tokenErr != nil {
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
 					continue
 				}
 				passkeyCache.Put(token, rawKey, pending.subject)
@@ -3144,12 +3869,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 				}
 				if !canAttachSession(attach.UserID, attach.OrgRole, readEggOwner(eggDir)) {
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: sessionID, ViewerID: attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: sessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 				clearAttentionCooldown(sessionID)
 				if attach.PublicKey == "" {
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: sessionID, ViewerID: attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: sessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 
@@ -3158,7 +3883,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				attachSubject := passkeySubject(attach.UserID, attach.PublicKey)
 				attachUserHasPasskey := len(passkeysForSubject(allowedKeys, attach.UserID)) > 0
 				if wingCfg.Locked && (attachSubject == "" || !attachUserHasPasskey) {
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: sessionID, ViewerID: attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: sessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 				if attachUserHasPasskey {
@@ -3176,7 +3901,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							log.Printf("pty session %s: reattach challenge generation failed: %v", sessionID, chalErr)
 							continue
 						}
-						write(ws.PasskeyChallenge{
+						writePTYMessage(write, ws.PasskeyChallenge{
 							Type:      ws.TypePasskeyChallenge,
 							SessionID: sessionID,
 							Challenge: base64.RawURLEncoding.EncodeToString(challenge),
@@ -3193,22 +3918,22 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				// the controller, including after a wing daemon reclaim.
 				if attach.Spectate {
 					if !wingCfg.Spectate {
-						write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: 1, Error: "spectate not enabled", ViewerID: attach.ViewerID})
+						writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: 1, Error: "spectate not enabled", ViewerID: attach.ViewerID})
 						continue
 					}
 					spectatorGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 					if deriveErr != nil {
-						write(ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: sessionID, ViewerID: attach.ViewerID})
+						writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: sessionID, ViewerID: attach.ViewerID})
 						continue
 					}
 					specCtx, specCancel := context.WithCancel(ctx)
 					specStream, specErr := ec.AttachSession(specCtx, sessionID)
 					if specErr != nil {
 						specCancel()
-						write(ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: sessionID, ViewerID: attach.ViewerID})
+						writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: sessionID, ViewerID: attach.ViewerID})
 						continue
 					}
-					write(ws.PTYStarted{
+					writePTYMessage(write, ws.PTYStarted{
 						Type: ws.TypePTYStarted, SessionID: sessionID, Agent: reclaimAgent,
 						PublicKey: wingPubKeyB64, AuthToken: attachAuthToken, ViewerID: attach.ViewerID,
 					})
@@ -3229,7 +3954,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							case *pb.SessionMsg_Output:
 								sendPTYOutputTagged(sessionID, viewerID, payload.Output, g, write)
 							case *pb.SessionMsg_ExitCode:
-								write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(payload.ExitCode), ViewerID: viewerID})
+								writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(payload.ExitCode), ViewerID: viewerID})
 								return
 							}
 						}
@@ -3243,7 +3968,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				newGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 				if deriveErr != nil {
 					log.Printf("pty session %s: reattach derive key failed: %v", sessionID, deriveErr)
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: sessionID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: sessionID})
 					continue
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", sessionID)
@@ -3252,7 +3977,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if reErr != nil {
 					newSCancel()
 					log.Printf("pty session %s: reattach to egg failed: %v", sessionID, reErr)
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "reattach failed", SessionID: sessionID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "reattach failed", SessionID: sessionID})
 					continue
 				}
 
@@ -3274,12 +3999,14 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					if attachAuthToken != "" {
 						started.AuthToken = attachAuthToken
 					}
-					write(started)
+					writePTYMessage(write, started)
 				}
 
 				// Resize egg to browser dimensions before snapshot.
 				if attach.Cols > 0 && attach.Rows > 0 {
-					ec.Resize(ctx, sessionID, attach.Rows, attach.Cols)
+					if err := ec.Resize(ctx, sessionID, attach.Rows, attach.Cols); err != nil {
+						log.Printf("pty session %s: resize reclaimed egg: %v", sessionID, err)
+					}
 					time.Sleep(150 * time.Millisecond) // let agent repaint for new dimensions before VTE snapshot
 				}
 
@@ -3332,7 +4059,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							sendPTYOutput(sessionID, p.Output, currentGCM, write)
 						case *pb.SessionMsg_ExitCode:
 							log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
-							write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
+							writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
 							clearAttentionCooldown(sessionID)
 							sessionCancel()
 							return
@@ -3361,7 +4088,11 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if decErr != nil {
 					continue
 				}
-				currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Input{Input: decoded}})
+				if err := currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Input{Input: decoded}}); err != nil {
+					log.Printf("pty session %s: send input to reclaimed egg: %v", sessionID, err)
+					sessionCancel()
+					return
+				}
 
 			case ws.TypePTYAttentionAck:
 				clearAttentionCooldown(sessionID)
@@ -3375,12 +4106,19 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				currentStream := activeStream
 				mu.Unlock()
 				if currentStream != nil {
-					currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{Rows: uint32(msg.Rows), Cols: uint32(msg.Cols)}}})
+					if err := currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{Rows: uint32(msg.Rows), Cols: uint32(msg.Cols)}}}); err != nil {
+						log.Printf("pty session %s: send resize to reclaimed egg: %v", sessionID, err)
+						sessionCancel()
+						return
+					}
 				}
 
 			case ws.TypePTYKill:
 				log.Printf("pty session %s: kill received", sessionID)
-				ec.Kill(ctx, sessionID)
+				if err := ec.Kill(ctx, sessionID); err != nil {
+					log.Printf("pty session %s: kill reclaimed egg: %v", sessionID, err)
+				}
+				sessionCancel()
 				return
 			}
 		}
@@ -3394,14 +4132,14 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map, tools []*config.ToolConfig, sharedHost bool) {
 	allowedKeys := *allowedKeysPtr
 	if start.PublicKey == "" {
-		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E client key required"})
+		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E client key required"})
 		return
 	}
 	subject := passkeySubject(start.UserID, start.PublicKey)
 	userHasPasskey := len(passkeysForSubject(allowedKeys, start.UserID)) > 0
 	if wingCfg.Locked && (subject == "" || !userHasPasskey) {
 		log.Printf("pty session %s: locked wing rejected user without a locally approved passkey", start.SessionID)
-		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "not allowed by wing"})
+		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "not allowed by wing"})
 		return
 	}
 	if userHasPasskey {
@@ -3416,11 +4154,11 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.W
 		// Generate and send challenge
 		challenge, chalErr := auth.GenerateChallenge()
 		if chalErr != nil {
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "challenge generation failed"})
+			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "challenge generation failed"})
 			return
 		}
 
-		write(ws.PasskeyChallenge{
+		writePTYMessage(write, ws.PasskeyChallenge{
 			Type:      ws.TypePasskeyChallenge,
 			SessionID: start.SessionID,
 			Challenge: base64.RawURLEncoding.EncodeToString(challenge),
@@ -3447,7 +4185,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.W
 				}
 				var resp ws.PasskeyResponse
 				if err := json.Unmarshal(data, &resp); err != nil {
-					write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey response"})
+					writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey response"})
 					return
 				}
 
@@ -3458,7 +4196,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.W
 
 				matchedRawKey, verifyErr := verifySubjectPasskey(allowedKeys, start.UserID, challenge, authData, clientJSON, sig, passkeyPolicy)
 				if verifyErr != nil {
-					write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey signature"})
+					writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey signature"})
 					return
 				}
 				log.Printf("pty session %s: passkey verified", start.SessionID)
@@ -3472,7 +4210,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.W
 				passkeyVerified = true
 
 			case <-timer.C:
-				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "passkey authentication timed out"})
+				writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "passkey authentication timed out"})
 				return
 
 			case <-ctx.Done():
@@ -3491,7 +4229,7 @@ authDone:
 	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
 	if privKeyErr != nil {
 		log.Printf("pty session %s: FATAL: load private key: %v", start.SessionID, privKeyErr)
-		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E encryption required but wing private key missing"})
+		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E encryption required but wing private key missing"})
 		return
 	}
 	wingPubKeyB64 = base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
@@ -3499,7 +4237,7 @@ authDone:
 		derived, deriveErr := auth.DeriveSharedKey(privKey, start.PublicKey, "wt-pty")
 		if deriveErr != nil {
 			log.Printf("pty session %s: FATAL: derive shared key: %v", start.SessionID, deriveErr)
-			write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E key exchange failed"})
+			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E key exchange failed"})
 			return
 		}
 		gcm = derived
@@ -3513,7 +4251,11 @@ authDone:
 	if len(tools) > 0 {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		toolsDir := filepath.Join(eggDir, ".tools")
-		os.MkdirAll(toolsDir, 0700)
+		if err := os.MkdirAll(toolsDir, 0700); err != nil {
+			log.Printf("pty session %s: create tool directory: %v", start.SessionID, err)
+			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "create tool directory: " + err.Error()})
+			return
+		}
 		toolSocketPath = filepath.Join(toolsDir, "tool.sock")
 		var tlErr error
 		toolListener, tlErr = egg.NewToolListener(toolSocketPath, tools)
@@ -3525,7 +4267,7 @@ authDone:
 		}
 	}
 	if toolListener != nil {
-		defer toolListener.Close()
+		defer closeWithLog("egg tool listener", toolListener)
 	}
 
 	// Spawn a per-session egg
@@ -3550,10 +4292,10 @@ authDone:
 		if strings.Contains(crashInfo, "no log available") || strings.Contains(crashInfo, "empty log") {
 			crashInfo = err.Error()
 		}
-		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
+		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
 		return
 	}
-	defer ec.Close()
+	defer closeWithLog("PTY egg client", ec)
 
 	log.Printf("pty session %s: spawned (user=%s agent=%s)", start.SessionID, start.UserID, start.Agent)
 
@@ -3566,9 +4308,10 @@ authDone:
 	}
 	sessionStates.Store(start.SessionID, idleState)
 	defer sessionStates.Delete(start.SessionID)
+	defer forgetAttentionState(start.SessionID)
 
 	// Notify browser
-	write(ws.PTYStarted{
+	writePTYMessage(write, ws.PTYStarted{
 		Type:      ws.TypePTYStarted,
 		SessionID: start.SessionID,
 		Agent:     start.Agent,
@@ -3583,7 +4326,7 @@ authDone:
 	if err != nil {
 		sCancel()
 		log.Printf("pty: egg attach failed: %v", err)
-		write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
 		return
 	}
 	activeStream = stream
@@ -3636,7 +4379,7 @@ authDone:
 
 			case *pb.SessionMsg_ExitCode:
 				log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
-				write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
+				writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
 				clearAttentionCooldown(start.SessionID)
 				sessionCancel()
 				return
@@ -3662,7 +4405,7 @@ authDone:
 			case <-pendingAuth.timeout():
 				for _, pending := range pendingAuth.expire(time.Now()) {
 					log.Printf("pty session %s: reattach passkey timed out", start.SessionID)
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
 				}
 				continue
 			case inputData, ok := <-input:
@@ -3691,12 +4434,12 @@ authDone:
 				signature, _ := base64.StdEncoding.DecodeString(response.Signature)
 				rawKey, verifyErr := verifySubjectPasskey(allowedKeys, pending.attach.UserID, pending.challenge, authData, clientData, signature, passkeyPolicy)
 				if verifyErr != nil {
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
 					continue
 				}
 				token, tokenErr := auth.GenerateAuthToken()
 				if tokenErr != nil {
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
 					continue
 				}
 				passkeyCache.Put(token, rawKey, pending.subject)
@@ -3713,19 +4456,19 @@ authDone:
 					}
 				}
 				if !canAttachSession(attach.UserID, attach.OrgRole, start.UserID) {
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 				clearAttentionCooldown(start.SessionID)
 				if attach.PublicKey == "" {
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 
 				attachSubject := passkeySubject(attach.UserID, attach.PublicKey)
 				attachUserHasPasskey := len(passkeysForSubject(allowedKeys, attach.UserID)) > 0
 				if wingCfg.Locked && (attachSubject == "" || !attachUserHasPasskey) {
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 				var attachAuthToken string
@@ -3738,10 +4481,10 @@ authDone:
 					if attachAuthToken == "" {
 						challenge, chalErr := auth.GenerateChallenge()
 						if chalErr != nil {
-							write(ws.ErrorMsg{Type: ws.TypeError, Message: "challenge generation failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+							writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "challenge generation failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 							continue
 						}
-						write(ws.PasskeyChallenge{
+						writePTYMessage(write, ws.PasskeyChallenge{
 							Type:      ws.TypePasskeyChallenge,
 							SessionID: start.SessionID,
 							Challenge: base64.RawURLEncoding.EncodeToString(challenge),
@@ -3757,14 +4500,14 @@ authDone:
 				if attach.Spectate {
 					if !wingCfg.Spectate {
 						log.Printf("pty session %s: spectate rejected (not enabled in wing config)", start.SessionID)
-						write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "spectate not enabled", ViewerID: attach.ViewerID})
+						writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "spectate not enabled", ViewerID: attach.ViewerID})
 						continue
 					}
 					// Derive spectator-specific E2E key (independent of controller)
 					spectatorGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 					if deriveErr != nil {
 						log.Printf("pty session %s: spectator key derive failed: %v", start.SessionID, deriveErr)
-						write(ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+						writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 						continue
 					}
 					log.Printf("pty session %s: spectator E2E enabled (viewer=%s)", start.SessionID, attach.ViewerID)
@@ -3775,12 +4518,12 @@ authDone:
 					if specErr != nil {
 						specCancel()
 						log.Printf("pty session %s: spectator attach to egg failed: %v", start.SessionID, specErr)
-						write(ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+						writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 						continue
 					}
 
 					// Send pty.started only after the independent stream exists.
-					write(ws.PTYStarted{
+					writePTYMessage(write, ws.PTYStarted{
 						Type:      ws.TypePTYStarted,
 						SessionID: start.SessionID,
 						Agent:     start.Agent,
@@ -3813,7 +4556,7 @@ authDone:
 									sendPTYOutputTagged(start.SessionID, viewerID, p.Output, g, write)
 								}
 							case *pb.SessionMsg_ExitCode:
-								write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode), ViewerID: viewerID})
+								writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode), ViewerID: viewerID})
 								return
 							}
 						}
@@ -3827,7 +4570,7 @@ authDone:
 				newGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 				if deriveErr != nil {
 					log.Printf("pty session %s: reattach derive key failed: %v", start.SessionID, deriveErr)
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: start.SessionID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: start.SessionID})
 					continue
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", start.SessionID)
@@ -3836,7 +4579,7 @@ authDone:
 				if reErr != nil {
 					newSCancel()
 					log.Printf("pty session %s: reattach to egg failed: %v", start.SessionID, reErr)
-					write(ws.ErrorMsg{Type: ws.TypeError, Message: "reattach failed", SessionID: start.SessionID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "reattach failed", SessionID: start.SessionID})
 					continue
 				}
 
@@ -3852,7 +4595,7 @@ authDone:
 				idleState.mu.Lock()
 				idleState.connected = true
 				idleState.mu.Unlock()
-				write(ws.PTYStarted{
+				writePTYMessage(write, ws.PTYStarted{
 					Type:      ws.TypePTYStarted,
 					SessionID: start.SessionID,
 					Agent:     start.Agent,
@@ -3862,7 +4605,9 @@ authDone:
 
 				// Resize egg to browser dimensions before snapshot.
 				if attach.Cols > 0 && attach.Rows > 0 {
-					ec.Resize(ctx, start.SessionID, attach.Rows, attach.Cols)
+					if err := ec.Resize(ctx, start.SessionID, attach.Rows, attach.Cols); err != nil {
+						log.Printf("pty session %s: resize egg after reattach: %v", start.SessionID, err)
+					}
 					time.Sleep(150 * time.Millisecond) // let agent repaint for new dimensions before VTE snapshot
 				}
 
@@ -3915,7 +4660,7 @@ authDone:
 							sendPTYOutput(start.SessionID, p.Output, currentGCM, write)
 						case *pb.SessionMsg_ExitCode:
 							log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
-							write(ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
+							writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
 							clearAttentionCooldown(start.SessionID)
 							sessionCancel()
 							return
@@ -3945,10 +4690,14 @@ authDone:
 					log.Printf("pty session %s: decrypt error: %v", start.SessionID, decErr)
 					continue
 				}
-				currentStream.Send(&pb.SessionMsg{
+				if err := currentStream.Send(&pb.SessionMsg{
 					SessionId: start.SessionID,
 					Payload:   &pb.SessionMsg_Input{Input: decoded},
-				})
+				}); err != nil {
+					log.Printf("pty session %s: send input to egg: %v", start.SessionID, err)
+					sessionCancel()
+					return
+				}
 
 			case ws.TypePTYAttentionAck:
 				clearAttentionCooldown(start.SessionID)
@@ -3962,13 +4711,17 @@ authDone:
 				currentStream := activeStream
 				mu.Unlock()
 				if currentStream != nil {
-					currentStream.Send(&pb.SessionMsg{
+					if err := currentStream.Send(&pb.SessionMsg{
 						SessionId: start.SessionID,
 						Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{
 							Rows: uint32(msg.Rows),
 							Cols: uint32(msg.Cols),
 						}},
-					})
+					}); err != nil {
+						log.Printf("pty session %s: send resize to egg: %v", start.SessionID, err)
+						sessionCancel()
+						return
+					}
 				}
 
 			case ws.TypePTYMigrate:
@@ -4007,7 +4760,10 @@ authDone:
 
 			case ws.TypePTYKill:
 				log.Printf("pty session %s: kill received", start.SessionID)
-				ec.Kill(ctx, start.SessionID)
+				if err := ec.Kill(ctx, start.SessionID); err != nil {
+					log.Printf("pty session %s: kill egg: %v", start.SessionID, err)
+				}
+				sessionCancel()
 				return
 			}
 		}
@@ -4102,6 +4858,47 @@ func passkeyPolicyForRoost(roostURL string) auth.PasskeyPolicy {
 	}
 }
 
+// passkeyPolicyFromRegistration accepts only a coherent RP policy delivered by
+// the authenticated coordinator. Additive acknowledgement fields let new wings
+// support custom AppHost and localhost HTTPS while retaining their URL-derived
+// fallback when connected to an older relay.
+func passkeyPolicyFromRegistration(msg ws.RegisteredMsg) (auth.PasskeyPolicy, bool) {
+	rpID := strings.ToLower(strings.TrimSpace(msg.PasskeyRPID))
+	if rpID == "" || strings.ContainsAny(rpID, "/\\:@") || len(msg.PasskeyOrigins) == 0 || len(msg.PasskeyOrigins) > 8 {
+		return auth.PasskeyPolicy{}, false
+	}
+	origins := make([]string, 0, len(msg.PasskeyOrigins))
+	seen := make(map[string]bool, len(msg.PasskeyOrigins))
+	for _, rawOrigin := range msg.PasskeyOrigins {
+		parsed, err := url.Parse(rawOrigin)
+		if err != nil || parsed.User != nil || parsed.Hostname() == "" || parsed.Path != "" ||
+			parsed.RawQuery != "" || parsed.Fragment != "" {
+			return auth.PasskeyPolicy{}, false
+		}
+		host := strings.ToLower(parsed.Hostname())
+		if host != rpID && !strings.HasSuffix(host, "."+rpID) {
+			return auth.PasskeyPolicy{}, false
+		}
+		if parsed.Scheme != "https" {
+			ip := net.ParseIP(host)
+			loopback := strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback())
+			if parsed.Scheme != "http" || !loopback {
+				return auth.PasskeyPolicy{}, false
+			}
+		}
+		origin := parsed.Scheme + "://" + parsed.Host
+		if !seen[origin] {
+			origins = append(origins, origin)
+			seen[origin] = true
+		}
+	}
+	return auth.PasskeyPolicy{
+		RPID:                    rpID,
+		Origins:                 origins,
+		RequireUserVerification: true,
+	}, true
+}
+
 func passkeysForSubject(allowedKeys []config.AllowKey, userID string) []config.AllowKey {
 	var matches []config.AllowKey
 	for _, allowed := range allowedKeys {
@@ -4115,6 +4912,19 @@ func passkeysForSubject(allowedKeys []config.AllowKey, userID string) []config.A
 		}
 	}
 	return matches
+}
+
+func visibleAllowKeys(req ws.TunnelRequest, allowedKeys []config.AllowKey) []config.AllowKey {
+	if !isMemberFiltered(req) {
+		return append([]config.AllowKey(nil), allowedKeys...)
+	}
+	visible := make([]config.AllowKey, 0, 1)
+	for _, allowed := range allowedKeys {
+		if allowed.UserID == req.SenderUserID {
+			visible = append(visible, allowed)
+		}
+	}
+	return visible
 }
 
 func verifySubjectPasskey(allowedKeys []config.AllowKey, userID string, challenge, authData, clientData, signature []byte, policy auth.PasskeyPolicy) ([]byte, error) {
@@ -4148,16 +4958,16 @@ func tunnelRespond(gcm cipher.AEAD, requestID string, result any, write ws.PTYWr
 	if err != nil {
 		return
 	}
-	write(ws.TunnelResponse{Type: ws.TypeTunnelResponse, RequestID: requestID, Payload: encrypted})
+	writePTYMessage(write, ws.TunnelResponse{Type: ws.TypeTunnelResponse, RequestID: requestID, Payload: encrypted})
 }
 
 // tunnelStreamChunk encrypts a streaming chunk and sends it as a tunnel.stream message.
-func tunnelStreamChunk(gcm cipher.AEAD, requestID string, chunk []byte, done bool, write ws.PTYWriteFunc) {
+func tunnelStreamChunk(gcm cipher.AEAD, requestID string, chunk []byte, done bool, write ws.PTYWriteFunc) error {
 	encrypted, err := auth.Encrypt(gcm, chunk)
 	if err != nil {
-		return
+		return err
 	}
-	write(ws.TunnelStream{Type: ws.TypeTunnelStream, RequestID: requestID, Payload: encrypted, Done: done})
+	return write(ws.TunnelStream{Type: ws.TypeTunnelStream, RequestID: requestID, Payload: encrypted, Done: done})
 }
 
 // isMemberFiltered returns true if the tunnel request is from an org member (not owner/admin).
@@ -4166,8 +4976,19 @@ func isMemberFiltered(req ws.TunnelRequest) bool {
 	if req.SenderUserID == "" {
 		return false
 	}
-	role := req.SenderOrgRole
-	return role == "member" || role == ""
+	return req.SenderOrgRole != "owner" && req.SenderOrgRole != "admin"
+}
+
+// requestAgainstWingConfig recomputes only the wing-local admin override from
+// the relay-authenticated role. Mutation paths call this while holding
+// wingCfgMu so a removed local admin cannot commit one last stale-snapshot edit
+// after SIGHUP has revoked that override.
+func requestAgainstWingConfig(req ws.TunnelRequest, authenticatedOrgRole string, wingCfg *config.WingConfig) ws.TunnelRequest {
+	req.SenderOrgRole = authenticatedOrgRole
+	if wingCfg != nil && wingCfg.IsAdmin(req.SenderEmail) && isMemberRole(req.SenderOrgRole) {
+		req.SenderOrgRole = "admin"
+	}
+	return req
 }
 
 // canSeeSession returns true if the request sender can view a session with the given owner.
@@ -4192,6 +5013,18 @@ func canAccessSessionPath(req ws.TunnelRequest, sessionPath string, userPaths []
 	return len(userPaths) > 0 && isUnderPaths(sessionPath, userPaths)
 }
 
+// canAccessSessionArtifact applies the same current owner-and-workspace policy
+// used by session listings before exposing a persisted audit or chat artifact.
+// Missing legacy metadata fails closed for members; owners and admins retain
+// the historical oversight access.
+func canAccessSessionArtifact(req ws.TunnelRequest, sessionDir string, userPaths []string) bool {
+	if !isMemberFiltered(req) {
+		return true
+	}
+	_, sessionPath := readEggMeta(sessionDir)
+	return canSeeSession(req, readEggOwner(sessionDir)) && canAccessSessionPath(req, sessionPath, userPaths)
+}
+
 func requestDirEntries(req ws.TunnelRequest, path string, userPaths []string) []ws.DirEntry {
 	if isMemberFiltered(req) && len(userPaths) == 0 {
 		return nil
@@ -4209,6 +5042,29 @@ func requestProjects(req ws.TunnelRequest, projects []ws.WingProject, userPaths 
 	return projects
 }
 
+func appendHostedRelayPolicyAudit(cfg *config.Config, operation string) (result error) {
+	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(cfg.Dir, "policy-audit.log")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { result = closeAndJoin("hosted relay policy audit", file, result) }()
+	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
+	record := map[string]string{
+		"time":      time.Now().UTC().Format(time.RFC3339Nano),
+		"event":     "hosted_relay_denied",
+		"operation": operation,
+		"transport": "hosted-relay",
+		"policy":    config.HostedRelayDeny,
+	}
+	return json.NewEncoder(file).Encode(record)
+}
+
 // handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
 func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, req ws.TunnelRequest, write ws.PTYWriteFunc,
 	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyChallenges *auth.ChallengeCache,
@@ -4216,7 +5072,17 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool, client *ws.Client,
 	peerMgr *webrtcpkg.PeerManager, dcSessions *sync.Map) {
 
-	allowedKeys := *allowedKeysPtr
+	// Tunnel callbacks run concurrently and some operations stream or perform
+	// network/process work for an arbitrary amount of time. Admit each request
+	// against an immutable policy snapshot; hold wingCfgMu only while taking that
+	// snapshot or committing a serialized wing.yaml mutation. This keeps SIGHUP
+	// revocation and unrelated requests responsive to a slow peer.
+	liveWingCfg := wingCfg
+	authenticatedOrgRole := req.SenderOrgRole
+	wingCfgMu.Lock()
+	wingCfg = liveWingCfg.Clone()
+	allowedKeys := append([]config.AllowKey(nil), (*allowedKeysPtr)...)
+	wingCfgMu.Unlock()
 
 	// Wing-level admin override
 	if wingCfg.IsAdmin(req.SenderEmail) && isMemberRole(req.SenderOrgRole) {
@@ -4225,8 +5091,8 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	// Derive or retrieve cached AES-GCM key for this sender
 	var gcm cipher.AEAD
-	if cached, ok := tunnelKeys.Load(req.SenderPub); ok {
-		gcm, _ = cached.(cipher.AEAD)
+	if cached, ok := tunnelKeys.Get(req.SenderPub); ok {
+		gcm = cached
 	}
 	if gcm == nil {
 		derived, err := auth.DeriveSharedKey(privKey, req.SenderPub, "wt-tunnel")
@@ -4235,7 +5101,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			return
 		}
 		gcm = derived
-		tunnelKeys.Store(req.SenderPub, gcm)
+		tunnelKeys.Put(req.SenderPub, gcm)
 	}
 
 	// Decrypt the payload
@@ -4249,6 +5115,23 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	var inner tunnelInner
 	if err := json.Unmarshal(plaintext, &inner); err != nil {
 		log.Printf("tunnel %s: bad inner JSON: %v", req.RequestID, err)
+		return
+	}
+	if inner.SessionID != "" && !ws.ValidSessionID(inner.SessionID) {
+		log.Printf("tunnel %s: rejected invalid session ID %q", req.RequestID, inner.SessionID)
+		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid session ID"}, write)
+		return
+	}
+	if req.Purpose != "" && !ws.TunnelPurposeMatches(req.Purpose, inner.Type) {
+		log.Printf("tunnel %s: declared purpose %q does not match inner type %q", req.RequestID, req.Purpose, inner.Type)
+		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "tunnel purpose mismatch"}, write)
+		return
+	}
+	// Every supported coordinator, including the N-1 org deployment, injects
+	// authenticated sender identity. Treat its absence as a protocol failure,
+	// not as legacy administrator authority.
+	if req.SenderUserID == "" {
+		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "authenticated user identity required"}, write)
 		return
 	}
 
@@ -4347,17 +5230,19 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			"locked":        wingCfg.Locked,
 			"spectate":      wingCfg.Spectate,
 			"allowed_count": len(wingCfg.AllowKeys),
+			"hosted_relay":  wingCfg.EffectiveHostedRelay(),
 		}
 		if wingCfg.Label != "" {
 			resp["wing_label"] = wingCfg.Label
 		}
-		// P2P: tell browser whether this wing supports P2P
-		if peerMgr != nil {
+		// Browser PTY migration remains opt-in even though the same PeerManager is
+		// available in relay mode for native direct MCP control.
+		if peerMgr != nil && (wingCfg.ConnectionMode == "p2p" || wingCfg.ConnectionMode == "p2p_only") {
 			resp["p2p"] = true
 			resp["connection_mode"] = wingCfg.ConnectionMode
-			if len(wingCfg.ICEServers) > 0 {
-				resp["ice_servers"] = wingCfg.ICEServers
-			}
+		}
+		if peerMgr != nil && len(wingCfg.ICEServers) > 0 {
+			resp["ice_servers"] = wingCfg.ICEServers
 		}
 		// Report which well-known API keys are set in the wing's environment
 		var globalKeys []string
@@ -4366,7 +5251,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 				globalKeys = append(globalKeys, k)
 			}
 		}
-		if len(globalKeys) > 0 {
+		if len(globalKeys) > 0 && !isMemberFiltered(req) {
 			resp["global_keys"] = globalKeys
 		}
 		if req.SenderUserID != "" {
@@ -4398,7 +5283,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]any{"error": fmt.Sprintf("webrtc offer: %v", err)}, write)
 			return
 		}
-		log.Printf("[P2P] webrtc.offer accepted from %s, answer SDP %d bytes", req.SenderPub[:8], len(answerSDP))
+		log.Printf("[P2P] webrtc.offer accepted from %s, answer SDP %d bytes", shortLogValue(req.SenderPub), len(answerSDP))
 		tunnelRespond(gcm, req.RequestID, map[string]any{"sdp": answerSDP}, write)
 
 	case "sessions.list":
@@ -4416,25 +5301,20 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
 
 	case "sessions.history":
-		sessions, total := getSessionsHistory(cfg, inner.Offset, inner.Limit)
+		sessions := collectSessionsHistory(cfg)
 		if isMemberFiltered(req) {
 			userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
-			var filtered []pastSessionInfo
-			for _, s := range sessions {
-				if canSeeSession(req, s.UserID) && canAccessSessionPath(req, s.CWD, userPaths) {
-					filtered = append(filtered, s)
-				}
-			}
-			sessions = filtered
-			total = len(filtered)
+			sessions = filterSessionsHistoryForRequest(req, sessions, userPaths)
 		}
+		sessions, total := paginateSessionsHistory(sessions, inner.Offset, inner.Limit)
 		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions, "total": total}, write)
 
 	case "audit.request":
 		if inner.SessionID != "" && isMemberFiltered(req) {
-			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", inner.SessionID))
-			if !canSeeSession(req, owner) {
-				log.Printf("tunnel %s: denied audit (user=%s session_owner=%s)", req.RequestID, req.SenderUserID, owner)
+			sessionDir := filepath.Join(cfg.Dir, "eggs", inner.SessionID)
+			userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
+			if !canAccessSessionArtifact(req, sessionDir, userPaths) {
+				log.Printf("tunnel %s: denied audit outside current owner/path policy (user=%s session=%s)", req.RequestID, req.SenderUserID, inner.SessionID)
 				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 				return
 			}
@@ -4588,26 +5468,15 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			Email  string `json:"email,omitempty"`
 		}
 		var allowed []allowInfo
-		for _, ak := range allowedKeys {
+		for _, ak := range visibleAllowKeys(req, allowedKeys) {
 			allowed = append(allowed, allowInfo{Key: ak.Key, UserID: ak.UserID, Email: ak.Email})
 		}
 		tunnelRespond(gcm, req.RequestID, map[string]any{"allowed": allowed}, write)
 
 	case "allow.add":
-		if wingCfg.Locked {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "locked wings require local approval via wt wing allow"}, write)
-			return
-		}
 		if req.SenderUserID == "" {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "no user identity"}, write)
 			return
-		}
-		// Check duplicate by user_id
-		for _, ak := range allowedKeys {
-			if ak.UserID == req.SenderUserID {
-				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "already allowed"}, write)
-				return
-			}
 		}
 		// Validate key if provided
 		if inner.Key != "" {
@@ -4626,8 +5495,21 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		// clobbers shared wings (sets locked: true + allow_keys with only
 		// the enrolling user, locking everyone else out).
 		// Admins manage allow_keys explicitly via `wt wing allow`.
-		allowedKeys = append(allowedKeys, newEntry)
-		*allowedKeysPtr = allowedKeys
+		wingCfgMu.Lock()
+		if liveWingCfg.Locked {
+			wingCfgMu.Unlock()
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "locked wings require local approval via wt wing allow"}, write)
+			return
+		}
+		for _, ak := range *allowedKeysPtr {
+			if ak.UserID == req.SenderUserID {
+				wingCfgMu.Unlock()
+				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "already allowed"}, write)
+				return
+			}
+		}
+		*allowedKeysPtr = append(*allowedKeysPtr, newEntry)
+		wingCfgMu.Unlock()
 		log.Printf("allowed: user=%s email=%s has_passkey=%v (session-scoped)", req.SenderUserID, req.SenderEmail, inner.Key != "")
 		tunnelRespond(gcm, req.RequestID, map[string]any{
 			"ok": "true", "email": req.SenderEmail, "user_id": req.SenderUserID,
@@ -4639,7 +5521,12 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "no user identity"}, write)
 			return
 		}
-		// Find entry to remove: by key or user_id
+		wingCfgMu.Lock()
+		liveReq := requestAgainstWingConfig(req, authenticatedOrgRole, liveWingCfg)
+		allowedKeys = append([]config.AllowKey(nil), (*allowedKeysPtr)...)
+		// Find entry to remove: by key or user_id against the live ACL. A
+		// SIGHUP between admission and this mutation must not resurrect an old
+		// snapshot or authorize a removed local admin.
 		target := inner.AllowUserID
 		if target == "" && inner.Key != "" {
 			for _, ak := range allowedKeys {
@@ -4650,12 +5537,14 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 		}
 		if target == "" {
+			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing allow_user_id or key"}, write)
 			return
 		}
 		// Only wing owner or the entry's own user can remove
-		isOwner := req.SenderOrgRole == "owner" || req.SenderOrgRole == "admin"
+		isOwner := liveReq.SenderOrgRole == "owner" || liveReq.SenderOrgRole == "admin"
 		if !isOwner && req.SenderUserID != target {
+			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 			return
 		}
@@ -4664,24 +5553,22 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		// in-memory change back if persistence fails so a request reported as
 		// failed cannot leave a live-but-unsaved authorization change.
 		persistedRemoved := false
-		wingCfgMu.Lock()
-		oldAllowKeys := append([]config.AllowKey(nil), wingCfg.AllowKeys...)
-		for i, ak := range wingCfg.AllowKeys {
+		oldAllowKeys := append([]config.AllowKey(nil), liveWingCfg.AllowKeys...)
+		for i, ak := range liveWingCfg.AllowKeys {
 			if ak.UserID == target || (inner.Key != "" && ak.Key == inner.Key) {
-				wingCfg.AllowKeys = append(wingCfg.AllowKeys[:i], wingCfg.AllowKeys[i+1:]...)
+				liveWingCfg.AllowKeys = append(liveWingCfg.AllowKeys[:i], liveWingCfg.AllowKeys[i+1:]...)
 				persistedRemoved = true
 				break
 			}
 		}
 		if persistedRemoved {
-			if saveErr := config.SaveWingConfig(cfg.Dir, wingCfg); saveErr != nil {
-				wingCfg.AllowKeys = oldAllowKeys
+			if saveErr := config.SaveWingConfig(cfg.Dir, liveWingCfg); saveErr != nil {
+				liveWingCfg.AllowKeys = oldAllowKeys
 				wingCfgMu.Unlock()
 				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 				return
 			}
 		}
-		wingCfgMu.Unlock()
 		// Also remove from in-memory list (covers session-scoped entries)
 		memRemoved := false
 		for i, ak := range allowedKeys {
@@ -4692,13 +5579,20 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 		}
 		if !persistedRemoved && !memRemoved {
+			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "entry not found"}, write)
 			return
 		}
 		*allowedKeysPtr = allowedKeys
-		client.Locked = wingCfg.Locked
-		client.AllowedCount = len(wingCfg.AllowKeys)
-		client.SendConfig(ctx)
+		locked, allowedCount := liveWingCfg.Locked, len(liveWingCfg.AllowKeys)
+		wingCfgMu.Unlock()
+		client.UpdateAccessConfig(locked, allowedCount)
+		if err := client.SendConfig(ctx); err != nil {
+			// The local policy mutation is already active and persisted. A later
+			// reconnect will advertise it again, so report the transient sync
+			// failure without rolling back the security decision.
+			log.Printf("advertise access config after revoke: %v", err)
+		}
 		log.Printf("revoked: target=%s by=%s persisted=%v", target, req.SenderUserID, persistedRemoved)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
@@ -4713,45 +5607,48 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 
 	case "paths.set":
-		if isMemberFiltered(req) {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
-			return
-		}
 		if inner.Paths == nil {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing paths"}, write)
 			return
 		}
 		wingCfgMu.Lock()
-		oldPaths, oldRoot := wingCfg.Paths, wingCfg.Root
-		wingCfg.Paths = config.PathList(inner.Paths)
-		wingCfg.Root = ""
-		if saveErr := config.SaveWingConfig(cfg.Dir, wingCfg); saveErr != nil {
+		if isMemberFiltered(requestAgainstWingConfig(req, authenticatedOrgRole, liveWingCfg)) {
+			wingCfgMu.Unlock()
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			return
+		}
+		oldPaths, oldRoot := liveWingCfg.Paths, liveWingCfg.Root
+		liveWingCfg.Paths = clonePathList(config.PathList(inner.Paths))
+		liveWingCfg.Root = ""
+		if saveErr := config.SaveWingConfig(cfg.Dir, liveWingCfg); saveErr != nil {
 			// Roll back so a request reported as failed does not keep steering
 			// live authorization until restart.
-			wingCfg.Paths, wingCfg.Root = oldPaths, oldRoot
+			liveWingCfg.Paths, liveWingCfg.Root = oldPaths, oldRoot
 			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 			return
 		}
+		paths := clonePathList(liveWingCfg.Paths)
 		wingCfgMu.Unlock()
-		log.Printf("paths.set: %d entries by %s", len(wingCfg.Paths), req.SenderUserID)
-		go killSessionsViolatingACLs(cfg, wingCfg.Paths, home)
+		log.Printf("paths.set: %d entries by %s", len(paths), req.SenderUserID)
+		go killSessionsViolatingACLs(cfg, paths, home)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "paths.add_member":
-		if isMemberFiltered(req) {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
-			return
-		}
 		if inner.Path == "" || inner.Email == "" {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing path or email"}, write)
 			return
 		}
+		wingCfgMu.Lock()
+		if isMemberFiltered(requestAgainstWingConfig(req, authenticatedOrgRole, liveWingCfg)) {
+			wingCfgMu.Unlock()
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			return
+		}
 		found := false
 		emailLower := strings.ToLower(inner.Email)
-		wingCfgMu.Lock()
-		oldPaths := clonePathList(wingCfg.Paths)
-		for i, e := range wingCfg.Paths {
+		oldPaths := clonePathList(liveWingCfg.Paths)
+		for i, e := range liveWingCfg.Paths {
 			if e.Path == inner.Path {
 				// Check duplicate
 				dup := false
@@ -4762,7 +5659,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 					}
 				}
 				if !dup {
-					wingCfg.Paths[i].Members = append(wingCfg.Paths[i].Members, inner.Email)
+					liveWingCfg.Paths[i].Members = append(liveWingCfg.Paths[i].Members, inner.Email)
 				}
 				found = true
 				break
@@ -4773,8 +5670,8 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "path not found"}, write)
 			return
 		}
-		if saveErr := config.SaveWingConfig(cfg.Dir, wingCfg); saveErr != nil {
-			wingCfg.Paths = oldPaths
+		if saveErr := config.SaveWingConfig(cfg.Dir, liveWingCfg); saveErr != nil {
+			liveWingCfg.Paths = oldPaths
 			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 			return
@@ -4784,19 +5681,20 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "paths.remove_member":
-		if isMemberFiltered(req) {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
-			return
-		}
 		if inner.Path == "" || inner.Email == "" {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing path or email"}, write)
 			return
 		}
+		wingCfgMu.Lock()
+		if isMemberFiltered(requestAgainstWingConfig(req, authenticatedOrgRole, liveWingCfg)) {
+			wingCfgMu.Unlock()
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			return
+		}
 		found := false
 		emailLower := strings.ToLower(inner.Email)
-		wingCfgMu.Lock()
-		oldPaths := clonePathList(wingCfg.Paths)
-		for i, e := range wingCfg.Paths {
+		oldPaths := clonePathList(liveWingCfg.Paths)
+		for i, e := range liveWingCfg.Paths {
 			if e.Path == inner.Path {
 				// An empty member list means a legacy open entry visible to every
 				// member, so removing the last member would silently make the
@@ -4808,7 +5706,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 				}
 				for j, m := range e.Members {
 					if strings.ToLower(m) == emailLower {
-						wingCfg.Paths[i].Members = append(e.Members[:j], e.Members[j+1:]...)
+						liveWingCfg.Paths[i].Members = append(e.Members[:j], e.Members[j+1:]...)
 						found = true
 						break
 					}
@@ -4821,15 +5719,16 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "path or member not found"}, write)
 			return
 		}
-		if saveErr := config.SaveWingConfig(cfg.Dir, wingCfg); saveErr != nil {
-			wingCfg.Paths = oldPaths
+		if saveErr := config.SaveWingConfig(cfg.Dir, liveWingCfg); saveErr != nil {
+			liveWingCfg.Paths = oldPaths
 			wingCfgMu.Unlock()
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 			return
 		}
+		paths := clonePathList(liveWingCfg.Paths)
 		wingCfgMu.Unlock()
 		log.Printf("paths.remove_member: %s from %s by %s", inner.Email, inner.Path, req.SenderUserID)
-		go killSessionsViolatingACLs(cfg, wingCfg.Paths, home)
+		go killSessionsViolatingACLs(cfg, paths, home)
 		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	default:
@@ -4837,12 +5736,14 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	}
 }
 
-// getSessionsHistory returns dead egg sessions from disk, paginated.
-func getSessionsHistory(cfg *config.Config, offset, limit int) ([]pastSessionInfo, int) {
+// collectSessionsHistory returns all dead egg sessions from disk newest first.
+// Authorization must be applied before pagination so member pages and totals do
+// not depend on the positions of sessions they cannot see.
+func collectSessionsHistory(cfg *config.Config) []pastSessionInfo {
 	eggsDir := filepath.Join(cfg.Dir, "eggs")
 	entries, err := os.ReadDir(eggsDir)
 	if err != nil {
-		return nil, 0
+		return nil
 	}
 
 	var dead []pastSessionInfo
@@ -4895,23 +5796,212 @@ func getSessionsHistory(cfg *config.Config, offset, limit int) ([]pastSessionInf
 	sort.Slice(dead, func(i, j int) bool {
 		return dead[i].StartedAt > dead[j].StartedAt
 	})
+	return dead
+}
 
-	total := len(dead)
+func filterSessionsHistoryForRequest(req ws.TunnelRequest, sessions []pastSessionInfo, userPaths []string) []pastSessionInfo {
+	if !isMemberFiltered(req) {
+		return sessions
+	}
+	filtered := make([]pastSessionInfo, 0, len(sessions))
+	for _, session := range sessions {
+		if canSeeSession(req, session.UserID) && canAccessSessionPath(req, session.CWD, userPaths) {
+			filtered = append(filtered, session)
+		}
+	}
+	return filtered
+}
+
+const (
+	defaultSessionsHistoryLimit = 20
+	maxSessionsHistoryLimit     = 200
+)
+
+func paginateSessionsHistory(sessions []pastSessionInfo, offset, limit int) ([]pastSessionInfo, int) {
+	total := len(sessions)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
 	if limit <= 0 {
-		limit = 20
+		limit = defaultSessionsHistoryLimit
 	}
-	if offset > len(dead) {
-		offset = len(dead)
+	if limit > maxSessionsHistoryLimit {
+		limit = maxSessionsHistoryLimit
 	}
-	end := offset + limit
-	if end > len(dead) {
-		end = len(dead)
+	remaining := total - offset
+	if limit > remaining {
+		limit = remaining
 	}
-	return dead[offset:end], total
+	return sessions[offset : offset+limit], total
+}
+
+const (
+	auditStreamChunkBytes = 32 << 10
+	maxAuditFrameBytes    = 64 << 10
+	maxAuditMetadataBytes = 64 << 10
+)
+
+func streamAuditFile(file io.Reader, base64Encode bool, emit func([]byte) error) error {
+	buffer := make([]byte, auditStreamChunkBytes)
+	for {
+		count, readErr := file.Read(buffer)
+		if count > 0 {
+			value := string(buffer[:count])
+			if base64Encode {
+				value = base64.StdEncoding.EncodeToString(buffer[:count])
+			}
+			chunk, marshalErr := json.Marshal(map[string]string{"data": value})
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if err := emit(chunk); err != nil {
+				return err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
+
+func auditDimensions(dir string) (int, int) {
+	cols, rows := 120, 40
+	file, err := os.Open(filepath.Join(dir, "egg.meta"))
+	if err != nil {
+		return cols, rows
+	}
+	defer closeWithLog("audit metadata", file)
+	meta, err := io.ReadAll(io.LimitReader(file, maxAuditMetadataBytes+1))
+	if err != nil || len(meta) > maxAuditMetadataBytes {
+		return cols, rows
+	}
+	for _, line := range strings.Split(string(meta), "\n") {
+		if strings.HasPrefix(line, "cols=") {
+			if value, parseErr := strconv.Atoi(strings.TrimPrefix(line, "cols=")); parseErr == nil && value > 0 && value <= 65535 {
+				cols = value
+			}
+		}
+		if strings.HasPrefix(line, "rows=") {
+			if value, parseErr := strconv.Atoi(strings.TrimPrefix(line, "rows=")); parseErr == nil && value > 0 && value <= 65535 {
+				rows = value
+			}
+		}
+	}
+	return cols, rows
+}
+
+func incompleteAuditRead(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func auditStreamErrorPayload(message string) []byte {
+	payload, err := json.Marshal(map[string]string{"error": message})
+	if err != nil {
+		return []byte(`{"error":"audit stream failed"}`)
+	}
+	return payload
+}
+
+// streamPTYAudit converts a decompressed V1/V2 recording incrementally. It
+// never retains the whole recording or trusts a frame length before enforcing
+// the per-frame cap.
+func streamPTYAudit(reader io.Reader, fallbackCols, fallbackRows int, emit func([]byte) error) error {
+	buffered := bufio.NewReaderSize(reader, auditStreamChunkBytes)
+	isV2 := false
+	if header, err := buffered.Peek(4); err == nil && bytes.Equal(header, []byte("WTA2")) {
+		if _, err := buffered.Discard(4); err != nil {
+			return err
+		}
+		isV2 = true
+		cols, err := binary.ReadUvarint(buffered)
+		if err != nil {
+			return fmt.Errorf("read audit columns: %w", err)
+		}
+		rows, err := binary.ReadUvarint(buffered)
+		if err != nil {
+			return fmt.Errorf("read audit rows: %w", err)
+		}
+		if cols == 0 || cols > 65535 || rows == 0 || rows > 65535 {
+			return fmt.Errorf("invalid audit dimensions %dx%d", cols, rows)
+		}
+		fallbackCols, fallbackRows = int(cols), int(rows)
+	}
+	header := []byte(fmt.Sprintf(`{"version":2,"width":%d,"height":%d}`, fallbackCols, fallbackRows))
+	if err := emit(header); err != nil {
+		return err
+	}
+
+	var cumulativeMS uint64
+	for {
+		deltaMS, err := binary.ReadUvarint(buffered)
+		if incompleteAuditRead(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read audit timestamp: %w", err)
+		}
+		frameType := uint64(0)
+		if isV2 {
+			frameType, err = binary.ReadUvarint(buffered)
+			if incompleteAuditRead(err) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("read audit frame type: %w", err)
+			}
+		}
+		dataLen, err := binary.ReadUvarint(buffered)
+		if incompleteAuditRead(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read audit frame length: %w", err)
+		}
+		if dataLen > maxAuditFrameBytes {
+			return fmt.Errorf("audit frame is %d bytes; maximum is %d", dataLen, maxAuditFrameBytes)
+		}
+		frame := make([]byte, int(dataLen))
+		if _, err := io.ReadFull(buffered, frame); incompleteAuditRead(err) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("read audit frame: %w", err)
+		}
+		if ^uint64(0)-cumulativeMS < deltaMS {
+			return errors.New("audit timestamp overflow")
+		}
+		cumulativeMS += deltaMS
+
+		var line []byte
+		if frameType == 1 {
+			resize := bytes.NewReader(frame)
+			cols, colErr := binary.ReadUvarint(resize)
+			rows, rowErr := binary.ReadUvarint(resize)
+			if colErr != nil || rowErr != nil || cols == 0 || cols > 65535 || rows == 0 || rows > 65535 {
+				continue
+			}
+			line = []byte(fmt.Sprintf("[%.3f,\"r\",\"%dx%d\"]", float64(cumulativeMS)/1000, cols, rows))
+		} else {
+			encoded := base64.StdEncoding.EncodeToString(frame)
+			line = []byte(fmt.Sprintf("[%.3f,\"o\",\"%s\"]", float64(cumulativeMS)/1000, encoded))
+		}
+		if err := emit(line); err != nil {
+			return err
+		}
+	}
 }
 
 // streamAuditData reads audit data from disk and streams encrypted chunks via tunnel.stream.
 func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD, requestID string, write ws.PTYWriteFunc) {
+	if !ws.ValidSessionID(sessionID) {
+		tunnelRespond(gcm, requestID, map[string]string{"error": "invalid session ID"}, write)
+		return
+	}
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
 
 	var filePath string
@@ -4924,165 +6014,49 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 		filePath = filepath.Join(dir, "audit.pty.gz")
 	}
 
-	data, err := os.ReadFile(filePath)
+	file, err := os.Open(filePath)
 	if err != nil {
 		tunnelRespond(gcm, requestID, map[string]string{"error": "file not found: " + kind}, write)
 		return
 	}
+	defer closeWithLog("audit stream", file)
+	emit := func(chunk []byte) error {
+		return tunnelStreamChunk(gcm, requestID, chunk, false, write)
+	}
 
 	if kind == "chat" {
-		// Chat: stream raw gzip bytes as base64 chunks
-		const chunkSize = 32 * 1024
-		for i := 0; i < len(data); i += chunkSize {
-			end := i + chunkSize
-			if end > len(data) {
-				end = len(data)
-			}
-			chunk := map[string]string{"data": base64.StdEncoding.EncodeToString(data[i:end])}
-			chunkJSON, _ := json.Marshal(chunk)
-			tunnelStreamChunk(gcm, requestID, chunkJSON, false, write)
+		if err := streamAuditFile(file, true, emit); err != nil {
+			_ = tunnelStreamChunk(gcm, requestID, auditStreamErrorPayload("read chat audit: "+err.Error()), true, write)
+			return
 		}
-		tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
+		_ = tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
 		return
 	}
 
 	if kind != "pty" {
-		// Keylog: stream text wrapped in JSON chunks
-		text := string(data)
-		const chunkSize = 32 * 1024
-		for i := 0; i < len(text); i += chunkSize {
-			end := i + chunkSize
-			if end > len(text) {
-				end = len(text)
-			}
-			chunk := map[string]string{"data": text[i:end]}
-			chunkJSON, _ := json.Marshal(chunk)
-			tunnelStreamChunk(gcm, requestID, chunkJSON, false, write)
+		if err := streamAuditFile(file, false, emit); err != nil {
+			_ = tunnelStreamChunk(gcm, requestID, auditStreamErrorPayload("read keylog audit: "+err.Error()), true, write)
+			return
 		}
-		tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
+		_ = tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
 		return
 	}
 
-	// Decompress gzip and stream as asciinema v2 NDJSON
-	// Tolerate incomplete gzip from live sessions (writer still open)
-	gr, gzErr := gzip.NewReader(bytes.NewReader(data))
+	// Decompress gzip and stream as asciinema v2 NDJSON. The parser tolerates
+	// an incomplete trailing frame from a live writer.
+	gr, gzErr := gzip.NewReader(file)
 	if gzErr != nil {
 		tunnelRespond(gcm, requestID, map[string]string{"error": "decompress: " + gzErr.Error()}, write)
 		return
 	}
-	raw, readErr := io.ReadAll(gr)
-	gr.Close()
-	if readErr != nil && len(raw) == 0 {
-		tunnelRespond(gcm, requestID, map[string]string{"error": "read: " + readErr.Error()}, write)
+	cols, rows := auditDimensions(dir)
+	streamErr := streamPTYAudit(gr, cols, rows, emit)
+	if closeErr := gr.Close(); closeErr != nil && streamErr == nil {
+		streamErr = closeErr
+	}
+	if streamErr != nil {
+		_ = tunnelStreamChunk(gcm, requestID, auditStreamErrorPayload("read PTY audit: "+streamErr.Error()), true, write)
 		return
 	}
-
-	// Read terminal dimensions from egg.meta
-	cols, rows := 120, 40
-	if meta, metaErr := os.ReadFile(filepath.Join(dir, "egg.meta")); metaErr == nil {
-		for _, line := range strings.Split(string(meta), "\n") {
-			if strings.HasPrefix(line, "cols=") {
-				if v, pErr := strconv.Atoi(strings.TrimPrefix(line, "cols=")); pErr == nil && v > 0 {
-					cols = v
-				}
-			}
-			if strings.HasPrefix(line, "rows=") {
-				if v, pErr := strconv.Atoi(strings.TrimPrefix(line, "rows=")); pErr == nil && v > 0 {
-					rows = v
-				}
-			}
-		}
-	}
-
-	// Convert varint format to asciinema v2 NDJSON
-	isV2 := len(raw) >= 4 && string(raw[:4]) == "WTA2"
-	pos := 0
-	if isV2 {
-		pos = 4
-		if v, n := readVarint(raw[pos:]); n > 0 {
-			cols = int(v)
-			pos += n
-		}
-		if v, n := readVarint(raw[pos:]); n > 0 {
-			rows = int(v)
-			pos += n
-		}
-	}
-	var cumulativeMs int64
-	var ndjson strings.Builder
-	fmt.Fprintf(&ndjson, `{"version":2,"width":%d,"height":%d}`, cols, rows)
-	ndjson.WriteByte('\n')
-	for pos < len(raw) {
-		deltaMs, n := readVarint(raw[pos:])
-		if n <= 0 {
-			break
-		}
-		pos += n
-
-		var frameType int64
-		if isV2 {
-			frameType, n = readVarint(raw[pos:])
-			if n <= 0 {
-				break
-			}
-			pos += n
-		}
-
-		dataLen, n := readVarint(raw[pos:])
-		if n <= 0 {
-			break
-		}
-		pos += n
-		if pos+int(dataLen) > len(raw) {
-			break
-		}
-		chunk := raw[pos : pos+int(dataLen)]
-		pos += int(dataLen)
-		cumulativeMs += deltaMs
-
-		if frameType == 1 {
-			rCols, cn := readVarint(chunk)
-			if cn <= 0 {
-				continue
-			}
-			rRows, rn := readVarint(chunk[cn:])
-			if rn <= 0 {
-				continue
-			}
-			fmt.Fprintf(&ndjson, "[%.3f,\"r\",\"%dx%d\"]\n", float64(cumulativeMs)/1000.0, rCols, rRows)
-		} else {
-			escaped := base64.StdEncoding.EncodeToString(chunk)
-			fmt.Fprintf(&ndjson, "[%.3f,\"o\",\"%s\"]\n", float64(cumulativeMs)/1000.0, escaped)
-		}
-	}
-
-	// Stream NDJSON lines as JSON-wrapped chunks
-	text := ndjson.String()
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		// Parse each NDJSON line and send as a chunk the browser can JSON.parse
-		tunnelStreamChunk(gcm, requestID, []byte(line), false, write)
-	}
-	tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
-}
-
-// readVarint reads a varint from buf, returns (value, bytes consumed).
-func readVarint(buf []byte) (int64, int) {
-	var x int64
-	var s uint
-	for i, b := range buf {
-		if i >= 10 {
-			return 0, 0
-		}
-		if b < 0x80 {
-			return x | int64(b)<<s, i + 1
-		}
-		x |= int64(b&0x7f) << s
-		s += 7
-	}
-	return 0, 0
+	_ = tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
 }

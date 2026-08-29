@@ -75,6 +75,7 @@ type SeccompProbe struct {
 type NamespaceProbe struct {
 	InPIDNamespace bool   `json:"in_pid_namespace"`
 	NSpid          string `json:"nspid"`
+	PIDNamespace   string `json:"pid_namespace"`
 }
 
 type PTYProbe struct {
@@ -166,7 +167,7 @@ func main() {
 
 	// Also write to CWD so the test runner can find results after sandbox cleanup
 	cwdPath := filepath.Join(".", "test-results.json")
-	os.WriteFile(cwdPath, data, 0644)
+	_ = os.WriteFile(cwdPath, data, 0644)
 
 	// Also print to stdout for convenience
 	fmt.Println(string(data))
@@ -190,7 +191,7 @@ func runInteractive() {
 	}()
 
 	// Echo stdin to stdout
-	io.Copy(os.Stdout, os.Stdin)
+	_, _ = io.Copy(os.Stdout, os.Stdin)
 }
 
 func probeEnv() map[string]string {
@@ -212,7 +213,7 @@ func probeFS() FSProbe {
 	testFile := "test-write-cwd"
 	if err := os.WriteFile(testFile, []byte("probe"), 0644); err == nil {
 		p.WriteCWD = true
-		os.Remove(testFile)
+		_ = os.Remove(testFile)
 	}
 
 	// Check HOME exists and is a real directory
@@ -225,29 +226,29 @@ func probeFS() FSProbe {
 		tmpPath := filepath.Join(home, ".wt-probe-test")
 		if err := os.WriteFile(tmpPath, []byte("probe"), 0644); err == nil {
 			p.HomeWritable = true
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 		}
 	}
 
 	// Write to ~/.claude/test-write (agent profile WriteRegex)
 	if home != "" {
 		claudeDir := filepath.Join(home, ".claude")
-		os.MkdirAll(claudeDir, 0755)
+		_ = os.MkdirAll(claudeDir, 0755)
 		testPath := filepath.Join(claudeDir, "test-write")
 		if err := os.WriteFile(testPath, []byte("probe"), 0644); err == nil {
 			p.WriteClaudeDir = true
-			os.Remove(testPath)
+			_ = os.Remove(testPath)
 		}
 	}
 
 	// Write to ~/.cache/claude/ (agent profile WriteDirs)
 	if home != "" {
 		cacheDir := filepath.Join(home, ".cache", "claude")
-		os.MkdirAll(cacheDir, 0755)
+		_ = os.MkdirAll(cacheDir, 0755)
 		testPath := filepath.Join(cacheDir, "test-write")
 		if err := os.WriteFile(testPath, []byte("probe"), 0644); err == nil {
 			p.WriteCacheDir = true
-			os.Remove(testPath)
+			_ = os.Remove(testPath)
 		}
 	}
 
@@ -272,7 +273,7 @@ func probeFS() FSProbe {
 	outsidePath := "/tmp/outside-mount-test"
 	if err := os.WriteFile(outsidePath, []byte("probe"), 0644); err == nil {
 		p.WriteOutsideMount = true
-		os.Remove(outsidePath)
+		_ = os.Remove(outsidePath)
 	}
 
 	return p
@@ -285,14 +286,14 @@ func probeNetwork() NetworkProbe {
 	conn, err := net.DialTimeout("tcp", "1.1.1.1:443", 3*time.Second)
 	if err == nil {
 		p.HTTPSOutbound = true
-		conn.Close()
+		_ = conn.Close()
 	}
 
 	// Raw TCP to non-standard port
 	conn, err = net.DialTimeout("tcp", "8.8.8.8:53", 3*time.Second)
 	if err == nil {
 		p.RawTCP = true
-		conn.Close()
+		_ = conn.Close()
 	}
 
 	return p

@@ -3,13 +3,66 @@
 package sandbox
 
 import (
-	"os"
+	"net"
 	"syscall"
 	"testing"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+func TestNetworkBridgeConnectionLimit(t *testing.T) {
+	bridge := &networkBridge{
+		connections: make(chan struct{}, 1),
+		active:      make(map[net.Conn]struct{}),
+	}
+	if !bridge.acquireConnection() {
+		t.Fatal("first bridge connection was rejected")
+	}
+	if bridge.acquireConnection() {
+		t.Fatal("bridge accepted a connection beyond its limit")
+	}
+	<-bridge.connections
+	if !bridge.acquireConnection() {
+		t.Fatal("bridge did not release connection capacity")
+	}
+	<-bridge.connections
+	bridge.Close()
+	if bridge.acquireConnection() {
+		t.Fatal("closed bridge accepted a connection")
+	}
+}
+
+func TestNetworkBridgeCloseClosesTrackedConnections(t *testing.T) {
+	bridge := &networkBridge{
+		connections: make(chan struct{}, 1),
+		active:      make(map[net.Conn]struct{}),
+	}
+	if !bridge.acquireConnection() {
+		t.Fatal("bridge connection was rejected")
+	}
+	client, clientPeer := net.Pipe()
+	upstream, upstreamPeer := net.Pipe()
+	defer clientPeer.Close()
+	defer upstreamPeer.Close()
+	cleanup, ok := bridge.trackConnections(client, upstream)
+	if !ok {
+		t.Fatal("bridge did not track active connections")
+	}
+
+	bridge.Close()
+	for name, peer := range map[string]net.Conn{"client": clientPeer, "upstream": upstreamPeer} {
+		_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := peer.Read(make([]byte, 1)); err == nil {
+			t.Errorf("%s connection remained open after bridge close", name)
+		}
+	}
+	cleanup()
+	cleanup()
+	if got := len(bridge.connections); got != 0 {
+		t.Fatalf("bridge connection slots after cleanup = %d, want 0", got)
+	}
+}
 
 func TestCloneFlagsNoNetwork(t *testing.T) {
 	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkNone}}
@@ -23,24 +76,24 @@ func TestCloneFlagsNoNetwork(t *testing.T) {
 func TestCloneFlagsLocal(t *testing.T) {
 	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkLocal}}
 	flags := s.cloneFlags()
-	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
 	if flags != want {
 		t.Errorf("NetworkLocal cloneFlags = 0x%x, want 0x%x", flags, want)
 	}
-	if flags&syscall.CLONE_NEWNET != 0 {
-		t.Error("NetworkLocal should not set CLONE_NEWNET")
+	if flags&syscall.CLONE_NEWNET == 0 {
+		t.Error("NetworkLocal should set CLONE_NEWNET")
 	}
 }
 
 func TestCloneFlagsFull(t *testing.T) {
 	s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkFull}}
 	flags := s.cloneFlags()
-	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
+	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
 	if flags != want {
 		t.Errorf("NetworkFull cloneFlags = 0x%x, want 0x%x", flags, want)
 	}
-	if flags&syscall.CLONE_NEWNET != 0 {
-		t.Error("NetworkFull should not set CLONE_NEWNET")
+	if flags&syscall.CLONE_NEWNET == 0 {
+		t.Error("NetworkFull should set CLONE_NEWNET")
 	}
 }
 
@@ -199,44 +252,61 @@ func TestSysProcAttrCloneflags(t *testing.T) {
 		want uintptr
 	}{
 		{NetworkNone, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
-		{NetworkLocal, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
-		{NetworkHTTPS, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
-		{NetworkFull, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID},
-	}
-	// sysProcAttr adds CLONE_NEWUSER for non-root
-	var extra uintptr
-	if os.Geteuid() != 0 {
-		extra = syscall.CLONE_NEWUSER
+		{NetworkLocal, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
+		{NetworkHTTPS, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
+		{NetworkFull, syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET},
 	}
 	for _, tt := range tests {
-		s := &linuxSandbox{cfg: Config{NetworkNeed: tt.need}}
+		s := &linuxSandbox{cfg: Config{NetworkNeed: tt.need}, userNamespace: true}
 		attr := s.sysProcAttr()
-		want := tt.want | extra
+		want := tt.want | syscall.CLONE_NEWUSER
 		if attr.Cloneflags != want {
 			t.Errorf("NetworkNeed %v: Cloneflags = 0x%x, want 0x%x", tt.need, attr.Cloneflags, want)
 		}
 	}
 }
 
-func TestNetworkNeedClearsNewnet(t *testing.T) {
-	tests := []struct {
-		need    NetworkNeed
-		wantNet bool // true = CLONE_NEWNET should be absent
+func TestSysProcAttrUsesCapabilitiesNotEffectiveUID(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		userNamespace bool
+		wantNewUser   bool
 	}{
-		{NetworkNone, false},
-		{NetworkLocal, true},
-		{NetworkHTTPS, true},
-		{NetworkFull, true},
+		{name: "capability available", userNamespace: false, wantNewUser: false},
+		{name: "reduced capability root or ordinary user", userNamespace: true, wantNewUser: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			s := &linuxSandbox{cfg: Config{NetworkNeed: NetworkNone}, userNamespace: testCase.userNamespace}
+			got := s.sysProcAttr().Cloneflags&syscall.CLONE_NEWUSER != 0
+			if got != testCase.wantNewUser {
+				t.Fatalf("CLONE_NEWUSER = %v, want %v", got, testCase.wantNewUser)
+			}
+		})
 	}
-	for _, tt := range tests {
-		s := &linuxSandbox{cfg: Config{NetworkNeed: tt.need}}
-		flags := s.cloneFlags()
-		hasNewnet := flags&syscall.CLONE_NEWNET != 0
-		if tt.wantNet && hasNewnet {
-			t.Errorf("NetworkNeed %v should clear CLONE_NEWNET", tt.need)
+}
+
+func TestEveryNetworkNeedKeepsNewnet(t *testing.T) {
+	for _, need := range []NetworkNeed{NetworkNone, NetworkLocal, NetworkHTTPS, NetworkFull} {
+		s := &linuxSandbox{cfg: Config{NetworkNeed: need}}
+		if s.cloneFlags()&syscall.CLONE_NEWNET == 0 {
+			t.Errorf("NetworkNeed %v should keep CLONE_NEWNET", need)
 		}
-		if !tt.wantNet && !hasNewnet {
-			t.Errorf("NetworkNeed %v should keep CLONE_NEWNET", tt.need)
-		}
+	}
+}
+
+func TestEverySandboxPolicyUsesEnforcementWrapper(t *testing.T) {
+	for name, cfg := range map[string]Config{
+		"empty":      {},
+		"deny":       {Deny: []string{"/secret"}},
+		"deny write": {DenyWrite: []string{"/policy.yaml"}},
+		"mount":      {Mounts: []Mount{{Source: "/tmp", Target: "/tmp"}}},
+		"proxy":      {ProxyPort: 1234},
+		"local port": {LocalPorts: []int{4321}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !(&linuxSandbox{cfg: cfg}).needsEnforcementWrapper() {
+				t.Fatal("sandbox policy would bypass the seccomp/mount enforcement wrapper")
+			}
+		})
 	}
 }

@@ -2,10 +2,15 @@
 
 Audit date: 2026-08-23.
 
+Status: historical snapshot for the superseded local-first branch; not a current
+merge verdict. Current scope and promotion gates live in the
+[agent-manager product brief](agent-manager-product-brief.md) and the checked-in
+CI/release workflows.
+
 Branch: `feature-local-first-terminal-routing`, audited from the immutable
 `f59fe8a` snapshot based directly on `origin/main` at `3665624` (`v0.143.0`).
 
-## Current evidence
+## Snapshot evidence
 
 The committed 25-commit base and successive security-review snapshots were
 tested independently. The current local gates pass:

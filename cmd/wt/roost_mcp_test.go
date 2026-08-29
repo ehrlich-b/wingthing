@@ -3,8 +3,28 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
+
+func TestRoostAllowedEmailsFromEnv(t *testing.T) {
+	t.Setenv("WT_ROOST_ALLOWED_EMAILS", " Alice@Example.com, bob@example.com,alice@example.com ")
+	got, err := roostAllowedEmailsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"alice@example.com", "bob@example.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("allowed emails = %#v, want %#v", got, want)
+	}
+
+	for _, invalid := range []string{"not-an-email", "missing@", "@missing", "two@@example.com", "white space@example.com", "alice@example.com,"} {
+		t.Setenv("WT_ROOST_ALLOWED_EMAILS", invalid)
+		if _, err := roostAllowedEmailsFromEnv(); err == nil {
+			t.Fatalf("invalid enrollment email %q accepted", invalid)
+		}
+	}
+}
 
 func TestLoadRoostMCPConfigUsesWingYAMLAndConfiguredToolsDir(t *testing.T) {
 	dir := t.TempDir()

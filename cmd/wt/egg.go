@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -19,11 +20,11 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -79,6 +80,8 @@ func eggRunCmd() *cobra.Command {
 		cols                       uint32
 		fsFlag                     []string
 		networkFlag                []string
+		localPortFlag              []int
+		networkModeFlag            string
 		agentDomainsFlag           string
 		envFlag                    []string
 		envFileRequired            bool
@@ -101,6 +104,7 @@ func eggRunCmd() *cobra.Command {
 		kindFlag                   string
 		commandFlag                []string
 		agentArgFlag               []string
+		outerBoundaryFlag          bool
 	)
 
 	cmd := &cobra.Command{
@@ -154,6 +158,8 @@ func eggRunCmd() *cobra.Command {
 				Shell:                      shell,
 				FS:                         fsFlag,
 				Network:                    networkFlag,
+				LocalPorts:                 localPortFlag,
+				NetworkMode:                networkModeFlag,
 				AgentDomains:               agentDomainsFlag,
 				Env:                        envMap,
 				Rows:                       rows,
@@ -174,6 +180,7 @@ func eggRunCmd() *cobra.Command {
 				ResumeSessionID:            resumeSessionFlag,
 				ToolNames:                  toolNamesFlag,
 				ToolSocketPath:             toolSocketFlag,
+				OuterBoundary:              outerBoundaryFlag,
 			}
 
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -203,10 +210,17 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&cols, "cols", 80, "terminal cols")
 	cmd.Flags().StringArrayVar(&fsFlag, "fs", nil, "filesystem rules (rw:./, deny:~/.ssh)")
 	cmd.Flags().StringArrayVar(&networkFlag, "network", nil, "network domains (api.anthropic.com, *, none)")
+	cmd.Flags().IntSliceVar(&localPortFlag, "local-port", nil, "host loopback port forwarded into the network namespace")
+	cmd.Flags().StringVar(&networkModeFlag, "network-mode", "", "network policy mode: enforce or observe (internal)")
 	cmd.Flags().StringVar(&agentDomainsFlag, "agent-domains", "", "agent domain policy: merge or none (internal)")
+	if err := cmd.Flags().MarkHidden("network-mode"); err != nil {
+		panic(err)
+	}
 	cmd.Flags().StringArrayVar(&envFlag, "env", nil, "environment variables (KEY=VAL)")
 	cmd.Flags().BoolVar(&envFileRequired, "env-file-required", false, "require the internal environment payload")
-	cmd.Flags().MarkHidden("env-file-required")
+	if err := cmd.Flags().MarkHidden("env-file-required"); err != nil {
+		panic(err)
+	}
 	cmd.Flags().BoolVar(&dangerouslySkipPermissions, "dangerously-skip-permissions", false, "skip agent permission prompts")
 	cmd.Flags().StringVar(&cpuFlag, "cpu", "", "CPU time limit (e.g. 300s)")
 	cmd.Flags().StringVar(&memFlag, "memory", "", "memory limit (e.g. 2GB)")
@@ -226,7 +240,13 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kindFlag, "kind", "agent", "session kind (internal)")
 	cmd.Flags().StringArrayVar(&commandFlag, "command-arg", nil, "command argument (internal)")
 	cmd.Flags().StringArrayVar(&agentArgFlag, "agent-arg", nil, "extra agent argument (internal)")
-	cmd.MarkFlagRequired("session-id")
+	cmd.Flags().BoolVar(&outerBoundaryFlag, "outer-boundary", false, "trust the parent host boundary (internal)")
+	if err := cmd.Flags().MarkHidden("outer-boundary"); err != nil {
+		panic(err)
+	}
+	if err := cmd.MarkFlagRequired("session-id"); err != nil {
+		panic(err)
+	}
 
 	return cmd
 }
@@ -295,13 +315,10 @@ func writeEggEnvironment(dir string, environment map[string]string) (string, err
 		return "", fmt.Errorf("create egg environment: %w", err)
 	}
 	if _, err := file.Write(data); err != nil {
-		file.Close()
-		os.Remove(path)
-		return "", fmt.Errorf("write egg environment: %w", err)
+		return "", errors.Join(fmt.Errorf("write egg environment: %w", err), closeAndJoin("egg environment", file, nil), removeIfExists(path))
 	}
 	if err := file.Close(); err != nil {
-		os.Remove(path)
-		return "", fmt.Errorf("close egg environment: %w", err)
+		return "", errors.Join(fmt.Errorf("close egg environment: %w", err), removeIfExists(path))
 	}
 	return path, nil
 }
@@ -328,7 +345,7 @@ func eggStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer ec.Close()
+			defer closeWithLog("egg client", ec)
 			if err := ec.Kill(cmd.Context(), session.ID); err != nil {
 				return fmt.Errorf("stop session %s: %w", session.ID, err)
 			}
@@ -454,23 +471,26 @@ func fileExists(path string) bool {
 	return err == nil && !st.IsDir()
 }
 
-// explainEnforcement reports how the network policy is actually held, which is
-// not the same on both platforms. macOS denies all egress in the seatbelt
-// profile and allows only the proxy port. Linux strips CLONE_NEWNET for any
-// need above NetworkNone, so HTTPS_PROXY is the only thing steering traffic and
-// the sandboxed process is free to ignore it. Saying "proxy" there would be a
-// lie, and this command exists to stop the sandbox being unauditable.
-func explainEnforcement(need sandbox.NetworkNeed, goos string) string {
+// explainEnforcement reports how the network policy is actually held. macOS
+// Seatbelt allows only the proxy endpoint. Linux keeps CLONE_NEWNET and exposes
+// only inherited proxy/loopback relays, so ignoring HTTPS_PROXY fails closed.
+func explainEnforcement(need sandbox.NetworkNeed, goos, mode string) string {
 	switch need {
 	case sandbox.NetworkNone:
 		return "none"
 	case sandbox.NetworkFull:
+		if goos == "linux" {
+			return "proxy"
+		}
 		return "unrestricted"
 	}
-	if goos == "linux" {
-		return "advisory"
-	}
 	if need == sandbox.NetworkHTTPS {
+		if mode == "observe" {
+			return "proxy-observe"
+		}
+		return "proxy"
+	}
+	if goos == "linux" {
 		return "proxy"
 	}
 	return "kernel"
@@ -501,7 +521,7 @@ func explainPolicyWithProvider(cfg *egg.EggConfig, agentName, home, source, prov
 		ConfigSource: source,
 		Isolation:    isolation,
 		NetworkNeed:  resolved.NetworkNeed.String(),
-		Enforcement:  explainEnforcement(resolved.NetworkNeed, runtime.GOOS),
+		Enforcement:  explainEnforcement(resolved.NetworkNeed, runtime.GOOS, resolved.Mode),
 		Domains:      nonNilStrings(resolved.Domains),
 		LocalPorts:   resolved.LocalPorts,
 		Mode:         resolved.Mode,
@@ -511,6 +531,12 @@ func explainPolicyWithProvider(cfg *egg.EggConfig, agentName, home, source, prov
 		Drilled:      make([]explainedHole, 0, len(resolved.Drilled)),
 		Derived:      make([]explainedHole, 0, len(resolved.Derived)),
 		Suppressed:   make([]explainedHole, 0, len(resolved.Suppressed)),
+	}
+	if isolation == "outer-boundary" {
+		// There is no wingthing network namespace or proxy boundary in this
+		// mode. In particular, do not claim Linux proxy enforcement merely
+		// because the resolved (unconfined) policy asks for full networking.
+		p.Enforcement = "unrestricted"
 	}
 	if p.LocalPorts == nil {
 		p.LocalPorts = []int{}
@@ -554,12 +580,18 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(tw, "agent\t%s\n", agentName)
-	fmt.Fprintf(tw, "config\t%s\n", p.ConfigSource)
-	fmt.Fprintf(tw, "isolation\t%s\n", p.Isolation)
-	fmt.Fprintf(tw, "network\t%s\n", p.NetworkNeed)
-	fmt.Fprintf(tw, "enforcement\t%s\n", p.Enforcement)
-	fmt.Fprintf(tw, "mode\t%s\n", mode)
+	for _, row := range []struct{ key, value string }{
+		{"agent", agentName},
+		{"config", p.ConfigSource},
+		{"isolation", p.Isolation},
+		{"network", string(p.NetworkNeed)},
+		{"enforcement", p.Enforcement},
+		{"mode", mode},
+	} {
+		if err := writef(tw, "%s\t%s\n", row.key, row.value); err != nil {
+			return err
+		}
+	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
@@ -578,15 +610,23 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 	}
 
 	if len(p.Domains) > 0 {
-		fmt.Fprintf(w, "\ndomains (%d)\n", len(p.Domains))
+		if err := writef(w, "\ndomains (%d)\n", len(p.Domains)); err != nil {
+			return err
+		}
 		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, d := range p.Domains {
 			if reason, ok := derivedDomains[d]; ok {
-				fmt.Fprintf(tw, "  %s\tderived\t%s\n", d, reason)
+				if err := writef(tw, "  %s\tderived\t%s\n", d, reason); err != nil {
+					return err
+				}
 			} else if reason, ok := drilledDomains[d]; ok {
-				fmt.Fprintf(tw, "  %s\tauto\t%s\n", d, reason)
+				if err := writef(tw, "  %s\tauto\t%s\n", d, reason); err != nil {
+					return err
+				}
 			} else {
-				fmt.Fprintf(tw, "  %s\tdeclared\t\n", d)
+				if err := writef(tw, "  %s\tdeclared\t\n", d); err != nil {
+					return err
+				}
 			}
 		}
 		if err := tw.Flush(); err != nil {
@@ -595,10 +635,14 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 	}
 
 	if len(p.Suppressed) > 0 {
-		fmt.Fprintln(w, "\nsuppressed agent domains")
+		if err := writeln(w, "\nsuppressed agent domains"); err != nil {
+			return err
+		}
 		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, h := range p.Suppressed {
-			fmt.Fprintf(tw, "  %s\tsuppressed\t%s\n", h.Value, h.Reason)
+			if err := writef(tw, "  %s\tsuppressed\t%s\n", h.Value, h.Reason); err != nil {
+				return err
+			}
 		}
 		if err := tw.Flush(); err != nil {
 			return err
@@ -606,21 +650,29 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 	}
 
 	if len(p.LocalPorts) > 0 {
-		fmt.Fprintf(w, "\nforwarded loopback ports\n")
+		if err := writeln(w, "\nforwarded loopback ports"); err != nil {
+			return err
+		}
 		for _, port := range p.LocalPorts {
-			fmt.Fprintf(w, "  %d\n", port)
+			if err := writef(w, "  %d\n", port); err != nil {
+				return err
+			}
 		}
 	}
 
 	if len(p.Mounts) > 0 {
-		fmt.Fprintf(w, "\nmounts (%d)\n", len(p.Mounts))
+		if err := writef(w, "\nmounts (%d)\n", len(p.Mounts)); err != nil {
+			return err
+		}
 		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, m := range p.Mounts {
 			access := "rw"
 			if m.ReadOnly {
 				access = "ro"
 			}
-			fmt.Fprintf(tw, "  %s\t%s\n", access, m.Source)
+			if err := writef(tw, "  %s\t%s\n", access, m.Source); err != nil {
+				return err
+			}
 		}
 		if err := tw.Flush(); err != nil {
 			return err
@@ -634,17 +686,25 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 		if len(section.paths) == 0 {
 			continue
 		}
-		fmt.Fprintf(w, "\n%s (%d)\n", section.title, len(section.paths))
+		if err := writef(w, "\n%s (%d)\n", section.title, len(section.paths)); err != nil {
+			return err
+		}
 		for _, path := range section.paths {
-			fmt.Fprintf(w, "  %s\n", path)
+			if err := writef(w, "  %s\n", path); err != nil {
+				return err
+			}
 		}
 	}
 
 	if len(p.Drilled) > 0 {
-		fmt.Fprintf(w, "\nauto-drilled for %s (%d)\n", p.Agent, len(p.Drilled))
+		if err := writef(w, "\nauto-drilled for %s (%d)\n", p.Agent, len(p.Drilled)); err != nil {
+			return err
+		}
 		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, h := range p.Drilled {
-			fmt.Fprintf(tw, "  %s\t%s\t%s\n", h.Kind, h.Value, h.Reason)
+			if err := writef(tw, "  %s\t%s\t%s\n", h.Kind, h.Value, h.Reason); err != nil {
+				return err
+			}
 		}
 		if err := tw.Flush(); err != nil {
 			return err
@@ -703,12 +763,15 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 		}
 	}
 
-	sessionID := uuid.New().String()[:8]
+	sessionID := newRuntimeID()
 
 	// Handle --resume: restore chat history and get agent session ID
 	var agentResumeID string
 	if resumeID != "" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve user home: %w", err)
+		}
 		eggDir := filepath.Join(cfg.Dir, "eggs", resumeID)
 		var restoreErr error
 		agentResumeID, restoreErr = egg.RestoreSessionHistory(agentName, cwd, eggDir, home)
@@ -722,7 +785,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
-	defer ec.Close()
+	defer closeWithLog("egg client", ec)
 
 	stream, err := ec.AttachSession(ctx, sessionID)
 	if err != nil {
@@ -733,7 +796,11 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	if term.IsTerminal(fd) {
 		oldState, err := term.MakeRaw(fd)
 		if err == nil {
-			defer term.Restore(fd, oldState)
+			defer func() {
+				if err := term.Restore(fd, oldState); err != nil {
+					log.Printf("restore terminal: %v", err)
+				}
+			}()
 		}
 	}
 
@@ -745,13 +812,16 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	go func() {
 		for range winchCh {
 			if w, h, err := term.GetSize(fd); err == nil {
-				ec.Resize(ctx, sessionID, uint32(h), uint32(w))
+				if err := ec.Resize(ctx, sessionID, uint32(h), uint32(w)); err != nil {
+					log.Printf("resize session %s: %v", sessionID, err)
+				}
 			}
 		}
 	}()
 
 	// Read output from egg → stdout
 	exitCode := 0
+	var outputErr error
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -762,7 +832,10 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 			}
 			switch p := msg.Payload.(type) {
 			case *pb.SessionMsg_Output:
-				os.Stdout.Write(p.Output)
+				if _, err := os.Stdout.Write(p.Output); err != nil {
+					outputErr = fmt.Errorf("write terminal output: %w", err)
+					return
+				}
 			case *pb.SessionMsg_ExitCode:
 				exitCode = int(p.ExitCode)
 				return
@@ -809,12 +882,17 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 		return nil
 	case <-done:
 	}
+	if outputErr != nil {
+		return outputErr
+	}
 
 	if exitCode != 0 {
 		// Dump egg.log so the user can see why the agent crashed
 		logPath := filepath.Join(cfg.Dir, "eggs", sessionID, "egg.log")
 		if logData, err := os.ReadFile(logPath); err == nil && len(logData) > 0 {
-			os.Stderr.Write(logData)
+			if _, err := os.Stderr.Write(logData); err != nil {
+				return errors.Join(fmt.Errorf("agent exited with code %d", exitCode), fmt.Errorf("write egg log: %w", err))
+			}
 		}
 		return fmt.Errorf("agent exited with code %d", exitCode)
 	}
@@ -888,10 +966,46 @@ func NormalizeUser(email string) string {
 	return strings.Trim(s, "-")
 }
 
-// userHash returns the first 12 hex chars of the SHA256 of the email.
-func userHash(email string) string {
-	h := sha256.Sum256([]byte(email))
+// userHash returns the first 12 hex chars of the SHA256 of a stable identity.
+// Org/shared-host callers deliberately pass the authenticated user ID, not an
+// email address: two distinct Wingthing accounts must not silently share agent
+// credentials merely because an identity provider reports the same email.
+func userHash(stableIdentity string) string {
+	h := sha256.Sum256([]byte(stableIdentity))
 	return hex.EncodeToString(h[:])[:12]
+}
+
+func prepareIsolatedClaudeConfig(home string, envMap map[string]string) error {
+	claudeDir := filepath.Join(home, ".claude")
+	envMap["CLAUDE_CONFIG_DIR"] = claudeDir
+
+	// One-time migration: users who already completed onboarding under the old
+	// layout have their config at ~/.claude.json. Relocating
+	// CLAUDE_CONFIG_DIR would leave that behind and re-prompt them once on
+	// release. Seed the new path from the old file if it hasn't been created
+	// yet. Only a regular file is migrated — a symlink at the root is the
+	// shared empty stub, whose users never had persisted state to preserve.
+	newCfg := filepath.Join(claudeDir, ".claude.json")
+	oldCfg := filepath.Join(home, ".claude.json")
+	if _, err := os.Stat(newCfg); errors.Is(err, os.ErrNotExist) {
+		if fi, legacyErr := os.Lstat(oldCfg); legacyErr == nil && fi.Mode().IsRegular() {
+			data, readErr := os.ReadFile(oldCfg)
+			if readErr != nil {
+				return fmt.Errorf("read legacy Claude config: %w", readErr)
+			}
+			if err := os.MkdirAll(claudeDir, 0700); err != nil {
+				return fmt.Errorf("prepare Claude config directory: %w", err)
+			}
+			if err := writeAtomicMetadataFile(newCfg, data, 0600); err != nil {
+				return fmt.Errorf("migrate Claude config: %w", err)
+			}
+		} else if legacyErr != nil && !errors.Is(legacyErr, os.ErrNotExist) {
+			return fmt.Errorf("inspect legacy Claude config: %w", legacyErr)
+		}
+	} else if err != nil {
+		return fmt.Errorf("inspect Claude config: %w", err)
+	}
+	return nil
 }
 
 func writeEggOwner(dir, userID, email string) error {
@@ -977,10 +1091,11 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		eggCfg = sealed
 	}
+	outerBoundary := !egg.RequiresSandbox(eggCfg, agentName)
 	// Pre-flight: verify the sandbox can work before spawning a child process.
 	// Catches AppArmor userns restrictions, missing sysctl, etc. with a clear
 	// error instead of a silent 5s timeout.
-	if egg.RequiresSandbox(eggCfg, agentName) {
+	if !outerBoundary {
 		if ok, help := sandbox.CheckCapability(); !ok {
 			return nil, fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
 		}
@@ -1015,6 +1130,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		"--rows", strconv.Itoa(int(rows)),
 		"--cols", strconv.Itoa(int(cols)),
 	}
+	if outerBoundary {
+		args = append(args, "--outer-boundary")
+	}
 	for _, arg := range o.Command {
 		args = append(args, "--command-arg="+arg)
 	}
@@ -1030,6 +1148,14 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if eggCfg.DangerouslySkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
+	// Compute the effective home before expanding FS policy. Besides ~ rules,
+	// this lets the policy mask a live SSH agent socket when ~/.ssh is denied.
+	realHome, _ := os.UserHomeDir()
+	effectiveHome := realHome
+	isolatedUser := identity.UserID != "" && (identity.OrgWing || identity.SharedHost)
+	if isolatedUser {
+		effectiveHome = filepath.Join(cfg.Dir, "user-homes", userHash(identity.UserID))
+	}
 	for _, entry := range eggCfg.FS {
 		// Resolve relative paths in fs entries
 		mode, path, ok := strings.Cut(entry, ":")
@@ -1044,8 +1170,17 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		args = append(args, "--fs", mode+":"+path)
 	}
+	for _, path := range eggCfg.SSHAgentSocketDenyPaths(effectiveHome, identity.SharedHost) {
+		args = append(args, "--fs", "deny:"+path)
+	}
 	for _, d := range eggCfg.Network.Domains {
 		args = append(args, "--network", d)
+	}
+	for _, port := range eggCfg.Network.LocalPorts {
+		args = append(args, "--local-port", strconv.Itoa(port))
+	}
+	if eggCfg.Network.Mode != "" {
+		args = append(args, "--network-mode", eggCfg.Network.Mode)
 	}
 	if eggCfg.Network.AgentDomains != "" {
 		args = append(args, "--agent-domains", eggCfg.Network.AgentDomains)
@@ -1056,12 +1191,6 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// On org wings, ALL users get per-user homes for isolation.
 	// Computed before BuildEnvMap so ~ expansion in FS rules (e.g. deny:~/.ssh)
 	// resolves against the correct home.
-	realHome, _ := os.UserHomeDir()
-	effectiveHome := realHome
-	isolatedUser := identity.UserID != "" && (identity.OrgWing || identity.SharedHost)
-	if isolatedUser {
-		effectiveHome = filepath.Join(cfg.Dir, "user-homes", userHash(identity.UserID))
-	}
 	envMap := eggCfg.BuildEnvMap(effectiveHome)
 	if identity.SharedHost {
 		safe := map[string]bool{
@@ -1121,9 +1250,15 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				src := filepath.Join(realHome, rc)
 				dst := filepath.Join(perUserHome, rc)
 				if _, err := os.Stat(src); err == nil {
-					if _, err := os.Lstat(dst); err != nil {
-						os.Symlink(src, dst)
+					if _, err := os.Lstat(dst); errors.Is(err, os.ErrNotExist) {
+						if err := os.Symlink(src, dst); err != nil {
+							return nil, fmt.Errorf("seed shell config %s: %w", rc, err)
+						}
+					} else if err != nil {
+						return nil, fmt.Errorf("inspect shell config %s: %w", rc, err)
 					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return nil, fmt.Errorf("inspect source shell config %s: %w", rc, err)
 				}
 			}
 		}
@@ -1135,14 +1270,19 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				return nil, fmt.Errorf("prepare agent bin directory: %w", err)
 			}
 		}
-		if agentBin, err := exec.LookPath(agentName); err == nil {
-			dst := filepath.Join(localBin, agentName)
+		runtimeCommand := agentRuntimeCommand(agentName)
+		if agentBin, err := exec.LookPath(runtimeCommand); err == nil {
+			dst := filepath.Join(localBin, runtimeCommand)
 			if identity.SealedFS {
-				if err := installSharedAgentBinary(agentBin, perUserHome, agentName); err != nil {
+				if err := installSharedAgentBinary(agentBin, perUserHome, runtimeCommand); err != nil {
 					return nil, fmt.Errorf("prepare shared-host %s runtime: %w", agentName, err)
 				}
-			} else if _, err := os.Lstat(dst); err != nil {
-				os.Symlink(agentBin, dst)
+			} else if _, err := os.Lstat(dst); errors.Is(err, os.ErrNotExist) {
+				if err := os.Symlink(agentBin, dst); err != nil {
+					return nil, fmt.Errorf("link agent runtime: %w", err)
+				}
+			} else if err != nil {
+				return nil, fmt.Errorf("inspect agent runtime link: %w", err)
 			}
 		}
 		args = append(args, "--user-home", perUserHome)
@@ -1159,23 +1299,8 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// the per-user home: onboarding and theme now land there immediately and
 	// survive across sessions regardless of how the previous one ended.
 	if isolatedUser && agentName == "claude" {
-		claudeDir := filepath.Join(effectiveHome, ".claude")
-		envMap["CLAUDE_CONFIG_DIR"] = claudeDir
-		// One-time migration: users who already completed onboarding under the
-		// old layout have their config at ~/.claude.json (HOME root). Relocating
-		// CLAUDE_CONFIG_DIR would leave that behind and re-prompt them once on
-		// release. Seed the new path from the old file if it hasn't been created
-		// yet. Only a regular file is migrated — a symlink at the root is the
-		// shared empty stub, whose users never had persisted state to preserve.
-		newCfg := filepath.Join(claudeDir, ".claude.json")
-		oldCfg := filepath.Join(effectiveHome, ".claude.json")
-		if _, err := os.Stat(newCfg); os.IsNotExist(err) {
-			if fi, lerr := os.Lstat(oldCfg); lerr == nil && fi.Mode().IsRegular() {
-				if data, rerr := os.ReadFile(oldCfg); rerr == nil {
-					os.MkdirAll(claudeDir, 0700)
-					os.WriteFile(newCfg, data, 0600)
-				}
-			}
+		if err := prepareIsolatedClaudeConfig(effectiveHome, envMap); err != nil {
+			return nil, err
 		}
 	}
 	// Rebuild agent settings every session for org wing users.
@@ -1185,11 +1310,17 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
 			settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
-			os.MkdirAll(filepath.Dir(settingsDst), 0700)
+			if err := os.MkdirAll(filepath.Dir(settingsDst), 0700); err != nil {
+				return nil, fmt.Errorf("prepare agent settings directory: %w", err)
+			}
 			baseSettings := make(map[string]any)
 			// Read existing session settings to preserve user preferences
 			if data, err := os.ReadFile(settingsDst); err == nil {
-				json.Unmarshal(data, &baseSettings)
+				if err := json.Unmarshal(data, &baseSettings); err != nil {
+					return nil, fmt.Errorf("parse agent settings: %w", err)
+				}
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("read agent settings: %w", err)
 			}
 			// Layer host settings on top (permissions from host always win)
 			if srcPath, ok := eggCfg.AgentSettings[agentName]; ok {
@@ -1213,8 +1344,12 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				}
 			}
 			if len(baseSettings) > 0 {
-				if data, err := json.MarshalIndent(baseSettings, "", "  "); err == nil {
-					os.WriteFile(settingsDst, append(data, '\n'), 0644)
+				data, err := json.MarshalIndent(baseSettings, "", "  ")
+				if err != nil {
+					return nil, fmt.Errorf("encode agent settings: %w", err)
+				}
+				if err := writeAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
+					return nil, fmt.Errorf("write agent settings: %w", err)
 				}
 			}
 		}
@@ -1223,7 +1358,9 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// it. The key never enters the agent's environment. The file lives at
 	// effectiveHome/.anthropic_key (not per-session) so the settings.json
 	// path doesn't go stale when sessions end or race with each other.
-	setupAPIKeyHelper(agentName, envMap, effectiveHome)
+	if err := setupAPIKeyHelper(agentName, envMap, effectiveHome); err != nil {
+		return nil, err
+	}
 	sessionEnv := make(map[string]string, len(envMap)+6)
 	for k, v := range envMap {
 		// Skip WT_ prefix — reserved for session identity injection
@@ -1298,10 +1435,10 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	args, envPath, err := prepareEggEnvironmentTransport(dir, args, sessionEnv)
 	if err != nil {
-		logFile.Close()
+		closeWithLog("egg log", logFile)
 		return nil, err
 	}
-	defer os.Remove(envPath)
+	defer removeWithLog(envPath)
 
 	child := exec.Command(exe, args...)
 	// Always build a clean env for the wt-egg-run child process.
@@ -1329,10 +1466,13 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := child.Start(); err != nil {
-		logFile.Close()
+		closeWithLog("egg log", logFile)
 		return nil, fmt.Errorf("start egg: %w", err)
 	}
-	logFile.Close()
+	if err := logFile.Close(); err != nil {
+		abandonStartedDaemon(child)
+		return nil, fmt.Errorf("close egg log: %w", err)
+	}
 
 	// Poll for socket
 	sockPath := filepath.Join(dir, "egg.sock")
@@ -1445,13 +1585,23 @@ func parseMemFlag(s string) uint64 {
 	return n * multiplier
 }
 
+// agentRuntimeCommand is the single translation from Wingthing's public agent
+// name to the executable placed in an isolated user's PATH. Most names match;
+// Cursor is intentionally exposed as "cursor" while its CLI binary is "agent".
+func agentRuntimeCommand(agentName string) string {
+	if definition, ok := agent.LookupDefinition(agentName); ok {
+		return definition.Command
+	}
+	return agentName
+}
+
 // setupAPIKeyHelper moves ANTHROPIC_API_KEY out of the environment and into a
 // stable file + apiKeyHelper setting. This prevents the key from entering the
 // agent's env and avoids the v0.128.0 race where per-session paths in
 // settings.json went stale.
-func setupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome string) {
+func setupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome string) error {
 	if agentName != "claude" {
-		return
+		return nil
 	}
 	v, ok := envMap["ANTHROPIC_API_KEY"]
 	if ok {
@@ -1466,23 +1616,38 @@ func setupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 		v = os.Getenv("ANTHROPIC_API_KEY")
 	}
 	if v == "" {
-		return
+		return nil
 	}
 	keyFile := filepath.Join(effectiveHome, ".anthropic_key")
-	os.Remove(keyFile) // remove old 0400 file so WriteFile can create fresh
-	os.WriteFile(keyFile, []byte(v), 0400)
+	if err := os.MkdirAll(effectiveHome, 0700); err != nil {
+		return fmt.Errorf("prepare API key helper directory: %w", err)
+	}
+	if err := writeAtomicMetadataFile(keyFile, []byte(v), 0400); err != nil {
+		return fmt.Errorf("write API key helper: %w", err)
+	}
 	agentProfile := egg.Profile(agentName)
 	if agentProfile.SettingsFile == "" {
-		return
+		return nil
 	}
 	settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
-	os.MkdirAll(filepath.Dir(settingsDst), 0700)
+	if err := os.MkdirAll(filepath.Dir(settingsDst), 0700); err != nil {
+		return fmt.Errorf("prepare API key settings directory: %w", err)
+	}
 	settings := make(map[string]any)
 	if data, err := os.ReadFile(settingsDst); err == nil {
-		json.Unmarshal(data, &settings)
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("parse API key settings: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read API key settings: %w", err)
 	}
 	settings["apiKeyHelper"] = "cat " + keyFile
-	if data, err := json.MarshalIndent(settings, "", "  "); err == nil {
-		os.WriteFile(settingsDst, append(data, '\n'), 0644)
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode API key settings: %w", err)
 	}
+	if err := writeAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
+		return fmt.Errorf("write API key settings: %w", err)
+	}
+	return nil
 }

@@ -51,7 +51,67 @@ const (
 	TypeRelayRestart = "relay.restart" // relay → all: server shutting down, reconnect
 	TypeWingOffline  = "wing.offline"  // relay → PTY browsers: wing disconnected
 	TypeError        = "error"
+
+	TunnelPurposeSignal    = "webrtc-signal"
+	TunnelPurposeDiscovery = "wing-discovery"
+	TunnelPurposePasskey   = "passkey-auth"
+	TunnelPurposeControl   = "wing-control"
+
+	HostedRelayAllow = "allow"
+	HostedRelayDeny  = "deny"
+
+	MaxCoordinationTunnelPayload = 256 * 1024
 )
+
+// ValidSessionID reports whether an ID is safe to use as one filesystem path
+// component and as a bounded in-memory routing key. Relay-created IDs are
+// compact UUID-derived values, while the broader character set preserves
+// compatibility with older short local sessions and human-readable
+// test/automation IDs.
+func ValidSessionID(sessionID string) bool {
+	if sessionID == "" || sessionID == "." || sessionID == ".." || len(sessionID) > 128 {
+		return false
+	}
+	for _, r := range sessionID {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// TunnelPurposeForInnerType declares the coordinator-visible class of an
+// otherwise encrypted tunnel request. Direct-only accounts may use only the
+// bounded coordination classes; the wing verifies the declaration after it
+// decrypts the inner type.
+func TunnelPurposeForInnerType(innerType string) string {
+	switch innerType {
+	case "webrtc.offer":
+		return TunnelPurposeSignal
+	case "wing.info":
+		return TunnelPurposeDiscovery
+	case "passkey.auth.begin", "passkey.auth.finish":
+		return TunnelPurposePasskey
+	default:
+		return TunnelPurposeControl
+	}
+}
+
+func IsCoordinationTunnelPurpose(purpose string) bool {
+	return purpose == TunnelPurposeSignal || purpose == TunnelPurposeDiscovery || purpose == TunnelPurposePasskey
+}
+
+func TunnelPurposeMatches(purpose, innerType string) bool {
+	return purpose == TunnelPurposeForInnerType(innerType)
+}
+
+// HostedRelayAllowed preserves compatibility with older wings that omit the
+// additive policy. Unknown explicit values fail closed.
+func HostedRelayAllowed(policy string) bool {
+	return policy == "" || policy == HostedRelayAllow
+}
 
 // WingConfig is sent by the wing when lock state changes (e.g. lock/unlock, allow/revoke).
 type WingConfig struct {
@@ -59,6 +119,8 @@ type WingConfig struct {
 	WingID       string `json:"wing_id"`
 	Locked       bool   `json:"locked"`
 	AllowedCount int    `json:"allowed_count"`
+	DirectMCP    bool   `json:"direct_mcp,omitempty"`
+	HostedRelay  string `json:"hosted_relay,omitempty"`
 }
 
 // Envelope wraps every WebSocket message with a type field for routing.
@@ -90,6 +152,11 @@ type WingRegister struct {
 	PublicKey    string        `json:"public_key,omitempty"`    // wing's X25519 identity key (base64)
 	Locked       bool          `json:"locked"`                  // explicit locked flag from wing.yaml
 	AllowedCount int           `json:"allowed_count,omitempty"` // number of allowed keys
+	// PurposeBinding means this wing verifies the coordinator-visible tunnel
+	// purpose against the decrypted inner message before dispatch.
+	PurposeBinding bool   `json:"purpose_binding,omitempty"`
+	DirectMCP      bool   `json:"direct_mcp,omitempty"`
+	HostedRelay    string `json:"hosted_relay,omitempty"`
 }
 
 // WingHeartbeat is sent by the wing every 30s.
@@ -100,9 +167,11 @@ type WingHeartbeat struct {
 
 // RegisteredMsg is the relay's acknowledgment of a successful wing registration.
 type RegisteredMsg struct {
-	Type        string `json:"type"`
-	WingID      string `json:"wing_id"`
-	RelayPubKey string `json:"relay_pub_key,omitempty"` // base64 DER EC P-256 public key for JWT verification
+	Type           string   `json:"type"`
+	WingID         string   `json:"wing_id"`
+	RelayPubKey    string   `json:"relay_pub_key,omitempty"` // base64 DER EC P-256 public key for JWT verification
+	PasskeyRPID    string   `json:"passkey_rp_id,omitempty"`
+	PasskeyOrigins []string `json:"passkey_origins,omitempty"`
 }
 
 // ErrorMsg is sent for protocol/session errors. Session and viewer IDs let a
@@ -110,6 +179,7 @@ type RegisteredMsg struct {
 type ErrorMsg struct {
 	Type      string `json:"type"`
 	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	ViewerID  string `json:"viewer_id,omitempty"`
 }
@@ -245,6 +315,7 @@ type TunnelRequest struct {
 	Type           string   `json:"type"`
 	WingID         string   `json:"wing_id"`
 	RequestID      string   `json:"request_id"`
+	Purpose        string   `json:"purpose,omitempty"`
 	SenderPub      string   `json:"sender_pub,omitempty"`      // browser X25519 identity pubkey
 	Payload        string   `json:"payload"`                   // base64(AES-GCM encrypted)
 	SenderUserID   string   `json:"sender_user_id,omitempty"`  // relay-injected user ID

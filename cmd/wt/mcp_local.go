@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
@@ -29,6 +31,8 @@ import (
 )
 
 const localMCPProtocolVersion = "2025-11-25"
+
+const maxConcurrentLocalMCPCalls = 64
 
 func mcpCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -88,6 +92,7 @@ func mcpCmd() *cobra.Command {
 			server := &localMCPServer{
 				cfg: cfg, in: os.Stdin, out: os.Stdout, logs: os.Stderr,
 				principal: owner, actor: clientID, unsandboxed: unsandboxed,
+				surface: control.SurfaceLocalMCP,
 			}
 			if configured {
 				server.grants = grantSet(clientConfig.Grants)
@@ -100,6 +105,7 @@ func mcpCmd() *cobra.Command {
 	stdioCmd.Flags().StringVar(&clientName, "client", "", "local MCP principal name (or WT_MCP_CLIENT)")
 	stdioCmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "trust an outer VM/container boundary for all sessions and prompt runs")
 	cmd.AddCommand(stdioCmd)
+	cmd.AddCommand(connectMCPCmd())
 	return cmd
 }
 
@@ -116,11 +122,26 @@ type localMCPServer struct {
 	spawnMu           sync.Mutex
 	admitMu           sync.Mutex // held across bounds check + spawn + record
 	spawnTimes        []time.Time
+	admission         *mcpAdmissionState // shared by remote connections on one wing
 	identity          EggIdentity
 	actor             string
+	surface           control.Surface
 	allowedPaths      []string
 	enforcePathBounds bool
 	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error
+}
+
+// mcpAdmissionState keeps process-local spawn admission shared across reconnecting
+// remote MCP clients. The filesystem-backed max-sessions check is also serialized by
+// this lock, so two data channels cannot race through the final available slot.
+// This remains a guardrail rather than a durable quota across wing restarts.
+type mcpAdmissionState struct {
+	mu         sync.Mutex
+	spawnTimes map[string][]time.Time
+}
+
+func newMCPAdmissionState() *mcpAdmissionState {
+	return &mcpAdmissionState{spawnTimes: map[string][]time.Time{}}
 }
 
 type activeMCPAgentRun struct {
@@ -149,8 +170,8 @@ func (s *localMCPServer) toolAllowed(name string) bool {
 	if s.grants == nil {
 		return true
 	}
-	grant, known := localMCPToolGrants[name]
-	return known && s.grants[grant]
+	tool, known := control.Lookup(name)
+	return known && s.grants[tool.Grant]
 }
 
 type localMCPRequest struct {
@@ -158,6 +179,15 @@ type localMCPRequest struct {
 	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+// MCP clients may attach protocol metadata such as progress tokens to a tool
+// call. It is coordinator metadata, not a tool argument, so accept it at the
+// envelope boundary while keeping strict decoding for every other field.
+type localMCPToolCallParams struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+	Meta      json.RawMessage `json:"_meta,omitempty"`
 }
 
 type localMCPResponse struct {
@@ -172,19 +202,16 @@ type localMCPError struct {
 	Message string `json:"message"`
 }
 
-type localMCPTool struct {
-	Name        string         `json:"name"`
-	Title       string         `json:"title,omitempty"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
-	Annotations map[string]any `json:"annotations,omitempty"`
-}
+type localMCPTool = control.Tool
 
 func (s *localMCPServer) serve(ctx context.Context) error {
+	callCtx, cancelCalls := context.WithCancel(ctx)
+	defer cancelCalls()
 	scanner := bufio.NewScanner(s.in)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	encoder := json.NewEncoder(s.out)
 	var calls sync.WaitGroup
+	requestSlots := make(chan struct{}, maxConcurrentLocalMCPCalls)
 	var encodeMu sync.Mutex
 	var encodeErr error
 	writeResponse := func(response localMCPResponse) {
@@ -195,15 +222,18 @@ func (s *localMCPServer) serve(ctx context.Context) error {
 		}
 	}
 	dispatch := func(request localMCPRequest) {
-		response, respond := s.handle(ctx, request)
+		response, respond := s.handle(callCtx, request)
 		if respond {
 			writeResponse(response)
 		}
 	}
+	contextCanceled := false
+scanLoop:
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			contextCanceled = true
+			break scanLoop
 		default:
 		}
 
@@ -219,20 +249,46 @@ func (s *localMCPServer) serve(ctx context.Context) error {
 		// independently lets the same stdio client send agent_stop, steering,
 		// and status calls while another request is waiting.
 		if request.Method == "tools/call" {
+			if !acquireLocalMCPCallSlot(requestSlots) {
+				if len(request.ID) > 0 {
+					writeResponse(localMCPResponse{
+						JSONRPC: "2.0", ID: request.ID,
+						Error: &localMCPError{Code: -32000, Message: "too many concurrent tool calls"},
+					})
+				}
+				continue
+			}
 			calls.Add(1)
 			go func() {
 				defer calls.Done()
+				defer func() { <-requestSlots }()
 				dispatch(request)
 			}()
 			continue
 		}
 		dispatch(request)
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read MCP request: %w", err)
-	}
+	scanErr := scanner.Err()
+	// stdin EOF means the owning MCP client is gone. Cancel bounded waits and
+	// transport calls, but not the durable sessions/runs they were observing.
+	cancelCalls()
 	calls.Wait()
+	if scanErr != nil {
+		return fmt.Errorf("read MCP request: %w", scanErr)
+	}
+	if contextCanceled {
+		return ctx.Err()
+	}
 	return encodeErr
+}
+
+func acquireLocalMCPCallSlot(slots chan struct{}) bool {
+	select {
+	case slots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *localMCPServer) handle(ctx context.Context, request localMCPRequest) (localMCPResponse, bool) {
@@ -272,10 +328,7 @@ func (s *localMCPServer) handle(ctx context.Context, request localMCPRequest) (l
 		}
 		response.Result = map[string]any{"tools": tools}
 	case "tools/call":
-		var call struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-		}
+		var call localMCPToolCallParams
 		if err := decodeStrict(request.Params, &call); err != nil {
 			response.Error = &localMCPError{Code: -32602, Message: "invalid tools/call params: " + err.Error()}
 			break
@@ -303,7 +356,7 @@ func (s *localMCPServer) handle(ctx context.Context, request localMCPRequest) (l
 }
 
 func (s *localMCPServer) mcpInstructions() string {
-	base := "Wingthing is a local-first runtime. Use terminal tools for persistent PTYs, agent_run for supervised semantic work, prompt_loop for bounded iteration, and swarm_run for a dependency DAG."
+	base := "Wingthing is an agent manager for agents. Use terminal tools for persistent PTYs, agent_run for supervised semantic work, prompt_loop for bounded iteration, and swarm_run for a dependency DAG."
 	if s.unsandboxed {
 		return base + " This server trusts an outer VM/container boundary: spawned processes have the full authority of the local OS user."
 	}
@@ -311,308 +364,7 @@ func (s *localMCPServer) mcpInstructions() string {
 }
 
 func localMCPTools() []localMCPTool {
-	stringProperty := func(description string) map[string]any {
-		return map[string]any{"type": "string", "description": description}
-	}
-	objectSchema := func(properties map[string]any, required ...string) map[string]any {
-		schema := map[string]any{
-			"type":                 "object",
-			"properties":           properties,
-			"additionalProperties": false,
-		}
-		if len(required) > 0 {
-			schema["required"] = required
-		}
-		return schema
-	}
-	readOnly := map[string]any{"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}
-	mutating := map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false}
-	modelCall := map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true}
-
-	tools := []localMCPTool{
-		{
-			Name: "wingthing_capabilities", Title: "Wingthing capabilities",
-			Description: "Discover supported and installed agent CLIs plus the local runtime primitives available on this machine.",
-			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
-		},
-		{
-			Name: "message_send", Title: "Send owner message",
-			Description: "Send a durable message to another Codex, Claude, or other client authenticated as the same Wingthing owner.",
-			InputSchema: objectSchema(map[string]any{
-				"content":  stringProperty("Message body; stored owner-scoped and omitted from audit logs"),
-				"channel":  stringProperty("Conversation channel; defaults to factory"),
-				"to_actor": stringProperty("Optional recipient actor ID; empty broadcasts to the owner's other clients"),
-				"kind": map[string]any{
-					"type": "string", "enum": []string{"message", "status", "question", "answer", "evidence", "error"},
-					"default": "message", "description": "Structured message kind",
-				},
-				"reply_to": stringProperty("Optional owner-scoped message ID being answered"),
-				"ttl_seconds": map[string]any{
-					"type": "integer", "minimum": 60, "maximum": 604800, "default": 86400,
-					"description": "Retention time from one minute through seven days",
-				},
-			}, "content"), Annotations: mutating,
-		},
-		{
-			Name: "message_list", Title: "List owner messages",
-			Description: "List durable messages visible to this authenticated actor in ascending order, with a cursor for the next call.",
-			InputSchema: objectSchema(map[string]any{
-				"channel":      stringProperty("Conversation channel; defaults to factory"),
-				"after_id":     stringProperty("Return messages after this owner-scoped message ID"),
-				"limit":        map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "default": 20},
-				"include_sent": map[string]any{"type": "boolean", "default": false, "description": "Include messages sent by this actor"},
-			}), Annotations: readOnly,
-		},
-		{
-			Name: "message_wait", Title: "Wait for owner message",
-			Description: "Wait until another same-owner client sends a visible message after the supplied cursor, or until the bounded timeout expires.",
-			InputSchema: objectSchema(map[string]any{
-				"channel":         stringProperty("Conversation channel; defaults to factory"),
-				"after_id":        stringProperty("Wait for messages after this owner-scoped message ID"),
-				"limit":           map[string]any{"type": "integer", "minimum": 1, "maximum": 20, "default": 20},
-				"timeout_seconds": map[string]any{"type": "number", "minimum": 0.1, "maximum": 3600, "default": 30},
-			}), Annotations: readOnly,
-		},
-		{
-			Name: "sandbox_explain", Title: "Explain sandbox policy",
-			Description: "Resolve the effective sandbox policy for an agent: mounts, denied paths, network domains, whether the network boundary is actually enforced on this platform, and every hole drilled automatically for the agent with the reason for it.",
-			InputSchema: objectSchema(map[string]any{
-				"agent":             stringProperty("Agent name; omit for a plain shell session"),
-				"config":            stringProperty("Path to an egg.yaml; discovered from the working directory when omitted"),
-				"cwd":               stringProperty("Directory to discover egg.yaml in; defaults to the MCP server's current directory"),
-				"provider_base_url": stringProperty("Optional provider URL whose exact host becomes the derived egress domain"),
-			}), Annotations: readOnly,
-		},
-		{
-			Name: "terminal_list", Title: "List persistent terminals",
-			Description: "List live local Wingthing sessions with stable IDs, labels, process kind, agent, activity, and working directory.",
-			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
-		},
-		{
-			Name: "terminal_read", Title: "Read terminal snapshot",
-			Description: "Read the current ANSI snapshot of one persistent terminal. This is raw terminal state, not semantic agent state.",
-			InputSchema: objectSchema(map[string]any{
-				"session": stringProperty("Session ID, unique ID prefix, or label"),
-			}, "session"), Annotations: readOnly,
-		},
-		{
-			Name: "terminal_send", Title: "Send terminal input",
-			Description: "Send text to a persistent PTY, optionally followed by Enter.",
-			InputSchema: objectSchema(map[string]any{
-				"session": stringProperty("Session ID, unique ID prefix, or label"),
-				"input":   stringProperty("Text to send"),
-				"enter":   map[string]any{"type": "boolean", "description": "Append Enter after the text", "default": false},
-			}, "session", "input"), Annotations: mutating,
-		},
-		{
-			Name: "terminal_wait", Title: "Wait for terminal output",
-			Description: "Wait without polling until a terminal produces text or becomes idle.",
-			InputSchema: objectSchema(map[string]any{
-				"session":         stringProperty("Session ID, unique ID prefix, or label"),
-				"contains":        stringProperty("Text to wait for; omit to wait for idle"),
-				"idle_seconds":    map[string]any{"type": "number", "minimum": 0.2, "description": "Idle duration when contains is omitted", "default": 2},
-				"timeout_seconds": map[string]any{"type": "number", "minimum": 0.1, "maximum": 3600, "description": "Maximum wait", "default": 30},
-			}, "session"), Annotations: readOnly,
-		},
-		{
-			Name: "terminal_start", Title: "Start persistent terminal",
-			Description: "Start a durable shell or command terminal under the MCP server's declared isolation mode and return immediately with its session ID.",
-			InputSchema: objectSchema(map[string]any{
-				"command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "default": []string{}, "description": "Executable and arguments; omit to start $SHELL"},
-				"cwd":     stringProperty("Working directory; defaults to the MCP server's current directory"),
-				"label":   stringProperty("Optional stable human-readable session label"),
-			}), Annotations: mutating,
-		},
-		{
-			Name: "agent_start", Title: "Start persistent agent terminal",
-			Description: "Start a supported agent in a durable PTY under the MCP server's declared isolation mode and return immediately with its session ID.",
-			InputSchema: objectSchema(map[string]any{
-				"agent":      stringProperty("Supported agent name"),
-				"model":      stringProperty("Provider model name, such as opus or gpt-5.6-terra"),
-				"cwd":        stringProperty("Working directory; defaults to the MCP server's current directory"),
-				"label":      stringProperty("Optional stable human-readable session label"),
-				"unattended": map[string]any{"type": "boolean", "description": "Enable the agent's unattended permission mode", "default": false},
-				"args": map[string]any{
-					"type": "array", "items": map[string]any{"type": "string"}, "default": []string{},
-					"description": "Extra arguments passed to the agent CLI verbatim, after Wingthing's own flags. Use the agent's native syntax, for example [\"--model\",\"sonnet\"] for claude or [\"-m\",\"gpt-5.6-terra\"] for codex.",
-				},
-			}, "agent"), Annotations: modelCall,
-		},
-		{
-			Name: "agent_run", Title: "Run agent task",
-			Description: "Start a supervised headless agent run and return immediately with an owner-scoped run ID. Use agent_wait and agent_result instead of reading terminal ANSI.",
-			InputSchema: objectSchema(map[string]any{
-				"prompt":          stringProperty("Task for the agent"),
-				"agent":           stringProperty("Supported agent name, such as codex or claude"),
-				"model":           stringProperty("Provider model name, such as gpt-5.6-terra or opus"),
-				"cwd":             stringProperty("Working directory; defaults to the MCP server's current directory"),
-				"label":           stringProperty("Short human-readable purpose recorded with the run"),
-				"timeout_seconds": map[string]any{"type": "integer", "minimum": 10, "maximum": 7200, "default": 900, "description": "Provider process deadline"},
-			}, "prompt", "agent"), Annotations: modelCall,
-		},
-		{
-			Name: "agent_status", Title: "Get agent run status",
-			Description: "Read bounded lifecycle metadata for one run owned by this MCP principal.",
-			InputSchema: objectSchema(map[string]any{
-				"run_id": stringProperty("Wingthing agent run ID"),
-			}, "run_id"), Annotations: readOnly,
-		},
-		{
-			Name: "agent_wait", Title: "Wait for agent run",
-			Description: "Wait without polling until an agent run reaches a terminal state or the requested timeout expires.",
-			InputSchema: objectSchema(map[string]any{
-				"run_id":          stringProperty("Wingthing agent run ID"),
-				"timeout_seconds": map[string]any{"type": "number", "minimum": 0.1, "maximum": 3600, "default": 30},
-			}, "run_id"), Annotations: readOnly,
-		},
-		{
-			Name: "agent_result", Title: "Read agent result",
-			Description: "Read the final semantic output or error for one completed run, with an explicit response bound.",
-			InputSchema: objectSchema(map[string]any{
-				"run_id":    stringProperty("Wingthing agent run ID"),
-				"max_chars": map[string]any{"type": "integer", "minimum": 1, "maximum": 200000, "default": 50000},
-			}, "run_id"), Annotations: readOnly,
-		},
-		{
-			Name: "agent_events", Title: "Read agent run events",
-			Description: "Read bounded lifecycle events for one owned run.",
-			InputSchema: objectSchema(map[string]any{
-				"run_id": stringProperty("Wingthing agent run ID"),
-				"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
-			}, "run_id"), Annotations: readOnly,
-		},
-		{
-			Name: "agent_steer", Title: "Steer agent run",
-			Description: "Queue an owner-scoped follow-up run that receives the prior request and result plus new direction.",
-			InputSchema: objectSchema(map[string]any{
-				"run_id": stringProperty("Run to follow up"),
-				"prompt": stringProperty("New direction for the agent"),
-				"model":  stringProperty("Optional model override for the follow-up"),
-			}, "run_id", "prompt"), Annotations: modelCall,
-		},
-		{
-			Name: "agent_stop", Title: "Stop agent run",
-			Description: "Cancel an active owner-scoped run and its provider process tree.",
-			InputSchema: objectSchema(map[string]any{
-				"run_id": stringProperty("Wingthing agent run ID"),
-			}, "run_id"),
-			Annotations: map[string]any{"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false},
-		},
-		{
-			Name: "terminal_rename", Title: "Rename persistent terminal",
-			Description: "Assign a stable human-readable label to a terminal owned by this MCP principal.",
-			InputSchema: objectSchema(map[string]any{
-				"session": stringProperty("Session ID, unique ID prefix, or current label"),
-				"name":    stringProperty("New session label"),
-			}, "session", "name"), Annotations: mutating,
-		},
-		{
-			Name: "terminal_stop", Title: "Stop persistent terminal",
-			Description: "Stop one Wingthing session and its process tree.",
-			InputSchema: objectSchema(map[string]any{
-				"session": stringProperty("Session ID, unique ID prefix, or label"),
-			}, "session"),
-			Annotations: map[string]any{"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false},
-		},
-		{
-			Name: "prompt_list", Title: "List saved prompts",
-			Description: "List current named prompt assets with immutable revisions, variables, default agents, and working directories.",
-			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
-		},
-		{
-			Name: "prompt_get", Title: "Get saved prompt",
-			Description: "Read the current or an immutable historical revision of a named prompt asset.",
-			InputSchema: objectSchema(map[string]any{
-				"name":     stringProperty("Prompt asset name"),
-				"revision": stringProperty("Optional immutable revision; current revision when omitted"),
-			}, "name"), Annotations: readOnly,
-		},
-		{
-			Name: "prompt_save", Title: "Save prompt",
-			Description: "Create or atomically update a named prompt template while preserving a content-addressed historical revision.",
-			InputSchema: objectSchema(map[string]any{
-				"name":              stringProperty("Prompt asset name"),
-				"description":       stringProperty("Human-readable purpose"),
-				"template":          stringProperty("Go text/template prompt body; variables use {{.name}}"),
-				"variables":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "default": []string{}},
-				"agent":             stringProperty("Optional default supported agent"),
-				"cwd":               stringProperty("Optional absolute default working directory"),
-				"expected_revision": stringProperty("Reject the update unless this is still the current revision"),
-			}, "name", "template"), Annotations: mutating,
-		},
-		{
-			Name: "prompt_run", Title: "Run one prompt",
-			Description: "Run either a raw prompt or a named immutable prompt revision through a supported agent, under the MCP server's declared isolation mode and with durable task provenance.",
-			InputSchema: objectSchema(map[string]any{
-				"prompt":      stringProperty("Raw prompt to execute; mutually exclusive with prompt_name"),
-				"prompt_name": stringProperty("Saved prompt asset; mutually exclusive with prompt"),
-				"revision":    stringProperty("Optional immutable saved-prompt revision"),
-				"variables":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "default": map[string]string{}},
-				"agent":       stringProperty("Agent override; then prompt default; then Wingthing default"),
-				"cwd":         stringProperty("Working-directory override; then prompt default; then MCP server cwd"),
-			}), Annotations: modelCall,
-		},
-		{
-			Name: "task_get", Title: "Get prompt task",
-			Description: "Get structured status, output, error, timing, agent, and dependency data for a Wingthing task.",
-			InputSchema: objectSchema(map[string]any{
-				"task_id": stringProperty("Wingthing task ID"),
-			}, "task_id"), Annotations: readOnly,
-		},
-		{
-			Name: "prompt_loop", Title: "Run bounded prompt loop",
-			Description: "Run a prompt sequentially for a bounded number of iterations. Each iteration receives the prior result and stops early when until_contains matches.",
-			InputSchema: objectSchema(map[string]any{
-				"prompt":         stringProperty("Base prompt for every iteration"),
-				"agent":          stringProperty("Supported agent name; defaults to Wingthing configuration"),
-				"cwd":            stringProperty("Working directory shared by every iteration"),
-				"max_iterations": map[string]any{"type": "integer", "minimum": 1, "maximum": 12, "default": 3},
-				"until_contains": stringProperty("Stop when an iteration's output contains this text"),
-			}, "prompt"), Annotations: modelCall,
-		},
-		{
-			Name: "swarm_run", Title: "Run agent swarm DAG",
-			Description: "Run a bounded dependency graph of prompts. Independent nodes execute in parallel; completed dependency outputs are injected into downstream prompts.",
-			InputSchema: objectSchema(map[string]any{
-				"name":         stringProperty("Human-readable swarm purpose"),
-				"cwd":          stringProperty("Working directory shared by every node"),
-				"max_parallel": map[string]any{"type": "integer", "minimum": 1, "maximum": 4, "default": 2},
-				"nodes": map[string]any{
-					"type": "array", "minItems": 1, "maxItems": 16,
-					"items": objectSchema(map[string]any{
-						"id":         stringProperty("Unique logical node ID"),
-						"prompt":     stringProperty("Prompt executed by this node"),
-						"agent":      stringProperty("Supported agent name; defaults to Wingthing configuration"),
-						"depends_on": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "default": []string{}},
-					}, "id", "prompt"),
-				},
-			}, "nodes"), Annotations: modelCall,
-		},
-	}
-	return tools
-}
-
-var roostControlToolNames = map[string]bool{
-	"wingthing_capabilities": true,
-	"message_send":           true,
-	"message_list":           true,
-	"message_wait":           true,
-	"sandbox_explain":        true,
-	"terminal_list":          true,
-	"terminal_read":          true,
-	"terminal_send":          true,
-	"terminal_wait":          true,
-	"terminal_start":         true,
-	"agent_start":            true,
-	"agent_run":              true,
-	"agent_status":           true,
-	"agent_wait":             true,
-	"agent_result":           true,
-	"agent_events":           true,
-	"agent_steer":            true,
-	"agent_stop":             true,
-	"terminal_rename":        true,
-	"terminal_stop":          true,
+	return control.Tools(control.SurfaceLocalMCP)
 }
 
 // roostNativeMCPTools adapts the local typed control surface to authenticated
@@ -620,10 +372,8 @@ var roostControlToolNames = map[string]bool{
 // bearer-token verification and never accepted from tool arguments.
 func roostNativeMCPTools(cfg *config.Config, sharedHost bool) []mcppkg.NativeTool {
 	var tools []mcppkg.NativeTool
-	for _, localTool := range localMCPTools() {
-		if !roostControlToolNames[localTool.Name] {
-			continue
-		}
+	admission := newMCPAdmissionState()
+	for _, localTool := range control.ToolsForAuthority(control.SurfaceHTTPMCP, control.AuthorityWing) {
 		tool := localTool
 		tools = append(tools, mcppkg.NativeTool{
 			Name: tool.Name, Title: tool.Title, Description: tool.Description,
@@ -636,17 +386,7 @@ func roostNativeMCPTools(cfg *config.Config, sharedHost bool) []mcppkg.NativeToo
 				if err != nil {
 					return nil, true, err
 				}
-				server := &localMCPServer{
-					cfg: cfg, logs: os.Stderr,
-					principal:         roostSessionPrincipal(principal.UserID),
-					actor:             principal.ClientID,
-					allowedPaths:      paths,
-					enforcePathBounds: true,
-					identity: EggIdentity{
-						UserID: principal.UserID, Email: principal.Email, SharedHost: sharedHost,
-						AllowedPaths: append([]string(nil), paths...), SealedFS: sharedHost,
-					},
-				}
+				server := newRoostNativeMCPServer(cfg, sharedHost, admission, principal, paths)
 				data, isError, protocolErr := server.callTool(ctx, tool.Name, arguments)
 				if protocolErr != nil {
 					return map[string]any{"error": protocolErr.Message}, true, nil
@@ -656,6 +396,29 @@ func roostNativeMCPTools(cfg *config.Config, sharedHost bool) []mcppkg.NativeToo
 		})
 	}
 	return tools
+}
+
+func newRoostNativeMCPServer(cfg *config.Config, sharedHost bool, admission *mcpAdmissionState, principal mcppkg.Principal, paths []string) *localMCPServer {
+	grants := grantSet(defaultDirectMCPGrants)
+	if portalTool, ok := control.Lookup("wing_list"); ok {
+		grants[portalTool.Grant] = true
+	}
+	return &localMCPServer{
+		cfg: cfg, logs: os.Stderr,
+		principal:         roostSessionPrincipal(principal.UserID),
+		actor:             principal.ClientID,
+		surface:           control.SurfaceHTTPMCP,
+		grants:            grants,
+		maxSessions:       defaultDirectMCPMaxSessions,
+		maxSpawnsPerHour:  defaultDirectMCPMaxSpawnsPerHour,
+		admission:         admission,
+		allowedPaths:      append([]string(nil), paths...),
+		enforcePathBounds: true,
+		identity: EggIdentity{
+			UserID: principal.UserID, Email: principal.Email, SharedHost: sharedHost,
+			AllowedPaths: append([]string(nil), paths...), SealedFS: sharedHost,
+		},
+	}
 }
 
 func roostSessionPrincipal(userID string) string {
@@ -707,11 +470,18 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 			decision = "error"
 		}
 		if auditErr := s.auditToolCall(name, arguments, data, decision); auditErr != nil {
-			fmt.Fprintf(s.logs, "wingthing MCP audit: %v\n", auditErr)
+			if logErr := writef(s.logs, "wingthing MCP audit: %v\n", auditErr); logErr != nil {
+				log.Printf("write MCP audit failure: %v", logErr)
+			}
 		}
 	}()
+	tool, known := control.Lookup(name)
+	if !known || !tool.Supports(s.controlSurface()) {
+		err = fmt.Errorf("unknown tool: %s", name)
+		return nil, false, &localMCPError{Code: -32602, Message: err.Error()}
+	}
 	if !s.toolAllowed(name) {
-		err = fmt.Errorf("principal %q lacks grant %q", s.clientPrincipal(), localMCPToolGrants[name])
+		err = fmt.Errorf("principal %q lacks grant %q", s.clientPrincipal(), tool.Grant)
 		return map[string]any{"error": err.Error()}, true, nil
 	}
 	switch name {
@@ -770,38 +540,23 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 	case "swarm_run":
 		data, isError, err = s.toolSwarmRun(ctx, arguments)
 	default:
-		err = fmt.Errorf("unknown tool: %s", name)
-		return nil, false, &localMCPError{Code: -32602, Message: "unknown tool: " + name}
+		err = fmt.Errorf("tool %q has no handler on %s", name, s.controlSurface())
+		return nil, false, &localMCPError{Code: -32603, Message: err.Error()}
 	}
 	if err != nil {
-		fmt.Fprintf(s.logs, "wingthing MCP %s: %v\n", name, err)
+		if logErr := writef(s.logs, "wingthing MCP %s: %v\n", name, err); logErr != nil {
+			log.Printf("write MCP failure: %v", logErr)
+		}
 		return map[string]any{"error": err.Error()}, true, nil
 	}
 	return data, isError, nil
 }
 
-func (s *localMCPServer) auditToolCall(tool string, arguments json.RawMessage, result map[string]any, decision string) error {
+func (s *localMCPServer) auditToolCall(tool string, arguments json.RawMessage, result map[string]any, decision string) (resultErr error) {
 	if s.cfg == nil || s.cfg.Dir == "" {
 		return nil
 	}
-	target := ""
-	var parsed map[string]any
-	if json.Unmarshal(arguments, &parsed) == nil {
-		for _, key := range []string{"session", "run_id", "task_id", "message_id", "after_id", "reply_to", "prompt_name", "name"} {
-			if value, ok := parsed[key].(string); ok && value != "" {
-				target = value
-				break
-			}
-		}
-	}
-	if target == "" && result != nil {
-		for _, key := range []string{"session", "run_id", "task_id", "message_id"} {
-			if value, ok := result[key].(string); ok && value != "" {
-				target = value
-				break
-			}
-		}
-	}
+	target := control.AuditTarget(tool, arguments, result)
 	digest := sha256.Sum256(arguments)
 	record := map[string]any{
 		"timestamp":       time.Now().UTC().Format(time.RFC3339Nano),
@@ -825,7 +580,11 @@ func (s *localMCPServer) auditToolCall(tool string, arguments json.RawMessage, r
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close MCP audit log: %w", err))
+		}
+	}()
 	if err := file.Chmod(0600); err != nil {
 		return err
 	}
@@ -856,19 +615,38 @@ func (s *localMCPServer) toolCapabilities(arguments json.RawMessage) (map[string
 			"persistent_storage":    append(append([]string(nil), profile.WriteRegex...), profile.WriteDirs...),
 		})
 	}
+	surface := s.controlSurface()
+	operations := make([]string, 0)
+	for _, tool := range control.Tools(surface) {
+		if s.toolAllowed(tool.Name) {
+			operations = append(operations, tool.Name)
+		}
+	}
 	return map[string]any{
 		"version":           version,
 		"principal":         s.clientPrincipal(),
 		"agents":            agents,
 		"actor":             s.clientActor(),
-		"objects":           []string{"terminal", "agent_run", "message", "prompt_asset", "task", "loop", "swarm", "sandbox_policy"},
+		"objects":           control.ObjectKinds(surface),
 		"session_isolation": s.sessionIsolationMode(),
+		"control_contract": map[string]any{
+			"version":    control.ContractVersion,
+			"surface":    string(surface),
+			"operations": operations,
+		},
 		"transports": map[string]any{
 			"local": true,
 			"ssh":   true,
 			"web":   true,
 		},
 	}, nil
+}
+
+func (s *localMCPServer) controlSurface() control.Surface {
+	if s.surface == "" {
+		return control.SurfaceLocalMCP
+	}
+	return s.surface
 }
 
 const maxMessageContentBytes = 32 << 10
@@ -931,7 +709,7 @@ func (s *localMCPServer) toolMessageSend(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer closeWithLog("message store", db)
 	if err := db.PurgeExpiredMessages(); err != nil {
 		return nil, err
 	}
@@ -969,7 +747,7 @@ func (s *localMCPServer) toolMessageList(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer closeWithLog("message store", db)
 	if err := db.PurgeExpiredMessages(); err != nil {
 		return nil, err
 	}
@@ -992,7 +770,7 @@ func (s *localMCPServer) toolMessageWait(ctx context.Context, arguments json.Raw
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer closeWithLog("message store", db)
 	if err := db.PurgeExpiredMessages(); err != nil {
 		return nil, err
 	}
@@ -1105,7 +883,7 @@ func normalizeMessageID(id, field string) (string, error) {
 		return "", fmt.Errorf("%s is not a Wingthing message ID", field)
 	}
 	for _, r := range id {
-		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
 			return "", fmt.Errorf("%s is not a Wingthing message ID", field)
 		}
 	}
@@ -1114,7 +892,7 @@ func normalizeMessageID(id, field string) (string, error) {
 
 func (s *localMCPServer) openMessageStore() (*store.Store, error) {
 	if s.cfg == nil || s.cfg.Dir == "" {
-		return nil, errors.New("Wingthing state directory is required for messages")
+		return nil, errors.New("wingthing state directory is required for messages")
 	}
 	if err := os.MkdirAll(s.cfg.Dir, 0700); err != nil {
 		return nil, err
@@ -1182,7 +960,10 @@ func (s *localMCPServer) toolSandboxExplain(arguments json.RawMessage) (map[stri
 	}
 	var eggCfg *egg.EggConfig
 	var source string
-	if s.unsandboxed && args.Config == "" {
+	if s.unsandboxed && args.Config != "" {
+		return nil, errors.New("sandbox_explain config cannot be combined with MCP server --unsandboxed; spawned processes use the outer host boundary")
+	}
+	if s.unsandboxed {
 		eggCfg = egg.UnsandboxedEggConfig()
 		source = "MCP server --unsandboxed"
 	} else {
@@ -1291,6 +1072,21 @@ func (s *localMCPServer) recordSpawn() {
 // recording happen under one lock so concurrent tool calls cannot both observe
 // a free slot and together exceed max_sessions or max_spawns_per_hour.
 func (s *localMCPServer) admitSpawn(spawn func() error) error {
+	if s.admission != nil {
+		s.admission.mu.Lock()
+		defer s.admission.mu.Unlock()
+		if err := s.checkSharedSpawnBounds(); err != nil {
+			return err
+		}
+		if err := spawn(); err != nil {
+			return err
+		}
+		if s.maxSpawnsPerHour > 0 {
+			principal := s.clientPrincipal()
+			s.admission.spawnTimes[principal] = append(s.admission.spawnTimes[principal], time.Now())
+		}
+		return nil
+	}
 	s.admitMu.Lock()
 	defer s.admitMu.Unlock()
 	if err := s.checkSpawnBounds(); err != nil {
@@ -1300,6 +1096,45 @@ func (s *localMCPServer) admitSpawn(spawn func() error) error {
 		return err
 	}
 	s.recordSpawn()
+	return nil
+}
+
+// checkSharedSpawnBounds runs with admission.mu held.
+func (s *localMCPServer) checkSharedSpawnBounds() error {
+	if s.maxSessions > 0 {
+		sessions, err := discoverSessionRefs(s.cfg)
+		if err != nil {
+			return err
+		}
+		owned := 0
+		for _, session := range sessions {
+			if s.ownsSession(session) {
+				owned++
+			}
+		}
+		if owned >= s.maxSessions {
+			return fmt.Errorf("principal %q reached max_sessions=%d", s.clientPrincipal(), s.maxSessions)
+		}
+	}
+	if s.maxSpawnsPerHour > 0 {
+		principal := s.clientPrincipal()
+		cutoff := time.Now().Add(-time.Hour)
+		history := s.admission.spawnTimes[principal]
+		kept := history[:0]
+		for _, timestamp := range history {
+			if timestamp.After(cutoff) {
+				kept = append(kept, timestamp)
+			}
+		}
+		if len(kept) == 0 {
+			delete(s.admission.spawnTimes, principal)
+		} else {
+			s.admission.spawnTimes[principal] = kept
+		}
+		if len(kept) >= s.maxSpawnsPerHour {
+			return fmt.Errorf("principal %q reached max_spawns_per_hour=%d", principal, s.maxSpawnsPerHour)
+		}
+	}
 	return nil
 }
 
@@ -1360,18 +1195,19 @@ func (s *localMCPServer) toolTerminalSend(ctx context.Context, arguments json.Ra
 		return nil, errors.New("session is required")
 	}
 	input := []byte(args.Input)
-	if args.Enter {
-		input = append(input, '\r')
-	}
 	owned, err := s.resolveOwnedSession(ctx, args.Session)
 	if err != nil {
 		return nil, err
 	}
-	session, err := sendSessionBytes(ctx, s.cfg, owned.ID, input)
+	session, err := sendSessionInput(ctx, s.cfg, owned.ID, input, args.Enter)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"session": session.ID, "bytes_sent": len(input)}, nil
+	bytesSent := len(input)
+	if args.Enter {
+		bytesSent++
+	}
+	return map[string]any{"session": session.ID, "bytes_sent": bytesSent}, nil
 }
 
 func (s *localMCPServer) toolTerminalWait(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
@@ -1416,7 +1252,7 @@ func (s *localMCPServer) toolTerminalWait(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return nil, err
 	}
-	defer ec.Close()
+	defer closeWithLog("egg client", ec)
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -1462,14 +1298,14 @@ func (s *localMCPServer) toolTerminalStart(arguments json.RawMessage) (map[strin
 	if err != nil {
 		return nil, err
 	}
-	sessionID := uuid.NewString()[:8]
+	sessionID := newRuntimeID()
 	if err := s.admitSpawn(func() error {
 		ec, spawnErr := spawnEgg(s.cfg, sessionID, "", eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
 			spawnEggOpts{Label: args.Label, Kind: kind, Command: args.Command, Principal: s.clientPrincipal()})
 		if spawnErr != nil {
 			return spawnErr
 		}
-		_ = ec.Close()
+		closeWithLog("spawned terminal egg client", ec)
 		return nil
 	}); err != nil {
 		return nil, err
@@ -1520,14 +1356,14 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		eggCfg = &copyCfg
 		eggCfg.DangerouslySkipPermissions = true
 	}
-	sessionID := uuid.NewString()[:8]
+	sessionID := newRuntimeID()
 	if err := s.admitSpawn(func() error {
 		ec, spawnErr := spawnEgg(s.cfg, sessionID, args.Agent, eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
 			spawnEggOpts{Label: args.Label, Kind: "agent", AgentArgs: args.Args, Principal: s.clientPrincipal()})
 		if spawnErr != nil {
 			return spawnErr
 		}
-		_ = ec.Close()
+		closeWithLog("spawned agent egg client", ec)
 		return nil
 	}); err != nil {
 		return nil, err
@@ -1564,6 +1400,13 @@ type agentRunArgs struct {
 	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
+type agentRunFollowup struct {
+	parentID  string
+	direction string
+}
+
+const maxAgentSteerPriorResultChars = 200000
+
 func (s *localMCPServer) toolAgentRun(arguments json.RawMessage) (map[string]any, error) {
 	var args agentRunArgs
 	if err := decodeStrict(arguments, &args); err != nil {
@@ -1572,7 +1415,7 @@ func (s *localMCPServer) toolAgentRun(arguments json.RawMessage) (map[string]any
 	return s.submitAgentRun(args, nil)
 }
 
-func (s *localMCPServer) submitAgentRun(args agentRunArgs, parentID *string) (map[string]any, error) {
+func (s *localMCPServer) submitAgentRun(args agentRunArgs, followup *agentRunFollowup) (map[string]any, error) {
 	if strings.TrimSpace(args.Prompt) == "" {
 		return nil, errors.New("prompt is required")
 	}
@@ -1599,10 +1442,13 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, parentID *string) (ma
 		return nil, err
 	}
 	var dependsOn *string
-	if parentID != nil {
-		encoded, _ := json.Marshal([]string{*parentID})
+	var parentID *string
+	if followup != nil {
+		encoded, _ := json.Marshal([]string{followup.parentID})
 		value := string(encoded)
 		dependsOn = &value
+		parent := followup.parentID
+		parentID = &parent
 	}
 	now := time.Now().UTC()
 	task := &store.Task{
@@ -1620,19 +1466,21 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, parentID *string) (ma
 		if openErr != nil {
 			return openErr
 		}
-		defer taskStore.Close()
+		defer closeWithLog("task store", taskStore)
 		if createErr := taskStore.CreateTask(task); createErr != nil {
 			return createErr
 		}
 		if args.Label != "" {
 			label := args.Label
-			_ = taskStore.AppendLog(task.ID, "label", &label)
+			if labelErr := taskStore.AppendLog(task.ID, "label", &label); labelErr != nil {
+				log.Printf("record label for agent run %s: %v", task.ID, labelErr)
+			}
 		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	s.startAgentRun(task.ID, parentID)
+	s.startAgentRun(task.ID, followup)
 	data := agentRunStatusData(task)
 	data["run_id"] = task.ID
 	if args.Label != "" {
@@ -1641,38 +1489,51 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, parentID *string) (ma
 	return data, nil
 }
 
-func (s *localMCPServer) startAgentRun(runID string, parentID *string) {
+func (s *localMCPServer) startAgentRun(runID string, followup *agentRunFollowup) {
+	options, optionsErr := s.agentTaskRunOptions()
+	if optionsErr != nil {
+		s.setAgentRunError(runID, optionsErr)
+		return
+	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	key := s.agentRunKey(runID)
 	done := make(chan struct{})
 	activeMCPAgentRuns.Store(key, activeMCPAgentRun{principal: s.clientPrincipal(), cancel: cancel, done: done})
-	options := s.agentTaskRunOptions()
 	go func() {
 		defer close(done)
 		defer cancel()
 		defer activeMCPAgentRuns.Delete(key)
-		if parentID != nil {
-			if err := s.waitForAgentRunTerminal(runCtx, *parentID); err != nil {
+		var resolvedFollowupPrompt string
+		if followup != nil {
+			if err := s.waitForAgentRunTerminal(runCtx, followup.parentID); err != nil {
 				s.setAgentRunError(runID, err)
 				return
 			}
-			parent, parentStore, err := s.ownedAgentRun(*parentID)
+			parent, parentStore, err := s.ownedAgentRun(followup.parentID)
 			if err != nil {
 				s.setAgentRunError(runID, err)
 				return
 			}
-			parentStore.Close()
+			if err := parentStore.Close(); err != nil {
+				s.setAgentRunError(runID, fmt.Errorf("close parent task store: %w", err))
+				return
+			}
 			if parent.Status != "done" {
 				s.setAgentRunError(runID, fmt.Errorf("parent agent run %s finished with status %s", parent.ID, parent.Status))
 				return
 			}
+			var parentResult string
+			if parent.Output != nil {
+				parentResult = *parent.Output
+			}
+			resolvedFollowupPrompt = agentSteerPrompt(parent.What, parentResult, followup.direction)
 		}
 		taskStore, err := store.Open(s.cfg.DBPath())
 		if err != nil {
 			s.setAgentRunError(runID, err)
 			return
 		}
-		defer taskStore.Close()
+		defer closeWithLog("task store", taskStore)
 		task, err := taskStore.GetTask(runID)
 		if err != nil || task == nil {
 			if err == nil {
@@ -1681,15 +1542,26 @@ func (s *localMCPServer) startAgentRun(runID string, parentID *string) {
 			s.setAgentRunError(runID, err)
 			return
 		}
+		if followup != nil {
+			if err := taskStore.SetTaskWhat(runID, resolvedFollowupPrompt); err != nil {
+				s.setAgentRunError(runID, fmt.Errorf("record resolved follow-up prompt: %w", err))
+				return
+			}
+			task.What = resolvedFollowupPrompt
+		}
+		var runErr error
 		if s.runAgentTask != nil {
-			_ = s.runAgentTask(runCtx, s.cfg, taskStore, task, options)
+			runErr = s.runAgentTask(runCtx, s.cfg, taskStore, task, options)
 		} else {
-			_ = runTaskToWithOptions(runCtx, s.cfg, taskStore, task, io.Discard, options)
+			runErr = runTaskToWithOptions(runCtx, s.cfg, taskStore, task, io.Discard, options)
+		}
+		if runErr != nil {
+			s.setAgentRunError(runID, runErr)
 		}
 	}()
 }
 
-func (s *localMCPServer) agentTaskRunOptions() taskRunOptions {
+func (s *localMCPServer) agentTaskRunOptions() (taskRunOptions, error) {
 	options := taskRunOptions{
 		SharedHost:   s.identity.SharedHost,
 		AllowedPaths: append([]string(nil), s.identity.AllowedPaths...),
@@ -1697,10 +1569,12 @@ func (s *localMCPServer) agentTaskRunOptions() taskRunOptions {
 	if s.identity.UserID != "" && (s.identity.SharedHost || s.identity.OrgWing) {
 		options.UserHome = filepath.Join(s.cfg.Dir, "user-homes", userHash(s.identity.UserID))
 		if !s.identity.SharedHost {
-			_ = os.MkdirAll(options.UserHome, 0700)
+			if err := os.MkdirAll(options.UserHome, 0700); err != nil {
+				return taskRunOptions{}, fmt.Errorf("create isolated agent home: %w", err)
+			}
 		}
 	}
-	return options
+	return options, nil
 }
 
 func (s *localMCPServer) setAgentRunError(runID string, runErr error) {
@@ -1708,9 +1582,13 @@ func (s *localMCPServer) setAgentRunError(runID string, runErr error) {
 		return
 	}
 	taskStore, err := store.Open(s.cfg.DBPath())
-	if err == nil {
-		defer taskStore.Close()
-		_ = taskStore.SetTaskError(runID, runErr.Error())
+	if err != nil {
+		log.Printf("record agent run %s failure: open store: %v", runID, err)
+		return
+	}
+	defer closeWithLog("task store", taskStore)
+	if err := taskStore.SetTaskError(runID, runErr.Error()); err != nil {
+		log.Printf("record agent run %s failure: %v", runID, err)
 	}
 }
 
@@ -1728,19 +1606,21 @@ func (s *localMCPServer) ownedAgentRun(runID string) (*store.Task, *store.Store,
 	}
 	task, err := taskStore.GetTask(runID)
 	if err != nil {
-		taskStore.Close()
-		return nil, nil, err
+		return nil, nil, closeAndJoin("task store", taskStore, err)
 	}
 	if task == nil || task.Type != "agent_run" || !s.ownsTask(task) {
-		taskStore.Close()
-		return nil, nil, fmt.Errorf("agent run %q not found or not owned by caller", runID)
+		return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("agent run %q not found or not owned by caller", runID))
 	}
 	if (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !ownedProcessIsAlive(task.RunnerPID) {
-		_ = taskStore.SetTaskError(task.ID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID))
+		if err := taskStore.SetTaskError(task.ID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID)); err != nil {
+			return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("mark orphaned agent run failed: %w", err))
+		}
 		task, err = taskStore.GetTask(runID)
 		if err != nil {
-			taskStore.Close()
-			return nil, nil, err
+			return nil, nil, closeAndJoin("task store", taskStore, err)
+		}
+		if task == nil {
+			return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("agent run %q disappeared after orphan cleanup", runID))
 		}
 	}
 	return task, taskStore, nil
@@ -1777,7 +1657,7 @@ func (s *localMCPServer) toolAgentStatus(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	return agentRunStatusData(task), nil
 }
 
@@ -1802,7 +1682,7 @@ func (s *localMCPServer) toolAgentWait(ctx context.Context, arguments json.RawMe
 	if loadErr != nil {
 		return nil, loadErr
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	data := agentRunStatusData(task)
 	if errors.Is(err, context.DeadlineExceeded) {
 		data["timed_out"] = true
@@ -1816,7 +1696,7 @@ func (s *localMCPServer) waitForAgentRunTerminal(ctx context.Context, runID stri
 	if err != nil {
 		return err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	if agentRunTerminal(task.Status) {
 		return nil
 	}
@@ -1860,7 +1740,7 @@ func (s *localMCPServer) toolAgentResult(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	data := agentRunStatusData(task)
 	data["ready"] = agentRunTerminal(task.Status)
 	if task.Output != nil {
@@ -1897,12 +1777,11 @@ func (s *localMCPServer) toolAgentEvents(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	rows, err := taskStore.DB().Query(`SELECT timestamp, event, COALESCE(detail, '') FROM task_log WHERE task_id = ? ORDER BY id DESC LIMIT ?`, args.RunID, args.Limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var events []map[string]any
 	for rows.Next() {
 		var timestamp, event, detail string
@@ -1915,7 +1794,13 @@ func (s *localMCPServer) toolAgentEvents(arguments json.RawMessage) (map[string]
 		}
 		events = append(events, entry)
 	}
-	return map[string]any{"run_id": args.RunID, "events": events}, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"run_id": args.RunID, "events": events}, nil
 }
 
 func (s *localMCPServer) toolAgentSteer(arguments json.RawMessage) (map[string]any, error) {
@@ -1934,7 +1819,9 @@ func (s *localMCPServer) toolAgentSteer(arguments json.RawMessage) (map[string]a
 	if err != nil {
 		return nil, err
 	}
-	taskStore.Close()
+	if err := taskStore.Close(); err != nil {
+		return nil, fmt.Errorf("close task store: %w", err)
+	}
 	model := args.Model
 	if model == "" {
 		model = parent.Model
@@ -1944,7 +1831,15 @@ func (s *localMCPServer) toolAgentSteer(arguments json.RawMessage) (map[string]a
 		Prompt: "Prior request:\n" + parent.What + "\n\nNew direction:\n" + args.Prompt,
 		Agent:  parent.Agent, Model: model,
 		CWD: parent.CWD, Label: "followup-" + parent.ID, TimeoutSeconds: parent.TimeoutSeconds,
-	}, &parentID)
+	}, &agentRunFollowup{parentID: parentID, direction: args.Prompt})
+}
+
+func agentSteerPrompt(parentRequest, parentResult, direction string) string {
+	resultRunes := []rune(parentResult)
+	if len(resultRunes) > maxAgentSteerPriorResultChars {
+		parentResult = string(resultRunes[:maxAgentSteerPriorResultChars]) + "\n\n[Wingthing truncated the prior result for this follow-up.]"
+	}
+	return "Prior request:\n" + parentRequest + "\n\nPrior result:\n" + parentResult + "\n\nNew direction:\n" + direction
 }
 
 func (s *localMCPServer) toolAgentStop(arguments json.RawMessage) (map[string]any, error) {
@@ -1958,13 +1853,23 @@ func (s *localMCPServer) toolAgentStop(arguments json.RawMessage) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	if agentRunTerminal(task.Status) {
 		return agentRunStatusData(task), nil
 	}
 	activeValue, ok := activeMCPAgentRuns.Load(s.agentRunKey(args.RunID))
 	active, valid := activeValue.(activeMCPAgentRun)
 	if !ok || !valid || active.principal != s.clientPrincipal() {
+		// The runner can finish between the first database read and the active
+		// map lookup. Reload before reporting a detached run so an idempotent
+		// stop never turns a successful completion race into an error.
+		latest, reloadErr := taskStore.GetTask(args.RunID)
+		if reloadErr != nil {
+			return nil, reloadErr
+		}
+		if latest != nil && agentRunTerminal(latest.Status) {
+			return agentRunStatusData(latest), nil
+		}
 		return nil, errors.New("run is no longer attached to this Wingthing process")
 	}
 	active.cancel()
@@ -2033,7 +1938,7 @@ func (s *localMCPServer) toolTerminalStop(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return nil, err
 	}
-	defer ec.Close()
+	defer closeWithLog("egg client", ec)
 	if err := ec.Kill(ctx, session.ID); err != nil {
 		return nil, err
 	}
@@ -2165,7 +2070,7 @@ func (s *localMCPServer) toolTaskGet(arguments json.RawMessage) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	task, err := taskStore.GetTask(args.TaskID)
 	if err != nil {
 		return nil, err
@@ -2201,7 +2106,7 @@ func (s *localMCPServer) executePrompt(ctx context.Context, prompt, agentName, c
 	if err != nil {
 		return nil, err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	task := &store.Task{
 		ID: genTaskID(), Type: "prompt", What: prompt, Agent: agentName,
 		RunAt: time.Now().UTC(), ParentID: parentID, DependsOn: dependsOn, CWD: cwd,
@@ -2259,7 +2164,9 @@ func (s *localMCPServer) toolPromptLoop(ctx context.Context, arguments json.RawM
 	if err != nil {
 		return nil, false, err
 	}
-	rootStore.Close()
+	if err := rootStore.Close(); err != nil {
+		return nil, false, fmt.Errorf("close root task store: %w", err)
+	}
 	results := make([]map[string]any, 0, args.MaxIterations)
 	var previousTaskID string
 	failed := false
@@ -2360,7 +2267,7 @@ func (s *localMCPServer) toolSwarmRun(ctx context.Context, arguments json.RawMes
 	if err != nil {
 		return nil, false, err
 	}
-	defer rootStore.Close()
+	defer closeWithLog("root task store", rootStore)
 
 	taskIDs := make(map[string]string, len(args.Nodes))
 	byID := make(map[string]swarmNodeSpec, len(args.Nodes))
@@ -2427,8 +2334,13 @@ func (s *localMCPServer) toolSwarmRun(ctx context.Context, arguments json.RawMes
 			}
 			if dependencyFailed {
 				message := "one or more dependencies failed"
-				_ = rootStore.SetTaskError(taskIDs[node.ID], message)
-				skipped, _ := rootStore.GetTask(taskIDs[node.ID])
+				if err := rootStore.SetTaskError(taskIDs[node.ID], message); err != nil {
+					return nil, true, fmt.Errorf("mark blocked swarm node %s failed: %w", node.ID, err)
+				}
+				skipped, err := rootStore.GetTask(taskIDs[node.ID])
+				if err != nil {
+					return nil, true, fmt.Errorf("reload blocked swarm node %s: %w", node.ID, err)
+				}
 				results[node.ID] = skipped
 				state[node.ID] = "blocked"
 				continue
@@ -2463,11 +2375,15 @@ func (s *localMCPServer) toolSwarmRun(ctx context.Context, arguments json.RawMes
 					resultCh <- swarmNodeResult{logicalID: node.ID, err: openErr}
 					return
 				}
-				defer taskStore.Close()
+				defer closeWithLog("task store", taskStore)
 				task, getErr := taskStore.GetTask(taskIDs[node.ID])
 				if getErr == nil && task != nil {
-					getErr = runTaskTo(ctx, s.cfg, taskStore, task, io.Discard)
-					task, _ = taskStore.GetTask(task.ID)
+					runErr := runTaskTo(ctx, s.cfg, taskStore, task, io.Discard)
+					refreshed, refreshErr := taskStore.GetTask(task.ID)
+					if refreshErr == nil {
+						task = refreshed
+					}
+					getErr = errors.Join(runErr, refreshErr)
 				}
 				resultCh <- swarmNodeResult{logicalID: node.ID, task: task, err: getErr}
 			}()
@@ -2584,12 +2500,10 @@ func (s *localMCPServer) createMetaTask(kind, what, agentName, cwd string) (*sto
 		RunAt: time.Now().UTC(), Status: "pending", CWD: cwd, Principal: s.clientPrincipal(),
 	}
 	if err := taskStore.CreateTask(task); err != nil {
-		taskStore.Close()
-		return nil, nil, err
+		return nil, nil, closeAndJoin("task store", taskStore, err)
 	}
 	if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
-		taskStore.Close()
-		return nil, nil, err
+		return nil, nil, closeAndJoin("task store", taskStore, err)
 	}
 	return task, taskStore, nil
 }
@@ -2599,7 +2513,7 @@ func (s *localMCPServer) finishMetaTask(taskID, status string, data map[string]a
 	if err != nil {
 		return err
 	}
-	defer taskStore.Close()
+	defer closeWithLog("task store", taskStore)
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		return err

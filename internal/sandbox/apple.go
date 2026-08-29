@@ -94,40 +94,17 @@ func buildProfile(cfg Config) string {
 	// Allow outbound connections to specific Unix sockets (e.g. tool sockets).
 	// Must come after any network deny rule so the allow takes precedence.
 	for _, sock := range cfg.AllowSockets {
-		abs, err := filepath.Abs(sock)
+		abs, err := canonicalSandboxPath(sock)
 		if err != nil {
 			continue
-		}
-		if real, err := filepath.EvalSymlinks(abs); err == nil {
-			abs = real
 		}
 		fmt.Fprintf(&sb, "(allow network-outbound (literal %q))\n", abs)
 	}
 
-	// Deny paths — block reads and writes to specific directories.
-	// Resolve symlinks because sandbox-exec uses real paths.
+	// Resolve the SSH directory once for the deny exceptions emitted below.
 	sshDir, _ := os.UserHomeDir()
 	if sshDir != "" {
-		sshDir = filepath.Join(sshDir, ".ssh")
-		if real, err := filepath.EvalSymlinks(sshDir); err == nil {
-			sshDir = real
-		}
-	}
-	for _, d := range cfg.Deny {
-		abs, err := filepath.Abs(d)
-		if err != nil {
-			continue
-		}
-		if real, err := filepath.EvalSymlinks(abs); err == nil {
-			abs = real
-		}
-		fmt.Fprintf(&sb, "(deny file-read* file-write* (subpath %q))\n", abs)
-		// Allow reading ~/.ssh/known_hosts so SSH can verify host keys
-		// without prompting (prompts interleave with agent PTY output).
-		// Skipped if known_hosts is also explicitly denied.
-		if abs == sshDir && !containsDenyPath(cfg.Deny, filepath.Join(abs, "known_hosts")) {
-			fmt.Fprintf(&sb, "(allow file-read* (literal %q))\n", filepath.Join(abs, "known_hosts"))
-		}
+		sshDir, _ = canonicalSandboxPath(filepath.Join(sshDir, ".ssh"))
 	}
 
 	// Mount-based filesystem write isolation.
@@ -145,8 +122,8 @@ func buildProfile(cfg Config) string {
 	}
 	if hasWritableMounts {
 		home, _ := os.UserHomeDir()
-		if real, err := filepath.EvalSymlinks(home); err == nil {
-			home = real
+		if home != "" {
+			home, _ = canonicalSandboxPath(home)
 		}
 		if home != "" {
 			fmt.Fprintf(&sb, "(deny file-write* (subpath %q))\n", home)
@@ -154,12 +131,9 @@ func buildProfile(cfg Config) string {
 				if m.ReadOnly {
 					continue
 				}
-				abs, err := filepath.Abs(m.Source)
+				abs, err := canonicalSandboxPath(m.Source)
 				if err != nil {
 					continue
-				}
-				if real, err := filepath.EvalSymlinks(abs); err == nil {
-					abs = real
 				}
 				if m.UseRegex {
 					// Regex covers both the directory and adjacent files with the same prefix.
@@ -177,22 +151,46 @@ func buildProfile(cfg Config) string {
 		fmt.Fprintf(&sb, "(allow file-write* (subpath %q))\n", keychains)
 		// Always allow writes to system tmp dirs (resolve symlinks for macOS /tmp -> /private/tmp)
 		tmpDir := os.TempDir()
-		if real, err := filepath.EvalSymlinks(tmpDir); err == nil {
+		if real, err := canonicalSandboxPath(tmpDir); err == nil {
 			tmpDir = real
 		}
 		fmt.Fprintf(&sb, "(allow file-write* (subpath %q))\n", tmpDir)
 		sb.WriteString("(allow file-write* (subpath \"/private/tmp\"))\n")
 	}
 
-	// Deny-write paths — block writes only, reads allowed.
-	// Emitted AFTER mount allows so they take precedence in SBPL evaluation.
-	for _, d := range cfg.DenyWrite {
-		abs, err := filepath.Abs(d)
+	// Deny paths — block reads, writes, and Unix-socket connections to specific
+	// paths. A filesystem deny alone does not stop connect(2) to an already-open
+	// Unix socket on macOS; network-outbound must name the socket path as well.
+	// These rules
+	// must follow mount allows so a writable mount cannot reopen an explicitly
+	// denied path. The narrow known_hosts exception follows the denies, unless
+	// that exact file was explicitly denied too.
+	for _, d := range cfg.Deny {
+		abs, err := canonicalSandboxPath(d)
 		if err != nil {
 			continue
 		}
-		if real, err := filepath.EvalSymlinks(abs); err == nil {
-			abs = real
+		// Seatbelt's subpath filter covers descendants, but not creation of the
+		// exact path when that path does not exist yet. The literal filter closes
+		// that gap; both rules are required for a directory deny.
+		fmt.Fprintf(&sb, "(deny file-read* file-write* (literal %q))\n", abs)
+		fmt.Fprintf(&sb, "(deny file-read* file-write* (subpath %q))\n", abs)
+		fmt.Fprintf(&sb, "(deny network-outbound (literal %q))\n", abs)
+		fmt.Fprintf(&sb, "(deny network-outbound (subpath %q))\n", abs)
+		// Allow reading ~/.ssh/known_hosts so SSH can verify host keys
+		// without prompting (prompts interleave with agent PTY output).
+		// Skipped if known_hosts is also explicitly denied.
+		if abs == sshDir && !containsDenyPath(cfg.Deny, filepath.Join(abs, "known_hosts")) {
+			fmt.Fprintf(&sb, "(allow file-read* (literal %q))\n", filepath.Join(abs, "known_hosts"))
+		}
+	}
+
+	// Deny-write paths — block writes only, reads allowed.
+	// Emitted AFTER mount allows so they take precedence in SBPL evaluation.
+	for _, d := range cfg.DenyWrite {
+		abs, err := canonicalSandboxPath(d)
+		if err != nil {
+			continue
 		}
 		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
 	}
@@ -200,15 +198,42 @@ func buildProfile(cfg Config) string {
 	return sb.String()
 }
 
+// canonicalSandboxPath returns the real path that Seatbelt evaluates. Unlike
+// filepath.EvalSymlinks, it also canonicalizes paths that do not exist yet by
+// resolving their longest existing ancestor and appending the missing suffix.
+// This matters on macOS, where /var and /tmp are symlinks into /private.
+func canonicalSandboxPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(real), nil
+	}
+
+	current := abs
+	var suffix []string
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			return abs, nil
+		}
+		suffix = append([]string{filepath.Base(current)}, suffix...)
+		current = parent
+		if real, err := filepath.EvalSymlinks(current); err == nil {
+			parts := append([]string{filepath.Clean(real)}, suffix...)
+			return filepath.Join(parts...), nil
+		}
+	}
+}
+
 // containsDenyPath checks if a resolved path is in the deny list (resolving symlinks).
 func containsDenyPath(deny []string, target string) bool {
 	for _, d := range deny {
-		abs, err := filepath.Abs(d)
+		abs, err := canonicalSandboxPath(d)
 		if err != nil {
 			continue
-		}
-		if real, err := filepath.EvalSymlinks(abs); err == nil {
-			abs = real
 		}
 		if abs == target {
 			return true
@@ -228,9 +253,4 @@ func sbplRegexEscape(s string) string {
 		sb.WriteRune(c)
 	}
 	return sb.String()
-}
-
-// profileString returns the generated profile for testing.
-func (s *seatbeltSandbox) profileString() string {
-	return s.profile
 }

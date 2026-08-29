@@ -3,16 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/relay"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -23,16 +22,57 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+func relayPolicyFromEnv() (string, time.Time, error) {
+	policy := strings.TrimSpace(envOr("WT_RELAY_POLICY", relay.RelayPolicyLegacy))
+	if policy != relay.RelayPolicyLegacy && policy != relay.RelayPolicyDirectFree {
+		return "", time.Time{}, fmt.Errorf("WT_RELAY_POLICY must be %q or %q", relay.RelayPolicyLegacy, relay.RelayPolicyDirectFree)
+	}
+
+	// The migration boundary is deployment state, not a compile-time product
+	// default. Prefer the accurately named variable while retaining the old one
+	// as a compatibility alias for existing operators.
+	raw := strings.TrimSpace(os.Getenv("WT_RELAY_MIGRATION_BEFORE"))
+	legacyRaw := strings.TrimSpace(os.Getenv("WT_RELAY_GRANDFATHER_BEFORE"))
+	if raw != "" && legacyRaw != "" && raw != legacyRaw {
+		return "", time.Time{}, fmt.Errorf("WT_RELAY_MIGRATION_BEFORE and deprecated WT_RELAY_GRANDFATHER_BEFORE disagree")
+	}
+	if raw == "" {
+		raw = legacyRaw
+	}
+	if raw == "" {
+		return policy, time.Time{}, nil
+	}
+	cutoff, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("WT_RELAY_MIGRATION_BEFORE must be RFC3339: %w", err)
+	}
+	return policy, cutoff, nil
+}
+
+func saveLocalServeToken(configDir, token string) error {
+	return auth.NewLocalTokenStore(configDir).Save(&auth.DeviceToken{
+		Token:    token,
+		DeviceID: "local",
+	})
+}
+
 func serveCmd() *cobra.Command {
 	var addrFlag string
 	var devFlag bool
 	var localFlag bool
+	var httpsFlag bool
+	var httpsAddrFlag string
 
 	cmd := &cobra.Command{
 		Use:     "relay",
 		Aliases: []string{"serve"},
 		Short:   "Start the relay server (web UI + WebSocket relay)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !localFlag {
+				if err := validateAuthProviderEnvironment(); err != nil {
+					return err
+				}
+			}
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -65,11 +105,15 @@ func serveCmd() *cobra.Command {
 			// Edge nodes skip SQLite and DB-dependent init
 			var store *relay.RelayStore
 			if !isEdge {
-				store, err = relay.OpenRelay(cfg.RelayDBPath())
+				relayDBPath, pathErr := cfg.RelayDBPath()
+				if pathErr != nil {
+					return pathErr
+				}
+				store, err = relay.OpenRelay(relayDBPath)
 				if err != nil {
 					return fmt.Errorf("open relay db: %w", err)
 				}
-				defer store.Close()
+				defer closeWithLog("relay store", store)
 
 				if err := store.BackfillProUsers(); err != nil {
 					return fmt.Errorf("backfill pro users: %w", err)
@@ -78,38 +122,67 @@ func serveCmd() *cobra.Command {
 
 			// Auto-enable local mode when no auth providers are configured.
 			// Must happen before JWT key check — local mode uses wing.yaml, not env.
-			githubID := os.Getenv("GITHUB_CLIENT_ID")
-			googleID := os.Getenv("GOOGLE_CLIENT_ID")
-			smtpHost := os.Getenv("SMTP_HOST")
-			if !localFlag && !isEdge && githubID == "" && googleID == "" && smtpHost == "" {
+			githubID := strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID"))
+			googleID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
+			smtpHost := strings.TrimSpace(os.Getenv("SMTP_HOST"))
+			if !localFlag && !isEdge && !authProvidersConfigured() {
 				localFlag = true
 				fmt.Println("no auth providers configured — enabling local mode")
+			}
+			if localFlag && !httpsFlag {
+				addrFlag, err = prepareLocalHTTPAddress(addrFlag, cmd.Flags().Changed("addr"))
+				if err != nil {
+					return err
+				}
+			}
+			if err := validateLocalHTTPSMode(httpsFlag, localFlag, isEdge); err != nil {
+				return err
+			}
+			var localHTTPS *localHTTPSConfig
+			if httpsFlag {
+				localHTTPS, err = prepareLocalHTTPS(cmd.Context(), cfg.Dir, addrFlag, httpsAddrFlag, cmd.Flags().Changed("addr"))
+				if err != nil {
+					return err
+				}
+				addrFlag = localHTTPS.HTTPAddr
 			}
 			jwtKey, err := jwtKeyFromEnvironment()
 			if err != nil {
 				return fmt.Errorf("jwt key: %w", err)
 			}
+			relayPolicy, relayMigrationBefore, err := relayPolicyFromEnv()
+			if err != nil {
+				return err
+			}
+			allowedEmails, err := roostAllowedEmailsFromEnv()
+			if err != nil {
+				return err
+			}
 
 			srvCfg := relay.ServerConfig{
-				BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
-				AppHost:            os.Getenv("WT_APP_HOST"),
-				WSHost:             os.Getenv("WT_WS_HOST"),
-				JWTKey:             jwtKey,
-				GitHubClientID:     githubID,
-				GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-				GoogleClientID:     googleID,
-				GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-				SMTPHost:           smtpHost,
-				SMTPPort:           envOr("SMTP_PORT", "587"),
-				SMTPUser:           os.Getenv("SMTP_USER"),
-				SMTPPass:           os.Getenv("SMTP_PASS"),
-				SMTPFrom:           os.Getenv("SMTP_FROM"),
-				NodeRole:           nodeRole,
-				LoginNodeAddr:      loginAddr,
-				FlyMachineID:       flyMachineID,
-				FlyRegion:          flyRegion,
-				FlyAppName:         flyApp,
-				HeroVideo:          os.Getenv("WT_HERO_VIDEO"),
+				BaseURL:              defaultBaseURL(localHTTPS),
+				AppHost:              os.Getenv("WT_APP_HOST"),
+				WSHost:               os.Getenv("WT_WS_HOST"),
+				JWTKey:               jwtKey,
+				InternalSecret:       os.Getenv("WT_INTERNAL_SECRET"),
+				GitHubClientID:       githubID,
+				GitHubClientSecret:   os.Getenv("GITHUB_CLIENT_SECRET"),
+				GoogleClientID:       googleID,
+				GoogleClientSecret:   os.Getenv("GOOGLE_CLIENT_SECRET"),
+				SMTPHost:             smtpHost,
+				SMTPPort:             envOr("SMTP_PORT", "587"),
+				SMTPUser:             os.Getenv("SMTP_USER"),
+				SMTPPass:             os.Getenv("SMTP_PASS"),
+				SMTPFrom:             os.Getenv("SMTP_FROM"),
+				NodeRole:             nodeRole,
+				LoginNodeAddr:        loginAddr,
+				FlyMachineID:         flyMachineID,
+				FlyRegion:            flyRegion,
+				FlyAppName:           flyApp,
+				HeroVideo:            os.Getenv("WT_HERO_VIDEO"),
+				RelayPolicy:          relayPolicy,
+				RelayMigrationBefore: relayMigrationBefore,
+				RoostAllowedEmails:   allowedEmails,
 			}
 
 			// JWT key: server mode requires WT_JWT_KEY env var.
@@ -140,10 +213,10 @@ func serveCmd() *cobra.Command {
 					return fmt.Errorf("WT_LOGIN_ADDR required for edge nodes")
 				}
 				srv.SetLoginProxy(relay.NewLoginProxy(loginAddr))
-				srv.SetSessionCache(relay.NewSessionCache())
+				srv.SetSessionCache(relay.NewSessionCache(srvCfg.InternalSecret))
 				// Bandwidth metering still works on edge, just with cached tiers
 				srv.Bandwidth = relay.NewBandwidthMeter(relay.SustainedRate, 1*1024*1024, nil)
-				entCache := relay.NewEntitlementCache(loginAddr)
+				entCache := relay.NewEntitlementCache(loginAddr, srvCfg.InternalSecret)
 				srv.Bandwidth.SetTierLookup(func(userID string) string {
 					return entCache.GetTier(userID)
 				})
@@ -185,26 +258,20 @@ func serveCmd() *cobra.Command {
 				srv.SetLocalUser(user)
 
 				// Grant pro tier — self-hosted has no bandwidth cap
-				if !store.IsUserPro(user.ID) {
-					subID := uuid.New().String()
-					store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &user.ID, Plan: "local", Status: "active", Seats: 1})
-					store.CreateEntitlement(&relay.Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID})
-					store.UpdateUserTier(user.ID, "pro")
+				if err := ensureSelfHostedPro(store, user.ID, "local"); err != nil {
+					return err
 				}
 
-				// Write device token so `wt wing` can connect without `wt login`
-				ts := auth.NewTokenStore(cfg.Dir)
-				ts.Save(&auth.DeviceToken{
-					Token:    token,
-					DeviceID: "local",
-				})
+				// Keep the localhost credential separate from the ordinary portal
+				// login so starting a self-hosted UI cannot log this profile out of
+				// wingthing.ai or an operator's private roost.
+				if err := saveLocalServeToken(cfg.Dir, token); err != nil {
+					return fmt.Errorf("save local device token: %w", err)
+				}
 				fmt.Println("local mode: single-user, no login required")
 			}
 
-			httpSrv := &http.Server{
-				Addr:    addrFlag,
-				Handler: srv,
-			}
+			listeners := newRelayListeners(srv, addrFlag, localHTTPS)
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -225,22 +292,34 @@ func serveCmd() *cobra.Command {
 				srv.EntitlementCache.StartSync(ctx, 60*time.Second)
 			}
 
-			errCh := make(chan error, 1)
-			go func() {
+			if err := listeners.Start(localHTTPS); err != nil {
+				return err
+			}
+			if localHTTPS != nil {
+				fmt.Printf("wt serve wing endpoint (loopback HTTP): %s\n", localHTTPURL(addrFlag))
+				fmt.Printf("wt serve browser UI (local HTTPS): %s\n", localHTTPS.URL)
+			} else {
 				fmt.Printf("wt serve listening on %s\n", addrFlag)
-				if localFlag {
-					fmt.Println()
-					fmt.Println("next: wt start --local")
+			}
+			if localFlag {
+				fmt.Println()
+				fmt.Println("next: wt start --local")
+				if localHTTPS != nil {
+					fmt.Printf("then: open %s\n", localHTTPS.URL)
+				} else {
 					fmt.Println("then: open http://localhost:8080")
 				}
-				errCh <- httpSrv.ListenAndServe()
-			}()
+			}
 
 			select {
 			case <-ctx.Done():
 				fmt.Println("graceful shutdown (sending relay.restart to all connections)...")
-				return srv.GracefulShutdown(httpSrv, 8*time.Second)
-			case err := <-errCh:
+				return listeners.Shutdown(srv, 8*time.Second)
+			case result := <-listeners.errCh:
+				err := listenerResult(result)
+				if err != nil {
+					_ = listeners.Shutdown(srv, 8*time.Second)
+				}
 				return err
 			}
 		},
@@ -249,6 +328,8 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&addrFlag, "addr", ":8080", "listen address")
 	cmd.Flags().BoolVar(&devFlag, "dev", false, "reload templates from disk on each request")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "single-user mode, no login required")
+	cmd.Flags().BoolVar(&httpsFlag, "https", false, "serve the local browser UI over HTTPS using an on-demand, device-local CA")
+	cmd.Flags().StringVar(&httpsAddrFlag, "https-addr", defaultLocalHTTPSAddr, "loopback HTTPS address for the local browser UI")
 
 	return cmd
 }

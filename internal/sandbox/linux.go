@@ -69,16 +69,19 @@ var deniedSyscallsCommon = []uint32{
 }
 
 type linuxSandbox struct {
-	cfg    Config
-	tmpDir string
-	cgroup *cgroupManager
+	cfg           Config
+	tmpDir        string
+	cgroup        *cgroupManager
+	networkBridge *networkBridge
+	userNamespace bool
 }
 
 // newPlatform tries to create a namespace+seccomp sandbox.
 // Returns an error if capabilities are insufficient so the factory falls back.
 func newPlatform(cfg Config) (Sandbox, error) {
-	if !hasNamespaceCapability() {
-		return nil, fmt.Errorf("linux sandbox: required user and mount namespace operations are unavailable")
+	hasNamespaceCapability := hasEffectiveCAPSYSADMIN()
+	if err := namespaceCapabilityError(hasNamespaceCapability); err != nil {
+		return nil, fmt.Errorf("linux sandbox capability probe: %w", err)
 	}
 
 	dir, err := os.MkdirTemp("", "wt-sandbox-*")
@@ -93,13 +96,10 @@ func newPlatform(cfg Config) (Sandbox, error) {
 	}
 
 	log.Printf("linux sandbox: created tmpdir=%s network=%s cgroup=%v", dir, cfg.NetworkNeed, cg != nil)
-	return &linuxSandbox{cfg: cfg, tmpDir: dir, cgroup: cg}, nil
+	return &linuxSandbox{cfg: cfg, tmpDir: dir, cgroup: cg, userNamespace: !hasNamespaceCapability}, nil
 }
 
-func hasNamespaceCapability() bool {
-	if os.Geteuid() == 0 {
-		return true
-	}
+func hasEffectiveCAPSYSADMIN() bool {
 	// Check CAP_SYS_ADMIN via capget. Use VERSION_1 which needs only one
 	// CapUserData struct (VERSION_3 requires [2]CapUserData — passing a single
 	// struct corrupts the stack because the kernel writes past the end).
@@ -109,14 +109,19 @@ func hasNamespaceCapability() bool {
 	hdr.Version = unix.LINUX_CAPABILITY_VERSION_1
 	hdr.Pid = 0 // current process
 	if err := unix.Capget(&hdr, &data); err == nil {
-		if data.Effective&(1<<unix.CAP_SYS_ADMIN) != 0 {
-			return true
-		}
+		return data.Effective&(1<<unix.CAP_SYS_ADMIN) != 0
+	}
+	return false
+}
+
+func namespaceCapabilityError(hasNamespaceCapability bool) error {
+	if hasNamespaceCapability {
+		return nil
 	}
 	// Check unprivileged user namespaces sysctl (fast reject if explicitly disabled).
 	if val, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone"); err == nil {
 		if strings.TrimSpace(string(val)) != "1" {
-			return false
+			return fmt.Errorf("kernel.unprivileged_userns_clone=%q", strings.TrimSpace(string(val)))
 		}
 		// Sysctl says enabled, but AppArmor may still block it (Ubuntu 24.04+,
 		// kernel 6.1+ with apparmor_restrict_unprivileged_userns=1).
@@ -150,20 +155,20 @@ func init() {
 // _deny_init, then asks the child to make the root private, create and remount
 // a read-only bind mask, and mount tmpfs. These are the filesystem primitives
 // the sandbox depends on for deny paths and write isolation.
-func probeMountNamespace() bool {
+func probeMountNamespace() error {
 	probeDir, err := os.MkdirTemp("", "wt-userns-probe-")
 	if err != nil {
-		return false
+		return fmt.Errorf("create probe directory: %w", err)
 	}
 	defer os.RemoveAll(probeDir)
 
 	exe, err := os.Executable()
 	if err != nil {
-		return false
+		return fmt.Errorf("resolve probe executable: %w", err)
 	}
 	cmd := exec.Command(exe, mountProbeArg, probeDir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+		Cloneflags: syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET,
 		UidMappings: []syscall.SysProcIDMap{{
 			ContainerID: 0,
 			HostID:      os.Getuid(),
@@ -175,7 +180,15 @@ func probeMountNamespace() bool {
 			Size:        1,
 		}},
 	}
-	return cmd.Run() == nil
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			return fmt.Errorf("start user+mount+network namespace probe: %w", err)
+		}
+		return fmt.Errorf("user+mount+network namespace probe: %w: %s", err, detail)
+	}
+	return nil
 }
 
 func runMountProbe(probeDir string) error {
@@ -249,7 +262,8 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		}
 	}
 
-	needsWrapper := len(s.cfg.Deny) > 0 || len(s.cfg.DenyWrite) > 0 || len(writablePaths) > 0
+	needsNetworkRelay := s.cfg.ProxyPort > 0 || len(s.cfg.LocalPorts) > 0
+	needsWrapper := s.needsEnforcementWrapper()
 	if needsWrapper {
 		// Wrap through _sandbox_init to apply deny paths (tmpfs overmounts)
 		// and write isolation (HOME read-only + writable sub-mounts).
@@ -266,6 +280,15 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 			"--uid", fmt.Sprintf("%d", uid),
 			"--gid", fmt.Sprintf("%d", gid),
 			"--log", logPath,
+		}
+		if needsNetworkRelay {
+			wrapArgs = append(wrapArgs, "--net-relay-fd", "3")
+			if s.cfg.ProxyPort > 0 {
+				wrapArgs = append(wrapArgs, "--proxy-port", fmt.Sprintf("%d", s.cfg.ProxyPort))
+			}
+			for _, port := range s.cfg.LocalPorts {
+				wrapArgs = append(wrapArgs, "--local-port", fmt.Sprintf("%d", port))
+			}
 		}
 		for _, d := range s.cfg.Deny {
 			wrapArgs = append(wrapArgs, "--deny", d)
@@ -347,6 +370,17 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		attr.Cloneflags &^= syscall.CLONE_NEWPID
 	}
 	cmd.SysProcAttr = attr
+	if needsNetworkRelay {
+		if s.networkBridge != nil {
+			return nil, fmt.Errorf("network relay already initialized")
+		}
+		bridge, child, err := newNetworkBridge(s.cfg.ProxyPort, s.cfg.LocalPorts)
+		if err != nil {
+			return nil, fmt.Errorf("create network relay: %w", err)
+		}
+		s.networkBridge = bridge
+		cmd.ExtraFiles = append(cmd.ExtraFiles, child)
+	}
 	return cmd, nil
 }
 
@@ -369,6 +403,9 @@ func straceSupportsKillOnExit(bin string) bool {
 // prlimit covers the gap. CLONE_INTO_CGROUP (Linux 5.7+) would eliminate
 // this race but requires CAP_SYS_ADMIN.
 func (s *linuxSandbox) PostStart(pid int) error {
+	if s.networkBridge != nil {
+		s.networkBridge.closeChild()
+	}
 	// Cgroup first — real memory (RSS) and PID tree limits
 	if s.cgroup != nil {
 		if err := s.cgroup.AddPID(pid); err != nil {
@@ -397,6 +434,10 @@ func (s *linuxSandbox) TraceLog() string {
 }
 
 func (s *linuxSandbox) Destroy() error {
+	if s.networkBridge != nil {
+		s.networkBridge.Close()
+		s.networkBridge = nil
+	}
 	if s.cgroup != nil {
 		if err := s.cgroup.Destroy(); err != nil {
 			log.Printf("linux sandbox: cgroup destroy: %v", err)
@@ -425,13 +466,21 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 		Pdeathsig: syscall.SIGKILL,
 	}
 
-	// When not root, use user namespaces for unprivileged isolation.
-	if os.Geteuid() != 0 && flags != 0 {
+	// Use a user namespace whenever the caller lacks effective CAP_SYS_ADMIN.
+	// EUID 0 is not sufficient: root in an ordinary unprivileged container often
+	// has a reduced capability set. Treating that process as privileged makes the
+	// capability probe pass while the first CLONE_NEWNS/CLONE_NEWNET launch fails.
+	if s.userNamespace && flags != 0 {
 		attr.Cloneflags |= syscall.CLONE_NEWUSER
 		uid := os.Getuid()
 		gid := os.Getgid()
 
-		needsRoot := len(s.cfg.Deny) > 0 || len(s.cfg.Mounts) > 0
+		// The network relay wrapper also needs to be UID 0 inside the new user
+		// namespace. It raises the isolated loopback interface and then creates
+		// the nested UID mapping used to launch the unprivileged agent. Mapping
+		// the wrapper directly to the caller's non-zero UID makes both operations
+		// fail even though CLONE_NEWNET itself succeeded.
+		needsRoot := s.needsEnforcementWrapper()
 		if needsRoot {
 			// Wrapper needs CAP_SYS_ADMIN for mounts → map to UID 0.
 			// The wrapper drops to real UID via nested user namespace
@@ -464,16 +513,21 @@ func (s *linuxSandbox) sysProcAttr() *syscall.SysProcAttr {
 	return attr
 }
 
-// cloneFlags returns namespace clone flags based on NetworkNeed.
+// needsEnforcementWrapper is intentionally unconditional. _deny_init installs
+// seccomp and makes the mount namespace private even when a base:none policy
+// contains no filesystem rules. Bypassing it for an otherwise empty policy
+// would silently drop syscall isolation; selecting it only for deny/write or
+// relay work also used to miss deny-write-only policies. The capability probe
+// already verifies the wrapper's mount primitives before New succeeds.
+func (s *linuxSandbox) needsEnforcementWrapper() bool {
+	return true
+}
+
+// cloneFlags always creates a fresh network namespace. Network-enabled modes
+// receive only explicitly inherited relay paths; without the relay there is no
+// interface or route an agent can use to bypass its policy.
 func (s *linuxSandbox) cloneFlags() uintptr {
-	flags := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
-	// Strip network namespace for agents that need network access.
-	// Linux can't do port-level filtering in userns without iptables,
-	// so HTTPS and Full both get full network. Local gets it too (localhost).
-	if s.cfg.NetworkNeed >= NetworkLocal {
-		flags &^= syscall.CLONE_NEWNET
-	}
-	return flags
+	return uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNET)
 }
 
 // rlimits returns resource limits for the sandboxed process.

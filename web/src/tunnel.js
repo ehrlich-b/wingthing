@@ -169,7 +169,14 @@ function openConn(wingId) {
         };
         ws.onmessage = function(e) {
             var msg = JSON.parse(e.data);
-            if (msg.type === 'tunnel.res') {
+            if (msg.type === 'error' && msg.request_id) {
+                var denied = conn.pending[msg.request_id];
+                if (denied) {
+                    delete conn.pending[msg.request_id];
+                    denied.reject(new Error(msg.message || 'tunnel request denied'));
+                    checkIdle(wingId, conn);
+                }
+            } else if (msg.type === 'tunnel.res') {
                 var h = conn.pending[msg.request_id];
                 if (h) {
                     delete conn.pending[msg.request_id];
@@ -179,8 +186,12 @@ function openConn(wingId) {
             } else if (msg.type === 'tunnel.stream') {
                 var h = conn.pending[msg.request_id];
                 if (h && h.onStream) {
-                    h.onStream(msg);
-                    if (msg.done) {
+                    var streamErr = h.onStream(msg);
+                    if (streamErr) {
+                        delete conn.pending[msg.request_id];
+                        h.reject(streamErr);
+                        checkIdle(wingId, conn);
+                    } else if (msg.done) {
                         delete conn.pending[msg.request_id];
                         h.resolve(msg);
                         checkIdle(wingId, conn);
@@ -266,6 +277,7 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
 
     var requestId = randomUUID();
     var payload = tunnelEncrypt(key, JSON.stringify(innerMsg));
+    var purpose = tunnelPurpose(innerMsg.type);
 
     var conn = await acquireConn(wingId);
 
@@ -275,6 +287,7 @@ export async function sendTunnelRequest(wingId, innerMsg, opts, _depth) {
             type: 'tunnel.req',
             wing_id: wingId,
             request_id: requestId,
+            purpose: purpose,
             sender_pub: identityPubKey,
             payload: payload
         }));
@@ -337,6 +350,7 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
 
     var requestId = randomUUID();
     var payload = tunnelEncrypt(key, JSON.stringify(innerMsg));
+    var purpose = tunnelPurpose(innerMsg.type);
 
     var conn = await acquireConn(wingId);
 
@@ -344,18 +358,24 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
         conn.pending[requestId] = {
             resolve: resolve,
             reject: reject,
-            onStream: async function(msg) {
+            onStream: function(msg) {
                 try {
                     var decrypted = tunnelDecrypt(key, msg.payload);
                     var chunk = JSON.parse(decrypted);
+                    if (chunk && chunk.error) return new Error(chunk.error);
                     onChunk(chunk);
-                } catch (e) { console.error('tunnel stream decrypt error:', e); }
+                    return null;
+                } catch (e) {
+                    console.error('tunnel stream decrypt error:', e);
+                    return e;
+                }
             }
         };
         conn.ws.send(JSON.stringify({
             type: 'tunnel.req',
             wing_id: wingId,
             request_id: requestId,
+            purpose: purpose,
             sender_pub: identityPubKey,
             payload: payload
         }));
@@ -367,6 +387,13 @@ export async function sendTunnelStream(wingId, innerMsg, onChunk) {
             }
         }, 120000);
     });
+}
+
+function tunnelPurpose(innerType) {
+    if (innerType === 'webrtc.offer') return 'webrtc-signal';
+    if (innerType === 'wing.info') return 'wing-discovery';
+    if (innerType === 'passkey.auth.begin' || innerType === 'passkey.auth.finish') return 'passkey-auth';
+    return 'wing-control';
 }
 
 async function handleTunnelPasskey(wingId) {

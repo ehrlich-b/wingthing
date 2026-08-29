@@ -16,7 +16,7 @@ func sampleEntries() []*store.ThreadEntry {
 		{
 			ID:        1,
 			Timestamp: ts,
-			WingID: "mac",
+			WingID:    "mac",
 			Agent:     strPtr("claude"),
 			Skill:     strPtr("jira-briefing"),
 			UserInput: nil,
@@ -25,7 +25,7 @@ func sampleEntries() []*store.ThreadEntry {
 		{
 			ID:        2,
 			Timestamp: ts.Add(73 * time.Minute),
-			WingID: "mac",
+			WingID:    "mac",
 			Agent:     strPtr("claude"),
 			Skill:     nil,
 			UserInput: strPtr("has sarah reviewed my PR yet?"),
@@ -34,7 +34,7 @@ func sampleEntries() []*store.ThreadEntry {
 		{
 			ID:        3,
 			Timestamp: ts.Add(105 * time.Minute),
-			WingID: "mac",
+			WingID:    "mac",
 			Agent:     strPtr("claude"),
 			Skill:     strPtr("scheduled"),
 			UserInput: nil,
@@ -81,7 +81,7 @@ func TestRenderNoUserInput(t *testing.T) {
 		{
 			ID:        1,
 			Timestamp: time.Date(2026, 2, 6, 10, 0, 0, 0, time.UTC),
-			WingID: "mac",
+			WingID:    "mac",
 			Agent:     strPtr("claude"),
 			Skill:     strPtr("cron-check"),
 			Summary:   "All systems healthy",
@@ -101,7 +101,7 @@ func TestRenderNoSkill(t *testing.T) {
 		{
 			ID:        1,
 			Timestamp: time.Date(2026, 2, 6, 14, 0, 0, 0, time.UTC),
-			WingID: "mac",
+			WingID:    "mac",
 			Agent:     strPtr("claude"),
 			Skill:     nil,
 			UserInput: strPtr("what time is it"),
@@ -187,18 +187,22 @@ func TestRenderDay(t *testing.T) {
 	ts1 := time.Date(2026, 2, 6, 8, 0, 0, 0, time.UTC)
 	ts2 := time.Date(2026, 2, 6, 9, 15, 0, 0, time.UTC)
 
-	s.AppendThreadAt(&store.ThreadEntry{
-		WingID: "mac",
-		Agent:     strPtr("claude"),
-		Skill:     strPtr("jira"),
-		Summary:   "Morning briefing",
-	}, ts1)
-	s.AppendThreadAt(&store.ThreadEntry{
-		WingID: "mac",
+	if err := s.AppendThreadAt(&store.ThreadEntry{
+		WingID:  "mac",
+		Agent:   strPtr("claude"),
+		Skill:   strPtr("jira"),
+		Summary: "Morning briefing",
+	}, ts1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendThreadAt(&store.ThreadEntry{
+		WingID:    "mac",
 		Agent:     strPtr("claude"),
 		UserInput: strPtr("check PR"),
 		Summary:   "PR is approved",
-	}, ts2)
+	}, ts2); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := RenderDay(s, date, 0)
 	if err != nil {
@@ -283,6 +287,10 @@ func openTestStore(t *testing.T) *store.Store {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	return s
 }

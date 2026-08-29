@@ -7,11 +7,15 @@ primary_region = "ewr"
   strategy = "rolling"
 
 [processes]
-  login = "sh -c 'mkdir -p /data/.wingthing && HOME=/data exec ./wt serve --addr :8080'"
+  login = "sh -c 'umask 077 && mkdir -p /data/.wingthing && HOME=/data exec ./wt serve --addr :8080'"
   # edge = "./wt serve --addr :8080"
 
 [env]
   WT_BASE_URL = "https://wingthing.ai"
+  # Public hosted policy is explicit. Private `wt serve` deployments retain
+  # legacy relay behavior unless their operator makes the same choice.
+  WT_RELAY_POLICY = "direct-free"
+  WT_RELAY_MIGRATION_BEFORE = "2026-08-26T00:00:00Z"
 
 [http_service]
   internal_port = 8080

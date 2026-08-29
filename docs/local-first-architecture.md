@@ -1,15 +1,26 @@
 # Local-first runtime architecture
 
-Status: direction proposal and first implementation slice  
-Reviewed: 2026-08-08
+Status: adopted direction, with control-plane convergence in progress
+
+Reviewed: 2026-08-28
+
+This document establishes the wing as the runtime authority. The current
+LLM-first follow-up defines the portal, qualified resource identity, and remote
+workspace placement in
+[the LLM-first architecture review](llm-first-review.md).
 
 ## Decision in one sentence
 
 **A wing is the durable runtime; everything else is a client, transport, access policy, or deployment bundle around it.**
 
-Wingthing should start locally, require no account, keep real terminal processes alive, and be useful from the terminal where the user already works. `wingthing.ai` is an optional browser client, rendezvous service, and relay fallback. It is not the place the work conceptually lives.
+Wingthing should start locally, require no account, keep real terminal processes alive, and be useful from the terminal where the user already works. `wingthing.ai` is an optional browser client, rendezvous service, and entitled browser/control relay. The native MCP connector is direct-only. The hosted service is not the place the work conceptually lives.
 
 That framing resolves the apparent conflict between “everyone goes to the roost” and “wingthing.ai routes to every wing.” They are different deployment stories built from the same layers, not competing definitions of the product.
+
+The next question is not simply local versus remote. Every workflow places five
+things: execution, workspace, display, credentials, and durable memory. The
+wing owns execution. The portal presents inventory and controls. Neither term
+implies that code or memory has been copied between machines.
 
 ## What Herdr got right
 
@@ -101,7 +112,8 @@ Wingthing did not miss the runtime. It buried it under the network and organizat
 - A wing discovers, starts, reclaims, and routes persistent eggs.
 - Browser ↔ wing terminal content is application-encrypted through the relay;
   see `docs/security.md` for metadata, TOFU, web-code, and forward-secrecy limits.
-- WebRTC can migrate browser traffic to a direct data channel with relay fallback.
+- WebRTC can migrate eligible browser traffic to a direct data channel while an
+  entitled session retains its relay transport.
 - A direct WebSocket server exists for browser clients on reachable networks.
 - Sandboxing, auditing, per-user homes, path policy, and privileged tools already sit next to the PTY runtime.
 
@@ -137,15 +149,20 @@ Clients should be peers, not tiers:
 
 The browser is valuable because it is universal. It is not the definition of remote access.
 
-### Transports
+### Target transport ordering
 
-Choose the simplest reachable transport, then fall back:
+The converged session protocol should choose the simplest reachable transport:
 
 1. local Unix socket
 2. SSH stdio using the user's SSH config, agent, VPN, or tailnet
 3. direct LAN/tailnet socket
 4. peer-to-peer negotiated path
 5. encrypted relay through `wingthing.ai` or another gateway
+
+This is an architecture target, not an automatic fallback claim. The shipped
+native `wt mcp connect` adapter is direct-only and fails closed when WebRTC cannot
+connect; it never changes to the hosted relay. Browser terminals with relay access
+use their gateway transport today, while CLI remote attach uses explicit SSH.
 
 The session protocol above these transports should converge. A client should attach to a wing and session; it should not need separate behavior because a relay happens to carry the bytes.
 
@@ -188,7 +205,11 @@ local/SSH/native/web client ──transport──> wing ──local socket──
                                             └── authoritative state
 ```
 
-The user installs `wt`, starts agents on their own machine, detaches, and reattaches. They may enable `wingthing.ai` for browser access, discovery, and NAT/firewall fallback. Collaboration is explicit sharing of a wing or session.
+The user installs `wt`, starts agents on their own machine, detaches, and reattaches.
+They may enable `wingthing.ai` for discovery and direct connection coordination;
+accounts with hosted relay access may also use its browser and NAT/firewall relay.
+The native MCP connector remains direct-only. Collaboration is explicit sharing of
+a wing or session.
 
 This should be the default onboarding and README story.
 
@@ -324,7 +345,7 @@ global routing.
 - [x] Add stable human-readable session labels alongside immutable IDs.
 - [x] Add persistent shells and arbitrary commands alongside agent sessions.
 - [x] Let the native CLI list and encrypted-probe wings available through a roost.
-- [ ] Dogfood before post-vacation promotion.
+- [x] Dogfood local and SSH detach/reattach before promotion.
 - [ ] Make `wt attach` one client protocol across every transport.
 
 ### P1: one local control surface
@@ -335,7 +356,9 @@ global routing.
 - [x] Expose local terminal and agent orchestration to LLM clients through MCP stdio.
 - [x] Add structured one-shot prompt, bounded loop, and dependency-DAG swarm primitives.
 - [x] Add named prompt templates with immutable revisions and task provenance.
-- Expose the same control semantics through browser tunnel and other transports.
+- Converge the direct and browser transports on the same wing-owned handlers; native
+  direct MCP already uses the shared operation registry, while the browser tunnel
+  remains bespoke.
 - Separate raw terminal operations from agent-aware operations.
 
 ### P2: agent awareness
@@ -358,7 +381,9 @@ global routing.
 ### P4: transport convergence
 
 - Put local, SSH, direct, P2P, and relay paths behind one attach protocol.
-- Prefer direct reachability and make relay fallback observable.
+- Prefer direct reachability for every transport; where the browser/control path is
+  entitled to relay, make that fallback explicit and observable. Do not add silent
+  relay fallback to the direct-only native MCP connector.
 - [x] Let `wingthing.ai` provide optional discovery/rendezvous without owning session metadata.
 - Keep the browser as a first-class client on the same protocol.
 - Emit a versioned control-protocol schema from the installed binary.

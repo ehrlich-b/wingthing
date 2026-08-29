@@ -1,6 +1,12 @@
 .git
+.agents
+.codex
+dist
+test
 wt
+wt-linux
 web/node_modules
+web/dist
 *.db
 *.db-wal
 *.db-shm

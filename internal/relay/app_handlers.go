@@ -3,9 +3,12 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ehrlich-b/wingthing/internal/ntfy"
+	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 // tokenUser authenticates a request via Bearer token (CLI device auth).
@@ -30,7 +34,7 @@ func (s *Server) tokenUser(r *http.Request) *User {
 		return nil
 	}
 	user, err := s.Store.GetUserByID(userID)
-	if err != nil {
+	if err != nil || !s.roostUserAllowed(user) {
 		return nil
 	}
 	return user
@@ -57,7 +61,7 @@ func (s *Server) handleResolveEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target, err := s.Store.GetUserByEmail(email)
-	if err != nil || target == nil {
+	if err != nil || target == nil || !s.roostUserAllowed(target) {
 		writeError(w, http.StatusNotFound, "no user found with email: "+email)
 		return
 	}
@@ -71,7 +75,13 @@ func (s *Server) handleResolveEmail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
+		// The SPA may live on a hostname unrelated to the OAuth/login hostname.
+		// Advertising the configured base avoids teaching current browsers to
+		// guess topology, while the additive field remains safe for old clients.
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error":          "not logged in",
+			"login_base_url": strings.TrimRight(s.Config.BaseURL, "/"),
+		})
 		return
 	}
 	tier := "free"
@@ -81,17 +91,22 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 	}
 	hasPersonalSub := s.Store.HasPersonalSubscription(user.ID)
 	creds, _ := s.Store.ListPasskeyCredentials(user.ID)
+	relayAccess := s.relayAccess(user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":               user.ID,
-		"display_name":     user.DisplayName,
-		"provider":         user.Provider,
-		"avatar_url":       user.AvatarURL,
-		"is_pro":           tier == "pro",
-		"tier":             tier,
-		"email":            user.Email,
-		"personal_pro":     hasPersonalSub,
-		"roost_mode":       s.RoostMode,
-		"has_passkeys":     len(creds) > 0,
+		"id":                 user.ID,
+		"display_name":       user.DisplayName,
+		"provider":           user.Provider,
+		"avatar_url":         user.AvatarURL,
+		"is_pro":             tier == "pro",
+		"tier":               tier,
+		"email":              user.Email,
+		"personal_pro":       hasPersonalSub,
+		"roost_mode":         s.RoostMode,
+		"self_service_plans": s.selfServicePlansEnabled(),
+		"has_passkeys":       len(creds) > 0,
+		"relay_allowed":      relayAccess.Allowed,
+		"relay_reason":       relayAccess.Reason,
+		"default_transport":  "direct",
 	})
 }
 
@@ -107,8 +122,14 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
+	writeJSON(w, http.StatusOK, s.appWingEntries(user.ID))
+}
 
-	wings := s.listAccessibleWings(user.ID)
+// appWingEntries is the access-filtered portal wing inventory shared by the
+// browser API and the HTTP MCP surface. Callers may decorate a copied entry,
+// but must not bypass this method with the unfiltered registries.
+func (s *Server) appWingEntries(userID string) []map[string]any {
+	wings := s.listAccessibleWings(userID)
 	latestVer := s.getLatestVersion()
 
 	// Collect unique owner IDs and resolve display names
@@ -119,11 +140,16 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		seenWings[wing.WingID] = true
 		ownerIDs[wing.UserID] = true
 		entry := map[string]any{
-			"wing_id":        wing.WingID,
-			"public_key":     wing.PublicKey,
-			"latest_version": latestVer,
-			"org_id":         wing.OrgID,
-			"user_id":        wing.UserID,
+			"wing_id":         wing.WingID,
+			"public_key":      wing.PublicKey,
+			"latest_version":  latestVer,
+			"org_id":          wing.OrgID,
+			"user_id":         wing.UserID,
+			"locked":          wing.Locked,
+			"allowed_count":   wing.AllowedCount,
+			"purpose_binding": wing.PurposeBinding,
+			"direct_mcp":      wing.DirectMCP,
+			"hosted_relay":    effectiveHostedRelay(wing.HostedRelay),
 		}
 		out = append(out, entry)
 	}
@@ -135,19 +161,24 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			// Check access: owner OR org member
-			if loc.UserID != user.ID {
-				if loc.OrgID == "" || s.Store == nil || !s.Store.IsOrgMember(loc.OrgID, user.ID) {
+			if loc.UserID != userID {
+				if loc.OrgID == "" || s.Store == nil || !s.Store.IsOrgMember(loc.OrgID, userID) {
 					continue
 				}
 			}
 			seenWings[wingID] = true
 			ownerIDs[loc.UserID] = true
 			entry := map[string]any{
-				"wing_id":        wingID,
-				"public_key":     loc.PublicKey,
-				"latest_version": latestVer,
-				"org_id":         loc.OrgID,
-				"user_id":        loc.UserID,
+				"wing_id":         wingID,
+				"public_key":      loc.PublicKey,
+				"latest_version":  latestVer,
+				"org_id":          loc.OrgID,
+				"user_id":         loc.UserID,
+				"locked":          loc.Locked,
+				"allowed_count":   loc.AllowedCount,
+				"purpose_binding": loc.PurposeBinding,
+				"direct_mcp":      loc.DirectMCP,
+				"hosted_relay":    effectiveHostedRelay(loc.HostedRelay),
 			}
 			if loc.MachineID != s.Config.FlyMachineID {
 				entry["remote_node"] = loc.MachineID
@@ -160,7 +191,7 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	ownerNames := make(map[string]string)
 	if s.Store != nil {
 		for uid := range ownerIDs {
-			if uid == user.ID {
+			if uid == userID {
 				continue
 			}
 			if u, err := s.Store.GetUserByID(uid); err == nil && u != nil {
@@ -179,19 +210,49 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, out)
+	sort.Slice(out, func(i, j int) bool {
+		left, _ := out[i]["wing_id"].(string)
+		right, _ := out[j]["wing_id"].(string)
+		return left < right
+	})
+	return out
 }
 
-// getLatestVersion returns the latest release version from cache, fetching from GitHub if stale.
-func (s *Server) getLatestVersion() string {
-	s.latestVersionMu.RLock()
-	ver := s.latestVersion
-	at := s.latestVersionAt
-	s.latestVersionMu.RUnlock()
+func effectiveHostedRelay(policy string) string {
+	if ws.HostedRelayAllowed(policy) {
+		return ws.HostedRelayAllow
+	}
+	return ws.HostedRelayDeny
+}
 
-	if ver != "" && time.Since(at) < time.Hour {
+const (
+	latestVersionFreshFor = time.Hour
+	latestVersionRetryIn  = 5 * time.Minute
+)
+
+// getLatestVersion returns the latest release version from cache, fetching from
+// GitHub if stale. Inventory requests may arrive in bursts, so the stale check
+// also reserves the fetch before releasing the mutex. Failed fetches retain the
+// last known version and are retried after a short backoff instead of spawning
+// one request per inventory call.
+func (s *Server) getLatestVersion() string {
+	s.latestVersionMu.Lock()
+	ver := s.latestVersion
+	now := time.Now()
+	if ver != "" && now.Sub(s.latestVersionAt) < latestVersionFreshFor {
+		s.latestVersionMu.Unlock()
 		return ver
 	}
+	if s.latestVersionFetching || now.Before(s.latestVersionNextFetch) {
+		s.latestVersionMu.Unlock()
+		return ver
+	}
+	s.latestVersionFetching = true
+	// Reserve the retry window immediately. The completion path updates it from
+	// the actual completion time, but this value also protects against a fetch
+	// function that blocks for longer than expected.
+	s.latestVersionNextFetch = now.Add(latestVersionRetryIn)
+	s.latestVersionMu.Unlock()
 
 	// Fetch in background, return cached (possibly empty) for now
 	go s.fetchLatestVersion()
@@ -199,50 +260,64 @@ func (s *Server) getLatestVersion() string {
 }
 
 func (s *Server) fetchLatestVersion() {
+	fetch := s.latestVersionFetch
+	if fetch == nil {
+		fetch = fetchLatestGitHubVersion
+	}
+	ver, err := fetch(context.Background())
+	ver = strings.TrimSpace(ver)
+	if err == nil && ver == "" {
+		err = fmt.Errorf("version fetch returned an empty tag")
+	}
+	now := time.Now()
+
 	s.latestVersionMu.Lock()
-	if s.latestVersion != "" && time.Since(s.latestVersionAt) < time.Hour {
+	s.latestVersionFetching = false
+	if err != nil {
+		s.latestVersionNextFetch = now.Add(latestVersionRetryIn)
 		s.latestVersionMu.Unlock()
 		return
 	}
+	if !strings.HasPrefix(ver, "v") {
+		ver = "v" + ver
+	}
+	s.latestVersion = ver
+	s.latestVersionAt = now
+	s.latestVersionNextFetch = now.Add(latestVersionFreshFor)
 	s.latestVersionMu.Unlock()
+	log.Printf("latest release version: %s", ver)
+}
 
+func fetchLatestGitHubVersion(ctx context.Context) (string, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/ehrlich-b/wingthing/releases/latest", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/ehrlich-b/wingthing/releases/latest", nil)
 	if err != nil {
-		return
+		return "", err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return
+		return "", err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github release response: %s", resp.Status)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
 	if err != nil {
-		return
+		return "", err
 	}
 	var release struct {
 		TagName string `json:"tag_name"`
 	}
 	if err := json.Unmarshal(body, &release); err != nil || release.TagName == "" {
-		return
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("github release response has no tag_name")
 	}
-
-	ver := release.TagName
-	if !strings.HasPrefix(ver, "v") {
-		ver = "v" + ver
-	}
-
-	s.latestVersionMu.Lock()
-	s.latestVersion = ver
-	s.latestVersionAt = time.Now()
-	s.latestVersionMu.Unlock()
-	log.Printf("latest release version: %s", ver)
+	return release.TagName, nil
 }
-
 
 // handleAppWS is a dashboard WebSocket that pushes wing.online/wing.offline events.
 func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
@@ -252,21 +327,23 @@ func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
-	})
+	conn, err := websocket.Accept(w, r, s.browserWebSocketAcceptOptions())
 	if err != nil {
 		return
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 
-	s.trackBrowser(conn)
+	s.trackBrowser(conn, user.ID)
 	defer s.untrackBrowser(conn)
 
 	// Resolve org memberships at subscribe time for pub/sub delivery
 	var orgIDs []string
 	if s.Store != nil {
-		orgs, _ := s.Store.ListOrgsForUser(user.ID)
+		orgs, err := s.Store.ListOrgsForUser(user.ID)
+		if err != nil {
+			log.Printf("app websocket: list user orgs: %v", err)
+			return
+		}
 		for _, org := range orgs {
 			orgIDs = append(orgIDs, org.ID)
 		}
@@ -334,29 +411,25 @@ func (s *Server) handleAppUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
-
-	existing, _ := s.Store.GetActivePersonalSubscription(user.ID)
-	if existing != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": "pro"})
+	if !s.selfServicePlansEnabled() {
+		writeError(w, http.StatusForbidden, "self-service plan changes are unavailable on this deployment")
 		return
 	}
 
 	subID := uuid.New().String()
 	sub := &Subscription{ID: subID, UserID: &user.ID, Plan: "pro_monthly", Status: "active", Seats: 1}
-	if err := s.Store.CreateSubscription(sub); err != nil {
-		writeError(w, http.StatusInternalServerError, "create subscription: "+err.Error())
+	ent := &Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID}
+	_, created, err := s.Store.EnsurePersonalSubscription(sub, ent)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "activate subscription: "+err.Error())
 		return
 	}
-	if err := s.Store.CreateEntitlement(&Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID}); err != nil {
-		writeError(w, http.StatusInternalServerError, "create entitlement: "+err.Error())
-		return
-	}
-
-	s.Store.UpdateUserTier(user.ID, "pro")
 	if s.Bandwidth != nil {
 		s.Bandwidth.InvalidateUser(user.ID)
 	}
-	log.Printf("user %s (%s) upgraded to pro (no billing)", user.ID, user.DisplayName)
+	if created {
+		log.Printf("user %s (%s) upgraded to pro (no billing)", user.ID, user.DisplayName)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": "pro"})
 }
 
@@ -368,23 +441,21 @@ func (s *Server) handleAppDowngrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sub, _ := s.Store.GetActivePersonalSubscription(user.ID)
+	sub, err := s.Store.GetActivePersonalSubscription(user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load subscription: "+err.Error())
+		return
+	}
 	if sub == nil {
 		writeError(w, http.StatusBadRequest, "no active personal subscription")
 		return
 	}
 
-	if err := s.Store.UpdateSubscriptionStatus(sub.ID, "canceled"); err != nil {
+	tier, err := s.Store.CancelPersonalSubscription(sub.ID, user.ID)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "cancel subscription: "+err.Error())
 		return
 	}
-	s.Store.DeleteEntitlementByUserAndSub(user.ID, sub.ID)
-
-	tier := "free"
-	if s.Store.IsUserPro(user.ID) {
-		tier = "pro"
-	}
-	s.Store.UpdateUserTier(user.ID, tier)
 	if s.Bandwidth != nil {
 		s.Bandwidth.InvalidateUser(user.ID)
 	}
@@ -394,30 +465,31 @@ func (s *Server) handleAppDowngrade(w http.ResponseWriter, r *http.Request) {
 
 // wingLabelScope resolves the owner and scope for a wing label operation.
 // Checks both local wings and peer wings (for cross-node labeling on login).
-// Returns (orgID, isOwner). Empty orgID means personal scope.
-func (s *Server) wingLabelScope(userID, wingID string) (orgID string, isOwner bool) {
+// Returns the organization scope (empty for personal), whether the user owns
+// the wing itself, and whether the preflight lookup authorizes the operation.
+func (s *Server) wingLabelScope(userID, wingID string) (orgID string, wingOwner, authorized bool) {
 	// Check local wings first
 	if wing := s.findWingByWingID(userID, wingID); wing != nil {
 		if !s.isWingOwner(userID, wing) {
-			return "", false
+			return "", false, false
 		}
-		return wing.OrgID, true
+		return wing.OrgID, true, true
 	}
 	// Check wings on other nodes via wingMap
 	if s.WingMap != nil {
 		if loc, found := s.WingMap.Locate(wingID); found {
 			if loc.UserID == userID {
-				return loc.OrgID, true
+				return loc.OrgID, true, true
 			}
 			if loc.OrgID != "" && s.Store != nil {
 				role := s.Store.GetOrgMemberRole(loc.OrgID, userID)
 				if role == "owner" || role == "admin" {
-					return loc.OrgID, true
+					return loc.OrgID, false, true
 				}
 			}
 		}
 	}
-	return "", false
+	return "", false, false
 }
 
 // handleWingLabel sets or updates a label for a wing.
@@ -429,8 +501,8 @@ func (s *Server) handleWingLabel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wingID := r.PathValue("wingID")
-	orgID, isOwner := s.wingLabelScope(user.ID, wingID)
-	if !isOwner {
+	orgID, wingOwner, authorized := s.wingLabelScope(user.ID, wingID)
+	if !authorized {
 		writeError(w, http.StatusNotFound, "wing not found")
 		return
 	}
@@ -451,7 +523,11 @@ func (s *Server) handleWingLabel(w http.ResponseWriter, r *http.Request) {
 		scopeID = orgID
 	}
 
-	if err := s.Store.SetLabel(wingID, scopeType, scopeID, body.Label); err != nil {
+	if err := s.Store.SetLabelAuthorized(wingID, scopeType, scopeID, user.ID, wingOwner, body.Label); err != nil {
+		if errors.Is(err, ErrOrgMutationUnauthorized) {
+			writeError(w, http.StatusNotFound, "wing not found")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "save label: "+err.Error())
 		return
 	}
@@ -467,8 +543,8 @@ func (s *Server) handleDeleteWingLabel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wingID := r.PathValue("wingID")
-	orgID, isOwner := s.wingLabelScope(user.ID, wingID)
-	if !isOwner {
+	orgID, wingOwner, authorized := s.wingLabelScope(user.ID, wingID)
+	if !authorized {
 		writeError(w, http.StatusNotFound, "wing not found")
 		return
 	}
@@ -480,7 +556,14 @@ func (s *Server) handleDeleteWingLabel(w http.ResponseWriter, r *http.Request) {
 		scopeID = orgID
 	}
 
-	s.Store.DeleteLabel(wingID, scopeType, scopeID)
+	if err := s.Store.DeleteLabelAuthorized(wingID, scopeType, scopeID, user.ID, wingOwner); err != nil {
+		if errors.Is(err, ErrOrgMutationUnauthorized) {
+			writeError(w, http.StatusNotFound, "wing not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "delete label: "+err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -539,6 +622,12 @@ func (s *Server) handleNtfySet(w http.ResponseWriter, r *http.Request) {
 	if req.Events == "" {
 		req.Events = "attention,exit"
 	}
+	if req.Topic != "" {
+		if _, err := s.newNtfyClient(req.Topic, req.Token, req.Events); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if err := s.Store.SetNtfyConfig(user.ID, NtfyConfig{
 		Topic:  req.Topic,
 		Token:  req.Token,
@@ -562,12 +651,23 @@ func (s *Server) handleNtfyTest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ntfy not configured")
 		return
 	}
-	c := ntfy.New(cfg.Topic, cfg.Token, cfg.Events)
+	c, err := s.newNtfyClient(cfg.Topic, cfg.Token, cfg.Events)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := c.SendTest(); err != nil {
 		writeError(w, http.StatusBadGateway, "ntfy send failed: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) newNtfyClient(topic, token, events string) (*ntfy.Client, error) {
+	if s.LocalMode || s.RoostMode {
+		return ntfy.New(topic, token, events), nil
+	}
+	return ntfy.NewHosted(topic, token, events)
 }
 
 // POST /api/app/ntfy/generate — generates a BIP39 topic.

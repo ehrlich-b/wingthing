@@ -1,94 +1,112 @@
 {{define "title"}}patterns - wingthing.ai{{end}}
 {{define "head"}}
 <style>
-.patterns{max-width:980px;margin:0 auto;padding:18px 8px 40px}
-.patterns h1{font-size:28px;letter-spacing:-0.03em;margin-bottom:8px}
-.patterns .lead{max-width:720px;color:var(--text-dim);font-size:15px;line-height:1.7;margin-bottom:30px}
-.piece-row{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0 40px}
-.piece{background:var(--bg-card);border:1px solid var(--accent);border-radius:7px;padding:16px}
-.piece h2{font-family:var(--mono);font-size:15px;color:var(--action);margin-bottom:6px}
-.piece p{color:var(--text-dim);font-size:13px;line-height:1.55}
+.patterns{max-width:1040px;margin:0 auto;padding:18px 8px 40px}
+.patterns h1{font-size:30px;letter-spacing:-0.03em;margin-bottom:8px}
+.patterns .lead{max-width:760px;color:var(--text-dim);font-size:15px;line-height:1.7;margin-bottom:22px}
+.plain-language{max-width:760px;background:var(--bg-card);border-left:3px solid var(--action);padding:14px 16px;margin-bottom:30px;color:var(--text-dim);line-height:1.6}
+.plain-language strong{color:var(--text)}
 .pattern-list{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
-.pattern{position:relative;background:var(--bg-card);border:1px solid var(--accent);border-radius:7px;padding:22px 22px 20px}
-.pattern-head{display:flex;justify-content:space-between;gap:16px;align-items:baseline;margin-bottom:8px}
-.pattern h2{font-size:18px;letter-spacing:-0.02em}
-.pattern-num{font-family:var(--mono);font-size:11px;color:var(--action);letter-spacing:0.08em;margin-bottom:12px}
+.pattern{display:flex;flex-direction:column;background:var(--bg-card);border:1px solid var(--accent);border-radius:7px;padding:22px}
+.pattern-num{font-family:var(--mono);font-size:11px;color:var(--action);letter-spacing:0.08em;margin-bottom:10px}
 .pattern-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .pattern-tag{font-family:var(--mono);font-size:10px;color:var(--text-dim);border:1px solid var(--accent);border-radius:10px;padding:2px 8px}
-.pattern p{color:var(--text-dim);line-height:1.65;margin-bottom:10px}
-.flow{font-family:var(--mono);font-size:12px;background:var(--bg);padding:10px 12px;border-radius:4px;overflow-x:auto;color:var(--text)}
-.recipe-row{display:flex;gap:12px;align-items:center;margin-top:12px;font-family:var(--mono);font-size:11px}
+.pattern h2{font-size:19px;line-height:1.3;letter-spacing:-0.02em;margin-bottom:10px}
+.pattern p{color:var(--text-dim);line-height:1.65;margin-bottom:12px}
+.pattern-facts{list-style:none;padding:0;margin:0 0 14px;color:var(--text-dim);line-height:1.55}
+.pattern-facts li{margin-bottom:8px}
+.pattern-facts strong{color:var(--text);font-weight:600}
+.flow{font-family:var(--mono);font-size:12px;background:var(--bg);padding:10px 12px;border-radius:4px;overflow-x:auto;color:var(--text);margin-top:auto}
+.recipe-row{display:flex;gap:14px;align-items:center;margin-top:14px;font-family:var(--mono);font-size:11px}
 .recipe-row a,.copy-recipe{color:var(--text-dim);background:none;border:none;padding:0;font:inherit;cursor:pointer;text-decoration:none}
 .recipe-row a:hover,.copy-recipe:hover{color:var(--action)}
-.skill-row{margin:-16px 0 30px}
-@media(max-width:700px){.piece-row,.pattern-list{grid-template-columns:1fr}.pattern-head{display:block}}
+@media(max-width:700px){.pattern-list{grid-template-columns:1fr}.patterns h1{font-size:25px}}
 </style>
 {{end}}
 {{define "content"}}
 <main class="patterns">
-<h1>ways to use wingthing</h1>
-<p class="lead">Wingthing provides three pieces you can compose. A roost coordinates access, a wing supplies a machine, and an egg wraps one durable agent session. The patterns change who drives the egg and where it runs.</p>
-<div class="recipe-row skill-row"><a href="/patterns/SKILL.md">open the patterns skill</a><button class="copy-recipe" data-copy="/patterns/SKILL.md">copy skill markdown</button></div>
+<h1>choose what you want to do</h1>
+<p class="lead">Each setup below works today. Pick one to see what must be installed, where the agents run, and how to connect.</p>
 
-<div class="piece-row">
-<section class="piece"><h2>roost</h2><p>Login, identity, policy, and routing for people and agent clients that share infrastructure.</p></section>
-<section class="piece"><h2>wing</h2><p>A machine that runs eggs. It can connect to a hosted roost or live inside a self-hosted one.</p></section>
-<section class="piece"><h2>egg</h2><p>An owner-scoped agent or terminal with a PTY, sandbox policy, and durable lifecycle.</p></section>
-</div>
+<div class="plain-language"><strong>A wing is simply a computer running Wingthing.</strong> Your code, agent credentials, and processes stay on that computer. Wingthing keeps the work alive and lets an authorized person or parent agent reconnect.</div>
 
 <div class="pattern-list">
 <section class="pattern">
 <div class="pattern-num">01</div>
-<div class="pattern-tags"><span class="pattern-tag">human</span><span class="pattern-tag">local</span></div>
-<div class="pattern-head"><h2>use it as a local sandbox</h2></div>
-<p>Start Claude, Codex, or another agent inside an egg on the current machine. The egg applies the project sandbox policy and keeps running across terminal disconnects.</p>
-<div class="flow">you → wt egg → sandboxed agent</div>
-<div class="recipe-row"><a href="/patterns/local-sandbox/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/local-sandbox/INSTRUCTIONS.md">copy markdown</button></div>
+<div class="pattern-tags"><span class="pattern-tag">one computer</span><span class="pattern-tag">human-driven</span></div>
+<h2>Run a durable, sandboxed agent on this computer</h2>
+<p>Start Claude, Codex, or another agent in a project without setting up a server or account.</p>
+<ul class="pattern-facts">
+<li><strong>You need:</strong> Wingthing and the agent CLI installed locally.</li>
+<li><strong>You get:</strong> project sandbox policy, a persistent terminal, and the ability to disconnect and reattach later.</li>
+</ul>
+<div class="flow">project folder -> sandboxed agent -> reattach later</div>
+<div class="recipe-row"><a href="/patterns/local-sandbox/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/local-sandbox/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
 <section class="pattern">
 <div class="pattern-num">02</div>
-<div class="pattern-tags"><span class="pattern-tag">agent</span><span class="pattern-tag">local</span></div>
-<div class="pattern-head"><h2>give your AI sandboxed sub-agents</h2></div>
-<p>Connect a main Codex or Claude session to Wingthing's typed interface. It can launch owner-scoped eggs, select a model, wait for completion, and read semantic results.</p>
-<div class="flow">your AI → local MCP → owned egg → result</div>
-<div class="recipe-row"><a href="/patterns/local-subagents/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/local-subagents/INSTRUCTIONS.md">copy markdown</button></div>
+<div class="pattern-tags"><span class="pattern-tag">one computer</span><span class="pattern-tag">AI-driven</span></div>
+<h2>Let your current AI launch local sub-agents</h2>
+<p>Give a parent Claude or Codex session tools for delegating parts of a larger task to other agents on the same computer.</p>
+<ul class="pattern-facts">
+<li><strong>You need:</strong> Wingthing added as a local MCP server in the parent AI client.</li>
+<li><strong>You get:</strong> start, wait, inspect, steer, and stop controls for sandboxed child agents.</li>
+</ul>
+<div class="flow">parent AI -> Wingthing -> child agents on this computer</div>
+<div class="recipe-row"><a href="/patterns/local-subagents/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/local-subagents/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
 <section class="pattern">
 <div class="pattern-num">03</div>
-<div class="pattern-tags"><span class="pattern-tag">human</span><span class="pattern-tag">remote</span></div>
-<div class="pattern-head"><h2>reach your machine from the web</h2></div>
-<p>Run a wing on a workstation and connect it outbound to the hosted roost. Open and resume its eggs from a browser without an inbound port.</p>
-<div class="flow">browser → hosted roost → your wing → egg</div>
-<div class="recipe-row"><a href="/patterns/personal-remote-wing/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/personal-remote-wing/INSTRUCTIONS.md">copy markdown</button></div>
+<div class="pattern-tags"><span class="pattern-tag">several computers</span><span class="pattern-tag">AI-driven</span></div>
+<h2>Let one AI manage agents on several computers</h2>
+<p>Run agents on a home machine, office VM, or other host from one parent Claude or Codex session.</p>
+<ul class="pattern-facts">
+<li><strong>You need:</strong> each computer logged into the same Wingthing account and running <code>wt start</code>; the parent AI uses <code>wt mcp connect</code>.</li>
+<li><strong>You get:</strong> one list of online computers, explicit machine selection, direct encrypted control, and durable remote work without inbound ports.</li>
+</ul>
+<div class="flow">parent AI -> choose computer -> direct connection -> agent runs there</div>
+<div class="recipe-row"><a href="/patterns/remote-orchestration/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/remote-orchestration/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
 <section class="pattern">
 <div class="pattern-num">04</div>
-<div class="pattern-tags"><span class="pattern-tag">team</span><span class="pattern-tag">shared host</span></div>
-<div class="pattern-head"><h2>share a roost over the web</h2></div>
-<p>Several people log into one roost and run agents on its hardware. Each egg has an owner. A ticket workspace can be shared separately when the work calls for it.</p>
-<div class="flow">team browsers → shared roost → owner-scoped eggs</div>
-<div class="recipe-row"><a href="/patterns/shared-web-roost/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/shared-web-roost/INSTRUCTIONS.md">copy markdown</button></div>
+<div class="pattern-tags"><span class="pattern-tag">remote computer</span><span class="pattern-tag">browser</span><span class="pattern-tag">self-hosted</span></div>
+<h2>Control a remote agent from a localhost browser</h2>
+<p>Run the web app on the computer in front of you, carry it over SSH, and launch Claude or Codex on the remote computer.</p>
+<ul class="pattern-facts">
+<li><strong>You need:</strong> Wingthing on both computers, SSH access to the remote computer, and the agent already logged in there.</li>
+<li><strong>You get:</strong> a private <code>https://localhost</code> page for starting and resuming durable sessions on the remote computer, without using the hosted relay. WT creates a localhost-only certificate on demand, installs only its public CA for your user, and keeps the private key on this computer.</li>
+</ul>
+<div class="flow">localhost browser -> local portal -> SSH tunnel -> remote wing -> agent</div>
+<div class="recipe-row"><a href="/patterns/personal-remote-wing/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/personal-remote-wing/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
 <section class="pattern">
 <div class="pattern-num">05</div>
-<div class="pattern-tags"><span class="pattern-tag">agent</span><span class="pattern-tag">shared host</span></div>
-<div class="pattern-head"><h2>let your AI use a shared roost</h2></div>
-<p>Codex or Claude authenticates with the person's Wingthing login and orchestrates that person's eggs on shared hardware. The provider login stays in the owner's agent home.</p>
-<div class="flow">your AI → roost MCP → your eggs → results</div>
-<div class="recipe-row"><a href="/patterns/shared-roost-agents/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/shared-roost-agents/INSTRUCTIONS.md">copy markdown</button></div>
+<div class="pattern-tags"><span class="pattern-tag">team</span><span class="pattern-tag">private server</span><span class="pattern-tag">browser</span></div>
+<h2>Give a team a private browser-based agent host</h2>
+<p>Run Wingthing on one shared server so several people can launch and resume their own agent sessions through a private web UI.</p>
+<ul class="pattern-facts">
+<li><strong>You need:</strong> a server, HTTPS hostname, OAuth login, an exact email enrollment list, and project directories on that server.</li>
+<li><strong>You get:</strong> a self-hosted portal, per-user sessions, and separate per-user agent homes on the shared host.</li>
+</ul>
+<div class="flow">team browsers -> private roost -> agents on the shared server</div>
+<div class="recipe-row"><a href="/patterns/shared-web-roost/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/shared-web-roost/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
 <section class="pattern">
 <div class="pattern-num">06</div>
-<div class="pattern-tags"><span class="pattern-tag">human or agent</span><span class="pattern-tag">remote hosts</span></div>
-<div class="pattern-head"><h2>orchestrate work on remote hosts</h2></div>
-<p>Select a roost or wing, launch work near the required code and hardware, and supervise it through the same typed operations used locally.</p>
-<div class="flow">you or your AI → remote runtime → owned eggs</div>
-<div class="recipe-row"><a href="/patterns/remote-orchestration/INSTRUCTIONS.md">open instructions</a><button class="copy-recipe" data-copy="/patterns/remote-orchestration/INSTRUCTIONS.md">copy markdown</button></div>
+<div class="pattern-tags"><span class="pattern-tag">private server</span><span class="pattern-tag">AI-driven</span></div>
+<h2>Let an AI control agents on your private roost</h2>
+<p>Connect a local Claude or Codex client to your self-hosted Wingthing server and let it manage work there.</p>
+<ul class="pattern-facts">
+<li><strong>You need:</strong> an enrolled account on a roost with HTTPS and OAuth, plus its HTTP MCP endpoint added to the parent AI client.</li>
+<li><strong>You get:</strong> authenticated control of that user's agent runs and persistent sessions on the roost server.</li>
+</ul>
+<div class="flow">parent AI -> private roost MCP -> agents on the roost server</div>
+<div class="recipe-row"><a href="/patterns/shared-roost-agents/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/shared-roost-agents/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 </div>
 </main>

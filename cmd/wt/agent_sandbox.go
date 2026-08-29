@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -11,6 +13,35 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
+
+// sandboxAgentExecutable resolves the adapter's command before entering the
+// filesystem jail. The jail wrapper cannot safely search PATH after deny:/ has
+// replaced the host root, and shared-host agents run from the copied runtime in
+// their owner-scoped home rather than from the host installation.
+func sandboxAgentExecutable(name, home string, sharedHost bool) (string, error) {
+	if filepath.IsAbs(name) {
+		return name, nil
+	}
+	if filepath.Base(name) != name || strings.ContainsAny(name, `/\\`) {
+		return "", fmt.Errorf("invalid sandbox agent command %q", name)
+	}
+	if sharedHost {
+		candidate := filepath.Join(home, ".local", "bin", name)
+		info, err := os.Stat(candidate)
+		if err != nil {
+			return "", fmt.Errorf("resolve shared-host agent command %q: %w", name, err)
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+			return "", fmt.Errorf("shared-host agent command %q is not an executable regular file", candidate)
+		}
+		return candidate, nil
+	}
+	resolved, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("resolve sandbox agent command %q: %w", name, err)
+	}
+	return resolved, nil
+}
 
 // directAgentSandboxConfig applies the same agent capabilities used by the
 // interactive egg path to non-interactive `wt run` tasks. Keeping these paths
@@ -75,14 +106,16 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 	}
 
 	result := sandbox.Config{
-		Mounts:   mounts,
-		Domains:  domains,
-		CPULimit: declared.CPULimit,
-		MemLimit: declared.MemLimit,
-		MaxFDs:   declared.MaxFDs,
-		PidLimit: declared.PidLimit,
-		UserHome: home,
-		Trace:    declared.Trace,
+		Mounts:      mounts,
+		NetworkMode: policy.Mode,
+		Domains:     domains,
+		LocalPorts:  append([]int(nil), policy.LocalPorts...),
+		CPULimit:    declared.CPULimit,
+		MemLimit:    declared.MemLimit,
+		MaxFDs:      declared.MaxFDs,
+		PidLimit:    declared.PidLimit,
+		UserHome:    home,
+		Trace:       declared.Trace,
 	}
 	if sharedHost {
 		result.Deny = []string{"/"}
@@ -187,7 +220,7 @@ func directAgentEnvWithPolicy(agentName, home string, proxyPort int, inheritHost
 	}
 	envMap["GIT_TERMINAL_PROMPT"] = "0"
 	if proxyPort > 0 {
-		proxyURL := "http://localhost:" + strconv.Itoa(proxyPort)
+		proxyURL := "http://127.0.0.1:" + strconv.Itoa(proxyPort)
 		envMap["HTTPS_PROXY"] = proxyURL
 		envMap["HTTP_PROXY"] = proxyURL
 		envMap["NODE_USE_ENV_PROXY"] = "1"

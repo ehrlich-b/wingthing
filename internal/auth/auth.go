@@ -6,9 +6,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
+
+const maxAuthResponseBytes = 1 << 20
+
+var authHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+func decodeAuthResponse(body io.Reader, destination any) error {
+	data, err := io.ReadAll(io.LimitReader(body, maxAuthResponseBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > maxAuthResponseBytes {
+		return fmt.Errorf("authentication response exceeds %d bytes", maxAuthResponseBytes)
+	}
+	return json.Unmarshal(data, destination)
+}
 
 type DeviceToken struct {
 	Token     string `json:"token" yaml:"device_token"`
@@ -44,27 +60,32 @@ type UserInfo struct {
 }
 
 func RequestDeviceCode(baseURL, wingID string, publicKey ...string) (*DeviceCodeResponse, error) {
-	req := map[string]string{"wing_id": wingID}
+	payload := map[string]string{"wing_id": wingID}
 	if len(publicKey) > 0 && publicKey[0] != "" {
-		req["public_key"] = publicKey[0]
+		payload["public_key"] = publicKey[0]
 	}
-	body, err := json.Marshal(req)
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := http.Post(baseURL+"/auth/device", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/auth/device", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build device code request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := authHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request device code: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("device code request failed: %s", resp.Status)
 	}
 
 	var dcr DeviceCodeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&dcr); err != nil {
+	if err := decodeAuthResponse(resp.Body, &dcr); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	return &dcr, nil
@@ -84,14 +105,28 @@ func PollForToken(ctx context.Context, baseURL, deviceCode string, interval int)
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-ticker.C:
-			resp, err := http.Post(baseURL+"/auth/token", "application/json", bytes.NewReader(body))
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/auth/token", bytes.NewReader(body))
 			if err != nil {
+				return nil, fmt.Errorf("build token poll request: %w", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := authHTTPClient.Do(req)
+			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return nil, ctxErr
+				}
 				return nil, fmt.Errorf("poll for token: %w", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				_ = resp.Body.Close()
+				return nil, fmt.Errorf("poll for token failed: %s", resp.Status)
 			}
 
 			var tr TokenResponse
-			decErr := json.NewDecoder(resp.Body).Decode(&tr)
-			resp.Body.Close()
+			decErr := decodeAuthResponse(resp.Body, &tr)
+			if err := resp.Body.Close(); err != nil {
+				return nil, fmt.Errorf("close token response: %w", err)
+			}
 			if decErr != nil {
 				return nil, fmt.Errorf("decode response: %w", decErr)
 			}
@@ -121,17 +156,16 @@ func ValidateTokenRemote(baseURL, token string) error {
 // FetchUserInfo calls /auth/check and returns the authenticated user's identity.
 // Returns ErrAuthFailed on 401, or a wrapped error for network failures.
 func FetchUserInfo(baseURL, token string) (*UserInfo, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
 	req, err := http.NewRequest("GET", baseURL+"/auth/check", nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
+	resp, err := authHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("relay unreachable: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, ErrAuthFailed
 	}
@@ -139,7 +173,7 @@ func FetchUserInfo(baseURL, token string) (*UserInfo, error) {
 		return nil, fmt.Errorf("unexpected status: %s", resp.Status)
 	}
 	var info UserInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	if err := decodeAuthResponse(resp.Body, &info); err != nil {
 		return nil, fmt.Errorf("decode user info: %w", err)
 	}
 	return &info, nil
@@ -154,18 +188,23 @@ func RefreshToken(baseURL string, token DeviceToken) (*TokenResponse, error) {
 		return nil, fmt.Errorf("marshal token: %w", err)
 	}
 
-	resp, err := http.Post(baseURL+"/auth/refresh", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/auth/refresh", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := authHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("refresh token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("refresh failed: %s", resp.Status)
 	}
 
 	var tr TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+	if err := decodeAuthResponse(resp.Body, &tr); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	return &tr, nil

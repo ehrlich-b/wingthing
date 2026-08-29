@@ -10,22 +10,52 @@ import { detachPTY, disconnectPTY, retryReconnect, attachPTY, handlePTYPasskey }
 import { showPalette, hidePalette, cyclePaletteAgent, cyclePaletteWing, navigatePalette, tabCompletePalette, launchFromPalette, debouncedDirList, isDirListPending } from './palette.js';
 import { connectAppWS } from './dashboard.js';
 import { loadHome } from './data.js';
+import { scopeBrowserStateToUser } from './storage-scope.js';
 import { closeAuditOverlay } from './audit.js';
 import { hideDetailModal, showSessionInfo, renderSidebar, renderDashboard } from './render.js';
 import { initNotifyListeners } from './notify.js';
 import { loadTunnelAuthTokens } from './tunnel.js';
 import { initPreview } from './preview.js';
 
+function denyBrowserRelayView() {
+    history.replaceState({ view: 'home' }, '', location.pathname);
+    showHome(false);
+}
+
 async function init() {
     initDOM();
-    loadTunnelAuthTokens();
 
     try {
         var resp = await fetch('/api/app/me');
-        if (resp.status === 401) { loginRedirect(); return; }
+        if (resp.status === 401) {
+            var denied = {};
+            try { denied = await resp.json(); } catch (e) {}
+            loginRedirect(denied.login_base_url);
+            return;
+        }
         S.currentUser = await resp.json();
+        scopeBrowserStateToUser(S.currentUser.id);
+        loadTunnelAuthTokens();
         DOM.userInfo.textContent = S.currentUser.display_name || 'user';
     } catch (e) { loginRedirect(); return; }
+
+    if (S.currentUser.relay_allowed === false && DOM.directAgentSetup) {
+        DOM.directAgentSetup.style.display = '';
+        DOM.newSessionBtn.style.display = 'none';
+        var emptySessionsTitle = document.getElementById('empty-no-sessions-title');
+        var emptySessionsHint = document.getElementById('empty-no-sessions-hint');
+        if (emptySessionsTitle) emptySessionsTitle.textContent = 'your wing is ready for direct agent control';
+        if (emptySessionsHint) emptySessionsHint.textContent = 'use one of the MCP connector commands above';
+        var canvasButton = document.getElementById('canvas-toggle-btn');
+        if (canvasButton) canvasButton.style.display = 'none';
+        DOM.directAgentSetup.querySelectorAll('[data-copy-command]').forEach(function(button) {
+            button.addEventListener('click', function() {
+                navigator.clipboard.writeText(button.dataset.copyCommand);
+                button.textContent = 'copied';
+                setTimeout(function() { button.textContent = 'copy'; }, 1500);
+            });
+        });
+    }
 
     if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account') && location.hash !== '#canvas') {
         history.replaceState({ view: 'home' }, '', location.pathname);
@@ -33,7 +63,16 @@ async function init() {
 
     // Event handlers
     DOM.homeBtn.addEventListener('click', showHome);
-    DOM.newSessionBtn.addEventListener('click', showPalette);
+    function showTerminalLauncher() {
+        if (S.currentUser && S.currentUser.relay_allowed === false) {
+            showHome();
+            if (DOM.directAgentSetup) DOM.directAgentSetup.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            return;
+        }
+        showPalette();
+    }
+
+    DOM.newSessionBtn.addEventListener('click', showTerminalLauncher);
     DOM.userInfo.addEventListener('click', function() { navigateToAccount(); });
     DOM.userInfo.style.cursor = 'pointer';
     DOM.headerTitle.addEventListener('click', function() {
@@ -50,9 +89,13 @@ async function init() {
             delete DOM.sessionCloseBtn.dataset.confirm;
             DOM.sessionCloseBtn.textContent = 'x';
             var sid = S.ptySessionId;
-            disconnectPTY();
-            if (sid) deleteSession(sid);
+            var killFinished = disconnectPTY();
+            // disconnectPTY already sent pty.kill for the active session.
+            if (sid) deleteSession(sid, true);
             showHome();
+            // Reconcile against the wing only after the one kill request completes;
+            // otherwise an in-flight sessions.list can restore the just-removed tab.
+            killFinished.then(function() { loadHome(); });
         } else {
             DOM.sessionCloseBtn.dataset.confirm = '1';
             DOM.sessionCloseBtn.textContent = 'end session?';
@@ -175,7 +218,7 @@ async function init() {
                         canvasSpawnAtCenter(agent, cwd, wingId);
                     });
                 }
-                showPalette();
+                showTerminalLauncher();
             } else {
                 hidePalette();
             }
@@ -188,7 +231,7 @@ async function init() {
                     toggleCanvasMode();
                     return;
                 }
-                showPalette();
+                showTerminalLauncher();
             }
         }
         if (e.key === 'Escape' && DOM.commandPalette.style.display !== 'none') {
@@ -318,21 +361,27 @@ async function init() {
     // Deep links
     var hashMatch = location.hash.match(/^#s\/(.+)$/);
     if (hashMatch) {
-        var deepSessionId = hashMatch[1];
-        history.replaceState({ view: 'terminal', sessionId: deepSessionId }, '', '#s/' + deepSessionId);
-        showTerminal();
-        attachPTY(deepSessionId);
+        if (S.currentUser && S.currentUser.relay_allowed === false) {
+            denyBrowserRelayView();
+        } else {
+            var deepSessionId = hashMatch[1];
+            history.replaceState({ view: 'terminal', sessionId: deepSessionId }, '', '#s/' + deepSessionId);
+            showTerminal();
+            attachPTY(deepSessionId);
+        }
     }
     var wingMatch = location.hash.match(/^#w\/(.+)$/);
     if (wingMatch) {
-        navigateToWingDetail(wingMatch[1]);
+        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
+        else navigateToWingDetail(wingMatch[1]);
     }
     var accountMatch = location.hash.match(/^#account(?:\/(.+))?$/);
     if (accountMatch) {
         navigateToAccount(true, accountMatch[1] || null);
     }
     if (location.hash === '#canvas') {
-        showCanvas(false);
+        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
+        else showCanvas(false);
     }
 }
 
@@ -340,6 +389,10 @@ async function init() {
 window.addEventListener('hashchange', function() {
     var hashMatch = location.hash.match(/^#s\/(.+)$/);
     if (hashMatch) {
+        if (S.currentUser && S.currentUser.relay_allowed === false) {
+            denyBrowserRelayView();
+            return;
+        }
         history.replaceState({ view: 'terminal', sessionId: hashMatch[1] }, '', '#s/' + hashMatch[1]);
         showTerminal();
         attachPTY(hashMatch[1]);
@@ -347,6 +400,10 @@ window.addEventListener('hashchange', function() {
     }
     var wingMatch = location.hash.match(/^#w\/(.+)$/);
     if (wingMatch) {
+        if (S.currentUser && S.currentUser.relay_allowed === false) {
+            denyBrowserRelayView();
+            return;
+        }
         navigateToWingDetail(wingMatch[1]);
         return;
     }
@@ -356,7 +413,8 @@ window.addEventListener('hashchange', function() {
         return;
     }
     if (location.hash === '#canvas') {
-        showCanvas(false);
+        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
+        else showCanvas(false);
     }
 });
 
@@ -371,13 +429,16 @@ window.addEventListener('popstate', function(e) {
     if (!state || state.view === 'home') {
         showHome(false);
     } else if (state.view === 'terminal' && state.sessionId) {
-        switchToSession(state.sessionId, false);
+        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
+        else switchToSession(state.sessionId, false);
     } else if (state.view === 'wing-detail' && state.wingId) {
-        navigateToWingDetail(state.wingId, false);
+        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
+        else navigateToWingDetail(state.wingId, false);
     } else if (state.view === 'account') {
         navigateToAccount(false, state.orgSlug || null);
     } else if (state.view === 'canvas') {
-        showCanvas(false);
+        if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
+        else showCanvas(false);
     }
 });
 

@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -16,16 +17,24 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/relay"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+)
+
+const (
+	roostReadyFDEnv          = "WT_ROOST_READY_FD"
+	roostReadyToken          = "ready\n"
+	roostDaemonReadyTimeout  = 10 * time.Second
+	roostWingReadyTimeout    = 8 * time.Second
+	maxRoostReadyMessageSize = 32
 )
 
 func roostCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "roost",
 		Short: "Run relay + wing in a single process (self-hosted mode)",
-		Long:  "Starts the relay server and a local wing together. One command, one process, one log stream.\nUse 'wt roost' to daemonize, 'wt roost --foreground' for systemd/debugging.",
+		Long:  "Starts the relay server and a local wing together. One command, one process, one log stream.\nUse 'wt roost start' to daemonize, or 'wt roost start --foreground' for systemd/debugging.",
 	}
 
 	cmd.AddCommand(roostStartCmd())
@@ -35,10 +44,33 @@ func roostCmd() *cobra.Command {
 	return cmd
 }
 
+func roostAllowedEmailsFromEnv() ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv("WT_ROOST_ALLOWED_EMAILS"))
+	if raw == "" {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	var emails []string
+	for _, value := range strings.Split(raw, ",") {
+		email := strings.ToLower(strings.TrimSpace(value))
+		at := strings.IndexByte(email, '@')
+		if email == "" || strings.Count(email, "@") != 1 || at <= 0 || at == len(email)-1 || strings.ContainsAny(email, " \t\r\n") {
+			return nil, fmt.Errorf("WT_ROOST_ALLOWED_EMAILS contains invalid email %q", value)
+		}
+		if !seen[email] {
+			seen[email] = true
+			emails = append(emails, email)
+		}
+	}
+	return emails, nil
+}
+
 func roostStartCmd() *cobra.Command {
 	// Relay flags
 	var addrFlag string
 	var devFlag bool
+	var httpsFlag bool
+	var httpsAddrFlag string
 	// Wing flags
 	var labelsFlag string
 	var pathsFlag string
@@ -54,16 +86,55 @@ func roostStartCmd() *cobra.Command {
 		Short: "Start roost (relay + wing)",
 		Long:  "Start a roost — relay server and local wing in one process. Daemonizes by default. Use --foreground for debugging or systemd.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateAuthProviderEnvironment(); err != nil {
+				return err
+			}
+			var lifecycleLock *os.File
+			if !foregroundFlag {
+				var err error
+				lifecycleLock, err = acquireDaemonLifecycleLock()
+				if err != nil {
+					return err
+				}
+				defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+			}
+			localMode := !authProvidersConfigured()
+			if err := validateLocalHTTPSMode(httpsFlag, localMode, false); err != nil {
+				return err
+			}
+			if localMode && !httpsFlag {
+				var err error
+				addrFlag, err = prepareLocalHTTPAddress(addrFlag, cmd.Flags().Changed("addr"))
+				if err != nil {
+					return err
+				}
+			}
+			if !foregroundFlag {
+				// Check before the trust ceremony so a failed duplicate start has
+				// no certificate or trust-store side effects.
+				if pid, kind, err := readDaemon(); err == nil {
+					if kind == roostDaemon {
+						return fmt.Errorf("roost daemon already running (pid %d)", pid)
+					}
+					return fmt.Errorf("wing daemon already running (pid %d) — stop it first with: wt stop", pid)
+				} else if !errors.Is(err, errNoDaemonRunning) {
+					return fmt.Errorf("inspect daemon state: %w", err)
+				}
+			}
+			var localHTTPS *localHTTPSConfig
+			if httpsFlag {
+				cfg, err := config.Load()
+				if err != nil {
+					return err
+				}
+				localHTTPS, err = prepareLocalHTTPS(cmd.Context(), cfg.Dir, addrFlag, httpsAddrFlag, cmd.Flags().Changed("addr"))
+				if err != nil {
+					return err
+				}
+				addrFlag = localHTTPS.HTTPAddr
+			}
 			if foregroundFlag {
-				return runRoostForeground(addrFlag, devFlag, labelsFlag, pathsFlag, eggConfigFlag, orgFlag, auditFlag, debugFlag)
-			}
-
-			// Daemon mode: check for existing daemon
-			if pid, err := readPidFrom(roostPidPath()); err == nil {
-				return fmt.Errorf("roost daemon already running (pid %d)", pid)
-			}
-			if pid, err := readPidFrom(wingPidPath()); err == nil {
-				return fmt.Errorf("wing daemon already running (pid %d) — stop it first with: wt stop", pid)
+				return runRoostForeground(addrFlag, devFlag, labelsFlag, pathsFlag, eggConfigFlag, orgFlag, auditFlag, debugFlag, localHTTPS)
 			}
 
 			exe, err := os.Executable()
@@ -79,6 +150,9 @@ func roostStartCmd() *cobra.Command {
 			}
 			if devFlag {
 				childArgs = append(childArgs, "--dev")
+			}
+			if httpsFlag {
+				childArgs = append(childArgs, "--https", "--https-addr", httpsAddrFlag)
 			}
 			if labelsFlag != "" {
 				childArgs = append(childArgs, "--labels", labelsFlag)
@@ -99,36 +173,69 @@ func roostStartCmd() *cobra.Command {
 				childArgs = append(childArgs, "--debug")
 			}
 
-			rotateLog(roostLogPath())
+			if err := rotateLog(roostLogPath()); err != nil {
+				return err
+			}
 			logFile, err := os.OpenFile(roostLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 			if err != nil {
 				return fmt.Errorf("open log: %w", err)
 			}
 
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil {
+				closeWithLog("roost log", logFile)
+				return fmt.Errorf("resolve user home: %w", err)
+			}
 
 			child := exec.Command(exe, childArgs...)
 			child.Dir = home
 			child.Stdout = logFile
 			child.Stderr = logFile
 			child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+			readyReader, readyWriter, err := os.Pipe()
+			if err != nil {
+				closeWithLog("roost log", logFile)
+				return fmt.Errorf("create daemon readiness pipe: %w", err)
+			}
+			child.ExtraFiles = []*os.File{readyWriter}
+			child.Env = replaceEnvironmentValue(os.Environ(), roostReadyFDEnv, "3")
 
 			if err := child.Start(); err != nil {
-				logFile.Close()
+				closeWithLog("roost readiness reader", readyReader)
+				closeWithLog("roost readiness writer", readyWriter)
+				closeWithLog("roost log", logFile)
 				return fmt.Errorf("start daemon: %w", err)
 			}
-			logFile.Close()
-
-			if err := os.WriteFile(roostPidPath(), []byte(strconv.Itoa(child.Process.Pid)), 0644); err != nil {
-				log.Printf("warning: failed to write PID file: %v", err)
+			if err := readyWriter.Close(); err != nil {
+				abandonStartedDaemon(child)
+				closeWithLog("roost readiness reader", readyReader)
+				closeWithLog("roost log", logFile)
+				return fmt.Errorf("close parent readiness writer: %w", err)
 			}
-			if err := os.WriteFile(roostArgsPath(), []byte(strings.Join(childArgs, "\n")), 0644); err != nil {
-				log.Printf("warning: failed to write args file: %v", err)
+			if err := logFile.Close(); err != nil {
+				abandonStartedDaemon(child)
+				closeWithLog("roost readiness reader", readyReader)
+				return fmt.Errorf("close roost log: %w", err)
+			}
+			if err := awaitRoostReady(readyReader, roostDaemonReadyTimeout); err != nil {
+				abandonStartedDaemon(child)
+				return fmt.Errorf("roost daemon did not become ready: %w (see %s)", err, roostLogPath())
+			}
+			if err := writeDaemonMetadata(roostPidPath(), roostArgsPath(), child.Process.Pid, childArgs); err != nil {
+				abandonStartedDaemon(child)
+				return fmt.Errorf("start roost daemon: %w", err)
+			}
+			if err := child.Process.Release(); err != nil {
+				log.Printf("warning: failed to release daemon process handle: %v", err)
 			}
 			fmt.Printf("roost daemon started (pid %d)\n", child.Process.Pid)
 			fmt.Printf("  log: %s\n", roostLogPath())
 			fmt.Println()
-			fmt.Printf("open http://localhost%s to start a terminal\n", addrFlag)
+			if localHTTPS != nil {
+				fmt.Printf("open %s to start a terminal\n", localHTTPS.URL)
+			} else {
+				fmt.Printf("open %s to start a terminal\n", localHTTPURL(addrFlag))
+			}
 			return nil
 		},
 	}
@@ -136,6 +243,8 @@ func roostStartCmd() *cobra.Command {
 	// Relay flags
 	cmd.Flags().StringVar(&addrFlag, "addr", ":8080", "listen address")
 	cmd.Flags().BoolVar(&devFlag, "dev", false, "reload templates from disk on each request")
+	cmd.Flags().BoolVar(&httpsFlag, "https", false, "serve the local browser UI over HTTPS using an on-demand, device-local CA")
+	cmd.Flags().StringVar(&httpsAddrFlag, "https-addr", defaultLocalHTTPSAddr, "loopback HTTPS address for the local browser UI")
 	// Wing flags
 	cmd.Flags().StringVar(&labelsFlag, "labels", "", "comma-separated wing labels")
 	cmd.Flags().StringVar(&pathsFlag, "paths", "", "comma-separated directories the wing can browse")
@@ -149,7 +258,7 @@ func roostStartCmd() *cobra.Command {
 	return cmd
 }
 
-func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eggConfigFlag, orgFlag string, auditFlag, debugFlag bool) error {
+func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eggConfigFlag, orgFlag string, auditFlag, debugFlag bool, localHTTPS *localHTTPSConfig) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -157,11 +266,15 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 
 	// --- Relay setup (local mode forced) ---
 
-	store, err := relay.OpenRelay(cfg.RelayDBPath())
+	relayDBPath, err := cfg.RelayDBPath()
+	if err != nil {
+		return err
+	}
+	store, err := relay.OpenRelay(relayDBPath)
 	if err != nil {
 		return fmt.Errorf("open relay db: %w", err)
 	}
-	defer store.Close()
+	defer closeWithLog("relay store", store)
 
 	if err := store.BackfillProUsers(); err != nil {
 		return fmt.Errorf("backfill pro users: %w", err)
@@ -182,21 +295,27 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		log.Printf("using stable P-256 JWT signing key derived from WT_JWT_SECRET")
 	}
 
+	roostAllowedEmails, err := roostAllowedEmailsFromEnv()
+	if err != nil {
+		return err
+	}
 	srvCfg := relay.ServerConfig{
-		BaseURL:            envOr("WT_BASE_URL", "http://localhost:8080"),
+		BaseURL:            defaultBaseURL(localHTTPS),
 		AppHost:            os.Getenv("WT_APP_HOST"),
 		WSHost:             os.Getenv("WT_WS_HOST"),
 		JWTKey:             jwtKey,
-		GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
+		InternalSecret:     os.Getenv("WT_INTERNAL_SECRET"),
+		GitHubClientID:     strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID")),
 		GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+		GoogleClientID:     strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
 		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		SMTPHost:           os.Getenv("SMTP_HOST"),
+		SMTPHost:           strings.TrimSpace(os.Getenv("SMTP_HOST")),
 		SMTPPort:           envOr("SMTP_PORT", "587"),
 		SMTPUser:           os.Getenv("SMTP_USER"),
 		SMTPPass:           os.Getenv("SMTP_PASS"),
 		SMTPFrom:           os.Getenv("SMTP_FROM"),
 		HeroVideo:          os.Getenv("WT_HERO_VIDEO"),
+		RoostAllowedEmails: roostAllowedEmails,
 	}
 
 	srv := relay.NewServer(store, srvCfg)
@@ -224,7 +343,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	}
 
 	// Auth mode detection: same pattern as serve.go
-	hasAuth := srvCfg.GoogleClientID != "" || srvCfg.GitHubClientID != "" || srvCfg.SMTPHost != ""
+	hasAuth := authProvidersConfigured()
 
 	var wingToken string
 	if !hasAuth {
@@ -238,11 +357,8 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		wingToken = token
 
 		// Grant pro tier — self-hosted has no bandwidth cap
-		if !store.IsUserPro(user.ID) {
-			subID := uuid.New().String()
-			store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &user.ID, Plan: "local", Status: "active", Seats: 1})
-			store.CreateEntitlement(&relay.Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID})
-			store.UpdateUserTier(user.ID, "pro")
+		if err := ensureSelfHostedPro(store, user.ID, "local"); err != nil {
+			return err
 		}
 		fmt.Println("no auth providers configured — local mode")
 	} else {
@@ -255,11 +371,8 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		wingToken = token
 
 		// Grant pro to service user
-		if !store.IsUserPro(user.ID) {
-			subID := uuid.New().String()
-			store.CreateSubscription(&relay.Subscription{ID: subID, UserID: &user.ID, Plan: "roost", Status: "active", Seats: 1})
-			store.CreateEntitlement(&relay.Entitlement{ID: uuid.New().String(), UserID: user.ID, SubscriptionID: subID})
-			store.UpdateUserTier(user.ID, "pro")
+		if err := ensureSelfHostedPro(store, user.ID, "roost"); err != nil {
+			return err
 		}
 		fmt.Println("auth providers configured — roost mode (OAuth enabled)")
 	}
@@ -270,7 +383,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	if err != nil {
 		return err
 	}
-	nativeTools := roostNativeMCPTools(cfg, hasAuth)
+	nativeTools := roostMCPControlTools(srv, cfg, hasAuth)
 	if hasAuth || policy != nil {
 		srv.EnableMCP(egg.NewToolRunner(tools), policy, nativeTools...)
 		roleCount := 0
@@ -280,17 +393,14 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 		log.Printf("mcp: enabled — %d control operation(s), %d executable tool(s), %d role(s) at POST /mcp", len(nativeTools), len(tools), roleCount)
 	}
 
-	// Write device token so the wing goroutine can connect
-	ts := auth.NewTokenStore(cfg.Dir)
-	ts.Save(&auth.DeviceToken{
+	// Keep the appliance service credential process-local. Persisting it in the
+	// ordinary token store would replace an operator's unrelated hosted login.
+	embeddedWingToken := &auth.DeviceToken{
 		Token:    wingToken,
 		DeviceID: "local",
-	})
-
-	httpSrv := &http.Server{
-		Addr:    addrFlag,
-		Handler: srv,
 	}
+
+	listeners := newRelayListeners(srv, addrFlag, localHTTPS)
 
 	// --- Signal handling: single owner ---
 
@@ -332,32 +442,170 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 
 	// --- Start relay ---
 
-	relayErrCh := make(chan error, 1)
-	go func() {
+	if err := listeners.Start(localHTTPS); err != nil {
+		return err
+	}
+	if localHTTPS != nil {
+		fmt.Printf("wt roost wing endpoint (loopback HTTP): %s\n", localHTTPURL(addrFlag))
+		fmt.Println()
+		fmt.Printf("open %s to start a terminal\n", localHTTPS.URL)
+	} else {
 		fmt.Printf("wt roost listening on %s\n", addrFlag)
 		fmt.Println()
-		fmt.Printf("open http://localhost%s to start a terminal\n", addrFlag)
-		relayErrCh <- httpSrv.ListenAndServe()
-	}()
+		fmt.Printf("open %s to start a terminal\n", localHTTPURL(addrFlag))
+	}
 
 	// --- Start wing (local=true, roost URL = localhost) ---
 
+	// A status file from an earlier standalone wing or roost must not satisfy
+	// this process's readiness check. The new embedded wing will recreate it as
+	// it moves through connecting to connected.
+	_ = os.Remove(wingStatusPath())
 	wingErrCh := make(chan error, 1)
 	go func() {
-		wingErrCh <- runWingWithContext(ctx, sighupCh, "http://localhost"+addrFlag, labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth)
+		wingErrCh <- runWingWithContext(ctx, sighupCh, localHTTPURL(addrFlag), labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth, embeddedWingToken)
 	}()
+	if err := awaitEmbeddedWingReady(ctx, wingErrCh, listeners.errCh, readWingStatus, roostWingReadyTimeout); err != nil {
+		_ = listeners.Shutdown(srv, 8*time.Second)
+		return fmt.Errorf("embedded wing did not become ready: %w", err)
+	}
+	if err := signalRoostReady(); err != nil {
+		_ = listeners.Shutdown(srv, 8*time.Second)
+		return err
+	}
 
 	// --- Wait for shutdown ---
 
 	select {
 	case <-ctx.Done():
 		log.Println("roost shutting down...")
-		return srv.GracefulShutdown(httpSrv, 8*time.Second)
-	case err := <-relayErrCh:
-		return fmt.Errorf("relay: %w", err)
+		return listeners.Shutdown(srv, 8*time.Second)
+	case result := <-listeners.errCh:
+		err := listenerResult(result)
+		if err != nil {
+			_ = listeners.Shutdown(srv, 8*time.Second)
+		}
+		return err
 	case err := <-wingErrCh:
-		return fmt.Errorf("wing: %w", err)
+		shutdownErr := listeners.Shutdown(srv, 8*time.Second)
+		return roostWingExitResult(ctx, err, shutdownErr)
 	}
+}
+
+func roostWingExitResult(ctx context.Context, wingErr, shutdownErr error) error {
+	if wingErr != nil {
+		return errors.Join(fmt.Errorf("wing: %w", wingErr), shutdownErr)
+	}
+	if ctx.Err() != nil {
+		return shutdownErr
+	}
+	return errors.Join(errors.New("wing exited unexpectedly"), shutdownErr)
+}
+
+func replaceEnvironmentValue(environment []string, key, value string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, prefix) {
+			result = append(result, entry)
+		}
+	}
+	return append(result, prefix+value)
+}
+
+func awaitRoostReady(reader io.ReadCloser, timeout time.Duration) (resultErr error) {
+	result := make(chan error, 1)
+	go func() {
+		payload, err := io.ReadAll(io.LimitReader(reader, maxRoostReadyMessageSize))
+		if err != nil {
+			result <- err
+			return
+		}
+		if string(payload) != roostReadyToken {
+			result <- fmt.Errorf("readiness pipe closed with %q", payload)
+			return
+		}
+		result <- nil
+	}()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close readiness pipe: %w", err))
+		}
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("timed out after %s", timeout)
+	}
+}
+
+func signalRoostReady() (resultErr error) {
+	rawFD := strings.TrimSpace(os.Getenv(roostReadyFDEnv))
+	if rawFD == "" {
+		return nil
+	}
+	fd, err := strconv.Atoi(rawFD)
+	if err != nil || fd < 3 {
+		return fmt.Errorf("invalid %s value %q", roostReadyFDEnv, rawFD)
+	}
+	readyWriter := os.NewFile(uintptr(fd), "roost-ready")
+	if readyWriter == nil {
+		return fmt.Errorf("open roost readiness descriptor %d", fd)
+	}
+	defer func() {
+		if err := readyWriter.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close roost readiness descriptor: %w", err))
+		}
+	}()
+	if _, err := io.WriteString(readyWriter, roostReadyToken); err != nil {
+		return fmt.Errorf("signal roost readiness: %w", err)
+	}
+	return nil
+}
+
+func awaitEmbeddedWingReady(ctx context.Context, wingErrors <-chan error, relayErrors <-chan namedServerError, readStatus func() (*wingStatus, error), timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-wingErrors:
+			if err == nil {
+				return errors.New("wing exited before connecting")
+			}
+			return err
+		case result := <-relayErrors:
+			if err := listenerResult(result); err != nil {
+				return err
+			}
+			return errors.New("relay listener closed before the wing connected")
+		case <-timer.C:
+			return fmt.Errorf("timed out after %s", timeout)
+		case <-ticker.C:
+			status, err := readStatus()
+			if err != nil {
+				continue
+			}
+			switch status.State {
+			case "connected":
+				return nil
+			case "auth_failed":
+				if status.Error != "" {
+					return fmt.Errorf("authentication failed: %s", status.Error)
+				}
+				return errors.New("authentication failed")
+			}
+		}
+	}
+}
+
+func roostMCPControlTools(srv *relay.Server, cfg *config.Config, sharedHost bool) []mcppkg.NativeTool {
+	tools := roostNativeMCPTools(cfg, sharedHost)
+	return append(tools, srv.PortalNativeMCPTools(cfg.WingID)...)
 }
 
 func loadRoostMCPConfig(configDir string) ([]*config.ToolConfig, *config.MCPConfig, error) {
@@ -392,16 +640,21 @@ func roostStopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the roost daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pid, err := readPidFrom(roostPidPath())
+			lifecycleLock, lockErr := acquireDaemonLifecycleLock()
+			if lockErr != nil {
+				return lockErr
+			}
+			defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+			pid, err := readPidFrom(roostPidPath(), roostDaemon)
 			if err != nil {
 				return fmt.Errorf("no roost daemon running")
 			}
-			proc, _ := os.FindProcess(pid)
-			if err := proc.Signal(syscall.SIGTERM); err != nil {
-				return fmt.Errorf("kill pid %d: %w", pid, err)
+			if err := stopDaemonAndWait(pid, roostDaemon, 5*time.Second); err != nil {
+				return err
 			}
-			os.Remove(roostPidPath())
-			os.Remove(roostArgsPath())
+			if err := removeFiles(roostPidPath(), roostArgsPath()); err != nil {
+				return fmt.Errorf("remove roost daemon metadata: %w", err)
+			}
 			fmt.Printf("roost daemon stopped (pid %d)\n", pid)
 			return nil
 		},
@@ -413,10 +666,13 @@ func roostStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Check roost daemon status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pid, err := readPidFrom(roostPidPath())
+			pid, err := readPidFrom(roostPidPath(), roostDaemon)
 			if err != nil {
-				fmt.Println("roost daemon is not running")
-				return nil
+				if daemonAbsentError(err) {
+					fmt.Println("roost daemon is not running")
+					return nil
+				}
+				return fmt.Errorf("inspect roost daemon state: %w", err)
 			}
 			fmt.Printf("roost daemon is running (pid %d)\n", pid)
 			fmt.Printf("  log: %s\n", roostLogPath())

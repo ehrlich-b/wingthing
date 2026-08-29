@@ -141,8 +141,7 @@ func wingsCmd() *cobra.Command {
 			if jsonFlag {
 				return writeSessionJSON(entries)
 			}
-			printWingFinderEntries(entries, noProbeFlag)
-			return nil
+			return printWingFinderEntries(entries, noProbeFlag)
 		},
 	}
 
@@ -162,13 +161,14 @@ func finderRelayURL(cfg *config.Config, override string) string {
 	return resolveRelayHTTPURL(&copy)
 }
 
-func printWingFinderEntries(entries []wingFinderEntry, noProbe bool) {
+func printWingFinderEntries(entries []wingFinderEntry, noProbe bool) error {
 	if len(entries) == 0 {
-		fmt.Println("no wings online")
-		return
+		return writeln(os.Stdout, "no wings online")
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "WING\tNAME\tOWNER\tPLATFORM\tVERSION\tSTATUS")
+	if err := writeln(w, "WING\tNAME\tOWNER\tPLATFORM\tVERSION\tSTATUS"); err != nil {
+		return err
+	}
 	for _, entry := range entries {
 		name := entry.Label
 		if name == "" {
@@ -200,7 +200,9 @@ func printWingFinderEntries(entries []wingFinderEntry, noProbe bool) {
 		} else if !noProbe {
 			status = "online; unverified"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", entry.WingID, name, owner, platform, version, status)
+		if err := writef(w, "%s\t%s\t%s\t%s\t%s\t%s\n", entry.WingID, name, owner, platform, version, status); err != nil {
+			return err
+		}
 	}
-	w.Flush()
+	return w.Flush()
 }

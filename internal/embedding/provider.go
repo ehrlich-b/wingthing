@@ -2,10 +2,27 @@ package embedding
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
 )
+
+const maxEmbeddingResponseBytes = 32 << 20
+
+func readEmbeddingResponse(body io.Reader, contentLength int64) ([]byte, error) {
+	if contentLength > maxEmbeddingResponseBytes {
+		return nil, fmt.Errorf("response exceeds %d bytes", maxEmbeddingResponseBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(body, maxEmbeddingResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxEmbeddingResponseBytes {
+		return nil, fmt.Errorf("response exceeds %d bytes", maxEmbeddingResponseBytes)
+	}
+	return data, nil
+}
 
 // NewFromProvider constructs an Embedder by provider name.
 // "auto" (default) tries ollama first, falls back to openai.
@@ -43,6 +60,8 @@ func ollamaReachable(baseURL string) bool {
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		return false
+	}
 	return resp.StatusCode == http.StatusOK
 }

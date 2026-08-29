@@ -7,6 +7,7 @@ export var WING_ORDER_KEY = 'wt_wing_order';
 export var EGG_ORDER_KEY = 'wt_egg_order';
 export var TERM_THUMB_PREFIX = 'wt_termthumb_';
 export var WING_SESSIONS_PREFIX = 'wt_wing_sessions_';
+export var CACHE_OWNER_KEY = 'wt_cache_owner_v1';
 
 // Mutable state — all modules import S and mutate properties
 export var S = {
@@ -53,6 +54,7 @@ export function initDOM() {
     DOM.headerTitle = document.getElementById('header-title');
     DOM.userInfo = document.getElementById('user-info');
     DOM.homeSection = document.getElementById('home-section');
+    DOM.directAgentSetup = document.getElementById('direct-agent-setup');
     DOM.wingStatusEl = document.getElementById('wing-status');
     DOM.sessionsList = document.getElementById('sessions-list');
     DOM.emptyState = document.getElementById('empty-state');
@@ -79,6 +81,7 @@ export function initDOM() {
     DOM.previewUrlBar = document.getElementById('preview-url-bar');
     DOM.previewUrl = document.getElementById('preview-url');
     DOM.previewCopyBtn = document.getElementById('preview-copy-btn');
+    DOM.previewLoadBtn = document.getElementById('preview-load-btn');
     DOM.previewOpenBtn = document.getElementById('preview-open-btn');
     DOM.previewDownloadBtn = document.getElementById('preview-download-btn');
     DOM.previewCloseBtn = document.getElementById('preview-close-btn');

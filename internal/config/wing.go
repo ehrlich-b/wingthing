@@ -6,29 +6,36 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ehrlich-b/wingthing/internal/fsutil"
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	HostedRelayAllow = "allow"
+	HostedRelayDeny  = "deny"
 )
 
 // WingConfig holds wing-specific settings persisted in ~/.wingthing/wing.yaml.
 type WingConfig struct {
-	WingID    string     `yaml:"wing_id"`
-	Label     string     `yaml:"label,omitempty"` // display name shown in the web UI
-	Roost     string     `yaml:"roost,omitempty"`
-	Org       string     `yaml:"org,omitempty"`
-	Paths     PathList   `yaml:"paths,omitempty"`
-	Root      string     `yaml:"root,omitempty"` // compat: folded into Paths on load
-	Labels    []string   `yaml:"labels,omitempty"`
-	EggConfig string     `yaml:"egg_config,omitempty"`
-	Conv      string     `yaml:"conv,omitempty"`
-	Audit     bool       `yaml:"audit,omitempty"`
-	Debug     bool       `yaml:"debug,omitempty"`
-	Locked    bool       `yaml:"locked,omitempty"`     // explicit lock mode toggle
-	Spectate  bool       `yaml:"spectate,omitempty"`   // allow spectator (read-only) session viewing
-	AuthTTL   string     `yaml:"auth_ttl,omitempty"`   // passkey auth token duration (default "1h")
-	AllowKeys []AllowKey `yaml:"allow_keys,omitempty"`
-	Admins      []string   `yaml:"admins,omitempty"`       // emails with admin role (see all sessions, all paths)
-	IdleTimeout    string `yaml:"idle_timeout,omitempty"`    // kill sessions idle for this long (e.g. "4h")
-	ConnectionMode string `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
+	WingID         string     `yaml:"wing_id"`
+	Label          string     `yaml:"label,omitempty"` // display name shown in the web UI
+	Roost          string     `yaml:"roost,omitempty"`
+	Org            string     `yaml:"org,omitempty"`
+	Paths          PathList   `yaml:"paths,omitempty"`
+	Root           string     `yaml:"root,omitempty"` // compat: folded into Paths on load
+	Labels         []string   `yaml:"labels,omitempty"`
+	EggConfig      string     `yaml:"egg_config,omitempty"`
+	Conv           string     `yaml:"conv,omitempty"`
+	Audit          bool       `yaml:"audit,omitempty"`
+	Debug          bool       `yaml:"debug,omitempty"`
+	Locked         bool       `yaml:"locked,omitempty"`   // explicit lock mode toggle
+	Spectate       bool       `yaml:"spectate,omitempty"` // allow spectator (read-only) session viewing
+	AuthTTL        string     `yaml:"auth_ttl,omitempty"` // passkey auth token duration (default "1h")
+	AllowKeys      []AllowKey `yaml:"allow_keys,omitempty"`
+	Admins         []string   `yaml:"admins,omitempty"`          // emails with admin role (see all sessions, all paths)
+	IdleTimeout    string     `yaml:"idle_timeout,omitempty"`    // kill sessions idle for this long (e.g. "4h")
+	ConnectionMode string     `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
+	HostedRelay    string     `yaml:"hosted_relay,omitempty"`    // "allow" (default) or "deny"
 
 	// P2P / Direct mode settings
 	ICEServers []ICEServer `yaml:"ice_servers,omitempty"` // STUN/TURN servers for WebRTC
@@ -44,7 +51,54 @@ type WingConfig struct {
 	ToolsDir string `yaml:"tools_dir,omitempty"`
 
 	// MCP is the optional OAuth-gated remote surface over privileged tools.
-	MCP *MCPConfig `yaml:"mcp,omitempty"`
+	MCP       *MCPConfig       `yaml:"mcp,omitempty"`
+	DirectMCP *DirectMCPConfig `yaml:"direct_mcp,omitempty"`
+}
+
+// Clone returns an independent runtime snapshot. Wing callbacks outlive config
+// reloads, so sharing slice/map storage would let a SIGHUP or ACL mutation race
+// an already admitted session.
+func (c *WingConfig) Clone() *WingConfig {
+	if c == nil {
+		return nil
+	}
+	clone := *c
+	clone.Labels = append([]string(nil), c.Labels...)
+	clone.AllowKeys = append([]AllowKey(nil), c.AllowKeys...)
+	clone.Admins = append([]string(nil), c.Admins...)
+	clone.Paths = make(PathList, len(c.Paths))
+	for index, path := range c.Paths {
+		clone.Paths[index] = path
+		clone.Paths[index].Members = append([]string(nil), path.Members...)
+	}
+	clone.ICEServers = make([]ICEServer, len(c.ICEServers))
+	for index, server := range c.ICEServers {
+		clone.ICEServers[index] = server
+		clone.ICEServers[index].URLs = append([]string(nil), server.URLs...)
+	}
+	if c.DirectMCP != nil {
+		direct := *c.DirectMCP
+		direct.AllowGrants = append([]string(nil), c.DirectMCP.AllowGrants...)
+		direct.DenyGrants = append([]string(nil), c.DirectMCP.DenyGrants...)
+		clone.DirectMCP = &direct
+	}
+	if c.MCP != nil {
+		mcp := *c.MCP
+		mcp.Roles = make(map[string]*MCPRoleConfig, len(c.MCP.Roles))
+		for name, role := range c.MCP.Roles {
+			if role == nil {
+				mcp.Roles[name] = nil
+				continue
+			}
+			roleClone := *role
+			roleClone.Allow = append([]string(nil), role.Allow...)
+			roleClone.Deny = append([]string(nil), role.Deny...)
+			roleClone.Members = append([]string(nil), role.Members...)
+			mcp.Roles[name] = &roleClone
+		}
+		clone.MCP = &mcp
+	}
+	return &clone
 }
 
 // IsAdmin returns true if email is in the Admins list (case-insensitive).
@@ -56,6 +110,19 @@ func (c *WingConfig) IsAdmin(email string) bool {
 		}
 	}
 	return false
+}
+
+// EffectiveHostedRelay returns the additive hosted relay policy. Empty means
+// allow so existing wing.yaml files retain their current behavior.
+func (c *WingConfig) EffectiveHostedRelay() string {
+	if c.HostedRelay == "" {
+		return HostedRelayAllow
+	}
+	return c.HostedRelay
+}
+
+func (c *WingConfig) HostedRelayAllowed() bool {
+	return c.EffectiveHostedRelay() == HostedRelayAllow
 }
 
 // ICEServer is a STUN/TURN server configuration for WebRTC P2P connections.
@@ -184,6 +251,14 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 			return nil, fmt.Errorf("validate %s mcp config: %w", path, err)
 		}
 	}
+	if cfg.DirectMCP != nil {
+		if err := cfg.DirectMCP.Validate(); err != nil {
+			return nil, fmt.Errorf("validate %s direct_mcp config: %w", path, err)
+		}
+	}
+	if cfg.HostedRelay != "" && cfg.HostedRelay != HostedRelayAllow && cfg.HostedRelay != HostedRelayDeny {
+		return nil, fmt.Errorf("validate %s hosted_relay: expected %q or %q, got %q", path, HostedRelayAllow, HostedRelayDeny, cfg.HostedRelay)
+	}
 	// Migrate legacy root -> paths
 	if cfg.Root != "" && len(cfg.Paths) == 0 {
 		cfg.Paths = PathList{{Path: cfg.Root}}
@@ -194,14 +269,49 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 // SaveWingConfig writes wing.yaml to dir. The file may contain the roost's JWT signing
 // key, so it must never be readable by other local users.
 func SaveWingConfig(dir string, cfg *WingConfig) error {
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create wing config directory: %w", err)
+	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(dir, "wing.yaml")
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return err
+	tmp, err := os.CreateTemp(dir, ".wing.yaml-*")
+	if err != nil {
+		return fmt.Errorf("create temporary wing config: %w", err)
 	}
-	return os.Chmod(path, 0600)
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		_ = tmp.Close()
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0600); err != nil {
+		return fmt.Errorf("restrict temporary wing config: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("write temporary wing config: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync temporary wing config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary wing config: %w", err)
+	}
+	// Rename replaces a legacy permissive file or symlink atomically. Readers
+	// therefore see either the complete old config or the complete new config;
+	// a crash cannot leave a truncated JWT signing key or access-control policy.
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace wing config: %w", err)
+	}
+	committed = true
+	// Persist the directory entry as well as the file contents. Some filesystems
+	// otherwise permit a successful rename to disappear after sudden power loss.
+	if err := fsutil.SyncDirectory(dir); err != nil {
+		return fmt.Errorf("persist wing config replacement: %w", err)
+	}
+	return nil
 }

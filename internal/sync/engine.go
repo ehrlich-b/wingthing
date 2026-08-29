@@ -13,7 +13,7 @@ import (
 
 type Engine struct {
 	MemoryDir string
-	WingID string
+	WingID    string
 	Store     *store.Store
 }
 
@@ -79,7 +79,7 @@ func (e *Engine) ExportThreadEntries(since time.Time) ([]*store.ThreadEntry, err
 	if err != nil {
 		return nil, fmt.Errorf("export thread entries: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []*store.ThreadEntry
 	for rows.Next() {

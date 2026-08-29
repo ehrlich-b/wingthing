@@ -8,22 +8,74 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  deterministic:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26.6'
           cache-dependency-path: go.sum
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Build all platforms
-        run: make release VERSION=${{ github.ref_name }}
+      - run: make check
+      - run: go vet ./...
+      - run: make test-vuln
+      - run: go test -race ./...
+      - run: make test-integ
+      - run: make test-compat
+      - run: make test-linux
+      - run: make test-linux-ubuntu
+      - run: make test-web
+      - run: git diff --check
+      - name: Build release artifacts after deterministic gates
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: make release VERSION="$VERSION"
+      - name: Preserve tested release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wingthing-release-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  macos-sandbox:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: make web
+      - run: go test -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt
+
+  release:
+    needs: [deterministic, macos-sandbox]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts from the deterministic gate
+        uses: actions/download-artifact@v4
+        with:
+          name: wingthing-release-${{ github.sha }}
+          path: dist/
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/wt-* --generate-notes
+        run: >-
+          gh release create "${{ github.ref_name }}"
+          dist/wt-linux-amd64 dist/wt-linux-arm64
+          dist/wt-darwin-amd64 dist/wt-darwin-arm64
+          dist/SHA256SUMS --generate-notes

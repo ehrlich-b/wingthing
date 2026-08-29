@@ -2,7 +2,9 @@ package egg
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -16,13 +18,30 @@ type inputAuditor struct {
 	mu         sync.Mutex
 	escState   int // 0=normal, 1=got ESC, 2=in CSI sequence
 	flushTimer *time.Timer
+	writeErr   error
 }
 
 func newInputAuditor(path string) (*inputAuditor, error) {
-	f, err := os.Create(path)
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, ".audit-input-*.tmp")
 	if err != nil {
 		return nil, err
 	}
+	temporaryPath := f.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = f.Close()
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err := f.Chmod(0o600); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return nil, err
+	}
+	committed = true
 	return &inputAuditor{file: f}, nil
 }
 
@@ -65,7 +84,12 @@ func (a *inputAuditor) emitLine() {
 	line := string(a.buf)
 	a.buf = a.buf[:0]
 	ts := time.Now().UTC().Format(time.RFC3339)
-	fmt.Fprintf(a.file, "%s\t%s\n", ts, line)
+	if a.writeErr == nil {
+		if _, err := fmt.Fprintf(a.file, "%s\t%s\n", ts, line); err != nil {
+			a.writeErr = err
+			log.Printf("egg: input audit write failed: %v", err)
+		}
+	}
 	if a.flushTimer != nil {
 		a.flushTimer.Stop()
 		a.flushTimer = nil
@@ -112,5 +136,7 @@ func (a *inputAuditor) Close() {
 	if len(a.buf) > 0 {
 		a.emitLine()
 	}
-	a.file.Close()
+	if err := a.file.Close(); err != nil && a.writeErr == nil {
+		log.Printf("egg: input audit close failed: %v", err)
+	}
 }

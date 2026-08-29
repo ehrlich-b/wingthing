@@ -13,12 +13,12 @@
 {{define "content"}}
 <div class="legal">
 <h1>terms of service</h1>
-<p class="updated">Last updated: February 11, 2026</p>
+<p class="updated">Last updated: August 25, 2026</p>
 
 <p>These Terms of Service ("Terms") govern your use of the wingthing software and service ("Service") operated by Bryan Ehrlich ("we", "us", "our"). By using the Service, you agree to be bound by these Terms. If you do not agree, do not use the Service.</p>
 
 <h2>1. the service</h2>
-<p>wingthing provides a command-line tool and relay infrastructure for running AI agent sessions on your own hardware and accessing them remotely. The Service includes the <code>wt</code> CLI, the relay server ("roost"), and the web interface at wingthing.ai and app.wingthing.ai.</p>
+<p>wingthing provides an agent manager, command-line tool, connection-coordination service, and optional relay infrastructure for running AI agent sessions on your own hardware. The Service includes the <code>wt</code> CLI, self-hosted roost, and the interfaces at wingthing.ai and app.wingthing.ai.</p>
 
 <h2>2. acceptable use</h2>
 <p>You agree not to use the Service to:</p>
@@ -33,14 +33,14 @@
 </ul>
 
 <h2>3. your content and data</h2>
-<p>You retain ownership of all content you create, transmit, or store through the Service. We do not claim any rights to your code, terminal sessions, or data. The shipped browser and wing application-encrypt PTY content through the roost; during normal operation the roost routes ciphertext rather than terminal plaintext. Routing metadata and the browser-code trust limitation are described in the security documentation.</p>
+<p>You retain ownership of all content you create, transmit, or store through the Service. We do not claim any rights to your code, terminal sessions, or data. Free agent clients send MCP payloads directly to their wings. Hosted browser-terminal and control relay access is an entitled service; when it is used, clients application-encrypt payloads and the service routes ciphertext rather than plaintext. Routing metadata and the client-code trust limitation are described in the security documentation.</p>
 
 <h2>4. termination</h2>
 <p>We may suspend or terminate your access to the Service at any time, for any reason, with or without notice. You may stop using the Service at any time. Upon termination, your right to use the Service ceases immediately. Self-hosted instances are yours to run indefinitely under the MIT license.</p>
 
 <h2>5. disclaimer of warranties</h2>
 <p>THE SERVICE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NONINFRINGEMENT, AND ANY WARRANTY ARISING FROM COURSE OF DEALING OR USAGE OF TRADE.</p>
-<p>The sandbox reduces risk when configured but does not guarantee isolation. Without an <code>egg.yaml</code>, the sandbox is permissive by default. We make no representations that the sandbox will prevent all unauthorized access, data exfiltration, or damage. You are solely responsible for what runs on your machine and for configuring appropriate isolation levels.</p>
+<p>The sandbox applies restrictive, agent-aware defaults and can be narrowed or extended with <code>egg.yaml</code>, but it does not guarantee complete isolation. We make no representations that the sandbox will prevent all unauthorized access, data exfiltration, or damage. You are solely responsible for what runs on your machine and for reviewing the effective isolation policy.</p>
 
 <h2>6. limitation of liability</h2>
 <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW, WE SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS, DATA, USE, GOODWILL, OR OTHER INTANGIBLE LOSSES, RESULTING FROM (A) YOUR USE OR INABILITY TO USE THE SERVICE; (B) ANY UNAUTHORIZED ACCESS TO OR ALTERATION OF YOUR DATA OR TRANSMISSIONS; (C) ANY CONDUCT OR CONTENT OF ANY THIRD PARTY ON THE SERVICE; OR (D) ANY ACTIONS TAKEN BY AI AGENTS RUNNING WITHIN THE SERVICE.</p>

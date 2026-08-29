@@ -2,13 +2,18 @@
 
 ## What This Is
 
-`wt` runs AI agents sandboxed on your machine, accessible from anywhere. The primary use case is `wt egg <agent>` (sandboxed agent sessions) and `wt wing` (remote access via relay). Skills are a secondary feature.
+`wt` puts AI agent runtimes behind one local control plane. A person uses that
+runtime through the CLI or browser. An LLM uses it through MCP. The primary use
+case is all of a person's agents in one inventory, for that person and their
+agents to operate together. Skills are a secondary feature.
 
 - `wt egg claude` -- run Claude Code in a per-session sandbox with PTY persistence
+- `wt mcp stdio --client codex` -- let a local LLM start and supervise agents
 - `wt start` -- connect your machine to the relay, access from app.wingthing.ai
-- `wt serve` -- relay server (web UI, WebSocket relay, skill registry), HTTP + SQLite
+- `wt roost start` -- self-hosted portal/gateway plus an embedded wing
+- `wt serve` -- gateway only (web UI, WebSocket relay, skill registry), HTTP + SQLite
 
-## Current Push: AI-Usable API
+## Current Push: One Portal for People and LLMs
 
 **An AI must be able to orchestrate wingthing as easily as a human can.** This is
 the primary focus of the current work. Anything a human can do from the terminal
@@ -16,6 +21,26 @@ or the browser, a model must be able to do through a typed interface with the
 same authority model and the same audit trail.
 
 The rule: **if you ship a capability only a human can drive, it is unfinished.**
+
+"One portal" means one resource inventory, authority model, and lifecycle
+contract. It does not mean every process or file moves to one machine.
+
+- A **portal** is the client-facing inventory and control surface.
+- A **wing** is the execution runtime and source of truth for local state.
+- A **session** is a persistent interactive terminal.
+- A **run** is a supervised headless task with semantic state.
+- An **egg** is the per-session process, PTY, and sandbox boundary.
+- A **roost** is the self-hosted bundle from `wt roost start`: portal/gateway
+  plus an embedded wing.
+
+Browser and MCP adapters must address the same qualified resources. Cross-wing
+resources need stable portal, wing, kind, and object IDs. Do not add mutable
+"current wing" state to a server-side MCP session.
+
+Every remote workflow must place execution, workspace, display, credentials,
+and durable memory explicitly. Current `cwd` values refer to existing paths on
+the selected wing. Wingthing does not yet synchronize code or memory between
+wings, and docs must not imply that it does.
 
 - `wt mcp stdio` is the model-facing surface. Tools have closed JSON Schemas,
   return structured content, and declare read-only/mutating/destructive intent.
@@ -63,17 +88,19 @@ completing the parent task via terminal scraping, ad hoc scripts, or a second
 orchestration system. Leave working paths alone unless a real task exposes a
 problem.
 
-The destination is the shared roost: any useful local operation added while
-dogfooding must be designed as a reusable runtime primitive that can also be
-exposed through an authenticated, owner-scoped, typed, audited roost adapter.
+The destination is one wing-owned control contract: any useful local operation
+added while dogfooding must be a reusable runtime primitive that can also be
+exposed through authenticated, owner-scoped, typed, audited browser and MCP
+adapters.
 A local-only convenience is incomplete unless it is a deliberate intermediate
 step toward that parity.
 
-The only current real user workflow is Slide's shared roost in the web UI.
-Preserve it by default while iterating on other workflows. Breaking changes are
-allowed when they materially simplify or improve the product, but first present
-Bryan with the concrete benefit, affected workflow, and migration plan and get
-his agreement. Compatibility remains a conscious tradeoff.
+The Slide shared roost is the highest-risk compatibility canary, and personal
+local/remote wings plus native direct MCP are also real workflows. Preserve all
+deployed contracts by default while iterating. Breaking changes are allowed when
+they materially simplify or improve the product, but first present Bryan with the
+concrete benefit, affected workflow, and migration plan and get his agreement.
+Compatibility remains a conscious tradeoff.
 
 ## Architecture
 
@@ -145,7 +172,7 @@ Wings can be shared via organizations. The relay has a full org system:
 
 `wt roost` runs relay + wing in one process for self-hosted deployments. See `docs/roost_design.md`.
 
-- Two auth modes: local (no OAuth, single user auto-created) and roost (with OAuth, all authenticated users access wings)
+- Two auth modes: local (no OAuth, single user auto-created) and roost (with OAuth, enrolled users access the embedded wing). Private OAuth roosts should set exact emails in `WT_ROOST_ALLOWED_EMAILS`; empty retains the historical accept-any-authenticated-account behavior.
 - Daemon mode with `~/.wingthing/roost.pid` and `~/.wingthing/roost.log`
 - `wt roost start/stop/status` subcommands
 - **Key file:** `cmd/wt/roost.go`
@@ -181,7 +208,8 @@ Single resolution path for all contexts: **CLI flag (`--agent`) > skill frontmat
 
 ## Skill System
 
-Skills are the core abstraction. Markdown files with YAML frontmatter and a prompt template body.
+Skills are portable workflow inputs, not the core runtime abstraction. They are
+Markdown files with YAML frontmatter and a prompt template body.
 
 ### Philosophy
 - **Repo skills** (`skills/`) are the validated library -- curated, tested, checked in
@@ -227,14 +255,19 @@ When `isolation` is `strict` or `standard` (no network), the sandbox automatical
 
 | Agent | Network | What it opens |
 |-------|---------|---------------|
-| claude | HTTPS | **All outbound TCP 443/80 + DNS.** Required for api.anthropic.com. macOS seatbelt cannot filter by hostname or IP — only by port. |
+| claude | HTTPS | Provider domains through the local CONNECT proxy. Required for api.anthropic.com. |
 | codex | HTTPS | Same as claude (for api.openai.com) |
 | gemini | HTTPS | Same as claude (for googleapis.com) |
 | cursor | HTTPS | Same as claude |
 | ollama | Local | Localhost only (127.0.0.1, no external) |
 | opencode | HTTPS | Same as claude (for anthropic, openai, googleapis) |
 
-**Important:** `standard` isolation with a cloud agent (claude, codex, gemini, cursor) allows outbound HTTPS to **any host**, not just the agent's API. This is a platform limitation — macOS seatbelt cannot filter by domain or IP range. On Linux, the agent currently gets full network access (no port filtering in unprivileged namespaces). See `docs/egg-sandbox-design.md` for details and the roadmap for SNI-based domain filtering.
+**Important:** cloud-agent HTTPS is forced through a domain-filtering CONNECT
+proxy on both platforms. Linux keeps a route-less `CLONE_NEWNET` namespace and
+exposes the proxy through an inherited-FD loopback relay, so ignoring
+`HTTPS_PROXY` fails closed. Declared host-loopback ports use the same relay.
+The Linux relay currently covers TCP proxy/loopback traffic, not arbitrary UDP,
+ICMP, or non-proxied protocols. See `docs/egg-sandbox-design.md` for details.
 
 ## Key Packages
 
@@ -327,14 +360,13 @@ CI runs via **GitHub Actions** (`.github/workflows/ci.yml` on push/PR; `release.
 
 **Prod (wingthing.fly.dev) is Bryan's daily driver.** Do not deploy to Fly during development unless explicitly asked. All development and testing happens locally.
 
-### Vacation freeze: local-first branch only
+### Release and deployment discipline
 
-Through approximately 2026-08-20, treat `main` as frozen. Major runtime work
-belongs on `feature-local-first-terminal-routing`. Do not merge it to `main`,
-tag a version, create a release, deploy Fly, or change the Slide deployment.
-Build the repository binary and use an isolated `WINGTHING_DIR` for local
-dogfooding. See `docs/vacation-local-first.md` for the branch contract and
-post-vacation promotion gate.
+The August local-first vacation freeze has expired and is historical. Use the
+current product brief plus CI/release workflows for promotion gates. Do not merge,
+tag, deploy Fly, or change the Slide deployment unless the active task explicitly
+authorizes that state change. Build the repository binary and use an isolated
+`WINGTHING_DIR` for local dogfooding.
 
 - `make serve` starts a local relay on `:8080`
 - `wt wing --relay http://localhost:8080` connects a wing to the local relay

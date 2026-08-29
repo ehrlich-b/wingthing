@@ -185,10 +185,8 @@ func (b *Builder) Build(ctx context.Context, taskID string) (*PromptResult, erro
 
 		identityFM := b.Memory.Frontmatter("identity")
 		idMap := make(map[string]string)
-		if identityFM != nil {
-			for k, v := range identityFM {
-				idMap[k] = fmt.Sprintf("%v", v)
-			}
+		for k, v := range identityFM {
+			idMap[k] = fmt.Sprintf("%v", v)
 		}
 
 		// Render thread for interpolation
@@ -232,10 +230,6 @@ func (b *Builder) Build(ctx context.Context, taskID string) (*PromptResult, erro
 	// reducer can consume the actual results of its completed workers without
 	// screen scraping or an out-of-band prompt rewrite.
 	dependencyBlock := b.dependencyResults(task, budget)
-	budget -= len(dependencyBlock)
-	if budget < 0 {
-		budget = 0
-	}
 
 	// 8. Assemble final prompt
 	var sections []string

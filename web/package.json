@@ -1,13 +1,15 @@
 {
   "name": "wingthing-web",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test"
   },
   "devDependencies": {
-    "vite": "^6.0.0"
+    "vite": "^6.4.3"
   },
   "dependencies": {
     "@nlux/core": "^2.17.1",

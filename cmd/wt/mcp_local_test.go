@@ -8,15 +8,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
+	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
@@ -25,7 +28,7 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"wingthing_capabilities","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"wingthing_capabilities","arguments":{},"_meta":{"progressToken":"claude-code"}}}`,
 	}, "\n") + "\n"
 	var output bytes.Buffer
 	server := &localMCPServer{
@@ -59,8 +62,8 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Result.Tools) != 27 {
-		t.Fatalf("tools = %d, want 27", len(listed.Result.Tools))
+	if want := len(control.Tools(control.SurfaceLocalMCP)); len(listed.Result.Tools) != want {
+		t.Fatalf("tools = %d, want %d from the control registry", len(listed.Result.Tools), want)
 	}
 	names := make(map[string]bool)
 	for _, tool := range listed.Result.Tools {
@@ -120,6 +123,164 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 	if len(capabilities.Result.StructuredContent["agents"].([]any)) != 7 {
 		t.Fatalf("agents = %#v", capabilities.Result.StructuredContent["agents"])
 	}
+	contract := capabilities.Result.StructuredContent["control_contract"].(map[string]any)
+	if contract["surface"] != string(control.SurfaceLocalMCP) || contract["version"] != control.ContractVersion {
+		t.Fatalf("local control contract = %#v", contract)
+	}
+	if got := len(contract["operations"].([]any)); got != len(listed.Result.Tools) {
+		t.Fatalf("capability operations = %d, listed tools = %d", got, len(listed.Result.Tools))
+	}
+}
+
+func TestLocalMCPStdioEOFCancelsOutstandingWait(t *testing.T) {
+	inputReader, inputWriter := io.Pipe()
+	var output bytes.Buffer
+	server := &localMCPServer{
+		cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"},
+		in:  inputReader, out: &output, logs: &bytes.Buffer{}, principal: "owner", actor: "test",
+	}
+	done := make(chan error, 1)
+	go func() { done <- server.serve(context.Background()) }()
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"message_wait","arguments":{"timeout_seconds":3600}}}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	// The request is dispatched asynchronously. EOF must cancel it whether it
+	// has entered its wait loop or is just about to do so.
+	if err := inputWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("local MCP server remained stuck in a one-hour wait after stdin EOF")
+	}
+}
+
+func TestLocalMCPCallAdmissionIsBounded(t *testing.T) {
+	slots := make(chan struct{}, maxConcurrentLocalMCPCalls)
+	for range maxConcurrentLocalMCPCalls {
+		if !acquireLocalMCPCallSlot(slots) {
+			t.Fatal("call slot rejected before reaching the limit")
+		}
+	}
+	if acquireLocalMCPCallSlot(slots) {
+		t.Fatal("call slot accepted beyond the concurrency limit")
+	}
+	<-slots
+	if !acquireLocalMCPCallSlot(slots) {
+		t.Fatal("released call slot was not reusable")
+	}
+}
+
+func TestMCPToolCallParamsStillRejectUnknownEnvelopeFields(t *testing.T) {
+	server := &localMCPServer{}
+	response, _ := server.handle(context.Background(), localMCPRequest{
+		JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/call",
+		Params: json.RawMessage(`{"name":"wingthing_capabilities","arguments":{},"_meta":{"progressToken":"ok"},"surprise":true}`),
+	})
+	if response.Error == nil || response.Error.Code != -32602 || !strings.Contains(response.Error.Message, `unknown field "surprise"`) {
+		t.Fatalf("unknown tool-call envelope field response = %#v", response)
+	}
+}
+
+func TestUnknownMCPToolIsNotMisreportedAsMissingGrant(t *testing.T) {
+	server := &localMCPServer{grants: map[string]bool{}, logs: io.Discard}
+	_, _, protocolErr := server.callTool(context.Background(), "not_a_tool", json.RawMessage(`{}`))
+	if protocolErr == nil || protocolErr.Code != -32602 || protocolErr.Message != "unknown tool: not_a_tool" {
+		t.Fatalf("unknown tool error = %#v", protocolErr)
+	}
+}
+
+func TestLocalAndHTTPMCPShareControlRegistry(t *testing.T) {
+	local := make(map[string]localMCPTool)
+	for _, tool := range localMCPTools() {
+		local[tool.Name] = tool
+	}
+	cfg := &config.Config{WingID: "embedded-wing"}
+	native := roostMCPControlTools(relay.NewServer(nil, relay.ServerConfig{}), cfg, false)
+	httpDefinitions := control.Tools(control.SurfaceHTTPMCP)
+	if len(native) != len(httpDefinitions) {
+		t.Fatalf("HTTP native tools = %d, registry = %d", len(native), len(httpDefinitions))
+	}
+	for index, want := range httpDefinitions {
+		got := native[index]
+		if got.Name != want.Name || got.Title != want.Title || got.Description != want.Description {
+			t.Errorf("HTTP tool %d metadata = %q/%q/%q, want %q/%q/%q",
+				index, got.Name, got.Title, got.Description, want.Name, want.Title, want.Description)
+		}
+		if !reflect.DeepEqual(got.InputSchema, want.InputSchema) {
+			t.Errorf("%s HTTP schema differs from registry", want.Name)
+		}
+		if !reflect.DeepEqual(got.Annotations, want.Annotations) {
+			t.Errorf("%s HTTP annotations differ from registry", want.Name)
+		}
+		if want.Authority == control.AuthorityWing && !reflect.DeepEqual(local[want.Name].InputSchema, want.InputSchema) {
+			t.Errorf("%s local schema differs from registry", want.Name)
+		}
+	}
+}
+
+func TestRoostNativeMCPAuthorityIsExplicitBoundedAndShared(t *testing.T) {
+	admission := newMCPAdmissionState()
+	paths := []string{"/srv/alice"}
+	server := newRoostNativeMCPServer(&config.Config{Dir: t.TempDir()}, true, admission, mcppkg.Principal{
+		UserID: "alice", Email: "alice@example.com", ClientID: "codex",
+	}, paths)
+	paths[0] = "/srv/mutated"
+	if server.admission != admission || server.maxSessions != defaultDirectMCPMaxSessions || server.maxSpawnsPerHour != defaultDirectMCPMaxSpawnsPerHour {
+		t.Fatalf("HTTP MCP bounds/admission = sessions %d spawns %d admission %p", server.maxSessions, server.maxSpawnsPerHour, server.admission)
+	}
+	if !server.enforcePathBounds || len(server.allowedPaths) != 1 || server.allowedPaths[0] != "/srv/alice" || !server.identity.SealedFS || !server.identity.SharedHost {
+		t.Fatalf("HTTP MCP identity boundary = paths %#v identity %#v", server.allowedPaths, server.identity)
+	}
+	for _, tool := range control.ToolsForAuthority(control.SurfaceHTTPMCP, control.AuthorityWing) {
+		if !server.grants[tool.Grant] {
+			t.Errorf("HTTP MCP default authority omitted explicit grant %q for %s", tool.Grant, tool.Name)
+		}
+	}
+	if portal, ok := control.Lookup("wing_list"); !ok || !server.grants[portal.Grant] {
+		t.Fatal("HTTP MCP capabilities omitted the composite portal wing_list grant")
+	}
+}
+
+func TestRoostCapabilitiesReportHTTPContract(t *testing.T) {
+	dir := t.TempDir()
+	workspace := t.TempDir()
+	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
+	if err := config.SaveWingConfig(dir, &config.WingConfig{
+		Paths: config.PathList{{Path: workspace}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var capabilities mcppkg.NativeTool
+	for _, tool := range roostNativeMCPTools(cfg, true) {
+		if tool.Name == "wingthing_capabilities" {
+			capabilities = tool
+			break
+		}
+	}
+	if capabilities.Call == nil {
+		t.Fatal("roost capabilities tool is missing")
+	}
+	result, isError, err := capabilities.Call(context.Background(), mcppkg.Principal{
+		UserID: "alice", Email: "alice@example.com", ClientID: "codex",
+	}, json.RawMessage(`{}`))
+	if err != nil || isError {
+		t.Fatalf("capabilities = %#v isError=%v err=%v", result, isError, err)
+	}
+	contract := result["control_contract"].(map[string]any)
+	if contract["surface"] != string(control.SurfaceHTTPMCP) || contract["version"] != control.ContractVersion {
+		t.Fatalf("HTTP control contract = %#v", contract)
+	}
+	if got, want := contract["operations"], control.OperationNames(control.SurfaceHTTPMCP); !reflect.DeepEqual(got, want) {
+		t.Fatalf("HTTP operations = %#v, want %#v", got, want)
+	}
+	if got, want := result["objects"], control.ObjectKinds(control.SurfaceHTTPMCP); !reflect.DeepEqual(got, want) {
+		t.Fatalf("HTTP objects = %#v, want %#v", got, want)
+	}
 }
 
 func TestLocalMCPUnsandboxedModeIsExplicitAndAudited(t *testing.T) {
@@ -138,6 +299,9 @@ func TestLocalMCPUnsandboxedModeIsExplicitAndAudited(t *testing.T) {
 	if !strings.Contains(server.mcpInstructions(), "full authority") {
 		t.Fatal("initialize instructions hide unsandboxed authority")
 	}
+	if !strings.Contains(strings.ToLower(server.mcpInstructions()), "agent manager") {
+		t.Fatal("initialize instructions do not explain Wingthing's agent-manager role")
+	}
 	explained, err := server.toolSandboxExplain(json.RawMessage(`{"agent":"claude"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +309,9 @@ func TestLocalMCPUnsandboxedModeIsExplicitAndAudited(t *testing.T) {
 	policy := explained["policy"].(explainedPolicy)
 	if policy.ConfigSource != "MCP server --unsandboxed" || policy.Enforcement != "unrestricted" || policy.Isolation != "outer-boundary" {
 		t.Fatalf("policy = %#v", policy)
+	}
+	if _, err := server.toolSandboxExplain(json.RawMessage(`{"config":"egg.yaml"}`)); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("unsandboxed server accepted a sandbox config it would not enforce: %v", err)
 	}
 	if err := server.auditToolCall("wingthing_capabilities", json.RawMessage(`{}`), capabilities, "allowed"); err != nil {
 		t.Fatal(err)
@@ -676,7 +843,7 @@ func TestLocalMCPTaskOwnership(t *testing.T) {
 	if err := taskStore.CreateTask(&store.Task{ID: "task-beta", What: "secret", RunAt: time.Now(), Principal: "beta"}); err != nil {
 		t.Fatal(err)
 	}
-	taskStore.Close()
+	closeForTest(t, "task store", taskStore)
 
 	server := &localMCPServer{cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha"}
 	result, isError, protocolErr := server.callTool(context.Background(), "task_get", json.RawMessage(`{"task_id":"task-beta"}`))
@@ -836,7 +1003,7 @@ func TestAgentStatusMarksOrphanedRunnerFailed(t *testing.T) {
 	if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
 		t.Fatal(err)
 	}
-	taskStore.Close()
+	closeForTest(t, "task store", taskStore)
 	server := &localMCPServer{cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha"}
 	status, err := server.toolAgentStatus(json.RawMessage(`{"run_id":"orphaned-run"}`))
 	if err != nil {
@@ -869,7 +1036,7 @@ func TestFailedParentDoesNotReleaseSteeredRun(t *testing.T) {
 	if err := taskStore.SetTaskError(parent.ID, "review failed"); err != nil {
 		t.Fatal(err)
 	}
-	taskStore.Close()
+	closeForTest(t, "task store", taskStore)
 	runnerCalled := make(chan struct{}, 1)
 	server := &localMCPServer{
 		cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha",
@@ -896,9 +1063,81 @@ func TestFailedParentDoesNotReleaseSteeredRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer childStore.Close()
+	defer closeForTest(t, "child task store", childStore)
 	if !strings.Contains(child.What, "Prior request:\noriginal review") || !strings.Contains(child.What, "New direction:\nfocus on auth") {
 		t.Fatalf("steered prompt = %q", child.What)
+	}
+}
+
+func TestAgentSteerPassesAndPersistsPriorResult(t *testing.T) {
+	dir := t.TempDir()
+	cwd := t.TempDir()
+	cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
+	taskStore, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := &store.Task{
+		ID: "completed-parent", Type: "agent_run", What: "review this branch", Agent: "claude", Model: "opus",
+		RunAt: time.Now(), CWD: cwd, Principal: "alpha", RunnerPID: os.Getpid(),
+	}
+	if err := taskStore.CreateTask(parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := taskStore.SetTaskOutput(parent.ID, "the auth boundary is sound"); err != nil {
+		t.Fatal(err)
+	}
+	if err := taskStore.UpdateTaskStatus(parent.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	closeForTest(t, "task store", taskStore)
+
+	wantPrompt := agentSteerPrompt(parent.What, "the auth boundary is sound", "now review the UI")
+	seenPrompt := make(chan string, 1)
+	server := &localMCPServer{
+		cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha",
+		runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+			seenPrompt <- task.What
+			return taskStore.UpdateTaskStatus(task.ID, "done")
+		},
+	}
+	created, err := server.toolAgentSteer(json.RawMessage(`{"run_id":"completed-parent","prompt":"now review the UI"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	childID := created["run_id"].(string)
+	select {
+	case got := <-seenPrompt:
+		if got != wantPrompt {
+			t.Fatalf("runner prompt = %q, want %q", got, wantPrompt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("steered agent runner did not start")
+	}
+	waited, err := server.toolAgentWait(context.Background(), json.RawMessage(`{"run_id":`+strconv.Quote(childID)+`,"timeout_seconds":2}`))
+	if err != nil || waited["status"] != "done" {
+		t.Fatalf("child wait = %#v err=%v", waited, err)
+	}
+	child, childStore, err := server.ownedAgentRun(childID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeForTest(t, "child task store", childStore)
+	if child.What != wantPrompt {
+		t.Fatalf("persisted prompt = %q, want %q", child.What, wantPrompt)
+	}
+}
+
+func TestAgentSteerBoundsPriorResultWithoutSplittingUnicode(t *testing.T) {
+	prior := strings.Repeat("✓", maxAgentSteerPriorResultChars+1)
+	prompt := agentSteerPrompt("review", prior, "continue")
+	if strings.Contains(prompt, strings.Repeat("✓", maxAgentSteerPriorResultChars+1)) {
+		t.Fatal("follow-up retained the unbounded prior result")
+	}
+	if !strings.Contains(prompt, strings.Repeat("✓", maxAgentSteerPriorResultChars)) ||
+		!strings.Contains(prompt, "[Wingthing truncated the prior result for this follow-up.]") ||
+		!strings.HasSuffix(prompt, "New direction:\ncontinue") {
+		t.Fatalf("bounded follow-up prompt has the wrong shape: prefix=%q suffix=%q", prompt[:64], prompt[len(prompt)-96:])
 	}
 }
 

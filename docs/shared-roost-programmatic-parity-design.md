@@ -1,6 +1,16 @@
 # Shared-roost programmatic parity
 
-Status: active implementation on `feature-local-first-terminal-routing`, updated 2026-08-22.
+Status: implemented slice and historical design record, reviewed 2026-08-24.
+
+The OAuth HTTP MCP and embedded-wing control slice described here shipped. The
+next architecture step is the cross-wing portal contract in
+[the LLM-first architecture review](llm-first-review.md). That review also
+supersedes this document's loose use of "roost" as both shared host and runtime.
+Private OAuth roosts now optionally enforce exact email enrollment with
+`WT_ROOST_ALLOWED_EMAILS`; references to authenticated users below assume that
+deployment boundary.
+A roost is now the self-hosted portal/gateway plus its embedded wing; the wing
+is the runtime authority.
 
 ## Decision
 
@@ -242,6 +252,10 @@ Email and the presence of an organization in `wing.yaml` play no part. The
 current `spawnEgg` condition based on `identity.Email != "" && identity.OrgWing`
 is insufficient: an OAuth roost can be multi-user with an empty wing org and
 therefore expose the host user's real home to every egg.
+
+Distinct authenticated accounts remain distinct owners even when one human
+controls both. Wingthing does not infer an account link from display names or
+email similarity, and it never aliases or copies provider homes implicitly.
 
 Personal provider credentials live only in the owner's agent home. Enrollment
 is explicit:

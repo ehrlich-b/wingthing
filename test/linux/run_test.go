@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -112,6 +114,38 @@ func configuredTestUser(t *testing.T) (string, string) {
 	return name, account.HomeDir
 }
 
+// testUserTempDir creates a fixture the non-root battery account can actually
+// traverse. t.TempDir's root-owned 0700 parent remains inaccessible even if a
+// test chmods only the returned leaf; Go then misleadingly reports the failed
+// child chdir as "fork/exec wt: permission denied".
+func testUserTempDir(t *testing.T, name string) string {
+	t.Helper()
+	account, err := user.Lookup(name)
+	if err != nil {
+		t.Fatalf("lookup test user %q: %v", name, err)
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		t.Fatalf("parse uid %q for %s: %v", account.Uid, name, err)
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		t.Fatalf("parse gid %q for %s: %v", account.Gid, name, err)
+	}
+	dir, err := os.MkdirTemp("", "wt-user-cwd-*")
+	if err != nil {
+		t.Fatalf("create test-user cwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := os.Chown(dir, uid, gid); err != nil {
+		t.Fatalf("chown test-user cwd to %s: %v", name, err)
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatalf("chmod test-user cwd: %v", err)
+	}
+	return dir
+}
+
 // probeResults mirrors the JSON written by the mock agent.
 type probeResults struct {
 	Version string `json:"version"`
@@ -138,6 +172,7 @@ type probeResults struct {
 		Namespace struct {
 			InPIDNamespace bool   `json:"in_pid_namespace"`
 			NSpid          string `json:"nspid"`
+			PIDNamespace   string `json:"pid_namespace"`
 		} `json:"namespace"`
 		Identity struct {
 			Uid int `json:"uid"`
@@ -234,6 +269,10 @@ func runEgg(t *testing.T, extraFS []string, extraNetwork []string) (*probeResult
 	}
 
 	// Pass env vars matching DefaultEggConfig allowlist
+	hostPIDNamespace, err := os.Readlink("/proc/self/ns/pid")
+	if err != nil {
+		t.Fatalf("read host PID namespace identity: %v", err)
+	}
 	for _, e := range []string{
 		"HOME=" + home,
 		"PATH=" + testPATH(),
@@ -241,6 +280,7 @@ func runEgg(t *testing.T, extraFS []string, extraNetwork []string) (*probeResult
 		"LANG=en_US.UTF-8",
 		"USER=root",
 		"WT_TEST_DENIED_CANARY=" + deniedCanary,
+		"WT_TEST_HOST_PID_NAMESPACE=" + hostPIDNamespace,
 	} {
 		args = append(args, "--env", e)
 	}
@@ -494,37 +534,80 @@ func runRealAgent(t *testing.T, agentName, commandName, agentBin string, writeDi
 		t.Fatalf("start: %v", err)
 	}
 
-	scanner := bufio.NewScanner(stdout)
-	var allOutput []string
-	found := false
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		allOutput = append(allOutput, line)
-
-		// Look for "egg: first PTY output from pid X after Yms (Z bytes)"
-		if strings.Contains(line, "first PTY output") {
-			t.Logf("%s binary: %s (resolved: %s)", agentName, agentBin, resolved)
-			t.Logf("SUCCESS: %s", line)
-			found = true
-			cmd.Process.Kill()
-			cmd.Wait()
-			return
-		}
-
-		// Early exit detection: if the egg server reports the session exited,
-		// the agent died without producing any PTY output.
-		if strings.Contains(line, "exited with code") {
-			break
-		}
-	}
-
-	cmd.Process.Kill()
-	cmd.Wait()
+	result := waitForRealAgentOutput(ctx, stdout)
+	_ = cmd.Process.Kill()
+	_ = stdout.Close()
+	_ = cmd.Wait()
 	t.Logf("%s binary: %s (resolved: %s)", agentName, agentBin, resolved)
-	t.Logf("output:\n%s", strings.Join(allOutput, "\n"))
-	if !found {
+	if result.firstPTYOutput != "" {
+		t.Logf("SUCCESS: %s", result.firstPTYOutput)
+		return
+	}
+	t.Logf("output:\n%s", strings.Join(result.lines, "\n"))
+	if result.err != nil {
+		t.Errorf("real %s startup observation failed: %v", agentName, result.err)
+	} else {
 		t.Errorf("real %s produced zero PTY output before exit", agentName)
+	}
+}
+
+type realAgentOutputResult struct {
+	lines          []string
+	firstPTYOutput string
+	err            error
+}
+
+// waitForRealAgentOutput observes an egg without letting an inherited output
+// descriptor defeat the caller's deadline. Some upstream CLIs fork helper
+// processes that retain stdout after the supervised command is gone; a scanner
+// running synchronously would then block forever even after CommandContext killed
+// the egg. Closing the read side on cancellation unblocks the scanner goroutine.
+func waitForRealAgentOutput(ctx context.Context, output io.ReadCloser) realAgentOutputResult {
+	resultCh := make(chan realAgentOutputResult, 1)
+	go func() {
+		scanner := bufio.NewScanner(output)
+		var result realAgentOutputResult
+		for scanner.Scan() {
+			line := scanner.Text()
+			result.lines = append(result.lines, line)
+			if strings.Contains(line, "first PTY output") {
+				result.firstPTYOutput = line
+				resultCh <- result
+				return
+			}
+			if strings.Contains(line, "exited with code") {
+				break
+			}
+		}
+		result.err = scanner.Err()
+		resultCh <- result
+	}()
+
+	select {
+	case result := <-resultCh:
+		return result
+	case <-ctx.Done():
+		_ = output.Close()
+		return realAgentOutputResult{err: ctx.Err()}
+	}
+}
+
+func TestWaitForRealAgentOutputHonorsContextWhenWriterStaysOpen(t *testing.T) {
+	reader, writer := io.Pipe()
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	result := waitForRealAgentOutput(ctx, reader)
+	if !errors.Is(result.err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline exceeded", result.err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("output observer ignored its deadline for %s", elapsed)
 	}
 }
 
@@ -1021,8 +1104,7 @@ func TestSandboxFailsWithClearErrorWithoutNamespaces(t *testing.T) {
 
 	// Run wt egg run as the configured non-root account. This exercises the
 	// explicit namespace diagnostic on AppArmor-restricted hosts.
-	cwd := t.TempDir()
-	os.Chmod(cwd, 0777)
+	cwd := testUserTempDir(t, testUser)
 
 	sessionID := fmt.Sprintf("test-nouserns-%d", time.Now().UnixNano()%100000)
 
@@ -1082,18 +1164,31 @@ func TestSealedJailNonRoot(t *testing.T) {
 		t.Skip("must run as root to su to the non-root test user")
 	}
 	testUser, testUserHome := configuredTestUser(t)
-	// Gate on the REAL namespace capability, not `wt doctor`: on kernel 6.8 hosts
-	// with userns enabled and no AppArmor profiles (bryan-wingthing and prod),
-	// `wt doctor` reports the sandbox NOT AVAILABLE even though unprivileged
-	// user+pid+mount namespaces work and real sessions launch — a doctor-probe
-	// false negative (tracked separately). If the host genuinely cannot create
-	// these namespaces, skip; the failure path is TestSandboxFailsWithClearError…
+	// Gate on the namespace primitive itself so container runtimes that reject
+	// non-root uid mappings skip this host-incompatible success path. Once the
+	// primitive works, any later `wt` preflight failure is a product regression
+	// and must fail below rather than being mistaken for a host limitation.
 	if !userCanCreateJailNamespaces(t, testUser) {
 		t.Skipf("%s cannot create user+pid+mount namespaces on this host; sealed-jail success path is not exercisable here", testUser)
 	}
 
-	cwd := t.TempDir()
-	os.Chmod(cwd, 0777)
+	cwd := testUserTempDir(t, testUser)
+	// Keep the static probe inside the explicit rw:cwd allowlist. CI normally
+	// installs it under /usr, but portable batteries may stage all artifacts in
+	// an isolated /tmp directory that the sealed root intentionally cannot see.
+	mockSource, err := exec.LookPath("claude")
+	if err != nil {
+		t.Fatalf("locate mock agent: %v", err)
+	}
+	mockData, err := os.ReadFile(mockSource)
+	if err != nil {
+		t.Fatalf("read mock agent %s: %v", mockSource, err)
+	}
+	localMock := filepath.Join(cwd, "claude")
+	if err := os.WriteFile(localMock, mockData, 0755); err != nil {
+		t.Fatalf("stage mock agent in sealed cwd: %v", err)
+	}
+	agentPATH := cwd + ":" + testPATH()
 	sessionID := fmt.Sprintf("test-sealed-%d", time.Now().UnixNano()%100000)
 
 	// A secret planted only in the spawning (roost-analog) process environment.
@@ -1101,6 +1196,10 @@ func TestSealedJailNonRoot(t *testing.T) {
 	// hunt for in other processes' /proc/<pid>/environ; with a private procfs it
 	// must never find it, because the spawning process is not in its namespace.
 	secret := fmt.Sprintf("wt-host-secret-%d", time.Now().UnixNano())
+	hostPIDNamespace, err := os.Readlink("/proc/self/ns/pid")
+	if err != nil {
+		t.Fatalf("read host PID namespace identity: %v", err)
+	}
 
 	// A canary in a denied path, to confirm deny:/ actually masks (not just an
 	// absent-file false positive).
@@ -1118,9 +1217,9 @@ func TestSealedJailNonRoot(t *testing.T) {
 		" --fs deny:/ --fs ro:/usr --fs ro:/bin --fs ro:/sbin --fs ro:/lib --fs ro:/lib64 --fs ro:/etc --fs rw:%s"+
 		" --network none"+
 		" --env HOME=%s --env PATH=%s --env TERM=xterm-256color"+
-		" --env WT_TEST_DENIED_CANARY=%s --env WT_TEST_FIND_SECRET=%s",
-		shellArg(secret), shellArg(testPATH()), shellArg(testWTPath()), sessionID, shellArg(cwd), shellArg(cwd),
-		shellArg(testUserHome), shellArg(testPATH()), shellArg(deniedCanary), shellArg(secret))
+		" --env WT_TEST_DENIED_CANARY=%s --env WT_TEST_FIND_SECRET=%s --env WT_TEST_HOST_PID_NAMESPACE=%s",
+		shellArg(secret), shellArg(agentPATH), shellArg(testWTPath()), sessionID, shellArg(cwd), shellArg(cwd),
+		shellArg(testUserHome), shellArg(agentPATH), shellArg(deniedCanary), shellArg(secret), shellArg(hostPIDNamespace))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -1132,17 +1231,10 @@ func TestSealedJailNonRoot(t *testing.T) {
 	resultsPath := filepath.Join(cwd, "test-results.json")
 	data, readErr := os.ReadFile(resultsPath)
 	if readErr != nil {
-		// Distinguish a KNOWN separate bug from the regression this test guards.
-		// `wt egg run`'s pre-flight sandbox.CheckCapability() (hasNamespaceCapability
-		// -> probeMountNamespace) false-negatives for a non-root user invoking wt
-		// directly, refusing with "sandbox not available" even on hosts where the
-		// namespaces work and the roost daemon runs sealed sessions fine. That is a
-		// capability-probe defect, NOT the jail failing — skip rather than red-fail,
-		// and fix the probe to exercise this end-to-end here.
-		if strings.Contains(out, "sandbox not available") {
-			t.Skipf("blocked by the CheckCapability false-negative for direct non-root invocation (separate probe bug, not the jail):\n%s", out)
-		}
-		// Otherwise the agent genuinely never launched — the v0.144.0 failure mode.
+		// A failed preflight is part of the product path, not grounds to skip the
+		// isolation test. This caught bryan-wingthing's non-writable /tmp: the old
+		// generic userns message hid the real mkdir failure and this test silently
+		// skipped even though every new org-mode run was broken.
 		t.Fatalf("sealed jail agent never launched / wrote no results (the v0.144.0 failure mode)\nsu/wt err: %v\noutput:\n%s", runErr, out)
 	}
 	var results probeResults

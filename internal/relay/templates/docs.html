@@ -36,6 +36,7 @@
 <nav class="docs-nav">
 <a href="#quickstart">quickstart</a>
 <a href="#overview">overview</a>
+<a href="#agent-control">agent control</a>
 <a href="#installation">installation</a>
 <a href="#wing-setup">wing setup</a>
 <a href="#wing-configuration">wing configuration</a>
@@ -46,61 +47,95 @@
 <a href="#idle-timeouts">idle timeouts</a>
 <a href="#egg-configuration">egg configuration</a>
 <a href="#self-hosting">self-hosting</a>
-<a href="#roost-configuration">roost configuration</a>
+<a href="#roost-configuration">gateway configuration</a>
 <a href="#architecture">architecture</a>
 <a href="#security">security</a>
 <a href="#sandbox-limits">sandbox limits</a>
 </nav>
 <div class="docs-body">
 <h1>documentation</h1>
-<p class="lead">wingthing runs AI agents sandboxed on your machine, accessible from anywhere.</p>
+<p class="lead">wingthing is an agent manager for agents: one typed control plane for durable work across every machine, with human takeover when useful.</p>
 
 <div class="docs-section" id="quickstart">
 <h2>quickstart</h2>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">local — no account or service</h3>
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">give Codex or Claude access to local agents</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span><br>
+<br>
+<span class="comment"># Codex</span><br>
+<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
+<br>
+<span class="comment"># Claude Code</span><br>
+<span class="prompt">$ </span><span class="cmd">claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
+</div>
+<p>Restart the client, then ask it to call <code>wingthing_capabilities</code>. It can start persistent terminals or headless runs, wait for results, steer work, and stop it.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">run your own private browser portal</h3>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt roost start --https</span><span class="comment"> # portal + gateway + local wing</span><br>
+<span class="prompt">$ </span><span class="cmd">open https://localhost:8443</span>
+</div>
+<p>This self-hosted path needs no Wingthing account. WT creates a localhost-only certificate on demand, installs only its public CA for your current user, and keeps its private keys on this machine.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">give an agent access to all your remote wings</h3>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt login</span><br>
+<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp connect --client codex</span><br>
+<span class="comment"># or: claude mcp add --scope user wingthing -- wt mcp connect --client claude</span>
+</div>
+<p>The agent calls <code>wing_list</code>, then passes an explicit <code>wing_id</code> to every operation. The hosted service supplies the access-filtered directory and WebRTC signaling; MCP payloads travel directly between the connector and selected wing. The first release expects the peers to share a LAN or tailnet unless you configure STUN or TURN under <code>ice_servers</code> in <code>~/.wingthing/wing.yaml</code>; the several-computer pattern includes the exact YAML shape.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">use the durable terminal yourself</h3>
+<div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt terminal --name work</span><br>
 <span class="prompt">$ </span><span class="cmd">wt attach work</span>
 </div>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">optional browser access through wingthing.ai</h3>
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">optional hosted portal</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
 <span class="prompt">$ </span><span class="cmd">wt start</span><br>
-<span class="prompt">$ </span><span class="cmd">open app.wingthing.ai</span>
+<span class="prompt">$ </span><span class="cmd">open https://app.wingthing.ai</span>
 </div>
+<p>Free accounts see wing readiness and direct-agent setup in the portal. Accounts with hosted relay access can also start and resume browser terminals. The public direct-free service does not let an account grant itself relay access; Pro and team relay entitlements are provisioned separately.</p>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">run your own</h3>
-<div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span><br>
-<span class="prompt">$ </span><span class="cmd">wt roost start</span><span class="comment">        # server + wing, one command</span><br>
-<span class="prompt">$ </span><span class="cmd">open localhost:8080</span>
-</div>
-
-<p>Your machine is now a <strong>wing</strong> — a remote-accessible sandbox host. Open a terminal from the browser, pick an agent (Claude, Codex, Ollama), and it runs in an isolated <strong>egg</strong> on your hardware. Terminal and wing API payloads are application-encrypted through the <strong>roost</strong>.</p>
+<p>Your machine is a <strong>wing</strong>, the runtime that owns the processes and workspaces. An LLM manages it through MCP; a person can use the same runtime through the CLI or browser. The hosted service coordinates direct connections by default. Pro includes its encrypted browser-terminal and control relay; the native connector never silently changes from direct transport to relay transport.</p>
 </div>
 
 <div class="docs-section" id="overview">
 <h2>overview</h2>
-<p>wingthing is a CLI tool (<code>wt</code>) that lets you run Claude Code, Codex, Ollama, and other AI agents in sandboxed sessions on your own hardware - then access them from any device through an encrypted connection.</p>
+<p>wingthing runs Claude Code, Codex, Ollama, and other AI agents behind one local control plane. The interface can be a CLI, browser, or MCP client. Execution stays on the wing where the selected workspace and hardware live.</p>
 <table class="vocab-table">
 <tr><th>term</th><th>what it is</th></tr>
-<tr><td>wing</td><td>Your machine. Install <code>wt</code>, run <code>wt start</code>, and it connects outbound to the roost. One machine = one wing.</td></tr>
-<tr><td>roost</td><td>The server. Handles login and routes connections. wingthing.ai is a roost. <code>wt roost start</code> runs your own.</td></tr>
-<tr><td>egg</td><td>A sandboxed agent session. Each egg is an isolated process with its own PTY, sandbox profile, and gRPC socket. Runs Claude, Codex, Ollama, etc.</td></tr>
+<tr><td>portal</td><td>The inventory and controls presented to a person or LLM. The browser and MCP are portal adapters, though they do not yet expose every object with full parity.</td></tr>
+<tr><td>wing</td><td>One machine running Wingthing. It owns its process, terminal, task, workspace, and agent-home state.</td></tr>
+<tr><td>session</td><td>A persistent interactive PTY for an agent, shell, or command.</td></tr>
+<tr><td>run</td><td>A supervised headless agent task with semantic status, events, output, and errors.</td></tr>
+<tr><td>egg</td><td>The process, PTY, sandbox policy, and local control socket behind a session.</td></tr>
+<tr><td>roost</td><td>The self-hosted bundle started by <code>wt roost start</code>: a portal and gateway with an embedded wing. Other wings can register with its gateway.</td></tr>
 </table>
-<p>Wings connect outbound to the roost (no port forwarding needed), and the roost bridges WebSocket connections between wings and browsers. PTY content is application-encrypted between the shipped browser client and wing.</p>
+<p><code>wingthing.ai</code> is the hosted identity, directory, and connection-coordination service. Think of it as a tailnet control plane for wings: it introduces authenticated peers, while the free native-MCP data path is direct. The optional hosted relay carries encrypted browser-terminal and control payloads for Pro users. It is not a roost under the stricter self-hosted-bundle definition above.</p>
+</div>
+
+<div class="docs-section" id="agent-control">
+<h2>agent control</h2>
+<p>The MCP server lets a parent LLM discover and operate Wingthing without scraping terminal output. Use <code>wt mcp stdio</code> for the same host and <code>wt mcp connect</code> for an explicitly selected remote wing. Use <code>agent_run</code> for semantic task state. Use <code>agent_start</code> when a person should be able to attach to the persistent terminal.</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
+<span class="prompt">$ </span><span class="cmd">claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
+</div>
+<p>The main operations are capability discovery, sandbox explanation, terminal lifecycle, agent run lifecycle, bounded loops and dependency graphs, and owner-scoped messages. Every model-reachable operation should have a principal, grant, bound, and audit record.</p>
+<p>Remote MCP has no mutable current wing: every wing-owned call requires <code>wing_id</code>, and results include the owning wing. The HTTP MCP endpoint remains available for self-hosted compatibility. Independent roost federation and native passkey ceremony for locked wings are still follow-up work.</p>
 </div>
 
 <div class="docs-section" id="installation">
 <h2>installation</h2>
-<p>Single binary, no dependencies. macOS and Linux, x64 and arm64.</p>
+<p>The Wingthing runtime and SQLite storage ship in one binary for macOS and Linux, x64 and arm64. Install the agent CLIs you intend to run separately. Trusted localhost HTTPS on Linux also needs <code>certutil</code> from <code>libnss3-tools</code> or <code>nss-tools</code>.</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span>
 </div>
-<p>Installs to <code>~/.local/bin/wt</code>. Set <code>WT_INSTALL_DIR</code> to change the location.</p>
+<p>Installs to <code>~/.local/bin/wt</code>. Set <code>WT_INSTALL_DIR</code> to change the location. The installer verifies the release checksum and confirms that the binary implements the command surface documented by this site before atomically replacing an existing installation.</p>
 <p>Or grab the binary from <a href="https://github.com/ehrlich-b/wingthing/releases/latest">GitHub releases</a>.</p>
 <p>To update:</p>
 <div class="docs-code">
@@ -112,11 +147,11 @@
 <h2>wing setup</h2>
 <p>Three commands to go from install to remote access:</p>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">wt login</span><span class="comment">                  # authenticate with the roost</span><br>
+<span class="prompt">$ </span><span class="cmd">wt login</span><span class="comment">                  # authenticate with the hosted portal</span><br>
 <span class="prompt">$ </span><span class="cmd">wt start</span><span class="comment">                  # start the wing daemon</span><br>
-<span class="prompt">$ </span><span class="cmd">open app.wingthing.ai</span><span class="comment">     # start terminals from your browser</span>
+<span class="prompt">$ </span><span class="cmd">open https://app.wingthing.ai</span><span class="comment"> # wing readiness and direct setup</span>
 </div>
-<p><code>wt start</code> runs the wing as a background daemon. Use <code>wt wing start --foreground</code> for debugging.</p>
+<p><code>wt start</code> runs the wing as a background daemon. Hosted accounts with relay access also get browser terminal controls; direct-only free accounts get the native connector instructions instead. Use <code>wt wing start --foreground</code> for debugging.</p>
 <p>Other wing commands:</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt wing status</span><span class="comment">            # check daemon status + active sessions</span><br>
@@ -130,7 +165,8 @@
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt wing config</span><span class="comment">                    # view current config</span><br>
 <span class="prompt">$ </span><span class="cmd">wt wing config set org=myteam</span><span class="comment">     # set a value</span><br>
-<span class="prompt">$ </span><span class="cmd">wt wing config set audit=true</span><span class="comment">     # enable session audit recording</span>
+<span class="prompt">$ </span><span class="cmd">wt wing config set audit=true</span><span class="comment">     # enable session audit recording</span><br>
+<span class="prompt">$ </span><span class="cmd">wt wing config set hosted_relay=deny</span><span class="comment"> # require direct payload transport</span>
 </div>
 <p>The daemon picks up changes via SIGHUP. See the reload column for what requires a restart.</p>
 
@@ -148,14 +184,19 @@
 <tr><td>audit</td><td>record session terminal output for replay</td><td>live</td></tr>
 <tr><td>debug</td><td>verbose daemon logging</td><td>live</td></tr>
 <tr><td>conv</td><td>conversation context file path</td><td>live</td></tr>
+<tr><td>direct_mcp</td><td>optional native-control policy: <code>disabled</code>, <code>allow_grants</code> or <code>deny_grants</code>, <code>max_sessions</code>, and <code>max_spawns_per_hour</code>. Omit it for compatible bounded defaults</td><td>live</td></tr>
+<tr><td>hosted_relay</td><td><code>allow</code> (compatible default) or <code>deny</code>. Deny overrides account entitlement and leaves only bounded direct-connection coordination on the gateway</td><td>restart</td></tr>
 </table>
+<p>Direct MCP policy is enforced by the wing after the coordinator-authenticated identity arrives. Grant and bound fields are not accepted from tool arguments. Malformed policy or unknown grant names fail closed instead of starting with unrestricted direct access.</p>
+<p>Hosted-relay denial is enforced before forwarding by a current gateway and again by the wing. The effective value appears in authorized capability metadata; audit records contain no command, path, terminal, or tunnel payload.</p>
+<p><strong>Downgrade boundary:</strong> a wing binary from before <code>hosted_relay</code> existed ignores this field and resumes the historical relay behavior. If <code>deny</code> is a security requirement, stop or isolate the wing before installing an older binary.</p>
 </div>
 
 <div class="docs-section" id="access-control">
 <h2>access control</h2>
 <p>By default, anyone with your account credentials can start sessions on your wing. Locking it adds a second factor using <a href="https://passkeys.dev">passkeys</a> - the same WebAuthn standard behind "Sign in with Face ID" and "Sign in with Windows Hello."</p>
 <p>A passkey is a cryptographic credential stored in your password manager (1Password, LastPass, iCloud Keychain, Bitwarden) or your OS (Touch ID, Windows Hello, Android biometrics). Most people already have one and don't know it.</p>
-<p>When your wing is locked, browsers must prove they hold a passkey whose public key is pinned in the wing's local allowlist before the wing will start, control, or spectate a session. The wing generates one-time challenges, fully validates the WebAuthn context and signature, and binds the resulting token to the browser encryption key and relay user.</p>
+<p>When your wing is locked, browsers must prove they hold a passkey whose public key is pinned in the wing's local allowlist before the wing will start, control, or spectate a session. The wing generates one-time challenges, fully validates the WebAuthn context and signature, and binds the resulting token to the browser encryption key and gateway user.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">lock your wing</h3>
 <div class="docs-code">
@@ -178,7 +219,7 @@
 <span class="prompt">$ </span><span class="cmd">wt wing unlock</span>
 </div>
 <p>Removes the passkey requirement. Sessions start without a second factor.</p>
-<p>The allowlist lives in <code>wing.yaml</code> on your machine. The roost stores your passkey's public key and credential ID so it can hand them to your wing during <code>wt wing allow</code>. The security model assumes the roost is not compromised at the time you add a key - after that, verification happens entirely on the wing.</p>
+<p>The allowlist lives in <code>wing.yaml</code> on your machine. The gateway stores your passkey's public key and credential ID so it can hand them to your wing during <code>wt wing allow</code>. The security model assumes the gateway is not compromised at the time you add a key. After that, verification happens entirely on the wing.</p>
 </div>
 
 <div class="docs-section" id="organizations">
@@ -200,7 +241,8 @@
 <p>Multiple users can share a single wing. Each user gets an isolated home directory, and you can restrict which folders each person sees.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">adding users</h3>
-<p>Set up OAuth on your roost (GitHub or Google), and users log in through the browser. Each authenticated user automatically gets their own home directory at <code>~/.wingthing/user-homes/&lt;hash&gt;/</code> with shell configs and agent binaries symlinked from the host. The owner gets a per-user home too - there's no bypass for local users.</p>
+<p>Set up OAuth on your roost (GitHub or Google), list the permitted account emails in <code>WT_ROOST_ALLOWED_EMAILS</code>, and let those users log in through the browser. Each enrolled user gets their own home directory at <code>~/.wingthing/user-homes/&lt;hash&gt;/</code> with shell configs and agent binaries symlinked from the host. The owner gets a per-user home too - there's no bypass for local users.</p>
+<p>OAuth proves identity; it does not decide who belongs on a private roost. If the enrollment list is empty, any account accepted by the configured OAuth provider may enroll. Set the list on every internet-reachable private roost unless the provider or ingress already restricts membership.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">restricting paths</h3>
 <p>By default, all users see all configured paths. Add <code>members</code> to restrict access per folder:</p>
@@ -253,7 +295,7 @@ agent_settings:<br>
 <p>The first line selects the mode:</p>
 <table class="docs-table">
 <tr><th>first line</th><th>panel shows</th></tr>
-<tr><td><code>url:&lt;url&gt;</code></td><td>the page in an iframe, with copy and open buttons</td></tr>
+<tr><td><code>url:&lt;url&gt;</code></td><td>the reviewed address with load, copy, and open controls; no request happens until you choose load or open</td></tr>
 <tr><td><code>file:&lt;name&gt;</code></td><td>the rest of the file, with a download button</td></tr>
 <tr><td>anything else</td><td>the whole file rendered as markdown</td></tr>
 </table>
@@ -268,7 +310,8 @@ echo "url:https://example.com/apps/$WT_USER/tracker/" &gt; "$WT_PREVIEW_DIR/$WT_
 &nbsp;&nbsp;cat report.csv<br>
 } &gt; "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE"
 </div>
-<p>Files ending in <code>.md</code> render as markdown; everything else is shown as plain source. Content is text - the panel renders it in a sandboxed iframe with no scripts and no raw HTML. Binary files aren't supported; serve those over a URL instead.</p>
+<p>Files ending in <code>.md</code> render as markdown; everything else is shown as plain source. Content is text - the panel renders it in a network-inert sandboxed iframe with no scripts, active links, image requests, or raw HTML. Binary files aren't supported; serve those over a URL instead.</p>
+<p>A URL comes from the agent, so Wingthing shows it without fetching it. Review the address before choosing <strong>load preview</strong> or <strong>open</strong>. Once chosen, the request comes from your browser and is outside the egg's network allowlist; the embedded page receives an opaque sandbox origin and no referrer.</p>
 <p>Markdown with no <code>file:</code> header still works and downloads as <code>preview.md</code>:</p>
 <div class="docs-code">
 cat &gt; "$WT_PREVIEW_DIR/$WT_PREVIEW_FILE" &lt;&lt; 'EOF'<br>
@@ -294,7 +337,7 @@ idle_timeout: 4h
 <div class="docs-section" id="egg-configuration">
 <h2>egg configuration</h2>
 <p>Without an <code>egg.yaml</code>, the sandbox applies opinionated defaults: CWD is writable, home is read-only, sensitive directories (<code>~/.ssh</code>, <code>~/.gnupg</code>, <code>~/.aws</code>, etc.) are denied, and only essential env vars pass through. <code>~/.ssh/known_hosts</code> is preserved read-only so SSH can verify host keys without prompting (add <code>deny:~/.ssh/known_hosts</code> to disable this). Network is blocked except for exactly what your agent needs - each agent has a profile declaring its API domains, env vars, and config directories. Claude gets <code>api.anthropic.com</code>, Ollama gets <code>localhost</code>, etc. You don't configure any of this.</p>
-<p>A local <a href="https://en.wikipedia.org/wiki/HTTP_tunnel">CONNECT proxy</a> enforces domain-level filtering - agents can only reach their own API, not the entire internet. On macOS, Seatbelt forces all traffic through the proxy at the OS level. On Linux, the proxy is set via <code>HTTPS_PROXY</code>.</p>
+<p>A local <a href="https://en.wikipedia.org/wiki/HTTP_tunnel">CONNECT proxy</a> enforces domain-level filtering - agents can only reach their declared APIs, not the entire internet. On macOS, Seatbelt permits only the proxy endpoint. On Linux, every sandbox keeps a route-less network namespace and an inherited-FD relay exposes only the proxy and explicitly declared host-loopback ports. Removing <code>HTTPS_PROXY</code> does not create a route.</p>
 <p>Drop an <code>egg.yaml</code> in your project to customize. Configs are additive - you only declare what you're changing from the defaults.</p>
 <p>Place <code>egg.yaml</code> in your project directory for per-project config, or in <code>~/.wingthing/egg.yaml</code> for global defaults. Project configs are discovered automatically. Use the <a href="/">sandbox builder</a> on the homepage to generate configs visually, or install the <a href="https://github.com/ehrlich-b/wingthing/tree/main/docs/skills/create-egg">Claude Code skill</a> for an interactive security interview that generates hardened configs.</p>
 <p>Example <code>egg.yaml</code>:</p>
@@ -328,27 +371,30 @@ dangerously_skip_permissions: true
 
 <div class="docs-section" id="self-hosting">
 <h2>self-hosting</h2>
-<p>Run your own roost. Single binary, SQLite, no external dependencies.</p>
+<p>Run your own roost: a browser portal, gateway, and embedded wing in one process. The runtime is one binary plus SQLite and needs no hosted Wingthing service. Local HTTPS trust on Linux additionally uses <code>certutil</code> from <code>libnss3-tools</code> or <code>nss-tools</code>.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">quick start</h3>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">wt roost start</span>
+<span class="prompt">$ </span><span class="cmd">wt roost start --https</span>
 </div>
-<p>Open <a href="http://localhost:8080">localhost:8080</a>. Server and wing in one process, no login page, no config.</p>
+<p>Open <a href="https://localhost:8443">https://localhost:8443</a>. On first use, WT creates a localhost-only CA and server certificate under <code>~/.wingthing/local-tls</code>. Both private keys stay mode <code>0600</code> on this machine. WT installs only the public CA certificate in the current user's trust store. The browser uses HTTPS on port 8443; the embedded wing uses a separate loopback-only HTTP endpoint on port 8080.</p>
+<p>Use <code>wt local-cert status</code> to inspect it and <code>wt local-cert remove</code> to remove the public CA from this user's trust store. Omit <code>--https</code> to keep HTTP. Single-user/no-login mode still binds the implicit listener to <code>127.0.0.1:8080</code>, refuses explicit non-loopback listeners, and rejects non-loopback Host headers plus cross-origin browser mutations and WebSockets. Authenticated shared deployments keep their configured listener and externally provisioned HTTPS.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">multi-user</h3>
-<p>Same command, add OAuth env vars. Now multiple people can log in.</p>
+<p>Same command, add OAuth env vars and an exact email enrollment list. Now those people can log in.</p>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">GITHUB_CLIENT_ID=xxx GITHUB_CLIENT_SECRET=yyy wt roost start</span>
+<span class="prompt">$ </span><span class="cmd">WT_BASE_URL=https://roost.example.com GITHUB_CLIENT_ID=xxx GITHUB_CLIENT_SECRET=yyy WT_ROOST_ALLOWED_EMAILS=alice@example.com,bob@example.com wt roost start --addr :8080</span>
 </div>
-<p>Or use Google OAuth with <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>. Connect additional wings from other machines with <code>wt login --roost https://my-roost.example.com</code> and <code>wt start --roost https://my-roost.example.com</code>. Or set <code>roost_url</code> in <code>~/.wingthing/config.yaml</code> to avoid passing the flag every time.</p>
+<p>Or use Google OAuth with <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>. The allowlist uses exact, case-insensitive email matches and applies to browser sessions, device tokens, wing inventory, and MCP authorization. Connect additional wings from other machines with <code>wt login --roost https://my-roost.example.com</code> and <code>wt start --roost https://my-roost.example.com</code>. Or set <code>roost_url</code> in <code>~/.wingthing/config.yaml</code> to avoid passing the flag every time.</p>
+<p>Public/shared and organization roosts keep their existing externally provisioned HTTPS. Do not add the local <code>--https</code> flag to an OAuth roost; terminate its public TLS at Caddy, nginx, your VPN proxy, Fly, or another ingress.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">running separately</h3>
-<p>If you need the server and wing on different machines, run them as separate processes:</p>
+<p>If you need the gateway and wing on different machines, terminate valid HTTPS at the gateway ingress, configure OAuth and the same exact enrollment list, and run them as separate processes:</p>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">wt serve</span><span class="comment">                          # server only</span><br>
+<span class="prompt">$ </span><span class="cmd">WT_BASE_URL=https://roost.example.com GITHUB_CLIENT_ID=xxx GITHUB_CLIENT_SECRET=yyy WT_ROOST_ALLOWED_EMAILS=alice@example.com wt serve --addr :8080</span><span class="comment"> # gateway only</span><br>
 <span class="comment"># on another machine:</span><br>
-<span class="prompt">$ </span><span class="cmd">wt start --roost http://host:port</span><span class="comment">   # wing only</span>
+<span class="prompt">$ </span><span class="cmd">wt login --roost https://roost.example.com</span><br>
+<span class="prompt">$ </span><span class="cmd">wt start --roost https://roost.example.com</span><span class="comment"> # wing only</span>
 </div>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">systemd</h3>
@@ -366,10 +412,15 @@ WantedBy=multi-user.target
 </div>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">docker</h3>
+<p>The image runs the gateway only; run wings on the machines that actually have your agent CLIs and projects. For a no-account Linux setup, host networking preserves WT's loopback-only security boundary:</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">docker build -t wingthing .</span><br>
-<span class="prompt">$ </span><span class="cmd">docker run -p 8080:8080 -v wt-data:/data wingthing</span>
+<span class="prompt">$ </span><span class="cmd">docker run --network host -v wt-data:/data wingthing</span><br>
+<span class="comment"># on each machine that will run agents:</span><br>
+<span class="prompt">$ </span><span class="cmd">wt login --roost http://localhost:8080</span><br>
+<span class="prompt">$ </span><span class="cmd">wt start --roost http://localhost:8080</span>
 </div>
+<p>Do not publish a no-login container on <code>0.0.0.0</code>. For a container reachable from other machines, configure OAuth, <code>WT_BASE_URL</code>, an exact <code>WT_ROOST_ALLOWED_EMAILS</code> list, and HTTPS at the ingress, then explicitly listen on <code>:8080</code>. Docker Desktop users can use that authenticated shape when host networking is unavailable.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">fly.io</h3>
 <div class="docs-code">
@@ -379,7 +430,7 @@ WantedBy=multi-user.target
 </div>
 
 <div class="docs-section" id="roost-configuration">
-<h2>roost configuration</h2>
+<h2>gateway and roost configuration</h2>
 <table class="docs-table">
 <tr><th>var</th><th>purpose</th></tr>
 <tr><td>WT_BASE_URL</td><td>public URL for OAuth callbacks</td></tr>
@@ -387,6 +438,7 @@ WantedBy=multi-user.target
 <tr><td>GITHUB_CLIENT_SECRET</td><td>GitHub OAuth app secret</td></tr>
 <tr><td>GOOGLE_CLIENT_ID</td><td>Google OAuth client ID</td></tr>
 <tr><td>GOOGLE_CLIENT_SECRET</td><td>Google OAuth client secret</td></tr>
+<tr><td>WT_ROOST_ALLOWED_EMAILS</td><td>exact comma-separated account emails enrolled in a private OAuth gateway or roost; empty allows any identity accepted by the configured OAuth provider to enroll, so set it for an internet-reachable roost unless the provider or ingress enforces an equivalent restriction</td></tr>
 <tr><td>OPENAI_API_KEY</td><td>embeddings (optional)</td></tr>
 <tr><td>WT_JWT_KEY</td><td>EC P-256 private key (PEM or base64-DER) for JWT signing (<strong>required</strong> in server mode, auto-generated in local/roost mode)</td></tr>
 <tr><td>WT_APP_HOST</td><td>hostname for app subdomain (e.g. app.example.com)</td></tr>
@@ -397,19 +449,20 @@ WantedBy=multi-user.target
 
 <div class="docs-section" id="architecture">
 <h2>architecture</h2>
-<p>For terminal content and encrypted tunnel APIs, the shipped roost forwards application ciphertext between browsers and wings during normal operation. It also owns accounts and routing, sees wing/session identifiers, selected agent and working-directory metadata, timing and sizes, and serves the browser code.</p>
+<p>The intended architecture is one wing-owned control contract with CLI, browser, stdio MCP, and HTTP MCP adapters. Today the browser and MCP share the underlying session state when they address the same wing, but the adapter paths are not fully converged.</p>
+<p>For an account or self-hosted policy with browser-relay access, the shipped gateway forwards application ciphertext between browsers and wings during normal operation. Free native-MCP clients instead send their operation payloads directly to a wing. The gateway owns accounts and routing, sees wing/session identifiers, selected agent and working-directory metadata, timing and sizes, and serves the browser code.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">how the pieces connect</h3>
-<p>Your wing opens an outbound WebSocket to the roost and holds it open. When you open a terminal in the browser, the browser connects to the roost over a second WebSocket. The roost matches them by wing ID and forwards messages both ways. Content payloads use Wingthing's application encryption; routing envelopes and metadata remain visible.</p>
+<p>Your wing opens an outbound WebSocket to the gateway and holds it open. When an entitled or self-hosted browser opens a terminal, the browser connects to the gateway over a second WebSocket. The gateway matches them by wing ID and forwards messages both ways. Content payloads use Wingthing's application encryption; routing envelopes and metadata remain visible. A free native-MCP client uses the gateway only to discover and establish its direct connection.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">encryption</h3>
-<p>The browser keeps an X25519 identity key for the tab and the wing has a persistent X25519 identity key. They derive separate AES-GCM keys via HKDF for PTY and tunnel payloads. Terminal I/O, encrypted controls, file listings, session history, and audit data are ciphertext as far as the as-built roost is concerned. The browser pins the first wing key it sees and rejects later changes. Because the wing key is persistent, Wingthing does not currently claim forward secrecy against later theft of that key.</p>
+<p>The browser keeps an X25519 identity key for the tab and the wing has a persistent X25519 identity key. They derive separate AES-GCM keys via HKDF for PTY and tunnel payloads. Terminal I/O, encrypted controls, file listings, session history, and audit data are ciphertext as far as the as-built gateway is concerned. The browser pins the first wing key it sees and rejects later changes. Because the wing key is persistent, Wingthing does not currently claim forward secrecy against later theft of that key.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">passkey auth</h3>
-<p>Encryption keeps the roost from reading your data. Passkeys control who can start sessions in the first place. When your wing is locked, the browser sends a WebAuthn assertion directly to the wing inside the encrypted channel. The roost forwards the blob but can't read or forge it. The wing verifies the signature against its local allowlist and issues a boot-scoped nonce for subsequent requests.</p>
+<p>Encryption keeps the gateway from reading your data. Passkeys control who can start sessions in the first place. When your wing is locked, the browser sends a WebAuthn assertion directly to the wing inside the encrypted channel. The gateway forwards the blob but can't read or forge it. The wing verifies the signature against its local allowlist and issues a boot-scoped nonce for subsequent requests.</p>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what the roost stores</h3>
-<p>User accounts, OAuth tokens, org membership, device auth tokens, bandwidth counters. That's it. No terminal data, no file contents, no session recordings. If you self-host, the SQLite database contains only auth state.</p>
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what the gateway stores</h3>
+<p>The gateway database contains account and organization records, login and device credentials, passkey public data, entitlement and usage records, content-free audit metadata, OAuth client registrations, and operational configuration. It does not store terminal bytes, file contents, or session recordings. In an all-in-one roost, the embedded wing separately keeps its local session and task state on the same operator-controlled host.</p>
 </div>
 
 <div class="docs-section" id="security">
@@ -419,11 +472,15 @@ WantedBy=multi-user.target
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">the egg: protecting you from the agent</h3>
 <p>Agents run inside a platform-native sandbox - Seatbelt on macOS, user namespaces + seccomp on Linux. The sandbox controls filesystem access, network reach, and system calls. Configure it with <code>egg.yaml</code>; see <a href="#egg-configuration">egg configuration</a>.</p>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">the wing: protecting you from the roost</h3>
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">the wing: protecting you from the gateway</h3>
 <p>Terminal and tunnel payloads between the shipped browser and wing are application-encrypted (X25519 + AES-GCM). Wings connect outbound only - no inbound ports or static IP. Locking adds a locally verified <a href="#access-control">passkey</a>. The hosted browser still trusts JavaScript delivered by the service, so this is not a malicious-service-resistant guarantee; see the security model for the exact boundary.</p>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">the roost: controlling access</h3>
-<p>The roost handles login (OAuth, device auth) and routes connections to the right wing. When a wing is locked, the roost stores passkey credential IDs so it can hand them to the wing during <code>wt wing allow</code> - but the WebAuthn verification happens on the wing, not the roost. See <a href="#access-control">access control</a>.</p>
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">the gateway: controlling access</h3>
+<p>The gateway handles login (OAuth, device auth) and routes connections to the right wing. When a wing is locked, the gateway stores passkey credential IDs so it can hand them to the wing during <code>wt wing allow</code>, but the WebAuthn verification happens on the wing. See <a href="#access-control">access control</a>.</p>
+
+<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">browser-local data and previews</h3>
+<p>For fast restore and session cards, the browser stores up to 200,000 serialized terminal characters plus a WebP thumbnail per session as plaintext in this site's local storage. Other cached inventory and layout data also lives there. Browser profiles, extensions, and scripts with access to this origin can read it; clear the site's browser data to remove it.</p>
+<p>Agent-authored Markdown previews are network-inert. Agent-authored URLs are displayed but not fetched until you choose <strong>load preview</strong> or <strong>open</strong>. After that choice, the request comes from your browser and is outside the egg's network allowlist. The iframe uses an opaque sandbox origin and no-referrer policy, but the destination still receives the request and its network-level metadata.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">what the sandbox enforces</h3>
 <table class="docs-table">
@@ -431,7 +488,7 @@ WantedBy=multi-user.target
 <tr><td>deny paths (.ssh, .aws, etc.)</td><td>SBPL rules</td><td>tmpfs overlays</td></tr>
 <tr><td>write isolation (HOME read-only)</td><td>SBPL rules</td><td>bind-mount read-only + writable holes</td></tr>
 <tr><td>network deny</td><td>full block via SBPL</td><td>network namespace (CLONE_NEWNET)</td></tr>
-<tr><td>domain filtering</td><td>SBPL forces traffic through local CONNECT proxy; only whitelisted domains pass</td><td>CONNECT proxy via HTTPS_PROXY (cooperative)</td></tr>
+<tr><td>domain filtering</td><td>SBPL forces traffic through local CONNECT proxy; only whitelisted domains pass</td><td>CLONE_NEWNET + inherited-FD loopback relay forces the local CONNECT proxy</td></tr>
 <tr><td>seccomp syscall filter</td><td>n/a</td><td>blocks mount, ptrace, kexec, setns, unshare, bpf, open_by_handle_at, and 20+ more</td></tr>
 <tr><td>resource limits (CPU, mem, FDs)</td><td>not available</td><td>cgroups v2 (memory, PIDs) + rlimit(2) (CPU, virtual address space, FDs)</td></tr>
 <tr><td>PID isolation</td><td>n/a</td><td>CLONE_NEWPID</td></tr>
@@ -443,8 +500,8 @@ WantedBy=multi-user.target
 <h2>sandbox limits</h2>
 <p>The sandbox is not a container runtime. Known gaps:</p>
 <ul>
-<li><strong>Linux domain filtering is cooperative.</strong> The CONNECT proxy is set via <code>HTTPS_PROXY</code>. Agent harnesses that respect proxy env vars (Claude Code, Codex, most Node.js and Go tooling) route through it automatically. An agent that spawns raw sockets can skip it. On macOS, Seatbelt forces all traffic through the proxy at the OS level. If your agent's harness doesn't respect <code>HTTPS_PROXY</code>, <a href="https://github.com/ehrlich-b/wingthing/issues">file an issue</a>.</li>
-<li><strong>Agent credentials are readable.</strong> API keys and config files are mounted into the sandbox. The agent can read them, but domain filtering means the only place it can send them is the agent's own API.</li>
+<li><strong>Linux protocol coverage is intentionally narrow.</strong> The agent has no default route. HTTPS reaches a domain-filtering CONNECT proxy through the one inherited relay, and declared <code>network.local_ports</code> reach only those host-loopback TCP ports. Arbitrary UDP, ICMP, and non-proxied TCP are unavailable; a client that ignores <code>HTTPS_PROXY</code> fails closed.</li>
+<li><strong>Agent credentials are readable.</strong> API keys and config files needed by the selected agent are mounted into the sandbox. The restrictive default network profile limits egress to that agent's declared service domains, but every endpoint in the effective allowlist is a possible exfiltration destination. Adding a domain or using <code>network: "*"</code> deliberately broadens that boundary.</li>
 <li><strong>HOME is readable.</strong> The agent reads your codebase. Add <code>"deny:~/.secrets"</code> to the <code>fs</code> list to hide sensitive directories.</li>
 <li><strong>Agent config is writable.</strong> <code>~/.claude/</code> and similar directories must be writable for the agent to function.</li>
 <li><strong>Resource limits are Linux-only.</strong> macOS agents can consume unbounded CPU and memory. On Linux, cgroups v2 limits real memory (RSS) and process count; rlimit covers CPU time, virtual address space, and file descriptors. Cgroups require v2 with delegation. Falls back to rlimit-only when unavailable.</li>

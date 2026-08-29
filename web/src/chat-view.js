@@ -4,6 +4,7 @@ import { S } from './state.js';
 import { sendTunnelRequest } from './tunnel.js';
 import { sendPTYInput } from './terminal.js';
 import { parseJSONL } from './chat.js';
+import { escapeMarkup, renderSafeSimpleMarkdown } from './security.js';
 
 var pollTimer = null;
 var pollOffset = 0;
@@ -133,21 +134,21 @@ function renderMessages() {
         el.className = 'cv-msg cv-' + msg.type;
 
         if (msg.type === 'user') {
-            el.innerHTML = '<div class="cv-bubble cv-user-bubble">' + escapeHtml(msg.content) + '</div>';
+            el.innerHTML = '<div class="cv-bubble cv-user-bubble">' + escapeMarkup(msg.content) + '</div>';
         } else if (msg.type === 'assistant') {
             var html = '';
             if (msg.thinking) {
-                html += '<details class="cv-thinking"><summary>thinking</summary><pre>' + escapeHtml(msg.thinking) + '</pre></details>';
+                html += '<details class="cv-thinking"><summary>thinking</summary><pre>' + escapeMarkup(msg.thinking) + '</pre></details>';
             }
             if (msg.content) {
-                html += '<div class="cv-text">' + renderMarkdown(msg.content) + '</div>';
+                html += '<div class="cv-text">' + renderSafeSimpleMarkdown(msg.content) + '</div>';
             }
             if (msg.toolCalls) {
                 for (var j = 0; j < msg.toolCalls.length; j++) {
                     var tc = msg.toolCalls[j];
                     if (tc.result !== undefined) {
                         var preview = tc.result.length > 200 ? tc.result.slice(0, 200) + '...' : tc.result;
-                        html += '<details class="cv-tool"><summary>' + escapeHtml(tc.name || 'tool result') + '</summary><pre>' + escapeHtml(preview) + '</pre></details>';
+                        html += '<details class="cv-tool"><summary>' + escapeMarkup(tc.name || 'tool result') + '</summary><pre>' + escapeMarkup(preview) + '</pre></details>';
                     } else {
                         var inputPreview = '';
                         if (tc.input) {
@@ -156,14 +157,14 @@ function renderMessages() {
                                 inputPreview = s.length > 200 ? s.slice(0, 200) + '...' : s;
                             } catch(e) { inputPreview = '...'; }
                         }
-                        html += '<details class="cv-tool"><summary>' + escapeHtml(tc.name) + '</summary><pre>' + escapeHtml(inputPreview) + '</pre></details>';
+                        html += '<details class="cv-tool"><summary>' + escapeMarkup(tc.name) + '</summary><pre>' + escapeMarkup(inputPreview) + '</pre></details>';
                     }
                 }
             }
             el.innerHTML = html;
         } else if (msg.type === 'tool_result') {
             var preview = msg.content.length > 200 ? msg.content.slice(0, 200) + '...' : msg.content;
-            el.innerHTML = '<details class="cv-tool"><summary>tool result</summary><pre>' + escapeHtml(preview) + '</pre></details>';
+            el.innerHTML = '<details class="cv-tool"><summary>tool result</summary><pre>' + escapeMarkup(preview) + '</pre></details>';
         }
         container.appendChild(el);
     }
@@ -176,34 +177,6 @@ function renderMessages() {
     }
 
     container.scrollTop = container.scrollHeight;
-}
-
-function escapeHtml(text) {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// Simple markdown: code blocks, inline code, bold, italic
-function renderMarkdown(text) {
-    // Code blocks: ```...```
-    text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
-        return '<pre class="cv-code"><code>' + escapeHtml(code.replace(/\n$/, '')) + '</code></pre>';
-    });
-    // Inline code
-    text = text.replace(/`([^`]+)`/g, function(_, code) {
-        return '<code>' + escapeHtml(code) + '</code>';
-    });
-    // Bold
-    text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    // Italic
-    text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    // Line breaks (but not inside pre)
-    var parts = text.split(/(<pre[\s\S]*?<\/pre>)/);
-    for (var i = 0; i < parts.length; i++) {
-        if (i % 2 === 0) { // not inside pre
-            parts[i] = parts[i].replace(/\n/g, '<br>');
-        }
-    }
-    return parts.join('');
 }
 
 export function isMobileChatDefault() {

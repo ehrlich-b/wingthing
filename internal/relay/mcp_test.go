@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testing.T) {
@@ -32,7 +33,7 @@ func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testi
 		t.Fatal(err)
 	}
 	srv.EnableMCP(nil, nil, mcp.NativeTool{
-		Name: "terminal_list", Title: "List owned terminals",
+		Name: "terminal_send", Title: "Send terminal input",
 		InputSchema: map[string]any{"type": "object", "additionalProperties": false},
 		Call: func(_ context.Context, principal mcp.Principal, _ json.RawMessage) (map[string]any, bool, error) {
 			return map[string]any{"owner_id": principal.UserID, "actor_id": principal.ClientID}, false, nil
@@ -45,11 +46,11 @@ func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testi
 	code := oauthAuthorize(t, ts.URL, clientID, "http://localhost:9999/cb",
 		base64.RawURLEncoding.EncodeToString(sum[:]), "sess-carol")
 	token := oauthToken(t, ts.URL, clientID, "http://localhost:9999/cb", code, verifier)
-	if names := mcpToolNames(t, ts.URL, token); !names["terminal_list"] {
+	if names := mcpToolNames(t, ts.URL, token); !names["terminal_send"] {
 		t.Fatalf("native control tool missing: %v", names)
 	}
 
-	body := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"terminal_list","arguments":{}}}`
+	body := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"terminal_send","arguments":{"session":"session-1","input":"private input"}}}`
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -58,16 +59,14 @@ func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	var result struct {
 		Result struct {
 			Structured map[string]any `json:"structuredContent"`
 			IsError    bool           `json:"isError"`
 		} `json:"result"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatal(err)
-	}
+	decodeTestJSON(t, resp.Body, &result)
 	if result.Result.IsError || result.Result.Structured["owner_id"] != "carol" || result.Result.Structured["actor_id"] != clientID {
 		t.Fatalf("native result = %#v", result.Result)
 	}
@@ -77,6 +76,85 @@ func TestRoostNativeMCPAllowsAuthenticatedUserWithoutExecutableToolRole(t *testi
 	}
 	if !strings.Contains(audit, `"owner_id":"carol"`) || !strings.Contains(audit, `"actor_id":"`+clientID+`"`) {
 		t.Fatalf("native audit = %s", audit)
+	}
+	if !strings.Contains(audit, `"target":"session-1"`) || strings.Contains(audit, "private input") {
+		t.Fatalf("native audit target or redaction = %s", audit)
+	}
+}
+
+func TestPortalNativeMCPWingListMatchesBrowserRoster(t *testing.T) {
+	store := testStore(t)
+	srv := NewServer(store, ServerConfig{FlyMachineID: "login-node"})
+	srv.RoostMode = true
+	srv.WingMap = NewWingMap()
+	srv.latestVersion = "v-test"
+	srv.latestVersionAt = time.Now()
+	for _, userID := range []string{"alice", "bob", roostWingServiceUserID} {
+		if err := store.CreateUser(userID); err != nil {
+			t.Fatalf("create user %s: %v", userID, err)
+		}
+	}
+	srv.Wings.Add(&ConnectedWing{ID: "conn-shared", UserID: roostWingServiceUserID, WingID: "shared-roost", PublicKey: "shared-key", HostedRelay: ws.HostedRelayDeny})
+	srv.Wings.Add(&ConnectedWing{ID: "conn-alice", UserID: "alice", WingID: "alice-wing", PublicKey: "alice-key"})
+	srv.Wings.Add(&ConnectedWing{ID: "conn-bob", UserID: "bob", WingID: "bob-wing", PublicKey: "bob-key"})
+	srv.WingMap.Register("remote-wing", WingLocation{MachineID: "edge-node", UserID: "alice", PublicKey: "remote-key"})
+
+	browserEntries := srv.appWingEntries("alice")
+	browserJSON, err := json.Marshal(browserEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tools := srv.PortalNativeMCPTools("shared-roost")
+	if len(tools) != 1 || tools[0].Name != "wing_list" {
+		t.Fatalf("portal tools = %#v", tools)
+	}
+	result, isError, err := tools[0].Call(context.Background(), mcp.Principal{UserID: "alice"}, json.RawMessage(`{}`))
+	if err != nil || isError {
+		t.Fatalf("wing_list error = %v, isError = %v", err, isError)
+	}
+	if result["control_scope"] != "embedded-wing-only" || result["embedded_wing_id"] != "shared-roost" {
+		t.Fatalf("wing_list control metadata = %#v", result)
+	}
+	entries, ok := result["wings"].([]map[string]any)
+	if !ok || len(entries) != 3 || result["count"] != 3 {
+		t.Fatalf("wing_list inventory = %#v", result)
+	}
+	for _, entry := range entries {
+		wingID, _ := entry["wing_id"].(string)
+		controllable, _ := entry["mcp_control"].(bool)
+		reason, _ := entry["mcp_control_reason"].(string)
+		if wingID == "bob-wing" {
+			t.Fatal("wing_list leaked an inaccessible wing")
+		}
+		hostedRelay, _ := entry["hosted_relay"].(string)
+		if wingID == "shared-roost" && hostedRelay != ws.HostedRelayDeny {
+			t.Fatalf("explicit hosted relay policy missing from roster: %#v", entry)
+		}
+		if wingID != "shared-roost" && hostedRelay != ws.HostedRelayAllow {
+			t.Fatalf("legacy wing did not receive compatible effective policy: %#v", entry)
+		}
+		if wingID == "shared-roost" {
+			if !controllable || reason != "embedded-wing" {
+				t.Fatalf("embedded wing metadata = %#v", entry)
+			}
+		} else if controllable || reason != "external-wing-routing-not-implemented" {
+			t.Fatalf("external wing metadata = %#v", entry)
+		}
+		delete(entry, "mcp_control")
+		delete(entry, "mcp_control_reason")
+	}
+	mcpJSON, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mcpJSON) != string(browserJSON) {
+		t.Fatalf("MCP roster differs from browser roster\nMCP:     %s\nbrowser: %s", mcpJSON, browserJSON)
+	}
+
+	_, isError, err = tools[0].Call(context.Background(), mcp.Principal{UserID: "alice"}, json.RawMessage(`{"wing_id":"shared-roost"}`))
+	if err == nil || !isError || err.Error() != "tool accepts no arguments" {
+		t.Fatalf("wing_list accepted undeclared selection: err = %v, isError = %v", err, isError)
 	}
 }
 
@@ -121,7 +199,7 @@ func TestMCPOAuthFlowAndScoping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated /mcp = %d, want 401", resp.StatusCode)
 	}
@@ -229,7 +307,7 @@ func TestMCPOAuthLoginBounce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("unauth authorize = %d, want 303 to login", resp.StatusCode)
 	}
@@ -255,7 +333,7 @@ func TestMCPOAuthLoginBounce(t *testing.T) {
 		t.Fatal(err)
 	}
 	buf, _ := io.ReadAll(resp2.Body)
-	resp2.Body.Close()
+	closeTestBody(t, resp2.Body)
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("resume authorize = %d, want 200 consent", resp2.StatusCode)
 	}
@@ -331,7 +409,7 @@ func TestMCPOAuthRejectsWrongResourceAndUnsafeRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("unsafe redirect registration = %d, want 400", resp.StatusCode)
 	}
@@ -348,7 +426,7 @@ func TestMCPOAuthRejectsWrongResourceAndUnsafeRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("wrong resource authorize = %d, want 400", resp.StatusCode)
 	}
@@ -361,7 +439,7 @@ func TestMCPOAuthRejectsWrongResourceAndUnsafeRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("malformed PKCE challenge authorize = %d, want 400", resp.StatusCode)
 	}
@@ -389,10 +467,46 @@ func TestMCPOAuthClientRegistrationSurvivesMemoryReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("authorize after memory reset = %d: %s", resp.StatusCode, body)
+	}
+}
+
+func TestMCPClientRegistrationCapacityIsTransactionalAndReclaimsExpired(t *testing.T) {
+	store := testStore(t)
+	now := time.Now().UTC()
+	if err := store.SaveMCPClientRegistration(MCPClientRegistration{
+		ClientID: "expired", RedirectURIs: []string{"http://localhost/callback"}, ExpiresAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first := MCPClientRegistration{
+		ClientID: "first", RedirectURIs: []string{"http://localhost/callback"}, ExpiresAt: now.Add(time.Hour),
+	}
+	stored, err := store.SaveMCPClientRegistrationLimited(first, now, 1)
+	if err != nil || !stored {
+		t.Fatalf("store first registration = %v, %v", stored, err)
+	}
+	second := MCPClientRegistration{
+		ClientID: "second", RedirectURIs: []string{"http://localhost/callback"}, ExpiresAt: now.Add(time.Hour),
+	}
+	stored, err = store.SaveMCPClientRegistrationLimited(second, now, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored {
+		t.Fatal("registration exceeded durable capacity")
+	}
+	if reg, err := store.GetMCPClientRegistration("expired", now); err != nil || reg != nil {
+		t.Fatalf("expired registration was not pruned: %#v, %v", reg, err)
+	}
+	if reg, err := store.GetMCPClientRegistration("first", now); err != nil || reg == nil {
+		t.Fatalf("accepted registration missing: %#v, %v", reg, err)
+	}
+	if reg, err := store.GetMCPClientRegistration("second", now); err != nil || reg != nil {
+		t.Fatalf("rejected registration was stored: %#v, %v", reg, err)
 	}
 }
 
@@ -442,6 +556,10 @@ func TestMCPRateLimitCoverage(t *testing.T) {
 		{http.MethodGet, "/oauth/authorize"},
 		{http.MethodPost, "/oauth/token"},
 		{http.MethodPost, "/mcp"},
+		{http.MethodPost, "/api/orgs"},
+		{http.MethodPut, "/api/app/wings/wing-1/label"},
+		{http.MethodPatch, "/api/future-resource"},
+		{http.MethodDelete, "/api/orgs/org-1/members/user-1"},
 	} {
 		if !s.shouldRateLimit(tc.method, tc.path) {
 			t.Errorf("%s %s is not rate limited", tc.method, tc.path)
@@ -449,6 +567,9 @@ func TestMCPRateLimitCoverage(t *testing.T) {
 	}
 	if s.shouldRateLimit(http.MethodGet, "/mcp") {
 		t.Error("nonexistent GET /mcp should not consume the MCP call limit")
+	}
+	if s.shouldRateLimit(http.MethodGet, "/api/app/wings") {
+		t.Error("read-only API request should not consume the mutation limit")
 	}
 }
 
@@ -467,7 +588,7 @@ func TestMCPRejectsGeneralWingJWT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wing JWT at MCP endpoint = %d, want 401", resp.StatusCode)
 	}
@@ -484,7 +605,7 @@ func TestMCPRejectsCrossOriginBeforeAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-origin unauthenticated MCP request = %d, want 403", resp.StatusCode)
 	}
@@ -531,7 +652,7 @@ func TestMCPOAuthRejectsUserWithOnlyDisabledRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("disabled-only authorize = %d, want 403", resp.StatusCode)
 	}
@@ -555,14 +676,14 @@ func oauthRegister(t *testing.T, base, redirect string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("register = %d", resp.StatusCode)
 	}
 	var out struct {
 		ClientID string `json:"client_id"`
 	}
-	json.NewDecoder(resp.Body).Decode(&out)
+	decodeTestJSON(t, resp.Body, &out)
 	if out.ClientID == "" {
 		t.Fatal("no client_id from registration")
 	}
@@ -605,7 +726,7 @@ func oauthConsentPage(t *testing.T, base, clientID, redirect, challenge, session
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("authorize consent = %d, want 200 (session not honored?)", resp.StatusCode)
 	}
@@ -629,7 +750,7 @@ func oauthDecide(t *testing.T, base, rid, session, action string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("consent %s = %d, want 303", action, resp.StatusCode)
 	}
@@ -657,12 +778,12 @@ func oauthTokenPair(t *testing.T, base, clientID, redirect, code, verifier strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("token = %d", resp.StatusCode)
 	}
 	var out oauthTokens
-	json.NewDecoder(resp.Body).Decode(&out)
+	decodeTestJSON(t, resp.Body, &out)
 	if out.TokenType != "Bearer" {
 		t.Errorf("token_type = %q, want Bearer", out.TokenType)
 	}
@@ -682,16 +803,14 @@ func oauthRefresh(t *testing.T, base, clientID, refreshToken string, wantStatus 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != wantStatus {
 		buf, _ := io.ReadAll(resp.Body)
 		t.Fatalf("refresh = %d, want %d: %s", resp.StatusCode, wantStatus, buf)
 	}
 	var out oauthTokens
 	if wantStatus == http.StatusOK {
-		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-			t.Fatal(err)
-		}
+		decodeTestJSON(t, resp.Body, &out)
 	}
 	return out
 }
@@ -706,12 +825,12 @@ func mcpRPC(t *testing.T, base, token, body string) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("authenticated /mcp = %d", resp.StatusCode)
 	}
 	var out map[string]any
-	json.NewDecoder(resp.Body).Decode(&out)
+	decodeTestJSON(t, resp.Body, &out)
 	return out
 }
 

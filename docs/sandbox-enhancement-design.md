@@ -1,7 +1,7 @@
 # Sandbox enhancement design
 
-Status: design
-Reviewed: 2026-08-09
+Status: implementation record plus remaining roadmap; Linux rootless egress enforcement shipped
+Reviewed: 2026-08-27
 
 Consolidates what we learned from building the egg sandbox, from the jailbreak
 testing in `egg-sandbox-design.md`, and from evaluating Anthropic's
@@ -29,10 +29,11 @@ macOS enforces domain filtering: when the proxy is up, `apple.go` emits
 `(deny network*)` and allows only `localhost:<proxyPort>`. Egress is genuinely
 constrained.
 
-Linux does not. `linux.go:341` strips `CLONE_NEWNET` whenever
-`NetworkNeed >= NetworkLocal`, so any agent needing HTTPS gets the **full host
-network**. The proxy still starts and `HTTPS_PROXY` is still exported, but nothing
-enforces it. A `curl` that ignores the variable reaches anything.
+Linux formerly stripped `CLONE_NEWNET` whenever an agent needed connectivity, so
+any agent needing HTTPS received the **full host network**. The proxy still
+started and `HTTPS_PROXY` was exported, but nothing enforced it. A `curl` that
+ignored the variable reached anything. Section 3.1 is now implemented; this
+paragraph records the defect that motivated it.
 
 So the same `egg.yaml` produces a real boundary on one platform and a suggestion
 on the other. Documentation calls this "by design"; it is a defect with a
@@ -83,8 +84,10 @@ These do not change:
 
 - **The `fs:` DSL.** `ro:P`, `rw:P`, `deny:P`, `deny-write:P`, bare path = `rw`.
   Parsing stays in `ParseFSRules`.
-- **`network:` scalar and list forms.** `none`/`""` → no network. `"*"` → full
-  network, unfiltered, forever. A domain list → filtered.
+- **`network:` scalar and list forms.** `none`/`""` → no network. `"*"` → any
+  destination supported by the platform transport. A domain list → filtered.
+  On Linux the transport is currently HTTP CONNECT plus declared loopback TCP;
+  it is not a general routed interface.
 - **`env:` scalar and list forms**, including `"*"`.
 - **`resources:`** keys and units.
 - **`base:` inheritance**, including per-section masks and `base: none`.
@@ -108,17 +111,20 @@ network:
   domains: ["*.anthropic.com", "github.com"]
   local_ports: [11434]      # host loopback services to forward
   mode: enforce             # enforce | observe
-  log: true
+  agent_domains: merge      # merge (default) | none
 ```
 
 ## Part 3 — The enhancements
 
 ### 3.1 Linux egress: keep the namespace, force the proxy
 
-Reverse `cloneFlags()`. Retain `CLONE_NEWNET` for every level below
-`NetworkFull`, leaving the jail with loopback and no route out. Egress becomes a
-Unix socket bind-mounted into the jail, connected to `DomainProxy` on the host
-side. An in-jail forwarder listens on loopback and relays over that socket.
+`cloneFlags()` now retains `CLONE_NEWNET` for every network level, including
+`NetworkFull`, leaving the jail with loopback and no route out. Before clone, the
+parent creates a Unix socketpair beside `DomainProxy`. The child inherits only
+one endpoint, raises loopback, and listens on the proxy and declared local ports.
+Accepted TCP sockets cross the socketpair with `SCM_RIGHTS`; the host validates
+the requested listener before dialing. The bridge FD is close-on-exec before the
+agent starts.
 
 This is the design srt shipped, confirming the approach. Two deliberate
 divergences: we do the relay in-process in Go rather than depending on `socat`,
@@ -139,9 +145,9 @@ localhost become unreachable.
 That would break the `ollama` profile, the provider-substitution work on this
 branch, and `make test-provider-swap` — our release gate.
 
-The fix is the same mechanism as egress: for each declared local port, bind-mount
-a Unix socket and run an in-jail forwarder listening on `127.0.0.1:<port>` that
-relays to the host's port. Declared ports only; nothing implicit.
+The fix is the same inherited-FD mechanism as egress: for each declared local
+port, `_deny_init` listens on `127.0.0.1:<port>` and relays to that exact host
+loopback port. Declared ports only; nothing implicit.
 
 For backwards compatibility, when `network:` is a plain domain list containing
 loopback literals (`localhost`, `127.0.0.1`, `::1`) — which is exactly what the
@@ -149,16 +155,17 @@ current agent profiles emit — the resolver **infers** the local ports it needs
 from the agent profile and the provider URL. Existing configs keep working with no
 edit. `local_ports` is for anything the profile cannot infer.
 
-### 3.3 SOCKS5 beside HTTP CONNECT
+### 3.3 SOCKS5 beside HTTP CONNECT (roadmap)
 
-`DomainProxy` speaks HTTP CONNECT only, so non-HTTP TCP has no filtered path at
-all. Once egress is actually forced through the proxy, anything that is not HTTP
-would simply break. Adding a SOCKS5 listener on the same socket keeps `git://`,
-SSH-to-forge, and database clients working under a domain policy.
+`DomainProxy` speaks HTTP CONNECT only. A CONNECT tunnel can carry any TCP
+protocol and currently permits any destination port on an allowed host, but the
+application must honor the HTTP proxy variables or explicitly speak CONNECT.
+Adding a SOCKS5 listener on the same socket would let more `git://`, SSH, and
+database clients work without application-specific CONNECT configuration.
 
 Purely additive — no existing config selects a proxy protocol.
 
-### 3.4 Close the `AF_UNIX` gap
+### 3.4 Close the `AF_UNIX` gap (roadmap)
 
 With egress running over a bind-mounted socket, what else is reachable by
 `AF_UNIX` inside the jail becomes a live question. Path-based sockets are bounded
@@ -170,7 +177,7 @@ filter before copying its allow/deny split — the proxy connection is itself a 
 socket, so a naive "deny AF_UNIX" breaks egress. Extend `deniedSyscallsCommon`
 only with a verified split and an e2e test that proves the proxy still works.
 
-### 3.5 Credential broker
+### 3.5 Credential broker (roadmap)
 
 The agent talks to a local endpoint that injects the API key on the way out; the
 key never exists inside the sandbox. This composes with the domain proxy — the
@@ -180,15 +187,15 @@ current docs describe as unfixable.
 Opt-in, additive: `credentials: broker` on the agent profile. Default remains
 passthrough, so nothing changes for existing configs.
 
-### 3.6 Egress log
+### 3.6 Egress log (partially implemented)
 
-`DomainProxy.ServeHTTP` already sees every CONNECT and logs only the blocked ones.
-Log both, per session, and expose `wt egg net <id>`: what the agent contacted,
-what was refused. Cheap, and it converts the proxy from a gate into evidence.
+`DomainProxy.ServeHTTP` now retains a bounded in-memory record of CONNECT attempts.
+That record is exercised by tests but is not yet attached to a durable session or
+exposed through a `wt egg net` command. A future slice should persist allowed and
+refused attempts per session and add a read-only CLI/MCP view. There is no shipped
+`network.log` configuration field.
 
-Pairs with the existing audit recording. Default on; `network.log: false` opts out.
-
-### 3.7 Session diff and the approval gate
+### 3.7 Session diff and the approval gate (roadmap)
 
 The overlay upper directory on Linux is already a complete record of what the
 session wrote. Surface it as `wt egg diff <id>`.
@@ -201,7 +208,7 @@ exists in `setupOverlayHome`.
 
 Additive and opt-in — `fs: ["rw:./"]` keeps writing straight through by default.
 
-### 3.8 Ephemeral agent home
+### 3.8 Ephemeral agent home (roadmap)
 
 Snapshot/restore exists (`internal/egg/snapshot.go`) and is a partial fix for the
 persistence attack. The overlay makes the complete fix available: the agent's
@@ -211,7 +218,7 @@ persisted.
 Opt-in via `home: ephemeral`, because some workflows legitimately want the agent
 to remember. Default stays persistent.
 
-### 3.9 Make the policy visible
+### 3.9 Make the policy visible (implemented)
 
 `wt egg explain [--config egg.yaml]` renders the effective policy: mounts, denies,
 network need, resolved domains, forwarded local ports, and — critically — **which
@@ -220,7 +227,7 @@ holes were auto-drilled for the agent and why.**
 This is the answer to the first learning. It is read-only, additive, and it is
 what makes every other item in this doc reviewable.
 
-### 3.10 Native sandbox as a second opinion
+### 3.10 Native sandbox as a second opinion (roadmap)
 
 Generate the agent's own sandbox config from `egg.yaml` (srt's settings JSON for
 Claude Code, and the equivalents catalogued in `native-sandbox-landscape.md`), so
@@ -228,49 +235,61 @@ two independent layers enforce one policy. Our sandbox stays the boundary; their
 becomes redundancy we configure. No runtime dependency, and graceful degradation
 if their format churns.
 
-## Part 4 — The one intentional break
+## Part 4 — Intentional Linux network tightening
 
-**On Linux, a domain-list `network:` policy currently yields unrestricted egress.
-After 3.1 it yields filtered egress.** Any workload that quietly relied on the
-hole — pulling from an undeclared registry, `git push` over SSH, a webhook to an
-unlisted host — stops working.
+**Before the 3.1 implementation, a Linux domain-list `network:` policy yielded
+unrestricted egress. It now yields filtered CONNECT egress.** Any workload that
+quietly relied on the hole—pulling from an undeclared registry or calling an
+unlisted webhook—stops working.
+
+There is a second, explicit compatibility change: on Linux `network: "*"` now
+allows any TCP destination presented through HTTP CONNECT, but no longer creates
+a general routed interface. Ordinary raw-socket clients, UDP, ICMP, and programs
+that ignore proxy configuration fail. macOS `network: "*"` retains its unrestricted Seatbelt
+network behavior. This asymmetry is visible in `wt egg explain`; it must not be
+described as byte-for-byte runtime compatibility.
 
 This is the "less anything insecure" carve-out. It is also the entire point: the
 policy starts meaning what it says. But it will break real setups, so it ships
 with a migration path rather than a flag day.
 
-**`mode: observe`.** The proxy runs and logs every allowed and denied domain, but
-egress is not constrained. Operators run their real workloads, read
-`wt egg net <id>`, and add the domains they actually need.
+**`mode: observe`.** The proxy permits CONNECT destinations outside the declared
+domain set and records them in its bounded in-memory event buffer. It does not
+restore a raw route, so programs that ignore proxy configuration still fail. The
+event buffer does not yet have a user-facing per-session command; operators must
+currently use proxy log output and `wt egg explain` while diagnosing policy.
 
-Sequence:
+The shipped sequence differs from the original rollout sketch below: `enforce` is
+the default, while `mode: observe` is an explicit diagnostic choice. Both retain
+the route-less namespace, so ignoring `HTTPS_PROXY` still provides no alternate
+network path. The list is kept as design history:
 
 1. Ship `observe` as the default on Linux, with a startup warning naming the
-   session and pointing at `wt egg net`.
+   session and pointing at the planned per-session egress view.
 2. Ship `enforce` as the default on Linux one release later. macOS is already
    enforcing and does not change.
-3. `network: "*"` remains the permanent, explicit, documented escape hatch, and
-   its meaning never changes.
+3. `network: "*"` remains the explicit any-CONNECT-destination value on Linux;
+   it is not a promise of arbitrary network protocols.
 
-Two things must be true before step 2: the loopback forwarder (3.2) works, and
-SOCKS5 (3.3) exists. Without them, "enforce" breaks local models and all non-HTTP
-traffic, and we would have traded a security defect for an availability one.
+The loopback forwarder (3.2) shipped before enforcement. SOCKS5 (3.3) did not, so
+non-CONNECT traffic remains a documented limitation rather than a supported
+compatibility path.
 
 ## Part 5 — Phasing
 
 | Phase | Contents | Breaks anything? |
 |---|---|---|
-| 1 | `wt egg explain` (3.9), egress log (3.6) | No — read-only |
-| 2 | Loopback forwarder (3.2), SOCKS5 (3.3) | No — additive |
-| 3 | Linux netns egress in `observe` mode (3.1) | No — logs only |
-| 4 | `enforce` default on Linux | **Yes — intended** |
+| 1 | `wt egg explain` (3.9), bounded proxy event buffer (part of 3.6) | No — read-only |
+| 2 | Loopback forwarder (3.2) | No — additive |
+| 3 | Linux route-less netns and inherited proxy relay (3.1) | **Yes — intended security tightening** |
+| 4 | User-facing egress history and SOCKS5/general TCP (3.3, 3.6) | No — additive |
 | 5 | `AF_UNIX` audit (3.4), credential broker (3.5) | No — opt-in |
 | 6 | Session diff (3.7), ephemeral home (3.8) | No — opt-in |
 | 7 | Native translation (3.10) | No — redundant layer |
 
-Phase 1 first on purpose: it is impossible to argue about the later phases without
-being able to see the effective policy, and the egress log is what tells operators
-which domains to declare before enforcement lands.
+The implemented pieces expose the effective policy before launch and retain a
+bounded event record inside the proxy. Durable per-session egress inspection is
+still required before documentation can tell users to query historical attempts.
 
 ## Part 6 — Test plan
 
@@ -283,9 +302,9 @@ scalar/list forms produce byte-identical configs to today (this is the
 backwards-compatibility guard, and it should be table-driven over real `egg.yaml`
 fixtures).
 
-**Integration.** Proxy allow/deny decisions including wildcards; SOCKS5 handshake;
-forwarder relays loopback to a fake host service; `observe` mode logs without
-blocking.
+**Integration.** Proxy allow/deny decisions including wildcards; forwarder relays
+loopback to a fake host service; `observe` mode records without blocking. Add a
+SOCKS5 handshake test when that protocol is implemented.
 
 **E2E, on a real kernel, inside the jail:**
 
@@ -293,18 +312,18 @@ blocking.
 - A client that ignores `HTTPS_PROXY` **fails closed** rather than reaching the
   network. This is the test that proves the fix is real.
 - `curl http://127.0.0.1:11434` reaches the host's ollama through the forwarder.
-- A declared domain succeeds; the egress log records both outcomes.
+- A declared domain succeeds; the proxy event buffer records both outcomes.
 - Existing sandbox battery still passes: deny paths, home write isolation,
   seccomp, `/root` denial, block devices.
 
-**Regression gate.** `make test-provider-swap` must still pass end-to-end after
-Phase 3. It is the only test that exercises real local models through the sandbox,
-so it is the canary for the loopback trap.
+**Regression gate.** `make test-provider-swap` must pass end-to-end after any
+relay change. It is the only test that exercises real local models through the
+sandbox, so it is the canary for the loopback trap.
 
 ## Open questions
 
 - srt's exact `AF_UNIX` allow/deny split (source read required).
-- Whether the in-jail forwarder should be a separate static helper or a re-exec of
-  `wt` like `_deny_init` — the latter is fewer artifacts but a larger process.
+- SOCKS5 or another explicit proxy path for TCP clients that cannot use CONNECT,
+  without weakening the route-less namespace guarantee.
 - Whether `observe` should be time-boxed, so a session cannot sit unenforced
   forever because someone forgot to flip it.

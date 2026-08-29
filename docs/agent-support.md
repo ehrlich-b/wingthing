@@ -1,9 +1,14 @@
 # Supported agent evidence
 
-Status: vacation branch verification snapshot  
+Status: historical live-verification snapshot, not a current release guarantee
+
 Verified: 2026-08-08
 
-“Supported” is not a boolean. Wingthing tracks several independent contracts:
+The versions and model results below are evidence captured on the verification
+date. Current releases must produce a new machine-readable manifest. See
+[Testing Wingthing](testing.md) for the proposed evidence and promotion policy.
+
+"Supported" is not a boolean. Wingthing tracks several independent contracts:
 
 1. **Catalog:** discovery, interactive command, unattended/resume flags, sandbox
    storage, network, and credential requirements.
@@ -16,7 +21,7 @@ Verified: 2026-08-08
 6. **Orchestration:** the real adapter works through MCP, loops, and dependency
    swarms rather than only when invoked directly.
 
-## Current matrix
+## Captured matrix
 
 | Agent | Headless contract unit test | Synthetic PTY lifecycle | Real WSL sandbox startup | Live model completion on this branch | Notes |
 |---|---:|---:|---:|---:|---|

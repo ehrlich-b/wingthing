@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -143,20 +144,16 @@ func (s *Server) handleOAuthRegister(w http.ResponseWriter, r *http.Request) {
 		name: req.ClientName, redirectURIs: append([]string(nil), req.RedirectURIs...),
 		expiresAt: now.Add(oauthClientTTL),
 	}
-	clientCount, err := s.Store.CountMCPClientRegistrations(now)
+	stored, err := s.Store.SaveMCPClientRegistrationLimited(MCPClientRegistration{
+		ClientID: clientID, ClientName: client.name,
+		RedirectURIs: client.redirectURIs, ExpiresAt: client.expiresAt,
+	}, now, maxOAuthClients)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "store client registration")
 		return
 	}
-	if clientCount >= maxOAuthClients {
+	if !stored {
 		writeError(w, http.StatusTooManyRequests, "client registration capacity reached")
-		return
-	}
-	if err := s.Store.SaveMCPClientRegistration(MCPClientRegistration{
-		ClientID: clientID, ClientName: client.name,
-		RedirectURIs: client.redirectURIs, ExpiresAt: client.expiresAt,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "store client registration")
 		return
 	}
 	s.mcpOAuth.mu.Lock()
@@ -243,11 +240,7 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
 		next := "/oauth/authorize?rid=" + rid
-		http.SetCookie(w, &http.Cookie{
-			Name: "oauth_next", Value: next, Path: "/auth", MaxAge: 600,
-			HttpOnly: true, SameSite: http.SameSiteLaxMode,
-			Secure: strings.HasPrefix(s.Config.BaseURL, "https"),
-		})
+		s.setAuthFlowCookie(w, "oauth_next", next, "/auth", 600)
 		http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusSeeOther)
 		return
 	}
@@ -321,7 +314,9 @@ func (s *Server) handleOAuthConsent(w http.ResponseWriter, r *http.Request) {
 		codeChallenge: pa.challenge, resource: pa.resource, expiresAt: time.Now().Add(5 * time.Minute),
 	}
 	s.mcpOAuth.mu.Unlock()
-	s.Store.AppendAudit(user.ID, "mcp_authorized", strPtr("client="+pa.clientID))
+	if err := s.Store.AppendAudit(user.ID, "mcp_authorized", strPtr("client="+pa.clientID)); err != nil {
+		log.Printf("write MCP authorization audit: %v", err)
+	}
 
 	loc := pa.redirectURI + sep + "code=" + url.QueryEscape(code)
 	if pa.state != "" {
@@ -478,7 +473,9 @@ func (s *Server) handleAuthorizationCodeGrant(w http.ResponseWriter, r *http.Req
 		expiresAt: time.Now().Add(refreshTokenTTL),
 	}
 	s.mcpOAuth.mu.Unlock()
-	s.Store.AppendAudit(ac.userID, "mcp_token_issued", strPtr("client="+ac.clientID))
+	if err := s.Store.AppendAudit(ac.userID, "mcp_token_issued", strPtr("client="+ac.clientID)); err != nil {
+		log.Printf("write MCP token audit: %v", err)
+	}
 	writeMCPTokenResponse(w, accessToken, refreshToken, exp)
 }
 
@@ -534,7 +531,9 @@ func (s *Server) handleRefreshTokenGrant(w http.ResponseWriter, r *http.Request)
 		expiresAt: time.Now().Add(refreshTokenTTL),
 	}
 	s.mcpOAuth.mu.Unlock()
-	s.Store.AppendAudit(grant.userID, "mcp_token_refreshed", strPtr("client="+grant.clientID))
+	if err := s.Store.AppendAudit(grant.userID, "mcp_token_refreshed", strPtr("client="+grant.clientID)); err != nil {
+		log.Printf("write MCP refresh audit: %v", err)
+	}
 	writeMCPTokenResponse(w, accessToken, newToken, exp)
 }
 
@@ -718,7 +717,7 @@ func (s *Server) mcpRolesForUser(user *User) []string {
 }
 
 func (s *Server) mcpUserCanAuthorize(user *User) bool {
-	if user == nil {
+	if !s.roostUserAllowed(user) {
 		return false
 	}
 	server, _ := s.mcpSnapshot()

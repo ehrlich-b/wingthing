@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,11 +17,12 @@ import (
 )
 
 // Tier rate/cap constants.
-// All tiers share the same sustained rate (3 Mbit/s) — this is a reasonable
-// ceiling for compressed terminal PTY, not a paid differentiator.
-// The only paid gate is the monthly cap: free = 1 GiB, pro/team = unlimited.
+// Hosted-payload cohorts share the same sustained rate (3 Mbit/s) — this is a
+// reasonable ceiling for compressed terminal PTY, not a paid differentiator.
+// Legacy/migration free relay access retains its 1 GiB monthly cap; pro/team is
+// unlimited. Direct-only coordination never consumes or consults that cap.
 const (
-	SustainedRate  = 375_000     // 3 Mbit/s — all tiers
+	SustainedRate        = 375_000 // 3 Mbit/s — all tiers
 	freeMonthlyCap int64 = 1 << 30 // 1 GiB
 )
 
@@ -34,8 +36,8 @@ type BandwidthMeter struct {
 	limiters map[string]*rate.Limiter
 	tiers    map[string]string // cached tier per user
 	counters map[string]*atomic.Int64
-	exceeded map[string]bool   // users who exceeded monthly cap (set by login via sync)
-	month    string             // current month "2006-01" — counters reset on rollover
+	exceeded map[string]bool // users who exceeded monthly cap (set by login via sync)
+	month    string          // current month "2006-01" — counters reset on rollover
 	rateVal  rate.Limit
 	burst    int
 	db       *sql.DB
@@ -105,6 +107,15 @@ func (b *BandwidthMeter) Wait(ctx context.Context, userID string, n int) error {
 		return fmt.Errorf("bandwidth limit exceeded")
 	}
 	b.counter(userID).Add(int64(n))
+	return b.WaitRate(ctx, userID, n)
+}
+
+// WaitRate applies the shared sustained-rate boundary without consuming or
+// consulting the hosted-payload monthly quota. The direct tier uses this for
+// its tightly bounded discovery, passkey, and WebRTC signaling responses: an
+// account that previously exhausted relay bytes must still be able to establish
+// a direct connection.
+func (b *BandwidthMeter) WaitRate(ctx context.Context, userID string, n int) error {
 	lim := b.limiter(userID)
 	if n <= b.burst {
 		return lim.WaitN(ctx, n)
@@ -231,7 +242,7 @@ func (b *BandwidthMeter) SeedFromDB() {
 		log.Printf("bandwidth seed error: %v", err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	n := 0
 	for rows.Next() {
@@ -316,36 +327,26 @@ func humanBytes(n int64) string {
 type RateLimiter struct {
 	mu       sync.Mutex
 	limiters map[string]*ipLimiter
+	order    []string
+	next     int
 	rate     rate.Limit
 	burst    int
 }
 
 type ipLimiter struct {
-	lim      *rate.Limiter
-	lastSeen time.Time
+	lim *rate.Limiter
 }
+
+const maxRateLimiterEntries = 10_000
 
 // NewRateLimiter creates a per-IP rate limiter.
 // reqPerSec is the sustained rate, burst is the max burst size.
 func NewRateLimiter(reqPerSec float64, burst int) *RateLimiter {
-	rl := &RateLimiter{
+	return &RateLimiter{
 		limiters: make(map[string]*ipLimiter),
 		rate:     rate.Limit(reqPerSec),
 		burst:    burst,
 	}
-	// Evict stale entries every 5 minutes
-	go func() {
-		for range time.Tick(5 * time.Minute) {
-			rl.mu.Lock()
-			for ip, l := range rl.limiters {
-				if time.Since(l.lastSeen) > 10*time.Minute {
-					delete(rl.limiters, ip)
-				}
-			}
-			rl.mu.Unlock()
-		}
-	}()
-	return rl
 }
 
 func (rl *RateLimiter) getLimiter(ip string) *rate.Limiter {
@@ -354,9 +355,16 @@ func (rl *RateLimiter) getLimiter(ip string) *rate.Limiter {
 	l, ok := rl.limiters[ip]
 	if !ok {
 		l = &ipLimiter{lim: rate.NewLimiter(rl.rate, rl.burst)}
+		if len(rl.order) < maxRateLimiterEntries {
+			rl.order = append(rl.order, ip)
+		} else {
+			evicted := rl.order[rl.next]
+			delete(rl.limiters, evicted)
+			rl.order[rl.next] = ip
+			rl.next = (rl.next + 1) % maxRateLimiterEntries
+		}
 		rl.limiters[ip] = l
 	}
-	l.lastSeen = time.Now()
 	return l.lim
 }
 
@@ -378,21 +386,33 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 }
 
 func clientIP(r *http.Request) string {
-	// Prefer Fly-Client-IP — set by Fly's proxy, not spoofable by clients
-	if fci := r.Header.Get("Fly-Client-IP"); fci != "" {
-		return strings.TrimSpace(fci)
+	peer := strings.TrimSpace(r.RemoteAddr)
+	if host, _, err := net.SplitHostPort(peer); err == nil {
+		peer = host
 	}
-	// Check X-Forwarded-For (fly.io, cloudflare, etc.)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i != -1 {
-			return strings.TrimSpace(xff[:i])
+	peerIP, peerErr := netip.ParseAddr(strings.Trim(peer, "[]"))
+
+	// Proxy identity headers are caller-controlled on a directly exposed roost.
+	// Honor them only when the immediate TCP peer is on a private, loopback, or
+	// link-local address, as it is behind Fly and ordinary local reverse proxies.
+	trustedProxy := peerErr == nil && (peerIP.IsPrivate() || peerIP.IsLoopback() || peerIP.IsLinkLocalUnicast())
+	if trustedProxy {
+		if fci := r.Header.Get("Fly-Client-IP"); fci != "" {
+			if ip, err := netip.ParseAddr(strings.TrimSpace(fci)); err == nil {
+				return ip.String()
+			}
 		}
-		return strings.TrimSpace(xff)
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if i := strings.IndexByte(xff, ','); i != -1 {
+				xff = xff[:i]
+			}
+			if ip, err := netip.ParseAddr(strings.TrimSpace(xff)); err == nil {
+				return ip.String()
+			}
+		}
 	}
-	// Fall back to RemoteAddr
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	if peerErr == nil {
+		return peerIP.String()
 	}
-	return ip
+	return peer
 }

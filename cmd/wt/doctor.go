@@ -144,7 +144,9 @@ func ollamaReachable(baseURL string) bool {
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		return false
+	}
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -158,7 +160,9 @@ func roostReachable(roostURL string) bool {
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		return false
+	}
 	return resp.StatusCode == http.StatusOK
 }
 
