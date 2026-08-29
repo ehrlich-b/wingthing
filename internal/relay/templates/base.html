@@ -27,13 +27,18 @@ nav .logo:hover{color:var(--action)}
 .nav-cta:hover{background:var(--action-hover);color:#fff !important}
 .user-name{color:var(--text);font-size:13px}
 a{color:var(--action)}a:hover{color:var(--action-hover)}
-@media(max-width:600px){.container{padding:12px 12px}}
+@media(max-width:600px){
+  .container{padding:12px 12px}
+  .site-nav{align-items:flex-start;flex-wrap:wrap;gap:10px}
+  .site-nav .nav-links{width:100%;flex-wrap:wrap;gap:8px 12px}
+  .site-nav .user-name{max-width:100%;overflow-wrap:anywhere}
+}
 </style>
 {{block "head" .}}{{end}}
 </head>
 <body>
 <div class="container">
-<nav>
+<nav class="site-nav">
 <a href="/" class="logo">wingthing.ai</a>
 <div class="nav-links">
 <a href="/patterns">patterns</a>
@@ -42,7 +47,7 @@ a{color:var(--action)}a:hover{color:var(--action-hover)}
 {{if .User}}<a href="{{.AppURL}}" class="nav-cta">open app</a>
 {{if not .LocalMode}}<span class="user-name">{{.User.DisplayName}}</span>
 <form method="POST" action="/auth/logout" style="display:inline"><button type="submit" class="nav-btn">logout</button></form>{{end}}
-{{else}}<a href="/login" class="nav-cta">login</a>{{end}}
+{{else}}<a href="/install" class="nav-cta">install locally</a><a href="/login">login</a>{{end}}
 </div>
 </nav>
 {{template "content" .}}

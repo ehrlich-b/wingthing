@@ -2,10 +2,10 @@
 
 [![ci](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml/badge.svg)](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml)
 
-Wingthing is a typed agent manager for durable agent runs and terminals. Give
-Codex, Claude, or another parent agent one control plane for starting and
-supervising work across all your machines. A person can inspect or take over the
-same terminal sessions from a terminal or browser.
+Wingthing is a local-first, agent-first manager for durable agent runs and
+terminals. Start by giving Codex, Claude, or another parent agent typed MCP
+control of agents on the same machine, using the code and provider login already
+there. Add remote machines or a browser only when the work requires them.
 
 The agents run where the code and hardware already live. Wingthing keeps their
 terminals alive, records semantic runs as durable tasks, applies sandbox policy,
@@ -13,7 +13,15 @@ and gives each caller an owner, actor, grant set, bound, and audit trail.
 
 https://github.com/user-attachments/assets/f1f04caf-4b07-4298-ba76-db5b226c38f2
 
-## Give an agent access to your agents
+Choose the smallest route that fits:
+
+1. An agent manages local agents through stdio MCP.
+2. A person starts a local sandboxed agent terminal.
+3. An agent reaches another machine through direct remote MCP.
+4. A person who needs a browser runs a self-hosted roost.
+5. An entitled account may optionally use the hosted `wingthing.ai` browser relay.
+
+## 1. Local agent control: stdio MCP
 
 Install Wingthing, then register its local MCP server with the agent that will
 coordinate the work:
@@ -43,10 +51,52 @@ Restart the client after registration. Ask it to call
 - exchange owner-scoped messages with another authenticated agent client; and
 - inspect the effective sandbox before launching anything.
 
-The local server uses the current OS user's authority. `--client` supplies
-ownership and audit attribution inside Wingthing, not a new operating-system
-security boundary. Optional grants and spawn bounds live in
-`~/.wingthing/clients.yaml`.
+The child agents use existing project directories and provider credentials on
+this computer. Wingthing does not clone the code or copy a provider login. The
+local server uses the current OS user's authority. `--client` supplies ownership
+and audit attribution inside Wingthing, not a new operating-system security
+boundary. Optional grants and spawn bounds live in `~/.wingthing/clients.yaml`.
+
+## 2. Local human terminal: sandboxed agent
+
+Use the same runtime directly when a person wants the terminal:
+
+```bash
+cd /path/to/existing/project
+wt egg claude --name research
+
+# Ctrl+B Q detaches without stopping the process
+wt attach research
+```
+
+The provider CLI must already be installed and authenticated for the current OS
+user. The project must already exist. No Wingthing account or wing daemon is
+required.
+
+The CLI also exposes persistent shells, arbitrary commands, and raw terminal
+operations:
+
+```bash
+wt terminal --name work                # persistent sandboxed shell
+wt terminal --name api -- npm run dev  # persistent arbitrary command
+
+# Ctrl+B Q detaches without stopping the process
+wt attach                              # list live sessions
+wt attach work                         # reattach by name or ID
+
+wt session ps --json
+wt session read api --json
+wt session send api r --enter --json
+wt session wait api --contains ready --json
+wt session rename api frontend --json
+wt session kill frontend --json
+```
+
+Terminal snapshots are ANSI state. Wingthing does not infer that an agent is
+done because a string appeared on screen. Use `agent_run`, `agent_wait`, and
+`agent_result` when the caller needs semantic task state.
+
+## 3. Different machines: direct remote MCP
 
 To give the parent agent one qualified inventory across remote wings, first log
 in and start Wingthing on every execution machine. Install and authenticate each
@@ -82,46 +132,10 @@ or disable native control under `direct_mcp` in `wing.yaml`. Organization member
 remain owner- and path-scoped, while owners/admins retain all configured paths. See
 the [security model](docs/security.md#native-direct-mcp-authority) for the policy shape.
 
-Hosted terminal relay is a separate transport decision. Existing configs remain
-compatible, while a wing can refuse relayed payloads regardless of account
-entitlement:
-
-```bash
-wt wing config set hosted_relay=deny
-wt stop && wt start
-```
-
-Direct discovery/signaling still works; terminal and general control payloads must go
-directly to the wing. The effective setting appears in wing capability metadata and
-denials are audited without commands, paths, or payload content.
-
-## Use the same runtime yourself
-
-```bash
-wt terminal --name work               # persistent sandboxed shell
-wt terminal --name api -- npm run dev  # persistent arbitrary command
-wt egg claude --name research         # persistent sandboxed agent
-
-# Ctrl+B Q detaches without stopping the process
-wt attach                              # list live sessions
-wt attach research                     # reattach by name or ID
-wt attach research --remote box        # reattach over ordinary SSH
-```
-
-The CLI exposes the raw terminal layer for scripts:
-
-```bash
-wt session ps --json
-wt session read api --json
-wt session send api r --enter --json
-wt session wait api --contains ready --json
-wt session rename api frontend --json
-wt session kill frontend --json
-```
-
-Terminal snapshots are ANSI state. Wingthing doesn't infer that an agent is
-done because a string appeared on screen. Use `agent_run`, `agent_wait`, and
-`agent_result` when the caller needs semantic task state.
+The direct connector is the route to choose when execution moves to another
+machine. It does not provide a browser display. Use `agent_run` for a semantic
+result, or `agent_start` when a person will later attach through the execution
+machine's CLI or SSH.
 
 ## The runtime model
 
@@ -156,11 +170,10 @@ person: CLI or browser ----------------/  (inspect or take over)
 detachment, but not an unplanned host restart. A run's record and result persist;
 an active headless run still depends on the supervising Wingthing process.
 
-`wingthing.ai` is the hosted identity, directory, key-exchange, and connection
-coordination service—roughly the control plane in a tailnet. It does not run the
-agents. New free accounts use direct remote MCP; Pro adds the encrypted hosted
-terminal and control relay. Local MCP, SSH, and self-hosted roosts do not require
-it.
+`wingthing.ai` can supply identity, an access-filtered directory, key exchange,
+and connection coordination for direct remote MCP. It does not run the agents or
+carry direct MCP payloads. Local MCP, local terminals, SSH, and self-hosted roosts
+do not require it.
 
 ### Shared control contract
 
@@ -212,23 +225,21 @@ outer VM as the security boundary. Wingthing still provides persistence and the
 control plane, reports `outer-boundary` to MCP clients, and records that mode in
 the audit log.
 
-## Browser and hosted service
+## 4. Browser visibility: self-hosted roost
 
-Browser access is optional:
+When a person needs a browser, run the browser portal locally first:
 
 ```bash
-wt login
-wt start
-open https://app.wingthing.ai
+wt roost start --https
+open https://localhost:8443
 ```
 
-The wing connects outbound, so it needs no public inbound port. Free accounts
-use the hosted site to register the wing and set up direct remote MCP; the
-hosted browser terminal is not part of that free path. Accounts with hosted
-relay access may use the application-encrypted browser terminal and control
-relay. The coordinator sees account, routing, and connection metadata, and the
-hosted browser still trusts JavaScript served by the service. Read
-[security.md](docs/security.md) before making a stronger claim.
+This self-hosted route needs no Wingthing account or hosted-relay entitlement.
+For a remote execution machine, keep the portal on localhost and carry its wing
+connection over SSH; follow the
+[self-hosted remote-browser recipe](patterns/personal-remote-wing/INSTRUCTIONS.md).
+For several people, configure OAuth, HTTPS, and an exact enrollment list as
+described below.
 
 A portal may have several wings. The native CLI can query the same authorized
 roster and probe each wing through the encrypted tunnel:
@@ -242,11 +253,11 @@ WINGTHING_DIR=~/.wingthing-lab wt login --roost https://lab.example.com
 WINGTHING_DIR=~/.wingthing-lab wt wings --roost https://lab.example.com --json
 ```
 
-The browser and native client select a wing by its stable `wing_id`. The hosted
-directory aggregates every wing registered to the account or its organizations.
-Peer-roost federation remains follow-up work.
+The browser and native client select a wing by its stable `wing_id`. A
+self-hosted gateway can list its embedded wing and other wings registered with
+that same gateway. Independent roosts do not federate their directories.
 
-## Shared roost
+### Self-hosted roost details
 
 Run a self-hosted portal, gateway, and embedded wing in one process:
 
@@ -313,6 +324,35 @@ This command shape follows the current
 [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp). Claude Code
 uses `claude mcp add --scope user --transport http lab
 https://lab.example.com/mcp`.
+
+## 5. Hosted browser relay: entitled and optional
+
+Use the hosted browser only when an account already has hosted-relay access and
+the selected wing's effective `hosted_relay` policy is `allow`:
+
+```bash
+wt login
+wt start
+open https://app.wingthing.ai
+```
+
+The wing connects outbound, so it needs no public inbound port. The hosted
+browser terminal is not part of the free direct-MCP path. In hosted-browser mode,
+the service relays application-encrypted terminal and control payloads, sees
+account and routing metadata, and supplies the browser JavaScript. Read
+[security.md](docs/security.md) for the exact boundary.
+
+Account entitlement and wing policy are separate. A wing can refuse hosted
+payload relay:
+
+```bash
+wt wing config set hosted_relay=deny
+wt stop && wt start
+```
+
+Direct discovery and signaling still work. The effective setting appears in wing
+capability metadata, and denials are audited without commands, paths, or payload
+content.
 
 ## Supported agents
 

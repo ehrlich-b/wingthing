@@ -3,7 +3,14 @@
 <style>
 .hero{padding:40px 0 24px;text-align:center}
 .hero h1{font-size:28px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px}
-.hero .tagline{color:var(--text-dim);font-size:15px;line-height:1.5;max-width:480px;margin:0 auto 24px}
+.hero .tagline{color:var(--text-dim);font-size:15px;line-height:1.6;max-width:720px;margin:0 auto 24px}
+.route-map{max-width:900px;margin:0 auto 22px;text-align:left;display:grid;gap:8px}
+.route-map a{display:grid;grid-template-columns:34px 220px 1fr;gap:12px;align-items:baseline;background:var(--bg-card);border:1px solid var(--accent);border-radius:6px;padding:10px 14px;text-decoration:none;color:var(--text)}
+.route-map a:hover{border-color:var(--action)}
+.route-num{font-family:var(--mono);font-size:11px;color:var(--action)}
+.route-title{font-weight:600;font-size:13px}
+.route-detail{font-size:12px;color:var(--text-dim)}
+.route-detail code{color:var(--text)}
 .prompt-flow{font-family:var(--mono);font-size:18px;margin-top:8px}
 .prompt-line{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0}
 .prompt-dim{color:var(--text-dim)}
@@ -74,6 +81,8 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 .sb-tip{font-family:var(--mono);font-size:11px;color:var(--text-dim);line-height:1.6;margin-top:12px;padding:0 4px}
 @media(max-width:700px){
   .hero h1{font-size:22px}
+  .route-map a{grid-template-columns:28px 1fr;gap:4px 8px}
+  .route-detail{grid-column:2}
   .how-grid{grid-template-columns:1fr}
   .sb-layout{grid-template-columns:1fr}
   .install{font-size:11px;padding:12px 14px}
@@ -92,19 +101,26 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
         if(e.key==='.'&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
             e.preventDefault();
             var app=document.getElementById('prompt-app');
-            window.location.href=app?app.href:'/login';
+            window.location.href=app?app.href:'/install';
         }
     });
 })();
 </script>
 <div class="hero">
-<h1>durable agent runs and terminals</h1>
-<p class="tagline">Wingthing is a typed agent manager for Codex, Claude, and other agents. Start and supervise work on the wing where the code and credentials already live, then take over a persistent terminal when a person belongs in the loop.</p>
+<h1>local-first control for coding agents</h1>
+<p class="tagline">Give an agent typed control of local agents on the code and provider login already on this machine. Move to direct remote MCP only when execution moves to another machine, and add a browser only when a person needs one.</p>
+<div class="route-map" aria-label="Wingthing setup routes">
+<a href="/patterns/local-subagents/INSTRUCTIONS.md" data-route="local-agent"><span class="route-num">01</span><span class="route-title">agent controls local agents</span><span class="route-detail"><code>wt mcp stdio</code> · no account or daemon</span></a>
+<a href="/patterns/local-sandbox/INSTRUCTIONS.md" data-route="local-human"><span class="route-num">02</span><span class="route-title">person starts a local agent terminal</span><span class="route-detail"><code>wt egg</code> · sandboxed and attachable</span></a>
+<a href="/patterns/remote-orchestration/INSTRUCTIONS.md" data-route="direct-remote"><span class="route-num">03</span><span class="route-title">machines differ</span><span class="route-detail"><code>wt mcp connect</code> · direct remote MCP to an explicit wing</span></a>
+<a href="/patterns/personal-remote-wing/INSTRUCTIONS.md" data-route="self-hosted-browser"><span class="route-num">04</span><span class="route-title">person needs a browser</span><span class="route-detail"><code>wt serve --local --https</code> · self-host first</span></a>
+<a href="/patterns/hosted-browser-wing/INSTRUCTIONS.md" data-route="hosted-relay"><span class="route-num">05</span><span class="route-title">optional hosted browser</span><span class="route-detail">requires hosted-relay entitlement and an allowing wing</span></a>
+</div>
 {{if .User}}<div class="prompt-flow">
-<a href="{{.AppURL}}" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open app</span></a>
+<a href="{{.AppURL}}" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">open optional hosted app</span></a>
 </div>
 {{else}}<div class="prompt-flow" id="prompt-flow">
-<div class="prompt-line"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to start</span></div>
+<a href="/install" class="prompt-line" id="prompt-app"><span class="prompt-dim">press</span> <span class="prompt-key">.</span> <span class="prompt-dim">to</span> <span class="prompt-key">install locally</span></a>
 </div>{{end}}
 {{if .HeroVideo}}<div class="hero-video" onclick="(function(){var v=document.getElementById('hero-vid');if(v.requestFullscreen)v.requestFullscreen();else if(v.webkitRequestFullscreen)v.webkitRequestFullscreen()})()"><video id="hero-vid" src="/hero.mp4" autoplay muted loop playsinline onloadedmetadata="this.playbackRate=0.8"></video><button class="hero-fs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button></div>{{end}}
 </div>
@@ -113,11 +129,11 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 <button onclick="switchTab('sb')">sandbox builder</button>
 </div>
 <div id="tab-how" class="how">
-<h2>how it works</h2>
+<h2>one wing owns each run</h2>
 <div class="how-grid">
 <div class="how-card">
 <h3>portal</h3>
-<p>The unified inventory and controls for your agents. An LLM uses typed MCP operations; a person can inspect or take over the same sessions.</p>
+<p>An agent starts with the local stdio MCP portal. A person uses the CLI, or adds a self-hosted browser when visibility requires one.</p>
 </div>
 <div class="how-card">
 <h3>wing</h3>
@@ -139,19 +155,19 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </div>
 <div class="how-card">
 <h3>direct by default</h3>
-<p>The hosted service coordinates identity, wing discovery, keys, and connection setup. Free agent clients send MCP payloads directly to their wing; the hosted encrypted terminal and control relay is a Pro feature.</p>
+<p>When machines differ, <code>wt mcp connect</code> selects a wing explicitly and sends MCP payloads directly to it. It never falls back to hosted relay.</p>
 </div>
 <div class="how-card">
 <h3>self-hostable</h3>
-<p><code>wt roost start --https</code> runs a portal, gateway, and embedded wing on your machine. WT creates a localhost-only certificate on demand, installs only its public CA for your user, and keeps the private key on this machine. No hosted account needed.</p>
+<p><code>wt roost start --https</code> is the first browser route: a portal, gateway, and embedded wing on your machine. No hosted account or relay entitlement is needed.</p>
 </div>
 <div class="how-card">
 <h3>any agent</h3>
 <p><code>wt egg claude</code>, <code>wt egg codex</code>, <code>wt egg gemini</code>. Switch the provider, keep the execution contract and sandbox config.</p>
 </div>
 <div class="how-card">
-<h3>passkey auth</h3>
-<p>WebAuthn passkeys. One-time challenges and signature verification happen on your wing against a locally pinned public key.</p>
+<h3>hosted relay is optional</h3>
+<p>The <code>wingthing.ai</code> browser relay is available only when the account is entitled and the selected wing allows it. The hosted service does not run agents.</p>
 </div>
 </div>
 </div>
@@ -206,6 +222,7 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </div>
 </div>
 <div class="links">
+<a href="/patterns">choose a route</a>
 <a href="/docs">docs</a>
 <a href="https://github.com/ehrlich-b/wingthing">github</a>
 </div>

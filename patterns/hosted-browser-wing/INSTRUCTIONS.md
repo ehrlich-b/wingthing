@@ -1,8 +1,9 @@
 # Use the hosted browser on a remote wing
 
-Use this setup when a person wants to start or resume a persistent agent terminal
-from `app.wingthing.ai` and the account already has hosted-relay access. This is a
-different transport from free native MCP and from a self-hosted roost:
+Use this optional route only when a person wants a hosted browser, the account
+already has hosted-relay access, and the selected wing allows hosted relay. Prefer
+a self-hosted roost when the person can run the browser portal. This is a different
+transport from direct native MCP and from a self-hosted roost:
 
 ```text
 hosted browser -> application-encrypted relay -> selected wing -> Claude or Codex

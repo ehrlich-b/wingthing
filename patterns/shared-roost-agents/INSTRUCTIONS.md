@@ -1,8 +1,10 @@
 # Let an AI control agents on your private roost
 
 Use this setup when a local Claude or Codex session should manage agents on your
-self-hosted Wingthing server. Workspaces, child-agent credentials, and processes stay
-on the roost server.
+self-hosted Wingthing server through its authenticated HTTP MCP endpoint. Use local
+stdio MCP instead when parent and child agents run on the same computer; use direct
+remote MCP when selecting among several external wings. Workspaces, child-agent
+credentials, and processes stay on the roost server.
 
 ## Placement and durable state
 

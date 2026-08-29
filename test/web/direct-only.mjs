@@ -24,6 +24,49 @@ async function contextFor(browser, token) {
 const browser = await chromium.launch({ args: ['--disable-dev-shm-usage', '--no-sandbox'] });
 fs.mkdirSync(OUT, { recursive: true });
 try {
+  const publicContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+  });
+  const publicPage = await publicContext.newPage();
+  await publicPage.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+  const publicState = await publicPage.evaluate(() => {
+    const nav = document.querySelector('nav.site-nav');
+    const logo = nav.querySelector('.logo').getBoundingClientRect();
+    const links = nav.querySelector('.nav-links');
+    const linkElements = Array.from(links.querySelectorAll('a'));
+    const linkRects = linkElements.map((link) => link.getBoundingClientRect());
+    const routeElements = Array.from(document.querySelectorAll('.route-map [data-route]'));
+    const selfHosted = routeElements.find((route) => route.dataset.route === 'self-hosted-browser');
+    return {
+      navLabels: linkElements.map((link) => link.textContent.trim()),
+      ctaLabels: linkElements.filter((link) => link.classList.contains('nav-cta')).map((link) => link.textContent.trim()),
+      flexWrap: getComputedStyle(links).flexWrap,
+      linksBelowLogo: links.getBoundingClientRect().top >= logo.bottom,
+      linksInsideViewport: linkRects.every((rect) => rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 0.5),
+      noHorizontalOverflow: document.documentElement.scrollWidth <= innerWidth,
+      routes: routeElements.map((route) => route.dataset.route),
+      selfHostedHref: selfHosted ? selfHosted.getAttribute('href') : '',
+      selfHostedText: selfHosted ? selfHosted.textContent : '',
+    };
+  });
+  record('public mobile: nav wraps below the logo without clipping and keeps neutral actions',
+    JSON.stringify(publicState.navLabels) === JSON.stringify(['patterns', 'docs', 'github', 'install locally', 'login']) &&
+      JSON.stringify(publicState.ctaLabels) === JSON.stringify(['install locally']) &&
+      publicState.flexWrap === 'wrap' && publicState.linksBelowLogo &&
+      publicState.linksInsideViewport && publicState.noHorizontalOverflow,
+    JSON.stringify(publicState));
+  record('public mobile: home renders the required hierarchy with a coherent self-hosted recipe',
+    JSON.stringify(publicState.routes) === JSON.stringify([
+      'local-agent', 'local-human', 'direct-remote', 'self-hosted-browser', 'hosted-relay',
+    ]) &&
+      publicState.selfHostedHref === '/patterns/personal-remote-wing/INSTRUCTIONS.md' &&
+      publicState.selfHostedText.includes('wt serve --local --https') &&
+      !publicState.selfHostedText.includes('wt roost start --https'),
+    JSON.stringify(publicState));
+  await publicPage.screenshot({ path: `${OUT}/public-mobile-nav.png`, fullPage: false });
+  await publicContext.close();
+
   const direct = await contextFor(browser, TOKENS.direct);
   await direct.addInitScript(function() {
     // Context init scripts also run in the opaque-origin preview iframe. Seed

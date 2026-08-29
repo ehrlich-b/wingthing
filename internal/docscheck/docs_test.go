@@ -75,6 +75,8 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 		"docs/security.md",
 		"docs/skills/create-egg/SKILL.md",
 		"web/index.html",
+		"internal/relay/templates/base.html",
+		"internal/relay/templates/home.html",
 		"internal/relay/templates/docs.html",
 		"internal/relay/templates/patterns.html",
 		"internal/relay/templates/privacy.html",
@@ -113,8 +115,10 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 		"SKILL.md":  {"every execution machine must run `wt login` and `wt start`", "both account-level hosted-relay access", "does not require a wingthing.ai hosted-relay entitlement"},
 		"patterns/shared-web-roost/INSTRUCTIONS.md":    {"WT_ROOST_ALLOWED_EMAILS", "OAuth by itself proves"},
 		"patterns/hosted-browser-wing/INSTRUCTIONS.md": {"Account access and wing policy are independent", "wt login", "wt start", "self-hosted roost", "application-encrypted"},
-		"internal/relay/templates/docs.html":           {"WT_BASE_URL=https://roost.example.com", "WT_ROOST_ALLOWED_EMAILS", "wt roost start --addr :8080", "wt serve --addr :8080", "never silently changes", "gateway database contains", "does not let an account grant itself relay access", "no request happens until you choose load or open", "200,000 serialized terminal characters", "a wing binary from before", "stop or isolate the wing", "On every execution machine", "wt login", "wt start"},
-		"internal/relay/templates/patterns.html":       {"/patterns/hosted-browser-wing/INSTRUCTIONS.md", "account with hosted-relay access", "hosted browser -> encrypted relay -> selected wing"},
+		"internal/relay/templates/base.html":           {`href="/install" class="nav-cta">install locally`, `href="/login">login`, ">open app</a>"},
+		"internal/relay/templates/home.html":           {"local-first control for coding agents", "wt mcp stdio", "wt egg", "wt mcp connect", "wt serve --local --https", "optional hosted browser"},
+		"internal/relay/templates/docs.html":           {"WT_BASE_URL=https://roost.example.com", "WT_ROOST_ALLOWED_EMAILS", "wt roost start --addr :8080", "wt serve --addr :8080", "never silently changes", "gateway database contains", "does not let an account grant itself relay access", "no request happens until you choose load or open", "200,000 serialized terminal characters", "a wing binary from before", "stop or isolate the wing", "Remote execution through direct MCP or the hosted browser needs a running wing", "do not require a separate wing daemon", "connector token", "wt login", "wt start"},
+		"internal/relay/templates/patterns.html":       {"/patterns/hosted-browser-wing/INSTRUCTIONS.md", "account with hosted-relay access", "hosted browser -> encrypted relay -> selected wing", "authorization for the connector account", "parent/connector needs"},
 		"internal/relay/templates/privacy.html":        {"gateway database contains", "embedded wing separately keeps", "200,000 serialized terminal characters", "Clearing the site's browser data removes"},
 		"fly.toml":                                     {`WT_RELAY_POLICY = "direct-free"`, "WT_RELAY_MIGRATION_BEFORE"},
 		"docs/security.md":                             {"not a downgrade-compatible security policy", "stop the wing or isolate it"},
@@ -164,13 +168,201 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 		t.Fatal(err)
 	}
 	installText := string(install)
-	for _, phrase := range []string{"wt roost start --https", "wt mcp connect", "hosted browser terminal and control relay require relay access", "certutil"} {
+	for _, phrase := range []string{"wt roost start --https", "wt mcp connect", "connector token", "authorized for the connector account", "hosted browser terminal and control relay require relay access", "certutil"} {
 		if !strings.Contains(installText, phrase) {
 			t.Errorf("public install flow must contain %q", phrase)
 		}
 	}
 	if strings.Contains(strings.ToLower(installText), "single binary, no dependencies") {
 		t.Fatal("public install flow hides optional HTTPS and agent CLI dependencies")
+	}
+}
+
+func TestPublicEntryPointsKeepLocalAgentFirstHierarchy(t *testing.T) {
+	root := repositoryRoot(t)
+	read := func(rel string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	ordered := map[string][]string{
+		"README.md": {
+			"## 1. Local agent control: stdio MCP",
+			"## 2. Local human terminal: sandboxed agent",
+			"## 3. Different machines: direct remote MCP",
+			"## 4. Browser visibility: self-hosted roost",
+			"## 5. Hosted browser relay: entitled and optional",
+		},
+		"SKILL.md": {
+			"1. **Local agent control:**",
+			"2. **Local human terminal:**",
+			"3. **Direct remote MCP:**",
+			"4. **Self-hosted browser:**",
+			"5. **Optional hosted browser:**",
+		},
+		"patterns/SKILL.md": {
+			"1. **Local agent control with stdio MCP:**",
+			"2. **Local sandboxed agent terminal for a person:**",
+			"3. **Direct remote MCP when machines differ:**",
+			"4. **Self-hosted roost when a person needs a browser:**",
+			"5. **Optional entitled hosted relay:**",
+		},
+	}
+	for _, rel := range []string{
+		"internal/relay/templates/home.html",
+		"internal/relay/templates/docs.html",
+		"internal/relay/templates/install.html",
+		"internal/relay/templates/patterns.html",
+	} {
+		ordered[rel] = []string{
+			`data-route="local-agent"`,
+			`data-route="local-human"`,
+			`data-route="direct-remote"`,
+			`data-route="self-hosted-browser"`,
+			`data-route="hosted-relay"`,
+		}
+	}
+
+	for rel, markers := range ordered {
+		text := read(rel)
+		previous := -1
+		for _, marker := range markers {
+			index := strings.Index(text, marker)
+			if index < 0 {
+				t.Errorf("%s is missing hierarchy marker %q", rel, marker)
+				continue
+			}
+			if index <= previous {
+				t.Errorf("%s places %q out of local-agent-first order", rel, marker)
+			}
+			previous = index
+		}
+	}
+
+	contracts := map[string][]string{
+		"README.md": {
+			"using the code and provider login already\nthere",
+			"No Wingthing account or wing daemon is\nrequired",
+			"It never silently falls back to the hosted relay",
+			"run the browser portal locally first",
+			"already has hosted-relay access",
+		},
+		"internal/relay/templates/home.html": {
+			"<code>wt mcp stdio</code> · no account or daemon",
+			"<code>wt egg</code> · sandboxed and attachable",
+			"direct remote MCP to an explicit wing",
+			"<code>wt serve --local --https</code> · self-host first",
+			"requires hosted-relay entitlement and an allowing wing",
+		},
+		"internal/relay/templates/docs.html": {
+			"existing project directories and the current OS user's existing provider logins",
+			"connector token",
+			"Run <code>wt start</code> on the parent only when that machine also executes agents",
+			"The connector never silently changes to hosted relay",
+			"Remote execution through direct MCP or the hosted browser needs a running wing",
+			"do not require a separate wing daemon",
+			"This self-hosted route needs no Wingthing account or hosted-relay entitlement",
+			"requires an account with hosted-relay access",
+		},
+		"internal/relay/templates/install.html": {
+			"Child agents use the existing code and provider login on this computer",
+			"authorized for the connector account",
+			"parent/connector machine",
+			"connector token",
+			"Run <code>wt start</code> on the parent only when that machine also executes agents",
+			"never silently fall back to hosted relay",
+			"No Wingthing account or hosted-relay entitlement is required",
+			"hosted browser terminal and control relay require relay access",
+		},
+		"internal/relay/templates/patterns.html": {
+			"parent AI -> local stdio MCP -> local child agents",
+			"person -> local sandboxed agent terminal -> reattach later",
+			"parent AI -> direct remote MCP -> selected wing -> agent",
+			"authorization for the connector account (personal or organization)",
+			"The parent/connector needs:",
+			"localhost browser -> local portal -> SSH tunnel -> remote wing -> agent",
+			"hosted browser -> encrypted relay -> selected wing -> agent",
+		},
+	}
+	for rel, phrases := range contracts {
+		text := read(rel)
+		for _, phrase := range phrases {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s must preserve hierarchy contract %q", rel, phrase)
+			}
+		}
+	}
+}
+
+func TestUsageRecipesPointToTheCorrectRoute(t *testing.T) {
+	root := repositoryRoot(t)
+	contracts := map[string][]string{
+		"patterns/local-subagents/INSTRUCTIONS.md": {
+			"Start here",
+			"Local stdio MCP uses the code and provider logins already on\nthis machine",
+			"no Wingthing account, daemon, roost, or hosted relay",
+		},
+		"patterns/local-sandbox/INSTRUCTIONS.md": {
+			"when a person wants a local sandboxed",
+			"local stdio MCP setup",
+		},
+		"patterns/remote-orchestration/INSTRUCTIONS.md": {
+			"only when the parent agent and execution wing are on different",
+			"prefer\nlocal `wt mcp stdio`",
+			"does not proxy direct MCP payloads or silently switch",
+		},
+		"patterns/personal-remote-wing/INSTRUCTIONS.md": {
+			"when a person needs browser visibility",
+			"the first browser route to consider",
+			"does not use wingthing.ai or require a hosted-relay entitlement",
+		},
+		"patterns/hosted-browser-wing/INSTRUCTIONS.md": {
+			"Use this optional route only",
+			"Prefer\na self-hosted roost",
+			"already has hosted-relay access",
+		},
+	}
+	for rel, phrases := range contracts {
+		data, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		for _, phrase := range phrases {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s must preserve route contract %q", rel, phrase)
+			}
+		}
+	}
+}
+
+func TestRemoteOrchestrationParentUsesAuthorizedAccount(t *testing.T) {
+	root := repositoryRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "patterns/remote-orchestration/INSTRUCTIONS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "## 2. Connect the parent AI")
+	end := strings.Index(text, "## 3. Use it")
+	if start < 0 || end <= start {
+		t.Fatal("remote orchestration recipe must preserve the parent connector section")
+	}
+	parentSection := text[start:end]
+	for _, phrase := range []string{
+		"account authorized for the execution wings",
+		"personally or\nthrough organization membership",
+	} {
+		if !strings.Contains(parentSection, phrase) {
+			t.Errorf("parent connector instructions must contain %q", phrase)
+		}
+	}
+	if strings.Contains(parentSection, "same account") {
+		t.Error("parent connector instructions must not require the same account")
 	}
 }
 

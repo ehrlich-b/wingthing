@@ -54,12 +54,12 @@
 </nav>
 <div class="docs-body">
 <h1>documentation</h1>
-<p class="lead">Wingthing is a typed agent manager for durable agent runs and terminals across local and remote wings, with human takeover when useful.</p>
+<p class="lead">Wingthing is a local-first, agent-first manager for durable agent runs and terminals. Start with local stdio MCP, then add another machine or a human display only when the task requires one.</p>
 
 <div class="docs-section" id="quickstart">
 <h2>quickstart</h2>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">give Codex or Claude access to local agents</h3>
+<h3 data-route="local-agent" style="font-size:14px;margin:16px 0 8px;color:var(--text)">1. give Codex or Claude local stdio MCP control</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">curl -fsSL https://wingthing.ai/install.sh | sh</span><br>
 <br>
@@ -69,49 +69,52 @@
 <span class="comment"># Claude Code</span><br>
 <span class="prompt">$ </span><span class="cmd">claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
 </div>
-<p>Restart the client, then ask it to call <code>wingthing_capabilities</code>. It can start persistent terminals or headless runs, wait for results, steer work, and stop it.</p>
+<p>Restart the client, then ask it to call <code>wingthing_capabilities</code>. Child agents use existing project directories and the current OS user's existing provider logins on this computer. No Wingthing account or daemon is required.</p>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">run your own private browser portal</h3>
+<h3 data-route="local-human" style="font-size:14px;margin:16px 0 8px;color:var(--text)">2. start a local sandboxed agent terminal yourself</h3>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">wt roost start --https</span><span class="comment"> # portal + gateway + local wing</span><br>
-<span class="prompt">$ </span><span class="cmd">open https://localhost:8443</span>
+<span class="prompt">$ </span><span class="cmd">cd /path/to/existing/project</span><br>
+<span class="prompt">$ </span><span class="cmd">wt egg claude --name work</span><br>
+<span class="prompt">$ </span><span class="cmd">wt attach work</span>
 </div>
-<p>This self-hosted path needs no Wingthing account. WT creates a localhost-only certificate on demand, installs only its public CA for your current user, and keeps its private keys on this machine.</p>
+<p>The provider CLI must already be installed and authenticated locally. <code>wt egg</code> applies the project sandbox and keeps the terminal attachable without an account or daemon.</p>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">give an agent access to all your remote wings</h3>
-<p>On every execution machine, install and authenticate the provider CLIs that may run there, then log in and start its wing:</p>
+<h3 data-route="direct-remote" style="font-size:14px;margin:16px 0 8px;color:var(--text)">3. use direct remote MCP when machines differ</h3>
+<p>On every execution machine, keep the required workspace there, install and authenticate the provider CLIs that may run there, then log in and start its wing:</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
 <span class="prompt">$ </span><span class="cmd">wt start</span><br>
 </div>
-<p>On the parent-agent machine, log in to the same account and register the direct connector. If that machine is also an execution wing, it is already logged in:</p>
+<p>On the parent/connector machine, log in with an account authorized to access those wings so <code>wt mcp connect</code> can load its connector token, then register the direct connector:</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
 <span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp connect --client codex</span><br>
 <span class="comment"># or: claude mcp add --scope user wingthing -- wt mcp connect --client claude</span>
 </div>
-<p>The agent calls <code>wing_list</code>, then passes an explicit <code>wing_id</code> to every operation. The hosted service supplies the access-filtered directory and WebRTC signaling; MCP payloads travel directly between the connector and selected wing. The first release expects the peers to share a LAN or tailnet unless you configure STUN or TURN under <code>ice_servers</code> in <code>~/.wingthing/wing.yaml</code>; the several-computer pattern includes the exact YAML shape.</p>
+<p>Run <code>wt start</code> on the parent only when that machine also executes agents.</p>
+<p>The agent calls <code>wing_list</code>, then passes an explicit <code>wing_id</code> to every operation. The hosted service supplies identity, the access-filtered directory, and WebRTC signaling; MCP payloads travel directly between the connector and selected wing. The connector never silently changes to hosted relay. The first release expects the peers to share a LAN or tailnet unless you configure STUN or TURN under <code>ice_servers</code> in <code>~/.wingthing/wing.yaml</code>; the several-computer pattern includes the exact YAML shape.</p>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">use the durable terminal yourself</h3>
+<h3 data-route="self-hosted-browser" style="font-size:14px;margin:16px 0 8px;color:var(--text)">4. self-host first when a person needs a browser</h3>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">wt terminal --name work</span><br>
-<span class="prompt">$ </span><span class="cmd">wt attach work</span>
+<span class="prompt">$ </span><span class="cmd">wt roost start --https</span><span class="comment"> # portal + gateway + local wing</span><br>
+<span class="prompt">$ </span><span class="cmd">open https://localhost:8443</span>
 </div>
+<p>This self-hosted route needs no Wingthing account or hosted-relay entitlement. WT creates a localhost-only certificate on demand, installs only its public CA for your current user, and keeps its private keys on this machine. Use the localhost-plus-SSH pattern for a remote wing, or configure OAuth, HTTPS, and explicit enrollment for several people.</p>
 
-<h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">optional hosted portal</h3>
+<h3 data-route="hosted-relay" style="font-size:14px;margin:16px 0 8px;color:var(--text)">5. use the entitled hosted browser only if needed</h3>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
 <span class="prompt">$ </span><span class="cmd">wt start</span><br>
 <span class="prompt">$ </span><span class="cmd">open https://app.wingthing.ai</span>
 </div>
-<p>Free accounts see wing readiness and direct-agent setup in the portal. Accounts with hosted relay access can also start and resume browser terminals. The public direct-free service does not let an account grant itself relay access; Pro and team relay entitlements are provisioned separately.</p>
+<p>The optional hosted browser terminal requires an account with hosted-relay access and a selected wing whose effective policy is <code>hosted_relay: allow</code>. The public direct-free service does not let an account grant itself relay access. In this mode, the service relays application-encrypted terminal and control payloads, sees routing metadata, and supplies the browser code.</p>
 
-<p>Your machine is a <strong>wing</strong>, the runtime that owns the processes and workspaces. An LLM manages it through MCP; a person can use the same runtime through the CLI or browser. The hosted service coordinates direct connections by default. Pro includes its encrypted browser-terminal and control relay; the native connector never silently changes from direct transport to relay transport.</p>
+<p>Your machine is a <strong>wing</strong>, the runtime that owns its processes, workspaces, agent homes, sessions, and runs. Local and remote adapters address that runtime; neither a connector nor a browser moves execution off the selected wing.</p>
 </div>
 
 <div class="docs-section" id="overview">
 <h2>overview</h2>
-<p>wingthing runs Claude Code, Codex, Ollama, and other AI agents behind one local control plane. The interface can be a CLI, browser, or MCP client. Execution stays on the wing where the selected workspace and hardware live.</p>
+<p>Wingthing runs Claude Code, Codex, Ollama, and other agents behind one wing-owned control plane. Local stdio MCP is the primary agent interface. The local CLI is the primary human terminal. Direct remote MCP connects different machines. A self-hosted roost adds browser visibility; the entitled hosted relay is an optional alternative. Execution stays on the wing where the selected workspace, provider login, and hardware live.</p>
 <table class="vocab-table">
 <tr><th>term</th><th>what it is</th></tr>
 <tr><td>portal</td><td>The inventory and controls presented to a person or LLM. The browser and MCP are portal adapters, though they do not yet expose every object with full parity.</td></tr>
@@ -160,13 +163,13 @@
 
 <div class="docs-section" id="wing-setup">
 <h2>wing setup</h2>
-<p>Three commands to go from install to remote access:</p>
+<p>Remote execution through direct MCP or the hosted browser needs a running wing. Local stdio MCP, local terminal commands, and an embedded self-hosted roost do not require a separate wing daemon. Prepare each standalone execution wing from a terminal:</p>
 <div class="docs-code">
-<span class="prompt">$ </span><span class="cmd">wt login</span><span class="comment">                  # authenticate with the hosted portal</span><br>
-<span class="prompt">$ </span><span class="cmd">wt start</span><span class="comment">                  # start the wing daemon</span><br>
-<span class="prompt">$ </span><span class="cmd">open https://app.wingthing.ai</span><span class="comment"> # wing readiness and direct setup</span>
+<span class="prompt">$ </span><span class="cmd">wt login</span><span class="comment">       # authenticate for identity, directory, and signaling</span><br>
+<span class="prompt">$ </span><span class="cmd">wt start</span><span class="comment">       # start the execution wing</span><br>
+<span class="prompt">$ </span><span class="cmd">wt wing status</span><span class="comment"> # verify it is ready</span>
 </div>
-<p><code>wt start</code> runs the wing as a background daemon. Hosted accounts with relay access also get browser terminal controls; direct-only free accounts get the native connector instructions instead. Use <code>wt wing start --foreground</code> for debugging.</p>
+<p><code>wt start</code> runs the wing as a background daemon. Register <code>wt mcp connect</code> on the parent-agent machine for direct control. Opening the hosted app is unnecessary for that path. Use <code>wt wing start --foreground</code> for debugging.</p>
 <p>Other wing commands:</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt wing status</span><span class="comment">            # check daemon status + active sessions</span><br>

@@ -25,101 +25,102 @@
 {{end}}
 {{define "content"}}
 <main class="patterns">
-<h1>choose a durable agent workflow</h1>
-<p class="lead">Wingthing is a typed agent manager for durable agent runs and terminals. Each setup below works today; pick one to see exactly what must be installed, where execution and state live, and how the driver connects.</p>
+<h1>choose the smallest route</h1>
+<p class="lead">Start with local stdio MCP when an agent is driving, or a local sandboxed terminal when a person is driving. If machines differ, use direct remote MCP. If a person needs a browser, self-host a roost first. The hosted browser relay is the last, optional route and requires entitlement.</p>
 
-<div class="plain-language"><strong>A wing is the computer that runs the work.</strong> Before launch, choose the execution wing, an existing workspace on it, a headless or terminal display, the owner whose provider home supplies credentials, and the wing that keeps durable state. Wingthing routes control; it does not copy workspaces, credentials, provider history, or Wingthing memory between wings.</div>
+<div class="plain-language"><strong>Code, credentials, processes, and durable state stay on the execution wing.</strong> Wingthing routes control to an existing workspace; it does not copy workspaces, provider logins, provider history, or Wingthing memory between machines.</div>
 
 <div class="pattern-list">
-<section class="pattern">
+<section class="pattern" data-route="local-agent">
 <div class="pattern-num">01</div>
-<div class="pattern-tags"><span class="pattern-tag">one computer</span><span class="pattern-tag">human-driven</span></div>
-<h2>Run a durable, sandboxed agent on this computer</h2>
-<p>Start Claude, Codex, or another agent in a project without setting up a server or account.</p>
-<ul class="pattern-facts">
-<li><strong>You need:</strong> Wingthing and the agent CLI installed locally.</li>
-<li><strong>You get:</strong> project sandbox policy, a persistent terminal, and the ability to disconnect and reattach later.</li>
-</ul>
-<div class="flow">project folder -> sandboxed agent -> reattach later</div>
-<div class="recipe-row"><a href="/patterns/local-sandbox/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/local-sandbox/INSTRUCTIONS.md">copy setup guide</button></div>
-</section>
-
-<section class="pattern">
-<div class="pattern-num">02</div>
-<div class="pattern-tags"><span class="pattern-tag">one computer</span><span class="pattern-tag">AI-driven</span></div>
+<div class="pattern-tags"><span class="pattern-tag">one computer</span><span class="pattern-tag">agent-driven</span><span class="pattern-tag">stdio MCP</span></div>
 <h2>Let your current AI launch local sub-agents</h2>
-<p>Give a parent Claude or Codex session tools for delegating parts of a larger task to other agents on the same computer.</p>
+<p>Give a parent Claude or Codex session typed tools for agents on the same computer, using the code and provider logins already there.</p>
 <ul class="pattern-facts">
-<li><strong>You need:</strong> Wingthing added as a local MCP server in the parent AI client.</li>
-<li><strong>You get:</strong> start, wait, inspect, steer, and stop controls for sandboxed child agents.</li>
+<li><strong>You need:</strong> Wingthing registered as <code>wt mcp stdio</code> in the parent client. No account or daemon is required.</li>
+<li><strong>You get:</strong> typed start, wait, inspect, steer, and stop controls for local sandboxed child agents.</li>
 </ul>
-<div class="flow">parent AI -> Wingthing -> child agents on this computer</div>
+<div class="flow">parent AI -> local stdio MCP -> local child agents</div>
 <div class="recipe-row"><a href="/patterns/local-subagents/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/local-subagents/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
-<section class="pattern">
+<section class="pattern" data-route="local-human">
+<div class="pattern-num">02</div>
+<div class="pattern-tags"><span class="pattern-tag">one computer</span><span class="pattern-tag">human-driven</span><span class="pattern-tag">terminal</span></div>
+<h2>Run a durable, sandboxed agent on this computer</h2>
+<p>Start Claude, Codex, or another agent in a local project without setting up a server or account.</p>
+<ul class="pattern-facts">
+<li><strong>You need:</strong> Wingthing and the provider agent CLI installed and authenticated locally.</li>
+<li><strong>You get:</strong> project sandbox policy, a persistent terminal, and the ability to disconnect and reattach later.</li>
+</ul>
+<div class="flow">person -> local sandboxed agent terminal -> reattach later</div>
+<div class="recipe-row"><a href="/patterns/local-sandbox/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/local-sandbox/INSTRUCTIONS.md">copy setup guide</button></div>
+</section>
+
+<section class="pattern" data-route="direct-remote">
 <div class="pattern-num">03</div>
 <div class="pattern-tags"><span class="pattern-tag">several computers</span><span class="pattern-tag">AI-driven</span></div>
 <h2>Let one AI manage agents on several computers</h2>
-<p>Run agents on a home machine, office VM, or other host from one parent Claude or Codex session.</p>
+<p>When parent and execution machines differ, connect one Claude or Codex session directly to an explicitly selected wing.</p>
 <ul class="pattern-facts">
-<li><strong>You need:</strong> each computer logged into the same Wingthing account and running <code>wt start</code>; the parent AI uses <code>wt mcp connect</code>.</li>
-<li><strong>You get:</strong> one list of online computers, explicit machine selection, direct encrypted control, and durable remote work without inbound ports.</li>
+<li><strong>Each execution wing needs:</strong> its own <code>wt login</code>, authorization for the connector account (personal or organization), and a running <code>wt start</code>.</li>
+<li><strong>The parent/connector needs:</strong> its own <code>wt login</code> token and <code>wt mcp connect</code>. It runs <code>wt start</code> only when it also executes agents.</li>
+<li><strong>You get:</strong> direct encrypted MCP control without inbound ports or silent fallback to hosted relay.</li>
 </ul>
-<div class="flow">parent AI -> choose computer -> direct connection -> agent runs there</div>
+<div class="flow">parent AI -> direct remote MCP -> selected wing -> agent</div>
 <div class="recipe-row"><a href="/patterns/remote-orchestration/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/remote-orchestration/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
-<section class="pattern">
+<section class="pattern" data-route="self-hosted-browser">
 <div class="pattern-num">04</div>
-<div class="pattern-tags"><span class="pattern-tag">remote computer</span><span class="pattern-tag">browser</span><span class="pattern-tag">hosted relay</span></div>
-<h2>Use the hosted browser on a remote wing</h2>
-<p>Start and resume a persistent agent terminal from <code>app.wingthing.ai</code> when your account and wing both permit hosted relay.</p>
-<ul class="pattern-facts">
-<li><strong>You need:</strong> an account with hosted-relay access; an execution machine running <code>wt login</code> and <code>wt start</code>; the provider already authenticated there; and effective wing policy <code>hosted_relay: allow</code>.</li>
-<li><strong>You get:</strong> a hosted browser terminal whose application-encrypted payloads are relayed to the selected wing. The hosted service still sees routing metadata and supplies the browser code.</li>
-</ul>
-<div class="flow">hosted browser -> encrypted relay -> selected wing -> agent</div>
-<div class="recipe-row"><a href="/patterns/hosted-browser-wing/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/hosted-browser-wing/INSTRUCTIONS.md">copy setup guide</button></div>
-</section>
-
-<section class="pattern">
-<div class="pattern-num">05</div>
 <div class="pattern-tags"><span class="pattern-tag">remote computer</span><span class="pattern-tag">browser</span><span class="pattern-tag">self-hosted</span></div>
 <h2>Control a remote agent from a localhost browser</h2>
-<p>Run the web app on the computer in front of you, carry it over SSH, and launch Claude or Codex on the remote computer.</p>
+<p>When a person needs a browser, run the portal on the computer in front of them and carry the wing connection to the remote computer over SSH.</p>
 <ul class="pattern-facts">
-<li><strong>You need:</strong> Wingthing on both computers, SSH access to the remote computer, and the agent already logged in there.</li>
-<li><strong>You get:</strong> a private <code>https://localhost</code> page for starting and resuming durable sessions on the remote computer, without using the hosted relay. WT creates a localhost-only certificate on demand, installs only its public CA for your user, and keeps the private key on this computer.</li>
+<li><strong>You need:</strong> Wingthing on both computers, SSH access to the remote computer, and the provider agent already authenticated there.</li>
+<li><strong>You get:</strong> a private <code>https://localhost</code> browser for remote sessions without a Wingthing account or hosted relay.</li>
 </ul>
 <div class="flow">localhost browser -> local portal -> SSH tunnel -> remote wing -> agent</div>
 <div class="recipe-row"><a href="/patterns/personal-remote-wing/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/personal-remote-wing/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
-<section class="pattern">
-<div class="pattern-num">06</div>
-<div class="pattern-tags"><span class="pattern-tag">team</span><span class="pattern-tag">private server</span><span class="pattern-tag">browser</span></div>
+<section class="pattern" data-route="self-hosted-team">
+<div class="pattern-num">05</div>
+<div class="pattern-tags"><span class="pattern-tag">team</span><span class="pattern-tag">private server</span><span class="pattern-tag">self-hosted browser</span></div>
 <h2>Give a team a private browser-based agent host</h2>
-<p>Run Wingthing on one shared server so several people can launch and resume their own agent sessions through a private web UI.</p>
+<p>Run one self-hosted roost so enrolled people can launch and resume their own agent sessions on a shared server.</p>
 <ul class="pattern-facts">
-<li><strong>You need:</strong> a server, HTTPS hostname, OAuth login, an exact email enrollment list, and project directories on that server.</li>
-<li><strong>You get:</strong> a self-hosted portal, per-user sessions, and separate per-user agent homes on the shared host.</li>
+<li><strong>You need:</strong> a server, HTTPS hostname, OAuth login, an exact email enrollment list, and existing project directories on that server.</li>
+<li><strong>You get:</strong> a private portal, per-user sessions, and separate per-user agent homes without a wingthing.ai relay entitlement.</li>
 </ul>
 <div class="flow">team browsers -> private roost -> agents on the shared server</div>
 <div class="recipe-row"><a href="/patterns/shared-web-roost/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/shared-web-roost/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 
-<section class="pattern">
-<div class="pattern-num">07</div>
-<div class="pattern-tags"><span class="pattern-tag">private server</span><span class="pattern-tag">AI-driven</span></div>
+<section class="pattern" data-route="self-hosted-agent">
+<div class="pattern-num">06</div>
+<div class="pattern-tags"><span class="pattern-tag">private server</span><span class="pattern-tag">AI-driven</span><span class="pattern-tag">self-hosted MCP</span></div>
 <h2>Let an AI control agents on your private roost</h2>
-<p>Connect a local Claude or Codex client to your self-hosted Wingthing server and let it manage work there.</p>
+<p>Connect Claude or Codex to the authenticated HTTP MCP endpoint of a self-hosted roost.</p>
 <ul class="pattern-facts">
-<li><strong>You need:</strong> an enrolled account on a roost with HTTPS and OAuth, plus its HTTP MCP endpoint added to the parent AI client.</li>
-<li><strong>You get:</strong> authenticated control of that user's agent runs and persistent sessions on the roost server.</li>
+<li><strong>You need:</strong> an enrolled account on a roost with HTTPS and OAuth, plus that endpoint added to the parent AI client.</li>
+<li><strong>You get:</strong> authenticated agent control of that user's runs and sessions on the roost's embedded wing.</li>
 </ul>
-<div class="flow">parent AI -> private roost MCP -> agents on the roost server</div>
+<div class="flow">parent AI -> private roost HTTP MCP -> embedded wing -> agents</div>
 <div class="recipe-row"><a href="/patterns/shared-roost-agents/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/shared-roost-agents/INSTRUCTIONS.md">copy setup guide</button></div>
+</section>
+
+<section class="pattern" data-route="hosted-relay">
+<div class="pattern-num">07</div>
+<div class="pattern-tags"><span class="pattern-tag">remote computer</span><span class="pattern-tag">browser</span><span class="pattern-tag">optional hosted relay</span></div>
+<h2>Use the entitled hosted browser on a remote wing</h2>
+<p>Choose this optional route only when running a self-hosted browser portal is not the desired setup and the account already has hosted-relay access.</p>
+<ul class="pattern-facts">
+<li><strong>You need:</strong> an account with hosted-relay access; a wing running <code>wt login</code> and <code>wt start</code>; and effective wing policy <code>hosted_relay: allow</code>.</li>
+<li><strong>You get:</strong> a hosted browser terminal whose application-encrypted payloads are relayed to the selected wing. The service still sees routing metadata and supplies the browser code.</li>
+</ul>
+<div class="flow">hosted browser -> encrypted relay -> selected wing -> agent</div>
+<div class="recipe-row"><a href="/patterns/hosted-browser-wing/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/hosted-browser-wing/INSTRUCTIONS.md">copy setup guide</button></div>
 </section>
 </div>
 </main>

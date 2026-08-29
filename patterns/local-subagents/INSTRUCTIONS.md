@@ -1,8 +1,10 @@
 # Let your current AI launch local sub-agents
 
-Use this setup when a parent Claude or Codex session should delegate work to other
-agents on the same computer. Wingthing gives the parent typed tools to start, wait
-for, inspect, steer, and stop those child agents.
+Start here when a parent Claude or Codex session should delegate work to agents on
+the same computer. Local stdio MCP uses the code and provider logins already on
+this machine; it needs no Wingthing account, daemon, roost, or hosted relay.
+Wingthing gives the parent typed tools to start, wait for, inspect, steer, and stop
+those child agents.
 
 ## Placement and durable state
 
