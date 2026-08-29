@@ -129,7 +129,14 @@ async function apiIdentity(principalState, who) {
 }
 
 fs.mkdirSync(OUT, { recursive: true });
-const browser = await chromium.launch({ args: ['--disable-dev-shm-usage', '--no-sandbox'] });
+const launchOptions = { args: ['--disable-dev-shm-usage', '--no-sandbox'] };
+// CI uses Playwright's bundled Chromium. Operators can point the live canary at
+// an already-installed Chromium-family browser instead of downloading another
+// browser solely to exercise a deployed roost.
+if (process.env.WT_E2E_CHROMIUM_EXECUTABLE) {
+  launchOptions.executablePath = process.env.WT_E2E_CHROMIUM_EXECUTABLE;
+}
+const browser = await chromium.launch(launchOptions);
 const openContexts = [];
 
 try {
