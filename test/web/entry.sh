@@ -23,6 +23,14 @@ for _attempt in $(seq 1 90); do
   sleep 1
 done
 if [ "$seeded" = "1" ]; then
+  # Seed a provider profile for Alice only. The directory name is
+  # userHash("u-alice"); the browser canary verifies that the launched Claude
+  # process receives this profile while Bob's distinct identity does not.
+  ALICE_HOME=/root/.wingthing/user-homes/e3fb03053ead
+  install -d -m 0700 "$ALICE_HOME/.claude"
+  printf '%s\n' '{"hasCompletedOnboarding":true,"wtCanaryProfile":"alice-persisted"}' \
+    > "$ALICE_HOME/.claude/.claude.json"
+  chmod 0600 "$ALICE_HOME/.claude/.claude.json"
   echo CANARY_SEEDED
   touch /tmp/seeded
 else

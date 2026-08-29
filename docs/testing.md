@@ -16,7 +16,7 @@ disagree about which sessions exist.
 | `make test-compat` | real last-release and candidate binaries: historical migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup, and rollback reopen | third-party wrappers and unsupported pre-baseline releases |
 | `make test-linux` | Debian container with privileged Linux sandbox, CLI, and namespace batteries | Ubuntu-specific behavior |
 | `make test-linux-ubuntu` | Ubuntu 24.04 version of the Linux battery | macOS and browser |
-| `make test-web` | seeded organization-mode roost, empty-enrollment legacy org canary, and hosted direct-free/relay-entitlement deployments driven by Playwright | local MCP, headless runs, real OAuth provider |
+| `make test-web` | seeded organization-mode roost (including per-identity provider-profile routing), empty-enrollment legacy org canary, and hosted direct-free/relay-entitlement deployments driven by Playwright | local MCP, headless runs, real OAuth provider |
 | `make test-provider-swap` | real supported CLIs against local models, direct and through Wingthing | hosted models and shared-roost HTTP MCP |
 | `make test-e2e` | both Linux batteries plus `make test-integ` | `make test-web` and `make test-provider-swap` |
 
@@ -68,7 +68,7 @@ the private namespace.
 | LLM, local wing | registry-defined local tool schemas, owner isolation, run lifecycle | Codex and Claude start/wait/result | provider smoke covers older prompt tools, not the current run lifecycle |
 | Human, personal remote wing | relay/tunnel plus browser session lifecycle | browser attaches to a real registered wing | shared-roost browser canary is the closest automated case |
 | LLM, personal remote wing | encrypted remote control RPC, target auth, qualified resources, grants, bounds, and two-wing connector reconnect | real MCP client controls two external wings without relay payloads | Passed on an external macOS wing plus Bryan: one built connector listed both direct targets, launched real Codex and Claude sessions, observed distinct responses, and stopped the qualified sessions. Fresh-user production enrollment remains a separate gate. |
-| Human, shared roost | two-user browser, path ACL, credential home, restart | canary shared deployment | automated tier plus Bryan's 17/17 public HTTPS org canary cover the main path |
+| Human, shared roost | two-user browser, path ACL, per-identity provider profile, credential home, restart | canary shared deployment | automated tier asserts one identity loads its persisted Claude profile while a second identity cannot inherit it; Bryan's public HTTPS org canary covers the real deployment path |
 | LLM, shared roost | OAuth HTTP MCP plus direct MCP, two owners, two actors, path bounds | Codex and Claude OAuth login and semantic run | native local MCP launched and controlled real Claude on Bryan; real OAuth-client semantic runs remain missing |
 | Several portals | qualified IDs, independent auth, fan-out inventory | one client routes work to two real portals | target registry doesn't exist |
 

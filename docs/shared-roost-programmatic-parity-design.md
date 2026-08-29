@@ -253,6 +253,10 @@ current `spawnEgg` condition based on `identity.Email != "" && identity.OrgWing`
 is insufficient: an OAuth roost can be multi-user with an empty wing org and
 therefore expose the host user's real home to every egg.
 
+Distinct authenticated accounts remain distinct owners even when one human
+controls both. Wingthing does not infer an account link from display names or
+email similarity, and it never aliases or copies provider homes implicitly.
+
 Personal provider credentials live only in the owner's agent home. Enrollment
 is explicit:
 

@@ -57,7 +57,10 @@ paths:
 ## User and administrator boundaries
 
 Each user completes Claude, Codex, or other provider login inside one of their own
-sessions. Later sessions reuse only that user's agent home.
+sessions. Later sessions reuse only that exact Wingthing account's agent home. A
+second Wingthing account gets a separate home even when the same person controls
+both accounts; Wingthing does not infer account relationships or copy provider
+credentials between them.
 
 Wingthing isolates users from one another at its application and sandbox layers. It
 does not protect their credentials from the server or hypervisor administrator; the

@@ -28,7 +28,8 @@ claude mcp add --scope user --transport http wingthing-roost https://roost.examp
 
 Complete the browser login as the person who should own the work. Then ask the
 parent to call `wingthing_capabilities` and use a working directory allowed by the
-roost.
+roost. Use the same Wingthing account that completed the child provider login on
+this roost. Separate Wingthing accounts deliberately have separate provider homes.
 
 ## Use it
 

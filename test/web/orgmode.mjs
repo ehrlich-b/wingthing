@@ -132,7 +132,9 @@ try {
     const lock = await waitLock(p);
     record('alice: E2E identity lock derived (fail-closed path)', lock.ok, `pty-status=${JSON.stringify(lock.status)}`);
 
-    // mock claude prints probe JSON then CANARY_SHELL_READY; wait for it, then interact
+    // The Claude-shaped canary reads the same isolated profile path as the real
+    // CLI. Alice must receive her persisted profile through the complete
+    // browser -> roost -> wing -> egg launch path.
     try {
       await p.waitForFunction(
         () => {
@@ -144,6 +146,23 @@ try {
       record('alice: agent session reached interactive shell', true);
     } catch {
       record('alice: agent session reached interactive shell', false, 'CANARY_SHELL_READY not seen in terminal');
+    }
+    try {
+      await p.waitForFunction(
+        () => {
+          const rows = document.querySelectorAll('#terminal-container .xterm-rows > div');
+          return Array.from(rows).some((r) => r.textContent.includes('CANARY_PROFILE_READY'));
+        },
+        { timeout: 15000 }
+      );
+      const text = await terminalText(p);
+      const loaded = text.includes('marker=alice-persisted') &&
+        text.includes('dir_ok=true') && text.includes('onboarding=true') &&
+        !text.includes('CANARY_PROFILE_EMPTY');
+      record('alice: existing Claude profile is loaded from her isolated home', loaded,
+        loaded ? '' : text.slice(0, 300));
+    } catch (e) {
+      record('alice: existing Claude profile is loaded from her isolated home', false, String(e).slice(0, 200));
     }
     await shot(p, 'alice-terminal-agent-output');
 
@@ -299,6 +318,22 @@ try {
       record('bob: member terminal in own role path works', lock.ok, `pty-status=${JSON.stringify(lock.status)}`);
     } catch (e) {
       record('bob: member terminal in own role path works', false, String(e).slice(0, 200));
+    }
+    try {
+      await p.waitForFunction(
+        () => {
+          const rows = document.querySelectorAll('#terminal-container .xterm-rows > div');
+          return Array.from(rows).some((r) => r.textContent.includes('CANARY_PROFILE_'));
+        },
+        { timeout: 15000 }
+      );
+      const text = await terminalText(p);
+      const isolated = text.includes('CANARY_PROFILE_EMPTY') && text.includes('dir_ok=true') &&
+        !text.includes('alice-persisted');
+      record('bob: distinct identity cannot inherit Alice Claude profile', isolated,
+        isolated ? '' : text.slice(0, 300));
+    } catch (e) {
+      record('bob: distinct identity cannot inherit Alice Claude profile', false, String(e).slice(0, 200));
     }
     await shot(p, 'bob-terminal-eng');
 

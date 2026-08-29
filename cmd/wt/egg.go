@@ -966,10 +966,46 @@ func NormalizeUser(email string) string {
 	return strings.Trim(s, "-")
 }
 
-// userHash returns the first 12 hex chars of the SHA256 of the email.
-func userHash(email string) string {
-	h := sha256.Sum256([]byte(email))
+// userHash returns the first 12 hex chars of the SHA256 of a stable identity.
+// Org/shared-host callers deliberately pass the authenticated user ID, not an
+// email address: two distinct Wingthing accounts must not silently share agent
+// credentials merely because an identity provider reports the same email.
+func userHash(stableIdentity string) string {
+	h := sha256.Sum256([]byte(stableIdentity))
 	return hex.EncodeToString(h[:])[:12]
+}
+
+func prepareIsolatedClaudeConfig(home string, envMap map[string]string) error {
+	claudeDir := filepath.Join(home, ".claude")
+	envMap["CLAUDE_CONFIG_DIR"] = claudeDir
+
+	// One-time migration: users who already completed onboarding under the old
+	// layout have their config at ~/.claude.json. Relocating
+	// CLAUDE_CONFIG_DIR would leave that behind and re-prompt them once on
+	// release. Seed the new path from the old file if it hasn't been created
+	// yet. Only a regular file is migrated — a symlink at the root is the
+	// shared empty stub, whose users never had persisted state to preserve.
+	newCfg := filepath.Join(claudeDir, ".claude.json")
+	oldCfg := filepath.Join(home, ".claude.json")
+	if _, err := os.Stat(newCfg); errors.Is(err, os.ErrNotExist) {
+		if fi, legacyErr := os.Lstat(oldCfg); legacyErr == nil && fi.Mode().IsRegular() {
+			data, readErr := os.ReadFile(oldCfg)
+			if readErr != nil {
+				return fmt.Errorf("read legacy Claude config: %w", readErr)
+			}
+			if err := os.MkdirAll(claudeDir, 0700); err != nil {
+				return fmt.Errorf("prepare Claude config directory: %w", err)
+			}
+			if err := writeAtomicMetadataFile(newCfg, data, 0600); err != nil {
+				return fmt.Errorf("migrate Claude config: %w", err)
+			}
+		} else if legacyErr != nil && !errors.Is(legacyErr, os.ErrNotExist) {
+			return fmt.Errorf("inspect legacy Claude config: %w", legacyErr)
+		}
+	} else if err != nil {
+		return fmt.Errorf("inspect Claude config: %w", err)
+	}
+	return nil
 }
 
 func writeEggOwner(dir, userID, email string) error {
@@ -1263,33 +1299,8 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// the per-user home: onboarding and theme now land there immediately and
 	// survive across sessions regardless of how the previous one ended.
 	if isolatedUser && agentName == "claude" {
-		claudeDir := filepath.Join(effectiveHome, ".claude")
-		envMap["CLAUDE_CONFIG_DIR"] = claudeDir
-		// One-time migration: users who already completed onboarding under the
-		// old layout have their config at ~/.claude.json (HOME root). Relocating
-		// CLAUDE_CONFIG_DIR would leave that behind and re-prompt them once on
-		// release. Seed the new path from the old file if it hasn't been created
-		// yet. Only a regular file is migrated — a symlink at the root is the
-		// shared empty stub, whose users never had persisted state to preserve.
-		newCfg := filepath.Join(claudeDir, ".claude.json")
-		oldCfg := filepath.Join(effectiveHome, ".claude.json")
-		if _, err := os.Stat(newCfg); errors.Is(err, os.ErrNotExist) {
-			if fi, lerr := os.Lstat(oldCfg); lerr == nil && fi.Mode().IsRegular() {
-				data, rerr := os.ReadFile(oldCfg)
-				if rerr != nil {
-					return nil, fmt.Errorf("read legacy Claude config: %w", rerr)
-				}
-				if err := os.MkdirAll(claudeDir, 0700); err != nil {
-					return nil, fmt.Errorf("prepare Claude config directory: %w", err)
-				}
-				if err := writeAtomicMetadataFile(newCfg, data, 0600); err != nil {
-					return nil, fmt.Errorf("migrate Claude config: %w", err)
-				}
-			} else if lerr != nil && !errors.Is(lerr, os.ErrNotExist) {
-				return nil, fmt.Errorf("inspect legacy Claude config: %w", lerr)
-			}
-		} else if err != nil {
-			return nil, fmt.Errorf("inspect Claude config: %w", err)
+		if err := prepareIsolatedClaudeConfig(effectiveHome, envMap); err != nil {
+			return nil, err
 		}
 	}
 	// Rebuild agent settings every session for org wing users.
