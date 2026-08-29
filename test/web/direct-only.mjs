@@ -45,19 +45,18 @@ try {
     const links = nav.querySelector('.nav-links');
     const linkElements = Array.from(links.querySelectorAll('a'));
     const linkRects = linkElements.map((link) => link.getBoundingClientRect());
-    const main = document.querySelector('main');
-    const mainLinks = main ? Array.from(main.querySelectorAll('a[href]')) : [];
-    const heading = main ? main.querySelector('h1') : null;
-    const heroVideo = main ? main.querySelector('video, iframe[title*="video" i], [data-hero-video]') : null;
-    const installCTA = mainLinks.find((link) => /\binstall\b/i.test(text(link)));
+    const hero = document.querySelector('.container > .hero');
+    const heroLinks = hero ? Array.from(hero.querySelectorAll('a[href]')) : [];
+    const heroVideo = hero ? hero.querySelector('video, iframe[title*="video" i], [data-hero-video]') : null;
+    const installCTA = heroLinks.find((link) => /\binstall\b/i.test(text(link)));
     const patternsLink = Array.from(document.querySelectorAll('a[href]')).find((link) => {
       const url = new URL(link.getAttribute('href'), location.href);
       return url.origin === location.origin && url.pathname.replace(/\/$/, '') === '/patterns' &&
         text(link).toLowerCase() === 'patterns';
     });
-    const hierarchyAnchor = heroVideo || installCTA;
-    const introElements = main ? Array.from(main.querySelectorAll('h1, p'))
-      .filter((element) => comesBefore(element, hierarchyAnchor)) : [];
+    const introElements = hero ? Array.from(hero.children)
+      .filter((element) => element.matches('h1, p.tagline')) : [];
+    const introEnd = introElements[introElements.length - 1];
     const introText = introElements.map(text).join(' ');
     return {
       navLabels: linkElements.map((link) => link.textContent.trim()),
@@ -66,7 +65,7 @@ try {
       linksBelowLogo: links.getBoundingClientRect().top >= logo.bottom,
       linksInsideViewport: linkRects.every((rect) => rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 0.5),
       noHorizontalOverflow: document.documentElement.scrollWidth <= innerWidth,
-      headingCount: main ? main.querySelectorAll('h1').length : 0,
+      headingCount: introElements.filter((element) => element.matches('h1')).length,
       introText,
       routeMapCount: document.querySelectorAll('.route-map').length,
       dataRouteCount: document.querySelectorAll('[data-route]').length,
@@ -74,9 +73,9 @@ try {
       patternsVisible: isVisible(patternsLink),
       heroConfigured: Boolean(heroVideo),
       heroVisible: isVisible(heroVideo),
-      introBeforeHero: comesBefore(heading, heroVideo),
+      introBeforeHero: comesBefore(introEnd, heroVideo),
       heroBeforeInstall: comesBefore(heroVideo, installCTA),
-      introBeforeInstall: comesBefore(heading, installCTA),
+      introBeforeInstall: comesBefore(introEnd, installCTA),
       installCTAText: text(installCTA),
       installCTAHref: installCTA ? installCTA.getAttribute('href') : '',
       installCTAVisible: isVisible(installCTA),
