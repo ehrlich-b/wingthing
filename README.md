@@ -48,8 +48,17 @@ ownership and audit attribution inside Wingthing, not a new operating-system
 security boundary. Optional grants and spawn bounds live in
 `~/.wingthing/clients.yaml`.
 
-To give the parent agent one qualified inventory across remote wings, log in on
-the client machine and use the direct connector instead:
+To give the parent agent one qualified inventory across remote wings, first log
+in and start Wingthing on every execution machine. Install and authenticate each
+provider CLI there as the OS user who will own its runs:
+
+```bash
+wt login
+wt start
+```
+
+Then log in on the parent-agent machine and add the direct connector (if it is
+also an execution wing, the commands above already satisfy its wing setup):
 
 ```bash
 wt login

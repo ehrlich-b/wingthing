@@ -211,14 +211,8 @@ a.prompt-line:hover .prompt-key{background:var(--action);color:#fff}
 </div>
 <script>
 (function(){
-var agents=['claude','codex','cursor','ollama','gemini'];
-var profiles={
-  claude:{env:['ANTHROPIC_API_KEY'],writeDirs:['~/.cache/claude/'],writeRegex:['~/.claude*'],domains:['*.anthropic.com','*.claude.com','sentry.io','statsigapi.net']},
-  codex:{env:['OPENAI_API_KEY'],writeDirs:['~/.codex/'],writeRegex:[],domains:['api.openai.com','*.openai.com']},
-  cursor:{env:['ANTHROPIC_API_KEY','OPENAI_API_KEY'],writeDirs:['~/.cursor/','~/Library/Caches/cursor-compile-cache/'],writeRegex:[],domains:['api.anthropic.com','api.openai.com','*.cursor.sh']},
-  ollama:{env:[],writeDirs:['~/.ollama/'],writeRegex:[],domains:['localhost']},
-  gemini:{env:['GEMINI_API_KEY','GOOGLE_API_KEY'],writeDirs:['~/.gemini/'],writeRegex:[],domains:['*.googleapis.com','generativelanguage.googleapis.com']}
-};
+var agents={{.SandboxBuilderAgents}};
+var profiles={{.SandboxBuilderAgentProfiles}};
 var defaultFS=[
   {mode:'rw',path:'./'},
   {mode:'rw',path:'~/.cache/'},
@@ -374,6 +368,14 @@ window.sbAddEnv=function(){state.envAllow.push('');renderEnv();sbRender();};
 
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function rpad(s,n){while(s.length<n)s+=' ';return s;}
+function agentPath(d,regex){return '~/'+d+(regex?'*':'/');}
+function agentEnv(ap){
+  var env=[],seen={};
+  (ap.EnvVars||[]).concat(ap.PlatformEnv||[],Object.keys(ap.SetEnv||{})).forEach(function(e){
+    if(!seen[e]){seen[e]=true;env.push(e);}
+  });
+  return env;
+}
 
 window.sbRender=function(){
   state.baseFS=document.getElementById('sb-base-fs').checked;
@@ -456,11 +458,11 @@ window.sbRender=function(){
     });
     // Agent write dirs
     if(ap){
-      ap.writeDirs.forEach(function(d){
-        pv.push({text:rpad('  - "rw:'+d+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
+      (ap.WriteDirs||[]).forEach(function(d){
+        pv.push({text:rpad('  - "rw:'+agentPath(d,false)+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
       });
-      ap.writeRegex.forEach(function(d){
-        pv.push({text:rpad('  - "rw:'+d+'"',38)+'# ['+state.agent+'] (regex)',cls:'y-agent'});
+      (ap.WriteRegex||[]).forEach(function(d){
+        pv.push({text:rpad('  - "rw:'+agentPath(d,true)+'"',38)+'# ['+state.agent+'] (regex)',cls:'y-agent'});
       });
     }
     // Base deny rules (skip overridden by user rw/ro)
@@ -479,11 +481,11 @@ window.sbRender=function(){
     if(showFS){
       pv.push({text:'fs:',cls:userFS.length?'y-user':'y-agent'});
       if(ap){
-        ap.writeDirs.forEach(function(d){
-          pv.push({text:rpad('  - "rw:'+d+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
+        (ap.WriteDirs||[]).forEach(function(d){
+          pv.push({text:rpad('  - "rw:'+agentPath(d,false)+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
         });
-        ap.writeRegex.forEach(function(d){
-          pv.push({text:rpad('  - "rw:'+d+'"',38)+'# ['+state.agent+'] (regex)',cls:'y-agent'});
+        (ap.WriteRegex||[]).forEach(function(d){
+          pv.push({text:rpad('  - "rw:'+agentPath(d,true)+'"',38)+'# ['+state.agent+'] (regex)',cls:'y-agent'});
         });
       }
       userFS.forEach(function(r){
@@ -493,7 +495,7 @@ window.sbRender=function(){
   }
 
   // --- Network section ---
-  var agentNet=ap?ap.domains:[];
+  var agentNet=ap?(ap.Domains||[]):[];
   if(state.netMode==='*'){
     pv.push({text:'network: "*"',cls:'y-user'});
   }else if(state.netMode==='domains'){
@@ -520,13 +522,13 @@ window.sbRender=function(){
   }
 
   // --- Env section ---
-  var agentEnv=ap?ap.env:[];
+  var agentEnvVars=ap?agentEnv(ap):[];
   var userEnv=state.envAllow.filter(function(e){return e;});
   if(state.envAll){
     pv.push({text:'env: "*"',cls:'y-user'});
-  }else if(agentEnv.length||userEnv.length){
+  }else if(agentEnvVars.length||userEnv.length){
     pv.push({text:'env:',cls:userEnv.length?'y-user':'y-agent'});
-    agentEnv.forEach(function(e){
+    agentEnvVars.forEach(function(e){
       pv.push({text:rpad('  - "'+e+'"',38)+'# ['+state.agent+']',cls:'y-agent'});
     });
     userEnv.forEach(function(e){

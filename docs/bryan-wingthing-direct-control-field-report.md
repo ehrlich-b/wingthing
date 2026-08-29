@@ -271,7 +271,8 @@ The direct manager is credible but not yet a polished default:
   separate directory, authorization, revocation, and conflict-resolution project.
 - Fresh authenticated enrollment and the remaining production account-cohort
   canaries still precede broad rollout. The physical two-machine canary and the
-  real N-1/candidate compatibility battery now pass.
+  configured historical-baseline/candidate compatibility battery now pass; the
+  pinned baseline is not an assertion about the immediately previous release.
 
 The two-machine canary also found three custom-roost UX/privacy defects. `wt start
 --roost` printed the public app URL, `wt wing status` validated the token against a

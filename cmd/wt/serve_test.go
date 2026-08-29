@@ -1,12 +1,86 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 )
+
+func TestLoadServeRuntimeDetectsFlyRoleBeforeConfigCreatesDataDirectory(t *testing.T) {
+	t.Run("unmounted edge", func(t *testing.T) {
+		dataDir := filepath.Join(t.TempDir(), "data")
+		t.Setenv("WINGTHING_DIR", dataDir)
+		t.Setenv("FLY_MACHINE_ID", "edge-machine")
+		t.Setenv("FLY_REGION", "lhr")
+		t.Setenv("FLY_APP_NAME", "wingthing-test")
+		t.Setenv("WT_NODE_ROLE", "")
+		t.Setenv("WT_LOGIN_ADDR", "")
+
+		runtime, err := loadServeRuntime(dataDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.nodeRole != "edge" || !runtime.autoRole {
+			t.Fatalf("role = %q auto=%v, want auto-detected edge", runtime.nodeRole, runtime.autoRole)
+		}
+		if want := "http://login.process.wingthing-test.internal:8080"; runtime.loginAddr != want || !runtime.autoLogin {
+			t.Fatalf("login address = %q auto=%v, want %q", runtime.loginAddr, runtime.autoLogin, want)
+		}
+		if _, err := os.Stat(dataDir); err != nil {
+			t.Fatalf("config load did not create its state directory after role detection: %v", err)
+		}
+	})
+
+	t.Run("mounted login", func(t *testing.T) {
+		dataDir := filepath.Join(t.TempDir(), "data")
+		if err := os.Mkdir(dataDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("WINGTHING_DIR", filepath.Join(dataDir, ".wingthing"))
+		t.Setenv("FLY_MACHINE_ID", "login-machine")
+		t.Setenv("FLY_APP_NAME", "wingthing-test")
+		t.Setenv("WT_NODE_ROLE", "")
+		t.Setenv("WT_LOGIN_ADDR", "")
+
+		runtime, err := loadServeRuntime(dataDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.nodeRole != "login" || !runtime.autoRole {
+			t.Fatalf("role = %q auto=%v, want auto-detected login", runtime.nodeRole, runtime.autoRole)
+		}
+		if runtime.loginAddr != "" || runtime.autoLogin {
+			t.Fatalf("login node derived an edge address: %q auto=%v", runtime.loginAddr, runtime.autoLogin)
+		}
+	})
+}
+
+func TestLoadServeRuntimePreservesExplicitNodeRoleAndLoginAddress(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	if err := os.Mkdir(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WINGTHING_DIR", filepath.Join(dataDir, ".wingthing"))
+	t.Setenv("FLY_MACHINE_ID", "edge-machine")
+	t.Setenv("FLY_APP_NAME", "wingthing-test")
+	t.Setenv("WT_NODE_ROLE", "edge")
+	t.Setenv("WT_LOGIN_ADDR", "http://login.internal:9090")
+
+	runtime, err := loadServeRuntime(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.nodeRole != "edge" || runtime.autoRole {
+		t.Fatalf("role = %q auto=%v, want explicit edge", runtime.nodeRole, runtime.autoRole)
+	}
+	if runtime.loginAddr != "http://login.internal:9090" || runtime.autoLogin {
+		t.Fatalf("login address = %q auto=%v, want explicit address", runtime.loginAddr, runtime.autoLogin)
+	}
+}
 
 func TestSaveLocalServeTokenPreservesOrdinaryPortalLogin(t *testing.T) {
 	dir := t.TempDir()

@@ -101,7 +101,7 @@ host when configured.
 | Field | Merge behavior |
 |-------|---------------|
 | `fs` | Appended. Explicit `ro:` or `rw:` for a path **overrides** a `deny:` of the same path from a parent. |
-| `network` | Unioned. Child domains added to parent domains. `"*"` in any layer = full network. |
+| `network` | Unioned. Child domains added to parent domains. `"*"` in any layer selects the broadest platform policy: any CONNECT destination on Linux without a general route, while macOS emits no Seatbelt network deny. |
 | `env` | Unioned. Child vars added to parent vars. `"*"` in any layer = all env. |
 | `resources` | Scalar override — child value wins per-field (cpu, memory, max_fds). |
 | `shell` | Scalar override — child wins. |

@@ -79,6 +79,12 @@
 <p>This self-hosted path needs no Wingthing account. WT creates a localhost-only certificate on demand, installs only its public CA for your current user, and keeps its private keys on this machine.</p>
 
 <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text)">give an agent access to all your remote wings</h3>
+<p>On every execution machine, install and authenticate the provider CLIs that may run there, then log in and start its wing:</p>
+<div class="docs-code">
+<span class="prompt">$ </span><span class="cmd">wt login</span><br>
+<span class="prompt">$ </span><span class="cmd">wt start</span><br>
+</div>
+<p>On the parent-agent machine, log in to the same account and register the direct connector. If that machine is also an execution wing, it is already logged in:</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
 <span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp connect --client codex</span><br>

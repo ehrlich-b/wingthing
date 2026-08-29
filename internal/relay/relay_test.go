@@ -7,9 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/egg"
 )
 
 func mustTest(t *testing.T, err error) {
@@ -349,6 +352,7 @@ func TestPatternsPageExplainsOnlySupportedSetups(t *testing.T) {
 		"Run a durable, sandboxed agent on this computer",
 		"Let your current AI launch local sub-agents",
 		"Let one AI manage agents on several computers",
+		"Use the hosted browser on a remote wing",
 		"Control a remote agent from a localhost browser",
 		"Give a team a private browser-based agent host",
 		"Let an AI control agents on your private roost",
@@ -356,14 +360,15 @@ func TestPatternsPageExplainsOnlySupportedSetups(t *testing.T) {
 		"an enrolled account on a roost",
 		"You need:",
 		"You get:",
+		"hosted browser -> encrypted relay -> selected wing -> agent",
 		"localhost browser -> local portal -> SSH tunnel -> remote wing -> agent",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("/patterns does not contain %q", want)
 		}
 	}
-	if got := strings.Count(page, `<section class="pattern">`); got != 6 {
-		t.Errorf("/patterns contains %d setup cards, want 6", got)
+	if got := strings.Count(page, `<section class="pattern">`); got != 7 {
+		t.Errorf("/patterns contains %d setup cards, want 7", got)
 	}
 	for _, internal := range []string{
 		"the workflows people are asking for",
@@ -454,12 +459,53 @@ func TestSignedInHomeUsesConfiguredAppURLForLinkAndShortcut(t *testing.T) {
 	}
 }
 
+func TestHomeSandboxBuilderAgentProfilesMatchEggPolicy(t *testing.T) {
+	_, ts := testServer(t)
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	defer closeTestBody(t, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read home page: %v", err)
+	}
+
+	const prefix = "var profiles="
+	start := strings.Index(string(body), prefix)
+	if start == -1 {
+		t.Fatal("home page omitted sandbox builder agent profiles")
+	}
+	encoded := string(body[start+len(prefix):])
+	end := strings.Index(encoded, ";")
+	if end == -1 {
+		t.Fatal("sandbox builder agent profiles were not terminated")
+	}
+
+	var rendered map[string]egg.AgentProfile
+	if err := json.Unmarshal([]byte(encoded[:end]), &rendered); err != nil {
+		t.Fatalf("decode sandbox builder agent profiles: %v", err)
+	}
+	if len(rendered) != len(sandboxBuilderAgents) {
+		t.Fatalf("rendered profiles = %d, want %d", len(rendered), len(sandboxBuilderAgents))
+	}
+	for _, agent := range sandboxBuilderAgents {
+		if got, want := rendered[agent], egg.Profile(agent); !reflect.DeepEqual(got, want) {
+			t.Errorf("rendered %s profile = %+v, want %+v", agent, got, want)
+		}
+	}
+}
+
 func TestPatternMarkdownRoutesServeCheckedInRecipes(t *testing.T) {
 	_, ts := testServer(t)
 	paths := []string{
 		"/patterns/SKILL.md",
 		"/patterns/local-sandbox/INSTRUCTIONS.md",
 		"/patterns/local-subagents/INSTRUCTIONS.md",
+		"/patterns/hosted-browser-wing/INSTRUCTIONS.md",
 		"/patterns/personal-remote-wing/INSTRUCTIONS.md",
 		"/patterns/shared-web-roost/INSTRUCTIONS.md",
 		"/patterns/shared-roost-agents/INSTRUCTIONS.md",

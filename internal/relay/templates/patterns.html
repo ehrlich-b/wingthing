@@ -72,6 +72,19 @@
 
 <section class="pattern">
 <div class="pattern-num">04</div>
+<div class="pattern-tags"><span class="pattern-tag">remote computer</span><span class="pattern-tag">browser</span><span class="pattern-tag">hosted relay</span></div>
+<h2>Use the hosted browser on a remote wing</h2>
+<p>Start and resume a persistent agent terminal from <code>app.wingthing.ai</code> when your account and wing both permit hosted relay.</p>
+<ul class="pattern-facts">
+<li><strong>You need:</strong> an account with hosted-relay access; an execution machine running <code>wt login</code> and <code>wt start</code>; the provider already authenticated there; and effective wing policy <code>hosted_relay: allow</code>.</li>
+<li><strong>You get:</strong> a hosted browser terminal whose application-encrypted payloads are relayed to the selected wing. The hosted service still sees routing metadata and supplies the browser code.</li>
+</ul>
+<div class="flow">hosted browser -> encrypted relay -> selected wing -> agent</div>
+<div class="recipe-row"><a href="/patterns/hosted-browser-wing/INSTRUCTIONS.md">read setup guide</a><button class="copy-recipe" data-copy="/patterns/hosted-browser-wing/INSTRUCTIONS.md">copy setup guide</button></div>
+</section>
+
+<section class="pattern">
+<div class="pattern-num">05</div>
 <div class="pattern-tags"><span class="pattern-tag">remote computer</span><span class="pattern-tag">browser</span><span class="pattern-tag">self-hosted</span></div>
 <h2>Control a remote agent from a localhost browser</h2>
 <p>Run the web app on the computer in front of you, carry it over SSH, and launch Claude or Codex on the remote computer.</p>
@@ -84,7 +97,7 @@
 </section>
 
 <section class="pattern">
-<div class="pattern-num">05</div>
+<div class="pattern-num">06</div>
 <div class="pattern-tags"><span class="pattern-tag">team</span><span class="pattern-tag">private server</span><span class="pattern-tag">browser</span></div>
 <h2>Give a team a private browser-based agent host</h2>
 <p>Run Wingthing on one shared server so several people can launch and resume their own agent sessions through a private web UI.</p>
@@ -97,7 +110,7 @@
 </section>
 
 <section class="pattern">
-<div class="pattern-num">06</div>
+<div class="pattern-num">07</div>
 <div class="pattern-tags"><span class="pattern-tag">private server</span><span class="pattern-tag">AI-driven</span></div>
 <h2>Let an AI control agents on your private roost</h2>
 <p>Connect a local Claude or Codex client to your self-hosted Wingthing server and let it manage work there.</p>

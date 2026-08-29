@@ -18,6 +18,22 @@ Before launching, identify:
 Wingthing routes control. It does not create or synchronize workspaces, credentials,
 or memory across wings.
 
+## Choose the remote transport deliberately
+
+- Native remote MCP uses `wt mcp connect`. The connector machine must run
+  `wt login`; every execution machine must run `wt login` and `wt start`, have the
+  requested provider CLI installed and authenticated for the execution owner, and
+  already contain the requested workspace. This path is direct WebRTC and never
+  falls back to the hosted relay.
+- A hosted browser terminal requires both account-level hosted-relay access and an
+  execution wing whose effective `hosted_relay` policy is `allow` (the compatible
+  default). `hosted_relay: deny` overrides an otherwise entitled account until the
+  wing is restarted with the policy changed.
+- A self-hosted roost does not require a wingthing.ai hosted-relay entitlement. Its
+  operator controls enrollment and relay policy, and its HTTP MCP endpoint controls
+  that roost's embedded wing rather than joining independent roosts into one
+  inventory.
+
 ## Run safely
 
 1. Call `wingthing_capabilities` before relying on an operation or agent.

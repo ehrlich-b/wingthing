@@ -245,9 +245,10 @@ unlisted webhook—stops working.
 There is a second, explicit compatibility change: on Linux `network: "*"` now
 allows any TCP destination presented through HTTP CONNECT, but no longer creates
 a general routed interface. Ordinary raw-socket clients, UDP, ICMP, and programs
-that ignore proxy configuration fail. macOS `network: "*"` retains its unrestricted Seatbelt
-network behavior. This asymmetry is visible in `wt egg explain`; it must not be
-described as byte-for-byte runtime compatibility.
+that ignore proxy configuration fail. On macOS, `network: "*"` emits no Seatbelt
+network deny and therefore leaves networking subject to the host OS and any outer
+boundary. This asymmetry is visible in `wt egg explain`; it must not be described
+as byte-for-byte runtime compatibility.
 
 This is the "less anything insecure" carve-out. It is also the entire point: the
 policy starts meaning what it says. But it will break real setups, so it ships

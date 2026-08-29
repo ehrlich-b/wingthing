@@ -8,6 +8,8 @@ primary_region = "ewr"
 
 [processes]
   login = "sh -c 'umask 077 && mkdir -p /data/.wingthing && HOME=/data exec ./wt serve --addr :8080'"
+  # Optional edges are disabled in the checked-in deployment. Enabling them also
+  # requires adding "edge" to http_service.processes before deploy and scale.
   # edge = "./wt serve --addr :8080"
 
 [env]
@@ -45,10 +47,11 @@ primary_region = "ewr"
   memory = "512mb"
   processes = ["login"]
 
-# Horizontal scaling — uncomment edge process above, then:
-#   fly deploy
-#   fly scale count login=1 edge=3
-#   fly scale count edge=2 --region nrt,lhr
+# Optional edge rollout:
+#   1. Uncomment the edge process above.
+#   2. Change http_service.processes to ["login", "edge"].
+#   3. Run fly deploy and verify login remains healthy.
+#   4. Scale edges, for example: fly scale count edge=2 --region nrt,lhr
 #
 # One-time setup:
 #   fly secrets set WT_JWT_KEY=$(wt keygen)

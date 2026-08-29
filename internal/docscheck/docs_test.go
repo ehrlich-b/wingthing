@@ -69,6 +69,11 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 	root := repositoryRoot(t)
 	publicFiles := []string{
 		"README.md",
+		"SKILL.md",
+		"docs/fly-ops.md",
+		"docs/sandbox.md",
+		"docs/security.md",
+		"docs/skills/create-egg/SKILL.md",
 		"web/index.html",
 		"internal/relay/templates/docs.html",
 		"internal/relay/templates/patterns.html",
@@ -104,13 +109,16 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 	}
 
 	mustContain := map[string][]string{
-		"README.md": {"WT_ROOST_ALLOWED_EMAILS", "never silently falls back"},
-		"patterns/shared-web-roost/INSTRUCTIONS.md": {"WT_ROOST_ALLOWED_EMAILS", "OAuth by itself proves"},
-		"internal/relay/templates/docs.html":        {"WT_BASE_URL=https://roost.example.com", "WT_ROOST_ALLOWED_EMAILS", "wt roost start --addr :8080", "wt serve --addr :8080", "never silently changes", "gateway database contains", "does not let an account grant itself relay access", "no request happens until you choose load or open", "200,000 serialized terminal characters", "a wing binary from before", "stop or isolate the wing"},
-		"internal/relay/templates/privacy.html":     {"gateway database contains", "embedded wing separately keeps", "200,000 serialized terminal characters", "Clearing the site's browser data removes"},
-		"fly.toml":                                  {`WT_RELAY_POLICY = "direct-free"`, "WT_RELAY_MIGRATION_BEFORE"},
-		"docs/security.md":                          {"not a downgrade-compatible security policy", "stop the wing or isolate it"},
-		"docs/fly-ops.md":                           {"matching GitHub release", "it does not", "publish a GitHub release", "not a completed security boundary until every"},
+		"README.md": {"WT_ROOST_ALLOWED_EMAILS", "never silently falls back", "first log\nin and start Wingthing on every execution machine"},
+		"SKILL.md":  {"every execution machine must run `wt login` and `wt start`", "both account-level hosted-relay access", "does not require a wingthing.ai hosted-relay entitlement"},
+		"patterns/shared-web-roost/INSTRUCTIONS.md":    {"WT_ROOST_ALLOWED_EMAILS", "OAuth by itself proves"},
+		"patterns/hosted-browser-wing/INSTRUCTIONS.md": {"Account access and wing policy are independent", "wt login", "wt start", "self-hosted roost", "application-encrypted"},
+		"internal/relay/templates/docs.html":           {"WT_BASE_URL=https://roost.example.com", "WT_ROOST_ALLOWED_EMAILS", "wt roost start --addr :8080", "wt serve --addr :8080", "never silently changes", "gateway database contains", "does not let an account grant itself relay access", "no request happens until you choose load or open", "200,000 serialized terminal characters", "a wing binary from before", "stop or isolate the wing", "On every execution machine", "wt login", "wt start"},
+		"internal/relay/templates/patterns.html":       {"/patterns/hosted-browser-wing/INSTRUCTIONS.md", "account with hosted-relay access", "hosted browser -> encrypted relay -> selected wing"},
+		"internal/relay/templates/privacy.html":        {"gateway database contains", "embedded wing separately keeps", "200,000 serialized terminal characters", "Clearing the site's browser data removes"},
+		"fly.toml":                                     {`WT_RELAY_POLICY = "direct-free"`, "WT_RELAY_MIGRATION_BEFORE"},
+		"docs/security.md":                             {"not a downgrade-compatible security policy", "stop the wing or isolate it"},
+		"docs/fly-ops.md":                              {"matching GitHub release", "it does not", "publish a GitHub release", "not a completed security boundary until every", "active `fly.toml` is deliberately login-only", "Two edits", `processes = ["login", "edge"]`, "does not exercise a mixed Fly login/edge fleet"},
 	}
 	for rel, phrases := range mustContain {
 		data, readErr := os.ReadFile(filepath.Join(root, rel))
@@ -166,6 +174,101 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 	}
 }
 
+func TestFlyOperationsDocumentationMatchesActiveConfiguration(t *testing.T) {
+	root := repositoryRoot(t)
+	read := func(rel string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	fly := read("fly.toml")
+	if !regexp.MustCompile(`(?m)^\s*login\s*=`).MatchString(fly) {
+		t.Fatal("fly.toml must define the active login process")
+	}
+	if regexp.MustCompile(`(?m)^\s*edge\s*=`).MatchString(fly) {
+		t.Fatal("the checked-in Fly contract expects the optional edge process to remain disabled")
+	}
+
+	httpStart := strings.Index(fly, "[http_service]")
+	if httpStart < 0 {
+		t.Fatal("fly.toml has no http_service section")
+	}
+	httpEnd := strings.Index(fly[httpStart+1:], "\n[")
+	if httpEnd < 0 {
+		httpEnd = len(fly) - httpStart - 1
+	}
+	httpService := fly[httpStart : httpStart+1+httpEnd]
+	if !strings.Contains(httpService, `processes = ["login"]`) || strings.Contains(httpService, `"edge"`) {
+		t.Fatalf("checked-in http_service must route only to login:\n%s", httpService)
+	}
+	for _, phrase := range []string{
+		`processes = ["login"]`,
+		`processes = ["login", "edge"]`,
+		"ordinary `fly deploy` of the checked-in file does not create or route",
+		"before creating edge machines",
+	} {
+		if !strings.Contains(read("docs/fly-ops.md"), phrase) {
+			t.Errorf("docs/fly-ops.md must contain %q", phrase)
+		}
+	}
+
+	makefile := read("Makefile")
+	for _, phrase := range []string{"edge process is disabled in fly.toml", "edge is not attached to http_service.processes"} {
+		if !strings.Contains(makefile, phrase) {
+			t.Errorf("deploy-edge must guard the inactive Fly topology with %q", phrase)
+		}
+	}
+
+	serve := read("cmd/wt/serve.go")
+	detect := strings.Index(serve, `if runtime.flyMachineID != "" && runtime.nodeRole == ""`)
+	load := strings.Index(serve, "cfg, err := config.Load()")
+	if detect < 0 || load < 0 || detect > load {
+		t.Fatal("Fly role detection must remain before config.Load so config initialization cannot fabricate /data")
+	}
+}
+
+func TestCompatibilityDocumentationNamesTheConfiguredBaseline(t *testing.T) {
+	root := repositoryRoot(t)
+	checks := []struct {
+		path        string
+		mustHave    string
+		mustNotHave []string
+	}{
+		{path: "Makefile", mustHave: "configured historical", mustNotHave: []string{"against the last published"}},
+		{path: "docs/fly-ops.md", mustHave: "configured historical-baseline", mustNotHave: []string{"real N-1/current"}},
+		{path: "docs/testing.md", mustHave: "configured-baseline and candidate", mustNotHave: []string{"real last-release", "live N-1/N gateway-wing"}},
+		{path: "docs/direct-agent-manager-design.md", mustHave: "configured historical baseline", mustNotHave: []string{"runs real N-1 and candidate"}},
+		{path: "docs/bryan-wingthing-direct-control-field-report.md", mustHave: "configured historical-baseline/candidate", mustNotHave: []string{"real N-1/candidate"}},
+	}
+	for _, check := range checks {
+		data, err := os.ReadFile(filepath.Join(root, check.path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		if !strings.Contains(text, check.mustHave) {
+			t.Errorf("%s must name %q", check.path, check.mustHave)
+		}
+		for _, stale := range check.mustNotHave {
+			if strings.Contains(text, stale) {
+				t.Errorf("%s overstates the pinned compatibility gate with %q", check.path, stale)
+			}
+		}
+	}
+
+	script, err := os.ReadFile(filepath.Join(root, "scripts/test-backward-compat.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), `BASELINE_REF="${WT_COMPAT_BASELINE_REF:-`) {
+		t.Fatal("compatibility script must keep an explicit overridable baseline")
+	}
+}
+
 func TestCurrentDesignDocsDoNotHardCodeMCPToolCounts(t *testing.T) {
 	root := repositoryRoot(t)
 	// Tool membership is a tested contract in internal/control. Numeric prose
@@ -196,8 +299,13 @@ func TestSandboxDocumentationMatchesImplementedBoundary(t *testing.T) {
 	}{
 		{
 			path:        "docs/skills/create-egg/SKILL.md",
-			mustHave:    []string{"HOME write isolation", "not a filesystem allowlist", "locations outside HOME"},
-			mustNotHave: []string{"root filesystem read-only", "read-only root mount"},
+			mustHave:    []string{"HOME write isolation", "not a filesystem allowlist", "locations outside HOME", "one uniform raw-networking mode", "route-less namespace", "no Seatbelt network deny"},
+			mustNotHave: []string{"root filesystem read-only", "read-only root mount", "Unrestricted network defeats"},
+		},
+		{
+			path:        "docs/egg-inheritance-design.md",
+			mustHave:    []string{"broadest platform policy", "any CONNECT destination on Linux without a general route", "macOS emits no Seatbelt network deny"},
+			mustNotHave: []string{`"*" in any layer = full network`},
 		},
 		{
 			path:        "docs/container-mode.md",
