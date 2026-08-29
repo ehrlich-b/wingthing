@@ -1,14 +1,16 @@
 # Control a remote agent from a self-hosted browser
 
-Run the Wingthing web app on the computer in front of you, then connect a remote
-computer to it through SSH. Claude or Codex runs on the remote computer; your
-browser stays pointed at `localhost`.
+Choose this route when a person needs browser visibility into an agent on another
+machine. Run the Wingthing web app on the computer in front of you, then connect a
+remote computer to it through SSH. Claude or Codex runs on the remote computer;
+your browser stays pointed at `localhost`.
 
 ```text
 localhost browser -> local portal -> SSH tunnel -> remote wing -> Claude or Codex
 ```
 
-This is the smallest self-hosted setup. It does not use wingthing.ai.
+This is the first browser route to consider and the smallest self-hosted setup. It
+does not use wingthing.ai or require a hosted-relay entitlement.
 
 ## Placement and durable state
 

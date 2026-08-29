@@ -45,3 +45,7 @@ terminal open/detach/reattach/end lifecycle, and the no-enrollment-allowlist
 backward-compatibility contract. It records the one terminal ID it creates in
 `deployed-org-results.json`, allowing the operator to clean up precisely after
 an interrupted run. It does not create or modify database records itself.
+
+CI normally uses Playwright's bundled Chromium. A live operator can set
+`WT_E2E_CHROMIUM_EXECUTABLE` to an installed Chrome or Chromium executable to
+avoid downloading a browser.

@@ -77,6 +77,10 @@ deploy-edge:
 ifndef REGIONS
 	$(error REGIONS is required. Example: make deploy-edge REGIONS=nrt,lhr)
 endif
+	@grep -Eq '^[[:space:]]*edge[[:space:]]*=' fly.toml || \
+		{ echo 'edge process is disabled in fly.toml; follow docs/fly-ops.md before scaling' >&2; exit 1; }
+	@awk 'BEGIN { section = 0; found = 0 } /^\[http_service\]$$/ { section = 1; next } /^\[/ { section = 0 } section && /^[[:space:]]*processes[[:space:]]*=/ && /"edge"/ { found = 1 } END { exit !found }' fly.toml || \
+		{ echo 'edge is not attached to http_service.processes in fly.toml' >&2; exit 1; }
 	fly scale count edge=$(COUNT) --region $(REGIONS) --yes
 
 # Show all machines, regions, and process groups.
@@ -164,8 +168,9 @@ test-linux-ubuntu:
 test-integ: | web/dist
 	go test -count=1 -tags e2e -v -timeout 120s ./test/integ/...
 
-# Black-box rolling-upgrade and rollback gate against the last published
-# release. Requires the baseline tag to be available in the local clone.
+# Black-box rolling-upgrade and rollback gate against the configured historical
+# baseline (WT_COMPAT_BASELINE_REF, defaulted by the script). Requires that tag
+# to be available in the local clone.
 test-compat: | web/dist
 	scripts/test-backward-compat.sh
 

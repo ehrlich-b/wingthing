@@ -1,25 +1,28 @@
 ---
 name: patterns
-description: Set up a supported Wingthing workflow for local agents, remote machines, or a private shared roost.
+description: Choose the smallest supported local-first Wingthing route for an agent or person, then add remote or browser access only when required.
 ---
 
 # Wingthing patterns
 
-Choose the outcome the user wants. Only offer the supported setups below.
+Choose the first supported route that satisfies the request:
 
-- Run a durable sandboxed agent on this computer: read
-  [local sandbox](local-sandbox/INSTRUCTIONS.md).
-- Let the current Claude or Codex session launch local sub-agents: read
-  [local sub-agents](local-subagents/INSTRUCTIONS.md).
-- Let one AI manage agents on several computers: read
-  [remote orchestration](remote-orchestration/INSTRUCTIONS.md).
-- Control a remote agent from a localhost browser through a self-hosted portal and
-  SSH tunnel: read
-  [personal remote wing](personal-remote-wing/INSTRUCTIONS.md).
-- Give a team a private browser-based agent host: read
-  [shared web roost](shared-web-roost/INSTRUCTIONS.md).
-- Let an AI control agents on a private roost: read
-  [shared roost agents](shared-roost-agents/INSTRUCTIONS.md).
+1. **Local agent control with stdio MCP:** let the current Claude or Codex
+   session manage local sub-agents on existing code and provider logins. Read
+   [local sub-agents](local-subagents/INSTRUCTIONS.md).
+2. **Local sandboxed agent terminal for a person:** run and later reattach to an
+   agent on this computer. Read [local sandbox](local-sandbox/INSTRUCTIONS.md).
+3. **Direct remote MCP when machines differ:** let one AI explicitly select and
+   manage agents on several computers. Read
+   [remote orchestration](remote-orchestration/INSTRUCTIONS.md).
+4. **Self-hosted roost when a person needs a browser:** for one person's remote
+   machine, read [personal remote wing](personal-remote-wing/INSTRUCTIONS.md). For
+   a team browser host, read [shared web roost](shared-web-roost/INSTRUCTIONS.md).
+   To connect an AI to that private roost, read
+   [shared roost agents](shared-roost-agents/INSTRUCTIONS.md).
+5. **Optional entitled hosted relay:** only when the account already has
+   hosted-relay access and the selected wing allows it, read
+   [hosted browser wing](hosted-browser-wing/INSTRUCTIONS.md).
 
 Do not present planned features as patterns. In particular, Wingthing does not
 currently merge independent roosts into one inventory, provide browser-direct free

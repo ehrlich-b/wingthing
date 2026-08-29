@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	patternfiles "github.com/ehrlich-b/wingthing/patterns"
 )
 
@@ -88,10 +89,22 @@ func (s *Server) template(cached *template.Template, files ...string) *template.
 }
 
 type pageData struct {
-	User      *User
-	LocalMode bool
-	HeroVideo bool
-	AppURL    string
+	User                        *User
+	LocalMode                   bool
+	HeroVideo                   bool
+	AppURL                      string
+	SandboxBuilderAgents        []string
+	SandboxBuilderAgentProfiles map[string]egg.AgentProfile
+}
+
+var sandboxBuilderAgents = []string{"claude", "codex", "cursor", "ollama", "gemini"}
+
+func sandboxBuilderAgentProfiles() map[string]egg.AgentProfile {
+	profiles := make(map[string]egg.AgentProfile, len(sandboxBuilderAgents))
+	for _, agent := range sandboxBuilderAgents {
+		profiles[agent] = egg.Profile(agent)
+	}
+	return profiles
 }
 
 type loginPageData struct {
@@ -109,7 +122,14 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app/", http.StatusSeeOther)
 		return
 	}
-	data := pageData{User: s.sessionUser(r), LocalMode: s.LocalMode, HeroVideo: s.Config.HeroVideo != "", AppURL: s.appURL()}
+	data := pageData{
+		User:                        s.sessionUser(r),
+		LocalMode:                   s.LocalMode,
+		HeroVideo:                   s.Config.HeroVideo != "",
+		AppURL:                      s.appURL(),
+		SandboxBuilderAgents:        sandboxBuilderAgents,
+		SandboxBuilderAgentProfiles: sandboxBuilderAgentProfiles(),
+	}
 	s.executePageTemplate(w, s.template(homeTmpl, "base.html", "home.html"), data)
 }
 

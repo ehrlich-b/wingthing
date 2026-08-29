@@ -1,7 +1,8 @@
 # Let one AI manage agents on several computers
 
-Use this setup when one parent Claude or Codex session should run durable agents on
-several machines—for example, a home computer and an office VM.
+Use this setup only when the parent agent and execution wing are on different
+machines—for example, a home computer and an office VM. On one machine, prefer
+local `wt mcp stdio`.
 
 After setup, the parent AI can:
 
@@ -11,9 +12,9 @@ After setup, the parent AI can:
 - reconnect to work that kept running after the parent disconnected.
 
 Agent-control payloads travel over a direct encrypted connection to the selected
-computer. `wingthing.ai` handles login, the authorized computer list, and connection
-setup; it does not proxy free-tier MCP payloads. No execution computer needs an
-inbound port.
+computer. `wingthing.ai` handles login, the authorized computer list, and
+connection setup; it does not proxy direct MCP payloads or silently switch the
+connector to hosted relay. No execution computer needs an inbound port.
 
 ## Placement and durable state
 
@@ -45,7 +46,8 @@ already exist on the computer where they will run.
 ## 2. Connect the parent AI
 
 On the computer where you run the parent Claude or Codex session, install Wingthing
-and log into the same account. Then add the native connector.
+and log in using an account authorized for the execution wings, personally or
+through organization membership. Then add the native connector.
 
 Codex:
 

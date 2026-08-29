@@ -164,8 +164,9 @@ The existing HTTP MCP endpoint remains available during migration, and the deplo
 The deterministic connector canary now crosses JSON-RPC stdio and two independent
 real WebRTC data channels, verifies qualified `home`/`office` routing, reconnects, and
 checks that the coordinator handled signaling only. The compatibility gate separately
-runs real N-1 and candidate binaries in both gateway/wing upgrade orders, starts a PTY
-through the old browser message shape, and proves the old binary can reopen candidate
-state. The direct-MCP canary remains an in-process network test; the release gate still
-requires the built `wt mcp connect` process and a real Codex/Claude client against two
-distinct hosts, including the WSL rig.
+runs the configured historical baseline and candidate binaries in both gateway/wing
+upgrade orders, starts a PTY through the old browser message shape, and proves the
+baseline binary can reopen candidate state. The pin is not automatically the
+immediately previous release. The direct-MCP canary remains an in-process network
+test; the release gate still requires the built `wt mcp connect` process and a real
+Codex/Claude client against two distinct hosts, including the WSL rig.

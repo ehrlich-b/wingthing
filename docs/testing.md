@@ -13,7 +13,7 @@ disagree about which sessions exist.
 | `make check` | web build, `make test`, binary build | every tagged and external E2E tier |
 | `make test-vuln` | pinned `govulncheck` plus npm's current advisory database | unreachable vulnerable Go symbols and non-Go/npm dependencies |
 | `make test-integ` | in-process relay, PTY routing, P2P, tunnel, and synthetic agent lifecycle | native sandbox enforcement and browser rendering |
-| `make test-compat` | real last-release and candidate binaries: historical migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup, and rollback reopen | third-party wrappers and unsupported pre-baseline releases |
+| `make test-compat` | real configured-baseline and candidate binaries: historical migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup, and rollback reopen. `WT_COMPAT_BASELINE_REF` overrides the script's pinned default | third-party wrappers, releases newer than a stale pin, and unsupported pre-baseline releases |
 | `make test-linux` | Debian container with privileged Linux sandbox, CLI, and namespace batteries | Ubuntu-specific behavior |
 | `make test-linux-ubuntu` | Ubuntu 24.04 version of the Linux battery | macOS and browser |
 | `make test-web` | seeded organization-mode roost (including per-identity provider-profile routing), empty-enrollment legacy org canary, and hosted direct-free/relay-entitlement deployments driven by Playwright | local MCP, headless runs, real OAuth provider |
@@ -184,7 +184,8 @@ sufficient for authorization, transport, persistence, or sandbox work.
 
 Do not chase a repository-wide coverage percentage. Require evidence for claims:
 owner access is paired with outsider denial, allowed egress with proxy bypass denial,
-fresh schema with deployed-schema upgrade, new/new components with N-1/N behavior,
+fresh schema with deployed-schema upgrade, new/new components with the explicitly
+configured historical-baseline/candidate behavior,
 and successful lifecycle with cancellation/restart. Every dogfood bug gets the
 narrowest deterministic regression test that would have caught it.
 
@@ -196,8 +197,9 @@ The current CI shape is:
 - required Linux jobs: Debian and Ubuntu native-architecture batteries;
 - required browser job: `make test-web`;
 - required compatibility job: immutable historical migrations, CLI/flag surface,
-  task-store round trips, and live N-1/N gateway-wing PTY tests in both upgrade
-  orders; the browser job adds the four-principal organization-mode and legacy
+  task-store round trips, and live configured-baseline/candidate gateway-wing PTY
+  tests in both upgrade orders; the browser job adds the four-principal
+  organization-mode and legacy
   enrollment suites;
 - scheduled or protected-environment job: published agent and hosted-model
   canaries; and

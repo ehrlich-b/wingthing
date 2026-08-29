@@ -31,7 +31,7 @@
 {{define "content"}}
 <div class="inst-hero">
 <h1>install wt</h1>
-<p>Install Wingthing, the typed agent manager for durable agent runs and terminals. macOS and Linux, x64 and arm64.</p>
+<p>Install Wingthing for local typed agent control first. Add a wing daemon, remote connector, or browser portal only when the work crosses those boundaries. macOS and Linux, x64 and arm64.</p>
 </div>
 
 <div class="inst-platforms">
@@ -50,40 +50,53 @@
 
 <div class="inst-section">
 <h2>get started</h2>
-<p>Every launch uses an existing workspace and provider login on its execution wing. Wingthing keeps task and terminal state on that wing; it does not copy the workspace, credentials, or durable memory elsewhere.</p>
+<p>Every launch uses an existing workspace and provider login on its execution wing. Wingthing keeps task and terminal state there; it does not copy code, credentials, or durable memory to another machine.</p>
 <ol class="inst-steps">
-<li>
-<h3>start an agent terminal locally</h3>
-<p>Authenticate the provider CLI first and use an existing project directory. No Wingthing account or daemon is required. Detach with <code>Ctrl+B</code>, then <code>Q</code>.</p>
+<li data-route="local-agent">
+<h3>give a parent agent typed local control</h3>
+<p>Register local stdio MCP, restart the parent client, and ask it to call <code>wingthing_capabilities</code>. Child agents use the existing code and provider login on this computer. No Wingthing account or daemon is required.</p>
+<div class="inst-code">
+<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
+<span class="comment"># or: claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
+</div>
+</li>
+<li data-route="local-human">
+<h3>start a local sandboxed agent terminal yourself</h3>
+<p>Authenticate the provider CLI first and use an existing project directory. Detach with <code>Ctrl+B</code>, then <code>Q</code>.</p>
 <div class="inst-code">
 <span class="prompt">$ </span><span class="cmd">cd /path/to/existing/project</span><br>
 <span class="prompt">$ </span><span class="cmd">wt egg claude --name work</span><br>
 <span class="prompt">$ </span><span class="cmd">wt attach work</span>
 </div>
 </li>
-<li>
-<h3>give a parent agent typed local control</h3>
-<p>Register local MCP, restart the parent client, and ask it to call <code>wingthing_capabilities</code>. Use <code>agent_run</code> for a semantic result or <code>agent_start</code> for an attachable PTY.</p>
+<li data-route="direct-remote">
+<h3>use direct remote MCP when machines differ</h3>
+<p>On each execution wing, run <code>wt login</code>, make sure the wing is authorized for the connector account personally or through an organization, then run <code>wt start</code>. Calls go directly to an explicit wing and never silently fall back to hosted relay.</p>
 <div class="inst-code">
-<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
-<span class="comment"># or: claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
+<span class="prompt">$ </span><span class="cmd">wt login</span><br>
+<span class="prompt">$ </span><span class="cmd">wt start</span>
+</div>
+<p>Separately, run <code>wt login</code> on the parent/connector machine so <code>wt mcp connect</code> can load its connector token, then register it with the parent client. Run <code>wt start</code> on the parent only when that machine also executes agents.</p>
+<div class="inst-code">
+<span class="prompt">$ </span><span class="cmd">wt login</span><br>
+<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp connect --client codex</span>
 </div>
 </li>
-<li>
-<h3>optionally run your own browser portal</h3>
-<p>No Wingthing account is required. This creates and trusts a localhost-only certificate for your current user; Linux needs <code>certutil</code> from <code>libnss3-tools</code> or <code>nss-tools</code> for that trust step.</p>
+<li data-route="self-hosted-browser">
+<h3>self-host first when a person needs a browser</h3>
+<p>No Wingthing account or hosted-relay entitlement is required. This creates and trusts a localhost-only certificate for your current user; Linux needs <code>certutil</code> from <code>libnss3-tools</code> or <code>nss-tools</code> for that trust step.</p>
 <div class="inst-code">
 <span class="prompt">$ </span><span class="cmd">wt roost start --https</span><br>
 <span class="prompt">$ </span><span class="cmd">open https://localhost:8443</span>
 </div>
 </li>
-<li>
-<h3>optionally connect a parent agent to remote wings</h3>
-<p>Run <code>wt login</code> and <code>wt start</code> on every execution machine, then register <code>wt mcp connect</code> with the parent Claude or Codex client. Free MCP payloads travel directly to the selected wing; the hosted browser terminal and control relay require relay access.</p>
+<li data-route="hosted-relay">
+<h3>use the entitled hosted browser only if needed</h3>
+<p>For this route, the hosted browser terminal and control relay require relay access on the account and <code>hosted_relay: allow</code> on the selected wing. This optional path is separate from direct remote MCP.</p>
 <div class="inst-code">
 <span class="prompt">$ </span><span class="cmd">wt login</span><br>
 <span class="prompt">$ </span><span class="cmd">wt start</span><br>
-<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp connect --client codex</span>
+<span class="prompt">$ </span><span class="cmd">open https://app.wingthing.ai</span>
 </div>
 </li>
 </ol>
@@ -99,6 +112,6 @@
 <div class="inst-code">
 <span class="prompt">$ </span><span class="cmd">wt update</span>
 </div>
-<p>Downloads the latest release and restarts the wing daemon if running. You can also trigger updates remotely from the web dashboard.</p>
+<p>Downloads the latest release and restarts the local wing daemon if it is running.</p>
 </div>
 {{end}}

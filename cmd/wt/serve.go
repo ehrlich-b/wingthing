@@ -56,6 +56,51 @@ func saveLocalServeToken(configDir, token string) error {
 	})
 }
 
+type serveRuntime struct {
+	config       *config.Config
+	nodeRole     string
+	loginAddr    string
+	flyMachineID string
+	flyRegion    string
+	flyApp       string
+	autoRole     bool
+	autoLogin    bool
+}
+
+func loadServeRuntime(flyDataDir string) (*serveRuntime, error) {
+	runtime := &serveRuntime{
+		nodeRole:     os.Getenv("WT_NODE_ROLE"),
+		loginAddr:    os.Getenv("WT_LOGIN_ADDR"),
+		flyMachineID: os.Getenv("FLY_MACHINE_ID"),
+		flyRegion:    os.Getenv("FLY_REGION"),
+		flyApp:       os.Getenv("FLY_APP_NAME"),
+	}
+
+	// Detect an unmounted Fly edge before config.Load can create its state
+	// directory under /data and make that edge look like the volume-owning login
+	// process. Explicit WT_NODE_ROLE always wins.
+	if runtime.flyMachineID != "" && runtime.nodeRole == "" {
+		if info, err := os.Stat(flyDataDir); err == nil && info.IsDir() {
+			runtime.nodeRole = "login"
+		} else {
+			runtime.nodeRole = "edge"
+		}
+		runtime.autoRole = true
+	}
+
+	if runtime.nodeRole == "edge" && runtime.loginAddr == "" && runtime.flyApp != "" {
+		runtime.loginAddr = "http://login.process." + runtime.flyApp + ".internal:8080"
+		runtime.autoLogin = true
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	runtime.config = cfg
+	return runtime, nil
+}
+
 func serveCmd() *cobra.Command {
 	var addrFlag string
 	var devFlag bool
@@ -73,30 +118,20 @@ func serveCmd() *cobra.Command {
 					return err
 				}
 			}
-			cfg, err := config.Load()
+			runtime, err := loadServeRuntime("/data")
 			if err != nil {
 				return err
 			}
-
-			nodeRole := os.Getenv("WT_NODE_ROLE")
-			loginAddr := os.Getenv("WT_LOGIN_ADDR")
-			flyMachineID := os.Getenv("FLY_MACHINE_ID")
-			flyRegion := os.Getenv("FLY_REGION")
-			flyApp := os.Getenv("FLY_APP_NAME")
-
-			// Auto-detect node role on Fly: volume mounted at /data → login, else edge.
-			if flyMachineID != "" && nodeRole == "" {
-				if info, err := os.Stat("/data"); err == nil && info.IsDir() {
-					nodeRole = "login"
-				} else {
-					nodeRole = "edge"
-				}
+			cfg := runtime.config
+			nodeRole := runtime.nodeRole
+			loginAddr := runtime.loginAddr
+			flyMachineID := runtime.flyMachineID
+			flyRegion := runtime.flyRegion
+			flyApp := runtime.flyApp
+			if runtime.autoRole {
 				fmt.Printf("auto-detected node role: %s\n", nodeRole)
 			}
-
-			// Auto-derive login node address from Fly internal DNS.
-			if nodeRole == "edge" && loginAddr == "" && flyApp != "" {
-				loginAddr = "http://login.process." + flyApp + ".internal:8080"
+			if runtime.autoLogin {
 				fmt.Printf("auto-derived login addr: %s\n", loginAddr)
 			}
 

@@ -7,9 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/egg"
 )
 
 func mustTest(t *testing.T, err error) {
@@ -346,24 +349,50 @@ func TestPatternsPageExplainsOnlySupportedSetups(t *testing.T) {
 	}
 	page := body.String()
 	for _, want := range []string{
-		"Run a durable, sandboxed agent on this computer",
 		"Let your current AI launch local sub-agents",
+		"Run a durable, sandboxed agent on this computer",
 		"Let one AI manage agents on several computers",
 		"Control a remote agent from a localhost browser",
 		"Give a team a private browser-based agent host",
 		"Let an AI control agents on your private roost",
+		"Use the entitled hosted browser on a remote wing",
 		"an exact email enrollment list",
 		"an enrolled account on a roost",
+		"Each execution wing needs:",
+		"authorization for the connector account (personal or organization)",
+		"The parent/connector needs:",
+		"It runs <code>wt start</code> only when it also executes agents.",
 		"You need:",
 		"You get:",
+		"hosted browser -> encrypted relay -> selected wing -> agent",
 		"localhost browser -> local portal -> SSH tunnel -> remote wing -> agent",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("/patterns does not contain %q", want)
 		}
 	}
-	if got := strings.Count(page, `<section class="pattern">`); got != 6 {
-		t.Errorf("/patterns contains %d setup cards, want 6", got)
+	if got := strings.Count(page, `<section class="pattern"`); got != 7 {
+		t.Errorf("/patterns contains %d setup cards, want 7", got)
+	}
+	previous := -1
+	for _, route := range []string{
+		`data-route="local-agent"`,
+		`data-route="local-human"`,
+		`data-route="direct-remote"`,
+		`data-route="self-hosted-browser"`,
+		`data-route="self-hosted-team"`,
+		`data-route="self-hosted-agent"`,
+		`data-route="hosted-relay"`,
+	} {
+		index := strings.Index(page, route)
+		if index < 0 {
+			t.Errorf("/patterns is missing route marker %q", route)
+			continue
+		}
+		if index <= previous {
+			t.Errorf("/patterns route marker %q is out of local-first order", route)
+		}
+		previous = index
 	}
 	for _, internal := range []string{
 		"the workflows people are asking for",
@@ -392,7 +421,8 @@ func TestPersonalRemoteWingGuideIsSelfHostedFirst(t *testing.T) {
 	}
 	guide := body.String()
 	for _, want := range []string{
-		"This is the smallest self-hosted setup. It does not use wingthing.ai.",
+		"This is the first browser route to consider and the smallest self-hosted setup.",
+		"does not use wingthing.ai or require a hosted-relay entitlement",
 		"wt serve --local --https",
 		"https://localhost:8443/app/",
 		"both private keys remain mode `0600` on this browser computer",
@@ -430,8 +460,14 @@ func TestSignedInDocumentationUsesThisRoostAppURL(t *testing.T) {
 			request.Host = "localhost"
 			recorder := httptest.NewRecorder()
 			server.ServeHTTP(recorder, request)
-			if !strings.Contains(recorder.Body.String(), `href="`+test.wantURL+`" class="nav-cta"`) {
+			rendered := recorder.Body.String()
+			if !strings.Contains(rendered, `href="`+test.wantURL+`" class="nav-cta">open app</a>`) {
 				t.Fatalf("documentation nav did not use app URL %q: %q", test.wantURL, recorder.Body.String())
+			}
+			for _, forbidden := range []string{">hosted app</a>", ">hosted login</a>"} {
+				if strings.Contains(rendered, forbidden) {
+					t.Errorf("documentation nav uses deployment-specific label %q", forbidden)
+				}
 			}
 		})
 	}
@@ -449,8 +485,181 @@ func TestSignedInHomeUsesConfiguredAppURLForLinkAndShortcut(t *testing.T) {
 	if !strings.Contains(rendered, `href="https://app.example.test/" class="prompt-line" id="prompt-app"`) {
 		t.Fatalf("signed-in home omitted configured app link: %q", rendered)
 	}
-	if strings.Contains(rendered, "h==='wingthing.ai'") || !strings.Contains(rendered, "app?app.href:'/login'") {
+	if !strings.Contains(rendered, `href="https://app.example.test/" class="nav-cta">open app</a>`) {
+		t.Fatalf("signed-in home omitted deployment-neutral app nav: %q", rendered)
+	}
+	if strings.Contains(rendered, ">hosted app</a>") || strings.Contains(rendered, ">hosted login</a>") {
+		t.Fatalf("signed-in home uses deployment-specific nav label: %q", rendered)
+	}
+	if strings.Contains(rendered, "h==='wingthing.ai'") || !strings.Contains(rendered, "app?app.href:'/install'") {
 		t.Fatalf("home keyboard shortcut is not driven by the configured app link: %q", rendered)
+	}
+}
+
+func TestPublicHomeLeadsWithLocalAgentFirstRoutes(t *testing.T) {
+	_, ts := testServer(t)
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	defer closeTestBody(t, resp.Body)
+	body := new(strings.Builder)
+	if _, err := io.Copy(body, resp.Body); err != nil {
+		t.Fatalf("read /: %v", err)
+	}
+	page := body.String()
+	previous := -1
+	for _, route := range []string{
+		`href="/patterns/local-subagents/INSTRUCTIONS.md" data-route="local-agent"`,
+		`href="/patterns/local-sandbox/INSTRUCTIONS.md" data-route="local-human"`,
+		`href="/patterns/remote-orchestration/INSTRUCTIONS.md" data-route="direct-remote"`,
+		`href="/patterns/personal-remote-wing/INSTRUCTIONS.md" data-route="self-hosted-browser"`,
+		`href="/patterns/hosted-browser-wing/INSTRUCTIONS.md" data-route="hosted-relay"`,
+	} {
+		index := strings.Index(page, route)
+		if index < 0 {
+			t.Fatalf("home is missing route %q", route)
+		}
+		if index <= previous {
+			t.Fatalf("home route %q is out of local-agent-first order", route)
+		}
+		previous = index
+	}
+	for _, contract := range []string{
+		"wt mcp stdio",
+		"no account or daemon",
+		"wt egg",
+		"wt mcp connect",
+		"direct remote MCP to an explicit wing",
+		"wt serve --local --https",
+		"self-host first",
+		"requires hosted-relay entitlement and an allowing wing",
+		`href="/install" class="nav-cta">install locally`,
+		`href="/login">login`,
+		`href="/install" class="prompt-line" id="prompt-app"`,
+	} {
+		if !strings.Contains(page, contract) {
+			t.Errorf("home does not contain hierarchy contract %q", contract)
+		}
+	}
+	for _, forbidden := range []string{">hosted app</a>", ">hosted login</a>"} {
+		if strings.Contains(page, forbidden) {
+			t.Errorf("home nav uses deployment-specific label %q", forbidden)
+		}
+	}
+}
+
+func TestPublicDocsAndInstallRenderLocalFirstHierarchy(t *testing.T) {
+	_, ts := testServer(t)
+	for _, test := range []struct {
+		path      string
+		contracts []string
+	}{
+		{
+			path: "/install",
+			contracts: []string{
+				"On each execution wing,",
+				"authorized for the connector account personally or through an organization",
+				"parent/connector machine",
+				"connector token",
+				"Run <code>wt start</code> on the parent only when that machine also executes agents",
+			},
+		},
+		{
+			path: "/docs",
+			contracts: []string{
+				"connector token",
+				"Run <code>wt start</code> on the parent only when that machine also executes agents",
+				"Remote execution through direct MCP or the hosted browser needs a running wing.",
+				"Local stdio MCP, local terminal commands, and an embedded self-hosted roost do not require a separate wing daemon.",
+			},
+		},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			resp, err := http.Get(ts.URL + test.path)
+			if err != nil {
+				t.Fatalf("GET %s: %v", test.path, err)
+			}
+			defer closeTestBody(t, resp.Body)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want %d", test.path, resp.StatusCode, http.StatusOK)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("read %s: %v", test.path, err)
+			}
+			page := string(body)
+			previous := -1
+			for _, route := range []string{
+				`data-route="local-agent"`,
+				`data-route="local-human"`,
+				`data-route="direct-remote"`,
+				`data-route="self-hosted-browser"`,
+				`data-route="hosted-relay"`,
+			} {
+				index := strings.Index(page, route)
+				if index < 0 {
+					t.Fatalf("%s is missing rendered route %q", test.path, route)
+				}
+				if index <= previous {
+					t.Fatalf("%s renders route %q out of local-agent-first order", test.path, route)
+				}
+				previous = index
+			}
+			for _, contract := range append(test.contracts,
+				`href="/install" class="nav-cta">install locally`,
+				`href="/login">login`,
+			) {
+				if !strings.Contains(page, contract) {
+					t.Errorf("%s does not contain rendered contract %q", test.path, contract)
+				}
+			}
+			for _, forbidden := range []string{">hosted app</a>", ">hosted login</a>"} {
+				if strings.Contains(page, forbidden) {
+					t.Errorf("%s uses deployment-specific nav label %q", test.path, forbidden)
+				}
+			}
+		})
+	}
+}
+
+func TestHomeSandboxBuilderAgentProfilesMatchEggPolicy(t *testing.T) {
+	_, ts := testServer(t)
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	defer closeTestBody(t, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read home page: %v", err)
+	}
+
+	const prefix = "var profiles="
+	start := strings.Index(string(body), prefix)
+	if start == -1 {
+		t.Fatal("home page omitted sandbox builder agent profiles")
+	}
+	encoded := string(body[start+len(prefix):])
+	end := strings.Index(encoded, ";")
+	if end == -1 {
+		t.Fatal("sandbox builder agent profiles were not terminated")
+	}
+
+	var rendered map[string]egg.AgentProfile
+	if err := json.Unmarshal([]byte(encoded[:end]), &rendered); err != nil {
+		t.Fatalf("decode sandbox builder agent profiles: %v", err)
+	}
+	if len(rendered) != len(sandboxBuilderAgents) {
+		t.Fatalf("rendered profiles = %d, want %d", len(rendered), len(sandboxBuilderAgents))
+	}
+	for _, agent := range sandboxBuilderAgents {
+		if got, want := rendered[agent], egg.Profile(agent); !reflect.DeepEqual(got, want) {
+			t.Errorf("rendered %s profile = %+v, want %+v", agent, got, want)
+		}
 	}
 }
 
@@ -460,6 +669,7 @@ func TestPatternMarkdownRoutesServeCheckedInRecipes(t *testing.T) {
 		"/patterns/SKILL.md",
 		"/patterns/local-sandbox/INSTRUCTIONS.md",
 		"/patterns/local-subagents/INSTRUCTIONS.md",
+		"/patterns/hosted-browser-wing/INSTRUCTIONS.md",
 		"/patterns/personal-remote-wing/INSTRUCTIONS.md",
 		"/patterns/shared-web-roost/INSTRUCTIONS.md",
 		"/patterns/shared-roost-agents/INSTRUCTIONS.md",

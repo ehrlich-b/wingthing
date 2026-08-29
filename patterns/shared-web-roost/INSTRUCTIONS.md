@@ -1,8 +1,9 @@
 # Give a team a private browser-based agent host
 
-Use this setup when several people should run agents on one shared server through a
-private web UI. A **roost** is Wingthing's self-hosted portal, gateway, and agent
-runtime in one service.
+Use this self-hosted browser setup when several people should run agents on one
+shared server through a private web UI. A **roost** is Wingthing's portal, gateway,
+and agent runtime in one service; it does not require a wingthing.ai hosted-relay
+entitlement.
 
 Each signed-in person gets their own sessions and provider-agent home. Project files
 and all agent processes remain on the shared server.

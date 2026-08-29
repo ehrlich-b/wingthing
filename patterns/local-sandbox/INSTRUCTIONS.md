@@ -1,7 +1,9 @@
 # Run a durable, sandboxed agent terminal on this computer
 
-Use this setup when you want to run Claude, Codex, or another agent in a local
-project. No Wingthing account or server is required.
+Use this setup when a person wants a local sandboxed Claude, Codex, or other agent
+terminal. If an existing parent agent should drive the work instead, use the
+[local stdio MCP setup](../local-subagents/INSTRUCTIONS.md). No Wingthing account
+or server is required.
 
 Wingthing applies the project's sandbox policy and keeps the terminal alive if you
 close the window or lose the connection.

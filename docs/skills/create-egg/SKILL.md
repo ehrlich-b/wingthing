@@ -89,7 +89,13 @@ fs:
 
 ### 2. NEVER use `network: "*"` unless the user can justify it
 
-Unrestricted network defeats the entire sandbox. The agent can exfiltrate anything it can read. Push back hard. Most "I need network" requests are actually "I need one or two specific domains":
+This is the broadest egress policy and can let the agent exfiltrate readable data.
+Do not describe it as one uniform raw-networking mode. Linux permits any TCP
+destination presented through HTTP CONNECT but retains a route-less namespace, so
+ordinary raw sockets, UDP, ICMP, and clients that ignore the proxy still fail. On
+macOS the wildcard emits no Seatbelt network deny, leaving host networking subject
+to the OS and any outer boundary. Push back hard. Most "I need network" requests
+are actually "I need one or two specific domains":
 
 - Need npm? Add `"registry.npmjs.org"` and `"*.npmjs.org"`
 - Need pip? Add `"pypi.org"` and `"files.pythonhosted.org"`
