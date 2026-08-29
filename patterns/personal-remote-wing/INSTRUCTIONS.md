@@ -10,6 +10,16 @@ localhost browser -> local portal -> SSH tunnel -> remote wing -> Claude or Code
 
 This is the smallest self-hosted setup. It does not use wingthing.ai.
 
+## Placement and durable state
+
+| Decision | This setup |
+| --- | --- |
+| **Execution wing** | The remote computer. The localhost service is only the browser portal and gateway; it does not move execution to the computer in front of you. |
+| **Workspace** | An existing project directory on the remote computer, included in that wing's allowed `--paths`. Wingthing does not copy or synchronize the project. |
+| **Display** | A persistent terminal in `https://localhost:8443`, with `wt attach` available on the remote computer. This workflow is for human-visible PTYs; use the several-computer MCP pattern for semantic headless runs. |
+| **Provider credentials** | The remote OS user's provider-agent home. Authenticate Claude, Codex, or another provider on the remote computer; the portal and SSH tunnel do not supply those credentials. |
+| **Durable memory** | The authoritative egg/session state, provider history, and optional Wingthing memory remain on the remote wing. The local portal keeps only its gateway/browser state. Neither the SSH tunnel nor the portal replicates durable agent memory. |
+
 ## 1. Start the private web app
 
 On the computer where you will use the browser:
@@ -78,9 +88,9 @@ wt start \
   --paths /path/to/project
 ```
 
-The project directory must also already exist on the remote computer. Wingthing
-routes control; it does not copy the project or provider credentials between
-computers.
+The project directory must already exist on the remote computer and be included in
+`--paths`. Wingthing routes control; it does not copy the project, provider
+credentials, or agent memory between computers.
 
 ## 4. Open the agent
 
@@ -88,8 +98,8 @@ Open [https://localhost:8443/app/](https://localhost:8443/app/) in the browser. 
 remote wing appears in the machine list. Select it, select the project directory,
 and start Claude or Codex.
 
-Closing the browser does not stop the agent. Reopen the session from the same page,
-or attach from a terminal on the remote computer with `wt attach`.
+Closing the browser does not stop the agent terminal. Reopen the session from the
+same page, or attach from a terminal on the remote computer with `wt attach`.
 
 ## What protects this setup
 

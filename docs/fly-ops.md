@@ -1,5 +1,25 @@
 # Fly Operations Guide
 
+Wingthing is a typed agent manager for durable agent runs and terminals. The Fly
+fleet hosts its public coordinator: identity, the authorized wing directory, key
+exchange, WebRTC signaling, the portal, and the optional encrypted relay. Agents
+still execute on a user's selected wing; neither Fly process group is a general
+agent host.
+
+## Placement and durable state
+
+| Decision | Public Fly deployment |
+| --- | --- |
+| **Execution wing** | The access-filtered wing explicitly selected by `wing_id`. Login and edge machines coordinate connections but do not substitute themselves as execution targets. |
+| **Workspace** | An existing `cwd` on the selected wing. No Fly service clones or synchronizes user repositories or untracked files. |
+| **Display** | `agent_run` returns semantic state over direct MCP without a browser view. `agent_start` creates a persistent PTY; hosted browser/control relay is entitlement-gated, while CLI, SSH, and self-hosted displays remain compatible. |
+| **Provider credentials** | The execution owner's agent home on the selected wing. Fly secrets are only service credentials such as JWT, OAuth, billing, or internal-node keys—not Claude, Codex, SSH, or other user provider credentials. |
+| **Durable memory** | The login volume stores gateway account, organization, auth, entitlement, and routing records. Each wing remains authoritative for its task database, eggs, optional Wingthing memory, provider history, and workspaces. Edge machines are stateless. |
+
+The public `direct-free` relay policy changes transport entitlement, not ownership
+or organization authorization. Existing personal and organization directories,
+roles, configured path scopes, grants, and bounds continue to apply at the wing.
+
 ## Architecture
 
 Two process groups, one image:
@@ -86,7 +106,9 @@ On `direct-free`, the historical billing-free personal and organization upgrade
 endpoints are disabled, and the account UI does not offer plan mutation. Existing
 Pro/team entitlements and cancellation paths remain valid; new relay entitlements
 must be provisioned by the deployment's billing or operator workflow. Legacy and
-self-hosted gateways retain their previous self-service behavior.
+self-hosted gateways retain their previous self-service behavior. This does not
+remove organization membership or wing sharing; it only prevents those endpoints
+from granting new hosted-relay entitlement.
 
 The public deployment also sets an explicit temporary migration boundary in
 `fly.toml`. Accounts created on or before that instant retain relay parity while

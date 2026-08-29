@@ -31,7 +31,7 @@
 {{define "content"}}
 <div class="inst-hero">
 <h1>install wt</h1>
-<p>One command installs the Wingthing runtime. macOS and Linux, x64 and arm64.</p>
+<p>Install Wingthing, the typed agent manager for durable agent runs and terminals. macOS and Linux, x64 and arm64.</p>
 </div>
 
 <div class="inst-platforms">
@@ -50,13 +50,23 @@
 
 <div class="inst-section">
 <h2>get started</h2>
+<p>Every launch uses an existing workspace and provider login on its execution wing. Wingthing keeps task and terminal state on that wing; it does not copy the workspace, credentials, or durable memory elsewhere.</p>
 <ol class="inst-steps">
 <li>
-<h3>start locally</h3>
-<p>No account or daemon is required. Detach with <code>Ctrl+B</code>, then <code>Q</code>.</p>
+<h3>start an agent terminal locally</h3>
+<p>Authenticate the provider CLI first and use an existing project directory. No Wingthing account or daemon is required. Detach with <code>Ctrl+B</code>, then <code>Q</code>.</p>
 <div class="inst-code">
-<span class="prompt">$ </span><span class="cmd">wt terminal --name work</span><br>
+<span class="prompt">$ </span><span class="cmd">cd /path/to/existing/project</span><br>
+<span class="prompt">$ </span><span class="cmd">wt egg claude --name work</span><br>
 <span class="prompt">$ </span><span class="cmd">wt attach work</span>
+</div>
+</li>
+<li>
+<h3>give a parent agent typed local control</h3>
+<p>Register local MCP, restart the parent client, and ask it to call <code>wingthing_capabilities</code>. Use <code>agent_run</code> for a semantic result or <code>agent_start</code> for an attachable PTY.</p>
+<div class="inst-code">
+<span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
+<span class="comment"># or: claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
 </div>
 </li>
 <li>

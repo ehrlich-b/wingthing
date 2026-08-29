@@ -15,6 +15,16 @@ computer. `wingthing.ai` handles login, the authorized computer list, and connec
 setup; it does not proxy free-tier MCP payloads. No execution computer needs an
 inbound port.
 
+## Placement and durable state
+
+| Decision | This setup |
+| --- | --- |
+| **Execution wing** | The exact online wing selected from `wing_list`. Every wing-owned operation carries its `wing_id`; Wingthing does not substitute a default wing. |
+| **Workspace** | An existing absolute `cwd` on that wing. The repository, revision, and untracked files must already be there because Wingthing does not clone or synchronize them. |
+| **Display** | Use `agent_run` for a semantic result without a live browser view. Use `agent_start` for a persistent PTY; a person can attach on the execution wing or over SSH, and can use the hosted browser only when the account has relay access. |
+| **Provider credentials** | The selected wing resolves the authenticated owner's agent home. Install and authenticate each provider CLI on every wing where it may run; credentials are not copied from the parent machine. |
+| **Durable memory** | Each wing keeps its own tasks, results, messages, sessions, optional Wingthing memory, and provider history under that wing's state and agent home. The hosted coordinator supplies identity, an access-filtered directory, keys, and signaling; it does not replicate that agent state. |
+
 ## 1. Connect every execution computer
 
 On each computer that should run agents:
@@ -26,9 +36,11 @@ wt start
 wt wing status
 ```
 
-Log every computer into the same Wingthing account. Install and authenticate the
-agent CLIs you intend to use on each computer. Projects must already exist on the
-computer where they will run.
+For personal wings, log every computer into the same Wingthing account. An
+organization wing can instead be visible to authorized organization members; the
+wing still enforces owner, role, path, grant, and spawn bounds. Install and
+authenticate the agent CLIs you intend to use on each computer. Projects must
+already exist on the computer where they will run.
 
 ## 2. Connect the parent AI
 
@@ -61,6 +73,8 @@ then ask which computer and existing project directory should run the task.
 The AI first calls `wing_list`. Every later operation names the returned `wing_id`,
 so work cannot silently drift to a different machine. Use `agent_run` for a headless
 result or `agent_start` for a persistent terminal a person can attach to later.
+Keep the returned run or session ID together with its owning `wing_id` for every
+later operation.
 
 ## Current limits
 

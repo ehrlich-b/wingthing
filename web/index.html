@@ -45,9 +45,9 @@
 
             <section id="home-section">
                 <div id="direct-agent-setup" style="display:none;">
-                    <div class="direct-agent-kicker">your agent manager is ready</div>
-                    <h2>connect your agent to every wing</h2>
-                    <p>Wingthing uses this service for login, wing discovery, and direct connection setup. Your agent's MCP requests go straight between the connector and your wing; the free tier does not use the hosted browser-terminal relay.</p>
+                    <div class="direct-agent-kicker">your typed agent manager is ready</div>
+                    <h2>connect a parent agent to every wing</h2>
+                    <p>Wingthing manages durable agent runs and terminals on the wing where each existing workspace and provider login live. This service handles login, authorized wing discovery, and direct connection setup; your agent's MCP requests go straight between the connector and the selected wing, and the free tier does not use the hosted browser-terminal relay.</p>
                     <div class="direct-agent-command"><code>codex mcp add wingthing -- wt mcp connect --client codex</code><button data-copy-command="codex mcp add wingthing -- wt mcp connect --client codex">copy</button></div>
                     <div class="direct-agent-command"><code>claude mcp add --scope user wingthing -- wt mcp connect --client claude</code><button data-copy-command="claude mcp add --scope user wingthing -- wt mcp connect --client claude">copy</button></div>
                     <p class="hint">On each machine you want to manage, run <code>wt login</code> and <code>wt start</code>. Keep both peers on the same LAN or tailnet for the first direct release. Pro includes the hosted browser terminal and control relay. The native connector never silently changes from direct transport to relay transport.</p>
@@ -57,7 +57,7 @@
                 <div id="empty-state" style="display:none;">
                     <div class="empty-icon">~</div>
                     <div id="empty-no-wings" style="display:none;">
-                        <p>install wt to connect your machine</p>
+                        <p>install wt to add an execution wing</p>
                         <div class="install-block"><code>curl -fsSL https://wingthing.ai/install.sh | sh</code><button class="install-copy-btn" onclick="navigator.clipboard.writeText('curl -fsSL https://wingthing.ai/install.sh | sh');this.textContent='copied';setTimeout(function(){document.querySelector('.install-copy-btn').textContent='copy'},1500)">copy</button></div>
                         <p class="hint">then run <code>wt login</code> and <code>wt start</code></p>
                         <p id="empty-signed-in" class="hint" style="margin-top:12px;opacity:0.5;display:none;"></p>

@@ -54,7 +54,7 @@
 </nav>
 <div class="docs-body">
 <h1>documentation</h1>
-<p class="lead">wingthing is an agent manager for agents: one typed control plane for durable work across every machine, with human takeover when useful.</p>
+<p class="lead">Wingthing is a typed agent manager for durable agent runs and terminals across local and remote wings, with human takeover when useful.</p>
 
 <div class="docs-section" id="quickstart">
 <h2>quickstart</h2>
@@ -121,6 +121,15 @@
 <div class="docs-section" id="agent-control">
 <h2>agent control</h2>
 <p>The MCP server lets a parent LLM discover and operate Wingthing without scraping terminal output. Use <code>wt mcp stdio</code> for the same host and <code>wt mcp connect</code> for an explicitly selected remote wing. Use <code>agent_run</code> for semantic task state. Use <code>agent_start</code> when a person should be able to attach to the persistent terminal.</p>
+<table class="vocab-table">
+<tr><th>placement</th><th>current contract</th></tr>
+<tr><td>execution wing</td><td>Local stdio executes on its host. Direct remote calls require the selected <code>wing_id</code>. A roost HTTP MCP endpoint controls that roost's built-in wing; Wingthing never silently substitutes a different target.</td></tr>
+<tr><td>workspace</td><td>Pass an existing <code>cwd</code> on the execution wing. Wingthing does not create, clone, upload, or synchronize the repository or its untracked files.</td></tr>
+<tr><td>display</td><td><code>agent_run</code> has semantic status and a final result but no live browser view. <code>agent_start</code> creates a PTY a person can attach to through the CLI, SSH, or an entitled/self-hosted browser.</td></tr>
+<tr><td>credentials</td><td>The provider CLI uses the execution owner's agent home on that wing. Shared hosts keep those homes separate. Provider tokens and SSH keys do not belong in prompts or MCP arguments.</td></tr>
+<tr><td>durable memory</td><td>Tasks, results, messages, and threads stay in that wing's <code>~/.wingthing/wt.db</code>; terminal state stays under <code>~/.wingthing/eggs</code>, optional prompt memory under <code>~/.wingthing/memory</code>, and provider history in the provider home. <code>WINGTHING_DIR</code> changes the Wingthing state root. None of this is replicated between wings automatically.</td></tr>
+</table>
+<p>A terminal survives client detachment. A run's record and result persist, but an active headless run still depends on its supervising Wingthing process. Keep the returned run or session ID together with its owning wing for every later operation.</p>
 <div class="docs-code">
 <span class="prompt">$ </span><span class="cmd">codex mcp add wingthing -- wt mcp stdio --client codex</span><br>
 <span class="prompt">$ </span><span class="cmd">claude mcp add --scope user wingthing -- wt mcp stdio --client claude</span>
