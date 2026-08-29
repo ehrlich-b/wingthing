@@ -1,10 +1,20 @@
-# Run a durable, sandboxed agent on this computer
+# Run a durable, sandboxed agent terminal on this computer
 
 Use this setup when you want to run Claude, Codex, or another agent in a local
 project. No Wingthing account or server is required.
 
 Wingthing applies the project's sandbox policy and keeps the terminal alive if you
 close the window or lose the connection.
+
+## Placement and durable state
+
+| Decision | This setup |
+| --- | --- |
+| **Execution wing** | This computer. The local CLI starts the egg directly; a wing daemon, portal, and hosted account are optional. |
+| **Workspace** | An existing project directory on this computer. Run the command from that directory; Wingthing does not create, clone, or synchronize it. |
+| **Display** | A persistent terminal opened by `wt egg` and resumed with `wt attach`. If this computer is also connected to a relay-entitled hosted portal or a self-hosted roost, the same terminal can appear there. |
+| **Provider credentials** | The selected agent CLI uses the current OS user's provider login on this computer. Authenticate that CLI here; do not pass provider tokens on the command line or in a prompt. |
+| **Durable memory** | Egg and terminal state stay under this computer's `~/.wingthing/eggs` (or `WINGTHING_DIR`). Provider-native history stays in its local agent home, and optional Wingthing prompt memory stays under `~/.wingthing/memory`. None of it is copied elsewhere automatically. |
 
 ## Set it up
 
@@ -14,7 +24,8 @@ Install Wingthing once:
 curl -fsSL https://wingthing.ai/install.sh | sh
 ```
 
-Open the project directory and inspect the sandbox before starting an agent:
+Authenticate the provider CLI if needed, then open the existing project directory
+and inspect the sandbox before starting an agent:
 
 ```sh
 cd /path/to/project

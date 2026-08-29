@@ -7,6 +7,16 @@ runtime in one service.
 Each signed-in person gets their own sessions and provider-agent home. Project files
 and all agent processes remain on the shared server.
 
+## Placement and durable state
+
+| Decision | This setup |
+| --- | --- |
+| **Execution wing** | The shared server's built-in roost wing. Browsers are displays; they do not run the provider process. |
+| **Workspace** | An existing server-side project directory under a root allowed by `wing.yaml`. Wingthing does not create, clone, upload, or synchronize it. |
+| **Display** | A persistent browser terminal, resumable after browser detachment. The server operator can also use the CLI; semantic headless runs are available through the roost's authenticated HTTP MCP workflow, not the browser session list. |
+| **Provider credentials** | Each enrolled Wingthing account has a separate provider-agent home on the server and completes provider login inside one of its own sessions. Credentials are never borrowed from another account or from the browser computer. |
+| **Durable memory** | Sessions, tasks, results, optional Wingthing memory, and provider history stay on the shared server under its `WINGTHING_DIR`; browser session snapshots are a separate local cache. Back up the server state and workspaces explicitly if they must survive host loss. |
+
 ## Before you start
 
 You need:
@@ -45,7 +55,9 @@ enforces the same membership boundary.
 Do not add `--https` to this public/shared command. That flag is deliberately for
 a single-user localhost roost: it creates a device-local CA and refuses public
 listeners. Shared and organization deployments retain their existing externally
-provisioned HTTPS and OAuth behavior.
+provisioned HTTPS and OAuth behavior. The enrollment list complements existing
+organization roles and path policy; it does not merge owner identities, provider
+homes, or workspace permissions.
 
 Declare the project roots the roost may browse in `~/.wingthing/wing.yaml`:
 

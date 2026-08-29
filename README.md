@@ -2,10 +2,10 @@
 
 [![ci](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml/badge.svg)](https://github.com/ehrlich-b/wingthing/actions/workflows/ci.yml)
 
-Wingthing is an agent manager for agents. Give Codex, Claude, or another parent
-agent one typed control plane for starting and supervising durable agents across
-all your machines. A person can inspect or take over the same sessions from a
-terminal or browser.
+Wingthing is a typed agent manager for durable agent runs and terminals. Give
+Codex, Claude, or another parent agent one control plane for starting and
+supervising work across all your machines. A person can inspect or take over the
+same terminal sessions from a terminal or browser.
 
 The agents run where the code and hardware already live. Wingthing keeps their
 terminals alive, records semantic runs as durable tasks, applies sandbox policy,
@@ -132,6 +132,20 @@ person: CLI or browser ----------------/  (inspect or take over)
 | **Run** | A supervised headless agent task with semantic status, events, output, and error data. It is separate from a PTY session. |
 | **Egg** | The per-session execution boundary: process, PTY, sandbox policy, and local control socket. |
 | **Roost** | The self-hosted bundle started by `wt roost start`: a portal/gateway and an embedded wing in one process. Other wings may register with its gateway. |
+
+### Place every run explicitly
+
+| Question | Wingthing's contract |
+| --- | --- |
+| **Execution** | Select the wing that will run the process. Direct remote calls require its `wing_id`; Wingthing never substitutes another wing. |
+| **Workspace** | Pass a `cwd` that already exists on that wing. Wingthing does not clone, create, or synchronize repositories. |
+| **Display** | Use `agent_run` for semantic status and a final result without a live browser view. Use `agent_start` when the task needs a PTY that a person can attach to from the CLI, SSH, or an entitled/self-hosted browser. |
+| **Credentials** | The provider CLI reads credentials from the execution owner's agent home on that wing. Shared hosts separate those homes by owner. Do not put provider tokens or SSH keys in prompts or MCP arguments. |
+| **Durable memory** | Wingthing stores task, result, message, and thread records in `~/.wingthing/wt.db`, session state under `~/.wingthing/eggs`, and optional prompt memory under `~/.wingthing/memory`. Provider-native history stays in the provider home. These are wing-local unless the operator arranges replication. |
+
+`WINGTHING_DIR` changes the `~/.wingthing` state root. A terminal survives client
+detachment, but not an unplanned host restart. A run's record and result persist;
+an active headless run still depends on the supervising Wingthing process.
 
 `wingthing.ai` is the hosted identity, directory, key-exchange, and connection
 coordination service—roughly the control plane in a tailnet. It does not run the
@@ -329,6 +343,7 @@ Update an installed binary with `wt update`.
 
 ## Documentation
 
+- [Agent-facing Wingthing skill](SKILL.md)
 - [Choose a usage pattern](https://wingthing.ai/patterns)
 - [Web documentation](https://wingthing.ai/docs)
 - [Historical LLM-first architecture review](docs/llm-first-review.md)
