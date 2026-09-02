@@ -20,7 +20,10 @@ func ResolveConfig(sk *skill.Skill, taskAgent, agentIsolation string, cfg *confi
 	rc := ResolvedConfig{
 		Agent:     cfg.DefaultAgent,
 		Isolation: "standard",
-		Timeout:   120 * time.Second,
+		// An absent timeout is intentionally unlimited. A direct `wt run` is
+		// the long-running, supervised execution path; callers that need a
+		// deadline declare one in skill frontmatter or on the task itself.
+		Timeout: 0,
 	}
 
 	// Agent config defaults (isolation from agents table)

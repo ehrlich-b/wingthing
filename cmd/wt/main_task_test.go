@@ -84,6 +84,18 @@ func TestNewRuntimeIDHasSixtyFourBitsOfReadableEntropy(t *testing.T) {
 	}
 }
 
+func TestEffectiveTaskTimeoutKeepsUnsetTaskUnlimited(t *testing.T) {
+	if got := effectiveTaskTimeout(0, 0); got != 0 {
+		t.Fatalf("unset timeout = %v, want no deadline", got)
+	}
+	if got := effectiveTaskTimeout(45*time.Second, 0); got != 45*time.Second {
+		t.Fatalf("skill timeout = %v, want 45s", got)
+	}
+	if got := effectiveTaskTimeout(45*time.Second, 900); got != 900*time.Second {
+		t.Fatalf("task timeout = %v, want 900s", got)
+	}
+}
+
 func TestRunTaskPersistsFailureFromEveryEarlyExit(t *testing.T) {
 	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude", WingID: "test-wing"}
 	taskStore, err := store.Open(cfg.DBPath())

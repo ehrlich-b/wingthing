@@ -577,10 +577,7 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 
 	runCtx := ctx
 	var cancel context.CancelFunc
-	timeout := pr.Timeout
-	if t.TimeoutSeconds > 0 {
-		timeout = time.Duration(t.TimeoutSeconds) * time.Second
-	}
+	timeout := effectiveTaskTimeout(pr.Timeout, t.TimeoutSeconds)
 	if timeout > 0 {
 		runCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -649,6 +646,16 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 
 	return nil
+}
+
+// effectiveTaskTimeout keeps the durable task contract unambiguous: a zero
+// timeout_seconds value means no process deadline. A task-level value wins over
+// the optional timeout declared by a saved skill.
+func effectiveTaskTimeout(resolved time.Duration, taskSeconds int) time.Duration {
+	if taskSeconds > 0 {
+		return time.Duration(taskSeconds) * time.Second
+	}
+	return resolved
 }
 
 func networkEnforcementDetail(enforcement string, need sandbox.NetworkNeed, domains []string, localPorts []int) string {
