@@ -142,17 +142,25 @@ func resolveDirectMCPPolicy(wingCfg *config.WingConfig, home string, sharedHost 
 	}, nil
 }
 
-func serveDirectMCPChannel(cfg *config.Config, wingCfg *config.WingConfig, home string, sharedHost bool, allowedKeys []config.AllowKey, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
+type directMCPChannel interface {
+	Label() string
+	Send([]byte) error
+	Close() error
+	OnClose(func())
+	OnMessage(func(pionwebrtc.DataChannelMessage))
+}
+
+func serveDirectMCPChannel(cfg *config.Config, wingCfg *config.WingConfig, home string, sharedHost bool, allowedKeys []config.AllowKey, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc directMCPChannel) {
 	serveDirectMCPChannelWithPolicySource(cfg, home, sharedHost, admission, identity, dc, func() (*config.WingConfig, []config.AllowKey) {
 		return wingCfg.Clone(), append([]config.AllowKey(nil), allowedKeys...)
 	})
 }
 
-func serveDirectMCPChannelWithPolicySource(cfg *config.Config, home string, sharedHost bool, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey)) {
+func serveDirectMCPChannelWithPolicySource(cfg *config.Config, home string, sharedHost bool, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc directMCPChannel, policySource func() (*config.WingConfig, []config.AllowKey)) {
 	serveDirectMCPChannelWithPolicySourceAndLease(cfg, home, sharedHost, admission, identity, dc, policySource, directMCPIdentityLease)
 }
 
-func serveDirectMCPChannelWithPolicySourceAndLease(cfg *config.Config, home string, sharedHost bool, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey), identityLease time.Duration) {
+func serveDirectMCPChannelWithPolicySourceAndLease(cfg *config.Config, home string, sharedHost bool, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc directMCPChannel, policySource func() (*config.WingConfig, []config.AllowKey), identityLease time.Duration) {
 	actor := strings.TrimPrefix(dc.Label(), control.DirectChannelPrefix)
 	if actor == dc.Label() || validateSessionName(actor) != nil || identity.UserID == "" || identityLease <= 0 {
 		log.Printf("[P2P] rejected direct MCP channel %q: invalid actor or identity", dc.Label())

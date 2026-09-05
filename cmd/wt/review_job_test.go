@@ -70,9 +70,85 @@ func TestReviewJobPolicyOwnerAndSharedHostBoundaries(t *testing.T) {
 	}
 }
 
+func TestReviewJobListDiscoversOwnerEvidenceAndPaginates(t *testing.T) {
+	s, _ := reviewServerFixture(t)
+	dir := filepath.Join(s.cfg.Dir, "review-jobs")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i, owner := range []string{s.principal, roostSessionPrincipal("bob"), s.principal} {
+		job := reviewjob.Job{ID: fmt.Sprintf("j-%032x", i+1), Owner: owner, Status: "succeeded", Stage: "terminal", CreatedAt: time.Unix(int64(i), 0), UpdatedAt: time.Unix(int64(i+1), 0), Spec: reviewjob.Spec{Implementer: reviewjob.Target{WingID: "terra-wing"}, Reviewer: reviewjob.Target{WingID: "sol-wing"}}, Rounds: []reviewjob.Round{{Number: 0, Candidate: &reviewjob.Candidate{Patch: "patch", SHA256: "digest"}, Review: &reviewjob.Review{Verdict: "pass"}, ImplementerTest: &reviewjob.TestResult{WorkspaceID: "implementation-test"}, ReviewerTest: &reviewjob.TestResult{WorkspaceID: "review-test"}}}}
+		data, err := json.Marshal(job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, job.ID+".json"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, bad, protocolErr := s.callTool(context.Background(), "review_job_list", json.RawMessage(`{"limit":1}`))
+	if bad || protocolErr != nil {
+		t.Fatalf("list failed: %v %v %v", first, bad, protocolErr)
+	}
+	rows := first["jobs"].([]map[string]any)
+	if len(rows) != 1 || rows[0]["job_id"] != fmt.Sprintf("j-%032x", 3) || rows[0]["final_evidence_available"] != true {
+		t.Fatalf("first page: %v", first)
+	}
+	for _, key := range []string{"job_id", "status", "stage", "created_at", "updated_at", "implementer", "reviewer", "final_evidence_available"} {
+		if _, ok := rows[0][key]; !ok {
+			t.Fatalf("missing discovery field %s", key)
+		}
+	}
+	args, _ := json.Marshal(map[string]any{"limit": 1, "cursor": first["next_cursor"]})
+	second, bad, protocolErr := s.callTool(context.Background(), "review_job_list", args)
+	if bad || protocolErr != nil {
+		t.Fatalf("second page: %v %v %v", second, bad, protocolErr)
+	}
+	rows = second["jobs"].([]map[string]any)
+	if len(rows) != 1 || rows[0]["job_id"] != fmt.Sprintf("j-%032x", 1) || second["next_cursor"] != "" {
+		t.Fatalf("other owner leaked or pagination failed: %v", second)
+	}
+	for _, args := range []string{`{"limit":0}`, `{"limit":101}`, `{"cursor":"../escape"}`, fmt.Sprintf(`{"cursor":"j-%032x"}`, 2), `{"owner":"bob"}`} {
+		_, bad, protocolErr := s.callTool(context.Background(), "review_job_list", json.RawMessage(args))
+		if !bad && protocolErr == nil {
+			t.Fatalf("list accepted %s", args)
+		}
+	}
+	other := *s
+	other.principal, other.identity.UserID = roostSessionPrincipal("bob"), "bob"
+	if data, bad, protocolErr := other.callTool(context.Background(), "review_job_list", json.RawMessage(`{}`)); !bad && protocolErr == nil {
+		t.Fatalf("other owner listed jobs: %v", data)
+	}
+}
+
+func TestReviewJobListEmptyAndInterrupted(t *testing.T) {
+	s, _ := reviewServerFixture(t)
+	data, bad, protocolErr := s.callTool(context.Background(), "review_job_list", json.RawMessage(`{}`))
+	if bad || protocolErr != nil || len(data["jobs"].([]map[string]any)) != 0 {
+		t.Fatalf("empty list: %v %v %v", data, bad, protocolErr)
+	}
+	dir := filepath.Join(s.cfg.Dir, "review-jobs")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	job := reviewjob.Job{ID: "j-" + strings.Repeat("a", 32), Owner: s.principal, Status: "running"}
+	encoded, _ := json.Marshal(job)
+	if err := os.WriteFile(filepath.Join(dir, job.ID+".json"), encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, bad, protocolErr = s.callTool(context.Background(), "review_job_list", json.RawMessage(`{}`))
+	if bad || protocolErr != nil {
+		t.Fatalf("interrupted list: %v %v %v", data, bad, protocolErr)
+	}
+	rows := data["jobs"].([]map[string]any)
+	if len(rows) != 1 || rows[0]["status"] != "interrupted" || rows[0]["final_evidence_available"] != false {
+		t.Fatalf("abandoned job was hidden or claimed complete: %v", data)
+	}
+}
+
 func TestReviewJobStrictSchemasAndGrants(t *testing.T) {
 	s, _ := reviewServerFixture(t)
-	for _, name := range []string{"review_job_submit", "review_job_status", "review_job_result", "review_workspace"} {
+	for _, name := range []string{"review_job_submit", "review_job_list", "review_job_status", "review_job_result", "review_workspace"} {
 		tool, ok := control.Lookup(name)
 		if !ok || tool.InputSchema["additionalProperties"] != false || !tool.Supports(control.SurfaceDirectMCP) || !tool.Supports(control.SurfaceHTTPMCP) {
 			t.Fatalf("bad tool contract: %+v", tool)

@@ -500,6 +500,8 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 	switch name {
 	case "review_job_submit":
 		data, err = s.toolReviewJobSubmit(arguments)
+	case "review_job_list":
+		data, err = s.toolReviewJobList(arguments)
 	case "review_job_status":
 		data, err = s.toolReviewJobRead(arguments, false)
 	case "review_job_result":

@@ -130,6 +130,9 @@ build-linux-sandbox-tests: | web/dist
 build-linux-wt-tests: | web/dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go test -c -tags integration \
 		-o test/linux/wt-tests ./cmd/wt/
+	mkdir -p test/linux/fixtures/scripts test/linux/fixtures/docs
+	cp scripts/wt-dogfood scripts/install-dogfood.sh test/linux/fixtures/scripts/
+	cp docs/dogfood-operator.md test/linux/fixtures/docs/
 
 # Browser E2E tier: seeded shared-roost (org mode) + Playwright in Docker.
 # Binaries must match the Docker daemon, which may differ from the client host

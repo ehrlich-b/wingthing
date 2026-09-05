@@ -5091,7 +5091,8 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	// Derive or retrieve cached AES-GCM key for this sender
 	var gcm cipher.AEAD
-	if cached, ok := tunnelKeys.Get(req.SenderPub); ok {
+	cacheKey := base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes()) + ":" + req.SenderPub
+	if cached, ok := tunnelKeys.Get(cacheKey); ok {
 		gcm = cached
 	}
 	if gcm == nil {
@@ -5101,7 +5102,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			return
 		}
 		gcm = derived
-		tunnelKeys.Put(req.SenderPub, gcm)
+		tunnelKeys.Put(cacheKey, gcm)
 	}
 
 	// Decrypt the payload

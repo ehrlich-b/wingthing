@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -31,6 +33,77 @@ type directConnectorTestTunnel struct {
 	wings map[string]*directConnectorTestWing
 	mu    sync.Mutex
 	seen  []string
+}
+
+type observationFaultTunnel struct {
+	*directConnectorTestTunnel
+	failures  int
+	fault     error
+	calls     int
+	deadlines []time.Time
+}
+
+func (tunnel *observationFaultTunnel) DiscoverWing(ctx context.Context, id string) (*ws.WingInfo, error) {
+	tunnel.calls++
+	deadline, _ := ctx.Deadline()
+	tunnel.deadlines = append(tunnel.deadlines, deadline)
+	if tunnel.calls <= tunnel.failures {
+		return nil, tunnel.fault
+	}
+	return tunnel.directConnectorTestTunnel.DiscoverWing(ctx, id)
+}
+
+func TestConnectMCPObservationRecoveryIsBoundedAndReadOnly(t *testing.T) {
+	for _, tt := range []struct {
+		name, tool string
+		failures   int
+		fault      error
+		calls      int
+		transport  bool
+	}{
+		{name: "status recovers", tool: "agent_status", failures: 2, calls: 3},
+		{name: "wait recovers", tool: "agent_wait", failures: 1, calls: 2},
+		{name: "result recovers", tool: "agent_result", failures: 1, calls: 2},
+		{name: "exhaustion", tool: "agent_status", failures: 10, calls: 4, transport: true},
+		{name: "launch never retried", tool: "agent_run", failures: 10, calls: 1, transport: true},
+		{name: "workspace never retried", tool: "review_workspace", failures: 10, calls: 1, transport: true},
+		{name: "authorization denial", tool: "agent_status", failures: 10, fault: errors.New("wings API: status 401"), calls: 1, transport: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fault := tt.fault
+			if fault == nil {
+				fault = &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNRESET}
+			}
+			tunnel := &observationFaultTunnel{directConnectorTestTunnel: newDirectConnectorTestTunnel(t), failures: tt.failures, fault: fault}
+			connector := &connectMCPServer{actor: "observation-test", tunnel: tunnel, timeout: time.Second}
+			defer connector.close()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			originalDeadline, _ := ctx.Deadline()
+			_, bad, err := connector.callTool(ctx, tt.tool, json.RawMessage(`{"wing_id":"office","run_id":"missing-run"}`))
+			if tunnel.calls != tt.calls || (err != nil) != tt.transport || !bad {
+				t.Fatalf("calls=%d bad=%v err=%v", tunnel.calls, bad, err)
+			}
+			for _, deadline := range tunnel.deadlines {
+				if deadline.IsZero() || deadline.After(originalDeadline) {
+					t.Fatalf("original deadline extended: %s > %s", deadline, originalDeadline)
+				}
+			}
+		})
+	}
+}
+
+func TestConnectMCPObservationRecoveryPreservesEarlierDeadline(t *testing.T) {
+	tunnel := &observationFaultTunnel{directConnectorTestTunnel: newDirectConnectorTestTunnel(t), failures: 10, fault: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNRESET}}
+	connector := &connectMCPServer{actor: "observation-test", tunnel: tunnel, timeout: time.Second}
+	defer connector.close()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, _, err := connector.callTool(ctx, "agent_status", json.RawMessage(`{"wing_id":"office","run_id":"missing-run"}`))
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > time.Second || tunnel.calls != 1 {
+		t.Fatalf("deadline: %v, calls=%d elapsed=%s", err, tunnel.calls, time.Since(started))
+	}
 }
 
 type blockingConnectMCPTunnel struct {

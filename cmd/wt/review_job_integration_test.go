@@ -45,10 +45,22 @@ func TestReviewJobDirectTransportReconnectIsolation(t *testing.T) {
 	if err != nil || bad || result["patch"] != "exact-patch" {
 		t.Fatalf("reconnect retrieval: %v %v %v", result, bad, err)
 	}
+	listed, bad, err := reconnected.Call(ctx, "review_job_list", json.RawMessage(`{}`))
+	if err != nil || bad {
+		t.Fatalf("fresh discovery: %v %v %v", listed, bad, err)
+	}
+	jobs := listed["jobs"].([]any)
+	if len(jobs) != 1 || jobs[0].(map[string]any)["job_id"] != id {
+		t.Fatalf("fresh client could not discover the job: %v", listed)
+	}
 	other, otherCtx := connectDirectMCPTestClient(t, s.cfg, wingCfg, t.TempDir(), false, webrtcpkg.PeerIdentity{UserID: "bob", Email: "bob@example.test", OrgRole: "owner"})
 	result, bad, err = other.Call(otherCtx, "review_job_result", args)
 	if err == nil && !bad {
 		t.Fatalf("cross-owner leak: %v", result)
+	}
+	listed, bad, err = other.Call(otherCtx, "review_job_list", json.RawMessage(`{}`))
+	if err == nil && !bad {
+		t.Fatalf("cross-owner discovery leak: %v", listed)
 	}
 	shared, sharedCtx := connectDirectMCPTestClient(t, s.cfg, wingCfg, t.TempDir(), true, webrtcpkg.PeerIdentity{UserID: "alice", Email: "alice@example.test", OrgRole: "owner"})
 	result, bad, err = shared.Call(sharedCtx, "review_job_result", args)

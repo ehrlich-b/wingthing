@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,6 +219,44 @@ func (s *connectMCPServer) handle(ctx context.Context, request localMCPRequest) 
 }
 
 func (s *connectMCPServer) callTool(ctx context.Context, name string, arguments json.RawMessage) (map[string]any, bool, error) {
+	data, bad, err := s.callToolOnce(ctx, name, arguments)
+	if !recoverableDirectObservation(name) || !directTransportUnavailable(err) || ctx.Err() != nil {
+		return data, bad, err
+	}
+	recovery, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	for retry := 1; retry <= 3; retry++ {
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-recovery.Done():
+			timer.Stop()
+			return nil, true, fmt.Errorf("%s observation recovery deadline: %w", name, recovery.Err())
+		case <-timer.C:
+		}
+		log.Printf("[direct MCP] reconnecting observation %s, retry %d/3", name, retry)
+		data, bad, err = s.callToolOnce(recovery, name, arguments)
+		if !directTransportUnavailable(err) || recovery.Err() != nil {
+			return data, bad, err
+		}
+	}
+	return nil, true, fmt.Errorf("%s observation recovery exhausted after three retries: %w", name, err)
+}
+
+func recoverableDirectObservation(name string) bool {
+	switch name {
+	case "agent_status", "agent_wait", "agent_result", "review_job_list", "review_job_status", "review_job_result":
+		return true
+	}
+	return false
+}
+
+func directTransportUnavailable(err error) bool {
+	var network net.Error
+	var unavailable *ws.WingUnavailableError
+	return err != nil && (errors.Is(err, webrtcpkg.ErrControlDisconnected) || errors.As(err, &network) || errors.As(err, &unavailable))
+}
+
+func (s *connectMCPServer) callToolOnce(ctx context.Context, name string, arguments json.RawMessage) (map[string]any, bool, error) {
 	tool, ok := control.Lookup(name)
 	if !ok || !tool.Supports(control.SurfaceDirectMCP) {
 		return nil, true, fmt.Errorf("unknown direct MCP tool %q", name)
@@ -264,7 +305,7 @@ func (s *connectMCPServer) callTool(ctx context.Context, name string, arguments 
 	}
 	result, isError, err := client.Call(ctx, name, forwarded)
 	if err != nil {
-		if client.Closed() {
+		if client.Closed() || errors.Is(err, webrtcpkg.ErrControlDisconnected) {
 			s.evictControl(wingID, client)
 		}
 		return nil, true, err

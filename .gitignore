@@ -18,6 +18,7 @@ test/linux/mock-agent
 test/linux/run-tests
 test/linux/sandbox-tests
 test/linux/wt-tests
+test/linux/fixtures/
 __pycache__/
 test/web/wt
 

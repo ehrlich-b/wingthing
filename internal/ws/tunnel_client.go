@@ -54,6 +54,10 @@ type WingInfo struct {
 	HostedRelay    string `json:"hosted_relay,omitempty"`
 }
 
+type WingUnavailableError struct{ WingID string }
+
+func (e *WingUnavailableError) Error() string { return fmt.Sprintf("wing %s not found", e.WingID) }
+
 // ListWings returns the online wings the authenticated relay account may use.
 // The relay roster intentionally contains routing identity only; callers use an
 // encrypted wing.info request when they need host or capability details.
@@ -108,7 +112,7 @@ func (tc *TunnelClient) DiscoverWing(ctx context.Context, wingID string) (*WingI
 			return &w, nil
 		}
 	}
-	return nil, fmt.Errorf("wing %s not found", wingID)
+	return nil, &WingUnavailableError{WingID: wingID}
 }
 
 // VerifyWingIdentity applies the native client's TOFU policy to a relay roster

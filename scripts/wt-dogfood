@@ -1,0 +1,71 @@
+#!/bin/bash
+set -euo pipefail
+
+dogfood_root="${HOME}/.local/share/wingthing-dogfood"
+dogfood_binary="$dogfood_root/bin/wt"
+dogfood_roost=http://127.0.0.1:17881
+dogfood_wing=5003a9a0a5b64b2f8521db78
+dogfood_host=dogfood@10.80.1.50
+dogfood_socket="$dogfood_root/ssh/work-1.sock"
+
+fail() {
+  printf 'wt-dogfood: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  printf '%s\n' 'usage: wt-dogfood review {list|submit|status|result} [arguments]' \
+    '       wt-dogfood mcp connect --client NAME' \
+    '       wt-dogfood --version'
+}
+
+if [ "$#" -eq 0 ] || [ "$1" = --help ]; then
+  usage
+  exit 0
+fi
+[ -x "$dogfood_binary" ] || fail "private binary missing; run scripts/install-dogfood.sh with a private build from the durable hardening repository"
+if [ "$1" = --version ]; then
+  exec "$dogfood_binary" --version
+fi
+case "$1:${2:-}" in
+  review:list|review:submit|review:status|review:result) dogfood_review=true ;;
+  mcp:connect) dogfood_review=false ;;
+  *) usage >&2; exit 2 ;;
+esac
+for argument in "$@"; do
+  case "$argument" in
+    --roost|--roost=*|--wing-id|--wing-id=*) fail 'target overrides are not accepted by this private entry point' ;;
+  esac
+done
+[ -f "$dogfood_root/ssh/id_ed25519" ] || fail 'private SSH identity is missing; restore access through the operator instructions, never copy provider credentials'
+[ -f "$dogfood_root/ssh/known_hosts" ] || fail 'private SSH host pins are missing; verify the owned VM before restoring them'
+[ -d "$dogfood_root/client" ] || fail 'existing private client profile is missing; authenticate it explicitly before use'
+
+dogfood_ssh=(ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes \
+  -o ConnectTimeout=8 -o ConnectionAttempts=1 -o StrictHostKeyChecking=yes \
+  -o "UserKnownHostsFile=$dogfood_root/ssh/known_hosts" \
+  -i "$dogfood_root/ssh/id_ed25519" -S "$dogfood_socket")
+
+ready() {
+  "${dogfood_ssh[@]}" -O check "$dogfood_host" >/dev/null 2>&1 &&
+    curl --disable --noproxy '*' --fail --silent --connect-timeout 1 --max-time 2 \
+      "$dogfood_roost/health" >/dev/null
+}
+
+if ! ready; then
+  if "${dogfood_ssh[@]}" -O check "$dogfood_host" >/dev/null 2>&1; then
+    "${dogfood_ssh[@]}" -o ExitOnForwardFailure=yes -O forward \
+      -L 127.0.0.1:17881:127.0.0.1:17881 "$dogfood_host" >/dev/null 2>&1 || true
+  else
+    "${dogfood_ssh[@]}" -o ControlMaster=auto -o ControlPersist=300 \
+      -o ExitOnForwardFailure=yes -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+      -fNT -L 127.0.0.1:17881:127.0.0.1:17881 "$dogfood_host" >/dev/null 2>&1 || true
+  fi
+  ready || fail 'cannot reach the private roost through its pinned SSH forward; check office/VPN reachability to 10.80.1.50, port 17881 conflicts, and the wingthing-dogfood-roost service; no hosted-relay fallback was attempted'
+fi
+
+if [ "$dogfood_review" = true ]; then
+  exec env WINGTHING_DIR="$dogfood_root/client" "$dogfood_binary" "$@" \
+    --wing-id "$dogfood_wing" --roost "$dogfood_roost"
+fi
+exec env WINGTHING_DIR="$dogfood_root/client" "$dogfood_binary" "$@" --roost "$dogfood_roost"

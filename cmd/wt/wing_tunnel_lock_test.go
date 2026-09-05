@@ -5,6 +5,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,50 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
+
+func TestTunnelKeyCacheBindsBothPeerIdentities(t *testing.T) {
+	sender, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []*ecdh.PrivateKey
+	for range 2 {
+		key, err := ecdh.X25519().GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, key)
+	}
+	for _, index := range []int{0, 1, 0} {
+		key := keys[index]
+		gcm, err := auth.DeriveSharedKey(sender, base64.StdEncoding.EncodeToString(key.PublicKey().Bytes()), "wt-tunnel")
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, err := auth.Encrypt(gcm, []byte(`{"type":"wing.info"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response ws.TunnelResponse
+		var allowed []config.AllowKey
+		var eggMu sync.Mutex
+		var eggConfig *egg.EggConfig
+		handleTunnelRequest(context.Background(), &config.Config{Dir: t.TempDir()}, &config.WingConfig{}, ws.TunnelRequest{
+			RequestID: "identity-cache", SenderPub: base64.StdEncoding.EncodeToString(sender.PublicKey().Bytes()), SenderUserID: "alice", SenderOrgRole: "owner", Payload: payload,
+		}, func(message any) error {
+			response = message.(ws.TunnelResponse)
+			return nil
+		}, &allowed, nil, nil, auth.PasskeyPolicy{}, key, t.TempDir(), &eggMu, &eggConfig, false, false, &ws.Client{Hostname: "cached-wing"}, nil, &sync.Map{})
+		plaintext, err := auth.Decrypt(gcm, response.Payload)
+		if err != nil {
+			t.Fatalf("wing %d used another identity's key: %v", index, err)
+		}
+		var info map[string]any
+		if err := json.Unmarshal(plaintext, &info); err != nil || info["hostname"] != "cached-wing" {
+			t.Fatalf("wing %d response: %s, %v", index, plaintext, err)
+		}
+	}
+}
 
 func TestTunnelResponseBackpressureDoesNotBlockWingConfigReload(t *testing.T) {
 	serverKey, err := ecdh.X25519().GenerateKey(rand.Reader)

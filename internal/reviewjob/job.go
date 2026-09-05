@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -110,6 +111,7 @@ type Engine struct {
 
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,80}$`)
 var commitID = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var jobID = regexp.MustCompile(`^j-[0-9a-f]{32}$`)
 
 func (s Spec) Validate() error {
 	if !identifier.MatchString(s.RequestID) || strings.TrimSpace(s.Prompt) == "" || len(s.Prompt) > 32000 {
@@ -219,7 +221,7 @@ func (e Engine) Submit(owner string, spec Spec, backend Backend) (Job, error) {
 }
 
 func (e Engine) Get(owner, id string) (Job, error) {
-	if !regexp.MustCompile(`^j-[0-9a-f]{32}$`).MatchString(id) {
+	if !jobID.MatchString(id) {
 		return Job{}, errors.New("invalid job_id")
 	}
 	read := func() (Job, error) {
@@ -252,6 +254,78 @@ func (e Engine) Get(owner, id string) (Job, error) {
 	job.Status, job.Stage = "interrupted", "terminal"
 	job.Error = "coordinator exited; child runs may remain active; no stage was replayed"
 	return job, e.save(job)
+}
+
+func (e Engine) List(owner string, limit int, cursor string) ([]Job, string, error) {
+	if owner == "" || limit < 1 || limit > 100 || (cursor != "" && !jobID.MatchString(cursor)) {
+		return nil, "", errors.New("list requires an owner, limit 1-100, and an optional job ID cursor")
+	}
+	entries, err := os.ReadDir(e.Dir)
+	if errors.Is(err, os.ErrNotExist) && cursor == "" {
+		return []Job{}, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	type indexEntry struct {
+		ID        string    `json:"job_id"`
+		Owner     string    `json:"owner"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+	var index []indexEntry
+	for _, entry := range entries {
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if !strings.HasSuffix(entry.Name(), ".json") || !jobID.MatchString(id) {
+			continue
+		}
+		if !entry.Type().IsRegular() {
+			return nil, "", errors.New("review job index contains a non-regular record")
+		}
+		data, err := os.ReadFile(e.path(id, ".json"))
+		if err != nil {
+			return nil, "", errors.New("review job index could not be read")
+		}
+		var item indexEntry
+		if err := json.Unmarshal(data, &item); err != nil || item.ID != id {
+			return nil, "", errors.New("review job index contains an invalid record")
+		}
+		if item.Owner == owner {
+			index = append(index, item)
+		}
+	}
+	sort.Slice(index, func(i, j int) bool {
+		if index[i].CreatedAt.Equal(index[j].CreatedAt) {
+			return index[i].ID > index[j].ID
+		}
+		return index[i].CreatedAt.After(index[j].CreatedAt)
+	})
+	start := 0
+	if cursor != "" {
+		found := false
+		for i, item := range index {
+			if item.ID == cursor {
+				start, found = i+1, true
+				break
+			}
+		}
+		if !found {
+			return nil, "", errors.New("cursor not found or not owned by caller")
+		}
+	}
+	end := min(start+limit, len(index))
+	jobs := make([]Job, 0, end-start)
+	for _, item := range index[start:end] {
+		job, err := e.Get(owner, item.ID)
+		if err != nil {
+			return nil, "", err
+		}
+		jobs = append(jobs, job)
+	}
+	next := ""
+	if end < len(index) {
+		next = index[end-1].ID
+	}
+	return jobs, next, nil
 }
 
 func (e Engine) execute(ctx context.Context, job *Job, b Backend) error {

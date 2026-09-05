@@ -5,6 +5,7 @@ import (
 	crand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -14,6 +15,8 @@ import (
 )
 
 const maxControlMessageBytes = 1 << 20
+
+var ErrControlDisconnected = errors.New("direct control transport disconnected")
 
 // ControlClient is the initiating half of Wingthing's direct MCP transport.
 // Signaling is performed by the caller; operation payloads use the DataChannel.
@@ -47,7 +50,7 @@ func NewControlClient(actor string, iceServers []webrtc.ICEServer) (*ControlClie
 		pending: make(map[string]chan control.DirectResponse),
 	}
 	dc.OnOpen(func() { client.readyMu.Do(func() { close(client.ready) }) })
-	dc.OnClose(func() { client.fail(fmt.Errorf("direct control channel closed")) })
+	dc.OnClose(func() { client.fail(fmt.Errorf("%w: channel closed", ErrControlDisconnected)) })
 	dc.OnMessage(func(message webrtc.DataChannelMessage) {
 		if len(message.Data) > maxControlMessageBytes {
 			client.fail(fmt.Errorf("direct control response exceeds %d bytes", maxControlMessageBytes))
@@ -69,7 +72,7 @@ func NewControlClient(actor string, iceServers []webrtc.ICEServer) (*ControlClie
 	})
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
-			client.fail(fmt.Errorf("peer connection %s", state.String()))
+			client.fail(fmt.Errorf("%w: peer connection %s", ErrControlDisconnected, state.String()))
 		}
 	})
 	return client, nil
@@ -144,7 +147,7 @@ func (c *ControlClient) Call(ctx context.Context, tool string, arguments json.Ra
 		return nil, true, fmt.Errorf("direct control request exceeds %d bytes", maxControlMessageBytes)
 	}
 	if err := c.dc.Send(payload); err != nil {
-		return nil, true, fmt.Errorf("send direct control request: %w", err)
+		return nil, true, fmt.Errorf("%w: send request: %v", ErrControlDisconnected, err)
 	}
 	select {
 	case <-ctx.Done():
@@ -186,7 +189,7 @@ func (c *ControlClient) Closed() bool {
 
 // Close releases the peer connection and all of its data channels.
 func (c *ControlClient) Close() error {
-	c.fail(fmt.Errorf("peer connection closed"))
+	c.fail(fmt.Errorf("%w: peer connection closed", ErrControlDisconnected))
 	return c.pc.Close()
 }
 

@@ -86,6 +86,32 @@ type reviewJobReadArgs struct {
 	Round    *int   `json:"round"`
 }
 
+func (s *localMCPServer) toolReviewJobList(arguments json.RawMessage) (map[string]any, error) {
+	var args struct {
+		Limit  *int   `json:"limit"`
+		Cursor string `json:"cursor"`
+	}
+	if err := decodeStrict(arguments, &args); err != nil {
+		return nil, err
+	}
+	if _, err := s.reviewJobPolicy(); err != nil {
+		return nil, err
+	}
+	limit := 50
+	if args.Limit != nil {
+		limit = *args.Limit
+	}
+	jobs, next, err := (reviewjob.Engine{Dir: filepath.Join(s.cfg.Dir, "review-jobs")}).List(s.clientPrincipal(), limit, args.Cursor)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]map[string]any, 0, len(jobs))
+	for _, job := range jobs {
+		rows = append(rows, reviewJobSummary(job))
+	}
+	return map[string]any{"jobs": rows, "count": len(rows), "next_cursor": next}, nil
+}
+
 func (s *localMCPServer) toolReviewJobRead(arguments json.RawMessage, result bool) (map[string]any, error) {
 	var args reviewJobReadArgs
 	if err := decodeStrict(arguments, &args); err != nil {
@@ -155,7 +181,12 @@ func reviewJobSummary(job reviewjob.Job) map[string]any {
 		}
 		rounds = append(rounds, row)
 	}
-	return map[string]any{"job_id": job.ID, "status": job.Status, "stage": job.Stage, "error": job.Error, "ready": job.Terminal(), "created_at": job.CreatedAt, "updated_at": job.UpdatedAt, "deadline": job.Deadline, "base_commit": job.Spec.BaseCommit, "implementer": job.Spec.Implementer, "reviewer": job.Spec.Reviewer, "rounds": rounds}
+	evidence := false
+	if job.Terminal() && len(job.Rounds) > 0 {
+		last := job.Rounds[len(job.Rounds)-1]
+		evidence = last.Candidate != nil && last.Review != nil && last.ImplementerTest != nil && last.ReviewerTest != nil
+	}
+	return map[string]any{"job_id": job.ID, "status": job.Status, "stage": job.Stage, "error": job.Error, "ready": job.Terminal(), "final_evidence_available": evidence, "created_at": job.CreatedAt, "updated_at": job.UpdatedAt, "deadline": job.Deadline, "base_commit": job.Spec.BaseCommit, "implementer": job.Spec.Implementer, "reviewer": job.Spec.Reviewer, "rounds": rounds}
 }
 
 func newReviewConnector(cfg *config.Config, actor, roost string) (*connectMCPServer, error) {
@@ -261,12 +292,13 @@ func (b *nativeReviewBackend) Close() { b.connector.close() }
 
 func reviewCmd() *cobra.Command {
 	root := &cobra.Command{Use: "review", Short: "Submit and inspect a fixed VM-owned implementation/review job"}
-	for _, verb := range []string{"submit", "status", "result"} {
+	for _, verb := range []string{"submit", "list", "status", "result"} {
 		verb := verb
-		var wingID, roost, specPath, artifact string
+		var wingID, roost, specPath, artifact, cursor string
+		var limit int
 		var jsonOutput bool
 		cmd := &cobra.Command{Use: verb + " [job-id]", Args: func(cmd *cobra.Command, args []string) error {
-			if verb == "submit" {
+			if verb == "submit" || verb == "list" {
 				return cobra.NoArgs(cmd, args)
 			}
 			return cobra.ExactArgs(1)(cmd, args)
@@ -311,6 +343,8 @@ func reviewCmd() *cobra.Command {
 				if err := json.Unmarshal(data, &values); err != nil {
 					return err
 				}
+			} else if verb == "list" {
+				values["limit"], values["cursor"] = limit, cursor
 			} else {
 				values["job_id"] = args[0]
 				if artifact != "" {
@@ -328,12 +362,29 @@ func reviewCmd() *cobra.Command {
 			if jsonOutput {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 			}
+			if verb == "list" {
+				for _, raw := range result["jobs"].([]any) {
+					job := raw.(map[string]any)
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%v: %v (%v)\n", job["job_id"], job["status"], job["stage"]); err != nil {
+						return err
+					}
+				}
+				if result["next_cursor"] != "" {
+					_, err = fmt.Fprintf(cmd.OutOrStdout(), "Next page: --cursor %v\n", result["next_cursor"])
+				}
+				return err
+			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%v: %v (%v)\n", result["job_id"], result["status"], result["stage"])
 			return err
 		}}
 		cmd.Flags().StringVar(&wingID, "wing-id", "", "coordinator wing ID")
 		cmd.Flags().StringVar(&roost, "roost", "", "private coordination roost URL")
 		cmd.Flags().BoolVar(&jsonOutput, "json", false, "print structured result")
+		if verb == "list" {
+			cmd.Use = "list"
+			cmd.Flags().IntVar(&limit, "limit", 50, "maximum jobs per page (1-100)")
+			cmd.Flags().StringVar(&cursor, "cursor", "", "next_cursor from a previous page")
+		}
 		if verb == "submit" {
 			cmd.Flags().StringVar(&specPath, "spec", "", "JSON job specification")
 		}

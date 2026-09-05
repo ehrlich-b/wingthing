@@ -9,6 +9,7 @@ COPY mock-agent /usr/local/bin/claude
 COPY run-tests /root/run-tests
 COPY sandbox-tests /root/sandbox-tests
 COPY wt-tests /root/wt-tests
+COPY fixtures /root/fixtures
 RUN chmod +x /usr/local/bin/wt /usr/local/bin/claude /root/run-tests /root/sandbox-tests /root/wt-tests
 RUN mkdir -p /root/.wingthing/eggs /root/.wingthing/logs /root/.claude /root/.ssh
 # Non-root user for namespace failure tests

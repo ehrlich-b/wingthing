@@ -30,7 +30,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"terminal_rename", "terminal_stop",
 		"wing_list",
 	}
-	http = append(http[:len(http)-1], "review_job_submit", "review_job_status", "review_job_result", "review_workspace", "wing_list")
+	http = append(http[:len(http)-1], "review_job_submit", "review_job_list", "review_job_status", "review_job_result", "review_workspace", "wing_list")
 
 	if got := toolNames(Tools(SurfaceLocalMCP)); !reflect.DeepEqual(got, local) {
 		t.Fatalf("local MCP operations changed:\n got: %v\nwant: %v", got, local)
@@ -90,7 +90,7 @@ func TestRegistryDefinitionsAreComplete(t *testing.T) {
 	for _, tool := range Tools(SurfaceHTTPMCP) {
 		if tool.Authority == AuthorityWing && !tool.Supports(SurfaceLocalMCP) {
 			switch tool.Name {
-			case "review_job_submit", "review_job_status", "review_job_result", "review_workspace":
+			case "review_job_submit", "review_job_list", "review_job_status", "review_job_result", "review_workspace":
 				// Review jobs require a long-lived wing and authenticated outbound identity.
 			default:
 				t.Errorf("HTTP operation %q is absent from the local contract", tool.Name)
