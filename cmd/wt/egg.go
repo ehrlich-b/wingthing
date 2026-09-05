@@ -1139,7 +1139,12 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err := validateAgentArgs(o.AgentArgs); err != nil {
 		return nil, err
 	}
-	for _, arg := range o.AgentArgs {
+	isolatedUser := identity.UserID != "" && (identity.OrgWing || identity.SharedHost)
+	policyArgs, err := isolatedClaudePolicyArgs(agentName, isolatedUser && len(o.Command) == 0)
+	if err != nil {
+		return nil, err
+	}
+	for _, arg := range append(policyArgs, o.AgentArgs...) {
 		args = append(args, "--agent-arg="+arg)
 	}
 	if eggCfg.Shell != "" {
@@ -1152,7 +1157,6 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// this lets the policy mask a live SSH agent socket when ~/.ssh is denied.
 	realHome, _ := os.UserHomeDir()
 	effectiveHome := realHome
-	isolatedUser := identity.UserID != "" && (identity.OrgWing || identity.SharedHost)
 	if isolatedUser {
 		effectiveHome = filepath.Join(cfg.Dir, "user-homes", userHash(identity.UserID))
 	}
@@ -1306,7 +1310,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// Rebuild agent settings every session for org wing users.
 	// Reads existing prefs, layers host settings on top (host always wins
 	// for permissions), then injects agent-specific overrides.
-	if isolatedUser && !identity.SharedHost {
+	if isolatedUser && !identity.SharedHost && agentName != "claude" {
 		agentProfile := egg.Profile(agentName)
 		if agentProfile.SettingsFile != "" {
 			settingsDst := filepath.Join(effectiveHome, agentProfile.SettingsFile)
@@ -1641,7 +1645,11 @@ func setupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read API key settings: %w", err)
 	}
-	settings["apiKeyHelper"] = "cat " + keyFile
+	helper := "cat " + keyFile
+	if settings["apiKeyHelper"] == helper {
+		return nil
+	}
+	settings["apiKeyHelper"] = helper
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode API key settings: %w", err)

@@ -620,7 +620,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	}
 
 	// Snapshot agent config before session so we can restore on exit
-	configSnap := SnapshotAgentConfig(rc.Agent)
+	configSnap := SnapshotAgentConfig(rc.Agent, rc.UserHome)
 
 	// Resolve declared, agent-profile, and provider-derived domains through the
 	// same policy path used by `wt egg explain`.

@@ -168,6 +168,10 @@ test-linux-ubuntu:
 test-integ: | web/dist
 	go test -count=1 -tags e2e -v -timeout 120s ./test/integ/...
 
+.PHONY: test-claude-policy
+test-claude-policy: | web/dist
+	WT_REQUIRE_REAL_CLAUDE=1 go test -count=1 -tags integration -v -timeout 180s ./cmd/wt -run '^TestRealClaudeModelPolicyPreservesPersonalSettings$$'
+
 # Black-box rolling-upgrade and rollback gate against the configured historical
 # baseline (WT_COMPAT_BASELINE_REF, defaulted by the script). Requires that tag
 # to be available in the local clone.

@@ -44,6 +44,20 @@ jobs:
           cache-dependency-path: go.sum
       - run: make test-compat
 
+  claude-model-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install -g @anthropic-ai/claude-code@2.1.260
+      - run: make test-claude-policy
+
   linux-sandbox:
     runs-on: ubuntu-latest
     steps:

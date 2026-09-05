@@ -17,11 +17,38 @@ disagree about which sessions exist.
 | `make test-linux` | Debian container with privileged Linux sandbox, CLI, and namespace batteries | Ubuntu-specific behavior |
 | `make test-linux-ubuntu` | Ubuntu 24.04 version of the Linux battery | macOS and browser |
 | `make test-web` | seeded organization-mode roost (including per-identity provider-profile routing), empty-enrollment legacy org canary, and hosted direct-free/relay-entitlement deployments driven by Playwright | local MCP, headless runs, real OAuth provider |
+| `make test-claude-policy` | installed real Claude CLI against a loopback fake API: effective model/effort, explicit selection, unchanged user settings | provider availability, real OAuth, deployed roost configuration |
 | `make test-provider-swap` | real supported CLIs against local models, direct and through Wingthing | hosted models and shared-roost HTTP MCP |
 | `make test-e2e` | both Linux batteries plus `make test-integ` | `make test-web` and `make test-provider-swap` |
 
 The last row is easy to misread. `make test-e2e` is not the complete promotion
 matrix.
+
+## Shared-roost Claude settings regressions
+
+Deployment policy and personal state are separate. Cover both on every release:
+
+- Host model/effort reach an existing user's isolated session without replacing
+  that user's theme, settings, credentials, onboarding, or project trust.
+- A fresh second user gets the same host policy, never another user's profile.
+- Reconnect and a new session after exit retain onboarding and preferences.
+- A policy change affects the next launch; an old session exiting cannot restore
+  stale host settings over the new deployment.
+- Missing policy preserves Claude's default behavior; unreadable or malformed
+  policy fails visibly instead of silently selecting the vendor default.
+- Host API keys, hooks, permissions, and unrelated environment settings are not
+  included in the model-policy projection. The existing credential helper and
+  shared-host jail retain their separate boundaries.
+- An explicit per-session model selection still works.
+
+Unit tests pin the projection and profile/snapshot behavior. The browser canary
+drives real browser → roost → isolated egg startup, reconnect, exit and relaunch.
+The Linux shared-host task test checks the same policy in the sealed jail.
+`make test-claude-policy` requires the actual vendor CLI and inspects its outgoing
+model/effort request using fixture credentials and a loopback server only. CI and
+release pin Claude Code 2.1.260 for that gate; rerun it with the installed runtime
+when deploying a different Claude Code version. A mock named `claude` cannot pass
+this gate.
 
 ## Evidence ladder
 

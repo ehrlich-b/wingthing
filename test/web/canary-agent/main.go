@@ -40,6 +40,26 @@ func printProfileState() {
 		profile.Marker, dirOK, profile.HasCompletedOnboarding)
 }
 
+func printModelPolicy() {
+	policyOK := false
+	model := ""
+	for i := 1; i+1 < len(os.Args); i++ {
+		if os.Args[i] == "--settings" {
+			policyOK = os.Args[i+1] == `{"env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh"}}`
+		}
+		if os.Args[i] == "--model" {
+			model = os.Args[i+1]
+		}
+	}
+	var prefs struct {
+		Model string `json:"model"`
+		Theme string `json:"theme"`
+	}
+	data, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".claude", "settings.json"))
+	json.Unmarshal(data, &prefs)
+	fmt.Printf("CANARY_MODEL_POLICY ok=%t saved_model=%s theme=%s\r\n", policyOK && model == "claude-sonnet-5", prefs.Model, prefs.Theme)
+}
+
 func main() {
 	if slices.Contains(os.Args[1:], "--version") {
 		fmt.Println("canary-agent v1")
@@ -48,6 +68,7 @@ func main() {
 	host, _ := os.Hostname()
 	wd, _ := os.Getwd()
 	printProfileState()
+	printModelPolicy()
 	fmt.Printf("CANARY_SHELL_READY host=%s cwd=%s\r\n> ", host, wd)
 
 	buf := make([]byte, 1024)
@@ -60,6 +81,23 @@ func main() {
 		for _, b := range buf[:n] {
 			switch b {
 			case '\r', '\n':
+				if string(line) == "CANARY_SET_THEME" {
+					path := filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")
+					data, err := os.ReadFile(path)
+					var prefs map[string]any
+					if err == nil {
+						err = json.Unmarshal(data, &prefs)
+					}
+					if err == nil && prefs != nil {
+						prefs["theme"] = "alice-edited"
+						data, err = json.Marshal(prefs)
+						if err == nil {
+							err = os.WriteFile(path, data, 0600)
+						}
+					}
+					fmt.Printf("\r\nCANARY_SETTINGS_SAVED ok=%t\r\n", err == nil && prefs != nil)
+					printModelPolicy()
+				}
 				fmt.Printf("\r\nECHO:%s\r\n> ", line)
 				line = line[:0]
 			case 0x03, 0x04: // ^C / ^D end the session

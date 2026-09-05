@@ -165,6 +165,11 @@ try {
       record('alice: existing Claude profile is loaded from her isolated home', false, String(e).slice(0, 200));
     }
     await shot(p, 'alice-terminal-agent-output');
+    {
+      const text = await terminalText(p);
+      record('alice: deployment model policy reaches the isolated session without replacing preferences',
+        text.includes('CANARY_MODEL_POLICY ok=true saved_model=opus theme=alice-theme'));
+    }
 
     try {
       await p.click('#terminal-container');
@@ -182,6 +187,15 @@ try {
       record('alice: terminal input/output round trip', false, String(e).slice(0, 200));
     }
     await shot(p, 'alice-terminal-roundtrip');
+    await p.keyboard.type('CANARY_SET_THEME');
+    await p.keyboard.press('Enter');
+    try {
+      await p.waitForFunction(() => Array.from(document.querySelectorAll('#terminal-container .xterm-rows > div'))
+        .some((row) => row.textContent.includes('CANARY_SETTINGS_SAVED ok=true')), null, { timeout: 15000 });
+      record('alice: personal settings can be changed inside the isolated session', true);
+    } catch (e) {
+      record('alice: personal settings can be changed inside the isolated session', false, String(e).slice(0, 200));
+    }
 
     // resize goes through the authenticated tunnel now — exercise it
     try {
@@ -212,6 +226,10 @@ try {
         { timeout: 20000 }
       );
       record('alice: detach + reattach replays scrollback', true);
+      const text = await terminalText(p);
+      record('alice: reconnect retains onboarding and personal preferences with host model policy',
+        text.includes('marker=alice-persisted') && text.includes('onboarding=true') &&
+        text.includes('CANARY_MODEL_POLICY ok=true saved_model=opus theme=alice-edited'));
     } catch (e) {
       record('alice: detach + reattach replays scrollback', false, String(e).slice(0, 200));
     }
@@ -336,6 +354,11 @@ try {
       record('bob: distinct identity cannot inherit Alice Claude profile', false, String(e).slice(0, 200));
     }
     await shot(p, 'bob-terminal-eng');
+    {
+      const text = await terminalText(p);
+      record('bob: fresh user receives deployment model policy without Alice preferences',
+        text.includes('CANARY_MODEL_POLICY ok=true saved_model= theme=') && !text.includes('alice-theme'));
+    }
 
     // ACL: bob is NOT a member of /opt/wingthing/support
     try {
@@ -427,6 +450,14 @@ try {
         (candidates, sessionID) => candidates.some((candidate) => candidate.dataset.sid === sessionID), endedSessionID);
       if (restored) throw new Error(`ended session ${endedSessionID} returned after reload`);
       record('alice: end-session removes the durable terminal from the UI', true);
+      await launchTerminal(p, '/opt/wingthing/eng');
+      const lock = await waitLock(p);
+      await p.waitForFunction(() => Array.from(document.querySelectorAll('#terminal-container .xterm-rows > div'))
+        .some((row) => row.textContent.includes('CANARY_MODEL_POLICY')), null, { timeout: 15000 });
+      const text = await terminalText(p);
+      record('alice: new session after exit preserves onboarding and preferences and reapplies host model policy',
+        lock.ok && text.includes('marker=alice-persisted') && text.includes('onboarding=true') &&
+        text.includes('CANARY_MODEL_POLICY ok=true saved_model=opus theme=alice-edited'));
     } catch (e) {
       record('alice: end-session removes the durable terminal from the UI', false, String(e).slice(0, 200));
     }

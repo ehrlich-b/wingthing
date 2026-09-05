@@ -24,6 +24,8 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make check
+      - run: npm install -g @anthropic-ai/claude-code@2.1.260
+      - run: make test-claude-policy
       - run: go vet ./...
       - run: make test-vuln
       - run: go test -race ./...

@@ -72,6 +72,41 @@ membership restriction is required at the provider or ingress.
 Set project roots, labels, sandbox defaults, and audit policy through the same
 wing configuration used by a standalone wing.
 
+## Claude deployment policy and personal state
+
+Each authenticated user's Claude profile belongs to that user. Its writable
+`CLAUDE_CONFIG_DIR` is the user's isolated `.claude` directory; onboarding,
+theme, project trust, credentials, and preferences persist there across sessions.
+Wingthing does not copy the service account's Claude profile over it or restore
+the host's old settings when an isolated Claude session exits. Personal local
+sandboxes retain their existing host-config snapshot protection.
+
+For isolated Claude launches, the service account's `~/.claude/settings.json`
+supplies only the deployment `model`, `effortLevel`, and
+`env.CLAUDE_CODE_EFFORT_LEVEL`. Wingthing passes the model with `--model` and
+effort policy with `--settings`,
+without rewriting the user's saved settings or exposing the host settings file
+inside the jail. Existing deployments using Sonnet 4.6 and environment effort
+`max` keep that policy:
+
+```json
+{
+  "model": "claude-sonnet-4-6",
+  "effortLevel": "high",
+  "env": { "CLAUDE_CODE_EFFORT_LEVEL": "max" }
+}
+```
+
+Changing this file affects subsequent launches without resetting profiles.
+Already-running sessions are not restarted. Explicit session model arguments
+remain supported. A malformed or unreadable policy stops the launch with an
+error; an absent policy retains Claude's ordinary defaults.
+
+This is a model default, not a model-access security boundary. Host credentials
+still use the existing private credential helper, and filesystem/owner authority
+still comes from the shared-host jail and authenticated resource checks. Neither
+arbitrary host settings nor another user's settings are inherited.
+
 ## Run components separately
 
 Use separate processes when the gateway and execution runtime belong on

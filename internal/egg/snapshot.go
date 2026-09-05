@@ -19,7 +19,10 @@ type ConfigSnapshot struct {
 }
 
 // SnapshotAgentConfig reads critical config files for the given agent and saves their contents.
-func SnapshotAgentConfig(agent string) *ConfigSnapshot {
+func SnapshotAgentConfig(agent, isolatedHome string) *ConfigSnapshot {
+	if agent == "claude" && isolatedHome != "" {
+		return nil
+	}
 	paths, ok := agentConfigFiles[agent]
 	if !ok {
 		return nil

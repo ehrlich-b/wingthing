@@ -32,6 +32,9 @@ func TestMain(m *testing.M) {
 func TestSharedHostAgentRunUsesSealedJail(t *testing.T) {
 	const providerKey = "shared-provider-key-canary"
 	root := t.TempDir()
+	hostHome := filepath.Join(root, "host-home")
+	t.Setenv("HOME", hostHome)
+	writePolicyFixture(t, filepath.Join(hostHome, ".claude", "settings.json"), `{"model":"claude-sonnet-5","env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh","HOST_SECRET":"must-not-cross"},"theme":"host-theme"}`)
 	workspace := filepath.Join(root, "workspace")
 	stateDir := filepath.Join(root, "wingthing-state")
 	userHome := filepath.Join(stateDir, "user-homes", "fixture-user")
@@ -49,6 +52,7 @@ func TestSharedHostAgentRunUsesSealedJail(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(userHome, ".claude", "credentials-fixture"), []byte("personal-login-state"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	writePolicyFixture(t, filepath.Join(userHome, ".claude", "settings.json"), `{"model":"opus","theme":"user-theme"}`)
 	secretPath := filepath.Join(otherUserHome, ".claude", "credentials-fixture")
 	if err := os.WriteFile(secretPath, []byte("other-user-login-state"), 0o600); err != nil {
 		t.Fatal(err)
@@ -101,6 +105,11 @@ func TestSharedHostAgentRunUsesSealedJail(t *testing.T) {
 	}
 	if strings.TrimSpace(output.String()) != "sealed" {
 		t.Fatalf("shared-host agent output = %q, want sealed", output.String())
+	}
+	var saved map[string]any
+	settingsData, err := os.ReadFile(filepath.Join(userHome, ".claude", "settings.json"))
+	if err != nil || json.Unmarshal(settingsData, &saved) != nil || saved["model"] != "opus" || saved["theme"] != "user-theme" {
+		t.Fatalf("shared run replaced user preferences: %s, %v", settingsData, err)
 	}
 	marker, err := os.ReadFile(filepath.Join(workspace, "agent-wrote-here"))
 	if err != nil {
@@ -163,6 +172,12 @@ func TestPrepareSharedAgentHomeCreatesOwnerOnlyParentTree(t *testing.T) {
 }
 
 func runSharedHostFixtureAgent(args []string) int {
+	policyOK := false
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--settings" {
+			policyOK = args[i+1] == `{"env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh"}}`
+		}
+	}
 	const providerKey = "shared-provider-key-canary"
 	prompt := argumentValue(args, "-p")
 	workspace := promptFixtureValue(prompt, "workspace")
@@ -171,6 +186,9 @@ func runSharedHostFixtureAgent(args []string) int {
 	if workspace == "" || secretPath == "" {
 		result = "fixture-input-missing"
 	} else {
+		if !policyOK || argumentValue(args, "--model") != "claude-sonnet-5" {
+			result = "model-policy-missing-or-leaked"
+		}
 		ownLogin, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".claude", "credentials-fixture"))
 		if err != nil || string(ownLogin) != "personal-login-state" {
 			result = "personal-login-missing"

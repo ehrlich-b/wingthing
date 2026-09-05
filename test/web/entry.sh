@@ -8,6 +8,9 @@ echo "support marker $(date -u)" > /opt/wingthing/support/README.txt
 # policy here since the docker container is the boundary.
 cp /root/.wingthing/egg.yaml /opt/wingthing/eng/egg.yaml
 cp /root/.wingthing/egg.yaml /opt/wingthing/support/egg.yaml
+install -d -m 0700 /root/.claude
+printf '%s\n' '{"model":"claude-sonnet-5","env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh","HOST_SECRET":"must-not-cross"},"theme":"host-theme"}' \
+  > /root/.claude/settings.json
 
 /usr/local/bin/wt roost start --foreground --audit --addr :8080 &
 ROOST_PID=$!
@@ -31,6 +34,8 @@ if [ "$seeded" = "1" ]; then
   printf '%s\n' '{"hasCompletedOnboarding":true,"wtCanaryProfile":"alice-persisted"}' \
     > "$ALICE_HOME/.claude/.claude.json"
   chmod 0600 "$ALICE_HOME/.claude/.claude.json"
+  printf '%s\n' '{"model":"opus","theme":"alice-theme","env":{"PERSONAL":"alice-only","CLAUDE_CODE_EFFORT_LEVEL":"max"}}' \
+    > "$ALICE_HOME/.claude/settings.json"
   echo CANARY_SEEDED
   touch /tmp/seeded
 else

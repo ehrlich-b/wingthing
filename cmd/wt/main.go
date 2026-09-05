@@ -561,12 +561,16 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		}()
 		sandboxDiagnosticPath = sb.DiagLog()
 		agentEnv := directAgentEnvWithPolicy(agentName, home, sbCfg.ProxyPort, !options.SharedHost)
+		policyArgs, err := isolatedClaudePolicyArgs(agentName, options.UserHome != "")
+		if err != nil {
+			return err
+		}
 		runOpts.CmdFactory = func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
 			executable, resolveErr := sandboxAgentExecutable(name, home, options.SharedHost)
 			if resolveErr != nil {
 				return nil, resolveErr
 			}
-			cmd, execErr := sb.Exec(ctx, executable, args)
+			cmd, execErr := sb.Exec(ctx, executable, append(append([]string(nil), policyArgs...), args...))
 			if execErr != nil {
 				return nil, execErr
 			}
