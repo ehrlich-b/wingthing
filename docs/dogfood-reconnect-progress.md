@@ -1,6 +1,9 @@
 # Private dogfood reconnect goal
 
-Status: in progress, September 5, 2026. No production or release authority.
+Status: acceptance proof passed, September 5, 2026. Private dogfood only;
+no production or release authority. A fresh native client discovered the real
+Terra/Sol job after reconnection and retrieved its verified final evidence.
+The generated patch remains an artifact, not an applied or released change.
 
 ## Acceptance checklist
 
@@ -12,10 +15,10 @@ Status: in progress, September 5, 2026. No production or release authority.
 - [x] Preserve authorization revalidation, ambiguous-launch denial, and restart interruption.
 - [x] Exercise the composed native workflow with deterministic failure fixtures.
 - [x] Cross the actual 15-minute identity lease on the owned VMs with a live fixture.
-- [ ] Complete a real Terra/Sol hardening job with all Mac clients disconnected.
-- [ ] Discover and retrieve exact evidence from a fresh Mac client without remembered IDs.
+- [x] Complete a real Terra/Sol hardening job with all Mac clients disconnected.
+- [x] Discover and retrieve exact evidence from a fresh Mac client without remembered IDs.
 - [x] Rerun integration, org-mode, sandbox, and compatibility gates.
-- [ ] Record exact source/artifact digests and repeatable operating commands.
+- [x] Record exact source/artifact digests and repeatable operating commands.
 
 ## Preservation
 
@@ -61,7 +64,7 @@ workspace identities. The production lease remains fifteen minutes.
 
 Full local logs are under `dist/dogfood/`. Fresh-client retrieval from the
 installed entry point and the live fifteen-minute lease fixture passed. The
-new disconnected real Terra/Sol task remains outstanding.
+subsequent disconnected real Terra/Sol proof also passed, as recorded below.
 
 The first composed run exposed a process-global tunnel-key cache indexed only
 by the sender key. It now binds both peer identities; the native composed test
@@ -220,7 +223,84 @@ Fresh verification logs under `dist/dogfood/`:
 - `compat-client-timeouts.log`: v0.144.1 compatibility, 67 CLI surfaces and
   both mixed-version directions.
 
-These are client/source verification, not evidence that the disconnected real
-job succeeded. That outcome remains unobserved until the recorded reconnect
-time. No native network command or SSH connection to either VM was made during
-this client-hardening work.
+These are client/source verification, separate from the subsequently retrieved
+real-job proof below. No native network command or SSH connection to either VM
+was made during this client-hardening work.
+
+## Disconnected real workflow passed
+
+The first reconnect was at `2026-09-05T15:43:40Z`, after the entire one-hour
+job deadline and isolation margin. `wt-dogfood review list --json` established
+the private connection and returned four owner-visible jobs. Selecting the
+newest row by creation time, without a supplied ID or success-only filter,
+discovered `j-debab30c550cc5876887f41b3c906b03`. Its identity, full pinned base,
+both worker targets/models, and original deadline matched the submission.
+
+| Event | UTC, September 5 |
+| --- | --- |
+| Submission persisted | 14:05:08.311570947 |
+| Mac private SSH master closed | 14:05:08, local timestamp precision one second |
+| Terra started / finished | 14:05:09 / 14:07:42 |
+| Sol started / finished | 14:07:56 / 14:08:25 |
+| Final workflow record persisted | 14:08:36.663527035 |
+| Fresh Mac reconnect | 15:43:40 |
+
+Native `agent_status` returned `done`, `isolation: standard`, the expected
+model, and the unchanged 600-second limit for both exact children:
+
+- Terra on work-2: `t-20260905-140509-7e53b6d98d5e4dfa`.
+- Sol on work-1: `t-20260905-140756-7b35fb233f6344d2`.
+
+The workflow succeeded in round zero, with no revisions, after about 208 seconds.
+Both test records have exit zero and the exact specified test argv. Both logs
+contain the execution and passing result of `TestReviewJobConfirmedRunStages`,
+not merely a successful command with no matching tests. The test workspaces
+are distinct: `95d4d34b74c9450fa9447a45778c0b4c` and
+`5cb93c98798b4f6c8f3b3cf4320b52c1`.
+
+Independently recomputed SHA-256 values:
+
+- Candidate patch: `b1832813f53284826689771a84214d098cede296b650f73ca2b49722a4108775`.
+- Implementation test output: `7b2ee0e26bfaccca3f3bd8253c8d70d1c467ca7e0a9fb94f5c291a2f693418c8`.
+- Review test output: `e1f1793d553ffd62dea3e0275762ff775d8dcbe29e66f7d75ad8a9f520945e25`.
+
+Sol's structured verdict is `pass` and binds that exact candidate digest.
+The patch changes only the two allowed files: four insertions/three deletions
+in `internal/reviewjob/job.go` and 147 insertions/four deletions in its test file.
+It records the confirmed running stage with the acknowledged child ID before
+waiting, with gated regressions for implementation, review, ambiguity, and a
+requested revision. No generated patch was applied to either source replica
+or to the Mac worktree.
+
+All result artifacts were retrieved through native `wt-dogfood review result`,
+not SSH file copying. Local durable evidence under `dist/dogfood/`:
+
+- `disconnected-real-fresh-discovery.json`, `disconnected-real-submit.json`,
+  and `disconnected-real-{at,reconnect-at}.txt` establish discovery and timing.
+- `disconnected-real-{patch,review,tests,implementation}.json` contain the exact
+  native result records.
+- `disconnected-real-runs.json` contains the two native child status responses.
+- `final-work-{1,2}-runtime.txt` records the subsequent read-only runtime audit.
+
+The runtime audit at 15:46 UTC found the original worker PIDs still serving the
+recorded Linux digest `1b834c2b1a563bfd3ac541cf4fb2d6542dca0f255d5da32f3d32ce0e0f5f6a2f`.
+Both source replicas remain clean at `5b8fcfce454f4881e27dc762082845067cc28180`.
+The audit also retrieved both actual 13:54:33 lease-expiry journal entries and
+the coordinator's `agent_wait` reconnect entry from the earlier live fixture.
+The installed Mac wrapper still matches local checkpoint `2e9109b`, while its
+runtime binary remains the separately identified `52ed38c` private build.
+
+## Completion scope and remaining limitations
+
+This proves one fixed personal-owner implementation/review workflow on the two
+owned VMs, including fresh discovery and exact evidence retrieval. It does not
+claim a general workflow engine, automatic source synchronization, browser
+takeover for headless runs, production readiness, or sustained multi-day usage.
+Existing source replicas and provider logins are prerequisites. Coordinator
+restart reports interruption without replay; it does not resume active stages.
+Future source changes require an explicit pinned-workspace preparation step.
+Generated patches still need a separate acceptance/application decision.
+
+No tags, releases, pushes, merges, production changes, credential-cache copying,
+or worker restarts during active work were performed. Use
+`docs/dogfood-operator.md` for the repeatable native commands.

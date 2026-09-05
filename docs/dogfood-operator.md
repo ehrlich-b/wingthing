@@ -1,6 +1,8 @@
 # Private Wingthing dogfood operator
 
-Status: reconnect goal in progress. Use private builds only.
+Status: fresh-session and disconnected Terra/Sol proof passed September 5, 2026.
+Use private builds only. Exact evidence and limitations are recorded in
+`docs/dogfood-reconnect-progress.md`.
 
 The source worktree is `/Users/ehrlich/repos/wingthing-dogfood-hardening`.
 The separate executable is `~/.local/bin/wt-dogfood`. It uses the existing
