@@ -30,6 +30,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"terminal_rename", "terminal_stop",
 		"wing_list",
 	}
+	http = append(http[:len(http)-1], "review_job_submit", "review_job_status", "review_job_result", "review_workspace", "wing_list")
 
 	if got := toolNames(Tools(SurfaceLocalMCP)); !reflect.DeepEqual(got, local) {
 		t.Fatalf("local MCP operations changed:\n got: %v\nwant: %v", got, local)
@@ -54,7 +55,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 
 func TestRegistryDefinitionsAreComplete(t *testing.T) {
 	seen := map[string]bool{}
-	for _, tool := range Tools(SurfaceLocalMCP) {
+	for _, tool := range catalog {
 		if seen[tool.Name] {
 			t.Errorf("duplicate operation %q", tool.Name)
 		}
@@ -87,8 +88,13 @@ func TestRegistryDefinitionsAreComplete(t *testing.T) {
 		}
 	}
 	for _, tool := range Tools(SurfaceHTTPMCP) {
-		if tool.Authority == AuthorityWing && !seen[tool.Name] {
-			t.Errorf("HTTP operation %q is absent from the local contract", tool.Name)
+		if tool.Authority == AuthorityWing && !tool.Supports(SurfaceLocalMCP) {
+			switch tool.Name {
+			case "review_job_submit", "review_job_status", "review_job_result", "review_workspace":
+				// Review jobs require a long-lived wing and authenticated outbound identity.
+			default:
+				t.Errorf("HTTP operation %q is absent from the local contract", tool.Name)
+			}
 		}
 	}
 	if got := toolNames(ToolsForAuthority(SurfaceHTTPMCP, AuthorityPortal)); !reflect.DeepEqual(got, []string{"wing_list"}) {
@@ -103,12 +109,12 @@ func TestObjectKindsFollowSurfaceAvailability(t *testing.T) {
 		t.Fatalf("local objects = %v, want %v", got, want)
 	}
 	if got, want := ObjectKinds(SurfaceHTTPMCP), []string{
-		"wing", "terminal", "agent_run", "message", "sandbox_policy",
+		"wing", "terminal", "agent_run", "review_job", "review_workspace", "message", "sandbox_policy",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("HTTP objects = %v, want %v", got, want)
 	}
 	if got, want := ObjectKinds(SurfaceDirectMCP), []string{
-		"wing", "terminal", "agent_run", "message", "sandbox_policy",
+		"wing", "terminal", "agent_run", "review_job", "review_workspace", "message", "sandbox_policy",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("direct objects = %v, want %v", got, want)
 	}

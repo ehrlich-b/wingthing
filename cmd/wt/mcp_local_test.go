@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/memory"
+	"github.com/ehrlich-b/wingthing/internal/orchestrator"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/store"
@@ -217,7 +220,7 @@ func TestLocalAndHTTPMCPShareControlRegistry(t *testing.T) {
 		if !reflect.DeepEqual(got.Annotations, want.Annotations) {
 			t.Errorf("%s HTTP annotations differ from registry", want.Name)
 		}
-		if want.Authority == control.AuthorityWing && !reflect.DeepEqual(local[want.Name].InputSchema, want.InputSchema) {
+		if want.Supports(control.SurfaceLocalMCP) && !reflect.DeepEqual(local[want.Name].InputSchema, want.InputSchema) {
 			t.Errorf("%s local schema differs from registry", want.Name)
 		}
 	}
@@ -874,6 +877,10 @@ func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
 			if err := taskStore.SetTaskOutput(task.ID, "semantic ✓ result"); err != nil {
 				return err
 			}
+			final := "final ✓ response"
+			if err := taskStore.AppendLog(task.ID, "final_output", &final); err != nil {
+				return err
+			}
 			return taskStore.UpdateTaskStatus(task.ID, "done")
 		},
 	}
@@ -913,9 +920,139 @@ func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
 	if err != nil || result["output"] != "semantic ✓" || result["truncated"] != true {
 		t.Fatalf("agent_result = %#v err=%v", result, err)
 	}
+	if result["final_output"] != "final ✓ re" || result["final_output_truncated"] != true {
+		t.Fatalf("final result = %#v", result)
+	}
+	if _, err := other.toolAgentResult(json.RawMessage(`{"run_id":"` + runID + `"}`)); err == nil {
+		t.Fatal("cross-owner final result leaked")
+	}
 	events, err := server.toolAgentEvents(json.RawMessage(`{"run_id":"` + runID + `"}`))
 	if err != nil || len(events["events"].([]map[string]any)) == 0 {
 		t.Fatalf("agent_events = %#v err=%v", events, err)
+	}
+}
+
+func TestLocalMCPAgentRunPendingIsolationIsDeclaredAndOwnerScoped(t *testing.T) {
+	tests := []struct {
+		name           string
+		agent          string
+		agentIsolation string
+		unsandboxed    bool
+		wantIsolation  string
+	}{
+		{name: "default standard", agent: "claude", wantIsolation: "standard"},
+		{name: "selected agent default", agent: "codex", agentIsolation: "network", wantIsolation: "network"},
+		{name: "explicit unsandboxed privileged", agent: "claude", unsandboxed: true, wantIsolation: "privileged"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cwd := t.TempDir()
+			cfg := &config.Config{Dir: dir, DefaultAgent: "claude"}
+			if tt.agentIsolation != "" {
+				taskStore, err := store.Open(cfg.DBPath())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := taskStore.UpsertAgent(&store.Agent{Name: tt.agent, DefaultIsolation: tt.agentIsolation}); err != nil {
+					t.Fatal(err)
+				}
+				closeForTest(t, "seed task store", taskStore)
+			}
+			started := make(chan string, 1)
+			builtIsolation := make(chan string, 1)
+			runnerDone := make(chan struct{})
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			server := &localMCPServer{
+				cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha", unsandboxed: tt.unsandboxed,
+				runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+					defer close(runnerDone)
+					started <- task.Isolation
+					<-release
+					// Build after the gate so the assertion below proves the task-level
+					// isolation wins even when the selected agent default changes.
+					result, err := (&orchestrator.Builder{
+						Store: taskStore, Memory: memory.New(cfg.MemoryDir()), Config: cfg,
+					}).Build(context.Background(), task.ID)
+					if err != nil {
+						return err
+					}
+					builtIsolation <- result.Isolation
+					return taskStore.UpdateTaskStatus(task.ID, "done")
+				},
+			}
+			created, err := server.toolAgentRun(json.RawMessage(`{"prompt":"hold pending","agent":` + strconv.Quote(tt.agent) + `,"cwd":` + strconv.Quote(cwd) + `}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Register before inspecting the admission response: if any response
+			// or registry assertion fails, the test-owned completion channel still
+			// guarantees that the gated runner finishes before t.TempDir cleanup.
+			completion := (<-chan struct{})(runnerDone)
+			t.Cleanup(func() {
+				releaseOnce.Do(func() { close(release) })
+				select {
+				case <-completion:
+				case <-time.After(5 * time.Second):
+					t.Error("admitted agent runner did not finish during cleanup")
+				}
+			})
+			runID := created["run_id"].(string)
+			activeValue, ok := activeMCPAgentRuns.Load(server.agentRunKey(runID))
+			active, ok := activeValue.(activeMCPAgentRun)
+			if !ok {
+				t.Fatal("admitted agent runner was not registered")
+			}
+			// Prefer the framework completion handle once it is available.
+			completion = active.done
+			if created["status"] != "pending" || created["isolation"] != tt.wantIsolation {
+				t.Fatalf("original pending response = %#v, want status pending isolation %q", created, tt.wantIsolation)
+			}
+			select {
+			case got := <-started:
+				if got != tt.wantIsolation {
+					t.Fatalf("runner isolation = %q, want %q", got, tt.wantIsolation)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("agent runner did not start")
+			}
+
+			reconnected := &localMCPServer{cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha"}
+			persisted, err := reconnected.toolAgentStatus(json.RawMessage(`{"run_id":` + strconv.Quote(runID) + `}`))
+			if err != nil || persisted["status"] != "pending" || persisted["isolation"] != tt.wantIsolation {
+				t.Fatalf("fresh same-owner pending record = %#v err=%v, want isolation %q", persisted, err, tt.wantIsolation)
+			}
+			otherOwner := &localMCPServer{cfg: cfg, logs: &bytes.Buffer{}, principal: "beta"}
+			if _, err := otherOwner.toolAgentStatus(json.RawMessage(`{"run_id":` + strconv.Quote(runID) + `}`)); err == nil || !strings.Contains(err.Error(), "not found or not owned") {
+				t.Fatalf("other-owner pending record error = %v", err)
+			}
+			// A changed agent default must not rewrite the isolation admitted for
+			// this run when the real orchestration builder resolves it.
+			taskStore, err := store.Open(cfg.DBPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := taskStore.UpsertAgent(&store.Agent{Name: tt.agent, DefaultIsolation: "strict"}); err != nil {
+				closeForTest(t, "mutate task store", taskStore)
+				t.Fatal(err)
+			}
+			closeForTest(t, "mutate task store", taskStore)
+			releaseOnce.Do(func() { close(release) })
+			select {
+			case <-active.done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("admitted agent runner did not finish")
+			}
+			select {
+			case got := <-builtIsolation:
+				if got != tt.wantIsolation {
+					t.Fatalf("builder isolation after agent default mutation = %q, want admitted %q", got, tt.wantIsolation)
+				}
+			default:
+				t.Fatal("admitted runner did not build its prompt")
+			}
+		})
 	}
 }
 

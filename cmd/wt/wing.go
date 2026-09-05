@@ -2145,8 +2145,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		killOrphanEgg(cfg, sessionID)
 	}
 
-	// Reclaim surviving egg sessions on every (re)connect
-	client.OnReconnect = func(rctx context.Context) {
+	reclaimSessions := func(rctx context.Context, sessionID string) {
 		wingCfgMu.Lock()
 		reconnectWingCfg := wingCfg.Clone()
 		reconnectAllowedKeys := append([]config.AllowKey(nil), allowedKeys...)
@@ -2164,8 +2163,14 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		wingToolsMu.Lock()
 		reclaimTools := append([]*config.ToolConfig{}, wingTools...)
 		wingToolsMu.Unlock()
-		reclaimEggSessions(rctx, cfg, client, reconnectWingCfg, reconnectAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, reclaimTools)
+		if sessionID != "" {
+			reclaimEggSession(rctx, cfg, client, sessionID, reconnectWingCfg, reconnectAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, reclaimTools)
+		} else {
+			reclaimEggSessions(rctx, cfg, client, reconnectWingCfg, reconnectAllowedKeys, passkeyCache, currentPasskeyPolicy(), authTTL, reclaimTools)
+		}
 	}
+	client.OnReconnect = func(rctx context.Context) { reclaimSessions(rctx, "") }
+	client.OnPTYReclaim = reclaimSessions
 
 	// SIGHUP reload goroutine — caller owns SIGTERM/SIGINT via ctx cancellation
 	go func() {
@@ -3650,56 +3655,50 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		if !e.IsDir() {
 			continue
 		}
-		sessionID := e.Name()
-		dir := filepath.Join(eggsDir, sessionID)
-		pidPath := filepath.Join(dir, "egg.pid")
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			continue
-		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			continue
-		}
-		if !ownedProcessIsAlive(pid) {
-			cleanEggDir(dir)
-			continue
-		}
-
-		// If a goroutine is already handling this session (survived the
-		// reconnect), skip — don't create a duplicate subscriber or
-		// goroutine, which would cause decrypt errors.
-		if wsClient.HasPTYSession(sessionID) {
-			log.Printf("egg: session %s already tracked, skipping", sessionID)
-			continue
-		}
-
-		agent, _ := readEggMeta(dir)
-
-		// Alive — dial and set up input routing
-		sockPath := filepath.Join(dir, "egg.sock")
-		tokenPath := filepath.Join(dir, "egg.token")
-		ec, dialErr := egg.Dial(sockPath, tokenPath)
-		if dialErr != nil {
-			log.Printf("egg: reclaim %s: dial failed: %v", sessionID, dialErr)
-			continue
-		}
-
-		log.Printf("egg: reclaiming session %s (pid %d agent=%s)", sessionID, pid, agent)
-
-		// Set up input routing for this session
-		write, input, cleanup, registered := wsClient.RegisterPTYSession(ctx, sessionID)
-		if !registered {
-			closeWithLog("duplicate reclaimed egg client", ec)
-			log.Printf("egg: session %s became active during reclaim, skipping", sessionID)
-			continue
-		}
-		go func(sid string, ec *egg.Client, dir string) {
-			defer cleanup()
-			defer closeWithLog("reclaimed egg client", ec)
-			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, tools)
-		}(sessionID, ec, dir)
+		reclaimEggSession(ctx, cfg, wsClient, e.Name(), wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, tools)
 	}
+}
+
+func reclaimEggSession(ctx context.Context, cfg *config.Config, wsClient *ws.Client, sessionID string, wingCfg *config.WingConfig, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, tools []*config.ToolConfig) {
+	if !ws.ValidSessionID(sessionID) || ctx.Err() != nil || wsClient.HasPTYSession(sessionID) {
+		return
+	}
+	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "egg.pid"))
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return
+	}
+	if !ownedProcessIsAlive(pid) {
+		cleanEggDir(dir)
+		return
+	}
+
+	agent, _ := readEggMeta(dir)
+	ec, err := egg.Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
+	if err != nil {
+		log.Printf("egg: reclaim %s: dial failed: %v", sessionID, err)
+		return
+	}
+
+	write, input, cleanup, registered := wsClient.RegisterPTYSession(ctx, sessionID)
+	if !registered {
+		closeWithLog("duplicate reclaimed egg client", ec)
+		return
+	}
+	log.Printf("egg: reclaiming session %s (pid %d agent=%s)", sessionID, pid, agent)
+	go func() {
+		defer cleanup()
+		defer closeWithLog("reclaimed egg client", ec)
+		handleReclaimedPTY(ctx, cfg, ec, sessionID, dir, write, input, wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, tools)
+	}()
 }
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
@@ -3751,6 +3750,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	if err != nil {
 		sCancel()
 		log.Printf("pty session %s: reclaim attach failed: %v", sessionID, err)
+		writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: sessionID, Message: "session is no longer available; start a new session"})
 		return
 	}
 	activeStream = stream

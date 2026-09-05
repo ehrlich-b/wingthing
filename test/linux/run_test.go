@@ -355,6 +355,52 @@ func TestSandboxWriteIsolation(t *testing.T) {
 	}
 }
 
+func TestSandboxRelativePathsUseFinalMountTree(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	home := t.TempDir()
+	cwd := filepath.Join(home, "work")
+	metadata := filepath.Join(cwd, ".git")
+	secret := filepath.Join(cwd, "secret")
+	for _, dir := range []string{metadata, secret} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(secret, "canary"), []byte("fixture-only"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(ctx, testWTPath(), "_deny_init",
+		"--uid", strconv.Itoa(os.Getuid()), "--gid", strconv.Itoa(os.Getgid()),
+		"--home", home, "--writable", cwd, "--deny", secret, "--deny-write", metadata,
+		"--", "/bin/sh", "-c", `set -eu
+test ! -s "$PWD/secret/canary"
+test ! -s secret/canary
+if touch "$PWD/.git/absolute" 2>/dev/null; then exit 1; fi
+if touch .git/relative 2>/dev/null; then exit 1; fi
+touch allowed
+echo FINAL_MOUNT_TREE_ENFORCED`)
+	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), "HOME="+home, "PWD="+cwd)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags:  syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+		UidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
+		GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "FINAL_MOUNT_TREE_ENFORCED") {
+		t.Fatalf("relative mount enforcement: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "allowed")); err != nil {
+		t.Fatalf("ordinary workspace write denied: %v", err)
+	}
+	for _, name := range []string{"absolute", "relative"} {
+		if _, err := os.Stat(filepath.Join(metadata, name)); !os.IsNotExist(err) {
+			t.Fatalf("metadata modified: %s: %v", name, err)
+		}
+	}
+}
+
 func TestNamespaceCreation(t *testing.T) {
 	results, _ := runEgg(t, nil, nil)
 
@@ -1211,14 +1257,20 @@ func TestSealedJailNonRoot(t *testing.T) {
 
 	// deny:/ triggers the sealed allowlist jail. The ro: rules are the allowlist
 	// the static agent binary needs; rw:cwd receives test-results.json.
+	lib64 := ""
+	if _, err := os.Stat("/lib64"); err == nil {
+		lib64 = " --fs ro:/lib64"
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("inspect optional /lib64: %v", err)
+	}
 	wtCmd := fmt.Sprintf("WT_TEST_HOST_SECRET=%s PATH=%s %s egg run"+
 		" --session-id %s --agent claude --cwd %s --rows 24 --cols 80"+
 		" --dangerously-skip-permissions"+
-		" --fs deny:/ --fs ro:/usr --fs ro:/bin --fs ro:/sbin --fs ro:/lib --fs ro:/lib64 --fs ro:/etc --fs rw:%s"+
+		" --fs deny:/ --fs ro:/usr --fs ro:/bin --fs ro:/sbin --fs ro:/lib%s --fs ro:/etc --fs rw:%s"+
 		" --network none"+
 		" --env HOME=%s --env PATH=%s --env TERM=xterm-256color"+
 		" --env WT_TEST_DENIED_CANARY=%s --env WT_TEST_FIND_SECRET=%s --env WT_TEST_HOST_PID_NAMESPACE=%s",
-		shellArg(secret), shellArg(agentPATH), shellArg(testWTPath()), sessionID, shellArg(cwd), shellArg(cwd),
+		shellArg(secret), shellArg(agentPATH), shellArg(testWTPath()), sessionID, shellArg(cwd), lib64, shellArg(cwd),
 		shellArg(testUserHome), shellArg(agentPATH), shellArg(deniedCanary), shellArg(secret), shellArg(hostPIDNamespace))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

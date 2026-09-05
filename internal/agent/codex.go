@@ -75,11 +75,24 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 
 	stream := newStream(ctx)
 	go func() {
+		var lastMessage string
+		var completed bool
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
+			var event codexEvent
+			if json.Unmarshal([]byte(line), &event) == nil {
+				switch event.Type {
+				case "turn.started", "turn.failed", "error":
+					lastMessage, completed = "", false
+				case "turn.completed":
+					completed = true
+				}
+			}
 			if text, ok := parseCodexEvent(line); ok {
+				lastMessage = text
+				completed = false
 				stream.send(Chunk{Text: text})
 			}
 			if input, output, ok := parseCodexUsage(line); ok {
@@ -89,6 +102,9 @@ func (c *Codex) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Stream
 		err := waitAgentCommand(cmd, diagnostics)
 		if scanErr := scanner.Err(); scanErr != nil && err == nil {
 			err = scanErr
+		}
+		if err == nil && completed && ctx.Err() == nil {
+			stream.setFinalOutput(lastMessage)
 		}
 		stream.close(err)
 	}()

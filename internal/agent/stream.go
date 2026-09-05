@@ -15,6 +15,7 @@ type Stream struct {
 	done         bool
 	inputTokens  int
 	outputTokens int
+	finalOutput  string
 }
 
 func newStream(ctx context.Context) *Stream {
@@ -63,6 +64,18 @@ func (s *Stream) Err() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.err
+}
+
+func (s *Stream) setFinalOutput(output string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finalOutput = output
+}
+
+func (s *Stream) FinalOutput() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.finalOutput
 }
 
 func (s *Stream) SetTokens(input, output int) {

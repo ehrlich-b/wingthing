@@ -1,6 +1,6 @@
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl procps python3 strace && rm -rf /var/lib/apt/lists/*
+    ca-certificates curl git procps python3 strace && rm -rf /var/lib/apt/lists/*
 # Run as root: Docker/Colima kernels don't support unprivileged user namespace
 # creation via Go's SysProcAttr.UidMappings. Root still exercises the full
 # sandbox codepath (namespace + seccomp + deny mounts + write isolation).

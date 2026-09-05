@@ -33,6 +33,7 @@ var defaultDirectMCPGrants = []string{
 	"sandbox.read",
 	"terminal.read", "terminal.send", "terminal.start", "terminal.rename", "terminal.stop",
 	"agent.run", "agent.read", "agent.stop",
+	"review.run", "review.read", "review.workspace",
 }
 
 func knownDirectMCPGrants() map[string]bool {

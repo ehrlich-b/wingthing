@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -14,6 +16,43 @@ func TestNewCodexDefaults(t *testing.T) {
 	}
 	if c.command != "codex" {
 		t.Errorf("command = %q, want %q", c.command, "codex")
+	}
+}
+
+func TestCodexFinalOutputRequiresSuccessfulCompletedTurn(t *testing.T) {
+	progress := `{"type":"item.completed","item":{"type":"agent_message","text":"checking"}}`
+	final := `{"type":"item.completed","item":{"type":"agent_message","text":"{\"verdict\":\"pass\"}"}}`
+	completed := `{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}`
+	for _, tt := range []struct {
+		name, events, want string
+		exit               int
+	}{
+		{"complete", progress + "\n" + final + "\n" + completed, `{"verdict":"pass"}`, 0},
+		{"partial", progress + "\n" + final, "", 0},
+		{"failed process", final + "\n" + completed, "", 1},
+		{"failed turn", final + "\n" + `{"type":"turn.failed"}`, "", 0},
+		{"new incomplete turn", final + "\n" + completed + "\n" + `{"type":"turn.started"}`, "", 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stream, err := NewCodex(0).Run(context.Background(), "review", RunOpts{CmdFactory: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
+				cmd := exec.CommandContext(ctx, "sh", "-c", "printf '%s\\n' \"$1\"; exit \"$2\"", "fixture", tt.events, fmt.Sprint(tt.exit))
+				return cmd, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for {
+				if _, ok := stream.Next(); !ok {
+					break
+				}
+			}
+			if got := stream.FinalOutput(); got != tt.want {
+				t.Fatalf("final = %q, want %q", got, tt.want)
+			}
+			if strings.Contains(tt.events, "checking") && !strings.Contains(stream.Text(), "checking") {
+				t.Fatal("transcript lost progress")
+			}
+		})
 	}
 }
 

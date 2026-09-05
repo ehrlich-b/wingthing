@@ -444,6 +444,13 @@ func DenyInit(args []string) {
 		initArgs := append([]string{jailAgentInitArg, strconv.Itoa(uid), strconv.Itoa(gid), "--"}, resolvedCommand...)
 		cmd = exec.Command("/proc/self/exe", initArgs...)
 	}
+	// Re-enter through the final mount tree; inherited cwd can still reference
+	// the covered writable mount and bypass deny rules through relative paths.
+	cwd, err := os.Getwd()
+	if err != nil {
+		failEnforcement("resolve working directory", "cwd", err)
+	}
+	cmd.Dir = cwd
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

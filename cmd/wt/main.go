@@ -101,6 +101,7 @@ func newRootCommand() *cobra.Command {
 		toolCallCmd(),
 		toolListCmd(),
 		mcpCmd(),
+		reviewCmd(),
 		localCertCmd(),
 	)
 	return root
@@ -203,6 +204,7 @@ func runCmd() *cobra.Command {
 	var noRun bool
 	var unsandboxed bool
 	var configFlag string
+	var timeoutFlag time.Duration
 
 	cmd := &cobra.Command{
 		Use:   "run [prompt]",
@@ -211,6 +213,10 @@ func runCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 && skillFlag == "" {
 				return fmt.Errorf("provide a prompt or --skill flag")
+			}
+			timeoutSeconds, err := runTimeoutSeconds(timeoutFlag)
+			if err != nil {
+				return err
 			}
 			cfg, err := config.Load()
 			if err != nil {
@@ -231,10 +237,11 @@ func runCmd() *cobra.Command {
 				return err
 			}
 			t := &store.Task{
-				ID:            genTaskID(),
-				RunAt:         time.Now().UTC(),
-				CWD:           cwd,
-				EggConfigYAML: eggConfigYAML,
+				ID:             genTaskID(),
+				RunAt:          time.Now().UTC(),
+				CWD:            cwd,
+				TimeoutSeconds: timeoutSeconds,
+				EggConfigYAML:  eggConfigYAML,
 			}
 			if unsandboxed {
 				t.Isolation = "privileged"
@@ -279,9 +286,30 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&afterFlag, "after", "", "Task ID this task depends on")
 	cmd.Flags().StringVar(&configFlag, "config", "", "Path to egg config")
 	cmd.Flags().BoolVar(&noRun, "no-run", false, "Submit task without running it")
+	cmd.Flags().DurationVar(&timeoutFlag, "timeout", 0, "Kill the task after this long (e.g. 30m). Default: no timeout")
 	cmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "trust the host boundary; run with the full authority of the local OS user")
 	cmd.MarkFlagsMutuallyExclusive("config", "unsandboxed")
 	return cmd
+}
+
+func runTimeoutSeconds(timeout time.Duration) (int, error) {
+	if timeout < 0 {
+		return 0, fmt.Errorf("--timeout must not be negative (got %s); omit it for no timeout", timeout)
+	}
+	if timeout == 0 {
+		return 0, nil
+	}
+	if timeout < time.Second {
+		return 0, fmt.Errorf("--timeout must be at least 1s (got %s)", timeout)
+	}
+	if timeout%time.Second != 0 {
+		return 0, fmt.Errorf("--timeout must use whole seconds (got %s)", timeout)
+	}
+	seconds := timeout / time.Second
+	if time.Duration(int(seconds)) != seconds {
+		return 0, fmt.Errorf("--timeout is too large (got %s)", timeout)
+	}
+	return int(seconds), nil
 }
 
 func resolveRunEggConfigYAML(configPath, cwd string, unsandboxed bool) (string, error) {
@@ -350,6 +378,8 @@ type taskRunOptions struct {
 	UserHome     string
 	SharedHost   bool
 	AllowedPaths []string
+	DenyWrite    []string
+	Deny         []string
 }
 
 func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Store, t *store.Task, destination io.Writer, options taskRunOptions) (runErr error) {
@@ -532,6 +562,8 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			return fmt.Errorf("resolve sandbox network policy: %w", policyErr)
 		}
 		sbCfg.SessionID = t.ID
+		sbCfg.DenyWrite = append(sbCfg.DenyWrite, options.DenyWrite...)
+		sbCfg.Deny = append(sbCfg.Deny, options.Deny...)
 		domainProxy, proxyErr := sandbox.StartPolicyProxyWithMode(sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.NetworkMode)
 		if proxyErr != nil {
 			detail := proxyErr.Error()
@@ -577,10 +609,7 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 
 	runCtx := ctx
 	var cancel context.CancelFunc
-	timeout := pr.Timeout
-	if t.TimeoutSeconds > 0 {
-		timeout = time.Duration(t.TimeoutSeconds) * time.Second
-	}
+	timeout := effectiveTaskTimeout(pr.Timeout, t.TimeoutSeconds)
 	if timeout > 0 {
 		runCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -625,6 +654,11 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	if err := s.SetTaskOutput(t.ID, output); err != nil {
 		return fmt.Errorf("record task output: %w", err)
 	}
+	if final := stream.FinalOutput(); final != "" {
+		if err := s.AppendLog(t.ID, "final_output", &final); err != nil {
+			return fmt.Errorf("record final agent message: %w", err)
+		}
+	}
 	if err := s.UpdateTaskStatus(t.ID, "done"); err != nil {
 		return fmt.Errorf("mark task done: %w", err)
 	}
@@ -649,6 +683,15 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	}
 
 	return nil
+}
+
+// A positive durable task timeout overrides the resolved skill timeout. A zero
+// task timeout leaves the resolved value in effect; ad-hoc tasks resolve to zero.
+func effectiveTaskTimeout(resolved time.Duration, taskSeconds int) time.Duration {
+	if taskSeconds > 0 {
+		return time.Duration(taskSeconds) * time.Second
+	}
+	return resolved
 }
 
 func networkEnforcementDetail(enforcement string, need sandbox.NetworkNeed, domains []string, localPorts []int) string {
@@ -795,9 +838,11 @@ func threadCmd() *cobra.Command {
 }
 
 func statusCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Task counts and token usage",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -809,11 +854,17 @@ func statusCmd() *cobra.Command {
 			}
 			defer closeWithLog("store", s)
 
-			var pending, running int
-			if err := s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'pending'").Scan(&pending); err != nil {
+			status := struct {
+				PendingTasks int `json:"pending_tasks"`
+				RunningTasks int `json:"running_tasks"`
+				Agents       int `json:"agents"`
+				TokensToday  int `json:"tokens_today"`
+				TokensWeek   int `json:"tokens_week"`
+			}{}
+			if err := s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'pending'").Scan(&status.PendingTasks); err != nil {
 				return fmt.Errorf("count pending tasks: %w", err)
 			}
-			if err := s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'running'").Scan(&running); err != nil {
+			if err := s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'running'").Scan(&status.RunningTasks); err != nil {
 				return fmt.Errorf("count running tasks: %w", err)
 			}
 			agents, err := s.ListAgents()
@@ -826,19 +877,25 @@ func statusCmd() *cobra.Command {
 			weekStart := todayStart.AddDate(0, 0, -6)
 			tomorrow := todayStart.AddDate(0, 0, 1)
 
-			tokensToday, err := s.SumTokensByDateRange(todayStart, tomorrow)
+			status.Agents = len(agents)
+			status.TokensToday, err = s.SumTokensByDateRange(todayStart, tomorrow)
 			if err != nil {
 				return fmt.Errorf("sum today's tokens: %w", err)
 			}
-			tokensWeek, err := s.SumTokensByDateRange(weekStart, tomorrow)
+			status.TokensWeek, err = s.SumTokensByDateRange(weekStart, tomorrow)
 			if err != nil {
 				return fmt.Errorf("sum weekly tokens: %w", err)
 			}
 
-			fmt.Printf("pending: %d\nrunning: %d\nagents:  %d\ntokens:  %d today / %d this week\n", pending, running, len(agents), tokensToday, tokensWeek)
-			return nil
+			if jsonOutput {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(status)
+			}
+			return writef(cmd.OutOrStdout(), "pending: %d\nrunning: %d\nagents:  %d\ntokens:  %d today / %d this week\n",
+				status.PendingTasks, status.RunningTasks, status.Agents, status.TokensToday, status.TokensWeek)
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print machine-readable JSON")
+	return cmd
 }
 
 func logCmd() *cobra.Command {

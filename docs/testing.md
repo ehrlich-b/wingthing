@@ -23,6 +23,17 @@ disagree about which sessions exist.
 The last row is easy to misread. `make test-e2e` is not the complete promotion
 matrix.
 
+Use `make test TEST_FLAGS='-run TestName -count=1 -timeout 30s'` for a focused
+regression. Add `-tags integration` for the tagged runtime fixtures.
+
+Late local terminal attachment is covered by the WebSocket client regression
+and `TestOnDemandEggReclaimPreservesOwnerAndEncryption`. The latter uses an
+actual egg gRPC socket to assert encrypted replay and reattachment, plus
+cross-owner, missing-encryption-key, and locked-wing denial. A CLI or MCP terminal
+created after wing registration must be adopted on demand; a missing session
+must return an error rather than leave the browser terminal empty. These fixtures
+do not prove browser rendering or provider OAuth completion.
+
 ## Evidence ladder
 
 Use the cheapest layer that can disprove the claim, then add the layer that
@@ -69,7 +80,7 @@ the private namespace.
 | Human, personal remote wing | relay/tunnel plus browser session lifecycle | browser attaches to a real registered wing | shared-roost browser canary is the closest automated case |
 | LLM, personal remote wing | encrypted remote control RPC, target auth, qualified resources, grants, bounds, and two-wing connector reconnect | real MCP client controls two external wings without relay payloads | Passed on an external macOS wing plus Bryan: one built connector listed both direct targets, launched real Codex and Claude sessions, observed distinct responses, and stopped the qualified sessions. Fresh-user production enrollment remains a separate gate. |
 | Human, shared roost | two-user browser, path ACL, per-identity provider profile, credential home, restart | canary shared deployment | automated tier asserts one identity loads its persisted Claude profile while a second identity cannot inherit it; Bryan's public HTTPS org canary covers the real deployment path |
-| LLM, shared roost | OAuth HTTP MCP plus direct MCP, two owners, two actors, path bounds | Codex and Claude OAuth login and semantic run | native local MCP launched and controlled real Claude on Bryan; real OAuth-client semantic runs remain missing |
+| LLM, shared roost | OAuth HTTP MCP plus direct MCP, two owners, two actors, path bounds | Codex and Claude OAuth login and semantic run | deterministic OAuth HTTP MCP covers same-owner supervision, other-owner denial, path denial, typed result, and audit; live Codex/Claude OAuth semantic runs remain missing |
 | Several portals | qualified IDs, independent auth, fan-out inventory | one client routes work to two real portals | target registry doesn't exist |
 
 ## Compatibility matrix
@@ -143,8 +154,12 @@ operation set for each adapter and version.
 
 The first contract checks now derive exact local and HTTP MCP operation sets
 from `internal/control`, verify adapter metadata and schemas, and compare
-`wing_list` with the browser's access-filtered roster. This is a useful unit
-boundary, not a substitute for the black-box cross-client suite above.
+`wing_list` with the browser's access-filtered roster. An authenticated HTTP MCP
+characterization also drives OAuth registration, consent, and token exchange before
+submitting `agent_run`; a second client for the same owner can observe and wait for
+the run, while another owner and an out-of-bounds workspace are denied. It uses a
+deterministic task runner, so it does not replace a live provider run or a real
+client disconnect/recovery test.
 
 ## Workspace and placement tests
 

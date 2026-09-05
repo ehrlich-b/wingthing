@@ -4,6 +4,7 @@
 	test-provider-swap build-web-e2e test-web test-vuln test-compat
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+BINARY ?= wt
 LDFLAGS := -s -w -X main.version=$(VERSION)
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
@@ -17,10 +18,10 @@ web/dist:
 		'<p>Web assets were not built. Run <code>make web</code>.' > $@/index.html
 
 build: | web/dist
-	go build -buildvcs=false -ldflags "-X main.version=$(VERSION)" -o wt ./cmd/wt
+	go build -buildvcs=false -ldflags "-X main.version=$(VERSION)" -o $(BINARY) ./cmd/wt
 
 test: | web/dist
-	go test ./...
+	go test $(TEST_FLAGS) ./...
 
 # Pin the scanner for reproducible parsing while intentionally consulting the
 # current Go vulnerability database. This is a promotion gate, not part of the

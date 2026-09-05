@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -81,6 +83,61 @@ func TestNewRuntimeIDHasSixtyFourBitsOfReadableEntropy(t *testing.T) {
 			t.Fatalf("duplicate runtime ID %q", id)
 		}
 		seen[id] = struct{}{}
+	}
+}
+
+func TestEffectiveTaskTimeoutKeepsUnsetTaskUnlimited(t *testing.T) {
+	if got := effectiveTaskTimeout(0, 0); got != 0 {
+		t.Fatalf("unset timeout = %v, want no deadline", got)
+	}
+	if got := effectiveTaskTimeout(45*time.Second, 0); got != 45*time.Second {
+		t.Fatalf("skill timeout = %v, want 45s", got)
+	}
+	if got := effectiveTaskTimeout(45*time.Second, 900); got != 900*time.Second {
+		t.Fatalf("task timeout = %v, want 900s", got)
+	}
+}
+
+func TestRunCommandPersistsExplicitTimeout(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WINGTHING_DIR", dir)
+	cmd := runCmd()
+	cmd.SetArgs([]string{"--no-run", "--unsandboxed", "--timeout", "45s", "bounded task"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	taskStore, err := store.Open(filepath.Join(dir, "wt.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := taskStore.Close(); err != nil {
+			t.Errorf("close task store: %v", err)
+		}
+	}()
+	var timeoutSeconds int
+	if err := taskStore.DB().QueryRow("SELECT timeout_seconds FROM tasks WHERE what = ?", "bounded task").Scan(&timeoutSeconds); err != nil {
+		t.Fatal(err)
+	}
+	if timeoutSeconds != 45 {
+		t.Fatalf("timeout_seconds = %d, want 45", timeoutSeconds)
+	}
+}
+
+func TestRunCommandRejectsAmbiguousTimeouts(t *testing.T) {
+	for _, timeout := range []string{"-1s", "500ms", "1500ms"} {
+		t.Run(timeout, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("WINGTHING_DIR", dir)
+			cmd := runCmd()
+			cmd.SetArgs([]string{"--no-run", "--unsandboxed", "--timeout", timeout, "invalid timeout"})
+			if err := cmd.Execute(); err == nil {
+				t.Fatalf("--timeout %s succeeded", timeout)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "wt.db")); !os.IsNotExist(err) {
+				t.Fatalf("invalid --timeout created state database: %v", err)
+			}
+		})
 	}
 }
 

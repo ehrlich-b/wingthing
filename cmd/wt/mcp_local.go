@@ -24,6 +24,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/orchestrator"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/google/uuid"
@@ -110,25 +111,28 @@ func mcpCmd() *cobra.Command {
 }
 
 type localMCPServer struct {
-	cfg               *config.Config
-	in                io.Reader
-	out               io.Writer
-	logs              io.Writer
-	principal         string
-	unsandboxed       bool
-	grants            map[string]bool
-	maxSessions       int
-	maxSpawnsPerHour  int
-	spawnMu           sync.Mutex
-	admitMu           sync.Mutex // held across bounds check + spawn + record
-	spawnTimes        []time.Time
-	admission         *mcpAdmissionState // shared by remote connections on one wing
-	identity          EggIdentity
-	actor             string
-	surface           control.Surface
-	allowedPaths      []string
-	enforcePathBounds bool
-	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error
+	cfg                 *config.Config
+	in                  io.Reader
+	out                 io.Writer
+	logs                io.Writer
+	principal           string
+	unsandboxed         bool
+	grants              map[string]bool
+	maxSessions         int
+	maxSpawnsPerHour    int
+	spawnMu             sync.Mutex
+	admitMu             sync.Mutex // held across bounds check + spawn + record
+	spawnTimes          []time.Time
+	admission           *mcpAdmissionState // shared by remote connections on one wing
+	identity            EggIdentity
+	actor               string
+	surface             control.Surface
+	allowedPaths        []string
+	enforcePathBounds   bool
+	runAgentTask        func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error
+	forceAgentIsolation string
+	agentDenyWrite      []string
+	agentDeny           []string
 }
 
 // mcpAdmissionState keeps process-local spawn admission shared across reconnecting
@@ -371,6 +375,14 @@ func localMCPTools() []localMCPTool {
 // Streamable HTTP MCP. The request principal is supplied by the roost after
 // bearer-token verification and never accepted from tool arguments.
 func roostNativeMCPTools(cfg *config.Config, sharedHost bool) []mcppkg.NativeTool {
+	return roostNativeMCPToolsWithTaskRunner(cfg, sharedHost, nil)
+}
+
+func roostNativeMCPToolsWithTaskRunner(
+	cfg *config.Config,
+	sharedHost bool,
+	runAgentTask func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error,
+) []mcppkg.NativeTool {
 	var tools []mcppkg.NativeTool
 	admission := newMCPAdmissionState()
 	for _, localTool := range control.ToolsForAuthority(control.SurfaceHTTPMCP, control.AuthorityWing) {
@@ -387,6 +399,7 @@ func roostNativeMCPTools(cfg *config.Config, sharedHost bool) []mcppkg.NativeToo
 					return nil, true, err
 				}
 				server := newRoostNativeMCPServer(cfg, sharedHost, admission, principal, paths)
+				server.runAgentTask = runAgentTask
 				data, isError, protocolErr := server.callTool(ctx, tool.Name, arguments)
 				if protocolErr != nil {
 					return map[string]any{"error": protocolErr.Message}, true, nil
@@ -485,6 +498,14 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 		return map[string]any{"error": err.Error()}, true, nil
 	}
 	switch name {
+	case "review_job_submit":
+		data, err = s.toolReviewJobSubmit(arguments)
+	case "review_job_status":
+		data, err = s.toolReviewJobRead(arguments, false)
+	case "review_job_result":
+		data, err = s.toolReviewJobRead(arguments, true)
+	case "review_workspace":
+		data, err = s.toolReviewWorkspace(ctx, arguments)
 	case "wingthing_capabilities":
 		data, err = s.toolCapabilities(arguments)
 	case "message_send":
@@ -1458,15 +1479,27 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, followup *agentRunFol
 		ParentID: parentID, DependsOn: dependsOn, CWD: resolvedCWD,
 		Principal: s.clientPrincipal(), RunnerPID: os.Getpid(),
 	}
-	if s.unsandboxed {
-		task.Isolation = "privileged"
-	}
 	if err := s.admitSpawn(func() error {
 		taskStore, openErr := store.Open(s.cfg.DBPath())
 		if openErr != nil {
 			return openErr
 		}
 		defer closeWithLog("task store", taskStore)
+		agentIsolation := ""
+		dbAgent, agentErr := taskStore.GetAgent(task.Agent)
+		if agentErr != nil {
+			return fmt.Errorf("get agent %q: %w", task.Agent, agentErr)
+		}
+		if dbAgent != nil {
+			agentIsolation = dbAgent.DefaultIsolation
+		}
+		task.Isolation = orchestrator.ResolveConfig(nil, task.Agent, agentIsolation, s.cfg).Isolation
+		if s.forceAgentIsolation != "" {
+			task.Isolation = s.forceAgentIsolation
+		}
+		if s.unsandboxed {
+			task.Isolation = "privileged"
+		}
 		if createErr := taskStore.CreateTask(task); createErr != nil {
 			return createErr
 		}
@@ -1565,6 +1598,8 @@ func (s *localMCPServer) agentTaskRunOptions() (taskRunOptions, error) {
 	options := taskRunOptions{
 		SharedHost:   s.identity.SharedHost,
 		AllowedPaths: append([]string(nil), s.identity.AllowedPaths...),
+		DenyWrite:    append([]string(nil), s.agentDenyWrite...),
+		Deny:         append([]string(nil), s.agentDeny...),
 	}
 	if s.identity.UserID != "" && (s.identity.SharedHost || s.identity.OrgWing) {
 		options.UserHome = filepath.Join(s.cfg.Dir, "user-homes", userHash(s.identity.UserID))
@@ -1755,6 +1790,22 @@ func (s *localMCPServer) toolAgentResult(arguments json.RawMessage) (map[string]
 	}
 	if task.Error != nil {
 		data["error"] = *task.Error
+	}
+	if task.Status == "done" {
+		logs, err := taskStore.ListLogByTask(task.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range logs {
+			if entry.Event == "final_output" && entry.Detail != nil {
+				final := []rune(*entry.Detail)
+				if len(final) > args.MaxChars {
+					final = final[:args.MaxChars]
+					data["final_output_truncated"] = true
+				}
+				data["final_output"] = string(final)
+			}
+		}
 	}
 	return data, nil
 }

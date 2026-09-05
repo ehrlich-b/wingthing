@@ -51,11 +51,25 @@ Restart the client after registration. Ask it to call
 - exchange owner-scoped messages with another authenticated agent client; and
 - inspect the effective sandbox before launching anything.
 
+The pending `agent_run` response reports the declared configured isolation for
+that run; it is not proof that the process has already entered the sandbox.
+
 The child agents use existing project directories and provider credentials on
 this computer. Wingthing does not clone the code or copy a provider login. The
 local server uses the current OS user's authority. `--client` supplies ownership
 and audit attribution inside Wingthing, not a new operating-system security
 boundary. Optional grants and spawn bounds live in `~/.wingthing/clients.yaml`.
+
+For a direct ad-hoc CLI run, an omitted timeout means no process deadline. A
+named skill still uses any timeout declared in its frontmatter. Supply an
+explicit whole-second duration when the task needs a wall-clock bound, and use
+JSON status for automation:
+
+```bash
+wt run "review this branch"
+wt run --timeout 30m "review this branch"
+wt status --json
+```
 
 ## 2. Local human terminal: sandboxed agent
 

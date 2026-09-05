@@ -65,6 +65,7 @@ type Client struct {
 	OnPTY               PTYHandler
 	OnTunnel            TunnelHandler
 	OnOrphanKill        func(ctx context.Context, sessionID string) // kill egg with no active goroutine
+	OnPTYReclaim        func(ctx context.Context, sessionID string) // register a local egg before attachment
 	OnReconnect         func(ctx context.Context)                   // called after re-registration with relay
 	OnPasskeyRegistered func(msg PasskeyRegistered)                 // called when a user registers a passkey
 	OnRegistered        func(msg RegisteredMsg)                     // additive coordinator runtime policy
@@ -320,25 +321,27 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 			}
 
 		case TypePTYAttach:
-			// Forward attach to the existing session for re-key and local auth.
-			var partial struct {
-				SessionID string `json:"session_id"`
-			}
-			if err := json.Unmarshal(data, &partial); err != nil {
+			var attach PTYAttach
+			if err := json.Unmarshal(data, &attach); err != nil {
 				continue
 			}
-			if !ValidSessionID(partial.SessionID) {
+			if !ValidSessionID(attach.SessionID) {
 				continue
 			}
-			c.ptySessionsMu.Lock()
-			ch := c.ptySessions[partial.SessionID]
-			c.ptySessionsMu.Unlock()
-			if ch != nil {
-				select {
-				case ch <- data:
-				default:
+			if c.HasPTYSession(attach.SessionID) {
+				c.routePTYAttach(ctx, attach, data)
+				continue
+			}
+			if !c.acquireTunnelHandler() {
+				if err := c.writeJSON(ctx, ErrorMsg{Type: TypeError, SessionID: attach.SessionID, ViewerID: attach.ViewerID, Message: "wing has too many concurrent control requests"}); err != nil {
+					return connected, fmt.Errorf("report attach concurrency limit: %w", err)
 				}
+				continue
 			}
+			go func() {
+				defer c.releaseTunnelHandler()
+				c.routePTYAttach(ctx, attach, data)
+			}()
 
 		case TypePTYInput, TypePTYAttentionAck, TypePasskeyResponse, TypePTYMigrate:
 			var partial struct {
@@ -518,6 +521,27 @@ func (c *Client) RegisterPTYSession(ctx context.Context, sessionID string) (writ
 		c.unregisterPTYSession(sessionID, inputCh)
 	}
 	return writeFn, inputCh, cleanupFn, true
+}
+
+func (c *Client) routePTYAttach(ctx context.Context, attach PTYAttach, data []byte) {
+	if !c.HasPTYSession(attach.SessionID) && c.OnPTYReclaim != nil {
+		c.OnPTYReclaim(ctx, attach.SessionID)
+	}
+	c.ptySessionsMu.Lock()
+	ch := c.ptySessions[attach.SessionID]
+	c.ptySessionsMu.Unlock()
+	message := "session not found or no longer running"
+	if ch != nil {
+		select {
+		case ch <- data:
+			return
+		default:
+			message = "terminal input buffer full; retry attachment"
+		}
+	}
+	if err := c.writeJSON(ctx, ErrorMsg{Type: TypeError, SessionID: attach.SessionID, ViewerID: attach.ViewerID, Message: message}); err != nil {
+		log.Printf("report PTY attach failure for %s: %v", attach.SessionID, err)
+	}
 }
 
 func (c *Client) registerPTYSession(sessionID string, inputCh chan []byte) bool {

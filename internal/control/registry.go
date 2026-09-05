@@ -109,6 +109,8 @@ func ObjectKinds(surface Surface) []string {
 		{name: "wing", surfaces: []Surface{SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "terminal", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "agent_run", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
+		{name: "review_job", surfaces: []Surface{SurfaceHTTPMCP, SurfaceDirectMCP}},
+		{name: "review_workspace", surfaces: []Surface{SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "message", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "prompt_asset", surfaces: []Surface{SurfaceLocalMCP}},
 		{name: "task", surfaces: []Surface{SurfaceLocalMCP}},
@@ -528,6 +530,9 @@ func buildTools() []Tool {
 			Grant: "wing.read", Surfaces: []Surface{SurfaceHTTPMCP, SurfaceDirectMCP}, Authority: AuthorityPortal,
 		},
 	}
+	portal := tools[len(tools)-1]
+	tools = append(tools[:len(tools)-1], reviewJobTools()...)
+	tools = append(tools, portal)
 	for index := range tools {
 		tools[index].Version = ContractVersion
 		if tools[index].Authority == "" {

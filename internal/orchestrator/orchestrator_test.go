@@ -472,8 +472,8 @@ func TestBuildAdHocTaskNoMounts(t *testing.T) {
 	if len(result.Mounts) != 0 {
 		t.Errorf("ad-hoc task should have no mounts, got %v", result.Mounts)
 	}
-	if result.Timeout != 120*time.Second {
-		t.Errorf("timeout = %v, want default 120s", result.Timeout)
+	if result.Timeout != 0 {
+		t.Errorf("timeout = %v, want no implicit deadline", result.Timeout)
 	}
 }
 
