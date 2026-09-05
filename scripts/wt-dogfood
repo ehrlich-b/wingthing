@@ -40,24 +40,31 @@ done
 [ -f "$dogfood_root/ssh/id_ed25519" ] || fail 'private SSH identity is missing; restore access through the operator instructions, never copy provider credentials'
 [ -f "$dogfood_root/ssh/known_hosts" ] || fail 'private SSH host pins are missing; verify the owned VM before restoring them'
 [ -d "$dogfood_root/client" ] || fail 'existing private client profile is missing; authenticate it explicitly before use'
+[ -x /usr/bin/perl ] || fail '/usr/bin/perl is required to bound private SSH connection setup; restore the macOS system tool before retrying'
 
 dogfood_ssh=(ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes \
   -o ConnectTimeout=8 -o ConnectionAttempts=1 -o StrictHostKeyChecking=yes \
   -o "UserKnownHostsFile=$dogfood_root/ssh/known_hosts" \
   -i "$dogfood_root/ssh/id_ed25519" -S "$dogfood_socket")
 
+bounded_ssh() {
+  local seconds=$1
+  shift
+  /usr/bin/perl -e 'alarm shift; exec @ARGV or die "exec: $!\n"' "$seconds" "${dogfood_ssh[@]}" "$@"
+}
+
 ready() {
-  "${dogfood_ssh[@]}" -O check "$dogfood_host" >/dev/null 2>&1 &&
+  bounded_ssh 2 -O check "$dogfood_host" >/dev/null 2>&1 &&
     curl --disable --noproxy '*' --fail --silent --connect-timeout 1 --max-time 2 \
       "$dogfood_roost/health" >/dev/null
 }
 
 if ! ready; then
-  if "${dogfood_ssh[@]}" -O check "$dogfood_host" >/dev/null 2>&1; then
-    "${dogfood_ssh[@]}" -o ExitOnForwardFailure=yes -O forward \
+  if bounded_ssh 2 -O check "$dogfood_host" >/dev/null 2>&1; then
+    bounded_ssh 4 -o ExitOnForwardFailure=yes -O forward \
       -L 127.0.0.1:17881:127.0.0.1:17881 "$dogfood_host" >/dev/null 2>&1 || true
   else
-    "${dogfood_ssh[@]}" -o ControlMaster=auto -o ControlPersist=300 \
+    bounded_ssh 10 -o ControlMaster=auto -o ControlPersist=300 \
       -o ExitOnForwardFailure=yes -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
       -fNT -L 127.0.0.1:17881:127.0.0.1:17881 "$dogfood_host" >/dev/null 2>&1 || true
   fi

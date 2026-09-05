@@ -24,6 +24,10 @@ it is not a replacement for checking `status`, test exits, and artifact digests.
 
 Each command checks the pinned private SSH connection, opens or restores the
 loopback forward when needed, and fails with remediation when unavailable.
+SSH control checks, forward repair, and startup have separate two-, four-, and
+ten-second deadlines, including an unresponsive control socket. Health checks
+are limited to two seconds. These bounds use the Mac's `/usr/bin/perl`; they do
+not limit the lifetime of the command after a connection is established.
 The master connection expires after five idle minutes. No hosted relay fallback
 or provider credential transfer is attempted. The wrapper's target is fixed:
 work-1 (`10.80.1.50`), wing `5003a9a0a5b64b2f8521db78`, roost

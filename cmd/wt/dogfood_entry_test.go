@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 )
 
 func dogfoodScriptFixture(t *testing.T, name string) string {
@@ -49,6 +51,9 @@ func TestDogfoodEntryRecoversItsPrivateForward(t *testing.T) {
 	write(filepath.Join(root, "ssh", "known_hosts"), "fixture-not-a-host-pin")
 	write(filepath.Join(bin, "ssh"), `#!/bin/sh
 printf '%s\n' "$*" >> "$WT_TEST_DOGFOOD_LOG"
+case "${WT_TEST_DOGFOOD_SSH_HANG:-}: $* " in
+  check:*" -O check "*|forward:*" -O forward "*|start:*" -fNT "*) exec /bin/sleep 30 ;;
+esac
 case " $* " in
   *" -O check "*) test -f "$WT_TEST_DOGFOOD_STATE" ;;
   *) test "${WT_TEST_DOGFOOD_SSH_FAIL:-0}" != 1 || exit 1
@@ -69,9 +74,11 @@ esac
 	t.Setenv("WT_TEST_DOGFOOD_HEALTH_FAIL", health)
 	run := func(args ...string) (string, error) {
 		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, "/bin/bash", append([]string{dogfoodScriptFixture(t, "wt-dogfood")}, args...)...).CombinedOutput()
+		cmd := exec.CommandContext(ctx, "/bin/bash", append([]string{dogfoodScriptFixture(t, "wt-dogfood")}, args...)...)
+		agentpkg.ConfigureProcessTree(cmd)
+		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
 	for i := 0; i < 2; i++ {
@@ -109,6 +116,22 @@ esac
 	t.Setenv("WT_TEST_DOGFOOD_SSH_FAIL", "1")
 	if out, err := run("review", "list", "--json"); err == nil || !strings.Contains(out, "check office/VPN reachability") || strings.Contains(out, "wrong-ambient-profile") {
 		t.Fatalf("connection failure: %v %s", err, out)
+	}
+	for _, operation := range []string{"check", "forward", "start"} {
+		t.Run("unresponsive-"+operation, func(t *testing.T) {
+			t.Setenv("WT_TEST_DOGFOOD_SSH_HANG", operation)
+			if operation == "forward" {
+				write(state, "connected")
+				write(health, "unreachable")
+			} else {
+				if err := os.Remove(state); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+			}
+			if out, err := run("review", "list", "--json"); err == nil || !strings.Contains(out, "check office/VPN reachability") {
+				t.Fatalf("unresponsive SSH %s did not produce a bounded actionable failure: %v %s", operation, err, out)
+			}
+		})
 	}
 }
 

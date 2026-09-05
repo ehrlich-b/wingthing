@@ -8,13 +8,13 @@ Status: in progress, September 5, 2026. No production or release authority.
 - [x] Checkpoint the existing tracked and untracked work locally.
 - [x] Install and document the persistent private `wt-dogfood` entry point.
 - [x] Recover its connection and list only the authenticated owner's jobs.
-- [ ] Recover safe observations within three retries, 60 seconds, and the original deadline.
-- [ ] Preserve authorization revalidation, ambiguous-launch denial, and restart interruption.
+- [x] Recover safe observations within three retries, 60 seconds, and the original deadline.
+- [x] Preserve authorization revalidation, ambiguous-launch denial, and restart interruption.
 - [x] Exercise the composed native workflow with deterministic failure fixtures.
 - [x] Cross the actual 15-minute identity lease on the owned VMs with a live fixture.
 - [ ] Complete a real Terra/Sol hardening job with all Mac clients disconnected.
 - [ ] Discover and retrieve exact evidence from a fresh Mac client without remembered IDs.
-- [ ] Rerun integration, org-mode, sandbox, and compatibility gates.
+- [x] Rerun integration, org-mode, sandbox, and compatibility gates.
 - [ ] Record exact source/artifact digests and repeatable operating commands.
 
 ## Preservation
@@ -171,3 +171,56 @@ new regression in both records, matching artifact digests, independent test
 workspaces, and a completed-at time before reconnecting. Verify that Terra
 finished after the disconnect and that revision/run bounds held. No manual
 workspace copying/handoffs or automatic patch application is allowed.
+
+## Client hardening during the isolation window
+
+The acceptance audit found a real remaining connection-bound gap. A stalled
+SSH multiplexer's alive-check response was not bounded by `ConnectTimeout`.
+The fake-profile regression first failed after the test harness killed the
+wrapper, without an actionable wrapper error. A separate local Unix-socket
+probe completed the actual OpenSSH hello exchange and withheld the alive-check
+response: `ConnectTimeout=1` still hung after three seconds. With the new
+two-second alarm, actual OpenSSH exited on SIGALRM after 2.006 seconds. This
+probe used only loopback/local IPC, not either owned VM.
+
+`scripts/wt-dogfood` now bounds SSH checks to two seconds, forward repair to
+four seconds, and startup to ten seconds. Its existing health probes remain
+bounded to two seconds. Fake-profile regressions exercise all three stalled
+operations and require the wrapper's actionable error, not harness cancellation.
+On Debian these cases completed in 6.02, 4.01, and 10.01 seconds respectively.
+The timeouts do not apply to the native command after connection setup.
+
+The installed Mac wrapper has SHA-256
+`944fa6f7c446a14f0212d83ee99168dd77257f427d6be1db44d0926a971bf448`.
+The installer also refreshed the operator instructions; both were compared
+byte-for-byte with the source. This was a client-script-only installation:
+the private binary remains `dogfood-52ed38cefbd7-b5e714242344`, its recorded
+Darwin digest is unchanged, and no VM service or provider process was restarted.
+The default client and original checkout's dirty recovery memo also retain
+their recorded digests. The existing private profile was not copied or replaced.
+
+The recovery audit additionally added
+`TestConnectMCPObservationRecoveryCapsLongDeadline`: with a five-minute parent
+deadline, all three retries share a single deadline capped at sixty seconds.
+This complements the shorter-parent-deadline and read-only/exhaustion tests;
+it uses only injected local transport errors and passed three repetitions.
+
+Fresh verification logs under `dist/dogfood/`:
+
+- `check-macos-client-timeouts-final.log`: full `make check`, including the
+  additional recovery-deadline assertion.
+- `dogfood-hung-control-red.log` and `dogfood-hung-control-green.log`: the
+  reproduced client hang followed by passing private-entry regressions.
+- `recovery-deadlines-repeat.log`: all observation-recovery unit tests, three runs.
+- `linux-debian-client-timeouts.log` and `linux-ubuntu-client-timeouts.log`:
+  full sandbox/native batteries, including the stalled-SSH cases and all ten
+  composed workflow scenarios.
+- `org-web-client-timeouts.log`: org, legacy-org, and direct-policy browser gates.
+- `integration-client-timeouts.log`: integration gate.
+- `compat-client-timeouts.log`: v0.144.1 compatibility, 67 CLI surfaces and
+  both mixed-version directions.
+
+These are client/source verification, not evidence that the disconnected real
+job succeeded. That outcome remains unobserved until the recorded reconnect
+time. No native network command or SSH connection to either VM was made during
+this client-hardening work.

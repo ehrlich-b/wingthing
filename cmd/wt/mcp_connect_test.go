@@ -106,6 +106,24 @@ func TestConnectMCPObservationRecoveryPreservesEarlierDeadline(t *testing.T) {
 	}
 }
 
+func TestConnectMCPObservationRecoveryCapsLongDeadline(t *testing.T) {
+	tunnel := &observationFaultTunnel{failures: 10, fault: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNRESET}}
+	connector := &connectMCPServer{actor: "observation-test", tunnel: tunnel, timeout: 5 * time.Minute}
+	defer connector.close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	started := time.Now()
+	_, _, err := connector.callTool(ctx, "agent_status", json.RawMessage(`{"wing_id":"office","run_id":"original-run"}`))
+	if err == nil || !strings.Contains(err.Error(), "exhausted after three retries") || tunnel.calls != 4 {
+		t.Fatalf("recovery exhaustion: %v, calls=%d", err, tunnel.calls)
+	}
+	for _, deadline := range tunnel.deadlines[1:] {
+		if deadline.IsZero() || deadline.After(started.Add(61*time.Second)) || !deadline.Equal(tunnel.deadlines[1]) {
+			t.Fatalf("recovery deadline was not capped once at 60 seconds: %v", tunnel.deadlines)
+		}
+	}
+}
+
 type blockingConnectMCPTunnel struct {
 	started chan struct{}
 	release chan struct{}
