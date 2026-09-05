@@ -6,12 +6,12 @@ Status: in progress, September 5, 2026. No production or release authority.
 
 - [x] Preserve the complete hardening worktree outside temporary storage.
 - [x] Checkpoint the existing tracked and untracked work locally.
-- [ ] Install and document the persistent private `wt-dogfood` entry point.
-- [ ] Recover its connection and list only the authenticated owner's jobs.
+- [x] Install and document the persistent private `wt-dogfood` entry point.
+- [x] Recover its connection and list only the authenticated owner's jobs.
 - [ ] Recover safe observations within three retries, 60 seconds, and the original deadline.
 - [ ] Preserve authorization revalidation, ambiguous-launch denial, and restart interruption.
 - [x] Exercise the composed native workflow with deterministic failure fixtures.
-- [ ] Cross the actual 15-minute identity lease on the owned VMs with a live fixture.
+- [x] Cross the actual 15-minute identity lease on the owned VMs with a live fixture.
 - [ ] Complete a real Terra/Sol hardening job with all Mac clients disconnected.
 - [ ] Discover and retrieve exact evidence from a fresh Mac client without remembered IDs.
 - [ ] Rerun integration, org-mode, sandbox, and compatibility gates.
@@ -31,10 +31,10 @@ releases, pushes, merges, production changes, or credential-cache copying.
 ## Source verification, September 5
 
 The owner-scoped listing, bounded observation recovery, persistent wrapper, and
-installer are implemented. The wrapper is not installed and the new binaries
-are not deployed yet. Both owned VMs were checked idle and still run
-`dogfood-72c7be52603d-f18a51038f51`; the old completed job remains separate
-evidence, not acceptance of this reconnect goal.
+installer are implemented. Local checkpoint `52ed38c` contains the verified
+reconnect work. The private entry point is installed and the two owned VMs now
+run the artifact identified below. The old completed job remains separate
+evidence, not acceptance of the new live lease and hardening requirements.
 
 The composed fixture uses a real relay, authenticated encrypted signaling,
 Pion data channels, the native review backend and coordinator, real pinned Git
@@ -59,13 +59,115 @@ workspace identities. The production lease remains fifteen minutes.
 | `make test TEST_FLAGS='-tags integration -run TestReviewJobComposedNativeWorkflow/timeout -count=3 -timeout=120s'` | Passed three consecutive real timeout fixtures |
 | `make test TEST_FLAGS='-run TestDogfood -count=10 -timeout=180s'` | Passed ten repetitions of private dispatch, connection recovery/failure, and immutable installation |
 
-Full local logs are under `dist/dogfood/`. The live fifteen-minute lease fixture,
-fresh-client retrieval from the installed entry point, and disconnected real
-Terra/Sol task are still outstanding. Exact new deployment digests will be
-recorded after building and verifying private artifacts.
+Full local logs are under `dist/dogfood/`. Fresh-client retrieval from the
+installed entry point and the live fifteen-minute lease fixture passed. The
+new disconnected real Terra/Sol task remains outstanding.
 
 The first composed run exposed a process-global tunnel-key cache indexed only
 by the sender key. It now binds both peer identities; the native composed test
 and `TestTunnelKeyCacheBindsBothPeerIdentities` cover the correction. Fixture
 shutdown drains hijacked WebSocket handlers before closing SQLite, and Linux
 test images now include the actual operator scripts and instructions.
+
+## Private deployment and fresh discovery
+
+Build: `dogfood-52ed38cefbd7-b5e714242344`.
+
+- Source commit: `52ed38cefbd78d698f9ed0e8f2706d097e3b953d`.
+- Source/build-input SHA-256: `b5e714242344ba190eee3ccaa44939e8c41c30137608bf7dff825932caa99ca7`.
+- Darwin arm64 binary: `71882c29d72fdda462fb08ad08edd49157418cd5803164d84af22152b4581c02`.
+- Linux amd64 binary: `1b834c2b1a563bfd3ac541cf4fb2d6542dca0f255d5da32f3d32ce0e0f5f6a2f`.
+- Work-1 coordinator PID `78582` and work-2 wing PID `75864` had that Linux
+  digest when read from `/proc/PID/exe` after deployment. Both were idle before
+  restart. The coordinator's active-job lock was held across its replacement.
+- The exact old Linux binary is retained at
+  `/usr/local/lib/wingthing-dogfood/dogfood-72c7be52603d-f18a51038f51/wt` on each VM.
+- `~/.local/bin/wt-dogfood` uses its own immutable versioned binary and the
+  existing private profile. The default `~/.local/bin/wt` retained SHA-256
+  `34f014bbc05daba619dfa2672f44ed797d10fa7e8dbd5cb71b93acea15e97035`.
+
+The first installed `wt-dogfood review list --json` established its connection
+and found the two older completed jobs in under one second. A fresh invocation
+selected the newest successful evidence-bearing row without a supplied ID:
+`j-c328435b2105e0b040c0f2c7526f7ccb`. Native result calls retrieved its exact patch,
+accepted Sol review, and separate passing test records. Patch digest
+`863ae8d7595cfd3383ee236b3c6e98b5c881c9184a6b32ccf4106f619254ff0e`, the review's
+digest binding, and both test-output digests were independently recomputed and
+verified. Retrieved records are `dist/dogfood/fresh-*`.
+
+While the lease fixture was running, canceling only the Mac master's
+`127.0.0.1:17881` forwarding rule followed by `wt-dogfood review list --json`
+restored that forwarding rule automatically in under one second. The same job
+and original Terra child remained running (`dist/dogfood/recovered-forward.json`).
+
+## Live lease fixture passed
+
+Submit command: `wt-dogfood review submit --spec docs/dogfood-lease-fixture.json --json`.
+
+- Durable job: `j-f73a340ce99905dc49ebc30eb41262eb`.
+- Admitted: `2026-09-05T13:39:33.386923189Z`; deadline:
+  `2026-09-05T14:09:33.386923189Z`.
+- Original Terra child: `t-20260905-133934-7f8b868e17384748`.
+- Both source replicas remain pinned at
+  `5b8fcfce454f4881e27dc762082845067cc28180` with the existing restricted egg policy.
+- The fixture asks the implementer to wait 930 seconds in one foreground
+  command, then create one marker. Sol reviews the marker without repeating
+  the wait. This is timer-fixture waiting, not claimed software implementation.
+- Zero revisions, 1,200 seconds per agent, 30 seconds per test, 1,800 seconds
+  total. No worker restart or manual workspace handoff is allowed while active.
+
+Do not count this fixture as the separate required real hardening task.
+
+Both running wing services recorded the real identity lease expiry at
+`2026-09-05T13:54:33Z`. The VM coordinator logged `reconnecting observation
+agent_wait, retry 1/3` at the same time. The original Terra child remained
+`t-20260905-133934-7f8b868e17384748`; there was no replacement implementation
+run. The workflow then completed successfully in round zero with Sol child
+`t-20260905-135533-c91d52d758a747dc`, a passing review, and both test exits zero.
+The original deadline remained `2026-09-05T14:09:33.386923189Z`.
+
+Retrieved patch SHA-256:
+`df1c6b3cb40299768efb830f24b191fd412081c4975f822e510fd1ec4305f632`.
+Native result records are in `dist/dogfood/live-lease-{patch,review,tests}.json`;
+the patch digest, review binding, and both test-output digests were recomputed
+and matched. This proves the deployed observation recovery across the actual
+lease, not just the shorter injected fixture.
+
+## Real hardening task in the disconnected proof window
+
+`docs/dogfood-confirmed-stages-job.json` freezes the next task: distinguish
+unacknowledged submission from an acknowledged child being awaited. The live
+fixture provided the reproduction: a persisted implementer run ID with stage
+still `implementation_submitting`. Terra may change only
+`internal/reviewjob/job.go` and `internal/reviewjob/job_test.go`, adding controlled
+launch/wait regressions named `TestReviewJobConfirmedRunStages`. Sol independently
+reviews the exact patch; both test gates run all `TestReviewJob` tests. Two
+revisions maximum, ten minutes per agent, three minutes per test, one hour total.
+
+Submitted through `wt-dogfood review submit` after the lease fixture succeeded:
+
+- Job: `j-debab30c550cc5876887f41b3c906b03`.
+- Admitted: `2026-09-05T14:05:08.311570947Z`.
+- Original deadline: `2026-09-05T15:05:08.311570947Z`.
+- The submission returned its persisted ID in pending/admitted state, before
+  any child ID was returned to the Mac. The CLI exited; all earlier private MCP
+  clients had already exited.
+- The Mac's exact private SSH master was then closed at `2026-09-05T14:05:08Z`
+  (local timestamp precision one second). `lsof` found no established Mac SSH
+  connection to either owned VM or the private roost port after closure.
+- Local evidence: `dist/dogfood/disconnected-real-submit.json` and
+  `dist/dogfood/disconnected-real-at.txt`.
+
+Do not reconnect to either VM or run `wt-dogfood` network commands before
+`2026-09-05T15:06:09Z`. This keeps the Mac disconnected through the entire job
+deadline plus a shutdown margin. A local foreground timer only waits on wall
+time; it does not connect to or coordinate the VMs. Do not restart or resubmit
+because no progress is visible during this deliberate isolation window.
+
+After that time, establish a fresh connection with `wt-dogfood review list
+--json`, discover the new job rather than injecting its ID, and retrieve patch,
+review, and both test records. Require terminal success, execution of the named
+new regression in both records, matching artifact digests, independent test
+workspaces, and a completed-at time before reconnecting. Verify that Terra
+finished after the disconnect and that revision/run bounds held. No manual
+workspace copying/handoffs or automatic patch application is allowed.

@@ -39,6 +39,12 @@ qualify each wing-owned operation with its explicit `wing_id`.
 wt-dogfood review submit --spec job.json --json
 ```
 
+The checked-in `docs/dogfood-confirmed-stages-job.json` is a complete bounded
+hardening example for the existing pinned Wingthing replicas. Run it from the
+durable source worktree. Its fixed request ID deliberately deduplicates reruns;
+use a new request ID when preparing a genuinely new task. The separate
+`docs/dogfood-lease-fixture.json` is a 930-second timer fixture, not coding work.
+
 The spec pins both worker wing IDs and existing clean source paths, the full
 source commit, exact allowed files, test argv, models, and deadlines. Work-2
 (`10.80.1.6`, wing `50a0a378e41543e584476044`) implements; work-1 reviews and

@@ -1,0 +1,28 @@
+{
+  "request_id": "confirmed-run-stages-20260905-52ed38c-01",
+  "prompt": "Fix one observed Wingthing review-job reporting bug. During the live lease fixture, the job remained stage=implementation_submitting for minutes even though its exact implementer_run was already durably recorded and the coordinator was waiting on that child. In internal/reviewjob/job.go, preserve the existing *_submitting intent before launch, but after a successful nonempty child acknowledgment persist the appropriate implementation_running or review_running stage together with that exact child ID before waiting. These stages describe a confirmed supervised child being awaited, not a claim about a provider's internal activity. Do not publish a running-stage transition for an ambiguous or failed launch. Keep existing terminal status, deadlines, deduplication, revision bounds, patch handoff, independent test gates, and interruption-without-replay behavior unchanged. Add a deterministic test named TestReviewJobConfirmedRunStages in internal/reviewjob/job_test.go using controlled launch/wait gates, not sleep-based guesses. Cover implementation and review acknowledgments, still-unacknowledged submission, an ambiguous/failed acknowledgment, and returning to implementation on a requested revision; assert persisted stages and exact run IDs while the job is nonterminal. Keep this to the existing fixed workflow and these two files. Do not add a stage framework, new CLI/API, dependencies, commits, deployment, delegation, or unrelated fixes. Run the relevant review-job tests and return a concise implementation summary.",
+  "base_commit": "5b8fcfce454f4881e27dc762082845067cc28180",
+  "implementer": {
+    "wing_id": "50a0a378e41543e584476044",
+    "source": "/home/dogfood/work/wingthing-review-source-20260905",
+    "model": "gpt-5.6-terra"
+  },
+  "reviewer": {
+    "wing_id": "5003a9a0a5b64b2f8521db78",
+    "source": "/home/dogfood/work/wingthing-review-source-20260905",
+    "model": "gpt-5.6-sol"
+  },
+  "allowed_paths": [
+    "internal/reviewjob/job.go",
+    "internal/reviewjob/job_test.go"
+  ],
+  "test_argv": [
+    "make",
+    "test",
+    "TEST_FLAGS=-v -run TestReviewJob -count=1 -timeout=120s"
+  ],
+  "max_revisions": 2,
+  "run_seconds": 600,
+  "test_seconds": 180,
+  "timeout_seconds": 3600
+}

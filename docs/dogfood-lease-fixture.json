@@ -1,0 +1,27 @@
+{
+  "request_id": "lease-fixture-20260905-52ed38c-01",
+  "prompt": "This is an operational identity-lease timer fixture, NOT software hardening or 15 minutes of coding. Only the IMPLEMENTER performs this step: execute exactly one foreground command, /usr/bin/python3 -c 'import pathlib,time; time.sleep(930); pathlib.Path(\"dogfood-lease-fixture.txt\").write_text(\"live identity lease fixture completed after 930 seconds\\n\")'. Keep the command alive until it completes; use the native command wait mechanism as necessary. Do not shorten or simulate the wait, background it, delegate it, run Wingthing recursively, or write any other file. Read repository instructions, but do no extra implementation. After the command exits, return a concise fixture completion summary. The REVIEWER must not repeat the wait or modify files: inspect the exact candidate marker and the coordinator test evidence, and provide the required independent digest-bound verdict. This fixture is solely to prove control-channel lease renewal while the exact original child remains running.",
+  "base_commit": "5b8fcfce454f4881e27dc762082845067cc28180",
+  "implementer": {
+    "wing_id": "50a0a378e41543e584476044",
+    "source": "/home/dogfood/work/wingthing-review-source-20260905",
+    "model": "gpt-5.6-terra"
+  },
+  "reviewer": {
+    "wing_id": "5003a9a0a5b64b2f8521db78",
+    "source": "/home/dogfood/work/wingthing-review-source-20260905",
+    "model": "gpt-5.6-sol"
+  },
+  "allowed_paths": [
+    "dogfood-lease-fixture.txt"
+  ],
+  "test_argv": [
+    "/usr/bin/python3",
+    "-c",
+    "from pathlib import Path; assert Path('dogfood-lease-fixture.txt').read_text() == 'live identity lease fixture completed after 930 seconds\\n'; print('live lease fixture marker verified')"
+  ],
+  "max_revisions": 0,
+  "run_seconds": 1200,
+  "test_seconds": 30,
+  "timeout_seconds": 1800
+}
