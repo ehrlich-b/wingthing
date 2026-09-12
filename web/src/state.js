@@ -61,6 +61,8 @@ export function initDOM() {
     DOM.terminalSection = document.getElementById('terminal-section');
     DOM.terminalContainer = document.getElementById('terminal-container');
     DOM.ptyStatus = document.getElementById('pty-status');
+    DOM.sessionUploadBtn = document.getElementById('session-upload-btn');
+    DOM.sessionUploadInput = document.getElementById('session-upload-input');
     DOM.sessionCloseBtn = document.getElementById('session-close-btn');
     DOM.chatSection = document.getElementById('chat-section');
     DOM.wingDetailSection = document.getElementById('wing-detail-section');

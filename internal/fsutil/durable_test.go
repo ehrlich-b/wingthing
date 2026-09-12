@@ -23,3 +23,18 @@ func TestSyncDirectoryReportsOpenFailure(t *testing.T) {
 		t.Fatalf("SyncDirectory error = %v", err)
 	}
 }
+
+func TestSyncRoot(t *testing.T) {
+	directory := t.TempDir()
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.WriteFile("entry", []byte("durable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncRoot(root); err != nil {
+		t.Fatalf("SyncRoot: %v", err)
+	}
+}

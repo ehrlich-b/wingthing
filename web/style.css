@@ -236,7 +236,8 @@ body {
     flex-shrink: 0;
 }
 
-#session-close-btn {
+#session-close-btn,
+#session-upload-btn {
     background: none;
     border: 1px solid var(--border);
     color: var(--text-dim);
@@ -246,9 +247,15 @@ body {
     border-radius: 3px;
     flex-shrink: 0;
 }
-#session-close-btn:hover {
+#session-close-btn:hover,
+#session-upload-btn:hover {
     color: var(--accent);
     border-color: var(--accent);
+}
+
+#session-upload-btn:disabled {
+    cursor: wait;
+    opacity: 0.65;
 }
 
 #header-right {
@@ -2089,6 +2096,27 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 @keyframes toast-in {
     from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
     to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.session-upload-toast {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2000;
+    max-width: 90vw;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+    animation: toast-in 0.2s ease-out;
+}
+
+.session-upload-toast.failed {
+    border-color: var(--red);
+    color: var(--red);
 }
 
 .crypto-error-toast {

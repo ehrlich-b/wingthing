@@ -21,3 +21,18 @@ func SyncDirectory(path string) error {
 	}
 	return nil
 }
+
+func SyncRoot(root *os.Root) error {
+	directory, err := root.Open(".")
+	if err != nil {
+		return fmt.Errorf("open root for sync: %w", err)
+	}
+	if err := directory.Sync(); err != nil {
+		_ = directory.Close()
+		return fmt.Errorf("sync root: %w", err)
+	}
+	if err := directory.Close(); err != nil {
+		return fmt.Errorf("close synced root: %w", err)
+	}
+	return nil
+}

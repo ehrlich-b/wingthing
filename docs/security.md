@@ -108,8 +108,10 @@ browser -- TLS --> wingthing.ai relay -- TLS --> wing
 
 When entitled, the shipped relay forwards application ciphertext for terminal
 content and encrypted tunnel requests. During normal service operation it does not receive
-the plaintext of terminal I/O, directory listings, session history, audit data,
+the plaintext of terminal I/O, uploaded files, directory listings, session history, audit data,
 egg configuration, or tunnel passkey assertions.
+
+Browser file uploads use that encrypted tunnel and are committed by the wing, not the relay. The wing derives the destination from a live session's recorded working directory, requires the exact session owner, rechecks the current path grant before commit, accepts only a single filename component, limits each file to 25 MiB, and refuses to replace an existing entry. Completed files appear atomically with mode `0600`; uploaded content is placed on disk but is not automatically sent to the agent or executed.
 
 The relay still sees and controls routing metadata. It terminates TLS, serves the
 browser application, authenticates accounts, and chooses which wing connection

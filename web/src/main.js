@@ -14,8 +14,9 @@ import { scopeBrowserStateToUser } from './storage-scope.js';
 import { closeAuditOverlay } from './audit.js';
 import { hideDetailModal, showSessionInfo, renderSidebar, renderDashboard } from './render.js';
 import { initNotifyListeners } from './notify.js';
-import { loadTunnelAuthTokens } from './tunnel.js';
+import { loadTunnelAuthTokens, sendTunnelRequest } from './tunnel.js';
 import { initPreview } from './preview.js';
+import { showUploadToast, uploadSessionFile } from './upload.js';
 
 function denyBrowserRelayView() {
     history.replaceState({ view: 'home' }, '', location.pathname);
@@ -105,6 +106,36 @@ async function init() {
                     DOM.sessionCloseBtn.textContent = 'x';
                 }
             }, 3000);
+        }
+    });
+
+    DOM.sessionUploadBtn.addEventListener('click', function() {
+        if (!S.ptySessionId || !S.ptyWingId || S.spectating || DOM.sessionUploadBtn.disabled) return;
+        DOM.sessionUploadInput.click();
+    });
+    DOM.sessionUploadInput.addEventListener('change', async function() {
+        var files = Array.from(DOM.sessionUploadInput.files || []);
+        DOM.sessionUploadInput.value = '';
+        if (!files.length || !S.ptySessionId || !S.ptyWingId || S.spectating) return;
+        var sessionId = S.ptySessionId;
+        var wingId = S.ptyWingId;
+        DOM.sessionUploadBtn.disabled = true;
+        try {
+            for (var i = 0; i < files.length; i++) {
+                var file = files[i];
+                DOM.sessionUploadBtn.textContent = 'uploading ' + (i + 1) + '/' + files.length;
+                var result = await uploadSessionFile(sendTunnelRequest, wingId, sessionId, file, function(done, total) {
+                    if (files.length === 1 && total > 0) {
+                        DOM.sessionUploadBtn.textContent = 'uploading ' + Math.floor(done * 100 / total) + '%';
+                    }
+                });
+                showUploadToast('uploaded ' + result.name + ' to the session directory');
+            }
+        } catch (error) {
+            showUploadToast('upload failed: ' + error.message, true);
+        } finally {
+            DOM.sessionUploadBtn.disabled = false;
+            DOM.sessionUploadBtn.textContent = 'upload';
         }
     });
 

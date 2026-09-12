@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 type canaryClaudeProfile struct {
@@ -81,7 +82,16 @@ func main() {
 		for _, b := range buf[:n] {
 			switch b {
 			case '\r', '\n':
-				if string(line) == "CANARY_SET_THEME" {
+				command := string(line)
+				if name, ok := strings.CutPrefix(command, "CANARY_READ_FILE "); ok {
+					data, err := os.ReadFile(name)
+					fmt.Printf("\r\nCANARY_FILE_READ ok=%t name=%s data=%s\r\n", err == nil, name, data)
+				}
+				if command == "CANARY_PRINT_STATE" {
+					printProfileState()
+					printModelPolicy()
+				}
+				if command == "CANARY_SET_THEME" {
 					path := filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")
 					data, err := os.ReadFile(path)
 					var prefs map[string]any

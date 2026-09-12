@@ -172,6 +172,34 @@ try {
     }
 
     try {
+      const uploadName = `wingthing-upload-${Date.now()}.txt`;
+      const uploadMarker = 'SESSION_UPLOAD_ROUNDTRIP';
+      await p.locator('#session-upload-btn').waitFor({ state: 'visible', timeout: 10000 });
+      await p.locator('#session-upload-input').setInputFiles({
+        name: uploadName,
+        mimeType: 'text/plain',
+        buffer: Buffer.from(uploadMarker),
+      });
+      await p.locator('#session-upload-toast').waitFor({ state: 'visible', timeout: 35000 });
+      const uploadStatus = await p.locator('#session-upload-toast').textContent();
+      if (!uploadStatus.includes('uploaded ' + uploadName)) {
+        throw new Error(uploadStatus);
+      }
+      await p.click('#terminal-container');
+      await p.keyboard.type('CANARY_READ_FILE ' + uploadName);
+      await p.keyboard.press('Enter');
+      await p.waitForFunction(
+        (marker) => Array.from(document.querySelectorAll('#terminal-container .xterm-rows > div'))
+          .some((row) => row.textContent.includes(marker)),
+        uploadMarker,
+        { timeout: 15000 }
+      );
+      record('alice: encrypted upload lands in the live session working directory', true);
+    } catch (e) {
+      record('alice: encrypted upload lands in the live session working directory', false, String(e).slice(0, 200));
+    }
+
+    try {
       await p.click('#terminal-container');
       await p.keyboard.type('echo INPUT_ROUNDTRIP_$(id -un)');
       await p.keyboard.press('Enter');
@@ -226,6 +254,15 @@ try {
         { timeout: 20000 }
       );
       record('alice: detach + reattach replays scrollback', true);
+      await p.click('#terminal-container');
+      await p.keyboard.type('CANARY_PRINT_STATE');
+      await p.keyboard.press('Enter');
+      await p.waitForFunction(
+        () => Array.from(document.querySelectorAll('#terminal-container .xterm-rows > div'))
+          .some((row) => row.textContent.includes('CANARY_MODEL_POLICY ok=true saved_model=opus theme=alice-edited')),
+        null,
+        { timeout: 15000 }
+      );
       const text = await terminalText(p);
       record('alice: reconnect retains onboarding and personal preferences with host model policy',
         text.includes('marker=alice-persisted') && text.includes('onboarding=true') &&

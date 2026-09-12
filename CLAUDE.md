@@ -124,7 +124,7 @@ Wing API payloads (directory listings, session history, audit recordings, egg co
 | `tunnel.res` | wing -> relay -> browser | Encrypted response: `{type, request_id, payload}` |
 | `tunnel.stream` | wing -> relay -> browser | Encrypted streaming: `{type, request_id, payload, done}` |
 
-Inner message types (inside encrypted payload): `dir.list`, `wing.info`, `webrtc.offer`, `sessions.list`, `sessions.history`, `audit.request`, `egg.config_update`, `pty.kill`, `wing.update`, `passkey.auth`, `allow.list`, `allow.add`, `allow.remove`, `paths.list`, `paths.set`, `paths.add_member`, `paths.remove_member`
+Inner message types (inside encrypted payload): `dir.list`, `wing.info`, `webrtc.offer`, `sessions.list`, `sessions.history`, `file.upload.begin`, `file.upload.chunk`, `file.upload.finish`, `file.upload.cancel`, `audit.request`, `egg.config_update`, `pty.kill`, `wing.update`, `passkey.auth`, `allow.list`, `allow.add`, `allow.remove`, `paths.list`, `paths.set`, `paths.add_member`, `paths.remove_member`
 
 ### Two Key Types, Two HKDF Domains
 

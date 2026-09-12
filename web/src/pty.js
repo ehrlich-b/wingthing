@@ -298,6 +298,7 @@ function setupPTYHandlers(ws, reattach) {
                     DOM.headerTitle.textContent = sessionTitle(msg.agent, S.ptyWingId);
                 }
                 DOM.sessionCloseBtn.style.display = '';
+                DOM.sessionUploadBtn.style.display = S.spectating ? 'none' : '';
                 hidePasskeyOverlay();
                 if (msg.auth_token && S.ptyWingId) {
                     S.tunnelAuthTokens[S.ptyWingId] = msg.auth_token;
@@ -391,6 +392,7 @@ function setupPTYHandlers(ws, reattach) {
                 closePreview();
                 DOM.headerTitle.textContent = '';
                 DOM.sessionCloseBtn.style.display = 'none';
+                DOM.sessionUploadBtn.style.display = 'none';
                 if (msg.session_id) clearTermBuffer(msg.session_id);
                 clearNotification(msg.session_id);
                 S.ptySessionId = null;
@@ -418,6 +420,7 @@ function setupPTYHandlers(ws, reattach) {
                 DOM.ptyStatus.textContent = 'bandwidth exceeded';
                 DOM.headerTitle.textContent = '';
                 DOM.sessionCloseBtn.style.display = 'none';
+                DOM.sessionUploadBtn.style.display = 'none';
                 S.term.writeln('\r\n\x1b[33;1m--- bandwidth limit reached ---\x1b[0m');
                 S.term.writeln('\x1b[2mYour free tier monthly bandwidth has been exceeded.\x1b[0m');
                 S.term.writeln('');
@@ -599,6 +602,7 @@ export function detachPTY() {
     S.ptyWingId = null;
     S.e2eKey = null;
     S.spectating = false;
+    DOM.sessionUploadBtn.style.display = 'none';
 }
 
 export function disconnectPTY() {
@@ -620,6 +624,7 @@ export function disconnectPTY() {
     DOM.ptyStatus.textContent = '';
     DOM.headerTitle.textContent = '';
     DOM.sessionCloseBtn.style.display = 'none';
+    DOM.sessionUploadBtn.style.display = 'none';
     return killFinished;
 }
 

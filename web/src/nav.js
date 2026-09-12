@@ -37,6 +37,7 @@ export function showCanvas(pushHistory) {
     DOM.headerTitle.style.display = 'none';
     DOM.ptyStatus.style.display = 'none';
     DOM.sessionCloseBtn.style.display = 'none';
+    DOM.sessionUploadBtn.style.display = 'none';
     var canvasBtn = document.getElementById('canvas-toggle-btn');
     if (canvasBtn) canvasBtn.classList.add('active');
     if (pushHistory !== false) {

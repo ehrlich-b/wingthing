@@ -234,6 +234,8 @@ wt roost start --https
 open https://localhost:8443
 ```
 
+An attached session has an **upload** control for copying files into the directory where that session started. Uploads travel through the application-encrypted browser-to-wing tunnel and never overwrite an existing file.
+
 This self-hosted route needs no Wingthing account or hosted-relay entitlement.
 For a remote execution machine, keep the portal on localhost and carry its wing
 connection over SSH; follow the

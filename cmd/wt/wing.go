@@ -4778,6 +4778,10 @@ type tunnelInner struct {
 	Type        string `json:"type"`
 	Path        string `json:"path,omitempty"`
 	SessionID   string `json:"session_id,omitempty"`
+	UploadID    string `json:"upload_id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	Data        string `json:"data,omitempty"`
 	Kind        string `json:"kind,omitempty"`
 	YAML        string `json:"yaml,omitempty"`
 	Offset      int    `json:"offset,omitempty"`
@@ -5308,6 +5312,67 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		sessions, total := paginateSessionsHistory(sessions, inner.Offset, inner.Limit)
 		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions, "total": total}, write)
+
+	case "file.upload.begin":
+		userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
+		session, err := sessionUploadTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		upload, err := sessionUploads.begin(session, req, inner.Name, inner.Size)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		tunnelRespond(gcm, req.RequestID, map[string]any{
+			"upload_id":  upload.id,
+			"chunk_size": maxSessionUploadChunk,
+		}, write)
+
+	case "file.upload.chunk":
+		chunk, err := base64.StdEncoding.DecodeString(inner.Data)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid upload chunk"}, write)
+			return
+		}
+		received, err := sessionUploads.append(inner.UploadID, req.SenderUserID, req.SenderPub, int64(inner.Offset), chunk)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		tunnelRespond(gcm, req.RequestID, map[string]int64{"received": received}, write)
+
+	case "file.upload.finish":
+		upload, err := sessionUploads.finish(inner.UploadID, req.SenderUserID, req.SenderPub)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		defer func() { _ = upload.root.Close() }()
+		userPaths := pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
+		session, err := sessionUploadTarget(req, upload.sessionID, listAliveEggSessions(cfg), userPaths)
+		if err != nil || session.CWD != upload.cwd {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload destination changed"}, write)
+			return
+		}
+		if err := writeSessionUploadRoot(upload.root, upload.name, upload.data); err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		log.Printf("session upload complete (user=%s session=%s name=%q size=%d)", req.SenderUserID, upload.sessionID, upload.name, upload.size)
+		tunnelRespond(gcm, req.RequestID, map[string]any{
+			"name":   upload.name,
+			"size":   upload.size,
+			"sha256": sessionUploadSHA256(upload.data),
+		}, write)
+
+	case "file.upload.cancel":
+		if err := sessionUploads.cancel(inner.UploadID, req.SenderUserID, req.SenderPub); err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "audit.request":
 		if inner.SessionID != "" && isMemberFiltered(req) {
