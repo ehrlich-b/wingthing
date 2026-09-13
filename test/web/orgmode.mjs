@@ -2,6 +2,7 @@
 // as three enrolled principals plus one outsider through dashboard layout, terminal
 // lifecycle, encryption, path ACLs, enrollment, account/org, and mobile behavior.
 import { chromium } from 'playwright';
+import crypto from 'crypto';
 import fs from 'fs';
 
 const BASE = process.env.ROOST_URL || 'http://roost:8080';
@@ -174,11 +175,14 @@ try {
     try {
       const uploadName = `wingthing-upload-${Date.now()}.txt`;
       const uploadMarker = 'SESSION_UPLOAD_ROUNDTRIP';
+      const uploadData = Buffer.alloc(128 * 1024 + uploadMarker.length + 1, 0x5a);
+      uploadData.write(uploadMarker, 128 * 1024 + 1);
+      const uploadSHA256 = crypto.createHash('sha256').update(uploadData).digest('hex');
       await p.locator('#session-upload-btn').waitFor({ state: 'visible', timeout: 10000 });
       await p.locator('#session-upload-input').setInputFiles({
         name: uploadName,
         mimeType: 'text/plain',
-        buffer: Buffer.from(uploadMarker),
+        buffer: uploadData,
       });
       await p.locator('#session-upload-toast').waitFor({ state: 'visible', timeout: 35000 });
       const uploadStatus = await p.locator('#session-upload-toast').textContent();
@@ -186,17 +190,20 @@ try {
         throw new Error(uploadStatus);
       }
       await p.click('#terminal-container');
-      await p.keyboard.type('CANARY_READ_FILE ' + uploadName);
+      await p.keyboard.type('CANARY_SHA256_FILE ' + uploadName);
       await p.keyboard.press('Enter');
       await p.waitForFunction(
-        (marker) => Array.from(document.querySelectorAll('#terminal-container .xterm-rows > div'))
-          .some((row) => row.textContent.includes(marker)),
-        uploadMarker,
+        (sha256) => {
+          const rows = document.querySelector('#terminal-container .xterm-rows');
+          const text = rows ? rows.textContent : '';
+          return text.includes('CANARY_FILE_SHA256 ok=true') && text.includes(sha256);
+        },
+        uploadSHA256,
         { timeout: 15000 }
       );
-      record('alice: encrypted upload lands in the live session working directory', true);
+      record('alice: encrypted multi-chunk upload lands intact in the live session working directory', true);
     } catch (e) {
-      record('alice: encrypted upload lands in the live session working directory', false, String(e).slice(0, 200));
+      record('alice: encrypted multi-chunk upload lands intact in the live session working directory', false, String(e).slice(0, 200));
     }
 
     try {

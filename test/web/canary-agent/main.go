@@ -6,6 +6,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -86,6 +87,10 @@ func main() {
 				if name, ok := strings.CutPrefix(command, "CANARY_READ_FILE "); ok {
 					data, err := os.ReadFile(name)
 					fmt.Printf("\r\nCANARY_FILE_READ ok=%t name=%s data=%s\r\n", err == nil, name, data)
+				}
+				if name, ok := strings.CutPrefix(command, "CANARY_SHA256_FILE "); ok {
+					data, err := os.ReadFile(name)
+					fmt.Printf("\r\nCANARY_FILE_SHA256 ok=%t name=%s size=%d sha256=%x\r\n", err == nil, name, len(data), sha256.Sum256(data))
 				}
 				if command == "CANARY_PRINT_STATE" {
 					printProfileState()

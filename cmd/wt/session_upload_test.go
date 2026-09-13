@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,6 +20,11 @@ func TestValidSessionUploadName(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"", ".", "..", "../secret", "sub/file", `sub\file`, "/tmp/file", "bad\x00name", "line\nbreak"} {
+		if validSessionUploadName(name) {
+			t.Errorf("validSessionUploadName(%q) = true", name)
+		}
+	}
+	for _, name := range []string{"bad\x00name", "line\nbreak", "tab\tname"} {
 		if validSessionUploadName(name) {
 			t.Errorf("validSessionUploadName(%q) = true", name)
 		}
@@ -116,8 +122,131 @@ func TestSessionUploadRegistryRejectsOversizedChunkAndDeclaredSize(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = registry.cancel(upload.id, req.SenderUserID, req.SenderPub) }()
 	if _, err := registry.append(upload.id, req.SenderUserID, req.SenderPub, 0, make([]byte, maxSessionUploadChunk+1)); err == nil {
 		t.Fatal("oversized chunk was accepted")
+	}
+	small, err := registry.begin(session, req, "declared.bin", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.cancel(small.id, req.SenderUserID, req.SenderPub) }()
+	if _, err := registry.append(small.id, req.SenderUserID, req.SenderPub, 0, []byte{1, 2}); err == nil {
+		t.Fatal("chunk exceeding declared size was accepted")
+	}
+}
+
+func TestSessionUploadRegistryEnforcesAdmissionLimitsAndReleasesCapacity(t *testing.T) {
+	session := ws.SessionInfo{SessionID: "session-1", UserID: "alice", CWD: t.TempDir()}
+	req := func(user string) ws.TunnelRequest {
+		return ws.TunnelRequest{SenderUserID: user, SenderPub: "browser-key"}
+	}
+
+	t.Run("per client", func(t *testing.T) {
+		registry := newSessionUploadRegistry()
+		first, err := registry.begin(session, req("alice"), "first.bin", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := registry.begin(session, req("alice"), "second.bin", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := registry.begin(session, req("alice"), "third.bin", 1); err == nil {
+			t.Fatal("third upload from one client was admitted")
+		}
+		if err := registry.cancel(first.id, "mallory", "browser-key"); err == nil {
+			t.Fatal("another user cancelled the upload")
+		}
+		if err := registry.cancel(first.id, "alice", "browser-key"); err != nil {
+			t.Fatal(err)
+		}
+		third, err := registry.begin(session, req("alice"), "third.bin", 1)
+		if err != nil {
+			t.Fatalf("capacity was not released after cancel: %v", err)
+		}
+		for _, upload := range []*sessionUpload{second, third} {
+			if err := registry.cancel(upload.id, upload.userID, upload.senderPub); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("global count", func(t *testing.T) {
+		registry := newSessionUploadRegistry()
+		uploads := make([]*sessionUpload, 0, maxActiveSessionUploads)
+		for i := range maxActiveSessionUploads {
+			upload, err := registry.begin(session, req(fmt.Sprintf("user-%d", i)), fmt.Sprintf("file-%d.bin", i), 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			uploads = append(uploads, upload)
+		}
+		if _, err := registry.begin(session, req("overflow"), "overflow.bin", 1); err == nil {
+			t.Fatal("upload beyond global count was admitted")
+		}
+		for _, upload := range uploads {
+			if err := registry.cancel(upload.id, upload.userID, upload.senderPub); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	t.Run("reserved bytes", func(t *testing.T) {
+		registry := newSessionUploadRegistry()
+		var uploads []*sessionUpload
+		for i, size := range []int64{25 << 20, 25 << 20, 14 << 20} {
+			upload, err := registry.begin(session, req(fmt.Sprintf("user-%d", i)), fmt.Sprintf("file-%d.bin", i), size)
+			if err != nil {
+				t.Fatal(err)
+			}
+			uploads = append(uploads, upload)
+		}
+		if _, err := registry.begin(session, req("overflow"), "overflow.bin", 1); err == nil {
+			t.Fatal("upload beyond reserved capacity was admitted")
+		}
+		if err := registry.cancel(uploads[2].id, uploads[2].userID, uploads[2].senderPub); err != nil {
+			t.Fatal(err)
+		}
+		replacement, err := registry.begin(session, req("replacement"), "replacement.bin", 1)
+		if err != nil {
+			t.Fatalf("reserved capacity was not released after cancel: %v", err)
+		}
+		uploads[2] = replacement
+		for _, upload := range uploads {
+			if err := registry.cancel(upload.id, upload.userID, upload.senderPub); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+}
+
+func TestSessionUploadRegistryFinishesEmptyFile(t *testing.T) {
+	cwd := t.TempDir()
+	registry := newSessionUploadRegistry()
+	req := ws.TunnelRequest{SenderUserID: "alice", SenderPub: "browser-key"}
+	session := ws.SessionInfo{SessionID: "session-1", UserID: "alice", CWD: cwd}
+	upload, err := registry.begin(session, req, "empty.bin", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, err := registry.finish(upload.id, req.SenderUserID, req.SenderPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = finished.root.Close() }()
+	if len(finished.data) != 0 {
+		t.Fatalf("empty upload contains %d bytes", len(finished.data))
+	}
+	if err := writeSessionUploadRoot(finished.root, finished.name, finished.data); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(cwd, "empty.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("empty upload size = %d", info.Size())
 	}
 }
 

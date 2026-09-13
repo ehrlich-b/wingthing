@@ -74,6 +74,55 @@ test('uploadSessionFile cancels an admitted upload after a chunk failure', async
     assert.deepEqual(calls, ['file.upload.begin', 'file.upload.chunk', 'file.upload.cancel']);
 });
 
+test('uploadSessionFile finishes an empty file without sending a chunk', async function() {
+    var calls = [];
+    var send = async function(_wingId, message) {
+        calls.push(message.type);
+        if (message.type === 'file.upload.begin') return { upload_id: 'upload-empty', chunk_size: 8 };
+        if (message.type === 'file.upload.finish') return { name: 'empty.bin', size: 0 };
+        throw new Error('unexpected call');
+    };
+
+    var result = await uploadSessionFile(send, 'wing-1', 'session-1', testFile('empty.bin', new Uint8Array()));
+    assert.deepEqual(result, { name: 'empty.bin', size: 0 });
+    assert.deepEqual(calls, ['file.upload.begin', 'file.upload.finish']);
+});
+
+test('uploadSessionFile cancels when the wing returns an invalid chunk size', async function() {
+    var calls = [];
+    var send = async function(_wingId, message) {
+        calls.push(message.type);
+        if (message.type === 'file.upload.begin') {
+            return { upload_id: 'upload-invalid-chunk', chunk_size: DEFAULT_SESSION_UPLOAD_CHUNK_BYTES + 1 };
+        }
+        if (message.type === 'file.upload.cancel') return { ok: 'true' };
+        throw new Error('unexpected call');
+    };
+
+    await assert.rejects(
+        uploadSessionFile(send, 'wing-1', 'session-1', testFile('notes.txt', new Uint8Array([1]))),
+        /invalid upload chunk size/
+    );
+    assert.deepEqual(calls, ['file.upload.begin', 'file.upload.cancel']);
+});
+
+test('uploadSessionFile cancels when the wing acknowledges the wrong offset', async function() {
+    var calls = [];
+    var send = async function(_wingId, message) {
+        calls.push(message.type);
+        if (message.type === 'file.upload.begin') return { upload_id: 'upload-wrong-offset', chunk_size: 2 };
+        if (message.type === 'file.upload.chunk') return { received: message.offset + 1 };
+        if (message.type === 'file.upload.cancel') return { ok: 'true' };
+        throw new Error('unexpected call');
+    };
+
+    await assert.rejects(
+        uploadSessionFile(send, 'wing-1', 'session-1', testFile('notes.txt', new Uint8Array([1, 2, 3]))),
+        /unexpected upload offset/
+    );
+    assert.deepEqual(calls, ['file.upload.begin', 'file.upload.chunk', 'file.upload.cancel']);
+});
+
 test('uploadSessionFile rejects an oversized file before contacting the wing', async function() {
     var called = false;
     await assert.rejects(
