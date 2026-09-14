@@ -372,7 +372,7 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		return err
 	}
 	if options.SharedHost {
-		_, canonical, err := sharedHostFilesystemRules(cfg, options.AllowedPaths)
+		canonical, err := validateSharedHostWorkspacePaths(cfg, options.AllowedPaths)
 		if err != nil {
 			return err
 		}
@@ -666,7 +666,8 @@ func appendNetworkEnforcementAudit(s *store.Store, taskID, event, enforcement st
 
 func taskSandboxMountPaths(promptMounts []string, workDir string, options taskRunOptions) []string {
 	if options.SharedHost {
-		return append([]string(nil), options.AllowedPaths...)
+		// Shared-host mounts come exclusively from the administrator's egg.yaml.
+		return nil
 	}
 	mounts := append([]string(nil), promptMounts...)
 	return append(mounts, workDir)

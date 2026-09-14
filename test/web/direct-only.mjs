@@ -217,7 +217,7 @@ try {
     await context.close();
   }
 } finally {
-  await browser.close();
+  fs.mkdirSync(OUT, { recursive: true });
   const failed = results.steps.filter((step) => !step.ok).length;
   results.summary = {
     total: results.steps.length,
@@ -227,5 +227,6 @@ try {
     failedRequests: results.failedRequests.length,
   };
   fs.writeFileSync(`${OUT}/direct-results.json`, JSON.stringify(results, null, 2));
+  await browser.close();
   process.exit(failed || results.consoleErrors.length || results.pageErrors.length || results.failedRequests.length ? 1 : 0);
 }

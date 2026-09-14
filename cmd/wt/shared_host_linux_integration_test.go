@@ -29,20 +29,37 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestSharedHostAgentRunUsesSealedJail(t *testing.T) {
+func TestSharedHostAgentRunPreservesExternalReadOnlyMount(t *testing.T) {
 	const providerKey = "shared-provider-key-canary"
 	root := t.TempDir()
 	hostHome := filepath.Join(root, "host-home")
 	t.Setenv("HOME", hostHome)
 	writePolicyFixture(t, filepath.Join(hostHome, ".claude", "settings.json"), `{"model":"claude-sonnet-5","env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh","HOST_SECRET":"must-not-cross"},"theme":"host-theme"}`)
 	workspace := filepath.Join(root, "workspace")
+	repos := filepath.Join(root, "repos")
+	otherRole := filepath.Join(root, "other-role")
 	stateDir := filepath.Join(root, "wingthing-state")
 	userHome := filepath.Join(stateDir, "user-homes", "fixture-user")
 	otherUserHome := filepath.Join(stateDir, "user-homes", "other-user")
-	for _, path := range []string{workspace, filepath.Join(userHome, ".claude"), filepath.Join(otherUserHome, ".claude"), filepath.Join(stateDir, "memory")} {
+	for _, path := range []string{workspace, repos, otherRole, filepath.Join(userHome, ".claude"), filepath.Join(otherUserHome, ".claude"), filepath.Join(stateDir, "memory")} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(repos, "source.txt"), []byte("source-visible"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(repos, filepath.Join(workspace, "repos")); err != nil {
+		t.Fatal(err)
+	}
+	otherRoleSecret := filepath.Join(otherRole, "secret")
+	if err := os.WriteFile(otherRoleSecret, []byte("other-role-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	eggConfigPath := filepath.Join(workspace, "egg.yaml")
+	eggConfig := fmt.Sprintf("base: none\nfs:\n  - deny:/\n  - rw:%s\n  - ro:%s\n  - deny-write:%s\n", workspace, repos, eggConfigPath)
+	if err := os.WriteFile(eggConfigPath, []byte(eggConfig), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	for _, name := range []string{"index.md", "identity.md"} {
 		if err := os.WriteFile(filepath.Join(stateDir, "memory", name), nil, 0o600); err != nil {
@@ -83,7 +100,7 @@ func TestSharedHostAgentRunUsesSealedJail(t *testing.T) {
 	task := &store.Task{
 		ID:        "shared-host-live-jail",
 		Type:      "prompt",
-		What:      fmt.Sprintf("SHARED_HOST_FIXTURE workspace=%s secret=%s", workspace, secretPath),
+		What:      fmt.Sprintf("SHARED_HOST_FIXTURE workspace=%s repos=%s secret=%s other_role_secret=%s egg_config=%s", workspace, repos, secretPath, otherRoleSecret, eggConfigPath),
 		RunAt:     time.Now(),
 		Agent:     "claude",
 		Isolation: "standard",
@@ -117,6 +134,15 @@ func TestSharedHostAgentRunUsesSealedJail(t *testing.T) {
 	}
 	if string(marker) != "workspace-visible" {
 		t.Fatalf("workspace marker = %q", marker)
+	}
+	if data, err := os.ReadFile(filepath.Join(repos, "source.txt")); err != nil || string(data) != "source-visible" {
+		t.Fatalf("read-only source changed: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(repos, "agent-write")); !os.IsNotExist(err) {
+		t.Fatalf("agent wrote through read-only repo mount: %v", err)
+	}
+	if data, err := os.ReadFile(eggConfigPath); err != nil || string(data) != eggConfig {
+		t.Fatalf("agent changed egg security policy: %q, %v", data, err)
 	}
 	helper, err := os.ReadFile(filepath.Join(userHome, ".anthropic_key"))
 	if err != nil || string(helper) != providerKey {
@@ -181,9 +207,12 @@ func runSharedHostFixtureAgent(args []string) int {
 	const providerKey = "shared-provider-key-canary"
 	prompt := argumentValue(args, "-p")
 	workspace := promptFixtureValue(prompt, "workspace")
+	repos := promptFixtureValue(prompt, "repos")
 	secretPath := promptFixtureValue(prompt, "secret")
+	otherRoleSecret := promptFixtureValue(prompt, "other_role_secret")
+	eggConfig := promptFixtureValue(prompt, "egg_config")
 	result := "sealed"
-	if workspace == "" || secretPath == "" {
+	if workspace == "" || repos == "" || secretPath == "" || otherRoleSecret == "" || eggConfig == "" {
 		result = "fixture-input-missing"
 	} else {
 		if !policyOK || argumentValue(args, "--model") != "claude-sonnet-5" {
@@ -195,6 +224,19 @@ func runSharedHostFixtureAgent(args []string) int {
 		}
 		if _, err := os.ReadFile(secretPath); err == nil {
 			result = "filesystem-leaked"
+		}
+		if _, err := os.ReadFile(otherRoleSecret); err == nil {
+			result = "other-role-leaked"
+		}
+		source, err := os.ReadFile(filepath.Join(workspace, "repos", "source.txt"))
+		if err != nil || string(source) != "source-visible" {
+			result = "external-read-only-mount-missing"
+		}
+		if err := os.WriteFile(filepath.Join(repos, "agent-write"), []byte("must-fail"), 0o600); err == nil {
+			result = "external-read-only-mount-writable"
+		}
+		if err := os.WriteFile(eggConfig, []byte("must-fail"), 0o600); err == nil {
+			result = "egg-security-policy-writable"
 		}
 		if os.Getenv("WT_SHARED_HOST_SECRET") != "" {
 			result = "environment-leaked"

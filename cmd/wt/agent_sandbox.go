@@ -78,13 +78,15 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 		mounts = append(mounts, m)
 	}
 
-	if !sharedHost {
-		for _, mount := range declared.Mounts {
-			appendMount(mount)
-		}
+	for _, mount := range declared.Mounts {
+		appendMount(mount)
 	}
-	for _, path := range mountPaths {
-		appendMount(sandbox.Mount{Source: path, Target: path})
+	// On shared hosts egg.yaml is the administrator-authored filesystem policy.
+	// Prompt-derived mounts must never widen it.
+	if !sharedHost {
+		for _, path := range mountPaths {
+			appendMount(sandbox.Mount{Source: path, Target: path})
+		}
 	}
 	if home != "" {
 		for _, dir := range profile.WriteRegex {
@@ -118,10 +120,14 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 		Trace:       declared.Trace,
 	}
 	if sharedHost {
-		result.Deny = []string{"/"}
-		for _, path := range sharedHostSystemReadPaths() {
-			appendMount(sandbox.Mount{Source: path, Target: path, ReadOnly: true})
+		if !containsExactPath(declared.Deny, string(filepath.Separator)) {
+			return sandbox.Config{}, fmt.Errorf("shared-host egg config must deny the filesystem root")
 		}
+		if err := rejectSharedHostRootMount(declared.Mounts); err != nil {
+			return sandbox.Config{}, err
+		}
+		result.Deny = declared.Deny
+		result.DenyWrite = declared.DenyWrite
 		result.Mounts = mounts
 	} else {
 		result.Deny = declared.Deny

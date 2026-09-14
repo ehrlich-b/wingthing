@@ -2,6 +2,7 @@
 // as three enrolled principals plus one outsider through dashboard layout, terminal
 // lifecycle, encryption, path ACLs, enrollment, account/org, and mobile behavior.
 import { chromium } from 'playwright';
+import crypto from 'crypto';
 import fs from 'fs';
 
 const BASE = process.env.ROOST_URL || 'http://roost:8080';
@@ -29,7 +30,8 @@ function watch(page, who) {
   page.on('requestfailed', (req) => {
     const f = req.failure();
     // aborted requests are routine (navigation, ws teardown)
-    if (f && f.errorText !== 'net::ERR_ABORTED') {
+    const expectedMCPCallback = req.url().startsWith('http://127.0.0.1:65534/callback?');
+    if (f && f.errorText !== 'net::ERR_ABORTED' && !expectedMCPCallback) {
       results.failedRequests.push({ who, url: req.url().slice(0, 200), err: f.errorText });
     }
   });
@@ -52,6 +54,124 @@ async function waitWing(page) {
   await page.waitForSelector('#wing-status .wing-box', { timeout: 30000 });
   // let wing detail websocket data settle
   await page.waitForTimeout(2000);
+}
+
+async function testMCPBrowserConsent(principal) {
+  const callback = 'http://127.0.0.1:65534/callback';
+  const verifier = 'wingthing-org-mode-browser-canary-verifier-000000000000000001';
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  const registration = await principal.ctx.request.post(BASE + '/oauth/register', {
+    data: {
+      redirect_uris: [callback],
+      client_name: 'Wingthing org-mode browser canary',
+      token_endpoint_auth_method: 'none',
+    },
+  });
+  const registered = await registration.json().catch(() => ({}));
+  if (registration.status() !== 201 || !registered.client_id) {
+    record('alice: MCP browser consent client registers', false,
+      `status=${registration.status()} body=${JSON.stringify(registered).slice(0, 160)}`);
+    return;
+  }
+
+  const authorize = new URL(BASE + '/oauth/authorize');
+  authorize.search = new URLSearchParams({
+    response_type: 'code',
+    client_id: registered.client_id,
+    redirect_uri: callback,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    state: 'org-mode-canary',
+    resource: BASE + '/mcp',
+  }).toString();
+  const response = await principal.page.goto(authorize.toString(), { waitUntil: 'domcontentloaded' });
+  if (!response?.ok() || await principal.page.locator('button.approve').count() !== 1) {
+    record('alice: MCP browser consent page renders in org mode', false,
+      `status=${response?.status() || 0}`);
+    return;
+  }
+
+  const consentResponse = principal.page.waitForResponse((candidate) =>
+    candidate.request().method() === 'POST' && candidate.url() === BASE + '/oauth/authorize');
+  await principal.page.locator('button.approve').click();
+  const approved = await consentResponse;
+  const origin = (await approved.request().allHeaders()).origin || '';
+  record('alice: MCP browser consent POST succeeds in org mode', approved.status() === 303,
+    `status=${approved.status()} origin=${JSON.stringify(origin)}`);
+
+  const redirect = approved.headers().location || '';
+  const code = redirect ? new URL(redirect).searchParams.get('code') : '';
+  const tokenResponse = await principal.ctx.request.post(BASE + '/oauth/token', {
+    form: {
+      grant_type: 'authorization_code',
+      client_id: registered.client_id,
+      redirect_uri: callback,
+      code,
+      code_verifier: verifier,
+      resource: BASE + '/mcp',
+    },
+  });
+  const tokens = await tokenResponse.json().catch(() => ({}));
+  record('alice: MCP browser authorization exchanges its PKCE code',
+    tokenResponse.status() === 200 && !!tokens.access_token,
+    `status=${tokenResponse.status()} token_type=${JSON.stringify(tokens.token_type || '')}`);
+
+  const mcpHeaders = {
+    Authorization: `Bearer ${tokens.access_token || ''}`,
+    'Content-Type': 'application/json',
+    'MCP-Protocol-Version': '2025-11-25',
+  };
+  const initializeResponse = await principal.ctx.request.post(BASE + '/mcp', {
+    headers: mcpHeaders,
+    data: {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'wingthing-org-canary', version: '1' },
+      },
+    },
+  });
+  const initialized = await initializeResponse.json().catch(() => ({}));
+  const listResponse = await principal.ctx.request.post(BASE + '/mcp', {
+    headers: mcpHeaders,
+    data: { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+  });
+  const listed = await listResponse.json().catch(() => ({}));
+  const toolNames = Array.isArray(listed?.result?.tools)
+    ? listed.result.tools.map((tool) => tool.name)
+    : [];
+  record('alice: authenticated org-mode MCP initializes and lists tools',
+    initializeResponse.status() === 200 && initialized?.result?.serverInfo?.name === 'wingthing' &&
+      listResponse.status() === 200 && toolNames.includes('wing_list'),
+    `initialize=${initializeResponse.status()} list=${listResponse.status()} tools=${JSON.stringify(toolNames)}`);
+
+  const callResponse = await principal.ctx.request.post(BASE + '/mcp', {
+    headers: mcpHeaders,
+    data: {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'wing_list', arguments: {} },
+    },
+  });
+  const called = await callResponse.json().catch(() => ({}));
+  record('alice: authenticated org-mode MCP executes a read-only tool',
+    callResponse.status() === 200 && !called.error && called?.result?.isError !== true,
+    `status=${callResponse.status()} error=${JSON.stringify(called.error || null)}`);
+
+  const blocked = await principal.ctx.request.post(BASE + '/oauth/authorize', {
+    headers: {
+      Origin: 'https://attacker.example',
+      'Sec-Fetch-Site': 'cross-site',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    data: 'rid=attacker-controlled&action=approve',
+  });
+  record('alice: MCP consent still rejects cross-site browser submissions', blocked.status() === 403,
+    `status=${blocked.status()}`);
 }
 
 // Open the command palette, type a path, launch a session there.
@@ -169,6 +289,8 @@ try {
       const text = await terminalText(p);
       record('alice: deployment model policy reaches the isolated session without replacing preferences',
         text.includes('CANARY_MODEL_POLICY ok=true saved_model=opus theme=alice-theme'));
+      record('alice: browser session enforces the administrator egg filesystem policy',
+        text.includes('CANARY_FS_POLICY repos_visible=true repos_read_only=true config_read_only=true other_role_denied=true'));
     }
 
     try {
@@ -294,6 +416,12 @@ try {
       record('alice: account renders; org section hidden in roost mode', false, String(e).slice(0, 200));
     }
     await shot(p, 'alice-account-org');
+
+    try {
+      await testMCPBrowserConsent(alice);
+    } catch (e) {
+      record('alice: MCP browser consent round trip in org mode', false, String(e).slice(0, 200));
+    }
   }
 
   // ---------- Alice, mobile ----------
@@ -467,6 +595,7 @@ try {
   await bob.ctx.close();
 } finally {
   await browser.close();
+  fs.mkdirSync(OUT, { recursive: true });
   const failed = results.steps.filter((s) => !s.ok).length;
   const unexpectedConsoleErrors = results.consoleErrors.filter((error) => !error.expected);
   results.summary = {

@@ -1231,33 +1231,46 @@ func TestSharedRoostPathBoundsFailClosed(t *testing.T) {
 	}
 }
 
-func TestSharedHostFilesystemPolicyIgnoresCallerWidening(t *testing.T) {
+func TestSharedHostFilesystemPolicyPreservesAdministratorConfig(t *testing.T) {
 	stateDir := t.TempDir()
 	workspace := t.TempDir()
+	readOnlySource := t.TempDir()
+	writableCache := t.TempDir()
+	deniedSecret := t.TempDir()
 	cfg := &config.Config{Dir: stateDir}
 	source := &egg.EggConfig{
-		FS:            []string{"rw:/", "rw:/Users/someone-else"},
+		FS: []string{
+			"deny:/",
+			"rw:" + workspace,
+			"ro:" + readOnlySource,
+			"rw:" + writableCache,
+			"deny:" + deniedSecret,
+			"deny-write:" + filepath.Join(workspace, "egg.yaml"),
+		},
 		AgentSettings: map[string]string{"claude": "/host/secret/settings.json"},
 	}
 	sealed, err := sealedSharedHostEggConfig(cfg, source, workspace, []string{workspace})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sealed.FS) == 0 || sealed.FS[0] != "deny:/" {
-		t.Fatalf("sealed fs = %#v", sealed.FS)
+	if !reflect.DeepEqual(sealed.FS, source.FS) {
+		t.Fatalf("sealed fs = %#v, want administrator policy %#v", sealed.FS, source.FS)
 	}
-	for _, rule := range sealed.FS {
-		if rule == "rw:/" || strings.Contains(rule, "someone-else") {
-			t.Fatalf("caller widened sealed policy with %q", rule)
-		}
+	if !reflect.DeepEqual(sealed.AgentSettings, source.AgentSettings) {
+		t.Fatalf("agent settings = %#v, want %#v", sealed.AgentSettings, source.AgentSettings)
 	}
-	if !containsString(sealed.FS, "rw:"+canonicalSessionPath(workspace)) {
-		t.Fatalf("workspace missing from sealed fs: %#v", sealed.FS)
+	sealed.FS[0] = "mutated"
+	sealed.AgentSettings["claude"] = "mutated"
+	if source.FS[0] != "deny:/" || source.AgentSettings["claude"] != "/host/secret/settings.json" {
+		t.Fatal("sealed config aliases the administrator config")
 	}
-	if sealed.AgentSettings != nil {
-		t.Fatalf("host agent settings survived sealing: %#v", sealed.AgentSettings)
+	if _, err := sealedSharedHostEggConfig(cfg, &egg.EggConfig{FS: []string{"rw:" + workspace}}, workspace, []string{workspace}); err == nil || !strings.Contains(err.Error(), "must deny the filesystem root") {
+		t.Fatalf("unjailled shared-host policy error = %v", err)
 	}
-	if _, _, err := sharedHostFilesystemRules(cfg, []string{stateDir}); err == nil {
+	if _, err := sealedSharedHostEggConfig(cfg, &egg.EggConfig{FS: []string{"deny:/", "ro:/"}}, workspace, []string{workspace}); err == nil || !strings.Contains(err.Error(), "must not mount the filesystem root") {
+		t.Fatalf("host-root mount error = %v", err)
+	}
+	if _, err := validateSharedHostWorkspacePaths(cfg, []string{stateDir}); err == nil {
 		t.Fatal("Wingthing state was accepted as a shared workspace")
 	}
 }

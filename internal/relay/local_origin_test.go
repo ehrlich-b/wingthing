@@ -148,6 +148,7 @@ func TestHostedModeRejectsSiblingOriginMutations(t *testing.T) {
 	})
 	tests := []struct {
 		name      string
+		path      string
 		origin    string
 		fetchSite string
 		want      int
@@ -156,11 +157,18 @@ func TestHostedModeRejectsSiblingOriginMutations(t *testing.T) {
 		{name: "base origin", origin: "https://wingthing.example", want: http.StatusNotFound},
 		{name: "sibling origin", origin: "https://attacker.wingthing.example", want: http.StatusForbidden},
 		{name: "cross site without origin", fetchSite: "cross-site", want: http.StatusForbidden},
+		{name: "null consent origin", path: "/oauth/authorize", origin: "null", fetchSite: "same-origin", want: http.StatusNotFound},
+		{name: "null origin outside consent", path: "/api/not-a-route", origin: "null", fetchSite: "same-origin", want: http.StatusForbidden},
+		{name: "cross-site null consent origin", path: "/oauth/authorize", origin: "null", fetchSite: "cross-site", want: http.StatusForbidden},
 		{name: "native client", want: http.StatusNotFound},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "http://app.wingthing.example/api/not-a-route", nil)
+			path := test.path
+			if path == "" {
+				path = "/api/not-a-route"
+			}
+			request := httptest.NewRequest(http.MethodPost, "http://app.wingthing.example"+path, nil)
 			request.Host = "app.wingthing.example"
 			request.Header.Set("Origin", test.origin)
 			request.Header.Set("Sec-Fetch-Site", test.fetchSite)

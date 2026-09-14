@@ -173,7 +173,6 @@ func mcpTestServer(t *testing.T) (*Server, *httptest.Server, string) {
 	if err := srv.Store.CreateSession("sess1", "alice", time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-
 	tools := []*config.ToolConfig{
 		{Name: "slide-db", Run: `echo "db:$1"`, Timeout: "5s"},
 		{Name: "crm-lookup", Run: `echo "crm:$1"`, Timeout: "5s"},
@@ -188,6 +187,38 @@ func mcpTestServer(t *testing.T) (*Server, *httptest.Server, string) {
 	}
 	srv.EnableMCP(egg.NewToolRunner(tools), policy)
 	return srv, ts, "sess1"
+}
+
+func TestMCPOAuthConsentIsBoundToTheUserWhoViewedIt(t *testing.T) {
+	srv, ts, session := mcpTestServer(t)
+	if err := srv.Store.CreateUser("consent-other"); err != nil {
+		t.Fatalf("create second user: %v", err)
+	}
+	if _, err := srv.Store.DB().Exec("UPDATE users SET email = ? WHERE id = ?", "other@example.com", "consent-other"); err != nil {
+		t.Fatalf("set second email: %v", err)
+	}
+	if err := srv.Store.CreateSession("consent-other-session", "consent-other", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("create second session: %v", err)
+	}
+	srv.mcpMu.Lock()
+	srv.mcpPolicy.Roles["eng"].Members = append(srv.mcpPolicy.Roles["eng"].Members, "other@example.com")
+	srv.mcpMu.Unlock()
+	clientID := oauthRegister(t, ts.URL, "http://localhost:9999/cb")
+	rid, _ := oauthConsentPage(t, ts.URL, clientID, "http://localhost:9999/cb",
+		"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", session)
+
+	form := url.Values{"rid": {rid}, "action": {"approve"}}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "wt_session", Value: "consent-other-session"})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestBody(t, resp.Body)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("second user approved first user's consent = %d, want 403", resp.StatusCode)
+	}
 }
 
 func TestMCPOAuthFlowAndScoping(t *testing.T) {

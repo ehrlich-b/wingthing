@@ -69,6 +69,7 @@ type pendingAuth struct {
 	challenge   string
 	state       string
 	resource    string
+	userID      string
 	expiresAt   time.Time
 }
 
@@ -249,6 +250,20 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "MCP access is not enabled for this user")
 		return
 	}
+	s.mcpOAuth.mu.Lock()
+	bound, ok := s.mcpOAuth.pending[rid]
+	if ok && bound.userID != "" && bound.userID != user.ID {
+		ok = false
+	} else if ok {
+		bound.userID = user.ID
+		s.mcpOAuth.pending[rid] = bound
+		pa = bound
+	}
+	s.mcpOAuth.mu.Unlock()
+	if !ok {
+		writeError(w, http.StatusForbidden, "authorization request belongs to another user")
+		return
+	}
 
 	s.renderMCPConsent(w, rid, pa, user)
 }
@@ -281,6 +296,10 @@ func (s *Server) handleOAuthConsent(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.mcpUserCanAuthorize(user) {
 		writeError(w, http.StatusForbidden, "MCP access is not enabled for this user")
+		return
+	}
+	if pa.userID == "" || pa.userID != user.ID {
+		writeError(w, http.StatusForbidden, "authorization request belongs to another user")
 		return
 	}
 	if !s.oauthClientAllows(pa.clientID, pa.redirectURI) {
