@@ -348,12 +348,26 @@ try {
         { timeout: 20000 }
       );
       record('alice: detach + reattach replays scrollback', true);
+    } catch (e) {
+      record('alice: detach + reattach replays scrollback', false, String(e).slice(0, 200));
+    }
+    try {
+      await p.waitForFunction(
+        () => {
+          const rows = document.querySelectorAll('#terminal-container .xterm-rows > div');
+          return Array.from(rows).some((r) =>
+            r.textContent.includes('CANARY_MODEL_POLICY ok=true saved_model=opus theme=alice-edited'));
+        },
+        null,
+        { timeout: 20000 }
+      );
       const text = await terminalText(p);
       record('alice: reconnect retains onboarding and personal preferences with host model policy',
         text.includes('marker=alice-persisted') && text.includes('onboarding=true') &&
         text.includes('CANARY_MODEL_POLICY ok=true saved_model=opus theme=alice-edited'));
     } catch (e) {
-      record('alice: detach + reattach replays scrollback', false, String(e).slice(0, 200));
+      record('alice: reconnect retains onboarding and personal preferences with host model policy',
+        false, String(e).slice(0, 200));
     }
     await shot(p, 'alice-reattach');
 
