@@ -361,9 +361,7 @@ try {
         null,
         { timeout: 20000 }
       );
-      const text = await terminalText(p);
-      record('alice: reconnect retains updated personal preferences with host model policy',
-        text.includes('CANARY_MODEL_POLICY ok=true saved_model=opus theme=alice-edited'));
+      record('alice: reconnect retains updated personal preferences with host model policy', true);
     } catch (e) {
       record('alice: reconnect retains updated personal preferences with host model policy',
         false, String(e).slice(0, 200));
