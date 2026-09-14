@@ -282,24 +282,38 @@ func TestAgentRuntimeCommandMatchesSupportedAgentCatalog(t *testing.T) {
 	}
 }
 
-func TestSharedHostDirectAgentUsesAllowlistJail(t *testing.T) {
+func TestSharedHostDirectAgentPreservesAdministratorFilesystemPolicy(t *testing.T) {
 	t.Setenv("WT_PROVIDER_BASE_URL", "")
 	home := t.TempDir()
 	workspace := t.TempDir()
-	cfg, err := directAgentSandboxConfigWithPolicy("codex", "standard", home, []string{workspace}, true)
+	readOnlySource := t.TempDir()
+	deniedSecret := t.TempDir()
+	eggCfg := &egg.EggConfig{FS: []string{
+		"deny:/",
+		"rw:" + workspace,
+		"ro:" + readOnlySource,
+		"deny:" + deniedSecret,
+	}}
+	cfg, err := directAgentSandboxConfigForTask(eggCfg, "codex", "standard", home, workspace, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Deny) != 1 || cfg.Deny[0] != "/" {
+	if len(cfg.Deny) == 0 || cfg.Deny[0] != "/" {
 		t.Fatalf("shared-host deny policy = %#v", cfg.Deny)
 	}
 	if !hasSandboxMount(cfg.Mounts, workspace) {
 		t.Fatalf("workspace is not writable in %#v", cfg.Mounts)
 	}
-	for _, mount := range cfg.Mounts {
-		if mount.Source == "/" {
-			t.Fatalf("host root was mounted into the jail: %#v", cfg.Mounts)
-		}
+	if !hasReadOnlySandboxMount(cfg.Mounts, readOnlySource) {
+		t.Fatalf("administrator read-only mount is absent from %#v", cfg.Mounts)
+	}
+	if len(cfg.Deny) != 2 {
+		t.Fatalf("administrator deny policy = %#v", cfg.Deny)
+	}
+	gotDenied, gotDeniedErr := os.Stat(cfg.Deny[1])
+	wantDenied, wantDeniedErr := os.Stat(deniedSecret)
+	if gotDeniedErr != nil || wantDeniedErr != nil || !os.SameFile(gotDenied, wantDenied) {
+		t.Fatalf("administrator deny policy = %#v", cfg.Deny)
 	}
 }
 
@@ -308,8 +322,8 @@ func TestSharedHostTaskMountsValidatedWorkspaceRoots(t *testing.T) {
 	workDir := filepath.Join(root, "mutable", "checkout")
 	options := taskRunOptions{SharedHost: true, AllowedPaths: []string{root}}
 	mounts := taskSandboxMountPaths([]string{workDir, "/caller/widening"}, workDir, options)
-	if len(mounts) != 1 || mounts[0] != root {
-		t.Fatalf("shared-host task mounts = %#v, want only %q", mounts, root)
+	if len(mounts) != 0 {
+		t.Fatalf("shared-host task mounts widened administrator policy: %#v", mounts)
 	}
 
 	personal := taskSandboxMountPaths([]string{"/prompt/mount"}, workDir, taskRunOptions{})
@@ -318,9 +332,34 @@ func TestSharedHostTaskMountsValidatedWorkspaceRoots(t *testing.T) {
 	}
 }
 
+func TestSharedHostDirectAgentIgnoresCallerMounts(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	callerMount := t.TempDir()
+	cfg, err := directAgentSandboxConfigForTask(&egg.EggConfig{FS: []string{
+		"deny:/",
+		"rw:" + workspace,
+	}}, "codex", "standard", home, workspace, []string{callerMount}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasSandboxMount(cfg.Mounts, callerMount) {
+		t.Fatalf("caller widened shared-host mounts: %#v", cfg.Mounts)
+	}
+}
+
 func hasSandboxMount(mounts []sandbox.Mount, source string) bool {
 	for _, mount := range mounts {
 		if mount.Source == source && !mount.ReadOnly {
+			return true
+		}
+	}
+	return false
+}
+
+func hasReadOnlySandboxMount(mounts []sandbox.Mount, source string) bool {
+	for _, mount := range mounts {
+		if mount.Source == source && mount.ReadOnly {
 			return true
 		}
 	}

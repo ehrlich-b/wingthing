@@ -1,8 +1,14 @@
-# Trusted-container policy: the docker container is the security boundary.
-# Mirrors egg.UnsandboxedEggConfig() — full env and network passthrough,
-# no FS or resource restrictions, so the egg runtime keeps PTY persistence
-# but skips the OS sandbox (rootless docker on WSL2 has no nested userns).
+# Sealed shared-host policy mirroring the deployed role eggs. The browser test
+# runs privileged specifically so the nested Linux jail is a required gate.
 base: none
+fs:
+  - deny:/
+  - ro:/usr
+  - ro:/etc
+  - ro:/var
+  - ro:/opt/wingthing/repos
+  - rw:.
+  - deny-write:./egg.yaml
 network:
   domains: ["*"]
 env: ["*"]

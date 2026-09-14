@@ -1,11 +1,14 @@
 #!/bin/sh
 set -e
-mkdir -p /opt/wingthing/eng /opt/wingthing/support /opt/wingthing/product /opt/wingthing/sales
+mkdir -p /opt/wingthing/eng /opt/wingthing/support /opt/wingthing/product /opt/wingthing/sales /opt/wingthing/repos/canary
 echo "canary marker $(date -u)" > /opt/wingthing/eng/README.txt
 echo "support marker $(date -u)" > /opt/wingthing/support/README.txt
+echo "external repository marker" > /opt/wingthing/repos/canary/source.txt
+ln -s /opt/wingthing/repos /opt/wingthing/eng/repos
+ln -s /opt/wingthing/repos /opt/wingthing/support/repos
 # Member sessions require a per-path egg.yaml (v0.48 folder-ACL design); the
-# Slide ansible role installs one per role dir. Use the trusted-container
-# policy here since the docker container is the boundary.
+# Slide ansible role installs one per role dir. Exercise the same sealed-jail
+# contract here.
 cp /root/.wingthing/egg.yaml /opt/wingthing/eng/egg.yaml
 cp /root/.wingthing/egg.yaml /opt/wingthing/support/egg.yaml
 install -d -m 0700 /root/.claude

@@ -217,7 +217,7 @@ try {
     await context.close();
   }
 } finally {
-  await browser.close();
+  fs.mkdirSync(OUT, { recursive: true });
   const failed = results.steps.filter((step) => !step.ok).length;
   results.summary = {
     total: results.steps.length,
@@ -226,6 +226,14 @@ try {
     pageErrors: results.pageErrors.length,
     failedRequests: results.failedRequests.length,
   };
-  fs.writeFileSync(`${OUT}/direct-results.json`, JSON.stringify(results, null, 2));
+  try {
+    fs.writeFileSync(`${OUT}/direct-results.json`, JSON.stringify(results, null, 2));
+  } catch (error) {
+    // Results are already emitted step-by-step to stdout. A transient Docker
+    // Desktop bind-mount teardown must not turn a completed policy canary into
+    // a product failure solely because its optional artifact cannot be saved.
+    console.warn(`[WARN] could not save direct-only results artifact: ${error}`);
+  }
+  await browser.close();
   process.exit(failed || results.consoleErrors.length || results.pageErrors.length || results.failedRequests.length ? 1 : 0);
 }

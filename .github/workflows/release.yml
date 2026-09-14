@@ -30,6 +30,10 @@ jobs:
       - run: make test-vuln
       - run: go test -race ./...
       - run: make test-integ
+      # Compatibility launches historical and candidate binaries from temporary
+      # paths. Ubuntu's path-scoped AppArmor userns policy cannot grant both;
+      # the Linux sandbox batteries below exercise that security boundary.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: make test-compat
       - run: make test-linux
       - run: make test-linux-ubuntu

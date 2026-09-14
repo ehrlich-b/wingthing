@@ -60,6 +60,29 @@ func printModelPolicy() {
 	fmt.Printf("CANARY_MODEL_POLICY ok=%t saved_model=%s theme=%s\r\n", policyOK && model == "claude-sonnet-5", prefs.Model, prefs.Theme)
 }
 
+func printFilesystemPolicy(wd string) {
+	repoPath := filepath.Join(wd, "repos", "canary", "source.txt")
+	repoData, repoErr := os.ReadFile(repoPath)
+	reposVisible := repoErr == nil && string(repoData) == "external repository marker\n"
+
+	writePath := filepath.Join(wd, "repos", "canary", fmt.Sprintf(".write-canary-%d", os.Getpid()))
+	writeErr := os.WriteFile(writePath, []byte("must not persist"), 0600)
+	reposReadOnly := writeErr != nil
+	if writeErr == nil {
+		_ = os.Remove(writePath)
+	}
+
+	config, configErr := os.OpenFile(filepath.Join(wd, "egg.yaml"), os.O_WRONLY|os.O_APPEND, 0)
+	configReadOnly := configErr != nil
+	if configErr == nil {
+		_ = config.Close()
+	}
+
+	_, otherRoleErr := os.ReadFile("/opt/wingthing/support/README.txt")
+	fmt.Printf("CANARY_FS_POLICY repos_visible=%t repos_read_only=%t config_read_only=%t other_role_denied=%t\r\n",
+		reposVisible, reposReadOnly, configReadOnly, otherRoleErr != nil)
+}
+
 func main() {
 	if slices.Contains(os.Args[1:], "--version") {
 		fmt.Println("canary-agent v1")
@@ -69,6 +92,7 @@ func main() {
 	wd, _ := os.Getwd()
 	printProfileState()
 	printModelPolicy()
+	printFilesystemPolicy(wd)
 	fmt.Printf("CANARY_SHELL_READY host=%s cwd=%s\r\n> ", host, wd)
 
 	buf := make([]byte, 1024)

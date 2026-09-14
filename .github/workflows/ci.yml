@@ -42,6 +42,10 @@ jobs:
         with:
           go-version: '1.26.6'
           cache-dependency-path: go.sum
+      # Compatibility launches historical and candidate binaries from temporary
+      # paths. Ubuntu's path-scoped AppArmor userns policy cannot grant both;
+      # the dedicated Linux sandbox jobs exercise that security boundary.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: make test-compat
 
   claude-model-policy:

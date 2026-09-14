@@ -1496,7 +1496,7 @@ func sealedSharedHostEggConfig(cfg *config.Config, source *egg.EggConfig, cwd st
 	if source == nil {
 		return nil, errors.New("shared-host egg config is required")
 	}
-	rules, canonical, err := sharedHostFilesystemRules(cfg, allowedPaths)
+	canonical, err := validateSharedHostWorkspacePaths(cfg, allowedPaths)
 	if err != nil {
 		return nil, err
 	}
@@ -1504,68 +1504,74 @@ func sealedSharedHostEggConfig(cfg *config.Config, source *egg.EggConfig, cwd st
 	if !isUnderPaths(resolvedCWD, canonical) {
 		return nil, fmt.Errorf("working directory %q is outside this user's roost paths", cwd)
 	}
+	declared := source.ToSandboxConfig("")
+	if !containsExactPath(declared.Deny, string(filepath.Separator)) {
+		return nil, errors.New("shared-host egg config must deny the filesystem root")
+	}
+	if err := rejectSharedHostRootMount(declared.Mounts); err != nil {
+		return nil, err
+	}
+	// egg.yaml is the administrator-authored security policy. AllowedPaths
+	// authorizes the session CWD; it does not replace or synthesize mounts.
 	sealed := *source
-	sealed.FS = rules
-	sealed.AgentSettings = nil
+	sealed.FS = append([]string(nil), source.FS...)
+	if source.AgentSettings != nil {
+		sealed.AgentSettings = make(map[string]string, len(source.AgentSettings))
+		for name, path := range source.AgentSettings {
+			sealed.AgentSettings[name] = path
+		}
+	}
 	sealed.Env = append(egg.EnvField(nil), source.Env...)
 	sealed.Network.Domains = append([]string(nil), source.Network.Domains...)
 	sealed.Network.LocalPorts = append([]int(nil), source.Network.LocalPorts...)
 	return &sealed, nil
 }
 
-func sharedHostFilesystemRules(cfg *config.Config, allowedPaths []string) ([]string, []string, error) {
+func containsExactPath(paths []string, target string) bool {
+	for _, path := range paths {
+		if path == target {
+			return true
+		}
+	}
+	return false
+}
+
+func rejectSharedHostRootMount(mounts []sandbox.Mount) error {
+	for _, mount := range mounts {
+		if canonicalSessionPath(mount.Source) == string(filepath.Separator) {
+			return errors.New("shared-host egg config must not mount the filesystem root")
+		}
+	}
+	return nil
+}
+
+func validateSharedHostWorkspacePaths(cfg *config.Config, allowedPaths []string) ([]string, error) {
 	canonical := canonicalPaths(allowedPaths)
 	if len(canonical) == 0 {
-		return nil, nil, errors.New("shared-host sessions require at least one configured workspace path")
+		return nil, errors.New("shared-host sessions require at least one configured workspace path")
 	}
 	stateDir := canonicalSessionPath(cfg.Dir)
 	hostHome, _ := os.UserHomeDir()
 	hostHome = canonicalSessionPath(hostHome)
 	for _, path := range canonical {
 		if path == string(filepath.Separator) {
-			return nil, nil, errors.New("the filesystem root cannot be a shared-roost workspace path")
+			return nil, errors.New("the filesystem root cannot be a shared-roost workspace path")
 		}
 		info, err := os.Stat(path)
 		if err != nil || !info.IsDir() {
 			if err == nil {
 				err = errors.New("not a directory")
 			}
-			return nil, nil, fmt.Errorf("shared-roost workspace %q: %w", path, err)
+			return nil, fmt.Errorf("shared-roost workspace %q: %w", path, err)
 		}
 		if isUnderPaths(stateDir, []string{path}) || isUnderPaths(path, []string{stateDir}) {
-			return nil, nil, fmt.Errorf("shared-roost workspace %q overlaps Wingthing state", path)
+			return nil, fmt.Errorf("shared-roost workspace %q overlaps Wingthing state", path)
 		}
 		if hostHome != "." && isUnderPaths(hostHome, []string{path}) {
-			return nil, nil, fmt.Errorf("shared-roost workspace %q contains the host account home", path)
+			return nil, fmt.Errorf("shared-roost workspace %q contains the host account home", path)
 		}
 	}
-
-	rules := []string{"deny:/"}
-	for _, path := range sharedHostSystemReadPaths() {
-		rules = append(rules, "ro:"+path)
-	}
-	for _, path := range canonical {
-		rules = append(rules, "rw:"+path)
-	}
-	return rules, canonical, nil
-}
-
-func sharedHostSystemReadPaths() []string {
-	candidates := []string{
-		"/usr", "/lib", "/lib64",
-		"/etc/ssl", "/etc/pki", "/etc/ca-certificates",
-		"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf",
-		"/etc/passwd", "/etc/group", "/etc/ld.so.cache",
-		"/nix/store",
-	}
-	paths := make([]string, 0, len(candidates))
-	for _, path := range candidates {
-		info, err := os.Lstat(path)
-		if err == nil && info.Mode()&os.ModeSymlink == 0 {
-			paths = append(paths, path)
-		}
-	}
-	return paths
+	return canonical, nil
 }
 
 // parseMemFlag parses a memory string like "2GB" or "512MB" into bytes.

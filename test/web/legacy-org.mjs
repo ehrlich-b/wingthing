@@ -58,6 +58,8 @@ try {
   await browser.close();
 }
 
+fs.mkdirSync(OUT, { recursive: true });
+
 record('legacy org: no browser console errors', results.consoleErrors.length === 0,
   JSON.stringify(results.consoleErrors).slice(0, 300));
 record('legacy org: no uncaught page errors', results.pageErrors.length === 0,
