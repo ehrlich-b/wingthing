@@ -1,11 +1,11 @@
 import { S, DOM, TERM_THUMB_PREFIX } from './state.js';
-import { escapeHtml, wingDisplayName, shortenPath, projectName, formatRelativeTime, semverCompare, nestedRepoCount, agentIcon, agentWithIcon, dirParent, setupCopyable } from './helpers.js';
+import { escapeHtml, wingDisplayName, shortenPath, projectName, sessionDisplayName, validSessionName, formatRelativeTime, semverCompare, nestedRepoCount, agentIcon, agentWithIcon, dirParent, setupCopyable } from './helpers.js';
 import { identityPubKey } from './crypto.js';
 import { sendTunnelRequest, tunnelCloseWing } from './tunnel.js';
 import { switchToSession } from './nav.js';
 import { showHome, navigateToWingDetail, navigateToAccount } from './nav.js';
 import { connectPTY } from './pty.js';
-import { setLastTermAgent, getLastTermAgent, setWingOrder, setEggOrder, getCachedWingSessions, setCachedWingSessions, probeWing, fetchWingSessions, mergeWingSessions } from './data.js';
+import { setLastTermAgent, getLastTermAgent, setWingOrder, setEggOrder, getCachedWingSessions, setCachedWingSessions, probeWing, fetchWingSessions, mergeWingSessions, saveSessionCache } from './data.js';
 import { rebuildAgentLists } from './dashboard.js';
 import { openAuditReplay, openAuditKeylog, downloadChatHistory } from './audit.js';
 import { showTerminal } from './nav.js';
@@ -35,30 +35,110 @@ export function renderSidebar() {
         if (s.id === S.ptySessionId) return true;
         return isWingVisible(s.wing_id);
     }).map(function(s) {
-        var name = projectName(s.cwd);
+        var name = sessionDisplayName(s);
         var letter = name.charAt(0).toUpperCase();
         var isActive = (S.activeView === 'terminal' && s.id === S.ptySessionId);
         var needsAttention = S.sessionNotifications[s.id];
         var dotClass = s.status === 'active' ? 'dot-live' : (s.swept ? 'dot-detached' : '');
         if (needsAttention) dotClass = 'dot-attention';
-        return '<button class="session-tab' + (isActive ? ' active' : '') + '" ' +
+        return '<div class="session-tab' + (isActive ? ' active' : '') + '" role="button" tabindex="0" ' +
+            'aria-label="Open ' + escapeHtml(name) + '" ' +
             'title="' + escapeHtml(name + ' \u00b7 ' + (s.agent || '?')) + '" ' +
             'data-sid="' + escapeHtml(s.id) + '">' +
-            '<span class="tab-letter">' + escapeHtml(letter) + '</span>' +
             '<span class="tab-dot ' + dotClass + '"></span>' +
-        '</button>';
+            '<span class="tab-letter">' + escapeHtml(letter) + '</span>' +
+            '<span class="tab-label">' + escapeHtml(name) + '</span>' +
+            '<button class="session-rename-btn" type="button" title="Rename session">rename</button>' +
+        '</div>';
     }).join('');
     DOM.sessionTabs.innerHTML = tabs;
 
     DOM.sessionTabs.querySelectorAll('.session-tab').forEach(function(tab) {
-        tab.addEventListener('click', function() {
+        function openSession() {
             var sid = tab.dataset.sid;
             if (sid === S.ptySessionId && S.activeView === 'terminal') return;
             var s = S.sessionsData.find(function(ss) { return ss.id === sid; });
             if (s && !s.swept) return;
             switchToSession(sid);
+        }
+        tab.addEventListener('click', function(e) {
+            if (e.target.closest('.session-rename-btn, .session-name-input')) return;
+            openSession();
+        });
+        tab.addEventListener('keydown', function(e) {
+            if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('.session-name-input')) {
+                e.preventDefault();
+                openSession();
+            }
+        });
+        var rename = tab.querySelector('.session-rename-btn');
+        rename.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var session = S.sessionsData.find(function(s) { return s.id === tab.dataset.sid; });
+            if (session) beginSessionRename(tab, session);
         });
     });
+}
+
+function beginSessionRename(tab, session) {
+    if (tab.classList.contains('renaming')) return;
+    tab.classList.add('renaming');
+    var label = tab.querySelector('.tab-label');
+    var input = document.createElement('input');
+    input.className = 'session-name-input';
+    input.type = 'text';
+    input.maxLength = 64;
+    input.value = session.name || '';
+    input.placeholder = projectName(session.cwd);
+    input.setAttribute('aria-label', 'Session name');
+    label.replaceWith(input);
+    input.focus();
+    input.select();
+
+    var settled = false;
+    function cancel() {
+        if (settled) return;
+        settled = true;
+        renderSidebar();
+    }
+    function save() {
+        if (settled) return;
+        var name = input.value.trim();
+        if (!name) { cancel(); return; }
+        if (!validSessionName(name)) {
+            input.classList.add('invalid');
+            input.title = "Use up to 64 letters, numbers, '.', '_', or '-'";
+            input.focus();
+            return;
+        }
+        settled = true;
+        input.disabled = true;
+        sendTunnelRequest(session.wing_id, { type: 'sessions.rename', session_id: session.id, name: name })
+            .then(function(result) {
+                session.name = (result && result.name) || name;
+                saveSessionCache();
+                if (session.id === S.ptySessionId && S.activeView === 'terminal') {
+                    DOM.headerTitle.textContent = session.name + ' \u00b7 ' + (session.agent || '?');
+                }
+                renderSidebar();
+                if (S.activeView === 'home') renderDashboard();
+            })
+            .catch(function(err) {
+                settled = false;
+                input.disabled = false;
+                input.classList.add('invalid');
+                input.title = (err && err.message) || 'Rename failed';
+                input.focus();
+                input.select();
+            });
+    }
+    input.addEventListener('click', function(e) { e.stopPropagation(); });
+    input.addEventListener('keydown', function(e) {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    input.addEventListener('blur', save);
 }
 
 export function setupWingDrag() {
@@ -2259,7 +2339,7 @@ export function renderDashboard() {
     }
 
     function renderEggCard(s) {
-        var name = projectName(s.cwd);
+        var name = sessionDisplayName(s);
         var isActive = s.status === 'active';
         var kind = s.kind || 'terminal';
         var needsAttention = S.sessionNotifications[s.id];

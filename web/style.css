@@ -30,7 +30,7 @@
     --red: #e74c3c;
     --orange: #e67e22;
     --font: 'JetBrains Mono', monospace;
-    --sidebar-w: 48px;
+    --sidebar-w: 188px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -66,8 +66,8 @@ body {
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    align-items: center;
-    padding: 8px 0;
+    align-items: stretch;
+    padding: 8px;
     flex-shrink: 0;
     gap: 2px;
     overflow-y: auto;
@@ -77,7 +77,7 @@ body {
 #sidebar::-webkit-scrollbar { width: 0; }
 
 #home-btn {
-    width: 36px;
+    width: 100%;
     height: 36px;
     border-radius: 8px;
     background: transparent;
@@ -88,7 +88,8 @@ body {
     cursor: pointer;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    gap: 10px;
     padding: 0;
     margin-bottom: 4px;
     transition: all 0.15s;
@@ -101,7 +102,7 @@ body {
 }
 
 #new-session-btn {
-    width: 36px;
+    width: 100%;
     height: 36px;
     border-radius: 8px;
     background: transparent;
@@ -112,7 +113,8 @@ body {
     cursor: pointer;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    gap: 10px;
     margin-bottom: 8px;
     padding: 0;
     transition: all 0.15s;
@@ -124,11 +126,25 @@ body {
     background: rgba(233, 69, 96, 0.1);
 }
 
+.nav-symbol {
+    width: 22px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.nav-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#session-tabs { display: flex; flex-direction: column; gap: 3px; }
+
 /* === Session tabs === */
 
 .session-tab {
-    width: 36px;
-    height: 40px;
+    width: 100%;
+    min-height: 44px;
     border-radius: 6px;
     background: transparent;
     border: none;
@@ -137,14 +153,55 @@ body {
     font-weight: 600;
     cursor: pointer;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
-    gap: 3px;
-    padding: 0;
+    gap: 8px;
+    padding: 6px 8px;
     position: relative;
     transition: all 0.15s;
 }
+
+.tab-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.session-rename-btn {
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 10px;
+    cursor: pointer;
+    padding: 3px 0;
+    opacity: 0;
+}
+
+.session-tab:hover .session-rename-btn,
+.session-tab:focus-within .session-rename-btn,
+.session-tab.active .session-rename-btn { opacity: 1; }
+
+.session-rename-btn:hover { color: var(--accent); }
+
+.session-name-input {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 5px;
+    outline: none;
+}
+
+.session-name-input.invalid { border-color: var(--red); }
 
 .session-tab:hover {
     background: var(--bg-card);
@@ -160,6 +217,7 @@ body {
 .tab-letter {
     font-size: 13px;
     line-height: 1;
+    display: none;
 }
 
 .tab-dot {
@@ -2164,6 +2222,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 /* === Mobile === */
 
 @media (max-width: 600px) {
+    :root { --sidebar-w: 52px; }
+    #sidebar { padding: 8px; }
+    #home-btn, #new-session-btn { justify-content: center; }
+    .nav-label, .tab-label, .session-rename-btn { display: none; }
+    .nav-symbol, .tab-letter { display: inline; }
+    .session-tab { justify-content: center; padding: 0; }
     .in-terminal #sidebar { display: none; }
     #main { padding: 0 8px; }
     #main-header { padding: 4px 0; }

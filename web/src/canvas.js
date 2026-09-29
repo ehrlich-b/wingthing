@@ -256,7 +256,8 @@ function applyTransform() {
     DOM.canvasWorld.style.transform = 'translate(' + offset.x + 'px, ' + offset.y + 'px) scale(' + scale + ')';
 }
 
-function sessionTitle(agent, wingId) {
+function sessionTitle(agent, wingId, label) {
+    if (label) return label + ' \u00b7 ' + agent;
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     var name = wing ? wingDisplayName(wing) : '';
     if (name) return name + ' \u00b7 ' + agent;
@@ -968,7 +969,7 @@ export function canvasSetAttention(sessionId) {
 
 // --- Attach to existing session ---
 
-function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH) {
+function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, label) {
     var cellW = optCellW || DEF_W;
     var cellH = optCellH || DEF_H;
     var x = col * CELL;
@@ -999,7 +1000,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH) {
     term.open(parts.body);
     setTimeout(function() { fitAddon.fit(); }, 50);
 
-    parts.title.textContent = sessionTitle(agent, wingId);
+    parts.title.textContent = sessionTitle(agent, wingId, label);
 
     var sess = {
         id: sessionId,
@@ -1010,6 +1011,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH) {
         e2eKey: null,
         wingId: wingId,
         agent: agent,
+        label: label || '',
         el: parts.el,
         titleEl: parts.title,
         dotEl: parts.dot,
@@ -1181,7 +1183,7 @@ function arrangeExistingSessions() {
             cellW = DEF_W;
             cellH = DEF_H;
         }
-        canvasAttach(s.id, s.agent || 'claude', s.wing_id, col, row, cellW, cellH);
+        canvasAttach(s.id, s.agent || 'claude', s.wing_id, col, row, cellW, cellH, s.name || '');
     });
 
     saveCanvasLayout();
@@ -1271,12 +1273,12 @@ export function showCanvasView() {
         var rs = sessions[rid];
         var savedCol = rs.col, savedRow = rs.row;
         var savedCellW = rs.cellW, savedCellH = rs.cellH;
-        var savedAgent = rs.agent, savedWingId = rs.wingId;
+        var savedAgent = rs.agent, savedWingId = rs.wingId, savedLabel = rs.label;
         clearCells(savedCol, savedRow, savedCellW, savedCellH);
         if (rs.el && rs.el.parentNode) rs.el.parentNode.removeChild(rs.el);
         try { rs.term.dispose(); } catch(e) {}
         delete sessions[rid];
-        canvasAttach(rid, savedAgent, savedWingId, savedCol, savedRow, savedCellW, savedCellH);
+        canvasAttach(rid, savedAgent, savedWingId, savedCol, savedRow, savedCellW, savedCellH, savedLabel);
     }
 
     // Auto-populate: connect to existing sessions that aren't already on the canvas

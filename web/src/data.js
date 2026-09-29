@@ -86,7 +86,7 @@ export function setCachedWingSessions(wingId, sessions) {
 
 export function saveSessionCache() {
     setCachedSessions(S.sessionsData.map(function(s) {
-        return { id: s.id, wing_id: s.wing_id, agent: s.agent, cwd: s.cwd, audit: s.audit, user_id: s.user_id, email: s.email };
+        return { id: s.id, name: s.name, wing_id: s.wing_id, agent: s.agent, cwd: s.cwd, audit: s.audit, user_id: s.user_id, email: s.email };
     }));
 }
 
@@ -204,7 +204,7 @@ export async function fetchWingSessions(wingId) {
     try {
         var result = await sendTunnelRequest(wingId, { type: 'sessions.list' }, { skipPasskey: true });
         return (result.sessions || []).map(function(s) {
-            return { id: s.session_id, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit, user_id: s.user_id, email: s.email };
+            return { id: s.session_id, name: s.name, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit, user_id: s.user_id, email: s.email };
         });
     } catch (e) { return null; }
 }

@@ -7,7 +7,7 @@ import { showReconnectBanner, hideReconnectBanner } from './dashboard.js';
 import { renderSidebar } from './render.js';
 import { loadHome } from './data.js';
 import { showHome } from './nav.js';
-import { wingDisplayName, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
+import { wingDisplayName, sessionDisplayName, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
 import { saveTunnelAuthTokens, sendTunnelRequest } from './tunnel.js';
 import { handlePreview, closePreview } from './preview.js';
 import { initWebRTC, completeMigration, cleanupPeer, cleanupSession, dcActive, sendViaDC } from './webrtc.js';
@@ -62,7 +62,8 @@ function showBrowserOpenToast(url, sessionId) {
     }
 }
 
-function sessionTitle(agent, wingId) {
+function sessionTitle(agent, wingId, session) {
+    if (session && session.name) return sessionDisplayName(session) + ' \u00b7 ' + agent;
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     var name = wing ? wingDisplayName(wing) : '';
     if (name) return name + ' \u00b7 ' + agent;
@@ -290,12 +291,12 @@ function setupPTYHandlers(ws, reattach) {
                     break;
                 }
                 S.ptySessionId = msg.session_id;
+                var activeSession = S.sessionsData.find(function(s) { return s.id === msg.session_id; });
                 if (S.spectating) {
-                    var sess = S.sessionsData.find(function(s) { return s.id === msg.session_id; });
-                    var who = sess && sess.email ? sess.email : '';
+                    var who = activeSession && activeSession.email ? activeSession.email : '';
                     DOM.headerTitle.textContent = 'watching' + (who ? ' ' + who : '') + ' · ' + (msg.agent || '?');
                 } else {
-                    DOM.headerTitle.textContent = sessionTitle(msg.agent, S.ptyWingId);
+                    DOM.headerTitle.textContent = sessionTitle(msg.agent, S.ptyWingId, activeSession);
                 }
                 DOM.sessionCloseBtn.style.display = '';
                 hidePasskeyOverlay();
@@ -565,7 +566,7 @@ export function attachPTY(sessionId, _retries) {
 
     var watchLabel = 'watching';
     if (S.spectating && sess && sess.email) watchLabel = 'watching ' + sess.email;
-    DOM.headerTitle.textContent = S.spectating ? watchLabel : (sess ? sessionTitle(sess.agent || '?', sess.wing_id) : 'reconnecting...');
+    DOM.headerTitle.textContent = S.spectating ? watchLabel : (sess ? sessionTitle(sess.agent || '?', sess.wing_id, sess) : 'reconnecting...');
     DOM.ptyStatus.textContent = '';
 
     if (S.ptyWingId) url += '?wing_id=' + encodeURIComponent(S.ptyWingId);

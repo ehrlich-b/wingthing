@@ -17,6 +17,7 @@ export function reconcileWingSessions(existingSessions, wingId, remoteSessions) 
         if (!remote) return; // The wing says this session is gone.
 
         session.agent = remote.agent;
+        session.name = remote.name;
         session.cwd = remote.cwd;
         session.needs_attention = remote.needs_attention;
         session.audit = remote.audit;

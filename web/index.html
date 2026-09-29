@@ -12,8 +12,8 @@
 <body>
     <div id="app">
         <nav id="sidebar">
-            <button id="home-btn" title="Home (Ctrl+.)">~</button>
-            <button id="new-session-btn" title="New session (Cmd+K)">+</button>
+            <button id="home-btn" title="Home (Ctrl+.)"><span class="nav-symbol">~</span><span class="nav-label">home</span></button>
+            <button id="new-session-btn" title="New session (Cmd+K)"><span class="nav-symbol">+</span><span class="nav-label">new session</span></button>
             <div id="session-tabs"></div>
         </nav>
         <div id="main">
@@ -32,7 +32,7 @@
                     </div>
                 </div>
                 <div id="header-right">
-                    <button id="canvas-toggle-btn" class="btn-sm" style="display:none" title="Canvas view">grid</button>
+                    <button id="canvas-toggle-btn" class="btn-sm" style="display:none" title="Open multiple sessions together">multi-session</button>
                     <span id="wing-indicator" class="wing-dot dot-offline" style="display:none"></span>
                     <span id="user-info"></span>
                 </div>
