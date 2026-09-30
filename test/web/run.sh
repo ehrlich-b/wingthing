@@ -12,6 +12,8 @@ if [ ! -x ./wt ] || [ ! -x ./claude ]; then
 fi
 
 mkdir -p out
+rm -rf out/exports
+mkdir -p out/exports
 rm -f out/*.png out/results.json out/legacy-org-results.json out/direct-results.json out/roost.log out/legacy-roost.log out/direct.log 2>/dev/null || true
 
 docker rm -f wt-web-roost wt-web-roost-legacy wt-web-hosted wt-web-e2e >/dev/null 2>&1 || true
@@ -28,6 +30,7 @@ docker network create wt-web-net
 # eggs fail closed with "system blocked sandbox namespace creation".
 docker run -d --name wt-web-roost --network wt-web-net --network-alias roost \
   --privileged \
+  -v "$(pwd)/out/exports:/opt/wingthing/exports" \
   -e WT_BASE_URL=http://roost:8080 \
   -e GOOGLE_CLIENT_ID=canary-dummy-client \
   -e GOOGLE_CLIENT_SECRET=canary-dummy-secret \

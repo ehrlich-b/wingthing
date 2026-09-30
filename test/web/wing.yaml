@@ -13,6 +13,11 @@ paths:
     members:
       - alice@slide.tech
       - carol@slide.tech
+exports:
+  - name: isolated-review
+    path: /opt/wingthing/exports
+    members:
+      - carol@slide.tech
 audit: true
 idle_timeout: 4h
 mcp:

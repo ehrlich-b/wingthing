@@ -13,6 +13,8 @@ const TOKENS = {
   carol: 'canary-carol-session-token-0000000003',
   dave: 'canary-dave-session-token-00000000004',
 };
+const SUPPORT_TEXT_NAME = `support-note-${crypto.randomBytes(6).toString('hex')}.txt`;
+const SUPPORT_TEXT_BYTES = Buffer.from('support upload round trip\n');
 
 const results = { base: BASE, steps: [], consoleErrors: [], pageErrors: [], failedRequests: [] };
 let stepNo = 0;
@@ -218,6 +220,32 @@ async function terminalText(page) {
   });
 }
 
+async function terminalCommand(page, command, marker) {
+  await page.click('#terminal-container');
+  await page.keyboard.type(command);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(
+    (expected) => Array.from(document.querySelectorAll('#terminal-container .xterm-rows > div'))
+      .some((row) => row.textContent.includes(expected)),
+    marker,
+    { timeout: 30000 },
+  );
+}
+
+function findExportedFile(root, name) {
+  if (!fs.existsSync(root)) return '';
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const path = `${root}/${entry.name}`;
+    if (entry.isDirectory()) {
+      const nested = findExportedFile(path, name);
+      if (nested) return nested;
+    } else if (entry.isFile() && entry.name === name) {
+      return path;
+    }
+  }
+  return '';
+}
+
 // The roost is served over plain HTTP inside the docker network, which is NOT
 // a secure browser context. That is deliberate: the web app supports
 // insecure-origin roosts (pure-JS crypto, guarded randomUUID), and this suite
@@ -226,6 +254,7 @@ const browser = await chromium.launch({
   args: ['--disable-dev-shm-usage', '--no-sandbox'],
 });
 fs.mkdirSync(OUT, { recursive: true });
+let carolSessionID = '';
 
 try {
   // ---------- Alice (wing admin), desktop ----------
@@ -521,6 +550,170 @@ try {
     await shot(p, 'bob-support-acl');
   }
 
+  // ---------- Carol (support member), desktop feature flow ----------
+  const carol = await newUser(browser, 'carol', { width: 1280, height: 800 });
+  {
+    const p = carol.page;
+    try {
+      await waitWing(p);
+      await launchTerminal(p, '/opt/wingthing/support');
+      const lock = await waitLock(p);
+      const active = p.locator('#session-tabs .session-tab.active');
+      await active.waitFor({ state: 'visible', timeout: 15000 });
+      carolSessionID = await active.getAttribute('data-sid') || '';
+      record('carol: support member launches an owned support session', lock.ok && !!carolSessionID,
+        `session=${carolSessionID || '(missing)'}`);
+    } catch (e) {
+      record('carol: support member launches an owned support session', false, String(e).slice(0, 200));
+    }
+
+    try {
+      const tab = p.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"]`);
+      await tab.locator('.session-rename-btn').click();
+      await tab.locator('.session-name-input').fill('support-night-review');
+      await tab.locator('.session-name-input').press('Enter');
+      await p.waitForFunction((sessionID) => {
+        const candidate = document.querySelector(`#session-tabs .session-tab[data-sid="${sessionID}"] .tab-label`);
+        return candidate && candidate.textContent === 'support-night-review';
+      }, carolSessionID, { timeout: 10000 });
+      await p.reload({ waitUntil: 'domcontentloaded' });
+      await p.waitForSelector(`#session-tabs .session-tab[data-sid="${carolSessionID}"] .tab-label`, { timeout: 20000 });
+      const persisted = await p.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"] .tab-label`).textContent();
+      record('carol: session name persists across a full reload', persisted === 'support-night-review', persisted || '');
+    } catch (e) {
+      record('carol: session name persists across a full reload', false, String(e).slice(0, 200));
+    }
+
+    try {
+      const tab = p.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"]`);
+      await tab.click();
+      await p.waitForSelector('#terminal-section', { state: 'visible', timeout: 15000 });
+      await waitLock(p);
+      await p.click('#canvas-toggle-btn');
+      await p.waitForSelector('#canvas-section', { state: 'visible', timeout: 15000 });
+      await p.waitForFunction(() => Array.from(document.querySelectorAll('.canvas-terminal-title'))
+        .some((title) => title.textContent.includes('support-night-review')), null, { timeout: 15000 });
+      record('carol: multi-session canvas exposes the durable session name', true);
+      await shot(p, 'carol-named-canvas');
+      await p.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"]`).click();
+      await p.waitForSelector('#terminal-section', { state: 'visible', timeout: 15000 });
+      const relock = await waitLock(p);
+      if (!relock.ok) throw new Error(`canvas return did not relock: ${relock.status}`);
+      await p.waitForTimeout(500);
+    } catch (e) {
+      record('carol: multi-session canvas exposes the durable session name', false, String(e).slice(0, 200));
+    }
+
+    try {
+      await terminalCommand(p, 'CANARY_PREVIEW', 'CANARY_PREVIEW_WRITTEN ok=true');
+      await p.waitForSelector('#preview-panel', { state: 'visible', timeout: 15000 });
+      await p.click('#preview-close-btn');
+      await p.waitForSelector('#preview-panel', { state: 'hidden', timeout: 10000 });
+      const available = await p.locator('#preview-toggle-btn').isVisible();
+      await p.click('#preview-toggle-btn');
+      await p.waitForSelector('#preview-panel', { state: 'visible', timeout: 10000 });
+      await p.waitForFunction(() => document.getElementById('preview-iframe').srcdoc.includes('Support preview'), null,
+        { timeout: 5000 });
+      const restored = await p.locator('#preview-iframe').evaluate((frame) =>
+        frame.srcdoc.includes('Support preview') && frame.srcdoc.includes('Session preview can be reopened'));
+      record('carol: closed session preview remains available and reopens', available && restored,
+        `toggle_visible=${available} content_restored=${restored}`);
+      await shot(p, 'carol-preview-reopened');
+    } catch (e) {
+      record('carol: closed session preview remains available and reopens', false, String(e).slice(0, 200));
+    }
+
+    try {
+      await p.click('#preview-close-btn').catch(() => {});
+      await terminalCommand(p, 'CANARY_COPY_LINES', 'COPY_END');
+      await p.evaluate(() => {
+        window.__wingthingCopiedText = '';
+        document.execCommand = function(command) {
+          if (command === 'copy') window.__wingthingCopiedText = document.activeElement.value;
+          return command === 'copy';
+        };
+      });
+      const rows = p.locator('#terminal-container .xterm-rows > div');
+      const contents = await rows.allTextContents();
+      const firstIndex = contents.findIndex((line) => line.includes('  indented value'));
+      const secondIndex = contents.findIndex((line) => line.includes('second value'));
+      if (firstIndex < 0 || secondIndex < 0) throw new Error('copy fixture rows not visible');
+      const firstBox = await rows.nth(firstIndex).boundingBox();
+      const secondBox = await rows.nth(secondIndex).boundingBox();
+      if (!firstBox || !secondBox) throw new Error('copy fixture rows have no layout box');
+      await p.mouse.move(firstBox.x + 2, firstBox.y + firstBox.height / 2);
+      await p.mouse.down();
+      await p.mouse.move(secondBox.x + 112, secondBox.y + secondBox.height / 2, { steps: 8 });
+      await p.mouse.up();
+      await p.waitForFunction(() => !document.getElementById('terminal-copy-btn').disabled, null, { timeout: 5000 });
+      await p.click('#terminal-copy-btn');
+      const copied = await p.evaluate(() => window.__wingthingCopiedText);
+      record('carol: clean copy preserves indentation and removes terminal line padding',
+        copied === '  indented value\nsecond value', JSON.stringify(copied));
+    } catch (e) {
+      record('carol: clean copy preserves indentation and removes terminal line padding', false, String(e).slice(0, 200));
+    }
+
+    try {
+      await p.click('#session-files-btn');
+      await p.setInputFiles('#session-upload-input', [
+        { name: SUPPORT_TEXT_NAME, mimeType: 'text/plain', buffer: SUPPORT_TEXT_BYTES },
+        { name: 'support-image.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex') },
+      ]);
+      await p.waitForFunction(() => document.getElementById('session-files-status').textContent.includes('added support-image.png at '), null,
+        { timeout: 30000 });
+      const resolvedPath = await p.inputValue('#session-file-path');
+      record('carol: text and image upload through the browser uses the policy-resolved data path',
+        resolvedPath === '/opt/wingthing/support/support-image.png', resolvedPath);
+
+      await p.fill('#session-file-path', `/opt/wingthing/support/${SUPPORT_TEXT_NAME}`);
+      const downloadPromise = p.waitForEvent('download', { timeout: 30000 });
+      await p.click('#session-download-btn');
+      const download = await downloadPromise;
+      const stream = await download.createReadStream();
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+      const downloaded = Buffer.concat(parts);
+      record('carol: browser download returns the uploaded file with exact bytes',
+        download.suggestedFilename() === SUPPORT_TEXT_NAME && downloaded.equals(SUPPORT_TEXT_BYTES),
+        `${download.suggestedFilename()} sha256=${crypto.createHash('sha256').update(downloaded).digest('hex')}`);
+
+      await p.selectOption('#session-export-target', 'isolated-review');
+      await p.click('#session-export-btn');
+      await p.waitForFunction(() => /^(copied|copy failed:)/.test(document.getElementById('session-files-status').textContent), null,
+        { timeout: 30000 });
+      const exportStatus = await p.locator('#session-files-status').textContent();
+      if (exportStatus !== `copied ${SUPPORT_TEXT_NAME} to isolated-review`) throw new Error(exportStatus || 'export had no result');
+      const exportedPath = findExportedFile(`${OUT}/exports`, SUPPORT_TEXT_NAME);
+      const exported = exportedPath ? fs.readFileSync(exportedPath) : Buffer.alloc(0);
+      record('carol: browser export copies into the isolated per-owner folder',
+        exported.equals(SUPPORT_TEXT_BYTES), exportedPath || 'export missing');
+      await shot(p, 'carol-session-files');
+    } catch (e) {
+      record('carol: browser upload, download, and isolated export flow', false, String(e).slice(0, 240));
+    }
+  }
+
+  // Owner/admin and other members can observe only the actions the backend will allow.
+  try {
+    await alice.page.goto(BASE + '/app/', { waitUntil: 'domcontentloaded' });
+    await alice.page.waitForSelector(`#session-tabs .session-tab[data-sid="${carolSessionID}"]`, { timeout: 20000 });
+    const adminRename = await alice.page.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"] .session-rename-btn`).count();
+    record('admin: another user session does not expose rename', adminRename === 0, `rename buttons=${adminRename}`);
+  } catch (e) {
+    record('admin: another user session does not expose rename', false, String(e).slice(0, 200));
+  }
+  try {
+    await bob.page.goto(BASE + `/app/#s/${carolSessionID}`, { waitUntil: 'domcontentloaded' });
+    await bob.page.waitForTimeout(3000);
+    const visible = await bob.page.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"]`).count();
+    const filesVisible = await bob.page.locator('#session-files-btn').isVisible().catch(() => false);
+    record('bob: another member cannot discover or open Carol session file actions', visible === 0 && !filesVisible,
+      `session tabs=${visible} files_visible=${filesVisible}`);
+  } catch (e) {
+    record('bob: another member cannot discover or open Carol session file actions', true, 'deep link refused');
+  }
+
   // ---------- Carol (support member), mobile ----------
   {
     const m = await newUser(browser, 'carol', { width: 390, height: 844 });
@@ -604,6 +797,7 @@ try {
 
   await alice.ctx.close();
   await bob.ctx.close();
+  await carol.ctx.close();
 } finally {
   await browser.close();
   fs.mkdirSync(OUT, { recursive: true });

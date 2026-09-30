@@ -105,7 +105,8 @@ func main() {
 		for _, b := range buf[:n] {
 			switch b {
 			case '\r', '\n':
-				if string(line) == "CANARY_SET_THEME" {
+				command := string(line)
+				if command == "CANARY_SET_THEME" {
 					path := filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")
 					data, err := os.ReadFile(path)
 					var prefs map[string]any
@@ -121,6 +122,15 @@ func main() {
 					}
 					fmt.Printf("\r\nCANARY_SETTINGS_SAVED ok=%t\r\n", err == nil && prefs != nil)
 					printModelPolicy()
+				}
+				if command == "CANARY_PREVIEW" {
+					path := filepath.Join(os.Getenv("WT_PREVIEW_DIR"), os.Getenv("WT_PREVIEW_FILE"))
+					body := []byte("file:support-preview.md\n# Support preview\n\nSession preview can be reopened.\n")
+					err := os.WriteFile(path, body, 0o600)
+					fmt.Printf("\r\nCANARY_PREVIEW_WRITTEN ok=%t\r\n", err == nil)
+				}
+				if command == "CANARY_COPY_LINES" {
+					fmt.Printf("\r\nCOPY_START\r\n  indented value    \r\nsecond value      \r\nCOPY_END\r\n")
 				}
 				fmt.Printf("\r\nECHO:%s\r\n> ", line)
 				line = line[:0]

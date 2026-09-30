@@ -1,6 +1,7 @@
 #!/bin/sh
 set -e
-mkdir -p /opt/wingthing/eng /opt/wingthing/support /opt/wingthing/product /opt/wingthing/sales /opt/wingthing/repos/canary
+mkdir -p /opt/wingthing/eng /opt/wingthing/support /opt/wingthing/product /opt/wingthing/sales /opt/wingthing/repos/canary /opt/wingthing/exports
+chmod 0700 /opt/wingthing/exports
 echo "canary marker $(date -u)" > /opt/wingthing/eng/README.txt
 echo "support marker $(date -u)" > /opt/wingthing/support/README.txt
 echo "external repository marker" > /opt/wingthing/repos/canary/source.txt
