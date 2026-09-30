@@ -78,7 +78,7 @@ export function renderSidebar() {
             openSession();
         });
         tab.addEventListener('keydown', function(e) {
-            if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('.session-name-input')) {
+            if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('.session-rename-btn, .session-name-input')) {
                 e.preventDefault();
                 openSession();
             }
