@@ -25,6 +25,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -99,6 +100,7 @@ func eggRunCmd() *cobra.Command {
 		idleTimeoutFlag            string
 		dangerouslySkipPermissions bool
 		resumeSessionFlag          string
+		providerSessionFlag        string
 		toolNamesFlag              []string
 		toolSocketFlag             string
 		kindFlag                   string
@@ -178,6 +180,7 @@ func eggRunCmd() *cobra.Command {
 				SkipHostAgentEnv:           skipHostAgentEnvFlag,
 				IdleTimeout:                idleTimeout,
 				ResumeSessionID:            resumeSessionFlag,
+				ProviderSessionID:          providerSessionFlag,
 				ToolNames:                  toolNamesFlag,
 				ToolSocketPath:             toolSocketFlag,
 				OuterBoundary:              outerBoundaryFlag,
@@ -235,6 +238,10 @@ func eggRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipHostAgentEnvFlag, "skip-host-agent-env", false, "do not inherit host provider credentials (internal)")
 	cmd.Flags().StringVar(&idleTimeoutFlag, "idle-timeout", "", "idle timeout duration (e.g. 4h)")
 	cmd.Flags().StringVar(&resumeSessionFlag, "resume-session", "", "agent session ID to resume (internal)")
+	cmd.Flags().StringVar(&providerSessionFlag, "provider-session-id", "", "exact provider session ID (internal)")
+	if err := cmd.Flags().MarkHidden("provider-session-id"); err != nil {
+		panic(err)
+	}
 	cmd.Flags().StringArrayVar(&toolNamesFlag, "tool-name", nil, "privileged tool names (internal)")
 	cmd.Flags().StringVar(&toolSocketFlag, "tool-socket", "", "tool socket path (internal)")
 	cmd.Flags().StringVar(&kindFlag, "kind", "agent", "session kind (internal)")
@@ -781,7 +788,10 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	}
 
 	// Spawn egg as child process
-	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0, spawnEggOpts{ResumeSessionID: agentResumeID, Label: name, Kind: "agent", AgentArgs: agentArgs})
+	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0, spawnEggOpts{
+		ResumeSessionID: agentResumeID, ResumeSourceSessionID: resumeID,
+		Label: name, Kind: "agent", AgentArgs: agentArgs,
+	})
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
 	}
@@ -1054,14 +1064,62 @@ func validateAgentArgs(args []string) error {
 }
 
 type spawnEggOpts struct {
-	ResumeSessionID string
-	ToolNames       []string
-	ToolSocketPath  string
-	Label           string
-	Kind            string
-	Command         []string
-	AgentArgs       []string
-	Principal       string
+	ResumeSessionID       string
+	ResumeSourceSessionID string
+	ProviderReserved      bool
+	ToolNames             []string
+	ToolSocketPath        string
+	Label                 string
+	Kind                  string
+	Command               []string
+	AgentArgs             []string
+	Principal             string
+}
+
+func effectiveProviderSession(agentName, generatedResumeID string, agentArgs []string) (providerID string, effectiveArgs []string, generatedResume string, err error) {
+	profile := egg.Profile(agentName)
+	args := append([]string(nil), agentArgs...)
+	if profile.SessionIDFlag == "" {
+		return "", args, generatedResumeID, nil
+	}
+	providerID = generatedResumeID
+	providerFlagSeen := generatedResumeID != ""
+	callerProviderFlag := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		for _, flag := range []string{profile.SessionIDFlag, profile.ResumeFlag} {
+			if flag == "" {
+				continue
+			}
+			if arg == flag {
+				providerFlagSeen = true
+				callerProviderFlag = true
+				if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
+					return "", nil, "", fmt.Errorf("%s requires an explicit provider session ID", flag)
+				}
+				providerID = args[index+1]
+				index++
+				break
+			}
+			if value, ok := strings.CutPrefix(arg, flag+"="); ok {
+				providerFlagSeen = true
+				callerProviderFlag = true
+				providerID = value
+				break
+			}
+		}
+	}
+	if !providerFlagSeen {
+		providerID = uuid.NewString()
+		args = append([]string{profile.SessionIDFlag, providerID}, args...)
+	}
+	if !validProviderSessionID(providerID) {
+		return "", nil, "", errors.New("provider session ID is invalid")
+	}
+	if callerProviderFlag {
+		generatedResumeID = ""
+	}
+	return providerID, args, generatedResumeID, nil
 }
 
 // spawnEgg starts a per-session egg child process and returns a connected client.
@@ -1147,12 +1205,21 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err := validateAgentArgs(o.AgentArgs); err != nil {
 		return nil, err
 	}
+	providerSessionID := ""
+	effectiveResumeSessionID := o.ResumeSessionID
+	effectiveAgentArgs := append([]string(nil), o.AgentArgs...)
+	if len(o.Command) == 0 {
+		providerSessionID, effectiveAgentArgs, effectiveResumeSessionID, err = effectiveProviderSession(agentName, o.ResumeSessionID, o.AgentArgs)
+		if err != nil {
+			return nil, err
+		}
+	}
 	isolatedUser := identity.UserID != "" && (identity.OrgWing || identity.SharedHost)
 	policyArgs, err := isolatedClaudePolicyArgs(agentName, isolatedUser && len(o.Command) == 0)
 	if err != nil {
 		return nil, err
 	}
-	for _, arg := range append(policyArgs, o.AgentArgs...) {
+	for _, arg := range append(policyArgs, effectiveAgentArgs...) {
 		args = append(args, "--agent-arg="+arg)
 	}
 	if eggCfg.Shell != "" {
@@ -1165,6 +1232,21 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// this lets the policy mask a live SSH agent socket when ~/.ssh is denied.
 	realHome, _ := os.UserHomeDir()
 	effectiveHome := effectiveSessionHome(cfg, identity)
+	var releaseProviderSession func(bool)
+	providerProcessStarted := false
+	if providerSessionID != "" {
+		if o.ProviderReserved {
+			if err := verifyProviderResumeReservation(cfg, effectiveHome, agentName, providerSessionID, o.ResumeSourceSessionID, sessionID); err != nil {
+				return nil, err
+			}
+		} else {
+			releaseProviderSession, err = browserProviderResumes.reserve(cfg, effectiveHome, agentName, providerSessionID, o.ResumeSourceSessionID, sessionID)
+			if err != nil {
+				return nil, err
+			}
+			defer func() { releaseProviderSession(providerProcessStarted) }()
+		}
+	}
 	for _, entry := range eggCfg.FS {
 		// Resolve relative paths in fs entries
 		mode, path, ok := strings.Cut(entry, ":")
@@ -1419,8 +1501,11 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if idleTimeout > 0 {
 		args = append(args, "--idle-timeout", idleTimeout.String())
 	}
-	if o.ResumeSessionID != "" {
-		args = append(args, "--resume-session", o.ResumeSessionID)
+	if effectiveResumeSessionID != "" {
+		args = append(args, "--resume-session", effectiveResumeSessionID)
+	}
+	if providerSessionID != "" {
+		args = append(args, "--provider-session-id", providerSessionID)
 	}
 	if o.ToolSocketPath != "" && len(o.ToolNames) > 0 {
 		args = append(args, "--tool-socket", o.ToolSocketPath)
@@ -1478,8 +1563,10 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		closeWithLog("egg log", logFile)
 		return nil, fmt.Errorf("start egg: %w", err)
 	}
+	providerProcessStarted = true
 	if err := logFile.Close(); err != nil {
 		abandonStartedDaemon(child)
+		providerProcessStarted = false
 		return nil, fmt.Errorf("close egg log: %w", err)
 	}
 

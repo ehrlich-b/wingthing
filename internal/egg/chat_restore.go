@@ -62,12 +62,6 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 	}
 
 	meta := ParseChatMeta(string(metaData))
-	if recordedAgent := meta["agent"]; recordedAgent == "" || recordedAgent != agent {
-		return "", fmt.Errorf("chat.meta agent %q does not match requested agent %q", recordedAgent, agent)
-	}
-	if recordedCWD := meta["cwd"]; recordedCWD == "" || restoreCanonicalPath(recordedCWD) != restoreCanonicalPath(cwd) {
-		return "", fmt.Errorf("chat.meta cwd does not match requested working directory")
-	}
 	agentSessionID = meta["agent_session_id"]
 	if agentSessionID == "" {
 		return "", fmt.Errorf("chat.meta missing agent_session_id")
@@ -143,11 +137,11 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 		if !existing.Mode().IsRegular() {
 			return agentSessionID, fmt.Errorf("existing provider session is not a regular file")
 		}
-		equal, compareErr := equalRootFiles(dstRoot, temporaryName, dstFile)
+		capturedPrefix, compareErr := rootFileHasPrefix(dstRoot, dstFile, temporaryName)
 		if compareErr != nil {
 			return agentSessionID, fmt.Errorf("compare existing provider session: %w", compareErr)
 		}
-		if !equal {
+		if !capturedPrefix {
 			return agentSessionID, fmt.Errorf("existing provider session has advanced; refusing to replace it with an older snapshot")
 		}
 		if err := dstRoot.Remove(temporaryName); err != nil {
@@ -187,14 +181,6 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 	return agentSessionID, nil
 }
 
-func restoreCanonicalPath(path string) string {
-	path = filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return resolved
-	}
-	return path
-}
-
 func restoreTemporaryName() (string, error) {
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
@@ -203,44 +189,50 @@ func restoreTemporaryName() (string, error) {
 	return ".session-restore-" + hex.EncodeToString(random[:]) + ".tmp", nil
 }
 
-func equalRootFiles(root *os.Root, leftPath, rightPath string) (bool, error) {
-	left, err := root.Open(leftPath)
+// rootFileHasPrefix reports whether fullPath starts with every byte in
+// prefixPath. Providers append to native transcripts while Wingthing is down;
+// an existing valid suffix is newer data and must be kept rather than treated
+// as a restore conflict.
+func rootFileHasPrefix(root *os.Root, fullPath, prefixPath string) (bool, error) {
+	full, err := root.Open(fullPath)
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = left.Close() }()
-	right, err := root.Open(rightPath)
+	defer func() { _ = full.Close() }()
+	prefix, err := root.Open(prefixPath)
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = right.Close() }()
-	leftInfo, err := left.Stat()
+	defer func() { _ = prefix.Close() }()
+	prefixInfo, err := prefix.Stat()
 	if err != nil {
 		return false, err
 	}
-	rightInfo, err := right.Stat()
+	fullInfo, err := full.Stat()
 	if err != nil {
 		return false, err
 	}
-	if leftInfo.Size() != rightInfo.Size() {
+	if fullInfo.Size() < prefixInfo.Size() {
 		return false, nil
 	}
-	leftBuffer := make([]byte, 32<<10)
-	rightBuffer := make([]byte, 32<<10)
+	left := make([]byte, 32<<10)
+	right := make([]byte, 32<<10)
 	for {
-		leftCount, leftErr := left.Read(leftBuffer)
-		rightCount, rightErr := right.Read(rightBuffer)
-		if leftCount != rightCount || !bytes.Equal(leftBuffer[:leftCount], rightBuffer[:rightCount]) {
-			return false, nil
+		prefixCount, prefixErr := prefix.Read(left)
+		if prefixCount > 0 {
+			fullCount, fullErr := io.ReadFull(full, right[:prefixCount])
+			if fullCount != prefixCount || !bytes.Equal(left[:prefixCount], right[:fullCount]) {
+				return false, nil
+			}
+			if fullErr != nil && fullErr != io.EOF && fullErr != io.ErrUnexpectedEOF {
+				return false, fullErr
+			}
 		}
-		if leftErr == io.EOF && rightErr == io.EOF {
+		if prefixErr == io.EOF {
 			return true, nil
 		}
-		if leftErr != nil {
-			return false, leftErr
-		}
-		if rightErr != nil {
-			return false, rightErr
+		if prefixErr != nil {
+			return false, prefixErr
 		}
 	}
 }

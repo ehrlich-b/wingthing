@@ -69,6 +69,18 @@ func TestSessionFilePolicyUsesWritableDataAreaAndHonorsEffectiveDeny(t *testing.
 	}
 }
 
+func TestSessionFilePolicyBroadExplicitDenyOverridesNarrowWritableRoot(t *testing.T) {
+	root := t.TempDir()
+	data := filepath.Join(root, "data")
+	policy := sessionFilePolicy{
+		writableRoots: []string{data},
+		deny:          []string{root},
+	}
+	if _, ok := policy.writableRoot(filepath.Join(data, "report.txt")); ok {
+		t.Fatal("narrow writable root overrode a covering explicit deny")
+	}
+}
+
 func TestResolveOwnedSessionFileTargetRequiresOwnerPathAndEffectiveConfig(t *testing.T) {
 	session, _, userPaths, _ := filePolicyFixture(t)
 	req := ws.TunnelRequest{SenderUserID: "alice"}
@@ -90,6 +102,35 @@ func TestResolveOwnedSessionFileTargetRequiresOwnerPathAndEffectiveConfig(t *tes
 				t.Fatal("access unexpectedly allowed")
 			}
 		})
+	}
+}
+
+func TestPersonalOwnerSessionFilesWorkWithoutConfiguredWingPaths(t *testing.T) {
+	session, policy, _, dataDir := filePolicyFixture(t)
+	owner := ws.TunnelRequest{SenderUserID: session.UserID, SenderOrgRole: "owner"}
+	resolved, err := resolveOwnedActiveSession(owner, session.SessionID, []ws.SessionInfo{session}, nil)
+	if err != nil {
+		t.Fatalf("personal owner session resolution failed: %v", err)
+	}
+	destination, err := policy.uploadDirectory(nil)
+	if err != nil {
+		t.Fatalf("personal owner upload destination failed: %v", err)
+	}
+	if destination != canonicalSessionPath(dataDir) {
+		t.Fatalf("destination = %q, want %q", destination, canonicalSessionPath(dataDir))
+	}
+	path := filepath.Join(dataDir, "result.txt")
+	if err := os.WriteFile(path, []byte("result"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, _, _, err := openSessionFile(resolved, policy, nil, path)
+	if err != nil {
+		t.Fatalf("personal owner download failed: %v", err)
+	}
+	_ = file.Close()
+	member := ws.TunnelRequest{SenderUserID: session.UserID, SenderOrgRole: "member"}
+	if _, err := resolveOwnedActiveSession(member, session.SessionID, []ws.SessionInfo{session}, nil); err == nil {
+		t.Fatal("org member without a current path grant was allowed")
 	}
 }
 
@@ -183,6 +224,24 @@ func TestOpenSessionFileRejectsTraversalSymlinkNonRegularAndOversize(t *testing.
 	}
 	if _, _, _, err := openSessionFile(session, policy, userPaths, "../outside"); err == nil {
 		t.Fatal("traversal opened")
+	}
+}
+
+func TestOpenSessionFileNoFollowRejectsSymlinkComponent(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "secret.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "swapped")); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := openSessionFileNoFollow(root, filepath.Join("swapped", "secret.txt")); err == nil {
+		_ = file.Close()
+		t.Fatal("symlink component was followed")
 	}
 }
 

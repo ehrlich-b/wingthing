@@ -2207,6 +2207,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 
 					// Hot-reload labels
 					wingCfg.Labels = newCfg.Labels
+					wingCfg.Exports = newCfg.Exports
 
 					// Hot-reload paths
 					wingCfg.Paths = newCfg.Paths
@@ -3388,8 +3389,15 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		status, statusErr := ec.Status(statusCtx)
 		cancel()
 		closeWithLog("egg health-check client", ec)
-		if statusErr != nil {
-			continue
+		var renderedConfig string
+		if statusErr == nil {
+			renderedConfig = status.RenderedConfig
+		} else {
+			// A live PID with a responsive authenticated egg socket remains a
+			// session even when the optional Status RPC is transiently slow.
+			// Keep it visible so attach and ACL revocation still work; file
+			// operations fail closed while the rendered policy is unavailable.
+			log.Printf("egg: status unavailable for live session %s: %v", sessionID, statusErr)
 		}
 
 		agent, sessionCWD := readEggMeta(dir)
@@ -3398,7 +3406,7 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 			Name:      readSessionName(dir),
 			Agent:     agent,
 			CWD:       sessionCWD,
-			EggConfig: status.RenderedConfig,
+			EggConfig: renderedConfig,
 			UserID:    readEggOwner(dir),
 			Email:     readEggOwnerEmail(dir),
 		}
@@ -3766,6 +3774,10 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	defer sessionCancel()
+	if reclaimCWD != "" {
+		go watchPreviewFile(sessionCtx, reclaimCWD, sessionID, &mu, &gcm, write)
+	}
+	go watchBrowserRequests(sessionCtx, filepath.Join(eggDir, "browser-requests"), sessionID, write)
 
 	// Read output from egg -> encrypt -> send to relay
 	go func() {
@@ -4301,7 +4313,10 @@ authDone:
 		// and read the host home, wing.yaml keys, and other users' agent homes.
 		SealedFS:     sharedHost,
 		AllowedPaths: sharedAllowedPaths,
-	}, idleTimeout, spawnEggOpts{ResumeSessionID: providerResumeID, ToolNames: toolNames, ToolSocketPath: toolSocketPath})
+	}, idleTimeout, spawnEggOpts{
+		ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
+		ProviderReserved: providerResumeID != "", ToolNames: toolNames, ToolSocketPath: toolSocketPath,
+	})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := readEggCrashInfo(eggDir)
@@ -5464,8 +5479,15 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
+		wingCfgMu.Lock()
+		exportCfg := liveWingCfg.Clone()
+		wingCfgMu.Unlock()
+		if err := config.ValidateExports(cfg.Dir, exportCfg); err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "export destinations are invalid: " + err.Error()}, write)
+			return
+		}
 		var exportTarget *config.ExportTarget
-		for _, candidate := range wingCfg.ExportsForUser(req.SenderEmail, req.SenderOrgRole) {
+		for _, candidate := range exportCfg.ExportsForUser(req.SenderEmail, req.SenderOrgRole) {
 			if candidate.Name == inner.Target {
 				copy := candidate
 				exportTarget = &copy

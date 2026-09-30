@@ -349,6 +349,43 @@ func TestExportTargetMustBeOutsideStateAndConfiguredWorkspaces(t *testing.T) {
 	}
 }
 
+func TestSaveWingConfigRejectsExportOverlapAfterPathMutation(t *testing.T) {
+	dir := t.TempDir()
+	workspace := t.TempDir()
+	cfg := &WingConfig{
+		Exports: []ExportTarget{{Name: "isolated", Path: filepath.Join(workspace, "export"), Members: []string{"member@example.com"}}},
+	}
+	if err := SaveWingConfig(dir, cfg); err != nil {
+		t.Fatalf("initial SaveWingConfig: %v", err)
+	}
+	cfg.Paths = PathList{{Path: workspace}}
+	if err := SaveWingConfig(dir, cfg); err == nil {
+		t.Fatal("SaveWingConfig accepted a path mutation that overlaps an export")
+	}
+	loaded, err := LoadWingConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Paths) != 0 {
+		t.Fatalf("invalid path mutation reached disk: %#v", loaded.Paths)
+	}
+}
+
+func TestValidateExportsChecksLegacyRootWithoutMutatingConfig(t *testing.T) {
+	dir := t.TempDir()
+	workspace := t.TempDir()
+	cfg := &WingConfig{
+		Root:    workspace,
+		Exports: []ExportTarget{{Name: "isolated", Path: filepath.Join(workspace, "export"), Members: []string{"member@example.com"}}},
+	}
+	if err := ValidateExports(dir, cfg); err == nil {
+		t.Fatal("legacy root overlap was accepted")
+	}
+	if len(cfg.Paths) != 0 || cfg.Root != workspace {
+		t.Fatalf("validation mutated config: %#v", cfg)
+	}
+}
+
 func TestPathListLegacyStringOnly(t *testing.T) {
 	input := `
 paths:

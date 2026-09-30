@@ -150,14 +150,24 @@ func TestRestoreSessionHistoryRejectsProviderRollbackAndAllowsIdenticalRetry(t *
 		t.Fatalf("identical retry failed: %v", err)
 	}
 	destination := filepath.Join(home, ".claude", "projects", encodeCWDForClaude(cwd), "abc123.jsonl")
-	if err := os.WriteFile(destination, []byte("advanced conversation\n"), 0o600); err != nil {
+	if err := os.WriteFile(destination, []byte("snapshot\nnew provider event\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RestoreSessionHistory("claude", cwd, eggDir, home); err != nil {
+		t.Fatalf("advanced provider transcript with captured prefix was rejected: %v", err)
+	}
+	data, _ := os.ReadFile(destination)
+	if string(data) != "snapshot\nnew provider event\n" {
+		t.Fatalf("advanced provider conversation changed: %q", data)
+	}
+	if err := os.WriteFile(destination, []byte("diverged conversation\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RestoreSessionHistory("claude", cwd, eggDir, home); err == nil || !strings.Contains(err.Error(), "advanced") {
 		t.Fatalf("rollback error = %v", err)
 	}
-	data, _ := os.ReadFile(destination)
-	if string(data) != "advanced conversation\n" {
+	data, _ = os.ReadFile(destination)
+	if string(data) != "diverged conversation\n" {
 		t.Fatalf("advanced provider conversation changed: %q", data)
 	}
 }
@@ -194,14 +204,16 @@ func TestRestoreSessionHistorySerializesConflictingConcurrentResumes(t *testing.
 	}
 }
 
-func TestRestoreSessionHistoryRequiresMatchingAgentAndCWD(t *testing.T) {
+func TestRestoreSessionHistoryPreservesCLICrossCWDCompatibility(t *testing.T) {
 	eggDir := t.TempDir()
 	writeRestoreFixture(t, eggDir, "agent_session_id=abc\nagent=claude\nformat=jsonl\ncwd=/tmp/a\n", "content")
-	if _, err := RestoreSessionHistory("codex", "/tmp/a", eggDir, t.TempDir()); err == nil {
-		t.Fatal("mismatched agent accepted")
+	home := t.TempDir()
+	if _, err := RestoreSessionHistory("claude", "/tmp/b", eggDir, home); err != nil {
+		t.Fatalf("cross-CWD CLI restore failed: %v", err)
 	}
-	if _, err := RestoreSessionHistory("claude", "/tmp/b", eggDir, t.TempDir()); err == nil {
-		t.Fatal("mismatched cwd accepted")
+	destination := filepath.Join(home, ".claude", "projects", encodeCWDForClaude("/tmp/b"), "abc.jsonl")
+	if data, err := os.ReadFile(destination); err != nil || string(data) != "content" {
+		t.Fatalf("cross-CWD restore = %q err=%v", data, err)
 	}
 }
 

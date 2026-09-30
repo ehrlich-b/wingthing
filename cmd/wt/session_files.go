@@ -133,7 +133,11 @@ func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
 	}
 	for _, rules := range [][]string{p.deny, p.denyWrite} {
 		for _, rule := range rules {
-			if isUnderPaths(path, []string{rule}) && len(rule) >= len(best) {
+			// deny:/ is the Linux jail-mode selector: its explicit rw/ro
+			// allowlist is mounted back into the jail. Every other covering
+			// deny is applied after writable mounts and therefore wins even
+			// when the writable root is more specific.
+			if filepath.Clean(rule) != string(filepath.Separator) && isUnderPaths(path, []string{rule}) {
 				return "", false
 			}
 		}
@@ -143,11 +147,21 @@ func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
 
 func (p sessionFilePolicy) uploadDirectory(userPaths []string) (string, error) {
 	userPaths = canonicalPaths(userPaths)
-	if _, ok := p.writableRoot(p.cwd); ok && isUnderPaths(p.cwd, userPaths) {
+	if _, ok := p.writableRoot(p.cwd); ok && (len(userPaths) == 0 || isUnderPaths(p.cwd, userPaths)) {
 		return p.cwd, nil
 	}
 	best := ""
 	for _, writable := range p.writableRoots {
+		if len(userPaths) == 0 {
+			if _, ok := p.writableRoot(writable); !ok {
+				continue
+			}
+			info, err := os.Stat(writable)
+			if err == nil && info.IsDir() && (best == "" || len(writable) > len(best)) {
+				best = writable
+			}
+			continue
+		}
 		for _, allowed := range userPaths {
 			candidate := ""
 			switch {
@@ -196,7 +210,7 @@ func resolveOwnedActiveSession(req ws.TunnelRequest, sessionID string, sessions 
 			break
 		}
 		session.CWD = canonicalSessionPath(session.CWD)
-		if len(userPaths) == 0 || !isUnderPaths(session.CWD, userPaths) {
+		if !canAccessSessionPath(req, session.CWD, userPaths) {
 			break
 		}
 		return session, nil
@@ -480,7 +494,7 @@ func openSessionFile(session ws.SessionInfo, policy sessionFilePolicy, userPaths
 		path = filepath.Join(session.CWD, path)
 	}
 	path = canonicalSessionPath(path)
-	if len(userPaths) == 0 || !isUnderPaths(path, userPaths) {
+	if len(userPaths) > 0 && !isUnderPaths(path, userPaths) {
 		return nil, "", nil, errors.New("file is outside current path policy")
 	}
 	rootPath, ok := policy.writableRoot(path)
@@ -491,12 +505,7 @@ func openSessionFile(session ws.SessionInfo, policy sessionFilePolicy, userPaths
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil, "", nil, errors.New("invalid file path")
 	}
-	root, err := openBoundDirectoryRoot(rootPath)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("open policy root: %w", err)
-	}
-	file, err := root.Open(rel)
-	_ = root.Close()
+	file, err := openSessionFileNoFollow(rootPath, rel)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("open file: %w", err)
 	}

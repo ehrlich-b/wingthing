@@ -209,6 +209,39 @@ func TestCaptureSessionHistory_Claude_MultipleFiles(t *testing.T) {
 	}
 }
 
+func TestCaptureSessionHistory_Claude_ExactIDDoesNotSelectNewerConversation(t *testing.T) {
+	home := t.TempDir()
+	eggDir := t.TempDir()
+	cwd := "/Users/test/shared-project"
+	projectDir := filepath.Join(home, ".claude", "projects", encodeCWDForClaude(cwd))
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "ours.jsonl"), []byte("ours\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "other.jsonl"), []byte("other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(filepath.Join(projectDir, "ours.jsonl"), now.Add(-time.Minute), now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(projectDir, "other.jsonl"), now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := CaptureSessionHistory("claude", cwd, eggDir, home, now.Add(time.Minute), "ours"); err != nil {
+		t.Fatal(err)
+	}
+	metaData, err := os.ReadFile(filepath.Join(eggDir, "chat.meta"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ParseChatMeta(string(metaData))["agent_session_id"]; got != "ours" {
+		t.Fatalf("captured provider ID = %q, want ours", got)
+	}
+}
+
 func TestCaptureSessionHistory_UnknownAgent(t *testing.T) {
 	eggDir := t.TempDir()
 	err := CaptureSessionHistory("ollama", "/tmp", eggDir, "/home/test", time.Now())

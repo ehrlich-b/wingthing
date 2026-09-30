@@ -126,6 +126,7 @@ type RunConfig struct {
 	SkipHostAgentEnv           bool          // shared hosts keep provider credentials in UserHome
 	IdleTimeout                time.Duration // 0 = disabled; self-terminate after this much idle
 	ResumeSessionID            string        // agent session ID to resume (from chat.meta)
+	ProviderSessionID          string        // exact native session ID used for capture
 	ToolNames                  []string      // names of privileged tools (for shim generation)
 	ToolSocketPath             string        // path to tool.sock (set by wing, empty = no tools)
 	OuterBoundary              bool          // explicit trusted-host marker from the parent process
@@ -967,7 +968,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			for {
 				select {
 				case <-ticker.C:
-					if err := CaptureSessionHistory(rc.Agent, rc.CWD, s.dir, captureHome, sess.StartedAt); err != nil {
+					if err := CaptureSessionHistory(rc.Agent, rc.CWD, s.dir, captureHome, sess.StartedAt, rc.ProviderSessionID); err != nil {
 						log.Printf("egg: chat capture: %v", err)
 					}
 				case <-sess.done:
@@ -983,8 +984,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	if hasSandbox {
 		isolationMode = "wingthing-sandbox"
 	}
-	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\n",
-		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix())
+	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nprovider_session_id=%s\n",
+		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix(), rc.ProviderSessionID)
 	if err := atomicWritePrivate(metaPath, []byte(metaContent)); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
 	}
@@ -1058,7 +1059,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 
 		// Final chat history capture (gets the complete conversation)
 		if profile := Profile(rc.Agent); profile.SessionDir != "" && captureHome != "" {
-			if err := CaptureSessionHistory(rc.Agent, rc.CWD, s.dir, captureHome, sess.StartedAt); err != nil {
+			if err := CaptureSessionHistory(rc.Agent, rc.CWD, s.dir, captureHome, sess.StartedAt, rc.ProviderSessionID); err != nil {
 				log.Printf("egg: final chat capture: %v", err)
 			}
 		}

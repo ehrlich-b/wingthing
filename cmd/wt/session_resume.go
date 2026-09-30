@@ -36,6 +36,25 @@ func providerResumeMetadata(key, sourceSessionID string) []byte {
 	return []byte(fmt.Sprintf("home_hash=%s\nagent=%s\nprovider_session_id=%s\nsource_session_id=%s\n", homeHash, agent, providerSessionID, sourceSessionID))
 }
 
+func verifyProviderResumeReservation(cfg *config.Config, home, agent, providerSessionID, sourceSessionID, wingSessionID string) error {
+	path := filepath.Join(cfg.Dir, "eggs", wingSessionID, providerResumeMetadataFile)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("provider resume reservation is unavailable")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return errors.New("provider resume reservation is unavailable")
+	}
+	values := egg.ParseChatMeta(string(data))
+	homeHash, rest, _ := strings.Cut(providerResumeKey(home, agent, providerSessionID), "\x00")
+	wantAgent, wantID, _ := strings.Cut(rest, "\x00")
+	if values["home_hash"] != homeHash || values["agent"] != wantAgent || values["provider_session_id"] != wantID || values["source_session_id"] != sourceSessionID {
+		return errors.New("provider resume reservation does not match the requested conversation")
+	}
+	return nil
+}
+
 func activeProviderResumeConflict(cfg *config.Config, key, exceptSessionID string, alive func(string) bool) bool {
 	homeHash, rest, _ := strings.Cut(key, "\x00")
 	agent, providerSessionID, _ := strings.Cut(rest, "\x00")
@@ -119,6 +138,18 @@ func sessionResumeStatus(sessionDir, agent, cwd string) (bool, string) {
 	if !validProviderSessionID(meta["agent_session_id"]) || meta["agent"] != agent || canonicalSessionPath(meta["cwd"]) != canonicalSessionPath(cwd) {
 		return false, "provider conversation metadata is invalid"
 	}
+	reservationInfo, err := os.Lstat(filepath.Join(sessionDir, providerResumeMetadataFile))
+	if err != nil || !reservationInfo.Mode().IsRegular() {
+		return false, "provider conversation identity was not verified"
+	}
+	reservationData, err := os.ReadFile(filepath.Join(sessionDir, providerResumeMetadataFile))
+	if err != nil {
+		return false, "provider conversation identity was not verified"
+	}
+	reservation := egg.ParseChatMeta(string(reservationData))
+	if reservation["agent"] != agent || reservation["provider_session_id"] != meta["agent_session_id"] {
+		return false, "provider conversation identity was not verified"
+	}
 	info, err := os.Lstat(filepath.Join(sessionDir, "chat.jsonl.gz"))
 	if err != nil || !info.Mode().IsRegular() {
 		return false, "provider conversation was not captured"
@@ -153,7 +184,7 @@ func prepareBrowserResume(cfg *config.Config, wingCfg *config.WingConfig, start 
 	if start.CWD != "" && canonicalSessionPath(start.CWD) != cwd {
 		return "", "", nil, errors.New("resume source does not match the requested working directory")
 	}
-	if len(userPaths) == 0 || !isUnderPaths(cwd, userPaths) {
+	if isMemberRole(start.OrgRole) && len(userPaths) == 0 || len(userPaths) > 0 && !isUnderPaths(cwd, userPaths) {
 		return "", "", nil, errors.New("resume source is outside current path policy")
 	}
 	if ok, reason := sessionResumeStatus(sourceDir, agent, cwd); !ok {

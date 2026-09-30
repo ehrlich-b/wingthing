@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -234,6 +235,54 @@ func configuredPathsOverlap(left, right string) bool {
 	return contains(left, right) || contains(right, left)
 }
 
+// ValidateExports verifies that export destinations stay isolated from both
+// Wingthing state and configured workspaces. Call it on every live snapshot
+// before using an export target; wing.yaml can also be mutated while the
+// daemon is running.
+func ValidateExports(dir string, cfg *WingConfig) error {
+	if cfg == nil {
+		return errors.New("missing wing config")
+	}
+	home, _ := os.UserHomeDir()
+	statePath := canonicalConfiguredPath(dir, home)
+	workspaces := cfg.Paths
+	if len(workspaces) == 0 && cfg.Root != "" {
+		workspaces = PathList{{Path: cfg.Root}}
+	}
+	seenExports := make(map[string]struct{}, len(cfg.Exports))
+	for _, target := range cfg.Exports {
+		if !validExportTargetName(target.Name) {
+			return fmt.Errorf("invalid target name %q", target.Name)
+		}
+		if _, exists := seenExports[target.Name]; exists {
+			return fmt.Errorf("duplicate target name %q", target.Name)
+		}
+		seenExports[target.Name] = struct{}{}
+		if !filepath.IsAbs(target.Path) {
+			return fmt.Errorf("target %q: path must be absolute", target.Name)
+		}
+		exportPath := canonicalConfiguredPath(target.Path, home)
+		if configuredPathsOverlap(exportPath, statePath) {
+			return fmt.Errorf("target %q: path must not overlap Wingthing state", target.Name)
+		}
+		for _, workspace := range workspaces {
+			workspacePath := canonicalConfiguredPath(workspace.Path, home)
+			if configuredPathsOverlap(exportPath, workspacePath) {
+				return fmt.Errorf("target %q: path must not overlap a configured workspace", target.Name)
+			}
+		}
+		if len(target.Members) == 0 {
+			return fmt.Errorf("target %q: members allowlist required", target.Name)
+		}
+		for _, member := range target.Members {
+			if strings.TrimSpace(member) == "" || strings.ContainsAny(member, "\x00\r\n") {
+				return fmt.Errorf("target %q: invalid member email", target.Name)
+			}
+		}
+	}
+	return nil
+}
+
 // PathList is a list of PathEntry values that supports mixed YAML formats:
 // plain strings ("~/repos") and mappings ({path: ~/repos, members: [...]}).
 type PathList []PathEntry
@@ -350,38 +399,8 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	if cfg.Root != "" && len(cfg.Paths) == 0 {
 		cfg.Paths = PathList{{Path: cfg.Root}}
 	}
-	home, _ := os.UserHomeDir()
-	statePath := canonicalConfiguredPath(dir, home)
-	seenExports := make(map[string]struct{}, len(cfg.Exports))
-	for _, target := range cfg.Exports {
-		if !validExportTargetName(target.Name) {
-			return nil, fmt.Errorf("validate %s exports: invalid target name %q", path, target.Name)
-		}
-		if _, exists := seenExports[target.Name]; exists {
-			return nil, fmt.Errorf("validate %s exports: duplicate target name %q", path, target.Name)
-		}
-		seenExports[target.Name] = struct{}{}
-		if !filepath.IsAbs(target.Path) {
-			return nil, fmt.Errorf("validate %s exports target %q: path must be absolute", path, target.Name)
-		}
-		exportPath := canonicalConfiguredPath(target.Path, home)
-		if configuredPathsOverlap(exportPath, statePath) {
-			return nil, fmt.Errorf("validate %s exports target %q: path must not overlap Wingthing state", path, target.Name)
-		}
-		for _, workspace := range cfg.Paths {
-			workspacePath := canonicalConfiguredPath(workspace.Path, home)
-			if configuredPathsOverlap(exportPath, workspacePath) {
-				return nil, fmt.Errorf("validate %s exports target %q: path must not overlap a configured workspace", path, target.Name)
-			}
-		}
-		if len(target.Members) == 0 {
-			return nil, fmt.Errorf("validate %s exports target %q: members allowlist required", path, target.Name)
-		}
-		for _, member := range target.Members {
-			if strings.TrimSpace(member) == "" || strings.ContainsAny(member, "\x00\r\n") {
-				return nil, fmt.Errorf("validate %s exports target %q: invalid member email", path, target.Name)
-			}
-		}
+	if err := ValidateExports(dir, cfg); err != nil {
+		return nil, fmt.Errorf("validate %s exports: %w", path, err)
 	}
 	return cfg, nil
 }
@@ -389,6 +408,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 // SaveWingConfig writes wing.yaml to dir. The file may contain the roost's JWT signing
 // key, so it must never be readable by other local users.
 func SaveWingConfig(dir string, cfg *WingConfig) error {
+	if err := ValidateExports(dir, cfg); err != nil {
+		return fmt.Errorf("validate wing.yaml exports: %w", err)
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("create wing config directory: %w", err)
 	}

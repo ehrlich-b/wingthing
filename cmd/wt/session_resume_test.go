@@ -26,6 +26,9 @@ func writeResumeSessionFixture(t *testing.T, cfg *config.Config, sessionID, owne
 	if err := os.WriteFile(filepath.Join(dir, "chat.meta"), []byte("agent_session_id="+providerID+"\nagent="+agent+"\nformat=jsonl\ncwd="+cwd+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, providerResumeMetadataFile), []byte("agent="+agent+"\nprovider_session_id="+providerID+"\nsource_session_id=\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	file, err := os.Create(filepath.Join(dir, "chat.jsonl.gz"))
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +97,30 @@ func TestPrepareBrowserResumeRequiresExactOwnerAgentAndCurrentPath(t *testing.T)
 	}
 }
 
+func TestPrepareBrowserResumeAllowsPersonalOwnerWithoutConfiguredPaths(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
+	cwd := t.TempDir()
+	writeResumeSessionFixture(t, cfg, "old-session", "alice", "claude", cwd, "provider-id", "conversation\n")
+	start := ws.PTYStart{
+		SessionID: "new-session", ResumeSessionID: "old-session", UserID: "alice",
+		OrgRole: "owner", Agent: "claude", CWD: cwd,
+	}
+	providerID, _, release, err := prepareBrowserResume(cfg, &config.WingConfig{}, start, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release(false)
+	if providerID != "provider-id" {
+		t.Fatalf("provider ID = %q", providerID)
+	}
+	member := start
+	member.SessionID = "member-session"
+	member.OrgRole = "member"
+	if _, _, _, err := prepareBrowserResume(cfg, &config.WingConfig{Org: "slide"}, member, nil, true); err == nil {
+		t.Fatal("org member without paths was allowed to resume")
+	}
+}
+
 func TestPrepareBrowserResumeReservesIdenticalProviderConversationUntilRelease(t *testing.T) {
 	cfg := &config.Config{Dir: t.TempDir()}
 	cwd := t.TempDir()
@@ -149,6 +176,36 @@ func TestProviderResumeReservationSurvivesReclaimUntilProviderExit(t *testing.T)
 	release(false)
 	if _, err := os.Stat(filepath.Join(cfg.Dir, "eggs", "after-exit", providerResumeMetadataFile)); !os.IsNotExist(err) {
 		t.Fatalf("failed resume reservation was not released: %v", err)
+	}
+}
+
+func TestEffectiveProviderSessionPinsFreshClaudeAndPreservesExplicitFlags(t *testing.T) {
+	providerID, args, generatedResume, err := effectiveProviderSession("claude", "", []string{"--model", "opus"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validProviderSessionID(providerID) || generatedResume != "" || len(args) != 4 || args[0] != "--session-id" || args[1] != providerID {
+		t.Fatalf("fresh provider launch = id %q args %#v resume %q", providerID, args, generatedResume)
+	}
+
+	explicit := []string{"--model", "opus", "--session-id=caller-id"}
+	providerID, args, generatedResume, err = effectiveProviderSession("claude", "", explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerID != "caller-id" || generatedResume != "" || strings.Join(args, "\x00") != strings.Join(explicit, "\x00") {
+		t.Fatalf("explicit session ID changed: id %q args %#v resume %q", providerID, args, generatedResume)
+	}
+
+	providerID, args, generatedResume, err = effectiveProviderSession("claude", "restored-id", []string{"--resume", "caller-resume", "--model", "opus"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerID != "caller-resume" || generatedResume != "" || strings.Join(args, "\x00") != "--resume\x00caller-resume\x00--model\x00opus" {
+		t.Fatalf("explicit resume was duplicated or changed: id %q args %#v resume %q", providerID, args, generatedResume)
+	}
+	if _, _, _, err := effectiveProviderSession("claude", "", []string{"--resume", "--model", "opus"}); err == nil {
+		t.Fatal("unverifiable bare resume was accepted")
 	}
 }
 
