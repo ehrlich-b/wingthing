@@ -184,13 +184,13 @@ body {
     cursor: pointer;
     padding: 3px 0 3px 8px;
     opacity: 0;
-    visibility: hidden;
+    pointer-events: none;
 }
 
 .session-tab:hover .session-rename-btn,
 .session-tab:focus-within .session-rename-btn {
     opacity: 1;
-    visibility: visible;
+    pointer-events: auto;
 }
 
 .session-tab:hover .tab-label,
