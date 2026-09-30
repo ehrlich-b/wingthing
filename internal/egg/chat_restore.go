@@ -62,6 +62,9 @@ func RestoreSessionHistory(agent, cwd, eggDir, home string) (agentSessionID stri
 	}
 
 	meta := ParseChatMeta(string(metaData))
+	if recordedAgent := meta["agent"]; recordedAgent == "" || recordedAgent != agent {
+		return "", fmt.Errorf("chat.meta agent %q does not match requested agent %q", recordedAgent, agent)
+	}
 	agentSessionID = meta["agent_session_id"]
 	if agentSessionID == "" {
 		return "", fmt.Errorf("chat.meta missing agent_session_id")

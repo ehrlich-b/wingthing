@@ -217,6 +217,14 @@ func TestRestoreSessionHistoryPreservesCLICrossCWDCompatibility(t *testing.T) {
 	}
 }
 
+func TestRestoreSessionHistoryRejectsMismatchedAgent(t *testing.T) {
+	eggDir := t.TempDir()
+	writeRestoreFixture(t, eggDir, "agent_session_id=abc\nagent=claude\nformat=jsonl\ncwd=/tmp/a\n", "content")
+	if _, err := RestoreSessionHistory("codex", "/tmp/a", eggDir, t.TempDir()); err == nil {
+		t.Fatal("Claude history was restored into another provider's session tree")
+	}
+}
+
 func TestRestoreSessionHistoryDoesNotEscapeProviderHomeSymlink(t *testing.T) {
 	home := t.TempDir()
 	outside := t.TempDir()
