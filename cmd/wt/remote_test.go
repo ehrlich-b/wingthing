@@ -181,6 +181,13 @@ func TestRemoteSessionListCommandIsExecutable(t *testing.T) {
 	}
 }
 
+func TestRemoteSessionStopRejectionNamesTheUnsupportedSubcommand(t *testing.T) {
+	err := validateRemoteCommand([]string{"session", "kill", "work"})
+	if err == nil || !strings.Contains(err.Error(), `session subcommand "kill" is not available over SSH`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestRemoteFlagsAfterDashStayWithRemoteCommand(t *testing.T) {
 	invocation, remote, err := parseRemoteInvocation([]string{
 		"--remote", "work1", "terminal", "--json", "--", "printf", "%s", "--remote", "literal-host-flag",
