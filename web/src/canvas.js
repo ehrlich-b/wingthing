@@ -264,6 +264,14 @@ function sessionTitle(agent, wingId, label) {
     return agent || '';
 }
 
+export function updateCanvasSessionName(sessionId, name) {
+    var sess = sessions[sessionId];
+    if (!sess) return false;
+    sess.label = name || '';
+    sess.titleEl.textContent = sessionTitle(sess.agent, sess.wingId, sess.label);
+    return true;
+}
+
 // --- Focus ---
 
 function unfocusAll() {

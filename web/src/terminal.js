@@ -7,6 +7,20 @@ import { e2eEncrypt } from './crypto.js';
 import { setNotification, clearNotification } from './notify.js';
 import { showHome } from './nav.js';
 import { sendViaDC } from './webrtc.js';
+import { cleanTerminalSelection, copyTextWithFallback, terminalClipboardAvailable } from './terminal-selection.js';
+
+export function copyTerminalSelection() {
+    if (!S.term || !S.term.hasSelection()) return Promise.resolve(false);
+    var text = cleanTerminalSelection(S.term.getSelection());
+    if (!text) return Promise.resolve(false);
+    return copyTextWithFallback(text).then(function(copied) {
+        if (copied) {
+            DOM.terminalCopyBtn.textContent = 'copied';
+            setTimeout(function() { DOM.terminalCopyBtn.textContent = 'copy'; }, 1200);
+        }
+        return copied;
+    });
+}
 
 export function initTerminal() {
     S.term = new Terminal({
@@ -40,6 +54,10 @@ export function initTerminal() {
         }
         // Let browser handle Ctrl+C/Cmd+C copy when text is selected
         if (e.type === 'keydown' && (e.ctrlKey || e.metaKey) && e.key === 'c' && S.term.hasSelection()) {
+            if (terminalClipboardAvailable()) {
+                e.preventDefault();
+                copyTerminalSelection();
+            }
             return false;
         }
         // Spectator: show toast on real keyboard input only
@@ -102,6 +120,14 @@ export function initTerminal() {
     S.term.onBell(function() {
         if (S.ptySessionId) setNotification(S.ptySessionId);
     });
+
+    S.term.onSelectionChange(function() {
+        DOM.terminalCopyBtn.disabled = !S.term.hasSelection();
+        DOM.terminalCopyBtn.title = S.term.hasSelection()
+            ? 'Copy selection without terminal line padding'
+            : 'Select terminal text to copy';
+    });
+    DOM.terminalCopyBtn.addEventListener('click', function() { copyTerminalSelection(); });
 
     // Touch scroll proxy — xterm.js v6 replaced native scrolling with a custom JS
     // scrollbar that only handles wheel events. On touch devices we overlay a transparent

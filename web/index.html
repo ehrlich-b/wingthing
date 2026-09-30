@@ -22,6 +22,10 @@
                 <div id="header-center">
                     <span id="header-title"></span>
                     <span id="pty-status"></span>
+                    <button id="terminal-copy-btn" class="btn-sm session-action" title="Select terminal text to copy" style="display:none" disabled>copy</button>
+                    <button id="preview-toggle-btn" class="btn-sm session-action" title="Show preview" style="display:none" aria-pressed="false">preview</button>
+                    <button id="session-files-btn" class="btn-sm session-action" title="Files for this session" style="display:none">files</button>
+                    <input id="session-upload-input" type="file" multiple hidden>
                     <button id="session-close-btn" title="End session" style="display:none">x</button>
                     <div id="canvas-toolbar" style="display:none">
                         <span id="ct-wing" class="ct-item"></span>
@@ -41,6 +45,32 @@
             <div id="reconnect-banner" style="display:none;">
                 <span id="reconnect-text">reconnecting...</span>
                 <button id="reconnect-btn" class="btn-sm" style="display:none">retry</button>
+            </div>
+
+            <div id="session-files-panel" style="display:none;" role="dialog" aria-label="Session files">
+                <div class="session-files-header">
+                    <strong>session files</strong>
+                    <button id="session-files-close" type="button" title="Close">&times;</button>
+                </div>
+                <div class="session-files-section">
+                    <button id="session-upload-btn" class="btn-sm" type="button">add files</button>
+                    <span id="session-upload-note" class="text-dim"></span>
+                </div>
+                <div class="session-files-section">
+                    <label for="session-file-path">file from the session directory</label>
+                    <div class="session-file-row">
+                        <input id="session-file-path" type="text" placeholder="reports/findings.md" autocomplete="off" spellcheck="false">
+                        <button id="session-download-btn" class="btn-sm" type="button">download</button>
+                    </div>
+                </div>
+                <div id="session-export-section" class="session-files-section" style="display:none;">
+                    <label for="session-export-target">copy to export folder</label>
+                    <div class="session-file-row">
+                        <select id="session-export-target"></select>
+                        <button id="session-export-btn" class="btn-sm" type="button">copy</button>
+                    </div>
+                </div>
+                <div id="session-files-status" class="session-files-status text-dim" aria-live="polite"></div>
             </div>
 
             <section id="home-section">

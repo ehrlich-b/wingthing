@@ -11,6 +11,8 @@ var MD_EXT = /\.(md|markdown|mdown|mkd)$/i;
 // URL mode (where "open" already covers it) and on close.
 var current = null;
 var currentPreviewURL = null;
+var previewSessions = {};
+var activePreviewSession = '';
 
 var URL_PREVIEW_DISCLOSURE = '<!DOCTYPE html><meta charset="utf-8"><style>'
     + 'body{font-family:system-ui,sans-serif;padding:24px;color:#333;background:#fff;line-height:1.5}'
@@ -36,6 +38,48 @@ function applyWidth(ratio) {
 
 function isOpen() {
     return DOM.previewPanel.style.display !== 'none';
+}
+
+function previewKey() {
+    return activePreviewSession || S.ptySessionId || '__preview__';
+}
+
+function updateToggle() {
+    if (!DOM.previewToggleBtn) return;
+    var entry = previewSessions[previewKey()];
+    DOM.previewToggleBtn.style.display = entry ? '' : 'none';
+    DOM.previewToggleBtn.setAttribute('aria-pressed', entry && entry.open ? 'true' : 'false');
+    DOM.previewToggleBtn.title = entry && entry.open ? 'Hide preview' : 'Show preview';
+}
+
+function hidePanel() {
+    current = null;
+    currentPreviewURL = null;
+    DOM.previewDownloadBtn.style.display = 'none';
+    DOM.previewLoadBtn.style.display = 'none';
+    DOM.previewPanel.style.display = 'none';
+    DOM.previewDivider.style.display = 'none';
+    DOM.terminalSection.classList.remove('has-preview');
+    DOM.previewIframe.removeAttribute('src');
+    DOM.previewIframe.removeAttribute('srcdoc');
+    if (S.fitAddon) S.fitAddon.fit();
+}
+
+function openPanel(opts) {
+    var openingKey = previewKey();
+    var ratio = savedRatio();
+    DOM.previewDivider.style.display = '';
+    DOM.previewPanel.style.display = '';
+    DOM.previewPanel.style.background = 'var(--bg)';
+    applyWidth(ratio);
+    DOM.terminalSection.classList.add('has-preview');
+    if (S.fitAddon) S.fitAddon.fit();
+    requestAnimationFrame(function() {
+        var entry = previewSessions[openingKey];
+        if (openingKey !== previewKey() || !entry || !entry.open) return;
+        setContent(opts);
+        DOM.previewPanel.style.background = '';
+    });
 }
 
 function setContent(opts) {
@@ -115,9 +159,12 @@ function setContent(opts) {
 
 export function handlePreview(opts) {
     if (!opts || !opts.mode) {
-        closePreview();
+        discardPreview(previewKey());
         return;
     }
+
+    previewSessions[previewKey()] = { payload: opts, open: true };
+    updateToggle();
 
     if (isOpen()) {
         // Already open — just swap content
@@ -125,32 +172,42 @@ export function handlePreview(opts) {
         return;
     }
 
-    // Open sequence — jank-free
-    var ratio = savedRatio();
-    DOM.previewDivider.style.display = '';
-    DOM.previewPanel.style.display = '';
-    DOM.previewPanel.style.background = 'var(--bg)';
-    applyWidth(ratio);
-    DOM.terminalSection.classList.add('has-preview');
-    if (S.fitAddon) S.fitAddon.fit();
-
-    requestAnimationFrame(function() {
-        setContent(opts);
-        DOM.previewPanel.style.background = '';
-    });
+    openPanel(opts);
 }
 
 export function closePreview() {
-    current = null;
-    currentPreviewURL = null;
-    DOM.previewDownloadBtn.style.display = 'none';
-    DOM.previewLoadBtn.style.display = 'none';
-    DOM.previewPanel.style.display = 'none';
-    DOM.previewDivider.style.display = 'none';
-    DOM.terminalSection.classList.remove('has-preview');
-    DOM.previewIframe.removeAttribute('src');
-    DOM.previewIframe.removeAttribute('srcdoc');
-    if (S.fitAddon) S.fitAddon.fit();
+    var entry = previewSessions[previewKey()];
+    if (entry) entry.open = false;
+    hidePanel();
+    updateToggle();
+}
+
+export function setPreviewSession(sessionId) {
+    activePreviewSession = sessionId || '';
+    var entry = previewSessions[previewKey()];
+    hidePanel();
+    if (entry && entry.open) openPanel(entry.payload);
+    updateToggle();
+}
+
+export function togglePreview() {
+    var entry = previewSessions[previewKey()];
+    if (!entry) return false;
+    if (entry.open) {
+        closePreview();
+    } else {
+        entry.open = true;
+        openPanel(entry.payload);
+        updateToggle();
+    }
+    return true;
+}
+
+export function discardPreview(sessionId) {
+    var key = sessionId || previewKey();
+    delete previewSessions[key];
+    if (key === previewKey()) hidePanel();
+    updateToggle();
 }
 
 // Loading is deliberately separate from handlePreview: receiving an
@@ -247,4 +304,7 @@ export function initPreview() {
     initDownloadBtn();
     initCloseBtn();
     initDividerDrag();
+    if (DOM.previewToggleBtn) {
+        DOM.previewToggleBtn.addEventListener('click', function() { togglePreview(); });
+    }
 }

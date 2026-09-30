@@ -203,6 +203,21 @@ body {
 
 .session-name-input.invalid { border-color: var(--red); }
 
+.session-rename-status:not(:empty) {
+    position: absolute;
+    z-index: 2;
+    top: calc(100% - 2px);
+    left: 8px;
+    right: 8px;
+    padding: 5px 7px;
+    border: 1px solid var(--red);
+    border-radius: 4px;
+    background: var(--bg-card);
+    color: var(--red);
+    font-size: 10px;
+    line-height: 1.3;
+}
+
 .session-tab:hover {
     background: var(--bg-card);
     color: var(--text);
@@ -294,7 +309,8 @@ body {
     flex-shrink: 0;
 }
 
-#session-close-btn {
+#session-close-btn,
+.session-action {
     background: none;
     border: 1px solid var(--border);
     color: var(--text-dim);
@@ -304,10 +320,72 @@ body {
     border-radius: 3px;
     flex-shrink: 0;
 }
-#session-close-btn:hover {
+#session-close-btn:hover,
+.session-action:hover:not(:disabled) {
     color: var(--accent);
     border-color: var(--accent);
 }
+
+.session-action[aria-pressed="true"] {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(233, 69, 96, 0.1);
+}
+
+#session-files-panel {
+    position: absolute;
+    top: 48px;
+    right: 12px;
+    z-index: 1200;
+    width: min(430px, calc(100vw - var(--sidebar-w) - 36px));
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    font-size: 12px;
+}
+
+.session-files-header,
+.session-file-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.session-files-header { margin-bottom: 12px; }
+
+#session-files-close {
+    margin-left: auto;
+    border: 0;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 18px;
+}
+
+.session-files-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+}
+
+.session-files-section:first-of-type { border-top: 0; }
+.session-file-row input, .session-file-row select {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+}
+
+.session-files-status { min-height: 18px; }
+.session-files-status.failed { color: var(--red); }
 
 #header-right {
     display: flex;
@@ -932,7 +1010,7 @@ body {
 
 #terminal-container .xterm {
     height: 100%;
-    padding: 4px;
+    padding: 0;
 }
 
 #terminal-container .xterm-helper-textarea {
@@ -1582,6 +1660,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     flex-shrink: 0;
 }
 
+.wd-resume-unavailable { opacity: 0.65; }
+
 .wd-load-more {
     margin-top: 8px;
 }
@@ -2228,6 +2308,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     .nav-label, .tab-label, .session-rename-btn { display: none; }
     .nav-symbol, .tab-letter { display: inline; }
     .session-tab { justify-content: center; padding: 0; }
+    #session-files-panel { right: 8px; width: calc(100vw - 16px); }
     .in-terminal #sidebar { display: none; }
     #main { padding: 0 8px; }
     #main-header { padding: 4px 0; }

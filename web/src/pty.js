@@ -9,9 +9,18 @@ import { loadHome } from './data.js';
 import { showHome } from './nav.js';
 import { wingDisplayName, sessionDisplayName, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
 import { saveTunnelAuthTokens, sendTunnelRequest } from './tunnel.js';
-import { handlePreview, closePreview } from './preview.js';
+import { handlePreview, setPreviewSession, discardPreview } from './preview.js';
 import { initWebRTC, completeMigration, cleanupPeer, cleanupSession, dcActive, sendViaDC } from './webrtc.js';
 import { safePreviewURL } from './security.js';
+import { refreshSessionFilesButton, hideSessionFiles } from './session-files.js';
+import { resumeAckMatches } from './pty-resume.js';
+
+function setSessionActions(active) {
+    DOM.terminalCopyBtn.style.display = active ? '' : 'none';
+    if (!active) DOM.terminalCopyBtn.disabled = true;
+    refreshSessionFilesButton();
+    if (!active) hideSessionFiles();
+}
 
 function showBrowserOpenToast(url, sessionId) {
     var existing = document.getElementById('browser-open-toast');
@@ -290,7 +299,29 @@ function setupPTYHandlers(ws, reattach) {
                     console.warn('pty.started for wrong session:', msg.session_id, 'expected:', S.ptySessionId);
                     break;
                 }
+                var requestedResumeId = S.pendingResumeSessionId;
+                if (!reattach && !resumeAckMatches(requestedResumeId, msg)) {
+                    S.pendingResumeSessionId = null;
+                    setPreviewSession(null);
+                    DOM.headerTitle.textContent = 'resume unavailable';
+                    DOM.ptyStatus.textContent = 'resume was not confirmed';
+                    S.term.writeln('\r\n\x1b[31;1mCould not resume that provider session.\x1b[0m');
+                    S.term.writeln('\x1b[2mThe newly started session is being stopped.\x1b[0m');
+                    S.ptyWs = null;
+                    if (msg.session_id && S.ptyWingId) {
+                        sendTunnelRequest(S.ptyWingId, { type: 'pty.kill', session_id: msg.session_id })
+                            .catch(function() {
+                                DOM.ptyStatus.textContent = 'resume failed; could not stop new session';
+                            })
+                            .finally(function() { try { ws.close(); } catch (e) {} });
+                    } else {
+                        try { ws.close(); } catch (e) {}
+                    }
+                    return;
+                }
+                S.pendingResumeSessionId = null;
                 S.ptySessionId = msg.session_id;
+                setPreviewSession(msg.session_id);
                 var activeSession = S.sessionsData.find(function(s) { return s.id === msg.session_id; });
                 if (S.spectating) {
                     var who = activeSession && activeSession.email ? activeSession.email : '';
@@ -299,6 +330,7 @@ function setupPTYHandlers(ws, reattach) {
                     DOM.headerTitle.textContent = sessionTitle(msg.agent, S.ptyWingId, activeSession);
                 }
                 DOM.sessionCloseBtn.style.display = '';
+                setSessionActions(true);
                 hidePasskeyOverlay();
                 if (msg.auth_token && S.ptyWingId) {
                     S.tunnelAuthTokens[S.ptyWingId] = msg.auth_token;
@@ -389,13 +421,14 @@ function setupPTYHandlers(ws, reattach) {
             case 'pty.exited':
                 if (S.ptySessionId && msg.session_id !== S.ptySessionId) break;
                 if (!S.ptySessionId && !msg.error) break;
-                closePreview();
+                discardPreview(msg.session_id);
                 DOM.headerTitle.textContent = '';
                 DOM.sessionCloseBtn.style.display = 'none';
                 if (msg.session_id) clearTermBuffer(msg.session_id);
                 clearNotification(msg.session_id);
                 S.ptySessionId = null;
                 S.e2eKey = null;
+                setSessionActions(false);
 
                 if (msg.error) {
                     DOM.ptyStatus.textContent = 'crashed';
@@ -428,6 +461,7 @@ function setupPTYHandlers(ws, reattach) {
                 S.ptySessionId = null;
                 S.ptyWingId = null;
                 S.e2eKey = null;
+                setSessionActions(false);
 
                 renderSidebar();
                 loadHome();
@@ -481,10 +515,21 @@ function setupPTYHandlers(ws, reattach) {
     };
 }
 
-export function connectPTY(agent, cwd, wingId) {
+export function connectPTY(agent, cwd, wingId, resumeSessionId) {
+    if (resumeSessionId) {
+        var resumeWing = S.wingsData.find(function(wing) { return wing.wing_id === wingId; });
+        var canResume = resumeWing && Array.isArray(resumeWing.capabilities) &&
+            resumeWing.capabilities.indexOf('session.provider_resume.v1') !== -1;
+        if (!canResume) {
+            DOM.headerTitle.textContent = 'resume unavailable';
+            DOM.ptyStatus.textContent = 'update this wing to resume provider sessions';
+            return false;
+        }
+    }
     detachPTY();
-    closePreview();
+    setPreviewSession(null);
     S.ptyBandwidthExceeded = false;
+    S.pendingResumeSessionId = resumeSessionId || null;
 
     S.term.clear();
 
@@ -511,15 +556,18 @@ export function connectPTY(agent, cwd, wingId) {
         };
         if (cwd) startMsg.cwd = cwd;
         if (wingId) startMsg.wing_id = wingId;
+        if (resumeSessionId) startMsg.resume_session_id = resumeSessionId;
         if (wingId && S.tunnelAuthTokens[wingId]) startMsg.auth_token = S.tunnelAuthTokens[wingId];
         S.ptyWs.send(JSON.stringify(startMsg));
     };
 
     setupPTYHandlers(S.ptyWs, false);
+    return true;
 }
 
 export function attachPTY(sessionId, _retries) {
     var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
+    setPreviewSession(sessionId);
 
     // Deep link before data loaded — wait for session or a spectate-enabled wing
     if (!sess && !_retries) {
@@ -600,12 +648,18 @@ export function detachPTY() {
     S.ptyWingId = null;
     S.e2eKey = null;
     S.spectating = false;
+    S.pendingResumeSessionId = null;
+    setPreviewSession(null);
+    setSessionActions(false);
 }
 
 export function disconnectPTY() {
     S.ptyReconnecting = false;
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
-    if (S.ptySessionId) cleanupSession(S.ptySessionId);
+    if (S.ptySessionId) {
+        cleanupSession(S.ptySessionId);
+        discardPreview(S.ptySessionId);
+    }
     if (S.ptyWingId) cleanupPeer(S.ptyWingId);
     var killFinished = Promise.resolve();
     if (S.ptyWingId && S.ptySessionId) {
@@ -617,10 +671,12 @@ export function disconnectPTY() {
     S.ptyWingId = null;
     S.e2eKey = null;
     S.spectating = false;
+    S.pendingResumeSessionId = null;
 
     DOM.ptyStatus.textContent = '';
     DOM.headerTitle.textContent = '';
     DOM.sessionCloseBtn.style.display = 'none';
+    setSessionActions(false);
     return killFinished;
 }
 

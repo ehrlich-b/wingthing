@@ -3,6 +3,7 @@ import { renderSidebar, renderDashboard } from './render.js';
 import { renderWingDetailPage } from './render.js';
 import { rebuildAgentLists, updateHeaderStatus } from './dashboard.js';
 import { updatePaletteState } from './palette.js';
+import { refreshSessionFilesButton } from './session-files.js';
 import { sendTunnelRequest, saveTunnelAuthTokens } from './tunnel.js';
 import { setNotification, clearNotification } from './notify.js';
 import { reconcileWingSessions } from './session-merge.js';
@@ -165,6 +166,9 @@ async function _probeWingInner(w) {
         w.projects = data.projects || [];
         w.locked = data.locked || false;
         w.spectate = data.spectate || false;
+        w.capabilities = Array.isArray(data.capabilities) ? data.capabilities : [];
+        w.exports = Array.isArray(data.exports) ? data.exports : [];
+        w.file_limits = data.file_limits && typeof data.file_limits === 'object' ? data.file_limits : {};
         w.allowed_count = data.allowed_count || 0;
         w.passkey_enrolled = !!data.passkey_enrolled;
         delete w.tunnel_error;
@@ -249,6 +253,7 @@ async function _loadHomeInner() {
     rebuildAgentLists();
     updateHeaderStatus();
     renderSidebar();
+    refreshSessionFilesButton();
     if (S.activeView === 'home') renderDashboard();
     if (S.activeView === 'wing-detail' && S.currentWingId) renderWingDetailPage(S.currentWingId);
 
@@ -321,6 +326,7 @@ async function _loadHomeInner() {
     saveWingCache();
     rebuildAgentLists();
     renderSidebar();
+    refreshSessionFilesButton();
     if (S.activeView === 'home') renderDashboard();
     if (S.activeView === 'wing-detail' && S.currentWingId) renderWingDetailPage(S.currentWingId);
     if (DOM.commandPalette.style.display !== 'none') updatePaletteState(true);

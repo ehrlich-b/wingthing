@@ -16,6 +16,7 @@ import { hideDetailModal, showSessionInfo, renderSidebar, renderDashboard } from
 import { initNotifyListeners } from './notify.js';
 import { loadTunnelAuthTokens } from './tunnel.js';
 import { initPreview } from './preview.js';
+import { initSessionFiles } from './session-files.js';
 
 function denyBrowserRelayView() {
     history.replaceState({ view: 'home' }, '', location.pathname);
@@ -341,6 +342,7 @@ async function init() {
     initTerminal();
     initCanvas();
     initPreview();
+    initSessionFiles();
 
     // Canvas toggle button
     var canvasToggleBtn = document.getElementById('canvas-toggle-btn');

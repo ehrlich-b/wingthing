@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DOM, S } from '../src/state.js';
-import { activateURLPreview, closePreview, handlePreview } from '../src/preview.js';
+import { activateURLPreview, closePreview, handlePreview, togglePreview } from '../src/preview.js';
 
 function fakeElement() {
     return {
@@ -31,7 +31,9 @@ function installPreviewDOM() {
     DOM.previewLoadBtn = fakeElement();
     DOM.previewOpenBtn = fakeElement();
     DOM.previewDownloadBtn = fakeElement();
+    DOM.previewToggleBtn = fakeElement();
     S.fitAddon = null;
+    globalThis.requestAnimationFrame = function(callback) { callback(); };
 }
 
 test('receiving an agent URL preview cannot make a browser network request', function() {
@@ -63,6 +65,23 @@ test('a replacement URL requires a fresh explicit activation', function() {
     assert.equal(DOM.previewIframe.src, undefined);
     assert.equal(DOM.previewOpenBtn.href, 'https://second.example.test/');
     assert.equal(DOM.previewLoadBtn.style.display, '');
+
+    closePreview();
+});
+
+test('closing a preview keeps it available for an explicit reopen', function() {
+    installPreviewDOM();
+    handlePreview({ mode: 'content', filename: 'result.md', content: '# Result' });
+
+    closePreview();
+    assert.equal(DOM.previewPanel.style.display, 'none');
+    assert.equal(DOM.previewToggleBtn.style.display, '');
+    assert.equal(DOM.previewToggleBtn.attributes['aria-pressed'], 'false');
+
+    assert.equal(togglePreview(), true);
+    assert.equal(DOM.previewPanel.style.display, '');
+    assert.equal(DOM.previewToggleBtn.attributes['aria-pressed'], 'true');
+    assert.match(DOM.previewIframe.srcdoc, /Result/);
 
     closePreview();
 });

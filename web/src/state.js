@@ -33,6 +33,7 @@ export var S = {
     latestVersion: '',
     ptyReconnecting: false,
     ptyBandwidthExceeded: false,
+    pendingResumeSessionId: null,
     spectating: false,
     currentWingId: null,
     wingPastSessions: {},
@@ -61,6 +62,20 @@ export function initDOM() {
     DOM.terminalSection = document.getElementById('terminal-section');
     DOM.terminalContainer = document.getElementById('terminal-container');
     DOM.ptyStatus = document.getElementById('pty-status');
+    DOM.terminalCopyBtn = document.getElementById('terminal-copy-btn');
+    DOM.previewToggleBtn = document.getElementById('preview-toggle-btn');
+    DOM.sessionFilesBtn = document.getElementById('session-files-btn');
+    DOM.sessionFilesPanel = document.getElementById('session-files-panel');
+    DOM.sessionFilesClose = document.getElementById('session-files-close');
+    DOM.sessionUploadBtn = document.getElementById('session-upload-btn');
+    DOM.sessionUploadInput = document.getElementById('session-upload-input');
+    DOM.sessionUploadNote = document.getElementById('session-upload-note');
+    DOM.sessionFilePath = document.getElementById('session-file-path');
+    DOM.sessionDownloadBtn = document.getElementById('session-download-btn');
+    DOM.sessionExportSection = document.getElementById('session-export-section');
+    DOM.sessionExportTarget = document.getElementById('session-export-target');
+    DOM.sessionExportBtn = document.getElementById('session-export-btn');
+    DOM.sessionFilesStatus = document.getElementById('session-files-status');
     DOM.sessionCloseBtn = document.getElementById('session-close-btn');
     DOM.chatSection = document.getElementById('chat-section');
     DOM.wingDetailSection = document.getElementById('wing-detail-section');

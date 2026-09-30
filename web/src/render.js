@@ -11,6 +11,7 @@ import { openAuditReplay, openAuditKeylog, downloadChatHistory } from './audit.j
 import { showTerminal } from './nav.js';
 import { safeTerminalThumbnail } from './security.js';
 import { shouldFetchWingSessions } from './session-merge.js';
+import { updateCanvasSessionName } from './canvas.js';
 
 function wingNameById(wingId) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
@@ -29,6 +30,11 @@ function isWingVisible(wingId) {
     return w && w.tunnel_error !== 'not_allowed';
 }
 
+function wingHasCapability(wingId, capability) {
+    var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
+    return !!wing && Array.isArray(wing.capabilities) && wing.capabilities.indexOf(capability) !== -1;
+}
+
 export function renderSidebar() {
     var tabs = S.sessionsData.filter(function(s) {
         if ((s.kind || 'terminal') === 'chat') return false;
@@ -41,14 +47,17 @@ export function renderSidebar() {
         var needsAttention = S.sessionNotifications[s.id];
         var dotClass = s.status === 'active' ? 'dot-live' : (s.swept ? 'dot-detached' : '');
         if (needsAttention) dotClass = 'dot-attention';
+        var canRename = wingHasCapability(s.wing_id, 'session.rename.v1');
+        var title = name + ' \u00b7 ' + (s.agent || '?');
+        if (!canRename) title += ' \u00b7 update this wing to rename';
         return '<div class="session-tab' + (isActive ? ' active' : '') + '" role="button" tabindex="0" ' +
             'aria-label="Open ' + escapeHtml(name) + '" ' +
-            'title="' + escapeHtml(name + ' \u00b7 ' + (s.agent || '?')) + '" ' +
+            'title="' + escapeHtml(title) + '" ' +
             'data-sid="' + escapeHtml(s.id) + '">' +
             '<span class="tab-dot ' + dotClass + '"></span>' +
             '<span class="tab-letter">' + escapeHtml(letter) + '</span>' +
             '<span class="tab-label">' + escapeHtml(name) + '</span>' +
-            '<button class="session-rename-btn" type="button" title="Rename session">rename</button>' +
+            (canRename ? '<button class="session-rename-btn" type="button" title="Rename session">rename</button>' : '') +
         '</div>';
     }).join('');
     DOM.sessionTabs.innerHTML = tabs;
@@ -72,11 +81,13 @@ export function renderSidebar() {
             }
         });
         var rename = tab.querySelector('.session-rename-btn');
-        rename.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var session = S.sessionsData.find(function(s) { return s.id === tab.dataset.sid; });
-            if (session) beginSessionRename(tab, session);
-        });
+        if (rename) {
+            rename.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var session = S.sessionsData.find(function(s) { return s.id === tab.dataset.sid; });
+                if (session) beginSessionRename(tab, session);
+            });
+        }
     });
 }
 
@@ -92,6 +103,10 @@ function beginSessionRename(tab, session) {
     input.placeholder = projectName(session.cwd);
     input.setAttribute('aria-label', 'Session name');
     label.replaceWith(input);
+    var status = document.createElement('span');
+    status.className = 'session-rename-status';
+    status.setAttribute('role', 'status');
+    input.insertAdjacentElement('afterend', status);
     input.focus();
     input.select();
 
@@ -117,6 +132,7 @@ function beginSessionRename(tab, session) {
             .then(function(result) {
                 session.name = (result && result.name) || name;
                 saveSessionCache();
+                updateCanvasSessionName(session.id, session.name);
                 if (session.id === S.ptySessionId && S.activeView === 'terminal') {
                     DOM.headerTitle.textContent = session.name + ' \u00b7 ' + (session.agent || '?');
                 }
@@ -127,7 +143,10 @@ function beginSessionRename(tab, session) {
                 settled = false;
                 input.disabled = false;
                 input.classList.add('invalid');
-                input.title = (err && err.message) || 'Rename failed';
+                var message = (err && err.message) || 'rename failed';
+                input.title = message;
+                input.setAttribute('aria-invalid', 'true');
+                status.textContent = message;
                 input.focus();
                 input.select();
             });
@@ -2049,8 +2068,9 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
         container.innerHTML = '<span class="text-dim">no audited sessions</span>';
         return;
     }
+    var canResume = wingHasCapability(wingId, 'session.provider_resume.v1');
     var html = sessions.map(function(s) {
-        var name = s.cwd ? projectName(s.cwd) : s.session_id.substring(0, 8);
+        var name = s.name || (s.cwd ? projectName(s.cwd) : s.session_id.substring(0, 8));
         var startStr = s.started_at ? formatRelativeTime(s.started_at * 1000) : '';
         var auditBadge = s.audit ? '<span class="wd-audit-badge">audit</span>' : '';
         var chatBadge = s.chat ? '<span class="wd-audit-badge">chat</span>' : '';
@@ -2061,6 +2081,12 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
         var chatBtn = s.chat
             ? '<button class="btn-sm wd-chat-btn" data-sid="' + escapeHtml(s.session_id) + '">chat</button>'
             : '';
+        var resumeReason = !canResume
+            ? 'Update this wing to resume provider sessions'
+            : (s.resume_unavailable_reason || 'This provider session cannot be resumed');
+        var resumeBtn = canResume && s.resumable
+            ? '<button class="btn-sm wd-resume-btn" data-sid="' + escapeHtml(s.session_id) + '">resume</button>'
+            : '<button class="btn-sm wd-resume-unavailable" disabled title="' + escapeHtml(resumeReason) + '">resume unavailable</button>';
         return '<div class="wd-past-row">' +
             '<span class="wd-past-name">' + escapeHtml(name) + ' \u00b7 ' + escapeHtml(s.agent || '?') + '</span>' +
             '<span class="wd-past-time text-dim">' + startStr + '</span>' +
@@ -2068,6 +2094,7 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
             chatBadge +
             auditBtns +
             chatBtn +
+            resumeBtn +
         '</div>';
     }).join('');
 
@@ -2099,12 +2126,20 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
             downloadChatHistory(wingId, btn.dataset.sid);
         });
     });
+    container.querySelectorAll('.wd-resume-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var session = sessions.find(function(item) { return item.session_id === btn.dataset.sid; });
+            if (!session || !session.resumable || !wingHasCapability(wingId, 'session.provider_resume.v1')) return;
+            showTerminal();
+            connectPTY(session.agent || 'claude', session.cwd || '', wingId, session.session_id);
+        });
+    });
 }
 
 export function showEggDetail(sessionId) {
     var s = S.sessionsData.find(function(s) { return s.id === sessionId; });
     if (!s) return;
-    var name = projectName(s.cwd);
+    var name = sessionDisplayName(s);
     var kind = s.kind || 'terminal';
     var wingName = '';
     if (s.wing_id) {
