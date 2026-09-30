@@ -12,6 +12,7 @@ import { showTerminal } from './nav.js';
 import { safeTerminalThumbnail } from './security.js';
 import { shouldFetchWingSessions } from './session-merge.js';
 import { updateCanvasSessionName } from './canvas.js';
+import { historyResumeState } from './session-resume.js';
 
 function wingNameById(wingId) {
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
@@ -47,9 +48,11 @@ export function renderSidebar() {
         var needsAttention = S.sessionNotifications[s.id];
         var dotClass = s.status === 'active' ? 'dot-live' : (s.swept ? 'dot-detached' : '');
         if (needsAttention) dotClass = 'dot-attention';
-        var canRename = wingHasCapability(s.wing_id, 'session.rename.v1');
+        var ownsSession = !!S.currentUser && !!s.user_id && s.user_id === S.currentUser.id;
+        var canRename = ownsSession && wingHasCapability(s.wing_id, 'session.rename.v1');
         var title = name + ' \u00b7 ' + (s.agent || '?');
-        if (!canRename) title += ' \u00b7 update this wing to rename';
+        if (!ownsSession) title += ' \u00b7 only the session owner can rename';
+        else if (!canRename) title += ' \u00b7 update this wing to rename';
         return '<div class="session-tab' + (isActive ? ' active' : '') + '" role="button" tabindex="0" ' +
             'aria-label="Open ' + escapeHtml(name) + '" ' +
             'title="' + escapeHtml(title) + '" ' +
@@ -2081,12 +2084,10 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
         var chatBtn = s.chat
             ? '<button class="btn-sm wd-chat-btn" data-sid="' + escapeHtml(s.session_id) + '">chat</button>'
             : '';
-        var resumeReason = !canResume
-            ? 'Update this wing to resume provider sessions'
-            : (s.resume_unavailable_reason || 'This provider session cannot be resumed');
-        var resumeBtn = canResume && s.resumable
+        var resumeState = historyResumeState(s, S.currentUser, canResume);
+        var resumeBtn = resumeState.available
             ? '<button class="btn-sm wd-resume-btn" data-sid="' + escapeHtml(s.session_id) + '">resume</button>'
-            : '<button class="btn-sm wd-resume-unavailable" disabled title="' + escapeHtml(resumeReason) + '">resume unavailable</button>';
+            : '<button class="btn-sm wd-resume-unavailable" disabled title="' + escapeHtml(resumeState.reason) + '">resume unavailable</button>';
         return '<div class="wd-past-row">' +
             '<span class="wd-past-name">' + escapeHtml(name) + ' \u00b7 ' + escapeHtml(s.agent || '?') + '</span>' +
             '<span class="wd-past-time text-dim">' + startStr + '</span>' +
@@ -2129,7 +2130,7 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
     container.querySelectorAll('.wd-resume-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
             var session = sessions.find(function(item) { return item.session_id === btn.dataset.sid; });
-            if (!session || !session.resumable || !wingHasCapability(wingId, 'session.provider_resume.v1')) return;
+            if (!session || !historyResumeState(session, S.currentUser, wingHasCapability(wingId, 'session.provider_resume.v1')).available) return;
             showTerminal();
             connectPTY(session.agent || 'claude', session.cwd || '', wingId, session.session_id);
         });
