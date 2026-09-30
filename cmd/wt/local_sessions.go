@@ -364,12 +364,16 @@ func printActiveSessions(ctx context.Context, cfg *config.Config, jsonOutput boo
 }
 
 func selectActiveSession(ctx context.Context, cfg *config.Config) (localSession, error) {
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return localSession{}, errors.New("interactive selection requires a terminal; pass a session ID or name")
-	}
 	sessions, err := discoverActiveSessions(ctx, cfg)
 	if err != nil {
 		return localSession{}, err
+	}
+	return selectSession(sessions)
+}
+
+func selectSession(sessions []localSession) (localSession, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return localSession{}, errors.New("interactive selection requires a terminal; pass a session ID or name")
 	}
 	if len(sessions) == 0 {
 		return localSession{}, errors.New("no active sessions")

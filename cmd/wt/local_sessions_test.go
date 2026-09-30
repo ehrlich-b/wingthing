@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -116,6 +117,23 @@ func TestSessionDiscoveryDoesNotCleanDeadMetadata(t *testing.T) {
 	}
 	if _, err := os.Stat(pidPath); err != nil {
 		t.Fatalf("read-only session discovery removed metadata: %v", err)
+	}
+}
+
+func TestEggRunFlagParserPreservesEmptyAndWhitespaceAgentArgs(t *testing.T) {
+	command := eggRunCmd()
+	if err := command.ParseFlags([]string{
+		"--session-id", "argv-canary", "--agent-arg=--tools", "--agent-arg=", "--agent-arg= \t ",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := command.Flags().GetStringArray("agent-arg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--tools", "", " \t "}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parsed agent argv = %#v, want %#v", got, want)
 	}
 }
 

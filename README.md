@@ -17,9 +17,10 @@ Choose the smallest route that fits:
 
 1. An agent manages local agents through stdio MCP.
 2. A person starts a local sandboxed agent terminal.
-3. An agent reaches another machine through direct remote MCP.
-4. A person who needs a browser runs a self-hosted roost.
-5. An entitled account may optionally use the hosted `wingthing.ai` browser relay.
+3. A person or agent reaches one known machine through ordinary SSH.
+4. An agent uses direct remote MCP when it needs one qualified multi-wing inventory.
+5. A person who needs a browser runs a self-hosted roost.
+6. An entitled account may optionally use the hosted `wingthing.ai` browser relay.
 
 ## 1. Local agent control: stdio MCP
 
@@ -97,6 +98,48 @@ done because a string appeared on screen. Use `agent_run`, `agent_wait`, and
 `agent_result` when the caller needs semantic task state.
 
 ## 3. Different machines: direct remote MCP
+
+### One known machine over SSH
+
+Use the same commands on an SSH host without installing local credentials or
+opening a local Wingthing store:
+
+```bash
+# Reattach, choose, or start a persistent shell on the remote machine.
+wt --remote work1
+wt --remote work1 --remote-cwd /home/me/work/project
+
+# Launch an agent in a remote checkout and return structured session data.
+wt --remote work1 egg codex --cwd /home/me/work/project --name review --json -- -m gpt-5.6-sol
+
+# Inspect and control remote sessions without a TTY.
+wt --remote work1 session ps --json
+wt --remote work1 session read review --json
+wt --remote work1 session send review --stdin < input.txt
+wt --remote work1 attach review
+```
+
+`work1` is a normal OpenSSH destination or alias. The remote login user owns the
+workspace, `WINGTHING_DIR`, egg policy, provider installation, and provider
+credentials. Wingthing does not copy any of them from the client. The same
+remote `egg.yaml` discovery and sandbox enforcement used by a local invocation
+still apply. A compatible `wt` must already exist on the remote host;
+`--remote-binary` selects a nonstandard or staged path. The client does not
+install or replace that binary.
+For agent launches, put the provider immediately after `egg`; arguments after
+`--` reach that provider verbatim.
+
+Bare interactive entry attaches the only matching live session, offers a picker
+for several, or starts a persistent shell when none exist. `--remote-cwd`
+filters that choice to one existing remote directory. With noninteractive input,
+bare entry prints the matching sessions as JSON and never creates one.
+
+This route needs a POSIX remote command shell because it uses POSIX quoting.
+Configure ports, bastions, keys, and host-key policy in OpenSSH. Wingthing does
+not disable host-key verification or accept SSH options through `--remote`.
+Doctor, MCP, daemon, browser, and stop commands are outside this route.
+
+### Qualified multi-wing control through direct MCP
 
 To give the parent agent one qualified inventory across remote wings, first log
 in and start Wingthing on every execution machine. Install and authenticate each

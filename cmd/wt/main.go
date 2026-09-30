@@ -43,10 +43,9 @@ func main() {
 		return
 	}
 
-	root := newRootCommand()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := root.ExecuteContext(ctx); err != nil {
+	if err := executeCLI(ctx, os.Args[1:], remoteProcessIO()); err != nil {
 		var exitErr *commandExitError
 		if errors.As(err, &exitErr) {
 			if exitErr.message != "" {
@@ -60,6 +59,9 @@ func main() {
 }
 
 func newRootCommand() *cobra.Command {
+	var remoteTarget string
+	var remoteBinary string
+	var remoteCWD string
 	root := &cobra.Command{
 		Use:           "wt",
 		Short:         "wingthing — an agent manager for agents",
@@ -67,6 +69,21 @@ func newRootCommand() *cobra.Command {
 		Version:       version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("remote") || cmd.Flags().Changed("remote-binary") || cmd.Flags().Changed("remote-cwd") {
+				return errors.New("remote routing was not initialized")
+			}
+			return cmd.Help()
+		},
+	}
+	root.PersistentFlags().StringVarP(&remoteTarget, "remote", "r", "", "run a supported command on this SSH host or alias")
+	root.PersistentFlags().StringVar(&remoteBinary, "remote-binary", "wt", "wt executable or absolute path on the remote host")
+	root.PersistentFlags().StringVar(&remoteCWD, "remote-cwd", "", "remote working directory for bare interactive entry")
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("remote") || cmd.Flags().Changed("remote-binary") || cmd.Flags().Changed("remote-cwd") {
+			return errors.New("remote routing was not initialized")
+		}
+		return nil
 	}
 
 	root.AddCommand(
@@ -102,6 +119,7 @@ func newRootCommand() *cobra.Command {
 		toolListCmd(),
 		mcpCmd(),
 		localCertCmd(),
+		remoteEnterCmd(),
 	)
 	return root
 }

@@ -36,6 +36,10 @@ func eggCmd() *cobra.Command {
 	var resumeFlag string
 	var nameFlag string
 	var unsandboxedFlag bool
+	var cwdFlag string
+	var detachFlag bool
+	var jsonFlag bool
+	var remoteExactArgvFlag bool
 
 	cmd := &cobra.Command{
 		Use:     "sandbox [agent]",
@@ -49,7 +53,7 @@ func eggCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag, resumeFlag, nameFlag, unsandboxedFlag, args[1:])
+			return eggSpawn(cmd.Context(), args[0], configFlag, traceFlag, resumeFlag, nameFlag, cwdFlag, detachFlag || jsonFlag, jsonFlag, unsandboxedFlag, remoteExactArgvFlag, args[1:])
 		},
 		Example: "  wt egg claude\n" +
 			"  wt egg claude --name research -- --model sonnet\n" +
@@ -60,7 +64,14 @@ func eggCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&traceFlag, "trace", false, "wrap sandbox with strace for syscall tracing (Linux only)")
 	cmd.Flags().StringVar(&resumeFlag, "resume", "", "resume a previous session by session ID")
 	cmd.Flags().StringVarP(&nameFlag, "name", "n", "", "human-readable session name")
+	cmd.Flags().StringVarP(&cwdFlag, "cwd", "C", "", "working directory (default: current directory)")
+	cmd.Flags().BoolVarP(&detachFlag, "detach", "d", false, "start without attaching")
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "start detached and print machine-readable JSON")
 	cmd.Flags().BoolVar(&unsandboxedFlag, "unsandboxed", false, "trust the host boundary; disable Wingthing filesystem, network, syscall, and resource isolation")
+	cmd.Flags().BoolVar(&remoteExactArgvFlag, "remote-exact-argv", false, "preserve empty remote provider arguments (internal)")
+	if err := cmd.Flags().MarkHidden("remote-exact-argv"); err != nil {
+		panic(err)
+	}
 	cmd.MarkFlagsMutuallyExclusive("config", "unsandboxed")
 
 	cmd.AddCommand(eggRunCmd())
@@ -741,8 +752,8 @@ func humanDuration(d time.Duration) string {
 	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
-// eggSpawn starts an agent session in a per-session egg and attaches the terminal.
-func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID, name string, unsandboxed bool, agentArgs []string) error {
+// eggSpawn starts an agent session in a per-session egg and optionally attaches the terminal.
+func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, resumeID, name, cwd string, detach, jsonOutput, unsandboxed, preserveEmptyAgentArgs bool, agentArgs []string) error {
 	if trace && runtime.GOOS != "linux" {
 		return fmt.Errorf("--trace requires Linux (strace is not available on %s)", runtime.GOOS)
 	}
@@ -755,7 +766,17 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 		return err
 	}
 
-	cwd, _ := os.Getwd()
+	if cwd == "" {
+		cwd, err = os.Getwd()
+	} else {
+		cwd, err = filepath.Abs(cwd)
+	}
+	if err != nil {
+		return fmt.Errorf("resolve working directory: %w", err)
+	}
+	if info, statErr := os.Stat(cwd); statErr != nil || !info.IsDir() {
+		return fmt.Errorf("working directory %q does not exist or is not a directory", cwd)
+	}
 	eggCfg, err := loadSpawnEggConfig(configPath, cwd, unsandboxed)
 	if err != nil {
 		return err
@@ -790,10 +811,27 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 	// Spawn egg as child process
 	ec, err := spawnEgg(cfg, sessionID, agentName, eggCfg, uint32(rows), uint32(cols), cwd, false, false, trace, EggIdentity{}, 0, spawnEggOpts{
 		ResumeSessionID: agentResumeID, ResumeSourceSessionID: resumeID,
-		Label: name, Kind: "agent", AgentArgs: agentArgs,
+		Label: name, Kind: "agent", AgentArgs: agentArgs, PreserveEmptyAgentArgs: preserveEmptyAgentArgs,
 	})
 	if err != nil {
 		return fmt.Errorf("spawn egg: %w", err)
+	}
+	if detach {
+		if err := ec.Close(); err != nil {
+			return fmt.Errorf("close egg client: %w", err)
+		}
+		if jsonOutput {
+			return writeSessionJSON(map[string]any{
+				"session": sessionID, "name": name, "kind": "agent", "agent": agentName,
+				"agent_args": agentArgs, "cwd": cwd, "status": "started", "isolation": sessionIsolationLabel(eggCfg),
+			})
+		}
+		display := sessionID
+		if name != "" {
+			display = name + " (" + sessionID + ")"
+		}
+		fmt.Printf("started %s\n", display)
+		return nil
 	}
 	defer closeWithLog("egg client", ec)
 
@@ -1048,9 +1086,9 @@ func writeEggOwner(dir, userID, email string) error {
 }
 
 // spawnEggOpts holds optional parameters for spawnEgg.
-// validateAgentArgs checks caller-supplied agent arguments before any process
-// is spawned. These become argv entries verbatim, so an empty or NUL-bearing
-// argument is rejected here rather than confusing the agent's own flag parser.
+// validateAgentArgs checks untrusted caller-supplied agent arguments before any
+// process is spawned. The native SSH route has a narrower validator because a
+// shell argv may intentionally contain empty entries.
 func validateAgentArgs(args []string) error {
 	for _, arg := range args {
 		if strings.TrimSpace(arg) == "" {
@@ -1063,17 +1101,27 @@ func validateAgentArgs(args []string) error {
 	return nil
 }
 
+func validateExactAgentArgs(args []string) error {
+	for _, arg := range args {
+		if strings.IndexByte(arg, 0) >= 0 {
+			return errors.New("agent arguments cannot contain NUL bytes")
+		}
+	}
+	return nil
+}
+
 type spawnEggOpts struct {
-	ResumeSessionID       string
-	ResumeSourceSessionID string
-	ProviderReserved      bool
-	ToolNames             []string
-	ToolSocketPath        string
-	Label                 string
-	Kind                  string
-	Command               []string
-	AgentArgs             []string
-	Principal             string
+	ResumeSessionID        string
+	ResumeSourceSessionID  string
+	ProviderReserved       bool
+	ToolNames              []string
+	ToolSocketPath         string
+	Label                  string
+	Kind                   string
+	Command                []string
+	AgentArgs              []string
+	Principal              string
+	PreserveEmptyAgentArgs bool
 }
 
 func effectiveProviderSession(agentName, generatedResumeID string, agentArgs []string) (providerID string, effectiveArgs []string, generatedResume string, err error) {
@@ -1236,7 +1284,11 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	for _, arg := range o.Command {
 		args = append(args, "--command-arg="+arg)
 	}
-	if err := validateAgentArgs(o.AgentArgs); err != nil {
+	validateArgs := validateAgentArgs
+	if o.PreserveEmptyAgentArgs {
+		validateArgs = validateExactAgentArgs
+	}
+	if err := validateArgs(o.AgentArgs); err != nil {
 		return nil, err
 	}
 	providerSessionID := ""

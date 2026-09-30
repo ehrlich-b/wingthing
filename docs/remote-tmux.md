@@ -2,8 +2,8 @@
 
 > Historical framing note: the local-first direction and layer boundaries are now
 > developed in [local-first-architecture.md](local-first-architecture.md). The CLI
-> attach priority described below has begun with `wt attach`, including SSH-native
-> `wt attach <session-id> --remote <host>`.
+> attach priority described below is now available as a first-class SSH route:
+> `wt --remote <host>`, including launches, attach, and bounded session control.
 
 Session persistence from any device. That's the pitch. SSH gives you a shell. mosh gives you a roaming shell. tmux gives you persistent sessions on one machine. wingthing gives you persistent sessions accessible from anywhere - your phone, your laptop, a browser on someone else's computer.
 
@@ -45,8 +45,8 @@ in wing.yaml.
 Tunnel challenges, assertions, and tokens travel inside the application-encrypted tunnel; PTY ceremonies use fresh wing challenges on the PTY control path. The wing verifies a locally pinned public key and binds tokens to the client key and relay user. This prevents the as-built relay from minting a locked-wing token, but a compromised hosted service can still replace the browser JavaScript; see `security.md`.
 
 **Browser with no client install, or native CLI.** Open a browser when that is
-the convenient client, or use `wt attach` locally and over SSH. The browser is
-no longer the only product surface.
+the convenient client, or use the local and SSH `wt` routes. The browser is no
+longer the only product surface.
 
 **Sandboxing.** Optional per-session OS-level sandbox (seatbelt on macOS, namespaces + seccomp + cgroups on Linux). Not relevant for plain terminal access, but available when you want to constrain what a process can touch.
 
@@ -74,17 +74,55 @@ Key management is the hard part. Each browser has its own ephemeral key, so the 
 
 ### CLI client
 
-The first slice now exists: `wt attach <session-id>` reattaches locally, and
-`wt attach <session-id> --remote <ssh-host>` reattaches through ordinary SSH.
-The web terminal remains useful, but it is no longer the only reattach surface.
+The SSH route runs the remote machine's installed `wt` under the ordinary login
+user. It covers persistent launches, attach, and session inspection/control:
+
+```bash
+wt --remote work1
+wt --remote work1 --remote-cwd /home/me/work/project
+wt --remote work1 terminal --cwd /home/me/work/project --name shell
+wt --remote work1 egg codex --cwd /home/me/work/project --name review --json -- -m gpt-5.6-sol
+wt --remote work1 attach review
+wt --remote work1 session ps --json
+```
+
+The existing `wt attach <session-id> --remote <ssh-host>` spelling remains
+valid. Foreground sessions allocate an SSH TTY only when the local input and
+output are terminals. JSON and scripted session control use a non-TTY channel,
+preserving machine-readable stdout.
+
+Bare interactive entry attaches the only active session, opens a picker for
+several, or starts a persistent shell when the inventory is empty. When
+`--remote-cwd` is supplied, only sessions in that existing remote directory are
+considered. A bare noninteractive call returns the matching inventory as JSON
+and does not create a session.
 
 Next goal: converge the local, SSH, direct, P2P, and relayed clients on the same
 wing-owned attach protocol. No browser should be required, and the hosted relay
 should be an optional transport rather than the product's center of gravity.
 
-**Auth today: let SSH be SSH.** The first remote client uses normal OpenSSH
-authentication and then connects to the egg's user-private local socket on the
-remote host. It does not add a second Wingthing challenge or enrollment flow.
+**Auth today: let SSH be SSH.** The client uses normal OpenSSH authentication,
+then the remote `wt` uses that login user's paths, config, credentials, and
+user-private egg sockets. No local provider token, Wingthing state, or SSH key
+is copied to the remote host. SSH access accepts the authority of that remote OS
+principal; it does not bypass browser or organization policy because those
+surfaces are not involved.
+
+A compatible `wt` must already be installed or staged on the remote host.
+`--remote-binary` selects its exact path; the client never installs or replaces
+it.
+
+Remote `--cwd` paths must already exist. Wingthing does not clone or synchronize
+workspaces. Remote `egg.yaml` discovery and sandbox enforcement are identical to
+a local invocation on that host. `--unsandboxed` remains an explicit launch
+choice and is never added by SSH routing.
+
+The route requires a POSIX remote command shell because each argument is POSIX
+shell-quoted before OpenSSH starts the remote binary. Configure ports, bastions,
+keys, and host-key policy in OpenSSH. This route does not disable host-key
+verification. Agent launches require an explicit provider immediately after
+`egg`; provider arguments after `--` remain distinct argv entries. Doctor, MCP,
+daemon, browser, and stop commands are deliberately excluded.
 
 If a future native client attaches through the hosted relay without SSH, it will
 need its own CLI-friendly authentication. Signing a challenge through

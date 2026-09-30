@@ -7,9 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -24,8 +22,6 @@ import (
 const attachPrefix byte = 0x02 // Ctrl+B
 
 func attachCmd() *cobra.Command {
-	var remoteTarget string
-	var remoteBinary string
 	var selectFlag bool
 	var jsonFlag bool
 
@@ -47,10 +43,6 @@ func attachCmd() *cobra.Command {
 			}
 			if sessionID != "" && jsonFlag {
 				return errors.New("--json lists sessions and cannot be used with a session")
-			}
-
-			if remoteTarget != "" {
-				return runRemoteAttach(cmd.Context(), remoteTarget, remoteBinary, sessionID, selectFlag, jsonFlag)
 			}
 
 			cfg, err := config.Load()
@@ -76,8 +68,6 @@ func attachCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&remoteTarget, "remote", "r", "", "SSH host or alias that owns the session")
-	cmd.Flags().StringVar(&remoteBinary, "remote-binary", "wt", "wt executable or absolute path on the remote host")
 	cmd.Flags().BoolVarP(&selectFlag, "select", "s", false, "choose a session interactively")
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print active sessions as JSON")
 	return cmd
@@ -88,58 +78,6 @@ func validateSessionID(sessionID string) error {
 		return fmt.Errorf("invalid session ID %q", sessionID)
 	}
 	return nil
-}
-
-func validateRemoteTarget(target string) error {
-	if target == "" {
-		return errors.New("missing SSH target")
-	}
-	if strings.HasPrefix(target, "-") {
-		return errors.New("SSH target must not start with '-'")
-	}
-	if strings.ContainsAny(target, "\r\n\x00") {
-		return errors.New("SSH target contains invalid characters")
-	}
-	return nil
-}
-
-func runRemoteAttach(ctx context.Context, target, remoteBinary, sessionID string, selectSession, jsonOutput bool) error {
-	if err := validateRemoteTarget(target); err != nil {
-		return err
-	}
-	if remoteBinary == "" || strings.ContainsAny(remoteBinary, "\r\n\x00") {
-		return errors.New("invalid remote binary")
-	}
-	if sessionID != "" {
-		if err := validateSessionID(sessionID); err != nil {
-			return err
-		}
-	}
-
-	remoteCommand := shellQuote(remoteBinary) + " attach"
-	if sessionID != "" {
-		remoteCommand += " " + shellQuote(sessionID)
-	} else if selectSession {
-		remoteCommand += " --select"
-	} else if jsonOutput {
-		remoteCommand += " --json"
-	}
-
-	args := []string{"-t", target, remoteCommand}
-	ssh := exec.CommandContext(ctx, "ssh", args...)
-	ssh.Stdin = os.Stdin
-	ssh.Stdout = os.Stdout
-	ssh.Stderr = os.Stderr
-	if err := ssh.Run(); err != nil {
-		return fmt.Errorf("remote attach to %s: %w", target, err)
-	}
-	return nil
-}
-
-// shellQuote quotes one argument for the remote user's POSIX shell. OpenSSH
-// joins the remote command into a string even when the local argv is safe.
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 type attachInputFilter struct {
