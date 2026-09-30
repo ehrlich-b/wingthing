@@ -7,7 +7,7 @@ import { showReconnectBanner, hideReconnectBanner } from './dashboard.js';
 import { renderSidebar } from './render.js';
 import { loadHome } from './data.js';
 import { showHome } from './nav.js';
-import { wingDisplayName, sessionDisplayName, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
+import { wingDisplayName, formatSessionTitle, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
 import { saveTunnelAuthTokens, sendTunnelRequest } from './tunnel.js';
 import { handlePreview, setPreviewSession, discardPreview } from './preview.js';
 import { initWebRTC, completeMigration, cleanupPeer, cleanupSession, dcActive, sendViaDC } from './webrtc.js';
@@ -72,11 +72,9 @@ function showBrowserOpenToast(url, sessionId) {
 }
 
 function sessionTitle(agent, wingId, session) {
-    if (session && session.name) return sessionDisplayName(session) + ' \u00b7 ' + agent;
     var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
     var name = wing ? wingDisplayName(wing) : '';
-    if (name) return name + ' \u00b7 ' + agent;
-    return agent || '';
+    return formatSessionTitle(session, agent, name);
 }
 
 function onlineWings() {

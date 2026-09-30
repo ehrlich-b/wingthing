@@ -51,6 +51,13 @@ export function sessionDisplayName(session) {
     return projectName(session && session.cwd);
 }
 
+export function formatSessionTitle(session, agent, wingName) {
+    var resolvedAgent = agent || (session && session.agent) || '';
+    var label = session && session.name ? sessionDisplayName(session) : (wingName || '');
+    if (label && resolvedAgent) return label + ' \u00b7 ' + resolvedAgent;
+    return label || resolvedAgent;
+}
+
 export function validSessionName(name) {
     return typeof name === 'string' && /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/.test(name);
 }

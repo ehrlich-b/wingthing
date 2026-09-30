@@ -30,7 +30,7 @@
     --red: #e74c3c;
     --orange: #e67e22;
     --font: 'JetBrains Mono', monospace;
-    --sidebar-w: 188px;
+    --sidebar-w: 220px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -172,19 +172,31 @@ body {
 }
 
 .session-rename-btn {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    transform: translateY(-50%);
     border: 0;
-    background: transparent;
+    background: var(--bg-card);
     color: var(--text-muted);
     font: inherit;
     font-size: 10px;
     cursor: pointer;
-    padding: 3px 0;
+    padding: 3px 0 3px 8px;
     opacity: 0;
+    visibility: hidden;
 }
 
 .session-tab:hover .session-rename-btn,
-.session-tab:focus-within .session-rename-btn,
-.session-tab.active .session-rename-btn { opacity: 1; }
+.session-tab:focus-within .session-rename-btn {
+    opacity: 1;
+    visibility: visible;
+}
+
+.session-tab:hover .tab-label,
+.session-tab:focus-within .tab-label { padding-right: 42px; }
+
+.session-tab.renaming .session-rename-btn { display: none; }
 
 .session-rename-btn:hover { color: var(--accent); }
 

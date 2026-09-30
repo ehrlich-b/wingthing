@@ -163,8 +163,13 @@ export function handlePreview(opts) {
         return;
     }
 
-    previewSessions[previewKey()] = { payload: opts, open: true };
+    var key = previewKey();
+    var existing = previewSessions[key];
+    var shouldOpen = !existing || existing.open;
+    previewSessions[key] = { payload: opts, open: shouldOpen };
     updateToggle();
+
+    if (!shouldOpen) return;
 
     if (isOpen()) {
         // Already open — just swap content
