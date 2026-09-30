@@ -13,11 +13,15 @@ import (
 
 func toolCallCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    "tool-call [tool] [args...]",
-		Short:  "Call a privileged tool via the wing daemon",
-		Hidden: true, // called by generated shims, not directly by users
-		Args:   cobra.MinimumNArgs(1),
+		Use:                "tool-call [tool] [args...]",
+		Short:              "Call a privileged tool via the wing daemon",
+		Hidden:             true, // called by generated shims, not directly by users
+		DisableFlagParsing: true, // all arguments after the tool name belong to the native tool
+		Args:               cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+				return cmd.Help()
+			}
 			sockPath := os.Getenv("WT_TOOL_SOCKET")
 			if sockPath == "" {
 				return exitError(126, "WT_TOOL_SOCKET not set — tool-call must be run inside an egg session with tools configured")

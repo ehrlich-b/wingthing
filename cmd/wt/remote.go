@@ -44,12 +44,17 @@ func remoteProcessIO() remoteIO {
 }
 
 func executeCLI(ctx context.Context, args []string, streams remoteIO) error {
-	invocation, remote, err := parseRemoteInvocation(args, streams.stdinTTY && streams.stdoutTTY)
-	if err != nil {
-		return err
-	}
-	if remote {
-		return runRemoteInvocation(ctx, invocation, streams)
+	// tool-call is an internal transport for generated privileged-tool shims.
+	// Everything after it belongs to the native tool, including values that look
+	// like Wingthing's global remote flags.
+	if len(args) == 0 || args[0] != "tool-call" {
+		invocation, remote, err := parseRemoteInvocation(args, streams.stdinTTY && streams.stdoutTTY)
+		if err != nil {
+			return err
+		}
+		if remote {
+			return runRemoteInvocation(ctx, invocation, streams)
+		}
 	}
 	root := newRootCommand()
 	root.SetArgs(args)
