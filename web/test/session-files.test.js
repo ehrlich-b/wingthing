@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 
 import { downloadSessionFile, uploadSessionFile, validSessionFilePath } from '../src/session-files.js';
 
-test('session file paths stay inside the session directory', function() {
+test('session file paths accept relative and absolute policy-checked paths', function() {
     assert.equal(validSessionFilePath('reports/findings.md'), true);
-    assert.equal(validSessionFilePath('../secrets'), false);
-    assert.equal(validSessionFilePath('/etc/passwd'), false);
-    assert.equal(validSessionFilePath('reports/../../secrets'), false);
+    assert.equal(validSessionFilePath('/allowed/data/findings.md'), true);
+    assert.equal(validSessionFilePath('../allowed-sibling/file'), true);
+    assert.equal(validSessionFilePath(''), false);
+    assert.equal(validSessionFilePath('bad\0path'), false);
 });
 
 test('upload sends ordered bounded chunks and finishes', async function() {

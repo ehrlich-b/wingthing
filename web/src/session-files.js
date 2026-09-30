@@ -46,9 +46,7 @@ function bytesHex(bytes) {
 
 export function validSessionFilePath(path) {
     if (typeof path !== 'string' || !path.trim() || path.length > 4096) return false;
-    var normalized = path.trim().replace(/\\/g, '/');
-    if (normalized.startsWith('/') || normalized.indexOf('\0') !== -1) return false;
-    return !normalized.split('/').some(function(part) { return part === '..'; });
+    return path.indexOf('\0') === -1;
 }
 
 export async function uploadSessionFile(send, wingId, sessionId, file, onProgress, maxBytes) {
@@ -94,7 +92,7 @@ export async function uploadSessionFile(send, wingId, sessionId, file, onProgres
 }
 
 export async function downloadSessionFile(stream, wingId, sessionId, path, onProgress, maxBytes) {
-    if (!validSessionFilePath(path)) throw new Error('enter a path inside the session directory');
+    if (!validSessionFilePath(path)) throw new Error('enter a valid file path');
     maxBytes = maxBytes || MAX_SESSION_DOWNLOAD_BYTES;
     var metadata = null;
     var chunks = [];
@@ -157,7 +155,7 @@ function refreshPanel() {
     var canExport = wingCapability(wing, 'session.file_export.v1') && exportTargets.length > 0;
     DOM.sessionUploadBtn.disabled = !canUpload;
     DOM.sessionUploadNote.textContent = canUpload
-        ? 'to the session directory · up to ' + formatMiB(wingFileLimit(wing, 'upload_bytes', MAX_SESSION_UPLOAD_BYTES))
+        ? 'to an allowed writable data area · up to ' + formatMiB(wingFileLimit(wing, 'upload_bytes', MAX_SESSION_UPLOAD_BYTES))
         : 'upload is unavailable on this wing';
     DOM.sessionDownloadBtn.disabled = !canDownload;
     DOM.sessionExportSection.style.display = canExport ? '' : 'none';
@@ -212,7 +210,8 @@ export function initSessionFiles() {
                 var result = await uploadSessionFile(sendTunnelRequest, wingId, sessionId, file, function(done, total) {
                     if (total) status('uploading ' + file.name + ' - ' + Math.floor(done * 100 / total) + '%');
                 }, wingFileLimit(activeWing(), 'upload_bytes', MAX_SESSION_UPLOAD_BYTES));
-                status('added ' + result.name + ' to the session directory');
+                if (result.path) DOM.sessionFilePath.value = result.path;
+                status('added ' + result.name + ' at ' + (result.path || result.name));
             }
         } catch (error) {
             status('upload failed: ' + error.message, true);
@@ -248,7 +247,7 @@ export function initSessionFiles() {
             return;
         }
         var path = DOM.sessionFilePath.value;
-        if (!validSessionFilePath(path)) { status('enter a path inside the session directory', true); return; }
+        if (!validSessionFilePath(path)) { status('enter a valid file path', true); return; }
         this.disabled = true;
         status('copying ' + path + '...');
         try {
