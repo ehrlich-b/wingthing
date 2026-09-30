@@ -336,6 +336,7 @@ body {
 .session-action:hover:not(:disabled) {
     color: var(--accent);
     border-color: var(--accent);
+    background: rgba(233, 69, 96, 0.1);
 }
 
 .session-action[aria-pressed="true"] {
