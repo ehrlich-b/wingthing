@@ -2138,7 +2138,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
-		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, passkeyChallenges, currentPasskeyPolicy(), privKey, home, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client, peerMgr, &dcSessions)
+		handleTunnelRequest(ctx, cfg, wingCfg, req, write, &allowedKeys, passkeyCache, passkeyChallenges, currentPasskeyPolicy(), privKey, home, &wingEggMu, &wingEggCfg, auditLive.Load(), debugLive.Load(), client, peerMgr, &dcSessions, sharedHost)
 	}
 
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
@@ -3384,13 +3384,21 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		if dialErr != nil {
 			continue
 		}
+		statusCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+		status, statusErr := ec.Status(statusCtx)
+		cancel()
 		closeWithLog("egg health-check client", ec)
+		if statusErr != nil {
+			continue
+		}
 
 		agent, sessionCWD := readEggMeta(dir)
 		info := ws.SessionInfo{
 			SessionID: sessionID,
+			Name:      readSessionName(dir),
 			Agent:     agent,
 			CWD:       sessionCWD,
+			EggConfig: status.RenderedConfig,
 			UserID:    readEggOwner(dir),
 			Email:     readEggOwnerEmail(dir),
 		}
@@ -4273,6 +4281,18 @@ authDone:
 	// Spawn a per-session egg
 	hostHome, _ := os.UserHomeDir()
 	sharedAllowedPaths := canonicalPaths(pathsForRequest(wingCfg.Paths, start.Email, start.OrgRole, hostHome))
+	providerResumeID := ""
+	var releaseProviderResume func(bool)
+	providerResumeSpawned := false
+	if start.ResumeSessionID != "" {
+		var resumeErr error
+		providerResumeID, start.CWD, releaseProviderResume, resumeErr = prepareBrowserResume(cfg, wingCfg, start, sharedAllowedPaths, sharedHost)
+		if resumeErr != nil {
+			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeErr.Error()})
+			return
+		}
+		defer func() { releaseProviderResume(providerResumeSpawned) }()
+	}
 	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace, EggIdentity{
 		UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName,
 		OrgWing: wingCfg.Org != "", SharedHost: sharedHost,
@@ -4281,7 +4301,7 @@ authDone:
 		// and read the host home, wing.yaml keys, and other users' agent homes.
 		SealedFS:     sharedHost,
 		AllowedPaths: sharedAllowedPaths,
-	}, idleTimeout, spawnEggOpts{ToolNames: toolNames, ToolSocketPath: toolSocketPath})
+	}, idleTimeout, spawnEggOpts{ResumeSessionID: providerResumeID, ToolNames: toolNames, ToolSocketPath: toolSocketPath})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := readEggCrashInfo(eggDir)
@@ -4296,6 +4316,7 @@ authDone:
 		return
 	}
 	defer closeWithLog("PTY egg client", ec)
+	providerResumeSpawned = providerResumeID != ""
 
 	log.Printf("pty session %s: spawned (user=%s agent=%s)", start.SessionID, start.UserID, start.Agent)
 
@@ -4312,12 +4333,13 @@ authDone:
 
 	// Notify browser
 	writePTYMessage(write, ws.PTYStarted{
-		Type:      ws.TypePTYStarted,
-		SessionID: start.SessionID,
-		Agent:     start.Agent,
-		PublicKey: wingPubKeyB64,
-		CWD:       start.CWD,
-		AuthToken: start.AuthToken,
+		Type:                 ws.TypePTYStarted,
+		SessionID:            start.SessionID,
+		Agent:                start.Agent,
+		PublicKey:            wingPubKeyB64,
+		CWD:                  start.CWD,
+		AuthToken:            start.AuthToken,
+		ResumedFromSessionID: start.ResumeSessionID,
 	})
 
 	// Attach to egg session stream
@@ -4778,6 +4800,11 @@ type tunnelInner struct {
 	Type        string `json:"type"`
 	Path        string `json:"path,omitempty"`
 	SessionID   string `json:"session_id,omitempty"`
+	UploadID    string `json:"upload_id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	Data        string `json:"data,omitempty"`
+	Target      string `json:"target,omitempty"`
 	Kind        string `json:"kind,omitempty"`
 	YAML        string `json:"yaml,omitempty"`
 	Offset      int    `json:"offset,omitempty"`
@@ -4942,13 +4969,16 @@ func verifySubjectPasskey(allowedKeys []config.AllowKey, userID string, challeng
 
 // pastSessionInfo is the local version of PastSessionInfo for tunnel responses.
 type pastSessionInfo struct {
-	SessionID string `json:"session_id"`
-	Agent     string `json:"agent"`
-	CWD       string `json:"cwd,omitempty"`
-	StartedAt int64  `json:"started_at,omitempty"`
-	Audit     bool   `json:"audit,omitempty"`
-	Chat      bool   `json:"chat,omitempty"`
-	UserID    string `json:"user_id,omitempty"`
+	SessionID               string `json:"session_id"`
+	Name                    string `json:"name,omitempty"`
+	Agent                   string `json:"agent"`
+	CWD                     string `json:"cwd,omitempty"`
+	StartedAt               int64  `json:"started_at,omitempty"`
+	Audit                   bool   `json:"audit,omitempty"`
+	Chat                    bool   `json:"chat,omitempty"`
+	UserID                  string `json:"user_id,omitempty"`
+	Resumable               bool   `json:"resumable,omitempty"`
+	ResumeUnavailableReason string `json:"resume_unavailable_reason,omitempty"`
 }
 
 // tunnelRespond encrypts a JSON response and sends it as a tunnel.res message.
@@ -5070,7 +5100,8 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyChallenges *auth.ChallengeCache,
 	passkeyPolicy auth.PasskeyPolicy, privKey *ecdh.PrivateKey, home string,
 	wingEggMu *sync.Mutex, wingEggCfg **egg.EggConfig, audit, debug bool, client *ws.Client,
-	peerMgr *webrtcpkg.PeerManager, dcSessions *sync.Map) {
+	peerMgr *webrtcpkg.PeerManager, dcSessions *sync.Map, sharedHostArg ...bool) {
+	sharedHost := len(sharedHostArg) > 0 && sharedHostArg[0]
 
 	// Tunnel callbacks run concurrently and some operations stream or perform
 	// network/process work for an arbitrary amount of time. Admit each request
@@ -5231,6 +5262,20 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			"spectate":      wingCfg.Spectate,
 			"allowed_count": len(wingCfg.AllowKeys),
 			"hosted_relay":  wingCfg.EffectiveHostedRelay(),
+			"file_limits": map[string]int64{
+				"upload_bytes":   maxSessionUploadSize,
+				"download_bytes": maxSessionDownloadSize,
+				"export_bytes":   maxSessionDownloadSize,
+			},
+		}
+		visibleExports := wingCfg.ExportsForUser(req.SenderEmail, req.SenderOrgRole)
+		resp["capabilities"] = browserSessionCapabilities(len(visibleExports) > 0)
+		if len(visibleExports) > 0 {
+			exports := make([]map[string]string, 0, len(visibleExports))
+			for _, target := range visibleExports {
+				exports = append(exports, map[string]string{"name": target.Name, "type": "folder"})
+			}
+			resp["exports"] = exports
 		}
 		if wingCfg.Label != "" {
 			resp["wing_label"] = wingCfg.Label
@@ -5308,6 +5353,142 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		sessions, total := paginateSessionsHistory(sessions, inner.Offset, inner.Limit)
 		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions, "total": total}, write)
+
+	case "sessions.rename":
+		if err := validateSessionName(inner.Name); err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		userPaths := canonicalPaths(pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
+		if _, err := resolveOwnedActiveSession(req, inner.SessionID, listAliveEggSessions(cfg), userPaths); err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "session not found or not owned by caller"}, write)
+			return
+		}
+		if err := ensureSessionNameAvailable(cfg, inner.Name, inner.SessionID); err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		if err := writeSessionName(filepath.Join(cfg.Dir, "eggs", inner.SessionID), inner.Name); err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		tunnelRespond(gcm, req.RequestID, map[string]any{"ok": true, "name": inner.Name}, write)
+
+	case "file.upload.begin":
+		userPaths := canonicalPaths(pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
+		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
+		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		upload, err := sessionUploads.begin(session, policy, userPaths, req, inner.Name, inner.Size)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		tunnelRespond(gcm, req.RequestID, map[string]any{"upload_id": upload.id, "chunk_size": maxSessionUploadChunk, "path": filepath.Join(upload.destination, upload.name)}, write)
+
+	case "file.upload.chunk":
+		chunk, err := base64.StdEncoding.DecodeString(inner.Data)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid upload chunk"}, write)
+			return
+		}
+		received, err := sessionUploads.append(inner.UploadID, req.SenderUserID, req.SenderPub, int64(inner.Offset), chunk)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		tunnelRespond(gcm, req.RequestID, map[string]int64{"received": received}, write)
+
+	case "file.upload.finish":
+		upload, err := sessionUploads.finish(inner.UploadID, req.SenderUserID, req.SenderPub)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		defer func() { _ = upload.root.Close() }()
+		userPaths := canonicalPaths(pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
+		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
+		session, policy, err := resolveOwnedSessionFileTarget(req, upload.sessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload policy changed"}, write)
+			return
+		}
+		destination, err := policy.uploadDirectory(userPaths)
+		if err != nil || session.SessionID != upload.sessionID || destination != upload.destination {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload destination changed"}, write)
+			return
+		}
+		sha, size, err := writeSessionFileRoot(upload.root, upload.name, bytes.NewReader(upload.data))
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		path := filepath.Join(upload.destination, upload.name)
+		log.Printf("session upload complete (user=%s session=%s path=%q size=%d)", req.SenderUserID, upload.sessionID, path, size)
+		tunnelRespond(gcm, req.RequestID, map[string]any{"name": upload.name, "path": path, "size": size, "sha256": sha}, write)
+
+	case "file.upload.cancel":
+		if err := sessionUploads.cancel(inner.UploadID, req.SenderUserID, req.SenderPub); err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		tunnelRespond(gcm, req.RequestID, map[string]any{"ok": true}, write)
+
+	case "file.download":
+		userPaths := canonicalPaths(pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
+		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
+		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
+		if err != nil {
+			_ = streamSessionFileError(gcm, req.RequestID, err.Error(), write)
+			return
+		}
+		file, path, info, err := openSessionFile(session, policy, userPaths, inner.Path)
+		if err != nil {
+			_ = streamSessionFileError(gcm, req.RequestID, err.Error(), write)
+			return
+		}
+		defer closeWithLog("session download", file)
+		if err := streamSessionFile(ctx, file, path, info, gcm, req.RequestID, write); err != nil {
+			log.Printf("session download failed (user=%s session=%s): %v", req.SenderUserID, inner.SessionID, err)
+			_ = streamSessionFileError(gcm, req.RequestID, err.Error(), write)
+		}
+
+	case "file.export":
+		userPaths := canonicalPaths(pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
+		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
+		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		var exportTarget *config.ExportTarget
+		for _, candidate := range wingCfg.ExportsForUser(req.SenderEmail, req.SenderOrgRole) {
+			if candidate.Name == inner.Target {
+				copy := candidate
+				exportTarget = &copy
+				break
+			}
+		}
+		if exportTarget == nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "export destination is unavailable for this user"}, write)
+			return
+		}
+		file, _, info, err := openSessionFile(session, policy, userPaths, inner.Path)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		defer closeWithLog("session export source", file)
+		sha, size, err := exportSessionFile(file, info, *exportTarget, req.SenderUserID)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			return
+		}
+		log.Printf("session export complete (user=%s session=%s target=%s name=%q size=%d)", req.SenderUserID, inner.SessionID, exportTarget.Name, info.Name(), size)
+		tunnelRespond(gcm, req.RequestID, map[string]any{"ok": true, "target": exportTarget.Name, "name": info.Name(), "size": size, "sha256": sha}, write)
 
 	case "audit.request":
 		if inner.SessionID != "" && isMemberFiltered(req) {
@@ -5781,15 +5962,20 @@ func collectSessionsHistory(cfg *config.Config) []pastSessionInfo {
 
 		info := pastSessionInfo{
 			SessionID: sessionID,
+			Name:      readSessionName(dir),
 			Agent:     agentName,
 			CWD:       cwd,
 			Audit:     hasAudit,
 			Chat:      hasChat,
 			UserID:    readEggOwner(dir),
 		}
-		if stat, err := os.Stat(dir); err == nil {
+		meta := readEggMetaValues(dir)
+		if startedAt, parseErr := strconv.ParseInt(meta["started_at"], 10, 64); parseErr == nil && startedAt > 0 {
+			info.StartedAt = startedAt
+		} else if stat, statErr := os.Stat(dir); statErr == nil {
 			info.StartedAt = stat.ModTime().Unix()
 		}
+		info.Resumable, info.ResumeUnavailableReason = sessionResumeStatus(dir, agentName, cwd)
 		dead = append(dead, info)
 	}
 

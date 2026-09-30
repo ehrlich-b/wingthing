@@ -292,6 +292,63 @@ func TestPathsForUser(t *testing.T) {
 	}
 }
 
+func TestExportTargetsRequireExplicitMemberAndAbsoluteUniquePath(t *testing.T) {
+	dir := t.TempDir()
+	exportRoot := t.TempDir()
+	body := "exports:\n  - name: isolated\n    path: " + exportRoot + "\n    members: [support@example.com]\n"
+	if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadWingConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ExportsForUser("SUPPORT@example.com", "member"); len(got) != 1 || got[0].Name != "isolated" {
+		t.Fatalf("visible exports = %#v", got)
+	}
+	if got := cfg.ExportsForUser("other@example.com", "owner"); len(got) != 0 {
+		t.Fatalf("owner bypassed export allowlist: %#v", got)
+	}
+
+	for name, invalid := range map[string]string{
+		"relative path":  "exports:\n  - name: isolated\n    path: relative\n    members: [support@example.com]\n",
+		"empty members":  "exports:\n  - name: isolated\n    path: " + exportRoot + "\n",
+		"duplicate name": "exports:\n  - name: isolated\n    path: " + exportRoot + "\n    members: [a@example.com]\n  - name: isolated\n    path: " + filepath.Join(dir, "other") + "\n    members: [b@example.com]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			caseDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(caseDir, "wing.yaml"), []byte(invalid), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadWingConfig(caseDir); err == nil {
+				t.Fatal("invalid export config was accepted")
+			}
+		})
+	}
+}
+
+func TestExportTargetMustBeOutsideStateAndConfiguredWorkspaces(t *testing.T) {
+	workspace := t.TempDir()
+	for name, target := range map[string]string{
+		"wing state": "STATE_EXPORT",
+		"workspace":  filepath.Join(workspace, "exports"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if target == "STATE_EXPORT" {
+				target = filepath.Join(dir, "exports")
+			}
+			body := "paths:\n  - " + workspace + "\nexports:\n  - name: isolated\n    path: " + target + "\n    members: [support@example.com]\n"
+			if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadWingConfig(dir); err == nil {
+				t.Fatal("overlapping export target was accepted")
+			}
+		})
+	}
+}
+
 func TestPathListLegacyStringOnly(t *testing.T) {
 	input := `
 paths:
@@ -374,6 +431,7 @@ func TestWingConfigCloneIsDeep(t *testing.T) {
 		Labels:    []string{"one"},
 		AllowKeys: []AllowKey{{UserID: "user-one"}},
 		Admins:    []string{"admin@example.com"},
+		Exports:   []ExportTarget{{Name: "isolated", Path: "/exports", Members: []string{"member@example.com"}}},
 		Paths:     PathList{{Path: "/work", Members: []string{"member@example.com"}}},
 		ICEServers: []ICEServer{{
 			URLs: []string{"stun:one.example"},
@@ -387,6 +445,7 @@ func TestWingConfigCloneIsDeep(t *testing.T) {
 	clone.Labels[0] = "two"
 	clone.AllowKeys[0].UserID = "user-two"
 	clone.Admins[0] = "other@example.com"
+	clone.Exports[0].Members[0] = "other@example.com"
 	clone.Paths[0].Members[0] = "other@example.com"
 	clone.ICEServers[0].URLs[0] = "stun:two.example"
 	clone.DirectMCP.AllowGrants[0] = "terminal.start"
@@ -394,7 +453,7 @@ func TestWingConfigCloneIsDeep(t *testing.T) {
 	clone.MCP.Roles["member"].Members[0] = "other@example.com"
 
 	if original.Labels[0] != "one" || original.AllowKeys[0].UserID != "user-one" ||
-		original.Admins[0] != "admin@example.com" || original.Paths[0].Members[0] != "member@example.com" ||
+		original.Admins[0] != "admin@example.com" || original.Exports[0].Members[0] != "member@example.com" || original.Paths[0].Members[0] != "member@example.com" ||
 		original.ICEServers[0].URLs[0] != "stun:one.example" || original.DirectMCP.AllowGrants[0] != "terminal.read" ||
 		original.MCP.Roles["member"].Allow[0] != "read" || original.MCP.Roles["member"].Members[0] != "member@example.com" {
 		t.Fatalf("clone mutation changed original: %#v", original)

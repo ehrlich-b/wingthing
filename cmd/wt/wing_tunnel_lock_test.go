@@ -194,3 +194,48 @@ func TestTunnelRejectsMissingCoordinatorIdentity(t *testing.T) {
 		t.Fatalf("anonymous tunnel response = %s", plaintext)
 	}
 }
+
+func TestFileDownloadOwnerDenialUsesTerminalStreamError(t *testing.T) {
+	serverKey, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderKey, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderPublic := base64.StdEncoding.EncodeToString(senderKey.PublicKey().Bytes())
+	senderGCM, err := auth.DeriveSharedKey(senderKey, base64.StdEncoding.EncodeToString(serverKey.PublicKey().Bytes()), "wt-tunnel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := auth.Encrypt(senderGCM, []byte(`{"type":"file.download","session_id":"missing-session","path":"result.txt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := []config.AllowKey(nil)
+	wingCfg := &config.WingConfig{Paths: config.PathList{{Path: t.TempDir()}}}
+	wingEggCfg := &egg.EggConfig{}
+	var wingEggMu sync.Mutex
+	var response ws.TunnelStream
+	handleTunnelRequest(context.Background(), &config.Config{Dir: t.TempDir()}, wingCfg, ws.TunnelRequest{
+		RequestID: "download-denied", SenderPub: senderPublic, SenderUserID: "alice", SenderEmail: "alice@example.com", SenderOrgRole: "member", Payload: payload,
+	}, func(message any) error {
+		var ok bool
+		response, ok = message.(ws.TunnelStream)
+		if !ok {
+			t.Fatalf("response type = %T, want ws.TunnelStream", message)
+		}
+		return nil
+	}, &allowed, auth.NewAuthCache(), auth.NewChallengeCache(), auth.PasskeyPolicy{}, serverKey, t.TempDir(), &wingEggMu, &wingEggCfg, false, false, &ws.Client{}, nil, &sync.Map{})
+	if !response.Done || response.RequestID != "download-denied" {
+		t.Fatalf("stream response = %#v", response)
+	}
+	plaintext, err := auth.Decrypt(senderGCM, response.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(plaintext), "session not found or not owned by caller") {
+		t.Fatalf("download denial = %s", plaintext)
+	}
+}

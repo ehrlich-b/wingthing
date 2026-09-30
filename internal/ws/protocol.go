@@ -201,17 +201,19 @@ type PTYStart struct {
 	DisplayName         string   `json:"display_name,omitempty"`          // relay-injected display name (Google full name, GitHub login)
 	OrgRole             string   `json:"org_role,omitempty"`              // relay-injected: "owner", "admin", "member", ""
 	Passkeys            []string `json:"passkeys,omitempty"`              // relay-injected: base64 raw P-256 public keys
+	ResumeSessionID     string   `json:"resume_session_id,omitempty"`     // prior Wingthing session to resume provider-natively
 }
 
 // PTYStarted confirms the PTY session is running.
 type PTYStarted struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Agent     string `json:"agent"`
-	PublicKey string `json:"public_key,omitempty"` // wing's X25519 (base64)
-	CWD       string `json:"cwd,omitempty"`        // resolved working directory
-	AuthToken string `json:"auth_token,omitempty"` // passkey auth token
-	ViewerID  string `json:"viewer_id,omitempty"`  // spectator viewer ID (relay-assigned)
+	Type                 string `json:"type"`
+	SessionID            string `json:"session_id"`
+	Agent                string `json:"agent"`
+	PublicKey            string `json:"public_key,omitempty"`              // wing's X25519 (base64)
+	CWD                  string `json:"cwd,omitempty"`                     // resolved working directory
+	AuthToken            string `json:"auth_token,omitempty"`              // passkey auth token
+	ViewerID             string `json:"viewer_id,omitempty"`               // spectator viewer ID (relay-assigned)
+	ResumedFromSessionID string `json:"resumed_from_session_id,omitempty"` // exact Wingthing source session selected
 }
 
 // PasskeyChallenge is sent from wing to browser requesting passkey verification.
@@ -351,9 +353,10 @@ type SessionAttention struct {
 // SessionInfo describes one active session on a wing (used in tunnel sessions.list responses).
 type SessionInfo struct {
 	SessionID      string `json:"session_id"`
+	Name           string `json:"name,omitempty"`
 	Agent          string `json:"agent"`
 	CWD            string `json:"cwd,omitempty"`
-	EggConfig      string `json:"egg_config,omitempty"` // YAML config snapshot
+	EggConfig      string `json:"-"` // server-only effective YAML config snapshot
 	NeedsAttention bool   `json:"needs_attention,omitempty"`
 	Audit          bool   `json:"audit,omitempty"` // true if session has audit recording
 	Chat           bool   `json:"chat,omitempty"`  // true if session has chat history

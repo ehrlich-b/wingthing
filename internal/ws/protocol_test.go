@@ -34,6 +34,42 @@ func TestEnvelopeRouting(t *testing.T) {
 	}
 }
 
+func TestProviderResumeWireFieldsAreAdditiveAndExplicit(t *testing.T) {
+	start := PTYStart{Type: TypePTYStart, SessionID: "new-session", Agent: "claude", ResumeSessionID: "old-session"}
+	data, err := json.Marshal(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded PTYStart
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ResumeSessionID != "old-session" {
+		t.Fatalf("resume session = %q", decoded.ResumeSessionID)
+	}
+	var oldRelay struct {
+		Type      string `json:"type"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(data, &oldRelay); err != nil {
+		t.Fatalf("old relay rejected additive field: %v", err)
+	}
+	ack, err := json.Marshal(PTYStarted{Type: TypePTYStarted, SessionID: "new-session", ResumedFromSessionID: "old-session"})
+	if err != nil || !strings.Contains(string(ack), `"resumed_from_session_id":"old-session"`) {
+		t.Fatalf("resume ack = %s err=%v", ack, err)
+	}
+}
+
+func TestSessionInfoDoesNotExposeEffectiveEggConfig(t *testing.T) {
+	data, err := json.Marshal(SessionInfo{SessionID: "session-1", Agent: "claude", EggConfig: "fs:\n  - deny:/\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "egg_config") || strings.Contains(string(data), "deny:/") {
+		t.Fatalf("session info exposed effective policy: %s", data)
+	}
+}
+
 func TestTunnelPurposeIsBoundToInnerType(t *testing.T) {
 	for innerType, want := range map[string]string{
 		"webrtc.offer":        TunnelPurposeSignal,

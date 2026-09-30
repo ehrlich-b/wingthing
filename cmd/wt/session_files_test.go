@@ -1,0 +1,244 @@
+package main
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/ws"
+)
+
+func filePolicyFixture(t *testing.T) (ws.SessionInfo, sessionFilePolicy, []string, string) {
+	t.Helper()
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	data := filepath.Join(root, "support-data")
+	if err := os.MkdirAll(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rendered := fmt.Sprintf("fs:\n  - deny:/\n  - ro:%s\n  - rw:%s\n  - deny-write:%s\n", repo, data, filepath.Join(data, "protected.txt"))
+	session := ws.SessionInfo{SessionID: "session-1", UserID: "alice", CWD: repo, EggConfig: rendered}
+	policy, err := loadSessionFilePolicy(session, filepath.Join(root, "home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session, policy, []string{repo, data}, data
+}
+
+func TestBrowserSessionCapabilitiesGateExportExplicitly(t *testing.T) {
+	withoutExport := strings.Join(browserSessionCapabilities(false), ",")
+	for _, capability := range []string{capabilitySessionRename, capabilitySessionUpload, capabilitySessionDownload, capabilitySessionResume} {
+		if !strings.Contains(withoutExport, capability) {
+			t.Fatalf("missing capability %q from %q", capability, withoutExport)
+		}
+	}
+	if strings.Contains(withoutExport, capabilitySessionExport) {
+		t.Fatal("export capability advertised without a destination")
+	}
+	withExport := browserSessionCapabilities(true)
+	if withExport[len(withExport)-1] != capabilitySessionExport {
+		t.Fatalf("export capability list = %v", withExport)
+	}
+}
+
+func TestSessionFilePolicyUsesWritableDataAreaAndHonorsEffectiveDeny(t *testing.T) {
+	_, policy, userPaths, data := filePolicyFixture(t)
+	destination, err := policy.uploadDirectory(userPaths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destination != canonicalSessionPath(data) {
+		t.Fatalf("destination = %q, want %q", destination, canonicalSessionPath(data))
+	}
+	if _, ok := policy.writableRoot(filepath.Join(data, "result.txt")); !ok {
+		t.Fatalf("writable data file was denied: policy=%#v path=%q", policy, canonicalPolicyPath(filepath.Join(data, "result.txt")))
+	}
+	if _, ok := policy.writableRoot(filepath.Join(data, "protected.txt")); ok {
+		t.Fatal("deny-write file was writable")
+	}
+	if _, ok := policy.writableRoot(filepath.Join(userPaths[0], "source.go")); ok {
+		t.Fatal("read-only cwd was writable")
+	}
+}
+
+func TestResolveOwnedSessionFileTargetRequiresOwnerPathAndEffectiveConfig(t *testing.T) {
+	session, _, userPaths, _ := filePolicyFixture(t)
+	req := ws.TunnelRequest{SenderUserID: "alice"}
+	if _, _, err := resolveOwnedSessionFileTarget(req, session.SessionID, []ws.SessionInfo{session}, userPaths, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	for name, test := range map[string]struct {
+		req     ws.TunnelRequest
+		paths   []string
+		session ws.SessionInfo
+	}{
+		"other owner":              {req: ws.TunnelRequest{SenderUserID: "bob"}, paths: userPaths, session: session},
+		"other administrator":      {req: ws.TunnelRequest{SenderUserID: "admin", SenderOrgRole: "admin"}, paths: userPaths, session: session},
+		"revoked path":             {req: req, paths: []string{t.TempDir()}, session: session},
+		"missing effective config": {req: req, paths: userPaths, session: func() ws.SessionInfo { copy := session; copy.EggConfig = ""; return copy }()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := resolveOwnedSessionFileTarget(test.req, test.session.SessionID, []ws.SessionInfo{test.session}, test.paths, t.TempDir()); err == nil {
+				t.Fatal("access unexpectedly allowed")
+			}
+		})
+	}
+}
+
+func TestSessionUploadIsBoundPrivateAndNoClobber(t *testing.T) {
+	session, policy, userPaths, dataDir := filePolicyFixture(t)
+	registry := newSessionUploadRegistry()
+	req := ws.TunnelRequest{SenderUserID: "alice", SenderPub: "browser-key"}
+	upload, err := registry.begin(session, policy, userPaths, req, "evidence.bin", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.append(upload.id, "bob", req.SenderPub, 0, []byte("no")); err == nil {
+		t.Fatal("different owner appended")
+	}
+	if _, err := registry.append(upload.id, req.SenderUserID, "other-browser", 0, []byte("no")); err == nil {
+		t.Fatal("different browser appended")
+	}
+	if _, err := registry.append(upload.id, req.SenderUserID, req.SenderPub, 0, []byte("data")); err != nil {
+		t.Fatal(err)
+	}
+	finished, err := registry.finish(upload.id, req.SenderUserID, req.SenderPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = finished.root.Close() }()
+	if _, _, err := writeSessionFileRoot(finished.root, finished.name, bytes.NewReader(finished.data)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dataDir, "evidence.bin")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %o", info.Mode().Perm())
+	}
+	if _, _, err := writeSessionFileRoot(finished.root, finished.name, strings.NewReader("replace")); err == nil {
+		t.Fatal("existing file overwritten")
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "data" {
+		t.Fatalf("file changed: %q", got)
+	}
+}
+
+func TestWriteSessionFileRootDoesNotCommitPastTransferLimit(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	reader := &boundedSessionFileReader{reader: strings.NewReader("four"), remaining: 3}
+	if _, _, err := writeSessionFileRoot(root, "too-large.txt", reader); !errors.Is(err, errSessionFileTooLarge) {
+		t.Fatalf("limit error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "too-large.txt")); !os.IsNotExist(err) {
+		t.Fatalf("oversized file was committed: %v", err)
+	}
+}
+
+func TestOpenSessionFileRejectsTraversalSymlinkNonRegularAndOversize(t *testing.T) {
+	session, policy, userPaths, dataDir := filePolicyFixture(t)
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dataDir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := openSessionFile(session, policy, userPaths, filepath.Join(dataDir, "escape")); err == nil {
+		t.Fatal("symlink escape opened")
+	}
+	if err := os.Mkdir(filepath.Join(dataDir, "directory"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := openSessionFile(session, policy, userPaths, filepath.Join(dataDir, "directory")); err == nil {
+		t.Fatal("directory opened")
+	}
+	large := filepath.Join(dataDir, "large.bin")
+	file, err := os.Create(large)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxSessionDownloadSize + 1); err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+	if _, _, _, err := openSessionFile(session, policy, userPaths, large); err == nil {
+		t.Fatal("oversized file opened")
+	}
+	if _, _, _, err := openSessionFile(session, policy, userPaths, "../outside"); err == nil {
+		t.Fatal("traversal opened")
+	}
+}
+
+func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(t.TempDir(), "report.txt")
+	if err := os.WriteFile(sourcePath, []byte("answer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	export := func(owner string) error {
+		source, err := os.Open(sourcePath)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = source.Close() }()
+		info, _ := source.Stat()
+		_, _, err = exportSessionFile(source, info, config.ExportTarget{Name: "isolated", Path: root, Members: []string{"support@example.com"}}, owner)
+		return err
+	}
+	if err := export("alice"); err != nil {
+		t.Fatal(err)
+	}
+	if err := export("bob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := export("alice"); err == nil {
+		t.Fatal("same owner overwrote export")
+	}
+	for _, owner := range []string{"alice", "bob"} {
+		got, err := os.ReadFile(filepath.Join(root, userHash(owner), "report.txt"))
+		if err != nil || string(got) != "answer" {
+			t.Fatalf("owner %s export = %q err=%v", owner, got, err)
+		}
+	}
+	symlink := filepath.Join(t.TempDir(), "export-link")
+	if err := os.Symlink(root, symlink); err != nil {
+		t.Fatal(err)
+	}
+	source, _ := os.Open(sourcePath)
+	defer func() { _ = source.Close() }()
+	info, _ := source.Stat()
+	if _, _, err := exportSessionFile(source, info, config.ExportTarget{Name: "bad", Path: symlink, Members: []string{"support@example.com"}}, "carol"); err == nil {
+		t.Fatal("symlink export root accepted")
+	}
+	maliciousRoot := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(maliciousRoot, userHash("carol"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := exportSessionFile(source, info, config.ExportTarget{Name: "bad-owner", Path: maliciousRoot, Members: []string{"support@example.com"}}, "carol"); err == nil {
+		t.Fatal("symlink owner export directory accepted")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "report.txt")); !os.IsNotExist(err) {
+		t.Fatalf("export escaped through owner symlink: %v", err)
+	}
+}

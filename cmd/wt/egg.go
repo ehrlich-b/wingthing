@@ -932,6 +932,14 @@ type EggIdentity struct {
 	SealedFS     bool     // replace caller filesystem rules with the shared-host allowlist jail
 }
 
+func effectiveSessionHome(cfg *config.Config, identity EggIdentity) string {
+	home, _ := os.UserHomeDir()
+	if identity.UserID != "" && (identity.OrgWing || identity.SharedHost) {
+		return filepath.Join(cfg.Dir, "user-homes", userHash(identity.UserID))
+	}
+	return home
+}
+
 // sanitizeEnvValue strips characters that could cause shell injection.
 // Allows alphanumeric, spaces, hyphens, underscores, dots, and @.
 func sanitizeEnvValue(s string) string {
@@ -1156,10 +1164,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// Compute the effective home before expanding FS policy. Besides ~ rules,
 	// this lets the policy mask a live SSH agent socket when ~/.ssh is denied.
 	realHome, _ := os.UserHomeDir()
-	effectiveHome := realHome
-	if isolatedUser {
-		effectiveHome = filepath.Join(cfg.Dir, "user-homes", userHash(identity.UserID))
-	}
+	effectiveHome := effectiveSessionHome(cfg, identity)
 	for _, entry := range eggCfg.FS {
 		// Resolve relative paths in fs entries
 		mode, path, ok := strings.Cut(entry, ":")
