@@ -569,6 +569,7 @@ try {
 
     try {
       const tab = p.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"]`);
+      await tab.hover();
       await tab.locator('.session-rename-btn').click();
       await tab.locator('.session-name-input').fill('support-night-review');
       await tab.locator('.session-name-input').press('Enter');
