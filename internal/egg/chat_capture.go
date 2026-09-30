@@ -19,6 +19,9 @@ func CaptureSessionHistory(agent, cwd, eggDir, home string, startedAfter time.Ti
 	if profile.SessionDir == "" {
 		return nil
 	}
+	if agent == "claude" && len(exactSessionID) > 0 && exactSessionID[0] == "" {
+		return errors.New("exact Claude provider session ID is required for capture")
+	}
 
 	requestedID := ""
 	if len(exactSessionID) > 0 {

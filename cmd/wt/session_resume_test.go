@@ -204,8 +204,39 @@ func TestEffectiveProviderSessionPinsFreshClaudeAndPreservesExplicitFlags(t *tes
 	if providerID != "caller-resume" || generatedResume != "" || strings.Join(args, "\x00") != "--resume\x00caller-resume\x00--model\x00opus" {
 		t.Fatalf("explicit resume was duplicated or changed: id %q args %#v resume %q", providerID, args, generatedResume)
 	}
-	if _, _, _, err := effectiveProviderSession("claude", "", []string{"--resume", "--model", "opus"}); err == nil {
-		t.Fatal("unverifiable bare resume was accepted")
+	for name, test := range map[string]struct {
+		args            []string
+		wantProviderID  string
+		wantGeneratedID string
+	}{
+		"continue long":       {args: []string{"--continue", "--model", "opus"}},
+		"continue short":      {args: []string{"-c"}},
+		"resume picker long":  {args: []string{"--resume", "--model", "opus"}},
+		"resume picker short": {args: []string{"-r"}},
+		"resume short exact":  {args: []string{"-r", "short-id"}, wantProviderID: "short-id"},
+		"fork fresh":          {args: []string{"--fork-session"}},
+		"fork resumed":        {args: []string{"--resume", "source-id", "--fork-session"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gotProviderID, gotArgs, gotGeneratedID, err := effectiveProviderSession("claude", "", test.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotProviderID != test.wantProviderID || gotGeneratedID != test.wantGeneratedID || strings.Join(gotArgs, "\x00") != strings.Join(test.args, "\x00") {
+				t.Fatalf("native argv changed: provider %q args %#v generated %q", gotProviderID, gotArgs, gotGeneratedID)
+			}
+		})
+	}
+
+	providerID, args, generatedResume, err = effectiveProviderSession("claude", "restored-id", []string{"--fork-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerID != "" || generatedResume != "restored-id" || strings.Join(args, "\x00") != "--fork-session" {
+		t.Fatalf("generated resume fork changed: provider %q args %#v generated %q", providerID, args, generatedResume)
+	}
+	if _, _, _, err := effectiveProviderSession("claude", "", []string{"--session-id", "--model", "opus"}); err == nil {
+		t.Fatal("bare session ID flag was accepted")
 	}
 }
 

@@ -2,6 +2,7 @@ package egg
 
 import (
 	"compress/gzip"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -239,6 +240,25 @@ func TestCaptureSessionHistory_Claude_ExactIDDoesNotSelectNewerConversation(t *t
 	}
 	if got := ParseChatMeta(string(metaData))["agent_session_id"]; got != "ours" {
 		t.Fatalf("captured provider ID = %q, want ours", got)
+	}
+}
+
+func TestCaptureSessionHistory_Claude_ExplicitUnverifiedIDDoesNotGuess(t *testing.T) {
+	home := t.TempDir()
+	eggDir := t.TempDir()
+	cwd := "/workspace/project"
+	projectDir := filepath.Join(home, ".claude", "projects", encodeCWDForClaude(cwd))
+	if err := os.MkdirAll(projectDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "someone-else.jsonl"), []byte("private\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CaptureSessionHistory("claude", cwd, eggDir, home, time.Time{}, ""); err == nil {
+		t.Fatal("unverified provider capture guessed a transcript")
+	}
+	if _, err := os.Stat(filepath.Join(eggDir, "chat.jsonl.gz")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unverified capture wrote history: %v", err)
 	}
 }
 

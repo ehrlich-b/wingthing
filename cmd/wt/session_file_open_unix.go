@@ -42,6 +42,11 @@ func openSessionFileNoFollow(root, relative string) (*os.File, error) {
 		flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
 		if index < len(parts)-1 {
 			flags |= unix.O_DIRECTORY
+		} else {
+			// A blocking open of a FIFO waits for a writer before the caller
+			// can reject it as non-regular. Open the leaf nonblocking, verify
+			// its type, then restore ordinary blocking I/O for regular files.
+			flags |= unix.O_NONBLOCK
 		}
 		next, openErr := unix.Openat(fd, part, flags, 0)
 		_ = rootFile.Close()
@@ -50,6 +55,18 @@ func openSessionFileNoFollow(root, relative string) (*os.File, error) {
 		}
 		fd = next
 		rootFile = os.NewFile(uintptr(fd), part)
+	}
+	info, err := rootFile.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		_ = rootFile.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("only regular files can be opened")
+	}
+	if err := unix.SetNonblock(int(rootFile.Fd()), false); err != nil {
+		_ = rootFile.Close()
+		return nil, err
 	}
 	return rootFile, nil
 }

@@ -14,6 +14,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -131,15 +132,20 @@ func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
 			return "", false
 		}
 	}
-	for _, rules := range [][]string{p.deny, p.denyWrite} {
-		for _, rule := range rules {
-			// deny:/ is the Linux jail-mode selector: its explicit rw/ro
-			// allowlist is mounted back into the jail. Every other covering
-			// deny is applied after writable mounts and therefore wins even
-			// when the writable root is more specific.
-			if filepath.Clean(rule) != string(filepath.Separator) && isUnderPaths(path, []string{rule}) {
-				return "", false
-			}
+	for _, rule := range p.deny {
+		// deny:/ is only a selector for the Linux mount jail, where explicit
+		// rw/ro roots are mounted back in. On other platforms it is an
+		// effective deny and therefore wins.
+		if runtime.GOOS == "linux" && filepath.Clean(rule) == string(filepath.Separator) {
+			continue
+		}
+		if isUnderPaths(path, []string{rule}) {
+			return "", false
+		}
+	}
+	for _, rule := range p.denyWrite {
+		if isUnderPaths(path, []string{rule}) {
+			return "", false
 		}
 	}
 	return best, best != ""

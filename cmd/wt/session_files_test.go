@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func filePolicyFixture(t *testing.T) (ws.SessionInfo, sessionFilePolicy, []strin
 	if err := os.MkdirAll(data, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	rendered := fmt.Sprintf("fs:\n  - deny:/\n  - ro:%s\n  - rw:%s\n  - deny-write:%s\n", repo, data, filepath.Join(data, "protected.txt"))
+	rendered := fmt.Sprintf("fs:\n  - ro:%s\n  - rw:%s\n  - deny-write:%s\n", repo, data, filepath.Join(data, "protected.txt"))
 	session := ws.SessionInfo{SessionID: "session-1", UserID: "alice", CWD: repo, EggConfig: rendered}
 	policy, err := loadSessionFilePolicy(session, filepath.Join(root, "home"))
 	if err != nil {
@@ -78,6 +79,20 @@ func TestSessionFilePolicyBroadExplicitDenyOverridesNarrowWritableRoot(t *testin
 	}
 	if _, ok := policy.writableRoot(filepath.Join(data, "report.txt")); ok {
 		t.Fatal("narrow writable root overrode a covering explicit deny")
+	}
+}
+
+func TestSessionFilePolicyRootDenyMatchesRuntimeAndDenyWriteAlwaysWins(t *testing.T) {
+	data := filepath.Join(t.TempDir(), "data")
+	path := filepath.Join(data, "report.txt")
+	policy := sessionFilePolicy{writableRoots: []string{data}, deny: []string{string(filepath.Separator)}}
+	_, allowed := policy.writableRoot(path)
+	if allowed != (runtime.GOOS == "linux") {
+		t.Fatalf("deny:/ writable result = %v on %s", allowed, runtime.GOOS)
+	}
+	policy = sessionFilePolicy{writableRoots: []string{data}, denyWrite: []string{string(filepath.Separator)}}
+	if _, allowed := policy.writableRoot(path); allowed {
+		t.Fatal("deny-write:/ did not override writable root")
 	}
 }
 

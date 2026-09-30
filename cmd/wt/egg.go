@@ -1085,9 +1085,26 @@ func effectiveProviderSession(agentName, generatedResumeID string, agentArgs []s
 	providerID = generatedResumeID
 	providerFlagSeen := generatedResumeID != ""
 	callerProviderFlag := false
+	unverifiableProviderSelection := false
+	forkSession := false
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
-		for _, flag := range []string{profile.SessionIDFlag, profile.ResumeFlag} {
+		if agentName == "claude" {
+			switch arg {
+			case "--continue", "-c":
+				callerProviderFlag = true
+				unverifiableProviderSelection = true
+				continue
+			case "--fork-session":
+				forkSession = true
+				continue
+			}
+		}
+		flags := []string{profile.SessionIDFlag, profile.ResumeFlag}
+		if agentName == "claude" {
+			flags = append(flags, "-r")
+		}
+		for _, flag := range flags {
 			if flag == "" {
 				continue
 			}
@@ -1095,7 +1112,14 @@ func effectiveProviderSession(agentName, generatedResumeID string, agentArgs []s
 				providerFlagSeen = true
 				callerProviderFlag = true
 				if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
-					return "", nil, "", fmt.Errorf("%s requires an explicit provider session ID", flag)
+					if flag == profile.SessionIDFlag {
+						return "", nil, "", fmt.Errorf("%s requires an explicit provider session ID", flag)
+					}
+					// Claude's native resume picker accepts --resume/-r without
+					// an ID. Preserve that interface, but do not invent an ID or
+					// capture a possibly concurrent transcript for browser resume.
+					unverifiableProviderSelection = true
+					break
 				}
 				providerID = args[index+1]
 				index++
@@ -1109,15 +1133,18 @@ func effectiveProviderSession(agentName, generatedResumeID string, agentArgs []s
 			}
 		}
 	}
+	if callerProviderFlag {
+		generatedResumeID = ""
+	}
+	if unverifiableProviderSelection || forkSession {
+		return "", args, generatedResumeID, nil
+	}
 	if !providerFlagSeen {
 		providerID = uuid.NewString()
 		args = append([]string{profile.SessionIDFlag, providerID}, args...)
 	}
 	if !validProviderSessionID(providerID) {
 		return "", nil, "", errors.New("provider session ID is invalid")
-	}
-	if callerProviderFlag {
-		generatedResumeID = ""
 	}
 	return providerID, args, generatedResumeID, nil
 }
@@ -1581,6 +1608,8 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 	}
 
+	abandonStartedDaemon(child)
+	providerProcessStarted = false
 	return nil, fmt.Errorf("egg did not start within 5s (check %s)", logPath)
 }
 

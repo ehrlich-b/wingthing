@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -75,6 +76,41 @@ func TestConsumeBrowserRequestChunkBoundsAndReassemblesLines(t *testing.T) {
 	}
 	if pending != "" || discarding {
 		t.Fatalf("parser state after complete lines = pending %q, discarding %v", pending, discarding)
+	}
+}
+
+func TestWatchBrowserRequestsReclaimStartsAtCurrentEnd(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "browser-requests")
+	if err := os.WriteFile(path, []byte("https://old.example/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	messages := make(chan ws.PTYBrowserOpen, 2)
+	go watchBrowserRequests(ctx, path, "session", browserRequestOffset(path), func(value any) error {
+		if message, ok := value.(ws.PTYBrowserOpen); ok {
+			messages <- message
+		}
+		return nil
+	})
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("https://new.example/\n"); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case message := <-messages:
+		if message.URL != "https://new.example/" {
+			t.Fatalf("reclaimed browser request = %q", message.URL)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("new browser request was not forwarded")
 	}
 }
 

@@ -46,6 +46,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 	pionwebrtc "github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 // wingAttention tracks sessions that have triggered a terminal bell (need user attention).
@@ -505,9 +507,16 @@ func consumeBrowserRequestChunk(data []byte, pending *string, discarding *bool, 
 	*pending = tail
 }
 
+func browserRequestOffset(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
 // watchBrowserRequests polls for new lines in the browser-requests file and forwards them as PTYBrowserOpen messages.
-func watchBrowserRequests(ctx context.Context, path, sessionID string, write ws.PTYWriteFunc) {
-	var lastOffset int64
+func watchBrowserRequests(ctx context.Context, path, sessionID string, lastOffset int64, write ws.PTYWriteFunc) {
 	var pending string
 	var discarding bool
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -3386,15 +3395,20 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 			continue
 		}
 		statusCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
-		status, statusErr := ec.Status(statusCtx)
+		statusResponse, statusErr := ec.Status(statusCtx)
 		cancel()
 		closeWithLog("egg health-check client", ec)
 		var renderedConfig string
 		if statusErr == nil {
-			renderedConfig = status.RenderedConfig
+			renderedConfig = statusResponse.RenderedConfig
 		} else {
-			// A live PID with a responsive authenticated egg socket remains a
-			// session even when the optional Status RPC is transiently slow.
+			// A verified live session process remains visible when the optional
+			// Status RPC is transiently slow. A lazy dial plus Unavailable does
+			// not prove a live egg, and a recycled PID must never revive stale
+			// session metadata.
+			if !eggPidMatchesSession(pid, sessionID) || grpcstatus.Code(statusErr) == codes.Unavailable {
+				continue
+			}
 			// Keep it visible so attach and ACL revocation still work; file
 			// operations fail closed while the rendered policy is unavailable.
 			log.Printf("egg: status unavailable for live session %s: %v", sessionID, statusErr)
@@ -3777,7 +3791,8 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	if reclaimCWD != "" {
 		go watchPreviewFile(sessionCtx, reclaimCWD, sessionID, &mu, &gcm, write)
 	}
-	go watchBrowserRequests(sessionCtx, filepath.Join(eggDir, "browser-requests"), sessionID, write)
+	browserRequestsPath := filepath.Join(eggDir, "browser-requests")
+	go watchBrowserRequests(sessionCtx, browserRequestsPath, sessionID, browserRequestOffset(browserRequestsPath), write)
 
 	// Read output from egg -> encrypt -> send to relay
 	go func() {
@@ -4378,7 +4393,7 @@ authDone:
 	}
 
 	// Watch for browser open requests from the shim
-	go watchBrowserRequests(sessionCtx, filepath.Join(cfg.Dir, "eggs", start.SessionID, "browser-requests"), start.SessionID, write)
+	go watchBrowserRequests(sessionCtx, filepath.Join(cfg.Dir, "eggs", start.SessionID, "browser-requests"), start.SessionID, 0, write)
 
 	// Read output from egg -> encrypt -> send to browser
 	go func() {

@@ -961,7 +961,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	if captureHome == "" {
 		captureHome, _ = os.UserHomeDir()
 	}
-	if profile := Profile(rc.Agent); profile.SessionDir != "" && captureHome != "" {
+	providerIdentityVerified := rc.Agent != "claude" || rc.ProviderSessionID != ""
+	if profile := Profile(rc.Agent); profile.SessionDir != "" && captureHome != "" && providerIdentityVerified {
 		go func() {
 			ticker := time.NewTicker(30 * time.Second)
 			defer ticker.Stop()
@@ -1058,7 +1059,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		}
 
 		// Final chat history capture (gets the complete conversation)
-		if profile := Profile(rc.Agent); profile.SessionDir != "" && captureHome != "" {
+		if profile := Profile(rc.Agent); profile.SessionDir != "" && captureHome != "" && providerIdentityVerified {
 			if err := CaptureSessionHistory(rc.Agent, rc.CWD, s.dir, captureHome, sess.StartedAt, rc.ProviderSessionID); err != nil {
 				log.Printf("egg: final chat capture: %v", err)
 			}
