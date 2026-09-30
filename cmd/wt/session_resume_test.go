@@ -214,6 +214,8 @@ func TestEffectiveProviderSessionPinsFreshClaudeAndPreservesExplicitFlags(t *tes
 		"resume picker long":  {args: []string{"--resume", "--model", "opus"}},
 		"resume picker short": {args: []string{"-r"}},
 		"resume short exact":  {args: []string{"-r", "short-id"}, wantProviderID: "short-id"},
+		"resume short equals": {args: []string{"-r=short-id"}},
+		"resume short joined": {args: []string{"-rshort-id"}},
 		"fork fresh":          {args: []string{"--fork-session"}},
 		"fork resumed":        {args: []string{"--resume", "source-id", "--fork-session"}},
 	} {

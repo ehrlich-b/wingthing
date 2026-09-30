@@ -1090,6 +1090,13 @@ func effectiveProviderSession(agentName, generatedResumeID string, agentArgs []s
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		if agentName == "claude" {
+			if strings.HasPrefix(arg, "-r") && arg != "-r" {
+				// Preserve attached short-option spellings for Claude to parse,
+				// but do not assume how it interprets their provider identity.
+				callerProviderFlag = true
+				unverifiableProviderSelection = true
+				continue
+			}
 			switch arg {
 			case "--continue", "-c":
 				callerProviderFlag = true

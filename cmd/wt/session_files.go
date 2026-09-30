@@ -57,6 +57,15 @@ type sessionFilePolicy struct {
 	denyWrite     []string
 }
 
+func sessionPolicyContains(root, path string) bool {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	if filepath.IsAbs(root) && filepath.Dir(root) == root {
+		return filepath.IsAbs(path) && filepath.VolumeName(path) == filepath.VolumeName(root)
+	}
+	return isUnderPaths(path, []string{root})
+}
+
 func canonicalPolicyPath(path string) string {
 	path = filepath.Clean(path)
 	current := path
@@ -120,7 +129,7 @@ func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
 	path = canonicalPolicyPath(path)
 	best := ""
 	for _, root := range p.writableRoots {
-		if isUnderPaths(path, []string{root}) && len(root) > len(best) {
+		if sessionPolicyContains(root, path) && len(root) > len(best) {
 			best = root
 		}
 	}
@@ -128,7 +137,7 @@ func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
 		return "", false
 	}
 	for _, root := range p.readOnlyRoots {
-		if isUnderPaths(path, []string{root}) && len(root) >= len(best) {
+		if sessionPolicyContains(root, path) && len(root) >= len(best) {
 			return "", false
 		}
 	}
@@ -139,12 +148,12 @@ func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
 		if runtime.GOOS == "linux" && filepath.Clean(rule) == string(filepath.Separator) {
 			continue
 		}
-		if isUnderPaths(path, []string{rule}) {
+		if sessionPolicyContains(rule, path) {
 			return "", false
 		}
 	}
 	for _, rule := range p.denyWrite {
-		if isUnderPaths(path, []string{rule}) {
+		if sessionPolicyContains(rule, path) {
 			return "", false
 		}
 	}

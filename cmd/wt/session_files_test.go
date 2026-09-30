@@ -25,7 +25,11 @@ func filePolicyFixture(t *testing.T) (ws.SessionInfo, sessionFilePolicy, []strin
 	if err := os.MkdirAll(data, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	rendered := fmt.Sprintf("fs:\n  - ro:%s\n  - rw:%s\n  - deny-write:%s\n", repo, data, filepath.Join(data, "protected.txt"))
+	rootDeny := ""
+	if runtime.GOOS == "linux" {
+		rootDeny = "  - deny:/\n"
+	}
+	rendered := fmt.Sprintf("fs:\n%s  - ro:%s\n  - rw:%s\n  - deny-write:%s\n", rootDeny, repo, data, filepath.Join(data, "protected.txt"))
 	session := ws.SessionInfo{SessionID: "session-1", UserID: "alice", CWD: repo, EggConfig: rendered}
 	policy, err := loadSessionFilePolicy(session, filepath.Join(root, "home"))
 	if err != nil {
@@ -93,6 +97,13 @@ func TestSessionFilePolicyRootDenyMatchesRuntimeAndDenyWriteAlwaysWins(t *testin
 	policy = sessionFilePolicy{writableRoots: []string{data}, denyWrite: []string{string(filepath.Separator)}}
 	if _, allowed := policy.writableRoot(path); allowed {
 		t.Fatal("deny-write:/ did not override writable root")
+	}
+}
+
+func TestSessionPolicyContainsFilesystemRoot(t *testing.T) {
+	root := filepath.VolumeName(t.TempDir()) + string(filepath.Separator)
+	if !sessionPolicyContains(root, filepath.Join(root, "private", "data.txt")) {
+		t.Fatal("filesystem root did not contain an absolute child")
 	}
 }
 
