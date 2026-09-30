@@ -184,6 +184,11 @@ func TestRemoteUnsupportedSessionSubcommandNamesTheSubcommand(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `session subcommand "sync" is not available over SSH`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	for _, command := range []string{"kill", "stop"} {
+		if !strings.Contains(err.Error(), command) {
+			t.Errorf("supported remote session command %q missing from error: %v", command, err)
+		}
+	}
 }
 
 func TestRemoteStopCommandsAreForwardedWithoutATTY(t *testing.T) {

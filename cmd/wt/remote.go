@@ -189,7 +189,7 @@ func validateRemoteCommand(args []string) error {
 		if len(args) == 1 || remoteSessionCommand(args[1]) {
 			return nil
 		}
-		return fmt.Errorf("session subcommand %q is not available over SSH; supported subcommands: list, ps, active, read, send, wait, and rename", args[1])
+		return fmt.Errorf("session subcommand %q is not available over SSH; supported subcommands: list, ps, active, read, send, wait, rename, kill, and stop", args[1])
 	}
 	return fmt.Errorf("command %q is not available over SSH; supported commands: egg, terminal, attach, and session", command)
 }

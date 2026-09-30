@@ -5385,20 +5385,8 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions, "total": total}, write)
 
 	case "sessions.rename":
-		if err := validateSessionName(inner.Name); err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
-			return
-		}
 		userPaths := canonicalPaths(pathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
-		if _, err := resolveOwnedActiveSession(req, inner.SessionID, listAliveEggSessions(cfg), userPaths); err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "session not found or not owned by caller"}, write)
-			return
-		}
-		if err := ensureSessionNameAvailable(cfg, inner.Name, inner.SessionID); err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
-			return
-		}
-		if err := writeSessionName(filepath.Join(cfg.Dir, "eggs", inner.SessionID), inner.Name); err != nil {
+		if err := renameTunnelSession(cfg, req, inner.SessionID, inner.Name, listAliveEggSessions(cfg), userPaths); err != nil {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
@@ -5952,6 +5940,19 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	default:
 		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "unknown type: " + inner.Type}, write)
 	}
+}
+
+func renameTunnelSession(cfg *config.Config, req ws.TunnelRequest, sessionID, name string, sessions []ws.SessionInfo, userPaths []string) error {
+	if err := validateSessionName(name); err != nil {
+		return err
+	}
+	if _, err := resolveOwnedActiveSession(req, sessionID, sessions, userPaths); err != nil {
+		return err
+	}
+	if err := ensureSessionNameAvailable(cfg, name, sessionID); err != nil {
+		return err
+	}
+	return writeSessionName(filepath.Join(cfg.Dir, "eggs", sessionID), name)
 }
 
 // collectSessionsHistory returns all dead egg sessions from disk newest first.

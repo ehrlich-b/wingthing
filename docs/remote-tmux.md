@@ -92,11 +92,11 @@ valid. Foreground sessions allocate an SSH TTY only when the local input and
 output are terminals. JSON and scripted session control use a non-TTY channel,
 preserving machine-readable stdout.
 
-Bare interactive entry attaches the only active session, opens a picker for
-several, or starts a persistent shell when the inventory is empty. When
-`--remote-cwd` is supplied, only sessions in that existing remote directory are
-considered. A bare noninteractive call returns the matching inventory as JSON
-and does not create a session.
+Bare interactive entry attaches the only active session or opens a picker for
+several. `--remote-cwd` limits the inventory to that existing remote directory
+and is required to start a persistent shell when no matching session exists.
+Without it, an empty inventory returns an error. A bare noninteractive call
+returns the matching inventory as JSON and does not create a session.
 
 Next goal: converge the local, SSH, direct, P2P, and relayed clients on the same
 wing-owned attach protocol. No browser should be required, and the hosted relay

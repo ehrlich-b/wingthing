@@ -130,10 +130,11 @@ install or replace that binary.
 For agent launches, put the provider immediately after `egg`; arguments after
 `--` reach that provider verbatim.
 
-Bare interactive entry attaches the only matching live session, offers a picker
-for several, or starts a persistent shell when none exist. `--remote-cwd`
-filters that choice to one existing remote directory. With noninteractive input,
-bare entry prints the matching sessions as JSON and never creates one.
+Bare interactive entry attaches the only matching live session or offers a
+picker for several. `--remote-cwd` filters that choice to one existing remote
+directory and is required to start a persistent shell when no matching session
+exists. Without it, an empty inventory returns an error. With noninteractive
+input, bare entry prints the matching sessions as JSON and never creates one.
 
 This route needs a POSIX remote command shell because it uses POSIX quoting.
 Configure ports, bastions, keys, and host-key policy in OpenSSH. Wingthing does

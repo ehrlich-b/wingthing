@@ -34,6 +34,8 @@ const (
 	sessionEnterDelay = 50 * time.Millisecond
 )
 
+var errSessionNameInUse = errors.New("session name is already in use")
+
 type localSession struct {
 	ID           string `json:"id"`
 	Name         string `json:"name,omitempty"`
@@ -277,7 +279,7 @@ func ensureSessionNameAvailable(cfg *config.Config, name, exceptID string) error
 	}
 	for _, session := range sessions {
 		if session.ID != exceptID && (session.Name == name || session.ID == name) {
-			return fmt.Errorf("session name %q is already in use by %s", name, session.ID)
+			return errSessionNameInUse
 		}
 	}
 	return nil
