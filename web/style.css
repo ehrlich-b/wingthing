@@ -2322,6 +2322,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     .session-tab { justify-content: center; padding: 0; }
     #session-files-panel { right: 8px; width: calc(100vw - 16px); }
     .in-terminal #sidebar { display: none; }
+    .in-terminal #header-right { display: none; }
     #main { padding: 0 8px; }
     #main-header { padding: 4px 0; }
     #modifier-keys { display: flex; flex-wrap: wrap; }
