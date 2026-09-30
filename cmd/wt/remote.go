@@ -179,7 +179,7 @@ func validateRemoteCommand(args []string) error {
 		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 			return fmt.Errorf("%s requires an explicit provider immediately after the command", command)
 		}
-		if args[1] == "stop" || args[1] == "run" {
+		if args[1] == "run" {
 			return fmt.Errorf("%s subcommand %q is not available over SSH", command, args[1])
 		}
 		return nil
@@ -196,7 +196,7 @@ func validateRemoteCommand(args []string) error {
 
 func remoteSessionCommand(command string) bool {
 	switch command {
-	case "list", "ps", "active", "read", "send", "wait", "rename", "--help", "-h":
+	case "list", "ps", "active", "read", "send", "wait", "rename", "kill", "stop", "--help", "-h":
 		return true
 	default:
 		return false

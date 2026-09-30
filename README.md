@@ -116,6 +116,7 @@ wt --remote work1 egg codex --cwd /home/me/work/project --name review --json -- 
 wt --remote work1 session ps --json
 wt --remote work1 session read review --json
 wt --remote work1 session send review --stdin < input.txt
+wt --remote work1 session stop review --json
 wt --remote work1 attach review
 ```
 
@@ -137,7 +138,10 @@ bare entry prints the matching sessions as JSON and never creates one.
 This route needs a POSIX remote command shell because it uses POSIX quoting.
 Configure ports, bastions, keys, and host-key policy in OpenSSH. Wingthing does
 not disable host-key verification or accept SSH options through `--remote`.
-Doctor, MCP, daemon, browser, and stop commands are outside this route.
+`session kill`/`stop` and `egg stop` forward the existing local stop operation.
+A successful result means the remote egg confirmed that its session process
+exited; remote command failures retain their nonzero exit status. Doctor, MCP,
+daemon, and browser commands are outside this route.
 
 ### Qualified multi-wing control through direct MCP
 

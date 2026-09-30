@@ -84,6 +84,7 @@ wt --remote work1 terminal --cwd /home/me/work/project --name shell
 wt --remote work1 egg codex --cwd /home/me/work/project --name review --json -- -m gpt-5.6-sol
 wt --remote work1 attach review
 wt --remote work1 session ps --json
+wt --remote work1 session stop review --json
 ```
 
 The existing `wt attach <session-id> --remote <ssh-host>` spelling remains
@@ -121,8 +122,10 @@ The route requires a POSIX remote command shell because each argument is POSIX
 shell-quoted before OpenSSH starts the remote binary. Configure ports, bastions,
 keys, and host-key policy in OpenSSH. This route does not disable host-key
 verification. Agent launches require an explicit provider immediately after
-`egg`; provider arguments after `--` remain distinct argv entries. Doctor, MCP,
-daemon, browser, and stop commands are deliberately excluded.
+`egg`; provider arguments after `--` remain distinct argv entries. Remote
+`session kill`/`stop` and `egg stop` return success only after the existing egg
+stop RPC confirms the session process exited. Doctor, MCP, daemon, and browser commands are
+deliberately excluded.
 
 If a future native client attaches through the hosted relay without SSH, it will
 need its own CLI-friendly authentication. Signing a challenge through

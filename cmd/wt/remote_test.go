@@ -151,10 +151,8 @@ func TestRemoteRoutingRejectsUnsupportedOrIncompleteTransport(t *testing.T) {
 		{"--remote", "work1", "doctor"},
 		{"--remote", "work1", "mcp", "stdio", "--client", "codex"},
 		{"--remote", "work1", "mcp", "connect"},
-		{"--remote", "work1", "egg", "stop", "work"},
 		{"--remote", "work1", "sandbox", "run", "internal"},
 		{"--remote", "work1", "egg", "--json", "codex"},
-		{"--remote", "work1", "session", "kill", "work"},
 		{"--remote", "work1", "session", "sync", "abc", "--from", "wing"},
 		{"--remote"},
 		{"--remote="},
@@ -181,10 +179,25 @@ func TestRemoteSessionListCommandIsExecutable(t *testing.T) {
 	}
 }
 
-func TestRemoteSessionStopRejectionNamesTheUnsupportedSubcommand(t *testing.T) {
-	err := validateRemoteCommand([]string{"session", "kill", "work"})
-	if err == nil || !strings.Contains(err.Error(), `session subcommand "kill" is not available over SSH`) {
+func TestRemoteUnsupportedSessionSubcommandNamesTheSubcommand(t *testing.T) {
+	err := validateRemoteCommand([]string{"session", "sync", "work"})
+	if err == nil || !strings.Contains(err.Error(), `session subcommand "sync" is not available over SSH`) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRemoteStopCommandsAreForwardedWithoutATTY(t *testing.T) {
+	for _, args := range [][]string{
+		{"session", "kill", "work", "--json"},
+		{"session", "stop", "work", "--json"},
+		{"egg", "stop", "work"},
+	} {
+		if err := validateRemoteCommand(args); err != nil {
+			t.Fatalf("remote validation rejected %q: %v", args, err)
+		}
+		if remoteCommandNeedsTTY(args) {
+			t.Fatalf("remote stop unexpectedly requested a TTY: %q", args)
+		}
 	}
 }
 
