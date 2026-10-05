@@ -1,7 +1,7 @@
 # Personal preview channel
 
 Preview is a separately compiled `wt-preview`, not a renamed stable `wt`.
-`make preview-package` creates local artifacts without installing, publishing,
+`make release CHANNEL=preview` creates local artifacts without installing, publishing,
 tagging, enrolling a wing, or changing a running service. The local candidate
 version defaults to `v0.148.0-preview.YYYYMMDD.gCOMMIT`; override
 `PREVIEW_VERSION` when building the composed candidate. This does not reserve a
@@ -67,7 +67,7 @@ a regular preview marker and the full state validation, including nested links;
 linked markers or provider homes do not qualify. The OS-account stable tree
 remains forbidden even with relocated `HOME`, and `HOME/.wingthing` cannot be
 adopted as preview state. This does not change the provider's home, import
-authentication, or grant a sandbox exception. `make test-preview-reentry` runs
+authentication, or grant a sandbox exception. `make e2e-mac` runs
 the actual macOS preview parent fixture through configured MCP initialization
 and child reservation, then verifies the existing nested-proxy denial.
 
@@ -105,8 +105,8 @@ changed and no outer-boundary fallback was used for those tests.
 Build and verify from an isolated checkout:
 
 ```sh
-make test-preview-unit
-make test-preview
+make check
+make gate GATE=integration
 ```
 
 The black-box proof uses short disposable `/tmp` directories, fixture credentials,

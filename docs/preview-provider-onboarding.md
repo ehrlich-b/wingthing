@@ -125,13 +125,13 @@ For a later authorized personal model check, the
 2.1.287 release meets that version requirement. This setup guide makes no model
 request and does not establish that the chosen account can use that model.
 
-Run `make test-preview-provider` for exact-argv and error/timeout/output tests
+Run `make gate GATE=integration` for exact-argv and error/timeout/output tests
 plus a built-executable journey. Every provider subprocess in that target is
 a temporary fake. Login process/stream tests inject terminal checks and exercise
 only a fake vendor; the built CLI proves captured login is refused. These do not
 establish real OAuth, Keychain access, or every external capture boundary.
 
-Run `make test-preview-context` on macOS for the composed fake-provider journey:
+Run `make e2e-mac` on macOS for the composed fake-provider journey:
 status, native egg and headless run, each with `/tmp` and `/private/tmp` state
 spellings. It observes the final process environment, canonical configuration
 identity, selected workspace cwd, native history and executed lifecycle hook

@@ -70,21 +70,21 @@ orchestrator failure.
 ## What the ordinary suite proves
 
 The current branch contains more than 600 Go tests across more than 70 test
-files. A fresh `make coverage` reports 26.7% aggregate statement
+files. A fresh `make gate GATE=coverage` reports 26.7% aggregate statement
 coverage. That aggregate is dragged down by process-heavy CLI and relay entry
 points; the new semantic cores are substantially better covered: agent catalog
 80.1%, MCP 72.1%, prompt manager 74.7%, orchestrator 80.6%, sandbox 66.2%, and
 store 64.4%. Coverage is a map of remaining risk, not proof that a published
 agent still accepts an invocation.
 
-`make test` exercises the adapter parsers and exact current invocations for all
+`make check` exercises the adapter parsers and exact current invocations for all
 seven agents without requiring credentials or spending model tokens. It also
 tests MCP initialization, tool schemas, strict argument decoding, task ID
 uniqueness, graph validation, dependency output injection, per-agent concurrency
 limits, versioned prompt storage/provenance, process-group cancellation, stderr
 propagation, store concurrency, and runtime sandbox configuration.
 
-`make test-integ` exercises the browser/wing PTY protocol for every cataloged
+`make gate GATE=integration` exercises the browser/wing PTY protocol for every cataloged
 agent using deterministic simulated endpoints.
 
 The Linux E2E binary runs capability-driven tests. Unsupported kernel features
@@ -97,7 +97,7 @@ upstream vendor preserved its flags. A real startup proves the CLI launches,
 not that credentials and billing work. A deterministic paid/free model canary
 proves one configured provider path, not every account or model.
 
-The opt-in provider-swap promotion battery is `make test-provider-swap`; its
+The opt-in provider-swap promotion battery is `make gate GATE=provider-swap`; its
 setup, exact assertions, compatibility controls, and NewPC invocation are in
 [release-e2e.md](release-e2e.md). Direct controls run beside the Wingthing path
 so a provider regression is distinguishable from a routing, sandbox, cwd, or

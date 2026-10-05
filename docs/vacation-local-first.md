@@ -30,7 +30,7 @@ the vacation window.
 Build and run the branch binary directly from the repository:
 
 ```bash
-make build
+make ops ACTION=build
 export WINGTHING_DIR="$PWD/.local-state"
 ./wt terminal --name work
 ```

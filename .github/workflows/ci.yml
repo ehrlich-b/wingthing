@@ -30,7 +30,7 @@ jobs:
         with:
           go-version: '1.26.6'
           cache-dependency-path: go.sum
-      - run: make test-integ
+      - run: make gate GATE=integration
 
   compatibility:
     runs-on: ubuntu-latest
@@ -46,7 +46,7 @@ jobs:
       # paths. Ubuntu's path-scoped AppArmor userns policy cannot grant both;
       # the dedicated Linux sandbox jobs exercise that security boundary.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: make test-compat
+      - run: make gate GATE=compat
 
   claude-model-policy:
     runs-on: ubuntu-latest
@@ -60,7 +60,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm install -g @anthropic-ai/claude-code@2.1.260
-      - run: make test-claude-policy
+      - run: make gate GATE=claude
 
   linux-sandbox:
     runs-on: ubuntu-latest
@@ -70,7 +70,7 @@ jobs:
         with:
           go-version: '1.26.6'
           cache-dependency-path: go.sum
-      - run: make test-linux-ubuntu
+      - run: make e2e-linux LINUX_DISTROS=ubuntu
 
   linux-sandbox-debian:
     runs-on: ubuntu-latest
@@ -80,7 +80,7 @@ jobs:
         with:
           go-version: '1.26.6'
           cache-dependency-path: go.sum
-      - run: make test-linux
+      - run: make e2e-linux LINUX_DISTROS=debian
 
   browser:
     runs-on: ubuntu-latest
@@ -95,12 +95,16 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: make test-web
+      - run: make e2e-web
 
   static-race-docs:
+    env:
+      RACE_BASE: ${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || 'HEAD~1' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.6'
@@ -111,11 +115,8 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make web
-      - run: go vet ./...
-      - run: make test-vuln
-      - run: go test -race ./...
+      - run: make gate GATE=static
       - run: git diff --check
-      - run: make release-contract
 
   macos-sandbox:
     runs-on: macos-latest
@@ -130,5 +131,4 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: make web
-      - run: go test -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt
+      - run: make e2e-mac

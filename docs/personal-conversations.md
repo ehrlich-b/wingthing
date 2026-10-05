@@ -302,17 +302,17 @@ cursor replay, intermediate transitions, old execution drain, checkpoint races
 and inventory limits. Native protocol fixtures use a disposable provider home
 and no model authentication.
 
-`make test-conversation-transport` runs the focused unit tier: envelopes, the
+`make check` runs the focused unit tier: envelopes, the
 provider write model, policy intersection, journal replay, tree-bound targets,
 activation and the refusal to start a broker from a Go test binary (unit tests
 replace the launcher with a fake; nothing spawns a process).
 
 ```sh
-make test-preview-reentry   # direct server: records the nested proxy blocker
-make test-conversation-e2e  # host mailbox: parent plus two real child eggs
+make e2e-mac   # direct server: records the nested proxy blocker
+make e2e-mac  # host mailbox: parent plus two real child eggs
 ```
 
-`test-conversation-e2e` builds `wt-preview` and runs the fixture with state in
+`make e2e-mac` builds `wt-preview` and runs the fixture with state in
 a fresh `wtc-state-*` directory under `CONVERSATION_FIXTURE_ROOT` (default: the
 checkout's parent), which must be inside the OS-account HOME and outside `/tmp`
 and the workspace. The parent provider, through its injected client, lists the
@@ -325,7 +325,7 @@ registration and broker shutdown with the parent. Neither mode invokes an
 Anthropic model; a fake protocol pass is not authenticated-model evidence.
 
 The completed product acceptance still requires a deliberately personal
-authenticated Claude home, a passing `test-conversation-e2e` run of the host
+authenticated Claude home, a passing `make e2e-mac` run of the host
 mailbox (implemented and unit tested; its compiled fixture has not yet passed),
 two real child results, inspected tool details, restart
 with the same provider conversation, and attention/completion delivery resumed

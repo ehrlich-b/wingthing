@@ -1,13 +1,13 @@
 #!/bin/sh
 # Browser E2E tier: shared-roost (org mode) canary in Docker.
-# Run via `make test-web` — it cross-compiles wt and mock-agent for the
+# Run via `make e2e-web` — it cross-compiles wt and mock-agent for the
 # docker host arch into this directory first. Plain docker, no compose,
 # works on rootless docker.
 set -e
 cd "$(dirname "$0")"
 
 if [ ! -x ./wt ] || [ ! -x ./claude ]; then
-  echo "missing ./wt or ./claude — run: make test-web" >&2
+  echo "missing ./wt or ./claude — run: make e2e-web" >&2
   exit 2
 fi
 

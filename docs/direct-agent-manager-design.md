@@ -153,7 +153,7 @@ the resource and entitlement model above but remains future work.
 5. A new free user is denied before a hosted relayed terminal starts or attaches, with direct/self-host/pro remediation.
 6. Pro and explicit temporary-migration accounts retain the current relay behavior.
 7. Roost mode keeps working without a hosted subscription and can choose its own relay policy.
-8. Contract, connector, transport, authorization, and relay-policy behavior have unit/integration coverage and `make test` passes.
+8. Contract, connector, transport, authorization, and relay-policy behavior have unit/integration coverage and `make check` passes.
 9. Locked and per-user passkey-protected wings reject native direct MCP calls until a passkey ceremony is implemented; coordinator identity alone never bypasses the local lock.
 10. A wing with `hosted_relay: deny` rejects relayed payloads for owner and org member even when the account is otherwise entitled, while bounded discovery/signaling still works.
 

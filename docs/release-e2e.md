@@ -10,7 +10,7 @@ call does not pass.
 
 ## Matrix
 
-`make test-provider-swap` runs these opt-in cases:
+`make gate GATE=provider-swap` runs these opt-in cases:
 
 | Harness | Provider path | Direct control | Through Wingthing | Assertion |
 |---|---|---:|---:|---|
@@ -81,7 +81,7 @@ WT_SMOKE_GEMINI_BIN=/usr/local/bin/gemini-real \
 WT_SMOKE_HERMES_BIN=/usr/local/bin/hermes-real \
 WT_SMOKE_OPENCODE_BIN=/usr/local/bin/opencode-real \
 WT_SMOKE_OLLAMA_BIN=/usr/local/bin/ollama-real \
-make test-provider-swap
+make gate GATE=provider-swap
 ```
 
 Run `python3 test/live/provider_swap_smoke.py --phase direct` to isolate

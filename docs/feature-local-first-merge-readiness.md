@@ -16,7 +16,7 @@ The committed 25-commit base and successive security-review snapshots were
 tested independently. The current local gates pass:
 
 - `make check`
-- `make test-integ`
+- `make gate GATE=integration`
 - `git diff --check`
 
 Native ARM64 Linux gates also pass:
@@ -159,7 +159,7 @@ used by `internal/relay`.
 
 ## Required gates by stack
 
-Every stack member requires `make check`, `make test-integ`, and
+Every stack member requires `make check`, `make gate GATE=integration`, and
 `git diff --check`. Additional evidence:
 
 | Change | Additional evidence |

@@ -95,5 +95,5 @@ replays final records, paginates and reconnects without duplicate completion. It
 also proves this draft keeps the active Codex adapter unsupported and unready.
 Neither tier proves provider startup or sandbox enforcement.
 
-Run both focused fixture tiers with `make test-codex-native`; use `make check`
+Run both focused fixture tiers with `make gate GATE=integration`; use `make check`
 for the normal repository verification.

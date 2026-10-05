@@ -301,20 +301,19 @@ ICMP, or non-proxied protocols. See `docs/egg-sandbox-design.md` for details.
 | Command | What it does |
 |---------|-------------|
 | `make check` | Run tests then build (the default verification step) |
-| `make build` | Build the `wt` binary |
-| `make test` | Unit tier — `go test ./...` |
-| `make test-integ` | Integration tier — relay/wing/PTY protocol with simulated endpoints |
-| `make test-linux` / `test-linux-ubuntu` | E2E tier — privileged Linux sandbox battery in Docker |
-| `make test-web` | Browser E2E tier — seeded shared-roost org-mode canary + Playwright in Docker (`test/web/`) |
-| `make test-provider-swap` | Opt-in real-harness/Ollama/LiteLLM release smoke matrix |
-| `make coverage` | Statement coverage report |
+| `make ops ACTION=build` | Build the `wt` binary |
+| `make gate GATE=integration` | Integration tier — relay/wing/PTY protocol with simulated endpoints |
+| `make e2e-linux` (Debian and Ubuntu) | E2E tier — privileged Linux sandbox battery in Docker |
+| `make e2e-web` | Browser E2E tier — seeded shared-roost org-mode canary + Playwright in Docker (`test/web/`) |
+| `make gate GATE=provider-swap` | Opt-in real-harness/Ollama/LiteLLM release smoke matrix |
+| `make gate GATE=coverage` | Statement coverage report |
 | `make web` | Build vite output (`cd web && npm run build`) |
 | `make serve` | Build then run `wt serve` in foreground |
 | `make clean` | Remove built binary |
 
-Run `make check` to verify changes. Run `make web` before `make check` if you changed anything in `web/`.
+Run `make check` to verify changes; it includes `make web`.
 
-`make build` and the Go test targets seed a placeholder `web/dist` when it is
+`make ops ACTION=build` and the Go test targets seed a placeholder `web/dist` when it is
 missing, because `web/embed.go` embeds it and the built assets are gitignored.
 `make web` overwrites the placeholder with the real vite output.
 
@@ -333,9 +332,9 @@ Three tiers, and every new capability lands with tests in **at least two**:
 
 | Tier | Command | Proves |
 |------|---------|--------|
-| Unit | `make test` | Exact contracts — argv, parsing, schemas, validation, config resolution |
-| Integration | `make test-integ` | Component protocol against simulated endpoints — no real agent, no network |
-| E2E | `make test-linux-ubuntu` | Real enforcement and real lifecycle on a real kernel |
+| Unit | `make check` | Exact contracts — argv, parsing, schemas, validation, config resolution |
+| Integration | `make gate GATE=integration` | Component protocol against simulated endpoints — no real agent, no network |
+| E2E | `make e2e-linux LINUX_DISTROS=ubuntu` | Real enforcement and real lifecycle on a real kernel |
 
 Rules:
 

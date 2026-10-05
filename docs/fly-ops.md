@@ -22,7 +22,7 @@ processes = ["login"]
 ```
 
 That means an ordinary `fly deploy` of the checked-in file does not create or route
-traffic to an edge process. Verify the live machine count with `make status`; the
+traffic to an edge process. Verify the live machine count with `make ops ACTION=status`; the
 configuration is the deployment target, not evidence of what an earlier manual
 scale command left running.
 
@@ -150,14 +150,14 @@ Then deploy that configuration before creating edge machines:
 
 ```sh
 fly deploy
-make status
-make deploy-edge REGIONS=nrt COUNT=1
-make deploy-edge REGIONS=lhr COUNT=1
+make ops ACTION=status
+make ops ACTION=deploy-edge REGIONS=nrt COUNT=1
+make ops ACTION=deploy-edge REGIONS=lhr COUNT=1
 ```
 
-`make deploy-edge` only changes the edge count in the named regions. It now refuses
+`make ops ACTION=deploy-edge` only changes the edge count in the named regions. It now refuses
 to run while the process command is commented out or the HTTP service excludes
-`edge`. After scaling, use `make status`, check `/health` through the public service,
+`edge`. After scaling, use `make ops ACTION=status`, check `/health` through the public service,
 and inspect each process's startup log. Edge logs must say `auto-detected node role:
 edge` and name the derived or configured login address; login logs must say
 `auto-detected node role: login`.
@@ -171,14 +171,14 @@ compatibility pin covers mixed edge releases.
 To set total counts across the process groups after edge is enabled:
 
 ```sh
-make scale LOGIN=1 EDGE=3
+make ops ACTION=scale LOGIN=1 EDGE=3
 ```
 
 To remove Tokyo edges, or every edge respectively:
 
 ```sh
 fly scale count edge=0 --region nrt
-make scale LOGIN=1 EDGE=0
+make ops ACTION=scale LOGIN=1 EDGE=0
 ```
 
 After the last edge is removed, return `fly.toml` to its checked-in login-only form

@@ -342,7 +342,7 @@ The gaps now line up with the product gap:
    metadata. No black-box test targets and isolates runtime work on two wings.
 4. No test exposes headless runs in the browser because that product surface
    doesn't exist.
-5. The web E2E tier isn't part of `make test-e2e` or required CI.
+5. The web E2E tier isn't part of `make e2e-linux gate GATE=integration` or required CI.
 6. The tag release workflow builds artifacts without running the documented
    promotion gates.
 7. The HTTP MCP tests exercise OAuth and owner propagation in-process, but no

@@ -25,19 +25,17 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: make check
       - run: npm install -g @anthropic-ai/claude-code@2.1.260
-      - run: make test-claude-policy
-      - run: go vet ./...
-      - run: make test-vuln
-      - run: go test -race ./...
-      - run: make test-integ
+      - run: make gate GATE=claude
+      - run: make gate GATE=static RACE_PACKAGES=./...
+      - run: make gate GATE=integration
       # Compatibility launches historical and candidate binaries from temporary
       # paths. Ubuntu's path-scoped AppArmor userns policy cannot grant both;
       # the Linux sandbox batteries below exercise that security boundary.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: make test-compat
-      - run: make test-linux
-      - run: make test-linux-ubuntu
-      - run: make test-web
+      - run: make gate GATE=compat
+      - run: make e2e-linux LINUX_DISTROS=debian
+      - run: make e2e-linux LINUX_DISTROS=ubuntu
+      - run: make e2e-web
       - run: git diff --check
       - name: Build release artifacts after deterministic gates
         env:
@@ -64,8 +62,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: make web
-      - run: go test -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt
+      - run: make e2e-mac
 
   release:
     needs: [deterministic, macos-sandbox]

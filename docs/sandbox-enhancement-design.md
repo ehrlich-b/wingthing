@@ -143,7 +143,7 @@ Ollama on `127.0.0.1:11434`, LiteLLM, and every `WT_PROVIDER_BASE_URL` pointing 
 localhost become unreachable.
 
 That would break the `ollama` profile, the provider-substitution work on this
-branch, and `make test-provider-swap` — our release gate.
+branch, and `make gate GATE=provider-swap` — our release gate.
 
 The fix is the same inherited-FD mechanism as egress: for each declared local
 port, `_deny_init` listens on `127.0.0.1:<port>` and relays to that exact host
@@ -317,7 +317,7 @@ SOCKS5 handshake test when that protocol is implemented.
 - Existing sandbox battery still passes: deny paths, home write isolation,
   seccomp, `/root` denial, block devices.
 
-**Regression gate.** `make test-provider-swap` must pass end-to-end after any
+**Regression gate.** `make gate GATE=provider-swap` must pass end-to-end after any
 relay change. It is the only test that exercises real local models through the
 sandbox, so it is the canary for the loopback trap.
 

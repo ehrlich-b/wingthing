@@ -180,7 +180,7 @@ doctor` then reported `linux available (user namespaces + seccomp)`.
 ### The Linux security Make target selected the client architecture
 
 The test client is an arm64 Mac, while its Colima Docker daemon is native amd64.
-`make test-linux` built arm64 binaries and copied them into an amd64 image, producing
+`make e2e-linux LINUX_DISTROS=debian` built arm64 binaries and copied them into an amd64 image, producing
 `Exec format error`. Security tests now select and validate the Docker daemon's
 native architecture, as the existing browser battery already intended to do.
 
@@ -193,8 +193,8 @@ does not promise a Go toolchain, and an unsandboxed Linux policy must report
 The final tree passed:
 
 - focused package tests for MCP, agent orchestration, and sandboxing;
-- the complete unit suite (`make test`);
-- the complete integration suite (`make test-integ`);
+- the complete unit suite (`make check`);
+- the complete integration suite (`make gate GATE=integration`);
 - the repository-wide race detector (`go test -race ./...`);
 - `go vet ./...`;
 - Debian 12's privileged Linux sandbox battery;

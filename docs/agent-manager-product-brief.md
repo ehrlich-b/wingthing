@@ -511,7 +511,7 @@ This slice is implemented and verified on 2026-08-25.
    cross-compilation, and then the two-host canary when it exists.
 
 Evidence: focused policy/config tests; real WebRTC grant and org-path tests; ten
-repeat runs; race detector; `make test`; `make test-integ`; `make check`; Linux amd64
+repeat runs; race detector; `make check`; `make gate GATE=integration`; `make check`; Linux amd64
 cross-build; and the seeded organization-mode Docker browser canary. The canary also
 uses the Docker daemon's architecture rather than assuming the client host matches it.
 

@@ -188,7 +188,7 @@ a browser may observe; this feature does not enable new access.
 The local acceptance fixture replaces SSH alone. It drives the actual CLI,
 separate sandboxed egg processes, private Unix endpoints, replay, two exact
 session identities, detach and reattach, stdin forwarding, and stop cleanup.
-Run it with `make test-integ`. `make test-preview-input` additionally drives the
+Run it with `make gate GATE=integration`. `make gate GATE=input` additionally drives the
 actual encrypted browser bridge against a disposable preview egg, with two
 observers, MCP/browser takeover, stale resize/detach rejection, connection loss,
 an unchanged provider PID, and lifecycle delivery after detach. It replaces the
@@ -196,7 +196,7 @@ browser DOM and network relay with typed message queues. A physical-host check
 remains necessary for SSH, installed binary and sandbox compatibility; a live
 browser pass remains necessary for the UI affordances.
 
-`make test-preview-remote` drives `--remote-state` end to end through the same
+`make e2e-linux` drives `--remote-state` end to end through the same
 kind of fake SSH transport. It uses the stable and preview builds as both
 clients and receivers, and runs sandboxed `/bin/sh` eggs that the fixture owns.
 The selected state path contains spaces and an apostrophe. The fixture checks:

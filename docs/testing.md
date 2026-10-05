@@ -9,19 +9,18 @@ disagree about which sessions exist.
 
 | Command | What it runs | What it omits |
 | --- | --- | --- |
-| `make test` | Go unit and package tests | tagged integration tests, browser, real provider harnesses |
-| `make check` | web build, `make test`, binary build | every tagged and external E2E tier |
-| `make test-vuln` | pinned `govulncheck` plus npm's current advisory database | unreachable vulnerable Go symbols and non-Go/npm dependencies |
-| `make test-integ` | in-process relay, PTY routing, P2P, tunnel, and synthetic agent lifecycle | native sandbox enforcement and browser rendering |
-| `make test-compat` | real configured-baseline and candidate binaries: historical migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup, and rollback reopen. Defaults to both `v0.144.1` and `v0.147.0`; `WT_COMPAT_BASELINE_REF` selects a single override baseline | third-party wrappers, releases newer than stale pins, and unsupported pre-baseline releases |
-| `make test-linux` | Debian container with privileged Linux sandbox, CLI, and namespace batteries | Ubuntu-specific behavior |
-| `make test-linux-ubuntu` | Ubuntu 24.04 version of the Linux battery | macOS and browser |
-| `make test-web` | seeded organization-mode roost (including per-identity provider-profile routing), empty-enrollment legacy org canary, and hosted direct-free/relay-entitlement deployments driven by Playwright | local MCP, headless runs, real OAuth provider |
-| `make test-claude-policy` | installed real Claude CLI against a loopback fake API: effective model/effort, explicit selection, unchanged user settings | provider availability, real OAuth, deployed roost configuration |
-| `make test-provider-swap` | real supported CLIs against local models, direct and through Wingthing | hosted models and shared-roost HTTP MCP |
-| `make test-e2e` | both Linux batteries plus `make test-integ` | `make test-web` and `make test-provider-swap` |
+| `make check` | web syntax and unit tests, Go unit and package tests (including Android contract), web and binary build | every tagged and external E2E tier |
+| `make gate GATE=static` | vet, race on touched packages, release CLI contract, pinned `govulncheck` plus npm's current advisory database | unreachable vulnerable Go symbols and non-Go/npm dependencies |
+| `make gate GATE=integration` | in-process relay, PTY routing, P2P, tunnel, and synthetic agent lifecycle | native sandbox enforcement and browser rendering |
+| `make gate GATE=compat` | real configured-baseline and candidate binaries: historical migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup, and rollback reopen. Defaults to both `v0.144.1` and `v0.147.0`; `WT_COMPAT_BASELINE_REF` selects a single override baseline | third-party wrappers, releases newer than stale pins, and unsupported pre-baseline releases |
+| `make e2e-linux LINUX_DISTROS=debian` | Debian container with privileged Linux sandbox, CLI, and namespace batteries | Ubuntu-specific behavior |
+| `make e2e-linux LINUX_DISTROS=ubuntu` | Ubuntu 24.04 version of the Linux battery | macOS and browser |
+| `make e2e-web` | seeded organization-mode roost (including per-identity provider-profile routing), empty-enrollment legacy org canary, and hosted direct-free/relay-entitlement deployments driven by Playwright | local MCP, headless runs, real OAuth provider |
+| `make gate GATE=claude` | installed real Claude CLI against a loopback fake API: effective model/effort, explicit selection, unchanged user settings | provider availability, real OAuth, deployed roost configuration |
+| `make gate GATE=provider-swap` | real supported CLIs against local models, direct and through Wingthing | hosted models and shared-roost HTTP MCP |
+| `make e2e-linux gate GATE=integration` | both Linux batteries plus `make gate GATE=integration` | `make e2e-web` and `make gate GATE=provider-swap` |
 
-The last row is easy to misread. `make test-e2e` is not the complete promotion
+The last row is easy to misread. `make e2e-linux gate GATE=integration` is not the complete promotion
 matrix.
 
 ## Shared-roost Claude settings regressions
@@ -44,7 +43,7 @@ Deployment policy and personal state are separate. Cover both on every release:
 Unit tests pin the projection and profile/snapshot behavior. The browser canary
 drives real browser → roost → isolated egg startup, reconnect, exit and relaunch.
 The Linux shared-host task test checks the same policy in the sealed jail.
-`make test-claude-policy` requires the actual vendor CLI and inspects its outgoing
+`make gate GATE=claude` requires the actual vendor CLI and inspects its outgoing
 model/effort request using fixture credentials and a loopback server only. CI and
 release pin Claude Code 2.1.260 for that gate; rerun it with the installed runtime
 when deploying a different Claude Code version. A mock named `claude` cannot pass
@@ -220,9 +219,9 @@ The current CI shape is:
 
 - required fast job: web build, unit tests, binary build, schema generation
   check, and `git diff --check`;
-- required protocol job: `make test-integ` plus adapter conformance;
+- required protocol job: `make gate GATE=integration` plus adapter conformance;
 - required Linux jobs: Debian and Ubuntu native-architecture batteries;
-- required browser job: `make test-web`;
+- required browser job: `make e2e-web`;
 - required compatibility job: immutable historical migrations, CLI/flag surface,
   task-store round trips, and live configured-baseline/candidate gateway-wing PTY
   tests in both upgrade orders; the browser job adds the four-principal
