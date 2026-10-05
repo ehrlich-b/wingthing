@@ -55,8 +55,12 @@ func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error)
 			value = args[i+1]
 		} else if strings.HasPrefix(arg, "--config=") {
 			value = strings.TrimPrefix(arg, "--config=")
+		} else if strings.HasPrefix(arg, "-c") {
+			value = strings.TrimPrefix(arg, "-c")
 		}
-		if strings.HasPrefix(strings.TrimSpace(value), "hooks") || strings.TrimSpace(value) == "features.hooks=false" || strings.TrimSpace(value) == "features.hooks = false" ||
+		key, configured, _ := strings.Cut(value, "=")
+		key = strings.TrimSpace(key)
+		if key == "hooks" || strings.HasPrefix(key, "hooks.") || (key == "features.hooks" && strings.TrimSpace(configured) == "false") ||
 			(arg == "--disable" && i+1 < len(args) && args[i+1] == "hooks") || arg == "--disable=hooks" {
 			return args, nil
 		}
@@ -67,6 +71,7 @@ func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error)
 	}
 	command := lifecycleHookCommand(spool)
 	out := append([]string(nil), args...)
+	var trustEntries []string
 	for _, event := range codexLifecycleEvents {
 		hash, err := codexLifecycleHookHash(event.key, command)
 		if err != nil {
@@ -74,9 +79,12 @@ func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error)
 		}
 		definition := "hooks." + event.name + "=[{hooks=[{type=\"command\",command=" + strconv.Quote(command) + ",timeout=3}]}]"
 		key := "/<session-flags>/config.toml:" + event.key + ":0:0"
-		trust := "hooks.state." + strconv.Quote(key) + ".trusted_hash=" + strconv.Quote(hash)
-		out = append(out, "-c", definition, "-c", trust)
+		trustEntries = append(trustEntries, strconv.Quote(key)+"={trusted_hash="+strconv.Quote(hash)+"}")
+		out = append(out, "-c", definition)
 	}
+	// CLI dotted keys split on every dot, including dots inside quoted keys.
+	// An inline table preserves the synthetic source path's config.toml key.
+	out = append(out, "-c", "hooks.state={"+strings.Join(trustEntries, ",")+"}")
 	return out, nil
 }
 

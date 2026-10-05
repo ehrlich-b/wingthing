@@ -655,6 +655,10 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 				e.State = "working"
 				if agent == "codex" && hook.Event == "PreToolUse" && hook.ToolName == "request_user_input" {
 					e.Type, e.State, e.Reason = "input_requested", "needs_input", "provider user input requested"
+				} else if agent == "codex" && hook.Event == "PreToolUse" && strings.HasPrefix(hook.ToolName, "mcp__") {
+					// Codex has no hook for elicitation inside an MCP call.
+					// Until PostToolUse, it could be running or awaiting input.
+					e.State, e.Reason = "unknown", "provider has no native MCP elicitation hook"
 				}
 			case "PreCompact", "PostCompact":
 				e.Type, e.State = "provider_compaction", "working"

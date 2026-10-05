@@ -103,6 +103,15 @@ func TestLifecycleClaudeStatusRequiresHooksAndDistinguishesSessionEnd(t *testing
 	}
 }
 
+func TestLifecycleMissingProcessWithHooksReportsExited(t *testing.T) {
+	dir, home, cwd, _ := lifecycleFixture(t)
+	lifecycleHook(t, home, filepath.Base(dir), "prompt", `{"session_id":"ours","hook_event_name":"UserPromptSubmit"}`)
+	v, err := ReadSessionLifecycle(dir, "claude", cwd, home, "ours", false, 0, 10)
+	if err != nil || v.Status != "exited" || v.ProcessAlive || v.Ready {
+		t.Fatalf("unclean process loss: %+v, %v", v, err)
+	}
+}
+
 func TestLifecycleExactIdentityPartialReplayAndConcurrentReaders(t *testing.T) {
 	dir, home, cwd, path := lifecycleFixture(t)
 	lifecycleWrite(t, filepath.Join(filepath.Dir(path), "other.jsonl"), `{"type":"assistant","sessionId":"other","message":{"content":"foreign-secret","stop_reason":"end_turn"}}`+"\n")

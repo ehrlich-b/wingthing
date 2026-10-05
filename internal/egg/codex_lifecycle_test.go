@@ -1,6 +1,8 @@
 package egg
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,7 +11,82 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestCodexLifecycleInstalledHookTrust(t *testing.T) {
+	binary, err := exec.LookPath("codex")
+	if err != nil || !codexLifecycleSupported(binary) {
+		t.Skip("installed Codex has no native hook trust support")
+	}
+	home := t.TempDir()
+	args, err := CodexLifecycleArgs([]string{"app-server"}, home, "trust-probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A separate existing hook must still require review. No provider session,
+	// authentication, or model request is started by this hooks/list probe.
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.WriteFile(configPath, []byte("[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = 'command'\ncommand = 'true'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Dir = home
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "CODEX_HOME=" + filepath.Join(home, ".codex")}
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = input.Close(); cancel(); _ = cmd.Wait() }()
+	for _, request := range []string{
+		`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"wt-hook-test","version":"1"},"capabilities":{"experimentalApi":true}}}`,
+		`{"method":"initialized"}`,
+		fmt.Sprintf(`{"id":2,"method":"hooks/list","params":{"cwd":%q}}`, home),
+	} {
+		if _, err := fmt.Fprintln(input, request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scanner := bufio.NewScanner(output)
+	scanner.Buffer(make([]byte, 4096), 1<<20)
+	for scanner.Scan() {
+		var response struct {
+			ID     int
+			Result struct {
+				Data []struct {
+					Hooks []struct{ Source, TrustStatus string }
+				}
+			}
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil || response.ID != 2 {
+			continue
+		}
+		trusted, untrusted := 0, 0
+		for _, data := range response.Result.Data {
+			for _, hook := range data.Hooks {
+				if hook.Source == "sessionFlags" && hook.TrustStatus == "trusted" {
+					trusted++
+				} else if hook.Source == "user" && hook.TrustStatus == "untrusted" {
+					untrusted++
+				}
+			}
+		}
+		if trusted != len(codexLifecycleEvents) || untrusted != 1 {
+			t.Fatalf("generated/existing hook trust changed: %s", scanner.Bytes())
+		}
+		return
+	}
+	t.Fatalf("Codex did not list hooks: %v, %v", scanner.Err(), ctx.Err())
+}
 
 func TestCodexLifecycleArgsTrustOnlyGeneratedHooks(t *testing.T) {
 	home := t.TempDir()
@@ -25,7 +102,7 @@ func TestCodexLifecycleArgsTrustOnlyGeneratedHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(args[:4], " ") != "resume thread-exact -m existing-model" || len(args) != 4+4*len(codexLifecycleEvents) {
+	if strings.Join(args[:4], " ") != "resume thread-exact -m existing-model" || len(args) != 4+2*len(codexLifecycleEvents)+2 {
 		t.Fatalf("unexpected args: %v", args)
 	}
 	for _, arg := range args {
@@ -43,10 +120,28 @@ func TestCodexLifecycleArgsTrustOnlyGeneratedHooks(t *testing.T) {
 	if err != nil || hash != "sha256:e40688e342bc653567f4d9e8590f9b0ceb640df45804b65d9361fbe9f641edf1" {
 		t.Fatalf("Codex trust identity changed: %q, %v", hash, err)
 	}
-	for _, supplied := range [][]string{{"--disable", "hooks"}, {"-c", "features.hooks=false"}, {"-c", "hooks.Stop=[]"}} {
+	for _, supplied := range [][]string{{"--disable", "hooks"}, {"-c", "features.hooks=false"}, {"-c", "hooks.Stop=[]"}, {"-chooks.Stop=[]"}, {"--config=hooks.Stop=[]"}, {"-c", "features.hooks\t=\tfalse"}} {
 		got, err := CodexLifecycleArgs(supplied, home, "egg-exact")
 		if err != nil || strings.Join(got, " ") != strings.Join(supplied, " ") {
 			t.Fatalf("explicit hook settings replaced: %v, %v", got, err)
+		}
+	}
+}
+
+func TestCodexLifecycleSupportedUsesBinaryCapability(t *testing.T) {
+	for _, tc := range []struct {
+		help string
+		want bool
+	}{
+		{"Codex CLI with notify", false},
+		{"Codex CLI --dangerously-bypass-hook-trust", true},
+	} {
+		path := filepath.Join(t.TempDir(), "codex")
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' "+shellQuoteLifecycle(tc.help)+"\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if got := codexLifecycleSupported(path); got != tc.want {
+			t.Fatalf("capability for %q = %t, want %t", tc.help, got, tc.want)
 		}
 	}
 }
@@ -59,7 +154,7 @@ func TestCodexLifecycleNativeHooksBindThreadAndReportStatus(t *testing.T) {
 	}
 	commands := map[string]string{}
 	for i, event := range codexLifecycleEvents {
-		definition := args[i*4+1]
+		definition := args[i*2+1]
 		quoted := strings.TrimSuffix(strings.SplitN(definition, "command=", 2)[1], ",timeout=3}]}]")
 		command, err := strconv.Unquote(quoted)
 		if err != nil {
@@ -94,6 +189,8 @@ func TestCodexLifecycleNativeHooksBindThreadAndReportStatus(t *testing.T) {
 		{"PostToolUse", "Bash", "working"},
 		{"PreToolUse", "request_user_input", "blocked"},
 		{"PostToolUse", "request_user_input", "working"},
+		{"PreToolUse", "mcp__fixture__tool", "unknown"},
+		{"PostToolUse", "mcp__fixture__tool", "working"},
 		{"Stop", "", "idle"},
 		{"PreCompact", "", "working"},
 		{"Interrupt", "", "idle"},
