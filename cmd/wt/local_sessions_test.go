@@ -2,15 +2,83 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"golang.org/x/sys/unix"
 )
+
+func TestSessionListingsDoNotWaitForLifecycleLock(t *testing.T) {
+	for _, entrypoint := range []string{"discovery", "session ps", "attach selection", "MCP terminal_list"} {
+		t.Run(entrypoint, func(t *testing.T) {
+			cfg := &config.Config{Dir: t.TempDir()}
+			t.Setenv("WINGTHING_DIR", cfg.Dir)
+			seedRemoteListSession(t, cfg, "locked-session", "")
+			lock, err := os.OpenFile(filepath.Join(cfg.Dir, "eggs", "locked-session", "lifecycle.lock"), os.O_CREATE|os.O_RDWR, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lock.Close()
+			if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+				t.Fatal(err)
+			}
+			defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				var sessions []localSession
+				var err error
+				var output bytes.Buffer
+				switch entrypoint {
+				case "discovery":
+					sessions, err = discoverActiveSessions(ctx, cfg)
+				case "session ps":
+					err = executeCLI(ctx, []string{"session", "ps", "--json"}, remoteIO{out: &output})
+					if err == nil {
+						err = json.Unmarshal(output.Bytes(), &sessions)
+					}
+				case "attach selection":
+					_, err = selectActiveSession(ctx, cfg)
+					// Without an interactive terminal, selection stops after listing.
+					if err != nil && strings.Contains(err.Error(), "interactive selection requires a terminal") {
+						err = nil
+					}
+				case "MCP terminal_list":
+					var listed map[string]any
+					listed, err = (&localMCPServer{cfg: cfg}).toolTerminalList(ctx, json.RawMessage(`{}`))
+					if err == nil {
+						sessions = listed["sessions"].([]localSession)
+					}
+				}
+				if err == nil && entrypoint != "attach selection" && (len(sessions) != 1 || sessions[0].Status != "unknown") {
+					err = fmt.Errorf("locked session must remain listed with unknown status: %#v", sessions)
+				}
+				result <- err
+			}()
+			select {
+			case err := <-result:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(250 * time.Millisecond):
+				// Release and join the reader even on the unfixed implementation.
+				_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+				<-result
+				t.Fatal("listing blocked on lifecycle.lock after context cancellation")
+			}
+		})
+	}
+}
 
 func TestSessionInputChunksSeparatesEnterFromPastedText(t *testing.T) {
 	tests := []struct {

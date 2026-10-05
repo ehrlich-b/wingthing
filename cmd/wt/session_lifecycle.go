@@ -55,6 +55,14 @@ func resolveLifecycleSession(cfg *config.Config, ref string) (localSession, erro
 }
 
 func lifecycleViewForSession(cfg *config.Config, session localSession, after int64, limit int) (egg.SessionView, error) {
+	return readLifecycleViewForSession(cfg, session, after, limit, false)
+}
+
+func tryLifecycleViewForSession(cfg *config.Config, session localSession) (egg.SessionView, error) {
+	return readLifecycleViewForSession(cfg, session, 0, 1, true)
+}
+
+func readLifecycleViewForSession(cfg *config.Config, session localSession, after int64, limit int, nonBlocking bool) (egg.SessionView, error) {
 	dir := filepath.Join(cfg.Dir, "eggs", session.ID)
 	meta := readEggMetaValues(dir)
 	home, err := lifecycleProviderHome(cfg, meta["provider_home"])
@@ -62,7 +70,11 @@ func lifecycleViewForSession(cfg *config.Config, session localSession, after int
 		return egg.SessionView{}, err
 	}
 	_, alive := readAliveEggPID(dir)
-	return egg.ReadSessionLifecycle(dir, session.Agent, session.CWD, home, meta["provider_session_id"], alive, after, limit)
+	read := egg.ReadSessionLifecycle
+	if nonBlocking {
+		read = egg.TryReadSessionLifecycle
+	}
+	return read(dir, session.Agent, session.CWD, home, meta["provider_session_id"], alive, after, limit)
 }
 
 func lifecycleProviderHome(cfg *config.Config, recorded string) (string, error) {

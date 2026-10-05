@@ -85,7 +85,7 @@ func discoverActiveSessions(ctx context.Context, cfg *config.Config) ([]localSes
 				}
 			}
 		}
-		if view, err := lifecycleViewForSession(cfg, *session, 0, 1); err == nil {
+		if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
 			session.Status = view.Status
 		}
 	}

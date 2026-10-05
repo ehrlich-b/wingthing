@@ -73,6 +73,10 @@ type lifecycleJournal struct {
 }
 
 func openLifecycleJournal(dir string) (*lifecycleJournal, error) {
+	return openLifecycleJournalWithLock(dir, unix.LOCK_EX)
+}
+
+func openLifecycleJournalWithLock(dir string, lockFlags int) (*lifecycleJournal, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
@@ -83,7 +87,7 @@ func openLifecycleJournal(dir string) (*lifecycleJournal, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if err = unix.Flock(int(j.lock.Fd()), unix.LOCK_EX); err != nil {
+	if err = unix.Flock(int(j.lock.Fd()), lockFlags); err != nil {
 		return fail(err)
 	}
 	j.file, err = root.OpenFile("lifecycle.jsonl", os.O_CREATE|os.O_RDWR|unix.O_NOFOLLOW, 0600)
@@ -390,11 +394,21 @@ func validLifecycleID(id string) bool {
 // returns bounded cursor replay. State completion means the foreground turn;
 // process_alive separately identifies whether this conversation can accept work.
 func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID string, processAlive bool, after int64, limit int) (SessionView, error) {
+	return readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID, processAlive, after, limit, unix.LOCK_EX)
+}
+
+// TryReadSessionLifecycle returns immediately if another reader or importer
+// holds the journal lock. Inventory callers can then display unknown status.
+func TryReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID string, processAlive bool, after int64, limit int) (SessionView, error) {
+	return readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID, processAlive, after, limit, unix.LOCK_EX|unix.LOCK_NB)
+}
+
+func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID string, processAlive bool, after int64, limit, lockFlags int) (SessionView, error) {
 	view := SessionView{SessionID: filepath.Base(eggDir), Agent: agent, ProviderSessionID: exactProviderID, State: "unknown", Status: "unknown", StateSource: "unsupported", ProcessAlive: processAlive, Events: []SessionEvent{}, Cursor: after}
 	if after < 0 || limit < 1 || limit > 200 {
 		return view, errors.New("after_cursor must be non-negative and limit between 1 and 200")
 	}
-	j, err := openLifecycleJournal(eggDir)
+	j, err := openLifecycleJournalWithLock(eggDir, lockFlags)
 	if err != nil {
 		return view, err
 	}
