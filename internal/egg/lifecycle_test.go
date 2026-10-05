@@ -460,6 +460,41 @@ func TestLifecycleCleanProcessExitPreservesNativeTurnFailure(t *testing.T) {
 	}
 }
 
+func TestLifecycleStoppedProcessExitOverridesNativeState(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending=%t", pending), func(t *testing.T) {
+			dir, home, cwd, path := lifecycleFixture(t)
+			lifecycleHook(t, home, filepath.Base(dir), "prompt", `{"session_id":"ours","hook_event_name":"UserPromptSubmit"}`)
+			before := lifecycleRead(t, dir, home, cwd, 0, 10)
+			if before.State != "working" || before.StateSource != "claude_hook" {
+				t.Fatalf("fixture not working: %+v", before)
+			}
+			const reason = "provider process was killed"
+			if err := RecordSessionProcessEvent(dir, "session_exit", "stopped", reason); err != nil {
+				t.Fatal(err)
+			}
+			if pending {
+				row := `{"type":"assistant","sessionId":"ours","message":{"content":"late flush","stop_reason":"end_turn"}}` + "\n"
+				lifecycleWrite(t, path, strings.Repeat(row, 501))
+			}
+			v := lifecycleRead(t, dir, home, cwd, before.Cursor, 10)
+			if v.State != "stopped" || v.StateSource != "egg_process" || v.StateCursor != before.HeadCursor+1 || v.Reason != reason || v.ProcessAlive || v.Ready {
+				t.Fatalf("native state hid stopped process: %+v", v)
+			}
+			if len(v.Events) == 0 || v.Events[0].Type != "session_exit" || v.Events[0].State != "stopped" {
+				t.Fatalf("process exit missing from replay: %+v", v.Events)
+			}
+			if pending && !v.HasMore {
+				t.Fatalf("pending transcript import lost: %+v", v)
+			}
+			again := lifecycleRead(t, dir, home, cwd, v.HeadCursor, 10)
+			if again.State != "stopped" || again.StateSource != "egg_process" || again.StateCursor != v.StateCursor || again.ProcessAlive || again.Ready || again.HasMore {
+				t.Fatalf("later import regressed stopped process: %+v", again)
+			}
+		})
+	}
+}
+
 func TestLifecycleSkipsOversizedNativeRecordsAndPersistsProgress(t *testing.T) {
 	for _, hooks := range []bool{false, true} {
 		t.Run(fmt.Sprintf("hooks=%t", hooks), func(t *testing.T) {

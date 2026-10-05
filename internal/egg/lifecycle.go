@@ -412,10 +412,12 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.Reason = hookState.Reason
 		view.StateCursor = hookState.Sequence
 	}
+	// Explicit stops and failures remain authoritative during native import.
+	processInterrupted := processEnded && (processEnd.State == "failed" || processEnd.State == "stopped")
 	if processEnded {
 		// Older eggs recorded completed on exit code zero. Keep that fallback
 		// when no native turn outcome exists, but preserve native evidence.
-		if processEnd.State == "failed" || (processEnd.State == "completed" && (view.StateSource == "egg_process" || view.StateSource == "unsupported")) {
+		if processInterrupted || (processEnd.State == "completed" && (view.StateSource == "egg_process" || view.StateSource == "unsupported")) {
 			view.State = processEnd.State
 			view.StateSource = processEnd.Source
 			view.Reason = processEnd.Reason
@@ -424,7 +426,7 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.Ready = false
 		view.ProcessAlive = false
 	}
-	if j.pending && (!processEnded || processEnd.State != "failed") {
+	if j.pending && !processInterrupted {
 		view.State = "working"
 		view.StateSource = "native_import"
 		view.StateCursor = 0
