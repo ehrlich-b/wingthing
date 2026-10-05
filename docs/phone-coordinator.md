@@ -40,17 +40,21 @@ The bearer is `device_token` in this wing's private `$WINGTHING_DIR/device_token
 | Home wing public key | `<base64-X25519-public-key>` from that roster entry, checked against `public_key` in this wing's `device_token.yaml` |
 | Existing access token | `<bearer-token>`, without the `Bearer ` prefix |
 
-Start a persistent **interactive** parent on the Mac using the hosted account's exact owner principal. In the same terminal, replace `<account-id>`, then run:
-```sh
-PHONE_OWNER="user-$(printf '%s' '<account-id>' | shasum -a 256 | cut -c 1-20)"
-"$WT_PHONE" mcp stdio --client "$PHONE_OWNER"
-```
-Paste this single JSON line, replacing the workspace/user and retry-ID placeholders; wait for `structuredContent.launch_state: started`, then Ctrl-D. This fresh state has no `clients.yaml`; the broker captures its fixed tool subset and finite bounds, not unlimited authority.
-```json
-{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agent_start","arguments":{"agent":"claude","label":"coordinator","cwd":"/Users/<mac-user>/phone-coordinator-work","conversation_role":"parent","request_id":"<unique-launch-request-id>","args":["--permission-mode","dontAsk","--allowedTools","mcp__wingthing__wingthing_capabilities,mcp__wingthing__agent_start,mcp__wingthing__session_status,mcp__wingthing__session_read,mcp__wingthing__session_wait,mcp__wingthing__session_prompt,mcp__wingthing__conversation_list,mcp__wingthing__conversation_read,mcp__wingthing__conversation_checkpoint"]}}}
-```
-Refresh iOS Conversations, open `coordinator`, wait for native ready/idle evidence, and send a message. `"$WT_PHONE" conversation transport <session-id> --json` should report `host_ready: true`. Keep this interactive execution alive for subsequent phone prompts. iOS New conversation uses `-p` headless execution; this branch does not implement its expected `headless_continuation`/`resume_session` handler, so that route cannot provide follow-ups after exit.
+Connect Home, tap **New conversation**, choose `phone-coordinator-work`, enter `coordinator`, an exact supported `<claude-model-id>` and your first message, then tap **Create conversation**. The phone creates the headless Claude root under the hosted account's owner; its logical conversation persists after the turn exits. The broker retains its fixed tool subset, finite bounds and existing sandbox protections.
+
+After the turn ends, wait for **Ready for follow-up**, then send your next message. `session_read` and `conversation_read` advertise `headless_continuation`; iOS calls `agent_start` with `resume_session`, `conversation_role: parent`, `input` and an immutable `request_id`. Each follow-up creates a new execution of the same conversation/provider session/model. If unconfirmed, retry the saved message rather than creating another conversation.
+
+Fallback: start an interactive `agent_start` parent (omit `-p`) through `"$WT_PHONE" mcp stdio --client <phone-owner>` on the Mac. `<phone-owner>` is `user-` plus the first 20 hex characters of SHA-256 of the exact `<account-id>`. Open it in iOS and keep its execution alive for `session_prompt` follow-ups.
 
 Native passkey approval is not implemented: locked wings need a locally pinned user passkey and an encryption-identity-bound auth token; unlocked wings also demand this for enrolled users. Use this fresh unlocked wing with no pinned passkeys; preserve the existing roost's lock.
 
-The inspected `origin/main` (`72c7be5`) already routes these encrypted operations; no relay code deploy is needed. The running hosted deployment/account was not verified. An ineligible `direct-free` account still needs an operator-managed entitlement linked to an active subscription (or the configured migration cohort); `hosted_relay: allow` alone cannot grant access. The [hosted native path](personal-conversations.md#hosted-native-path) lists the code checks and exact database/config requirements. No production change is made here.
+On wingthing.ai's login-node database, Bryan needs `entitlements.user_id='<account-id>'` with `entitlements.subscription_id=subscriptions.id` and `subscriptions.status='active'` unless migration-eligible. Bryan can run this read-only SQL there; at least one returned row satisfies `IsUserPro`:
+```sql
+SELECT e.id, e.user_id, e.subscription_id, s.status
+FROM entitlements e
+JOIN subscriptions s ON s.id = e.subscription_id
+WHERE e.user_id = '<account-id>' AND s.status = 'active';
+```
+`users.tier='pro'` alone is insufficient. The alternative is `users.created_at` no later than the running `WT_RELAY_MIGRATION_BEFORE` cutoff (checked in: `2026-08-26T00:00:00Z`). `hosted_relay: allow` cannot grant entitlement; missing rows require operator/billing action.
+
+The inspected `origin/main` (`72c7be5`) already routes these encrypted operations; no relay code deploy is needed. The running hosted deployment/account was not verified. The [hosted native path](personal-conversations.md#hosted-native-path) lists all admission checks. No production change is made here.
