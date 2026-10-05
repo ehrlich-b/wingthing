@@ -299,9 +299,11 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "terminal_list", Title: "List persistent terminals",
-			Description: "List live local Wingthing sessions with stable IDs, labels, process kind, agent, activity, and working directory.",
-			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
-			Grant: "terminal.read", Surfaces: both,
+			Description: "List live Wingthing sessions with stable IDs, labels, process kind, agent, activity, and working directory. Defaults to local sessions; remote selects one configured SSH name on an unrestricted MCP connection.",
+			InputSchema: objectSchema(map[string]any{
+				"remote": stringProperty("Configured SSH remote name; omit for local sessions only"),
+			}), Annotations: readOnly,
+			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"remote"},
 		},
 		{
 			Name: "terminal_read", Title: "Read terminal snapshot",

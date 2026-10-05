@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/spf13/cobra"
@@ -69,7 +70,10 @@ func executeCLI(ctx context.Context, args []string, streams remoteIO) error {
 	}
 	root := newRootCommand()
 	root.SetArgs(args)
-	return root.ExecuteContext(ctx)
+	root.SetIn(streams.in)
+	root.SetOut(streams.out)
+	root.SetErr(streams.errOut)
+	return root.ExecuteContext(context.WithValue(ctx, remoteIOContextKey{}, streams))
 }
 
 func parseRemoteInvocation(argv []string, interactive bool) (remoteInvocation, bool, error) {
@@ -228,16 +232,7 @@ func remoteTransportFlag(arg string) (name, value string, inline, matched bool) 
 }
 
 func validateRemoteTarget(target string) error {
-	if target == "" {
-		return errors.New("missing SSH target")
-	}
-	if strings.HasPrefix(target, "-") {
-		return errors.New("SSH target must not start with '-'")
-	}
-	if strings.ContainsAny(target, "\r\n\x00") {
-		return errors.New("SSH target contains invalid characters")
-	}
-	return nil
+	return config.ValidateSSHTarget(target)
 }
 
 func validateRemoteBinary(binary string) error {
@@ -252,7 +247,7 @@ func validateRemoteBinary(binary string) error {
 // filesystem says nothing about the remote one, and the receiving executable
 // applies its own overlap, alias, and channel-marker checks before any write.
 //
-// The byte contract matches --remote and --remote-binary: NUL cannot reach an
+// As with --remote-binary, NUL cannot reach an
 // environment value, and CR or LF would split the one-line remote command for
 // SSH logs and non-POSIX login shells. Every other byte, including tab and
 // other control bytes, is legal in a POSIX path and stays inert inside the
@@ -379,6 +374,9 @@ func firstPositionalBeforeDash(args []string) string {
 }
 
 func runRemoteInvocation(ctx context.Context, invocation remoteInvocation, streams remoteIO) error {
+	if err := validateRemoteTarget(invocation.target); err != nil {
+		return err
+	}
 	if invocation.state != "" {
 		if err := validateRemoteState(invocation.state); err != nil {
 			return err
@@ -420,6 +418,9 @@ func runRemoteInvocation(ctx context.Context, invocation remoteInvocation, strea
 		sshPath = "ssh"
 	}
 	child := exec.CommandContext(ctx, sshPath, sshArgs...)
+	// SSH helpers (for example a ProxyCommand) can inherit these pipes. Bound
+	// the drain after SSH exits or is canceled so a remote deadline stays short.
+	child.WaitDelay = 100 * time.Millisecond
 	child.Stdin = streams.in
 	child.Stdout = streams.out
 	child.Stderr = streams.errOut

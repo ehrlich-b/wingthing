@@ -1204,8 +1204,36 @@ func (s *localMCPServer) checkSharedSpawnBounds() error {
 }
 
 func (s *localMCPServer) toolTerminalList(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
-	if err := requireEmptyObject(arguments); err != nil {
+	var args struct {
+		Remote *string `json:"remote"`
+	}
+	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
+	}
+	if args.Remote != nil {
+		if err := config.ValidateRemoteName(*args.Remote); err != nil {
+			return nil, err
+		}
+		// A local path or conversation boundary cannot authorize inventory on
+		// another filesystem. Keep these restricted connections on their host.
+		if s.enforcePathBounds || s.boundConversation != "" {
+			return nil, errors.New("remote terminal_list is unavailable on a path- or conversation-bound MCP connection")
+		}
+		remote, err := configuredRemote(s.cfg.Dir, *args.Remote)
+		if err != nil {
+			return nil, err
+		}
+		sessions, err := queryRemoteSessions(ctx, *args.Remote, remote, remoteStreams(ctx))
+		if err != nil {
+			return nil, err
+		}
+		owned := make([]machineSession, 0, len(sessions))
+		for _, session := range sessions {
+			if s.ownsSession(session) {
+				owned = append(owned, machineSession{localSession: session, Machine: *args.Remote})
+			}
+		}
+		return map[string]any{"sessions": owned}, nil
 	}
 	sessions, err := discoverActiveSessions(ctx, s.cfg)
 	if err != nil {

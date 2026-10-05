@@ -39,21 +39,42 @@ func sessionCmd() *cobra.Command {
 }
 
 func sessionPSCmd() *cobra.Command {
-	var jsonFlag bool
+	var jsonFlag, remoteInventoryFlag bool
 	cmd := &cobra.Command{
 		Use:     "ps",
 		Aliases: []string{"active"},
-		Short:   "List active local terminal sessions",
+		Short:   "List active terminal sessions across local and configured SSH machines",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			return printActiveSessions(cmd.Context(), cfg, jsonFlag)
+			if remoteInventoryFlag {
+				if !jsonFlag {
+					return fmt.Errorf("--remote-inventory requires --json")
+				}
+				sessions, err := discoverActiveSessions(cmd.Context(), cfg)
+				if err != nil {
+					return err
+				}
+				if sessions == nil {
+					sessions = []localSession{}
+				}
+				encoder := json.NewEncoder(cmd.OutOrStdout())
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(remoteSessionInventory{Version: version, ContractVersion: remoteSessionContractVersion, Sessions: sessions})
+			}
+			rows, err := discoverMachineSessions(cmd.Context(), cfg, remoteStreams(cmd.Context()))
+			if err != nil {
+				return err
+			}
+			return writeMachineSessions(cmd.OutOrStdout(), rows, jsonFlag)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "print machine-readable JSON")
+	cmd.Flags().BoolVar(&remoteInventoryFlag, "remote-inventory", false, "return the local-only SSH inventory contract")
+	_ = cmd.Flags().MarkHidden("remote-inventory")
 	return cmd
 }
 
