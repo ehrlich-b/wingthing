@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 )
@@ -18,6 +20,8 @@ import (
 const (
 	remoteSessionContractVersion = "v1"
 	remoteSessionTimeout         = 3 * time.Second
+	remoteSessionStdoutLimit     = 4 << 20
+	remoteSessionStderrLimit     = 64 << 10
 )
 
 // Only the internal inventory response is versioned. Public session ps --json
@@ -43,39 +47,73 @@ func remoteStreams(ctx context.Context) remoteIO {
 	return remoteProcessIO()
 }
 
+type remoteSessionBuffer struct {
+	buffer   bytes.Buffer
+	limit    int
+	stream   string
+	cancel   context.CancelFunc
+	overflow error
+}
+
+func (b *remoteSessionBuffer) Write(p []byte) (int, error) {
+	if b.overflow != nil {
+		return 0, b.overflow
+	}
+	remaining := b.limit - b.buffer.Len()
+	if len(p) > remaining {
+		n, _ := b.buffer.Write(p[:remaining])
+		b.overflow = fmt.Errorf("%s exceeded %d-byte limit", b.stream, b.limit)
+		b.cancel()
+		return n, b.overflow
+	}
+	return b.buffer.Write(p)
+}
+
 func queryRemoteSessions(ctx context.Context, name string, remote config.Remote, streams remoteIO) ([]localSession, error) {
 	ctx, cancel := context.WithTimeout(ctx, remoteSessionTimeout)
 	defer cancel()
 	invocation := remoteInvocation{target: remote.SSHTarget, binary: config.BinaryName(), state: remote.WingthingDir}
-	var stdout, stderr bytes.Buffer
+	stdout := remoteSessionBuffer{limit: remoteSessionStdoutLimit, stream: "stdout", cancel: cancel}
+	stderr := remoteSessionBuffer{limit: remoteSessionStderrLimit, stream: "stderr", cancel: cancel}
 	streams.in, streams.out, streams.errOut = nil, &stdout, &stderr
-	invocation.args = []string{"--version"}
-	if err := runRemoteInvocation(ctx, invocation, streams); err != nil {
-		return nil, remoteQueryError(name, err, stderr.String())
+	run := func() error {
+		err := runRemoteInvocation(ctx, invocation, streams)
+		// Cancellation also returns context.Canceled; retain the overflow cause.
+		if stdout.overflow != nil {
+			return stdout.overflow
+		}
+		if stderr.overflow != nil {
+			return stderr.overflow
+		}
+		return err
 	}
-	remoteVersion := strings.TrimSpace(stdout.String())
+	invocation.args = []string{"--version"}
+	if err := run(); err != nil {
+		return nil, remoteQueryError(name, err, stderr.buffer.String())
+	}
+	remoteVersion := strings.TrimSpace(stdout.buffer.String())
 	if remoteVersion == "" {
 		remoteVersion = "unknown"
 	}
-	stdout.Reset()
-	stderr.Reset()
+	stdout.buffer.Reset()
+	stderr.buffer.Reset()
 	// The receiver skips its registry entirely, so this never recursively fans
 	// out to that machine's configured remotes (even a cycle back to this one).
 	invocation.args = []string{"session", "ps", "--json", "--remote-inventory"}
-	err := runRemoteInvocation(ctx, invocation, streams)
+	err := run()
 	if err != nil {
 		var exitErr *commandExitError
 		if !errors.As(err, &exitErr) || exitErr.code == 255 {
-			return nil, remoteQueryError(name, err, stderr.String())
+			return nil, remoteQueryError(name, err, stderr.buffer.String())
 		}
-		diagnostic := strings.TrimSpace(stderr.String())
+		diagnostic := strings.TrimSpace(stderr.buffer.String())
 		if strings.Contains(diagnostic, "unknown flag") || strings.Contains(diagnostic, "unknown command") || strings.Contains(diagnostic, "flag provided but not defined") {
 			return nil, remoteInventoryMismatch(name, remoteVersion, "unsupported", diagnostic)
 		}
 		return nil, remoteQueryError(name, err, diagnostic)
 	}
 	var inventory remoteSessionInventory
-	if err := json.Unmarshal(stdout.Bytes(), &inventory); err != nil {
+	if err := json.Unmarshal(stdout.buffer.Bytes(), &inventory); err != nil {
 		return nil, remoteInventoryMismatch(name, remoteVersion, "unsupported", "invalid session ps --json inventory")
 	}
 	if inventory.Version != "" {
@@ -156,7 +194,7 @@ func writeMachineSessions(out io.Writer, rows []machineSession, jsonOutput bool)
 	}
 	for _, row := range rows {
 		if row.Error != "" {
-			if _, err := fmt.Fprintf(w, "%s\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t%s\n", row.Machine, strings.Join(strings.Fields(row.Error), " ")); err != nil {
+			if _, err := fmt.Fprintf(w, "%s\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t%s\n", escapeSessionField(row.Machine), escapeSessionField(row.Error)); err != nil {
 				return err
 			}
 			continue
@@ -177,13 +215,26 @@ func writeMachineSessions(out io.Writer, rows []machineSession, jsonOutput bool)
 		if isolation == "" {
 			isolation = "unknown"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t\n", row.Machine,
-			name, row.ID, row.Kind, process, status, isolation, row.Readers,
-			humanDuration(time.Duration(row.UptimeSecs)*time.Second), humanDuration(time.Duration(row.IdleSecs)*time.Second), shortenPath(row.CWD)); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t\n", escapeSessionField(row.Machine),
+			escapeSessionField(name), escapeSessionField(row.ID), escapeSessionField(row.Kind), escapeSessionField(process), escapeSessionField(status), escapeSessionField(isolation), row.Readers,
+			humanDuration(time.Duration(row.UptimeSecs)*time.Second), humanDuration(time.Duration(row.IdleSecs)*time.Second), escapeSessionField(shortenPath(row.CWD))); err != nil {
 			return err
 		}
 	}
 	return w.Flush()
+}
+
+func escapeSessionField(value string) string {
+	var escaped strings.Builder
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			quoted := strconv.QuoteRune(r)
+			escaped.WriteString(quoted[1 : len(quoted)-1])
+		} else {
+			escaped.WriteRune(r)
+		}
+	}
+	return escaped.String()
 }
 
 func parseRemoteSession(ref string) (name, session string, err error) {
