@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/cipher"
 	"crypto/rand"
@@ -276,6 +277,31 @@ type sessionUpload struct {
 	root                                                *os.Root
 }
 
+func (u *sessionUpload) commit(destination string) (string, int64, error) {
+	validate := func() error { return u.validateDestination(destination) }
+	if err := validate(); err != nil {
+		return "", 0, err
+	}
+	return writeSessionFileRootChecked(u.root, u.name, bytes.NewReader(u.data), validate)
+}
+
+func (u *sessionUpload) validateDestination(destination string) error {
+	if destination != u.destination {
+		return errors.New("session upload destination changed")
+	}
+	current, err := openBoundDirectoryRoot(destination)
+	if err != nil {
+		return errors.New("session upload destination changed")
+	}
+	defer func() { _ = current.Close() }()
+	currentInfo, currentErr := current.Stat(".")
+	retainedInfo, retainedErr := u.root.Stat(".")
+	if currentErr != nil || retainedErr != nil || !os.SameFile(currentInfo, retainedInfo) {
+		return errors.New("session upload destination changed")
+	}
+	return nil
+}
+
 type sessionUploadRegistry struct {
 	mu      sync.Mutex
 	uploads map[string]*sessionUpload
@@ -422,6 +448,10 @@ func newSessionFileID() (string, error) {
 }
 
 func writeSessionFileRoot(root *os.Root, name string, source io.Reader) (sha string, size int64, result error) {
+	return writeSessionFileRootChecked(root, name, source, nil)
+}
+
+func writeSessionFileRootChecked(root *os.Root, name string, source io.Reader, beforeCommit func() error) (sha string, size int64, result error) {
 	temporaryID, err := newSessionFileID()
 	if err != nil {
 		return "", 0, err
@@ -450,6 +480,11 @@ func writeSessionFileRoot(root *os.Root, name string, source io.Reader) (sha str
 	}
 	if err := file.Close(); err != nil {
 		return "", 0, fmt.Errorf("close file: %w", err)
+	}
+	if beforeCommit != nil {
+		if err := beforeCommit(); err != nil {
+			return "", 0, err
+		}
 	}
 	if err := root.Link(temporaryName, name); err != nil {
 		if errors.Is(err, os.ErrExist) {
@@ -590,6 +625,8 @@ func streamSessionFileError(gcm cipher.AEAD, requestID, message string, write ws
 	return tunnelStreamChunk(gcm, requestID, payload, true, write)
 }
 
+var openSessionExportOwnerRoot = (*os.Root).OpenRoot
+
 func exportSessionFile(source *os.File, info os.FileInfo, target config.ExportTarget, ownerID string) (string, int64, error) {
 	if !validSessionFileName(info.Name()) {
 		return "", 0, errors.New("invalid export file name")
@@ -620,21 +657,20 @@ func exportSessionFile(source *os.File, info os.FileInfo, target config.ExportTa
 	if err != nil || !ownerInfo.IsDir() || ownerInfo.Mode()&os.ModeSymlink != 0 {
 		return "", 0, errors.New("owner export directory is unavailable")
 	}
-	ownerDirectory, err := root.Open(ownerDir)
-	if err != nil {
-		return "", 0, errors.New("owner export directory is unavailable")
-	}
-	if err := ownerDirectory.Chmod(0o700); err != nil {
-		_ = ownerDirectory.Close()
-		return "", 0, fmt.Errorf("protect owner export directory: %w", err)
-	}
-	if err := ownerDirectory.Close(); err != nil {
-		return "", 0, fmt.Errorf("close owner export directory: %w", err)
-	}
-	ownerRoot, err := root.OpenRoot(ownerDir)
+	ownerRoot, err := openSessionExportOwnerRoot(root, ownerDir)
 	if err != nil {
 		return "", 0, fmt.Errorf("open owner export directory: %w", err)
 	}
 	defer func() { _ = ownerRoot.Close() }()
+	openedOwnerInfo, err := ownerRoot.Stat(".")
+	if err != nil || !os.SameFile(ownerInfo, openedOwnerInfo) {
+		return "", 0, errors.New("owner export directory changed while opening it")
+	}
+	// The validated root owns the directory descriptor for chmod and every
+	// subsequent write. Reopening ownerDir could follow a swapped symlink to
+	// another owner inside the same export root.
+	if err := ownerRoot.Chmod(".", 0o700); err != nil {
+		return "", 0, fmt.Errorf("protect owner export directory: %w", err)
+	}
 	return writeSessionFileRoot(ownerRoot, info.Name(), &boundedSessionFileReader{reader: source, remaining: maxSessionDownloadSize})
 }

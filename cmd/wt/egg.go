@@ -1271,6 +1271,11 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 	}
 	if o.Label != "" {
+		lock, err := acquireSessionNameLock(cfg)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = lock.Close() }()
 		if err := ensureSessionNameAvailable(cfg, o.Label, sessionID); err != nil {
 			return nil, err
 		}

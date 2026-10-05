@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -182,7 +182,7 @@ func TestSessionUploadIsBoundPrivateAndNoClobber(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = finished.root.Close() }()
-	if _, _, err := writeSessionFileRoot(finished.root, finished.name, bytes.NewReader(finished.data)); err != nil {
+	if _, _, err := finished.commit(finished.destination); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dataDir, "evidence.bin")
@@ -325,5 +325,170 @@ func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T)
 	}
 	if _, err := os.Stat(filepath.Join(outside, "report.txt")); !os.IsNotExist(err) {
 		t.Fatalf("export escaped through owner symlink: %v", err)
+	}
+}
+
+func TestExportSessionFileRejectsOwnerDirectorySwap(t *testing.T) {
+	root := t.TempDir()
+	ownerPath := filepath.Join(root, userHash("alice"))
+	otherPath := filepath.Join(root, userHash("bob"))
+	for _, path := range []string{ownerPath, otherPath} {
+		if err := os.Mkdir(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sourcePath := filepath.Join(t.TempDir(), "report.txt")
+	if err := os.WriteFile(sourcePath, []byte("answer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = source.Close() }()
+	info, err := source.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalOpen := openSessionExportOwnerRoot
+	t.Cleanup(func() { openSessionExportOwnerRoot = originalOpen })
+	openSessionExportOwnerRoot = func(parent *os.Root, name string) (*os.Root, error) {
+		// Swap after Lstat validated the owner, immediately before its open.
+		if err := os.Rename(ownerPath, filepath.Join(root, "parked-owner")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Base(otherPath), ownerPath); err != nil {
+			t.Fatal(err)
+		}
+		return originalOpen(parent, name)
+	}
+	if _, _, err := exportSessionFile(source, info, config.ExportTarget{Name: "isolated", Path: root}, "alice"); err == nil {
+		t.Fatal("export accepted an owner directory swapped after validation")
+	}
+	if _, err := os.Stat(filepath.Join(otherPath, info.Name())); !os.IsNotExist(err) {
+		t.Fatalf("export followed the owner symlink into another owner's area: %v", err)
+	}
+	otherInfo, err := os.Stat(otherPath)
+	if err != nil || otherInfo.Mode().Perm() != 0o755 {
+		t.Fatalf("export changed another owner's directory permissions: info=%v err=%v", otherInfo, err)
+	}
+	if err := os.Remove(ownerPath); err != nil {
+		t.Fatal(err)
+	}
+	parked := filepath.Join(root, "parked-owner")
+	if err := os.Rename(parked, ownerPath); err != nil {
+		t.Fatal(err)
+	}
+	openSessionExportOwnerRoot = func(parent *os.Root, name string) (*os.Root, error) {
+		bound, err := originalOpen(parent, name)
+		if err != nil {
+			return nil, err
+		}
+		// A swap after opening must leave chmod and writes on this descriptor.
+		if err := os.Rename(ownerPath, parked); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Base(otherPath), ownerPath); err != nil {
+			t.Fatal(err)
+		}
+		return bound, nil
+	}
+	if _, _, err := exportSessionFile(source, info, config.ExportTarget{Name: "isolated", Path: root}, "alice"); err != nil {
+		t.Fatalf("export through the retained owner root failed: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(parked, info.Name())); err != nil || string(data) != "answer" {
+		t.Fatalf("export did not use the retained owner root: data=%q err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(otherPath, info.Name())); !os.IsNotExist(err) {
+		t.Fatalf("export reopened the swapped owner path: %v", err)
+	}
+	otherInfo, err = os.Stat(otherPath)
+	if err != nil || otherInfo.Mode().Perm() != 0o755 {
+		t.Fatalf("chmod reopened the swapped owner path: info=%v err=%v", otherInfo, err)
+	}
+}
+
+func TestSessionUploadCommitRejectsReplacedDestination(t *testing.T) {
+	session, policy, paths, destination := filePolicyFixture(t)
+	registry := newSessionUploadRegistry()
+	req := ws.TunnelRequest{SenderUserID: "alice", SenderPub: "browser"}
+	upload, err := registry.begin(session, policy, paths, req, "report.txt", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, err := registry.finish(upload.id, req.SenderUserID, req.SenderPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = finished.root.Close() }()
+	moved := destination + "-moved"
+	if err := os.Rename(destination, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(destination, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	current, err := policy.uploadDirectory(paths)
+	if err != nil || current != finished.destination {
+		t.Fatalf("replacement did not preserve the authorized pathname: %q, %v", current, err)
+	}
+	if _, _, err := finished.commit(current); err == nil {
+		t.Fatal("upload committed through a handle to a replaced destination")
+	}
+	for _, path := range []string{destination, moved} {
+		if _, err := os.Stat(filepath.Join(path, finished.name)); !os.IsNotExist(err) {
+			t.Fatalf("rejected upload wrote to %q: %v", path, err)
+		}
+	}
+}
+
+type sessionFileSwapReader struct {
+	io.Reader
+	swap func()
+}
+
+func (r *sessionFileSwapReader) Read(buffer []byte) (int, error) {
+	if r.swap != nil {
+		r.swap()
+		r.swap = nil
+	}
+	return r.Reader.Read(buffer)
+}
+
+func TestSessionUploadRechecksDestinationBeforeLink(t *testing.T) {
+	session, policy, paths, destination := filePolicyFixture(t)
+	registry := newSessionUploadRegistry()
+	req := ws.TunnelRequest{SenderUserID: "alice", SenderPub: "browser"}
+	upload, err := registry.begin(session, policy, paths, req, "report.txt", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, err := registry.finish(upload.id, req.SenderUserID, req.SenderPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = finished.root.Close() }()
+	if err := finished.validateDestination(finished.destination); err != nil {
+		t.Fatal(err)
+	}
+	moved := destination + "-moved"
+	source := &sessionFileSwapReader{Reader: strings.NewReader("answer"), swap: func() {
+		if err := os.Rename(destination, moved); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(destination, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	if _, _, err := writeSessionFileRootChecked(finished.root, finished.name, source, func() error {
+		return finished.validateDestination(finished.destination)
+	}); err == nil {
+		t.Fatal("upload committed after the destination changed during its write")
+	}
+	for _, path := range []string{destination, moved} {
+		entries, err := os.ReadDir(path)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("rejected upload left files in %q: entries=%v err=%v", path, entries, err)
+		}
 	}
 }

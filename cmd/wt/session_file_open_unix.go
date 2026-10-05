@@ -19,19 +19,28 @@ func openSessionFileNoFollow(root, relative string) (*os.File, error) {
 	if filepath.IsAbs(relative) || len(parts) == 0 {
 		return nil, errors.New("file path must be relative")
 	}
-	before, err := os.Lstat(root)
-	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("file root is unavailable")
+	if !filepath.IsAbs(root) {
+		return nil, errors.New("file root must be absolute")
 	}
-	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	// O_NOFOLLOW on an absolute path protects only its final component. Walk
+	// the authorized root from the filesystem root so its ancestors are bound
+	// by descriptors too, without resolving a newly introduced symlink.
+	directoryFlags := unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC | unix.O_NOFOLLOW
+	fd, err := unix.Open(string(filepath.Separator), directoryFlags, 0)
 	if err != nil {
 		return nil, err
 	}
 	rootFile := os.NewFile(uintptr(fd), root)
-	after, statErr := rootFile.Stat()
-	if statErr != nil || !os.SameFile(before, after) {
+	for _, part := range strings.Split(strings.TrimPrefix(filepath.Clean(root), string(filepath.Separator)), string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		next, openErr := unix.Openat(int(rootFile.Fd()), part, directoryFlags, 0)
 		_ = rootFile.Close()
-		return nil, errors.New("file root changed while opening it")
+		if openErr != nil {
+			return nil, openErr
+		}
+		rootFile = os.NewFile(uintptr(next), part)
 	}
 	fd = int(rootFile.Fd())
 	for index, part := range parts {
@@ -56,13 +65,18 @@ func openSessionFileNoFollow(root, relative string) (*os.File, error) {
 		fd = next
 		rootFile = os.NewFile(uintptr(fd), part)
 	}
-	info, err := rootFile.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	var stat unix.Stat_t
+	err = unix.Fstat(int(rootFile.Fd()), &stat)
+	if err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG {
 		_ = rootFile.Close()
 		if err != nil {
 			return nil, err
 		}
 		return nil, errors.New("only regular files can be opened")
+	}
+	if stat.Nlink > 1 {
+		_ = rootFile.Close()
+		return nil, errors.New("files with multiple hardlinks cannot be downloaded or exported")
 	}
 	if err := unix.SetNonblock(int(rootFile.Fd()), false); err != nil {
 		_ = rootFile.Close()

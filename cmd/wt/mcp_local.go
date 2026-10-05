@@ -2040,6 +2040,11 @@ func (s *localMCPServer) toolTerminalRename(ctx context.Context, arguments json.
 	if err != nil {
 		return nil, err
 	}
+	lock, err := acquireSessionNameLock(s.cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = lock.Close() }()
 	if err := ensureSessionNameAvailable(s.cfg, args.Name, session.ID); err != nil {
 		return nil, err
 	}

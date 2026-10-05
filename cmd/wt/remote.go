@@ -74,6 +74,7 @@ func executeCLI(ctx context.Context, args []string, streams remoteIO) error {
 
 func parseRemoteInvocation(argv []string, interactive bool) (remoteInvocation, bool, error) {
 	invocation := remoteInvocation{binary: config.BinaryName()}
+	command, _, _ := newRootCommand().Find(argv)
 	args := make([]string, 0, len(argv))
 	transportSeen := false
 	stateSeen := false
@@ -87,6 +88,10 @@ func parseRemoteInvocation(argv []string, interactive bool) (remoteInvocation, b
 		name, value, inline, matched := remoteTransportFlag(arg)
 		if !matched {
 			args = append(args, arg)
+			if remoteCommandFlagConsumesValue(command, arg) && i+1 < len(argv) {
+				i++
+				args = append(args, argv[i])
+			}
 			continue
 		}
 		transportSeen = true
@@ -159,6 +164,37 @@ func parseRemoteInvocation(argv []string, interactive bool) (remoteInvocation, b
 	invocation.args = args
 	invocation.allocateTTY = interactive && remoteCommandNeedsTTY(args)
 	return invocation, true, nil
+}
+
+// Transport flags may appear anywhere before --, but a value consumed by a
+// command flag belongs to that command even when it looks like -r or --remote.
+// Use Cobra's definitions so new command flags inherit the same routing rule.
+func remoteCommandFlagConsumesValue(command *cobra.Command, arg string) bool {
+	flags := command.Flags()
+	flags.AddFlagSet(command.InheritedFlags())
+	if name, ok := strings.CutPrefix(arg, "--"); ok {
+		if strings.Contains(name, "=") {
+			return false
+		}
+		flag := flags.Lookup(name)
+		return flag != nil && flag.NoOptDefVal == ""
+	}
+	if !strings.HasPrefix(arg, "-") {
+		return false
+	}
+	for index := 1; index < len(arg); index++ {
+		flag := flags.ShorthandLookup(arg[index : index+1])
+		if flag == nil {
+			return false
+		}
+		if flag.NoOptDefVal == "" {
+			return index == len(arg)-1
+		}
+		if index+1 < len(arg) && arg[index+1] == '=' {
+			return false
+		}
+	}
+	return false
 }
 
 func remoteJSONOnly(args []string) bool {

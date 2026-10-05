@@ -5574,7 +5574,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload destination changed"}, write)
 			return
 		}
-		sha, size, err := writeSessionFileRoot(upload.root, upload.name, bytes.NewReader(upload.data))
+		sha, size, err := upload.commit(destination)
 		if err != nil {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
@@ -6090,6 +6090,11 @@ func renameTunnelSession(cfg *config.Config, req ws.TunnelRequest, sessionID, na
 	if _, err := resolveOwnedActiveSession(req, sessionID, sessions, userPaths); err != nil {
 		return err
 	}
+	lock, err := acquireSessionNameLock(cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
 	if err := ensureSessionNameAvailable(cfg, name, sessionID); err != nil {
 		return err
 	}
