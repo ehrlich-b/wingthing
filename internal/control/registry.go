@@ -392,11 +392,13 @@ func buildTools() []Tool {
 				"conversation_role":      map[string]any{"type": "string", "enum": []string{"parent", "child"}, "description": "Create a persistent personal conversation; Claude currently supported"},
 				"parent_conversation_id": stringProperty("Owned logical parent conversation ID; inherited by conversation-bound MCP connections"),
 				"request_id":             stringProperty("Required unique retry key for linked conversation launches; identical retries reuse the same execution"),
+				"resume_session":         stringProperty("Ended owned Claude root execution to continue; send conversation_role parent, input and request_id without other launch fields"),
+				"input":                  stringProperty("Exact follow-up message for resume_session, at most 64 KiB"),
 				"args": map[string]any{
 					"type": "array", "items": map[string]any{"type": "string"}, "default": []string{},
 					"description": "Extra arguments passed to the agent CLI verbatim, after Wingthing's own flags. Use the agent's native syntax, for example [\"--model\",\"sonnet\"] for claude or [\"-m\",\"gpt-5.6-terra\"] for codex.",
 				},
-			}, "agent"), Annotations: modelCall,
+			}), Annotations: modelCall,
 			Grant: "terminal.start", Surfaces: both, AuditTargetKeys: []string{"session"},
 		},
 		{
@@ -579,6 +581,12 @@ func buildTools() []Tool {
 		}
 	}
 	for index := range tools {
+		if tools[index].Name == "agent_start" {
+			tools[index].InputSchema["anyOf"] = []any{
+				map[string]any{"required": []string{"agent"}},
+				map[string]any{"required": []string{"resume_session", "conversation_role", "input", "request_id"}},
+			}
+		}
 		tools[index].Version = ContractVersion
 		if tools[index].Authority == "" {
 			tools[index].Authority = AuthorityWing

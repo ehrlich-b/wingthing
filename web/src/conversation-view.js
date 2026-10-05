@@ -22,6 +22,12 @@ var navigation = createNavigationGuard();
 var panel = null;
 var snapshotListener = false;
 
+window.addEventListener('wingthing:continuation-started', function(event) {
+    var source = event.detail.source;
+    if (!panel || !panelCurrent(panel) || source.userId !== userId() || source.wingId !== panel.wingId || source.conversationId !== panel.conversation.conversation_id) return;
+    openFromCard({ wingId: source.wingId, conversationId: source.conversationId }, document.querySelector('.conversation-recovery-status'));
+});
+
 function userId() { return S.currentUser ? S.currentUser.id : ''; }
 function storage() { try { return window.localStorage; } catch (e) { return null; } }
 function request(wingId, payload) { return sendTunnelRequest(wingId, payload); }

@@ -75,6 +75,13 @@ func (s *Store) ReserveConversation(c Conversation) (*Conversation, bool, error)
 	if _, err := tx.Exec(`UPDATE conversations SET revision = revision WHERE id = ''`); err != nil {
 		return nil, false, err
 	}
+	var continuationKeys int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM conversation_continuations WHERE owner_id = ? AND request_id = ?`, c.OwnerID, c.LaunchKey).Scan(&continuationKeys); err != nil {
+		return nil, false, err
+	}
+	if continuationKeys != 0 {
+		return nil, false, errors.New("launch request_id was already used with different arguments")
+	}
 	var count, existing int
 	if err := tx.QueryRow(`SELECT COUNT(*),COALESCE(SUM(launch_key = ?),0) FROM conversations WHERE owner_id = ?`, c.LaunchKey, c.OwnerID).Scan(&count, &existing); err != nil {
 		return nil, false, err

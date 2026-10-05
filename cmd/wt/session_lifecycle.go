@@ -154,7 +154,9 @@ func (s *localMCPServer) toolSessionRead(ctx context.Context, arguments json.Raw
 	if err != nil {
 		return nil, err
 	}
-	return lifecycleResult(view), nil
+	result := lifecycleResult(view)
+	s.addSessionContinuation(result, view)
+	return result, nil
 }
 
 type sessionWaitArgs struct {
