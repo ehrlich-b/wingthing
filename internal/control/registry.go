@@ -299,7 +299,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "terminal_list", Title: "List persistent terminals",
-			Description: "List live local Wingthing sessions with stable IDs, labels, process kind, agent, activity, and working directory.",
+			Description: "List live local Wingthing sessions with stable IDs, labels, process kind, agent, activity, working directory, and hook-derived status: working, blocked, idle, done, exited, or unknown. Older eggs and unsupported agents report unknown.",
 			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
 			Grant: "terminal.read", Surfaces: both,
 		},

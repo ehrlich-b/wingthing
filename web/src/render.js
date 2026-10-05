@@ -14,7 +14,7 @@ import { shouldFetchWingSessions } from './session-merge.js';
 import { updateCanvasSessionName } from './canvas.js';
 import { historyResumeState } from './session-resume.js';
 import { readSessionContent, notificationForSession } from './session-reference.js';
-import { sessionInventoryState, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey } from './session-inventory.js';
+import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey } from './session-inventory.js';
 import { refreshConversationInventory } from './conversation-view.js';
 import { refreshParentDot } from './parent-dot.js';
 
@@ -73,8 +73,6 @@ export function renderSidebar() {
         var letter = name.charAt(0).toUpperCase();
         var isActive = S.activeView === 'terminal' && sessionIsSelected(s, S.ptySessionId, S.ptyWingId);
         var state = sessionInventoryState(s, sessionWing(s), notificationForSession(S.sessionNotifications, s));
-        var dotClass = state.canAttach ? 'dot-live' : 'dot-offline';
-        if (state.attention) dotClass = 'dot-attention';
         var ownsSession = !!S.currentUser && !!s.user_id && s.user_id === S.currentUser.id;
         var canRename = sessionInventoryActions(s, sessionWing(s), S.currentUser).rename;
         var title = name + ' \u00b7 ' + (s.agent || '?') + ' \u00b7 ' + wingNameById(s.wing_id) + ' \u00b7 ' + state.connectionLabel + ' \u00b7 ' + state.agentLabel;
@@ -84,10 +82,10 @@ export function renderSidebar() {
             'aria-label="' + escapeHtml(title) + '" ' + (isActive ? 'aria-current="page" ' : '') +
             'title="' + escapeHtml(title) + '" ' +
             'data-sid="' + escapeHtml(s.id) + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '">' +
-            '<span class="tab-dot ' + dotClass + '"></span>' +
+            sessionStatusDot(state.status, true) +
             '<span class="tab-letter">' + escapeHtml(letter) + '</span>' +
             '<span class="tab-copy"><span class="tab-label">' + escapeHtml(name) + '</span>' +
-            '<span class="tab-meta">' + escapeHtml((s.agent || '?') + ' · ' + (wingNameById(s.wing_id) || 'unknown wing')) + '</span></span>' +
+            '<span class="tab-meta">' + escapeHtml((s.agent || '?') + ' · ' + state.agentLabel + ' · ' + (wingNameById(s.wing_id) || 'unknown wing')) + '</span></span>' +
             (canRename ? '<button class="session-rename-btn" type="button" data-session-action="rename" aria-label="Rename ' + escapeHtml(name) + '" title="Rename session">rename</button>' : '') +
         '</div>';
     }).join('');
@@ -1552,7 +1550,7 @@ function renderActiveSessionRows(sessions) {
               '<button class="btn-sm wd-keylog-btn" data-sid="' + sid + '">keylog</button>'
             : '';
         return '<div class="wd-session-row" role="group" tabindex="0" aria-label="' + escapeHtml(sName + ' · ' + presentation.agentLabel + ' · ' + presentation.connectionLabel) + '" data-sid="' + sid + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '" data-kind="' + escapeHtml(kind) + '" data-agent="' + escapeHtml(s.agent || 'claude') + '">' +
-            '<span class="session-dot ' + presentation.tone + '" aria-hidden="true"></span>' +
+            sessionStatusDot(presentation.status) +
             '<span class="wd-session-name">' + escapeHtml(sName) + ' \u00b7 ' + agentWithIcon(s.agent || '?') + '</span>' +
             '<span class="wd-session-state">' + escapeHtml(presentation.agentLabel) + '</span>' +
             auditBadge +
@@ -2504,7 +2502,7 @@ function renderSessionInventory() {
         var error = sessionActionErrors.get(resourceKey);
         return '<article class="egg-box inventory-session' + (selected ? ' selected' : '') + '" role="group" tabindex="0" data-sid="' + sid + '" data-wing-id="' + escapeHtml(session.wing_id || '') + '" data-kind="' + escapeHtml(session.kind || 'terminal') + '" aria-label="' + escapeHtml(label + ' · ' + state.connectionLabel + ' · ' + state.agentLabel) + '"' + (selected ? ' aria-current="page"' : '') + '>' +
             (thumbnail ? '<div class="egg-preview"><img src="' + thumbnail + '" alt="" loading="lazy"></div>' : '') +
-            '<div class="egg-footer"><span class="session-dot ' + state.tone + '" aria-hidden="true"></span>' +
+            '<div class="egg-footer">' + sessionStatusDot(state.status) +
             '<span class="egg-label tab-label">' + escapeHtml(name) + '</span>' +
             (role ? '<span class="session-role">' + escapeHtml(role) + '</span>' : '') + '</div>' +
             '<div class="inventory-session-meta">' + agentWithIcon(session.agent || '?') + '<span>·</span><span>' + escapeHtml(wing && wingDisplayName(wing) || 'unknown wing') + '</span></div>' +

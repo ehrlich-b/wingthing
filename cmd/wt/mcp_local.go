@@ -1233,6 +1233,7 @@ func (s *localMCPServer) toolTerminalList(ctx context.Context, arguments json.Ra
 			owned = append(owned, session)
 		}
 	}
+	// Each entry includes the shared hook-derived status from session discovery.
 	return map[string]any{"sessions": owned}, nil
 }
 

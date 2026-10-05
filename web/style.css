@@ -773,6 +773,11 @@ body {
 .session-dot.live { background: var(--green); }
 .session-dot.detached { background: var(--yellow); }
 .session-dot.offline { background: var(--text-muted); }
+.agent-status-working, .agent-status-done { background: var(--green); }
+.agent-status-idle { background: var(--yellow); }
+.agent-status-blocked { background: var(--orange); }
+.agent-status-exited { background: var(--red); }
+.agent-status-unknown { background: var(--text-muted); }
 .session-dot.attention {
     background: var(--orange);
     animation: pulse 1s ease-in-out infinite;

@@ -43,6 +43,7 @@ type localSession struct {
 	Principal    string `json:"principal,omitempty"`
 	Kind         string `json:"kind"`
 	Agent        string `json:"agent,omitempty"`
+	Status       string `json:"status"`
 	Command      string `json:"command,omitempty"`
 	CWD          string `json:"cwd,omitempty"`
 	Isolation    string `json:"isolation,omitempty"`
@@ -64,6 +65,7 @@ func discoverActiveSessions(ctx context.Context, cfg *config.Config) ([]localSes
 	}
 	for i := range sessions {
 		session := &sessions[i]
+		session.Status = "unknown"
 		dir := filepath.Join(cfg.Dir, "eggs", session.ID)
 		ec, dialErr := egg.Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
 		if dialErr == nil {
@@ -82,6 +84,9 @@ func discoverActiveSessions(ctx context.Context, cfg *config.Config) ([]localSes
 					session.Agent = st.Agent
 				}
 			}
+		}
+		if view, err := lifecycleViewForSession(cfg, *session, 0, 1); err == nil {
+			session.Status = view.Status
 		}
 	}
 	sortLocalSessions(sessions)
@@ -365,7 +370,7 @@ func printActiveSessions(ctx context.Context, cfg *config.Config, jsonOutput boo
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "NAME\tID\tKIND\tPROCESS\tISOLATION\tREADERS\tUPTIME\tIDLE\tCWD"); err != nil {
+	if _, err := fmt.Fprintln(w, "NAME\tID\tKIND\tPROCESS\tSTATUS\tISOLATION\tREADERS\tUPTIME\tIDLE\tCWD"); err != nil {
 		return err
 	}
 	for _, session := range sessions {
@@ -384,8 +389,8 @@ func printActiveSessions(ctx context.Context, cfg *config.Config, jsonOutput boo
 		if isolation == "" {
 			isolation = "unknown"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
-			name, session.ID, session.Kind, process, isolation, session.Readers,
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			name, session.ID, session.Kind, process, session.Status, isolation, session.Readers,
 			humanDuration(time.Duration(session.UptimeSecs)*time.Second),
 			humanDuration(time.Duration(session.IdleSecs)*time.Second),
 			shortenPath(session.CWD),
@@ -425,7 +430,7 @@ func selectSession(sessions []localSession) (localSession, error) {
 		if process == "" {
 			process = session.Command
 		}
-		fmt.Fprintf(os.Stderr, "  %d) %-20s %-8s %s  %s\n", i+1, name, session.Kind, shortenPath(session.CWD), process)
+		fmt.Fprintf(os.Stderr, "  %d) %-20s %-8s %-8s %s  %s\n", i+1, name, session.Kind, session.Status, shortenPath(session.CWD), process)
 	}
 	fmt.Fprintf(os.Stderr, "Attach [1-%d]: ", len(sessions))
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')

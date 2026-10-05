@@ -19,7 +19,7 @@ func sessionLifecycleSummary(ctx context.Context, cfg *config.Config, id string)
 	if err != nil {
 		return nil
 	}
-	return map[string]any{"state": view.State, "state_source": view.StateSource, "ready": view.Ready, "process_alive": view.ProcessAlive, "head_cursor": view.HeadCursor}
+	return map[string]any{"state": view.State, "status": view.Status, "state_source": view.StateSource, "ready": view.Ready, "process_alive": view.ProcessAlive, "head_cursor": view.HeadCursor}
 }
 
 // browserSessionControl is a narrow adapter over the same typed MCP handlers.
