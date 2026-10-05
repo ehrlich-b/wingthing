@@ -6098,14 +6098,11 @@ func renameTunnelSession(cfg *config.Config, req ws.TunnelRequest, sessionID, na
 	if _, err := resolveOwnedActiveSession(req, sessionID, sessions, userPaths); err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(filepath.Join(cfg.Dir, "eggs", ".session-name.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := acquireSessionNameLock(cfg)
 	if err != nil {
-		return fmt.Errorf("open session name lock: %w", err)
+		return err
 	}
 	defer func() { _ = lock.Close() }()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("lock session names: %w", err)
-	}
 	if err := ensureSessionNameAvailable(cfg, name, sessionID); err != nil {
 		return err
 	}

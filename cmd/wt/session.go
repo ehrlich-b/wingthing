@@ -235,6 +235,11 @@ func sessionRenameCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			lock, err := acquireSessionNameLock(cfg)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = lock.Close() }()
 			if err := ensureSessionNameAvailable(cfg, args[1], session.ID); err != nil {
 				return err
 			}

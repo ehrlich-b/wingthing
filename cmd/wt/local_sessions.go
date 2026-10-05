@@ -278,6 +278,25 @@ func validateSessionName(name string) error {
 	return nil
 }
 
+// acquireSessionNameLock serializes name assignments across every entry point
+// and process. Hold it through the availability check and durable write; a new
+// egg must also become discoverable before releasing its label claim.
+func acquireSessionNameLock(cfg *config.Config) (*os.File, error) {
+	eggsDir := filepath.Join(cfg.Dir, "eggs")
+	if err := os.MkdirAll(eggsDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create eggs dir: %w", err)
+	}
+	lock, err := os.OpenFile(filepath.Join(eggsDir, ".session-name.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open session name lock: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		_ = lock.Close()
+		return nil, fmt.Errorf("lock session names: %w", err)
+	}
+	return lock, nil
+}
+
 func ensureSessionNameAvailable(cfg *config.Config, name, exceptID string) error {
 	if name == "" {
 		return nil
