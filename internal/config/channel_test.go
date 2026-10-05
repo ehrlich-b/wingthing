@@ -5,8 +5,87 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
+
+func TestStableLoadRequiresHomeUnlessStateIsExplicit(t *testing.T) {
+	old := ReleaseChannel
+	ReleaseChannel = "stable"
+	t.Cleanup(func() { ReleaseChannel = old })
+	t.Chdir(t.TempDir())
+	for _, name := range []string{"HOME", "WINGTHING_DIR", "WINGTHING_PREVIEW_DIR"} {
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.UserHomeDir(); err == nil {
+		t.Skip("this platform resolves a home without HOME")
+	}
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "HOME") {
+		t.Fatalf("missing home was not propagated: %v", err)
+	}
+	if _, err := os.Stat(".wingthing"); !os.IsNotExist(err) {
+		t.Fatalf("Load created state in the working directory: %v", err)
+	}
+	t.Setenv("WINGTHING_DIR", filepath.Join(t.TempDir(), "explicit-state"))
+	if _, err := Load(); err != nil {
+		t.Fatalf("explicit state must not require HOME: %v", err)
+	}
+}
+
+func TestPreviewStateRejectsCaseAliasedMissingChild(t *testing.T) {
+	home := previewTest(t)
+	stable := filepath.Join(home, ".wingthing")
+	if err := os.Mkdir(stable, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(home, ".WINGTHING")
+	stableInfo, err := os.Stat(stable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasInfo, err := os.Stat(alias)
+	if os.IsNotExist(err) || (err == nil && !os.SameFile(stableInfo, aliasInfo)) {
+		t.Skip("filesystem is case-sensitive")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(alias, "missing", "preview")
+	t.Setenv("WINGTHING_DIR", child)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "overlaps") {
+		t.Fatalf("preview adopted a case alias of stable state: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stable, "missing")); !os.IsNotExist(err) {
+		t.Fatalf("preview created a child inside stable state: %v", err)
+	}
+}
+
+func TestPreviewStateRejectsPhysicalAliasedMissingChild(t *testing.T) {
+	home := previewTest(t)
+	stable := canonicalConfiguredPath(filepath.Join(home, ".wingthing"), "")
+	alias := canonicalConfiguredPath(filepath.Join(t.TempDir(), "alias"), "")
+	for _, path := range []string{stable, alias} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Model a physical alias such as a firmlink, which EvalSymlinks cannot see.
+	stat := statePathStat
+	statePathStat = func(path string) (os.FileInfo, error) {
+		if path == alias {
+			path = stable
+		}
+		return stat(path)
+	}
+	t.Cleanup(func() { statePathStat = stat })
+	t.Setenv("WINGTHING_DIR", filepath.Join(alias, "missing", "preview"))
+	if _, err := StateDir(); err == nil || !strings.Contains(err.Error(), "overlaps") {
+		t.Fatalf("preview accepted a missing child of a physical stable alias: %v", err)
+	}
+}
 
 func previewTest(t *testing.T) string {
 	t.Helper()

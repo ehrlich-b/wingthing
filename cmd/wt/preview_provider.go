@@ -240,6 +240,14 @@ func inspectPreviewClaude(ctx context.Context, profile previewProviderProfile, t
 		result.Diagnostic = "Claude was not found on PATH. Install its supported vendor CLI deliberately, then use the setup guide."
 		return result
 	}
+	// Bindings and credential symlinks can change after profile resolution.
+	// Revalidate before the vendor has any opportunity to read credentials.
+	current, err := resolvePreviewProviderProfile()
+	if err != nil || current.Home != profile.Home || current.HomeBinding != profile.HomeBinding ||
+		current.OSHome != profile.OSHome || current.ConfigDirectory != profile.ConfigDirectory {
+		result.Diagnostic = "The preview provider home or credential paths failed validation; no vendor status check was run."
+		return result
+	}
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	stdout, stderr := &previewProviderOutput{Cancel: cancel}, &previewProviderOutput{Cancel: cancel}

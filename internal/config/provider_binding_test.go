@@ -79,6 +79,36 @@ func TestPreviewProviderBindingMissingKeepsExactDefault(t *testing.T) {
 	}
 }
 
+func TestPreviewProviderBindingRejectsHostCredentialSymlinks(t *testing.T) {
+	for _, name := range []string{".claude", ".claude.json", ".claude/.credentials.json"} {
+		t.Run(name, func(t *testing.T) {
+			_, state, provider, account := providerBindingFixture(t)
+			writeProviderBinding(t, state, provider, 0600)
+			target := filepath.Join(account, name)
+			if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if name == ".claude" {
+				if err := os.Mkdir(target, 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(target, []byte("host-credential-fixture"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(provider, name)
+			if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := ResolvePreviewProviderHome(state); err == nil || !strings.Contains(err.Error(), "credential") {
+				t.Fatalf("bound home accepted host credential alias %q: %v", name, err)
+			}
+		})
+	}
+}
+
 func TestPreviewProviderBindingSelectsExactCanonicalExistingHome(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

@@ -39,6 +39,9 @@ func ValidateProtectedWriteTargets(targets []string) error {
 		if target == "" || strings.IndexByte(target, 0) >= 0 || !filepath.IsAbs(target) {
 			return &ProtectedWriteTargetError{Target: target, Reason: "must be a non-empty absolute path without NUL bytes"}
 		}
+		if filepath.Clean(target) != target {
+			return &ProtectedWriteTargetError{Target: target, Reason: "must be a clean path; symlinks change the meaning of .."}
+		}
 	}
 	return nil
 }

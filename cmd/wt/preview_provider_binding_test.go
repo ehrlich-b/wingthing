@@ -120,6 +120,53 @@ func TestPreviewProviderBindingProfileStatusGuideAndLoginUseBoundHome(t *testing
 	}
 }
 
+func TestPreviewProviderBindingStatusRechecksCredentialPaths(t *testing.T) {
+	state, provider, observed := previewProviderBindingFixture(t, "exit 99\n")
+	profile, err := resolvePreviewProviderProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePreviewProviderScript(t, profile, "printf ran > "+shellQuote(observed)+"\nexit 99\n")
+	// The binding is still valid, but a credential namespace was redirected
+	// after resolution into protected controller state.
+	if err := os.Symlink(state, filepath.Join(provider, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	status := inspectPreviewClaude(context.Background(), profile, time.Second)
+	if status.State != "unknown" || status.LoggedIn != nil {
+		t.Fatalf("unsafe credential paths produced an auth result: %#v", status)
+	}
+	if _, err := os.Stat(observed); !os.IsNotExist(err) {
+		t.Fatalf("vendor CLI ran after credential paths changed: %v", err)
+	}
+}
+
+func TestPreviewProviderBindingStatusRejectsChangedMacConfigDirectory(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS stores the resolved Claude configuration directory")
+	}
+	_, provider, observed := previewProviderBindingFixture(t, "exit 99\n")
+	link := filepath.Join(provider, ".claude")
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := resolvePreviewProviderProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePreviewProviderScript(t, profile, "printf ran > "+shellQuote(observed)+"\nexit 99\n")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	inspectPreviewClaude(context.Background(), profile, time.Second)
+	if _, err := os.Stat(observed); !os.IsNotExist(err) {
+		t.Fatalf("vendor CLI ran with a stale resolved configuration directory: %v", err)
+	}
+}
+
 func TestPreviewProviderBindingInvalidStopsBeforeVendor(t *testing.T) {
 	state, provider, observed := previewProviderBindingFixture(t, "")
 	binding := filepath.Join(state, config.ProviderHomeBinding)
