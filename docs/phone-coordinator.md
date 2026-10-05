@@ -1,8 +1,6 @@
 # Phone coordinator through wingthing.ai
 
-Use a **stable build of this branch**, an awake, online Mac, and an installed/authenticated Claude CLI. The separate wing uses the Mac's normal provider login; its Wingthing state, bearer, key, sessions and daemon files are isolated. Preview remains loopback-only.
-
-From this clone, build into a new executable outside the coordinator workspace:
+Use a **stable build of this branch**, an awake, online Mac, and an installed/authenticated Claude CLI. The separate wing uses the Mac's normal provider login; its Wingthing state, bearer, key, sessions and daemon files are isolated. Preview remains loopback-only. From this clone, build into a new executable outside the coordinator workspace:
 ```sh
 nice -n 15 make web
 mkdir -p "$HOME/.local/bin"
@@ -26,18 +24,19 @@ allow_keys: []
 YAML
 chmod 600 "$WINGTHING_DIR/wing.yaml"
 "$WT_PHONE" wing start --roost https://wingthing.ai
+"$WT_PHONE" phone link # copy the single setup URL from stdout
 ```
 Keep `WINGTHING_DIR` exported for every command here, including later stop/status commands. Do not copy state from the existing local roost. Keep state and executable under the OS home, outside writable workspaces, TMPDIR and provider profile paths; the broker refuses exposed layouts instead of adding sandbox exceptions.
 
-The bearer is `device_token` in this wing's private `$WINGTHING_DIR/device_token.yaml` after `wt login` (or an existing valid device bearer for the same hosted account). Obtain `<account-id>` with `curl --fail -H 'Authorization: Bearer <bearer-token>' https://wingthing.ai/auth/check`, reading `user_id`. Use that bearer to GET `/api/app/wings` on the same origin and find this wing. Enter these values in iOS **Home**:
+In iOS **Home**, tap **Paste setup link**, then **Connect**. Universal Clipboard works; tapping or AirDropping the link opens the prefilled form without connecting. The account and pinned wing identity are checked before the bearer enters Keychain. The link contains a credential: keep it private. Use `phone link --no-token` to enter the token separately, or `--json` for a JSON `url`. Older logins check `/auth/check` only at the configured roost; its account is then saved locally with the token. Manual fallback: enter these values in **Home** (the bearer is `device_token` in this wing's private `$WINGTHING_DIR/device_token.yaml`):
 
 | Form field | Value |
 | --- | --- |
 | Transport | Hosted home I choose |
 | HTTPS home address | `https://wingthing.ai` |
-| Account ID | `<account-id>` from `/auth/check.user_id` |
+| Account ID | `user_id` in this wing's `device_token.yaml`, or `/auth/check.user_id` |
 | Home wing ID | `<wing-id>` from `$WINGTHING_DIR/wing-id`, matching the roster |
-| Home wing public key | `<base64-X25519-public-key>` from that roster entry, checked against `public_key` in this wing's `device_token.yaml` |
+| Home wing public key | `public_key` in this wing's `device_token.yaml`, matching the roster |
 | Existing access token | `<bearer-token>`, without the `Bearer ` prefix |
 
 Connect Home, tap **New conversation**, choose `phone-coordinator-work`, enter `coordinator`, an exact supported `<claude-model-id>` and your first message, then tap **Create conversation**. The phone creates the headless Claude root under the hosted account's owner; its logical conversation persists after the turn exits. The broker retains its fixed tool subset, finite bounds and existing sandbox protections.

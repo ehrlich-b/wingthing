@@ -32,6 +32,9 @@ public enum HomeConnectionPhase: Equatable, Sendable {
 
 @MainActor public final class WingthingModel: ObservableObject {
     @Published public private(set) var profile: HomeProfile?
+    @Published public private(set) var pendingHomeSetup: HomeSetupLink?
+    @Published public private(set) var homeSetupError: String?
+    private var homeSetupRequested = false
     @Published public private(set) var parent: ParentSelection?
     @Published public private(set) var roots: [Conversation] = []
     @Published public private(set) var tasks: [ConversationTask] = []
@@ -82,10 +85,26 @@ public enum HomeConnectionPhase: Equatable, Sendable {
         self.cacheDirectory = cacheDirectory; self.credentialStore = credentialStore
     }
 
+    public func receiveHomeSetupLink(_ text: String) {
+        homeSetupRequested = true
+        do {
+            pendingHomeSetup = try HomeSetupLink(text)
+            homeSetupError = nil
+        } catch {
+            pendingHomeSetup = nil
+            homeSetupError = error.localizedDescription
+        }
+    }
+
+    public func takeHomeSetupLink() -> HomeSetupLink? {
+        defer { pendingHomeSetup = nil }
+        return pendingHomeSetup
+    }
+
     // Launch restores only the selected remote profile. refresh repeats the
     // same health/account/pinned-wing checks and never replays saved input.
     public func restoreHome(wire: any HomeWire = URLSessionHomeWire()) async {
-        guard profile == nil, client == nil, phase == .notConfigured, let credentialStore else { return }
+        guard !homeSetupRequested, profile == nil, client == nil, phase == .notConfigured, let credentialStore else { return }
         let requested = generation
         do {
             guard let home = try selectedHomeStore().load() else { return }
@@ -190,14 +209,20 @@ public enum HomeConnectionPhase: Equatable, Sendable {
 
     // Explicit user connection to an already authorized home. Fields are checked
     // before any file or network access; no pairing, grant, or token is created.
-    public func connect(origin: String, transport: HomeTransport, userID: String, wingID: String, wingPublicKey: String, existingBearer: String, wire: any HomeWire = URLSessionHomeWire()) async {
+    public func connect(origin: String, transport: HomeTransport, userID: String, wingID: String, wingPublicKey: String, existingBearer: String, mode: HomeProfileMode = .remote, wire: any HomeWire = URLSessionHomeWire()) async {
         let (requested, released) = beginReplacement()
         phase = .connecting; busy = true
         await released?.disconnect()
         do {
-            let home = try Self.pinnedProfile(origin: origin, transport: transport, userID: userID, wingID: wingID, wingPublicKey: wingPublicKey)
+            let home = mode == .remote
+                ? try Self.pinnedProfile(origin: origin, transport: transport, userID: userID, wingID: wingID, wingPublicKey: wingPublicKey)
+                : try HomeProfile.formInput(origin: origin, transport: transport, userID: userID, wingID: wingID, wingPublicKey: wingPublicKey, mode: mode)
             let bearer = existingBearer.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !bearer.isEmpty else { throw ClientError.invalidConfiguration("Enter the access token you already use for this home.") }
+            if mode == .localPreview {
+                guard existingBearer.isEmpty else { throw ClientError.invalidConfiguration("Local preview takes no credential. Nothing was sent.") }
+            } else {
+                guard !bearer.isEmpty else { throw ClientError.invalidConfiguration("Enter the access token you already use for this home.") }
+            }
             guard try await install(home, bearer: bearer, cacheFile: cacheFile(for: home), wire: wire, requested: requested) else { return }
             busy = false
             await refresh(rememberBearer: bearer)
@@ -829,11 +854,9 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     // The profile ID (and so the cache file) is derived only from the canonical
     // origin, account, wing, and pinned key. It never includes the token.
     private static func pinnedProfile(origin: String, transport: HomeTransport, userID: String, wingID: String, wingPublicKey: String) throws -> HomeProfile {
-        let user = userID.trimmingCharacters(in: .whitespacesAndNewlines), wing = wingID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = wingPublicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let checked = try HomeProfile.formInput(origin: origin, transport: transport, userID: userID, wingID: wingID, wingPublicKey: wingPublicKey)
+        let user = checked.expectedUserID, wing = checked.homeWingID, key = checked.homeWingPublicKey
         let invalid = ClientError.invalidConfiguration("Choose an exact HTTPS home origin without a path or embedded credentials.")
-        guard let raw = URL(string: origin.trimmingCharacters(in: .whitespacesAndNewlines)) else { throw invalid }
-        let checked = try HomeProfile(origin: raw, transport: transport, expectedUserID: user, homeWingID: wing, homeWingPublicKey: key)
         guard let parts = URLComponents(url: checked.origin, resolvingAgainstBaseURL: false), let host = parts.host?.lowercased(), !host.isEmpty,
               let keyBytes = Data(base64Encoded: key) else { throw invalid }
         let pinnedKey = keyBytes.base64EncodedString()

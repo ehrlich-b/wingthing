@@ -39,7 +39,7 @@ public struct HomeProfile: Codable, Hashable, Sendable, Identifiable {
     public let mode: HomeProfileMode
 
     public init(id: UUID = UUID(), origin: URL, transport: HomeTransport, expectedUserID: String, homeWingID: String, homeWingPublicKey: String, homeRoostID: String? = nil) throws {
-        guard let parts = URLComponents(url: origin, resolvingAgainstBaseURL: false), parts.scheme == "https", parts.host != nil,
+        guard let parts = URLComponents(url: origin, resolvingAgainstBaseURL: false), parts.scheme == "https", let host = parts.host, !host.isEmpty,
               parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
               parts.path.isEmpty || parts.path == "/" else {
             throw ClientError.invalidConfiguration("Choose an exact HTTPS home origin without a path or embedded credentials.")
@@ -55,6 +55,19 @@ public struct HomeProfile: Codable, Hashable, Sendable, Identifiable {
     static let localPreviewCompiled = false
     #endif
     public static let localPreviewUserID = "local"
+
+    // Shared by manual entry and setup links; neither path creates authority.
+    public static func formInput(origin: String, transport: HomeTransport, userID: String, wingID: String, wingPublicKey: String, mode: HomeProfileMode = .remote) throws -> HomeProfile {
+        guard let address = URL(string: origin.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw ClientError.invalidConfiguration("Choose an exact HTTPS home origin without a path or embedded credentials.")
+        }
+        let user = userID.trimmingCharacters(in: .whitespacesAndNewlines), wing = wingID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = wingPublicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if mode == .localPreview {
+            return try localPreview(origin: address, expectedUserID: user, homeWingID: wing, homeWingPublicKey: key)
+        }
+        return try HomeProfile(origin: address, transport: transport, expectedUserID: user, homeWingID: wing, homeWingPublicKey: key)
+    }
 
     // Explicit debug entry point. Release builds have no way to construct or
     // restore this mode.
