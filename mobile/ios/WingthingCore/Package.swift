@@ -8,6 +8,9 @@ let package = Package(
     targets: [
         .target(name: "WingthingCore"),
         .target(name: "WingthingUI", dependencies: ["WingthingCore"]),
+        // Debug-only read acceptance against an explicit same-Mac preview roost.
+        // Deliberately not a product; release builds refuse to run.
+        .executableTarget(name: "WingthingLivePreview", dependencies: ["WingthingCore"]),
         .testTarget(name: "WingthingCoreTests", dependencies: ["WingthingCore", "WingthingUI"]),
     ]
 )

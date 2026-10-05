@@ -69,6 +69,9 @@ private struct LocalState: Codable {
     var parent: ParentSelection?
     var pending: [PendingInput] = []
     var conversations: [CachedConversation] = []
+    var stops: [PendingStop]? // Optional so caches written before Stop still load.
+    var continuations: [PendingContinuation]? // Older caches remain readable.
+    var launches: [PendingConversationLaunch]?
 }
 
 public actor LocalConversationStore {
@@ -103,6 +106,69 @@ public actor LocalConversationStore {
         if let existing = state.pending.first(where: { $0.id == pending.id }), existing.execution != pending.execution || existing.input != pending.input { throw ClientError.staleReference }
         if state.pending.contains(where: { $0.execution == pending.execution && $0.id != pending.id && ![.nativeReceiptObserved, .definitelyNotSent].contains($0.delivery) }) { throw ClientError.response("This execution already has an input with unconfirmed delivery. Check its exact receipt first.") }
         var next = state; next.pending.removeAll { $0.id == pending.id }; next.pending.append(pending); try write(next)
+    }
+    public func pendingStop(for execution: ExecutionReference) -> PendingStop? { (state.stops ?? []).last { $0.execution == execution } }
+    public func unfinishedLaunch() throws -> PendingConversationLaunch? {
+        let value = (state.launches ?? []).last { !$0.progress.final }
+        if let value { try value.validate(profile) }
+        return value
+    }
+    public func saveLaunch(_ value: PendingConversationLaunch) throws {
+        try value.validate(profile)
+        var records = state.launches ?? []
+        if let existing = records.first(where: { $0.id == value.id }) {
+            guard existing.sameIntent(value) else { throw ClientError.staleReference }
+            if existing.progress.final { return }
+        }
+        guard !records.contains(where: { $0.id != value.id && !$0.progress.final }) else {
+            throw ClientError.response("Check the saved unconfirmed conversation first.")
+        }
+        records.removeAll { $0.id == value.id }; records.append(value)
+        while records.count > 32, let index = records.firstIndex(where: { $0.progress.final }) { records.remove(at: index) }
+        guard records.count <= 32 else { throw ClientError.storage("Too many saved conversation launches.") }
+        var next = state; next.launches = records; try write(next)
+    }
+    public func continuation(for reference: ConversationReference, unfinishedOnly: Bool = false) throws -> PendingContinuation? {
+        try reference.validate(profile)
+        return (state.continuations ?? []).last { $0.source.conversation == reference && (!unfinishedOnly || !$0.progress.final) }
+    }
+    public func saveContinuation(_ value: PendingContinuation) throws {
+        try value.source.conversation.validate(profile)
+        var records = state.continuations ?? []
+        if let existing = records.first(where: { $0.id == value.id }) {
+            guard existing.sameIntent(value) else { throw ClientError.staleReference }
+            if existing.progress.final { return }
+        }
+        guard !records.contains(where: { $0.source.conversation == value.source.conversation && $0.id != value.id && !$0.progress.final }) else {
+            throw ClientError.response("Check the existing unconfirmed follow-up first.")
+        }
+        records.removeAll { $0.id == value.id }; records.append(value)
+        while records.count > 32, let index = records.firstIndex(where: { $0.progress.final }) { records.remove(at: index) }
+        guard records.count <= 32 else { throw ClientError.storage("Too many unconfirmed follow-ups are saved.") }
+        var next = state; next.continuations = records; try write(next)
+    }
+    // Saved before any dispatch. One unfinished intent per execution; its
+    // identity never changes and its progress never moves backward.
+    public func saveStop(_ stop: PendingStop) throws {
+        try stop.execution.conversation.validate(profile)
+        var stops = state.stops ?? []
+        if let existing = stops.first(where: { $0.id == stop.id }) {
+            guard existing.sameIntent(stop) else { throw ClientError.staleReference }
+            if existing.progress.isFinal || existing.progress.rank > stop.progress.rank { return }
+        }
+        if stops.contains(where: { $0.execution == stop.execution && $0.id != stop.id && !$0.progress.isFinal }) {
+            throw ClientError.response("This task already has a stop request waiting for confirmation. Check it first.")
+        }
+        stops.removeAll { $0.id == stop.id }; stops.append(stop)
+        while stops.count > 32 {
+            guard let index = stops.firstIndex(where: \.progress.isFinal) else { throw ClientError.storage("Too many unconfirmed stop requests are saved on this phone.") }
+            stops.remove(at: index)
+        }
+        var next = state; next.stops = stops; try write(next)
+    }
+    // Local only: forgetting never cancels a stop that may have been delivered.
+    public func forgetStop(_ id: UUID) throws {
+        var next = state; next.stops = (state.stops ?? []).filter { $0.id != id }; try write(next)
     }
     public func cache(_ cached: CachedConversation) throws {
         try cached.reference.validate(profile)

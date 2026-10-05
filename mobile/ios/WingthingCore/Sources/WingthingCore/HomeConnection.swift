@@ -17,6 +17,14 @@ public enum HomeTransport: String, Codable, CaseIterable, Sendable {
     case localNetwork, userOwnedEndpoint, existingVPN, explicitHostedRoost
 }
 
+// Remote is the only shipping mode. localPreview is a DEBUG-only way to read a
+// browser-authorized single-user preview roost on this same Mac: literal
+// http://127.0.0.1 with an explicit port, user "local", no credential. It is
+// never chosen automatically and never relaxes the HTTPS contract.
+public enum HomeProfileMode: String, Codable, Hashable, Sendable {
+    case remote, localPreview
+}
+
 // These are configured identities. A relay URL and wing ID are not HomeRoostID.
 // No default vendor address, discovery service, fallback, or enrollment exists.
 public struct HomeProfile: Codable, Hashable, Sendable, Identifiable {
@@ -27,6 +35,7 @@ public struct HomeProfile: Codable, Hashable, Sendable, Identifiable {
     public let homeWingID: String
     public let homeWingPublicKey: String
     public let homeRoostID: String?
+    public let mode: HomeProfileMode
 
     public init(id: UUID = UUID(), origin: URL, transport: HomeTransport, expectedUserID: String, homeWingID: String, homeWingPublicKey: String, homeRoostID: String? = nil) throws {
         guard let parts = URLComponents(url: origin, resolvingAgainstBaseURL: false), parts.scheme == "https", parts.host != nil,
@@ -34,17 +43,72 @@ public struct HomeProfile: Codable, Hashable, Sendable, Identifiable {
               parts.path.isEmpty || parts.path == "/" else {
             throw ClientError.invalidConfiguration("Choose an exact HTTPS home origin without a path or embedded credentials.")
         }
-        guard !expectedUserID.isEmpty, !homeWingID.isEmpty, Data(base64Encoded: homeWingPublicKey)?.count == 32 else {
-            throw ClientError.invalidConfiguration("The home user and pinned wing identity are required. Pairing is not implemented yet.")
-        }
+        try Self.checkIdentity(expectedUserID, homeWingID, homeWingPublicKey)
         self.id = id; self.origin = origin; self.transport = transport; self.expectedUserID = expectedUserID
-        self.homeWingID = homeWingID; self.homeWingPublicKey = homeWingPublicKey; self.homeRoostID = homeRoostID
+        self.homeWingID = homeWingID; self.homeWingPublicKey = homeWingPublicKey; self.homeRoostID = homeRoostID; mode = .remote
     }
 
-    enum CodingKeys: String, CodingKey { case id, origin, transport, expectedUserID, homeWingID, homeWingPublicKey, homeRoostID }
+    #if DEBUG
+    static let localPreviewCompiled = true
+    #else
+    static let localPreviewCompiled = false
+    #endif
+    public static let localPreviewUserID = "local"
+
+    // Explicit debug entry point. Release builds have no way to construct or
+    // restore this mode.
+    public static func localPreview(id: UUID = UUID(), origin: URL, expectedUserID: String, homeWingID: String, homeWingPublicKey: String) throws -> HomeProfile {
+        try HomeProfile(localPreview: id, origin: origin, expectedUserID: expectedUserID, homeWingID: homeWingID, homeWingPublicKey: homeWingPublicKey)
+    }
+
+    init(localPreview id: UUID, origin: URL, expectedUserID: String, homeWingID: String, homeWingPublicKey: String, compiled: Bool = localPreviewCompiled) throws {
+        guard compiled else { throw ClientError.unsupported("Local preview mode exists only in debug builds.") }
+        guard let parts = URLComponents(url: origin, resolvingAgainstBaseURL: false), parts.scheme == "http", parts.host == "127.0.0.1",
+              let port = parts.port, (1...65535).contains(port), origin.absoluteString.hasPrefix("http://127.0.0.1:\(port)"),
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+              parts.path.isEmpty || parts.path == "/" else {
+            throw ClientError.invalidConfiguration("Local preview requires the literal origin http://127.0.0.1 with an explicit port.")
+        }
+        guard expectedUserID == Self.localPreviewUserID else { throw ClientError.invalidConfiguration("Local preview requires the expected user \"local\".") }
+        try Self.checkIdentity(expectedUserID, homeWingID, homeWingPublicKey)
+        self.id = id; self.origin = origin; transport = .localNetwork; self.expectedUserID = expectedUserID
+        self.homeWingID = homeWingID; self.homeWingPublicKey = homeWingPublicKey; homeRoostID = nil; mode = .localPreview
+    }
+
+    private static func checkIdentity(_ user: String, _ wing: String, _ key: String) throws {
+        guard !user.isEmpty, !wing.isEmpty, Data(base64Encoded: key)?.count == 32 else {
+            throw ClientError.invalidConfiguration("The home user and pinned wing identity are required. Pairing is not implemented yet.")
+        }
+    }
+
+    enum CodingKeys: String, CodingKey { case id, origin, transport, expectedUserID, homeWingID, homeWingPublicKey, homeRoostID, mode }
     public init(from decoder: any Decoder) throws {
+        try self.init(decoding: decoder, compiled: Self.localPreviewCompiled)
+    }
+
+    // A saved localPreview profile is revalidated in full and fails in release.
+    init(decoding decoder: any Decoder, compiled: Bool) throws {
         let value = try decoder.container(keyedBy: CodingKeys.self)
-        try self.init(id: value.decode(UUID.self, forKey: .id), origin: value.decode(URL.self, forKey: .origin), transport: value.decode(HomeTransport.self, forKey: .transport), expectedUserID: value.decode(String.self, forKey: .expectedUserID), homeWingID: value.decode(String.self, forKey: .homeWingID), homeWingPublicKey: value.decode(String.self, forKey: .homeWingPublicKey), homeRoostID: value.decodeIfPresent(String.self, forKey: .homeRoostID))
+        let id = try value.decode(UUID.self, forKey: .id), origin = try value.decode(URL.self, forKey: .origin)
+        let user = try value.decode(String.self, forKey: .expectedUserID), wing = try value.decode(String.self, forKey: .homeWingID), key = try value.decode(String.self, forKey: .homeWingPublicKey)
+        switch try value.decodeIfPresent(HomeProfileMode.self, forKey: .mode) ?? .remote {
+        case .remote:
+            try self.init(id: id, origin: origin, transport: value.decode(HomeTransport.self, forKey: .transport), expectedUserID: user, homeWingID: wing, homeWingPublicKey: key, homeRoostID: value.decodeIfPresent(String.self, forKey: .homeRoostID))
+        case .localPreview:
+            guard try value.decode(HomeTransport.self, forKey: .transport) == .localNetwork, try value.decodeIfPresent(String.self, forKey: .homeRoostID) == nil else {
+                throw ClientError.invalidConfiguration("The saved local preview profile is not valid.")
+            }
+            try self.init(localPreview: id, origin: origin, expectedUserID: user, homeWingID: wing, homeWingPublicKey: key, compiled: compiled)
+        }
+    }
+
+    // Remote profiles encode exactly as before; only localPreview adds a mode.
+    public func encode(to encoder: any Encoder) throws {
+        var value = encoder.container(keyedBy: CodingKeys.self)
+        try value.encode(id, forKey: .id); try value.encode(origin, forKey: .origin); try value.encode(transport, forKey: .transport)
+        try value.encode(expectedUserID, forKey: .expectedUserID); try value.encode(homeWingID, forKey: .homeWingID)
+        try value.encode(homeWingPublicKey, forKey: .homeWingPublicKey); try value.encodeIfPresent(homeRoostID, forKey: .homeRoostID)
+        if mode != .remote { try value.encode(mode, forKey: .mode) }
     }
 
     public func endpoint(_ path: String) throws -> URL {
@@ -57,7 +121,7 @@ public struct HomeProfile: Codable, Hashable, Sendable, Identifiable {
 
     public func tunnelURL(wingID: String) throws -> URL {
         var parts = URLComponents(url: try endpoint("/ws/relay"), resolvingAgainstBaseURL: false)!
-        parts.scheme = "wss"; parts.queryItems = [URLQueryItem(name: "wing_id", value: wingID)]
+        parts.scheme = mode == .localPreview ? "ws" : "wss"; parts.queryItems = [URLQueryItem(name: "wing_id", value: wingID)]
         return parts.url!
     }
 

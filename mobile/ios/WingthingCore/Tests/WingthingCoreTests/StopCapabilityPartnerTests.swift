@@ -38,7 +38,8 @@ private func expectNoStopAttempt(_ wire: FixtureWire, sourceLocation: SourceLoca
         let client = try HomeClient(profile: home, existingBearer: "synthetic-existing-token", wire: wire)
         _ = try await client.verifyHome()
         let execution = reference(home, task: "child")
-        for operation in ["agent_stop", "terminal_stop", "session_stop", "terminal_send", "pty.kill"] {
+        // conversation_stop is reachable only through the advertisement-gated submitStop.
+        for operation in ["agent_stop", "terminal_stop", "session_stop", "terminal_send", "pty.kill", "conversation_stop"] {
             do {
                 _ = try await client.control(execution, operation: operation, arguments: ["session": .string("child-session")])
                 fail("\(operation) was sent without a supported stop contract")
