@@ -462,11 +462,9 @@ func TestClaudeLifecycleSettingsFileRefusesLinks(t *testing.T) {
 			if _, err := prepareClaudeLifecycleArgs(nil, t.TempDir(), dir, "ours", t.TempDir()); err == nil {
 				t.Fatal("accepted linked settings file")
 			}
-			if link.name == "symlink" {
-				data, err := os.ReadFile(target)
-				if err != nil || string(data) != "target settings" {
-					t.Fatalf("symlink target changed: %s %v", data, err)
-				}
+			data, err := os.ReadFile(target)
+			if err != nil || string(data) != "target settings" {
+				t.Fatalf("%s target changed: %s %v", link.name, data, err)
 			}
 		})
 	}

@@ -276,7 +276,7 @@ func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd str
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|unix.O_NOFOLLOW, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|unix.O_NOFOLLOW, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -290,6 +290,9 @@ func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd str
 		return nil, errors.New("lifecycle settings must be a regular file with one link")
 	}
 	if err = f.Chmod(0600); err == nil {
+		err = f.Truncate(0)
+	}
+	if err == nil {
 		_, err = io.WriteString(f, out[len(out)-1])
 	}
 	closeErr := f.Close()
