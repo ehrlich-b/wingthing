@@ -257,7 +257,7 @@ def run_parent(configuration):
 
 
 config_path = option('--mcp-config')
-if config_path:
+if config_path and '-p' not in sys.argv:
     run_parent(json.load(open(config_path))['mcpServers']['wingthing'])
 
 PASTE_START, PASTE_END = b'\x1b[200~', b'\x1b[201~'
@@ -275,6 +275,11 @@ def submit(prompt):
     record('assistant', [{'type': 'text', 'text': 'fixture-result:' + prompt}])
     hook('Stop', background_tasks=[])
     print('FIXTURE_NATIVE_TURN_RECORDED', flush=True)
+
+
+if '-p' in sys.argv:
+    submit(option('-p'))
+    sys.exit(0)
 
 
 # Like an editor composer: a bracketed paste is literal text (newlines included)

@@ -223,6 +223,7 @@ func (s *localMCPServer) toolConversationRead(ctx context.Context, arguments jso
 		return nil, err
 	}
 	tasks := make([]map[string]any, 0, len(nodes))
+	var continuation map[string]any
 	for _, node := range nodes {
 		if s.enforcePathBounds && !isUnderPaths(canonicalSessionPath(node.CWD), s.allowedPaths) {
 			continue
@@ -248,6 +249,12 @@ func (s *localMCPServer) toolConversationRead(ctx context.Context, arguments jso
 		if viewErr == nil {
 			view.Events = []egg.SessionEvent{}
 			task["lifecycle"] = view
+			if available := s.continuationAvailability(db, node, view); available != nil {
+				task["headless_continuation"] = available
+				if node.ID == c.ID {
+					continuation = available
+				}
+			}
 		} else {
 			task["lifecycle_error"] = viewErr.Error()
 		}
@@ -265,7 +272,11 @@ func (s *localMCPServer) toolConversationRead(ctx context.Context, arguments jso
 	if len(events) > 0 {
 		next = events[len(events)-1].Sequence
 	}
-	return map[string]any{"conversation": c, "coordinator_context": contextForConversation(c), "tasks": tasks, "events": events, "next_cursor": next, "has_more": hasMore, "delivery": "replayable; checkpoint explicitly to acknowledge"}, nil
+	result := map[string]any{"conversation": c, "coordinator_context": contextForConversation(c), "tasks": tasks, "events": events, "next_cursor": next, "has_more": hasMore, "delivery": "replayable; checkpoint explicitly to acknowledge"}
+	if continuation != nil {
+		result["headless_continuation"] = continuation
+	}
+	return result, nil
 }
 
 func syncConversationStates(ctx context.Context, cfg *config.Config, db *store.Store, c *store.Conversation) (egg.SessionView, error) {

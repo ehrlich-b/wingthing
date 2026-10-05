@@ -30,6 +30,9 @@ function ensureReader() {
         legacyStorage: browserStorage('sessionStorage'),
         request: function(wingId, payload) { return sendTunnelRequest(wingId, payload); },
         randomId: randomUUID,
+        onContinuationStarted: function(source, result) {
+            window.dispatchEvent(new CustomEvent('wingthing:continuation-started', { detail: { source: source, result: result } }));
+        },
         onChange: function(next) {
             snapshot = next;
             render();
@@ -89,6 +92,7 @@ function submitInput() {
     // The reserved request now owns this text (shown in the pending card); a
     // definite not-sent receipt is the only thing that hands it back.
     if (snapshot && snapshot.pending && snapshot.pending.input === text.trim()) { inputEl.value = ''; autoGrow(); }
+    if (snapshot && snapshot.continuation && snapshot.continuation.input === text) { inputEl.value = ''; autoGrow(); }
     sent.then(restoreDraft);
 }
 
@@ -143,10 +147,10 @@ function updateInput() {
     var ready = snapshot.inputReady && !S.spectating;
     if (inputEl) {
         inputEl.disabled = !ready;
-        inputEl.placeholder = ready ? 'Send a message…' : (snapshot.pending ? 'Resolve the unconfirmed input above first' : 'Input is available only when the live native session is ready');
+        inputEl.placeholder = ready ? (snapshot.continuationReady ? 'Send a follow-up…' : 'Send a message…') : (snapshot.pending || snapshot.continuation ? 'Resolve the unconfirmed input above first' : 'Input is available when the session is ready or a follow-up is offered');
     }
     if (sendBtn) {
-        sendBtn.textContent = 'Send';
+        sendBtn.textContent = snapshot.continuationReady ? 'Send follow-up' : 'Send';
         sendBtn.disabled = !ready;
     }
     if (!statusEl) return;
@@ -175,18 +179,25 @@ function pendingCard(pending, current) {
         '</div>';
 }
 
+function continuationCard(pending) {
+    return '<div class="chat-pending-item" data-request="' + escapeMarkup(pending.request_id) + '"><p><strong>Unconfirmed follow-up</strong></p>' +
+        '<p class="text-dim">' + escapeMarkup(pending.lastReason || 'Waiting for the wing to confirm this follow-up.') + '</p>' +
+        '<details><summary>Message</summary><pre>' + escapeMarkup(pending.input) + '</pre></details>' +
+        '<button type="button" data-check-request="' + escapeMarkup(pending.request_id) + '"' + (snapshot.checking ? ' disabled' : '') + '>Check follow-up</button></div>';
+}
+
 function renderPending() {
     if (!pendingEl) return;
     var items = (snapshot.pending ? [[snapshot.pending, true]] : []).concat(snapshot.otherPending.map(function(p) { return [p, false]; }));
-    var signature = JSON.stringify([snapshot.checking, items.map(function(item) { return [item[0].request_id, item[0].status, item[0].checks, item[0].lastReason, item[1]]; })]);
+    var signature = JSON.stringify([snapshot.checking, snapshot.continuation, items.map(function(item) { return [item[0].request_id, item[0].status, item[0].checks, item[0].lastReason, item[1]]; })]);
     if (signature === pendingSignature) return;
     pendingSignature = signature;
     // Keep expanded input inspectors and keyboard focus stable across refresh.
     var open = new Set();
     pendingEl.querySelectorAll('.chat-pending-item').forEach(function(item) { if (item.querySelector('details[open]')) open.add(item.dataset.request); });
     var focused = pendingEl.contains(document.activeElement) && document.activeElement.dataset ? document.activeElement.dataset.checkRequest : '';
-    pendingEl.hidden = !items.length;
-    pendingEl.innerHTML = items.map(function(item) { return pendingCard(item[0], item[1]); }).join('');
+    pendingEl.hidden = !items.length && !snapshot.continuation;
+    pendingEl.innerHTML = (snapshot.continuation ? continuationCard(snapshot.continuation) : '') + items.map(function(item) { return pendingCard(item[0], item[1]); }).join('');
     pendingEl.querySelectorAll('.chat-pending-item').forEach(function(item) {
         if (open.has(item.dataset.request)) item.querySelector('details').open = true;
         var button = item.querySelector('[data-check-request]');

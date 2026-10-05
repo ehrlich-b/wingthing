@@ -12,10 +12,11 @@
 //
 // All I/O is injected, so the whole flow is testable without a browser.
 
-import { emptyConversationState, restoredConversationState, applyConversationRead, conversationExecutionPresentation } from './conversation-state.js';
+import { emptyConversationState, restoredConversationState, applyConversationRead, conversationExecutionPresentation, CONVERSATION_FRESH_MS } from './conversation-state.js';
 import { applyPromptReceipt } from './conversation-response.js';
 import { readExecution, writeExecution, createPendingInput, updatePendingEvidence, pendingForConversation, migrateLegacyPending, validId, boundDelivery } from './conversation-recovery-store.js';
 import { historyResumeState } from './session-resume.js';
+import { continuationAvailability, createPendingContinuation, readPendingContinuation, savePendingContinuation, clearPendingContinuation, continuationArguments, continuationReceipt } from './conversation-continuation.js';
 
 export const READ_INTERVAL_MS = 1500;
 export const READ_RETRY_MS = 3000;
@@ -56,6 +57,8 @@ export function createConversationReader(options) {
     var notice = '';
     var draft = null;
     var stop = { pending: false, error: '', acknowledgedAt: 0 };
+    var continuation = null;
+    var availableContinuation = null;
 
     function ref() { return { userId: target.userId, wingId: target.wingId, sessionId: target.sessionId }; }
 
@@ -65,6 +68,7 @@ export function createConversationReader(options) {
 
     function snapshot() {
         var shown = present();
+        var canContinue = !!availableContinuation && !cached && !readError && !halted && observedAt > 0 && now() - observedAt < CONVERSATION_FRESH_MS;
         return {
             target: target ? { ...target } : null,
             messages: state.messages, lifecycle: state.lifecycle, cursor: state.cursor, trimmed: trimmed,
@@ -72,7 +76,9 @@ export function createConversationReader(options) {
             identityError: state.identityError || '', halted: halted,
             pending: pending, otherPending: otherPending.slice(), checking: !!checking, notice: notice,
             stop: { ...stop },
-            inputReady: !!target && !pending && !checking && !halted && shown.inputReady,
+            continuation: continuation, continuationAvailable: canContinue,
+            continuationReady: canContinue && !pending && !continuation && !checking,
+            inputReady: !!target && !pending && !continuation && !checking && !halted && (shown.inputReady || canContinue),
         };
     }
 
@@ -116,6 +122,7 @@ export function createConversationReader(options) {
             }
             state = next;
             if (!target.providerSessionId && state.lifecycle && state.lifecycle.provider_session_id) target.providerSessionId = state.lifecycle.provider_session_id;
+            availableContinuation = continuationAvailability(result, target, state.lifecycle);
             cached = false;
             observedAt = now();
             readError = '';
@@ -152,6 +159,8 @@ export function createConversationReader(options) {
         observedAt = 0;
         readError = '';
         stop = { pending: false, error: '', acknowledgedAt: 0 };
+        continuation = null;
+        availableContinuation = null;
     }
 
     // target: { userId, wingId, sessionId, conversationId?, providerSessionId? }
@@ -181,6 +190,7 @@ export function createConversationReader(options) {
             if (pending) persist();
         }
         otherPending = target.conversationId ? pendingForConversation(storage, target.userId, target.wingId, target.conversationId, target.sessionId) : [];
+        continuation = target.conversationId ? readPendingContinuation(storage, target) : null;
         emit();
         scheduleRead(generation, 0);
         return true;
@@ -235,6 +245,7 @@ export function createConversationReader(options) {
     }
 
     function send(text) {
+        if (snapshot().continuationReady) return sendContinuation(text);
         text = typeof text === 'string' ? text.trim() : '';
         if (!target || !text || !snapshot().inputReady) return Promise.resolve(false);
         var lifecycle = state.lifecycle || {};
@@ -249,9 +260,49 @@ export function createConversationReader(options) {
 
     function checkReceipt(requestId) {
         if (checking) return Promise.resolve(false);
+        if (continuation && (!requestId || continuation.request_id === requestId)) return submitContinuation(continuation);
         var p = pending && (!requestId || pending.request_id === requestId) ? pending : otherPending.find(function(item) { return item.request_id === requestId; });
         if (!p) return Promise.resolve(false);
         return submit(p);
+    }
+
+    function sendContinuation(text) {
+        var saved = createPendingContinuation(target, text, randomId(), now());
+        if (!saved) { notice = "Enter a message of at most 64 KiB that does not begin with '-'."; emit(); return Promise.resolve(false); }
+        if (!savePendingContinuation(storage, saved)) {
+            continuation = readPendingContinuation(storage, target);
+            storageError = continuation ? 'A follow-up is already waiting for confirmation. Your new message has not been sent.' : 'The follow-up could not be saved in this browser. Your message has not been sent.';
+            emit();
+            return Promise.resolve(false);
+        }
+        continuation = saved;
+        notice = '';
+        return submitContinuation(saved);
+    }
+
+    async function submitContinuation(saved) {
+        var gen = generation;
+        checking = saved.request_id;
+        emit();
+        var result, status = 'unconfirmed', reason = 'Follow-up unconfirmed. Check reuses this saved message.';
+        try {
+            result = await request(saved.wingId, { type: 'session.control', operation: 'agent_start', arguments: continuationArguments(saved) });
+            status = await continuationReceipt(saved, result);
+            if (status === 'failed') reason = result.launch_error || 'The follow-up did not start.';
+        } catch (error) { reason = message(error, reason); }
+        if (status === 'unconfirmed') savePendingContinuation(storage, { ...saved, status: status, lastReason: reason });
+        else clearPendingContinuation(storage, saved);
+        if (gen !== generation) return status === 'started';
+        checking = '';
+        continuation = status === 'unconfirmed' ? { ...saved, status: status, lastReason: reason } : null;
+        notice = status === 'started' ? 'Follow-up started.' : reason;
+        if (status === 'failed' && sameExecution(target, saved)) draft = saved.input;
+        if (status === 'started') {
+            availableContinuation = null;
+            if (options.onContinuationStarted) options.onContinuationStarted(saved, result);
+        }
+        emit();
+        return status === 'started';
     }
 
     function stopExecution() {

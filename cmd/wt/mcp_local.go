@@ -149,6 +149,7 @@ type localMCPServer struct {
 	allowedPaths      []string
 	enforcePathBounds bool
 	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error
+	startContinuation func(*store.Conversation, *egg.EggConfig, spawnEggOpts) error
 	// tools, when set, further limits callable tools by name; grants are
 	// per category and cannot express the host mailbox's fixed subset.
 	tools map[string]bool
@@ -1407,9 +1408,17 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		ConversationRole     string   `json:"conversation_role"`
 		ParentConversationID string   `json:"parent_conversation_id"`
 		RequestID            string   `json:"request_id"`
+		ResumeSession        string   `json:"resume_session,omitempty"`
+		Input                string   `json:"input,omitempty"`
 	}
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
+	}
+	if args.ResumeSession != "" {
+		return s.toolAgentContinue(arguments)
+	}
+	if args.Input != "" {
+		return nil, errors.New("input requires resume_session")
 	}
 	if args.Agent == "" {
 		return nil, errors.New("agent is required")
@@ -1459,6 +1468,22 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 	}
 	if conversation != nil && !created {
 		return conversationLaunchResult(conversation, true), nil
+	}
+	if conversation != nil && conversation.ParentID == "" {
+		model := args.Model
+		for i, arg := range args.Args {
+			if arg == "--model" && i+1 < len(args.Args) {
+				model = args.Args[i+1]
+			} else if value, ok := strings.CutPrefix(arg, "--model="); ok {
+				model = value
+			}
+		}
+		if err := saveCoordinatorModel(s.cfg.Dir, sessionID, model); err != nil {
+			if saveErr := s.markConversationLaunch(conversation, err); saveErr != nil {
+				return nil, saveErr
+			}
+			return nil, err
+		}
 	}
 	var managedParent *conversationBrokerRegistration
 	args.Args, managedParent, err = s.prepareBoundParentLaunch(conversation, eggCfg, args.Args)

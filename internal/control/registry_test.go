@@ -97,6 +97,26 @@ func TestRegistryDefinitionsAreComplete(t *testing.T) {
 	}
 }
 
+func TestAgentStartSchemaAllowsExactContinuationWithoutAgent(t *testing.T) {
+	tool, ok := Lookup("agent_start")
+	if !ok {
+		t.Fatal("missing agent_start")
+	}
+	properties := tool.InputSchema["properties"].(map[string]any)
+	for _, field := range []string{"resume_session", "conversation_role", "input", "request_id"} {
+		if properties[field] == nil {
+			t.Fatalf("missing continuation field %s", field)
+		}
+	}
+	if _, globallyRequired := tool.InputSchema["required"]; globallyRequired {
+		t.Fatal("agent must not be required for a continuation")
+	}
+	want := []any{map[string]any{"required": []string{"agent"}}, map[string]any{"required": []string{"resume_session", "conversation_role", "input", "request_id"}}}
+	if !reflect.DeepEqual(tool.InputSchema["anyOf"], want) || tool.InputSchema["additionalProperties"] != false {
+		t.Fatalf("open or incomplete continuation schema %v", tool.InputSchema)
+	}
+}
+
 func TestObjectKindsFollowSurfaceAvailability(t *testing.T) {
 	if got, want := ObjectKinds(SurfaceLocalMCP), []string{
 		"terminal", "conversation", "agent_run", "message", "prompt_asset", "task", "loop", "swarm", "sandbox_policy",
