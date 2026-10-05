@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -19,17 +20,60 @@ func TestCodexLifecycleInstalledHookTrust(t *testing.T) {
 	if err != nil || !codexLifecycleSupported(binary) {
 		t.Skip("installed Codex has no native hook trust support")
 	}
-	home := t.TempDir()
+	// Codex canonicalizes source paths (including macOS's /var symlink).
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	args, err := CodexLifecycleArgs([]string{"app-server"}, home, "trust-probe")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A separate existing hook must still require review. No provider session,
-	// authentication, or model request is started by this hooks/list probe.
+	// Seed a trusted user hook and an untrusted user hook. Neither provider
+	// sessions, authentication, nor model requests are started by hooks/list.
 	configPath := filepath.Join(home, ".codex", "config.toml")
-	if err := os.WriteFile(configPath, []byte("[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = 'command'\ncommand = 'true'\n"), 0600); err != nil {
+	userKey := configPath + ":stop:0:0"
+	// This hash is from Codex 0.159.3 for `true` with its default timeout.
+	userHash := "sha256:2ba34c7a02841fada06b868a093d041fd3d9de81883c789a321916b0aa118851"
+	config := "[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = 'command'\ncommand = 'true'\n" +
+		"[[hooks.Interrupt]]\n[[hooks.Interrupt.hooks]]\ntype = 'command'\ncommand = 'true'\n" +
+		"[hooks.state." + strconv.Quote(userKey) + "]\ntrusted_hash = " + strconv.Quote(userHash) + "\n"
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
+	baseline := listInstalledCodexHooks(t, binary, home, []string{"app-server"})
+	assertInstalledCodexHookTrust(t, baseline, userKey, 0)
+	hooks := listInstalledCodexHooks(t, binary, home, args)
+	assertInstalledCodexHookTrust(t, hooks, userKey, len(codexLifecycleEvents))
+	data, err := os.ReadFile(configPath)
+	if err != nil || string(data) != config {
+		t.Fatalf("user config changed: %s, %v", data, err)
+	}
+}
+
+type installedCodexHook struct {
+	Key, Source, TrustStatus string
+}
+
+func assertInstalledCodexHookTrust(t *testing.T, hooks []installedCodexHook, userKey string, generated int) {
+	t.Helper()
+	trusted, userTrusted, userUntrusted := 0, 0, 0
+	for _, hook := range hooks {
+		if hook.Source == "sessionFlags" && hook.TrustStatus == "trusted" {
+			trusted++
+		} else if hook.Source == "user" && hook.Key == userKey && hook.TrustStatus == "trusted" {
+			userTrusted++
+		} else if hook.Source == "user" && hook.TrustStatus == "untrusted" {
+			userUntrusted++
+		}
+	}
+	if trusted != generated || userTrusted != 1 || userUntrusted != 1 || len(hooks) != generated+2 {
+		t.Fatalf("generated/existing hook trust changed: %+v", hooks)
+	}
+}
+
+func listInstalledCodexHooks(t *testing.T, binary, home string, args []string) []installedCodexHook {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
@@ -62,30 +106,24 @@ func TestCodexLifecycleInstalledHookTrust(t *testing.T) {
 		var response struct {
 			ID     int
 			Result struct {
-				Data []struct {
-					Hooks []struct{ Source, TrustStatus string }
-				}
+				Data []struct{ Hooks []installedCodexHook }
 			}
+			Error json.RawMessage
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil || response.ID != 2 {
 			continue
 		}
-		trusted, untrusted := 0, 0
+		if len(response.Error) > 0 {
+			t.Fatalf("Codex hooks/list failed: %s", response.Error)
+		}
+		var hooks []installedCodexHook
 		for _, data := range response.Result.Data {
-			for _, hook := range data.Hooks {
-				if hook.Source == "sessionFlags" && hook.TrustStatus == "trusted" {
-					trusted++
-				} else if hook.Source == "user" && hook.TrustStatus == "untrusted" {
-					untrusted++
-				}
-			}
+			hooks = append(hooks, data.Hooks...)
 		}
-		if trusted != len(codexLifecycleEvents) || untrusted != 1 {
-			t.Fatalf("generated/existing hook trust changed: %s", scanner.Bytes())
-		}
-		return
+		return hooks
 	}
 	t.Fatalf("Codex did not list hooks: %v, %v", scanner.Err(), ctx.Err())
+	return nil
 }
 
 func TestCodexLifecycleArgsTrustOnlyGeneratedHooks(t *testing.T) {
@@ -143,6 +181,59 @@ func TestCodexLifecycleSupportedUsesBinaryCapability(t *testing.T) {
 		if got := codexLifecycleSupported(path); got != tc.want {
 			t.Fatalf("capability for %q = %t, want %t", tc.help, got, tc.want)
 		}
+	}
+}
+
+func TestCodexLifecycleSupportedCachesByBinaryPathAndMtime(t *testing.T) {
+	for _, supported := range []bool{true, false} {
+		t.Run(strconv.FormatBool(supported), func(t *testing.T) {
+			dir := t.TempDir()
+			binary, counter := filepath.Join(dir, "codex"), filepath.Join(dir, "probes")
+			writeBinary := func(supported bool, modTime time.Time) {
+				t.Helper()
+				help := "Codex CLI with notify"
+				if supported {
+					help += " --dangerously-bypass-hook-trust"
+				}
+				script := "#!/bin/sh\nprintf 'probe\\n' >> " + shellQuoteLifecycle(counter) +
+					"\nprintf '%s\\n' " + shellQuoteLifecycle(help) + "\n"
+				if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(binary, modTime, modTime); err != nil {
+					t.Fatal(err)
+				}
+			}
+			assertCached := func(want bool, probes int) {
+				t.Helper()
+				var wg sync.WaitGroup
+				for range 6 {
+					wg.Go(func() {
+						if got := codexLifecycleSupported(binary); got != want {
+							t.Errorf("capability = %t, want %t", got, want)
+						}
+					})
+				}
+				wg.Wait()
+				data, err := os.ReadFile(counter)
+				if err != nil || strings.Count(string(data), "probe\n") != probes {
+					t.Fatalf("expected %d help probes, got %q: %v", probes, data, err)
+				}
+			}
+			// Both binaries start at the same mtime; their paths keep the
+			// supported and unsupported results separate.
+			modTime := time.Unix(1700000000, 0)
+			writeBinary(supported, modTime)
+			assertCached(supported, 1)
+			writeBinary(!supported, modTime.Add(time.Second))
+			assertCached(!supported, 2)
+			if err := os.Remove(binary); err != nil {
+				t.Fatal(err)
+			}
+			if codexLifecycleSupported(binary) {
+				t.Fatal("removed binary retained cached capability")
+			}
+		})
 	}
 }
 

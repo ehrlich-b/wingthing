@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,11 +34,41 @@ var codexLifecycleEvents = []struct{ name, key string }{
 	{"SessionEnd", "session_end"},
 }
 
+type codexLifecycleCapability struct {
+	modTime   time.Time
+	supported bool
+}
+
+var codexLifecycleCapabilityCache = struct {
+	sync.Mutex
+	byPath map[string]codexLifecycleCapability
+}{byPath: make(map[string]codexLifecycleCapability)}
+
 func codexLifecycleSupported(binary string) bool {
+	path, err := exec.LookPath(binary)
+	if err != nil {
+		return false
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	// Serialize probes so concurrent launches only run --help once per version.
+	codexLifecycleCapabilityCache.Lock()
+	defer codexLifecycleCapabilityCache.Unlock()
+	if cached, ok := codexLifecycleCapabilityCache.byPath[path]; ok && cached.modTime.Equal(info.ModTime()) {
+		return cached.supported
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	help, err := exec.CommandContext(ctx, binary, "--help").Output()
-	return err == nil && bytes.Contains(help, []byte("--dangerously-bypass-hook-trust"))
+	help, err := exec.CommandContext(ctx, path, "--help").Output()
+	supported := err == nil && bytes.Contains(help, []byte("--dangerously-bypass-hook-trust"))
+	codexLifecycleCapabilityCache.byPath[path] = codexLifecycleCapability{modTime: info.ModTime(), supported: supported}
+	return supported
 }
 
 // CodexLifecycleArgs installs observational hooks in the session-flags layer.
@@ -84,6 +115,7 @@ func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error)
 	}
 	// CLI dotted keys split on every dot, including dots inside quoted keys.
 	// An inline table preserves the synthetic source path's config.toml key.
+	// Codex merges it with lower config layers, preserving existing trust entries.
 	out = append(out, "-c", "hooks.state={"+strings.Join(trustEntries, ",")+"}")
 	return out, nil
 }
