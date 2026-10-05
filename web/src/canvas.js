@@ -101,10 +101,33 @@ function saveCanvasLayout() {
 }
 
 function loadCanvasLayout() {
+    var layout = {};
     try {
         var data = localStorage.getItem(CANVAS_LAYOUT_KEY);
-        return data ? JSON.parse(data) : {};
-    } catch(e) { return {}; }
+        var parsed = data ? JSON.parse(data) : null;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) layout = parsed;
+    } catch(e) {}
+    try {
+        var legacy = JSON.parse(localStorage.getItem('wt_canvas_layout'));
+        if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) {
+            Object.keys(legacy).forEach(function(id) {
+                var matches = S.sessionsData.filter(function(s) { return s.id === id; });
+                if (matches.length !== 1 || !matches[0].wing_id) return;
+                var saved = legacy[id];
+                if (!saved || !Number.isInteger(saved.col) || !Number.isInteger(saved.row) ||
+                    !Number.isInteger(saved.cellW) || saved.cellW <= 0 ||
+                    !Number.isInteger(saved.cellH) || saved.cellH <= 0) return;
+                var key = sessionResourceKey(matches[0]);
+                if (!Object.hasOwn(layout, key)) {
+                    layout[key] = { col: saved.col, row: saved.row, cellW: saved.cellW, cellH: saved.cellH };
+                }
+            });
+            localStorage.setItem(CANVAS_LAYOUT_KEY, JSON.stringify(layout));
+        }
+    } catch(e) {}
+    // Discard ambiguous geometry so a later inventory cannot guess its owner.
+    try { localStorage.removeItem('wt_canvas_layout'); } catch(e) {}
+    return layout;
 }
 
 function saveCanvasView() {
