@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -161,7 +162,7 @@ func attachLocalIO(ctx context.Context, cfg *config.Config, sessionID string, in
 	if err != nil {
 		return false, err
 	}
-	defer closeWithLog("egg client", ec)
+	defer cmdutil.CloseWithLog("egg client", ec)
 	sessionID = resolved.ID
 
 	fd := -1

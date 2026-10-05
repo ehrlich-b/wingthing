@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
@@ -56,7 +57,7 @@ func (s *localMCPServer) toolConversationWake(arguments json.RawMessage) (map[st
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("conversation wake store", db)
+	defer cmdutil.CloseWithLog("conversation wake store", db)
 	c, err := s.ownedConversation(db, args.ConversationID)
 	if err != nil {
 		return nil, err
@@ -152,12 +153,12 @@ func processConversationWake(ctx context.Context, s *localMCPServer, root string
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("conversation wake lock", lock)
+	defer cmdutil.CloseWithLog("conversation wake lock", lock)
 	db, err := s.openMessageStore()
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("conversation wake store", db)
+	defer cmdutil.CloseWithLog("conversation wake store", db)
 	c, err := s.ownedConversation(db, root)
 	if err != nil {
 		return err

@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
 	"github.com/spf13/cobra"
@@ -110,7 +111,7 @@ func updateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("fetch latest release: %w", err)
 			}
-			defer closeWithLog("GitHub release response", resp.Body)
+			defer cmdutil.CloseWithLog("GitHub release response", resp.Body)
 
 			if resp.StatusCode == http.StatusNotFound {
 				return fmt.Errorf("no releases found — tag a release first")
@@ -175,7 +176,7 @@ func updateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("download: %w", err)
 			}
-			defer closeWithLog("release download response", dlResp.Body)
+			defer cmdutil.CloseWithLog("release download response", dlResp.Body)
 
 			if dlResp.StatusCode != http.StatusOK {
 				return fmt.Errorf("download failed: %s", dlResp.Status)
@@ -201,7 +202,7 @@ func updateCmd() *cobra.Command {
 					}
 				}
 				if tmp != "" {
-					if err := removeIfExists(tmp); err != nil {
+					if err := cmdutil.RemoveIfExists(tmp); err != nil {
 						runErr = errors.Join(runErr, fmt.Errorf("remove update temporary file: %w", err))
 					}
 				}
@@ -278,11 +279,11 @@ func updateCmd() *cobra.Command {
 					return fmt.Errorf("updated to %s but could not restart daemon: %w; run 'wt %s stop' and 'wt %s start' manually", rel.TagName, err, kind, kind)
 				}
 				if daemonState.kind == roostDaemon {
-					if err := removeFiles(roostPidPath(), roostArgsPath()); err != nil {
+					if err := cmdutil.RemoveFiles(roostPidPath(), roostArgsPath()); err != nil {
 						return fmt.Errorf("remove stopped roost metadata: %w", err)
 					}
 				} else {
-					if err := removeFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+					if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
 						return fmt.Errorf("remove stopped wing metadata: %w", err)
 					}
 				}
@@ -380,7 +381,7 @@ func fetchReleaseChecksum(ctx context.Context, manifestURL, binaryName string) (
 	if err != nil {
 		return "", err
 	}
-	defer closeWithLog("release checksum response", resp.Body)
+	defer cmdutil.CloseWithLog("release checksum response", resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download SHA256SUMS: %s", resp.Status)
 	}

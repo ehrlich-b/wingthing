@@ -35,6 +35,7 @@ import (
 
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	directpkg "github.com/ehrlich-b/wingthing/internal/direct"
@@ -331,7 +332,7 @@ func readPreviewFileBoundedWithOpen(path string, open func(string) (*os.File, er
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("preview file", file)
+	defer cmdutil.CloseWithLog("preview file", file)
 	openedInfo, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -370,7 +371,7 @@ func consumeAndSendPreview(path, sessionID string, mu *sync.Mutex, gcm *cipher.A
 	if err != nil {
 		if errors.Is(err, errPreviewNotRegular) || errors.Is(err, errPreviewTooLarge) {
 			log.Printf("pty session %s: discard preview: %v", sessionID, err)
-			if removeErr := removeIfExists(path); removeErr != nil {
+			if removeErr := cmdutil.RemoveIfExists(path); removeErr != nil {
 				log.Printf("pty session %s: remove rejected preview: %v", sessionID, removeErr)
 			}
 		}
@@ -380,7 +381,7 @@ func consumeAndSendPreview(path, sessionID string, mu *sync.Mutex, gcm *cipher.A
 	if err != nil {
 		if errors.Is(err, errPreviewTooLarge) {
 			log.Printf("pty session %s: discard preview: %v", sessionID, err)
-			if removeErr := removeIfExists(path); removeErr != nil {
+			if removeErr := cmdutil.RemoveIfExists(path); removeErr != nil {
 				log.Printf("pty session %s: remove rejected preview: %v", sessionID, removeErr)
 			}
 		}
@@ -403,7 +404,7 @@ func consumeAndSendPreview(path, sessionID string, mu *sync.Mutex, gcm *cipher.A
 		log.Printf("pty session %s: preview send error: %v", sessionID, err)
 		return
 	}
-	if err := removeIfExists(path); err != nil {
+	if err := cmdutil.RemoveIfExists(path); err != nil {
 		log.Printf("pty session %s: remove consumed preview: %v", sessionID, err)
 	}
 }
@@ -416,7 +417,7 @@ func watchPreviewFile(ctx context.Context, cwd, sessionID string, mu *sync.Mutex
 	// Try fsnotify first
 	watcher, err := fsnotify.NewWatcher()
 	if err == nil {
-		defer closeWithLog("preview watcher", watcher)
+		defer cmdutil.CloseWithLog("preview watcher", watcher)
 		if addErr := watcher.Add(cwd); addErr != nil {
 			log.Printf("pty session %s: fsnotify add failed, falling back to polling: %v", sessionID, addErr)
 			goto poll
@@ -531,7 +532,7 @@ func watchBrowserRequests(ctx context.Context, path, sessionID string, lastOffse
 			}
 			info, err := f.Stat()
 			if err != nil {
-				closeWithLog("browser request file", f)
+				cmdutil.CloseWithLog("browser request file", f)
 				continue
 			}
 			if info.Size() < lastOffset {
@@ -540,7 +541,7 @@ func watchBrowserRequests(ctx context.Context, path, sessionID string, lastOffse
 				discarding = false
 			}
 			if info.Size() == lastOffset {
-				closeWithLog("browser request file", f)
+				cmdutil.CloseWithLog("browser request file", f)
 				continue
 			}
 			if unread := info.Size() - lastOffset; unread > maxBrowserRequestReadBytes {
@@ -549,7 +550,7 @@ func watchBrowserRequests(ctx context.Context, path, sessionID string, lastOffse
 				discarding = true // the retained window may begin in the middle of a line
 			}
 			if _, err := f.Seek(lastOffset, io.SeekStart); err != nil {
-				closeWithLog("browser request file", f)
+				cmdutil.CloseWithLog("browser request file", f)
 				log.Printf("seek browser request file for session %s: %v", sessionID, err)
 				continue
 			}
@@ -1087,7 +1088,7 @@ func rotateLog(path string) error {
 	}
 
 	// Delete oldest (.log.2.gz)
-	if err := removeIfExists(path + ".2.gz"); err != nil {
+	if err := cmdutil.RemoveIfExists(path + ".2.gz"); err != nil {
 		return fmt.Errorf("remove oldest rotated log: %w", err)
 	}
 
@@ -1096,18 +1097,18 @@ func rotateLog(path string) error {
 		if gz, err := os.Create(path + ".2.gz"); err == nil {
 			w := gzip.NewWriter(gz)
 			if _, werr := w.Write(data); werr != nil {
-				closeWithLog("rotated gzip stream", w)
-				closeWithLog("rotated log", gz)
+				cmdutil.CloseWithLog("rotated gzip stream", w)
+				cmdutil.CloseWithLog("rotated log", gz)
 				return fmt.Errorf("compress rotated log: %w", werr)
 			}
 			if err := w.Close(); err != nil {
-				closeWithLog("rotated log", gz)
+				cmdutil.CloseWithLog("rotated log", gz)
 				return fmt.Errorf("finish rotated log compression: %w", err)
 			}
 			if err := gz.Close(); err != nil {
 				return fmt.Errorf("close rotated log: %w", err)
 			}
-			if err := removeIfExists(path + ".1"); err != nil {
+			if err := cmdutil.RemoveIfExists(path + ".1"); err != nil {
 				return fmt.Errorf("remove compressed source log: %w", err)
 			}
 		} else {
@@ -1232,7 +1233,7 @@ func writeAtomicMetadataFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer removeWithLog(tmpPath)
+	defer cmdutil.RemoveWithLog(tmpPath)
 	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
 		return err
@@ -1255,7 +1256,7 @@ func writeAtomicMetadataFile(path string, data []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("metadata directory", dir)
+	defer cmdutil.CloseWithLog("metadata directory", dir)
 	return dir.Sync()
 }
 
@@ -1551,7 +1552,7 @@ func wingStartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+			defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
 
 			// Daemon mode (default): re-exec detached, write PID file, return
 			if pid, _, err := readDaemon(); err == nil {
@@ -1624,7 +1625,7 @@ func wingStartCmd() *cobra.Command {
 			}
 
 			// Remove stale status from previous run
-			if err := removeIfExists(wingStatusPath()); err != nil {
+			if err := cmdutil.RemoveIfExists(wingStatusPath()); err != nil {
 				return fmt.Errorf("remove stale wing status: %w", err)
 			}
 
@@ -1638,7 +1639,7 @@ func wingStartCmd() *cobra.Command {
 
 			home, err := os.UserHomeDir()
 			if err != nil {
-				closeWithLog("wing log", logFile)
+				cmdutil.CloseWithLog("wing log", logFile)
 				return fmt.Errorf("resolve user home: %w", err)
 			}
 
@@ -1649,7 +1650,7 @@ func wingStartCmd() *cobra.Command {
 			child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 			if err := child.Start(); err != nil {
-				closeWithLog("wing log", logFile)
+				cmdutil.CloseWithLog("wing log", logFile)
 				return fmt.Errorf("start daemon: %w", err)
 			}
 			if err := logFile.Close(); err != nil {
@@ -1668,7 +1669,7 @@ func wingStartCmd() *cobra.Command {
 			case "auth_failed":
 				// Kill daemon, clean up
 				abandonStartedDaemon(child)
-				if err := removeFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+				if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
 					return errors.Join(fmt.Errorf("login expired — run: wt login"), fmt.Errorf("remove failed daemon metadata: %w", err))
 				}
 				return fmt.Errorf("login expired — run: wt login")
@@ -1728,7 +1729,7 @@ func wingStartCmd() *cobra.Command {
 func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte bool) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	defer removeWithLog(wingStatusPath())
+	defer cmdutil.RemoveWithLog(wingStatusPath())
 
 	sighupCh := make(chan os.Signal, 1)
 	signal.Notify(sighupCh, syscall.SIGHUP)
@@ -1973,7 +1974,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		peerMgr.OnDC(func(senderPub, sessionID string, ident webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
 			if strings.HasPrefix(dc.Label(), control.DirectChannelPrefix) {
 				if ident.UserID == "" {
-					log.Printf("[P2P] rejected direct MCP channel from %s: missing authenticated identity", shortLogValue(senderPub))
+					log.Printf("[P2P] rejected direct MCP channel from %s: missing authenticated identity", cmdutil.ShortLogValue(senderPub))
 					if err := dc.Close(); err != nil {
 						log.Printf("[P2P] close rejected direct MCP channel: %v", err)
 					}
@@ -1987,11 +1988,11 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 				return
 			}
 			if sessionID == "" {
-				log.Printf("[P2P] DC opened with no session ID from %s", shortLogValue(senderPub))
+				log.Printf("[P2P] DC opened with no session ID from %s", cmdutil.ShortLogValue(senderPub))
 				return
 			}
 			if !ws.ValidSessionID(sessionID) {
-				log.Printf("[P2P] rejected DC with invalid session ID %q from %s", sessionID, shortLogValue(senderPub))
+				log.Printf("[P2P] rejected DC with invalid session ID %q from %s", sessionID, cmdutil.ShortLogValue(senderPub))
 				if err := dc.Close(); err != nil {
 					log.Printf("[P2P] close invalid session channel: %v", err)
 				}
@@ -2003,7 +2004,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			// it does not own.
 			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", sessionID))
 			if ident.UserID == "" || owner == "" || ident.UserID != owner {
-				log.Printf("[P2P] rejected DC for session %s from %s: sender is not the session owner", sessionID, shortLogValue(senderPub))
+				log.Printf("[P2P] rejected DC for session %s from %s: sender is not the session owner", sessionID, cmdutil.ShortLogValue(senderPub))
 				if err := dc.Close(); err != nil {
 					log.Printf("[P2P] close rejected session channel: %v", err)
 				}
@@ -2015,7 +2016,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 				return
 			}
 			dcSessions.Store(sessionID, dc)
-			log.Printf("[P2P] DC stored for session %s from %s", sessionID, shortLogValue(senderPub))
+			log.Printf("[P2P] DC stored for session %s from %s", sessionID, cmdutil.ShortLogValue(senderPub))
 
 			dc.OnMessage(browserDataChannelInputHandler(&dcSessions, sessionID, dc, boundController, client.PushPTYInput))
 			dc.OnClose(func() {
@@ -2339,7 +2340,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 							}
 						}
 						pollCancel()
-						closeWithLog("idle-check egg client", ec)
+						cmdutil.CloseWithLog("idle-check egg client", ec)
 					}
 				}
 
@@ -2351,7 +2352,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 						if err := ec.Kill(ctx, sid); err != nil {
 							log.Printf("idle reaper: kill session %s: %v", sid, err)
 						}
-						closeWithLog("idle-reaper egg client", ec)
+						cmdutil.CloseWithLog("idle-reaper egg client", ec)
 					}
 					sessionStates.Delete(sid)
 				}
@@ -2375,7 +2376,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		if err := directSrv.StartAsync(addr); err != nil {
 			return fmt.Errorf("start direct server: %w", err)
 		}
-		defer closeWithLog("direct server", directSrv)
+		defer cmdutil.CloseWithLog("direct server", directSrv)
 	}
 
 	err = client.Run(ctx)
@@ -2442,13 +2443,6 @@ func directMCPEnabled(hasPeerManager bool, wingCfg *config.WingConfig) bool {
 	return hasPeerManager && wingCfg != nil && (wingCfg.DirectMCP == nil || !wingCfg.DirectMCP.Disabled)
 }
 
-func shortLogValue(value string) string {
-	if len(value) <= 8 {
-		return value
-	}
-	return value[:8]
-}
-
 func wingStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
@@ -2458,7 +2452,7 @@ func wingStopCmd() *cobra.Command {
 			if lockErr != nil {
 				return lockErr
 			}
-			defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+			defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
 			pid, kind, err := readDaemon()
 			if err != nil {
 				return fmt.Errorf("no wing daemon running")
@@ -2466,7 +2460,7 @@ func wingStopCmd() *cobra.Command {
 			if err := stopDaemonAndWait(pid, kind, 5*time.Second); err != nil {
 				return err
 			}
-			if err := removeFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+			if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
 				return fmt.Errorf("remove wing daemon metadata: %w", err)
 			}
 			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
@@ -2571,11 +2565,11 @@ func resolveEmail(cfg *config.Config, email string) (string, string, error) {
 		return "", "", fmt.Errorf("build email lookup request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+tok.Token)
-	resp, err := cliHTTPClient.Do(req)
+	resp, err := cmdutil.CLIHTTPClient.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve email: %w", err)
 	}
-	defer closeWithLog("email lookup response", resp.Body)
+	defer cmdutil.CloseWithLog("email lookup response", resp.Body)
 	if resp.StatusCode != 200 {
 		return "", "", fmt.Errorf("no user found with email: %s", email)
 	}
@@ -2583,7 +2577,7 @@ func resolveEmail(cfg *config.Config, email string) (string, string, error) {
 		UserID      string `json:"user_id"`
 		DisplayName string `json:"display_name"`
 	}
-	if err := decodeCLIAPIResponse(resp.Body, &result); err != nil {
+	if err := cmdutil.DecodeCLIAPIResponse(resp.Body, &result); err != nil {
 		return "", "", fmt.Errorf("parse email lookup response: %w", err)
 	}
 	return result.UserID, result.DisplayName, nil
@@ -2609,18 +2603,18 @@ func fetchCurrentPasskey(cfg *config.Config) (config.AllowKey, error) {
 		return config.AllowKey{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok.Token)
-	resp, err := cliHTTPClient.Do(req)
+	resp, err := cmdutil.CLIHTTPClient.Do(req)
 	if err != nil {
 		return config.AllowKey{}, fmt.Errorf("fetch passkeys: %w", err)
 	}
-	defer closeWithLog("passkey response", resp.Body)
+	defer cmdutil.CloseWithLog("passkey response", resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return config.AllowKey{}, fmt.Errorf("fetch passkeys: HTTP %d", resp.StatusCode)
 	}
 	var credentials []struct {
 		PublicKey string `json:"public_key"`
 	}
-	if err := decodeCLIAPIResponse(resp.Body, &credentials); err != nil {
+	if err := cmdutil.DecodeCLIAPIResponse(resp.Body, &credentials); err != nil {
 		return config.AllowKey{}, fmt.Errorf("parse passkeys: %w", err)
 	}
 	for _, credential := range credentials {
@@ -2700,11 +2694,11 @@ func wingAllowCmd() *cobra.Command {
 					return fmt.Errorf("build org lookup request: %w", err)
 				}
 				orgsReq.Header.Set("Authorization", "Bearer "+tok.Token)
-				orgsResp, err := cliHTTPClient.Do(orgsReq)
+				orgsResp, err := cmdutil.CLIHTTPClient.Do(orgsReq)
 				if err != nil {
 					return fmt.Errorf("fetch orgs: %w", err)
 				}
-				defer closeWithLog("org lookup response", orgsResp.Body)
+				defer cmdutil.CloseWithLog("org lookup response", orgsResp.Body)
 				if orgsResp.StatusCode != 200 {
 					return fmt.Errorf("fetch orgs: HTTP %d", orgsResp.StatusCode)
 				}
@@ -2712,7 +2706,7 @@ func wingAllowCmd() *cobra.Command {
 					ID   string `json:"id"`
 					Slug string `json:"slug"`
 				}
-				if err := decodeCLIAPIResponse(orgsResp.Body, &orgs); err != nil {
+				if err := cmdutil.DecodeCLIAPIResponse(orgsResp.Body, &orgs); err != nil {
 					return fmt.Errorf("parse orgs: %w", err)
 				}
 				var orgID string
@@ -2732,11 +2726,11 @@ func wingAllowCmd() *cobra.Command {
 					return fmt.Errorf("build org member request: %w", err)
 				}
 				req.Header.Set("Authorization", "Bearer "+tok.Token)
-				resp, err := cliHTTPClient.Do(req)
+				resp, err := cmdutil.CLIHTTPClient.Do(req)
 				if err != nil {
 					return fmt.Errorf("fetch org members: %w", err)
 				}
-				defer closeWithLog("org member response", resp.Body)
+				defer cmdutil.CloseWithLog("org member response", resp.Body)
 				if resp.StatusCode != 200 {
 					return fmt.Errorf("fetch org members: HTTP %d", resp.StatusCode)
 				}
@@ -2748,7 +2742,7 @@ func wingAllowCmd() *cobra.Command {
 						PasskeyPubKey string `json:"passkey_public_key"`
 					} `json:"members"`
 				}
-				if err := decodeCLIAPIResponse(resp.Body, &membersResp); err != nil {
+				if err := cmdutil.DecodeCLIAPIResponse(resp.Body, &membersResp); err != nil {
 					return fmt.Errorf("parse org members: %w", err)
 				}
 				members := membersResp.Members
@@ -3363,9 +3357,9 @@ func reapDeadEggs(cfg *config.Config) {
 // cleanEggDir removes the files in an egg session directory, then the directory itself.
 // If recordings or lifecycle history exist, preserves metadata and data.
 func cleanEggDir(dir string) {
-	removeWithLog(filepath.Join(dir, "egg.sock"))
-	removeWithLog(filepath.Join(dir, "egg.token"))
-	removeWithLog(filepath.Join(dir, "egg.pid"))
+	cmdutil.RemoveWithLog(filepath.Join(dir, "egg.sock"))
+	cmdutil.RemoveWithLog(filepath.Join(dir, "egg.token"))
+	cmdutil.RemoveWithLog(filepath.Join(dir, "egg.pid"))
 	// Preserve egg.log — the parent process reads it via readEggCrashInfo
 	// after this child exits. Deleting it here causes a race where the
 	// crash message is lost ("egg process crashed (no log available)").
@@ -3420,7 +3414,7 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		statusCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
 		statusResponse, statusErr := ec.Status(statusCtx)
 		cancel()
-		closeWithLog("egg health-check client", ec)
+		cmdutil.CloseWithLog("egg health-check client", ec)
 		var renderedConfig string
 		if statusErr == nil {
 			renderedConfig = statusResponse.RenderedConfig
@@ -3534,7 +3528,7 @@ func killOrphanEgg(cfg *config.Config, sessionID string) {
 	} else {
 		log.Printf("pty session %s: orphan termination requested (gRPC)", sessionID)
 	}
-	closeWithLog("orphan egg client", ec)
+	cmdutil.CloseWithLog("orphan egg client", ec)
 }
 
 func resizeEgg(cfg *config.Config, sessionID string, rows, cols uint32) (result error) {
@@ -3549,7 +3543,7 @@ func resizeEgg(cfg *config.Config, sessionID string, rows, cols uint32) (result 
 	if err != nil {
 		return fmt.Errorf("open session: %w", err)
 	}
-	defer func() { result = closeAndJoin("egg resize client", ec, result) }()
+	defer func() { result = cmdutil.CloseAndJoin("egg resize client", ec, result) }()
 	resizeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := ec.Resize(resizeCtx, sessionID, rows, cols); err != nil {
@@ -3758,13 +3752,13 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		// Set up input routing for this session
 		write, input, cleanup, registered := wsClient.RegisterPTYSession(ctx, sessionID)
 		if !registered {
-			closeWithLog("duplicate reclaimed egg client", ec)
+			cmdutil.CloseWithLog("duplicate reclaimed egg client", ec)
 			log.Printf("egg: session %s became active during reclaim, skipping", sessionID)
 			continue
 		}
 		go func(sid string, ec *egg.Client, dir string) {
 			defer cleanup()
-			defer closeWithLog("reclaimed egg client", ec)
+			defer cmdutil.CloseWithLog("reclaimed egg client", ec)
 			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, tools)
 		}(sessionID, ec, dir)
 	}
@@ -3808,7 +3802,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				log.Printf("pty session %s: reclaim tool listener failed: %v", sessionID, tlErr)
 			} else {
 				log.Printf("pty session %s: reclaim tool listener restarted (%d tools)", sessionID, len(tools))
-				defer closeWithLog("reclaimed egg tool listener", tl)
+				defer cmdutil.CloseWithLog("reclaimed egg tool listener", tl)
 			}
 		}
 	}
@@ -4366,7 +4360,7 @@ authDone:
 		}
 	}
 	if toolListener != nil {
-		defer closeWithLog("egg tool listener", toolListener)
+		defer cmdutil.CloseWithLog("egg tool listener", toolListener)
 	}
 
 	// Spawn a per-session egg
@@ -4415,7 +4409,7 @@ authDone:
 		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
 		return
 	}
-	defer closeWithLog("PTY egg client", ec)
+	defer cmdutil.CloseWithLog("PTY egg client", ec)
 	providerResumeSpawned = providerResumeID != ""
 	if err := inheritConversationExecution(cfg, start.ResumeSessionID, start.SessionID); err != nil {
 		killCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -5244,7 +5238,7 @@ func appendHostedRelayPolicyAudit(cfg *config.Config, operation string) (result 
 	if err != nil {
 		return err
 	}
-	defer func() { result = closeAndJoin("hosted relay policy audit", file, result) }()
+	defer func() { result = cmdutil.CloseAndJoin("hosted relay policy audit", file, result) }()
 	if err := file.Chmod(0o600); err != nil {
 		return err
 	}
@@ -5494,7 +5488,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]any{"error": fmt.Sprintf("webrtc offer: %v", err)}, write)
 			return
 		}
-		log.Printf("[P2P] webrtc.offer accepted from %s, answer SDP %d bytes", shortLogValue(req.SenderPub), len(answerSDP))
+		log.Printf("[P2P] webrtc.offer accepted from %s, answer SDP %d bytes", cmdutil.ShortLogValue(req.SenderPub), len(answerSDP))
 		tunnelRespond(gcm, req.RequestID, map[string]any{"sdp": answerSDP}, write)
 
 	case "sessions.list":
@@ -5612,7 +5606,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			_ = streamSessionFileError(gcm, req.RequestID, err.Error(), write)
 			return
 		}
-		defer closeWithLog("session download", file)
+		defer cmdutil.CloseWithLog("session download", file)
 		if err := streamSessionFile(ctx, file, path, info, gcm, req.RequestID, write); err != nil {
 			log.Printf("session download failed (user=%s session=%s): %v", req.SenderUserID, inner.SessionID, err)
 			_ = streamSessionFileError(gcm, req.RequestID, err.Error(), write)
@@ -5650,7 +5644,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		defer closeWithLog("session export source", file)
+		defer cmdutil.CloseWithLog("session export source", file)
 		sha, size, err := exportSessionFile(file, info, *exportTarget, req.SenderUserID)
 		if err != nil {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
@@ -6256,7 +6250,7 @@ func auditDimensions(dir string) (int, int) {
 	if err != nil {
 		return cols, rows
 	}
-	defer closeWithLog("audit metadata", file)
+	defer cmdutil.CloseWithLog("audit metadata", file)
 	meta, err := io.ReadAll(io.LimitReader(file, maxAuditMetadataBytes+1))
 	if err != nil || len(meta) > maxAuditMetadataBytes {
 		return cols, rows
@@ -6399,7 +6393,7 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 		tunnelRespond(gcm, requestID, map[string]string{"error": "file not found: " + kind}, write)
 		return
 	}
-	defer closeWithLog("audit stream", file)
+	defer cmdutil.CloseWithLog("audit stream", file)
 	emit := func(chunk []byte) error {
 		return tunnelStreamChunk(gcm, requestID, chunk, false, write)
 	}

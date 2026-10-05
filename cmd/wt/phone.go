@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -157,7 +158,7 @@ func fetchPhoneAccount(ctx context.Context, origin, bearer string) (string, erro
 		return "", errors.New("configured roost rejected the account check")
 	}
 	var info auth.UserInfo
-	if err := decodeCLIAPIResponse(response.Body, &info); err != nil || strings.TrimSpace(info.UserID) == "" {
+	if err := cmdutil.DecodeCLIAPIResponse(response.Body, &info); err != nil || strings.TrimSpace(info.UserID) == "" {
 		return "", errors.New("configured roost returned an invalid account identity")
 	}
 	return info.UserID, nil

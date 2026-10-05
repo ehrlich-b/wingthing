@@ -22,6 +22,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/memory"
@@ -46,12 +47,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := executeCLI(ctx, os.Args[1:], remoteProcessIO()); err != nil {
-		var exitErr *commandExitError
+		var exitErr *cmdutil.CommandExitError
 		if errors.As(err, &exitErr) {
-			if exitErr.message != "" {
-				_, _ = fmt.Fprintln(os.Stderr, exitErr.message)
+			if exitErr.Message != "" {
+				_, _ = fmt.Fprintln(os.Stderr, exitErr.Message)
 			}
-			os.Exit(exitErr.code)
+			os.Exit(exitErr.Code)
 		}
 		_, _ = fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
@@ -201,7 +202,7 @@ func stopCmd() *cobra.Command {
 			if lockErr != nil {
 				return lockErr
 			}
-			defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+			defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
 			pid, kind, err := readDaemon()
 			if err != nil {
 				return fmt.Errorf("no wing daemon running")
@@ -210,17 +211,13 @@ func stopCmd() *cobra.Command {
 				return err
 			}
 			// Clean up both wing and roost pid/args files
-			if err := removeFiles(wingPidPath(), wingArgsPath(), roostPidPath(), roostArgsPath()); err != nil {
+			if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), roostPidPath(), roostArgsPath()); err != nil {
 				return fmt.Errorf("remove daemon metadata: %w", err)
 			}
 			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
 			return nil
 		},
 	}
-}
-
-func genTaskID() string {
-	return fmt.Sprintf("t-%s-%s", time.Now().Format("20060102-150405"), newRuntimeID())
 }
 
 func runCmd() *cobra.Command {
@@ -247,7 +244,7 @@ func runCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer closeWithLog("store", s)
+			defer cmdutil.CloseWithLog("store", s)
 
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -258,7 +255,7 @@ func runCmd() *cobra.Command {
 				return err
 			}
 			t := &store.Task{
-				ID:            genTaskID(),
+				ID:            cmdutil.GenTaskID(),
 				RunAt:         time.Now().UTC(),
 				CWD:           cwd,
 				EggConfigYAML: eggConfigYAML,
@@ -689,7 +686,7 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			WingID:     cfg.WingID,
 			Agent:      &agentName,
 			UserInput:  &t.What,
-			Summary:    truncate(output, 200),
+			Summary:    cmdutil.Truncate(output, 200),
 			TokensUsed: &totalTok,
 		}); err != nil {
 			return fmt.Errorf("record task thread entry: %w", err)
@@ -759,13 +756,6 @@ func mergeAgentFailureOutput(stdout, diagnostics string) string {
 	return stdout + diagnostics
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-3] + "..."
-}
-
 func timelineCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "timeline",
@@ -779,7 +769,7 @@ func timelineCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer closeWithLog("store", s)
+			defer cmdutil.CloseWithLog("store", s)
 
 			tasks, err := s.ListRecent(20)
 			if err != nil {
@@ -821,7 +811,7 @@ func threadCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer closeWithLog("store", s)
+			defer cmdutil.CloseWithLog("store", s)
 
 			date := time.Now().UTC()
 			if yesterday {
@@ -856,7 +846,7 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer closeWithLog("store", s)
+			defer cmdutil.CloseWithLog("store", s)
 
 			var pending, running int
 			if err := s.DB().QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'pending'").Scan(&pending); err != nil {
@@ -906,7 +896,7 @@ func logCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer closeWithLog("store", s)
+			defer cmdutil.CloseWithLog("store", s)
 
 			taskID := ""
 			if len(args) > 0 {
@@ -968,7 +958,7 @@ func agentCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer closeWithLog("store", s)
+			defer cmdutil.CloseWithLog("store", s)
 
 			agents, err := s.ListAgents()
 			if err != nil {
@@ -1014,7 +1004,7 @@ func scheduleCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer closeWithLog("store", s)
+			defer cmdutil.CloseWithLog("store", s)
 
 			tasks, err := s.ListRecurring()
 			if err != nil {
@@ -1057,7 +1047,7 @@ func scheduleCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer closeWithLog("store", s)
+			defer cmdutil.CloseWithLog("store", s)
 
 			t, err := s.GetTask(args[0])
 			if err != nil {
@@ -1090,7 +1080,7 @@ func retryCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer closeWithLog("store", s)
+			defer cmdutil.CloseWithLog("store", s)
 
 			t, err := s.GetTask(args[0])
 			if err != nil {
@@ -1104,7 +1094,7 @@ func retryCmd() *cobra.Command {
 			}
 
 			newTask := &store.Task{
-				ID:             genTaskID(),
+				ID:             cmdutil.GenTaskID(),
 				Type:           t.Type,
 				What:           t.What,
 				RunAt:          time.Now().UTC(),
@@ -1325,7 +1315,7 @@ func logoutCmd() *cobra.Command {
 			if lockErr != nil {
 				return lockErr
 			}
-			defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+			defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
 
 			// Stop wing daemon if running (prevents orphaned daemon with revoked token)
 			if pid, kind, pidErr := readDaemon(); pidErr == nil {
@@ -1333,7 +1323,7 @@ func logoutCmd() *cobra.Command {
 				if stopErr := stopDaemonAndWait(pid, kind, 5*time.Second); stopErr != nil {
 					return fmt.Errorf("refusing to delete login while daemon is still running: %w", stopErr)
 				}
-				if err := removeFiles(wingPidPath(), wingArgsPath(), roostPidPath(), roostArgsPath()); err != nil {
+				if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), roostPidPath(), roostArgsPath()); err != nil {
 					return fmt.Errorf("remove stopped daemon metadata: %w", err)
 				}
 			}
@@ -1356,7 +1346,7 @@ func restartWingDaemonIfRunning() error {
 	if lockErr != nil {
 		return lockErr
 	}
-	defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+	defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
 
 	pid, err := readPidFrom(wingPidPath(), wingDaemon)
 	if err != nil {
@@ -1381,7 +1371,7 @@ func restartWingDaemonIfRunning() error {
 	if err := stopDaemonAndWait(pid, wingDaemon, 5*time.Second); err != nil {
 		return fmt.Errorf("refusing to start a competing daemon: %w", err)
 	}
-	if err := removeFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+	if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
 		return fmt.Errorf("remove stopped daemon metadata: %w", err)
 	}
 
@@ -1401,7 +1391,7 @@ func restartWingDaemonIfRunning() error {
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		closeWithLog("wing log", logFile)
+		cmdutil.CloseWithLog("wing log", logFile)
 		return fmt.Errorf("resolve user home: %w", err)
 	}
 	child := exec.Command(exe, savedArgs...)
@@ -1411,10 +1401,10 @@ func restartWingDaemonIfRunning() error {
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := child.Start(); err != nil {
-		closeWithLog("wing log", logFile)
+		cmdutil.CloseWithLog("wing log", logFile)
 		return fmt.Errorf("start daemon: %w", err)
 	}
-	closeWithLog("wing log", logFile)
+	cmdutil.CloseWithLog("wing log", logFile)
 
 	if err := writeDaemonMetadata(wingPidPath(), wingArgsPath(), child.Process.Pid, savedArgs); err != nil {
 		abandonStartedDaemon(child)
@@ -1428,7 +1418,7 @@ func restartWingDaemonIfRunning() error {
 		fmt.Printf("  relay: connected\n")
 	case "auth_failed":
 		abandonStartedDaemon(child)
-		if err := removeFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+		if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
 			return errors.Join(fmt.Errorf("wing daemon restarted but auth failed — run: wt logout && wt login"), fmt.Errorf("remove failed daemon metadata: %w", err))
 		}
 		return fmt.Errorf("wing daemon restarted but auth failed — run: wt logout && wt login")
@@ -1791,7 +1781,7 @@ func addZipTail(zw *zip.Writer, name, srcPath string, maxLines int) error {
 		}
 		return fmt.Errorf("open support source %s: %w", srcPath, err)
 	}
-	defer closeWithLog("support source", f)
+	defer cmdutil.CloseWithLog("support source", f)
 
 	var lines []string
 	scanner := bufio.NewScanner(f)

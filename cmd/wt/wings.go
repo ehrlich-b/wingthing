@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
@@ -163,10 +164,10 @@ func finderRelayURL(cfg *config.Config, override string) string {
 
 func printWingFinderEntries(entries []wingFinderEntry, noProbe bool) error {
 	if len(entries) == 0 {
-		return writeln(os.Stdout, "no wings online")
+		return cmdutil.Writeln(os.Stdout, "no wings online")
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	if err := writeln(w, "WING\tNAME\tOWNER\tPLATFORM\tVERSION\tSTATUS"); err != nil {
+	if err := cmdutil.Writeln(w, "WING\tNAME\tOWNER\tPLATFORM\tVERSION\tSTATUS"); err != nil {
 		return err
 	}
 	for _, entry := range entries {
@@ -200,7 +201,7 @@ func printWingFinderEntries(entries []wingFinderEntry, noProbe bool) error {
 		} else if !noProbe {
 			status = "online; unverified"
 		}
-		if err := writef(w, "%s\t%s\t%s\t%s\t%s\t%s\n", entry.WingID, name, owner, platform, version, status); err != nil {
+		if err := cmdutil.Writef(w, "%s\t%s\t%s\t%s\t%s\t%s\n", entry.WingID, name, owner, platform, version, status); err != nil {
 			return err
 		}
 	}

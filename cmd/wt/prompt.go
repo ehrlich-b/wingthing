@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/store"
@@ -46,14 +47,14 @@ func promptListCmd() *cobra.Command {
 				return writePromptJSON(cmd.OutOrStdout(), assets)
 			}
 			if len(assets) == 0 {
-				return writeln(cmd.OutOrStdout(), "no saved prompts")
+				return cmdutil.Writeln(cmd.OutOrStdout(), "no saved prompts")
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			if err := writeln(w, "NAME\tREVISION\tAGENT\tVARIABLES\tDESCRIPTION"); err != nil {
+			if err := cmdutil.Writeln(w, "NAME\tREVISION\tAGENT\tVARIABLES\tDESCRIPTION"); err != nil {
 				return err
 			}
 			for _, asset := range assets {
-				if err := writef(w, "%s\t%s\t%s\t%s\t%s\n", asset.Name, asset.Revision, asset.Agent,
+				if err := cmdutil.Writef(w, "%s\t%s\t%s\t%s\t%s\n", asset.Name, asset.Revision, asset.Agent,
 					strings.Join(asset.Variables, ","), asset.Description); err != nil {
 					return err
 				}
@@ -85,30 +86,30 @@ func promptShowCmd() *cobra.Command {
 				return writePromptJSON(cmd.OutOrStdout(), asset)
 			}
 			out := cmd.OutOrStdout()
-			if err := writef(out, "%s@%s\n", asset.Name, asset.Revision); err != nil {
+			if err := cmdutil.Writef(out, "%s@%s\n", asset.Name, asset.Revision); err != nil {
 				return err
 			}
 			if asset.Description != "" {
-				if err := writef(out, "description: %s\n", asset.Description); err != nil {
+				if err := cmdutil.Writef(out, "description: %s\n", asset.Description); err != nil {
 					return err
 				}
 			}
 			if asset.Agent != "" {
-				if err := writef(out, "agent: %s\n", asset.Agent); err != nil {
+				if err := cmdutil.Writef(out, "agent: %s\n", asset.Agent); err != nil {
 					return err
 				}
 			}
 			if asset.CWD != "" {
-				if err := writef(out, "cwd: %s\n", asset.CWD); err != nil {
+				if err := cmdutil.Writef(out, "cwd: %s\n", asset.CWD); err != nil {
 					return err
 				}
 			}
 			if len(asset.Variables) > 0 {
-				if err := writef(out, "variables: %s\n", strings.Join(asset.Variables, ", ")); err != nil {
+				if err := cmdutil.Writef(out, "variables: %s\n", strings.Join(asset.Variables, ", ")); err != nil {
 					return err
 				}
 			}
-			return writef(out, "\n%s\n", asset.Template)
+			return cmdutil.Writef(out, "\n%s\n", asset.Template)
 		},
 	}
 	cmd.Flags().StringVar(&revision, "revision", "", "Read an immutable historical revision")
@@ -167,7 +168,7 @@ func promptSaveCmd() *cobra.Command {
 			if jsonOutput {
 				return writePromptJSON(cmd.OutOrStdout(), asset)
 			}
-			return writef(cmd.OutOrStdout(), "saved: %s@%s\n", asset.Name, asset.Revision)
+			return cmdutil.Writef(cmd.OutOrStdout(), "saved: %s@%s\n", asset.Name, asset.Revision)
 		},
 	}
 	cmd.Flags().StringVar(&description, "description", "", "Human-readable purpose")
@@ -219,15 +220,15 @@ func promptRunCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open db: %w", err)
 			}
-			defer closeWithLog("prompt task store", taskStore)
+			defer cmdutil.CloseWithLog("prompt task store", taskStore)
 			task := &store.Task{
-				ID: genTaskID(), Type: "prompt", What: rendered, Agent: agentName,
+				ID: cmdutil.GenTaskID(), Type: "prompt", What: rendered, Agent: agentName,
 				RunAt: time.Now().UTC(), CWD: cwd, PromptName: asset.Name, PromptRevision: asset.Revision,
 			}
 			if err := taskStore.CreateTask(task); err != nil {
 				return err
 			}
-			if err := writef(cmd.OutOrStdout(), "submitted: %s (%s@%s)\n", task.ID, asset.Name, asset.Revision); err != nil {
+			if err := cmdutil.Writef(cmd.OutOrStdout(), "submitted: %s (%s@%s)\n", task.ID, asset.Name, asset.Revision); err != nil {
 				return err
 			}
 			return runTaskTo(cmd.Context(), cfg, taskStore, task, cmd.OutOrStdout())

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
@@ -506,7 +507,7 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 			decision = "error"
 		}
 		if auditErr := s.auditToolCall(name, arguments, data, decision); auditErr != nil {
-			if logErr := writef(s.logs, "wingthing MCP audit: %v\n", auditErr); logErr != nil {
+			if logErr := cmdutil.Writef(s.logs, "wingthing MCP audit: %v\n", auditErr); logErr != nil {
 				log.Printf("write MCP audit failure: %v", logErr)
 			}
 		}
@@ -604,7 +605,7 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 		return nil, false, &localMCPError{Code: -32603, Message: err.Error()}
 	}
 	if err != nil {
-		if logErr := writef(s.logs, "wingthing MCP %s: %v\n", name, err); logErr != nil {
+		if logErr := cmdutil.Writef(s.logs, "wingthing MCP %s: %v\n", name, err); logErr != nil {
 			log.Printf("write MCP failure: %v", logErr)
 		}
 		return map[string]any{"error": err.Error()}, true, nil
@@ -769,7 +770,7 @@ func (s *localMCPServer) toolMessageSend(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("message store", db)
+	defer cmdutil.CloseWithLog("message store", db)
 	if err := db.PurgeExpiredMessages(); err != nil {
 		return nil, err
 	}
@@ -807,7 +808,7 @@ func (s *localMCPServer) toolMessageList(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("message store", db)
+	defer cmdutil.CloseWithLog("message store", db)
 	if err := db.PurgeExpiredMessages(); err != nil {
 		return nil, err
 	}
@@ -830,7 +831,7 @@ func (s *localMCPServer) toolMessageWait(ctx context.Context, arguments json.Raw
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("message store", db)
+	defer cmdutil.CloseWithLog("message store", db)
 	if err := db.PurgeExpiredMessages(); err != nil {
 		return nil, err
 	}
@@ -1247,7 +1248,7 @@ func (s *localMCPServer) toolTerminalList(ctx context.Context, arguments json.Ra
 			return nil, err
 		}
 		bound, err := s.ownedConversation(db, s.boundConversation)
-		closeWithLog("bound terminal list store", db)
+		cmdutil.CloseWithLog("bound terminal list store", db)
 		if err != nil {
 			return nil, err
 		}
@@ -1363,7 +1364,7 @@ func (s *localMCPServer) toolTerminalWait(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("egg client", ec)
+	defer cmdutil.CloseWithLog("egg client", ec)
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -1409,14 +1410,14 @@ func (s *localMCPServer) toolTerminalStart(arguments json.RawMessage) (map[strin
 	if err != nil {
 		return nil, err
 	}
-	sessionID := newRuntimeID()
+	sessionID := cmdutil.NewRuntimeID()
 	if err := s.admitSpawn(func() error {
 		ec, spawnErr := spawnEgg(s.cfg, sessionID, "", eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
 			spawnEggOpts{Label: args.Label, Kind: kind, Command: args.Command, Principal: s.clientPrincipal()})
 		if spawnErr != nil {
 			return spawnErr
 		}
-		closeWithLog("spawned terminal egg client", ec)
+		cmdutil.CloseWithLog("spawned terminal egg client", ec)
 		return nil
 	}); err != nil {
 		return nil, err
@@ -1488,7 +1489,7 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		eggCfg = &copyCfg
 		eggCfg.DangerouslySkipPermissions = true
 	}
-	sessionID := newRuntimeID()
+	sessionID := cmdutil.NewRuntimeID()
 	// Hash normalized launch arguments, excluding the retry key itself.
 	spec := args
 	spec.RequestID = ""
@@ -1539,7 +1540,7 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		if spawnErr != nil {
 			return spawnErr
 		}
-		closeWithLog("spawned agent egg client", ec)
+		cmdutil.CloseWithLog("spawned agent egg client", ec)
 		return nil
 	})
 	if err := s.markConversationLaunch(conversation, spawnErr); err != nil {
@@ -1636,7 +1637,7 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, followup *agentRunFol
 	}
 	now := time.Now().UTC()
 	task := &store.Task{
-		ID: genTaskID(), Type: "agent_run", What: args.Prompt,
+		ID: cmdutil.GenTaskID(), Type: "agent_run", What: args.Prompt,
 		Agent: args.Agent, Model: args.Model, TimeoutSeconds: args.TimeoutSeconds,
 		RunAt: now, CreatedAt: now,
 		ParentID: parentID, DependsOn: dependsOn, CWD: resolvedCWD,
@@ -1650,7 +1651,7 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, followup *agentRunFol
 		if openErr != nil {
 			return openErr
 		}
-		defer closeWithLog("task store", taskStore)
+		defer cmdutil.CloseWithLog("task store", taskStore)
 		if createErr := taskStore.CreateTask(task); createErr != nil {
 			return createErr
 		}
@@ -1717,7 +1718,7 @@ func (s *localMCPServer) startAgentRun(runID string, followup *agentRunFollowup)
 			s.setAgentRunError(runID, err)
 			return
 		}
-		defer closeWithLog("task store", taskStore)
+		defer cmdutil.CloseWithLog("task store", taskStore)
 		task, err := taskStore.GetTask(runID)
 		if err != nil || task == nil {
 			if err == nil {
@@ -1770,7 +1771,7 @@ func (s *localMCPServer) setAgentRunError(runID string, runErr error) {
 		log.Printf("record agent run %s failure: open store: %v", runID, err)
 		return
 	}
-	defer closeWithLog("task store", taskStore)
+	defer cmdutil.CloseWithLog("task store", taskStore)
 	if err := taskStore.SetTaskError(runID, runErr.Error()); err != nil {
 		log.Printf("record agent run %s failure: %v", runID, err)
 	}
@@ -1790,21 +1791,21 @@ func (s *localMCPServer) ownedAgentRun(runID string) (*store.Task, *store.Store,
 	}
 	task, err := taskStore.GetTask(runID)
 	if err != nil {
-		return nil, nil, closeAndJoin("task store", taskStore, err)
+		return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, err)
 	}
 	if task == nil || task.Type != "agent_run" || !s.ownsTask(task) {
-		return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("agent run %q not found or not owned by caller", runID))
+		return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, fmt.Errorf("agent run %q not found or not owned by caller", runID))
 	}
 	if (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !procinfo.OwnedProcessIsAlive(task.RunnerPID) {
 		if err := taskStore.SetTaskError(task.ID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID)); err != nil {
-			return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("mark orphaned agent run failed: %w", err))
+			return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, fmt.Errorf("mark orphaned agent run failed: %w", err))
 		}
 		task, err = taskStore.GetTask(runID)
 		if err != nil {
-			return nil, nil, closeAndJoin("task store", taskStore, err)
+			return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, err)
 		}
 		if task == nil {
-			return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("agent run %q disappeared after orphan cleanup", runID))
+			return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, fmt.Errorf("agent run %q disappeared after orphan cleanup", runID))
 		}
 	}
 	return task, taskStore, nil
@@ -1841,7 +1842,7 @@ func (s *localMCPServer) toolAgentStatus(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("task store", taskStore)
+	defer cmdutil.CloseWithLog("task store", taskStore)
 	return agentRunStatusData(task), nil
 }
 
@@ -1866,7 +1867,7 @@ func (s *localMCPServer) toolAgentWait(ctx context.Context, arguments json.RawMe
 	if loadErr != nil {
 		return nil, loadErr
 	}
-	defer closeWithLog("task store", taskStore)
+	defer cmdutil.CloseWithLog("task store", taskStore)
 	data := agentRunStatusData(task)
 	if errors.Is(err, context.DeadlineExceeded) {
 		data["timed_out"] = true
@@ -1880,7 +1881,7 @@ func (s *localMCPServer) waitForAgentRunTerminal(ctx context.Context, runID stri
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("task store", taskStore)
+	defer cmdutil.CloseWithLog("task store", taskStore)
 	if agentRunTerminal(task.Status) {
 		return nil
 	}
@@ -1924,7 +1925,7 @@ func (s *localMCPServer) toolAgentResult(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("task store", taskStore)
+	defer cmdutil.CloseWithLog("task store", taskStore)
 	data := agentRunStatusData(task)
 	data["ready"] = agentRunTerminal(task.Status)
 	if task.Output != nil {
@@ -1961,7 +1962,7 @@ func (s *localMCPServer) toolAgentEvents(arguments json.RawMessage) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("task store", taskStore)
+	defer cmdutil.CloseWithLog("task store", taskStore)
 	rows, err := taskStore.DB().Query(`SELECT timestamp, event, COALESCE(detail, '') FROM task_log WHERE task_id = ? ORDER BY id DESC LIMIT ?`, args.RunID, args.Limit)
 	if err != nil {
 		return nil, err
@@ -2037,7 +2038,7 @@ func (s *localMCPServer) toolAgentStop(arguments json.RawMessage) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("task store", taskStore)
+	defer cmdutil.CloseWithLog("task store", taskStore)
 	if agentRunTerminal(task.Status) {
 		return agentRunStatusData(task), nil
 	}
@@ -2127,7 +2128,7 @@ func (s *localMCPServer) toolTerminalStop(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("egg client", ec)
+	defer cmdutil.CloseWithLog("egg client", ec)
 	if err := ec.Kill(ctx, session.ID); err != nil {
 		return nil, err
 	}
@@ -2259,7 +2260,7 @@ func (s *localMCPServer) toolTaskGet(arguments json.RawMessage) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("task store", taskStore)
+	defer cmdutil.CloseWithLog("task store", taskStore)
 	task, err := taskStore.GetTask(args.TaskID)
 	if err != nil {
 		return nil, err
@@ -2295,9 +2296,9 @@ func (s *localMCPServer) executePrompt(ctx context.Context, prompt, agentName, c
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("task store", taskStore)
+	defer cmdutil.CloseWithLog("task store", taskStore)
 	task := &store.Task{
-		ID: genTaskID(), Type: "prompt", What: prompt, Agent: agentName,
+		ID: cmdutil.GenTaskID(), Type: "prompt", What: prompt, Agent: agentName,
 		RunAt: time.Now().UTC(), ParentID: parentID, DependsOn: dependsOn, CWD: cwd,
 		PromptName: promptName, PromptRevision: promptRevision, Principal: s.clientPrincipal(),
 	}
@@ -2456,12 +2457,12 @@ func (s *localMCPServer) toolSwarmRun(ctx context.Context, arguments json.RawMes
 	if err != nil {
 		return nil, false, err
 	}
-	defer closeWithLog("root task store", rootStore)
+	defer cmdutil.CloseWithLog("root task store", rootStore)
 
 	taskIDs := make(map[string]string, len(args.Nodes))
 	byID := make(map[string]swarmNodeSpec, len(args.Nodes))
 	for _, node := range args.Nodes {
-		taskIDs[node.ID] = genTaskID()
+		taskIDs[node.ID] = cmdutil.GenTaskID()
 		byID[node.ID] = node
 	}
 	for _, node := range args.Nodes {
@@ -2564,7 +2565,7 @@ func (s *localMCPServer) toolSwarmRun(ctx context.Context, arguments json.RawMes
 					resultCh <- swarmNodeResult{logicalID: node.ID, err: openErr}
 					return
 				}
-				defer closeWithLog("task store", taskStore)
+				defer cmdutil.CloseWithLog("task store", taskStore)
 				task, getErr := taskStore.GetTask(taskIDs[node.ID])
 				if getErr == nil && task != nil {
 					runErr := runTaskTo(ctx, s.cfg, taskStore, task, io.Discard)
@@ -2685,14 +2686,14 @@ func (s *localMCPServer) createMetaTask(kind, what, agentName, cwd string) (*sto
 		return nil, nil, err
 	}
 	task := &store.Task{
-		ID: genTaskID(), Type: kind, What: what, Agent: agentName,
+		ID: cmdutil.GenTaskID(), Type: kind, What: what, Agent: agentName,
 		RunAt: time.Now().UTC(), Status: "pending", CWD: cwd, Principal: s.clientPrincipal(),
 	}
 	if err := taskStore.CreateTask(task); err != nil {
-		return nil, nil, closeAndJoin("task store", taskStore, err)
+		return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, err)
 	}
 	if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
-		return nil, nil, closeAndJoin("task store", taskStore, err)
+		return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, err)
 	}
 	return task, taskStore, nil
 }
@@ -2702,7 +2703,7 @@ func (s *localMCPServer) finishMetaTask(taskID, status string, data map[string]a
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("task store", taskStore)
+	defer cmdutil.CloseWithLog("task store", taskStore)
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		return err

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -66,21 +65,6 @@ func TestRootHelpLeadsWithAgentManager(t *testing.T) {
 	if !strings.Contains(strings.ToLower(root.Short), "agent manager") ||
 		!strings.Contains(strings.ToLower(root.Long), "agent manager") {
 		t.Fatalf("root help does not lead with the product's agent-manager role: short=%q long=%q", root.Short, root.Long)
-	}
-}
-
-func TestNewRuntimeIDHasSixtyFourBitsOfReadableEntropy(t *testing.T) {
-	want := regexp.MustCompile(`^[0-9a-f]{16}$`)
-	seen := make(map[string]struct{}, 1000)
-	for range 1000 {
-		id := newRuntimeID()
-		if !want.MatchString(id) {
-			t.Fatalf("runtime ID %q is not 16 lowercase hex characters", id)
-		}
-		if _, exists := seen[id]; exists {
-			t.Fatalf("duplicate runtime ID %q", id)
-		}
-		seen[id] = struct{}{}
 	}
 }
 

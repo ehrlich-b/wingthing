@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
@@ -373,7 +374,7 @@ func (s *connectMCPServer) establishControlClient(ctx context.Context, wingID st
 		}
 	}
 	if err != nil {
-		closeWithLog("WebRTC client", client)
+		cmdutil.CloseWithLog("WebRTC client", client)
 		return nil, err
 	}
 	return client, nil

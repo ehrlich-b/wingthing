@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 )
@@ -80,8 +81,8 @@ func TestExecuteCLIPrivilegedToolPreservesNativeArgsAndAuthority(t *testing.T) {
 	}
 
 	err = executeCLI(context.Background(), []string{"tool-call", "unconfigured", "--help"}, remoteIO{})
-	var exitErr *commandExitError
-	if !errors.As(err, &exitErr) || exitErr.code != 1 || exitErr.message != "unknown tool: unconfigured" {
+	var exitErr *cmdutil.CommandExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 || exitErr.Message != "unknown tool: unconfigured" {
 		t.Fatalf("unconfigured tool error = %#v, want exit 1 unknown-tool denial", err)
 	}
 }

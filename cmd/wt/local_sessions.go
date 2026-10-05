@@ -16,6 +16,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -447,7 +448,7 @@ func readSessionSnapshot(ctx context.Context, cfg *config.Config, ref string) (l
 	if err != nil {
 		return localSession{}, nil, err
 	}
-	defer closeWithLog("egg client", ec)
+	defer cmdutil.CloseWithLog("egg client", ec)
 	stream, err := ec.AttachSessionWithOptions(ctx, session.ID, egg.AttachOptions{ReadOnly: true, Owner: "snapshot"})
 	if err != nil {
 		return localSession{}, nil, fmt.Errorf("read session %s: %w", session.ID, err)
@@ -481,7 +482,7 @@ func sendSessionInput(ctx context.Context, cfg *config.Config, ref string, input
 	if err != nil {
 		return localSession{}, err
 	}
-	defer closeWithLog("egg client", ec)
+	defer cmdutil.CloseWithLog("egg client", ec)
 	stream, err := ec.AttachSessionWithOptions(ctx, session.ID, egg.AttachOptions{Claim: true, Owner: "session-send"})
 	if err != nil {
 		return localSession{}, fmt.Errorf("send to session %s: %w", session.ID, err)
@@ -532,7 +533,7 @@ func waitForSessionText(ctx context.Context, cfg *config.Config, ref, needle str
 	if err != nil {
 		return localSession{}, err
 	}
-	defer closeWithLog("egg client", ec)
+	defer cmdutil.CloseWithLog("egg client", ec)
 	stream, err := ec.AttachSessionWithOptions(ctx, session.ID, egg.AttachOptions{ReadOnly: true, Owner: "terminal-wait"})
 	if err != nil {
 		return localSession{}, fmt.Errorf("wait for session %s: %w", session.ID, err)

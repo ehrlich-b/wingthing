@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 )
 
@@ -102,8 +103,8 @@ func queryRemoteSessions(ctx context.Context, name string, remote config.Remote,
 	invocation.args = []string{"session", "ps", "--json", "--remote-inventory"}
 	err := run()
 	if err != nil {
-		var exitErr *commandExitError
-		if !errors.As(err, &exitErr) || exitErr.code == 255 {
+		var exitErr *cmdutil.CommandExitError
+		if !errors.As(err, &exitErr) || exitErr.Code == 255 {
 			return nil, remoteQueryError(name, err, stderr.buffer.String())
 		}
 		diagnostic := strings.TrimSpace(stderr.buffer.String())

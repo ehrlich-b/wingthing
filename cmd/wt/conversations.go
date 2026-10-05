@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
@@ -47,7 +48,7 @@ func sessionConversationLink(cfg *config.Config, session string) conversationLin
 	if err != nil {
 		return conversationLink{}
 	}
-	defer closeWithLog("conversation inventory store", db)
+	defer cmdutil.CloseWithLog("conversation inventory store", db)
 	c, err := db.ConversationForSession(session)
 	if err != nil {
 		return conversationLink{}
@@ -87,7 +88,7 @@ func (s *localMCPServer) reserveAgentConversation(agent, cwd, title, role, paren
 	if err != nil {
 		return nil, false, err
 	}
-	defer closeWithLog("conversation launch store", db)
+	defer cmdutil.CloseWithLog("conversation launch store", db)
 	if parent != "" {
 		c, err := db.GetConversation(s.clientPrincipal(), parent)
 		if err != nil || (s.enforcePathBounds && !isUnderPaths(canonicalSessionPath(c.CWD), s.allowedPaths)) {
@@ -107,7 +108,7 @@ func (s *localMCPServer) reserveAgentConversation(agent, cwd, title, role, paren
 	if wc, err := config.LoadWingConfig(s.cfg.Dir); err == nil {
 		wingID = wc.WingID
 	}
-	return db.ReserveConversation(store.Conversation{ID: newRuntimeID(), OwnerID: s.clientPrincipal(), ParentID: parent, Title: title, Agent: agent, CWD: cwd, WingID: wingID, SessionID: sessionID, LaunchKey: requestID, SpecDigest: hex.EncodeToString(digest[:])})
+	return db.ReserveConversation(store.Conversation{ID: cmdutil.NewRuntimeID(), OwnerID: s.clientPrincipal(), ParentID: parent, Title: title, Agent: agent, CWD: cwd, WingID: wingID, SessionID: sessionID, LaunchKey: requestID, SpecDigest: hex.EncodeToString(digest[:])})
 }
 
 func (s *localMCPServer) markConversationLaunch(c *store.Conversation, spawnErr error) error {
@@ -118,7 +119,7 @@ func (s *localMCPServer) markConversationLaunch(c *store.Conversation, spawnErr 
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("conversation launch store", db)
+	defer cmdutil.CloseWithLog("conversation launch store", db)
 	state, detail := "started", ""
 	if spawnErr != nil {
 		state, detail = "failed", spawnErr.Error()
@@ -169,7 +170,7 @@ func (s *localMCPServer) toolConversationList(arguments json.RawMessage) (map[st
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("conversation list store", db)
+	defer cmdutil.CloseWithLog("conversation list store", db)
 	root := ""
 	if s.boundConversation != "" {
 		bound, err := s.ownedConversation(db, s.boundConversation)
@@ -213,7 +214,7 @@ func (s *localMCPServer) toolConversationRead(ctx context.Context, arguments jso
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("conversation read store", db)
+	defer cmdutil.CloseWithLog("conversation read store", db)
 	c, err := s.ownedConversation(db, args.ConversationID)
 	if err != nil {
 		return nil, err
@@ -356,7 +357,7 @@ func (s *localMCPServer) toolConversationCheckpoint(arguments json.RawMessage) (
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("conversation checkpoint store", db)
+	defer cmdutil.CloseWithLog("conversation checkpoint store", db)
 	if _, err := s.ownedConversation(db, args.ConversationID); err != nil {
 		return nil, err
 	}
@@ -378,7 +379,7 @@ func inheritConversationExecution(cfg *config.Config, source, target string) err
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("conversation resume store", db)
+	defer cmdutil.CloseWithLog("conversation resume store", db)
 	return db.ResumeConversationExecution(source, target)
 }
 
@@ -424,7 +425,7 @@ func conversationCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer closeWithLog("conversation bootstrap store", db)
+		defer cmdutil.CloseWithLog("conversation bootstrap store", db)
 		c, err := db.GetConversation(client, args[0])
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("conversation not found or not owned by caller")
@@ -454,7 +455,7 @@ func validateBoundConversation(s *localMCPServer) error {
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("conversation binding store", db)
+	defer cmdutil.CloseWithLog("conversation binding store", db)
 	c, lookupErr := s.ownedConversation(db, s.boundConversation)
 	err = lookupErr
 	if err != nil {
@@ -553,7 +554,7 @@ func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *eg
 	if err != nil {
 		return nil, nil, err
 	}
-	defer closeWithLog("parent MCP workspace", root)
+	defer cmdutil.CloseWithLog("parent MCP workspace", root)
 	relative := filepath.Join(".wingthing-conversations", c.ID, "mcp.json")
 	if err := root.MkdirAll(filepath.Dir(relative), 0700); err != nil {
 		return nil, nil, err
@@ -601,7 +602,7 @@ func prepareConversationResumeMCP(cfg *config.Config, wc *config.WingConfig, sta
 	if err != nil {
 		return nil, "", err
 	}
-	defer closeWithLog("conversation resume binding store", db)
+	defer cmdutil.CloseWithLog("conversation resume binding store", db)
 	c, err := db.ConversationForSession(start.ResumeSessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, principal, nil
@@ -642,7 +643,7 @@ func (s *localMCPServer) toolConversationBootstrap(arguments json.RawMessage) (m
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("conversation bootstrap store", db)
+	defer cmdutil.CloseWithLog("conversation bootstrap store", db)
 	c, err := s.ownedConversation(db, args.ConversationID)
 	if err != nil {
 		return nil, err

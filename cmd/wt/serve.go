@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/spf13/cobra"
@@ -148,7 +149,7 @@ func serveCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("open relay db: %w", err)
 				}
-				defer closeWithLog("relay store", store)
+				defer cmdutil.CloseWithLog("relay store", store)
 
 				if err := store.BackfillProUsers(); err != nil {
 					return fmt.Errorf("backfill pro users: %w", err)

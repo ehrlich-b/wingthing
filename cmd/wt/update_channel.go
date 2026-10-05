@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
 )
@@ -186,7 +187,7 @@ func updatePreviewFile(ctx context.Context, source, manifest string) (runErr err
 		if state.kind == roostDaemon {
 			paths = []string{roostPidPath(), roostArgsPath()}
 		}
-		if err := removeFiles(paths...); err != nil {
+		if err := cmdutil.RemoveFiles(paths...); err != nil {
 			return err
 		}
 		if err := lock.Close(); err != nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -99,10 +100,10 @@ func runPreviewProviderLogin(ctx context.Context, profile previewProviderProfile
 	if err := streams.run(command); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 {
-			return &commandExitError{code: exitErr.ExitCode()}
+			return &cmdutil.CommandExitError{Code: exitErr.ExitCode()}
 		}
 		if ctx.Err() != nil {
-			return &commandExitError{code: 130}
+			return &cmdutil.CommandExitError{Code: 130}
 		}
 		return errors.New("the vendor login process could not execute or finish; its streams were not captured by Wingthing")
 	}

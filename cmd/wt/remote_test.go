@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -318,8 +319,8 @@ func TestRunRemoteInvocationStreamsStdioAndPreservesExitStatus(t *testing.T) {
 		target: "work1", binary: remoteBinary,
 		args: []string{"terminal", "--detach", "--name", "codex's remote"},
 	}, remoteIO{in: strings.NewReader(input), out: &stdout, errOut: &stderr, sshPath: sshPath})
-	var exitErr *commandExitError
-	if !errors.As(err, &exitErr) || exitErr.code != 23 {
+	var exitErr *cmdutil.CommandExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 23 {
 		t.Fatalf("remote error = %#v, want exit code 23", err)
 	}
 	wantStdout := "arg=<terminal>\narg=<--detach>\narg=<--name>\narg=<codex's remote>\n" + input
@@ -711,8 +712,8 @@ func TestRemoteStateDisconnectNamesTheSameStateForReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := runRemoteInvocation(context.Background(), remoteInvocation{target: "work1", binary: "wt", state: "/state", args: []string{"attach", "research"}}, remoteIO{in: strings.NewReader(""), out: io.Discard, errOut: io.Discard, sshPath: sshPath})
-	var exitErr *commandExitError
-	if !errors.As(err, &exitErr) || exitErr.code != 255 || !strings.Contains(exitErr.message, "state is unknown; reconnect with the same --remote-state and list sessions before relaunching") {
+	var exitErr *cmdutil.CommandExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 255 || !strings.Contains(exitErr.Message, "state is unknown; reconnect with the same --remote-state and list sessions before relaunching") {
 		t.Fatalf("SSH disconnect result = %+v", err)
 	}
 }
@@ -724,8 +725,8 @@ func TestRemoteDisconnectPreserves255AndDoesNotSuggestRelaunch(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	err := runRemoteInvocation(context.Background(), remoteInvocation{target: "work1", binary: "wt", args: []string{"attach", "research"}}, remoteIO{in: strings.NewReader(""), out: io.Discard, errOut: &stderr, sshPath: sshPath})
-	var exitErr *commandExitError
-	if !errors.As(err, &exitErr) || exitErr.code != 255 || !strings.Contains(exitErr.message, "state is unknown") || !strings.Contains(exitErr.message, "list sessions before relaunching") {
+	var exitErr *cmdutil.CommandExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 255 || !strings.Contains(exitErr.Message, "state is unknown") || !strings.Contains(exitErr.Message, "list sessions before relaunching") {
 		t.Fatalf("SSH disconnect result = %+v", err)
 	}
 	if stderr.String() != "Connection closed\n" {

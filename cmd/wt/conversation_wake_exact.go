@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"golang.org/x/sys/unix"
@@ -67,7 +68,7 @@ func reconcileUnreservedConversationWake(ctx context.Context, cfg *config.Config
 	if err != nil {
 		return false, err
 	}
-	defer closeWithLog("wake original execution", root)
+	defer cmdutil.CloseWithLog("wake original execution", root)
 	lock, err := root.OpenFile("prompt.lock", os.O_CREATE|os.O_EXCL|os.O_RDWR|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
 	if errors.Is(err, os.ErrExist) || errors.Is(err, os.ErrNotExist) {
 		// Match the prompt writer's Darwin first-creation race handling without
@@ -77,7 +78,7 @@ func reconcileUnreservedConversationWake(ctx context.Context, cfg *config.Config
 	if err != nil {
 		return false, err
 	}
-	defer closeWithLog("wake original prompt lock", lock)
+	defer cmdutil.CloseWithLog("wake original prompt lock", lock)
 	info, statErr := lock.Stat()
 	named, namedErr := root.Lstat("prompt.lock")
 	if statErr != nil || namedErr != nil || !info.Mode().IsRegular() || !os.SameFile(info, named) {

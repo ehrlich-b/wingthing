@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
@@ -96,7 +97,7 @@ func roostStartCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+				defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
 			}
 			localMode := !authProvidersConfigured()
 			if err := validateLocalHTTPSMode(httpsFlag, localMode, false); err != nil {
@@ -183,7 +184,7 @@ func roostStartCmd() *cobra.Command {
 
 			home, err := os.UserHomeDir()
 			if err != nil {
-				closeWithLog("roost log", logFile)
+				cmdutil.CloseWithLog("roost log", logFile)
 				return fmt.Errorf("resolve user home: %w", err)
 			}
 
@@ -194,27 +195,27 @@ func roostStartCmd() *cobra.Command {
 			child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 			readyReader, readyWriter, err := os.Pipe()
 			if err != nil {
-				closeWithLog("roost log", logFile)
+				cmdutil.CloseWithLog("roost log", logFile)
 				return fmt.Errorf("create daemon readiness pipe: %w", err)
 			}
 			child.ExtraFiles = []*os.File{readyWriter}
 			child.Env = replaceEnvironmentValue(os.Environ(), roostReadyFDEnv, "3")
 
 			if err := child.Start(); err != nil {
-				closeWithLog("roost readiness reader", readyReader)
-				closeWithLog("roost readiness writer", readyWriter)
-				closeWithLog("roost log", logFile)
+				cmdutil.CloseWithLog("roost readiness reader", readyReader)
+				cmdutil.CloseWithLog("roost readiness writer", readyWriter)
+				cmdutil.CloseWithLog("roost log", logFile)
 				return fmt.Errorf("start daemon: %w", err)
 			}
 			if err := readyWriter.Close(); err != nil {
 				abandonStartedDaemon(child)
-				closeWithLog("roost readiness reader", readyReader)
-				closeWithLog("roost log", logFile)
+				cmdutil.CloseWithLog("roost readiness reader", readyReader)
+				cmdutil.CloseWithLog("roost log", logFile)
 				return fmt.Errorf("close parent readiness writer: %w", err)
 			}
 			if err := logFile.Close(); err != nil {
 				abandonStartedDaemon(child)
-				closeWithLog("roost readiness reader", readyReader)
+				cmdutil.CloseWithLog("roost readiness reader", readyReader)
 				return fmt.Errorf("close roost log: %w", err)
 			}
 			if err := awaitRoostReady(readyReader, roostDaemonReadyTimeout); err != nil {
@@ -274,7 +275,7 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	if err != nil {
 		return fmt.Errorf("open relay db: %w", err)
 	}
-	defer closeWithLog("relay store", store)
+	defer cmdutil.CloseWithLog("relay store", store)
 
 	if err := store.BackfillProUsers(); err != nil {
 		return fmt.Errorf("backfill pro users: %w", err)
@@ -644,7 +645,7 @@ func roostStopCmd() *cobra.Command {
 			if lockErr != nil {
 				return lockErr
 			}
-			defer closeWithLog("daemon lifecycle lock", lifecycleLock)
+			defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
 			pid, err := readPidFrom(roostPidPath(), roostDaemon)
 			if err != nil {
 				return fmt.Errorf("no roost daemon running")
@@ -652,7 +653,7 @@ func roostStopCmd() *cobra.Command {
 			if err := stopDaemonAndWait(pid, roostDaemon, 5*time.Second); err != nil {
 				return err
 			}
-			if err := removeFiles(roostPidPath(), roostArgsPath()); err != nil {
+			if err := cmdutil.RemoveFiles(roostPidPath(), roostArgsPath()); err != nil {
 				return fmt.Errorf("remove roost daemon metadata: %w", err)
 			}
 			fmt.Printf("roost daemon stopped (pid %d)\n", pid)

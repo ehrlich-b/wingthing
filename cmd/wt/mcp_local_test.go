@@ -397,17 +397,6 @@ func TestValidateSwarmRejectsInvalidGraphs(t *testing.T) {
 	}
 }
 
-func TestGeneratedTaskIDsDoNotCollideWithinSecond(t *testing.T) {
-	seen := make(map[string]bool)
-	for range 1000 {
-		id := genTaskID()
-		if seen[id] {
-			t.Fatalf("duplicate task ID %q", id)
-		}
-		seen[id] = true
-	}
-}
-
 func TestResolveWorkingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	got, err := resolveWorkingDirectory(dir)

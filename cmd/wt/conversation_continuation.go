@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
@@ -54,12 +55,12 @@ func archivedCoordinatorModel(dir string) string {
 	if err != nil {
 		return ""
 	}
-	defer closeWithLog("coordinator transcript", file)
+	defer cmdutil.CloseWithLog("coordinator transcript", file)
 	reader, err := gzip.NewReader(file)
 	if err != nil {
 		return ""
 	}
-	defer closeWithLog("coordinator transcript gzip", reader)
+	defer cmdutil.CloseWithLog("coordinator transcript gzip", reader)
 	scanner := bufio.NewScanner(io.LimitReader(reader, 16<<20))
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	model := ""
@@ -126,7 +127,7 @@ func (s *localMCPServer) addSessionContinuation(result map[string]any, view egg.
 	if err != nil {
 		return
 	}
-	defer closeWithLog("continuation availability store", db)
+	defer cmdutil.CloseWithLog("continuation availability store", db)
 	c, err := db.ConversationForSession(view.SessionID)
 	if err != nil {
 		return
@@ -183,7 +184,7 @@ func (s *localMCPServer) toolAgentContinue(arguments json.RawMessage) (map[strin
 	if err != nil {
 		return nil, err
 	}
-	defer closeWithLog("continuation launch store", db)
+	defer cmdutil.CloseWithLog("continuation launch store", db)
 	// Replay precedes eligibility: the source may be retired and the root may
 	// already have later turns. Its immutable request still names one execution.
 	turn, err := db.GetConversationContinuation(s.clientPrincipal(), args.RequestID)
@@ -233,7 +234,7 @@ func (s *localMCPServer) toolAgentContinue(arguments json.RawMessage) (map[strin
 		return nil, errors.New("headless continuation is unavailable for this source execution")
 	}
 	inputHash := sha256.Sum256([]byte(args.Input))
-	turn, created, err := db.ReserveConversationContinuation(store.ConversationContinuation{OwnerID: s.clientPrincipal(), RequestID: args.RequestID, ConversationID: c.ID, SourceSession: args.SourceSession, SessionID: newRuntimeID(), ProviderSessionID: view.ProviderSessionID, InputSHA256: hex.EncodeToString(inputHash[:]), SpecDigest: specDigest})
+	turn, created, err := db.ReserveConversationContinuation(store.ConversationContinuation{OwnerID: s.clientPrincipal(), RequestID: args.RequestID, ConversationID: c.ID, SourceSession: args.SourceSession, SessionID: cmdutil.NewRuntimeID(), ProviderSessionID: view.ProviderSessionID, InputSHA256: hex.EncodeToString(inputHash[:]), SpecDigest: specDigest})
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +292,7 @@ func (s *localMCPServer) launchHeadlessContinuation(c *store.Conversation, turn 
 			var client *egg.Client
 			client, err = spawnEgg(s.cfg, c.SessionID, "claude", eggCfg, 24, 80, c.CWD, false, false, false, s.identity, 0, opts)
 			if err == nil {
-				closeWithLog("continued agent egg client", client)
+				cmdutil.CloseWithLog("continued agent egg client", client)
 			}
 		}
 		spawned = err == nil

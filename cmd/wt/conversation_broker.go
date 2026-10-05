@@ -35,6 +35,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
@@ -296,7 +297,7 @@ func (s *localMCPServer) prepareBrokerParentMCP(c *store.Conversation, eggCfg *e
 	if err != nil {
 		return nil, nil, err
 	}
-	defer closeWithLog("parent MCP workspace", root)
+	defer cmdutil.CloseWithLog("parent MCP workspace", root)
 	if err := root.MkdirAll(reg.Mailbox, 0700); err != nil {
 		return nil, nil, err
 	}
@@ -565,7 +566,7 @@ func (s *localMCPServer) preflightBrokerChild(eggCfg *egg.EggConfig, agentName, 
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("host mailbox admission store", db)
+	defer cmdutil.CloseWithLog("host mailbox admission store", db)
 	launched, err := db.CountConversationLaunchesSince(s.clientPrincipal(), time.Now().Add(-time.Hour))
 	if err != nil {
 		return err
@@ -610,7 +611,7 @@ func (s *localMCPServer) checkBoundSessionTarget(tool string, arguments json.Raw
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("bound session target store", db)
+	defer cmdutil.CloseWithLog("bound session target store", db)
 	bound, err := db.GetConversation(s.clientPrincipal(), s.boundConversation)
 	if err != nil {
 		return outside
@@ -731,7 +732,7 @@ func runConversationBroker(ctx context.Context, cfg *config.Config, session stri
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("host mailbox workspace", workspace)
+	defer cmdutil.CloseWithLog("host mailbox workspace", workspace)
 	if err := workspace.MkdirAll(reg.Mailbox, 0700); err != nil {
 		return err
 	}
@@ -739,7 +740,7 @@ func runConversationBroker(ctx context.Context, cfg *config.Config, session stri
 	if err != nil {
 		return err
 	}
-	defer closeWithLog("host mailbox", mailbox)
+	defer cmdutil.CloseWithLog("host mailbox", mailbox)
 	epoch, err := newMailboxID()
 	if err != nil {
 		return err
@@ -753,7 +754,7 @@ func runConversationBroker(ctx context.Context, cfg *config.Config, session stri
 	defer cancel()
 	b.publishReady(true, "")
 	b.reconcileJournal(callCtx)
-	_ = writef(logs, "wingthing host mailbox: serving conversation %s execution %s epoch %s\n", reg.ConversationID, reg.SessionID, epoch)
+	_ = cmdutil.Writef(logs, "wingthing host mailbox: serving conversation %s execution %s epoch %s\n", reg.ConversationID, reg.SessionID, epoch)
 	poll := time.NewTicker(conversationMailboxPoll)
 	defer poll.Stop()
 	heartbeat := time.NewTicker(time.Second)
@@ -777,7 +778,7 @@ func runConversationBroker(ctx context.Context, cfg *config.Config, session stri
 	b.publishReady(false, reason)
 	cancel()
 	b.calls.Wait()
-	_ = writef(logs, "wingthing host mailbox: %s\n", reason)
+	_ = cmdutil.Writef(logs, "wingthing host mailbox: %s\n", reason)
 	return nil
 }
 
@@ -808,7 +809,7 @@ func (b *conversationBroker) waitForParent(ctx context.Context) error {
 func (b *conversationBroker) publishReady(ready bool, reason string) {
 	value := conversationMailboxReady{Version: conversationMailboxVersion, Epoch: b.epoch, ConversationID: b.reg.ConversationID, SessionID: b.reg.SessionID, ProviderSessionID: b.provider, HostReady: ready, ObservedAt: time.Now().Unix(), Reason: reason}
 	if err := mailboxWrite(b.mailbox, conversationMailboxReadyFile, value, conversationMailboxReadyBytes); err != nil {
-		_ = writef(b.logs, "wingthing host mailbox: publish readiness: %v\n", err)
+		_ = cmdutil.Writef(b.logs, "wingthing host mailbox: publish readiness: %v\n", err)
 	}
 }
 
@@ -841,7 +842,7 @@ func (b *conversationBroker) writeJournal(entry conversationBrokerJournal) error
 func (b *conversationBroker) respond(id, outcome string, payload json.RawMessage, message string) {
 	response := conversationMailboxResponse{Version: conversationMailboxVersion, ID: id, Epoch: b.epoch, ConversationID: b.reg.ConversationID, SessionID: b.reg.SessionID, ProviderSessionID: b.provider, Dispatched: outcome != brokerOutcomeNotDispatched, Outcome: outcome, Payload: payload, Error: message}
 	if err := mailboxWrite(b.mailbox, mailboxResponseName(id), response, conversationMailboxResponseBytes); err != nil {
-		_ = writef(b.logs, "wingthing host mailbox: publish response %s: %v\n", id, err)
+		_ = cmdutil.Writef(b.logs, "wingthing host mailbox: publish response %s: %v\n", id, err)
 	}
 }
 
@@ -865,7 +866,7 @@ func (b *conversationBroker) release(id string) {
 func (b *conversationBroker) scan(ctx context.Context) {
 	entries, err := mailboxEntries(b.mailbox, conversationMailboxEntryLimit)
 	if err != nil {
-		_ = writef(b.logs, "wingthing host mailbox: %v\n", err)
+		_ = cmdutil.Writef(b.logs, "wingthing host mailbox: %v\n", err)
 		return
 	}
 	for _, entry := range entries {
@@ -984,7 +985,7 @@ func (b *conversationBroker) complete(ctx context.Context, entry conversationBro
 	}
 	entry.Phase, entry.Outcome, entry.Response, entry.Error = "completed", outcome, payload, message
 	if err := b.writeJournal(entry); err != nil {
-		_ = writef(b.logs, "wingthing host mailbox: journal response %s: %v\n", entry.ID, err)
+		_ = cmdutil.Writef(b.logs, "wingthing host mailbox: journal response %s: %v\n", entry.ID, err)
 	}
 	b.respond(entry.ID, outcome, payload, message)
 }
@@ -1104,7 +1105,7 @@ func (b *conversationBroker) sweepResponses() {
 	if err != nil {
 		return
 	}
-	defer closeWithLog("host mailbox response sweep", file)
+	defer cmdutil.CloseWithLog("host mailbox response sweep", file)
 	now := time.Now()
 	for {
 		entries, err := file.ReadDir(conversationMailboxEntryLimit)
@@ -1130,9 +1131,9 @@ func conversationBrokerStatus(cfg *config.Config, session string) (map[string]an
 	}
 	status := map[string]any{"conversation_id": reg.ConversationID, "root_conversation_id": reg.RootID, "session_id": reg.SessionID, "principal": reg.Principal, "launcher_actor": reg.LauncherActor, "tools": reg.Tools, "max_sessions": reg.MaxSessions, "max_spawns_per_hour": reg.MaxSpawnsPerHour, "workspace": reg.Workspace, "mailbox": filepath.Join(reg.Workspace, reg.Mailbox), "trust": "same-owner workspace mailbox, writable by the parent and children sharing its workspace; not a sealed caller transport", "audit_actor": brokerActor(reg.ConversationID, reg.SessionID), "host_ready": false}
 	if workspace, err := os.OpenRoot(reg.Workspace); err == nil {
-		defer closeWithLog("host mailbox workspace", workspace)
+		defer cmdutil.CloseWithLog("host mailbox workspace", workspace)
 		if mailbox, err := workspace.OpenRoot(reg.Mailbox); err == nil {
-			defer closeWithLog("host mailbox", mailbox)
+			defer cmdutil.CloseWithLog("host mailbox", mailbox)
 			ready, readyErr := readMailboxReady(mailbox, reg.ConversationID, reg.SessionID, time.Now())
 			status["host_ready"] = readyErr == nil
 			status["provider_session_id"] = ready.ProviderSessionID

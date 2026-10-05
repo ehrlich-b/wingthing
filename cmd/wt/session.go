@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -213,7 +214,7 @@ func sessionWaitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer closeWithLog("egg client", ec)
+			defer cmdutil.CloseWithLog("egg client", ec)
 			ticker := time.NewTicker(200 * time.Millisecond)
 			defer ticker.Stop()
 			for {
@@ -305,7 +306,7 @@ func sessionKillCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer closeWithLog("egg client", ec)
+			defer cmdutil.CloseWithLog("egg client", ec)
 			if err := ec.Kill(cmd.Context(), session.ID); err != nil {
 				return fmt.Errorf("kill session %s: %w", session.ID, err)
 			}

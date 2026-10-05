@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -438,7 +439,7 @@ func runRemoteInvocation(ctx context.Context, invocation remoteInvocation, strea
 				}
 				message = fmt.Sprintf("SSH to %s ended with status 255; check the SSH diagnostic above. Session state is unknown; %s and list sessions before relaunching", invocation.target, reconnect)
 			}
-			return &commandExitError{code: exitErr.ExitCode(), message: message}
+			return &cmdutil.CommandExitError{Code: exitErr.ExitCode(), Message: message}
 		}
 		return fmt.Errorf("start ssh for %s: %w", invocation.target, err)
 	}

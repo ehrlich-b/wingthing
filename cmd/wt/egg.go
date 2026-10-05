@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -350,10 +351,10 @@ func writeEggEnvironment(dir string, environment map[string]string) (string, err
 		return "", fmt.Errorf("create egg environment: %w", err)
 	}
 	if _, err := file.Write(data); err != nil {
-		return "", errors.Join(fmt.Errorf("write egg environment: %w", err), closeAndJoin("egg environment", file, nil), removeIfExists(path))
+		return "", errors.Join(fmt.Errorf("write egg environment: %w", err), cmdutil.CloseAndJoin("egg environment", file, nil), cmdutil.RemoveIfExists(path))
 	}
 	if err := file.Close(); err != nil {
-		return "", errors.Join(fmt.Errorf("close egg environment: %w", err), removeIfExists(path))
+		return "", errors.Join(fmt.Errorf("close egg environment: %w", err), cmdutil.RemoveIfExists(path))
 	}
 	return path, nil
 }
@@ -380,7 +381,7 @@ func eggStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer closeWithLog("egg client", ec)
+			defer cmdutil.CloseWithLog("egg client", ec)
 			if err := ec.Kill(cmd.Context(), session.ID); err != nil {
 				return fmt.Errorf("stop session %s: %w", session.ID, err)
 			}
@@ -623,7 +624,7 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 		{"enforcement", p.Enforcement},
 		{"mode", mode},
 	} {
-		if err := writef(tw, "%s\t%s\n", row.key, row.value); err != nil {
+		if err := cmdutil.Writef(tw, "%s\t%s\n", row.key, row.value); err != nil {
 			return err
 		}
 	}
@@ -645,21 +646,21 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 	}
 
 	if len(p.Domains) > 0 {
-		if err := writef(w, "\ndomains (%d)\n", len(p.Domains)); err != nil {
+		if err := cmdutil.Writef(w, "\ndomains (%d)\n", len(p.Domains)); err != nil {
 			return err
 		}
 		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, d := range p.Domains {
 			if reason, ok := derivedDomains[d]; ok {
-				if err := writef(tw, "  %s\tderived\t%s\n", d, reason); err != nil {
+				if err := cmdutil.Writef(tw, "  %s\tderived\t%s\n", d, reason); err != nil {
 					return err
 				}
 			} else if reason, ok := drilledDomains[d]; ok {
-				if err := writef(tw, "  %s\tauto\t%s\n", d, reason); err != nil {
+				if err := cmdutil.Writef(tw, "  %s\tauto\t%s\n", d, reason); err != nil {
 					return err
 				}
 			} else {
-				if err := writef(tw, "  %s\tdeclared\t\n", d); err != nil {
+				if err := cmdutil.Writef(tw, "  %s\tdeclared\t\n", d); err != nil {
 					return err
 				}
 			}
@@ -670,12 +671,12 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 	}
 
 	if len(p.Suppressed) > 0 {
-		if err := writeln(w, "\nsuppressed agent domains"); err != nil {
+		if err := cmdutil.Writeln(w, "\nsuppressed agent domains"); err != nil {
 			return err
 		}
 		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, h := range p.Suppressed {
-			if err := writef(tw, "  %s\tsuppressed\t%s\n", h.Value, h.Reason); err != nil {
+			if err := cmdutil.Writef(tw, "  %s\tsuppressed\t%s\n", h.Value, h.Reason); err != nil {
 				return err
 			}
 		}
@@ -685,18 +686,18 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 	}
 
 	if len(p.LocalPorts) > 0 {
-		if err := writeln(w, "\nforwarded loopback ports"); err != nil {
+		if err := cmdutil.Writeln(w, "\nforwarded loopback ports"); err != nil {
 			return err
 		}
 		for _, port := range p.LocalPorts {
-			if err := writef(w, "  %d\n", port); err != nil {
+			if err := cmdutil.Writef(w, "  %d\n", port); err != nil {
 				return err
 			}
 		}
 	}
 
 	if len(p.Mounts) > 0 {
-		if err := writef(w, "\nmounts (%d)\n", len(p.Mounts)); err != nil {
+		if err := cmdutil.Writef(w, "\nmounts (%d)\n", len(p.Mounts)); err != nil {
 			return err
 		}
 		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
@@ -705,7 +706,7 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 			if m.ReadOnly {
 				access = "ro"
 			}
-			if err := writef(tw, "  %s\t%s\n", access, m.Source); err != nil {
+			if err := cmdutil.Writef(tw, "  %s\t%s\n", access, m.Source); err != nil {
 				return err
 			}
 		}
@@ -721,23 +722,23 @@ func renderPolicy(w io.Writer, p explainedPolicy) error {
 		if len(section.paths) == 0 {
 			continue
 		}
-		if err := writef(w, "\n%s (%d)\n", section.title, len(section.paths)); err != nil {
+		if err := cmdutil.Writef(w, "\n%s (%d)\n", section.title, len(section.paths)); err != nil {
 			return err
 		}
 		for _, path := range section.paths {
-			if err := writef(w, "  %s\n", path); err != nil {
+			if err := cmdutil.Writef(w, "  %s\n", path); err != nil {
 				return err
 			}
 		}
 	}
 
 	if len(p.Drilled) > 0 {
-		if err := writef(w, "\nauto-drilled for %s (%d)\n", p.Agent, len(p.Drilled)); err != nil {
+		if err := cmdutil.Writef(w, "\nauto-drilled for %s (%d)\n", p.Agent, len(p.Drilled)); err != nil {
 			return err
 		}
 		tw = tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, h := range p.Drilled {
-			if err := writef(tw, "  %s\t%s\t%s\n", h.Kind, h.Value, h.Reason); err != nil {
+			if err := cmdutil.Writef(tw, "  %s\t%s\t%s\n", h.Kind, h.Value, h.Reason); err != nil {
 				return err
 			}
 		}
@@ -778,7 +779,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 		return errors.New("--trace and --unsandboxed cannot be combined")
 	}
 
-	sessionID := newRuntimeID()
+	sessionID := cmdutil.NewRuntimeID()
 	cfg, err := loadConfigForEgg(sessionID)
 	if err != nil {
 		return err
@@ -849,7 +850,7 @@ func eggSpawn(ctx context.Context, agentName, configPath string, trace bool, res
 		fmt.Printf("started %s\n", display)
 		return nil
 	}
-	defer closeWithLog("egg client", ec)
+	defer cmdutil.CloseWithLog("egg client", ec)
 
 	stream, err := ec.AttachSessionWithOptions(ctx, sessionID, egg.AttachOptions{Claim: true, Owner: "cli"})
 	if err != nil {
@@ -1685,10 +1686,10 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	args, envPath, err := prepareEggEnvironmentTransport(dir, args, sessionEnv)
 	if err != nil {
-		closeWithLog("egg log", logFile)
+		cmdutil.CloseWithLog("egg log", logFile)
 		return nil, err
 	}
-	defer removeWithLog(envPath)
+	defer cmdutil.RemoveWithLog(envPath)
 
 	child := exec.Command(exe, args...)
 	// Always build a clean env for the wt-egg-run child process.
@@ -1716,7 +1717,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := child.Start(); err != nil {
-		closeWithLog("egg log", logFile)
+		cmdutil.CloseWithLog("egg log", logFile)
 		return nil, fmt.Errorf("start egg: %w", err)
 	}
 	providerProcessStarted = true
