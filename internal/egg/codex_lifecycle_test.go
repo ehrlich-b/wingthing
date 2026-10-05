@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -163,6 +164,31 @@ func TestCodexLifecycleArgsTrustOnlyGeneratedHooks(t *testing.T) {
 		if err != nil || strings.Join(got, " ") != strings.Join(supplied, " ") {
 			t.Fatalf("explicit hook settings replaced: %v, %v", got, err)
 		}
+	}
+}
+
+func TestCodexLifecycleArgsInsertOverridesBeforeTerminator(t *testing.T) {
+	for _, supplied := range [][]string{
+		{"--", "hello"},
+		{"resume", "thread-exact", "-m", "existing-model", "--", "hello", "--", "-c", "hooks.Stop=[]"},
+		{"--", "--disable=hooks"},
+	} {
+		t.Run(strings.Join(supplied, " "), func(t *testing.T) {
+			args, err := CodexLifecycleArgs(supplied, t.TempDir(), "egg-exact")
+			if err != nil {
+				t.Fatal(err)
+			}
+			end := slices.Index(supplied, "--")
+			generated := 2*len(codexLifecycleEvents) + 2
+			if len(args) != len(supplied)+generated || !slices.Equal(args[:end], supplied[:end]) || !slices.Equal(args[end+generated:], supplied[end:]) {
+				t.Fatalf("generated options changed the positional arguments: len=%d want=%d terminator=%d want=%d", len(args), len(supplied)+generated, slices.Index(args, "--"), end+generated)
+			}
+			for i := end; i < end+generated; i += 2 {
+				if args[i] != "-c" || !strings.HasPrefix(args[i+1], "hooks.") {
+					t.Fatalf("generated override is outside option parsing: %v", args)
+				}
+			}
+		})
 	}
 }
 

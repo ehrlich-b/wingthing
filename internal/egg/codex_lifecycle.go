@@ -80,7 +80,12 @@ func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error)
 	}
 	// Respect explicit hook configuration in this same layer instead of
 	// replacing a caller's definitions or enabling hooks they disabled.
+	optionsEnd := len(args)
 	for i, arg := range args {
+		if arg == "--" {
+			optionsEnd = i
+			break
+		}
 		value := ""
 		if (arg == "-c" || arg == "--config") && i+1 < len(args) {
 			value = args[i+1]
@@ -101,7 +106,7 @@ func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error)
 		return nil, err
 	}
 	command := lifecycleHookCommand(spool)
-	out := append([]string(nil), args...)
+	out := append([]string(nil), args[:optionsEnd]...)
 	var trustEntries []string
 	for _, event := range codexLifecycleEvents {
 		hash, err := codexLifecycleHookHash(event.key, command)
@@ -117,7 +122,7 @@ func CodexLifecycleArgs(args []string, home, sessionID string) ([]string, error)
 	// An inline table preserves the synthetic source path's config.toml key.
 	// Codex merges it with lower config layers, preserving existing trust entries.
 	out = append(out, "-c", "hooks.state={"+strings.Join(trustEntries, ",")+"}")
-	return out, nil
+	return append(out, args[optionsEnd:]...), nil
 }
 
 // Codex hashes sorted compact JSON of the normalized TOML hook identity.
