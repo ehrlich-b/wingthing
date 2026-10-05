@@ -76,6 +76,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     private var client: HomeClient?
     private var store: LocalConversationStore?
     private var generation = UUID()
+    private var homeRestoration: UUID?
     private var treeObservedAt: Date?
     private let cacheDirectory: URL?
     private let credentialStore: (any HomeCredentialStore)?
@@ -88,6 +89,10 @@ public enum HomeConnectionPhase: Equatable, Sendable {
 
     public func receiveHomeSetupLink(_ text: String) {
         homeSetupRequested = true
+        if homeRestoration != nil {
+            let (_, released) = beginReplacement()
+            if let released { Task { await released.disconnect() } }
+        }
         do {
             pendingHomeSetup = try HomeSetupLink(text)
             homeSetupError = nil
@@ -107,6 +112,8 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     public func restoreHome(wire: any HomeWire = URLSessionHomeWire()) async {
         guard !homeSetupRequested, profile == nil, client == nil, phase == .notConfigured, let credentialStore else { return }
         let requested = generation
+        homeRestoration = requested
+        defer { if homeRestoration == requested { homeRestoration = nil } }
         do {
             guard let home = try selectedHomeStore().load() else { return }
             profile = home
@@ -114,6 +121,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
             phase = .connecting; busy = true
             guard try await install(home, bearer: bearer, cacheFile: cacheFile(for: home), wire: wire, requested: requested) else { return }
             busy = false
+            guard requested == generation, !homeSetupRequested else { return }
             guard bearer != nil else { phase = .disconnected; return }
             await refresh()
         } catch {
@@ -239,6 +247,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
         persistReadingPosition()
         error = nil
         generation = UUID()
+        homeRestoration = nil
         let released = client
         client = nil; busy = false; stopCapability = nil; continuationAvailability = nil; continuationObservedAt = nil; creationOptions = nil; stopFlight = nil; readEpoch = UUID()
         transcript.markUnavailable(); parentTranscript.markUnavailable()
@@ -750,6 +759,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     private func beginReplacement() -> (UUID, HomeClient?) {
         persistReadingPosition()
         generation = UUID()
+        homeRestoration = nil
         let released = client
         client = nil; store = nil; localViews = nil; readingPositions.removeAll(); localSaveError = nil; profile = nil; parent = nil; roots = []; tasks = []; selected = nil; execution = nil
         transcript = TranscriptState(); parentTranscript = TranscriptState(); pending = nil; draft = ""; treeObservedAt = nil
