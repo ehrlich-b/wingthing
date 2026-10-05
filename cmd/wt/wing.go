@@ -2016,15 +2016,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			dcSessions.Store(sessionID, dc)
 			log.Printf("[P2P] DC stored for session %s from %s", sessionID, shortLogValue(senderPub))
 
-			dc.OnMessage(func(msg pionwebrtc.DataChannelMessage) {
-				if !currentDataChannel(&dcSessions, sessionID, dc) {
-					return
-				}
-				if !currentBrowserInput(sessionID, boundController) {
-					return
-				}
-				client.PushPTYInput(sessionID, msg.Data)
-			})
+			dc.OnMessage(browserDataChannelInputHandler(&dcSessions, sessionID, dc, boundController, client.PushPTYInput))
 			dc.OnClose(func() {
 				if !dcSessions.CompareAndDelete(sessionID, dc) {
 					log.Printf("[P2P] stale DC closed for session %s", sessionID)

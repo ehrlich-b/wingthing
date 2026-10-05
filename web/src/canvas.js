@@ -615,9 +615,24 @@ function sendResize(sess) {
 function updateCanvasStopState(sess) {
     sess.closeBtn.disabled = !!(sess.starting || sess.stopPending);
     sess.closeBtn.textContent = sess.starting ? 'launching' : sess.stopPending ? 'stopping…' : '\u00d7';
-    sess.closeBtn.title = sess.starting ? 'Wait for the wing to confirm this session before stopping it' : 'Stop session';
+    sess.closeBtn.title = sess.starting ? 'Wait for the wing to confirm this session before stopping it' : sess.launchFailed ? 'Dismiss failed launch' : 'Stop session';
+    sess.closeBtn.setAttribute('aria-label', sess.closeBtn.title);
     sess.stopNotice.textContent = sess.starting ? 'Launching: Stop becomes available when the wing confirms the session.' : sess.stopError || '';
     sess.stopNotice.style.display = sess.stopNotice.textContent ? '' : 'none';
+}
+
+function failCanvasLaunch(sess) {
+    if (!sess.starting) return;
+    sess.starting = false;
+    sess.launchFailed = true;
+    sess.attached = false;
+    sess.dead = true;
+    sess.titleEl.textContent = 'Launch failed';
+    if (sess.dotEl) {
+        sess.dotEl.classList.remove('dot-live', 'dot-attention');
+        sess.dotEl.classList.add('dot-offline');
+    }
+    updateCanvasStopState(sess);
 }
 
 function handleCanvasControlError(sess, message) {
@@ -664,6 +679,10 @@ var closeTimers = {};
 function confirmClose(id, btn) {
     var sess = sessions[id];
     if (!sess || sess.starting || sess.stopPending) { if (sess) updateCanvasStopState(sess); return; }
+    if (sess.launchFailed) {
+        removeStoppedCanvasSession(sess);
+        return;
+    }
     if (btn.classList.contains('confirm')) {
         btn.classList.remove('confirm');
         btn.textContent = '\u00d7';
@@ -712,7 +731,7 @@ function removeStoppedCanvasSession(sess) {
     canvasState.remove(id);
     clearNotification(sess.id, sess.wingId);
     clearTermBuffer(sess.id, sess.wingId);
-    if (typeof window._deleteSession === 'function') window._deleteSession(sess.id, true, sess.wingId);
+    if (!sess.launchFailed && typeof window._deleteSession === 'function') window._deleteSession(sess.id, true, sess.wingId);
     saveCanvasLayout();
     if (wasFocused) {
         canvasState.focusedKey = null;
@@ -852,9 +871,10 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     var pendingOutput = [];
 
     ws.onmessage = function(e) {
-        if (sessions[sess.key] !== sess) return;
+        if (sessions[sess.key] !== sess || sess.launchFailed) return;
         var msg = JSON.parse(e.data);
-        if (msg.session_id && msg.type !== 'pty.started' && msg.session_id !== sess.id) return;
+        var launchFailure = sess.starting && (msg.type === 'pty.exited' || msg.type === 'error');
+        if (msg.session_id && msg.type !== 'pty.started' && msg.session_id !== sess.id && !launchFailure) return;
         switch (msg.type) {
             case 'pty.started':
                 var realId = msg.session_id;
@@ -907,6 +927,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
                 break;
 
             case 'pty.exited':
+                failCanvasLaunch(sess);
                 sess.attached = false;
                 sess.dead = true;
                 term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
@@ -925,7 +946,10 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
                 break;
 
             case 'error':
-                if (handleCanvasControlError(sess, msg.message)) break;
+                if (sess.starting) {
+                    failCanvasLaunch(sess);
+                    ws.close();
+                } else if (handleCanvasControlError(sess, msg.message)) break;
                 term.writeln('\r\n\x1b[31m' + (msg.message || 'error') + '\x1b[0m');
                 break;
         }
@@ -938,6 +962,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
             sess.dead = true;
             term.writeln('\r\n\x1b[2m--- disconnected ---\x1b[0m');
         }
+        failCanvasLaunch(sess);
         if (sess.dotEl) {
             sess.dotEl.classList.remove('dot-live', 'dot-attention');
             sess.dotEl.classList.add('dot-offline');
@@ -947,6 +972,10 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     ws.onerror = function() {
         if (sessions[sess.key] !== sess) return;
         term.writeln('\r\n\x1b[31mconnection error\x1b[0m');
+        if (sess.starting) {
+            failCanvasLaunch(sess);
+            ws.close();
+        }
     };
 
     term.onData(function(data) {

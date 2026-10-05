@@ -1296,6 +1296,7 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 				log.Printf("report relay bandwidth exhaustion: %v", writeErr)
 			}
 			// Detach browser so subsequent forwards are dropped (send once)
+			s.forwardBrowserDetach(bc, sessionID)
 			route.mu.Lock()
 			if route.BrowserConn == bc {
 				route.BrowserConn = nil
@@ -1312,6 +1313,7 @@ func (s *Server) forwardPTYToBrowser(sessionID, sourceWingID string, data []byte
 	defer cancel()
 	if err := bc.Write(ctx, websocket.MessageText, data); err != nil {
 		log.Printf("forward PTY payload to browser: %v", err)
+		s.forwardBrowserDetach(bc, sessionID)
 		route.mu.Lock()
 		if route.BrowserConn == bc {
 			route.BrowserConn = nil

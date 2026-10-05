@@ -79,7 +79,7 @@ export function createConversationReader(options) {
     function emit() { onChange(snapshot()); }
 
     function persist() {
-        if (!target) return;
+        if (!target) return false;
         var lifecycle = state.lifecycle;
         var result = writeExecution(storage, ref(), {
             conversationId: target.conversationId, providerSessionId: target.providerSessionId, agent: lifecycle && lifecycle.agent,
@@ -87,6 +87,7 @@ export function createConversationReader(options) {
             messages: state.messages, trimmed: trimmed, pending: pending,
         });
         storageError = result.error;
+        return result.ok;
     }
 
     function scheduleRead(gen, delay) {
@@ -243,7 +244,14 @@ export function createConversationReader(options) {
         notice = '';
         // The reservation is durable before any transport so a reload can only
         // offer an explicit receipt check for this exact request.
-        persist();
+        if (!persist()) {
+            draft = pending.input;
+            pending = null;
+            notice = 'Input was not sent because this browser could not save its reservation. Your draft is still available; retry when browser storage is available.';
+            emit();
+            return Promise.resolve(false);
+        }
+        draft = null;
         return submit(pending);
     }
 

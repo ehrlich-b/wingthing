@@ -65,6 +65,39 @@ function harness(storage, respond, extra) {
 
 const mac = { userId: 'owner', wingId: 'mac', sessionId: 'sess-1', conversationId: 'logical-child' };
 
+test('Send keeps the draft and reports failure when its reservation cannot be saved', async () => {
+    for (const failure of ['storage disabled', 'storage full']) {
+        const storage = memoryStorage();
+        const h = harness(storage, (wing, payload) => payload.operation === 'session_read'
+            ? Promise.resolve({ lifecycle: live() })
+            : Promise.resolve({ receipt: { status: 'unconfirmed' } }));
+        h.reader.open(mac);
+        await h.tick();
+        const saved = storage.getItem(executionKey(mac.userId, mac.wingId, mac.sessionId));
+        const setItem = storage.setItem;
+        storage.setItem = () => { throw new Error(failure); };
+
+        assert.equal(await h.reader.send('keep this draft'), false);
+        assert.deepEqual(h.operations(), ['session_read']);
+        assert.equal(h.latest.pending, null);
+        assert.equal(h.latest.checking, false);
+        assert.equal(h.latest.inputReady, true);
+        assert.match(h.latest.notice, /not sent/i);
+        assert.match(h.latest.storageError, /could not save/i);
+        if (failure === 'storage disabled') assert.equal(h.reader.takeDraft(), 'keep this draft');
+        assert.equal(storage.getItem(executionKey(mac.userId, mac.wingId, mac.sessionId)), saved);
+
+        // Once storage works again, an explicit retry saves the reservation
+        // before transport and can be restored by another reader.
+        storage.setItem = setItem;
+        assert.equal(await h.reader.send('keep this draft'), true);
+        assert.equal(h.calls.at(-1).payload.arguments.request_id, 'request-2');
+        assert.equal(readExecution(storage, mac).record.pending.input, 'keep this draft');
+        assert.equal(h.reader.takeDraft(), null, 'a successful retry must not restore the earlier unsent draft');
+        h.reader.close();
+    }
+});
+
 test('reopening a reader with unresolved input only reads; Check receipt is explicit and reuses the exact request', async () => {
     const storage = memoryStorage();
     const first = harness(storage, (wing, payload) => payload.operation === 'session_read' ? Promise.resolve({ session: 'sess-1', lifecycle: live() }) : Promise.reject(new Error('tunnel request timeout')));
