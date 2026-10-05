@@ -77,4 +77,8 @@ public struct SelectedHomeStore: Sendable {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(profile).write(to: file, options: .atomic)
     }
+    public func clear() throws {
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        try FileManager.default.removeItem(at: file)
+    }
 }

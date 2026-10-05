@@ -79,6 +79,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     private var treeObservedAt: Date?
     private let cacheDirectory: URL?
     private let credentialStore: (any HomeCredentialStore)?
+    private var homesToForget: [HomeProfile] = []
 
     // Empty/default app performs no network, file, or credential action.
     public init(cacheDirectory: URL? = nil, credentialStore: (any HomeCredentialStore)? = nil) {
@@ -123,7 +124,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
 
     public var connected: Bool { phase == .online }
     public var canReconnect: Bool { client != nil && !busy }
-    public var canDisconnect: Bool { client != nil || phase == .connecting || (credentialStore != nil && profile?.mode == .remote && phase != .disconnected) }
+    public var canDisconnect: Bool { !homesToForget.isEmpty || client != nil || phase == .connecting || (credentialStore != nil && profile?.mode == .remote && phase != .disconnected) }
     public var canCreateConversation: Bool {
         !inspectionOnly && connected && !busy && pendingLaunch == nil && creationOptions?.projects.isEmpty == false
     }
@@ -242,11 +243,29 @@ public enum HomeConnectionPhase: Equatable, Sendable {
         client = nil; busy = false; stopCapability = nil; continuationAvailability = nil; continuationObservedAt = nil; creationOptions = nil; stopFlight = nil; readEpoch = UUID()
         transcript.markUnavailable(); parentTranscript.markUnavailable()
         phase = profile == nil ? .notConfigured : .disconnected
-        if let profile, profile.mode == .remote, let credentialStore {
-            do { try credentialStore.forget(profile) }
-            catch {
-                let message = "The saved token couldn't be forgotten. \(error.localizedDescription)"
+        if let credentialStore {
+            do {
+                let selection = try selectedHomeStore()
+                var loadError: Error?
+                do {
+                    if let saved = try selection.load(), !homesToForget.contains(saved) { homesToForget.append(saved) }
+                } catch { loadError = error }
+                // Clear automatic restoration even if Keychain is locked.
+                try selection.clear()
+                if let loadError { throw loadError }
+            } catch {
+                let message = "Saved home access couldn't be cleared. \(error.localizedDescription)"
                 self.error = message; phase = .failed(message)
+            }
+            if let profile, profile.mode == .remote, !homesToForget.contains(profile) { homesToForget.append(profile) }
+            for home in homesToForget {
+                do {
+                    try credentialStore.forget(home)
+                    homesToForget.removeAll { $0 == home }
+                } catch {
+                    let message = "The saved token couldn't be forgotten. \(error.localizedDescription)"
+                    self.error = message; phase = .failed(message)
+                }
             }
         }
         await released?.disconnect()
