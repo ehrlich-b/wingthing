@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,8 +18,17 @@ import (
 
 func TestCodexLifecycleInstalledHookTrust(t *testing.T) {
 	binary, err := exec.LookPath("codex")
-	if err != nil || !codexLifecycleSupported(binary) {
-		t.Skip("installed Codex has no native hook trust support")
+	if err != nil {
+		t.Skip("Codex is not installed")
+	}
+	if !codexLifecycleSupported(binary) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		version, err := exec.CommandContext(ctx, binary, "--version").Output()
+		if err != nil {
+			t.Skipf("installed Codex has no native hook trust support (version unavailable: %v)", err)
+		}
+		t.Skipf("installed Codex has no native hook trust support: %s", strings.TrimSpace(string(version)))
 	}
 	// Codex canonicalizes source paths (including macOS's /var symlink).
 	home, err := filepath.EvalSymlinks(t.TempDir())
@@ -163,6 +173,31 @@ func TestCodexLifecycleArgsTrustOnlyGeneratedHooks(t *testing.T) {
 		if err != nil || strings.Join(got, " ") != strings.Join(supplied, " ") {
 			t.Fatalf("explicit hook settings replaced: %v, %v", got, err)
 		}
+	}
+}
+
+func TestCodexLifecycleArgsInsertOverridesBeforeTerminator(t *testing.T) {
+	for _, supplied := range [][]string{
+		{"--", "hello"},
+		{"resume", "thread-exact", "-m", "existing-model", "--", "hello", "--", "-c", "hooks.Stop=[]"},
+		{"--", "--disable=hooks"},
+	} {
+		t.Run(strings.Join(supplied, " "), func(t *testing.T) {
+			args, err := CodexLifecycleArgs(supplied, t.TempDir(), "egg-exact")
+			if err != nil {
+				t.Fatal(err)
+			}
+			end := slices.Index(supplied, "--")
+			generated := 2*len(codexLifecycleEvents) + 2
+			if len(args) != len(supplied)+generated || !slices.Equal(args[:end], supplied[:end]) || !slices.Equal(args[end+generated:], supplied[end:]) {
+				t.Fatalf("generated options changed the positional arguments: len=%d want=%d terminator=%d want=%d", len(args), len(supplied)+generated, slices.Index(args, "--"), end+generated)
+			}
+			for i := end; i < end+generated; i += 2 {
+				if args[i] != "-c" || !strings.HasPrefix(args[i+1], "hooks.") {
+					t.Fatalf("generated override is outside option parsing: %v", args)
+				}
+			}
+		})
 	}
 }
 
