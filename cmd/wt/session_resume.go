@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -93,6 +94,30 @@ func (r *providerResumeRegistry) reserveWithAlive(cfg *config.Config, home, agen
 	if _, exists := r.active[key]; exists {
 		return nil, errors.New("provider conversation is already being resumed")
 	}
+	eggsDir := filepath.Join(cfg.Dir, "eggs")
+	if err := os.MkdirAll(eggsDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create resume reservation directory: %w", err)
+	}
+	keyHash := sha256.Sum256([]byte(key))
+	lockPath := filepath.Join(eggsDir, ".provider-resume-"+hex.EncodeToString(keyHash[:])+".lock")
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open resume reservation lock: %w", err)
+	}
+	keepLock := false
+	defer func() {
+		if !keepLock {
+			_ = lock.Close()
+		}
+	}()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, errors.New("provider conversation is already being resumed")
+		}
+		return nil, fmt.Errorf("lock resume reservation: %w", err)
+	}
+	// Keep the descriptor locked through pending launch and PID publication.
+	// Never unlink this file: contenders must always lock the same inode.
 	if activeProviderResumeConflict(cfg, key, wingSessionID, alive) {
 		return nil, errors.New("provider conversation is already running in another session")
 	}
@@ -105,6 +130,7 @@ func (r *providerResumeRegistry) reserveWithAlive(cfg *config.Config, home, agen
 		return nil, fmt.Errorf("persist resume reservation: %w", err)
 	}
 	r.active[key] = wingSessionID
+	keepLock = true
 	var once sync.Once
 	return func(spawned bool) {
 		once.Do(func() {
@@ -112,10 +138,11 @@ func (r *providerResumeRegistry) reserveWithAlive(cfg *config.Config, home, agen
 			if r.active[key] == wingSessionID {
 				delete(r.active, key)
 			}
-			r.mu.Unlock()
 			if !spawned {
 				_ = os.Remove(metadataPath)
 			}
+			_ = lock.Close()
+			r.mu.Unlock()
 		})
 	}, nil
 }

@@ -6,11 +6,55 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
+
+func TestTunnelSessionRenameHoldsStoreLockThroughUniquenessCheck(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
+	workspace := t.TempDir()
+	writeActiveRenameFixture(t, cfg, "first", "alice", workspace, "one")
+	writeActiveRenameFixture(t, cfg, "second", "alice", workspace, "two")
+	sessions := []ws.SessionInfo{{SessionID: "first", UserID: "alice", CWD: workspace}}
+	lock, err := os.OpenFile(filepath.Join(cfg.Dir, "eggs", ".session-name.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- renameTunnelSession(cfg, ws.TunnelRequest{SenderUserID: "alice"}, "first", "shared", sessions, []string{workspace})
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("rename bypassed the store lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := writeSessionName(filepath.Join(cfg.Dir, "eggs", "second"), "shared"); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, errSessionNameInUse) {
+			t.Fatalf("rename did not check uniqueness under the store lock: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("rename did not finish after the store lock was released")
+	}
+	if got := readSessionName(filepath.Join(cfg.Dir, "eggs", "first")); got != "one" {
+		t.Fatalf("rejected rename changed the session name: %q", got)
+	}
+}
 
 func writeActiveRenameFixture(t *testing.T, cfg *config.Config, sessionID, owner, cwd, name string) {
 	t.Helper()

@@ -83,6 +83,28 @@ func TestParseRemoteInvocationSupportsLegacyAttachPlacement(t *testing.T) {
 	}
 }
 
+func TestParseRemoteInvocationSkipsCommandFlagValues(t *testing.T) {
+	for _, args := range [][]string{
+		{"session", "wait", "review", "--contains", "-ready"},
+		{"session", "wait", "review", "--contains", "--remote=other"},
+		{"session", "wait", "review", "--contains", "--remote"},
+		{"egg", "codex", "--name", "-review"},
+		{"terminal", "-n", "-review"},
+		{"terminal", "-dn", "--remote-state"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if invocation, remote, err := parseRemoteInvocation(args, false); err != nil || remote {
+				t.Fatalf("local flag value routed remotely: %+v remote=%v err=%v", invocation, remote, err)
+			}
+			argv := append(append([]string(nil), args...), "--remote", "work1")
+			invocation, remote, err := parseRemoteInvocation(argv, false)
+			if err != nil || !remote || invocation.target != "work1" || !reflect.DeepEqual(invocation.args, args) {
+				t.Fatalf("remote flag value changed argv: %+v remote=%v err=%v", invocation, remote, err)
+			}
+		})
+	}
+}
+
 func TestParseBareRemoteChoosesInteractiveEntryOrReadOnlyJSON(t *testing.T) {
 	interactive, remote, err := parseRemoteInvocation([]string{"--remote=work1", "--remote-cwd", "/work/project"}, true)
 	if err != nil || !remote {

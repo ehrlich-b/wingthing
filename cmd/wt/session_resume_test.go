@@ -3,6 +3,7 @@ package main
 import (
 	"compress/gzip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,42 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
+
+func TestProviderResumeReservationExcludesPendingLaunchAcrossProcesses(t *testing.T) {
+	const stateEnv = "WT_TEST_PROVIDER_RESUME_STATE"
+	if state := os.Getenv(stateEnv); state != "" {
+		cfg := &config.Config{Dir: state}
+		registry := providerResumeRegistry{active: make(map[string]string)}
+		release, err := registry.reserveWithAlive(cfg, state, "claude", "provider-id", "source", "child", func(string) bool { return false })
+		if err == nil {
+			release(false)
+			t.Fatal("second process reserved a conversation with a pending launch")
+		}
+		if !strings.Contains(err.Error(), "already being resumed") {
+			t.Fatalf("unexpected reservation error: %v", err)
+		}
+		return
+	}
+	cfg := &config.Config{Dir: t.TempDir()}
+	registry := providerResumeRegistry{active: make(map[string]string)}
+	release, err := registry.reserveWithAlive(cfg, cfg.Dir, "claude", "provider-id", "source", "parent", func(string) bool { return false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release(false)
+	child := exec.Command(os.Args[0], "-test.run=^TestProviderResumeReservationExcludesPendingLaunchAcrossProcesses$")
+	child.Env = append(os.Environ(), stateEnv+"="+cfg.Dir)
+	if output, err := child.CombinedOutput(); err != nil {
+		t.Fatalf("cross-process reservation failed: %v\n%s", err, output)
+	}
+	release(false)
+	otherRegistry := providerResumeRegistry{active: make(map[string]string)}
+	releaseAgain, err := otherRegistry.reserveWithAlive(cfg, cfg.Dir, "claude", "provider-id", "source", "after-release", func(string) bool { return false })
+	if err != nil {
+		t.Fatalf("reservation remained locked after release: %v", err)
+	}
+	releaseAgain(false)
+}
 
 func writeResumeSessionFixture(t *testing.T, cfg *config.Config, sessionID, owner, agent, cwd, providerID, content string) string {
 	t.Helper()
