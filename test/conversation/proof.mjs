@@ -60,6 +60,9 @@ if (stateRoot) {
     // existing private binding file inside S; no real provider home is used.
     providerData = path.join(await realpath(scratch), 'provider-data');
     await mkdir(providerData, { mode: 0o700 });
+    // Claim this freshly created fixture state before making it nonempty;
+    // preview startup intentionally refuses unmarked nonempty directories.
+    await writeFile(path.join(state, '.release-channel'), 'preview\n', { mode: 0o600, flag: 'wx' });
     await writeFile(path.join(state, '.provider-home'), providerData + '\n', { mode: 0o600, flag: 'wx' });
 }
 await copyFile(new URL('./fake_claude.py', import.meta.url), path.join(bin, 'claude'));
