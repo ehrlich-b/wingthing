@@ -157,7 +157,7 @@ def main():
                 native = next(item for item in new if item["route"] == "native")
                 checked.append(native)
                 settings_path = Path(native["argv"][native["argv"].index("--settings") + 1])
-                assert settings_path == egg_dir / "claude-settings.json", "native settings escaped the egg directory"
+                assert settings_path.resolve() == (egg_dir / "claude-settings.json").resolve(), "native settings escaped the egg directory"
                 assert settings_path.stat().st_mode & 0o777 == 0o600, "native settings are not private"
                 meta_path = egg_dir / "egg.meta"
                 deadline = time.monotonic() + 3
