@@ -1,5 +1,10 @@
 import SwiftUI
 import WingthingCore
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 private struct ConversationPalette {
     let background, foreground, secondary, surface, border, userBubble, accentText, accentFill, onAccent: Color
@@ -22,6 +27,7 @@ public struct WingthingRootView: View {
     @Environment(\.colorScheme) private var scheme
     @State private var showingHome = false
     @State private var showingNew = false
+    @State private var homeAfterNew = false
     @State private var conversationStates: [ConversationReference: ConversationViewState] = [:]
     public init(model: WingthingModel) { self.model = model }
     private var palette: ConversationPalette { .init(scheme) }
@@ -65,7 +71,14 @@ public struct WingthingRootView: View {
             .hideConversationNavigationBar()
         }.tint(palette.accentText)
             .sheet(isPresented: $showingHome) { NavigationStack { HomeConnectionView(model: model) } }
-            .sheet(isPresented: $showingNew) { NavigationStack { NewConversationView(model: model) } }
+            .sheet(isPresented: $showingNew, onDismiss: {
+                if homeAfterNew { homeAfterNew = false; showingHome = true }
+            }) { NavigationStack { NewConversationView(model: model) } }
+            .onOpenURL { url in
+                model.receiveHomeSetupLink(url.absoluteString)
+                if showingNew { homeAfterNew = true; showingNew = false }
+                else { showingHome = true }
+            }
     }
 }
 
@@ -543,8 +556,11 @@ private struct HomeConnectionView: View {
     @State private var wingID = ""
     @State private var wingKey = ""
     @State private var token = ""
+    @State private var setupMode = HomeProfileMode.remote
+    @State private var importedSetup = false
     private var formComplete: Bool {
-        [address, userID, wingID, wingKey, token].allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        [address, userID, wingID, wingKey].allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            && (setupMode == .localPreview || !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
     var body: some View {
         Form {
@@ -558,7 +574,19 @@ private struct HomeConnectionView: View {
                 }
             }
             Section {
-                Button("wingthing.ai") { address = HomeProfile.hostedPresetOrigin; transport = .explicitHostedRoost }
+                Button("Paste setup link") {
+                    #if os(iOS)
+                    let text = UIPasteboard.general.string
+                    #elseif os(macOS)
+                    let text = NSPasteboard.general.string(forType: .string)
+                    #else
+                    let text: String? = nil
+                    #endif
+                    model.receiveHomeSetupLink(text ?? "")
+                    applySetupLink()
+                }.accessibilityIdentifier("paste-home-setup-link")
+                if let error = model.homeSetupError { Text(error).foregroundStyle(.red) }
+                Button("wingthing.ai") { address = HomeProfile.hostedPresetOrigin; transport = .explicitHostedRoost; setupMode = .remote }
                     .accessibilityIdentifier("wingthing-ai-preset")
                 Picker("Connection", selection: $transport) {
                     Text("Local network").tag(HomeTransport.localNetwork)
@@ -578,7 +606,7 @@ private struct HomeConnectionView: View {
                 Button("Connect") {
                     let secret = token
                     token = ""
-                    Task { await model.connect(origin: address, transport: transport, userID: userID, wingID: wingID, wingPublicKey: wingKey, existingBearer: secret) }
+                    Task { await model.connect(origin: address, transport: transport, userID: userID, wingID: wingID, wingPublicKey: wingKey, existingBearer: secret, mode: setupMode) }
                 }.disabled(model.busy || !formComplete)
             } header: { Text("Access") } footer: {
                 Text("Use access you already have for this home. After its identity is checked, the token is saved in this device's Keychain and restored when you reopen the app. Disconnect forgets it.")
@@ -603,11 +631,22 @@ private struct HomeConnectionView: View {
             }
         }.navigationTitle("Home connection")
             .task(id: model.profile?.id) {
-                if let profile = model.profile, profile.mode == .remote {
+                applySetupLink()
+                if !importedSetup, let profile = model.profile, profile.mode == .remote {
                     address = profile.origin.absoluteString; transport = profile.transport
                     userID = profile.expectedUserID; wingID = profile.homeWingID; wingKey = profile.homeWingPublicKey
                 }
             }
+            .onChange(of: model.pendingHomeSetup?.profile.id) { _ in applySetupLink() }
+            .onDisappear { token = ""; _ = model.takeHomeSetupLink() }
+    }
+
+    private func applySetupLink() {
+        guard let setup = model.takeHomeSetupLink() else { return }
+        importedSetup = true
+        address = setup.profile.origin.absoluteString; transport = setup.profile.transport
+        userID = setup.profile.expectedUserID; wingID = setup.profile.homeWingID; wingKey = setup.profile.homeWingPublicKey
+        token = setup.token ?? ""; setupMode = setup.profile.mode
     }
 }
 

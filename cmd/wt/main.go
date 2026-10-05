@@ -104,6 +104,7 @@ func newRootCommand() *cobra.Command {
 		loginCmd(),
 		logoutCmd(),
 		whoamiCmd(),
+		phoneCmd(),
 		supportCmd(),
 		embedCmd(),
 		doctorCmd(),

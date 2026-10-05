@@ -9,6 +9,10 @@
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1</string>
     <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLName</key><string>dev.ehrlich.wingthing.home</string>
+        <key>CFBundleURLSchemes</key><array><string>wingthing</string></array>
+    </dict></array>
     <key>UILaunchScreen</key><dict/>
     <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
     <key>NSLocalNetworkUsageDescription</key><string>Connect to the home endpoint you explicitly choose on your local network.</string>
