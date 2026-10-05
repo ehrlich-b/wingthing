@@ -30,6 +30,7 @@ func attachCmd() *cobra.Command {
 		Use:   "attach [session]",
 		Short: "Attach this terminal to a running egg session",
 		Long: "Attach the current terminal directly to a persistent egg session. " +
+			"Use NAME:SESSION for a configured SSH remote, or a plain SESSION for a local session. " +
 			"Use --remote with an SSH host from ~/.ssh/config to attach without opening the web app.\n\n" +
 			"Detach without stopping the session with Ctrl+B, then Q. Send a literal Ctrl+B with Ctrl+B twice.",
 		Args: cobra.MaximumNArgs(1),
@@ -45,10 +46,33 @@ func attachCmd() *cobra.Command {
 			if sessionID != "" && jsonFlag {
 				return errors.New("--json lists sessions and cannot be used with a session")
 			}
+			remoteName, remoteSession, err := parseRemoteSession(sessionID)
+			if err != nil {
+				return err
+			}
 
 			cfg, err := config.Load()
 			if err != nil {
 				return err
+			}
+			if remoteName != "" {
+				remote, err := configuredRemote(cfg.Dir, remoteName)
+				if err != nil {
+					return err
+				}
+				remoteArgs := []string{"attach"}
+				if readOnlyFlag {
+					remoteArgs = append(remoteArgs, "--read-only")
+				}
+				if takeoverFlag {
+					remoteArgs = append(remoteArgs, "--takeover")
+				}
+				remoteArgs = append(remoteArgs, "--", remoteSession)
+				streams := remoteStreams(cmd.Context())
+				return runRemoteInvocation(cmd.Context(), remoteInvocation{
+					target: remote.SSHTarget, binary: config.BinaryName(), state: remote.WingthingDir,
+					args: remoteArgs, allocateTTY: streams.stdinTTY && streams.stdoutTTY,
+				}, streams)
 			}
 			if sessionID == "" {
 				if !selectFlag {

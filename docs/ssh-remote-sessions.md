@@ -5,6 +5,40 @@ The host must already have a compatible Wingthing binary and an authenticated
 provider CLI. Wingthing uses the remote owner's configuration and credentials;
 it does not copy a workspace or install a binary.
 
+Register machines once to list their sessions together:
+
+```sh
+wt remote add work me@work1
+wt remote add lab lab-alias --wingthing-dir /home/me/isolated-state
+wt remote ls
+wt session ps
+wt session ps --json
+wt attach work:review
+wt remote rm lab
+```
+
+The registry is `~/.wingthing/remotes.yaml` (or the selected Wingthing state
+directory), written atomically with mode 0600. Names use letters, digits, `-`,
+and `_`; SSH targets cannot start with `-` or contain whitespace or control
+characters. `--wingthing-dir` selects an absolute state path on the receiver,
+with the same checks as `--remote-state`. Add/remove only change the registry.
+
+`session ps` includes local sessions (`machine: "local"`) and every configured
+remote (`machine` is its registered name). Queries run in parallel with a
+three-second deadline per remote. An unavailable or incompatible receiver
+produces one row with an `error` field in JSON and a diagnostic in the table;
+other sessions still appear and the command succeeds. Receivers must support
+the versioned, local-only `session ps --json` inventory contract; an old or
+different contract reports the remote name and both versions. A plain
+`wt attach SESSION` stays local; `NAME:SESSION` resolves only a registered name.
+The existing `--remote SSH_TARGET` route remains available.
+
+MCP `terminal_list` accepts `{"remote":"work"}` to list one configured remote,
+with its existing principal filter. Omitting `remote` keeps the local-only
+response. Connections bounded to local paths or conversations cannot select
+a remote. No other MCP tool accepts this argument. This uses the SSH login
+account's existing access and requires no Wingthing account or relay.
+
 ```sh
 # Discover before creating anything. This command never attaches or launches.
 wt --remote work1 --json

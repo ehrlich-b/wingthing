@@ -123,6 +123,7 @@ func newRootCommand() *cobra.Command {
 		toolListCmd(),
 		mcpCmd(),
 		localCertCmd(),
+		remoteCmd(),
 		remoteEnterCmd(),
 	)
 	if config.Channel() == "preview" {
