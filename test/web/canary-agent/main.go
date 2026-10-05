@@ -45,7 +45,16 @@ func printModelPolicy() {
 	model := ""
 	for i := 1; i+1 < len(os.Args); i++ {
 		if os.Args[i] == "--settings" {
-			policyOK = os.Args[i+1] == `{"env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh"}}`
+			data := []byte(os.Args[i+1])
+			if !json.Valid(data) {
+				data, _ = os.ReadFile(os.Args[i+1])
+			}
+			var policy struct {
+				Env struct {
+					Effort string `json:"CLAUDE_CODE_EFFORT_LEVEL"`
+				} `json:"env"`
+			}
+			policyOK = json.Unmarshal(data, &policy) == nil && policy.Env.Effort == "xhigh"
 		}
 		if os.Args[i] == "--model" {
 			model = os.Args[i+1]
