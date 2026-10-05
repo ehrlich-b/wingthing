@@ -28,6 +28,10 @@ function parseClaude(raw) {
 
     var role = raw.message.role;
     if (role === 'user') {
+        var userBlocks = raw.message.content;
+        if (Array.isArray(userBlocks) && userBlocks.some(function(b) { return b.type === 'tool_result'; })) {
+            return { type: 'tool_result', name: userBlocks.map(function(b) { return b.tool_use_id || ''; }).filter(Boolean).join(', '), content: extractText(userBlocks) };
+        }
         return { type: 'user', content: extractText(raw.message.content) };
     }
     if (role === 'assistant') {

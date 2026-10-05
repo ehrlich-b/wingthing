@@ -6,10 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
@@ -134,6 +136,17 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 		result.DenyWrite = declared.DenyWrite
 	}
 	result.NetworkNeed = netNeed
+	if config.Channel() == "preview" && runtime.GOOS == "darwin" && agentName == "claude" {
+		osHome, _, err := egg.PreviewClaudeOSContext(home)
+		if err != nil {
+			return sandbox.Config{}, err
+		}
+		protected, err := egg.GuardPreviewClaudeMounts(result.Mounts, osHome)
+		if err != nil {
+			return sandbox.Config{}, err
+		}
+		result.Deny = append(result.Deny, protected...)
+	}
 	return result, nil
 }
 
@@ -214,6 +227,17 @@ func directAgentEnvWithPolicy(agentName, home string, proxyPort int, inheritHost
 	}
 	if home != "" {
 		envMap["HOME"] = home
+		if config.Channel() == "preview" {
+			// HOME alone does not namespace Claude's macOS Keychain entry.
+			// Set provider directories for this invocation; never inherit a
+			// host account's configuration or authentication namespace.
+			switch agentName {
+			case "claude":
+				envMap["CLAUDE_CONFIG_DIR"] = filepath.Join(home, ".claude")
+			case "codex":
+				envMap["CODEX_HOME"] = filepath.Join(home, ".codex")
+			}
+		}
 		localBin := filepath.Join(home, ".local", "bin")
 		if path := envMap["PATH"]; path != "" {
 			envMap["PATH"] = localBin + string(os.PathListSeparator) + path

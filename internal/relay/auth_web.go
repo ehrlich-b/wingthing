@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/google/uuid"
 	"golang.org/x/net/publicsuffix"
 )
@@ -24,6 +25,13 @@ const (
 	sessionDuration               = 30 * 24 * time.Hour
 	maxOAuthProviderResponseBytes = 1 << 20
 )
+
+func sessionCookieNameForChannel() string {
+	if config.Channel() == "preview" {
+		return "wt_preview_session"
+	}
+	return sessionCookieName
+}
 
 func (s *Server) oauthClient() *http.Client {
 	if s.oauthHTTPClient != nil {
@@ -78,7 +86,7 @@ func (s *Server) sessionUser(r *http.Request) *User {
 	if s.LocalMode && s.localUser != nil {
 		return s.localUser
 	}
-	c, err := r.Cookie(sessionCookieName)
+	c, err := r.Cookie(sessionCookieNameForChannel())
 	if err != nil {
 		return nil
 	}
@@ -234,7 +242,7 @@ func longestSharedDNSName(first, second string) string {
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     sessionCookieNameForChannel(),
 		Value:    token,
 		Path:     "/",
 		Domain:   s.cookieDomain(),
@@ -752,12 +760,12 @@ func (s *Server) handleMagicVerify(w http.ResponseWriter, r *http.Request) {
 // Logout
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	c, err := r.Cookie(sessionCookieName)
+	c, err := r.Cookie(sessionCookieNameForChannel())
 	if err == nil && s.Store != nil {
 		if err := s.Store.DeleteSession(c.Value); err != nil {
 			log.Printf("logout: delete session: %v", err)
 		}
 	}
-	s.expireCookie(w, sessionCookieName, "/")
+	s.expireCookie(w, sessionCookieNameForChannel(), "/")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

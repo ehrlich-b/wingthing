@@ -1,6 +1,7 @@
 import { S, DOM } from './state.js';
 import { safePreviewURL } from './security.js';
 import { renderNetworkInertMarkdown } from './preview-markdown.js';
+import { sessionResourceKey } from './session-reference.js';
 
 var SPLIT_KEY = 'wt_preview_split';
 
@@ -41,7 +42,7 @@ function isOpen() {
 }
 
 function previewKey() {
-    return activePreviewSession || S.ptySessionId || '__preview__';
+    return activePreviewSession || (S.ptySessionId && S.ptyWingId ? sessionResourceKey({ id: S.ptySessionId, wingId: S.ptyWingId }) : '__preview__');
 }
 
 function updateToggle() {
@@ -159,7 +160,7 @@ function setContent(opts) {
 
 export function handlePreview(opts) {
     if (!opts || !opts.mode) {
-        discardPreview(previewKey());
+        discardPreview();
         return;
     }
 
@@ -187,8 +188,9 @@ export function closePreview() {
     updateToggle();
 }
 
-export function setPreviewSession(sessionId) {
-    activePreviewSession = sessionId || '';
+export function setPreviewSession(sessionId, wingId) {
+    wingId = wingId || S.ptyWingId;
+    activePreviewSession = sessionId && wingId ? sessionResourceKey({ id: sessionId, wingId: wingId }) : '__preview__';
     var entry = previewSessions[previewKey()];
     hidePanel();
     if (entry && entry.open) openPanel(entry.payload);
@@ -208,8 +210,10 @@ export function togglePreview() {
     return true;
 }
 
-export function discardPreview(sessionId) {
-    var key = sessionId || previewKey();
+export function discardPreview(sessionId, wingId) {
+    wingId = wingId || S.ptyWingId;
+    if (sessionId && !wingId) return;
+    var key = sessionId ? sessionResourceKey({ id: sessionId, wingId: wingId }) : previewKey();
     delete previewSessions[key];
     if (key === previewKey()) hidePanel();
     updateToggle();

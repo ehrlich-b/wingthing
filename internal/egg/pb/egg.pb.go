@@ -68,6 +68,10 @@ type StatusResponse struct {
 	UptimeSeconds  int64                  `protobuf:"varint,7,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
 	RenderedConfig string                 `protobuf:"bytes,8,opt,name=rendered_config,json=renderedConfig,proto3" json:"rendered_config,omitempty"`
 	IdleSeconds    int64                  `protobuf:"varint,9,opt,name=idle_seconds,json=idleSeconds,proto3" json:"idle_seconds,omitempty"`
+	WriterId       string                 `protobuf:"bytes,10,opt,name=writer_id,json=writerId,proto3" json:"writer_id,omitempty"`
+	WriterOwner    string                 `protobuf:"bytes,11,opt,name=writer_owner,json=writerOwner,proto3" json:"writer_owner,omitempty"`
+	InputEpoch     uint64                 `protobuf:"varint,12,opt,name=input_epoch,json=inputEpoch,proto3" json:"input_epoch,omitempty"`
+	ProcessPid     int32                  `protobuf:"varint,13,opt,name=process_pid,json=processPid,proto3" json:"process_pid,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -165,6 +169,34 @@ func (x *StatusResponse) GetIdleSeconds() int64 {
 	return 0
 }
 
+func (x *StatusResponse) GetWriterId() string {
+	if x != nil {
+		return x.WriterId
+	}
+	return ""
+}
+
+func (x *StatusResponse) GetWriterOwner() string {
+	if x != nil {
+		return x.WriterOwner
+	}
+	return ""
+}
+
+func (x *StatusResponse) GetInputEpoch() uint64 {
+	if x != nil {
+		return x.InputEpoch
+	}
+	return 0
+}
+
+func (x *StatusResponse) GetProcessPid() int32 {
+	if x != nil {
+		return x.ProcessPid
+	}
+	return 0
+}
+
 type KillRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -246,12 +278,15 @@ func (*KillResponse) Descriptor() ([]byte, []int) {
 }
 
 type ResizeRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Rows          uint32                 `protobuf:"varint,2,opt,name=rows,proto3" json:"rows,omitempty"`
-	Cols          uint32                 `protobuf:"varint,3,opt,name=cols,proto3" json:"cols,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	SessionId       string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Rows            uint32                 `protobuf:"varint,2,opt,name=rows,proto3" json:"rows,omitempty"`
+	Cols            uint32                 `protobuf:"varint,3,opt,name=cols,proto3" json:"cols,omitempty"`
+	AttachmentId    string                 `protobuf:"bytes,4,opt,name=attachment_id,json=attachmentId,proto3" json:"attachment_id,omitempty"`
+	InputEpoch      uint64                 `protobuf:"varint,5,opt,name=input_epoch,json=inputEpoch,proto3" json:"input_epoch,omitempty"`
+	AttachmentToken string                 `protobuf:"bytes,6,opt,name=attachment_token,json=attachmentToken,proto3" json:"attachment_token,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ResizeRequest) Reset() {
@@ -305,6 +340,27 @@ func (x *ResizeRequest) GetCols() uint32 {
 	return 0
 }
 
+func (x *ResizeRequest) GetAttachmentId() string {
+	if x != nil {
+		return x.AttachmentId
+	}
+	return ""
+}
+
+func (x *ResizeRequest) GetInputEpoch() uint64 {
+	if x != nil {
+		return x.InputEpoch
+	}
+	return 0
+}
+
+func (x *ResizeRequest) GetAttachmentToken() string {
+	if x != nil {
+		return x.AttachmentToken
+	}
+	return ""
+}
+
 type ResizeResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -342,8 +398,10 @@ func (*ResizeResponse) Descriptor() ([]byte, []int) {
 }
 
 type SessionMsg struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AttachOptions  *AttachOptions         `protobuf:"bytes,8,opt,name=attach_options,json=attachOptions,proto3" json:"attach_options,omitempty"`
+	AttachmentInfo *AttachmentInfo        `protobuf:"bytes,9,opt,name=attachment_info,json=attachmentInfo,proto3" json:"attachment_info,omitempty"`
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*SessionMsg_Output
@@ -392,6 +450,20 @@ func (x *SessionMsg) GetSessionId() string {
 		return x.SessionId
 	}
 	return ""
+}
+
+func (x *SessionMsg) GetAttachOptions() *AttachOptions {
+	if x != nil {
+		return x.AttachOptions
+	}
+	return nil
+}
+
+func (x *SessionMsg) GetAttachmentInfo() *AttachmentInfo {
+	if x != nil {
+		return x.AttachmentInfo
+	}
+	return nil
 }
 
 func (x *SessionMsg) GetPayload() isSessionMsg_Payload {
@@ -495,6 +567,166 @@ func (*SessionMsg_Attach) isSessionMsg_Payload() {}
 
 func (*SessionMsg_Detach) isSessionMsg_Payload() {}
 
+type AttachOptions struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ReadOnly      bool                   `protobuf:"varint,1,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	Takeover      bool                   `protobuf:"varint,2,opt,name=takeover,proto3" json:"takeover,omitempty"`
+	Claim         bool                   `protobuf:"varint,3,opt,name=claim,proto3" json:"claim,omitempty"`
+	Owner         string                 `protobuf:"bytes,4,opt,name=owner,proto3" json:"owner,omitempty"`
+	Rows          uint32                 `protobuf:"varint,5,opt,name=rows,proto3" json:"rows,omitempty"`
+	Cols          uint32                 `protobuf:"varint,6,opt,name=cols,proto3" json:"cols,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AttachOptions) Reset() {
+	*x = AttachOptions{}
+	mi := &file_egg_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttachOptions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttachOptions) ProtoMessage() {}
+
+func (x *AttachOptions) ProtoReflect() protoreflect.Message {
+	mi := &file_egg_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttachOptions.ProtoReflect.Descriptor instead.
+func (*AttachOptions) Descriptor() ([]byte, []int) {
+	return file_egg_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *AttachOptions) GetReadOnly() bool {
+	if x != nil {
+		return x.ReadOnly
+	}
+	return false
+}
+
+func (x *AttachOptions) GetTakeover() bool {
+	if x != nil {
+		return x.Takeover
+	}
+	return false
+}
+
+func (x *AttachOptions) GetClaim() bool {
+	if x != nil {
+		return x.Claim
+	}
+	return false
+}
+
+func (x *AttachOptions) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
+func (x *AttachOptions) GetRows() uint32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *AttachOptions) GetCols() uint32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+type AttachmentInfo struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	AttachmentId    string                 `protobuf:"bytes,1,opt,name=attachment_id,json=attachmentId,proto3" json:"attachment_id,omitempty"`
+	WriterId        string                 `protobuf:"bytes,2,opt,name=writer_id,json=writerId,proto3" json:"writer_id,omitempty"`
+	WriterOwner     string                 `protobuf:"bytes,3,opt,name=writer_owner,json=writerOwner,proto3" json:"writer_owner,omitempty"`
+	InputEpoch      uint64                 `protobuf:"varint,4,opt,name=input_epoch,json=inputEpoch,proto3" json:"input_epoch,omitempty"`
+	AttachmentToken string                 `protobuf:"bytes,5,opt,name=attachment_token,json=attachmentToken,proto3" json:"attachment_token,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *AttachmentInfo) Reset() {
+	*x = AttachmentInfo{}
+	mi := &file_egg_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttachmentInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttachmentInfo) ProtoMessage() {}
+
+func (x *AttachmentInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_egg_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttachmentInfo.ProtoReflect.Descriptor instead.
+func (*AttachmentInfo) Descriptor() ([]byte, []int) {
+	return file_egg_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *AttachmentInfo) GetAttachmentId() string {
+	if x != nil {
+		return x.AttachmentId
+	}
+	return ""
+}
+
+func (x *AttachmentInfo) GetWriterId() string {
+	if x != nil {
+		return x.WriterId
+	}
+	return ""
+}
+
+func (x *AttachmentInfo) GetWriterOwner() string {
+	if x != nil {
+		return x.WriterOwner
+	}
+	return ""
+}
+
+func (x *AttachmentInfo) GetInputEpoch() uint64 {
+	if x != nil {
+		return x.InputEpoch
+	}
+	return 0
+}
+
+func (x *AttachmentInfo) GetAttachmentToken() string {
+	if x != nil {
+		return x.AttachmentToken
+	}
+	return ""
+}
+
 type Resize struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Rows          uint32                 `protobuf:"varint,1,opt,name=rows,proto3" json:"rows,omitempty"`
@@ -505,7 +737,7 @@ type Resize struct {
 
 func (x *Resize) Reset() {
 	*x = Resize{}
-	mi := &file_egg_proto_msgTypes[7]
+	mi := &file_egg_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -517,7 +749,7 @@ func (x *Resize) String() string {
 func (*Resize) ProtoMessage() {}
 
 func (x *Resize) ProtoReflect() protoreflect.Message {
-	mi := &file_egg_proto_msgTypes[7]
+	mi := &file_egg_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -530,7 +762,7 @@ func (x *Resize) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resize.ProtoReflect.Descriptor instead.
 func (*Resize) Descriptor() ([]byte, []int) {
-	return file_egg_proto_rawDescGZIP(), []int{7}
+	return file_egg_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Resize) GetRows() uint32 {
@@ -552,7 +784,7 @@ var File_egg_proto protoreflect.FileDescriptor
 const file_egg_proto_rawDesc = "" +
 	"\n" +
 	"\tegg.proto\x12\x03egg\"\x0f\n" +
-	"\rStatusRequest\"\xbf\x02\n" +
+	"\rStatusRequest\"\xc1\x03\n" +
 	"\x0eStatusResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -563,28 +795,55 @@ const file_egg_proto_rawDesc = "" +
 	"\areaders\x18\x06 \x01(\x05R\areaders\x12%\n" +
 	"\x0euptime_seconds\x18\a \x01(\x03R\ruptimeSeconds\x12'\n" +
 	"\x0frendered_config\x18\b \x01(\tR\x0erenderedConfig\x12!\n" +
-	"\fidle_seconds\x18\t \x01(\x03R\vidleSeconds\",\n" +
+	"\fidle_seconds\x18\t \x01(\x03R\vidleSeconds\x12\x1b\n" +
+	"\twriter_id\x18\n" +
+	" \x01(\tR\bwriterId\x12!\n" +
+	"\fwriter_owner\x18\v \x01(\tR\vwriterOwner\x12\x1f\n" +
+	"\vinput_epoch\x18\f \x01(\x04R\n" +
+	"inputEpoch\x12\x1f\n" +
+	"\vprocess_pid\x18\r \x01(\x05R\n" +
+	"processPid\",\n" +
 	"\vKillRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x0e\n" +
-	"\fKillResponse\"V\n" +
+	"\fKillResponse\"\xc7\x01\n" +
 	"\rResizeRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
 	"\x04rows\x18\x02 \x01(\rR\x04rows\x12\x12\n" +
-	"\x04cols\x18\x03 \x01(\rR\x04cols\"\x10\n" +
-	"\x0eResizeResponse\"\xe2\x01\n" +
+	"\x04cols\x18\x03 \x01(\rR\x04cols\x12#\n" +
+	"\rattachment_id\x18\x04 \x01(\tR\fattachmentId\x12\x1f\n" +
+	"\vinput_epoch\x18\x05 \x01(\x04R\n" +
+	"inputEpoch\x12)\n" +
+	"\x10attachment_token\x18\x06 \x01(\tR\x0fattachmentToken\"\x10\n" +
+	"\x0eResizeResponse\"\xdb\x02\n" +
 	"\n" +
 	"SessionMsg\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x129\n" +
+	"\x0eattach_options\x18\b \x01(\v2\x12.egg.AttachOptionsR\rattachOptions\x12<\n" +
+	"\x0fattachment_info\x18\t \x01(\v2\x13.egg.AttachmentInfoR\x0eattachmentInfo\x12\x18\n" +
 	"\x06output\x18\x02 \x01(\fH\x00R\x06output\x12\x16\n" +
 	"\x05input\x18\x03 \x01(\fH\x00R\x05input\x12%\n" +
 	"\x06resize\x18\x04 \x01(\v2\v.egg.ResizeH\x00R\x06resize\x12\x1d\n" +
 	"\texit_code\x18\x05 \x01(\x05H\x00R\bexitCode\x12\x18\n" +
 	"\x06attach\x18\x06 \x01(\bH\x00R\x06attach\x12\x18\n" +
 	"\x06detach\x18\a \x01(\bH\x00R\x06detachB\t\n" +
-	"\apayload\"0\n" +
+	"\apayload\"\x9c\x01\n" +
+	"\rAttachOptions\x12\x1b\n" +
+	"\tread_only\x18\x01 \x01(\bR\breadOnly\x12\x1a\n" +
+	"\btakeover\x18\x02 \x01(\bR\btakeover\x12\x14\n" +
+	"\x05claim\x18\x03 \x01(\bR\x05claim\x12\x14\n" +
+	"\x05owner\x18\x04 \x01(\tR\x05owner\x12\x12\n" +
+	"\x04rows\x18\x05 \x01(\rR\x04rows\x12\x12\n" +
+	"\x04cols\x18\x06 \x01(\rR\x04cols\"\xc1\x01\n" +
+	"\x0eAttachmentInfo\x12#\n" +
+	"\rattachment_id\x18\x01 \x01(\tR\fattachmentId\x12\x1b\n" +
+	"\twriter_id\x18\x02 \x01(\tR\bwriterId\x12!\n" +
+	"\fwriter_owner\x18\x03 \x01(\tR\vwriterOwner\x12\x1f\n" +
+	"\vinput_epoch\x18\x04 \x01(\x04R\n" +
+	"inputEpoch\x12)\n" +
+	"\x10attachment_token\x18\x05 \x01(\tR\x0fattachmentToken\"0\n" +
 	"\x06Resize\x12\x12\n" +
 	"\x04rows\x18\x01 \x01(\rR\x04rows\x12\x12\n" +
 	"\x04cols\x18\x02 \x01(\rR\x04cols2\xc9\x01\n" +
@@ -606,7 +865,7 @@ func file_egg_proto_rawDescGZIP() []byte {
 	return file_egg_proto_rawDescData
 }
 
-var file_egg_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_egg_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_egg_proto_goTypes = []any{
 	(*StatusRequest)(nil),  // 0: egg.StatusRequest
 	(*StatusResponse)(nil), // 1: egg.StatusResponse
@@ -615,23 +874,27 @@ var file_egg_proto_goTypes = []any{
 	(*ResizeRequest)(nil),  // 4: egg.ResizeRequest
 	(*ResizeResponse)(nil), // 5: egg.ResizeResponse
 	(*SessionMsg)(nil),     // 6: egg.SessionMsg
-	(*Resize)(nil),         // 7: egg.Resize
+	(*AttachOptions)(nil),  // 7: egg.AttachOptions
+	(*AttachmentInfo)(nil), // 8: egg.AttachmentInfo
+	(*Resize)(nil),         // 9: egg.Resize
 }
 var file_egg_proto_depIdxs = []int32{
-	7, // 0: egg.SessionMsg.resize:type_name -> egg.Resize
-	2, // 1: egg.Egg.Kill:input_type -> egg.KillRequest
-	4, // 2: egg.Egg.Resize:input_type -> egg.ResizeRequest
-	6, // 3: egg.Egg.Session:input_type -> egg.SessionMsg
-	0, // 4: egg.Egg.Status:input_type -> egg.StatusRequest
-	3, // 5: egg.Egg.Kill:output_type -> egg.KillResponse
-	5, // 6: egg.Egg.Resize:output_type -> egg.ResizeResponse
-	6, // 7: egg.Egg.Session:output_type -> egg.SessionMsg
-	1, // 8: egg.Egg.Status:output_type -> egg.StatusResponse
-	5, // [5:9] is the sub-list for method output_type
-	1, // [1:5] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	7, // 0: egg.SessionMsg.attach_options:type_name -> egg.AttachOptions
+	8, // 1: egg.SessionMsg.attachment_info:type_name -> egg.AttachmentInfo
+	9, // 2: egg.SessionMsg.resize:type_name -> egg.Resize
+	2, // 3: egg.Egg.Kill:input_type -> egg.KillRequest
+	4, // 4: egg.Egg.Resize:input_type -> egg.ResizeRequest
+	6, // 5: egg.Egg.Session:input_type -> egg.SessionMsg
+	0, // 6: egg.Egg.Status:input_type -> egg.StatusRequest
+	3, // 7: egg.Egg.Kill:output_type -> egg.KillResponse
+	5, // 8: egg.Egg.Resize:output_type -> egg.ResizeResponse
+	6, // 9: egg.Egg.Session:output_type -> egg.SessionMsg
+	1, // 10: egg.Egg.Status:output_type -> egg.StatusResponse
+	7, // [7:11] is the sub-list for method output_type
+	3, // [3:7] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_egg_proto_init() }
@@ -653,7 +916,7 @@ func file_egg_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_egg_proto_rawDesc), len(file_egg_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -340,7 +340,7 @@ func (c *Client) connectAndServe(ctx context.Context) (connected bool, err error
 				}
 			}
 
-		case TypePTYInput, TypePTYAttentionAck, TypePasskeyResponse, TypePTYMigrate:
+		case TypePTYInput, TypePTYAttentionAck, TypePasskeyResponse, TypePTYMigrate, TypePTYDetach:
 			var partial struct {
 				SessionID string `json:"session_id"`
 			}

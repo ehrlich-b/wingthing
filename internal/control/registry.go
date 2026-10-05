@@ -108,6 +108,7 @@ func ObjectKinds(surface Surface) []string {
 	objects := []objectKind{
 		{name: "wing", surfaces: []Surface{SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "terminal", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
+		{name: "conversation", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "agent_run", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "message", surfaces: []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP}},
 		{name: "prompt_asset", surfaces: []Surface{SurfaceLocalMCP}},
@@ -311,6 +312,44 @@ func buildTools() []Tool {
 			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"session"},
 		},
 		{
+			Name: "session_status", Title: "Read native session lifecycle",
+			Description: "Read native interactive agent state, exact provider identity, readiness, and the durable event head. Unsupported providers report unknown; terminal silence is never completion. Archived sessions remain readable.",
+			InputSchema: objectSchema(map[string]any{"session": stringProperty("Wingthing session ID or unique label/prefix")}, "session"), Annotations: readOnly,
+			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"session"},
+		},
+		{
+			Name: "session_read", Title: "Read session conversation events",
+			Description: "Read bounded exact-provider native transcript and lifecycle events after a durable cursor. Raw provider records are included when within bounds. Completion refers to the foreground turn, separately from process survival.",
+			InputSchema: objectSchema(map[string]any{
+				"session":      stringProperty("Wingthing session ID or unique label/prefix"),
+				"after_cursor": map[string]any{"type": "integer", "minimum": 0, "default": 0},
+				"limit":        map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+			}, "session"), Annotations: readOnly,
+			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"session"},
+		},
+		{
+			Name: "session_wait", Title: "Wait for native session evidence",
+			Description: "Wait for native lifecycle evidence or events after a durable cursor, with explicit matched/timed_out. State ready means the native provider reported session initialization, not a screen guess. Use after_cursor to exclude an earlier completed turn.",
+			InputSchema: objectSchema(map[string]any{
+				"session":         stringProperty("Wingthing session ID or unique label/prefix"),
+				"after_cursor":    map[string]any{"type": "integer", "minimum": 0, "default": 0},
+				"state":           map[string]any{"type": "string", "enum": []string{"ready", "starting", "working", "idle", "completed", "needs_input", "failed", "unknown"}},
+				"timeout_seconds": map[string]any{"type": "number", "minimum": 0.1, "maximum": 3600, "default": 30},
+			}, "session"), Annotations: readOnly,
+			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"session"},
+		},
+		{
+			Name: "session_prompt", Title: "Submit retry-safe native session prompt",
+			Description: "Reserve a caller request ID before submitting one prompt to a natively ready exact-provider interactive session. Identical retries never resend; changed arguments are rejected. Report native_receipt_observed only when exact provider human-user transcript text matches after the reservation cursor. This is a text receipt, not a provider request-specific causal acknowledgement. Timeout or lost connection remains unconfirmed. not_sent with definitely_not_sent=true requires explicit proof that no input attempt occurred; use a new request ID for a deliberate later submission.",
+			InputSchema: objectSchema(map[string]any{
+				"session":         stringProperty("Wingthing session ID or unique label/prefix"),
+				"request_id":      map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": "Unique caller retry ID; identical retries reuse the ID and all arguments"},
+				"input":           map[string]any{"type": "string", "minLength": 1, "maxLength": 65536, "description": "UTF-8 prompt (65536 byte runtime bound); multiline text is pasted as one submission"},
+				"timeout_seconds": map[string]any{"type": "number", "minimum": 0.1, "maximum": 60, "default": 15},
+			}, "session", "request_id", "input"), Annotations: modelCall,
+			Grant: "terminal.send", Surfaces: both, AuditTargetKeys: []string{"session"},
+		},
+		{
 			Name: "terminal_send", Title: "Send terminal input",
 			Description: "Send text to a persistent PTY, optionally followed by Enter.",
 			InputSchema: objectSchema(map[string]any{
@@ -345,11 +384,14 @@ func buildTools() []Tool {
 			Name: "agent_start", Title: "Start persistent agent terminal",
 			Description: "Start a supported agent in a durable PTY under the MCP server's declared isolation mode and return immediately with its session ID.",
 			InputSchema: objectSchema(map[string]any{
-				"agent":      stringProperty("Supported agent name"),
-				"model":      stringProperty("Provider model name, such as opus or gpt-5.6-terra"),
-				"cwd":        stringProperty("Working directory; defaults to the MCP server's current directory"),
-				"label":      stringProperty("Optional stable human-readable session label"),
-				"unattended": map[string]any{"type": "boolean", "description": "Enable the agent's unattended permission mode", "default": false},
+				"agent":                  stringProperty("Supported agent name"),
+				"model":                  stringProperty("Provider model name, such as opus or gpt-5.6-terra"),
+				"cwd":                    stringProperty("Working directory; defaults to the MCP server's current directory"),
+				"label":                  stringProperty("Optional stable human-readable session label"),
+				"unattended":             map[string]any{"type": "boolean", "description": "Enable the agent's unattended permission mode", "default": false},
+				"conversation_role":      map[string]any{"type": "string", "enum": []string{"parent", "child"}, "description": "Create a persistent personal conversation; Claude currently supported"},
+				"parent_conversation_id": stringProperty("Owned logical parent conversation ID; inherited by conversation-bound MCP connections"),
+				"request_id":             stringProperty("Required unique retry key for linked conversation launches; identical retries reuse the same execution"),
 				"args": map[string]any{
 					"type": "array", "items": map[string]any{"type": "string"}, "default": []string{},
 					"description": "Extra arguments passed to the agent CLI verbatim, after Wingthing's own flags. Use the agent's native syntax, for example [\"--model\",\"sonnet\"] for claude or [\"-m\",\"gpt-5.6-terra\"] for codex.",
@@ -527,6 +569,14 @@ func buildTools() []Tool {
 			InputSchema: objectSchema(map[string]any{}), Annotations: readOnly,
 			Grant: "wing.read", Surfaces: []Surface{SurfaceHTTPMCP, SurfaceDirectMCP}, Authority: AuthorityPortal,
 		},
+	}
+	for index, tool := range tools {
+		if tool.Name == "wing_list" {
+			prefix := append([]Tool(nil), tools[:index]...)
+			prefix = append(prefix, conversationTools()...)
+			tools = append(prefix, tools[index:]...)
+			break
+		}
 	}
 	for index := range tools {
 		tools[index].Version = ContractVersion

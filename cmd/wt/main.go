@@ -62,25 +62,27 @@ func newRootCommand() *cobra.Command {
 	var remoteTarget string
 	var remoteBinary string
 	var remoteCWD string
+	var remoteState string
 	root := &cobra.Command{
-		Use:           "wt",
+		Use:           config.BinaryName(),
 		Short:         "wingthing — an agent manager for agents",
 		Long:          "An agent manager for agents: one typed control plane for durable agent runs and terminals across your machines, with human inspection and takeover when useful.",
 		Version:       version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("remote") || cmd.Flags().Changed("remote-binary") || cmd.Flags().Changed("remote-cwd") {
+			if cmd.Flags().Changed("remote") || cmd.Flags().Changed("remote-binary") || cmd.Flags().Changed("remote-state") || cmd.Flags().Changed("remote-cwd") {
 				return errors.New("remote routing was not initialized")
 			}
 			return cmd.Help()
 		},
 	}
 	root.PersistentFlags().StringVarP(&remoteTarget, "remote", "r", "", "run a supported command on this SSH host or alias")
-	root.PersistentFlags().StringVar(&remoteBinary, "remote-binary", "wt", "wt executable or absolute path on the remote host")
+	root.PersistentFlags().StringVar(&remoteBinary, "remote-binary", config.BinaryName(), "channel-matching executable or absolute path on the remote host")
+	root.PersistentFlags().StringVar(&remoteState, "remote-state", "", "absolute state directory on the remote host (sets WINGTHING_DIR and WINGTHING_PREVIEW_DIR there)")
 	root.PersistentFlags().StringVar(&remoteCWD, "remote-cwd", "", "remote working directory for bare interactive entry")
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		if cmd.Flags().Changed("remote") || cmd.Flags().Changed("remote-binary") || cmd.Flags().Changed("remote-cwd") {
+		if cmd.Flags().Changed("remote") || cmd.Flags().Changed("remote-binary") || cmd.Flags().Changed("remote-state") || cmd.Flags().Changed("remote-cwd") {
 			return errors.New("remote routing was not initialized")
 		}
 		return nil
@@ -112,15 +114,20 @@ func newRootCommand() *cobra.Command {
 		terminalCmd(),
 		attachCmd(),
 		sessionCmd(),
+		conversationCmd(),
 		wingsCmd(),
 		keygenCmd(),
 		updateCmd(),
+		channelCmd(),
 		toolCallCmd(),
 		toolListCmd(),
 		mcpCmd(),
 		localCertCmd(),
 		remoteEnterCmd(),
 	)
+	if config.Channel() == "preview" {
+		root.AddCommand(previewProviderCmd())
+	}
 	return root
 }
 
@@ -490,7 +497,7 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 	// environment. On a shared host that would hand any OAuth caller the roost
 	// account's secrets and filesystem, so it fails closed regardless of how
 	// the agent's default isolation is configured.
-	if options.SharedHost && pr.Isolation == "privileged" {
+	if (options.SharedHost || config.Channel() == "preview") && pr.Isolation == "privileged" {
 		msg := "privileged isolation is not available on a shared host"
 		return errors.New(msg)
 	}
@@ -509,6 +516,9 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 
 	if pr.Isolation != "privileged" {
 		home := options.UserHome
+		if config.Channel() == "preview" {
+			home = cfg.ProviderDataHome()
+		}
 		if home == "" {
 			var homeErr error
 			home, homeErr = os.UserHomeDir()
@@ -578,8 +588,22 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			}
 		}()
 		sandboxDiagnosticPath = sb.DiagLog()
-		agentEnv := directAgentEnvWithPolicy(agentName, home, sbCfg.ProxyPort, !options.SharedHost)
-		policyArgs, err := isolatedClaudePolicyArgs(agentName, options.UserHome != "")
+		agentEnv := directAgentEnvWithPolicy(agentName, home, sbCfg.ProxyPort, !options.SharedHost && config.Channel() != "preview")
+		if config.Channel() == "preview" && runtime.GOOS == "darwin" && agentName == "claude" {
+			values := make(map[string]string)
+			for _, entry := range agentEnv {
+				key, value, _ := strings.Cut(entry, "=")
+				values[key] = value
+			}
+			if _, err := egg.ApplyPreviewClaudeOSContext(values, home); err != nil {
+				return err
+			}
+			agentEnv = agentEnv[:0]
+			for key, value := range values {
+				agentEnv = append(agentEnv, key+"="+value)
+			}
+		}
+		policyArgs, err := isolatedClaudePolicyArgs(agentName, options.UserHome != "" || config.Channel() == "preview")
 		if err != nil {
 			return err
 		}
@@ -1425,7 +1449,7 @@ func resolveRelayHTTPURL(cfg *config.Config) string {
 		}
 	}
 	if relayURL == "" {
-		relayURL = "https://ws.wingthing.ai"
+		relayURL = config.DefaultRelayURL()
 	}
 	return normalizeRelayHTTPURL(relayURL)
 }
@@ -1469,13 +1493,13 @@ func resolveWingRelayHTTPURL(cfg *config.Config, explicit string, local bool) st
 		}
 	}
 	if relayURL == "" && local {
-		relayURL = "http://localhost:8080"
+		relayURL = config.DefaultLocalRelayURL()
 	}
 	if relayURL == "" && cfg != nil {
 		relayURL = cfg.RoostURL
 	}
 	if relayURL == "" {
-		relayURL = "https://ws.wingthing.ai"
+		relayURL = config.DefaultRelayURL()
 	}
 	return normalizeRelayHTTPURL(relayURL)
 }

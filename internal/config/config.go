@@ -30,27 +30,50 @@ type Config struct {
 	DefaultMaxRetries int               `yaml:"max_retries"`
 	RoostURL          string            `yaml:"roost_url"`
 	Vars              map[string]string `yaml:"vars"`
+
+	providerDataHome string
+}
+
+// ProviderDataHome is the preview provider data home validated by Load,
+// including any ProviderHomeBinding. A Config not produced by Load has no
+// binding and uses the default location below its state directory.
+func (c *Config) ProviderDataHome() string {
+	if c.providerDataHome != "" {
+		return c.providerDataHome
+	}
+	return PreviewProviderHome(c.Dir)
 }
 
 func Load() (*Config, error) {
-	dir := os.Getenv("WINGTHING_DIR")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("get home dir: %w", err)
+	dir, err := StateDir()
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateStateDirectory(dir); err != nil {
+		return nil, err
+	}
+	// Resolve the provider binding before creating or claiming state, so an
+	// invalid binding stops every command before any vendor invocation.
+	var providerDataHome string
+	if Channel() == "preview" {
+		if providerDataHome, _, err = ResolvePreviewProviderHome(dir); err != nil {
+			return nil, err
 		}
-		dir = filepath.Join(home, ".wingthing")
 	}
 	if err := ensureStateDirectory(dir); err != nil {
 		return nil, err
 	}
+	if err := claimPreviewDirectory(dir); err != nil {
+		return nil, err
+	}
 
 	cfg := &Config{
-		Dir:             dir,
-		DefaultAgent:    "claude",
-		DefaultEmbedder: "auto",
-		PollInterval:    "1s",
-		Vars:            make(map[string]string),
+		Dir:              dir,
+		DefaultAgent:     "claude",
+		DefaultEmbedder:  "auto",
+		PollInterval:     "1s",
+		Vars:             make(map[string]string),
+		providerDataHome: providerDataHome,
 	}
 
 	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
@@ -69,6 +92,9 @@ func Load() (*Config, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if err := ValidatePreviewRelay(cfg.RoostURL); err != nil {
+		return nil, err
 	}
 	cfg.Dir = dir
 	if cfg.Vars == nil {

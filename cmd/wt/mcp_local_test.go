@@ -528,14 +528,11 @@ func TestRoostMCPSandboxExplainBoundsExplicitConfig(t *testing.T) {
 	}
 }
 
-// TestAgentStartArgsAreValidated keeps the passthrough from becoming a hole.
-// These arguments become argv for a real process, so they are checked before a
-// session is ever spawned rather than failing somewhere inside the egg.
+// Provider disabling flags must survive both separated and equals argv forms.
+// NUL is rejected before spawn; empty values are preserved literally.
 func TestAgentStartArgsAreValidated(t *testing.T) {
 	tests := map[string][]string{
-		"empty argument":   {""},
-		"NUL byte":         {"--model\x00sonnet"},
-		"blank after trim": {"   "},
+		"NUL byte": {"--model\x00sonnet"},
 	}
 	for name, args := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -544,11 +541,15 @@ func TestAgentStartArgsAreValidated(t *testing.T) {
 			}
 		})
 	}
-	if err := validateAgentArgs([]string{"--model", "sonnet"}); err != nil {
-		t.Fatalf("rejected ordinary args: %v", err)
-	}
-	if err := validateAgentArgs(nil); err != nil {
-		t.Fatalf("rejected empty args: %v", err)
+	for _, args := range [][]string{
+		nil,
+		{"--model", "claude-opus-5-5", "--tools", "", "--setting-sources", ""},
+		{"--model=claude-opus-5-5", "--tools=", "--setting-sources="},
+		{" \t "},
+	} {
+		if err := validateAgentArgs(args); err != nil {
+			t.Fatalf("rejected literal argv %q: %v", args, err)
+		}
 	}
 }
 

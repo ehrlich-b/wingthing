@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DOM, S } from '../src/state.js';
-import { activateURLPreview, closePreview, discardPreview, handlePreview, togglePreview } from '../src/preview.js';
+import { activateURLPreview, closePreview, discardPreview, handlePreview, togglePreview, setPreviewSession } from '../src/preview.js';
 
 function fakeElement() {
     return {
@@ -35,6 +35,7 @@ function installPreviewDOM() {
     S.fitAddon = null;
     globalThis.requestAnimationFrame = function(callback) { callback(); };
     discardPreview();
+    setPreviewSession(null);
 }
 
 test('receiving an agent URL preview cannot make a browser network request', function() {
@@ -101,4 +102,31 @@ test('a preview update preserves a user-closed panel until explicit reopen', fun
     assert.match(DOM.previewIframe.srcdoc, /Updated/);
 
     closePreview();
+});
+
+test('equal IDs on different wings keep preview content, open state and removal separate', function() {
+    installPreviewDOM();
+    setPreviewSession('same-provider-id', 'mac');
+    handlePreview({ mode: 'content', filename: 'mac.md', content: '# Mac result' });
+    assert.match(DOM.previewIframe.srcdoc, /Mac result/);
+    closePreview();
+
+    setPreviewSession('same-provider-id', 'linux');
+    assert.equal(DOM.previewPanel.style.display, 'none');
+    assert.equal(DOM.previewToggleBtn.style.display, 'none');
+    handlePreview({ mode: 'content', filename: 'linux.md', content: '# Linux result' });
+    assert.match(DOM.previewIframe.srcdoc, /Linux result/);
+
+    setPreviewSession('same-provider-id', 'mac');
+    assert.equal(DOM.previewPanel.style.display, 'none');
+    assert.equal(togglePreview(), true);
+    assert.match(DOM.previewIframe.srcdoc, /Mac result/);
+    discardPreview('same-provider-id', 'mac');
+    assert.equal(togglePreview(), false);
+
+    setPreviewSession('same-provider-id', 'linux');
+    assert.equal(DOM.previewPanel.style.display, '');
+    assert.match(DOM.previewIframe.srcdoc, /Linux result/);
+    discardPreview('same-provider-id', 'linux');
+    setPreviewSession(null);
 });

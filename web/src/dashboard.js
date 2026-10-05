@@ -134,9 +134,10 @@ function applyWingEvent(ev) {
         tunnelCloseWing(ev.wing_id);
         // DON'T clear sessions — wing might reconnect momentarily
     } else if (ev.type === 'session.attention' && ev.session_id) {
-        setNotification(ev.session_id);
-        if (isCanvasActive()) canvasSetAttention(ev.session_id);
+        setNotification(ev.session_id, ev.wing_id);
+        if (isCanvasActive()) canvasSetAttention(ev.session_id, ev.wing_id);
         renderSidebar();
+        if (S.activeView === 'home') renderDashboard();
         return;
     }
 
@@ -144,11 +145,12 @@ function applyWingEvent(ev) {
     saveWingCache();
     rebuildAgentLists();
     updateHeaderStatus();
+    renderSidebar();
     if (S.activeView === 'home') {
         if (needsFullRender) {
             renderDashboard();
         } else {
-            updateWingCardStatus(ev.wing_id);
+            renderDashboard();
         }
         pingWingDot(ev.wing_id);
     } else if (S.activeView === 'wing-detail' && S.currentWingId === ev.wing_id) {

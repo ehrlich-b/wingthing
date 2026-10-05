@@ -25,6 +25,7 @@ import (
 
 	"github.com/creack/pty"
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
+	"github.com/ehrlich-b/wingthing/internal/config"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"google.golang.org/grpc"
@@ -46,13 +47,15 @@ var (
 type Server struct {
 	pb.UnimplementedEggServer
 
-	dir        string // ~/.wingthing/eggs/<session-id>/
-	token      string
-	session    *Session
-	mu         sync.RWMutex
-	grpcServer *grpc.Server
-	listener   net.Listener
-	metaMu     sync.Mutex
+	dir            string // ~/.wingthing/eggs/<session-id>/
+	token          string
+	session        *Session
+	mu             sync.RWMutex
+	grpcServer     *grpc.Server
+	listener       net.Listener
+	metaMu         sync.Mutex
+	exclusiveInput bool
+	inputLease     inputLease
 }
 
 // Session holds a single PTY process and its state.
@@ -81,6 +84,7 @@ type Session struct {
 	idleTimeout    time.Duration // 0 = disabled
 	done           chan struct{} // closed when process exits
 	exitCode       int
+	cancelled      bool
 	debug          bool
 	audit          bool
 	auditor        *inputAuditor // nil when audit disabled
@@ -130,6 +134,8 @@ type RunConfig struct {
 	ToolNames                  []string      // names of privileged tools (for shim generation)
 	ToolSocketPath             string        // path to tool.sock (set by wing, empty = no tools)
 	OuterBoundary              bool          // explicit trusted-host marker from the parent process
+	ProtectedWriteTargets      []string      // host-owned paths the final sandbox policy must keep unwritable (empty = no contract)
+	OmitBrowserBridge          bool          // no browser request file, shim, BROWSER/WT_SESSION_DIR env, PATH entry or mount
 }
 
 // replayBuffer is an append-only (bounded) log of PTY output.
@@ -469,13 +475,17 @@ func utf8SafeCut(data []byte, offset int) int {
 // NewServer creates a new per-session egg server.
 // dir is the session directory: ~/.wingthing/eggs/<session-id>/
 func NewServer(dir string) (*Server, error) {
+	if err := ValidateSocketPath(filepath.Join(dir, "egg.sock")); err != nil {
+		return nil, err
+	}
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
 	return &Server{
-		dir:   dir,
-		token: fmt.Sprintf("%x", tokenBytes),
+		dir:            dir,
+		token:          fmt.Sprintf("%x", tokenBytes),
+		exclusiveInput: config.Channel() == "preview",
 	}, nil
 }
 
@@ -511,7 +521,17 @@ func stripMouseTracking(data []byte) []byte {
 }
 
 // RunSession is the core lifecycle: create sandbox, start agent in PTY, serve gRPC, exit when done.
-func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
+func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
+	if err := ValidateSocketPath(filepath.Join(s.dir, "egg.sock")); err != nil {
+		return err
+	}
+	defer func() {
+		if runErr != nil {
+			if err := RecordSessionProcessEvent(s.dir, "session_failed", "failed", "egg startup or control process failed"); err != nil {
+				log.Printf("egg: persist lifecycle failure: %v", err)
+			}
+		}
+	}()
 	if err := validatePTYSize(rc.Cols, rc.Rows); err != nil {
 		return err
 	}
@@ -534,6 +554,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		return errors.New("outer-boundary mode cannot be combined with filesystem, network, environment, or resource restrictions")
 	}
 	hasSandbox := !rc.OuterBoundary
+	if err := ValidatePreviewClaudeBoundary(rc.Agent, rc.Command, rc.OuterBoundary); err != nil {
+		return err
+	}
+	if err := ValidateProtectedWriteTargetBoundary(rc.ProtectedWriteTargets, hasSandbox); err != nil {
+		return err
+	}
 	if hasSandbox {
 		if ok, help := sandbox.CheckCapability(); !ok {
 			return fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
@@ -611,6 +637,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	// Prepend ~/.local/bin to PATH so agents like Claude Code find their
 	// native installation and don't warn about missing PATH entries.
 	home := envMap["HOME"]
+	if rc.Agent == "claude" && len(rc.Command) == 0 && rc.ProviderSessionID != "" {
+		args, err = ClaudeLifecycleArgs(args, home, filepath.Base(s.dir), rc.ProviderSessionID)
+		if err != nil {
+			return fmt.Errorf("prepare native lifecycle hooks: %w", err)
+		}
+	}
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")
 		if p, ok := envMap["PATH"]; ok {
@@ -661,35 +693,15 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	// Browser open interception shim. The request file is the only writable
 	// object from the session directory exposed to a sandbox; logs, metadata,
 	// tokens, and control sockets remain outside its writable mount set.
-	browserRequestsPath := filepath.Join(s.dir, "browser-requests")
-	browserRequests, err := os.OpenFile(browserRequestsPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("create browser request file: %w", err)
-	}
-	if err := browserRequests.Close(); err != nil {
-		return fmt.Errorf("close browser request file: %w", err)
-	}
-	shimDir := filepath.Join(s.dir, "shims")
-	if err := os.MkdirAll(shimDir, 0o755); err != nil {
-		return fmt.Errorf("create browser shim directory: %w", err)
-	}
-	shimScript := "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$WT_SESSION_DIR/browser-requests\"\n"
-	shimPath := filepath.Join(shimDir, "wt-browser")
-	if err := os.WriteFile(shimPath, []byte(shimScript), 0o755); err != nil {
-		return fmt.Errorf("write browser shim: %w", err)
-	}
-	if err := os.Symlink("wt-browser", filepath.Join(shimDir, "open")); err != nil {
-		return fmt.Errorf("link open browser shim: %w", err)
-	}
-	if err := os.Symlink("wt-browser", filepath.Join(shimDir, "xdg-open")); err != nil {
-		return fmt.Errorf("link xdg-open browser shim: %w", err)
-	}
-	envMap["BROWSER"] = "wt-browser"
-	envMap["WT_SESSION_DIR"] = s.dir
-	if path, ok := envMap["PATH"]; ok {
-		envMap["PATH"] = shimDir + ":" + path
-	} else {
-		envMap["PATH"] = shimDir + ":/usr/bin:/bin"
+	// OmitBrowserBridge drops the whole optional bridge (file, shim, env, PATH
+	// entry and mount) instead of granting any write exception.
+	browserRequestsPath, shimDir := "", ""
+	if !rc.OmitBrowserBridge {
+		browserRequestsPath = filepath.Join(s.dir, "browser-requests")
+		shimDir = filepath.Join(s.dir, "shims")
+		if err := installBrowserBridge(envMap, s.dir, browserRequestsPath, shimDir); err != nil {
+			return err
+		}
 	}
 
 	// Generate tool shims for privileged tools (called via wt tool-call).
@@ -714,12 +726,24 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		}
 		if path, ok := envMap["PATH"]; ok {
 			envMap["PATH"] = toolsDir + ":" + path
-		} else {
+		} else if shimDir != "" {
 			envMap["PATH"] = toolsDir + ":" + shimDir + ":/usr/bin:/bin"
+		} else {
+			envMap["PATH"] = toolsDir + ":/usr/bin:/bin"
 		}
 	}
 
-	// Build envSlice AFTER proxy setup so HTTPS_PROXY etc. are included
+	// Native hooks, snapshots, history and mounts still use rc.UserHome. Only
+	// macOS Claude's final subprocess receives its real OS-user HOME so the
+	// system Keychain can resolve the existing user-domain preference context.
+	previewClaudeOSHome := ""
+	if config.Channel() == "preview" && runtime.GOOS == "darwin" && rc.Agent == "claude" && len(rc.Command) == 0 {
+		previewClaudeOSHome, err = ApplyPreviewClaudeOSContext(envMap, rc.UserHome)
+		if err != nil {
+			return err
+		}
+	}
+	// Build envSlice AFTER proxy and OS-context setup.
 	var envSlice []string
 	for k, v := range envMap {
 		envSlice = append(envSlice, k+"="+v)
@@ -740,10 +764,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			fsHome = rc.UserHome
 		}
 		mounts, deny, denyWrite := ParseFSRules(rc.FS, fsHome)
-		mounts = append(mounts, sandbox.Mount{
-			Source: browserRequestsPath,
-			Target: browserRequestsPath,
-		})
+		if browserRequestsPath != "" {
+			mounts = append(mounts, sandbox.Mount{
+				Source: browserRequestsPath,
+				Target: browserRequestsPath,
+			})
+		}
 
 		// Auto-inject agent binary install root so sandbox can find it.
 		if home != "" && len(mounts) > 0 {
@@ -804,6 +830,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		}
 
 		allowSockets := sandboxAllowedSockets(rc.ToolSocketPath, envMap)
+		if previewClaudeOSHome != "" {
+			protected, err := GuardPreviewClaudeMounts(mounts, previewClaudeOSHome)
+			if err != nil {
+				return err
+			}
+			deny = append(deny, protected...)
+		}
 
 		sbCfg := sandbox.Config{
 			Mounts:       mounts,
@@ -822,11 +855,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 			UserHome:     rc.UserHome,
 			Trace:        rc.Trace,
 			AllowSockets: allowSockets,
+			// Enforced against the final emitted policy inside sandbox.New.
+			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
 		}
 
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
-			return fmt.Errorf("sandbox: %v", err)
+			return fmt.Errorf("sandbox: %w", err)
 		}
 		cmd, err = sb.Exec(context.Background(), binPath, args)
 		if err != nil {
@@ -985,10 +1020,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 	if hasSandbox {
 		isolationMode = "wingthing-sandbox"
 	}
-	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nprovider_session_id=%s\n",
-		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix(), rc.ProviderSessionID)
+	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nprovider_session_id=%s\nprovider_home=%s\n",
+		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix(), rc.ProviderSessionID, captureHome)
 	if err := atomicWritePrivate(metaPath, []byte(metaContent)); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
+	}
+	if err := RecordSessionProcessEvent(s.dir, "session_started", "starting", "provider process started; awaiting native readiness"); err != nil {
+		log.Printf("egg: persist lifecycle startup: %v", err)
 	}
 
 	s.grpcServer = grpc.NewServer(
@@ -1064,6 +1102,22 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 				log.Printf("egg: final chat capture: %v", err)
 			}
 		}
+		if _, err := ReadSessionLifecycle(s.dir, rc.Agent, rc.CWD, captureHome, rc.ProviderSessionID, true, 0, 1); err != nil {
+			log.Printf("egg: final native lifecycle import: %v", err)
+		}
+		sess.mu.Lock()
+		cancelled := sess.cancelled
+		sess.mu.Unlock()
+		state, reason := "completed", fmt.Sprintf("provider process exited with code %d", exitCode)
+		if exitCode != 0 || cancelled {
+			state = "failed"
+			if cancelled {
+				reason = "session cancelled by caller"
+			}
+		}
+		if err := RecordSessionProcessEvent(s.dir, "session_exit", state, reason); err != nil {
+			log.Printf("egg: persist lifecycle exit: %v", err)
+		}
 
 		// Give gRPC a moment to send exit_code, then stop
 		time.Sleep(500 * time.Millisecond)
@@ -1084,6 +1138,66 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) error {
 		s.cleanup()
 		return err
 	}
+}
+
+// ValidateProtectedWriteTargetBoundary refuses a protected set that no sandbox policy
+// will enforce. It is an early, typed refusal only; overlap enforcement happens
+// against the final emitted policy in sandbox.New.
+func ValidateProtectedWriteTargetBoundary(targets []string, hasSandbox bool) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	if err := sandbox.ValidateProtectedWriteTargets(targets); err != nil {
+		return err
+	}
+	if !hasSandbox {
+		return &sandbox.ProtectedWriteTargetError{Reason: "outer-boundary mode has no sandbox policy to enforce protected write targets; refusing nonempty protected set"}
+	}
+	return nil
+}
+
+// installBrowserBridge creates the session's browser request file and open
+// shims and points BROWSER and PATH at them.
+func installBrowserBridge(envMap map[string]string, sessionDir, browserRequestsPath, shimDir string) error {
+	browserRequests, err := os.OpenFile(browserRequestsPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create browser request file: %w", err)
+	}
+	if err := browserRequests.Close(); err != nil {
+		return fmt.Errorf("close browser request file: %w", err)
+	}
+	if err := os.MkdirAll(shimDir, 0o755); err != nil {
+		return fmt.Errorf("create browser shim directory: %w", err)
+	}
+	shimScript := "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$WT_SESSION_DIR/browser-requests\"\n"
+	shimPath := filepath.Join(shimDir, "wt-browser")
+	if err := os.WriteFile(shimPath, []byte(shimScript), 0o755); err != nil {
+		return fmt.Errorf("write browser shim: %w", err)
+	}
+	if err := installBrowserShimAlias(shimDir, "open", shimScript); err != nil {
+		return fmt.Errorf("link open browser shim: %w", err)
+	}
+	if err := installBrowserShimAlias(shimDir, "xdg-open", shimScript); err != nil {
+		return fmt.Errorf("link xdg-open browser shim: %w", err)
+	}
+	envMap["BROWSER"] = "wt-browser"
+	envMap["WT_SESSION_DIR"] = sessionDir
+	if path, ok := envMap["PATH"]; ok {
+		envMap["PATH"] = shimDir + ":" + path
+	} else {
+		envMap["PATH"] = shimDir + ":/usr/bin:/bin"
+	}
+	return nil
+}
+
+func installBrowserShimAlias(dir, name, script string) error {
+	path := filepath.Join(dir, name)
+	if config.Channel() == "preview" {
+		// Preview's state preflight rejects artifact aliases. These tiny
+		// generated wrappers must be regular files so inspection/restart works.
+		return os.WriteFile(path, []byte(script), 0755)
+	}
+	return os.Symlink("wt-browser", path)
 }
 
 // sandboxAllowedSockets converts already-filtered endpoint environment into
@@ -1122,6 +1236,9 @@ func sandboxAllowedSockets(toolSocket string, envMap map[string]string) []string
 // not to strand an agent process with no way to attach or terminate it.
 func (s *Server) prepareEndpoint() (net.Listener, error) {
 	sockPath := filepath.Join(s.dir, "egg.sock")
+	if err := ValidateSocketPath(sockPath); err != nil {
+		return nil, err
+	}
 	tokenPath := filepath.Join(s.dir, "egg.token")
 	pidPath := filepath.Join(s.dir, "egg.pid")
 
@@ -1186,6 +1303,9 @@ func (s *Server) shutdown() {
 	sess := s.session
 	s.mu.RUnlock()
 	if sess != nil && sess.cmd != nil && sess.cmd.Process != nil {
+		sess.mu.Lock()
+		sess.cancelled = true
+		sess.mu.Unlock()
 		if err := sess.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			log.Printf("egg: signal session during shutdown: %v", err)
 		}
@@ -1222,8 +1342,7 @@ func (s *Server) cleanup() {
 	s.mu.RUnlock()
 	// Keep session dir if audit recordings or chat history exist
 	hasAudit := sess != nil && sess.audit
-	_, hasChat := os.Stat(filepath.Join(s.dir, "chat.jsonl.gz"))
-	if !hasAudit && hasChat != nil {
+	if !hasAudit && !HasRetainedSessionData(s.dir) {
 		if err := os.RemoveAll(s.dir); err != nil {
 			log.Printf("egg: remove session directory: %v", err)
 		}
@@ -1488,6 +1607,9 @@ func (s *Server) Kill(ctx context.Context, req *pb.KillRequest) (*pb.KillRespons
 	if sess == nil {
 		return nil, status.Error(codes.NotFound, "no session")
 	}
+	sess.mu.Lock()
+	sess.cancelled = true
+	sess.mu.Unlock()
 	if err := terminateSession(ctx, sess, 3*time.Second); err != nil {
 		return nil, status.Errorf(codes.Internal, "terminate session: %v", err)
 	}
@@ -1540,21 +1662,34 @@ func (s *Server) Resize(ctx context.Context, req *pb.ResizeRequest) (*pb.ResizeR
 	if err := validatePTYSize(req.Cols, req.Rows); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	if err := pty.Setsize(sess.ptmx, &pty.Winsize{
-		Cols: uint16(req.Cols),
-		Rows: uint16(req.Rows),
-	}); err != nil {
-		return nil, status.Errorf(codes.Internal, "resize PTY: %v", err)
+	if s.exclusiveInput {
+		if err := s.inputLease.resize(req.AttachmentId, req.InputEpoch, req.AttachmentToken, func() error { return s.resizeSession(sess, req.Rows, req.Cols) }); err != nil {
+			return nil, err
+		}
+		return &pb.ResizeResponse{}, nil
 	}
-	select {
-	case sess.vtermCh <- vtermMsg{resize: &vtermResize{int(req.Cols), int(req.Rows)}}:
-	default:
-	}
-	sess.writeAuditResize(req.Cols, req.Rows)
-	if err := s.updateMetaDimensions(req.Cols, req.Rows); err != nil {
-		log.Printf("egg: update terminal metadata: %v", err)
+	if err := s.resizeSession(sess, req.Rows, req.Cols); err != nil {
+		return nil, err
 	}
 	return &pb.ResizeResponse{}, nil
+}
+
+func (s *Server) resizeSession(sess *Session, rows, cols uint32) error {
+	if err := pty.Setsize(sess.ptmx, &pty.Winsize{
+		Cols: uint16(cols),
+		Rows: uint16(rows),
+	}); err != nil {
+		return status.Errorf(codes.Internal, "resize PTY: %v", err)
+	}
+	select {
+	case sess.vtermCh <- vtermMsg{resize: &vtermResize{int(cols), int(rows)}}:
+	default:
+	}
+	sess.writeAuditResize(cols, rows)
+	if err := s.updateMetaDimensions(cols, rows); err != nil {
+		log.Printf("egg: update terminal metadata: %v", err)
+	}
+	return nil
 }
 
 func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
@@ -1565,6 +1700,7 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 		return nil, status.Error(codes.NotFound, "no session")
 	}
 	st := sess.replay.Stats()
+	lease := s.inputLease.info(nil)
 	idleSec := int64(sess.idleDuration().Seconds())
 	return &pb.StatusResponse{
 		SessionId:      sess.ID,
@@ -1576,6 +1712,8 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 		UptimeSeconds:  int64(time.Since(sess.StartedAt).Seconds()),
 		RenderedConfig: sess.RenderedConfig,
 		IdleSeconds:    idleSec,
+		WriterId:       lease.WriterId, WriterOwner: lease.WriterOwner, InputEpoch: lease.InputEpoch,
+		ProcessPid: int32(sess.PID),
 	}, nil
 }
 
@@ -1594,6 +1732,39 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 	}
 
 	sessionID := msg.SessionId
+	if options := msg.AttachOptions; options != nil {
+		if len(options.Owner) > 128 {
+			return status.Error(codes.InvalidArgument, "attachment owner label must be at most 128 bytes")
+		}
+		if options.ReadOnly && (options.Claim || options.Takeover || options.Rows != 0 || options.Cols != 0) {
+			return status.Error(codes.PermissionDenied, "read-only attachment cannot claim, take over, or resize")
+		}
+		if options.Rows != 0 || options.Cols != 0 {
+			if err := validatePTYSize(options.Cols, options.Rows); err != nil {
+				return status.Error(codes.InvalidArgument, err.Error())
+			}
+		}
+	}
+	var attachment *inputAttachment
+	if s.exclusiveInput {
+		attachment = s.inputLease.register(msg.AttachOptions)
+		defer s.inputLease.release(attachment)
+		if options := msg.AttachOptions; options != nil && (options.Claim || options.Takeover) {
+			if err := s.inputLease.claim(attachment, options.Takeover); err != nil {
+				return err
+			}
+		}
+	}
+	if options := msg.AttachOptions; options != nil && options.Rows != 0 {
+		resize := func() error { return s.resizeSession(sess, options.Rows, options.Cols) }
+		if s.exclusiveInput {
+			if err := s.inputLease.mutation(attachment, resize); err != nil {
+				return err
+			}
+		} else if err := resize(); err != nil {
+			return err
+		}
+	}
 	var startOffset int64
 
 	if msg.GetAttach() {
@@ -1623,8 +1794,9 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 			snapshot, startOffset = sess.replay.Snapshot()
 		}
 		if err := stream.Send(&pb.SessionMsg{
-			SessionId: sessionID,
-			Payload:   &pb.SessionMsg_Output{Output: snapshot},
+			SessionId:      sessionID,
+			AttachmentInfo: s.inputLease.info(attachment),
+			Payload:        &pb.SessionMsg_Output{Output: snapshot},
 		}); err != nil {
 			return err
 		}
@@ -1678,9 +1850,41 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 		}
 	}()
 
-	// Read input from client.
+	// Recv may block while an old writer is revoked. Returning from the RPC
+	// cancels its output cursor without stopping the session process.
+	type incoming struct {
+		message *pb.SessionMsg
+		err     error
+	}
+	incomingCh := make(chan incoming)
+	go func() {
+		for {
+			message, err := stream.Recv()
+			select {
+			case incomingCh <- incoming{message, err}:
+			case <-stream.Context().Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	var revoked <-chan struct{}
+	if attachment != nil {
+		revoked = attachment.revoked
+	}
 	for {
-		msg, err := stream.Recv()
+		var msg *pb.SessionMsg
+		var err error
+		select {
+		case item := <-incomingCh:
+			msg, err = item.message, item.err
+		case <-revoked:
+			return status.Error(codes.Aborted, "terminal attachment taken over; attach again to request control")
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		}
 		if err != nil {
 			if err == io.EOF {
 				return nil
@@ -1690,32 +1894,36 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 
 		switch p := msg.Payload.(type) {
 		case *pb.SessionMsg_Input:
-			sess.mu.Lock()
-			sess.lastInput = time.Now()
-			sess.mu.Unlock()
-			if sess.auditor != nil {
-				sess.auditor.Process(p.Input)
+			writeInput := func() error {
+				sess.mu.Lock()
+				sess.lastInput = time.Now()
+				sess.mu.Unlock()
+				if sess.auditor != nil {
+					sess.auditor.Process(p.Input)
+				}
+				if _, err := sess.ptmx.Write(p.Input); err != nil {
+					return status.Errorf(codes.Unavailable, "write PTY input: %v", err)
+				}
+				return nil
 			}
-			if _, err := sess.ptmx.Write(p.Input); err != nil {
-				return status.Errorf(codes.Unavailable, "write PTY input: %v", err)
+			if s.exclusiveInput {
+				if err := s.inputLease.mutation(attachment, writeInput); err != nil {
+					return err
+				}
+			} else if err := writeInput(); err != nil {
+				return err
 			}
 		case *pb.SessionMsg_Resize:
 			if err := validatePTYSize(p.Resize.Cols, p.Resize.Rows); err != nil {
 				return status.Error(codes.InvalidArgument, err.Error())
 			}
-			if err := pty.Setsize(sess.ptmx, &pty.Winsize{
-				Cols: uint16(p.Resize.Cols),
-				Rows: uint16(p.Resize.Rows),
-			}); err != nil {
-				return status.Errorf(codes.Internal, "resize PTY: %v", err)
-			}
-			select {
-			case sess.vtermCh <- vtermMsg{resize: &vtermResize{int(p.Resize.Cols), int(p.Resize.Rows)}}:
-			default:
-			}
-			sess.writeAuditResize(p.Resize.Cols, p.Resize.Rows)
-			if err := s.updateMetaDimensions(p.Resize.Cols, p.Resize.Rows); err != nil {
-				log.Printf("egg: update terminal metadata: %v", err)
+			resize := func() error { return s.resizeSession(sess, p.Resize.Rows, p.Resize.Cols) }
+			if s.exclusiveInput {
+				if err := s.inputLease.mutation(attachment, resize); err != nil {
+					return err
+				}
+			} else if err := resize(); err != nil {
+				return err
 			}
 		case *pb.SessionMsg_Detach:
 			if p.Detach {

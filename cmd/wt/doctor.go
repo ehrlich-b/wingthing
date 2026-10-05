@@ -53,6 +53,9 @@ func doctorCmd() *cobra.Command {
 		Short: "Check available agents, embedders, and API keys",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if fixFlag {
+				if config.Channel() == "preview" {
+					return fmt.Errorf("preview does not install or replace host sandbox policy; run %s doctor for diagnostics and review a separate executable-specific host setup", config.BinaryName())
+				}
 				return doctorFix()
 			}
 

@@ -177,15 +177,17 @@ type RegisteredMsg struct {
 // ErrorMsg is sent for protocol/session errors. Session and viewer IDs let a
 // relay route an authorization failure back to the pending attach attempt.
 type ErrorMsg struct {
-	Type      string `json:"type"`
-	Message   string `json:"message"`
-	RequestID string `json:"request_id,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	ViewerID  string `json:"viewer_id,omitempty"`
+	Type         string `json:"type"`
+	Message      string `json:"message"`
+	RequestID    string `json:"request_id,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
+	ViewerID     string `json:"viewer_id,omitempty"`
+	ControllerID string `json:"controller_id,omitempty"`
 }
 
 // PTYStart requests a new interactive terminal session on the wing.
 type PTYStart struct {
+	ControllerID        string   `json:"controller_id,omitempty"` // relay-assigned connection attempt
 	Type                string   `json:"type"`
 	SessionID           string   `json:"session_id"`
 	Agent               string   `json:"agent"` // "claude", "codex", "ollama"
@@ -206,6 +208,7 @@ type PTYStart struct {
 
 // PTYStarted confirms the PTY session is running.
 type PTYStarted struct {
+	ControllerID         string `json:"controller_id,omitempty"`
 	Type                 string `json:"type"`
 	SessionID            string `json:"session_id"`
 	Agent                string `json:"agent"`
@@ -262,10 +265,11 @@ type PTYInput struct {
 
 // PTYResize tells the wing to resize the terminal.
 type PTYResize struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
-	Cols      int    `json:"cols"`
-	Rows      int    `json:"rows"`
+	ControllerID string `json:"controller_id,omitempty"`
+	Type         string `json:"type"`
+	SessionID    string `json:"session_id"`
+	Cols         int    `json:"cols"`
+	Rows         int    `json:"rows"`
 }
 
 // PTYExited tells the browser the process exited.
@@ -279,19 +283,21 @@ type PTYExited struct {
 
 // PTYAttach requests reattachment to an existing PTY session.
 type PTYAttach struct {
-	Type      string   `json:"type"`
-	SessionID string   `json:"session_id"`
-	PublicKey string   `json:"public_key,omitempty"` // new browser ephemeral key
-	WingID    string   `json:"wing_id,omitempty"`    // target wing (for relay routing)
-	AuthToken string   `json:"auth_token,omitempty"` // cached passkey auth token
-	UserID    string   `json:"user_id,omitempty"`    // relay-injected
-	OrgRole   string   `json:"org_role,omitempty"`   // relay-injected: "owner", "admin", "member", ""
-	Cols      uint32   `json:"cols,omitempty"`       // browser terminal cols (for resize-before-snapshot)
-	Rows      uint32   `json:"rows,omitempty"`       // browser terminal rows (for resize-before-snapshot)
-	Spectate  bool     `json:"spectate,omitempty"`   // read-only spectator mode
-	ViewerID  string   `json:"viewer_id,omitempty"`  // relay-assigned attach attempt ID
-	Email     string   `json:"email,omitempty"`      // relay-injected user email
-	Passkeys  []string `json:"passkeys,omitempty"`   // relay-injected passkey attestation
+	ControllerID string   `json:"controller_id,omitempty"` // relay-assigned connection attempt
+	Takeover     bool     `json:"takeover,omitempty"`      // deliberate writer replacement
+	Type         string   `json:"type"`
+	SessionID    string   `json:"session_id"`
+	PublicKey    string   `json:"public_key,omitempty"` // new browser ephemeral key
+	WingID       string   `json:"wing_id,omitempty"`    // target wing (for relay routing)
+	AuthToken    string   `json:"auth_token,omitempty"` // cached passkey auth token
+	UserID       string   `json:"user_id,omitempty"`    // relay-injected
+	OrgRole      string   `json:"org_role,omitempty"`   // relay-injected: "owner", "admin", "member", ""
+	Cols         uint32   `json:"cols,omitempty"`       // browser terminal cols (for resize-before-snapshot)
+	Rows         uint32   `json:"rows,omitempty"`       // browser terminal rows (for resize-before-snapshot)
+	Spectate     bool     `json:"spectate,omitempty"`   // read-only spectator mode
+	ViewerID     string   `json:"viewer_id,omitempty"`  // relay-assigned attach attempt ID
+	Email        string   `json:"email,omitempty"`      // relay-injected user email
+	Passkeys     []string `json:"passkeys,omitempty"`   // relay-injected passkey attestation
 }
 
 // PTYKill requests termination of a PTY session.
@@ -302,8 +308,10 @@ type PTYKill struct {
 
 // PTYDetach explicitly detaches the browser from a PTY session.
 type PTYDetach struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id"`
+	ControllerID string `json:"controller_id,omitempty"`
+	ViewerID     string `json:"viewer_id,omitempty"`
+	Type         string `json:"type"`
+	SessionID    string `json:"session_id"`
 }
 
 // PTYAttentionAck acknowledges a notification was seen by the browser.
@@ -352,16 +360,21 @@ type SessionAttention struct {
 
 // SessionInfo describes one active session on a wing (used in tunnel sessions.list responses).
 type SessionInfo struct {
-	SessionID      string `json:"session_id"`
-	Name           string `json:"name,omitempty"`
-	Agent          string `json:"agent"`
-	CWD            string `json:"cwd,omitempty"`
-	EggConfig      string `json:"-"` // server-only effective YAML config snapshot
-	NeedsAttention bool   `json:"needs_attention,omitempty"`
-	Audit          bool   `json:"audit,omitempty"` // true if session has audit recording
-	Chat           bool   `json:"chat,omitempty"`  // true if session has chat history
-	UserID         string `json:"user_id,omitempty"`
-	Email          string `json:"email,omitempty"`
+	ConversationID       string         `json:"conversation_id,omitempty"`
+	RootConversationID   string         `json:"root_conversation_id,omitempty"`
+	ParentConversationID string         `json:"parent_conversation_id,omitempty"`
+	ConversationRole     string         `json:"conversation_role,omitempty"`
+	Lifecycle            map[string]any `json:"lifecycle,omitempty"`
+	SessionID            string         `json:"session_id"`
+	Name                 string         `json:"name,omitempty"`
+	Agent                string         `json:"agent"`
+	CWD                  string         `json:"cwd,omitempty"`
+	EggConfig            string         `json:"-"` // server-only effective YAML config snapshot
+	NeedsAttention       bool           `json:"needs_attention,omitempty"`
+	Audit                bool           `json:"audit,omitempty"` // true if session has audit recording
+	Chat                 bool           `json:"chat,omitempty"`  // true if session has chat history
+	UserID               string         `json:"user_id,omitempty"`
+	Email                string         `json:"email,omitempty"`
 }
 
 // DirEntry is a single entry in a directory listing.

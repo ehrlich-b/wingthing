@@ -17,10 +17,13 @@ import (
 	"golang.org/x/term"
 )
 
+// remoteInvocation.state is a lexical absolute path on the remote host. It is
+// never resolved locally: the receiving executable owns its own state checks.
 type remoteInvocation struct {
 	target      string
 	binary      string
 	cwd         string
+	state       string
 	args        []string
 	allocateTTY bool
 }
@@ -44,6 +47,14 @@ func remoteProcessIO() remoteIO {
 }
 
 func executeCLI(ctx context.Context, args []string, streams remoteIO) error {
+	var err error
+	args, err = channelInvocationArgs(args)
+	if err != nil {
+		return err
+	}
+	if err := validatePreviewInvocation(args); err != nil {
+		return err
+	}
 	// tool-call is an internal transport for generated privileged-tool shims.
 	// Everything after it belongs to the native tool, including values that look
 	// like Wingthing's global remote flags.
@@ -62,9 +73,10 @@ func executeCLI(ctx context.Context, args []string, streams remoteIO) error {
 }
 
 func parseRemoteInvocation(argv []string, interactive bool) (remoteInvocation, bool, error) {
-	invocation := remoteInvocation{binary: "wt"}
+	invocation := remoteInvocation{binary: config.BinaryName()}
 	args := make([]string, 0, len(argv))
 	transportSeen := false
+	stateSeen := false
 	for i := 0; i < len(argv); i++ {
 		arg := argv[i]
 		if arg == "--" {
@@ -95,6 +107,12 @@ func parseRemoteInvocation(argv []string, interactive bool) (remoteInvocation, b
 			invocation.binary = value
 		case "--remote-cwd":
 			invocation.cwd = value
+		case "--remote-state":
+			if stateSeen {
+				return remoteInvocation{}, false, errors.New("--remote-state may be specified only once")
+			}
+			stateSeen = true
+			invocation.state = value
 		}
 	}
 
@@ -113,19 +131,26 @@ func parseRemoteInvocation(argv []string, interactive bool) (remoteInvocation, b
 	if strings.IndexByte(invocation.cwd, 0) >= 0 {
 		return remoteInvocation{}, false, errors.New("remote working directory contains a NUL byte")
 	}
-	if invocation.cwd != "" && len(args) > 0 {
+	if stateSeen {
+		if err := validateRemoteState(invocation.state); err != nil {
+			return remoteInvocation{}, false, err
+		}
+	}
+	bareEntry := len(args) == 0 || remoteJSONOnly(args)
+	if invocation.cwd != "" && !bareEntry {
 		return remoteInvocation{}, false, errors.New("--remote-cwd is only valid with bare 'wt --remote HOST'; use the command's --cwd flag for launches")
 	}
 
-	if len(args) == 0 {
+	if bareEntry {
 		invocation.args = []string{"_remote", "enter"}
+		invocation.args = append(invocation.args, args...)
 		if invocation.cwd != "" {
 			invocation.args = append(invocation.args, "--cwd", invocation.cwd)
 		}
 		if !interactive {
 			invocation.args = append(invocation.args, "--json")
 		}
-		invocation.allocateTTY = interactive
+		invocation.allocateTTY = interactive && !boolFlagBeforeDash(invocation.args[2:], "json", "")
 		return invocation, true, nil
 	}
 	if err := validateRemoteCommand(args); err != nil {
@@ -136,14 +161,23 @@ func parseRemoteInvocation(argv []string, interactive bool) (remoteInvocation, b
 	return invocation, true, nil
 }
 
+func remoteJSONOnly(args []string) bool {
+	for _, arg := range args {
+		if arg != "--json" && !strings.HasPrefix(arg, "--json=") {
+			return false
+		}
+	}
+	return len(args) > 0
+}
+
 func remoteTransportFlag(arg string) (name, value string, inline, matched bool) {
 	switch arg {
 	case "--remote", "-r":
 		return "--remote", "", false, true
-	case "--remote-binary", "--remote-cwd":
+	case "--remote-binary", "--remote-cwd", "--remote-state":
 		return arg, "", false, true
 	}
-	for _, name := range []string{"--remote", "--remote-binary", "--remote-cwd"} {
+	for _, name := range []string{"--remote", "--remote-binary", "--remote-cwd", "--remote-state"} {
 		if value, ok := strings.CutPrefix(arg, name+"="); ok {
 			return name, value, true, true
 		}
@@ -177,6 +211,29 @@ func validateRemoteBinary(binary string) error {
 	return nil
 }
 
+// validateRemoteState accepts only a POSIX absolute path for the remote host.
+// It deliberately avoids filepath.Abs, Clean, and EvalSymlinks: the client's
+// filesystem says nothing about the remote one, and the receiving executable
+// applies its own overlap, alias, and channel-marker checks before any write.
+//
+// The byte contract matches --remote and --remote-binary: NUL cannot reach an
+// environment value, and CR or LF would split the one-line remote command for
+// SSH logs and non-POSIX login shells. Every other byte, including tab and
+// other control bytes, is legal in a POSIX path and stays inert inside the
+// single-quoted assignment, so it is passed through literally.
+func validateRemoteState(state string) error {
+	if state == "" {
+		return errors.New("--remote-state requires a non-empty absolute path on the remote host")
+	}
+	if strings.ContainsAny(state, "\r\n\x00") {
+		return errors.New("--remote-state must not contain NUL, CR, or LF")
+	}
+	if !strings.HasPrefix(state, "/") {
+		return fmt.Errorf("--remote-state must be an absolute path on the remote host, got %q", state)
+	}
+	return nil
+}
+
 func validateRemoteCommand(args []string) error {
 	command := args[0]
 	switch command {
@@ -188,7 +245,7 @@ func validateRemoteCommand(args []string) error {
 			return fmt.Errorf("%s subcommand %q is not available over SSH", command, args[1])
 		}
 		return nil
-	case "terminal", "new", "attach", "help", "--help", "-h", "--version":
+	case "terminal", "new", "attach", "channel", "help", "--help", "-h", "--version":
 		return nil
 	case "session":
 		if len(args) == 1 || remoteSessionCommand(args[1]) {
@@ -196,7 +253,7 @@ func validateRemoteCommand(args []string) error {
 		}
 		return fmt.Errorf("session subcommand %q is not available over SSH; supported subcommands: list, ps, active, read, send, wait, rename, kill, and stop", args[1])
 	}
-	return fmt.Errorf("command %q is not available over SSH; supported commands: egg, terminal, attach, and session", command)
+	return fmt.Errorf("command %q is not available over SSH; supported commands: egg, terminal, attach, session, and channel", command)
 }
 
 func remoteSessionCommand(command string) bool {
@@ -286,7 +343,21 @@ func firstPositionalBeforeDash(args []string) string {
 }
 
 func runRemoteInvocation(ctx context.Context, invocation remoteInvocation, streams remoteIO) error {
-	remoteArgs := append([]string{invocation.binary}, remoteCommandArgs(invocation.args)...)
+	if invocation.state != "" {
+		if err := validateRemoteState(invocation.state); err != nil {
+			return err
+		}
+	}
+	remoteArgs := []string{invocation.binary}
+	if config.Channel() == "preview" || invocation.state != "" {
+		// The receiving executable checks this before opening config, tokens,
+		// sockets, or sessions. Stable receivers released before this flag
+		// reject it as unknown during argument parsing, before they could honor
+		// WINGTHING_DIR without the state channel-marker check. Stable argv
+		// without --remote-state stays unchanged for existing installations.
+		remoteArgs = append(remoteArgs, "--expected-channel", config.Channel())
+	}
+	remoteArgs = append(remoteArgs, remoteCommandArgs(invocation.args)...)
 	quoted := make([]string, len(remoteArgs))
 	for i, arg := range remoteArgs {
 		if strings.IndexByte(arg, 0) >= 0 {
@@ -294,11 +365,20 @@ func runRemoteInvocation(ctx context.Context, invocation remoteInvocation, strea
 		}
 		quoted[i] = shellQuote(arg)
 	}
+	command := strings.Join(quoted, " ")
+	if invocation.state != "" {
+		// POSIX assignment prefixes apply only to this one remote process. Both
+		// names carry the same lexical path: stable reads WINGTHING_DIR, preview
+		// requires the pair to agree. Without --remote-state the command stays
+		// byte-identical to the legacy argv.
+		state := shellQuote(invocation.state)
+		command = "WINGTHING_DIR=" + state + " WINGTHING_PREVIEW_DIR=" + state + " " + command
+	}
 	sshArgs := []string{"-T"}
 	if invocation.allocateTTY {
 		sshArgs[0] = "-t"
 	}
-	sshArgs = append(sshArgs, invocation.target, strings.Join(quoted, " "))
+	sshArgs = append(sshArgs, invocation.target, command)
 	sshPath := streams.sshPath
 	if sshPath == "" {
 		sshPath = "ssh"
@@ -313,7 +393,15 @@ func runRemoteInvocation(ctx context.Context, invocation remoteInvocation, strea
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return &commandExitError{code: exitErr.ExitCode()}
+			message := ""
+			if exitErr.ExitCode() == 255 {
+				reconnect := "reconnect"
+				if invocation.state != "" {
+					reconnect = "reconnect with the same --remote-state"
+				}
+				message = fmt.Sprintf("SSH to %s ended with status 255; check the SSH diagnostic above. Session state is unknown; %s and list sessions before relaunching", invocation.target, reconnect)
+			}
+			return &commandExitError{code: exitErr.ExitCode(), message: message}
 		}
 		return fmt.Errorf("start ssh for %s: %w", invocation.target, err)
 	}

@@ -7,6 +7,8 @@ import { sendTunnelRequest } from './tunnel.js';
 import { loadHome, saveSessionCache, setEggOrder } from './data.js';
 import { stopChatPolling } from './chat-view.js';
 import { showCanvasView, hideCanvasView } from './canvas.js';
+import { findSessionResource, sessionResourceKey } from './session-inventory.js';
+import { sessionRoute } from './session-route.js';
 
 function hideCanvasChrome() {
     if (DOM.canvasToolbar) DOM.canvasToolbar.style.display = 'none';
@@ -61,9 +63,10 @@ export function showHome(pushHistory) {
     DOM.headerTitle.textContent = '';
     DOM.ptyStatus.textContent = '';
     var detachingId = S.ptySessionId;
+    var detachingWingId = S.ptyWingId;
     detachPTY();
     if (detachingId) {
-        var s = S.sessionsData.find(function(s) { return s.id === detachingId; });
+        var s = findSessionResource(S.sessionsData, detachingId, detachingWingId);
         if (s) s.status = 'detached';
     }
     renderSidebar();
@@ -96,15 +99,16 @@ export function showTerminal() {
     return true;
 }
 
-export function switchToSession(sessionId, pushHistory) {
+export function switchToSession(sessionId, pushHistory, wingId) {
     if (hostedRelayUnavailable()) { showHome(pushHistory); return false; }
-    var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
+    var sess = findSessionResource(S.sessionsData, sessionId, wingId);
+    if (!sess && S.sessionsData.filter(function(s) { return s.id === sessionId; }).length > 1) return false;
     if (sess && !sess.swept) return;
     detachPTY();
     if (!showTerminal()) return false;
-    attachPTY(sessionId);
+    attachPTY(sessionId, undefined, wingId || (sess && sess.wing_id));
     if (pushHistory !== false) {
-        history.pushState({ view: 'terminal', sessionId: sessionId }, '', '#s/' + sessionId);
+        history.pushState({ view: 'terminal', sessionId: sessionId, wingId: wingId || (sess && sess.wing_id) }, '', sessionRoute(sessionId, wingId || (sess && sess.wing_id)));
     }
     return true;
 }
@@ -155,18 +159,19 @@ export function navigateToAccount(pushHistory, orgSlug) {
     }
 }
 
-export function deleteSession(sessionId, skipKill) {
-    var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
+export function deleteSession(sessionId, skipKill, targetWingId) {
+    var sess = findSessionResource(S.sessionsData, sessionId, targetWingId);
+    if (!sess && S.sessionsData.filter(function(s) { return s.id === sessionId; }).length > 1) return false;
     var wingId = '';
     if (sess) {
         var wing = S.wingsData.find(function(w) { return w.wing_id === sess.wing_id; });
         if (wing) wingId = wing.wing_id;
     }
-    S.sessionsData = S.sessionsData.filter(function(s) { return s.id !== sessionId; });
-    setEggOrder(S.sessionsData.map(function(s) { return s.id; }));
+    S.sessionsData = S.sessionsData.filter(function(s) { return s.id !== sessionId || (targetWingId && s.wing_id !== targetWingId); });
+    setEggOrder(S.sessionsData.map(sessionResourceKey));
     saveSessionCache();
-    clearTermBuffer(sessionId);
-    delete S.sessionNotifications[sessionId];
+    clearTermBuffer(sessionId, targetWingId || (sess && sess.wing_id));
+    if (targetWingId || sess) delete S.sessionNotifications[sessionResourceKey({ id: sessionId, wingId: targetWingId || sess.wing_id })];
     if (S.activeView === 'home') renderDashboard();
     renderSidebar();
     if (wingId && !skipKill) {

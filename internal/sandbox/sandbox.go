@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -47,6 +48,11 @@ type Config struct {
 	UserHome     string        // per-user home override (empty = os.UserHomeDir)
 	Trace        bool          // wrap command with strace (Linux only)
 	AllowSockets []string      // Unix socket paths to allow outbound connections (macOS Seatbelt)
+	// ProtectedWriteTargets are host-owned absolute paths (e.g. controller
+	// state) that no effective writable rule may reach. The final policy is
+	// refused with ProtectedWriteTargetError on any overlap, and backends that
+	// cannot verify their final policy refuse a nonempty set. Empty = no contract.
+	ProtectedWriteTargets []string
 }
 
 // EnforcementError is returned when the system cannot enforce the requested sandbox config.
@@ -69,6 +75,11 @@ func New(cfg Config) (Sandbox, error) {
 	s, err := newPlatform(cfg)
 	if err == nil {
 		return s, nil
+	}
+	// A protected-target refusal is a policy conflict, not missing isolation.
+	var protectedErr *ProtectedWriteTargetError
+	if errors.As(err, &protectedErr) {
+		return nil, err
 	}
 	return nil, newEnforcementError(cfg, err)
 }

@@ -14,6 +14,8 @@ export var S = {
     ptyWs: null,
     ptySessionId: null,
     ptyWingId: null,
+    ptyControllerId: null,
+    ptyInputBlocked: false,
     term: null,
     fitAddon: null,
     serializeAddon: null,

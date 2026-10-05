@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/ntfy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -79,8 +80,9 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 		// Advertising the configured base avoids teaching current browsers to
 		// guess topology, while the additive field remains safe for old clients.
 		writeJSON(w, http.StatusUnauthorized, map[string]string{
-			"error":          "not logged in",
-			"login_base_url": strings.TrimRight(s.Config.BaseURL, "/"),
+			"error":           "not logged in",
+			"login_base_url":  strings.TrimRight(s.Config.BaseURL, "/"),
+			"release_channel": config.Channel(), "executable": config.BinaryName(), "channel_label": config.ChannelLabel(),
 		})
 		return
 	}
@@ -107,6 +109,7 @@ func (s *Server) handleAppMe(w http.ResponseWriter, r *http.Request) {
 		"relay_allowed":      relayAccess.Allowed,
 		"relay_reason":       relayAccess.Reason,
 		"default_transport":  "direct",
+		"release_channel":    config.Channel(), "executable": config.BinaryName(), "channel_label": config.ChannelLabel(),
 	})
 }
 
@@ -290,7 +293,11 @@ func (s *Server) fetchLatestVersion() {
 
 func fetchLatestGitHubVersion(ctx context.Context) (string, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/ehrlich-b/wingthing/releases/latest", nil)
+	endpoint := "https://api.github.com/repos/ehrlich-b/wingthing/releases/latest"
+	if config.Channel() == "preview" {
+		endpoint = "https://api.github.com/repos/ehrlich-b/wingthing/releases?per_page=100"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", err
 	}
@@ -303,9 +310,28 @@ func fetchLatestGitHubVersion(ctx context.Context) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("github release response: %s", resp.Status)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 	if err != nil {
 		return "", err
+	}
+	if len(body) > 1<<20 {
+		return "", fmt.Errorf("release metadata exceeds 1 MiB")
+	}
+	if config.Channel() == "preview" {
+		var releases []struct {
+			TagName    string `json:"tag_name"`
+			Prerelease bool   `json:"prerelease"`
+			Draft      bool   `json:"draft"`
+		}
+		if err := json.Unmarshal(body, &releases); err != nil {
+			return "", err
+		}
+		for _, release := range releases {
+			if release.Prerelease && !release.Draft && strings.HasPrefix(release.TagName, "v") && strings.Contains(release.TagName, "-preview.") {
+				return release.TagName, nil
+			}
+		}
+		return "", fmt.Errorf("no published preview release")
 	}
 	var release struct {
 		TagName string `json:"tag_name"`

@@ -701,6 +701,11 @@ try {
     await alice.page.waitForSelector(`#session-tabs .session-tab[data-sid="${carolSessionID}"]`, { timeout: 20000 });
     const adminRename = await alice.page.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"] .session-rename-btn`).count();
     record('admin: another user session does not expose rename', adminRename === 0, `rename buttons=${adminRename}`);
+    const foreignCard = alice.page.locator(`#sessions-list .egg-box[data-sid="${carolSessionID}"]`);
+    await foreignCard.waitFor({ state: 'visible', timeout: 20000 });
+    record('admin: inventory preserves allowed inspection and stop while rename remains owner-only',
+      await foreignCard.locator('.inventory-details, .inventory-stop').count() === 2 &&
+      await foreignCard.locator('.inventory-rename').count() === 0);
   } catch (e) {
     record('admin: another user session does not expose rename', false, String(e).slice(0, 200));
   }
@@ -713,6 +718,31 @@ try {
       `session tabs=${visible} files_visible=${filesVisible}`);
   } catch (e) {
     record('bob: another member cannot discover or open Carol session file actions', true, 'deep link refused');
+  }
+
+  try {
+    const p = carol.page;
+    await p.click('#home-btn');
+    await p.waitForSelector('#session-inventory-search', { state: 'visible', timeout: 20000 });
+    await p.fill('#session-inventory-search', 'support-night-review');
+    await p.waitForFunction((id) => {
+      const rows = Array.from(document.querySelectorAll('#sessions-list .egg-box'));
+      return rows.length === 1 && rows[0].dataset.sid === id;
+    }, carolSessionID, { timeout: 10000 });
+    await p.selectOption('#session-inventory-agent', 'claude');
+    const card = p.locator('#sessions-list .egg-box').first();
+    record('carol: search and provider filtering keep a named owned session inspectable',
+      await p.inputValue('#session-inventory-search') === 'support-night-review' &&
+      await card.locator('.inventory-attach, .inventory-details, .inventory-rename, .inventory-stop').count() === 4 &&
+      (await card.textContent()).includes('/opt/wingthing/support'));
+    await p.locator('#session-inventory-search').focus();
+    await p.keyboard.press('ArrowDown');
+    record('carol: keyboard inventory navigation focuses the exact matching session',
+      await p.evaluate((id) => document.activeElement?.dataset.sid === id, carolSessionID));
+    await shot(p, 'carol-filtered-inventory');
+    await p.click('#session-inventory-clear');
+  } catch (e) {
+    record('carol: searchable inventory and keyboard navigation', false, String(e).slice(0, 200));
   }
 
   // ---------- Carol (support member), mobile ----------

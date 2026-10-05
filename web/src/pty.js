@@ -1,4 +1,7 @@
 import { S, DOM } from './state.js';
+import { findSessionResource } from './session-inventory.js';
+import { terminalReferenceMatches } from './session-reference.js';
+import { sessionRoute } from './session-route.js';
 import { e2eDecrypt, deriveE2EKey } from './crypto.js';
 import { identityPubKey } from './crypto.js';
 import { saveTermBuffer, clearTermBuffer } from './terminal.js';
@@ -10,10 +13,40 @@ import { showHome } from './nav.js';
 import { wingDisplayName, formatSessionTitle, b64urlToBytes, bytesToB64url, bytesToB64 } from './helpers.js';
 import { saveTunnelAuthTokens, sendTunnelRequest } from './tunnel.js';
 import { handlePreview, setPreviewSession, discardPreview } from './preview.js';
-import { initWebRTC, completeMigration, cleanupPeer, cleanupSession, dcActive, sendViaDC } from './webrtc.js';
+import { initWebRTC, completeMigration, cleanupPeer, cleanupSession, sendViaDC } from './webrtc.js';
 import { safePreviewURL } from './security.js';
 import { refreshSessionFilesButton, hideSessionFiles } from './session-files.js';
 import { resumeAckMatches } from './pty-resume.js';
+import { terminalControlFailure, terminalControlOptions, ptyAttachRequest, currentTerminalResize, renderTerminalControlNotice } from './terminal-attachment.js';
+
+function clearTerminalControl() {
+    S.ptyControllerId = null;
+    S.ptyInputBlocked = false;
+    renderTerminalControlNotice(document.getElementById('terminal-control-notice'), null);
+}
+
+function handleTerminalControlError(ws, sessionId, wingId, message) {
+    var failure = terminalControlFailure(message);
+    if (!failure || !sessionId || !wingId || !S.currentUser || S.currentUser.release_channel !== 'preview') return false;
+    S.ptyControllerId = null;
+    S.ptyInputBlocked = true;
+    S.ptyReconnecting = false;
+    if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
+    cleanupSession(sessionId, wingId);
+    hideReconnectBanner();
+    hideReplayOverlay();
+    DOM.ptyStatus.textContent = failure.kind === 'busy' ? 'input in use' : 'control changed';
+    var wing = S.wingsData.find(function(item) { return item.wing_id === wingId; });
+    renderTerminalControlNotice(document.getElementById('terminal-control-notice'), failure, wing, S.currentUser, function(mode) {
+        if (ws !== S.ptyWs || wingId !== S.ptyWingId) return;
+        var currentWing = S.wingsData.find(function(item) { return item.wing_id === wingId; });
+        var options = terminalControlOptions(S.currentUser, currentWing, mode);
+        if (!options) return;
+        detachPTY();
+        attachPTY(sessionId, 1, wingId, undefined, options);
+    });
+    return true;
+}
 
 function setSessionActions(active) {
     DOM.terminalCopyBtn.style.display = active ? '' : 'none';
@@ -184,7 +217,8 @@ export async function handlePTYPasskey() {
     }
 }
 
-function setupPTYHandlers(ws, reattach) {
+function setupPTYHandlers(ws, reattach, requestedSessionId) {
+    var connectedWingId = S.ptyWingId;
     var pendingOutput = [];
     var keyReady = false;
     var replayDone = !reattach;
@@ -224,7 +258,7 @@ function setupPTYHandlers(ws, reattach) {
             try {
                 var text = new TextDecoder().decode(bytes);
                 if (checkForNotification(text)) {
-                    setNotification(S.ptySessionId);
+                    setNotification(S.ptySessionId, S.ptyWingId);
                 }
             } catch (ex) {}
         }).catch(function (err) {
@@ -253,6 +287,7 @@ function setupPTYHandlers(ws, reattach) {
             for (var i = 0; i < good.length; i++) { combined.set(good[i], off); off += good[i].length; }
             S.term.reset();
             S.term.write(combined, function () {
+                if (ws !== S.ptyWs) return;
                 hideReplayOverlay();
                 S.term.focus();
                 replayDone = true;
@@ -260,7 +295,7 @@ function setupPTYHandlers(ws, reattach) {
                 pendingOutput = [];
                 queued.forEach(processOutput);
             });
-        }).catch(function () { replayDone = true; hideReplayOverlay(); });
+        }).catch(function () { if (ws === S.ptyWs) { replayDone = true; hideReplayOverlay(); } });
     }
 
     ws.onmessage = function (e) {
@@ -273,7 +308,9 @@ function setupPTYHandlers(ws, reattach) {
                     S.ptyReconnecting = true;
                     DOM.ptyStatus.textContent = 'reconnecting...';
                     showReconnectBanner();
-                    setTimeout(function () { ptyReconnectAttach(sid); }, 1000);
+                    setTimeout(function () {
+                        if (terminalReferenceMatches(S, sid, connectedWingId, ws)) ptyReconnectAttach(sid, 0, connectedWingId);
+                    }, 1000);
                 }
                 return;
 
@@ -283,7 +320,9 @@ function setupPTYHandlers(ws, reattach) {
                     S.ptyReconnecting = true;
                     DOM.ptyStatus.textContent = 'wing restarting...';
                     showReconnectBanner('wing restarting...');
-                    setTimeout(function () { ptyReconnectAttach(sid); }, 1000);
+                    setTimeout(function () {
+                        if (terminalReferenceMatches(S, sid, connectedWingId, ws)) ptyReconnectAttach(sid, 0, connectedWingId);
+                    }, 1000);
                 }
                 return;
 
@@ -319,8 +358,10 @@ function setupPTYHandlers(ws, reattach) {
                 }
                 S.pendingResumeSessionId = null;
                 S.ptySessionId = msg.session_id;
-                setPreviewSession(msg.session_id);
-                var activeSession = S.sessionsData.find(function(s) { return s.id === msg.session_id; });
+                clearTerminalControl();
+                S.ptyControllerId = typeof msg.controller_id === 'string' ? msg.controller_id : null;
+                setPreviewSession(msg.session_id, S.ptyWingId);
+                var activeSession = findSessionResource(S.sessionsData, msg.session_id, S.ptyWingId);
                 if (S.spectating) {
                     var who = activeSession && activeSession.email ? activeSession.email : '';
                     DOM.headerTitle.textContent = 'watching' + (who ? ' ' + who : '') + ' · ' + (msg.agent || '?');
@@ -335,7 +376,7 @@ function setupPTYHandlers(ws, reattach) {
                     saveTunnelAuthTokens();
                 }
                 if (!reattach) {
-                    history.pushState({ view: 'terminal', sessionId: msg.session_id }, '', '#s/' + msg.session_id);
+                    history.pushState({ view: 'terminal', sessionId: msg.session_id, wingId: S.ptyWingId }, '', sessionRoute(msg.session_id, S.ptyWingId));
                 }
 
                 if (msg.public_key) {
@@ -364,22 +405,20 @@ function setupPTYHandlers(ws, reattach) {
 
                 // Dispose previous resize listener to prevent accumulation across sessions
                 if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
+                var resizeBinding = { sessionId: msg.session_id, wingId: connectedWingId, socket: ws, controllerId: S.ptyControllerId };
                 S._resizeDispose = S.term.onResize(function (size) {
-                    if (!S.ptySessionId || S.spectating) return;
-                    var msg = { type: 'pty.resize', session_id: S.ptySessionId, cols: size.cols, rows: size.rows };
+                    var msg = currentTerminalResize(resizeBinding, S, size);
+                    if (!msg) return;
                     // P2P: try DataChannel first
-                    if (sendViaDC(S.ptySessionId, msg)) return;
-                    if (S.ptyWingId) {
-                        sendTunnelRequest(S.ptyWingId, msg).catch(function() {});
-                    }
+                    if (sendViaDC(resizeBinding.sessionId, msg, resizeBinding.wingId)) return;
+                    sendTunnelRequest(resizeBinding.wingId, msg).catch(function() {});
                 });
                 S.fitAddon.fit();
                 // Always send resize on session load — fitAddon.fit() only triggers
                 // onResize when dimensions change, but the remote PTY may have stale
                 // dimensions from a different machine/window.
-                if (S.ptyWingId && S.ptySessionId && !S.spectating) {
-                    sendTunnelRequest(S.ptyWingId, { type: 'pty.resize', session_id: S.ptySessionId, cols: S.term.cols, rows: S.term.rows }).catch(function() {});
-                }
+                var initialResize = currentTerminalResize(resizeBinding, S, { cols: S.term.cols, rows: S.term.rows });
+                if (initialResize) sendTunnelRequest(resizeBinding.wingId, initialResize).catch(function() {});
 
                 // P2P: check if wing supports P2P and initiate WebRTC
                 if (S.ptyWingId && !reattach) {
@@ -399,7 +438,7 @@ function setupPTYHandlers(ws, reattach) {
 
             case 'pty.fallback':
                 if (msg.session_id === S.ptySessionId) {
-                    cleanupSession(msg.session_id);
+                    cleanupSession(msg.session_id, S.ptyWingId);
                     console.log('[P2P] session ' + msg.session_id + ' FALLBACK — input+output back on relay WS');
                 }
                 break;
@@ -419,11 +458,12 @@ function setupPTYHandlers(ws, reattach) {
             case 'pty.exited':
                 if (S.ptySessionId && msg.session_id !== S.ptySessionId) break;
                 if (!S.ptySessionId && !msg.error) break;
-                discardPreview(msg.session_id);
+                discardPreview(msg.session_id, S.ptyWingId);
                 DOM.headerTitle.textContent = '';
                 DOM.sessionCloseBtn.style.display = 'none';
-                if (msg.session_id) clearTermBuffer(msg.session_id);
-                clearNotification(msg.session_id);
+                if (msg.session_id) clearTermBuffer(msg.session_id, S.ptyWingId);
+                clearNotification(msg.session_id, S.ptyWingId);
+                clearTerminalControl();
                 S.ptySessionId = null;
                 S.e2eKey = null;
                 setSessionActions(false);
@@ -440,12 +480,13 @@ function setupPTYHandlers(ws, reattach) {
                 }
                 // The wing already exited; remove local state without sending a
                 // redundant pty.kill back to it.
-                if (msg.session_id) window._deleteSession(msg.session_id, true);
+                if (msg.session_id) window._deleteSession(msg.session_id, true, S.ptyWingId);
                 renderSidebar();
                 loadHome();
                 break;
 
             case 'bandwidth.exceeded':
+                clearTerminalControl();
                 S.ptyBandwidthExceeded = true;
                 DOM.ptyStatus.textContent = 'bandwidth exceeded';
                 DOM.headerTitle.textContent = '';
@@ -472,6 +513,7 @@ function setupPTYHandlers(ws, reattach) {
             case 'pty.preview':
                 if (msg.session_id !== S.ptySessionId) break;
                 e2eDecrypt(msg.data).then(function(bytes) {
+                    if (!terminalReferenceMatches(S, msg.session_id, connectedWingId, ws)) return;
                     var preview = JSON.parse(new TextDecoder().decode(bytes));
                     handlePreview(preview);
                 }).catch(function(err) {
@@ -480,6 +522,9 @@ function setupPTYHandlers(ws, reattach) {
                 break;
 
             case 'error':
+                if (msg.session_id && requestedSessionId && msg.session_id !== requestedSessionId) break;
+                if (msg.controller_id && S.ptyControllerId && msg.controller_id !== S.ptyControllerId) break;
+                if (handleTerminalControlError(ws, msg.session_id || requestedSessionId || S.ptySessionId, connectedWingId, msg.message)) break;
                 DOM.ptyStatus.textContent = msg.message;
                 break;
         }
@@ -487,6 +532,7 @@ function setupPTYHandlers(ws, reattach) {
 
     ws.onclose = function () {
         if (ws !== S.ptyWs) return;
+        if (S.ptyInputBlocked) return;
         if (S.ptyBandwidthExceeded) {
             S.ptyBandwidthExceeded = false;
             return;
@@ -496,7 +542,9 @@ function setupPTYHandlers(ws, reattach) {
             S.ptyReconnecting = true;
             DOM.ptyStatus.textContent = 'reconnecting...';
             showReconnectBanner();
-            setTimeout(function () { ptyReconnectAttach(sid); }, 1000);
+            setTimeout(function () {
+                if (terminalReferenceMatches(S, sid, connectedWingId, ws)) ptyReconnectAttach(sid, 0, connectedWingId);
+            }, 1000);
             return;
         }
         if (!S.ptyReconnecting) {
@@ -529,7 +577,7 @@ export function connectPTY(agent, cwd, wingId, resumeSessionId) {
     S.ptyBandwidthExceeded = false;
     S.pendingResumeSessionId = resumeSessionId || null;
 
-    S.term.clear();
+    S.term.reset();
 
     S.ptyWingId = wingId || (onlineWings()[0] || {}).wing_id || null;
 
@@ -542,8 +590,11 @@ export function connectPTY(agent, cwd, wingId, resumeSessionId) {
 
     S.e2eKey = null;
 
-    S.ptyWs = new WebSocket(url);
-    S.ptyWs.onopen = function () {
+    var connectedWingId = S.ptyWingId;
+    var socket = new WebSocket(url);
+    S.ptyWs = socket;
+    socket.onopen = function () {
+        if (socket !== S.ptyWs || connectedWingId !== S.ptyWingId) return;
         DOM.headerTitle.textContent = 'starting ' + agent + '...';
         var startMsg = {
             type: 'pty.start',
@@ -553,19 +604,33 @@ export function connectPTY(agent, cwd, wingId, resumeSessionId) {
             public_key: identityPubKey,
         };
         if (cwd) startMsg.cwd = cwd;
-        if (wingId) startMsg.wing_id = wingId;
+        if (connectedWingId) startMsg.wing_id = connectedWingId;
         if (resumeSessionId) startMsg.resume_session_id = resumeSessionId;
-        if (wingId && S.tunnelAuthTokens[wingId]) startMsg.auth_token = S.tunnelAuthTokens[wingId];
-        S.ptyWs.send(JSON.stringify(startMsg));
+        if (connectedWingId && S.tunnelAuthTokens[connectedWingId]) startMsg.auth_token = S.tunnelAuthTokens[connectedWingId];
+        socket.send(JSON.stringify(startMsg));
     };
 
     setupPTYHandlers(S.ptyWs, false);
     return true;
 }
 
-export function attachPTY(sessionId, _retries) {
-    var sess = S.sessionsData.find(function(s) { return s.id === sessionId; });
-    setPreviewSession(sessionId);
+var attachRequestId = 0;
+
+export function attachPTY(sessionId, _retries, wingId, requestId, options) {
+    options = options || {};
+    var sess = findSessionResource(S.sessionsData, sessionId, wingId);
+    if (!sess && S.sessionsData.filter(function(s) { return s.id === sessionId; }).length > 1) {
+        DOM.ptyStatus.textContent = 'Choose the execution wing for this session';
+        return false;
+    }
+    if (requestId === undefined) {
+        requestId = ++attachRequestId;
+        if (S.term) S.term.reset();
+    }
+    if (requestId !== attachRequestId) return false;
+    clearTerminalControl();
+    S.ptyReconnecting = false;
+    setPreviewSession(sessionId, wingId || (sess && sess.wing_id));
 
     // Deep link before data loaded — wait for session or a spectate-enabled wing
     if (!sess && !_retries) {
@@ -573,12 +638,13 @@ export function attachPTY(sessionId, _retries) {
         DOM.headerTitle.textContent = 'connecting...';
         var attempts = 0;
         var timer = setInterval(function() {
-            var s = S.sessionsData.find(function(s) { return s.id === sessionId; });
-            var hasSpectateWing = S.wingsData.some(function(w) { return w.online !== false && w.spectate; });
+            if (requestId !== attachRequestId) { clearInterval(timer); return; }
+            var s = findSessionResource(S.sessionsData, sessionId, wingId);
+            var hasSpectateWing = !wingId && S.wingsData.some(function(w) { return w.online !== false && w.spectate; });
             attempts++;
             if (s || hasSpectateWing || attempts > 20) {
                 clearInterval(timer);
-                attachPTY(sessionId, attempts);
+                attachPTY(sessionId, attempts, wingId, requestId, options);
             }
         }, 500);
         return;
@@ -588,21 +654,26 @@ export function attachPTY(sessionId, _retries) {
     var url = proto + '//' + location.host + '/ws/pty';
 
     showReplayOverlay();
-    clearNotification(sessionId);
+    clearNotification(sessionId, wingId || (sess && sess.wing_id));
 
     if (S.ptyWs) { try { S.ptyWs.close(); } catch(e) {} }
 
-    S.ptyWingId = sess ? sess.wing_id : null;
+    S.ptyWingId = wingId || (sess ? sess.wing_id : null);
 
     // Auto-spectate: if this is another user's session and the wing has spectate enabled
     var isOtherUser = sess && sess.user_id && S.currentUser && sess.user_id !== S.currentUser.id;
-    var wing = isOtherUser && sess.wing_id ? S.wingsData.find(function(w) { return w.wing_id === sess.wing_id; }) : null;
-    S.spectating = !!(isOtherUser && wing && wing.spectate);
+    var wing = S.wingsData.find(function(w) { return w.wing_id === S.ptyWingId; });
+    if (options.spectate && (!wing || !wing.spectate)) {
+        DOM.ptyStatus.textContent = 'Observation is not enabled for this wing';
+        return false;
+    }
+    var explicitTakeover = !!(options.takeover && S.currentUser && S.currentUser.release_channel === 'preview');
+    S.spectating = !!(((isOtherUser && !explicitTakeover) || options.spectate) && wing && wing.spectate);
 
     // Session not in our list (spectator deep link, path ACLs, etc.) —
     // find a spectate-enabled wing and attach directly. The wing will
     // accept if it has the session running.
-    if (!sess && !S.spectating) {
+    if (!sess && !S.spectating && !wingId) {
         var spectateWing = S.wingsData.find(function(w) { return w.online !== false && w.spectate; });
         if (spectateWing) {
             S.ptyWingId = spectateWing.wing_id;
@@ -618,26 +689,34 @@ export function attachPTY(sessionId, _retries) {
     if (S.ptyWingId) url += '?wing_id=' + encodeURIComponent(S.ptyWingId);
     else if (sessionId) url += '?session_id=' + encodeURIComponent(sessionId);
 
-    S.ptyWs = new WebSocket(url);
-    S.ptyWs.onopen = function () {
-        var msg = { type: 'pty.attach', session_id: sessionId, public_key: identityPubKey };
-        if (S.spectating) msg.spectate = true;
-        if (S.ptyWingId) msg.wing_id = S.ptyWingId;
-        if (S.ptyWingId && S.tunnelAuthTokens[S.ptyWingId]) msg.auth_token = S.tunnelAuthTokens[S.ptyWingId];
-        if (S.term) { msg.cols = S.term.cols; msg.rows = S.term.rows; }
-        S.ptyWs.send(JSON.stringify(msg));
+    var connectedWingId = S.ptyWingId;
+    var socket = new WebSocket(url);
+    S.ptyWs = socket;
+    socket.onopen = function () {
+        if (socket !== S.ptyWs || connectedWingId !== S.ptyWingId) return;
+        var msg = ptyAttachRequest(sessionId, connectedWingId, identityPubKey, {
+            spectate: S.spectating,
+            takeover: explicitTakeover,
+            authToken: S.tunnelAuthTokens[connectedWingId],
+            cols: S.term && S.term.cols, rows: S.term && S.term.rows
+        });
+        socket.send(JSON.stringify(msg));
     };
 
-    setupPTYHandlers(S.ptyWs, true);
+    setupPTYHandlers(S.ptyWs, true, sessionId);
 }
 
 export function detachPTY() {
+    attachRequestId++;
+    S.ptyReconnecting = false;
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
-    if (S.ptySessionId) cleanupSession(S.ptySessionId);
+    if (S.ptySessionId) cleanupSession(S.ptySessionId, S.ptyWingId);
     if (S.ptyWingId) cleanupPeer(S.ptyWingId);
     if (S.ptyWs) {
         if (S.ptySessionId && S.ptyWs.readyState === WebSocket.OPEN) {
-            S.ptyWs.send(JSON.stringify({ type: 'pty.detach', session_id: S.ptySessionId }));
+            var detach = { type: 'pty.detach', session_id: S.ptySessionId };
+            if (S.ptyControllerId) detach.controller_id = S.ptyControllerId;
+            S.ptyWs.send(JSON.stringify(detach));
         }
         S.ptyWs.close();
         S.ptyWs = null;
@@ -647,16 +726,18 @@ export function detachPTY() {
     S.e2eKey = null;
     S.spectating = false;
     S.pendingResumeSessionId = null;
+    clearTerminalControl();
     setPreviewSession(null);
     setSessionActions(false);
 }
 
 export function disconnectPTY() {
+    attachRequestId++;
     S.ptyReconnecting = false;
     if (S._resizeDispose) { S._resizeDispose.dispose(); S._resizeDispose = null; }
     if (S.ptySessionId) {
-        cleanupSession(S.ptySessionId);
-        discardPreview(S.ptySessionId);
+        cleanupSession(S.ptySessionId, S.ptyWingId);
+        discardPreview(S.ptySessionId, S.ptyWingId);
     }
     if (S.ptyWingId) cleanupPeer(S.ptyWingId);
     var killFinished = Promise.resolve();
@@ -670,6 +751,7 @@ export function disconnectPTY() {
     S.e2eKey = null;
     S.spectating = false;
     S.pendingResumeSessionId = null;
+    clearTerminalControl();
 
     DOM.ptyStatus.textContent = '';
     DOM.headerTitle.textContent = '';
@@ -680,7 +762,8 @@ export function disconnectPTY() {
 
 var MAX_RECONNECT_ATTEMPTS = 10;
 
-function ptyReconnectAttach(sessionId, attempt) {
+function ptyReconnectAttach(sessionId, attempt, wingId) {
+    if (!S.ptyReconnecting || S.ptySessionId !== sessionId || !wingId || S.ptyWingId !== wingId) return;
     attempt = attempt || 0;
     if (attempt >= MAX_RECONNECT_ATTEMPTS) {
         S.ptyReconnecting = false;
@@ -695,39 +778,48 @@ function ptyReconnectAttach(sessionId, attempt) {
 
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/pty';
-    if (S.ptyWingId) url += '?wing_id=' + encodeURIComponent(S.ptyWingId);
-    else url += '?session_id=' + encodeURIComponent(sessionId);
+    url += '?wing_id=' + encodeURIComponent(wingId);
 
     if (S.ptyWs) { try { S.ptyWs.close(); } catch(e) {} }
+    clearTerminalControl();
 
-    S.ptyWs = new WebSocket(url);
-    S.ptyWs.onopen = function () {
-        var msg = { type: 'pty.attach', session_id: sessionId, public_key: identityPubKey };
-        if (S.spectating) msg.spectate = true;
-        if (S.ptyWingId) msg.wing_id = S.ptyWingId;
-        if (S.ptyWingId && S.tunnelAuthTokens[S.ptyWingId]) msg.auth_token = S.tunnelAuthTokens[S.ptyWingId];
-        if (S.term) { msg.cols = S.term.cols; msg.rows = S.term.rows; }
-        S.ptyWs.send(JSON.stringify(msg));
+    var socket = new WebSocket(url);
+    S.ptyWs = socket;
+    socket.onopen = function () {
+        if (!terminalReferenceMatches(S, sessionId, wingId, socket)) return;
+        // Reconnect requests never repeat a prior explicit takeover.
+        var msg = ptyAttachRequest(sessionId, wingId, identityPubKey, {
+            spectate: S.spectating, authToken: S.tunnelAuthTokens[wingId],
+            cols: S.term && S.term.cols, rows: S.term && S.term.rows
+        });
+        socket.send(JSON.stringify(msg));
     };
 
-    setupPTYHandlers(S.ptyWs, true);
+    setupPTYHandlers(S.ptyWs, true, sessionId);
 
     var innerWs = S.ptyWs;
     innerWs.onclose = function () {
         if (innerWs !== S.ptyWs) return;
+        if (S.ptyInputBlocked) return;
         var delay = Math.min(1000 * Math.pow(2, attempt), 30000);
-        setTimeout(function () { ptyReconnectAttach(sessionId, attempt + 1); }, delay);
+        setTimeout(function () {
+            if (terminalReferenceMatches(S, sessionId, wingId, innerWs)) ptyReconnectAttach(sessionId, attempt + 1, wingId);
+        }, delay);
     };
 
     var origMsg = innerWs.onmessage;
     innerWs.onmessage = function (e) {
         if (innerWs !== S.ptyWs) return;
         var msg = JSON.parse(e.data);
-        if (msg.type === 'pty.started') {
+        if (msg.type === 'pty.started' && msg.session_id === sessionId) {
             S.ptyReconnecting = false;
             hideReconnectBanner();
         }
         if (msg.type === 'error') {
+            if (terminalControlFailure(msg.message) && S.currentUser && S.currentUser.release_channel === 'preview') {
+                origMsg.call(innerWs, e);
+                return;
+            }
             // Don't give up — close WS so onclose fires and retries
             if (innerWs) { try { innerWs.close(); } catch(ex) {} }
             return;
@@ -739,5 +831,5 @@ function ptyReconnectAttach(sessionId, attempt) {
 export function retryReconnect() {
     if (!S.ptySessionId) return;
     S.ptyReconnecting = true;
-    ptyReconnectAttach(S.ptySessionId, 0);
+    ptyReconnectAttach(S.ptySessionId, 0, S.ptyWingId);
 }

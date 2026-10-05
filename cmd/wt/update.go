@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
 	"github.com/spf13/cobra"
 )
@@ -25,8 +26,10 @@ import (
 const githubRepo = "ehrlich-b/wingthing"
 
 type ghRelease struct {
-	TagName string    `json:"tag_name"`
-	Assets  []ghAsset `json:"assets"`
+	TagName    string    `json:"tag_name"`
+	Assets     []ghAsset `json:"assets"`
+	Prerelease bool      `json:"prerelease"`
+	Draft      bool      `json:"draft"`
 }
 
 type ghAsset struct {
@@ -81,14 +84,21 @@ func daemonRestartArgs(saved []byte, kind daemonKind) ([]string, error) {
 }
 
 func updateCmd() *cobra.Command {
-	return &cobra.Command{
+	var localFile, checksumFile string
+	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update wt to the latest release",
 		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
+			if err := validateUpdateTarget(); err != nil {
+				return err
+			}
+			if localFile != "" {
+				return updatePreviewFile(cmd.Context(), localFile, checksumFile)
+			}
 			fmt.Printf("current version: %s\n", version)
 
 			// Fetch latest release.
-			req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", githubRepo), nil)
+			req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, releaseMetadataURL(), nil)
 			if err != nil {
 				return fmt.Errorf("create latest release request: %w", err)
 			}
@@ -106,7 +116,7 @@ func updateCmd() *cobra.Command {
 				return fmt.Errorf("github API error: %s", resp.Status)
 			}
 
-			rel, err := decodeGitHubRelease(resp.Body)
+			rel, err := decodeChannelRelease(resp.Body)
 			if err != nil {
 				return fmt.Errorf("parse release: %w", err)
 			}
@@ -117,7 +127,7 @@ func updateCmd() *cobra.Command {
 			}
 
 			// Find the matching binary and its release checksum manifest.
-			wantName := fmt.Sprintf("wt-%s-%s", runtime.GOOS, runtime.GOARCH)
+			wantName := releaseAssetName()
 			var downloadURL string
 			var sumsURL string
 			for _, a := range rel.Assets {
@@ -176,7 +186,7 @@ func updateCmd() *cobra.Command {
 				return fmt.Errorf("find executable: %w", err)
 			}
 
-			f, err := os.CreateTemp(filepath.Dir(exe), ".wt-update-*")
+			f, err := os.CreateTemp(filepath.Dir(exe), "."+config.BinaryName()+"-update-*")
 			if err != nil {
 				return fmt.Errorf("create temp file: %w", err)
 			}
@@ -294,6 +304,9 @@ func updateCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&localFile, "file", "", "preview only: install a checksummed local preview artifact")
+	cmd.Flags().StringVar(&checksumFile, "checksum-file", "", "SHA256SUMS manifest for --file (default: beside artifact)")
+	return cmd
 }
 
 func waitForProcessExit(process *os.Process, timeout time.Duration) bool {
@@ -403,11 +416,29 @@ func releaseChecksum(manifest []byte, binaryName string) (string, error) {
 }
 
 func validateReleaseBinary(ctx context.Context, path string) error {
+	if config.Channel() == "preview" {
+		checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		output, err := exec.CommandContext(checkCtx, path, "--expected-channel", "preview", "channel", "--json").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("preview identity: %w", err)
+		}
+		var identity struct {
+			Channel    string `json:"release_channel"`
+			Executable string `json:"executable"`
+		}
+		if err := json.Unmarshal(output, &identity); err != nil {
+			return err
+		}
+		if identity.Channel != "preview" || identity.Executable != "wt-preview" {
+			return fmt.Errorf("downloaded binary is not preview")
+		}
+	}
 	checks := []struct {
 		args     []string
 		contains string
 	}{
-		{args: []string{"--version"}, contains: "wt version"},
+		{args: []string{"--version"}, contains: config.BinaryName() + " version"},
 		{args: []string{"mcp", "connect", "--help"}, contains: "connect"},
 		{args: []string{"serve", "--help"}, contains: "--https"},
 		{args: []string{"roost", "start", "--help"}, contains: "--https"},

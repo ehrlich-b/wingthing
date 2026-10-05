@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -53,7 +52,8 @@ func terminalCmd() *cobra.Command {
 }
 
 func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd string, detach, trace, jsonOutput, unsandboxed bool) error {
-	cfg, err := config.Load()
+	sessionID := newRuntimeID()
+	cfg, err := loadConfigForEgg(sessionID)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,6 @@ func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd s
 		}
 	}
 
-	sessionID := newRuntimeID()
 	ec, err := spawnEgg(
 		cfg,
 		sessionID,

@@ -11,23 +11,24 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"wingthing_capabilities",
 		"message_send", "message_list", "message_wait",
 		"sandbox_explain",
-		"terminal_list", "terminal_read", "terminal_send", "terminal_wait",
+		"terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
 		"terminal_start", "agent_start",
 		"agent_run", "agent_status", "agent_wait", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
 		"prompt_list", "prompt_get", "prompt_save", "prompt_run", "task_get",
-		"prompt_loop", "swarm_run",
+		"prompt_loop", "swarm_run", "conversation_bootstrap", "conversation_list", "conversation_read", "conversation_checkpoint", "conversation_wake",
 	}
 	http := []string{
 		"wingthing_capabilities",
 		"message_send", "message_list", "message_wait",
 		"sandbox_explain",
-		"terminal_list", "terminal_read", "terminal_send", "terminal_wait",
+		"terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
 		"terminal_start", "agent_start",
 		"agent_run", "agent_status", "agent_wait", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
+		"conversation_bootstrap", "conversation_list", "conversation_read", "conversation_checkpoint", "conversation_wake",
 		"wing_list",
 	}
 
@@ -98,17 +99,17 @@ func TestRegistryDefinitionsAreComplete(t *testing.T) {
 
 func TestObjectKindsFollowSurfaceAvailability(t *testing.T) {
 	if got, want := ObjectKinds(SurfaceLocalMCP), []string{
-		"terminal", "agent_run", "message", "prompt_asset", "task", "loop", "swarm", "sandbox_policy",
+		"terminal", "conversation", "agent_run", "message", "prompt_asset", "task", "loop", "swarm", "sandbox_policy",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("local objects = %v, want %v", got, want)
 	}
 	if got, want := ObjectKinds(SurfaceHTTPMCP), []string{
-		"wing", "terminal", "agent_run", "message", "sandbox_policy",
+		"wing", "terminal", "conversation", "agent_run", "message", "sandbox_policy",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("HTTP objects = %v, want %v", got, want)
 	}
 	if got, want := ObjectKinds(SurfaceDirectMCP), []string{
-		"wing", "terminal", "agent_run", "message", "sandbox_policy",
+		"wing", "terminal", "conversation", "agent_run", "message", "sandbox_policy",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("direct objects = %v, want %v", got, want)
 	}

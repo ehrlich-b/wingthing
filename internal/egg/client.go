@@ -4,18 +4,23 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // Client wraps the generated gRPC client for a single egg process.
 type Client struct {
-	conn   *grpc.ClientConn
-	client pb.EggClient
-	token  string
+	conn    *grpc.ClientConn
+	client  pb.EggClient
+	token   string
+	leaseMu sync.Mutex
+	leases  map[string]*pb.AttachmentInfo
 }
 
 // Dial connects to an egg's Unix socket and reads its auth token.
@@ -53,29 +58,121 @@ func (c *Client) Kill(ctx context.Context, sessionID string) error {
 
 // Resize changes terminal dimensions.
 func (c *Client) Resize(ctx context.Context, sessionID string, rows, cols uint32) error {
-	_, err := c.client.Resize(c.authCtx(ctx), &pb.ResizeRequest{
-		SessionId: sessionID,
-		Rows:      rows,
-		Cols:      cols,
-	})
+	c.leaseMu.Lock()
+	lease := c.leases[sessionID]
+	c.leaseMu.Unlock()
+	return c.ResizeForAttachment(ctx, sessionID, rows, cols, lease)
+}
+
+// ResizeForAttachment binds a resize to a specific stream's confirmed lease.
+// Adapters sharing a client must retain this value rather than adopting a
+// newer stream's token when the old connection sends a late resize.
+func (c *Client) ResizeForAttachment(ctx context.Context, sessionID string, rows, cols uint32, lease *pb.AttachmentInfo) error {
+	request := &pb.ResizeRequest{SessionId: sessionID, Rows: rows, Cols: cols}
+	if lease != nil {
+		request.AttachmentId, request.InputEpoch, request.AttachmentToken = lease.AttachmentId, lease.InputEpoch, lease.AttachmentToken
+	}
+	_, err := c.client.Resize(c.authCtx(ctx), request)
 	return err
 }
 
 // AttachSession opens a bidirectional stream for PTY I/O.
 func (c *Client) AttachSession(ctx context.Context, sessionID string) (pb.Egg_SessionClient, error) {
+	return c.AttachSessionWithOptions(ctx, sessionID, AttachOptions{})
+}
+
+type AttachOptions struct {
+	ReadOnly bool
+	Takeover bool
+	Claim    bool
+	Owner    string
+	Rows     uint32
+	Cols     uint32
+}
+
+// AttachSessionWithOptions confirms the initial snapshot before returning.
+// An eager writer claim therefore fails before any prompt/input is submitted.
+func (c *Client) AttachSessionWithOptions(ctx context.Context, sessionID string, options AttachOptions) (pb.Egg_SessionClient, error) {
+	if options.ReadOnly && (options.Claim || options.Takeover) {
+		return nil, fmt.Errorf("read-only and writer claim/takeover are mutually exclusive")
+	}
+	if len(options.Owner) > 128 {
+		return nil, fmt.Errorf("attachment owner label must be at most 128 bytes")
+	}
+	if options.Rows != 0 || options.Cols != 0 {
+		if options.ReadOnly {
+			return nil, fmt.Errorf("read-only attachment cannot resize")
+		}
+		if err := validatePTYSize(options.Cols, options.Rows); err != nil {
+			return nil, err
+		}
+	}
 	stream, err := c.client.Session(c.authCtx(ctx))
 	if err != nil {
 		return nil, err
 	}
 
 	if err := stream.Send(&pb.SessionMsg{
-		SessionId: sessionID,
-		Payload:   &pb.SessionMsg_Attach{Attach: true},
+		SessionId:     sessionID,
+		Payload:       &pb.SessionMsg_Attach{Attach: true},
+		AttachOptions: &pb.AttachOptions{ReadOnly: options.ReadOnly, Takeover: options.Takeover, Claim: options.Claim, Owner: options.Owner, Rows: options.Rows, Cols: options.Cols},
 	}); err != nil {
 		return nil, fmt.Errorf("send attach: %w", err)
 	}
 
-	return stream, nil
+	first, err := stream.Recv()
+	if err != nil {
+		return nil, fmt.Errorf("confirm attachment: %w", err)
+	}
+	if lease := first.AttachmentInfo; lease != nil && lease.AttachmentId == lease.WriterId && lease.AttachmentToken != "" {
+		c.leaseMu.Lock()
+		if c.leases == nil {
+			c.leases = make(map[string]*pb.AttachmentInfo)
+		}
+		c.leases[sessionID] = lease
+		c.leaseMu.Unlock()
+	}
+	return &attachmentStream{Egg_SessionClient: stream, first: first, lease: first.AttachmentInfo, readOnly: options.ReadOnly}, nil
+}
+
+// AttachmentInfo returns a copy of the immutable snapshot acknowledgment.
+// AttachmentToken is private to this authenticated writer stream and must
+// never be included in public status, relay messages, or logs.
+func AttachmentInfo(stream pb.Egg_SessionClient) *pb.AttachmentInfo {
+	if attached, ok := stream.(*attachmentStream); ok && attached.lease != nil {
+		lease := attached.lease
+		return &pb.AttachmentInfo{AttachmentId: lease.AttachmentId, WriterId: lease.WriterId, WriterOwner: lease.WriterOwner, InputEpoch: lease.InputEpoch, AttachmentToken: lease.AttachmentToken}
+	}
+	return nil
+}
+
+type attachmentStream struct {
+	pb.Egg_SessionClient
+	first    *pb.SessionMsg
+	lease    *pb.AttachmentInfo
+	readOnly bool
+	mu       sync.Mutex // gRPC permits one sender and one receiver concurrently.
+}
+
+func (s *attachmentStream) Recv() (*pb.SessionMsg, error) {
+	if s.first != nil {
+		first := s.first
+		s.first = nil
+		return first, nil
+	}
+	return s.Egg_SessionClient.Recv()
+}
+
+func (s *attachmentStream) Send(message *pb.SessionMsg) error {
+	if s.readOnly {
+		switch message.Payload.(type) {
+		case *pb.SessionMsg_Input, *pb.SessionMsg_Resize:
+			return status.Error(codes.PermissionDenied, "read-only attachment cannot write or resize")
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Egg_SessionClient.Send(message)
 }
 
 // Status returns debug stats from the egg session.

@@ -15,6 +15,9 @@ type fallbackSandbox struct {
 }
 
 func newFallback(cfg Config) (Sandbox, error) {
+	if err := refuseProtectedWriteTargets(cfg, "fallback"); err != nil {
+		return nil, err
+	}
 	dir, err := os.MkdirTemp("", "wt-sandbox-*")
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox tmpdir: %w", err)

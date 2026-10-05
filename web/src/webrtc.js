@@ -3,12 +3,14 @@ import { sendTunnelRequest } from './tunnel.js';
 import { e2eDecrypt } from './crypto.js';
 import { saveTermBuffer } from './terminal.js';
 import { checkForNotification, setNotification } from './notify.js';
+import { sessionResourceKey, terminalReferenceMatches } from './session-reference.js';
+import { sessionIsSelected } from './session-inventory.js';
 
 // Per-wing peer connections and per-session data channels
 var peers = {};        // wingId -> RTCPeerConnection
-var dataChannels = {}; // sessionId -> RTCDataChannel
-var dcBuffers = {};    // sessionId -> [] (buffered messages before migration confirmed)
-var sessionWings = {}; // sessionId -> wingId (tracks which wing owns each session's DC)
+var dataChannels = {}; // [wingId,sessionId] -> RTCDataChannel
+var dcBuffers = {};    // [wingId,sessionId] -> [] (buffered messages before migration confirmed)
+var sessionWings = {}; // [wingId,sessionId] -> wingId (tracks which wing owns each session's DC)
 
 // Whether each session is actively using DC for I/O
 // Exported so pty.js and terminal.js can check
@@ -44,10 +46,11 @@ function gunzip(data) {
  * If p2pOnly is true and connection fails, writes an error to the terminal.
  */
 export async function initWebRTC(wingId, sessionId, p2pOnly) {
+    var key = sessionResourceKey({ id: sessionId, wingId: wingId });
     console.log('[P2P] wing ' + wingId.slice(0, 8) + ' supports p2p, initiating WebRTC for session ' + sessionId);
 
     function p2pOnlyError(reason) {
-        if (!p2pOnly) return;
+        if (!p2pOnly || !sessionIsSelected({ id: sessionId, wing_id: wingId }, S.ptySessionId, S.ptyWingId)) return;
         console.log('[P2P] p2p_only mode — connection failed: ' + reason);
         if (S.term) {
             S.term.writeln('\r\n\x1b[31;1m--- P2P connection failed ---\x1b[0m');
@@ -79,14 +82,15 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
 
         // Create data channel with session-specific label
         var dc = pc.createDataChannel('pty:' + sessionId);
-        dataChannels[sessionId] = dc;
-        dcBuffers[sessionId] = [];
-        sessionWings[sessionId] = wingId;
+        dataChannels[key] = dc;
+        dcBuffers[key] = [];
+        sessionWings[key] = wingId;
 
         dc.onopen = function() {
+            if (dataChannels[key] !== dc) return;
             console.log('[P2P] data channel \'pty:' + sessionId + '\' state: open');
             // Send pty.migrate via relay WS to tell wing to swap output
-            if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN) {
+            if (sessionIsSelected({ id: sessionId, wing_id: wingId }, S.ptySessionId, S.ptyWingId) && S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN) {
                 console.log('[P2P] sending pty.migrate via relay WS for session ' + sessionId);
                 S.ptyWs.send(JSON.stringify({
                     type: 'pty.migrate',
@@ -95,13 +99,14 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
             }
             // Timeout: if pty.migrated doesn't arrive within 3s, clean up and stay on relay
             var migrateTimer = setTimeout(function() {
-                if (!dcActive[sessionId]) {
+                if (dataChannels[key] !== dc) return;
+                if (!dcActive[key]) {
                     console.log('[P2P] migration timeout for session ' + sessionId + ' — no pty.migrated after 3s, staying on relay');
-                    delete dcBuffers[sessionId];
-                    var timedOutDC = dataChannels[sessionId];
+                    delete dcBuffers[key];
+                    var timedOutDC = dataChannels[key];
                     if (timedOutDC) {
                         timedOutDC.close();
-                        delete dataChannels[sessionId];
+                        delete dataChannels[key];
                     }
                 }
             }, 3000);
@@ -111,11 +116,12 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
 
         dc.onclose = function() {
             console.log('[P2P] data channel \'pty:' + sessionId + '\' closed — falling back to relay WS');
-            delete dataChannels[sessionId];
-            delete dcBuffers[sessionId];
-            delete sessionWings[sessionId];
-            if (dcActive[sessionId]) {
-                delete dcActive[sessionId];
+            if (dataChannels[key] !== dc) return;
+            delete dataChannels[key];
+            delete dcBuffers[key];
+            delete sessionWings[key];
+            if (dcActive[key]) {
+                delete dcActive[key];
                 console.log('[P2P] session ' + sessionId + ' FALLBACK — input+output back on relay WS');
             }
         };
@@ -126,16 +132,18 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
 
         // Handle incoming messages on the DC (output from wing)
         dc.onmessage = function(e) {
-            if (!dcActive[sessionId]) {
+            if (dataChannels[key] !== dc) return;
+            if (!dcActive[key]) {
                 // Buffer until migration confirmed
-                dcBuffers[sessionId] = dcBuffers[sessionId] || [];
-                dcBuffers[sessionId].push(e.data);
+                dcBuffers[key] = dcBuffers[key] || [];
+                dcBuffers[key].push(e.data);
                 return;
             }
-            handleDCMessage(sessionId, e.data);
+            handleDCMessage(wingId, sessionId, e.data);
         };
 
         pc.onconnectionstatechange = function() {
+            if (peers[wingId] !== pc) return;
             console.log('[P2P] RTCPeerConnection state: ' + pc.connectionState);
             if (pc.connectionState === 'failed') {
                 console.log('[P2P] RTCPeerConnection failed (state: failed) — staying on relay');
@@ -152,6 +160,7 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
 
         // Wait for ICE gathering to complete before sending offer
         var offer = await pc.createOffer();
+        if (peers[wingId] !== pc) return;
         var gatherComplete = new Promise(function(resolve) {
             pc.onicegatheringstatechange = function() {
                 if (pc.iceGatheringState === 'complete') {
@@ -175,6 +184,7 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
                 setTimeout(function() { reject(new Error('ICE gathering timeout (10s)')); }, 10000);
             })
         ]);
+        if (peers[wingId] !== pc) return;
 
         if (!pc.localDescription || !pc.localDescription.sdp) {
             console.log('[P2P] no local description after ICE gathering');
@@ -188,6 +198,7 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
         console.log('[P2P] sending webrtc.offer via tunnel (sdp: ' + sdp.length + ' bytes)');
 
         var resp = await sendTunnelRequest(wingId, { type: 'webrtc.offer', sdp: sdp });
+        if (peers[wingId] !== pc) return;
         if (resp.error) {
             console.log('[P2P] webrtc.offer REJECTED by wing: "' + resp.error + '"');
             p2pOnlyError('Wing rejected P2P offer: ' + resp.error);
@@ -206,6 +217,7 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
         await pc.setRemoteDescription({ type: 'answer', sdp: resp.sdp });
 
     } catch (err) {
+        if (pc && peers[wingId] !== pc) return;
         console.log('[P2P] WebRTC init error:', err);
         p2pOnlyError('WebRTC initialization error: ' + err.message);
         cleanupPeer(wingId);
@@ -216,19 +228,21 @@ export async function initWebRTC(wingId, sessionId, p2pOnly) {
  * Called when pty.migrated is received — flush buffered DC messages and mark session active.
  */
 export function completeMigration(wingId, sessionId) {
-    dcActive[sessionId] = true;
+    var key = sessionResourceKey({ id: sessionId, wingId: wingId });
+    if (!dataChannels[key] || dataChannels[key].readyState !== 'open') return;
+    dcActive[key] = true;
     // Cancel migration timeout
-    var dc = dataChannels[sessionId];
+    var dc = dataChannels[key];
     if (dc && dc._migrateTimer) {
         clearTimeout(dc._migrateTimer);
         dc._migrateTimer = null;
     }
-    var buffered = dcBuffers[sessionId] || [];
-    delete dcBuffers[sessionId];
+    var buffered = dcBuffers[key] || [];
+    delete dcBuffers[key];
     console.log('[P2P] received pty.migrated for session ' + sessionId);
     console.log('[P2P] flushing ' + buffered.length + ' buffered DC messages');
     for (var i = 0; i < buffered.length; i++) {
-        handleDCMessage(sessionId, buffered[i]);
+        handleDCMessage(wingId, sessionId, buffered[i]);
     }
     console.log('[P2P] session ' + sessionId + ' MIGRATED — input+output now on DataChannel');
 }
@@ -237,13 +251,15 @@ export function completeMigration(wingId, sessionId) {
  * Process a message received on the DataChannel.
  * Messages are JSON-encoded, same format as relay WS messages.
  */
-function handleDCMessage(sessionId, rawData) {
+function handleDCMessage(wingId, sessionId, rawData) {
+    if (!sessionIsSelected({ id: sessionId, wing_id: wingId }, S.ptySessionId, S.ptyWingId)) return;
     try {
         var msg = JSON.parse(rawData);
+        if (msg.session_id && msg.session_id !== sessionId) return;
         switch (msg.type) {
             case 'pty.output':
                 if (msg.session_id && S.ptySessionId && msg.session_id !== S.ptySessionId) return;
-                processP2POutput(msg.data, !!msg.compressed);
+                processP2POutput(msg.data, !!msg.compressed, wingId, sessionId);
                 break;
             case 'pty.exited':
                 // Forward to WS handler by dispatching on the WS
@@ -271,17 +287,18 @@ function handleDCMessage(sessionId, rawData) {
  * Process encrypted PTY output received over P2P DataChannel.
  * Same decryption as relay path.
  */
-function processP2POutput(dataStr, compressed) {
+function processP2POutput(dataStr, compressed, wingId, sessionId) {
+    var socket = S.ptyWs;
     e2eDecrypt(dataStr).then(function(bytes) {
         return compressed ? gunzip(bytes) : bytes;
     }).then(function(bytes) {
-        if (!bytes) return;
+        if (!bytes || !terminalReferenceMatches(S, sessionId, wingId, socket)) return;
         S.term.write(bytes);
         saveTermBuffer();
         try {
             var text = new TextDecoder().decode(bytes);
             if (checkForNotification(text)) {
-                setNotification(S.ptySessionId);
+                setNotification(sessionId, wingId);
             }
         } catch (ex) {}
     }).catch(function(err) {
@@ -292,9 +309,11 @@ function processP2POutput(dataStr, compressed) {
 /**
  * Try to send a message via DataChannel. Returns true if sent, false if DC not available.
  */
-export function sendViaDC(sessionId, msg) {
-    if (!dcActive[sessionId]) return false;
-    var dc = dataChannels[sessionId];
+export function sendViaDC(sessionId, msg, wingId) {
+    if (!wingId) return false;
+    var key = sessionResourceKey({ id: sessionId, wingId: wingId });
+    if (!dcActive[key]) return false;
+    var dc = dataChannels[key];
     if (!dc || dc.readyState !== 'open') {
         if (dc) console.log('[P2P] sendViaDC(' + sessionId + '): DC not open (state: ' + dc.readyState + '), falling back to WS');
         return false;
@@ -339,13 +358,15 @@ export function cleanupPeer(wingId) {
 /**
  * Clean up a specific session's DC (on detach/disconnect).
  */
-export function cleanupSession(sessionId) {
-    var dc = dataChannels[sessionId];
+export function cleanupSession(sessionId, wingId) {
+    if (!wingId) return;
+    var key = sessionResourceKey({ id: sessionId, wingId: wingId });
+    var dc = dataChannels[key];
     if (dc) {
+        delete dataChannels[key];
         dc.close();
-        delete dataChannels[sessionId];
     }
-    delete dcActive[sessionId];
-    delete dcBuffers[sessionId];
-    delete sessionWings[sessionId];
+    delete dcActive[key];
+    delete dcBuffers[key];
+    delete sessionWings[key];
 }

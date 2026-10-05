@@ -521,7 +521,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// always private because it may set short-lived OAuth flow cookies.
 	if r.Method == http.MethodGet && isDynamicSitePage(path) {
 		w.Header().Add("Vary", "Cookie")
-		_, sessionCookieErr := r.Cookie(sessionCookieName)
+		_, sessionCookieErr := r.Cookie(sessionCookieNameForChannel())
 		if path == "/login" || sessionCookieErr == nil {
 			w.Header().Set("Cache-Control", "private, no-store")
 		} else if r.URL.RawQuery != "" {

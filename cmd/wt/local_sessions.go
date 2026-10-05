@@ -37,6 +37,7 @@ const (
 var errSessionNameInUse = errors.New("session name is already in use")
 
 type localSession struct {
+	conversationLink
 	ID           string `json:"id"`
 	Name         string `json:"name,omitempty"`
 	Principal    string `json:"principal,omitempty"`
@@ -47,6 +48,9 @@ type localSession struct {
 	Isolation    string `json:"isolation,omitempty"`
 	PID          int    `json:"pid"`
 	Readers      int32  `json:"readers"`
+	WriterID     string `json:"writer_id,omitempty"`
+	WriterOwner  string `json:"writer_owner,omitempty"`
+	InputEpoch   uint64 `json:"input_epoch,omitempty"`
 	UptimeSecs   int64  `json:"uptime_seconds"`
 	IdleSecs     int64  `json:"idle_seconds"`
 	BufferBytes  int64  `json:"buffer_bytes"`
@@ -69,6 +73,7 @@ func discoverActiveSessions(ctx context.Context, cfg *config.Config) ([]localSes
 			_ = ec.Close()
 			if statusErr == nil {
 				session.Readers = st.Readers
+				session.WriterID, session.WriterOwner, session.InputEpoch = st.WriterId, st.WriterOwner, st.InputEpoch
 				session.UptimeSecs = st.UptimeSeconds
 				session.IdleSecs = st.IdleSeconds
 				session.BufferBytes = st.BufferBytes
@@ -109,15 +114,16 @@ func discoverSessionRefs(cfg *config.Config) ([]localSession, error) {
 
 		meta := readEggMetaValues(dir)
 		s := localSession{
-			ID:        sessionID,
-			Name:      readSessionName(dir),
-			Principal: readSessionPrincipal(dir),
-			Kind:      meta["kind"],
-			Agent:     meta["agent"],
-			Command:   meta["command"],
-			CWD:       meta["cwd"],
-			Isolation: meta["isolation"],
-			PID:       pid,
+			conversationLink: sessionConversationLink(cfg, sessionID),
+			ID:               sessionID,
+			Name:             readSessionName(dir),
+			Principal:        readSessionPrincipal(dir),
+			Kind:             meta["kind"],
+			Agent:            meta["agent"],
+			Command:          meta["command"],
+			CWD:              meta["cwd"],
+			Isolation:        meta["isolation"],
+			PID:              pid,
 		}
 		if s.Kind == "" {
 			if s.Agent != "" {
@@ -184,6 +190,9 @@ func readAliveEggPID(dir string) (int, bool) {
 		return 0, false
 	}
 	if !ownedProcessIsAlive(pid) {
+		return 0, false
+	}
+	if config.Channel() == "preview" && !previewEggProcessMatches(pid, filepath.Base(dir)) {
 		return 0, false
 	}
 	return pid, true
@@ -324,6 +333,9 @@ func printActiveSessions(ctx context.Context, cfg *config.Config, jsonOutput boo
 		return err
 	}
 	if jsonOutput {
+		if sessions == nil {
+			sessions = []localSession{}
+		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(sessions)
@@ -427,7 +439,7 @@ func readSessionSnapshot(ctx context.Context, cfg *config.Config, ref string) (l
 		return localSession{}, nil, err
 	}
 	defer closeWithLog("egg client", ec)
-	stream, err := ec.AttachSession(ctx, session.ID)
+	stream, err := ec.AttachSessionWithOptions(ctx, session.ID, egg.AttachOptions{ReadOnly: true, Owner: "snapshot"})
 	if err != nil {
 		return localSession{}, nil, fmt.Errorf("read session %s: %w", session.ID, err)
 	}
@@ -461,7 +473,7 @@ func sendSessionInput(ctx context.Context, cfg *config.Config, ref string, input
 		return localSession{}, err
 	}
 	defer closeWithLog("egg client", ec)
-	stream, err := ec.AttachSession(ctx, session.ID)
+	stream, err := ec.AttachSessionWithOptions(ctx, session.ID, egg.AttachOptions{Claim: true, Owner: "session-send"})
 	if err != nil {
 		return localSession{}, fmt.Errorf("send to session %s: %w", session.ID, err)
 	}
@@ -487,9 +499,23 @@ func sendSessionInput(ctx context.Context, cfg *config.Config, ref string, input
 			return localSession{}, fmt.Errorf("send to session %s: %w", session.ID, err)
 		}
 	}
-	_ = stream.Send(&pb.SessionMsg{SessionId: session.ID, Payload: &pb.SessionMsg_Detach{Detach: true}})
-	_ = stream.CloseSend()
-	return session, nil
+	if err := stream.Send(&pb.SessionMsg{SessionId: session.ID, Payload: &pb.SessionMsg_Detach{Detach: true}}); err != nil {
+		return localSession{}, fmt.Errorf("detach after send: %w", err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		return localSession{}, err
+	}
+	// Send only queues bytes. Wait for the server to process the ordered input
+	// and detach before closing the connection and reporting delivery success.
+	for {
+		_, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return session, nil
+		}
+		if err != nil {
+			return localSession{}, fmt.Errorf("confirm session input: %w", err)
+		}
+	}
 }
 
 func waitForSessionText(ctx context.Context, cfg *config.Config, ref, needle string) (localSession, error) {
@@ -498,7 +524,7 @@ func waitForSessionText(ctx context.Context, cfg *config.Config, ref, needle str
 		return localSession{}, err
 	}
 	defer closeWithLog("egg client", ec)
-	stream, err := ec.AttachSession(ctx, session.ID)
+	stream, err := ec.AttachSessionWithOptions(ctx, session.ID, egg.AttachOptions{ReadOnly: true, Owner: "terminal-wait"})
 	if err != nil {
 		return localSession{}, fmt.Errorf("wait for session %s: %w", session.ID, err)
 	}

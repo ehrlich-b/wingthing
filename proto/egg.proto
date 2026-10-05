@@ -20,6 +20,10 @@ message StatusResponse {
     int64 uptime_seconds = 7;
     string rendered_config = 8;
     int64 idle_seconds = 9;
+    string writer_id = 10;
+    string writer_owner = 11;
+    uint64 input_epoch = 12;
+    int32 process_pid = 13;
 }
 
 message KillRequest { string session_id = 1; }
@@ -29,11 +33,16 @@ message ResizeRequest {
     string session_id = 1;
     uint32 rows = 2;
     uint32 cols = 3;
+    string attachment_id = 4;
+    uint64 input_epoch = 5;
+    string attachment_token = 6;
 }
 message ResizeResponse {}
 
 message SessionMsg {
     string session_id = 1;
+    AttachOptions attach_options = 8;
+    AttachmentInfo attachment_info = 9;
     oneof payload {
         bytes output = 2;
         bytes input = 3;
@@ -42,6 +51,23 @@ message SessionMsg {
         bool attach = 6;
         bool detach = 7;
     }
+}
+
+message AttachOptions {
+    bool read_only = 1;
+    bool takeover = 2;
+    bool claim = 3;
+    string owner = 4;
+    uint32 rows = 5;
+    uint32 cols = 6;
+}
+
+message AttachmentInfo {
+    string attachment_id = 1;
+    string writer_id = 2;
+    string writer_owner = 3;
+    uint64 input_epoch = 4;
+    string attachment_token = 5;
 }
 
 message Resize {

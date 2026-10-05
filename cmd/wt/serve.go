@@ -360,11 +360,11 @@ func serveCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&addrFlag, "addr", ":8080", "listen address")
+	cmd.Flags().StringVar(&addrFlag, "addr", config.DefaultListenAddr(), "listen address")
 	cmd.Flags().BoolVar(&devFlag, "dev", false, "reload templates from disk on each request")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "single-user mode, no login required")
 	cmd.Flags().BoolVar(&httpsFlag, "https", false, "serve the local browser UI over HTTPS using an on-demand, device-local CA")
-	cmd.Flags().StringVar(&httpsAddrFlag, "https-addr", defaultLocalHTTPSAddr, "loopback HTTPS address for the local browser UI")
+	cmd.Flags().StringVar(&httpsAddrFlag, "https-addr", defaultHTTPSAddr(), "loopback HTTPS address for the local browser UI")
 
 	return cmd
 }

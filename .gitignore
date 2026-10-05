@@ -23,3 +23,9 @@ test/web/wt
 
 test/web/out/
 test/web/claude
+
+# Local preview channel artifacts
+/wt-preview
+/dist-preview/
+# Generated synthetic visual QA page; rebuild from the current app markup.
+web/fixtures/session-inventory.html

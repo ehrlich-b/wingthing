@@ -242,6 +242,22 @@ func TestEffectiveProviderSessionPinsFreshClaudeAndPreservesExplicitFlags(t *tes
 	}
 }
 
+func TestEffectiveProviderSessionPreservesEmptyDisablingFlags(t *testing.T) {
+	want := []string{"--model", "claude-opus-5-5", "--tools", "", "--setting-sources", ""}
+	providerID, args, resumeID, err := effectiveProviderSession("claude", "", want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validProviderSessionID(providerID) || resumeID != "" || len(args) != len(want)+2 {
+		t.Fatalf("fresh provider identity = %q, argv = %#v, resume = %q", providerID, args, resumeID)
+	}
+	for i, value := range want {
+		if args[i+2] != value {
+			t.Fatalf("provider argv[%d] = %q, want %q", i, args[i+2], value)
+		}
+	}
+}
+
 func TestSessionResumeStatusRequiresNativeMetadata(t *testing.T) {
 	cfg := &config.Config{Dir: t.TempDir()}
 	cwd := t.TempDir()

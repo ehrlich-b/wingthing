@@ -113,6 +113,7 @@ wt --remote work1 --remote-cwd /home/me/work/project
 wt --remote work1 egg codex --cwd /home/me/work/project --name review --json -- -m gpt-5.6-sol
 
 # Inspect and control remote sessions without a TTY.
+wt --remote work1 --json
 wt --remote work1 session ps --json
 wt --remote work1 session read review --json
 wt --remote work1 session send review --stdin < input.txt
@@ -135,6 +136,9 @@ picker for several. `--remote-cwd` filters that choice to one existing remote
 directory and is required to start a persistent shell when no matching session
 exists. Without it, an empty inventory returns an error. With noninteractive
 input, bare entry prints the matching sessions as JSON and never creates one.
+`--json` requests that same read-only inventory explicitly from any terminal.
+An explicit attachment detaches when its input closes; it leaves the remote
+process running. Use `session read`, `send`, and `wait` for scripted control.
 
 This route needs a POSIX remote command shell because it uses POSIX quoting.
 Configure ports, bastions, keys, and host-key policy in OpenSSH. Wingthing does
@@ -143,6 +147,12 @@ not disable host-key verification or accept SSH options through `--remote`.
 A successful result means the remote egg confirmed that its session process
 exited; remote command failures retain their nonzero exit status. Doctor, MCP,
 daemon, and browser commands are outside this route.
+An unexpected stream closure is reported as an unconfirmed session exit. SSH
+status 255 retains the SSH diagnostic and tells you to reconnect and list the
+inventory before relaunching. Wingthing never retries a launch automatically.
+
+For a complete launch, detach, reconnect, and inspect journey, see
+[SSH remote sessions](docs/ssh-remote-sessions.md).
 
 ### Qualified multi-wing control through direct MCP
 

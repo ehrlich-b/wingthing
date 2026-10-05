@@ -23,6 +23,12 @@ export function reconcileWingSessions(existingSessions, wingId, remoteSessions) 
         session.audit = remote.audit;
         session.user_id = remote.user_id;
         session.email = remote.email;
+        session.lifecycle = remote.lifecycle;
+        session.lifecycle_seen_at = remote.lifecycle_seen_at;
+        session.conversation_id = remote.conversation_id;
+        session.root_conversation_id = remote.root_conversation_id;
+        session.parent_conversation_id = remote.parent_conversation_id;
+        session.conversation_role = remote.conversation_role;
         session.swept = true;
         kept.push(session);
         remoteMap.delete(session.id);

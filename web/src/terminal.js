@@ -3,6 +3,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import '@xterm/xterm/css/xterm.css';
 import { S, DOM, TERM_BUF_PREFIX, TERM_THUMB_PREFIX } from './state.js';
+import { readSessionContent, writeSessionContent, clearSessionContent, terminalReferenceMatches } from './session-reference.js';
+import { findSessionResource } from './session-inventory.js';
 import { e2eEncrypt } from './crypto.js';
 import { setNotification, clearNotification } from './notify.js';
 import { showHome } from './nav.js';
@@ -118,7 +120,7 @@ export function initTerminal() {
     });
 
     S.term.onBell(function() {
-        if (S.ptySessionId) setNotification(S.ptySessionId);
+        if (S.ptySessionId) setNotification(S.ptySessionId, S.ptyWingId);
     });
 
     S.term.onSelectionChange(function() {
@@ -218,13 +220,15 @@ export function initTerminal() {
 
 export function saveTermBuffer() {
     if (!S.ptySessionId || !S.serializeAddon) return;
+    var sessionId = S.ptySessionId, wingId = S.ptyWingId, serializer = S.serializeAddon;
     clearTimeout(S.saveBufferTimer);
     S.saveBufferTimer = setTimeout(function () {
         try {
-            var data = S.serializeAddon.serialize();
+            if (S.ptySessionId !== sessionId || S.ptyWingId !== wingId || S.serializeAddon !== serializer) return;
+            var data = serializer.serialize();
             if (data.length > 200000) data = data.slice(-200000);
-            localStorage.setItem(TERM_BUF_PREFIX + S.ptySessionId, data);
-            saveTermThumb();
+            writeSessionContent(localStorage, TERM_BUF_PREFIX, wingId, sessionId, data);
+            saveTermThumb(wingId, sessionId);
         } catch (e) {}
     }, 500);
 }
@@ -250,8 +254,8 @@ export function cellFgColor(cell) {
     return '#eee';
 }
 
-export function saveTermThumb() {
-    if (!S.ptySessionId || !S.term) return;
+export function saveTermThumb(wingId, sessionId) {
+    if (!wingId || S.ptySessionId !== sessionId || S.ptyWingId !== wingId || !S.term) return;
     try {
         var dpr = window.devicePixelRatio || 1;
         var W = 480, H = 260;
@@ -295,20 +299,20 @@ export function saveTermThumb() {
             if (run) { ctx.fillStyle = lastColor; ctx.fillText(run, padX + runX * charW, padY + y * lineH); }
         }
 
-        localStorage.setItem(TERM_THUMB_PREFIX + S.ptySessionId, c.toDataURL('image/webp', 0.6));
+        writeSessionContent(localStorage, TERM_THUMB_PREFIX, wingId, sessionId, c.toDataURL('image/webp', 0.6));
     } catch (e) {}
 }
 
-export function restoreTermBuffer(sessionId) {
+export function restoreTermBuffer(sessionId, wingId) {
     try {
-        var data = localStorage.getItem(TERM_BUF_PREFIX + sessionId);
+        var data = readSessionContent(localStorage, TERM_BUF_PREFIX, wingId, sessionId);
         if (data && S.term) S.term.write(data);
     } catch (e) {}
 }
 
-export function clearTermBuffer(sessionId) {
-    try { localStorage.removeItem(TERM_BUF_PREFIX + sessionId); } catch (e) {}
-    try { localStorage.removeItem(TERM_THUMB_PREFIX + sessionId); } catch (e) {}
+export function clearTermBuffer(sessionId, wingId) {
+    var session = wingId ? null : findSessionResource(S.sessionsData, sessionId);
+    clearSessionContent(localStorage, [TERM_BUF_PREFIX, TERM_THUMB_PREFIX], wingId || (session && session.wing_id), sessionId);
 }
 
 var _spectateToastTimer = null;
@@ -330,12 +334,14 @@ function showSpectateToast() {
 }
 
 export function sendPTYInput(text) {
-    if (!S.ptySessionId || S.spectating) return;
-    clearNotification(S.ptySessionId);
+    if (!S.ptySessionId || S.spectating || S.ptyInputBlocked) return;
+    var sessionId = S.ptySessionId, wingId = S.ptyWingId, socket = S.ptyWs;
+    clearNotification(sessionId, wingId);
     e2eEncrypt(text).then(function (encoded) {
-        var msg = { type: 'pty.input', session_id: S.ptySessionId, data: encoded };
+        if (!terminalReferenceMatches(S, sessionId, wingId, socket)) return;
+        var msg = { type: 'pty.input', session_id: sessionId, data: encoded };
         // P2P: try DataChannel first, fall back to relay WS
-        if (sendViaDC(S.ptySessionId, msg)) return;
+        if (sendViaDC(sessionId, msg, wingId)) return;
         if (S.ptyWs && S.ptyWs.readyState === WebSocket.OPEN) {
             S.ptyWs.send(JSON.stringify(msg));
         }

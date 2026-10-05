@@ -40,6 +40,9 @@ func mcpCmd() *cobra.Command {
 		Short: "Expose Wingthing to LLM clients",
 	}
 	var clientName string
+	var conversationID string
+	var executionID string
+	var hostMailbox string
 	var unsandboxed bool
 	stdioCmd := &cobra.Command{
 		Use:   "stdio",
@@ -48,6 +51,15 @@ func mcpCmd() *cobra.Command {
 			"control persistent terminals, run prompts, and coordinate bounded loops and swarms.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if hostMailbox != "" || executionID != "" {
+				// A sandboxed parent's injected client. It forwards to the host
+				// broker registered for this execution and never opens Wingthing
+				// state; --client is informational, authority is host-captured.
+				if hostMailbox == "" || executionID == "" || conversationID == "" || unsandboxed {
+					return errors.New("--host-mailbox requires --conversation and --execution and cannot be combined with --unsandboxed")
+				}
+				return serveConversationMailboxClient(cmd.Context(), os.Stdin, os.Stdout, hostMailbox, conversationID, executionID)
+			}
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -92,17 +104,24 @@ func mcpCmd() *cobra.Command {
 			server := &localMCPServer{
 				cfg: cfg, in: os.Stdin, out: os.Stdout, logs: os.Stderr,
 				principal: owner, actor: clientID, unsandboxed: unsandboxed,
-				surface: control.SurfaceLocalMCP,
+				surface:           control.SurfaceLocalMCP,
+				boundConversation: conversationID,
 			}
 			if configured {
 				server.grants = grantSet(clientConfig.Grants)
 				server.maxSessions = clientConfig.Bounds.MaxSessions
 				server.maxSpawnsPerHour = clientConfig.Bounds.MaxSpawnsPerHour
 			}
+			if err := validateBoundConversation(server); err != nil {
+				return err
+			}
 			return server.serve(cmd.Context())
 		},
 	}
 	stdioCmd.Flags().StringVar(&clientName, "client", "", "local MCP principal name (or WT_MCP_CLIENT)")
+	stdioCmd.Flags().StringVar(&conversationID, "conversation", "", "bind child launches to an existing owner conversation")
+	stdioCmd.Flags().StringVar(&executionID, "execution", "", "exact parent execution session served by --host-mailbox")
+	stdioCmd.Flags().StringVar(&hostMailbox, "host-mailbox", "", "forward to the host broker registered for this parent execution")
 	stdioCmd.Flags().BoolVar(&unsandboxed, "unsandboxed", false, "trust an outer VM/container boundary for all sessions and prompt runs")
 	cmd.AddCommand(stdioCmd)
 	cmd.AddCommand(connectMCPCmd())
@@ -125,10 +144,19 @@ type localMCPServer struct {
 	admission         *mcpAdmissionState // shared by remote connections on one wing
 	identity          EggIdentity
 	actor             string
+	boundConversation string
 	surface           control.Surface
 	allowedPaths      []string
 	enforcePathBounds bool
 	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error
+	// tools, when set, further limits callable tools by name; grants are
+	// per category and cannot express the host mailbox's fixed subset.
+	tools map[string]bool
+	// broker is the protected registration of a host mailbox dispatcher.
+	broker *conversationBrokerRegistration
+	// hostMailboxUnavailable, when set, refuses host mailbox selection for a
+	// launcher whose spawn cannot apply the broker launch contract.
+	hostMailboxUnavailable string
 }
 
 // mcpAdmissionState keeps process-local spawn admission shared across reconnecting
@@ -167,6 +195,9 @@ func (s *localMCPServer) clientActor() string {
 }
 
 func (s *localMCPServer) toolAllowed(name string) bool {
+	if s.tools != nil && !s.tools[name] {
+		return false
+	}
 	if s.grants == nil {
 		return true
 	}
@@ -200,6 +231,9 @@ type localMCPResponse struct {
 type localMCPError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	// Data is set only by the host mailbox client to report whether a call
+	// was dispatched; direct servers never populate it.
+	Data any `json:"data,omitempty"`
 }
 
 type localMCPTool = control.Tool
@@ -482,6 +516,12 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 	}
 	if !s.toolAllowed(name) {
 		err = fmt.Errorf("principal %q lacks grant %q", s.clientPrincipal(), tool.Grant)
+		if s.tools != nil && !s.tools[name] {
+			err = fmt.Errorf("tool %q is not available on this connection", name)
+		}
+		return map[string]any{"error": err.Error()}, true, nil
+	}
+	if err = s.checkBoundSessionTarget(name, arguments); err != nil {
 		return map[string]any{"error": err.Error()}, true, nil
 	}
 	switch name {
@@ -499,6 +539,14 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 		data, err = s.toolTerminalList(ctx, arguments)
 	case "terminal_read":
 		data, err = s.toolTerminalRead(ctx, arguments)
+	case "session_status":
+		data, err = s.toolSessionStatus(ctx, arguments)
+	case "session_read":
+		data, err = s.toolSessionRead(ctx, arguments)
+	case "session_wait":
+		data, err = s.toolSessionWait(ctx, arguments)
+	case "session_prompt":
+		data, err = s.toolSessionPrompt(ctx, arguments)
 	case "terminal_send":
 		data, err = s.toolTerminalSend(ctx, arguments)
 	case "terminal_wait":
@@ -507,6 +555,16 @@ func (s *localMCPServer) callTool(ctx context.Context, name string, arguments js
 		data, err = s.toolTerminalStart(arguments)
 	case "agent_start":
 		data, err = s.toolAgentStart(arguments)
+	case "conversation_list":
+		data, err = s.toolConversationList(arguments)
+	case "conversation_bootstrap":
+		data, err = s.toolConversationBootstrap(arguments)
+	case "conversation_read":
+		data, err = s.toolConversationRead(ctx, arguments)
+	case "conversation_checkpoint":
+		data, err = s.toolConversationCheckpoint(arguments)
+	case "conversation_wake":
+		data, err = s.toolConversationWake(arguments)
 	case "agent_run":
 		data, err = s.toolAgentRun(arguments)
 	case "agent_status":
@@ -1014,6 +1072,12 @@ func (s *localMCPServer) resolveOwnedSession(ctx context.Context, ref string) (l
 	if s.enforcePathBounds && (len(s.allowedPaths) == 0 || !isUnderPaths(canonicalSessionPath(session.CWD), s.allowedPaths)) {
 		return localSession{}, errors.New("session not found or not owned by caller")
 	}
+	// A host mailbox connection was checked against its tree by exact ID; a
+	// live label or prefix match must not substitute another session. Direct
+	// bound connections keep the deployed label/prefix resolution.
+	if s.broker != nil && session.ID != ref {
+		return localSession{}, errors.New("session is outside this MCP connection's bound task tree; use its exact execution session ID")
+	}
 	return session, nil
 }
 
@@ -1146,8 +1210,24 @@ func (s *localMCPServer) toolTerminalList(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return nil, err
 	}
+	root := ""
+	if s.broker != nil && s.boundConversation != "" {
+		db, err := s.openMessageStore()
+		if err != nil {
+			return nil, err
+		}
+		bound, err := s.ownedConversation(db, s.boundConversation)
+		closeWithLog("bound terminal list store", db)
+		if err != nil {
+			return nil, err
+		}
+		root = bound.RootID
+	}
 	owned := make([]localSession, 0, len(sessions))
 	for _, session := range sessions {
+		if root != "" && session.RootConversationID != root {
+			continue
+		}
 		if s.ownsSession(session) && (!s.enforcePathBounds || (len(s.allowedPaths) > 0 && isUnderPaths(canonicalSessionPath(session.CWD), s.allowedPaths))) {
 			owned = append(owned, session)
 		}
@@ -1318,12 +1398,15 @@ func (s *localMCPServer) toolTerminalStart(arguments json.RawMessage) (map[strin
 
 func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]any, error) {
 	var args struct {
-		Agent      string   `json:"agent"`
-		Model      string   `json:"model"`
-		CWD        string   `json:"cwd"`
-		Label      string   `json:"label"`
-		Unattended bool     `json:"unattended"`
-		Args       []string `json:"args"`
+		Agent                string   `json:"agent"`
+		Model                string   `json:"model"`
+		CWD                  string   `json:"cwd"`
+		Label                string   `json:"label"`
+		Unattended           bool     `json:"unattended"`
+		Args                 []string `json:"args"`
+		ConversationRole     string   `json:"conversation_role"`
+		ParentConversationID string   `json:"parent_conversation_id"`
+		RequestID            string   `json:"request_id"`
 	}
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
@@ -1333,6 +1416,9 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 	}
 	if _, ok := agentpkg.LookupDefinition(args.Agent); !ok {
 		return nil, fmt.Errorf("unsupported agent %q", args.Agent)
+	}
+	if err := validateSessionName(args.Label); err != nil {
+		return nil, err
 	}
 	if err := validateAgentArgs(args.Args); err != nil {
 		return nil, err
@@ -1347,7 +1433,14 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		return nil, err
 	}
 	args.CWD = resolvedCWD
-	eggCfg, err := loadSpawnEggConfig("", args.CWD, s.unsandboxed)
+	var eggCfg *egg.EggConfig
+	if s.broker != nil {
+		// Host mailbox children inherit the parent's captured launch policy;
+		// workspace egg.yaml files are writable by the parent provider.
+		eggCfg, err = s.broker.childEggConfig(args.CWD)
+	} else {
+		eggCfg, err = loadSpawnEggConfig("", args.CWD, s.unsandboxed)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1357,16 +1450,52 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		eggCfg.DangerouslySkipPermissions = true
 	}
 	sessionID := newRuntimeID()
-	if err := s.admitSpawn(func() error {
-		ec, spawnErr := spawnEgg(s.cfg, sessionID, args.Agent, eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
-			spawnEggOpts{Label: args.Label, Kind: "agent", AgentArgs: args.Args, Principal: s.clientPrincipal()})
+	// Hash normalized launch arguments, excluding the retry key itself.
+	spec := args
+	spec.RequestID = ""
+	conversation, created, err := s.reserveAgentConversation(args.Agent, args.CWD, args.Label, args.ConversationRole, args.ParentConversationID, args.RequestID, sessionID, spec)
+	if err != nil {
+		return nil, err
+	}
+	if conversation != nil && !created {
+		return conversationLaunchResult(conversation, true), nil
+	}
+	var managedParent *conversationBrokerRegistration
+	args.Args, managedParent, err = s.prepareBoundParentLaunch(conversation, eggCfg, args.Args)
+	if err != nil {
+		if saveErr := s.markConversationLaunch(conversation, err); saveErr != nil {
+			return nil, saveErr
+		}
+		return nil, err
+	}
+	spawnErr := s.admitSpawn(func() error {
+		if err := s.preflightBrokerChild(eggCfg, args.Agent, args.CWD, sessionID); err != nil {
+			return err
+		}
+		opts := spawnEggOpts{Label: args.Label, Kind: "agent", AgentArgs: args.Args, Principal: s.clientPrincipal()}
+		// Broker-managed parents and every child of a host mailbox carry the
+		// protected state/executable set and omit the browser bridge.
+		if managedParent != nil {
+			opts = managedParent.launchOpts(s.cfg, opts)
+		} else if s.broker != nil {
+			opts = s.broker.launchOpts(s.cfg, opts)
+		}
+		ec, spawnErr := spawnEgg(s.cfg, sessionID, args.Agent, eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0, opts)
 		if spawnErr != nil {
 			return spawnErr
 		}
 		closeWithLog("spawned agent egg client", ec)
 		return nil
-	}); err != nil {
+	})
+	if err := s.markConversationLaunch(conversation, spawnErr); err != nil {
 		return nil, err
+	}
+	if spawnErr != nil {
+		return nil, spawnErr
+	}
+	if conversation != nil {
+		conversation.LaunchState = "started"
+		return conversationLaunchResult(conversation, false), nil
 	}
 	return map[string]any{
 		"session": sessionID, "label": args.Label, "agent": args.Agent,

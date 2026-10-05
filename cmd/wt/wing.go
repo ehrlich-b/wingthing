@@ -1038,13 +1038,38 @@ func scanDir(dir string, depth, maxDepth int, projects *[]ws.WingProject) {
 	}
 }
 
-func wingPidPath() string {
-	cfg, _ := config.Load()
-	if cfg != nil {
-		return filepath.Join(cfg.Dir, "wing.pid")
+// daemonStateDir selects the state that owns daemon pid/args/log/status and
+// the lifecycle lock. It never substitutes DefaultDir for a selection that
+// failed: an unresolvable StateDir is an error, and a selected preview state
+// that cannot load (for example an invalid provider binding) returns its own
+// directory with the load error so lifecycle mutations fail closed.
+func daemonStateDir() (string, error) {
+	cfg, loadErr := config.Load()
+	if loadErr == nil {
+		return cfg.Dir, nil
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".wingthing", "wing.pid")
+	dir, err := config.StateDir()
+	if err != nil {
+		return "", err
+	}
+	if config.Channel() == "preview" {
+		return dir, loadErr
+	}
+	return dir, nil
+}
+
+// daemonStatePath is empty when no state can be selected. Lifecycle
+// mutations never reach it then: acquireDaemonLifecycleLock refuses first.
+func daemonStatePath(name string) string {
+	dir, _ := daemonStateDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, name)
+}
+
+func wingPidPath() string {
+	return daemonStatePath("wing.pid")
 }
 
 const maxLogSize = 1 << 20 // 1MB
@@ -1099,30 +1124,15 @@ func rotateLog(path string) error {
 }
 
 func wingArgsPath() string {
-	cfg, _ := config.Load()
-	if cfg != nil {
-		return filepath.Join(cfg.Dir, "wing.args")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".wingthing", "wing.args")
+	return daemonStatePath("wing.args")
 }
 
 func wingLogPath() string {
-	cfg, _ := config.Load()
-	if cfg != nil {
-		return filepath.Join(cfg.Dir, "wing.log")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".wingthing", "wing.log")
+	return daemonStatePath("wing.log")
 }
 
 func wingStatusPath() string {
-	cfg, _ := config.Load()
-	if cfg != nil {
-		return filepath.Join(cfg.Dir, "wing.status")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".wingthing", "wing.status")
+	return daemonStatePath("wing.status")
 }
 
 // wingStatus is the JSON schema for wing.status.
@@ -1193,30 +1203,15 @@ func waitForWingStatus(pid int, timeout time.Duration) string {
 }
 
 func roostPidPath() string {
-	cfg, _ := config.Load()
-	if cfg != nil {
-		return filepath.Join(cfg.Dir, "roost.pid")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".wingthing", "roost.pid")
+	return daemonStatePath("roost.pid")
 }
 
 func roostArgsPath() string {
-	cfg, _ := config.Load()
-	if cfg != nil {
-		return filepath.Join(cfg.Dir, "roost.args")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".wingthing", "roost.args")
+	return daemonStatePath("roost.args")
 }
 
 func roostLogPath() string {
-	cfg, _ := config.Load()
-	if cfg != nil {
-		return filepath.Join(cfg.Dir, "roost.log")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".wingthing", "roost.log")
+	return daemonStatePath("roost.log")
 }
 
 func writeDaemonMetadata(pidPath, argsPath string, pid int, args []string) error {
@@ -1264,7 +1259,11 @@ func writeAtomicMetadataFile(path string, data []byte, mode os.FileMode) error {
 }
 
 func acquireDaemonLifecycleLock() (*os.File, error) {
-	return acquireDaemonLifecycleLockAt(filepath.Join(filepath.Dir(wingPidPath()), "daemon.lock"))
+	dir, err := daemonStateDir()
+	if err != nil {
+		return nil, fmt.Errorf("select daemon state: %w", err)
+	}
+	return acquireDaemonLifecycleLockAt(filepath.Join(dir, "daemon.lock"))
 }
 
 func acquireDaemonLifecycleLockAt(path string) (*os.File, error) {
@@ -1358,6 +1357,12 @@ func inspectDaemonPid(pid int, kind daemonKind) (bool, error) {
 }
 
 func daemonArgvMatches(argv []string, kind daemonKind) bool {
+	if config.Channel() == "preview" {
+		exe, err := os.Executable()
+		if err != nil || len(argv) == 0 || canonicalPolicyPath(argv[0]) != canonicalPolicyPath(exe) {
+			return false
+		}
+	}
 	if len(argv) < 4 || argv[2] != "start" {
 		return false
 	}
@@ -1387,7 +1392,15 @@ func parseSavedDaemonArgs(data []byte, kind daemonKind) ([]string, error) {
 		return nil, fmt.Errorf("empty daemon args")
 	}
 	args := strings.Split(trimmed, "\n")
-	argv := append([]string{"wt"}, args...)
+	executable := "wt"
+	if config.Channel() == "preview" {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			return nil, err
+		}
+	}
+	argv := append([]string{executable}, args...)
 	if !daemonArgvMatches(argv, kind) {
 		return nil, fmt.Errorf("saved args do not describe a %s foreground daemon", kind)
 	}
@@ -1829,13 +1842,13 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	// Resolve roost URL
 	roostURL := roostFlag
 	if local && roostURL == "" {
-		roostURL = "http://localhost:8080"
+		roostURL = config.DefaultLocalRelayURL()
 	}
 	if roostURL == "" {
 		roostURL = cfg.RoostURL
 	}
 	if roostURL == "" {
-		roostURL = "https://ws.wingthing.ai"
+		roostURL = config.DefaultRelayURL()
 	}
 	var passkeyPolicyLive atomic.Value
 	passkeyPolicyLive.Store(passkeyPolicyForRoost(passkeyRPURL(roostURL, os.Getenv("WT_BASE_URL"))))
@@ -1995,11 +2008,19 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 				}
 				return
 			}
+			boundController, canBind := browserDataChannelBinding(sessionID, senderPub, ident.UserID)
+			if !canBind {
+				_ = dc.Close()
+				return
+			}
 			dcSessions.Store(sessionID, dc)
 			log.Printf("[P2P] DC stored for session %s from %s", sessionID, shortLogValue(senderPub))
 
 			dc.OnMessage(func(msg pionwebrtc.DataChannelMessage) {
 				if !currentDataChannel(&dcSessions, sessionID, dc) {
+					return
+				}
+				if !currentBrowserInput(sessionID, boundController) {
 					return
 				}
 				client.PushPTYInput(sessionID, msg.Data)
@@ -2264,6 +2285,13 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			}
 		}
 	}()
+
+	go runConversationWakeController(ctx, cfg, func() (*config.WingConfig, bool) {
+		wingCfgMu.Lock()
+		copyCfg := *wingCfg
+		wingCfgMu.Unlock()
+		return &copyCfg, sharedHost
+	})
 
 	// Idle session reaper — kills sessions that have been idle too long.
 	// Always runs; reads wingCfg.IdleTimeout dynamically so SIGHUP reload works.
@@ -2538,7 +2566,7 @@ func wingStatusCmd() *cobra.Command {
 func resolveEmail(cfg *config.Config, email string) (string, string, error) {
 	roostURL := cfg.RoostURL
 	if roostURL == "" {
-		roostURL = "https://ws.wingthing.ai"
+		roostURL = config.DefaultRelayURL()
 	}
 	ts := auth.NewTokenStore(cfg.Dir)
 	tok, err := ts.Load()
@@ -2664,7 +2692,7 @@ func wingAllowCmd() *cobra.Command {
 				}
 				roostURL := cfg.RoostURL
 				if roostURL == "" {
-					roostURL = "https://ws.wingthing.ai"
+					roostURL = config.DefaultRelayURL()
 				}
 				ts := auth.NewTokenStore(cfg.Dir)
 				tok, err := ts.Load()
@@ -3065,7 +3093,7 @@ func wingConfigCmd() *cobra.Command {
 			fmt.Printf("wing_id:    %s\n", wingCfg.WingID)
 			roost := wingCfg.Roost
 			if roost == "" {
-				roost = "wss://ws.wingthing.ai"
+				roost = config.DefaultRelayURL()
 			}
 			fmt.Printf("roost:      %s\n", roost)
 			fmt.Printf("org:        %s\n", wingCfg.Org)
@@ -3332,7 +3360,7 @@ func reapDeadEggs(cfg *config.Config) {
 }
 
 // cleanEggDir removes the files in an egg session directory, then the directory itself.
-// If audit files or chat history exist, preserves egg.meta, egg.owner, and data (only removes runtime files).
+// If recordings or lifecycle history exist, preserves metadata and data.
 func cleanEggDir(dir string) {
 	removeWithLog(filepath.Join(dir, "egg.sock"))
 	removeWithLog(filepath.Join(dir, "egg.token"))
@@ -3342,14 +3370,8 @@ func cleanEggDir(dir string) {
 	// crash message is lost ("egg process crashed (no log available)").
 	// The log is small and the parent's cleanEggDir call cleans it up later.
 	// Keep egg.meta, egg.owner, and dir if audit recordings or chat history exist
-	for _, name := range []string{"audit.pty.gz", "audit.log", "chat.jsonl.gz"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-			return
-		} else if !errors.Is(err, os.ErrNotExist) {
-			// An unreadable recording must never be mistaken for an absent one.
-			log.Printf("egg: preserve %s after stat failure: %v", dir, err)
-			return
-		}
+	if egg.HasRetainedSessionData(dir) {
+		return
 	}
 	// The egg copies its diagnostic log to the persistent log directory before
 	// normal shutdown. Remove the whole transient directory so crash logs and
@@ -3424,6 +3446,9 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 			UserID:    readEggOwner(dir),
 			Email:     readEggOwnerEmail(dir),
 		}
+		link := sessionConversationLink(cfg, sessionID)
+		info.ConversationID, info.RootConversationID, info.ParentConversationID, info.ConversationRole = link.ConversationID, link.RootConversationID, link.ParentConversationID, link.ConversationRole
+		info.Lifecycle = sessionLifecycleSummary(context.Background(), cfg, sessionID)
 		if _, ok := wingAttention.Load(sessionID); ok {
 			info.NeedsAttention = true
 		}
@@ -3444,6 +3469,9 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 // process (another user's egg, or any roost process), so a PID whose argv
 // cannot be confirmed is never signaled.
 func eggPidMatchesSession(pid int, sessionID string) bool {
+	if config.Channel() == "preview" {
+		return previewEggProcessMatches(pid, sessionID)
+	}
 	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil {
 		argv := strings.Split(string(data), "\x00")
 		for i, a := range argv {
@@ -3612,6 +3640,15 @@ func (p *pendingReattachAuths) take(viewerID string) (pendingReattachAuth, bool)
 	return pending, ok
 }
 
+func (p *pendingReattachAuths) detach(detach ws.PTYDetach) {
+	for viewerID, pending := range p.byViewer {
+		if (detach.ViewerID != "" && pending.attach.ViewerID == detach.ViewerID) || (detach.ControllerID != "" && pending.attach.ControllerID == detach.ControllerID) {
+			delete(p.byViewer, viewerID)
+		}
+	}
+	p.resetTimer()
+}
+
 func (p *pendingReattachAuths) expire(now time.Time) []pendingReattachAuth {
 	var expired []pendingReattachAuth
 	for viewerID, pending := range p.byViewer {
@@ -3777,7 +3814,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 	// Attach to existing egg session
 	streamCtx, sCancel := context.WithCancel(ctx)
-	stream, err := ec.AttachSession(streamCtx, sessionID)
+	stream, err := ec.AttachSessionWithOptions(streamCtx, sessionID, egg.AttachOptions{ReadOnly: config.Channel() == "preview", Owner: "wing:observer"})
 	if err != nil {
 		sCancel()
 		log.Printf("pty session %s: reclaim attach failed: %v", sessionID, err)
@@ -3785,6 +3822,10 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	}
 	activeStream = stream
 	cancelStream = sCancel
+	if config.Channel() == "preview" {
+		cancelStream = nil
+		defer sCancel()
+	}
 
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	defer sessionCancel()
@@ -3818,6 +3859,9 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				} else {
 					lastHadBell = false
 				}
+				if config.Channel() == "preview" {
+					continue
+				}
 				mu.Lock()
 				currentGCM := gcm
 				mu.Unlock()
@@ -3837,6 +3881,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 	// Process input from browser
 	go func() {
+		defer releaseBrowserClient(sessionID, ec)
 		pendingAuth := newPendingReattachAuths()
 		defer pendingAuth.close()
 		defer func() {
@@ -3962,12 +4007,13 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 						continue
 					}
 					specCtx, specCancel := context.WithCancel(ctx)
-					specStream, specErr := ec.AttachSession(specCtx, sessionID)
+					specStream, specErr := ec.AttachSessionWithOptions(specCtx, sessionID, egg.AttachOptions{ReadOnly: true, Owner: "browser:observer"})
 					if specErr != nil {
 						specCancel()
 						writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: sessionID, ViewerID: attach.ViewerID})
 						continue
 					}
+					bindBrowserViewer(sessionID, attach.ViewerID, ec, specCancel)
 					writePTYMessage(write, ws.PTYStarted{
 						Type: ws.TypePTYStarted, SessionID: sessionID, Agent: reclaimAgent,
 						PublicKey: wingPubKeyB64, AuthToken: attachAuthToken, ViewerID: attach.ViewerID,
@@ -3980,6 +4026,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 					go func(viewerID string, g cipher.AEAD, stream pb.Egg_SessionClient, cancel context.CancelFunc) {
 						defer cancel()
+						defer browserViewers.Delete(sessionID + ":" + viewerID)
 						for {
 							msg, err := stream.Recv()
 							if err != nil {
@@ -4008,11 +4055,11 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", sessionID)
 				newStreamCtx, newSCancel := context.WithCancel(ctx)
-				newStream, reErr := ec.AttachSession(newStreamCtx, sessionID)
+				newStream, reErr := ec.AttachSessionWithOptions(newStreamCtx, sessionID, egg.AttachOptions{Claim: true, Takeover: attach.Takeover, Owner: "browser:" + attach.UserID, Rows: attach.Rows, Cols: attach.Cols})
 				if reErr != nil {
 					newSCancel()
 					log.Printf("pty session %s: reattach to egg failed: %v", sessionID, reErr)
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "reattach failed", SessionID: sessionID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: reErr.Error(), SessionID: sessionID, ControllerID: attach.ControllerID})
 					continue
 				}
 
@@ -4025,24 +4072,24 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				}
 				mu.Unlock()
 
+				// Activate new key + stream, start new output goroutine.
+				mu.Lock()
+				gcm = newGCM
+				activeStream = newStream
+				cancelStream = newSCancel
+				mu.Unlock()
+				bindBrowserInput(sessionID, attach.ControllerID, attach.PublicKey, attach.UserID, ec, newStream, newSCancel)
+
 				// Send pty.started so browser can derive key.
 				reclaimIdleState.mu.Lock()
 				reclaimIdleState.connected = true
 				reclaimIdleState.mu.Unlock()
 				{
-					started := ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, PublicKey: wingPubKeyB64}
+					started := ws.PTYStarted{Type: ws.TypePTYStarted, SessionID: sessionID, PublicKey: wingPubKeyB64, ControllerID: attach.ControllerID}
 					if attachAuthToken != "" {
 						started.AuthToken = attachAuthToken
 					}
 					writePTYMessage(write, started)
-				}
-
-				// Resize egg to browser dimensions before snapshot.
-				if attach.Cols > 0 && attach.Rows > 0 {
-					if err := ec.Resize(ctx, sessionID, attach.Rows, attach.Cols); err != nil {
-						log.Printf("pty session %s: resize reclaimed egg: %v", sessionID, err)
-					}
-					time.Sleep(150 * time.Millisecond) // let agent repaint for new dimensions before VTE snapshot
 				}
 
 				// Read replay (first message) and send to browser in chunks.
@@ -4055,18 +4102,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 				}
 
-				// Activate new key + stream, start new output goroutine.
-				mu.Lock()
-				gcm = newGCM
-				activeStream = newStream
-				cancelStream = newSCancel
-				mu.Unlock()
-
 				go func() {
 					var lastHadBell bool
 					for {
 						msg, err := newStream.Recv()
 						if err != nil {
+							browserStreamEnded(sessionID, attach.ControllerID, err, write)
 							if err != io.EOF {
 								log.Printf("pty session %s: egg stream error: %v", sessionID, err)
 							}
@@ -4077,7 +4118,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							reclaimIdleState.mu.Lock()
 							reclaimIdleState.lastOutput = time.Now()
 							reclaimIdleState.mu.Unlock()
-							if hasBell(p.Output) {
+							if config.Channel() != "preview" && hasBell(p.Output) {
 								if lastHadBell {
 									checkAndSendAttention(sessionID, reclaimAgent, reclaimCWD, write)
 								}
@@ -4093,6 +4134,9 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							}
 							sendPTYOutput(sessionID, p.Output, currentGCM, write)
 						case *pb.SessionMsg_ExitCode:
+							if config.Channel() == "preview" {
+								return
+							}
 							log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
 							writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
 							clearAttentionCooldown(sessionID)
@@ -4125,8 +4169,18 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				}
 				if err := currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Input{Input: decoded}}); err != nil {
 					log.Printf("pty session %s: send input to reclaimed egg: %v", sessionID, err)
+					if config.Channel() == "preview" {
+						continue reclaimInputLoop
+					}
 					sessionCancel()
 					return
+				}
+
+			case ws.TypePTYDetach:
+				var detach ws.PTYDetach
+				if json.Unmarshal(data, &detach) == nil {
+					pendingAuth.detach(detach)
+					detachBrowserAttachment(sessionID, detach)
 				}
 
 			case ws.TypePTYAttentionAck:
@@ -4141,8 +4195,17 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				currentStream := activeStream
 				mu.Unlock()
 				if currentStream != nil {
+					if config.Channel() == "preview" {
+						if err := resizeBrowserStream(ctx, sessionID, msg.ControllerID, currentStream, uint32(msg.Rows), uint32(msg.Cols)); err != nil {
+							log.Printf("browser resize: %v", err)
+						}
+						continue
+					}
 					if err := currentStream.Send(&pb.SessionMsg{SessionId: sessionID, Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{Rows: uint32(msg.Rows), Cols: uint32(msg.Cols)}}}); err != nil {
 						log.Printf("pty session %s: send resize to reclaimed egg: %v", sessionID, err)
+						if config.Channel() == "preview" {
+							continue reclaimInputLoop
+						}
 						sessionCancel()
 						return
 					}
@@ -4320,6 +4383,11 @@ authDone:
 		}
 		defer func() { releaseProviderResume(providerResumeSpawned) }()
 	}
+	resumeArgs, resumePrincipal, resumeBindingErr := prepareConversationResumeMCP(cfg, wingCfg, start, eggCfg, sharedHost)
+	if resumeBindingErr != nil {
+		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
+		return
+	}
 	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace, EggIdentity{
 		UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName,
 		OrgWing: wingCfg.Org != "", SharedHost: sharedHost,
@@ -4331,6 +4399,7 @@ authDone:
 	}, idleTimeout, spawnEggOpts{
 		ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
 		ProviderReserved: providerResumeID != "", ToolNames: toolNames, ToolSocketPath: toolSocketPath,
+		Principal: resumePrincipal, AgentArgs: resumeArgs,
 	})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
@@ -4347,6 +4416,13 @@ authDone:
 	}
 	defer closeWithLog("PTY egg client", ec)
 	providerResumeSpawned = providerResumeID != ""
+	if err := inheritConversationExecution(cfg, start.ResumeSessionID, start.SessionID); err != nil {
+		killCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_ = ec.Kill(killCtx, start.SessionID)
+		cancel()
+		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "persist resumed conversation identity: " + err.Error()})
+		return
+	}
 
 	log.Printf("pty session %s: spawned (user=%s agent=%s)", start.SessionID, start.UserID, start.Agent)
 
@@ -4361,31 +4437,59 @@ authDone:
 	defer sessionStates.Delete(start.SessionID)
 	defer forgetAttentionState(start.SessionID)
 
-	// Notify browser
-	writePTYMessage(write, ws.PTYStarted{
-		Type:                 ws.TypePTYStarted,
-		SessionID:            start.SessionID,
-		Agent:                start.Agent,
-		PublicKey:            wingPubKeyB64,
-		CWD:                  start.CWD,
-		AuthToken:            start.AuthToken,
-		ResumedFromSessionID: start.ResumeSessionID,
-	})
-
 	// Attach to egg session stream
 	streamCtx, sCancel := context.WithCancel(ctx)
-	stream, err := ec.AttachSession(streamCtx, start.SessionID)
+	stream, err := ec.AttachSessionWithOptions(streamCtx, start.SessionID, egg.AttachOptions{Claim: true, Owner: "browser:" + start.UserID})
+	writerConfirmed := err == nil
 	if err != nil {
-		sCancel()
 		log.Printf("pty: egg attach failed: %v", err)
-		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
-		return
+		if config.Channel() != "preview" {
+			sCancel()
+			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+			return
+		}
+		writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: start.SessionID, ControllerID: start.ControllerID, Message: err.Error()})
+		if grpcstatus.Code(err) != codes.FailedPrecondition {
+			sCancel()
+			return
+		}
+		// Another surface may claim a newly visible egg before the browser's
+		// initial attach. Keep its bridge alive for a deliberate takeover.
+		stream, err = ec.AttachSessionWithOptions(streamCtx, start.SessionID, egg.AttachOptions{ReadOnly: true, Owner: "wing:pending-browser"})
+		if err != nil {
+			sCancel()
+			return
+		}
+		idleState.mu.Lock()
+		idleState.connected = false
+		idleState.mu.Unlock()
 	}
 	activeStream = stream
 	cancelStream = sCancel
 
+	if writerConfirmed {
+		bindBrowserInput(start.SessionID, start.ControllerID, start.PublicKey, start.UserID, ec, stream, sCancel)
+		// Notify browser
+		writePTYMessage(write, ws.PTYStarted{
+			Type:                 ws.TypePTYStarted,
+			SessionID:            start.SessionID,
+			ControllerID:         start.ControllerID,
+			Agent:                start.Agent,
+			PublicKey:            wingPubKeyB64,
+			CWD:                  start.CWD,
+			AuthToken:            start.AuthToken,
+			ResumedFromSessionID: start.ResumeSessionID,
+		})
+	}
+
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
 	defer sessionCancel()
+	if config.Channel() == "preview" {
+		if err := watchPreviewBrowserEgg(sessionCtx, ec, start.SessionID, start.Agent, start.CWD, idleState, write, sessionCancel); err != nil {
+			writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: start.SessionID, Message: err.Error()})
+			return
+		}
+	}
 
 	// Watch for .wt-preview file in agent working directory
 	if start.CWD != "" {
@@ -4401,6 +4505,7 @@ authDone:
 		for {
 			msg, err := stream.Recv()
 			if err != nil {
+				browserStreamEnded(start.SessionID, start.ControllerID, err, write)
 				if err != io.EOF {
 					log.Printf("pty session %s: egg stream error: %v", start.SessionID, err)
 				}
@@ -4412,7 +4517,7 @@ authDone:
 				idleState.mu.Lock()
 				idleState.lastOutput = time.Now()
 				idleState.mu.Unlock()
-				if hasBell(p.Output) {
+				if config.Channel() != "preview" && hasBell(p.Output) {
 					if lastHadBell {
 						checkAndSendAttention(start.SessionID, start.Agent, start.CWD, write)
 					}
@@ -4430,6 +4535,9 @@ authDone:
 				sendPTYOutput(start.SessionID, p.Output, currentGCM, write)
 
 			case *pb.SessionMsg_ExitCode:
+				if config.Channel() == "preview" {
+					return
+				}
 				log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
 				writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
 				clearAttentionCooldown(start.SessionID)
@@ -4441,6 +4549,7 @@ authDone:
 
 	// Process input from browser -> decrypt -> send to egg
 	go func() {
+		defer releaseBrowserClient(start.SessionID, ec)
 		pendingAuth := newPendingReattachAuths()
 		defer pendingAuth.close()
 		defer func() {
@@ -4566,7 +4675,7 @@ authDone:
 
 					// Open independent egg stream (gets replay + live cursor)
 					specCtx, specCancel := context.WithCancel(ctx)
-					specStream, specErr := ec.AttachSession(specCtx, start.SessionID)
+					specStream, specErr := ec.AttachSessionWithOptions(specCtx, start.SessionID, egg.AttachOptions{ReadOnly: true, Owner: "browser:observer"})
 					if specErr != nil {
 						specCancel()
 						log.Printf("pty session %s: spectator attach to egg failed: %v", start.SessionID, specErr)
@@ -4575,6 +4684,7 @@ authDone:
 					}
 
 					// Send pty.started only after the independent stream exists.
+					bindBrowserViewer(start.SessionID, attach.ViewerID, ec, specCancel)
 					writePTYMessage(write, ws.PTYStarted{
 						Type:      ws.TypePTYStarted,
 						SessionID: start.SessionID,
@@ -4597,6 +4707,7 @@ authDone:
 					// Independent output goroutine
 					go func(viewerID string, g cipher.AEAD, stream pb.Egg_SessionClient, cancel context.CancelFunc) {
 						defer cancel()
+						defer browserViewers.Delete(start.SessionID + ":" + viewerID)
 						for {
 							msg, err := stream.Recv()
 							if err != nil {
@@ -4627,11 +4738,11 @@ authDone:
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", start.SessionID)
 				newStreamCtx, newSCancel := context.WithCancel(ctx)
-				newStream, reErr := ec.AttachSession(newStreamCtx, start.SessionID)
+				newStream, reErr := ec.AttachSessionWithOptions(newStreamCtx, start.SessionID, egg.AttachOptions{Claim: true, Takeover: attach.Takeover, Owner: "browser:" + attach.UserID, Rows: attach.Rows, Cols: attach.Cols})
 				if reErr != nil {
 					newSCancel()
 					log.Printf("pty session %s: reattach to egg failed: %v", start.SessionID, reErr)
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "reattach failed", SessionID: start.SessionID})
+					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: reErr.Error(), SessionID: start.SessionID, ControllerID: attach.ControllerID})
 					continue
 				}
 
@@ -4642,26 +4753,27 @@ authDone:
 				}
 				mu.Unlock()
 
+				// Activate new key + stream, start new output goroutine.
+				mu.Lock()
+				gcm = newGCM
+				activeStream = newStream
+				cancelStream = newSCancel
+				mu.Unlock()
+				bindBrowserInput(start.SessionID, attach.ControllerID, attach.PublicKey, attach.UserID, ec, newStream, newSCancel)
+
 				// Send pty.started so browser can derive key and the relay can
 				// promote this pending controller.
 				idleState.mu.Lock()
 				idleState.connected = true
 				idleState.mu.Unlock()
 				writePTYMessage(write, ws.PTYStarted{
-					Type:      ws.TypePTYStarted,
-					SessionID: start.SessionID,
-					Agent:     start.Agent,
-					PublicKey: wingPubKeyB64,
-					AuthToken: attachAuthToken,
+					ControllerID: attach.ControllerID,
+					Type:         ws.TypePTYStarted,
+					SessionID:    start.SessionID,
+					Agent:        start.Agent,
+					PublicKey:    wingPubKeyB64,
+					AuthToken:    attachAuthToken,
 				})
-
-				// Resize egg to browser dimensions before snapshot.
-				if attach.Cols > 0 && attach.Rows > 0 {
-					if err := ec.Resize(ctx, start.SessionID, attach.Rows, attach.Cols); err != nil {
-						log.Printf("pty session %s: resize egg after reattach: %v", start.SessionID, err)
-					}
-					time.Sleep(150 * time.Millisecond) // let agent repaint for new dimensions before VTE snapshot
-				}
 
 				// Read replay (first message) and send to browser in chunks.
 				if newGCM != nil {
@@ -4673,18 +4785,12 @@ authDone:
 					}
 				}
 
-				// Activate new key + stream, start new output goroutine.
-				mu.Lock()
-				gcm = newGCM
-				activeStream = newStream
-				cancelStream = newSCancel
-				mu.Unlock()
-
 				go func() {
 					var lastHadBell bool
 					for {
 						msg, err := newStream.Recv()
 						if err != nil {
+							browserStreamEnded(start.SessionID, attach.ControllerID, err, write)
 							if err != io.EOF {
 								log.Printf("pty session %s: egg stream error: %v", start.SessionID, err)
 							}
@@ -4695,7 +4801,7 @@ authDone:
 							idleState.mu.Lock()
 							idleState.lastOutput = time.Now()
 							idleState.mu.Unlock()
-							if hasBell(p.Output) {
+							if config.Channel() != "preview" && hasBell(p.Output) {
 								if lastHadBell {
 									checkAndSendAttention(start.SessionID, start.Agent, start.CWD, write)
 								}
@@ -4711,6 +4817,9 @@ authDone:
 							}
 							sendPTYOutput(start.SessionID, p.Output, currentGCM, write)
 						case *pb.SessionMsg_ExitCode:
+							if config.Channel() == "preview" {
+								return
+							}
 							log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
 							writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
 							clearAttentionCooldown(start.SessionID)
@@ -4747,8 +4856,18 @@ authDone:
 					Payload:   &pb.SessionMsg_Input{Input: decoded},
 				}); err != nil {
 					log.Printf("pty session %s: send input to egg: %v", start.SessionID, err)
+					if config.Channel() == "preview" {
+						continue inputLoop
+					}
 					sessionCancel()
 					return
+				}
+
+			case ws.TypePTYDetach:
+				var detach ws.PTYDetach
+				if json.Unmarshal(data, &detach) == nil {
+					pendingAuth.detach(detach)
+					detachBrowserAttachment(start.SessionID, detach)
 				}
 
 			case ws.TypePTYAttentionAck:
@@ -4763,6 +4882,12 @@ authDone:
 				currentStream := activeStream
 				mu.Unlock()
 				if currentStream != nil {
+					if config.Channel() == "preview" {
+						if err := resizeBrowserStream(ctx, start.SessionID, msg.ControllerID, currentStream, uint32(msg.Rows), uint32(msg.Cols)); err != nil {
+							log.Printf("browser resize: %v", err)
+						}
+						continue
+					}
 					if err := currentStream.Send(&pb.SessionMsg{
 						SessionId: start.SessionID,
 						Payload: &pb.SessionMsg_Resize{Resize: &pb.Resize{
@@ -4771,6 +4896,9 @@ authDone:
 						}},
 					}); err != nil {
 						log.Printf("pty session %s: send resize to egg: %v", start.SessionID, err)
+						if config.Channel() == "preview" {
+							continue inputLoop
+						}
 						sessionCancel()
 						return
 					}
@@ -4827,24 +4955,27 @@ authDone:
 
 // tunnelInner is the decrypted JSON payload inside a tunnel request.
 type tunnelInner struct {
-	Type        string `json:"type"`
-	Path        string `json:"path,omitempty"`
-	SessionID   string `json:"session_id,omitempty"`
-	UploadID    string `json:"upload_id,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Size        int64  `json:"size,omitempty"`
-	Data        string `json:"data,omitempty"`
-	Target      string `json:"target,omitempty"`
-	Kind        string `json:"kind,omitempty"`
-	YAML        string `json:"yaml,omitempty"`
-	Offset      int    `json:"offset,omitempty"`
-	Limit       int    `json:"limit,omitempty"`
-	Cols        int    `json:"cols,omitempty"`
-	Rows        int    `json:"rows,omitempty"`
-	AuthToken   string `json:"auth_token,omitempty"`
-	Key         string `json:"key,omitempty"`           // passkey public key for allow.add
-	AllowUserID string `json:"allow_user_id,omitempty"` // target user_id for allow.remove
-	SDP         string `json:"sdp,omitempty"`           // WebRTC SDP for webrtc.offer
+	ControllerID string          `json:"controller_id"`
+	Type         string          `json:"type"`
+	Operation    string          `json:"operation,omitempty"`
+	Arguments    json.RawMessage `json:"arguments,omitempty"`
+	Path         string          `json:"path,omitempty"`
+	SessionID    string          `json:"session_id,omitempty"`
+	UploadID     string          `json:"upload_id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	Size         int64           `json:"size,omitempty"`
+	Data         string          `json:"data,omitempty"`
+	Target       string          `json:"target,omitempty"`
+	Kind         string          `json:"kind,omitempty"`
+	YAML         string          `json:"yaml,omitempty"`
+	Offset       int             `json:"offset,omitempty"`
+	Limit        int             `json:"limit,omitempty"`
+	Cols         int             `json:"cols,omitempty"`
+	Rows         int             `json:"rows,omitempty"`
+	AuthToken    string          `json:"auth_token,omitempty"`
+	Key          string          `json:"key,omitempty"`           // passkey public key for allow.add
+	AllowUserID  string          `json:"allow_user_id,omitempty"` // target user_id for allow.remove
+	SDP          string          `json:"sdp,omitempty"`           // WebRTC SDP for webrtc.offer
 
 	// Path ACL fields (for paths.set / paths.add_member / paths.remove_member)
 	Paths   []config.PathEntry `json:"paths,omitempty"`   // for paths.set (bulk replace)
@@ -4999,6 +5130,7 @@ func verifySubjectPasskey(allowedKeys []config.AllowKey, userID string, challeng
 
 // pastSessionInfo is the local version of PastSessionInfo for tunnel responses.
 type pastSessionInfo struct {
+	conversationLink
 	SessionID               string `json:"session_id"`
 	Name                    string `json:"name,omitempty"`
 	Agent                   string `json:"agent"`
@@ -5299,7 +5431,10 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			},
 		}
 		visibleExports := wingCfg.ExportsForUser(req.SenderEmail, req.SenderOrgRole)
-		resp["capabilities"] = browserSessionCapabilities(len(visibleExports) > 0)
+		resp["capabilities"] = append(browserSessionCapabilities(len(visibleExports) > 0), "session.lifecycle.v1")
+		if wingCfg.Org == "" && !sharedHost {
+			resp["capabilities"] = append(resp["capabilities"].([]string), "conversation.personal.v1")
+		}
 		if len(visibleExports) > 0 {
 			exports := make([]map[string]string, 0, len(visibleExports))
 			for _, target := range visibleExports {
@@ -5374,6 +5509,14 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			sessions = filtered
 		}
 		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
+
+	case "session.control":
+		result, err := browserSessionControl(ctx, cfg, wingCfg, req, inner.Operation, inner.Arguments, home, sharedHost)
+		if err != nil {
+			tunnelRespond(gcm, req.RequestID, map[string]any{"error": err.Error()}, write)
+			return
+		}
+		tunnelRespond(gcm, req.RequestID, result, write)
 
 	case "sessions.history":
 		sessions := collectSessionsHistory(cfg)
@@ -5577,7 +5720,13 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 				return
 			}
 		}
-		if err := resizeEgg(cfg, inner.SessionID, uint32(inner.Rows), uint32(inner.Cols)); err != nil {
+		var resizeErr error
+		if config.Channel() == "preview" {
+			resizeErr = resizeBrowserInput(ctx, inner.SessionID, inner.ControllerID, req.SenderPub, req.SenderUserID, uint32(inner.Rows), uint32(inner.Cols))
+		} else {
+			resizeErr = resizeEgg(cfg, inner.SessionID, uint32(inner.Rows), uint32(inner.Cols))
+		}
+		if err := resizeErr; err != nil {
 			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
@@ -5999,13 +6148,14 @@ func collectSessionsHistory(cfg *config.Config) []pastSessionInfo {
 		}
 
 		info := pastSessionInfo{
-			SessionID: sessionID,
-			Name:      readSessionName(dir),
-			Agent:     agentName,
-			CWD:       cwd,
-			Audit:     hasAudit,
-			Chat:      hasChat,
-			UserID:    readEggOwner(dir),
+			conversationLink: sessionConversationLink(cfg, sessionID),
+			SessionID:        sessionID,
+			Name:             readSessionName(dir),
+			Agent:            agentName,
+			CWD:              cwd,
+			Audit:            hasAudit,
+			Chat:             hasChat,
+			UserID:           readEggOwner(dir),
 		}
 		meta := readEggMetaValues(dir)
 		if startedAt, parseErr := strconv.ParseInt(meta["started_at"], 10, 64); parseErr == nil && startedAt > 0 {

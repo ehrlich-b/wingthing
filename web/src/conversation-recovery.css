@@ -1,0 +1,51 @@
+/* Conversation reader panel, linked task cards and recovery evidence. */
+.conversation-toolbar.conversation-panel { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 6px; max-height: 45vh; overflow-y: auto; }
+.conversation-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.conversation-identity strong { color: var(--text); font-size: 13px; }
+.cp-identity { font-size: 11px; color: #aeb8cb; overflow-wrap: anywhere; }
+.conversation-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.conversation-toolbar button:disabled, #conversation-inventory button:disabled { opacity: 0.55; cursor: default; }
+.conversation-toolbar button:focus-visible, #conversation-inventory button:focus-visible, .chat-pending button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.conversation-setup-status:empty, .conversation-recovery-status:empty, .conversation-inventory-status:empty { display: none; }
+.conversation-recovery-status { color: var(--yellow); overflow-wrap: anywhere; margin: 0; }
+.conversation-tree summary, .conversation-deliveries summary { cursor: pointer; padding: 4px 0; color: var(--text); }
+.conversation-cards { display: flex; flex-direction: column; }
+.conversation-deliveries ol { margin: 4px 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.conversation-deliveries li[data-state="needs_input"] { color: var(--yellow); }
+.conversation-deliveries li[data-state="failed"] { color: var(--red); }
+
+.conversation-task { flex-wrap: wrap; }
+.conversation-task > details { flex-basis: 100%; font-size: 11px; color: #aeb8cb; }
+.conversation-task > details summary { cursor: pointer; padding: 2px 0; }
+.conversation-task > details pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; }
+.conversation-selected > .conversation-open { border-color: var(--accent) !important; }
+.conversation-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 4px 0; }
+.conversation-facts dt { color: var(--text-dim); }
+.conversation-facts dd { margin: 0; overflow-wrap: anywhere; }
+.conversation-last-selected { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; margin-bottom: 8px; }
+
+.conversation-badge { display: inline-block; padding: 0 6px; border-radius: 8px; border: 1px solid var(--border); font-size: 10px; color: var(--text-dim); }
+.conversation-badge[data-state="working"], .conversation-badge[data-state="starting"] { color: var(--accent); border-color: var(--accent); }
+.conversation-badge[data-state="ready"], .conversation-badge[data-state="turn_completed"] { color: var(--green); border-color: var(--green); }
+.conversation-badge[data-state="needs_input"] { color: var(--yellow); border-color: var(--yellow); }
+.conversation-badge[data-state="failed"], .conversation-badge[data-state="turn_failed"], .conversation-badge[data-state="launch_failed"], .conversation-badge[data-state="unavailable"] { color: var(--red); border-color: var(--red); }
+
+.chat-pending { flex-shrink: 0; padding: 6px 8px; border-top: 1px solid var(--border); font-size: 12px; max-height: 35vh; overflow-y: auto; }
+.chat-pending[hidden] { display: none; }
+.chat-pending-item { border: 1px solid var(--yellow); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; }
+.chat-pending-item p { margin: 2px 0; overflow-wrap: anywhere; }
+.chat-pending-item pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-card); padding: 6px; border-radius: 3px; max-height: 160px; overflow-y: auto; }
+.chat-pending-item button { font: inherit; font-size: 12px; color: var(--text); background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px; padding: 6px 10px; min-height: 36px; cursor: pointer; }
+
+.cv-cache-banner { font-size: 11px; color: var(--yellow); margin: 0 0 4px; }
+.cv-lifecycle { align-self: center; font-size: 11px; color: var(--text-dim); max-width: 95%; }
+.cv-lifecycle p { margin: 0; }
+.cv-lifecycle-attention { color: var(--yellow); }
+.cv-lifecycle-turn_failed, .cv-lifecycle-warning { color: var(--red); }
+.cv-provider_record { font-size: 12px; color: var(--text-dim); }
+#chat-view-status[data-state="needs_input"] { color: var(--yellow); }
+
+@media (max-width: 600px) {
+    .conversation-toolbar.conversation-panel { max-height: 50vh; }
+    .chat-pending-item button { min-height: 44px; }
+}

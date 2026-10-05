@@ -59,6 +59,9 @@ type ToolListener struct {
 // NewToolListener creates and starts a tool socket listener.
 // sockPath is the path for the Unix socket (e.g. ~/.wingthing/eggs/<session>/tool.sock).
 func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener, error) {
+	if err := ValidateSocketPath(sockPath); err != nil {
+		return nil, err
+	}
 	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("remove stale tool socket: %w", err)
 	}

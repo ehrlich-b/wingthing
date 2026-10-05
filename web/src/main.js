@@ -17,6 +17,9 @@ import { initNotifyListeners } from './notify.js';
 import { loadTunnelAuthTokens } from './tunnel.js';
 import { initPreview } from './preview.js';
 import { initSessionFiles } from './session-files.js';
+import { sessionRoute, parseSessionRoute } from './session-route.js';
+import { restoreConversationRoute } from './conversation-view.js';
+import { initParentDot } from './parent-dot.js';
 
 function denyBrowserRelayView() {
     history.replaceState({ view: 'home' }, '', location.pathname);
@@ -58,7 +61,7 @@ async function init() {
         });
     }
 
-    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account') && location.hash !== '#canvas') {
+    if (!location.hash.startsWith('#s/') && !location.hash.startsWith('#w/') && !location.hash.startsWith('#account') && location.hash !== '#canvas' && !location.hash.startsWith('#conversation/')) {
         history.replaceState({ view: 'home' }, '', location.pathname);
     }
 
@@ -90,9 +93,10 @@ async function init() {
             delete DOM.sessionCloseBtn.dataset.confirm;
             DOM.sessionCloseBtn.textContent = 'x';
             var sid = S.ptySessionId;
+            var wingId = S.ptyWingId;
             var killFinished = disconnectPTY();
             // disconnectPTY already sent pty.kill for the active session.
-            if (sid) deleteSession(sid, true);
+            if (sid) deleteSession(sid, true, wingId);
             showHome();
             // Reconcile against the wing only after the one kill request completes;
             // otherwise an in-flight sessions.list can restore the just-removed tab.
@@ -356,20 +360,23 @@ async function init() {
         });
     }
     initNotifyListeners();
-    loadHome();
+    initParentDot();
+    await loadHome();
     setInterval(loadHome, 30000);
     connectAppWS();
 
+    await restoreConversationRoute();
+
     // Deep links
-    var hashMatch = location.hash.match(/^#s\/(.+)$/);
-    if (hashMatch) {
+    var sessionLink = parseSessionRoute(location.hash);
+    if (sessionLink) {
         if (S.currentUser && S.currentUser.relay_allowed === false) {
             denyBrowserRelayView();
         } else {
-            var deepSessionId = hashMatch[1];
-            history.replaceState({ view: 'terminal', sessionId: deepSessionId }, '', '#s/' + deepSessionId);
+            var deepSessionId = sessionLink.sessionId;
+            history.replaceState({ view: 'terminal', sessionId: deepSessionId, wingId: sessionLink.wingId }, '', sessionRoute(deepSessionId, sessionLink.wingId));
             showTerminal();
-            attachPTY(deepSessionId);
+            attachPTY(deepSessionId, undefined, sessionLink.wingId);
         }
     }
     var wingMatch = location.hash.match(/^#w\/(.+)$/);
@@ -389,15 +396,16 @@ async function init() {
 
 // Hash change (user pastes #s/ URL while page is already loaded)
 window.addEventListener('hashchange', function() {
-    var hashMatch = location.hash.match(/^#s\/(.+)$/);
-    if (hashMatch) {
+    if (location.hash.startsWith('#conversation/')) { restoreConversationRoute(); return; }
+    var sessionLink = parseSessionRoute(location.hash);
+    if (sessionLink) {
         if (S.currentUser && S.currentUser.relay_allowed === false) {
             denyBrowserRelayView();
             return;
         }
-        history.replaceState({ view: 'terminal', sessionId: hashMatch[1] }, '', '#s/' + hashMatch[1]);
+        history.replaceState({ view: 'terminal', sessionId: sessionLink.sessionId, wingId: sessionLink.wingId }, '', sessionRoute(sessionLink.sessionId, sessionLink.wingId));
         showTerminal();
-        attachPTY(hashMatch[1]);
+        attachPTY(sessionLink.sessionId, undefined, sessionLink.wingId);
         return;
     }
     var wingMatch = location.hash.match(/^#w\/(.+)$/);
@@ -427,12 +435,13 @@ window.addEventListener('popstate', function(e) {
         closeAuditOverlay();
         return;
     }
+    if (location.hash.startsWith('#conversation/')) { restoreConversationRoute(); return; }
     var state = e.state;
     if (!state || state.view === 'home') {
         showHome(false);
     } else if (state.view === 'terminal' && state.sessionId) {
         if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
-        else switchToSession(state.sessionId, false);
+        else switchToSession(state.sessionId, false, state.wingId);
     } else if (state.view === 'wing-detail' && state.wingId) {
         if (S.currentUser && S.currentUser.relay_allowed === false) denyBrowserRelayView();
         else navigateToWingDetail(state.wingId, false);

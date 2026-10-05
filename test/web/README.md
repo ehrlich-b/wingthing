@@ -49,3 +49,35 @@ an interrupted run. It does not create or modify database records itself.
 CI normally uses Playwright's bundled Chromium. A live operator can set
 `WT_E2E_CHROMIUM_EXECUTABLE` to an installed Chrome or Chromium executable to
 avoid downloading a browser.
+
+For isolated visual review without a provider, run
+`python3 test/web/inventory-fixture.py`, then start the frontend with
+`npm --prefix web run dev -- --host 127.0.0.1 --port 8264` and open
+`http://127.0.0.1:8264/app/fixtures/session-inventory.html` in an owned browser tab.
+The fixture uses the real app markup and inventory renderer, with synthetic
+parent/child, unknown-provider, attention and offline rows. Search, filters,
+keyboard focus, details and simulated WSL disconnect/reconnect work; every
+runtime action is disabled. Its screenshot is visual evidence only, not proof
+of live launch, approval, attachment or reconnect behavior. The generated HTML
+is ignored and rebuilt from the current app markup.
+
+Frontend session content uses `[wing_id, session_id]` references. Terminal text
+and thumbnails read/write only `v2` cache keys; old bare-ID content remains
+unused because its source wing cannot be recovered reliably. Canvas geometry
+starts under `wt_canvas_layout_v2` with qualified keys. Attention broadcasts
+use a user-scoped v2 channel and carry both IDs. `make web` includes regression
+tests for equal provider IDs on two wings, independent attention/preview state,
+canvas startup rekey/focus/removal, and stale terminal connection references.
+These tests verify UI state isolation; supported-browser launch/reconnect QA
+still requires the Browser runtime's Node REPL tool.
+
+Preview input conflicts preserve the agent session and expose explicit
+`Take control`; `Observe` appears only when the wing already enables spectate.
+The UI never repeats takeover during reconnect. Resize requests carry the
+acknowledged `controller_id`, including canvas panes; a pending, replaced or
+read-only attachment cannot send resize. Canvas Stop retains the card until
+the wing returns its typed acknowledgement and leaves a readable error after
+failure. Temporary launch IDs cannot be stopped before `pty.started`.
+Frontend tests exercise the exact wire flags, controller binding, action
+buttons and deferred/rejected stop acknowledgements. They do not replace
+live browser-to-egg acceptance against the preview adapter.

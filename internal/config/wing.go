@@ -382,6 +382,12 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if Channel() == "preview" && cfg.Org != "" {
+		return nil, fmt.Errorf("preview is personal-only; wing.yaml organization enrollment is disabled")
+	}
+	if err := ValidatePreviewRelay(cfg.Roost); err != nil {
+		return nil, err
+	}
 	if cfg.MCP != nil {
 		if err := cfg.MCP.Validate(); err != nil {
 			return nil, fmt.Errorf("validate %s mcp config: %w", path, err)
@@ -408,6 +414,12 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 // SaveWingConfig writes wing.yaml to dir. The file may contain the roost's JWT signing
 // key, so it must never be readable by other local users.
 func SaveWingConfig(dir string, cfg *WingConfig) error {
+	if Channel() == "preview" && cfg.Org != "" {
+		return fmt.Errorf("preview is personal-only; organization enrollment is disabled")
+	}
+	if err := ValidatePreviewRelay(cfg.Roost); err != nil {
+		return err
+	}
 	if err := ValidateExports(dir, cfg); err != nil {
 		return fmt.Errorf("validate wing.yaml exports: %w", err)
 	}

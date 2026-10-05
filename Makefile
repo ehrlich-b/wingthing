@@ -4,6 +4,18 @@
 	test-provider-swap build-web-e2e test-web test-vuln test-compat
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+.PHONY: android-contract android-vectors android-build android-check
+android-contract: | web/dist
+	go test ./test/androidcontract
+android-vectors:
+	go run ./android/contract/generate.go
+android-build:
+	$(MAKE) -C android build
+android-check:
+	$(MAKE) -C android check
+
+PREVIEW_VERSION ?= v0.148.0-preview.$(shell date -u +%Y%m%d).g$(shell git rev-parse --short HEAD)
+PREVIEW_LDFLAGS := -X main.version=$(PREVIEW_VERSION) -X github.com/ehrlich-b/wingthing/internal/config.ReleaseChannel=preview
 LDFLAGS := -s -w -X main.version=$(VERSION)
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
@@ -18,6 +30,115 @@ web/dist:
 
 build: | web/dist
 	go build -buildvcs=false -ldflags "-X main.version=$(VERSION)" -o wt ./cmd/wt
+
+.PHONY: build-preview build-preview-linux preview-package test-preview test-preview-unit test-preview-reentry test-preview-provider test-preview-context test-socket-path
+build-preview: | web/dist
+	go build -buildvcs=false -ldflags "$(PREVIEW_LDFLAGS)" -o wt-preview ./cmd/wt
+
+build-preview-linux: | web/dist
+	@mkdir -p dist-preview
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(LINUX_ARCH) go build -buildvcs=false -ldflags "$(PREVIEW_LDFLAGS)" -o dist-preview/wt-preview-linux-$(LINUX_ARCH) ./cmd/wt
+	@cd dist-preview && shasum -a 256 wt-preview-* > SHA256SUMS
+
+# Deliberately local artifacts. No install, tag, upload, or deployment occurs.
+preview-package: build-preview
+	@mkdir -p dist-preview
+	cp wt-preview dist-preview/wt-preview-$(shell go env GOOS)-$(shell go env GOARCH)
+	cp scripts/preview-package.sh dist-preview/preview-package.sh
+	@cd dist-preview && shasum -a 256 wt-preview-* > SHA256SUMS
+	./wt-preview channel --json > dist-preview/channel.json
+
+# Black-box state/process/install/upgrade/uninstall isolation proof.
+test-preview-unit: | web/dist
+	go test ./internal/config ./cmd/wt ./internal/egg ./internal/relay -run "TestPreview" -count=1
+
+# Temporary fixture bindings and fake vendors only; never reads a real provider home.
+test-preview-provider-binding: | web/dist
+	go test ./internal/config ./cmd/wt -run 'TestPreviewProviderBinding' -count=1
+
+# Synthetic temp states and malformed pid files only: never signals or spawns a daemon.
+.PHONY: test-preview-lifecycle-binding
+test-preview-lifecycle-binding: GO ?= go
+test-preview-lifecycle-binding: | web/dist
+	$(GO) test ./cmd/wt -run 'TestPreviewLifecycleBinding|TestPreviewProviderBinding|TestDaemonLifecycleLock|TestReadPidFrom|TestWingStatus|TestWriteDaemonMetadata' -count=1
+
+# Temp spools and fixture hook payloads only; no provider, PTY, or network.
+.PHONY: test-lifecycle-hook-order
+test-lifecycle-hook-order: GO ?= go
+test-lifecycle-hook-order:
+	$(GO) test ./internal/egg -run 'TestLifecycle|TestClaudeLifecycleArgs' -count=1
+	$(GO) test -tags e2e ./test/integ -run 'TestSessionNativeLifecycleProtocolReconnect|TestSessionPromptNativeTranscriptReceiptAfterLostConnection' -count=1
+
+# Temporary fixture directories only; alias cases skip on case-sensitive volumes.
+.PHONY: test-preview-provider-binding-case
+test-preview-provider-binding-case: GO ?= go
+test-preview-provider-binding-case:
+	$(GO) test ./internal/config -run 'TestPreviewProviderBinding' -count=1 -v
+
+# Fake vendor only: no real login, browser, credentials, model, or vendor network.
+test-preview-provider: build-preview
+	go test ./cmd/wt -run "TestPreviewProvider" -count=1
+	python3 test/preview/provider_onboarding.py ./wt-preview
+
+# Fake vendor final processes and synthetic selector/guard tests only.
+PREVIEW_CONTEXT_BINARY ?= ./wt-preview
+ifeq ($(PREVIEW_CONTEXT_BINARY),./wt-preview)
+test-preview-context: build-preview
+endif
+test-preview-context: | web/dist
+	go test ./internal/egg -run 'TestPreviewClaude(GuardRejectsSymlinkAliases|ContextRejectsAliasedForeignSelector)$$' -count=1
+	python3 test/preview/mac_provider_context.py "$(PREVIEW_CONTEXT_BINARY)"
+
+# Actual preview parent -> configured MCP -> linked child reservation. The
+# existing macOS parent sandbox still denies the nested proxy bind, as expected.
+test-preview-reentry: build-preview
+	@test "$$(go env GOOS)" = darwin || { echo 'test-preview-reentry requires macOS for the existing nested-proxy denial'; exit 1; }
+	node test/conversation/proof.mjs ./wt-preview --expect-nested-proxy-block
+
+# Host mailbox transport for a sandboxed personal parent. The unit tier covers
+# envelopes, the protected-state model, policy intersection, journal replay and
+# tree-bound targets. The e2e tier runs the fake native-protocol provider in an
+# unchanged Seatbelt parent: injected stdio -> host broker -> two child eggs.
+# Fixture state lives under CONVERSATION_FIXTURE_ROOT (outside /tmp and every
+# provider-writable root); no model, login or credential is used.
+.PHONY: test-conversation-transport test-conversation-e2e test-conversation-broker-launch
+test-conversation-transport: | web/dist
+	go test ./internal/store -run 'TestConversation' -count=1
+	go test ./cmd/wt -run 'TestConversation|TestBound|TestAutomaticParentMCP|TestPublicCoordinator|TestCoordinator|TestHostMailbox|TestProviderWrite' -count=1
+
+# Broker launch contract only: optional browser-bridge omission, whole-state
+# and controller protected targets, provider data home outside state, argv.
+# In-process; no binary build, egg spawn or Seatbelt execution.
+test-conversation-broker-launch: GO ?= go
+test-conversation-broker-launch: | web/dist
+	$(GO) test ./internal/egg -run 'TestInstallBrowserBridge|TestProtectedWriteTargets' -count=1
+	$(GO) test ./cmd/wt -run 'TestHostMailbox|TestProviderWrite|TestProtectedWriteTargetArgs|TestEggRunWithoutProtectedTargets' -count=1
+
+#
+# CONVERSATION_BINARY=/abs/path/wt-preview runs that frozen preview binary
+# as-is and skips build-preview; CONVERSATION_BINARY_SHA256 pins its bytes.
+# Unset, the target builds ./wt-preview as before.
+CONVERSATION_FIXTURE_ROOT ?= $(abspath ..)
+CONVERSATION_BINARY ?=
+CONVERSATION_BINARY_SHA256 ?=
+ifeq ($(strip $(CONVERSATION_BINARY)),)
+test-conversation-e2e: build-preview
+endif
+test-conversation-e2e:
+	@test "$$(uname -s)" = Darwin || { echo 'test-conversation-e2e requires the macOS Seatbelt parent sandbox'; exit 1; }
+	node test/conversation/proof.mjs "$(or $(strip $(CONVERSATION_BINARY)),./wt-preview)" --state-root "$(CONVERSATION_FIXTURE_ROOT)"$(if $(strip $(CONVERSATION_BINARY_SHA256)), --expect-sha256 "$(strip $(CONVERSATION_BINARY_SHA256))")
+
+test-socket-path: | web/dist
+	go test ./cmd/wt ./internal/egg -run "TestSocketPath" -count=1
+
+# Static/in-process checks of the protected-write-target policy contract. Seatbelt
+# profiles are built and inspected, never executed.
+.PHONY: test-protected-write-targets
+test-protected-write-targets: | web/dist
+	go test ./internal/sandbox ./internal/egg ./cmd/wt -run 'ProtectedWriteTarget|ProtectedTargets|CheckedProfile|RefusesProtectedWriteTargets|RefusesUnenforceableProtected' -count=1
+
+test-preview: build build-preview preview-package
+	python3 test/preview/channel_isolation.py ./wt ./wt-preview ./dist-preview
 
 test: | web/dist
 	go test ./...
@@ -36,6 +157,14 @@ coverage: | web/dist
 	go tool cover -func=$(COVERAGE_OUT)
 
 check: web test build
+
+# Fake-only conversation reader/recovery/parent-dot tests. No npm install,
+# browser, tunnel, provider, model or network; `make web` runs these too.
+# DOM-bound view modules cannot be imported by node:test; parse them instead.
+.PHONY: test-conversation-ui
+test-conversation-ui:
+	cd web && for f in src/chat-view.js src/conversation-view.js src/parent-dot.js; do node --check $$f || exit 1; done
+	cd web && node --test src/conversation-recovery.test.js test/conversation-state.test.js test/conversation-response.test.js test/parent-dot.test.js
 
 web:
 	cd web && npm ci && npm test && npm run build
@@ -165,8 +294,40 @@ test-linux-ubuntu:
 	docker run --rm --privileged wt-test-ubuntu sh -lc \
 		'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s'
 
-test-integ: | web/dist
-	go test -count=1 -tags e2e -v -timeout 120s ./test/integ/...
+test-integ: build build-preview | web/dist
+	WT_TEST_BINARY="$(CURDIR)/wt" WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" go test -count=1 -tags e2e -v -timeout 120s ./test/integ/...
+
+# Native protocol/parser fixtures only: no provider process, auth or model call.
+.PHONY: test-codex-native
+test-codex-native: | web/dist
+	go test -count=1 -run '^TestCodexNative' ./internal/egg
+	go test -count=1 -tags e2e -run '^TestCodexNative' -v ./test/integ
+
+.PHONY: test-preview-input
+test-preview-input: build-preview | web/dist
+	WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" go test -count=1 -tags integration -v -timeout 60s ./cmd/wt -run '^TestPreviewBrowserLeaseOnRealEgg$$'
+
+# Remote routing unit contracts: argv, --remote-state quoting, and guards.
+.PHONY: test-remote-unit test-preview-remote
+test-remote-unit: | web/dist
+	go test ./cmd/wt -run '^Test(Remote|ParseRemote|ParseBareRemote|BareRemote|RunRemote|PreviewRemote|NewRootCommandFailsClosed)' -count=1
+
+# Exact durable wake-target identity plus the existing wake contracts. Synthetic
+# egg directories and an in-process transport only: no provider process,
+# credential, network endpoint, permission reply, or process kill.
+.PHONY: test-wake-exact
+test-wake-exact: | web/dist
+	go test ./cmd/wt -run '^Test(WakeExact|ConversationWake|OpusWakeRecovery)' -count=1
+
+# Fake SSH transport only: real stable/preview receivers and sandboxed /bin/sh
+# eggs. No host, credential, install, or unsandboxed fallback.
+test-preview-remote: build build-preview
+	python3 test/preview/remote_isolation.py ./wt ./wt-preview
+
+# Owned local child only: the remote fixture's reader drain. No build.
+.PHONY: test-preview-remote-drain
+test-preview-remote-drain:
+	python3 test/preview/remote_reader_drain_regression.py
 
 .PHONY: test-claude-policy
 test-claude-policy: | web/dist
@@ -189,3 +350,9 @@ clean:
 	rm -f wt
 	rm -rf dist/
 	rm -f test/linux/wt test/linux/mock-agent test/linux/run-tests test/linux/sandbox-tests test/linux/wt-tests
+
+# Temporary fixture directories and a fake identity hook for physical aliases.
+.PHONY: test-preview-provider-binding-physical
+test-preview-provider-binding-physical: GO ?= go
+test-preview-provider-binding-physical:
+	$(GO) test ./internal/config -run 'TestPreviewProviderBinding' -count=1 -v

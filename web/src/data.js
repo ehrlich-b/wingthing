@@ -7,6 +7,8 @@ import { refreshSessionFilesButton } from './session-files.js';
 import { sendTunnelRequest, saveTunnelAuthTokens } from './tunnel.js';
 import { setNotification, clearNotification } from './notify.js';
 import { reconcileWingSessions } from './session-merge.js';
+import { notificationForSession, sessionResourceKey, orderSessionReferences } from './session-reference.js';
+import { sessionIsSelected } from './session-inventory.js';
 
 // localStorage CRUD
 
@@ -61,20 +63,7 @@ export function setEggOrder(order) {
     try { localStorage.setItem(EGG_ORDER_KEY, JSON.stringify(order)); } catch (e) {}
 }
 export function sortSessionsByOrder(sessions) {
-    var order = getEggOrder();
-    var orderMap = {};
-    order.forEach(function(id, i) { orderMap[id] = i; });
-    var known = [];
-    var unknown = [];
-    sessions.forEach(function(s) {
-        if (orderMap.hasOwnProperty(s.id)) {
-            known.push(s);
-        } else {
-            unknown.push(s);
-        }
-    });
-    known.sort(function(a, b) { return orderMap[a.id] - orderMap[b.id]; });
-    return known.concat(unknown);
+    return orderSessionReferences(sessions, getEggOrder());
 }
 
 export function getCachedWingSessions(wingId) {
@@ -87,7 +76,7 @@ export function setCachedWingSessions(wingId, sessions) {
 
 export function saveSessionCache() {
     setCachedSessions(S.sessionsData.map(function(s) {
-        return { id: s.id, name: s.name, wing_id: s.wing_id, agent: s.agent, cwd: s.cwd, audit: s.audit, user_id: s.user_id, email: s.email };
+        return { id: s.id, name: s.name, wing_id: s.wing_id, agent: s.agent, cwd: s.cwd, audit: s.audit, user_id: s.user_id, email: s.email, lifecycle: s.lifecycle, conversation_id: s.conversation_id, root_conversation_id: s.root_conversation_id, parent_conversation_id: s.parent_conversation_id, conversation_role: s.conversation_role };
     }));
 }
 
@@ -208,14 +197,14 @@ export async function fetchWingSessions(wingId) {
     try {
         var result = await sendTunnelRequest(wingId, { type: 'sessions.list' }, { skipPasskey: true });
         return (result.sessions || []).map(function(s) {
-            return { id: s.session_id, name: s.name, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit, user_id: s.user_id, email: s.email };
+            return { id: s.session_id, name: s.name, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit, user_id: s.user_id, email: s.email, lifecycle: s.lifecycle, lifecycle_seen_at: Date.now(), conversation_id: s.conversation_id, root_conversation_id: s.root_conversation_id, parent_conversation_id: s.parent_conversation_id, conversation_role: s.conversation_role };
         });
     } catch (e) { return null; }
 }
 
 export function mergeWingSessions(wingId, remoteSessions) {
     S.sessionsData = sortSessionsByOrder(reconcileWingSessions(S.sessionsData, wingId, remoteSessions));
-    setEggOrder(S.sessionsData.map(function(s) { return s.id; }));
+    setEggOrder(S.sessionsData.map(sessionResourceKey));
     saveSessionCache();
 }
 
@@ -244,7 +233,7 @@ async function _loadHomeInner() {
     if (S.sessionsData.length === 0 && !(S.currentUser && S.currentUser.relay_allowed === false)) {
         var cachedSessions = getCachedSessions();
         if (cachedSessions.length > 0) {
-            cachedSessions.forEach(function(s) { s.status = 'detached'; s.swept = true; });
+            cachedSessions.forEach(function(s) { s.status = 'detached'; s.swept = true; delete s.lifecycle_seen_at; });
             S.sessionsData = sortSessionsByOrder(cachedSessions);
         }
     }
@@ -356,10 +345,10 @@ async function _loadHomeInner() {
     });
 
     S.sessionsData.forEach(function(s) {
-        if (s.needs_attention && s.id !== S.ptySessionId) {
-            setNotification(s.id);
-        } else if (!s.needs_attention && S.sessionNotifications[s.id]) {
-            clearNotification(s.id);
+        if (s.needs_attention && !sessionIsSelected(s, S.ptySessionId, S.ptyWingId)) {
+            setNotification(s.id, s.wing_id);
+        } else if (!s.needs_attention && notificationForSession(S.sessionNotifications, s)) {
+            clearNotification(s.id, s.wing_id);
         }
     });
 

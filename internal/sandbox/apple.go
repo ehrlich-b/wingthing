@@ -25,12 +25,16 @@ func newPlatform(cfg Config) (Sandbox, error) {
 		return nil, fmt.Errorf("sandbox-exec not found: %w", err)
 	}
 
+	profile, err := buildCheckedProfile(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	dir, err := os.MkdirTemp("", "wt-sandbox-*")
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox tmpdir: %w", err)
 	}
 
-	profile := buildProfile(cfg)
 	log.Printf("seatbelt sandbox: created tmpdir=%s network=%s", dir, cfg.NetworkNeed)
 	log.Printf("seatbelt profile:\n%s", profile)
 	return &seatbeltSandbox{cfg: cfg, profile: profile, tmpDir: dir}, nil
@@ -195,7 +199,47 @@ func buildProfile(cfg Config) string {
 		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
 	}
 
+	// Protected write targets — host-owned state the agent must never write.
+	// Emitted last so no earlier rule can reopen them. Like Deny, the literal
+	// covers creating a missing target and the subpath covers descendants.
+	// buildCheckedProfile still refuses any allow rule that overlaps a target.
+	for _, t := range cfg.ProtectedWriteTargets {
+		abs, err := canonicalSandboxPath(t)
+		if err != nil {
+			continue // buildCheckedProfile reports the uncovered target
+		}
+		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
+		fmt.Fprintf(&sb, "(deny file-write* (subpath %q))\n", abs)
+	}
+
 	return sb.String()
+}
+
+// buildCheckedProfile builds the profile handed to sandbox-exec and, when the
+// host supplied protected write targets, verifies that exact profile text keeps
+// every target unwritable. An empty protected set returns buildProfile output
+// unchanged.
+func buildCheckedProfile(cfg Config) (string, error) {
+	profile := buildProfile(cfg)
+	if len(cfg.ProtectedWriteTargets) == 0 {
+		return profile, nil
+	}
+	if err := ValidateProtectedWriteTargets(cfg.ProtectedWriteTargets); err != nil {
+		return "", err
+	}
+	targets := make([]string, 0, len(cfg.ProtectedWriteTargets))
+	for _, t := range cfg.ProtectedWriteTargets {
+		abs, err := canonicalSandboxPath(t)
+		if err != nil {
+			return "", &ProtectedWriteTargetError{Target: t, Reason: "resolve protected target: " + err.Error()}
+		}
+		targets = append(targets, abs)
+	}
+	// APFS is case-insensitive by default; folding only widens overlap.
+	if err := checkProtectedWriteTargets(profile, targets, true); err != nil {
+		return "", err
+	}
+	return profile, nil
 }
 
 // canonicalSandboxPath returns the real path that Seatbelt evaluates. Unlike

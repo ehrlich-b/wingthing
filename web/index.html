@@ -2,7 +2,7 @@
 <html lang="en" translate="no">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
     <meta name="google" content="notranslate">
     <meta name="theme-color" content="#1a1a2e">
     <link rel="manifest" href="manifest.json">
@@ -11,7 +11,7 @@
 </head>
 <body>
     <div id="app">
-        <nav id="sidebar">
+        <nav id="sidebar" aria-label="Session navigation">
             <button id="home-btn" title="Home (Ctrl+.)"><span class="nav-symbol">~</span><span class="nav-label">home</span></button>
             <button id="new-session-btn" title="New session (Cmd+K)"><span class="nav-symbol">+</span><span class="nav-label">new session</span></button>
             <div id="session-tabs"></div>
@@ -19,6 +19,9 @@
         <div id="main">
             <header id="main-header">
                 <a href="/" id="header-logo" title="wingthing.ai">wingthing.ai</a>
+                <button id="parent-dot" type="button" title="Select a parent conversation" aria-label="Select a parent conversation" data-state="unselected" hidden>
+                    <span class="parent-dot-light" aria-hidden="true"></span><span class="parent-dot-name">parent</span><span class="parent-dot-state">select parent</span>
+                </button>
                 <div id="header-center">
                     <span id="header-title"></span>
                     <span id="pty-status"></span>
@@ -42,10 +45,13 @@
                 </div>
             </header>
 
-            <div id="reconnect-banner" style="display:none;">
+            <div id="channel-banner" style="display:none;" role="status"></div>
+            <div id="parent-dot-message" class="parent-dot-message" role="status" aria-live="polite" hidden></div>
+            <div id="reconnect-banner" style="display:none;" role="status" aria-live="polite">
                 <span id="reconnect-text">reconnecting...</span>
                 <button id="reconnect-btn" class="btn-sm" style="display:none">retry</button>
             </div>
+            <div id="terminal-control-notice" class="terminal-control-notice" style="display:none;" role="status" aria-live="polite"></div>
 
             <div id="session-files-panel" style="display:none;" role="dialog" aria-label="Session files">
                 <div class="session-files-header">
@@ -83,6 +89,18 @@
                     <p class="hint">On each machine you want to manage, run <code>wt login</code> and <code>wt start</code>. Keep both peers on the same LAN or tailnet for the first direct release. Pro includes the hosted browser terminal and control relay. The native connector never silently changes from direct transport to relay transport.</p>
                 </div>
                 <div id="wing-status"></div>
+                <section id="conversation-inventory" aria-label="Conversations"></section>
+                <div id="session-inventory-controls" style="display:none;" role="search" aria-label="Filter sessions">
+                    <div class="inventory-heading"><h3 class="section-label">sessions</h3><span id="session-inventory-count" role="status" aria-live="polite"></span></div>
+                    <div class="inventory-filters">
+                        <label class="inventory-search"><span class="sr-only">Search sessions by name, agent, wing or folder</span><input id="session-inventory-search" type="search" placeholder="Search sessions, agents, wings, folders…" autocomplete="off" spellcheck="false" aria-controls="sessions-list"></label>
+                        <label><span class="sr-only">Execution wing</span><select id="session-inventory-wing" aria-controls="sessions-list"><option value="">all wings</option></select></label>
+                        <label><span class="sr-only">Agent provider</span><select id="session-inventory-agent" aria-controls="sessions-list"><option value="">all agents</option></select></label>
+                        <label><span class="sr-only">Session status</span><select id="session-inventory-status" aria-controls="sessions-list"><option value="">all states</option><option value="attention">needs attention</option><option value="available">available</option><option value="offline">unavailable</option></select></label>
+                        <button id="session-inventory-clear" class="btn-sm" type="button">clear filters</button>
+                    </div>
+                    <p class="inventory-hint">Use ↑ / ↓ to browse sessions, Enter to attach. Agent state is shown when the provider reports it.</p>
+                </div>
                 <div id="sessions-list"></div>
                 <div id="empty-state" style="display:none;">
                     <div class="empty-icon">~</div>

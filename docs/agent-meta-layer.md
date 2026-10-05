@@ -212,3 +212,90 @@ qualified resource model is in
 
 The product test is concrete: can an LLM operate Wingthing without scraping the
 web UI, and can a person see, understand, and take over everything it did?
+
+### Interactive native session lifecycle
+
+`session_status`, `session_read`, and `session_wait` expose a persistent
+interactive session independently of the ANSI terminal tools. CLI equivalents
+are `wt session status`, `transcript`, and `await`, each with `--json`.
+Every remote call still selects an explicit execution wing. These tools inherit
+`terminal.read` ownership and path checks, including archived-session reads.
+
+Claude records are bound to the provider session ID assigned at launch. Native
+JSONL records and observational native hooks are imported into the private egg
+`lifecycle.jsonl` journal with monotonic durable sequence numbers. Hook payloads
+are atomically published inside Claude's existing writable provider directory;
+launch-only `--settings` preserves supplied settings, existing hooks, and
+`disableAllHooks`, without editing a host settings file or expanding the sandbox.
+The provider home is persisted in egg metadata so isolated owner histories remain
+separate. Provider records containing a different session ID are not disclosed.
+
+Read responses contain `lifecycle.events`, `cursor` (last delivered event),
+`head_cursor` (journal head), `state_cursor` (the event establishing current
+state), and `has_more`. Save the delivered cursor and drain bounded pages. State
+waits inspect `state_cursor` independently of transcript pagination. Pass the
+head cursor captured before sending a new prompt when waiting for that turn,
+so an earlier completed response cannot satisfy the wait. `matched` and
+`timed_out` are explicit; cancellation still cancels the wait.
+
+Readiness means the native provider reported session initialization or prompt
+submission; it does not promise a terminal composer is visible. `prompt_submitted`
+is the native UserPromptSubmit observation, before provider processing and other
+user hooks, not a guarantee of eventual acceptance. `completed` from Claude is a
+foreground `end_turn` or Stop observation, not completion of an arbitrary
+delegated goal. Other Stop hooks may continue the conversation; background tasks
+reported by Stop produce `idle` with an explicit reason. Later native prompt/tool
+hooks restore `working`. Native hook transitions take precedence over delayed
+transcript flushes, and durable process failure/cancellation overrides both.
+An unknown process exit remains `unknown`, never success. Unsupported providers
+(including Codex for now) declare unknown agent semantics and retain the existing
+raw terminal tools. No status derives completion from PTY silence.
+
+Fixture coverage verifies native hook command/stdin/spool/journal integration,
+concurrent readers, exact same-directory identity, partial JSONL retry, reconnect
+cursor replay, delayed transcript flushes, wait pagination, process cancellation,
+owner/path enforcement and strict MCP arguments. Real authenticated provider
+startup/composer behavior remains a separate opt-in canary; fixtures do not
+establish vendor login behavior. Journal reads currently scan local history;
+indexing and retention controls are follow-up work for very long conversations.
+
+`session_prompt` / `wt session prompt --request-id ID --json` add a separate
+semantic send path. The caller supplies stable request ID, exact destination,
+text, and a bounded receipt wait (100 ms–60 s, 15 s default). Up to 64 KiB of
+UTF-8 text is bracketed-pasted as one submission; unsupported terminal control
+bytes are rejected. Raw `terminal_send` remains available for intentional
+terminal interaction.
+
+A session-scoped gate serializes requests. Wingthing persists and syncs the
+request ID, exact-provider spec hash and drained native head cursor before any
+transport attempt. Identical request retries never resend; changing the prompt,
+destination or wait bound rejects reuse. A crash between reservation and delivery
+remains explicitly unconfirmed. The input connection stays open through receipt
+observation. An eager writer claim is confirmed before any input is enqueued;
+the preview central writer lease excludes competing attachments until release.
+Native readiness and the reserved provider identity are checked again while
+this attachment owns input.
+Stable retains its existing attachment behavior. Neither channel turns a text
+match into a provider request-specific causal acknowledgement.
+
+`receipt.native_receipt_observed` means an exact-provider, non-synthetic,
+non-meta, non-summary, non-sidechain human user JSONL message matched the text
+after reservation. A UserPromptSubmit hook, terminal echo or successful stream
+write cannot satisfy it. `transport_enqueued` and byte count are separate
+transport facts. After an input attempt, timeout, read failure or lost connection
+preserves the reservation and reports `unconfirmed`; retry with the same arguments to inspect
+for a late receipt. `provider_request_acknowledged` remains false: Claude does
+not carry Wingthing's request ID, so identical concurrent human text cannot be
+causally attributed to a particular request. Reservation provides at-most-once
+sending through this control path, not global exactly-once execution or proof
+that the provider accepted an arbitrary delegated goal.
+
+A preflight refusal can return `status: "not_sent"` together with
+`definitely_not_sent: true` only when the actual sender explicitly reports that
+it never attempted input. A busy writer, changed readiness or replaced provider
+before the first input send preserves a bounded actionable reason. The sender
+clears this evidence immediately before attempting that send: zero enqueued
+bytes, a send error or a crash cannot prove that input was unsent. Terminal
+`not_sent` retries return the saved result without reading the current provider
+or sending again. A person can retain the draft, resolve the condition and
+deliberately submit with a new request ID; an existing ID never resends.

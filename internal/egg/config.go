@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	wingconfig "github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"gopkg.in/yaml.v3"
 )
@@ -310,8 +311,8 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	if wingDefault != nil {
 		return wingDefault
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		path := filepath.Join(home, ".wingthing", "egg.yaml")
+	if dir, err := wingconfig.StateDir(); err == nil {
+		path := filepath.Join(dir, "egg.yaml")
 		if _, statErr := os.Stat(path); statErr == nil {
 			cfg, resolveErr := ResolveEggConfig(path)
 			if resolveErr == nil {
@@ -388,8 +389,11 @@ func resolveBasePath(base, configDir string) string {
 		return filepath.Join(configDir, base)
 	}
 	// Named base: ~/.wingthing/bases/<name>.yaml
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".wingthing", "bases", base+".yaml")
+	dir, err := wingconfig.StateDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "bases", base+".yaml")
 }
 
 // applySectionMasks replaces individual sections of the parent config based on

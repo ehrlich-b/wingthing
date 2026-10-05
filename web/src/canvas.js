@@ -8,6 +8,11 @@ import { b64ToBytes, bytesToB64, wingDisplayName, agentWithIcon } from './helper
 import { onlineWings, showPalette, setCanvasLaunchCallback } from './palette.js';
 import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { checkForNotification, setNotification, clearNotification } from './notify.js';
+import { sessionResourceKey } from './session-reference.js';
+import { createCanvasSessionState } from './canvas-session-state.js';
+import { clearTermBuffer } from './terminal.js';
+import { terminalControlFailure, terminalControlOptions, ptyAttachRequest, ptyResizeRequest, renderTerminalControlNotice } from './terminal-attachment.js';
+import { requestCanvasStop } from './canvas-stop.js';
 
 // Grid constants
 var CELL = 40;
@@ -17,17 +22,17 @@ var MIN_W = 10;  // cells (400px)
 var MIN_H = 6;   // cells (240px)
 
 // Persistence keys
-var CANVAS_LAYOUT_KEY = 'wt_canvas_layout';
+var CANVAS_LAYOUT_KEY = 'wt_canvas_layout_v2';
 var CANVAS_VIEW_KEY = 'wt_canvas_view';
 
 // Module state
-var sessions = {};
-var focusedId = null;
+var canvasState = createCanvasSessionState();
+var sessions = canvasState.sessions;
 var offset = { x: 0, y: 0 };
 var scale = 1.0;
 var nextZ = 1;
 var active = false;
-var occupied = {}; // "col,row" -> sessionId
+var occupied = {}; // "col,row" -> qualified session key
 var canvasMode = 'use'; // 'use' | 'create'
 
 // Drag state
@@ -91,11 +96,7 @@ function findFirstFit(w, h) {
 // --- Layout + view persistence ---
 
 function saveCanvasLayout() {
-    var layout = {};
-    for (var id in sessions) {
-        var s = sessions[id];
-        layout[id] = { col: s.col, row: s.row, cellW: s.cellW, cellH: s.cellH };
-    }
+    var layout = canvasState.layout();
     try { localStorage.setItem(CANVAS_LAYOUT_KEY, JSON.stringify(layout)); } catch(e) {}
 }
 
@@ -264,8 +265,8 @@ function sessionTitle(agent, wingId, label) {
     return agent || '';
 }
 
-export function updateCanvasSessionName(sessionId, name) {
-    var sess = sessions[sessionId];
+export function updateCanvasSessionName(sessionId, name, wingId) {
+    var sess = canvasState.find(sessionId, wingId);
     if (!sess) return false;
     sess.label = name || '';
     sess.titleEl.textContent = sessionTitle(sess.agent, sess.wingId, sess.label);
@@ -275,17 +276,17 @@ export function updateCanvasSessionName(sessionId, name) {
 // --- Focus ---
 
 function unfocusAll() {
-    if (focusedId && sessions[focusedId]) {
-        sessions[focusedId].el.classList.remove('focused');
+    if (canvasState.focusedKey && sessions[canvasState.focusedKey]) {
+        sessions[canvasState.focusedKey].el.classList.remove('focused');
     }
-    focusedId = null;
+    canvasState.focusedKey = null;
 }
 
 function focusSession(id) {
-    if (focusedId && sessions[focusedId]) {
-        sessions[focusedId].el.classList.remove('focused');
+    if (canvasState.focusedKey && sessions[canvasState.focusedKey]) {
+        sessions[canvasState.focusedKey].el.classList.remove('focused');
     }
-    focusedId = id;
+    canvasState.focus(id);
     if (sessions[id]) {
         sessions[id].el.classList.add('focused');
         sessions[id].zIndex = nextZ++;
@@ -299,7 +300,7 @@ function focusSession(id) {
         if (dot && dot.classList.contains('dot-attention')) {
             dot.classList.remove('dot-attention');
             dot.classList.add('dot-live');
-            clearNotification(id);
+            clearNotification(sessions[id].id, sessions[id].wingId);
         }
     }
 }
@@ -336,7 +337,7 @@ function positionGhost(col, row, cellW, cellH, valid) {
 
 // --- Terminal element creation ---
 
-function createTerminalEl(id, x, y, width, height) {
+function createTerminalEl(id, x, y, width, height, sessionId, wingId) {
     var el = document.createElement('div');
     el.className = 'canvas-terminal';
     el.style.left = x + 'px';
@@ -344,11 +345,13 @@ function createTerminalEl(id, x, y, width, height) {
     el.style.width = width + 'px';
     el.style.height = height + 'px';
     el.style.zIndex = nextZ++;
-    el.dataset.sessionId = id;
+    el.dataset.sessionId = sessionId || id;
+    el.dataset.wingId = wingId || '';
+    el.dataset.sessionKey = id;
 
-    // All event handlers read the CURRENT session id from the DOM attribute,
-    // not the closure-captured id, because pty.started re-keys temp -> real id.
-    function sid() { return el.dataset.sessionId; }
+    // Event handlers read the current qualified key: startup replaces a
+    // temporary session ID while preserving its wing.
+    function sid() { return el.dataset.sessionKey; }
 
     var header = document.createElement('div');
     header.className = 'canvas-terminal-header';
@@ -372,7 +375,8 @@ function createTerminalEl(id, x, y, width, height) {
     var closeBtn = document.createElement('button');
     closeBtn.className = 'canvas-terminal-btn';
     closeBtn.textContent = '\u00d7';
-    closeBtn.title = 'close';
+    closeBtn.title = 'Stop session';
+    closeBtn.setAttribute('aria-label', 'Stop session');
     closeBtn.addEventListener('click', function(e) {
         e.stopPropagation();
         e.preventDefault();
@@ -386,18 +390,28 @@ function createTerminalEl(id, x, y, width, height) {
 
     var body = document.createElement('div');
     body.className = 'canvas-terminal-body';
+    var stopNotice = document.createElement('div');
+    stopNotice.className = 'canvas-stop-notice';
+    stopNotice.setAttribute('role', 'status');
+    stopNotice.style.display = 'none';
+    var controlNotice = document.createElement('div');
+    controlNotice.className = 'terminal-control-notice';
+    controlNotice.setAttribute('role', 'status');
+    controlNotice.style.display = 'none';
 
     var handle = document.createElement('div');
     handle.className = 'canvas-terminal-resize-handle';
 
     el.appendChild(header);
+    el.appendChild(stopNotice);
+    el.appendChild(controlNotice);
     el.appendChild(body);
     el.appendChild(handle);
 
     // Only intercept body clicks on the FOCUSED terminal (live, accepts input).
     // Unfocused terminals let events bubble to viewport for pan.
     body.addEventListener('mousedown', function(e) {
-        if (e.button === 0 && sid() === focusedId) {
+        if (e.button === 0 && sid() === canvasState.focusedKey) {
             e.stopPropagation();
         }
     });
@@ -424,16 +438,16 @@ function createTerminalEl(id, x, y, width, height) {
     // Only block propagation for the focused terminal in use mode.
     // Unfocused terminals let events through to viewport for pan.
     el.addEventListener('mousedown', function(e) {
-        if (canvasMode === 'use' && sid() === focusedId) e.stopPropagation();
+        if (canvasMode === 'use' && sid() === canvasState.focusedKey) e.stopPropagation();
     });
 
     // Only the focused terminal captures wheel for scrollback.
     // Unfocused terminals and create mode let wheel bubble to viewport for zoom.
     el.addEventListener('wheel', function(e) {
-        if (canvasMode === 'use' && el.dataset.sessionId === focusedId) e.stopPropagation();
+        if (canvasMode === 'use' && el.dataset.sessionKey === canvasState.focusedKey) e.stopPropagation();
     });
 
-    return { el: el, body: body, title: title, dot: dot };
+    return { el: el, body: body, title: title, dot: dot, close: closeBtn, stopNotice: stopNotice, controlNotice: controlNotice };
 }
 
 // --- Move (ghost drag) ---
@@ -486,7 +500,7 @@ function onMouseMove(e) {
         if (!sess) return;
         var targetCol = snapToGrid(moving.origCol * CELL + dx);
         var targetRow = snapToGrid(moving.origRow * CELL + dy);
-        var valid = canPlace(targetCol, targetRow, sess.cellW, sess.cellH, sess.id);
+        var valid = canPlace(targetCol, targetRow, sess.cellW, sess.cellH, sess.key);
         positionGhost(targetCol, targetRow, sess.cellW, sess.cellH, valid);
         moving._targetCol = targetCol;
         moving._targetRow = targetRow;
@@ -500,7 +514,7 @@ function onMouseMove(e) {
         if (!sess) return;
         var newCellW = Math.max(MIN_W, snapToGrid(resizing.origCellW * CELL + dx));
         var newCellH = Math.max(MIN_H, snapToGrid(resizing.origCellH * CELL + dy));
-        var valid = canPlace(sess.col, sess.row, newCellW, newCellH, sess.id);
+        var valid = canPlace(sess.col, sess.row, newCellW, newCellH, sess.key);
         positionGhost(sess.col, sess.row, newCellW, newCellH, valid);
         resizing._targetW = newCellW;
         resizing._targetH = newCellH;
@@ -549,7 +563,7 @@ function onMouseUp(e) {
         // In use mode, click (no drag) on unfocused terminal → focus it
         if (pc.source === 'pan' && pc.target) {
             var termEl = pc.target.closest && pc.target.closest('.canvas-terminal');
-            if (termEl) focusSession(termEl.dataset.sessionId);
+            if (termEl) focusSession(termEl.dataset.sessionKey);
         }
         return;
     }
@@ -563,7 +577,7 @@ function onMouseUp(e) {
             sess.y = sess.row * CELL;
             sess.el.style.left = sess.x + 'px';
             sess.el.style.top = sess.y + 'px';
-            markCells(sess.col, sess.row, sess.cellW, sess.cellH, sess.id);
+            markCells(sess.col, sess.row, sess.cellW, sess.cellH, sess.key);
             saveCanvasLayout();
         }
         removeGhost();
@@ -580,7 +594,7 @@ function onMouseUp(e) {
             sess.height = sess.cellH * CELL;
             sess.el.style.width = sess.width + 'px';
             sess.el.style.height = sess.height + 'px';
-            markCells(sess.col, sess.row, sess.cellW, sess.cellH, sess.id);
+            markCells(sess.col, sess.row, sess.cellW, sess.cellH, sess.key);
             saveCanvasLayout();
             setTimeout(function() {
                 sess.fitAddon.fit();
@@ -594,13 +608,42 @@ function onMouseUp(e) {
 }
 
 function sendResize(sess) {
-    if (!sess.id || !sess.wingId) return;
-    sendTunnelRequest(sess.wingId, {
-        type: 'pty.resize',
-        session_id: sess.id,
-        cols: sess.term.cols,
-        rows: sess.term.rows
-    }).catch(function() {});
+    if (sessions[sess.key] !== sess || !sess.id || !sess.wingId || !sess.attached || sess.starting || sess.spectating || sess.inputBlocked) return;
+    sendTunnelRequest(sess.wingId, ptyResizeRequest(sess.id, sess.controllerId, { cols: sess.term.cols, rows: sess.term.rows })).catch(function() {});
+}
+
+function updateCanvasStopState(sess) {
+    sess.closeBtn.disabled = !!(sess.starting || sess.stopPending);
+    sess.closeBtn.textContent = sess.starting ? 'launching' : sess.stopPending ? 'stopping…' : '\u00d7';
+    sess.closeBtn.title = sess.starting ? 'Wait for the wing to confirm this session before stopping it' : 'Stop session';
+    sess.stopNotice.textContent = sess.starting ? 'Launching: Stop becomes available when the wing confirms the session.' : sess.stopError || '';
+    sess.stopNotice.style.display = sess.stopNotice.textContent ? '' : 'none';
+}
+
+function handleCanvasControlError(sess, message) {
+    var failure = terminalControlFailure(message);
+    if (!failure || !S.currentUser || S.currentUser.release_channel !== 'preview') return false;
+    sess.inputBlocked = true;
+    sess.attached = false;
+    sess.controllerId = null;
+    var wing = S.wingsData.find(function(item) { return item.wing_id === sess.wingId; });
+    renderTerminalControlNotice(sess.controlNotice, failure, wing, S.currentUser, function(mode) {
+        if (sessions[sess.key] !== sess || sess.starting || sess.stopPending) return;
+        var currentWing = S.wingsData.find(function(item) { return item.wing_id === sess.wingId; });
+        var options = terminalControlOptions(S.currentUser, currentWing, mode);
+        if (!options) return;
+        var wasFocused = canvasState.focusedKey === sess.key;
+        // Replace this local attachment without stopping the agent or clearing
+        // its content/attention. A reconnect never repeats a prior takeover.
+        clearCells(sess.col, sess.row, sess.cellW, sess.cellH);
+        canvasState.remove(sess.key);
+        try { sess.ws.close(); } catch (error) {}
+        sess.el.remove();
+        sess.term.dispose();
+        canvasAttach(sess.id, sess.agent, sess.wingId, sess.col, sess.row, sess.cellW, sess.cellH, sess.label, options);
+        if (wasFocused) focusSession(sess.key);
+    });
+    return true;
 }
 
 function toggleExpand(id) {
@@ -619,6 +662,8 @@ function toggleExpand(id) {
 var closeTimers = {};
 
 function confirmClose(id, btn) {
+    var sess = sessions[id];
+    if (!sess || sess.starting || sess.stopPending) { if (sess) updateCanvasStopState(sess); return; }
     if (btn.classList.contains('confirm')) {
         btn.classList.remove('confirm');
         btn.textContent = '\u00d7';
@@ -639,13 +684,19 @@ function confirmClose(id, btn) {
 function killSession(id) {
     var sess = sessions[id];
     if (!sess) return;
+    requestCanvasStop(sess, sendTunnelRequest, function() {
+        if (sessions[sess.key] === sess) updateCanvasStopState(sess);
+    }).then(function(confirmed) {
+        if (!confirmed || sessions[sess.key] !== sess) return;
+        removeStoppedCanvasSession(sess);
+    });
+}
+
+function removeStoppedCanvasSession(sess) {
+    var id = sess.key;
     // Clear grid cells
     if (sess.col !== undefined) {
         clearCells(sess.col, sess.row, sess.cellW, sess.cellH);
-    }
-    // Send kill via tunnel
-    if (sess.wingId) {
-        sendTunnelRequest(sess.wingId, { type: 'pty.kill', session_id: id }).catch(function() {});
     }
     // Close WebSocket
     if (sess.ws) {
@@ -657,10 +708,14 @@ function killSession(id) {
     }
     // Dispose terminal
     try { sess.term.dispose(); } catch(e) {}
-    delete sessions[id];
+    var wasFocused = canvasState.focusedKey === id;
+    canvasState.remove(id);
+    clearNotification(sess.id, sess.wingId);
+    clearTermBuffer(sess.id, sess.wingId);
+    if (typeof window._deleteSession === 'function') window._deleteSession(sess.id, true, sess.wingId);
     saveCanvasLayout();
-    if (focusedId === id) {
-        focusedId = null;
+    if (wasFocused) {
+        canvasState.focusedKey = null;
         var topId = null;
         var topZ = -1;
         for (var sid in sessions) {
@@ -725,12 +780,13 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     term.loadAddon(serializeAddon);
 
     var tempId = 'canvas-' + randomUUID();
+    var tempKey = sessionResourceKey({ id: tempId, wingId: wingId });
 
-    var parts = createTerminalEl(tempId, x, y, width, height);
+    var parts = createTerminalEl(tempKey, x, y, width, height, tempId, wingId);
     DOM.canvasWorld.appendChild(parts.el);
 
     term.open(parts.body);
-    setTimeout(function() { fitAddon.fit(); }, 50);
+    setTimeout(function() { if (sessions[sess.key] === sess) fitAddon.fit(); }, 50);
 
     var sess = {
         id: tempId,
@@ -744,6 +800,13 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
         el: parts.el,
         titleEl: parts.title,
         dotEl: parts.dot,
+        closeBtn: parts.close,
+        stopNotice: parts.stopNotice,
+        controlNotice: parts.controlNotice,
+        starting: true,
+        attached: false,
+        controllerId: null,
+        inputBlocked: false,
         col: col,
         row: row,
         cellW: cellW,
@@ -757,9 +820,10 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
         dead: false,
     };
 
-    markCells(col, row, cellW, cellH, tempId);
-    sessions[tempId] = sess;
-    focusSession(tempId);
+    canvasState.put(sess);
+    updateCanvasStopState(sess);
+    markCells(col, row, cellW, cellH, sess.key);
+    focusSession(sess.key);
     saveCanvasLayout();
 
     // Open WebSocket
@@ -771,6 +835,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     sess.ws = ws;
 
     ws.onopen = function() {
+        if (sessions[sess.key] !== sess) return;
         var startMsg = {
             type: 'pty.start',
             agent: agent,
@@ -787,24 +852,29 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     var pendingOutput = [];
 
     ws.onmessage = function(e) {
+        if (sessions[sess.key] !== sess) return;
         var msg = JSON.parse(e.data);
+        if (msg.session_id && msg.type !== 'pty.started' && msg.session_id !== sess.id) return;
         switch (msg.type) {
             case 'pty.started':
                 var realId = msg.session_id;
                 // Re-key session from temp to real ID
                 clearCells(sess.col, sess.row, sess.cellW, sess.cellH);
-                delete sessions[tempId];
-                sess.id = realId;
+                if (!canvasState.rekey(tempKey, realId)) return;
+                sess.starting = false;
+                sess.attached = true;
+                sess.controllerId = typeof msg.controller_id === 'string' ? msg.controller_id : null;
+                updateCanvasStopState(sess);
                 sess.el.dataset.sessionId = realId;
-                sessions[realId] = sess;
-                markCells(sess.col, sess.row, sess.cellW, sess.cellH, realId);
-                if (focusedId === tempId) focusedId = realId;
+                sess.el.dataset.sessionKey = sess.key;
+                markCells(sess.col, sess.row, sess.cellW, sess.cellH, sess.key);
                 saveCanvasLayout();
 
                 parts.title.textContent = sessionTitle(agent, wingId);
 
                 if (msg.public_key) {
                     deriveE2EKey(msg.public_key, wingId).then(function(key) {
+                        if (sessions[sess.key] !== sess) return;
                         sess.e2eKey = key;
                         sess.keyReady = true;
                         var pending = pendingOutput;
@@ -813,6 +883,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
                             processOutput(sess, item.data, item.compressed);
                         });
                     }).catch(function(err) {
+                        if (sessions[sess.key] !== sess) return;
                         sess.term.writeln('\r\n\x1b[31m' + (err && err.message ? err.message : 'wing identity verification failed') + '\x1b[0m');
                         ws.close();
                     });
@@ -836,6 +907,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
                 break;
 
             case 'pty.exited':
+                sess.attached = false;
                 sess.dead = true;
                 term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
                 if (msg.error) {
@@ -853,12 +925,15 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
                 break;
 
             case 'error':
+                if (handleCanvasControlError(sess, msg.message)) break;
                 term.writeln('\r\n\x1b[31m' + (msg.message || 'error') + '\x1b[0m');
                 break;
         }
     };
 
     ws.onclose = function() {
+        if (sessions[sess.key] !== sess) return;
+        sess.attached = false;
         if (!sess.dead) {
             sess.dead = true;
             term.writeln('\r\n\x1b[2m--- disconnected ---\x1b[0m');
@@ -870,11 +945,12 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
     };
 
     ws.onerror = function() {
+        if (sessions[sess.key] !== sess) return;
         term.writeln('\r\n\x1b[31mconnection error\x1b[0m');
     };
 
     term.onData(function(data) {
-        if (focusedId !== sess.id || sess.dead) return;
+        if (canvasState.focusedKey !== sess.key || !sess.attached || sess.dead || sess.inputBlocked || sess.spectating) return;
         var encoded = sessionEncrypt(sess.e2eKey, data);
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
@@ -887,7 +963,7 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
 
     term.attachCustomKeyEventHandler(function(e) {
         if (e.type === 'keydown' && e.key === 'Escape' && sess.el.classList.contains('expanded')) {
-            toggleExpand(sess.id);
+            toggleExpand(sess.key);
             return false;
         }
         if (e.type === 'keydown' && (e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -900,10 +976,12 @@ export function canvasConnect(agent, cwd, wingId, col, row) {
 }
 
 function processOutput(sess, dataStr, compressed) {
+    if (sessions[sess.key] !== sess) return;
     try {
         var bytes = sessionDecrypt(sess.e2eKey, dataStr);
         if (compressed) {
             gunzip(bytes).then(function(decompressed) {
+                if (sessions[sess.key] !== sess) return;
                 sess.term.write(decompressed);
                 checkOutputForAttention(sess, decompressed);
             }).catch(function() {});
@@ -918,9 +996,9 @@ function processOutput(sess, dataStr, compressed) {
 
 function checkOutputForAttention(sess, bytes) {
     var text = new TextDecoder().decode(bytes);
-    if (checkForNotification(text) && focusedId !== sess.id) {
-        canvasSetAttention(sess.id);
-        setNotification(sess.id);
+    if (checkForNotification(text) && canvasState.focusedKey !== sess.key) {
+        canvasSetAttention(sess.id, sess.wingId);
+        setNotification(sess.id, sess.wingId);
     }
 }
 
@@ -968,8 +1046,8 @@ function onViewportWheel(e) {
 
 // --- Attention ---
 
-export function canvasSetAttention(sessionId) {
-    var sess = sessions[sessionId];
+export function canvasSetAttention(sessionId, wingId) {
+    var sess = canvasState.find(sessionId, wingId);
     if (!sess || !sess.dotEl) return;
     sess.dotEl.classList.remove('dot-live', 'dot-offline');
     sess.dotEl.classList.add('dot-attention');
@@ -977,7 +1055,8 @@ export function canvasSetAttention(sessionId) {
 
 // --- Attach to existing session ---
 
-function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, label) {
+function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, label, options) {
+    options = options || {};
     var cellW = optCellW || DEF_W;
     var cellH = optCellH || DEF_H;
     var x = col * CELL;
@@ -1002,11 +1081,11 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
     term.loadAddon(fitAddon);
     term.loadAddon(serializeAddon);
 
-    var parts = createTerminalEl(sessionId, x, y, width, height);
+    var parts = createTerminalEl(sessionResourceKey({ id: sessionId, wingId: wingId }), x, y, width, height, sessionId, wingId);
     DOM.canvasWorld.appendChild(parts.el);
 
     term.open(parts.body);
-    setTimeout(function() { fitAddon.fit(); }, 50);
+    setTimeout(function() { if (sessions[sess.key] === sess) fitAddon.fit(); }, 50);
 
     parts.title.textContent = sessionTitle(agent, wingId, label);
 
@@ -1023,6 +1102,14 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
         el: parts.el,
         titleEl: parts.title,
         dotEl: parts.dot,
+        closeBtn: parts.close,
+        stopNotice: parts.stopNotice,
+        controlNotice: parts.controlNotice,
+        starting: false,
+        attached: false,
+        controllerId: null,
+        inputBlocked: false,
+        spectating: !!options.spectate,
         col: col,
         row: row,
         cellW: cellW,
@@ -1036,8 +1123,9 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
         dead: false,
     };
 
-    markCells(col, row, cellW, cellH, sessionId);
-    sessions[sessionId] = sess;
+    canvasState.put(sess);
+    updateCanvasStopState(sess);
+    markCells(col, row, cellW, cellH, sess.key);
 
     // Open WebSocket and attach to existing session
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1048,26 +1136,29 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
     sess.ws = ws;
 
     ws.onopen = function() {
-        var msg = {
-            type: 'pty.attach',
-            session_id: sessionId,
-            public_key: identityPubKey,
-            cols: term.cols,
-            rows: term.rows,
-        };
-        if (wingId) msg.wing_id = wingId;
-        if (wingId && S.tunnelAuthTokens[wingId]) msg.auth_token = S.tunnelAuthTokens[wingId];
+        if (sessions[sess.key] !== sess) return;
+        var msg = ptyAttachRequest(sessionId, wingId, identityPubKey, {
+            cols: term.cols, rows: term.rows, authToken: S.tunnelAuthTokens[wingId],
+            spectate: sess.spectating, takeover: !!(options.takeover && S.currentUser && S.currentUser.release_channel === 'preview')
+        });
         ws.send(JSON.stringify(msg));
     };
 
     var pendingOutput = [];
 
     ws.onmessage = function(e) {
+        if (sessions[sess.key] !== sess) return;
         var msg = JSON.parse(e.data);
+        if (msg.session_id && msg.session_id !== sess.id) return;
         switch (msg.type) {
             case 'pty.started':
+                sess.attached = true;
+                sess.controllerId = typeof msg.controller_id === 'string' ? msg.controller_id : null;
+                sess.inputBlocked = false;
+                renderTerminalControlNotice(sess.controlNotice, null);
                 if (msg.public_key) {
                     deriveE2EKey(msg.public_key, wingId).then(function(key) {
+                        if (sessions[sess.key] !== sess) return;
                         sess.e2eKey = key;
                         sess.keyReady = true;
                         var pending = pendingOutput;
@@ -1076,6 +1167,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
                             processOutput(sess, item.data, item.compressed);
                         });
                     }).catch(function(err) {
+                        if (sessions[sess.key] !== sess) return;
                         sess.term.writeln('\r\n\x1b[31m' + (err && err.message ? err.message : 'wing identity verification failed') + '\x1b[0m');
                         ws.close();
                     });
@@ -1099,6 +1191,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
                 break;
 
             case 'pty.exited':
+                sess.attached = false;
                 sess.dead = true;
                 term.writeln('\r\n\x1b[2m--- session ended ---\x1b[0m');
                 if (msg.error) {
@@ -1116,12 +1209,16 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
                 break;
 
             case 'error':
+                if (msg.controller_id && sess.controllerId && msg.controller_id !== sess.controllerId) break;
+                if (handleCanvasControlError(sess, msg.message)) break;
                 term.writeln('\r\n\x1b[31m' + (msg.message || 'error') + '\x1b[0m');
                 break;
         }
     };
 
     ws.onclose = function() {
+        if (sessions[sess.key] !== sess) return;
+        sess.attached = false;
         if (!sess.dead) {
             sess.dead = true;
             term.writeln('\r\n\x1b[2m--- disconnected ---\x1b[0m');
@@ -1133,11 +1230,12 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
     };
 
     ws.onerror = function() {
+        if (sessions[sess.key] !== sess) return;
         term.writeln('\r\n\x1b[31mconnection error\x1b[0m');
     };
 
     term.onData(function(data) {
-        if (focusedId !== sess.id || sess.dead) return;
+        if (canvasState.focusedKey !== sess.key || !sess.attached || sess.dead || sess.inputBlocked || sess.spectating) return;
         var encoded = sessionEncrypt(sess.e2eKey, data);
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
@@ -1150,7 +1248,7 @@ function canvasAttach(sessionId, agent, wingId, col, row, optCellW, optCellH, la
 
     term.attachCustomKeyEventHandler(function(e) {
         if (e.type === 'keydown' && e.key === 'Escape' && sess.el.classList.contains('expanded')) {
-            toggleExpand(sess.id);
+            toggleExpand(sess.key);
             return false;
         }
         if (e.type === 'keydown' && (e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -1173,11 +1271,11 @@ function arrangeExistingSessions() {
     var layout = loadCanvasLayout();
 
     S.sessionsData.forEach(function(s) {
-        if (existing[s.id]) return;
+        if (existing[sessionResourceKey(s)]) return;
         var wing = S.wingsData.find(function(w) { return w.wing_id === s.wing_id && w.online !== false; });
         if (!wing) return;
 
-        var saved = layout[s.id];
+        var saved = layout[sessionResourceKey(s)];
         var col, row, cellW, cellH;
         if (saved && canPlace(saved.col, saved.row, saved.cellW || DEF_W, saved.cellH || DEF_H, null)) {
             col = saved.col;
@@ -1270,7 +1368,7 @@ export function showCanvasView() {
     var reconnectIds = [];
     for (var id in sessions) {
         var sess = sessions[id];
-        if (sess.ws && sess.ws.readyState !== WebSocket.OPEN && !sess.dead) {
+        if (sess.ws && sess.ws.readyState !== WebSocket.OPEN && !sess.dead && !sess.inputBlocked) {
             reconnectIds.push(id);
         } else {
             setTimeout((function(s) { return function() { s.fitAddon.fit(); }; })(sess), 50);
@@ -1286,7 +1384,8 @@ export function showCanvasView() {
         if (rs.el && rs.el.parentNode) rs.el.parentNode.removeChild(rs.el);
         try { rs.term.dispose(); } catch(e) {}
         delete sessions[rid];
-        canvasAttach(rid, savedAgent, savedWingId, savedCol, savedRow, savedCellW, savedCellH, savedLabel);
+        canvasAttach(rs.id, savedAgent, savedWingId, savedCol, savedRow, savedCellW, savedCellH, savedLabel, { spectate: !!rs.spectating });
+        if (canvasState.focusedKey === rid) focusSession(rid);
     }
 
     // Auto-populate: connect to existing sessions that aren't already on the canvas
