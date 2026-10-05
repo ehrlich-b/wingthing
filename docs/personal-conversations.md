@@ -163,9 +163,10 @@ wingthing.ai deployment or Bryan's account entitlement.
 
 Browser session tools preserve historical personal-owner/admin oversight of
 artifacts and use a session's persisted principal only after artifact admission.
-Conversation IDs themselves remain owner-scoped. The phone setup's local MCP
-launcher uses the same `user-` plus first 20 hex characters of SHA-256(account ID)
-principal as the authenticated browser adapter, so the phone sees its root.
+Conversation IDs themselves remain owner-scoped. The phone's New conversation
+uses the authenticated browser adapter's owner principal. The optional local MCP
+fallback uses the same `user-` plus first 20 hex characters of SHA-256(account ID)
+principal, so the phone sees its root.
 Broker calls stay within the captured root, intersect the captured grants/bounds
 and paths with current `clients.yaml`/wing policy, and stop mutations when locked.
 Stable opt-in revocation stops every subsequent broker call. Mailbox access is
@@ -174,8 +175,18 @@ same-owner workspace trust; it does not authenticate a particular writer process
 Checked-in `fly.toml` selects `WT_RELAY_POLICY=direct-free`. For an ineligible
 account, the precise missing data is an `entitlements` row with
 `user_id=<account-id>` and `subscription_id` referencing a `subscriptions.id`
-whose `status='active'`; see `store.go:IsUserPro`. `users.tier='pro'` alone does
-not satisfy this check. Alternatively `users.created_at` must be no later than
+whose `status='active'`; see `store.go:IsUserPro`. On the hosted login-node
+database, this read-only SQL must return at least one row for that entitlement:
+
+```sql
+SELECT e.id, e.user_id, e.subscription_id, s.status
+FROM entitlements e
+JOIN subscriptions s ON s.id = e.subscription_id
+WHERE e.user_id = '<account-id>' AND s.status = 'active';
+```
+
+`users.tier='pro'` alone does not satisfy this check. Alternatively
+`users.created_at` must be no later than
 the explicitly configured `WT_RELAY_MIGRATION_BEFORE` cutoff (checked in as
 `2026-08-26T00:00:00Z`, with deprecated `WT_RELAY_GRANDFATHER_BEFORE` alias).
 Edge deployments consume the login node's synchronized `EntitlementCache`.
@@ -183,13 +194,21 @@ Those are operator/billing-managed data or deployment configuration changes;
 none is performed by this branch. The public direct-free self-service plan
 endpoints cannot grant relay access, and a wing's allow setting cannot either.
 
-The current iOS New conversation template starts Claude with `-p` and exits
-after its turn. Its follow-up adapter expects `session_read.headless_continuation`
-and `agent_start.resume_session`, which this backend does not implement; a
-browser PTY parent resume also refuses the broker launch contract. Use the
-documented Mac-started interactive parent for persistent phone `session_prompt`
-access. Headless continuation and broker-managed PTY resume need separate wing
-implementation, not a relay operation-specific deploy.
+The iOS New conversation template starts a headless Claude root with `-p` and
+exits after its turn. `cmd/wt/conversation_continuation.go` now advertises
+`headless_continuation` through `session_read` and `conversation_read` for the
+latest owned, ended, resumable personal Claude root with verified provider
+identity, archived history and an exact model. It excludes bound MCP callers,
+children, organization/shared hosts, active executions and conflicting resumes.
+The phone sends `agent_start` with `resume_session`, `conversation_role: parent`,
+`input` and `request_id`. Continuation rechecks ownership, paths, launch bounds,
+provider reservation and parent transport protections, then starts a new linked
+execution with the same provider conversation and model. The durable request
+reservation makes identical retries reuse that execution; changed arguments
+fail. A Mac-started interactive parent remains an optional `session_prompt`
+fallback. Browser PTY parent resume still refuses the broker launch contract;
+it is separate from the implemented headless continuation path. Headless
+continuation requires the new wing build, with no relay operation-specific deploy.
 
 ## Reconnect and input
 
