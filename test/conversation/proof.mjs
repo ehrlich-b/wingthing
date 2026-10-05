@@ -135,6 +135,20 @@ async function restartBroker(parentSession) {
     return { old_pid: oldPid, new_pid: newPid, old_epoch: oldEpoch, new_epoch: ready.epoch, stale_epoch_request: { dispatched: stale.dispatched, outcome: stale.outcome } };
 }
 
+// The server pages lifecycle reads at 200 events; collect every page.
+async function readAllLifecycle(control, session) {
+    let after = 0, first = null, events = [];
+    for (let page = 0; page < 50; page++) {
+        const read = await control('session_read', { session, after_cursor: after, limit: 200 });
+        first = first || read;
+        events = events.concat(read.lifecycle.events);
+        if (!read.lifecycle.has_more) break;
+        after = read.lifecycle.cursor;
+    }
+    first.lifecycle.events = events;
+    return first;
+}
+
 try {
     for (let i = 0; i < 100; i++) {
         try {
@@ -231,7 +245,7 @@ try {
     const children = tree.tasks.filter(task => task.conversation.parent_conversation_id === parent.conversation_id);
     assert.equal(children.length, 2);
     sessions = tree.tasks.map(task => task.conversation.session_id);
-    const native = await control('session_read', { session: parent.session, after_cursor: 0, limit: 500 });
+    const native = await readAllLifecycle(control, parent.session);
     assert.ok(native.lifecycle.events.some(event => event.text === 'FIXTURE_PARENT_ORCHESTRATED_TWO_CHILDREN'));
     const evidenceText = native.lifecycle.events.map(event => event.text || '').find(text => text.startsWith('FIXTURE_EVIDENCE:'));
     assert.ok(evidenceText, 'parent recorded no orchestration evidence');
@@ -242,7 +256,7 @@ try {
     for (const child of evidence.children) {
         // Exactly one native delivery per child, including after the parent's
         // same-ID replay and its reconnected client's replay.
-        const read = await control('session_read', { session: child.session, after_cursor: 0, limit: 500 });
+        const read = await readAllLifecycle(control, child.session);
         const suffix = child.prompt_request_id.slice(-1);
         const input = `fixture-work-${suffix}\nfixture second line ${suffix}`;
         assert.equal(read.lifecycle.events.filter(event => event.type === 'message' && event.role === 'user' && event.text === input).length, 1, `${child.session} received ${JSON.stringify(input)} other than exactly once`);

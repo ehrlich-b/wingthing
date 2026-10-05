@@ -42,10 +42,14 @@ transcript = os.path.join(project, provider_id + '.jsonl')
 settings = {}
 for index, arg in enumerate(sys.argv[:-1]):
     if arg == '--settings':
+        raw = sys.argv[index + 1]
         try:
-            value = json.loads(sys.argv[index + 1])
+            if not raw.lstrip().startswith('{'):
+                with open(raw) as f:
+                    raw = f.read()
+            value = json.loads(raw)
             settings.update(value.get('hooks', {}))
-        except (ValueError, TypeError):
+        except (OSError, ValueError, TypeError):
             pass
 
 
