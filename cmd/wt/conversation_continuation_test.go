@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -347,12 +348,21 @@ func TestHeadlessContinuationBrowserAdapterMatchesNativeContract(t *testing.T) {
 }
 
 func TestHeadlessContinuationFakeClaudeResumesSameProvider(t *testing.T) {
-	s, db, root, _ := continuationFixture(t)
-	python, err := exec.LookPath("python3")
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	fake, err := filepath.Abs(filepath.Join(filepath.Dir(source), "..", "..", "test", "conversation", "fake_claude.py"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake, err := filepath.Abs("../../test/conversation/fake_claude.py")
+	if _, err := os.Stat(fake); os.IsNotExist(err) {
+		t.Skip("requires repository fixture test/conversation/fake_claude.py; the Linux battery contains only compiled test binaries")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	s, db, root, _ := continuationFixture(t)
+	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Fatal(err)
 	}
