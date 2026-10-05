@@ -74,7 +74,13 @@ public actor ConversationTransportFixture: HomeWire {
         // Lose only the first launch acknowledgement after committing it. A
         // reconnect reads the current task; only an explicit retry replays it.
         if ["lost-reply", "creation-lost-reply"].contains(scenario), operation == "agent_start", launchRequests == 1 { throw URLError(.networkConnectionLost) }
-        let reply: JSONValue = .object(["type": .string("tunnel.res"), "request_id": .string(id), "payload": .string(try cipher.seal(JSONEncoder().encode(result)))])
+        var encryptedResult = result
+        if operation == "agent_start", case .object(var fields) = result {
+            if scenario == "creation-missing-echo" { fields.removeValue(forKey: "request_id") }
+            if scenario == "creation-wrong-echo" { fields["request_id"] = .string("earlier-encrypted-success") }
+            encryptedResult = .object(fields)
+        }
+        let reply: JSONValue = .object(["type": .string("tunnel.res"), "request_id": .string(id), "payload": .string(try cipher.seal(JSONEncoder().encode(encryptedResult)))])
         return try JSONEncoder().encode(reply)
     }
     private func conversation(child: Bool = false) -> JSONValue {
@@ -148,7 +154,7 @@ public actor ConversationTransportFixture: HomeWire {
                 let root = "fixture-created-\(starts.count + 1)", session = "fixture-created-session-\(starts.count + 1)"
                 let failed = scenario == "creation-failed" && starts.isEmpty
                 let state = failed ? "failed" : "started"
-                let result: JSONValue = .object(["session": .string(session), "conversation_id": .string(root), "root_conversation_id": .string(root),
+                let result: JSONValue = .object(["request_id": .string(id), "session": .string(session), "conversation_id": .string(root), "root_conversation_id": .string(root),
                     "parent_conversation_id": .string(""), "agent": .string("claude"), "label": .string(label), "cwd": args["cwd"]!, "wing_id": .string(wingID),
                     "launch_state": .string(state), "reused": .bool(false), "launch_error": .string("Synthetic creation failure")])
                 starts[id] = result; startArguments[id] = args

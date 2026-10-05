@@ -558,6 +558,8 @@ private struct HomeConnectionView: View {
                 }
             }
             Section {
+                Button("wingthing.ai") { address = HomeProfile.hostedPresetOrigin; transport = .explicitHostedRoost }
+                    .accessibilityIdentifier("wingthing-ai-preset")
                 Picker("Connection", selection: $transport) {
                     Text("Local network").tag(HomeTransport.localNetwork)
                     Text("My reachable endpoint").tag(HomeTransport.userOwnedEndpoint)
@@ -575,11 +577,11 @@ private struct HomeConnectionView: View {
                 SecureField("Existing access token", text: $token).plainEntry()
                 Button("Connect") {
                     let secret = token
-                    token = "" // Only the in-memory connection keeps it from here.
+                    token = ""
                     Task { await model.connect(origin: address, transport: transport, userID: userID, wingID: wingID, wingPublicKey: wingKey, existingBearer: secret) }
                 }.disabled(model.busy || !formComplete)
             } header: { Text("Access") } footer: {
-                Text("Use access you already have for this home. It stays in memory on this device and isn't saved, so you'll enter it again after you disconnect or reopen the app.")
+                Text("Use access you already have for this home. After its identity is checked, the token is saved in this device's Keychain and restored when you reopen the app. Disconnect forgets it.")
             }
             Section {
                 Button("Scan identity QR") {}.disabled(true)
@@ -600,6 +602,12 @@ private struct HomeConnectionView: View {
                 Text("A message saved on this phone isn't confirmed until your home reports a receipt. Reconnecting never resends it.")
             }
         }.navigationTitle("Home connection")
+            .task(id: model.profile?.id) {
+                if let profile = model.profile, profile.mode == .remote {
+                    address = profile.origin.absoluteString; transport = profile.transport
+                    userID = profile.expectedUserID; wingID = profile.homeWingID; wingKey = profile.homeWingPublicKey
+                }
+            }
     }
 }
 

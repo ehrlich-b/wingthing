@@ -69,19 +69,42 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     // Unsent text is saved atomically for one exact home and execution.
     // Submitted text is owned by its persisted PendingInput receipt instead.
     private var unsentDrafts: [ExecutionReference: String] = [:]
-    // The only holder of the existing token. Released on disconnect or replacement.
+    // The live token is released on disconnect or replacement.
     private var client: HomeClient?
     private var store: LocalConversationStore?
     private var generation = UUID()
     private var treeObservedAt: Date?
     private let cacheDirectory: URL?
+    private let credentialStore: (any HomeCredentialStore)?
 
     // Empty/default app performs no network, file, or credential action.
-    public init(cacheDirectory: URL? = nil) { self.cacheDirectory = cacheDirectory }
+    public init(cacheDirectory: URL? = nil, credentialStore: (any HomeCredentialStore)? = nil) {
+        self.cacheDirectory = cacheDirectory; self.credentialStore = credentialStore
+    }
+
+    // Launch restores only the selected remote profile. refresh repeats the
+    // same health/account/pinned-wing checks and never replays saved input.
+    public func restoreHome(wire: any HomeWire = URLSessionHomeWire()) async {
+        guard profile == nil, client == nil, phase == .notConfigured, let credentialStore else { return }
+        let requested = generation
+        do {
+            guard let home = try selectedHomeStore().load() else { return }
+            profile = home
+            let bearer = try credentialStore.token(for: home)
+            phase = .connecting; busy = true
+            guard try await install(home, bearer: bearer, cacheFile: cacheFile(for: home), wire: wire, requested: requested) else { return }
+            busy = false
+            guard bearer != nil else { phase = .disconnected; return }
+            await refresh()
+        } catch {
+            guard requested == generation else { return }
+            phase = classify(error); self.error = error.localizedDescription; busy = false
+        }
+    }
 
     public var connected: Bool { phase == .online }
     public var canReconnect: Bool { client != nil && !busy }
-    public var canDisconnect: Bool { client != nil || phase == .connecting }
+    public var canDisconnect: Bool { client != nil || phase == .connecting || (credentialStore != nil && profile?.mode == .remote && phase != .disconnected) }
     public var canCreateConversation: Bool {
         !inspectionOnly && connected && !busy && pendingLaunch == nil && creationOptions?.projects.isEmpty == false
     }
@@ -176,23 +199,31 @@ public enum HomeConnectionPhase: Equatable, Sendable {
             let bearer = existingBearer.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !bearer.isEmpty else { throw ClientError.invalidConfiguration("Enter the access token you already use for this home.") }
             guard try await install(home, bearer: bearer, cacheFile: cacheFile(for: home), wire: wire, requested: requested) else { return }
+            busy = false
+            await refresh(rememberBearer: bearer)
         } catch {
             guard requested == generation else { return }
             phase = classify(error); self.error = error.localizedDescription; busy = false
             return
         }
-        busy = false
-        await refresh()
     }
 
     // Drops the client and its token. Saved tasks and transcript stay readable.
     public func disconnect() async {
         persistReadingPosition()
+        error = nil
         generation = UUID()
         let released = client
         client = nil; busy = false; stopCapability = nil; continuationAvailability = nil; continuationObservedAt = nil; creationOptions = nil; stopFlight = nil; readEpoch = UUID()
         transcript.markUnavailable(); parentTranscript.markUnavailable()
         phase = profile == nil ? .notConfigured : .disconnected
+        if let profile, profile.mode == .remote, let credentialStore {
+            do { try credentialStore.forget(profile) }
+            catch {
+                let message = "The saved token couldn't be forgotten. \(error.localizedDescription)"
+                self.error = message; phase = .failed(message)
+            }
+        }
         await released?.disconnect()
     }
 
@@ -359,6 +390,9 @@ public enum HomeConnectionPhase: Equatable, Sendable {
 
     // Explicit reconnect. Reads only; a pending input is never resent here.
     public func refresh() async {
+        await refresh(rememberBearer: nil)
+    }
+    private func refresh(rememberBearer: String?) async {
         guard let client, let profile, !busy else { return }
         busy = true; error = nil; phase = .connecting; let requested = generation
         stopCapability = nil; continuationAvailability = nil; continuationObservedAt = nil; readEpoch = UUID() // Reconnect requires a fresh advertisement.
@@ -366,6 +400,10 @@ public enum HomeConnectionPhase: Equatable, Sendable {
         do {
             _ = try await client.verifyHome()
             guard requested == generation else { return } // Superseded: never list on a dropped client.
+            if let rememberBearer, let credentialStore, profile.mode == .remote {
+                try credentialStore.save(rememberBearer, for: profile)
+                try selectedHomeStore().save(profile)
+            }
             let inventory = try await client.conversations(on: profile.homeWingID)
             guard requested == generation else { return }
             roots = inventory.filter(\.isRoot); phase = .online; busy = false
@@ -418,15 +456,28 @@ public enum HomeConnectionPhase: Equatable, Sendable {
                 }
             }
             if let issue = task.lifecycleError { throw ClientError.response(issue) }
-            let observation = try await client.observe(target, after: transcript.cursor)
-            guard requested == generation else { return }
-            let lifecycle = observation.lifecycle
-            let bound = ExecutionReference(conversation: reference, sessionID: target.sessionID, providerSessionID: lifecycle.providerSessionID)
-            execution = bound
-            try transcript.apply(lifecycle, target: bound); phase = .online
-            stopCapability = epoch == readEpoch && observation.stopCapability?.covers(bound) == true ? observation.stopCapability : nil
-            continuationAvailability = epoch == readEpoch ? observation.continuation : nil
-            continuationObservedAt = continuationAvailability == nil ? nil : Date()
+            var bound = target
+            repeat {
+                try Task.checkCancellation()
+                let after = transcript.cursor
+                let observation = try await client.observe(bound, after: after)
+                try Task.checkCancellation()
+                guard requested == generation, selected == reference, execution == bound else { return }
+                let lifecycle = observation.lifecycle
+                guard lifecycle.cursor >= after, lifecycle.headCursor.map({ lifecycle.cursor <= $0 }) ?? true else { throw ClientError.response("Session history cursor moved backwards.") }
+                bound = ExecutionReference(conversation: reference, sessionID: target.sessionID, providerSessionID: lifecycle.providerSessionID)
+                execution = bound
+                try transcript.apply(lifecycle, target: bound); phase = .online
+                stopCapability = epoch == readEpoch && observation.stopCapability?.covers(bound) == true ? observation.stopCapability : nil
+                continuationAvailability = epoch == readEpoch ? observation.continuation : nil
+                continuationObservedAt = continuationAvailability == nil ? nil : Date()
+                if lifecycle.hasMore != true { break }
+                if lifecycle.cursor == after {
+                    // A pending journal can advertise more while already at head.
+                    guard let head = lifecycle.headCursor, after >= head else { throw ClientError.response("Session history stopped advancing before its head.") }
+                    break
+                }
+            } while true
             pendingContinuation = try await store.continuation(for: reference, unfinishedOnly: true)
             pending = await store.pending(for: bound)
             if pending?.delivery == .nativeReceiptObserved || pending?.delivery == .definitelyNotSent { pending = nil }
@@ -439,6 +490,7 @@ public enum HomeConnectionPhase: Equatable, Sendable {
             try await store.cache(CachedConversation(reference: reference, tasks: view.tasks, transcript: transcript))
         } catch {
             guard requested == generation else { return }
+            if error is CancellationError { busy = false; return }
             stopCapability = nil
             continuationAvailability = nil; continuationObservedAt = nil
             transcript.markUnavailable(); parentTranscript.markUnavailable(); phase = classify(error); self.error = error.localizedDescription
@@ -668,14 +720,16 @@ public enum HomeConnectionPhase: Equatable, Sendable {
         return (generation, released)
     }
 
-    private func install(_ home: HomeProfile, bearer: String, cacheFile: URL, wire: any HomeWire, requested: UUID) async throws -> Bool {
-        let connection: HomeClient
-        #if DEBUG
-        if home.mode == .localPreview { connection = try HomeClient(localPreview: home, suppliedCredential: bearer, wire: wire) }
-        else { connection = try HomeClient(profile: home, existingBearer: bearer, wire: wire) }
-        #else
-        connection = try HomeClient(profile: home, existingBearer: bearer, wire: wire)
-        #endif
+    private func install(_ home: HomeProfile, bearer: String?, cacheFile: URL, wire: any HomeWire, requested: UUID) async throws -> Bool {
+        let connection: HomeClient?
+        if let bearer {
+            #if DEBUG
+            if home.mode == .localPreview { connection = try HomeClient(localPreview: home, suppliedCredential: bearer, wire: wire) }
+            else { connection = try HomeClient(profile: home, existingBearer: bearer, wire: wire) }
+            #else
+            connection = try HomeClient(profile: home, existingBearer: bearer, wire: wire)
+            #endif
+        } else { connection = nil }
         let local = try LocalConversationStore(profile: home, file: cacheFile)
         let views = try LocalConversationViewStore(profile: home, file: cacheFile.appendingPathExtension("view-state"))
         let restored = await local.parent()
@@ -762,9 +816,14 @@ public enum HomeConnectionPhase: Equatable, Sendable {
     }
 
     private func cacheFile(for home: HomeProfile) throws -> URL {
-        let directory = try cacheDirectory ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+        try homeDirectory().appendingPathComponent("home-\(home.id.uuidString.lowercased()).json")
+    }
+    private func homeDirectory() throws -> URL {
+        try cacheDirectory ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
             .appendingPathComponent("Wingthing", isDirectory: true).appendingPathComponent("Homes", isDirectory: true)
-        return directory.appendingPathComponent("home-\(home.id.uuidString.lowercased()).json")
+    }
+    private func selectedHomeStore() throws -> SelectedHomeStore {
+        SelectedHomeStore(file: try homeDirectory().appendingPathComponent("selected-home.json"))
     }
 
     // The profile ID (and so the cache file) is derived only from the canonical

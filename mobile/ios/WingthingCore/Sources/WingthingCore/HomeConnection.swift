@@ -26,8 +26,9 @@ public enum HomeProfileMode: String, Codable, Hashable, Sendable {
 }
 
 // These are configured identities. A relay URL and wing ID are not HomeRoostID.
-// No default vendor address, discovery service, fallback, or enrollment exists.
+// The hosted preset fills only the origin; account, wing and pin stay explicit.
 public struct HomeProfile: Codable, Hashable, Sendable, Identifiable {
+    public static let hostedPresetOrigin = "https://wingthing.ai"
     public let id: UUID
     public let origin: URL
     public let transport: HomeTransport

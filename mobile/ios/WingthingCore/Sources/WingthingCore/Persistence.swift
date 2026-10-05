@@ -26,14 +26,34 @@ public struct PendingInput: Codable, Equatable, Sendable, Identifiable {
     public private(set) var delivery: InputDelivery
     public private(set) var notice: String?
     public init(id: UUID = UUID(), execution: ExecutionReference, input: String, savedAt: Date = Date()) throws {
-        guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, input.utf8.count <= 1 << 20 else { throw ClientError.invalidConfiguration("Input is empty or too large.") }
+        try Self.validateInput(input)
         self.id = id; self.execution = execution; self.input = input; self.savedAt = savedAt; delivery = .savedLocally
+    }
+    static func validateInput(_ input: String) throws {
+        // Match egg.validateSessionPromptOptions: UTF-8 bytes and Unicode Cc,
+        // with only LF and TAB allowed. Foundation's control set also includes Cf.
+        guard input.unicodeScalars.contains(where: { !Self.goWhitespace($0) }), input.utf8.count <= 64 << 10 else {
+            throw ClientError.invalidConfiguration("Enter non-empty text of at most 65536 UTF-8 bytes.")
+        }
+        guard !input.unicodeScalars.contains(where: { $0.properties.generalCategory == .control && $0 != "\n" && $0 != "\t" }) else {
+            throw ClientError.invalidConfiguration("Input contains unsupported terminal control characters; use newlines rather than carriage returns.")
+        }
+    }
+    private static func goWhitespace(_ scalar: Unicode.Scalar) -> Bool {
+        // Go unicode.IsSpace uses the Unicode White_Space property.
+        switch scalar.value {
+        case 0x09...0x0d, 0x20, 0x85, 0xa0, 0x1680, 0x2000...0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000: true
+        default: false
+        }
     }
     public var arguments: [String: JSONValue] {
         ["session": .string(execution.sessionID), "request_id": .string(id.uuidString), "input": .string(input), "timeout_seconds": .integer(3)]
     }
     public mutating func markUnconfirmed() { delivery = .unconfirmed }
     public mutating func applyReceipt(_ receipt: JSONValue) {
+        guard receipt["request_id"] == .string(id.uuidString), receipt["session_id"] == .string(execution.sessionID) else {
+            delivery = .unconfirmed; notice = "The encrypted reply didn't identify this exact request and session. Delivery remains unconfirmed."; return
+        }
         let status = receipt["status"]?.string
         if status == "native_receipt_observed", receipt["native_receipt_observed"] == .bool(true) {
             delivery = .nativeReceiptObserved; notice = nil
@@ -100,7 +120,7 @@ public actor LocalConversationStore {
         try selected.reference.validate(profile)
         var next = state; next.parent = selected; try write(next)
     }
-    public func pending(for execution: ExecutionReference) -> PendingInput? { state.pending.first { $0.execution == execution } }
+    public func pending(for execution: ExecutionReference) -> PendingInput? { state.pending.last { $0.execution == execution } }
     public func savePending(_ pending: PendingInput) throws {
         try pending.execution.conversation.validate(profile)
         if let existing = state.pending.first(where: { $0.id == pending.id }), existing.execution != pending.execution || existing.input != pending.input { throw ClientError.staleReference }

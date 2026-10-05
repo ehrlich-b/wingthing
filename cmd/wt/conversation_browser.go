@@ -91,5 +91,16 @@ func browserSessionControl(ctx context.Context, cfg *config.Config, wc *config.W
 		}
 		return nil, errors.New("session operation failed")
 	}
+	if operation == "agent_start" {
+		// This result is encrypted by the tunnel handler. The relay's outer
+		// request ID alone cannot correlate a saved launch receipt safely.
+		var correlation struct {
+			RequestID string `json:"request_id"`
+		}
+		if err := json.Unmarshal(arguments, &correlation); err != nil {
+			return nil, err
+		}
+		result["request_id"] = correlation.RequestID
+	}
 	return result, nil
 }
