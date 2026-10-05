@@ -1,4 +1,4 @@
-package main
+package eggclient
 
 import (
 	"crypto/sha256"
@@ -20,15 +20,15 @@ import (
 )
 
 type providerResumeRegistry struct {
-	mu     sync.Mutex
-	active map[string]string
+	Mu     sync.Mutex
+	Active map[string]string
 }
 
-var browserProviderResumes = providerResumeRegistry{active: make(map[string]string)}
+var BrowserProviderResumes = providerResumeRegistry{Active: make(map[string]string)}
 
-const providerResumeMetadataFile = "provider.resume"
+const ProviderResumeMetadataFile = "provider.resume"
 
-func providerResumeKey(home, agent, providerSessionID string) string {
+func ProviderResumeKey(home, agent, providerSessionID string) string {
 	hash := sha256.Sum256([]byte(wingpolicy.CanonicalPolicyPath(home)))
 	return hex.EncodeToString(hash[:]) + "\x00" + agent + "\x00" + providerSessionID
 }
@@ -40,7 +40,7 @@ func providerResumeMetadata(key, sourceSessionID string) []byte {
 }
 
 func verifyProviderResumeReservation(cfg *config.Config, home, agent, providerSessionID, sourceSessionID, wingSessionID string) error {
-	path := filepath.Join(cfg.Dir, "eggs", wingSessionID, providerResumeMetadataFile)
+	path := filepath.Join(cfg.Dir, "eggs", wingSessionID, ProviderResumeMetadataFile)
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return errors.New("provider resume reservation is unavailable")
@@ -50,7 +50,7 @@ func verifyProviderResumeReservation(cfg *config.Config, home, agent, providerSe
 		return errors.New("provider resume reservation is unavailable")
 	}
 	values := egg.ParseChatMeta(string(data))
-	homeHash, rest, _ := strings.Cut(providerResumeKey(home, agent, providerSessionID), "\x00")
+	homeHash, rest, _ := strings.Cut(ProviderResumeKey(home, agent, providerSessionID), "\x00")
 	wantAgent, wantID, _ := strings.Cut(rest, "\x00")
 	if values["home_hash"] != homeHash || values["agent"] != wantAgent || values["provider_session_id"] != wantID || values["source_session_id"] != sourceSessionID {
 		return errors.New("provider resume reservation does not match the requested conversation")
@@ -58,7 +58,7 @@ func verifyProviderResumeReservation(cfg *config.Config, home, agent, providerSe
 	return nil
 }
 
-func activeProviderResumeConflict(cfg *config.Config, key, exceptSessionID string, alive func(string) bool) bool {
+func ActiveProviderResumeConflict(cfg *config.Config, key, exceptSessionID string, alive func(string) bool) bool {
 	homeHash, rest, _ := strings.Cut(key, "\x00")
 	agent, providerSessionID, _ := strings.Cut(rest, "\x00")
 	entries, err := os.ReadDir(filepath.Join(cfg.Dir, "eggs"))
@@ -70,7 +70,7 @@ func activeProviderResumeConflict(cfg *config.Config, key, exceptSessionID strin
 			continue
 		}
 		dir := filepath.Join(cfg.Dir, "eggs", entry.Name())
-		metadata, err := os.ReadFile(filepath.Join(dir, providerResumeMetadataFile))
+		metadata, err := os.ReadFile(filepath.Join(dir, ProviderResumeMetadataFile))
 		if err != nil {
 			continue
 		}
@@ -82,18 +82,18 @@ func activeProviderResumeConflict(cfg *config.Config, key, exceptSessionID strin
 	return false
 }
 
-func (r *providerResumeRegistry) reserve(cfg *config.Config, home, agent, providerSessionID, sourceSessionID, wingSessionID string) (func(bool), error) {
+func (r *providerResumeRegistry) Reserve(cfg *config.Config, home, agent, providerSessionID, sourceSessionID, wingSessionID string) (func(bool), error) {
 	return r.reserveWithAlive(cfg, home, agent, providerSessionID, sourceSessionID, wingSessionID, func(dir string) bool {
-		_, alive := readAliveEggPID(dir)
+		_, alive := ReadAliveEggPID(dir)
 		return alive
 	})
 }
 
 func (r *providerResumeRegistry) reserveWithAlive(cfg *config.Config, home, agent, providerSessionID, sourceSessionID, wingSessionID string, alive func(string) bool) (func(bool), error) {
-	key := providerResumeKey(home, agent, providerSessionID)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.active[key]; exists {
+	key := ProviderResumeKey(home, agent, providerSessionID)
+	r.Mu.Lock()
+	defer r.Mu.Unlock()
+	if _, exists := r.Active[key]; exists {
 		return nil, errors.New("provider conversation is already being resumed")
 	}
 	eggsDir := filepath.Join(cfg.Dir, "eggs")
@@ -120,36 +120,36 @@ func (r *providerResumeRegistry) reserveWithAlive(cfg *config.Config, home, agen
 	}
 	// Keep the descriptor locked through pending launch and PID publication.
 	// Never unlink this file: contenders must always lock the same inode.
-	if activeProviderResumeConflict(cfg, key, wingSessionID, alive) {
+	if ActiveProviderResumeConflict(cfg, key, wingSessionID, alive) {
 		return nil, errors.New("provider conversation is already running in another session")
 	}
 	sessionDir := filepath.Join(cfg.Dir, "eggs", wingSessionID)
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create resume reservation: %w", err)
 	}
-	metadataPath := filepath.Join(sessionDir, providerResumeMetadataFile)
+	metadataPath := filepath.Join(sessionDir, ProviderResumeMetadataFile)
 	if err := daemonctl.WriteAtomicMetadataFile(metadataPath, providerResumeMetadata(key, sourceSessionID), 0o600); err != nil {
 		return nil, fmt.Errorf("persist resume reservation: %w", err)
 	}
-	r.active[key] = wingSessionID
+	r.Active[key] = wingSessionID
 	keepLock = true
 	var once sync.Once
 	return func(spawned bool) {
 		once.Do(func() {
-			r.mu.Lock()
-			if r.active[key] == wingSessionID {
-				delete(r.active, key)
+			r.Mu.Lock()
+			if r.Active[key] == wingSessionID {
+				delete(r.Active, key)
 			}
 			if !spawned {
 				_ = os.Remove(metadataPath)
 			}
 			_ = lock.Close()
-			r.mu.Unlock()
+			r.Mu.Unlock()
 		})
 	}, nil
 }
 
-func sessionResumeStatus(sessionDir, agent, cwd string) (bool, string) {
+func SessionResumeStatus(sessionDir, agent, cwd string) (bool, string) {
 	definition, ok := agentpkg.LookupDefinition(agent)
 	if !ok || definition.ResumeFlag == "" || egg.Profile(agent).SessionDir == "" {
 		return false, "agent does not support provider resume"
@@ -164,14 +164,14 @@ func sessionResumeStatus(sessionDir, agent, cwd string) (bool, string) {
 		return false, "provider conversation was not captured"
 	}
 	meta := egg.ParseChatMeta(string(metaData))
-	if !validProviderSessionID(meta["agent_session_id"]) || meta["agent"] != agent || wingpolicy.CanonicalSessionPath(meta["cwd"]) != wingpolicy.CanonicalSessionPath(cwd) {
+	if !ValidProviderSessionID(meta["agent_session_id"]) || meta["agent"] != agent || wingpolicy.CanonicalSessionPath(meta["cwd"]) != wingpolicy.CanonicalSessionPath(cwd) {
 		return false, "provider conversation metadata is invalid"
 	}
-	reservationInfo, err := os.Lstat(filepath.Join(sessionDir, providerResumeMetadataFile))
+	reservationInfo, err := os.Lstat(filepath.Join(sessionDir, ProviderResumeMetadataFile))
 	if err != nil || !reservationInfo.Mode().IsRegular() {
 		return false, "provider conversation identity was not verified"
 	}
-	reservationData, err := os.ReadFile(filepath.Join(sessionDir, providerResumeMetadataFile))
+	reservationData, err := os.ReadFile(filepath.Join(sessionDir, ProviderResumeMetadataFile))
 	if err != nil {
 		return false, "provider conversation identity was not verified"
 	}
@@ -186,26 +186,26 @@ func sessionResumeStatus(sessionDir, agent, cwd string) (bool, string) {
 	return true, ""
 }
 
-func validProviderSessionID(id string) bool {
+func ValidProviderSessionID(id string) bool {
 	return id != "" && filepath.Base(id) == id && id != "." && id != ".." && !strings.ContainsAny(id, "\x00\r\n") && len(id) <= 240
 }
 
-func prepareBrowserResume(cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, userPaths []string, sharedHost bool) (providerSessionID, cwd string, release func(bool), err error) {
+func PrepareBrowserResume(cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, userPaths []string, sharedHost bool) (providerSessionID, cwd string, release func(bool), err error) {
 	userPaths = wingpolicy.CanonicalPaths(userPaths)
-	if err := validateSessionID(start.ResumeSessionID); err != nil {
+	if err := ValidateSessionID(start.ResumeSessionID); err != nil {
 		return "", "", nil, errors.New("invalid resume session ID")
 	}
 	if start.ResumeSessionID == start.SessionID {
 		return "", "", nil, errors.New("resume source must differ from the new session")
 	}
 	sourceDir := filepath.Join(cfg.Dir, "eggs", start.ResumeSessionID)
-	if readEggOwner(sourceDir) == "" || readEggOwner(sourceDir) != start.UserID {
+	if ReadEggOwner(sourceDir) == "" || ReadEggOwner(sourceDir) != start.UserID {
 		return "", "", nil, errors.New("resume session not found or not owned by caller")
 	}
-	if _, alive := readAliveEggPID(sourceDir); alive {
+	if _, alive := ReadAliveEggPID(sourceDir); alive {
 		return "", "", nil, errors.New("resume source is still active; attach to it instead")
 	}
-	agent, cwd := readEggMeta(sourceDir)
+	agent, cwd := ReadEggMeta(sourceDir)
 	if agent == "" || cwd == "" || agent != start.Agent {
 		return "", "", nil, errors.New("resume source does not match the requested agent")
 	}
@@ -216,19 +216,19 @@ func prepareBrowserResume(cfg *config.Config, wingCfg *config.WingConfig, start 
 	if wingpolicy.IsMemberRole(start.OrgRole) && len(userPaths) == 0 || len(userPaths) > 0 && !wingpolicy.IsUnderPaths(cwd, userPaths) {
 		return "", "", nil, errors.New("resume source is outside current path policy")
 	}
-	if ok, reason := sessionResumeStatus(sourceDir, agent, cwd); !ok {
+	if ok, reason := SessionResumeStatus(sourceDir, agent, cwd); !ok {
 		return "", "", nil, errors.New(reason)
 	}
-	home := effectiveSessionHome(cfg, EggIdentity{UserID: start.UserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
+	home := EffectiveSessionHome(cfg, EggIdentity{UserID: start.UserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
 	metaData, err := os.ReadFile(filepath.Join(sourceDir, "chat.meta"))
 	if err != nil {
 		return "", "", nil, errors.New("provider conversation metadata is unavailable")
 	}
 	providerSessionID = egg.ParseChatMeta(string(metaData))["agent_session_id"]
-	if !validProviderSessionID(providerSessionID) {
+	if !ValidProviderSessionID(providerSessionID) {
 		return "", "", nil, errors.New("provider conversation metadata is invalid")
 	}
-	release, err = browserProviderResumes.reserve(cfg, home, agent, providerSessionID, start.ResumeSessionID, start.SessionID)
+	release, err = BrowserProviderResumes.Reserve(cfg, home, agent, providerSessionID, start.ResumeSessionID, start.SessionID)
 	if err != nil {
 		return "", "", nil, err
 	}

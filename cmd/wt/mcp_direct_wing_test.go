@@ -13,6 +13,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	pionwebrtc "github.com/pion/webrtc/v4"
 )
@@ -203,7 +204,7 @@ func TestDirectMCPMaxSessionsIsSharedAcrossConnections(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sessionDir, "egg.meta"), []byte("kind=command\ncwd="+dir+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSessionPrincipal(sessionDir, "same-owner"); err != nil {
+	if err := eggclient.WriteSessionPrincipal(sessionDir, "same-owner"); err != nil {
 		t.Fatal(err)
 	}
 

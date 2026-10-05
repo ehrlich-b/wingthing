@@ -16,6 +16,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"golang.org/x/sys/unix"
 )
@@ -58,8 +59,10 @@ func TestConversationWakeQueuesApprovalAndReconcilesNativeReceiptAfterRestart(t 
 		}
 		return view, nil
 	}
-	runtime := conversationWakeRuntime{Read: func(ctx context.Context, _ localSession) (egg.SessionView, error) { return nativeRead(ctx, 0, 1) }, Now: time.Now,
-		Prompt: func(ctx context.Context, session localSession, id, text string) (egg.SessionPromptResult, error) {
+	runtime := conversationWakeRuntime{Read: func(ctx context.Context, _ eggclient.LocalSession) (egg.SessionView, error) {
+		return nativeRead(ctx, 0, 1)
+	}, Now: time.Now,
+		Prompt: func(ctx context.Context, session eggclient.LocalSession, id, text string) (egg.SessionPromptResult, error) {
 			sentID, sentText = id, text
 			return egg.SubmitSessionPrompt(ctx, filepath.Join(cfg.Dir, "eggs", session.ID), egg.SessionPromptOptions{RequestID: id, Input: text, Timeout: 100 * time.Millisecond, Read: nativeRead, Send: func(context.Context, string) (egg.PromptDelivery, error) {
 				sends++
@@ -139,9 +142,9 @@ func TestConversationWakeFreshAttemptsRequireExplicitNoInputProof(t *testing.T) 
 			_ = db.Close()
 			now := time.Unix(100, 0)
 			var ids []string
-			runtime := conversationWakeRuntime{Now: func() time.Time { return now }, Read: func(_ context.Context, s localSession) (egg.SessionView, error) {
+			runtime := conversationWakeRuntime{Now: func() time.Time { return now }, Read: func(_ context.Context, s eggclient.LocalSession) (egg.SessionView, error) {
 				return egg.SessionView{SessionID: s.ID, Agent: "claude", ProviderSessionID: "provider-root", State: "idle", StateSource: "claude_hook", ProcessAlive: true, Ready: true}, nil
-			}, Prompt: func(_ context.Context, _ localSession, id, _ string) (egg.SessionPromptResult, error) {
+			}, Prompt: func(_ context.Context, _ eggclient.LocalSession, id, _ string) (egg.SessionPromptResult, error) {
 				ids = append(ids, id)
 				return egg.SessionPromptResult{Status: "not_sent", DefinitelyNotSent: known, TransportBytesEnqueued: 0}, nil
 			}}
@@ -179,9 +182,9 @@ func TestConversationWakeNeverRedirectsUnknownToResumedParent(t *testing.T) {
 	_ = db.SetConversationWake("owner", root.ID, true)
 	s := &localMCPServer{cfg: cfg, principal: "owner"}
 	var destinations, requests []string
-	runtime := conversationWakeRuntime{Now: time.Now, Read: func(_ context.Context, session localSession) (egg.SessionView, error) {
-		return egg.SessionView{SessionID: session.ID, Agent: "claude", ProviderSessionID: readEggMetaValues(filepath.Join(cfg.Dir, "eggs", session.ID))["provider_session_id"], State: "idle", StateSource: "claude_hook", Ready: true, ProcessAlive: true}, nil
-	}, Prompt: func(ctx context.Context, session localSession, id, text string) (egg.SessionPromptResult, error) {
+	runtime := conversationWakeRuntime{Now: time.Now, Read: func(_ context.Context, session eggclient.LocalSession) (egg.SessionView, error) {
+		return egg.SessionView{SessionID: session.ID, Agent: "claude", ProviderSessionID: eggclient.ReadEggMetaValues(filepath.Join(cfg.Dir, "eggs", session.ID))["provider_session_id"], State: "idle", StateSource: "claude_hook", Ready: true, ProcessAlive: true}, nil
+	}, Prompt: func(ctx context.Context, session eggclient.LocalSession, id, text string) (egg.SessionPromptResult, error) {
 		destinations = append(destinations, session.ID)
 		requests = append(requests, id)
 		return egg.SubmitSessionPrompt(ctx, filepath.Join(cfg.Dir, "eggs", session.ID), egg.SessionPromptOptions{
@@ -249,7 +252,7 @@ func TestConversationWakeRebindsOnlyAfterLockedReservationAbsence(t *testing.T) 
 			oldRequest := w.RequestID
 			spy := newWakeExactSpy(cfg)
 			if evidence == "reservation_exists" {
-				if _, err := spy.runtime().Prompt(context.Background(), localSession{ID: root.SessionID}, w.RequestID, w.Input); err != nil {
+				if _, err := spy.runtime().Prompt(context.Background(), eggclient.LocalSession{ID: root.SessionID}, w.RequestID, w.Input); err != nil {
 					t.Fatal(err)
 				}
 				spy.reset()
@@ -269,7 +272,7 @@ func TestConversationWakeRebindsOnlyAfterLockedReservationAbsence(t *testing.T) 
 			runtime := spy.runtime()
 			runtime.Now = func() time.Time { return now }
 			read := runtime.Read
-			runtime.Read = func(ctx context.Context, session localSession) (egg.SessionView, error) {
+			runtime.Read = func(ctx context.Context, session eggclient.LocalSession) (egg.SessionView, error) {
 				if session.ID == root.SessionID {
 					return egg.SessionView{}, errors.New("original execution stopped")
 				}
@@ -375,10 +378,10 @@ func TestConversationWakeRetainedRuntimeExitAndStartupFailure(t *testing.T) {
 			_ = db.Close()
 			sends := 0
 			runtime := conversationWakeRuntime{Now: time.Now,
-				Read: func(_ context.Context, session localSession) (egg.SessionView, error) {
+				Read: func(_ context.Context, session eggclient.LocalSession) (egg.SessionView, error) {
 					return egg.SessionView{SessionID: session.ID, Agent: "claude", ProviderSessionID: "provider-root", State: "idle", StateSource: "claude_hook", ProcessAlive: true, Ready: true}, nil
 				},
-				Prompt: func(_ context.Context, _ localSession, _ string, text string) (egg.SessionPromptResult, error) {
+				Prompt: func(_ context.Context, _ eggclient.LocalSession, _ string, text string) (egg.SessionPromptResult, error) {
 					sends++
 					if !strings.Contains(text, `"source":"egg_process"`) || strings.Contains(text, "private runtime fixture reason") {
 						t.Fatalf("runtime payload %q", text)
@@ -417,10 +420,10 @@ func TestConversationWakeConcurrentControllersHaveOneRootSender(t *testing.T) {
 	_ = db.Close()
 	var sends atomic.Int32
 	runtime := conversationWakeRuntime{Now: time.Now,
-		Read: func(_ context.Context, session localSession) (egg.SessionView, error) {
+		Read: func(_ context.Context, session eggclient.LocalSession) (egg.SessionView, error) {
 			return egg.SessionView{SessionID: session.ID, Agent: "claude", ProviderSessionID: "provider-root", State: "idle", StateSource: "claude_hook", ProcessAlive: true, Ready: true}, nil
 		},
-		Prompt: func(context.Context, localSession, string, string) (egg.SessionPromptResult, error) {
+		Prompt: func(context.Context, eggclient.LocalSession, string, string) (egg.SessionPromptResult, error) {
 			sends.Add(1)
 			return egg.SessionPromptResult{Status: "native_receipt_observed", NativeReceiptObserved: true, ReceiptCursor: 9}, nil
 		},
@@ -475,7 +478,7 @@ func TestConversationWakeExplicitRetryAfterWriterReleaseUsesFreshNativeRequest(t
 		}
 		return v, nil
 	}
-	runtime := conversationWakeRuntime{Now: func() time.Time { return now }, Read: func(ctx context.Context, _ localSession) (egg.SessionView, error) { return read(ctx, 0, 1) }, Prompt: func(ctx context.Context, session localSession, id, text string) (egg.SessionPromptResult, error) {
+	runtime := conversationWakeRuntime{Now: func() time.Time { return now }, Read: func(ctx context.Context, _ eggclient.LocalSession) (egg.SessionView, error) { return read(ctx, 0, 1) }, Prompt: func(ctx context.Context, session eggclient.LocalSession, id, text string) (egg.SessionPromptResult, error) {
 		ids = append(ids, id)
 		return egg.SubmitSessionPrompt(ctx, filepath.Join(cfg.Dir, "eggs", session.ID), egg.SessionPromptOptions{RequestID: id, Input: text, Timeout: 100 * time.Millisecond, Read: read, Send: func(context.Context, string) (egg.PromptDelivery, error) {
 			if writerBusy {

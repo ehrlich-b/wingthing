@@ -16,7 +16,8 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
-	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
+
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/relay"
@@ -307,7 +308,7 @@ func TestLocalMCPUnsandboxedModeIsExplicitAndAudited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := explained["policy"].(explainedPolicy)
+	policy := explained["policy"].(eggclient.ExplainedPolicy)
 	if policy.ConfigSource != "MCP server --unsandboxed" || policy.Enforcement != "unrestricted" || policy.Isolation != "outer-boundary" {
 		t.Fatalf("policy = %#v", policy)
 	}
@@ -430,7 +431,7 @@ func TestLocalMCPSandboxExplain(t *testing.T) {
 		t.Fatalf("sandbox_explain = %#v isError=%v protocol=%v", got, isError, protocolErr)
 	}
 
-	policy, ok := got["policy"].(explainedPolicy)
+	policy, ok := got["policy"].(eggclient.ExplainedPolicy)
 	if !ok {
 		t.Fatalf("policy = %#v, want explainedPolicy", got["policy"])
 	}
@@ -453,7 +454,7 @@ func TestLocalMCPSandboxExplain(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	var decoded struct {
-		Policy explainedPolicy `json:"policy"`
+		Policy eggclient.ExplainedPolicy `json:"policy"`
 	}
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -518,31 +519,6 @@ func TestRoostMCPSandboxExplainBoundsExplicitConfig(t *testing.T) {
 	}
 }
 
-// Provider disabling flags must survive both separated and equals argv forms.
-// NUL is rejected before spawn; empty values are preserved literally.
-func TestAgentStartArgsAreValidated(t *testing.T) {
-	tests := map[string][]string{
-		"NUL byte": {"--model\x00sonnet"},
-	}
-	for name, args := range tests {
-		t.Run(name, func(t *testing.T) {
-			if err := validateAgentArgs(args); err == nil {
-				t.Fatalf("accepted %q", args)
-			}
-		})
-	}
-	for _, args := range [][]string{
-		nil,
-		{"--model", "claude-opus-5-5", "--tools", "", "--setting-sources", ""},
-		{"--model=claude-opus-5-5", "--tools=", "--setting-sources="},
-		{" \t "},
-	} {
-		if err := validateAgentArgs(args); err != nil {
-			t.Fatalf("rejected literal argv %q: %v", args, err)
-		}
-	}
-}
-
 func TestLocalMCPPromptManager(t *testing.T) {
 	server := &localMCPServer{cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, logs: &bytes.Buffer{}}
 	saved, isError, protocolErr := server.callTool(context.Background(), "prompt_save", json.RawMessage(`{
@@ -581,7 +557,7 @@ func TestLocalMCPPrincipalOwnershipAndAudit(t *testing.T) {
 			t.Fatal(err)
 		}
 		if principal != "" {
-			if err := writeSessionPrincipal(sessionDir, principal); err != nil {
+			if err := eggclient.WriteSessionPrincipal(sessionDir, principal); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -599,7 +575,7 @@ func TestLocalMCPPrincipalOwnershipAndAudit(t *testing.T) {
 	if protocolErr != nil || isError {
 		t.Fatalf("terminal_list failed: %#v %v", listed, protocolErr)
 	}
-	sessions := listed["sessions"].([]localSession)
+	sessions := listed["sessions"].([]eggclient.LocalSession)
 	if len(sessions) != 1 || sessions[0].ID != "alpha001" {
 		t.Fatalf("alpha saw sessions %#v", sessions)
 	}
@@ -1217,52 +1193,8 @@ func TestSharedRoostPathBoundsFailClosed(t *testing.T) {
 		t.Fatalf("empty path policy error = %v", err)
 	}
 	listed, err := server.toolTerminalList(context.Background(), json.RawMessage(`{}`))
-	if err != nil || len(listed["sessions"].([]localSession)) != 0 {
+	if err != nil || len(listed["sessions"].([]eggclient.LocalSession)) != 0 {
 		t.Fatalf("empty path policy list = %#v err=%v", listed, err)
-	}
-}
-
-func TestSharedHostFilesystemPolicyPreservesAdministratorConfig(t *testing.T) {
-	stateDir := t.TempDir()
-	workspace := t.TempDir()
-	readOnlySource := t.TempDir()
-	writableCache := t.TempDir()
-	deniedSecret := t.TempDir()
-	cfg := &config.Config{Dir: stateDir}
-	source := &egg.EggConfig{
-		FS: []string{
-			"deny:/",
-			"rw:" + workspace,
-			"ro:" + readOnlySource,
-			"rw:" + writableCache,
-			"deny:" + deniedSecret,
-			"deny-write:" + filepath.Join(workspace, "egg.yaml"),
-		},
-		AgentSettings: map[string]string{"claude": "/host/secret/settings.json"},
-	}
-	sealed, err := sealedSharedHostEggConfig(cfg, source, workspace, []string{workspace})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(sealed.FS, source.FS) {
-		t.Fatalf("sealed fs = %#v, want administrator policy %#v", sealed.FS, source.FS)
-	}
-	if !reflect.DeepEqual(sealed.AgentSettings, source.AgentSettings) {
-		t.Fatalf("agent settings = %#v, want %#v", sealed.AgentSettings, source.AgentSettings)
-	}
-	sealed.FS[0] = "mutated"
-	sealed.AgentSettings["claude"] = "mutated"
-	if source.FS[0] != "deny:/" || source.AgentSettings["claude"] != "/host/secret/settings.json" {
-		t.Fatal("sealed config aliases the administrator config")
-	}
-	if _, err := sealedSharedHostEggConfig(cfg, &egg.EggConfig{FS: []string{"rw:" + workspace}}, workspace, []string{workspace}); err == nil || !strings.Contains(err.Error(), "must deny the filesystem root") {
-		t.Fatalf("unjailled shared-host policy error = %v", err)
-	}
-	if _, err := sealedSharedHostEggConfig(cfg, &egg.EggConfig{FS: []string{"deny:/", "ro:/"}}, workspace, []string{workspace}); err == nil || !strings.Contains(err.Error(), "must not mount the filesystem root") {
-		t.Fatalf("host-root mount error = %v", err)
-	}
-	if _, err := validateSharedHostWorkspacePaths(cfg, []string{stateDir}); err == nil {
-		t.Fatal("Wingthing state was accepted as a shared workspace")
 	}
 }
 
@@ -1286,10 +1218,10 @@ func TestRoostControlToolsKeepTwoUsersSessionsSeparate(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(sessionDir, "egg.meta"), []byte("cwd="+workspace+"\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeSessionPrincipal(sessionDir, roostSessionPrincipal(userID)); err != nil {
+		if err := eggclient.WriteSessionPrincipal(sessionDir, roostSessionPrincipal(userID)); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeEggOwner(sessionDir, userID, userID+"@example.com"); err != nil {
+		if err := eggclient.WriteEggOwner(sessionDir, userID, userID+"@example.com"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1310,7 +1242,7 @@ func TestRoostControlToolsKeepTwoUsersSessionsSeparate(t *testing.T) {
 		if err != nil || isError {
 			t.Fatalf("%s terminal_list: result=%#v isError=%v err=%v", userID, result, isError, err)
 		}
-		sessions := result["sessions"].([]localSession)
+		sessions := result["sessions"].([]eggclient.LocalSession)
 		if len(sessions) != 1 || sessions[0].ID != "session-"+userID {
 			t.Fatalf("%s saw sessions %#v", userID, sessions)
 		}

@@ -1,4 +1,4 @@
-package main
+package eggclient
 
 import (
 	"path/filepath"
@@ -15,7 +15,7 @@ func TestPreviewClaudeDoesNotImportHostModelPolicy(t *testing.T) {
 	t.Setenv("HOME", home)
 	path := filepath.Join(home, ".claude", "settings.json")
 	writePolicyFixture(t, path, "invalid host policy must not be opened")
-	args, err := isolatedClaudePolicyArgs("claude", true)
+	args, err := IsolatedClaudePolicyArgs("claude", true)
 	if err != nil || len(args) != 0 {
 		t.Fatalf("preview imported host policy: %q %v", args, err)
 	}

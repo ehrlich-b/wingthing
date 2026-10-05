@@ -41,6 +41,7 @@ import (
 	directpkg "github.com/ehrlich-b/wingthing/internal/direct"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	relaypkg "github.com/ehrlich-b/wingthing/internal/relay"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
@@ -623,36 +624,13 @@ var tunnelKeys = newTunnelKeyCache(maxTunnelKeyCacheEntries)
 // into a corrupt config.
 var wingCfgMu sync.Mutex
 
-// readEggOwner reads the creator user ID from an egg's owner file.
-func readEggOwner(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "egg.owner"))
-	if err != nil {
-		return ""
-	}
-	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)
-	return lines[0]
-}
-
-// readEggOwnerEmail reads the creator email from an egg's owner file (line 2).
-func readEggOwnerEmail(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "egg.owner"))
-	if err != nil {
-		return ""
-	}
-	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)
-	if len(lines) < 2 {
-		return ""
-	}
-	return lines[1]
-}
-
 // killSessionsViolatingACLs checks active sessions and kills any that no longer
 // have access under the current path ACLs.
 func killSessionsViolatingACLs(cfg *config.Config, paths config.PathList, home string) {
 	sessions := listAliveEggSessions(cfg)
 	for _, s := range sessions {
 		dir := filepath.Join(cfg.Dir, "eggs", s.SessionID)
-		email := readEggOwnerEmail(dir)
+		email := eggclient.ReadEggOwnerEmail(dir)
 		if email == "" {
 			continue // pre-ACL session or admin — leave it
 		}
@@ -660,30 +638,9 @@ func killSessionsViolatingACLs(cfg *config.Config, paths config.PathList, home s
 		userPaths := wingpolicy.ResolvePathStrings(paths.PathsForUser(email, "member"), home)
 		if len(userPaths) == 0 || !wingpolicy.IsUnderPaths(s.CWD, userPaths) {
 			log.Printf("ACL revoke: killing session %s (user=%s cwd=%s)", s.SessionID, email, s.CWD)
-			killOrphanEgg(cfg, s.SessionID)
+			eggclient.KillOrphanEgg(cfg, s.SessionID)
 		}
 	}
-}
-
-// readEggMeta reads agent/cwd from an egg's meta file.
-func readEggMeta(dir string) (agent, cwd string) {
-	data, err := os.ReadFile(filepath.Join(dir, "egg.meta"))
-	if err != nil {
-		return "", ""
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		switch k {
-		case "agent":
-			agent = v
-		case "cwd":
-			cwd = v
-		}
-	}
-	return agent, cwd
 }
 
 // hasBell returns true if data contains any BEL character (0x07).
@@ -1213,7 +1170,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	fmt.Printf("open %s to start a terminal\n", wingpolicy.RoostBrowserURL(roostURL))
 
 	// Reap dead egg directories on startup
-	reapDeadEggs(cfg)
+	eggclient.ReapDeadEggs(cfg)
 
 	// Ensure wing keypair exists (auto-generate on first run)
 	if _, err := auth.EnsureKeyPair(cfg.Dir); err != nil {
@@ -1285,7 +1242,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 			// trusted input channel, so only the session owner's peer identity
 			// may bind one. Anything else could inject input or kill a session
 			// it does not own.
-			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", sessionID))
+			owner := eggclient.ReadEggOwner(filepath.Join(cfg.Dir, "eggs", sessionID))
 			if ident.UserID == "" || owner == "" || ident.UserID != owner {
 				log.Printf("[P2P] rejected DC for session %s from %s: sender is not the session owner", sessionID, cmdutil.ShortLogValue(senderPub))
 				if err := dc.Close(); err != nil {
@@ -1449,7 +1406,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	}
 
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
-		killOrphanEgg(cfg, sessionID)
+		eggclient.KillOrphanEgg(cfg, sessionID)
 	}
 
 	// Reclaim surviving egg sessions on every (re)connect
@@ -2526,60 +2483,6 @@ func wingConfigSetCmd() *cobra.Command {
 	}
 }
 
-// reapDeadEggs removes egg directories for dead processes on startup.
-func reapDeadEggs(cfg *config.Config) {
-	eggsDir := filepath.Join(cfg.Dir, "eggs")
-	entries, err := os.ReadDir(eggsDir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		dir := filepath.Join(eggsDir, e.Name())
-		pidPath := filepath.Join(dir, "egg.pid")
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			// No pid file — stale dir, clean up
-			cleanEggDir(dir)
-			continue
-		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			cleanEggDir(dir)
-			continue
-		}
-		if !procinfo.OwnedProcessIsAlive(pid) {
-			// Dead process
-			log.Printf("egg: reaping dead egg %s (pid %d)", e.Name(), pid)
-			cleanEggDir(dir)
-		}
-	}
-}
-
-// cleanEggDir removes the files in an egg session directory, then the directory itself.
-// If recordings or lifecycle history exist, preserves metadata and data.
-func cleanEggDir(dir string) {
-	cmdutil.RemoveWithLog(filepath.Join(dir, "egg.sock"))
-	cmdutil.RemoveWithLog(filepath.Join(dir, "egg.token"))
-	cmdutil.RemoveWithLog(filepath.Join(dir, "egg.pid"))
-	// Preserve egg.log — the parent process reads it via readEggCrashInfo
-	// after this child exits. Deleting it here causes a race where the
-	// crash message is lost ("egg process crashed (no log available)").
-	// The log is small and the parent's cleanEggDir call cleans it up later.
-	// Keep egg.meta, egg.owner, and dir if audit recordings or chat history exist
-	if egg.HasRetainedSessionData(dir) {
-		return
-	}
-	// The egg copies its diagnostic log to the persistent log directory before
-	// normal shutdown. Remove the whole transient directory so crash logs and
-	// partially-created files do not leave an unreapable directory forever.
-	if err := os.RemoveAll(dir); err != nil {
-		log.Printf("egg: remove transient session directory %s: %v", dir, err)
-	}
-}
-
 // listAliveEggSessions scans ~/.wingthing/eggs/ for alive egg processes.
 func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 	eggsDir := filepath.Join(cfg.Dir, "eggs")
@@ -2627,7 +2530,7 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 			// Status RPC is transiently slow. A lazy dial plus Unavailable does
 			// not prove a live egg, and a recycled PID must never revive stale
 			// session metadata.
-			if !eggPidMatchesSession(pid, sessionID) || grpcstatus.Code(statusErr) == codes.Unavailable {
+			if !eggclient.EggPidMatchesSession(pid, sessionID) || grpcstatus.Code(statusErr) == codes.Unavailable {
 				continue
 			}
 			// Keep it visible so attach and ACL revocation still work; file
@@ -2635,19 +2538,19 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 			log.Printf("egg: status unavailable for live session %s: %v", sessionID, statusErr)
 		}
 
-		agent, sessionCWD := readEggMeta(dir)
+		agent, sessionCWD := eggclient.ReadEggMeta(dir)
 		info := ws.SessionInfo{
 			SessionID: sessionID,
-			Name:      readSessionName(dir),
+			Name:      eggclient.ReadSessionName(dir),
 			Agent:     agent,
 			CWD:       sessionCWD,
 			EggConfig: renderedConfig,
-			UserID:    readEggOwner(dir),
-			Email:     readEggOwnerEmail(dir),
+			UserID:    eggclient.ReadEggOwner(dir),
+			Email:     eggclient.ReadEggOwnerEmail(dir),
 		}
-		link := sessionConversationLink(cfg, sessionID)
+		link := eggclient.SessionConversationLink(cfg, sessionID)
 		info.ConversationID, info.RootConversationID, info.ParentConversationID, info.ConversationRole = link.ConversationID, link.RootConversationID, link.ParentConversationID, link.ConversationRole
-		info.Lifecycle = sessionLifecycleSummary(context.Background(), cfg, sessionID)
+		info.Lifecycle = eggclient.SessionLifecycleSummary(context.Background(), cfg, sessionID)
 		if _, ok := wingAttention.Load(sessionID); ok {
 			info.NeedsAttention = true
 		}
@@ -2661,146 +2564,6 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		out = append(out, info)
 	}
 	return out
-}
-
-// eggPidMatchesSession reports whether pid's command line is the egg runner
-// for sessionID. PIDs are recycled; a stale egg.pid can point at an unrelated
-// process (another user's egg, or any roost process), so a PID whose argv
-// cannot be confirmed is never signaled.
-func eggPidMatchesSession(pid int, sessionID string) bool {
-	if config.Channel() == "preview" {
-		return previewEggProcessMatches(pid, sessionID)
-	}
-	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil {
-		argv := strings.Split(string(data), "\x00")
-		for i, a := range argv {
-			if a == "--session-id" && i+1 < len(argv) && argv[i+1] == sessionID {
-				return true
-			}
-		}
-		return false
-	}
-	// No /proc (darwin): fall back to ps.
-	out, psErr := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
-	if psErr != nil {
-		return false
-	}
-	return strings.Contains(string(out), "--session-id "+sessionID)
-}
-
-// killOrphanEgg kills an egg session that has no active goroutine managing it.
-// This handles the case where a pty.kill arrives but the session was never reclaimed.
-func killOrphanEgg(cfg *config.Config, sessionID string) {
-	if err := validateSessionID(sessionID); err != nil {
-		log.Printf("refuse to kill invalid egg session: %v", err)
-		return
-	}
-	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
-	sockPath := filepath.Join(dir, "egg.sock")
-	tokenPath := filepath.Join(dir, "egg.token")
-
-	ec, err := egg.Dial(sockPath, tokenPath)
-	if err != nil {
-		// Can't reach egg — try to kill by PID, but only after confirming the
-		// PID still belongs to this session's egg runner.
-		pidPath := filepath.Join(dir, "egg.pid")
-		terminationRequested := false
-		data, readErr := os.ReadFile(pidPath)
-		if readErr == nil {
-			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && eggPidMatchesSession(pid, sessionID) {
-				if proc, findErr := os.FindProcess(pid); findErr != nil {
-					log.Printf("pty session %s: find orphan egg process %d: %v", sessionID, pid, findErr)
-				} else if signalErr := proc.Signal(syscall.SIGTERM); signalErr != nil {
-					log.Printf("pty session %s: terminate orphan egg process %d: %v", sessionID, pid, signalErr)
-				} else {
-					terminationRequested = true
-				}
-			}
-		}
-		if terminationRequested {
-			// Leave runtime files in place until the egg exits and performs its
-			// own cleanup. Reaping them now can break an in-flight shutdown.
-			log.Printf("pty session %s: orphan termination requested (pid)", sessionID)
-		} else {
-			cleanEggDir(dir)
-			log.Printf("pty session %s: stale orphan metadata cleaned", sessionID)
-		}
-		return
-	}
-	if killErr := ec.Kill(context.Background(), sessionID); killErr != nil {
-		log.Printf("pty session %s: terminate orphan over gRPC: %v", sessionID, killErr)
-	} else {
-		log.Printf("pty session %s: orphan termination requested (gRPC)", sessionID)
-	}
-	cmdutil.CloseWithLog("orphan egg client", ec)
-}
-
-func resizeEgg(cfg *config.Config, sessionID string, rows, cols uint32) (result error) {
-	if err := validateSessionID(sessionID); err != nil {
-		return err
-	}
-	if rows == 0 || cols == 0 || rows > 1000 || cols > 1000 {
-		return fmt.Errorf("invalid terminal dimensions")
-	}
-	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
-	ec, err := egg.Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
-	if err != nil {
-		return fmt.Errorf("open session: %w", err)
-	}
-	defer func() { result = cmdutil.CloseAndJoin("egg resize client", ec, result) }()
-	resizeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := ec.Resize(resizeCtx, sessionID, rows, cols); err != nil {
-		return fmt.Errorf("resize session: %w", err)
-	}
-	return nil
-}
-
-// readEggCrashInfo reads the last lines of an egg's log looking for panic/crash info.
-func readEggCrashInfo(dir string) string {
-	logPath := filepath.Join(dir, "egg.log")
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		return "egg process crashed (no log available)"
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) == 0 {
-		return "egg process crashed (empty log)"
-	}
-
-	// Find the last panic
-	lastPanic := -1
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.Contains(lines[i], "panic") || strings.Contains(lines[i], "PANIC") || strings.Contains(lines[i], "fatal error") {
-			lastPanic = i
-			break
-		}
-	}
-
-	if lastPanic != -1 {
-		// Extract up to 20 lines from the panic point
-		end := lastPanic + 20
-		if end > len(lines) {
-			end = len(lines)
-		}
-		excerpt := strings.Join(lines[lastPanic:end], "\n")
-		return fmt.Sprintf("egg crashed: %s", strings.TrimSpace(excerpt))
-	}
-
-	// No panic found — return the last line (cobra prints "Error: ..." there)
-	// plus any "Error:" lines from the log.
-	last := lines[len(lines)-1]
-	if strings.Contains(last, "Error:") || strings.Contains(last, "error") {
-		return strings.TrimSpace(last)
-	}
-
-	// Fall back to last 5 lines for context
-	start := len(lines) - 5
-	if start < 0 {
-		start = 0
-	}
-	return strings.TrimSpace(strings.Join(lines[start:], "\n"))
 }
 
 type pendingReattachAuth struct {
@@ -2928,7 +2691,7 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 			continue
 		}
 		if !procinfo.OwnedProcessIsAlive(pid) {
-			cleanEggDir(dir)
+			eggclient.CleanEggDir(dir)
 			continue
 		}
 
@@ -2940,7 +2703,7 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 			continue
 		}
 
-		agent, _ := readEggMeta(dir)
+		agent, _ := eggclient.ReadEggMeta(dir)
 
 		// Alive — dial and set up input routing
 		sockPath := filepath.Join(dir, "egg.sock")
@@ -2970,7 +2733,7 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
 func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client, sessionID, eggDir string, write ws.PTYWriteFunc, input <-chan []byte, wingCfg *config.WingConfig, allowedKeys []config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, tools []*config.ToolConfig) {
-	reclaimAgent, reclaimCWD := readEggMeta(eggDir)
+	reclaimAgent, reclaimCWD := eggclient.ReadEggMeta(eggDir)
 	var mu sync.Mutex
 	var gcm cipher.AEAD
 	var activeStream pb.Egg_SessionClient
@@ -3147,7 +2910,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 						continue
 					}
 				}
-				if !wingpolicy.CanAttachSession(attach.UserID, attach.OrgRole, readEggOwner(eggDir)) {
+				if !wingpolicy.CanAttachSession(attach.UserID, attach.OrgRole, eggclient.ReadEggOwner(eggDir)) {
 					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: sessionID, ViewerID: attach.ViewerID})
 					continue
 				}
@@ -3575,7 +3338,7 @@ authDone:
 	providerResumeSpawned := false
 	if start.ResumeSessionID != "" {
 		var resumeErr error
-		providerResumeID, start.CWD, releaseProviderResume, resumeErr = prepareBrowserResume(cfg, wingCfg, start, sharedAllowedPaths, sharedHost)
+		providerResumeID, start.CWD, releaseProviderResume, resumeErr = eggclient.PrepareBrowserResume(cfg, wingCfg, start, sharedAllowedPaths, sharedHost)
 		if resumeErr != nil {
 			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeErr.Error()})
 			return
@@ -3587,7 +3350,7 @@ authDone:
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
 		return
 	}
-	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace, EggIdentity{
+	ec, err := eggclient.SpawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace, eggclient.EggIdentity{
 		UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName,
 		OrgWing: wingCfg.Org != "", SharedHost: sharedHost,
 		// Browser terminals get the same allowlist jail as MCP agent runs; a
@@ -3595,14 +3358,14 @@ authDone:
 		// and read the host home, wing.yaml keys, and other users' agent homes.
 		SealedFS:     sharedHost,
 		AllowedPaths: sharedAllowedPaths,
-	}, idleTimeout, spawnEggOpts{
+	}, idleTimeout, eggclient.SpawnEggOpts{
 		ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
 		ProviderReserved: providerResumeID != "", ToolNames: toolNames, ToolSocketPath: toolSocketPath,
 		Principal: resumePrincipal, AgentArgs: resumeArgs,
 	})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
-		crashInfo := readEggCrashInfo(eggDir)
+		crashInfo := eggclient.ReadEggCrashInfo(eggDir)
 		log.Printf("pty session %s: spawn egg failed: %v", start.SessionID, err)
 		// If no crash info from the child (e.g. pre-flight check failed before
 		// child was spawned), use the spawn error directly — it contains the
@@ -4191,7 +3954,7 @@ type tunnelInner struct {
 
 // pastSessionInfo is the local version of PastSessionInfo for tunnel responses.
 type pastSessionInfo struct {
-	conversationLink
+	eggclient.ConversationLink
 	SessionID               string `json:"session_id"`
 	Name                    string `json:"name,omitempty"`
 	Agent                   string `json:"agent"`
@@ -4202,18 +3965,6 @@ type pastSessionInfo struct {
 	UserID                  string `json:"user_id,omitempty"`
 	Resumable               bool   `json:"resumable,omitempty"`
 	ResumeUnavailableReason string `json:"resume_unavailable_reason,omitempty"`
-}
-
-// canAccessSessionArtifact applies the same current owner-and-workspace policy
-// used by session listings before exposing a persisted audit or chat artifact.
-// Missing legacy metadata fails closed for members; owners and admins retain
-// the historical oversight access.
-func canAccessSessionArtifact(req ws.TunnelRequest, sessionDir string, userPaths []string) bool {
-	if !wingpolicy.IsMemberFiltered(req) {
-		return true
-	}
-	_, sessionPath := readEggMeta(sessionDir)
-	return wingpolicy.CanSeeSession(req, readEggOwner(sessionDir)) && wingpolicy.CanAccessSessionPath(req, sessionPath, userPaths)
 }
 
 func appendHostedRelayPolicyAudit(cfg *config.Config, operation string) (result error) {
@@ -4519,7 +4270,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	case "file.upload.begin":
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
-		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
+		effectiveHome := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
 		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
@@ -4553,7 +4304,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		defer func() { _ = upload.root.Close() }()
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
-		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
+		effectiveHome := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
 		session, policy, err := resolveOwnedSessionFileTarget(req, upload.sessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload policy changed"}, write)
@@ -4582,7 +4333,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	case "file.download":
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
-		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
+		effectiveHome := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
 		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
 			_ = streamSessionFileError(gcm, req.RequestID, err.Error(), write)
@@ -4601,7 +4352,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	case "file.export":
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
-		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
+		effectiveHome := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
 		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
@@ -4644,7 +4395,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		if inner.SessionID != "" && wingpolicy.IsMemberFiltered(req) {
 			sessionDir := filepath.Join(cfg.Dir, "eggs", inner.SessionID)
 			userPaths := wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
-			if !canAccessSessionArtifact(req, sessionDir, userPaths) {
+			if !eggclient.CanAccessSessionArtifact(req, sessionDir, userPaths) {
 				log.Printf("tunnel %s: denied audit outside current owner/path policy (user=%s session=%s)", req.RequestID, req.SenderUserID, inner.SessionID)
 				ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 				return
@@ -4680,14 +4431,14 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			return
 		}
 		if wingpolicy.IsMemberFiltered(req) {
-			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", inner.SessionID))
+			owner := eggclient.ReadEggOwner(filepath.Join(cfg.Dir, "eggs", inner.SessionID))
 			if !wingpolicy.CanSeeSession(req, owner) {
 				log.Printf("tunnel %s: denied kill (user=%s session_owner=%s)", req.RequestID, req.SenderUserID, owner)
 				ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 				return
 			}
 		}
-		killOrphanEgg(cfg, inner.SessionID)
+		eggclient.KillOrphanEgg(cfg, inner.SessionID)
 		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "pty.resize":
@@ -4696,7 +4447,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			return
 		}
 		if wingpolicy.IsMemberFiltered(req) {
-			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", inner.SessionID))
+			owner := eggclient.ReadEggOwner(filepath.Join(cfg.Dir, "eggs", inner.SessionID))
 			if !wingpolicy.CanSeeSession(req, owner) {
 				ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 				return
@@ -4706,7 +4457,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		if config.Channel() == "preview" {
 			resizeErr = resizeBrowserInput(ctx, inner.SessionID, inner.ControllerID, req.SenderPub, req.SenderUserID, uint32(inner.Rows), uint32(inner.Cols))
 		} else {
-			resizeErr = resizeEgg(cfg, inner.SessionID, uint32(inner.Rows), uint32(inner.Cols))
+			resizeErr = eggclient.ResizeEgg(cfg, inner.SessionID, uint32(inner.Rows), uint32(inner.Cols))
 		}
 		if err := resizeErr; err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
@@ -5074,21 +4825,21 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 }
 
 func renameTunnelSession(cfg *config.Config, req ws.TunnelRequest, sessionID, name string, sessions []ws.SessionInfo, userPaths []string) error {
-	if err := validateSessionName(name); err != nil {
+	if err := eggclient.ValidateSessionName(name); err != nil {
 		return err
 	}
 	if _, err := resolveOwnedActiveSession(req, sessionID, sessions, userPaths); err != nil {
 		return err
 	}
-	lock, err := acquireSessionNameLock(cfg)
+	lock, err := eggclient.AcquireSessionNameLock(cfg)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = lock.Close() }()
-	if err := ensureSessionNameAvailable(cfg, name, sessionID); err != nil {
+	if err := eggclient.EnsureSessionNameAvailable(cfg, name, sessionID); err != nil {
 		return err
 	}
-	return writeSessionName(filepath.Join(cfg.Dir, "eggs", sessionID), name)
+	return eggclient.WriteSessionName(filepath.Join(cfg.Dir, "eggs", sessionID), name)
 }
 
 // collectSessionsHistory returns all dead egg sessions from disk newest first.
@@ -5118,7 +4869,7 @@ func collectSessionsHistory(cfg *config.Config) []pastSessionInfo {
 			}
 		}
 
-		agentName, cwd := readEggMeta(dir)
+		agentName, cwd := eggclient.ReadEggMeta(dir)
 		hasAudit := false
 		if _, err := os.Stat(filepath.Join(dir, "audit.pty.gz")); err == nil {
 			hasAudit = true
@@ -5135,22 +4886,22 @@ func collectSessionsHistory(cfg *config.Config) []pastSessionInfo {
 		}
 
 		info := pastSessionInfo{
-			conversationLink: sessionConversationLink(cfg, sessionID),
+			ConversationLink: eggclient.SessionConversationLink(cfg, sessionID),
 			SessionID:        sessionID,
-			Name:             readSessionName(dir),
+			Name:             eggclient.ReadSessionName(dir),
 			Agent:            agentName,
 			CWD:              cwd,
 			Audit:            hasAudit,
 			Chat:             hasChat,
-			UserID:           readEggOwner(dir),
+			UserID:           eggclient.ReadEggOwner(dir),
 		}
-		meta := readEggMetaValues(dir)
+		meta := eggclient.ReadEggMetaValues(dir)
 		if startedAt, parseErr := strconv.ParseInt(meta["started_at"], 10, 64); parseErr == nil && startedAt > 0 {
 			info.StartedAt = startedAt
 		} else if stat, statErr := os.Stat(dir); statErr == nil {
 			info.StartedAt = stat.ModTime().Unix()
 		}
-		info.Resumable, info.ResumeUnavailableReason = sessionResumeStatus(dir, agentName, cwd)
+		info.Resumable, info.ResumeUnavailableReason = eggclient.SessionResumeStatus(dir, agentName, cwd)
 		dead = append(dead, info)
 	}
 

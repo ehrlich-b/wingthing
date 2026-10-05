@@ -13,6 +13,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
@@ -42,7 +43,7 @@ func TestSocketPathCLIFailsBeforeStateOrProcessCreation(t *testing.T) {
 func TestSocketPathSpawnRejectsBeforeEggOrProcessCreation(t *testing.T) {
 	state := filepath.Join(t.TempDir(), strings.Repeat("x", 120))
 	// A nil policy would fail later; address rejection must precede all setup.
-	_, err := spawnEgg(&config.Config{Dir: state}, "socket-fixture", "", nil, 24, 80, "", false, false, false, EggIdentity{}, 0)
+	_, err := eggclient.SpawnEgg(&config.Config{Dir: state}, "socket-fixture", "", nil, 24, 80, "", false, false, false, eggclient.EggIdentity{}, 0)
 	assertSocketPathFailure(t, err)
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
 		t.Fatalf("spawn wrote state: %v", err)

@@ -1,4 +1,4 @@
-package main
+package eggclient
 
 import (
 	"encoding/json"
@@ -32,7 +32,7 @@ func TestIsolatedClaudePolicyProjectsOnlyModelAndEffort(t *testing.T) {
 			t.Setenv("HOME", home)
 			path := filepath.Join(home, ".claude", "settings.json")
 			writePolicyFixture(t, path, tc.source)
-			args, err := isolatedClaudePolicyArgs("claude", true)
+			args, err := IsolatedClaudePolicyArgs("claude", true)
 			if tc.invalid {
 				if err == nil || len(args) != 0 {
 					t.Fatalf("invalid policy accepted: %q, %v", args, err)
@@ -86,10 +86,10 @@ func TestIsolatedClaudePolicyReloadsWithoutTouchingUserProfiles(t *testing.T) {
 	for _, model := range []string{"claude-sonnet-4-6", "claude-sonnet-5"} {
 		writePolicyFixture(t, policyPath, `{"model":"`+model+`"}`)
 		for _, user := range users {
-			if err := prepareIsolatedClaudeConfig(user, map[string]string{}); err != nil {
+			if err := PrepareIsolatedClaudeConfig(user, map[string]string{}); err != nil {
 				t.Fatal(err)
 			}
-			args, err := isolatedClaudePolicyArgs("claude", true)
+			args, err := IsolatedClaudePolicyArgs("claude", true)
 			if err != nil || len(args) != 2 || args[0] != "--model" || args[1] != model {
 				t.Fatalf("new launch did not load current policy: %q, %v", args, err)
 			}
@@ -104,7 +104,7 @@ func TestIsolatedClaudePolicyKeepsExplicitSessionModel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writePolicyFixture(t, filepath.Join(home, ".claude", "settings.json"), `{"model":"claude-sonnet-5"}`)
-	policy, err := isolatedClaudePolicyArgs("claude", true)
+	policy, err := IsolatedClaudePolicyArgs("claude", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestIsolatedClaudePolicyDoesNotReadHostForPersonalOrOtherAgents(t *testing.
 		agent    string
 		isolated bool
 	}{{"claude", false}, {"codex", true}, {"shell", true}} {
-		args, err := isolatedClaudePolicyArgs(tc.agent, tc.isolated)
+		args, err := IsolatedClaudePolicyArgs(tc.agent, tc.isolated)
 		if err != nil || len(args) != 0 {
 			t.Fatalf("unrelated session inherited policy: %q, %v", args, err)
 		}
@@ -133,14 +133,14 @@ func TestIsolatedClaudePolicyDoesNotReadHostForPersonalOrOtherAgents(t *testing.
 func TestIsolatedClaudePolicyMissingAndUnreadable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	args, err := isolatedClaudePolicyArgs("claude", true)
+	args, err := IsolatedClaudePolicyArgs("claude", true)
 	if err != nil || len(args) != 0 {
 		t.Fatalf("missing host policy = %q, %v", args, err)
 	}
 	if err := os.MkdirAll(filepath.Join(home, ".claude", "settings.json"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := isolatedClaudePolicyArgs("claude", true); err == nil {
+	if _, err := IsolatedClaudePolicyArgs("claude", true); err == nil {
 		t.Fatal("unreadable policy silently fell back to vendor default")
 	}
 }
@@ -155,7 +155,7 @@ func TestExistingClaudeHelperDoesNotRewritePersonalSettings(t *testing.T) {
 	personal := "{\n  \"theme\": \"user-theme\", \"model\": \"opus\",\n  \"apiKeyHelper\": " + string(helper) + "\n}\n"
 	writePolicyFixture(t, path, personal)
 	for _, key := range []string{"fixture-key-before", "fixture-key-after"} {
-		if err := setupAPIKeyHelper("claude", map[string]string{"ANTHROPIC_API_KEY": key}, home); err != nil {
+		if err := SetupAPIKeyHelper("claude", map[string]string{"ANTHROPIC_API_KEY": key}, home); err != nil {
 			t.Fatal(err)
 		}
 		assertPolicyFixture(t, path, personal)

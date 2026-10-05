@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"io"
 	"os"
 	"path/filepath"
@@ -104,7 +105,8 @@ func newMailboxID() (string, error) {
 	return hex.EncodeToString(value), nil
 }
 
-func mailboxRequestName(id string) string  { return "request." + id + ".json" }
+func mailboxRequestName(id string) string { return "request." + id + ".json" }
+
 func mailboxResponseName(id string) string { return "response." + id + ".json" }
 
 // mailboxRequestID returns the ID of a well-formed request artifact name.
@@ -261,6 +263,7 @@ type mailboxCallError struct {
 }
 
 func (e *mailboxCallError) Error() string { return e.err.Error() }
+
 func (e *mailboxCallError) Unwrap() error { return e.err }
 
 func notSent(err error) error {
@@ -379,10 +382,10 @@ func serveConversationMailboxClient(ctx context.Context, in io.Reader, out io.Wr
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
 		return errors.New("--host-mailbox must be a clean absolute directory")
 	}
-	if err := validateSessionID(conversation); err != nil {
+	if err := eggclient.ValidateSessionID(conversation); err != nil {
 		return fmt.Errorf("--conversation: %w", err)
 	}
-	if err := validateSessionID(session); err != nil {
+	if err := eggclient.ValidateSessionID(session); err != nil {
 		return fmt.Errorf("--execution: %w", err)
 	}
 	client := conversationMailboxClient{dir: dir, conversation: conversation, session: session}

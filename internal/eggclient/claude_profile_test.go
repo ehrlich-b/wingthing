@@ -1,4 +1,4 @@
-package main
+package eggclient
 
 import (
 	"os"
@@ -14,7 +14,7 @@ func TestPrepareIsolatedClaudeConfigLoadsStableWritableProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	envMap := map[string]string{}
-	if err := prepareIsolatedClaudeConfig(home, envMap); err != nil {
+	if err := PrepareIsolatedClaudeConfig(home, envMap); err != nil {
 		t.Fatal(err)
 	}
 
@@ -48,7 +48,7 @@ func TestPrepareIsolatedClaudeConfigNeverOverwritesCurrentProfile(t *testing.T) 
 	if err := os.WriteFile(profile, []byte(`{"wtFixture":"current"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := prepareIsolatedClaudeConfig(home, map[string]string{}); err != nil {
+	if err := PrepareIsolatedClaudeConfig(home, map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(profile)
@@ -69,7 +69,7 @@ func TestPrepareIsolatedClaudeConfigDoesNotFollowLegacySymlink(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(home, ".claude.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err := prepareIsolatedClaudeConfig(home, map[string]string{}); err != nil {
+	if err := PrepareIsolatedClaudeConfig(home, map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", ".claude.json")); !os.IsNotExist(err) {
@@ -78,15 +78,15 @@ func TestPrepareIsolatedClaudeConfigDoesNotFollowLegacySymlink(t *testing.T) {
 }
 
 func TestUserHashSeparatesDistinctAuthenticatedIdentities(t *testing.T) {
-	first := userHash("user-id-for-work-account")
-	second := userHash("user-id-for-personal-account")
+	first := UserHash("user-id-for-work-account")
+	second := UserHash("user-id-for-personal-account")
 	if first == second {
 		t.Fatal("distinct authenticated identities shared an agent-home hash")
 	}
-	if first != userHash("user-id-for-work-account") {
+	if first != UserHash("user-id-for-work-account") {
 		t.Fatal("stable identity did not retain a stable agent-home hash")
 	}
-	if got := userHash("u-alice"); got != "e3fb03053ead" {
+	if got := UserHash("u-alice"); got != "e3fb03053ead" {
 		t.Fatalf("userHash(u-alice) = %q; browser identity fixture expects e3fb03053ead", got)
 	}
 }

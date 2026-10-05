@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package eggclient
 
 import (
 	"errors"
@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func prepareSharedAgentHome(home string, relativeDirs []string) error {
+func PrepareSharedAgentHome(home string, relativeDirs []string) error {
 	parent := filepath.Dir(home)
 	if err := os.MkdirAll(parent, 0700); err != nil {
 		return err
@@ -46,7 +46,7 @@ func prepareSharedAgentHome(home string, relativeDirs []string) error {
 	return nil
 }
 
-func installSharedAgentBinary(source, home, agentName string) error {
+func InstallSharedAgentBinary(source, home, agentName string) error {
 	if agentName == "" || filepath.Base(agentName) != agentName || strings.ContainsAny(agentName, `/\\`) {
 		return errors.New("invalid shared-host agent name")
 	}

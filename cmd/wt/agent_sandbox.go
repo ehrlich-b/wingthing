@@ -13,6 +13,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
 
@@ -122,10 +123,10 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 		Trace:       declared.Trace,
 	}
 	if sharedHost {
-		if !containsExactPath(declared.Deny, string(filepath.Separator)) {
+		if !eggclient.ContainsExactPath(declared.Deny, string(filepath.Separator)) {
 			return sandbox.Config{}, fmt.Errorf("shared-host egg config must deny the filesystem root")
 		}
-		if err := rejectSharedHostRootMount(declared.Mounts); err != nil {
+		if err := eggclient.RejectSharedHostRootMount(declared.Mounts); err != nil {
 			return sandbox.Config{}, err
 		}
 		result.Deny = declared.Deny

@@ -1,4 +1,4 @@
-package main
+package eggclient
 
 import (
 	"context"
@@ -241,11 +241,11 @@ func TestNativePromptPreflightNotSentIsDurable(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			session, err := resolveLifecycleSession(cfg, "fixture")
+			session, err := ResolveLifecycleSession(cfg, "fixture")
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := promptSession(ctx, cfg, session, "proof-"+condition, "retain this draft", time.Second, "mcp:proof")
+			result, err := PromptSession(ctx, cfg, session, "proof-"+condition, "retain this draft", time.Second, "mcp:proof")
 			if err != nil || result.Status != "not_sent" || !result.DefinitelyNotSent || result.TransportEnqueued || result.TransportBytesEnqueued != 0 || result.NativeReceiptObserved {
 				t.Fatalf("preflight failure did not become typed not_sent: %+v %v", result, err)
 			}
@@ -256,7 +256,7 @@ func TestNativePromptPreflightNotSentIsDurable(t *testing.T) {
 			// The condition may resolve or the provider may be replaced. This
 			// request remains terminal and cannot claim a second attachment.
 			fixture.busy = false
-			retry, err := promptSession(ctx, cfg, session, "proof-"+condition, "retain this draft", time.Second, "mcp:proof")
+			retry, err := PromptSession(ctx, cfg, session, "proof-"+condition, "retain this draft", time.Second, "mcp:proof")
 			if err != nil || retry.Status != "not_sent" || !retry.DefinitelyNotSent || !retry.Retried || fixture.calls.Load() != 1 {
 				t.Fatalf("not_sent replay resent or lost its proof: %+v calls=%d %v", retry, fixture.calls.Load(), err)
 			}

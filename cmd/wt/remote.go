@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/spf13/cobra"
 )
@@ -64,7 +65,7 @@ func remoteEnterCmd() *cobra.Command {
 					return fmt.Errorf("remote working directory %q does not exist or is not a directory", cwd)
 				}
 			}
-			sessions, err := discoverActiveSessions(cmd.Context(), cfg)
+			sessions, err := eggclient.DiscoverActiveSessions(cmd.Context(), cfg)
 			if err != nil {
 				return err
 			}
@@ -79,7 +80,7 @@ func remoteEnterCmd() *cobra.Command {
 			}
 			if jsonOutput {
 				if sessions == nil {
-					sessions = []localSession{}
+					sessions = []eggclient.LocalSession{}
 				}
 				encoder := json.NewEncoder(os.Stdout)
 				encoder.SetIndent("", "  ")
@@ -98,7 +99,7 @@ func remoteEnterCmd() *cobra.Command {
 					return err
 				}
 			}
-			detached, err := attachLocal(cmd.Context(), cfg, selected.ID)
+			detached, err := eggclient.AttachLocal(cmd.Context(), cfg, selected.ID)
 			if detached {
 				fmt.Fprintf(os.Stderr, "\r\n[detached from %s]\r\n", selected.ID)
 			}

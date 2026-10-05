@@ -16,46 +16,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
 )
-
-type conversationLink struct {
-	ConversationID       string `json:"conversation_id,omitempty"`
-	RootConversationID   string `json:"root_conversation_id,omitempty"`
-	ParentConversationID string `json:"parent_conversation_id,omitempty"`
-	ConversationRole     string `json:"conversation_role,omitempty"`
-}
-
-func linkForConversation(c *store.Conversation) conversationLink {
-	if c == nil {
-		return conversationLink{}
-	}
-	role := "child"
-	if c.ParentID == "" {
-		role = "parent"
-	}
-	return conversationLink{c.ID, c.RootID, c.ParentID, role}
-}
-
-func sessionConversationLink(cfg *config.Config, session string) conversationLink {
-	// Do not create or migrate state just to enrich legacy session inventory.
-	if _, err := os.Stat(cfg.DBPath()); err != nil {
-		return conversationLink{}
-	}
-	db, err := store.Open(cfg.DBPath())
-	if err != nil {
-		return conversationLink{}
-	}
-	defer cmdutil.CloseWithLog("conversation inventory store", db)
-	c, err := db.ConversationForSession(session)
-	if err != nil {
-		return conversationLink{}
-	}
-	return linkForConversation(c)
-}
 
 func (s *localMCPServer) reserveAgentConversation(agent, cwd, title, role, parent, requestID, sessionID string, spec any) (*store.Conversation, bool, error) {
 	if s.boundConversation != "" {
@@ -143,7 +109,7 @@ func conversationLaunchResult(c *store.Conversation, reused bool) map[string]any
 }
 
 func (s *localMCPServer) ownedConversation(db *store.Store, id string) (*store.Conversation, error) {
-	if err := validateSessionID(id); err != nil {
+	if err := eggclient.ValidateSessionID(id); err != nil {
 		return nil, errors.New("invalid conversation_id")
 	}
 	c, err := db.GetConversation(s.clientPrincipal(), id)
@@ -328,7 +294,7 @@ func readExactExecutionLifecycleView(ctx context.Context, cfg *config.Config, id
 	if id == "" {
 		return egg.SessionView{}, errors.New("session is required")
 	}
-	if err := validateSessionName(id); err != nil {
+	if err := eggclient.ValidateSessionName(id); err != nil {
 		return egg.SessionView{}, err
 	}
 	dir := filepath.Join(cfg.Dir, "eggs", id)
@@ -339,9 +305,9 @@ func readExactExecutionLifecycleView(ctx context.Context, cfg *config.Config, id
 	if err != nil {
 		return egg.SessionView{}, err
 	}
-	meta := readEggMetaValues(dir)
-	session := localSession{ID: id, Name: readSessionName(dir), Principal: readSessionPrincipal(dir), Agent: meta["agent"], Kind: meta["kind"], CWD: meta["cwd"]}
-	return lifecycleViewForSession(cfg, session, after, limit)
+	meta := eggclient.ReadEggMetaValues(dir)
+	session := eggclient.LocalSession{ID: id, Name: eggclient.ReadSessionName(dir), Principal: eggclient.ReadSessionPrincipal(dir), Agent: meta["agent"], Kind: meta["kind"], CWD: meta["cwd"]}
+	return eggclient.LifecycleViewForSession(cfg, session, after, limit)
 }
 
 func (s *localMCPServer) toolConversationCheckpoint(arguments json.RawMessage) (map[string]any, error) {
@@ -466,8 +432,8 @@ func validateBoundConversation(s *localMCPServer) error {
 	// Propagate it only when its persisted principal matches the same user's
 	// existing owner hash. This adds no client grants or credential access.
 	dir := filepath.Join(s.cfg.Dir, "eggs", c.SessionID)
-	owner := readEggOwner(dir)
-	if owner != "" && c.OwnerID == roostSessionPrincipal(owner) && readSessionPrincipal(dir) == c.OwnerID {
+	owner := eggclient.ReadEggOwner(dir)
+	if owner != "" && c.OwnerID == roostSessionPrincipal(owner) && eggclient.ReadSessionPrincipal(dir) == c.OwnerID {
 		wc, err := config.LoadWingConfig(s.cfg.Dir)
 		if err != nil {
 			return err
@@ -476,7 +442,7 @@ func validateBoundConversation(s *localMCPServer) error {
 			return errors.New("personal conversation MCP binding is unavailable on an organization wing")
 		}
 		s.identity.UserID = owner
-		s.identity.Email = readEggOwnerEmail(dir)
+		s.identity.Email = eggclient.ReadEggOwnerEmail(dir)
 	}
 	return nil
 }
@@ -513,7 +479,7 @@ func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *eg
 		if err != nil {
 			return nil, nil, err
 		}
-		home := effectiveSessionHome(s.cfg, s.identity)
+		home := eggclient.EffectiveSessionHome(s.cfg, s.identity)
 		policy, err := loadSessionFilePolicy(ws.SessionInfo{CWD: c.CWD, EggConfig: rendered}, home)
 		if err != nil {
 			return nil, nil, err
@@ -595,7 +561,7 @@ func prepareConversationResumeMCP(cfg *config.Config, wc *config.WingConfig, sta
 	if start.ResumeSessionID == "" {
 		return nil, "", nil
 	}
-	principal := readSessionPrincipal(filepath.Join(cfg.Dir, "eggs", start.ResumeSessionID))
+	principal := eggclient.ReadSessionPrincipal(filepath.Join(cfg.Dir, "eggs", start.ResumeSessionID))
 	if _, err := os.Stat(cfg.DBPath()); errors.Is(err, os.ErrNotExist) {
 		return nil, principal, nil
 	}
@@ -621,7 +587,7 @@ func prepareConversationResumeMCP(cfg *config.Config, wc *config.WingConfig, sta
 	paths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, start.Email, "owner", home))
 	server := &localMCPServer{cfg: cfg, principal: principal, actor: "browser", surface: control.SurfaceHTTPMCP,
 		grants: grantSet(defaultDirectMCPGrants), maxSessions: defaultDirectMCPMaxSessions, maxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour,
-		allowedPaths: paths, enforcePathBounds: len(paths) > 0, identity: EggIdentity{UserID: start.UserID, Email: start.Email},
+		allowedPaths: paths, enforcePathBounds: len(paths) > 0, identity: eggclient.EggIdentity{UserID: start.UserID, Email: start.Email},
 		// The browser PTY spawn cannot yet apply the broker launch contract
 		// (protected targets, no browser bridge), so resume keeps the refusal.
 		hostMailboxUnavailable: "a resumed browser parent cannot apply the host mailbox launch contract"}

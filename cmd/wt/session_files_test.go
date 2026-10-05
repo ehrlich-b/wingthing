@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -291,7 +292,7 @@ func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T)
 		t.Fatal("same owner overwrote export")
 	}
 	for _, owner := range []string{"alice", "bob"} {
-		got, err := os.ReadFile(filepath.Join(root, userHash(owner), "report.txt"))
+		got, err := os.ReadFile(filepath.Join(root, eggclient.UserHash(owner), "report.txt"))
 		if err != nil || string(got) != "answer" {
 			t.Fatalf("owner %s export = %q err=%v", owner, got, err)
 		}
@@ -308,7 +309,7 @@ func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T)
 	}
 	maliciousRoot := t.TempDir()
 	outside := t.TempDir()
-	if err := os.Symlink(outside, filepath.Join(maliciousRoot, userHash("carol"))); err != nil {
+	if err := os.Symlink(outside, filepath.Join(maliciousRoot, eggclient.UserHash("carol"))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := source.Seek(0, 0); err != nil {
@@ -324,8 +325,8 @@ func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T)
 
 func TestExportSessionFileRejectsOwnerDirectorySwap(t *testing.T) {
 	root := t.TempDir()
-	ownerPath := filepath.Join(root, userHash("alice"))
-	otherPath := filepath.Join(root, userHash("bob"))
+	ownerPath := filepath.Join(root, eggclient.UserHash("alice"))
+	otherPath := filepath.Join(root, eggclient.UserHash("bob"))
 	for _, path := range []string{ownerPath, otherPath} {
 		if err := os.Mkdir(path, 0o755); err != nil {
 			t.Fatal(err)

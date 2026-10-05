@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
@@ -24,7 +25,7 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 	if isError || protocolErr != nil {
 		t.Fatalf("default list: %#v, %v", local, protocolErr)
 	}
-	sessions := local["sessions"].([]localSession)
+	sessions := local["sessions"].([]eggclient.LocalSession)
 	if len(sessions) != 1 || sessions[0].ID != "local-session" {
 		t.Fatalf("default terminal_list changed: %#v", sessions)
 	}
@@ -32,14 +33,14 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 	if strings.Contains(string(data), `"machine"`) {
 		t.Fatalf("default local response gained remote fields: %s", data)
 	}
-	sshPath := fakeInventorySSH(t, remoteSessionInventory{Version: "remote-test", ContractVersion: remoteSessionContractVersion,
-		Sessions: []localSession{{ID: "remote-owned", Principal: "alpha"}, {ID: "remote-other", Principal: "beta"}}})
+	sshPath := fakeInventorySSH(t, eggclient.RemoteSessionInventory{Version: "remote-test", ContractVersion: eggclient.RemoteSessionContractVersion,
+		Sessions: []eggclient.LocalSession{{ID: "remote-owned", Principal: "alpha"}, {ID: "remote-other", Principal: "beta"}}})
 	ctx := context.WithValue(context.Background(), remoteIOContextKey{}, remotepkg.IO{SSHPath: sshPath})
 	remote, isError, protocolErr := server.callTool(ctx, "terminal_list", json.RawMessage(`{"remote":"work"}`))
 	if isError || protocolErr != nil {
 		t.Fatalf("remote list: %#v, %v", remote, protocolErr)
 	}
-	rows := remote["sessions"].([]machineSession)
+	rows := remote["sessions"].([]eggclient.MachineSession)
 	if len(rows) != 1 || rows[0].ID != "remote-owned" || rows[0].Machine != "work" {
 		t.Fatalf("remote argument did not select only the owned remote inventory: %#v", rows)
 	}

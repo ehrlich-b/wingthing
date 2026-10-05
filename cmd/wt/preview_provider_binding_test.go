@@ -16,6 +16,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
@@ -217,15 +218,15 @@ func TestPreviewProviderBindingSessionAndLifecycleHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if home := effectiveSessionHome(cfg, EggIdentity{}); home != provider {
+	if home := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{}); home != provider {
 		t.Fatalf("native session home ignored the binding: %q", home)
 	}
 	for _, recorded := range []string{"", provider} {
-		if home, err := lifecycleProviderHome(cfg, recorded); err != nil || home != provider {
+		if home, err := eggclient.LifecycleProviderHome(cfg, recorded); err != nil || home != provider {
 			t.Fatalf("lifecycle home ignored the binding: %q %v", home, err)
 		}
 	}
-	if _, err := lifecycleProviderHome(cfg, config.PreviewProviderHome(cfg.Dir)); err == nil {
+	if _, err := eggclient.LifecycleProviderHome(cfg, config.PreviewProviderHome(cfg.Dir)); err == nil {
 		t.Fatal("lifecycle accepted the unbound default provider home")
 	}
 }

@@ -1,4 +1,4 @@
-package main
+package eggclient
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 
 // Only deployment model policy crosses from the host profile into an isolated
 // session. Pass it to Claude for this launch; never merge it into the user's file.
-func isolatedClaudePolicyArgs(agentName string, isolated bool) ([]string, error) {
+func IsolatedClaudePolicyArgs(agentName string, isolated bool) ([]string, error) {
 	if agentName != "claude" || !isolated {
 		return nil, nil
 	}

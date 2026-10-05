@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -63,7 +64,7 @@ func TestSessionRenameCLIAndMCPShareStoreLock(t *testing.T) {
 			switch {
 			case got.err == nil:
 				succeeded++
-			case errors.Is(got.err, errSessionNameInUse):
+			case errors.Is(got.err, eggclient.ErrSessionNameInUse):
 				rejected++
 			default:
 				t.Fatalf("%s rename failed: %v", got.path, got.err)
@@ -77,7 +78,7 @@ func TestSessionRenameCLIAndMCPShareStoreLock(t *testing.T) {
 	}
 	claims := 0
 	for _, id := range []string{"first", "second"} {
-		if readSessionName(filepath.Join(cfg.Dir, "eggs", id)) == "shared" {
+		if eggclient.ReadSessionName(filepath.Join(cfg.Dir, "eggs", id)) == "shared" {
 			claims++
 		}
 	}
@@ -106,7 +107,7 @@ func TestEggLaunchLabelChecksAvailabilityUnderStoreLock(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		// A sealed launch with no policy must fail before spawning a process.
-		_, err := spawnEgg(cfg, "new", "claude", nil, 24, 80, workspace, false, false, false, EggIdentity{SealedFS: true}, 0, spawnEggOpts{Label: "shared"})
+		_, err := eggclient.SpawnEgg(cfg, "new", "claude", nil, 24, 80, workspace, false, false, false, eggclient.EggIdentity{SealedFS: true}, 0, eggclient.SpawnEggOpts{Label: "shared"})
 		done <- err
 	}()
 	select {
@@ -114,7 +115,7 @@ func TestEggLaunchLabelChecksAvailabilityUnderStoreLock(t *testing.T) {
 		t.Fatalf("launch label bypassed the store lock: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
-	if err := writeSessionName(filepath.Join(state, "eggs", "first"), "shared"); err != nil {
+	if err := eggclient.WriteSessionName(filepath.Join(state, "eggs", "first"), "shared"); err != nil {
 		t.Fatal(err)
 	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
@@ -122,7 +123,7 @@ func TestEggLaunchLabelChecksAvailabilityUnderStoreLock(t *testing.T) {
 	}
 	select {
 	case err := <-done:
-		if !errors.Is(err, errSessionNameInUse) {
+		if !errors.Is(err, eggclient.ErrSessionNameInUse) {
 			t.Fatalf("launch did not check name availability under the store lock: %v", err)
 		}
 	case <-time.After(2 * time.Second):
@@ -170,7 +171,7 @@ func TestTunnelSessionRenameHoldsStoreLockThroughUniquenessCheck(t *testing.T) {
 		t.Fatalf("rename bypassed the store lock: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
-	if err := writeSessionName(filepath.Join(cfg.Dir, "eggs", "second"), "shared"); err != nil {
+	if err := eggclient.WriteSessionName(filepath.Join(cfg.Dir, "eggs", "second"), "shared"); err != nil {
 		t.Fatal(err)
 	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
@@ -178,13 +179,13 @@ func TestTunnelSessionRenameHoldsStoreLockThroughUniquenessCheck(t *testing.T) {
 	}
 	select {
 	case err := <-done:
-		if !errors.Is(err, errSessionNameInUse) {
+		if !errors.Is(err, eggclient.ErrSessionNameInUse) {
 			t.Fatalf("rename did not check uniqueness under the store lock: %v", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("rename did not finish after the store lock was released")
 	}
-	if got := readSessionName(filepath.Join(cfg.Dir, "eggs", "first")); got != "one" {
+	if got := eggclient.ReadSessionName(filepath.Join(cfg.Dir, "eggs", "first")); got != "one" {
 		t.Fatalf("rejected rename changed the session name: %q", got)
 	}
 }
@@ -205,7 +206,7 @@ func writeActiveRenameFixture(t *testing.T, cfg *config.Config, sessionID, owner
 			t.Fatal(err)
 		}
 	}
-	if err := writeSessionName(dir, name); err != nil {
+	if err := eggclient.WriteSessionName(dir, name); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -222,23 +223,23 @@ func TestTunnelSessionRenameHidesCrossOwnerCollisionAndAllowsOwnedRename(t *test
 	}
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "member"}
 	err := renameTunnelSession(cfg, req, "alice-session", "shared-name", sessions, []string{workspace})
-	if !errors.Is(err, errSessionNameInUse) {
+	if !errors.Is(err, eggclient.ErrSessionNameInUse) {
 		t.Fatalf("cross-owner collision error = %v", err)
 	}
 	if got := err.Error(); got != "session name is already in use" || strings.Contains(got, "bob-private-session") || strings.Contains(got, "shared-name") {
 		t.Fatalf("cross-owner collision exposed session information: %q", got)
 	}
-	if got := readSessionName(filepath.Join(cfg.Dir, "eggs", "alice-session")); got != "alice-old" {
+	if got := eggclient.ReadSessionName(filepath.Join(cfg.Dir, "eggs", "alice-session")); got != "alice-old" {
 		t.Fatalf("rejected rename changed requester session name to %q", got)
 	}
 
 	if err := renameTunnelSession(cfg, req, "alice-session", "alice-new", sessions, []string{workspace}); err != nil {
 		t.Fatalf("owned session rename failed: %v", err)
 	}
-	if got := readSessionName(filepath.Join(cfg.Dir, "eggs", "alice-session")); got != "alice-new" {
+	if got := eggclient.ReadSessionName(filepath.Join(cfg.Dir, "eggs", "alice-session")); got != "alice-new" {
 		t.Fatalf("owned session name = %q, want alice-new", got)
 	}
-	if got := readSessionName(filepath.Join(cfg.Dir, "eggs", "bob-private-session")); got != "shared-name" {
+	if got := eggclient.ReadSessionName(filepath.Join(cfg.Dir, "eggs", "bob-private-session")); got != "shared-name" {
 		t.Fatalf("other owner's session name changed to %q", got)
 	}
 }

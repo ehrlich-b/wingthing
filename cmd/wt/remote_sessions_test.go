@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+
 	"reflect"
 	"strings"
 	"testing"
@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
@@ -35,7 +36,7 @@ func TestRemoteSessionOutputLimits(t *testing.T) {
 				script += fmt.Sprintf("head -c %d /dev/zero%s\nexec sleep 30\n", stream.limit+1, stream.redirect)
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
-				rows, err := discoverMachineSessions(ctx, cfg, remotepkg.IO{SSHPath: writeFakeRemoteSSH(t, script)})
+				rows, err := eggclient.DiscoverMachineSessions(version, ctx, cfg, remotepkg.IO{SSHPath: writeFakeRemoteSSH(t, script)})
 				if err != nil || len(rows) != 2 || rows[0].ID != "local-session" || rows[1].Machine != "flood" || rows[1].ID != "" {
 					t.Fatalf("overflow rows = %#v, %v", rows, err)
 				}
@@ -51,30 +52,15 @@ func TestRemoteSessionOutputLimits(t *testing.T) {
 	}
 }
 
-func TestRemoteSessionBufferBoundsLargeWrites(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	buffer := remoteSessionBuffer{limit: 64 << 10, stream: "stderr", cancel: cancel}
-	input := bytes.Repeat([]byte("x"), buffer.limit+1)
-	// io.Copy must not find a promoted bytes.Buffer.ReadFrom that bypasses Write.
-	n, err := io.Copy(&buffer, bytes.NewReader(input))
-	if n != int64(buffer.limit) || err == nil || buffer.buffer.Len() != buffer.limit || ctx.Err() == nil {
-		t.Fatalf("copy = %d, %v; buffer length = %d; context = %v", n, err, buffer.buffer.Len(), ctx.Err())
-	}
-	if n, err := buffer.Write(input); n != 0 || err == nil || buffer.buffer.Len() != buffer.limit {
-		t.Fatalf("write after overflow = %d, %v; length = %d", n, err, buffer.buffer.Len())
-	}
-}
-
 func TestMachineSessionsEscapeControlsOnlyForHumanOutput(t *testing.T) {
 	controls := "\n\r\t\x1b\x00\x07\x08\x0b\x0c\x7f\u0085\u009b"
 	escaped := `\n\r\t\x1b\x00\a\b\v\f\x7f\u0085\u009b`
-	rows := []machineSession{
-		{Machine: "machine" + controls, localSession: localSession{
+	rows := []eggclient.MachineSession{
+		{Machine: "machine" + controls, LocalSession: eggclient.LocalSession{
 			ID: "id" + controls, Name: "name" + controls, Kind: "kind" + controls,
 			Agent: "agent" + controls, Status: "status" + controls, Isolation: "isolation" + controls, CWD: "/cwd" + controls,
 		}},
-		{Machine: "command-machine", localSession: localSession{ID: "command-id", Kind: "command", Command: "command" + controls}},
+		{Machine: "command-machine", LocalSession: eggclient.LocalSession{ID: "command-id", Kind: "command", Command: "command" + controls}},
 		{Machine: "diagnostic-machine" + controls, Error: "diagnostic" + controls},
 	}
 	var human bytes.Buffer
@@ -98,7 +84,7 @@ func TestMachineSessionsEscapeControlsOnlyForHumanOutput(t *testing.T) {
 	if err := writeMachineSessions(&output, rows, true); err != nil {
 		t.Fatal(err)
 	}
-	var decoded []machineSession
+	var decoded []eggclient.MachineSession
 	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil || !reflect.DeepEqual(decoded, rows) {
 		t.Fatalf("JSON changed remote fields: %#v, %v", decoded, err)
 	}

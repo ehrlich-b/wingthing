@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
@@ -145,10 +146,10 @@ func (h *opusWakeHarness) root(t *testing.T, db *store.Store, id string, childSt
 
 func (h *opusWakeHarness) runtime() conversationWakeRuntime {
 	return conversationWakeRuntime{Now: time.Now,
-		Read: func(ctx context.Context, s localSession) (egg.SessionView, error) {
+		Read: func(ctx context.Context, s eggclient.LocalSession) (egg.SessionView, error) {
 			return h.parents[s.ID].read(ctx, 0, 1)
 		},
-		Prompt: func(ctx context.Context, s localSession, id, text string) (egg.SessionPromptResult, error) {
+		Prompt: func(ctx context.Context, s eggclient.LocalSession, id, text string) (egg.SessionPromptResult, error) {
 			h.mu.Lock()
 			h.prompts = append(h.prompts, id)
 			after := h.afterPrompt
@@ -251,7 +252,7 @@ func (h *opusWakeHarness) appendHook(t *testing.T, session, state string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	line, _ := json.Marshal(egg.SessionEvent{Sequence: int64(strings.Count(string(data), "\n") + 1), Type: "native-fixture", Source: "claude_hook", State: state, ProviderSessionID: readEggMetaValues(dir)["provider_session_id"]})
+	line, _ := json.Marshal(egg.SessionEvent{Sequence: int64(strings.Count(string(data), "\n") + 1), Type: "native-fixture", Source: "claude_hook", State: state, ProviderSessionID: eggclient.ReadEggMetaValues(dir)["provider_session_id"]})
 	if err = os.WriteFile(filepath.Join(dir, "lifecycle.jsonl"), append(append(data, line...), '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}

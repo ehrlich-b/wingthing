@@ -1,4 +1,4 @@
-package main
+package eggclient
 
 import (
 	"errors"
@@ -15,7 +15,7 @@ const failedEggLogBytes = 64 << 10
 
 // Preserve a bounded startup tail before reaping an abandoned child. No
 // environment, credential files or provider transcript is read here.
-func preserveEggFailure(dir string, failure error) (string, error) {
+func PreserveEggFailure(dir string, failure error) (string, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return "", err

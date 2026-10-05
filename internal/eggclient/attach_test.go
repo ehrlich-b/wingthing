@@ -1,4 +1,4 @@
-package main
+package eggclient
 
 import (
 	"bytes"
@@ -33,11 +33,11 @@ func TestAttachInputFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filter := &attachInputFilter{}
+			filter := &AttachInputFilter{}
 			var got []byte
 			var detached bool
 			for _, chunk := range tt.chunks {
-				output, detach := filter.filter(chunk)
+				output, detach := filter.Filter(chunk)
 				got = append(got, output...)
 				if detach {
 					detached = true
@@ -152,12 +152,12 @@ func TestAttachReportsInputTransportFailure(t *testing.T) {
 
 func TestValidateSessionID(t *testing.T) {
 	for _, valid := range []string{"deadbeef", "session-1", "agent_one", "a.b"} {
-		if err := validateSessionID(valid); err != nil {
+		if err := ValidateSessionID(valid); err != nil {
 			t.Errorf("validateSessionID(%q): %v", valid, err)
 		}
 	}
 	for _, invalid := range []string{"", ".", "..", "../egg", "a/b", `a\b`, "two words", "x\ncommand", strings.Repeat("a", 129)} {
-		if err := validateSessionID(invalid); err == nil {
+		if err := ValidateSessionID(invalid); err == nil {
 			t.Errorf("validateSessionID(%q) unexpectedly succeeded", invalid)
 		}
 	}

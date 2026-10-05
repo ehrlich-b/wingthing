@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
@@ -48,7 +49,7 @@ func TestSessionPSLocalFormatGolden(t *testing.T) {
 					}
 					if active {
 						seedRemoteListSession(t, cfg, "local-session", "")
-						if err := writeSessionName(filepath.Join(cfg.Dir, "eggs", "local-session"), "review"); err != nil {
+						if err := eggclient.WriteSessionName(filepath.Join(cfg.Dir, "eggs", "local-session"), "review"); err != nil {
 							t.Fatal(err)
 						}
 					}

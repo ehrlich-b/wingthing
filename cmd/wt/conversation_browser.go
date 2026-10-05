@@ -9,19 +9,12 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 var browserConversationAdmission = newMCPAdmissionState()
-
-func sessionLifecycleSummary(ctx context.Context, cfg *config.Config, id string) map[string]any {
-	view, err := readSessionLifecycleView(ctx, cfg, id, 0, 1)
-	if err != nil {
-		return nil
-	}
-	return map[string]any{"state": view.State, "status": view.Status, "state_source": view.StateSource, "ready": view.Ready, "process_alive": view.ProcessAlive, "head_cursor": view.HeadCursor}
-}
 
 // browserSessionControl is a narrow adapter over the same typed MCP handlers.
 // Authentication/passkey/purpose checks occur before this dispatcher; artifact
@@ -41,7 +34,7 @@ func browserSessionControl(ctx context.Context, cfg *config.Config, wc *config.W
 	paths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, req.SenderEmail, req.SenderOrgRole, home))
 	server := &localMCPServer{cfg: cfg, logs: os.Stderr, principal: roostSessionPrincipal(req.SenderUserID), actor: "browser", surface: control.SurfaceHTTPMCP,
 		grants: grantSet(defaultDirectMCPGrants), maxSessions: defaultDirectMCPMaxSessions, maxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour, admission: browserConversationAdmission,
-		allowedPaths: paths, enforcePathBounds: len(paths) > 0 || wingpolicy.IsMemberFiltered(req), identity: EggIdentity{UserID: req.SenderUserID, Email: req.SenderEmail, OrgWing: wc.Org != "", SharedHost: sharedHost, SealedFS: sharedHost, AllowedPaths: paths}}
+		allowedPaths: paths, enforcePathBounds: len(paths) > 0 || wingpolicy.IsMemberFiltered(req), identity: eggclient.EggIdentity{UserID: req.SenderUserID, Email: req.SenderEmail, OrgWing: wc.Org != "", SharedHost: sharedHost, SealedFS: sharedHost, AllowedPaths: paths}}
 	if operation == "agent_start" || operation == "conversation_checkpoint" || operation == "conversation_wake" {
 		if wc.Org != "" || sharedHost {
 			return nil, errors.New("personal conversation mutations are unavailable on organization or shared wings")
@@ -63,21 +56,21 @@ func browserSessionControl(ctx context.Context, cfg *config.Config, wc *config.W
 		if err := json.Unmarshal(arguments, &selector); err != nil {
 			return nil, err
 		}
-		if err := validateSessionID(selector.Session); err != nil {
+		if err := eggclient.ValidateSessionID(selector.Session); err != nil {
 			return nil, err
 		}
 		dir := filepath.Join(cfg.Dir, "eggs", selector.Session)
-		if _, err := os.Stat(dir); err != nil || !canAccessSessionArtifact(req, dir, paths) {
+		if _, err := os.Stat(dir); err != nil || !eggclient.CanAccessSessionArtifact(req, dir, paths) {
 			return nil, errors.New("session not found or not owned by caller")
 		}
 		if operation == "session_prompt" || operation == "terminal_send" {
-			if !wingpolicy.CanAttachSession(req.SenderUserID, req.SenderOrgRole, readEggOwner(dir)) {
+			if !wingpolicy.CanAttachSession(req.SenderUserID, req.SenderOrgRole, eggclient.ReadEggOwner(dir)) {
 				return nil, errors.New("session not found or not owned by caller")
 			}
 		}
 		// Legacy browser sessions have no MCP principal. Preserve access only
 		// after the current browser ownership and workspace checks above.
-		server.principal = readSessionPrincipal(dir)
+		server.principal = eggclient.ReadSessionPrincipal(dir)
 		if server.principal == "" {
 			server.principal = "default"
 		}

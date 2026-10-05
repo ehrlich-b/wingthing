@@ -17,6 +17,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
@@ -42,7 +43,7 @@ func opusExecutionEgg(t *testing.T, cfg *config.Config, session, provider, owner
 	if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSessionPrincipal(dir, owner); err != nil {
+	if err := eggclient.WriteSessionPrincipal(dir, owner); err != nil {
 		t.Fatal(err)
 	}
 	opusAppend(t, dir, events...)
@@ -94,12 +95,12 @@ func opusTranscriptUser(provider, text string) egg.SessionEvent {
 }
 
 // opusNativeReader is the production journal reader for one owned execution.
-func opusNativeReader(cfg *config.Config, session localSession) func(context.Context, int64, int) (egg.SessionView, error) {
+func opusNativeReader(cfg *config.Config, session eggclient.LocalSession) func(context.Context, int64, int) (egg.SessionView, error) {
 	return func(ctx context.Context, after int64, limit int) (egg.SessionView, error) {
 		if err := ctx.Err(); err != nil {
 			return egg.SessionView{}, err
 		}
-		return lifecycleViewForSession(cfg, session, after, limit)
+		return eggclient.LifecycleViewForSession(cfg, session, after, limit)
 	}
 }
 
@@ -405,7 +406,7 @@ func TestOpusCoordinatorWakeOutboxKeepsUnknownBindingAcrossParentResumeAndProofG
 	now := time.Now()
 	writerHeld, echo, noInput := false, false, 0
 	runtime := conversationWakeRuntime{Read: nativeConversationWakeRuntime(cfg).Read, Now: func() time.Time { return now },
-		Prompt: func(ctx context.Context, session localSession, request, text string) (egg.SessionPromptResult, error) {
+		Prompt: func(ctx context.Context, session eggclient.LocalSession, request, text string) (egg.SessionPromptResult, error) {
 			prompts = append(prompts, attempt{session.ID, request, text})
 			dir := filepath.Join(cfg.Dir, "eggs", session.ID)
 			return egg.SubmitSessionPrompt(ctx, dir, egg.SessionPromptOptions{RequestID: request, Input: text, Timeout: 100 * time.Millisecond, Read: opusNativeReader(cfg, session),
@@ -416,7 +417,7 @@ func TestOpusCoordinatorWakeOutboxKeepsUnknownBindingAcrossParentResumeAndProofG
 					}
 					transport = append(transport, attempt{session.ID, request, input})
 					if echo {
-						provider := readEggMetaValues(dir)["provider_session_id"]
+						provider := eggclient.ReadEggMetaValues(dir)["provider_session_id"]
 						opusAppend(t, dir, opusHook("prompt_submitted", "working", provider), opusTranscriptUser(provider, input))
 					}
 					return egg.PromptDelivery{BytesEnqueued: len(input)}, nil
@@ -682,7 +683,7 @@ func TestOpusCoordinatorMissingNativeHistoryIsReportedUnavailableNotCompleted(t 
 	// Unavailable evidence queues no wake. The root is never prompt-ready
 	// here, so a queued wake stays inspectable without any send.
 	runtime := conversationWakeRuntime{Read: nativeConversationWakeRuntime(cfg).Read, Now: time.Now,
-		Prompt: func(context.Context, localSession, string, string) (egg.SessionPromptResult, error) {
+		Prompt: func(context.Context, eggclient.LocalSession, string, string) (egg.SessionPromptResult, error) {
 			t.Error("unready parent prompted")
 			return egg.SessionPromptResult{}, errors.New("unexpected prompt")
 		}}

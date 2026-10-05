@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"sort"
+
 	"text/tabwriter"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/spf13/cobra"
 )
@@ -56,7 +57,7 @@ func remoteCmd() *cobra.Command {
 			if _, err := fmt.Fprintln(w, "NAME\tSSH_TARGET\tWINGTHING_DIR"); err != nil {
 				return err
 			}
-			for _, name := range sortedRemoteNames(remotes) {
+			for _, name := range eggclient.SortedRemoteNames(remotes) {
 				remote := remotes[name]
 				if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", name, remote.SSHTarget, remote.WingthingDir); err != nil {
 					return err
@@ -86,13 +87,4 @@ func remoteCmd() *cobra.Command {
 	}
 	cmd.AddCommand(add, ls, rm)
 	return cmd
-}
-
-func sortedRemoteNames(remotes map[string]config.Remote) []string {
-	names := make([]string, 0, len(remotes))
-	for name := range remotes {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }

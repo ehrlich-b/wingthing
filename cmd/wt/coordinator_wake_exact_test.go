@@ -13,6 +13,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
@@ -50,7 +51,7 @@ func (w *wakeExactSpy) nativeView(id string, after int64, limit int) egg.Session
 	defer w.mu.Unlock()
 	provider, ok := w.view[id]
 	if !ok {
-		provider = readEggMetaValues(filepath.Join(w.cfg.Dir, "eggs", id))["provider_session_id"]
+		provider = eggclient.ReadEggMetaValues(filepath.Join(w.cfg.Dir, "eggs", id))["provider_session_id"]
 	}
 	v := egg.SessionView{SessionID: id, Agent: "claude", ProviderSessionID: provider, State: "idle", StateSource: "claude_hook", Ready: true, ProcessAlive: true, Cursor: after, HeadCursor: 1, Events: []egg.SessionEvent{}}
 	for _, e := range w.events[id] {
@@ -70,7 +71,7 @@ func (w *wakeExactSpy) nativeView(id string, after int64, limit int) egg.Session
 
 // publishLocked appends an exact native user-text record to one execution.
 func (w *wakeExactSpy) publishLocked(id, text string) {
-	provider := readEggMetaValues(filepath.Join(w.cfg.Dir, "eggs", id))["provider_session_id"]
+	provider := eggclient.ReadEggMetaValues(filepath.Join(w.cfg.Dir, "eggs", id))["provider_session_id"]
 	raw, _ := json.Marshal(map[string]any{"type": "user", "sessionId": provider, "message": map[string]any{"role": "user", "content": text}})
 	w.events[id] = append(w.events[id], egg.SessionEvent{Sequence: int64(len(w.events[id])) + 2, Type: "message", Source: "claude_transcript", ProviderSessionID: provider, Raw: raw})
 }
@@ -101,13 +102,13 @@ func (w *wakeExactSpy) calls() (reads, prompts, sends []string) {
 
 func (w *wakeExactSpy) runtime() conversationWakeRuntime {
 	return conversationWakeRuntime{Now: time.Now,
-		Read: func(_ context.Context, s localSession) (egg.SessionView, error) {
+		Read: func(_ context.Context, s eggclient.LocalSession) (egg.SessionView, error) {
 			w.mu.Lock()
 			w.reads = append(w.reads, s.ID)
 			w.mu.Unlock()
 			return w.nativeView(s.ID, 0, 1), nil
 		},
-		Prompt: func(ctx context.Context, s localSession, id, text string) (egg.SessionPromptResult, error) {
+		Prompt: func(ctx context.Context, s eggclient.LocalSession, id, text string) (egg.SessionPromptResult, error) {
 			w.mu.Lock()
 			w.prompts = append(w.prompts, s.ID+":"+id)
 			w.mu.Unlock()
@@ -145,7 +146,7 @@ func wakeExactEgg(t *testing.T, cfg *config.Config, id, owner, provider string) 
 	if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSessionPrincipal(dir, owner); err != nil {
+	if err := eggclient.WriteSessionPrincipal(dir, owner); err != nil {
 		t.Fatal(err)
 	}
 	line, _ := json.Marshal(egg.SessionEvent{Sequence: 1, Type: "native-fixture", Source: "claude_hook", State: "idle", ProviderSessionID: provider})
@@ -294,7 +295,7 @@ func wakeExactAlias(t *testing.T, cfg *config.Config, kind string) string {
 	case "name_alias":
 		const other = "b0b0b0b0b0b0b0b0"
 		dir := wakeExactEgg(t, cfg, other, "owner", wakeExactProvider)
-		if err := writeSessionName(dir, wakeExactLegacy); err != nil {
+		if err := eggclient.WriteSessionName(dir, wakeExactLegacy); err != nil {
 			t.Fatal(err)
 		}
 		return other
@@ -391,7 +392,7 @@ func TestWakeExactForeignOrUnrecordedExecutionFailsClosed(t *testing.T) {
 			untouched := wakeExactLegacy
 			switch kind {
 			case "foreign_principal":
-				if err := writeSessionPrincipal(legacy, "other"); err != nil {
+				if err := eggclient.WriteSessionPrincipal(legacy, "other"); err != nil {
 					t.Fatal(err)
 				}
 			case "foreign_roost_owner":
@@ -576,7 +577,7 @@ func TestWakeExactBindingWithoutReservationOnRetiredTargetStaysPending(t *testin
 func TestWakeExactResolverRejectsHumanSelectorsAndUnsafeIDs(t *testing.T) {
 	cfg := &config.Config{Dir: t.TempDir()}
 	root := wakeExactTree(t, cfg, wakeExactLegacy)
-	if err := writeSessionName(filepath.Join(cfg.Dir, "eggs", wakeExactLegacy), "parent"); err != nil {
+	if err := eggclient.WriteSessionName(filepath.Join(cfg.Dir, "eggs", wakeExactLegacy), "parent"); err != nil {
 		t.Fatal(err)
 	}
 	s := &localMCPServer{cfg: cfg, principal: "owner"}

@@ -1,4 +1,4 @@
-package main
+package eggclient
 
 import (
 	"errors"
@@ -18,11 +18,11 @@ func TestFailedEggDiagnosticBoundAndRetention(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	path, err := preserveEggFailure(dir, errors.New("loopback bind denied"))
+	path, err := PreserveEggFailure(dir, errors.New("loopback bind denied"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cleanEggDir(dir)
+	CleanEggDir(dir)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestPromptReservationsSurviveWingReaping(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			cleanEggDir(dir)
+			CleanEggDir(dir)
 			for _, artifact := range []string{name, "egg.owner", "session.principal", "egg.meta"} {
 				if _, err := os.Stat(filepath.Join(dir, artifact)); err != nil {
 					t.Fatalf("lost %s: %v", artifact, err)

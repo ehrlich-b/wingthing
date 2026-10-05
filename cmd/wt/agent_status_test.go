@@ -17,6 +17,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 )
 
 // The test executable doubles as a fake agent binary. It receives the actual
@@ -157,7 +158,7 @@ func TestAgentStatusSessionPSAndMCPFromFakeAgentHooks(t *testing.T) {
 					t.Fatalf("fake agent failed to publish %s: %v", step.event, ack.Err())
 				}
 				data := captureAgentStatusPS(t, true)
-				var sessions []localSession
+				var sessions []eggclient.LocalSession
 				if err := json.Unmarshal(data, &sessions); err != nil || len(sessions) != 1 || sessions[0].Status != step.status || sessions[0].Agent != agent {
 					t.Fatalf("session ps --json after %s: %s, %v", step.event, data, err)
 				}
@@ -167,45 +168,13 @@ func TestAgentStatusSessionPSAndMCPFromFakeAgentHooks(t *testing.T) {
 				}
 				server := &localMCPServer{cfg: cfg}
 				listed, err := server.toolTerminalList(ctx, json.RawMessage(`{}`))
-				if err != nil || len(listed["sessions"].([]localSession)) != 1 || listed["sessions"].([]localSession)[0].Status != step.status {
+				if err != nil || len(listed["sessions"].([]eggclient.LocalSession)) != 1 || listed["sessions"].([]eggclient.LocalSession)[0].Status != step.status {
 					t.Fatalf("MCP status: %v, %v", listed, err)
 				}
-				if summary := sessionLifecycleSummary(ctx, cfg, id); summary["status"] != step.status {
+				if summary := eggclient.SessionLifecycleSummary(ctx, cfg, id); summary["status"] != step.status {
 					t.Fatalf("web summary disagrees: %v", summary)
 				}
 			}
 		})
-	}
-}
-
-func TestAgentStatusLegacyEggAndBrokenJournalRemainListable(t *testing.T) {
-	root, home := t.TempDir(), t.TempDir()
-	cfg := &config.Config{Dir: root}
-	for _, id := range []string{"old-egg", "broken-journal"} {
-		dir := filepath.Join(root, "eggs", id)
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			t.Fatal(err)
-		}
-		for name, data := range map[string]string{
-			"egg.pid": strconv.Itoa(os.Getpid()), "egg.meta": "agent=claude\nprovider_home=" + home + "\nprovider_session_id=provider-exact\n",
-		} {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if id == "broken-journal" {
-			if err := os.WriteFile(filepath.Join(dir, "lifecycle.jsonl"), []byte("invalid\n"), 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	sessions, err := discoverActiveSessions(context.Background(), cfg)
-	if err != nil || len(sessions) != 2 {
-		t.Fatalf("legacy discovery failed: %v, %v", sessions, err)
-	}
-	for _, session := range sessions {
-		if session.Status != "unknown" {
-			t.Fatalf("old egg invented state: %+v", session)
-		}
 	}
 }

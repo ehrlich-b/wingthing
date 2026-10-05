@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	pionwebrtc "github.com/pion/webrtc/v4"
@@ -69,7 +70,7 @@ func connectMCPCmd() *cobra.Command {
 			if actor == "" {
 				actor = "default"
 			}
-			if err := validateSessionName(actor); err != nil {
+			if err := eggclient.ValidateSessionName(actor); err != nil {
 				return fmt.Errorf("invalid MCP client name: %w", err)
 			}
 			tokenStore := auth.NewTokenStore(cfg.Dir)

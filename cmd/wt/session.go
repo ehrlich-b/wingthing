@@ -15,6 +15,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
@@ -56,29 +57,29 @@ func sessionPSCmd() *cobra.Command {
 				if !jsonFlag {
 					return fmt.Errorf("--remote-inventory requires --json")
 				}
-				sessions, err := discoverActiveSessions(cmd.Context(), cfg)
+				sessions, err := eggclient.DiscoverActiveSessions(cmd.Context(), cfg)
 				if err != nil {
 					return err
 				}
 				if sessions == nil {
-					sessions = []localSession{}
+					sessions = []eggclient.LocalSession{}
 				}
 				encoder := json.NewEncoder(cmd.OutOrStdout())
 				encoder.SetIndent("", "  ")
-				return encoder.Encode(remoteSessionInventory{Version: version, ContractVersion: remoteSessionContractVersion, Sessions: sessions})
+				return encoder.Encode(eggclient.RemoteSessionInventory{Version: version, ContractVersion: eggclient.RemoteSessionContractVersion, Sessions: sessions})
 			}
 			remotes, err := config.LoadRemotes(cfg.Dir)
 			if err != nil {
 				return err
 			}
 			if len(remotes) == 0 {
-				sessions, err := discoverActiveSessions(cmd.Context(), cfg)
+				sessions, err := eggclient.DiscoverActiveSessions(cmd.Context(), cfg)
 				if err != nil {
 					return err
 				}
 				return writeLocalSessions(cmd.OutOrStdout(), sessions, jsonFlag)
 			}
-			rows, err := discoverMachineSessions(cmd.Context(), cfg, remoteStreams(cmd.Context()))
+			rows, err := eggclient.DiscoverMachineSessions(version, cmd.Context(), cfg, remoteStreams(cmd.Context()))
 			if err != nil {
 				return err
 			}
@@ -102,7 +103,7 @@ func sessionReadCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			session, snapshot, err := readSessionSnapshot(cmd.Context(), cfg, args[0])
+			session, snapshot, err := eggclient.ReadSessionSnapshot(cmd.Context(), cfg, args[0])
 			if err != nil {
 				return err
 			}
@@ -149,7 +150,7 @@ func sessionSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			session, err := sendSessionInput(cmd.Context(), cfg, args[0], input, enterFlag)
+			session, err := eggclient.SendSessionInput(cmd.Context(), cfg, args[0], input, enterFlag)
 			if err != nil {
 				return err
 			}
@@ -197,7 +198,7 @@ func sessionWaitCmd() *cobra.Command {
 			}
 
 			if containsFlag != "" {
-				session, waitErr := waitForSessionText(waitCtx, cfg, args[0], containsFlag)
+				session, waitErr := eggclient.WaitForSessionText(waitCtx, cfg, args[0], containsFlag)
 				if waitErr != nil {
 					return waitErr
 				}
@@ -211,7 +212,7 @@ func sessionWaitCmd() *cobra.Command {
 			if idleFlag <= 0 {
 				idleFlag = 2 * time.Second
 			}
-			session, ec, err := openLocalEgg(waitCtx, cfg, args[0])
+			session, ec, err := eggclient.OpenLocalEgg(waitCtx, cfg, args[0])
 			if err != nil {
 				return err
 			}
@@ -230,7 +231,7 @@ func sessionWaitCmd() *cobra.Command {
 					if jsonFlag {
 						return writeSessionJSON(map[string]any{"session": session.ID, "condition": "idle", "idle_seconds": statusResponse.IdleSeconds})
 					}
-					fmt.Printf("session %s idle for %s\n", session.ID, humanDuration(time.Duration(statusResponse.IdleSeconds)*time.Second))
+					fmt.Printf("session %s idle for %s\n", session.ID, eggclient.HumanDuration(time.Duration(statusResponse.IdleSeconds)*time.Second))
 					return nil
 				}
 				select {
@@ -258,26 +259,26 @@ func sessionRenameCmd() *cobra.Command {
 			if args[1] == "" {
 				return fmt.Errorf("session name cannot be empty")
 			}
-			if err := validateSessionName(args[1]); err != nil {
+			if err := eggclient.ValidateSessionName(args[1]); err != nil {
 				return err
 			}
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			session, err := resolveActiveSession(cmd.Context(), cfg, args[0])
+			session, err := eggclient.ResolveActiveSession(cmd.Context(), cfg, args[0])
 			if err != nil {
 				return err
 			}
-			lock, err := acquireSessionNameLock(cfg)
+			lock, err := eggclient.AcquireSessionNameLock(cfg)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = lock.Close() }()
-			if err := ensureSessionNameAvailable(cfg, args[1], session.ID); err != nil {
+			if err := eggclient.EnsureSessionNameAvailable(cfg, args[1], session.ID); err != nil {
 				return err
 			}
-			if err := writeSessionName(filepath.Join(cfg.Dir, "eggs", session.ID), args[1]); err != nil {
+			if err := eggclient.WriteSessionName(filepath.Join(cfg.Dir, "eggs", session.ID), args[1]); err != nil {
 				return err
 			}
 			if jsonFlag {
@@ -303,7 +304,7 @@ func sessionKillCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			session, ec, err := openLocalEgg(cmd.Context(), cfg, args[0])
+			session, ec, err := eggclient.OpenLocalEgg(cmd.Context(), cfg, args[0])
 			if err != nil {
 				return err
 			}
@@ -481,7 +482,7 @@ func sessionListCmd() *cobra.Command {
 					continue
 				}
 
-				agent, cwd := readEggMeta(dir)
+				agent, cwd := eggclient.ReadEggMeta(dir)
 				metaPath := filepath.Join(dir, "chat.meta")
 				if metaData, err := os.ReadFile(metaPath); err == nil {
 					meta := egg.ParseChatMeta(string(metaData))
@@ -499,7 +500,7 @@ func sessionListCmd() *cobra.Command {
 				info, _ := os.Stat(filepath.Join(dir, "chat.jsonl.gz"))
 				size := ""
 				if info != nil {
-					size = humanBytes(info.Size())
+					size = eggclient.HumanBytes(info.Size())
 				}
 
 				fmt.Printf("  %s  agent=%s  chat=%s", e.Name(), agent, size)

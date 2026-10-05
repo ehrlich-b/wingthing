@@ -11,6 +11,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
@@ -37,7 +38,7 @@ type providerWriteModel struct {
 	Regions  []providerWriteRegion `json:"regions"`
 }
 
-func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, cwd, sessionID string, identity EggIdentity) (providerWriteModel, error) {
+func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, cwd, sessionID string, identity eggclient.EggIdentity) (providerWriteModel, error) {
 	var model providerWriteModel
 	if runtime.GOOS != "darwin" {
 		return model, fmt.Errorf("provider write protection is modeled only for the macOS Seatbelt profile, not %s", runtime.GOOS)
@@ -56,7 +57,7 @@ func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, c
 	// Same per-user data home selection as spawnEgg/egg runtime (rc.UserHome).
 	dataHome := home
 	if config.Channel() == "preview" || identity.UserID != "" && (identity.OrgWing || identity.SharedHost) {
-		dataHome = effectiveSessionHome(cfg, identity)
+		dataHome = eggclient.EffectiveSessionHome(cfg, identity)
 	}
 	resolved := make([]string, 0, len(eggCfg.FS))
 	for _, entry := range eggCfg.FS {

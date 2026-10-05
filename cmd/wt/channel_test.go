@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 )
 
 func TestPreviewChannelGuardPrecedesStateAndPreservesAgentArguments(t *testing.T) {
@@ -24,7 +25,7 @@ func TestPreviewChannelGuardPrecedesStateAndPreservesAgentArguments(t *testing.T
 	if err != nil || strings.Join(args, " ") != "tool-call native --expected-channel stable" {
 		t.Fatal("native tool argv changed")
 	}
-	if eggPidMatchesSession(os.Getpid(), "fixture") {
+	if eggclient.EggPidMatchesSession(os.Getpid(), "fixture") {
 		t.Fatal("preview accepted unrelated live process as orphan egg")
 	}
 }
@@ -35,14 +36,14 @@ func TestPreviewAgentHomeAndCredentialsDoNotReuseHost(t *testing.T) {
 	t.Cleanup(func() { config.ReleaseChannel = old })
 	state := t.TempDir()
 	cfg := &config.Config{Dir: state}
-	home := effectiveSessionHome(cfg, EggIdentity{})
+	home := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{})
 	if home != config.PreviewProviderHome(state) {
 		t.Fatal(home)
 	}
 	t.Setenv("ANTHROPIC_API_KEY", "private-fixture-never-copy")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "private-fixture-never-copy")
 	t.Setenv("CODEX_HOME", "/host/provider/config")
-	if err := setupAPIKeyHelper("claude", map[string]string{}, home); err != nil {
+	if err := eggclient.SetupAPIKeyHelper("claude", map[string]string{}, home); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(home); !os.IsNotExist(err) {
@@ -107,7 +108,7 @@ func TestPreviewDirectProviderNamespacesAndStableEnvironment(t *testing.T) {
 	}
 	// The interactive Claude path already uses the documented Keychain namespace.
 	interactive := map[string]string{"CLAUDE_CONFIG_DIR": foreign}
-	if err := prepareIsolatedClaudeConfig(home, interactive); err != nil {
+	if err := eggclient.PrepareIsolatedClaudeConfig(home, interactive); err != nil {
 		t.Fatal(err)
 	}
 	if interactive["CLAUDE_CONFIG_DIR"] != filepath.Join(home, ".claude") {

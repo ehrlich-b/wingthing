@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
+
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +15,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -35,7 +36,7 @@ func fixtureConversation(t *testing.T, db *store.Store, cfg *config.Config, id, 
 	if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSessionPrincipal(dir, owner); err != nil {
+	if err := eggclient.WriteSessionPrincipal(dir, owner); err != nil {
 		t.Fatal(err)
 	}
 	var journal bytes.Buffer
@@ -112,7 +113,7 @@ func TestBoundConversationBootstrapPreservesBrowserOwnerAndRejectsOtherTrees(t *
 	root := fixtureConversation(t, db, cfg, "root", "", owner, "idle")
 	unrelated := fixtureConversation(t, db, cfg, "other", "", owner, "idle")
 	dir := filepath.Join(cfg.Dir, "eggs", root.SessionID)
-	if err := writeEggOwner(dir, user, "fixture@example.invalid"); err != nil {
+	if err := eggclient.WriteEggOwner(dir, user, "fixture@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	server := &localMCPServer{cfg: cfg, principal: owner, boundConversation: root.ID, logs: &bytes.Buffer{}}
@@ -267,26 +268,5 @@ func TestConversationDirectMCPPreservesConfiguredClientAndOwner(t *testing.T) {
 	browser, err := launcher.toolConversationBootstrap(json.RawMessage(`{"conversation_id":"root"}`))
 	if err != nil || browser["mcp_client"] != "alice" {
 		t.Fatalf("browser bootstrap identity changed: %v %v", browser, err)
-	}
-}
-
-func TestLifecycleJournalSurvivesWingReaping(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "egg")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"egg.meta", "egg.owner", "egg.pid", "egg.token", "lifecycle.jsonl"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("fixture"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cleanEggDir(dir)
-	for _, name := range []string{"egg.meta", "egg.owner", "lifecycle.jsonl"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
-			t.Fatalf("lost %s: %v", name, err)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(dir, "egg.pid")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("runtime pid retained: %v", err)
 	}
 }

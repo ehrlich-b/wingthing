@@ -11,6 +11,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"golang.org/x/sys/unix"
@@ -28,30 +29,30 @@ import (
 //
 // A missing directory retains the binding: losing the execution's artifacts
 // cannot prove that input was never attempted.
-func (s *localMCPServer) resolveExactWakeTarget(db *store.Store, c *store.Conversation, id string) (localSession, error) {
-	if err := validateSessionID(id); err != nil {
-		return localSession{}, errors.New("wake target is not an exact execution ID")
+func (s *localMCPServer) resolveExactWakeTarget(db *store.Store, c *store.Conversation, id string) (eggclient.LocalSession, error) {
+	if err := eggclient.ValidateSessionID(id); err != nil {
+		return eggclient.LocalSession{}, errors.New("wake target is not an exact execution ID")
 	}
 	executions, err := db.ConversationExecutions(c.ID)
 	if err != nil {
-		return localSession{}, err
+		return eggclient.LocalSession{}, err
 	}
 	if !slices.Contains(executions, id) {
-		return localSession{}, errors.New("wake target is not a recorded execution of this root conversation")
+		return eggclient.LocalSession{}, errors.New("wake target is not a recorded execution of this root conversation")
 	}
 	dir := filepath.Join(s.cfg.Dir, "eggs", id)
 	info, err := os.Lstat(dir)
 	if errors.Is(err, os.ErrNotExist) || (err == nil && !info.IsDir()) {
-		return localSession{}, errors.New("wake target execution not found; its original binding is retained")
+		return eggclient.LocalSession{}, errors.New("wake target execution not found; its original binding is retained")
 	}
 	if err != nil {
-		return localSession{}, err
+		return eggclient.LocalSession{}, err
 	}
-	meta := readEggMetaValues(dir)
-	pid, _ := readAliveEggPID(dir)
-	session := localSession{ID: id, Name: readSessionName(dir), Principal: readSessionPrincipal(dir), Agent: meta["agent"], Kind: meta["kind"], CWD: meta["cwd"], PID: pid}
+	meta := eggclient.ReadEggMetaValues(dir)
+	pid, _ := eggclient.ReadAliveEggPID(dir)
+	session := eggclient.LocalSession{ID: id, Name: eggclient.ReadSessionName(dir), Principal: eggclient.ReadSessionPrincipal(dir), Agent: meta["agent"], Kind: meta["kind"], CWD: meta["cwd"], PID: pid}
 	if !s.ownsSession(session) || (s.enforcePathBounds && (len(s.allowedPaths) == 0 || !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(session.CWD), s.allowedPaths))) {
-		return localSession{}, errors.New("session not found or not owned by caller")
+		return eggclient.LocalSession{}, errors.New("session not found or not owned by caller")
 	}
 	return session, nil
 }

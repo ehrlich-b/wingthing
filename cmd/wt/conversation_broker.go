@@ -39,6 +39,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
@@ -101,7 +102,7 @@ func conversationBrokerEnabled(wc *config.WingConfig) bool {
 	return config.Channel() == "preview" || config.Channel() == "stable" && wc != nil && wc.Conversations == config.ConversationsEnabled
 }
 
-func defaultConversationBrokerProtection(cfg *config.Config, eggCfg *egg.EggConfig, agentName, cwd, sessionID string, identity EggIdentity, targets []string) error {
+func defaultConversationBrokerProtection(cfg *config.Config, eggCfg *egg.EggConfig, agentName, cwd, sessionID string, identity eggclient.EggIdentity, targets []string) error {
 	if err := brokerProviderHomeOutsideState(cfg); err != nil {
 		return err
 	}
@@ -156,7 +157,7 @@ func (r *conversationBrokerRegistration) protectedTargets(cfg *config.Config) []
 // launchOpts applies the broker-managed launch contract to an egg spawn: the
 // protected set above, and no optional browser bridge, whose writable request
 // file lies inside the protected state directory.
-func (r *conversationBrokerRegistration) launchOpts(cfg *config.Config, opts spawnEggOpts) spawnEggOpts {
+func (r *conversationBrokerRegistration) launchOpts(cfg *config.Config, opts eggclient.SpawnEggOpts) eggclient.SpawnEggOpts {
 	opts.ProtectedWriteTargets = r.protectedTargets(cfg)
 	opts.OmitBrowserBridge = true
 	return opts
@@ -244,10 +245,10 @@ func (s *localMCPServer) prepareBrokerParentMCP(c *store.Conversation, eggCfg *e
 	if wc.Org != "" || s.identity.OrgWing || s.identity.SharedHost {
 		return nil, nil, errors.New("the host mailbox is available only for personal wings")
 	}
-	if err := validateSessionID(c.ID); err != nil {
+	if err := eggclient.ValidateSessionID(c.ID); err != nil {
 		return nil, nil, err
 	}
-	if err := validateSessionID(c.SessionID); err != nil {
+	if err := eggclient.ValidateSessionID(c.SessionID); err != nil {
 		return nil, nil, err
 	}
 	tools, maxSessions, maxSpawns := s.brokerToolCeiling()
@@ -397,7 +398,7 @@ func writeConversationBrokerRegistration(cfg *config.Config, reg conversationBro
 
 func loadConversationBrokerRegistration(cfg *config.Config, session string) (conversationBrokerRegistration, error) {
 	var reg conversationBrokerRegistration
-	if err := validateSessionID(session); err != nil {
+	if err := eggclient.ValidateSessionID(session); err != nil {
 		return reg, err
 	}
 	path := filepath.Join(conversationBrokerDir(cfg, session), "registration.json")
@@ -419,7 +420,7 @@ func loadConversationBrokerRegistration(cfg *config.Config, session string) (con
 	if reg.Version != conversationBrokerVersion || reg.SessionID != session || reg.StateDir != wingpolicy.CanonicalPolicyPath(cfg.Dir) {
 		return reg, errors.New("host mailbox registration does not belong to this execution and state directory")
 	}
-	if validateSessionID(reg.ConversationID) != nil || validateSessionID(reg.RootID) != nil || validateSessionName(reg.Principal) != nil || reg.Principal == "" {
+	if eggclient.ValidateSessionID(reg.ConversationID) != nil || eggclient.ValidateSessionID(reg.RootID) != nil || eggclient.ValidateSessionName(reg.Principal) != nil || reg.Principal == "" {
 		return reg, errors.New("host mailbox registration has an invalid identity")
 	}
 	if reg.MaxSessions <= 0 || reg.MaxSpawnsPerHour <= 0 || len(reg.Tools) == 0 {
@@ -513,7 +514,7 @@ func (r *conversationBrokerRegistration) server(cfg *config.Config, admission *m
 		cfg: cfg, logs: os.Stderr, principal: r.Principal, actor: brokerActor(r.ConversationID, r.SessionID),
 		surface: control.SurfaceLocalMCP, grants: grants, tools: tools,
 		maxSessions: maxSessions, maxSpawnsPerHour: maxSpawns, admission: admission,
-		identity:     EggIdentity{UserID: r.UserID, Email: r.Email},
+		identity:     eggclient.EggIdentity{UserID: r.UserID, Email: r.Email},
 		allowedPaths: paths, enforcePathBounds: enforce,
 		boundConversation: r.ConversationID, broker: &reg,
 	}, wc, nil
@@ -601,7 +602,7 @@ func (s *localMCPServer) checkBoundSessionTarget(tool string, arguments json.Raw
 		return nil // the handler's strict decoder reports the argument error
 	}
 	outside := errors.New("session is outside this MCP connection's bound task tree; use its exact execution session ID")
-	if validateSessionID(selector.Session) != nil {
+	if eggclient.ValidateSessionID(selector.Session) != nil {
 		return outside
 	}
 	info, err := os.Lstat(filepath.Join(s.cfg.Dir, "eggs", selector.Session))
@@ -726,7 +727,7 @@ func runConversationBroker(ctx context.Context, cfg *config.Config, session stri
 		return err
 	}
 	// Recheck protection with the current host layout before serving.
-	if err := conversationBrokerProtection(cfg, eggCfg, "claude", reg.Workspace, reg.SessionID, EggIdentity{UserID: reg.UserID, Email: reg.Email}, reg.protectedTargets(cfg)); err != nil {
+	if err := conversationBrokerProtection(cfg, eggCfg, "claude", reg.Workspace, reg.SessionID, eggclient.EggIdentity{UserID: reg.UserID, Email: reg.Email}, reg.protectedTargets(cfg)); err != nil {
 		return fmt.Errorf("host mailbox protection preflight: %w", err)
 	}
 	workspace, err := os.OpenRoot(reg.Workspace)
@@ -766,7 +767,7 @@ func runConversationBroker(ctx context.Context, cfg *config.Config, session stri
 		case <-ctx.Done():
 			running = false
 		case <-heartbeat.C:
-			if _, alive := readAliveEggPID(filepath.Join(cfg.Dir, "eggs", reg.SessionID)); !alive {
+			if _, alive := eggclient.ReadAliveEggPID(filepath.Join(cfg.Dir, "eggs", reg.SessionID)); !alive {
 				reason, running = "parent execution ended", false
 				break
 			}
@@ -787,7 +788,7 @@ func (b *conversationBroker) waitForParent(ctx context.Context) error {
 	dir := filepath.Join(b.cfg.Dir, "eggs", b.reg.SessionID)
 	deadline := time.Now().Add(conversationBrokerStartWait)
 	for {
-		if _, alive := readAliveEggPID(dir); alive {
+		if _, alive := eggclient.ReadAliveEggPID(dir); alive {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -799,8 +800,8 @@ func (b *conversationBroker) waitForParent(ctx context.Context) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	meta := readEggMetaValues(dir)
-	if readSessionPrincipal(dir) != b.reg.Principal || (b.reg.UserID != "" && readEggOwner(dir) != b.reg.UserID) || meta["agent"] != "claude" || wingpolicy.CanonicalPolicyPath(meta["cwd"]) != b.reg.Workspace {
+	meta := eggclient.ReadEggMetaValues(dir)
+	if eggclient.ReadSessionPrincipal(dir) != b.reg.Principal || (b.reg.UserID != "" && eggclient.ReadEggOwner(dir) != b.reg.UserID) || meta["agent"] != "claude" || wingpolicy.CanonicalPolicyPath(meta["cwd"]) != b.reg.Workspace {
 		return errors.New("parent execution does not match the registered owner, provider and workspace")
 	}
 	b.provider = meta["provider_session_id"]

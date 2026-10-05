@@ -24,6 +24,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
@@ -75,7 +76,7 @@ func mcpCmd() *cobra.Command {
 			if principal == "" {
 				principal = "default"
 			}
-			if err := validateSessionName(principal); err != nil {
+			if err := eggclient.ValidateSessionName(principal); err != nil {
 				return fmt.Errorf("invalid MCP client name: %w", err)
 			}
 			clientsConfig, err := loadLocalMCPClientsConfig(cfg)
@@ -100,7 +101,7 @@ func mcpCmd() *cobra.Command {
 			owner := clientID
 			if configured && strings.TrimSpace(clientConfig.Owner) != "" {
 				owner = strings.TrimSpace(clientConfig.Owner)
-				if err := validateSessionName(owner); err != nil {
+				if err := eggclient.ValidateSessionName(owner); err != nil {
 					return fmt.Errorf("invalid MCP owner name: %w", err)
 				}
 			}
@@ -145,14 +146,14 @@ type localMCPServer struct {
 	admitMu           sync.Mutex // held across bounds check + spawn + record
 	spawnTimes        []time.Time
 	admission         *mcpAdmissionState // shared by remote connections on one wing
-	identity          EggIdentity
+	identity          eggclient.EggIdentity
 	actor             string
 	boundConversation string
 	surface           control.Surface
 	allowedPaths      []string
 	enforcePathBounds bool
 	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error
-	startContinuation func(*store.Conversation, *egg.EggConfig, spawnEggOpts) error
+	startContinuation func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error
 	// tools, when set, further limits callable tools by name; grants are
 	// per category and cannot express the host mailbox's fixed subset.
 	tools map[string]bool
@@ -452,7 +453,7 @@ func newRoostNativeMCPServer(cfg *config.Config, sharedHost bool, admission *mcp
 		admission:         admission,
 		allowedPaths:      append([]string(nil), paths...),
 		enforcePathBounds: true,
-		identity: EggIdentity{
+		identity: eggclient.EggIdentity{
 			UserID: principal.UserID, Email: principal.Email, SharedHost: sharedHost,
 			AllowedPaths: append([]string(nil), paths...), SealedFS: sharedHost,
 		},
@@ -902,7 +903,7 @@ func normalizeMessageChannel(channel string) (string, error) {
 	if channel == "" {
 		channel = "factory"
 	}
-	if err := validateSessionName(channel); err != nil {
+	if err := eggclient.ValidateSessionName(channel); err != nil {
 		return "", fmt.Errorf("invalid message channel: %w", err)
 	}
 	return channel, nil
@@ -1017,13 +1018,13 @@ func (s *localMCPServer) toolSandboxExplain(arguments json.RawMessage) (map[stri
 		eggCfg = egg.UnsandboxedEggConfig()
 		source = "MCP server --unsandboxed"
 	} else {
-		eggCfg, source, err = loadEggConfigForExplain(args.Config, cwd)
+		eggCfg, source, err = eggclient.LoadEggConfigForExplain(args.Config, cwd)
 		if err != nil {
 			return nil, err
 		}
 	}
 	home, _ := os.UserHomeDir()
-	policy, err := explainPolicyWithProvider(eggCfg, args.Agent, home, source, args.ProviderBaseURL)
+	policy, err := eggclient.ExplainPolicyWithProvider(eggCfg, args.Agent, home, source, args.ProviderBaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -1045,7 +1046,7 @@ func (s *localMCPServer) resolveConfigPath(path string) (string, error) {
 	return canonical, nil
 }
 
-func (s *localMCPServer) ownsSession(session localSession) bool {
+func (s *localMCPServer) ownsSession(session eggclient.LocalSession) bool {
 	principal := s.clientPrincipal()
 	if principal == "default" {
 		return session.Principal == "" || session.Principal == principal
@@ -1053,29 +1054,29 @@ func (s *localMCPServer) ownsSession(session localSession) bool {
 	return session.Principal == principal
 }
 
-func (s *localMCPServer) resolveOwnedSession(ctx context.Context, ref string) (localSession, error) {
-	session, err := resolveActiveSession(ctx, s.cfg, ref)
+func (s *localMCPServer) resolveOwnedSession(ctx context.Context, ref string) (eggclient.LocalSession, error) {
+	session, err := eggclient.ResolveActiveSession(ctx, s.cfg, ref)
 	if err != nil {
-		return localSession{}, err
+		return eggclient.LocalSession{}, err
 	}
 	if !s.ownsSession(session) {
-		return localSession{}, errors.New("session not found or not owned by caller")
+		return eggclient.LocalSession{}, errors.New("session not found or not owned by caller")
 	}
 	if s.enforcePathBounds && (len(s.allowedPaths) == 0 || !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(session.CWD), s.allowedPaths)) {
-		return localSession{}, errors.New("session not found or not owned by caller")
+		return eggclient.LocalSession{}, errors.New("session not found or not owned by caller")
 	}
 	// A host mailbox connection was checked against its tree by exact ID; a
 	// live label or prefix match must not substitute another session. Direct
 	// bound connections keep the deployed label/prefix resolution.
 	if s.broker != nil && session.ID != ref {
-		return localSession{}, errors.New("session is outside this MCP connection's bound task tree; use its exact execution session ID")
+		return eggclient.LocalSession{}, errors.New("session is outside this MCP connection's bound task tree; use its exact execution session ID")
 	}
 	return session, nil
 }
 
 func (s *localMCPServer) checkSpawnBounds() error {
 	if s.maxSessions > 0 {
-		sessions, err := discoverSessionRefs(s.cfg)
+		sessions, err := eggclient.DiscoverSessionRefs(s.cfg)
 		if err != nil {
 			return err
 		}
@@ -1150,7 +1151,7 @@ func (s *localMCPServer) admitSpawn(spawn func() error) error {
 // checkSharedSpawnBounds runs with admission.mu held.
 func (s *localMCPServer) checkSharedSpawnBounds() error {
 	if s.maxSessions > 0 {
-		sessions, err := discoverSessionRefs(s.cfg)
+		sessions, err := eggclient.DiscoverSessionRefs(s.cfg)
 		if err != nil {
 			return err
 		}
@@ -1206,19 +1207,19 @@ func (s *localMCPServer) toolTerminalList(ctx context.Context, arguments json.Ra
 		if err != nil {
 			return nil, err
 		}
-		sessions, err := queryRemoteSessions(ctx, *args.Remote, remote, remoteStreams(ctx))
+		sessions, err := eggclient.QueryRemoteSessions(version, ctx, *args.Remote, remote, remoteStreams(ctx))
 		if err != nil {
 			return nil, err
 		}
-		owned := make([]machineSession, 0, len(sessions))
+		owned := make([]eggclient.MachineSession, 0, len(sessions))
 		for _, session := range sessions {
 			if s.ownsSession(session) {
-				owned = append(owned, machineSession{localSession: session, Machine: *args.Remote})
+				owned = append(owned, eggclient.MachineSession{LocalSession: session, Machine: *args.Remote})
 			}
 		}
 		return map[string]any{"sessions": owned}, nil
 	}
-	sessions, err := discoverActiveSessions(ctx, s.cfg)
+	sessions, err := eggclient.DiscoverActiveSessions(ctx, s.cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -1235,7 +1236,7 @@ func (s *localMCPServer) toolTerminalList(ctx context.Context, arguments json.Ra
 		}
 		root = bound.RootID
 	}
-	owned := make([]localSession, 0, len(sessions))
+	owned := make([]eggclient.LocalSession, 0, len(sessions))
 	for _, session := range sessions {
 		if root != "" && session.RootConversationID != root {
 			continue
@@ -1262,7 +1263,7 @@ func (s *localMCPServer) toolTerminalRead(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return nil, err
 	}
-	session, snapshot, err := readSessionSnapshot(ctx, s.cfg, owned.ID)
+	session, snapshot, err := eggclient.ReadSessionSnapshot(ctx, s.cfg, owned.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1292,7 +1293,7 @@ func (s *localMCPServer) toolTerminalSend(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return nil, err
 	}
-	session, err := sendSessionInput(ctx, s.cfg, owned.ID, input, args.Enter)
+	session, err := eggclient.SendSessionInput(ctx, s.cfg, owned.ID, input, args.Enter)
 	if err != nil {
 		return nil, err
 	}
@@ -1329,7 +1330,7 @@ func (s *localMCPServer) toolTerminalWait(ctx context.Context, arguments json.Ra
 		return nil, err
 	}
 	if args.Contains != "" {
-		session, err := waitForSessionText(waitCtx, s.cfg, owned.ID, args.Contains)
+		session, err := eggclient.WaitForSessionText(waitCtx, s.cfg, owned.ID, args.Contains)
 		if err != nil {
 			return nil, err
 		}
@@ -1341,7 +1342,7 @@ func (s *localMCPServer) toolTerminalWait(ctx context.Context, arguments json.Ra
 	if args.IdleSeconds < 0.2 {
 		return nil, errors.New("idle_seconds must be at least 0.2")
 	}
-	session, ec, err := openLocalEgg(waitCtx, s.cfg, owned.ID)
+	session, ec, err := eggclient.OpenLocalEgg(waitCtx, s.cfg, owned.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1387,14 +1388,14 @@ func (s *localMCPServer) toolTerminalStart(arguments json.RawMessage) (map[strin
 		args.Command = []string{shell}
 		kind = "shell"
 	}
-	eggCfg, err := loadSpawnEggConfig("", args.CWD, s.unsandboxed)
+	eggCfg, err := eggclient.LoadSpawnEggConfig("", args.CWD, s.unsandboxed)
 	if err != nil {
 		return nil, err
 	}
 	sessionID := cmdutil.NewRuntimeID()
 	if err := s.admitSpawn(func() error {
-		ec, spawnErr := spawnEgg(s.cfg, sessionID, "", eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
-			spawnEggOpts{Label: args.Label, Kind: kind, Command: args.Command, Principal: s.clientPrincipal()})
+		ec, spawnErr := eggclient.SpawnEgg(s.cfg, sessionID, "", eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0,
+			eggclient.SpawnEggOpts{Label: args.Label, Kind: kind, Command: args.Command, Principal: s.clientPrincipal()})
 		if spawnErr != nil {
 			return spawnErr
 		}
@@ -1438,10 +1439,10 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 	if _, ok := agentpkg.LookupDefinition(args.Agent); !ok {
 		return nil, fmt.Errorf("unsupported agent %q", args.Agent)
 	}
-	if err := validateSessionName(args.Label); err != nil {
+	if err := eggclient.ValidateSessionName(args.Label); err != nil {
 		return nil, err
 	}
-	if err := validateAgentArgs(args.Args); err != nil {
+	if err := eggclient.ValidateAgentArgs(args.Args); err != nil {
 		return nil, err
 	}
 	modelArgs, err := agentModelArgs(args.Agent, args.Model)
@@ -1460,7 +1461,7 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		// workspace egg.yaml files are writable by the parent provider.
 		eggCfg, err = s.broker.childEggConfig(args.CWD)
 	} else {
-		eggCfg, err = loadSpawnEggConfig("", args.CWD, s.unsandboxed)
+		eggCfg, err = eggclient.LoadSpawnEggConfig("", args.CWD, s.unsandboxed)
 	}
 	if err != nil {
 		return nil, err
@@ -1509,7 +1510,7 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		if err := s.preflightBrokerChild(eggCfg, args.Agent, args.CWD, sessionID); err != nil {
 			return err
 		}
-		opts := spawnEggOpts{Label: args.Label, Kind: "agent", AgentArgs: args.Args, Principal: s.clientPrincipal()}
+		opts := eggclient.SpawnEggOpts{Label: args.Label, Kind: "agent", AgentArgs: args.Args, Principal: s.clientPrincipal()}
 		// Broker-managed parents and every child of a host mailbox carry the
 		// protected state/executable set and omit the browser bridge.
 		if managedParent != nil {
@@ -1517,7 +1518,7 @@ func (s *localMCPServer) toolAgentStart(arguments json.RawMessage) (map[string]a
 		} else if s.broker != nil {
 			opts = s.broker.launchOpts(s.cfg, opts)
 		}
-		ec, spawnErr := spawnEgg(s.cfg, sessionID, args.Agent, eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0, opts)
+		ec, spawnErr := eggclient.SpawnEgg(s.cfg, sessionID, args.Agent, eggCfg, 24, 80, args.CWD, false, false, false, s.identity, 0, opts)
 		if spawnErr != nil {
 			return spawnErr
 		}
@@ -1594,7 +1595,7 @@ func (s *localMCPServer) submitAgentRun(args agentRunArgs, followup *agentRunFol
 	if _, err := agentModelArgs(args.Agent, args.Model); err != nil {
 		return nil, err
 	}
-	if err := validateSessionName(args.Label); err != nil {
+	if err := eggclient.ValidateSessionName(args.Label); err != nil {
 		return nil, err
 	}
 	if args.TimeoutSeconds == 0 {
@@ -1733,7 +1734,7 @@ func (s *localMCPServer) agentTaskRunOptions() (taskRunOptions, error) {
 		AllowedPaths: append([]string(nil), s.identity.AllowedPaths...),
 	}
 	if s.identity.UserID != "" && (s.identity.SharedHost || s.identity.OrgWing) {
-		options.UserHome = filepath.Join(s.cfg.Dir, "user-homes", userHash(s.identity.UserID))
+		options.UserHome = filepath.Join(s.cfg.Dir, "user-homes", eggclient.UserHash(s.identity.UserID))
 		if !s.identity.SharedHost {
 			if err := os.MkdirAll(options.UserHome, 0700); err != nil {
 				return taskRunOptions{}, fmt.Errorf("create isolated agent home: %w", err)
@@ -2070,22 +2071,22 @@ func (s *localMCPServer) toolTerminalRename(ctx context.Context, arguments json.
 	if args.Session == "" || args.Name == "" {
 		return nil, errors.New("session and name are required")
 	}
-	if err := validateSessionName(args.Name); err != nil {
+	if err := eggclient.ValidateSessionName(args.Name); err != nil {
 		return nil, err
 	}
 	session, err := s.resolveOwnedSession(ctx, args.Session)
 	if err != nil {
 		return nil, err
 	}
-	lock, err := acquireSessionNameLock(s.cfg)
+	lock, err := eggclient.AcquireSessionNameLock(s.cfg)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = lock.Close() }()
-	if err := ensureSessionNameAvailable(s.cfg, args.Name, session.ID); err != nil {
+	if err := eggclient.EnsureSessionNameAvailable(s.cfg, args.Name, session.ID); err != nil {
 		return nil, err
 	}
-	if err := writeSessionName(filepath.Join(s.cfg.Dir, "eggs", session.ID), args.Name); err != nil {
+	if err := eggclient.WriteSessionName(filepath.Join(s.cfg.Dir, "eggs", session.ID), args.Name); err != nil {
 		return nil, err
 	}
 	return map[string]any{"session": session.ID, "name": args.Name}, nil
@@ -2105,7 +2106,7 @@ func (s *localMCPServer) toolTerminalStop(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return nil, err
 	}
-	session, ec, err := openLocalEgg(ctx, s.cfg, owned.ID)
+	session, ec, err := eggclient.OpenLocalEgg(ctx, s.cfg, owned.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2600,7 +2601,7 @@ func (s *localMCPServer) toolSwarmRun(ctx context.Context, arguments json.RawMes
 func validateSwarm(nodes []swarmNodeSpec, defaultAgent string) error {
 	byID := make(map[string]swarmNodeSpec, len(nodes))
 	for _, node := range nodes {
-		if err := validateSessionName(node.ID); err != nil || node.ID == "" {
+		if err := eggclient.ValidateSessionName(node.ID); err != nil || node.ID == "" {
 			return fmt.Errorf("invalid swarm node ID %q", node.ID)
 		}
 		if _, exists := byID[node.ID]; exists {

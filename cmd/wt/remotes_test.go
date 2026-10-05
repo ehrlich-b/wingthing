@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
@@ -26,7 +27,7 @@ func writeFakeRemoteSSH(t *testing.T, script string) string {
 	return path
 }
 
-func fakeInventorySSH(t *testing.T, inventory remoteSessionInventory) string {
+func fakeInventorySSH(t *testing.T, inventory eggclient.RemoteSessionInventory) string {
 	t.Helper()
 	data, err := json.Marshal(inventory)
 	if err != nil {
@@ -51,7 +52,7 @@ func seedRemoteListSession(t *testing.T, cfg *config.Config, id, principal strin
 			t.Fatal(err)
 		}
 	}
-	if err := writeSessionPrincipal(dir, principal); err != nil {
+	if err := eggclient.WriteSessionPrincipal(dir, principal); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -182,8 +183,8 @@ func TestSessionPSAggregatesHealthyAndFailingFakeRemotesInParallel(t *testing.T)
 	if err := config.SaveRemotes(dir, map[string]config.Remote{"work": {SSHTarget: "healthy"}, "down": {SSHTarget: "down"}}); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := json.Marshal(remoteSessionInventory{Version: "remote-test", ContractVersion: remoteSessionContractVersion,
-		Sessions: []localSession{{ID: "remote-session", Name: "review", Kind: "agent", Agent: "codex"}}})
+	data, _ := json.Marshal(eggclient.RemoteSessionInventory{Version: "remote-test", ContractVersion: eggclient.RemoteSessionContractVersion,
+		Sessions: []eggclient.LocalSession{{ID: "remote-session", Name: "review", Kind: "agent", Agent: "codex"}}})
 	sshPath := writeFakeRemoteSSH(t, "touch \"$WT_REMOTE_TEST_DIR/$2\"\n"+
 		"count=0\nwhile ! test -f \"$WT_REMOTE_TEST_DIR/healthy\" || ! test -f \"$WT_REMOTE_TEST_DIR/down\"; do\n"+
 		"  count=$((count+1)); if test \"$count\" -gt 100; then echo 'remotes were not queried in parallel' >&2; exit 8; fi\n"+
@@ -209,7 +210,7 @@ func TestSessionPSAggregatesHealthyAndFailingFakeRemotesInParallel(t *testing.T)
 			}
 			continue
 		}
-		var rows []machineSession
+		var rows []eggclient.MachineSession
 		if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
 			t.Fatal(err)
 		}
@@ -228,11 +229,11 @@ func TestSessionPSRemoteTimeoutProducesOneRowPerRemote(t *testing.T) {
 	}
 	sshPath := writeFakeRemoteSSH(t, "exec sleep 30\n")
 	start := time.Now()
-	rows, err := discoverMachineSessions(context.Background(), cfg, remotepkg.IO{SSHPath: sshPath})
+	rows, err := eggclient.DiscoverMachineSessions(version, context.Background(), cfg, remotepkg.IO{SSHPath: sshPath})
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("timed out remotes: %#v, %v", rows, err)
 	}
-	if time.Since(start) > remoteSessionTimeout+time.Second {
+	if time.Since(start) > eggclient.RemoteSessionTimeout+time.Second {
 		t.Fatal("remote timeouts ran sequentially or were not bounded")
 	}
 	for _, row := range rows {
@@ -248,7 +249,7 @@ func TestRemoteTimeoutBoundsInheritedOutputPipes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := queryRemoteSessions(ctx, "slow", config.Remote{SSHTarget: "host"}, remotepkg.IO{SSHPath: sshPath})
+	_, err := eggclient.QueryRemoteSessions(version, ctx, "slow", config.Remote{SSHTarget: "host"}, remotepkg.IO{SSHPath: sshPath})
 	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Fatalf("timeout diagnostic: %v", err)
 	}
@@ -271,8 +272,8 @@ func TestSessionPSRemoteInventorySkipsConfiguredRemotes(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	var inventory remoteSessionInventory
-	if err := json.Unmarshal(out.Bytes(), &inventory); err != nil || inventory.Version != version || inventory.ContractVersion != remoteSessionContractVersion || len(inventory.Sessions) != 1 || inventory.Sessions[0].ID != "receiver-session" {
+	var inventory eggclient.RemoteSessionInventory
+	if err := json.Unmarshal(out.Bytes(), &inventory); err != nil || inventory.Version != version || inventory.ContractVersion != eggclient.RemoteSessionContractVersion || len(inventory.Sessions) != 1 || inventory.Sessions[0].ID != "receiver-session" {
 		t.Fatalf("receiver inventory: %s, %v", &out, err)
 	}
 }
@@ -291,7 +292,7 @@ func TestSessionPSRemoteVersionMismatchNamesBothVersions(t *testing.T) {
 				t.Fatal(err)
 			}
 			sshPath := writeFakeRemoteSSH(t, "case \"$3\" in\n*\"'--version'\"*) echo 'wt version v0.1.0' ;;\n*) "+test.response+" ;;\nesac\n")
-			rows, err := discoverMachineSessions(context.Background(), cfg, remotepkg.IO{SSHPath: sshPath})
+			rows, err := eggclient.DiscoverMachineSessions(version, context.Background(), cfg, remotepkg.IO{SSHPath: sshPath})
 			if err != nil || len(rows) != 1 || rows[0].Machine != "old" {
 				t.Fatalf("mismatch rows: %#v, %v", rows, err)
 			}

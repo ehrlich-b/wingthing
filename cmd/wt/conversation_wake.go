@@ -16,24 +16,25 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
 )
 
 type conversationWakeRuntime struct {
-	Read   func(context.Context, localSession) (egg.SessionView, error)
-	Prompt func(context.Context, localSession, string, string) (egg.SessionPromptResult, error)
+	Read   func(context.Context, eggclient.LocalSession) (egg.SessionView, error)
+	Prompt func(context.Context, eggclient.LocalSession, string, string) (egg.SessionPromptResult, error)
 	Now    func() time.Time
 }
 
 func nativeConversationWakeRuntime(cfg *config.Config) conversationWakeRuntime {
 	return conversationWakeRuntime{
-		Read: func(ctx context.Context, s localSession) (egg.SessionView, error) {
-			return lifecycleViewForSession(cfg, s, 0, 1)
+		Read: func(ctx context.Context, s eggclient.LocalSession) (egg.SessionView, error) {
+			return eggclient.LifecycleViewForSession(cfg, s, 0, 1)
 		},
-		Prompt: func(ctx context.Context, s localSession, id, text string) (egg.SessionPromptResult, error) {
-			return promptSession(ctx, cfg, s, id, text, 500*time.Millisecond, "host:conversation-wake")
+		Prompt: func(ctx context.Context, s eggclient.LocalSession, id, text string) (egg.SessionPromptResult, error) {
+			return eggclient.PromptSession(ctx, cfg, s, id, text, 500*time.Millisecond, "host:conversation-wake")
 		},
 		Now: time.Now,
 	}
@@ -125,8 +126,8 @@ func conversationWakeCmd(client *string) *cobra.Command {
 // The body contains only bounded host-selected identities and enums. Neither
 // child prose nor permission questions are injected as controller instructions.
 func conversationWakeText(cfg *config.Config, c *store.Conversation, w *store.ConversationWake) (string, error) {
-	provider := readEggMetaValues(filepath.Join(cfg.Dir, "eggs", w.Event.SessionID))["provider_session_id"]
-	providerKnown := validateSessionID(provider) == nil
+	provider := eggclient.ReadEggMetaValues(filepath.Join(cfg.Dir, "eggs", w.Event.SessionID))["provider_session_id"]
+	providerKnown := eggclient.ValidateSessionID(provider) == nil
 	if !providerKnown && w.Event.StateSource != "egg_process" {
 		return "", errors.New("child exact provider identity unavailable")
 	}
@@ -195,8 +196,8 @@ func processConversationWake(ctx context.Context, s *localMCPServer, root string
 	if err != nil {
 		return err
 	}
-	meta := readEggMetaValues(filepath.Join(s.cfg.Dir, "eggs", target))
-	owner := readEggOwner(filepath.Join(s.cfg.Dir, "eggs", target))
+	meta := eggclient.ReadEggMetaValues(filepath.Join(s.cfg.Dir, "eggs", target))
+	owner := eggclient.ReadEggOwner(filepath.Join(s.cfg.Dir, "eggs", target))
 	if session.Principal != c.OwnerID || (owner != "" && roostSessionPrincipal(owner) != c.OwnerID) {
 		return errors.New("wake parent ownership does not match retained principal")
 	}

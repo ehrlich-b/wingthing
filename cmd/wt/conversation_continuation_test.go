@@ -20,6 +20,7 @@ import (
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -49,11 +50,11 @@ func continuationFixture(t *testing.T) (*localMCPServer, *store.Store, *store.Co
 	transcript := `{"uuid":"first","type":"user","sessionId":"provider","message":{"role":"user","content":"First message"}}` + "\n" +
 		`{"uuid":"answer","type":"assistant","sessionId":"provider","message":{"role":"assistant","model":"` + continuationModel + `","content":[{"type":"text","text":"First answer"}]}}` + "\n"
 	dir := writeResumeSessionFixture(t, cfg, "source", "owner", "claude", cfg.Dir, "provider", transcript)
-	meta := "agent=claude\ncwd=" + cfg.Dir + "\nprovider_session_id=provider\nprovider_home=" + effectiveSessionHome(cfg, EggIdentity{}) + "\n"
+	meta := "agent=claude\ncwd=" + cfg.Dir + "\nprovider_session_id=provider\nprovider_home=" + eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{}) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte(meta), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSessionPrincipal(dir, "owner"); err != nil {
+	if err := eggclient.WriteSessionPrincipal(dir, "owner"); err != nil {
 		t.Fatal(err)
 	}
 	server := &localMCPServer{cfg: cfg, principal: "owner", unsandboxed: true, logs: &bytes.Buffer{}}
@@ -96,7 +97,7 @@ func TestHeadlessContinuationAdvertisementEligibility(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "unverified provider":
-				if err := os.Remove(filepath.Join(dir, providerResumeMetadataFile)); err != nil {
+				if err := os.Remove(filepath.Join(dir, eggclient.ProviderResumeMetadataFile)); err != nil {
 					t.Fatal(err)
 				}
 			case "unknown model":
@@ -134,7 +135,7 @@ func TestHeadlessContinuationAdvertisementEligibility(t *testing.T) {
 				t.Fatalf("ineligible advertisement: %v", available)
 			}
 			if name != "ended owned resumable" {
-				s.startContinuation = func(*store.Conversation, *egg.EggConfig, spawnEggOpts) error {
+				s.startContinuation = func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error {
 					t.Fatal("ineligible source reached launch")
 					return nil
 				}
@@ -149,7 +150,7 @@ func TestHeadlessContinuationAdvertisementEligibility(t *testing.T) {
 func TestHeadlessContinuationReplayMismatchAndTreeLinkage(t *testing.T) {
 	s, db, root, dir := continuationFixture(t)
 	starts := 0
-	s.startContinuation = func(c *store.Conversation, _ *egg.EggConfig, opts spawnEggOpts) error {
+	s.startContinuation = func(c *store.Conversation, _ *egg.EggConfig, opts eggclient.SpawnEggOpts) error {
 		starts++
 		current, err := db.GetConversation("owner", root.ID)
 		if err != nil || current.SessionID != c.SessionID || current.LaunchState != "starting" {
@@ -180,7 +181,7 @@ func TestHeadlessContinuationReplayMismatchAndTreeLinkage(t *testing.T) {
 	if err != nil || current.SessionID != first["session"] {
 		t.Fatalf("current %v %v", current, err)
 	}
-	link := sessionConversationLink(s.cfg, first["session"].(string))
+	link := eggclient.SessionConversationLink(s.cfg, first["session"].(string))
 	if link.ConversationID != root.ID || link.RootConversationID != root.ID || link.ParentConversationID != "" {
 		t.Fatalf("tree link %v", link)
 	}
@@ -209,7 +210,7 @@ func TestHeadlessContinuationReplayMismatchAndTreeLinkage(t *testing.T) {
 func TestHeadlessContinuationFailedAndUnconfirmedReservationsNeverRelaunch(t *testing.T) {
 	s, db, root, _ := continuationFixture(t)
 	starts := 0
-	s.startContinuation = func(*store.Conversation, *egg.EggConfig, spawnEggOpts) error {
+	s.startContinuation = func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error {
 		starts++
 		return errors.New("fake launch refused")
 	}
@@ -291,7 +292,7 @@ func TestHeadlessContinuationConcurrentReplay(t *testing.T) {
 	s, _, _, _ := continuationFixture(t)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var starts int
-	s.startContinuation = func(*store.Conversation, *egg.EggConfig, spawnEggOpts) error {
+	s.startContinuation = func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error {
 		starts++
 		close(entered)
 		<-release
@@ -323,7 +324,7 @@ func TestHeadlessContinuationBrowserAdapterMatchesNativeContract(t *testing.T) {
 	if _, err := db.DB().Exec(`UPDATE conversations SET owner_id = ? WHERE id = ?`, principal, root.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSessionPrincipal(dir, principal); err != nil {
+	if err := eggclient.WriteSessionPrincipal(dir, principal); err != nil {
 		t.Fatal(err)
 	}
 	s.principal = principal
@@ -336,7 +337,7 @@ func TestHeadlessContinuationBrowserAdapterMatchesNativeContract(t *testing.T) {
 			t.Fatalf("browser advertisement %v %v", result, err)
 		}
 	}
-	s.startContinuation = func(*store.Conversation, *egg.EggConfig, spawnEggOpts) error { return nil }
+	s.startContinuation = func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error { return nil }
 	args := continuationRequest("source", "Native follow-up", "native-request")
 	first, err := s.toolAgentStart(args)
 	if err != nil {
@@ -368,9 +369,9 @@ func TestHeadlessContinuationFakeClaudeResumesSameProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	starts := 0
-	s.startContinuation = func(c *store.Conversation, _ *egg.EggConfig, opts spawnEggOpts) error {
+	s.startContinuation = func(c *store.Conversation, _ *egg.EggConfig, opts eggclient.SpawnEggOpts) error {
 		starts++
-		provider, extra, resume, err := effectiveProviderSession("claude", opts.ResumeSessionID, opts.AgentArgs)
+		provider, extra, resume, err := eggclient.EffectiveProviderSession("claude", opts.ResumeSessionID, opts.AgentArgs)
 		if err != nil || provider != "provider" || resume != "provider" {
 			return errors.New("wrong provider-native resume")
 		}
@@ -382,13 +383,13 @@ func TestHeadlessContinuationFakeClaudeResumesSameProvider(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, python, append([]string{fake}, argv...)...)
 		cmd.Dir = c.CWD
-		home := effectiveSessionHome(s.cfg, s.identity)
+		home := eggclient.EffectiveSessionHome(s.cfg, s.identity)
 		cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "CLAUDE_CONFIG_DIR=" + filepath.Join(home, ".claude")}
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fake Claude: %v %s", err, output)
 		}
 		dir := filepath.Join(s.cfg.Dir, "eggs", c.SessionID)
-		if err := writeSessionPrincipal(dir, "owner"); err != nil {
+		if err := eggclient.WriteSessionPrincipal(dir, "owner"); err != nil {
 			return err
 		}
 		if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\ncwd="+c.CWD+"\nprovider_session_id=provider\nprovider_home="+home+"\n"), 0600); err != nil {

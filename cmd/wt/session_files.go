@@ -23,6 +23,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
@@ -621,7 +622,7 @@ func exportSessionFile(source *os.File, info os.FileInfo, target config.ExportTa
 	if statErr != nil || !os.SameFile(rootInfo, openedRootInfo) {
 		return "", 0, errors.New("export destination changed while opening it")
 	}
-	ownerDir := userHash(ownerID)
+	ownerDir := eggclient.UserHash(ownerID)
 	if err := root.MkdirAll(ownerDir, 0o700); err != nil {
 		return "", 0, fmt.Errorf("create owner export directory: %w", err)
 	}

@@ -1,4 +1,4 @@
-package main
+package eggclient
 
 import (
 	"path/filepath"
@@ -10,7 +10,7 @@ import (
 // loadConfigForEgg rejects unusable socket addresses before config.Load can
 // create state. Runtime callers with an existing config use the same preflight
 // in spawnEgg, so CLI and MCP launches report the same actionable error.
-func loadConfigForEgg(sessionID string) (*config.Config, error) {
+func LoadConfigForEgg(sessionID string) (*config.Config, error) {
 	dir, err := config.StateDir()
 	if err != nil {
 		return nil, err

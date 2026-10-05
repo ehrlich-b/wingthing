@@ -7,7 +7,8 @@ import (
 	"runtime"
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
-	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
+
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -54,7 +55,7 @@ func terminalCmd() *cobra.Command {
 
 func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd string, detach, trace, jsonOutput, unsandboxed bool) error {
 	sessionID := cmdutil.NewRuntimeID()
-	cfg, err := loadConfigForEgg(sessionID)
+	cfg, err := eggclient.LoadConfigForEgg(sessionID)
 	if err != nil {
 		return err
 	}
@@ -74,7 +75,7 @@ func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd s
 	if trace && unsandboxed {
 		return fmt.Errorf("--trace and --unsandboxed cannot be combined")
 	}
-	eggCfg, err := loadSpawnEggConfig(configPath, cwd, unsandboxed)
+	eggCfg, err := eggclient.LoadSpawnEggConfig(configPath, cwd, unsandboxed)
 	if err != nil {
 		return err
 	}
@@ -97,7 +98,7 @@ func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd s
 		}
 	}
 
-	ec, err := spawnEgg(
+	ec, err := eggclient.SpawnEgg(
 		cfg,
 		sessionID,
 		"",
@@ -108,9 +109,9 @@ func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd s
 		false,
 		false,
 		trace,
-		EggIdentity{},
+		eggclient.EggIdentity{},
 		0,
-		spawnEggOpts{Label: name, Kind: kind, Command: command},
+		eggclient.SpawnEggOpts{Label: name, Kind: kind, Command: command},
 	)
 	if err != nil {
 		return fmt.Errorf("start terminal: %w", err)
@@ -125,23 +126,16 @@ func terminalSpawn(cmd *cobra.Command, command []string, name, configPath, cwd s
 		if jsonOutput {
 			return writeSessionJSON(map[string]any{
 				"session": sessionID, "name": name, "kind": kind, "command": command,
-				"cwd": cwd, "status": "started", "isolation": sessionIsolationLabel(eggCfg),
+				"cwd": cwd, "status": "started", "isolation": eggclient.SessionIsolationLabel(eggCfg),
 			})
 		}
 		fmt.Printf("started %s\n", display)
 		return nil
 	}
 
-	detached, err := attachLocal(cmd.Context(), cfg, sessionID)
+	detached, err := eggclient.AttachLocal(cmd.Context(), cfg, sessionID)
 	if detached {
 		fmt.Fprintf(os.Stderr, "\r\n[detached from %s]\r\n", display)
 	}
 	return err
-}
-
-func sessionIsolationLabel(cfg *egg.EggConfig) string {
-	if egg.RequiresSandbox(cfg, "") {
-		return "wingthing-sandbox"
-	}
-	return "outer-boundary"
 }

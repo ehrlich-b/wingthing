@@ -12,6 +12,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	pionwebrtc "github.com/pion/webrtc/v4"
@@ -69,7 +70,7 @@ type directMCPPolicy struct {
 	maxSpawnsPerHour  int
 	allowedPaths      []string
 	enforcePathBounds bool
-	identity          EggIdentity
+	identity          eggclient.EggIdentity
 }
 
 func resolveDirectMCPPolicy(wingCfg *config.WingConfig, home string, sharedHost bool, identity webrtcpkg.PeerIdentity) (directMCPPolicy, error) {
@@ -134,7 +135,7 @@ func resolveDirectMCPPolicy(wingCfg *config.WingConfig, home string, sharedHost 
 		role: role, grants: grants,
 		maxSessions: maxSessions, maxSpawnsPerHour: maxSpawnsPerHour,
 		allowedPaths: paths, enforcePathBounds: member,
-		identity: EggIdentity{
+		identity: eggclient.EggIdentity{
 			UserID: identity.UserID, Email: identity.Email,
 			OrgWing: wingCfg.Org != "", SharedHost: sealedBoundary,
 			AllowedPaths: append([]string(nil), paths...), SealedFS: sealedBoundary,
@@ -154,7 +155,7 @@ func serveDirectMCPChannelWithPolicySource(cfg *config.Config, home string, shar
 
 func serveDirectMCPChannelWithPolicySourceAndLease(cfg *config.Config, home string, sharedHost bool, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey), identityLease time.Duration) {
 	actor := strings.TrimPrefix(dc.Label(), control.DirectChannelPrefix)
-	if actor == dc.Label() || validateSessionName(actor) != nil || identity.UserID == "" || identityLease <= 0 {
+	if actor == dc.Label() || eggclient.ValidateSessionName(actor) != nil || identity.UserID == "" || identityLease <= 0 {
 		log.Printf("[P2P] rejected direct MCP channel %q: invalid actor or identity", dc.Label())
 		_ = dc.Close()
 		return

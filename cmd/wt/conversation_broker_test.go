@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
@@ -375,7 +376,7 @@ func TestHostMailboxBrokerKeepsEverySessionTargetInsideCapturedRoot(t *testing.T
 	if err := os.MkdirAll(unlinked, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSessionPrincipal(unlinked, "owner"); err != nil {
+	if err := eggclient.WriteSessionPrincipal(unlinked, "owner"); err != nil {
 		t.Fatal(err)
 	}
 	for name, target := range map[string]string{
@@ -624,7 +625,7 @@ func TestHostMailboxChildrenUseCapturedParentPolicyNotWorkspaceFiles(t *testing.
 		t.Fatal(err)
 	}
 	refused := false
-	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, EggIdentity, []string) error {
+	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, eggclient.EggIdentity, []string) error {
 		refused = true
 		return os.ErrPermission
 	}
@@ -636,7 +637,9 @@ func TestHostMailboxChildrenUseCapturedParentPolicyNotWorkspaceFiles(t *testing.
 
 func TestHostMailboxDurableSpawnRateSurvivesBrokerRestart(t *testing.T) {
 	f := newBrokerFixture(t, control.SurfaceHTTPMCP, "browser")
-	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, EggIdentity, []string) error { return nil }
+	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, eggclient.EggIdentity, []string) error {
+		return nil
+	}
 	t.Cleanup(func() { conversationBrokerProtection = defaultConversationBrokerProtection })
 	f.b.reg.MaxSpawnsPerHour = 3
 	server, _, err := f.b.reg.server(f.cfg, newMCPAdmissionState())
@@ -669,7 +672,7 @@ func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *
 	narrow := func() *egg.EggConfig { return &egg.EggConfig{FS: []string{"ro:/", "rw:./"}} }
 	exposed := &localMCPServer{cfg: &config.Config{Dir: t.TempDir()}, principal: "owner"}
 	var protectedTargets []string
-	conversationBrokerProtection = func(_ *config.Config, _ *egg.EggConfig, _, _, _ string, _ EggIdentity, targets []string) error {
+	conversationBrokerProtection = func(_ *config.Config, _ *egg.EggConfig, _, _, _ string, _ eggclient.EggIdentity, targets []string) error {
 		protectedTargets = targets
 		return errors.New("modeled provider-writable state")
 	}
@@ -709,19 +712,21 @@ func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *
 	if want := []string{wingpolicy.CanonicalPolicyPath(exposed.cfg.Dir), wingpolicy.CanonicalPolicyPath(executable)}; !slices.Equal(protectedTargets, want) {
 		t.Fatalf("protected targets %v, want %v", protectedTargets, want)
 	}
-	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, EggIdentity, []string) error { return nil }
+	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, eggclient.EggIdentity, []string) error {
+		return nil
+	}
 	// A resumed browser parent cannot carry the launch contract and never
 	// registers a broker.
 	resumed := &localMCPServer{cfg: exposed.cfg, principal: "owner", hostMailboxUnavailable: "resume refused"}
 	if _, err := resumed.prepareBoundParentMCP(c, narrow(), nil); err == nil || !strings.Contains(err.Error(), "host mailbox unavailable: resume refused") || len(started) != 0 {
 		t.Fatalf("resume selected the host mailbox: %v", err)
 	}
-	launcher := &localMCPServer{cfg: exposed.cfg, principal: roostSessionPrincipal("user"), actor: "browser", surface: control.SurfaceHTTPMCP, identity: EggIdentity{UserID: "user", Email: "user@example.invalid"}}
+	launcher := &localMCPServer{cfg: exposed.cfg, principal: roostSessionPrincipal("user"), actor: "browser", surface: control.SurfaceHTTPMCP, identity: eggclient.EggIdentity{UserID: "user", Email: "user@example.invalid"}}
 	args, managed, err := launcher.prepareBoundParentLaunch(c, narrow(), []string{"--model", "selected"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts := managed.launchOpts(exposed.cfg, spawnEggOpts{Label: "parent", Kind: "agent"})
+	opts := managed.launchOpts(exposed.cfg, eggclient.SpawnEggOpts{Label: "parent", Kind: "agent"})
 	if !opts.OmitBrowserBridge || !slices.Equal(opts.ProtectedWriteTargets, protectedTargets) || opts.Label != "parent" {
 		t.Fatalf("broker-managed parent launch options %+v", opts)
 	}
@@ -799,7 +804,7 @@ func TestProviderWriteModelFollowsSeatbeltWriteRules(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("TMPDIR", tmp)
 	cfg := &config.Config{Dir: filepath.Join(home, ".wingthing")}
-	model, err := modelProviderWrites(cfg, egg.DefaultEggConfig(), "claude", workspace, "parent-exec", EggIdentity{})
+	model, err := modelProviderWrites(cfg, egg.DefaultEggConfig(), "claude", workspace, "parent-exec", eggclient.EggIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -834,7 +839,7 @@ func TestProviderWriteModelFollowsSeatbeltWriteRules(t *testing.T) {
 	if err := verifyAncestorsNotRenamable("/usr"); err != nil && os.Getuid() != 0 {
 		t.Fatalf("root-owned ancestors refused: %v", err)
 	}
-	if _, err := modelProviderWrites(cfg, egg.UnsandboxedEggConfig(), "claude", workspace, "parent-exec", EggIdentity{}); err == nil {
+	if _, err := modelProviderWrites(cfg, egg.UnsandboxedEggConfig(), "claude", workspace, "parent-exec", eggclient.EggIdentity{}); err == nil {
 		t.Fatal("outer-boundary session modeled as protected")
 	}
 }
@@ -849,7 +854,7 @@ func TestHostMailboxRequiresProviderDataHomeOutsideState(t *testing.T) {
 	if err := brokerProviderHomeOutsideState(inside); err == nil || !strings.Contains(err.Error(), "overlaps protected state") {
 		t.Fatalf("provider data home inside state accepted: %v", err)
 	}
-	if err := defaultConversationBrokerProtection(inside, egg.DefaultEggConfig(), "claude", state, "parent-exec", EggIdentity{}, nil); err == nil || !strings.Contains(err.Error(), "overlaps protected state") {
+	if err := defaultConversationBrokerProtection(inside, egg.DefaultEggConfig(), "claude", state, "parent-exec", eggclient.EggIdentity{}, nil); err == nil || !strings.Contains(err.Error(), "overlaps protected state") {
 		t.Fatalf("protection preflight ignored the provider data home: %v", err)
 	}
 }
@@ -868,11 +873,11 @@ func TestStableConversationHostMailboxOptIn(t *testing.T) {
 	}
 	workspace := wingpolicy.CanonicalPolicyPath(t.TempDir())
 	c := &store.Conversation{ID: "parent", RootID: "parent", SessionID: "parent-exec", CWD: workspace, Agent: "claude"}
-	launcher := &localMCPServer{cfg: cfg, principal: roostSessionPrincipal("user"), actor: "browser", surface: control.SurfaceHTTPMCP, identity: EggIdentity{UserID: "user"}}
+	launcher := &localMCPServer{cfg: cfg, principal: roostSessionPrincipal("user"), actor: "browser", surface: control.SurfaceHTTPMCP, identity: eggclient.EggIdentity{UserID: "user"}}
 	policy := &egg.EggConfig{FS: []string{"ro:/", "rw:./"}}
 	before, _ := policy.YAML()
 	var protected int
-	conversationBrokerProtection = func(got *config.Config, gotPolicy *egg.EggConfig, agent, cwd, session string, identity EggIdentity, targets []string) error {
+	conversationBrokerProtection = func(got *config.Config, gotPolicy *egg.EggConfig, agent, cwd, session string, identity eggclient.EggIdentity, targets []string) error {
 		protected++
 		if got != cfg || gotPolicy != policy || agent != "claude" || cwd != workspace || session != c.SessionID || identity.UserID != "user" || len(targets) != 2 || targets[0] != wingpolicy.CanonicalPolicyPath(cfg.Dir) {
 			t.Fatalf("lost launch protection: cfg=%+v identity=%+v targets=%v", got, identity, targets)
@@ -896,12 +901,12 @@ func TestStableConversationHostMailboxOptIn(t *testing.T) {
 		t.Fatalf("parent must use the mailbox without reopening state: %s %v", data, err)
 	}
 	after, _ := policy.YAML()
-	opts := managed.launchOpts(cfg, spawnEggOpts{})
+	opts := managed.launchOpts(cfg, eggclient.SpawnEggOpts{})
 	if before != after || !opts.OmitBrowserBridge || !slices.Equal(opts.ProtectedWriteTargets, managed.protectedTargets(cfg)) {
 		t.Fatalf("sandbox contract changed: before=%s after=%s opts=%+v", before, after, opts)
 	}
 	// The subprocess must admit stable opt-in too, then recheck protection.
-	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, EggIdentity, []string) error {
+	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, eggclient.EggIdentity, []string) error {
 		return errors.New("startup protection checked")
 	}
 	if err := runConversationBroker(context.Background(), cfg, c.SessionID, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "startup protection checked") {
@@ -947,7 +952,7 @@ func TestStableConversationHostMailboxOptIn(t *testing.T) {
 	if err != nil || !bytes.Equal(directData, optedData) {
 		t.Fatalf("opt-in changed direct configuration: %s %v", optedData, err)
 	}
-	for _, identity := range []EggIdentity{{UserID: "user", OrgWing: true}, {UserID: "user", SharedHost: true}} {
+	for _, identity := range []eggclient.EggIdentity{{UserID: "user", OrgWing: true}, {UserID: "user", SharedHost: true}} {
 		launcher.identity = identity
 		if _, _, err := launcher.prepareBoundParentLaunch(c, policy, nil); err == nil || !strings.Contains(err.Error(), "only for personal wings") || len(started) != 1 {
 			t.Fatalf("nonpersonal stable wing admitted: identity=%+v err=%v", identity, err)
@@ -973,7 +978,7 @@ func TestStableHostMailboxUsesNormalProviderHomeWriteProtection(t *testing.T) {
 		t.Skip("write protection is modeled only for macOS")
 	}
 	workspace := wingpolicy.CanonicalPolicyPath(t.TempDir())
-	model, err := modelProviderWrites(cfg, &egg.EggConfig{FS: []string{"ro:/", "rw:./"}}, "claude", workspace, "parent-exec", EggIdentity{})
+	model, err := modelProviderWrites(cfg, &egg.EggConfig{FS: []string{"ro:/", "rw:./"}}, "claude", workspace, "parent-exec", eggclient.EggIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -990,29 +995,29 @@ func TestStableHostMailboxUsesNormalProviderHomeWriteProtection(t *testing.T) {
 func TestHostMailboxChildLaunchCarriesContract(t *testing.T) {
 	cfg := &config.Config{Dir: wingpolicy.CanonicalPolicyPath(t.TempDir())}
 	reg := &conversationBrokerRegistration{SessionID: "parent-exec", Executable: "/opt/wt/bin/wt"}
-	opts := reg.launchOpts(cfg, spawnEggOpts{Kind: "agent", Principal: "owner"})
+	opts := reg.launchOpts(cfg, eggclient.SpawnEggOpts{Kind: "agent", Principal: "owner"})
 	if !opts.OmitBrowserBridge || !slices.Equal(opts.ProtectedWriteTargets, []string{cfg.Dir, wingpolicy.CanonicalPolicyPath(reg.Executable)}) || opts.Principal != "owner" {
 		t.Fatalf("child launch options %+v", opts)
 	}
-	args, err := protectedWriteTargetArgs(opts.ProtectedWriteTargets)
+	args, err := eggclient.ProtectedWriteTargetArgs(opts.ProtectedWriteTargets)
 	if err != nil || len(args) != 2 {
 		t.Fatalf("protected argv %v %v", args, err)
 	}
 	cmd := eggRunCmd()
-	if err := cmd.ParseFlags(append([]string{"--session-id", "s1", "--" + omitBrowserBridgeArg}, args...)); err != nil {
+	if err := cmd.ParseFlags(append([]string{"--session-id", "s1", "--" + eggclient.OmitBrowserBridgeArg}, args...)); err != nil {
 		t.Fatal(err)
 	}
-	if omitted, err := cmd.Flags().GetBool(omitBrowserBridgeArg); err != nil || !omitted {
+	if omitted, err := cmd.Flags().GetBool(eggclient.OmitBrowserBridgeArg); err != nil || !omitted {
 		t.Fatalf("omit-browser-bridge did not round trip: %v", err)
 	}
-	if flag := cmd.Flags().Lookup(omitBrowserBridgeArg); flag == nil || !flag.Hidden {
+	if flag := cmd.Flags().Lookup(eggclient.OmitBrowserBridgeArg); flag == nil || !flag.Hidden {
 		t.Fatal("omit-browser-bridge must be a hidden internal flag")
 	}
 	plain := eggRunCmd()
 	if err := plain.ParseFlags([]string{"--session-id", "s1"}); err != nil {
 		t.Fatal(err)
 	}
-	if omitted, _ := plain.Flags().GetBool(omitBrowserBridgeArg); omitted {
+	if omitted, _ := plain.Flags().GetBool(eggclient.OmitBrowserBridgeArg); omitted {
 		t.Fatal("ordinary egg runs must keep the browser bridge")
 	}
 }

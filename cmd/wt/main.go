@@ -25,6 +25,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
@@ -317,7 +318,7 @@ func resolveRunEggConfigYAML(configPath, cwd string, unsandboxed bool) (string, 
 		}
 		return "", nil
 	}
-	eggCfg, err := loadSpawnEggConfig(configPath, cwd, false)
+	eggCfg, err := eggclient.LoadSpawnEggConfig(configPath, cwd, false)
 	if err != nil {
 		return "", err
 	}
@@ -398,7 +399,7 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		return err
 	}
 	if options.SharedHost {
-		canonical, err := validateSharedHostWorkspacePaths(cfg, options.AllowedPaths)
+		canonical, err := eggclient.ValidateSharedHostWorkspacePaths(cfg, options.AllowedPaths)
 		if err != nil {
 			return err
 		}
@@ -532,7 +533,7 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			profile := egg.Profile(agentName)
 			dirs := append(append([]string(nil), profile.WriteRegex...), profile.WriteDirs...)
 			dirs = append(dirs, filepath.Join(".local", "bin"))
-			stateErr = prepareSharedAgentHome(home, dirs)
+			stateErr = eggclient.PrepareSharedAgentHome(home, dirs)
 		} else {
 			stateErr = prepareDirectAgentState(agentName, home)
 		}
@@ -544,13 +545,13 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			if lookupErr != nil {
 				return fmt.Errorf("find shared-host %s runtime: %w", agentDefinition.Command, lookupErr)
 			}
-			if installErr := installSharedAgentBinary(agentBin, home, agentDefinition.Command); installErr != nil {
+			if installErr := eggclient.InstallSharedAgentBinary(agentBin, home, agentDefinition.Command); installErr != nil {
 				return fmt.Errorf("prepare shared-host %s runtime: %w", agentName, installErr)
 			}
 			// Shared-host tasks intentionally drop ambient provider credentials.
 			// Give Claude the same file-backed helper used by interactive org
 			// sessions so the secret never enters the agent environment.
-			if err := setupAPIKeyHelper(agentName, map[string]string{}, home); err != nil {
+			if err := eggclient.SetupAPIKeyHelper(agentName, map[string]string{}, home); err != nil {
 				return fmt.Errorf("prepare shared-host credential helper: %w", err)
 			}
 		}
@@ -573,7 +574,7 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 			defer domainProxy.Close()
 			sbCfg.ProxyPort = domainProxy.Port()
 		}
-		detail, auditErr := appendNetworkEnforcementAudit(s, t.ID, "sandbox_enforcement", explainEnforcement(sbCfg.NetworkNeed, runtime.GOOS, sbCfg.NetworkMode), sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.LocalPorts)
+		detail, auditErr := appendNetworkEnforcementAudit(s, t.ID, "sandbox_enforcement", eggclient.ExplainEnforcement(sbCfg.NetworkNeed, runtime.GOOS, sbCfg.NetworkMode), sbCfg.NetworkNeed, sbCfg.Domains, sbCfg.LocalPorts)
 		if auditErr != nil {
 			return fmt.Errorf("record sandbox enforcement audit: %w", auditErr)
 		}
@@ -604,7 +605,7 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 				agentEnv = append(agentEnv, key+"="+value)
 			}
 		}
-		policyArgs, err := isolatedClaudePolicyArgs(agentName, options.UserHome != "" || config.Channel() == "preview")
+		policyArgs, err := eggclient.IsolatedClaudePolicyArgs(agentName, options.UserHome != "" || config.Channel() == "preview")
 		if err != nil {
 			return err
 		}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 )
 
 func lifecycleMCPFixture(t *testing.T) (*localMCPServer, string) {
@@ -26,35 +27,13 @@ func lifecycleMCPFixture(t *testing.T) (*localMCPServer, string) {
 	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte(meta), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSessionPrincipal(dir, "owner"); err != nil {
+	if err := eggclient.WriteSessionPrincipal(dir, "owner"); err != nil {
 		t.Fatal(err)
 	}
 	if err := egg.RecordSessionProcessEvent(dir, "session_exit", "failed", "cancelled"); err != nil {
 		t.Fatal(err)
 	}
 	return &localMCPServer{cfg: cfg, principal: "owner", logs: os.Stderr}, dir
-}
-
-func TestPreviewLifecycleHomeDoesNotFallBackToHost(t *testing.T) {
-	previous := config.ReleaseChannel
-	config.ReleaseChannel = "preview"
-	t.Cleanup(func() { config.ReleaseChannel = previous })
-	cfg := &config.Config{Dir: t.TempDir()}
-	expected := config.PreviewProviderHome(cfg.Dir)
-	for _, recorded := range []string{"", expected} {
-		home, err := lifecycleProviderHome(cfg, recorded)
-		if err != nil || home != expected {
-			t.Fatalf("preview provider home: %q, %v", home, err)
-		}
-	}
-	if _, err := lifecycleProviderHome(cfg, t.TempDir()); err == nil {
-		t.Fatal("preview accepted another provider home")
-	}
-	config.ReleaseChannel = "stable"
-	legacy := t.TempDir()
-	if home, err := lifecycleProviderHome(cfg, legacy); err != nil || home != legacy {
-		t.Fatalf("stable recorded home changed: %q, %v", home, err)
-	}
 }
 
 func TestSessionLifecycleMCPDispatchArchiveOwnershipStrictArguments(t *testing.T) {
@@ -98,19 +77,19 @@ func TestSessionLifecycleWaitHeadBeyondPageAndCancellation(t *testing.T) {
 	if err := egg.RecordSessionProcessEvent(dir, "session_exit", "completed", "provider exited"); err != nil {
 		t.Fatal(err)
 	}
-	session, err := resolveLifecycleSession(s.cfg, "archived")
+	session, err := eggclient.ResolveLifecycleSession(s.cfg, "archived")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	view, matched, err := waitSessionLifecycle(ctx, s.cfg, session, 1, "completed")
+	view, matched, err := eggclient.WaitSessionLifecycle(ctx, s.cfg, session, 1, "completed")
 	if err != nil || !matched || view.StateCursor <= 200 {
 		t.Fatalf("completion behind page never matched: %+v %t %v", view, matched, err)
 	}
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	cancel2()
-	if _, _, err = waitSessionLifecycle(ctx2, s.cfg, session, view.HeadCursor, "working"); err != context.Canceled {
+	if _, _, err = eggclient.WaitSessionLifecycle(ctx2, s.cfg, session, view.HeadCursor, "working"); err != context.Canceled {
 		t.Fatalf("cancellation ignored: %v", err)
 	}
 	result, err := s.toolSessionWait(context.Background(), json.RawMessage(fmt.Sprintf(`{"session":"archived","after_cursor":%d,"state":"completed","timeout_seconds":0.1}`, view.HeadCursor)))
@@ -127,7 +106,7 @@ func TestSessionLifecycleCommandExposure(t *testing.T) {
 			t.Fatalf("%s missing typed CLI: %v", name, err)
 		}
 	}
-	if err := validateLifecycleWait("silent"); err == nil || !strings.Contains(err.Error(), "state") {
+	if err := eggclient.ValidateLifecycleWait("silent"); err == nil || !strings.Contains(err.Error(), "state") {
 		t.Fatal("accepted terminal silence as lifecycle state")
 	}
 }

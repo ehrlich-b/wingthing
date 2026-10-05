@@ -42,6 +42,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
@@ -226,18 +227,18 @@ func opusPRAppendDurable(path string, record any) error {
 func opusPRWakeStep(h opusPRHelper, boundary string) {
 	s := &localMCPServer{cfg: h.cfg, principal: opusPROwner}
 	runtime := nativeConversationWakeRuntime(h.cfg)
-	runtime.Prompt = func(ctx context.Context, session localSession, id, text string) (egg.SessionPromptResult, error) {
+	runtime.Prompt = func(ctx context.Context, session eggclient.LocalSession, id, text string) (egg.SessionPromptResult, error) {
 		if boundary == "bound_before_reservation" {
 			opusPRReach(opusPRReport{Boundary: boundary, RequestID: id, Session: session.ID})
 		}
 		dir := filepath.Join(h.cfg.Dir, "eggs", session.ID)
-		provider := readEggMetaValues(dir)["provider_session_id"]
+		provider := eggclient.ReadEggMetaValues(dir)["provider_session_id"]
 		return egg.SubmitSessionPrompt(ctx, dir, egg.SessionPromptOptions{RequestID: id, Input: text, Timeout: opusPRWakeTimeout,
 			Read: func(ctx context.Context, after int64, limit int) (egg.SessionView, error) {
 				if err := ctx.Err(); err != nil {
 					return egg.SessionView{}, err
 				}
-				return lifecycleViewForSession(h.cfg, session, after, limit)
+				return eggclient.LifecycleViewForSession(h.cfg, session, after, limit)
 			},
 			Send: func(_ context.Context, input string) (egg.PromptDelivery, error) {
 				return opusPRSyntheticTransport(h, boundary, id, provider, input)
@@ -399,7 +400,7 @@ func opusPRNewWorld(t *testing.T) *opusPRWorld {
 		if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte(meta), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeSessionPrincipal(dir, opusPROwner); err != nil {
+		if err := eggclient.WriteSessionPrincipal(dir, opusPROwner); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -870,13 +871,13 @@ func TestOpusProcessRecoveryQueuedWakeSurvivesKilledControllerLoop(t *testing.T)
 	w.hook(opusPRChildExec, opusPRChildProvider, "SessionStart", nil)
 	w.hook(opusPRChildExec, opusPRChildProvider, "UserPromptSubmit", map[string]any{"prompt": "benign fixture task"})
 
-	rootSession := localSession{ID: opusPRRootExec, Agent: "claude", CWD: opusPRCWD}
-	childSession := localSession{ID: opusPRChildExec, Agent: "claude", CWD: opusPRCWD}
-	rootView, err := lifecycleViewForSession(w.cfg, rootSession, 0, 200)
+	rootSession := eggclient.LocalSession{ID: opusPRRootExec, Agent: "claude", CWD: opusPRCWD}
+	childSession := eggclient.LocalSession{ID: opusPRChildExec, Agent: "claude", CWD: opusPRCWD}
+	rootView, err := eggclient.LifecycleViewForSession(w.cfg, rootSession, 0, 200)
 	if err != nil || !rootView.ProcessAlive || rootView.State != "needs_input" || egg.NativePromptReady(rootView) {
 		t.Fatalf("root fixture should be a live parent awaiting a human: %+v %v", rootView, err)
 	}
-	childView, err := lifecycleViewForSession(w.cfg, childSession, 0, 200)
+	childView, err := eggclient.LifecycleViewForSession(w.cfg, childSession, 0, 200)
 	if err != nil || !childView.ProcessAlive || childView.State != "working" {
 		t.Fatalf("child stub should be a live working child: %+v %v", childView, err)
 	}
@@ -888,7 +889,7 @@ func TestOpusProcessRecoveryQueuedWakeSurvivesKilledControllerLoop(t *testing.T)
 	if err := egg.RecordSessionProcessEvent(w.eggDir(opusPRChildExec), "session_exit", "stopped", childReason); err != nil {
 		t.Fatal(err)
 	}
-	childView, err = lifecycleViewForSession(w.cfg, childSession, 0, 200)
+	childView, err = eggclient.LifecycleViewForSession(w.cfg, childSession, 0, 200)
 	if err != nil || childView.ProcessAlive || childView.State != "stopped" || childView.StateSource != "egg_process" {
 		t.Fatalf("child exit not journaled: %+v %v", childView, err)
 	}
