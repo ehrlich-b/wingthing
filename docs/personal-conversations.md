@@ -53,6 +53,13 @@ tcp4 127.0.0.1:0: bind: operation not permitted`. The
 Where the direct server was previously refused because the provider cannot
 write the state directory, a root launch instead registers a host mailbox. This
 is the only activation path; layouts that already worked keep the direct server.
+The original gate kept this host-authority bridge in the personal preview
+rollout. Stable now requires explicit `conversations: enabled` in wing.yaml;
+omitting it preserves the exact existing refusal. Opt-in is rechecked at broker
+startup and on every call. Preview remains personal and loopback-only. Both
+channels retain the same-owner workspace trust boundary and protection checks;
+the gate does not substitute for those checks. See
+[phone coordinator setup](phone-coordinator.md) for an isolated hosted wing.
 
 - The already-authorized launcher (browser owner or local MCP client) captures
   its principal, actor, surface, conversation, root and exact parent execution,
@@ -99,6 +106,90 @@ readiness and trust statement. The mailbox is **same-owner workspace trust**:
 any process able to write the workspace, including the parent provider, can use
 the captured parent's already-authorized tree scope. It does not authenticate a
 caller process and is not Context's sealed caller binding.
+
+## Hosted native path
+
+The inspected `origin/main` is `72c7be5` (2026-08-29). Its
+`internal/relay/server.go` already registers `/auth/check`, `/api/app/wings`
+and `/ws/relay`; `pty_relay.go:handlePTYWS` forwards generic `tunnel.req` and
+`workers.go:forwardTunnelToBrowser` returns encrypted replies to their source
+browser/phone. The relay does not decode `session.control` or its operation.
+These native operations require the new **wing** build, not a relay code
+deployment. This is a source-level finding, not verification of the live
+wingthing.ai deployment or Bryan's account entitlement.
+
+1. The phone's `mobile/ios/WingthingCore/Sources/WingthingCore/HomeConnection.swift`
+   requires an exact HTTPS origin, account ID, wing ID and base64 32-byte public
+   key. `HomeClient.connect` verifies `/health`, the bearer account returned by
+   `/auth/check` and exactly one matching wing/key in `/api/app/wings`.
+   `/auth/check` uses `handler.go:requireToken` (validated JWT or unexpired
+   `device_tokens.token`); the bearer roster uses `app_handlers.go:tokenUser`
+   (database device token, existing user and applicable roost enrollment).
+   Personal inventory is owner-only; organization inventory requires membership.
+2. `HomeClient.tunnel` checks the current home/execution references and explicit
+   wing pin, derives X25519/HKDF `wt-tunnel` AES-GCM, and sends the encrypted
+   `session.control` operation through bearer `/ws/relay?wing_id=<wing-id>` with
+   purpose `wing-control`. `handlePTYWS` validates bearer/session authentication,
+   enrollment and the online wing's owner/org access, hydrating current account
+   email and org role. Cross-node routing resolves the wing before WS upgrade.
+3. Every control request requires current relay entitlement **and** effective
+   wing `hosted_relay: allow`. `wing-control` is not an exempt coordination
+   purpose. The relay caps WS requests at 512 KiB, requires a bounded unique
+   request ID with available pending-request capacity, and replaces sender user,
+   email and role with authenticated values. Response routing is bound to both
+   source wing and originating connection, expires stale requests, rechecks wing
+   hosted policy and uses `writeRelayPayload` to recheck entitlement/rate limits.
+4. On the Mac, `internal/ws/client.go:hostedRelayDenial` independently enforces
+   hosted policy. `cmd/wt/wing.go:handleTunnelRequest` decrypts, validates session
+   ID and declared purpose against the inner type, and requires sender identity.
+   Locked wings require a locally pinned passkey for that user plus a valid
+   token bound to `passkeySubject(user_id, sender_public_key)` and `auth_ttl`.
+   Unlocked wings also require this token when that user has a locally enrolled
+   passkey. Relay-supplied roles/keys do not replace local passkey approval.
+   The iOS client has no passkey ceremony adapter and reports `passkey_required`;
+   an existing locked wing must keep its lock. The setup guide uses fresh state.
+5. `cmd/wt/conversation_browser.go:browserSessionControl` dispatches the same
+   strict typed `localMCPServer.callTool` handlers with HTTP-MCP grants, finite
+   session/spawn-rate bounds, current workspace policy and authenticated user.
+   `direct_mcp.enabled` is unrelated to this hosted tunnel route.
+
+| Operation | Wing checks after transport/passkey admission |
+| --- | --- |
+| `conversation_list` | Only `conversations.owner_id = roostSessionPrincipal(sender_user_id)`, filtered by current canonical path bounds. |
+| `conversation_read` | Exact owned conversation ID and current path bounds; bound MCP connections additionally stay within their root task tree. |
+| `session_read` | Valid exact session ID, current artifact owner/path visibility, then its persisted MCP session principal and lifecycle policy. |
+| `session_prompt` | The read checks plus attachment owner/admin access, durable bounded request ID/input, supported native adapter, live foreground readiness, exact provider identity, writer claim and receipt reconciliation. |
+| `agent_start` | A linked personal Claude conversation; no organization/shared-host mutations; strict role/arguments/workspace/model validation, session/spawn bounds and retry-safe launch reservation. Root fallback additionally checks `conversations: enabled` on stable, writable workspace, personal-only broker admission and provider-write protection of state/executable at registration, startup and child launch. |
+
+Browser session tools preserve historical personal-owner/admin oversight of
+artifacts and use a session's persisted principal only after artifact admission.
+Conversation IDs themselves remain owner-scoped. The phone setup's local MCP
+launcher uses the same `user-` plus first 20 hex characters of SHA-256(account ID)
+principal as the authenticated browser adapter, so the phone sees its root.
+Broker calls stay within the captured root, intersect the captured grants/bounds
+and paths with current `clients.yaml`/wing policy, and stop mutations when locked.
+Stable opt-in revocation stops every subsequent broker call. Mailbox access is
+same-owner workspace trust; it does not authenticate a particular writer process.
+
+Checked-in `fly.toml` selects `WT_RELAY_POLICY=direct-free`. For an ineligible
+account, the precise missing data is an `entitlements` row with
+`user_id=<account-id>` and `subscription_id` referencing a `subscriptions.id`
+whose `status='active'`; see `store.go:IsUserPro`. `users.tier='pro'` alone does
+not satisfy this check. Alternatively `users.created_at` must be no later than
+the explicitly configured `WT_RELAY_MIGRATION_BEFORE` cutoff (checked in as
+`2026-08-26T00:00:00Z`, with deprecated `WT_RELAY_GRANDFATHER_BEFORE` alias).
+Edge deployments consume the login node's synchronized `EntitlementCache`.
+Those are operator/billing-managed data or deployment configuration changes;
+none is performed by this branch. The public direct-free self-service plan
+endpoints cannot grant relay access, and a wing's allow setting cannot either.
+
+The current iOS New conversation template starts Claude with `-p` and exits
+after its turn. Its follow-up adapter expects `session_read.headless_continuation`
+and `agent_start.resume_session`, which this backend does not implement; a
+browser PTY parent resume also refuses the broker launch contract. Use the
+documented Mac-started interactive parent for persistent phone `session_prompt`
+access. Headless continuation and broker-managed PTY resume need separate wing
+implementation, not a relay operation-specific deploy.
 
 ## Reconnect and input
 

@@ -3098,6 +3098,9 @@ func wingConfigCmd() *cobra.Command {
 			fmt.Printf("locked:     %v\n", wingCfg.Locked)
 			fmt.Printf("spectate:   %v\n", wingCfg.Spectate)
 			fmt.Printf("hosted_relay: %s\n", wingCfg.EffectiveHostedRelay())
+			if wingCfg.Conversations != "" {
+				fmt.Printf("conversations: %s\n", wingCfg.Conversations)
+			}
 			authTTL := wingCfg.AuthTTL
 			if authTTL == "" {
 				authTTL = "0"
@@ -3175,6 +3178,11 @@ func wingConfigSetCmd() *cobra.Command {
 						return fmt.Errorf("hosted_relay: expected %q or %q", config.HostedRelayAllow, config.HostedRelayDeny)
 					}
 					wingCfg.HostedRelay = value
+				case "conversations":
+					if value != config.ConversationsEnabled && value != config.ConversationsDisabled {
+						return fmt.Errorf("conversations: expected %q or %q", config.ConversationsEnabled, config.ConversationsDisabled)
+					}
+					wingCfg.Conversations = value
 				case "labels":
 					var labels []string
 					for _, l := range strings.Split(value, ",") {

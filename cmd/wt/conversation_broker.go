@@ -9,7 +9,8 @@ package main
 // sandbox. The parent's stdio client exchanges bounded files with it through a
 // mailbox in the parent's already writable workspace (same-owner workspace
 // trust, shared with children in that workspace; never a sealed caller; see
-// conversation_mailbox.go). The broker is preview-only. Every call is dispatched through the
+// conversation_mailbox.go). Stable requires conversations: enabled; preview
+// retains its personal-only rollout. Every call is dispatched through the
 // existing typed callTool path, strict argument decoding, audit and admission,
 // on a fixed subset of conversation/session tools, re-intersected with current
 // clients.yaml and wing policy each time. No new grant, mount, socket or
@@ -94,6 +95,10 @@ func brokerActor(conversation, session string) string {
 // parent launch, when the broker starts, and before every child spawn.
 var conversationBrokerProtection = defaultConversationBrokerProtection
 
+func conversationBrokerEnabled(wc *config.WingConfig) bool {
+	return config.Channel() == "preview" || config.Channel() == "stable" && wc != nil && wc.Conversations == config.ConversationsEnabled
+}
+
 func defaultConversationBrokerProtection(cfg *config.Config, eggCfg *egg.EggConfig, agentName, cwd, sessionID string, identity EggIdentity, targets []string) error {
 	if err := brokerProviderHomeOutsideState(cfg); err != nil {
 		return err
@@ -155,10 +160,14 @@ func (r *conversationBrokerRegistration) launchOpts(cfg *config.Config, opts spa
 	return opts
 }
 
-// The provider data home D is writable by the provider, so it must lie outside
-// the protected state directory S. Its physical-alias binding is checked
-// separately when the configuration is loaded.
+// Preview's isolated provider data home must lie outside protected state; its
+// physical-alias binding is checked when configuration is loaded. Stable uses
+// the ordinary OS HOME write-deny root, not Config.ProviderDataHome. Its profile
+// write regions are checked by modelProviderWrites and verifyProtected below.
 func brokerProviderHomeOutsideState(cfg *config.Config) error {
+	if config.Channel() != "preview" {
+		return nil
+	}
 	state := canonicalPolicyPath(cfg.Dir)
 	home := canonicalPolicyPath(cfg.ProviderDataHome())
 	if sessionPolicyContains(state, home) || sessionPolicyContains(home, state) {
@@ -217,8 +226,11 @@ func brokerChildPolicySnapshot(eggCfg *egg.EggConfig, workspace string) (string,
 //
 // The returned registration's launchOpts must be applied to the parent spawn.
 func (s *localMCPServer) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggConfig, args []string) ([]string, *conversationBrokerRegistration, error) {
-	// Stable keeps its deployed refusal for this layout unchanged.
-	if config.Channel() != "preview" {
+	wc, err := config.LoadWingConfig(s.cfg.Dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !conversationBrokerEnabled(wc) {
 		return nil, nil, errors.New("the host mailbox is available only in the preview channel")
 	}
 	if s.unsandboxed {
@@ -226,10 +238,6 @@ func (s *localMCPServer) prepareBrokerParentMCP(c *store.Conversation, eggCfg *e
 	}
 	if s.hostMailboxUnavailable != "" {
 		return nil, nil, errors.New(s.hostMailboxUnavailable)
-	}
-	wc, err := config.LoadWingConfig(s.cfg.Dir)
-	if err != nil {
-		return nil, nil, err
 	}
 	if wc.Org != "" || s.identity.OrgWing || s.identity.SharedHost {
 		return nil, nil, errors.New("the host mailbox is available only for personal wings")
@@ -436,6 +444,9 @@ func (r *conversationBrokerRegistration) server(cfg *config.Config, admission *m
 	wc, err := config.LoadWingConfig(cfg.Dir)
 	if err != nil {
 		return nil, nil, err
+	}
+	if !conversationBrokerEnabled(wc) {
+		return nil, nil, errors.New("host mailbox requires conversations: enabled on a stable wing")
 	}
 	if wc.Org != "" {
 		return nil, nil, errors.New("host mailbox is unavailable on an organization wing")
@@ -682,8 +693,15 @@ type conversationBroker struct {
 var errConversationBrokerRunning = errors.New("host mailbox broker already running for this execution")
 
 func runConversationBroker(ctx context.Context, cfg *config.Config, session string, logs io.Writer) error {
-	if config.Channel() != "preview" {
+	wc, configErr := config.LoadWingConfig(cfg.Dir)
+	if !conversationBrokerEnabled(wc) {
 		return errors.New("the host mailbox broker is available only in the preview channel")
+	}
+	if configErr != nil {
+		return configErr
+	}
+	if wc.Org != "" {
+		return errors.New("host mailbox is unavailable on an organization wing")
 	}
 	reg, err := loadConversationBrokerRegistration(cfg, session)
 	if err != nil {
