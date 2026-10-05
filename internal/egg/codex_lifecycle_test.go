@@ -26,9 +26,9 @@ func TestCodexLifecycleInstalledHookTrust(t *testing.T) {
 		defer cancel()
 		version, err := exec.CommandContext(ctx, binary, "--version").Output()
 		if err != nil {
-			t.Skipf("installed Codex has no native hook trust support (version unavailable: %v)", err)
+			t.Skipf("installed Codex hook trust requires codex-cli >= 0.159.3 (version unavailable: %v)", err)
 		}
-		t.Skipf("installed Codex has no native hook trust support: %s", strings.TrimSpace(string(version)))
+		t.Skipf("installed Codex hook trust requires codex-cli >= 0.159.3: %s", strings.TrimSpace(string(version)))
 	}
 	// Codex canonicalizes source paths (including macOS's /var symlink).
 	home, err := filepath.EvalSymlinks(t.TempDir())
@@ -201,20 +201,69 @@ func TestCodexLifecycleArgsInsertOverridesBeforeTerminator(t *testing.T) {
 	}
 }
 
-func TestCodexLifecycleSupportedUsesBinaryCapability(t *testing.T) {
+func TestParseCodexVersion(t *testing.T) {
 	for _, tc := range []struct {
-		help string
-		want bool
+		output string
+		want   [3]uint64
 	}{
-		{"Codex CLI with notify", false},
-		{"Codex CLI --dangerously-bypass-hook-trust", true},
+		{"codex-cli 0.147.0", [3]uint64{0, 147, 0}},
+		{"codex-cli 0.159.3\n", [3]uint64{0, 159, 3}},
+		{" \tcodex-cli\t0.160.10\r\n", [3]uint64{0, 160, 10}},
+		{"codex-cli 1.0.0", [3]uint64{1, 0, 0}},
+	} {
+		t.Run(tc.output, func(t *testing.T) {
+			got, ok := parseCodexVersion(tc.output)
+			if !ok || got != tc.want {
+				t.Fatalf("parseCodexVersion(%q) = %v, %t, want %v", tc.output, got, ok, tc.want)
+			}
+		})
+	}
+	for _, output := range []string{
+		"", "0.159.3", "codex 0.159.3", "codex-cli", "codex-cli v0.159.3",
+		"codex-cli 0.159", "codex-cli 0.159.3.1", "codex-cli 0..3",
+		"codex-cli -1.159.3", "codex-cli 0.+159.3", "codex-cli 0.159.x",
+		"codex-cli 0.159.3-alpha.1", "codex-cli 0.159.3+build", "codex-cli 0.159.3 extra",
+		"codex-cli 18446744073709551616.159.3",
+	} {
+		t.Run(output, func(t *testing.T) {
+			if _, ok := parseCodexVersion(output); ok {
+				t.Fatalf("parseCodexVersion(%q) accepted an unrecognized version", output)
+			}
+		})
+	}
+}
+
+func TestCodexLifecycleSupportedUsesBinaryVersion(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{
+		{"codex-cli 0.147.0", false},
+		{"codex-cli 0.158.99", false},
+		{"codex-cli 0.159.0", false},
+		{"codex-cli 0.159.2", false},
+		{"codex-cli 0.159.3", true},
+		{"codex-cli 0.159.4", true},
+		{"codex-cli 0.160.0", true},
+		{"codex-cli 1.0.0", true},
+		{"codex-cli unknown", false},
 	} {
 		path := filepath.Join(t.TempDir(), "codex")
-		if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' "+shellQuoteLifecycle(tc.help)+"\n"), 0700); err != nil {
+		// Older versions expose the same help flag despite using a different
+		// hook trust format, so help must not determine support.
+		script := "#!/bin/sh\ncase \"$1\" in\n--version) printf '%s\\n' " + shellQuoteLifecycle(tc.version) +
+			";;\n--help) printf '%s\\n' '--dangerously-bypass-hook-trust';;\n*) exit 1;;\nesac\n"
+		if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}
 		if got := codexLifecycleSupported(path); got != tc.want {
-			t.Fatalf("capability for %q = %t, want %t", tc.help, got, tc.want)
+			t.Fatalf("capability for %q = %t, want %t", tc.version, got, tc.want)
+		}
+		if !tc.want {
+			view, err := ReadSessionLifecycle(t.TempDir(), "codex", "", t.TempDir(), "", true, 0, 10)
+			if err != nil || view.Status != "unknown" || view.Ready {
+				t.Fatalf("unsupported version guessed status: %+v, %v", view, err)
+			}
 		}
 	}
 }
@@ -226,12 +275,12 @@ func TestCodexLifecycleSupportedCachesByBinaryPathAndMtime(t *testing.T) {
 			binary, counter := filepath.Join(dir, "codex"), filepath.Join(dir, "probes")
 			writeBinary := func(supported bool, modTime time.Time) {
 				t.Helper()
-				help := "Codex CLI with notify"
+				version := "codex-cli 0.147.0"
 				if supported {
-					help += " --dangerously-bypass-hook-trust"
+					version = "codex-cli 0.159.3"
 				}
-				script := "#!/bin/sh\nprintf 'probe\\n' >> " + shellQuoteLifecycle(counter) +
-					"\nprintf '%s\\n' " + shellQuoteLifecycle(help) + "\n"
+				script := "#!/bin/sh\n[ \"$1\" = '--version' ] || exit 1\nprintf 'probe\\n' >> " + shellQuoteLifecycle(counter) +
+					"\nprintf '%s\\n' " + shellQuoteLifecycle(version) + "\n"
 				if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -252,7 +301,7 @@ func TestCodexLifecycleSupportedCachesByBinaryPathAndMtime(t *testing.T) {
 				wg.Wait()
 				data, err := os.ReadFile(counter)
 				if err != nil || strings.Count(string(data), "probe\n") != probes {
-					t.Fatalf("expected %d help probes, got %q: %v", probes, data, err)
+					t.Fatalf("expected %d version probes, got %q: %v", probes, data, err)
 				}
 			}
 			// Both binaries start at the same mtime; their paths keep the

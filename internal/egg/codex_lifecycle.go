@@ -57,7 +57,7 @@ func codexLifecycleSupported(binary string) bool {
 	if err != nil {
 		return false
 	}
-	// Serialize probes so concurrent launches only run --help once per version.
+	// Serialize probes so concurrent launches only run --version once per version.
 	codexLifecycleCapabilityCache.Lock()
 	defer codexLifecycleCapabilityCache.Unlock()
 	if cached, ok := codexLifecycleCapabilityCache.byPath[path]; ok && cached.modTime.Equal(info.ModTime()) {
@@ -65,10 +65,41 @@ func codexLifecycleSupported(binary string) bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	help, err := exec.CommandContext(ctx, path, "--help").Output()
-	supported := err == nil && bytes.Contains(help, []byte("--dangerously-bypass-hook-trust"))
+	output, err := exec.CommandContext(ctx, path, "--version").Output()
+	version, parsed := parseCodexVersion(string(output))
+	supported := err == nil && parsed
+	if supported {
+		// 0.159.3 is the earliest locally verified hook trust format. The
+		// bypass help flag does not establish compatibility with this format.
+		for i, minimum := range [3]uint64{0, 159, 3} {
+			if version[i] != minimum {
+				supported = version[i] > minimum
+				break
+			}
+		}
+	}
 	codexLifecycleCapabilityCache.byPath[path] = codexLifecycleCapability{modTime: info.ModTime(), supported: supported}
 	return supported
+}
+
+func parseCodexVersion(output string) ([3]uint64, bool) {
+	fields := strings.Fields(output)
+	if len(fields) != 2 || fields[0] != "codex-cli" {
+		return [3]uint64{}, false
+	}
+	parts := strings.Split(fields[1], ".")
+	if len(parts) != 3 {
+		return [3]uint64{}, false
+	}
+	var version [3]uint64
+	for i, part := range parts {
+		value, err := strconv.ParseUint(part, 10, 64)
+		if err != nil {
+			return [3]uint64{}, false
+		}
+		version[i] = value
+	}
+	return version, true
 }
 
 // CodexLifecycleArgs installs observational hooks in the session-flags layer.
