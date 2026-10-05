@@ -140,6 +140,21 @@ func validateProviderHomeBinding(stateDir string, data []byte) (string, error) {
 	if err := validateProviderHomeDirectory(resolved); err != nil {
 		return "", err
 	}
+	// The home itself can be isolated while its credential files alias host
+	// state. Check both Claude's config root and its credential-file locations
+	// without opening any credentials, including missing paths below aliases.
+	for _, name := range []string{".claude", ".claude.json", filepath.Join(".claude", ".credentials.json")} {
+		credential := filepath.Join(resolved, name)
+		for label, path := range protected {
+			overlaps, err := statePathsOverlap(credential, path)
+			if err != nil {
+				return "", fmt.Errorf("verify provider credential path %q: %w", credential, err)
+			}
+			if overlaps {
+				return "", fmt.Errorf("provider credential path %q must not overlap %s %q", credential, label, path)
+			}
+		}
+	}
 	return resolved, nil
 }
 
@@ -210,12 +225,20 @@ func requireNoPhysicalProviderHomeOverlap(home string, protected map[string]stri
 }
 
 func DefaultDir() string {
-	home, _ := os.UserHomeDir()
+	dir, _ := defaultStateDir()
+	return dir
+}
+
+func defaultStateDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
 	name := ".wingthing"
 	if Channel() == "preview" {
 		name = ".wingthing-preview"
 	}
-	return filepath.Join(home, name)
+	return filepath.Join(home, name), nil
 }
 
 func DefaultRelayURL() string {
@@ -254,7 +277,11 @@ func StateDir() (string, error) {
 		dir = previewDir
 	}
 	if dir == "" {
-		dir = DefaultDir()
+		var err error
+		dir, err = defaultStateDir()
+		if err != nil {
+			return "", err
+		}
 	}
 	if Channel() == "preview" {
 		home, err := os.UserHomeDir()
@@ -263,7 +290,11 @@ func StateDir() (string, error) {
 		}
 		stable := canonicalConfiguredPath(filepath.Join(home, ".wingthing"), home)
 		resolved := canonicalConfiguredPath(dir, home)
-		if configuredPathsOverlap(stable, resolved) {
+		overlaps, err := statePathsOverlap(stable, resolved)
+		if err != nil {
+			return "", err
+		}
+		if overlaps {
 			reentry, err := validatePreviewProviderReentry(resolved, home)
 			if err != nil {
 				return "", err
@@ -299,7 +330,11 @@ func validatePreviewProviderReentry(root, home string) (bool, error) {
 		return false, errors.New("preview parent re-entry requires an absolute OS-account home directory")
 	}
 	stable := canonicalConfiguredPath(filepath.Join(account.HomeDir, ".wingthing"), "")
-	if configuredPathsOverlap(stable, root) {
+	overlaps, err := statePathsOverlap(stable, root)
+	if err != nil {
+		return false, err
+	}
+	if overlaps {
 		return false, fmt.Errorf("preview state directory %q overlaps OS-account stable state %q", root, stable)
 	}
 	for _, path := range []string{root, providerHome} {
@@ -317,6 +352,65 @@ func validatePreviewProviderReentry(root, home string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// Tests replace this to model physical aliases that EvalSymlinks cannot see.
+var statePathStat = os.Stat
+
+// statePathsOverlap compares resolved existing ancestors as well as names.
+// Missing suffixes must still overlap: two absent siblings sharing an existing
+// ancestor do not overlap, but a missing child of a physical alias does.
+func statePathsOverlap(left, right string) (bool, error) {
+	overlaps := func(a, b string) bool {
+		if providerHomeFoldsCase {
+			a, b = strings.ToLower(a), strings.ToLower(b)
+		}
+		return configuredPathsOverlap(a, b)
+	}
+	left, right = canonicalConfiguredPath(left, ""), canonicalConfiguredPath(right, "")
+	if overlaps(left, right) {
+		return true, nil
+	}
+	type ancestor struct {
+		info   os.FileInfo
+		suffix string
+	}
+	ancestors := func(path string) ([]ancestor, error) {
+		var chain []ancestor
+		for current := path; ; current = filepath.Dir(current) {
+			info, err := statePathStat(current)
+			if err == nil {
+				suffix, err := filepath.Rel(current, path)
+				if err != nil {
+					return nil, err
+				}
+				chain = append(chain, ancestor{info: info, suffix: suffix})
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("inspect state path %q: %w", current, err)
+			} else if _, err := os.Lstat(current); err == nil {
+				return nil, fmt.Errorf("state path %q is a dangling symlink", current)
+			}
+			if filepath.Dir(current) == current {
+				return chain, nil
+			}
+		}
+	}
+	leftChain, err := ancestors(left)
+	if err != nil {
+		return false, err
+	}
+	rightChain, err := ancestors(right)
+	if err != nil {
+		return false, err
+	}
+	for _, a := range leftChain {
+		for _, b := range rightChain {
+			if os.SameFile(a.info, b.info) && overlaps(a.suffix, b.suffix) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // ValidateStateDirectory runs before mkdir/chmod, daemon inspection, or auth

@@ -156,6 +156,23 @@ func TestCheckedProfileRejectsRelativeTarget(t *testing.T) {
 	requireProtectedError(t, err, "")
 }
 
+func TestCheckedProfileRejectsSymlinkDotDotProtectedTarget(t *testing.T) {
+	home, _ := protectedProfileEnv(t)
+	work := filepath.Join(home, "work")
+	if err := os.MkdirAll(filepath.Join(work, "sub"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, "link")
+	if err := os.Symlink(filepath.Join(work, "sub"), link); err != nil {
+		t.Fatal(err)
+	}
+	// Preserve ..: Join would erase the difference between the kernel's path
+	// (work/controller) and the lexical path (home/controller).
+	target := link + "/../controller"
+	_, err := buildCheckedProfile(protectedProfileConfig(home, target))
+	requireProtectedError(t, err, "")
+}
+
 func TestNewReturnsProtectedWriteTargetErrorUnwrapped(t *testing.T) {
 	if _, err := exec.LookPath("sandbox-exec"); err != nil {
 		t.Skip("sandbox-exec not on PATH")

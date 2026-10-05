@@ -55,11 +55,29 @@ func releaseAssetName() string {
 }
 
 func validateUpdateTarget() error {
+	if err := validateUpdateState(); err != nil {
+		return err
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
 	return validateChannelUpdatePath(exe)
+}
+
+func validateUpdateState() error {
+	dir, err := config.StateDir()
+	if err != nil {
+		return err
+	}
+	return config.ValidateStateDirectory(dir)
+}
+
+func acquireUpdateLifecycleLock() (*os.File, error) {
+	if err := validateUpdateState(); err != nil {
+		return nil, err
+	}
+	return acquireDaemonLifecycleLock()
 }
 
 func validateChannelUpdatePath(path string) error {
@@ -141,7 +159,7 @@ func updatePreviewFile(ctx context.Context, source, manifest string) (runErr err
 	if err := validateReleaseBinary(ctx, tmp); err != nil {
 		return err
 	}
-	lock, err := acquireDaemonLifecycleLock()
+	lock, err := acquireUpdateLifecycleLock()
 	if err != nil {
 		return err
 	}

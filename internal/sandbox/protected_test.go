@@ -2,11 +2,24 @@ package sandbox
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 const protectedTestTarget = "/Users/u/.wingthing/ctl"
+
+func TestValidateProtectedWriteTargetsRejectsUncleanPaths(t *testing.T) {
+	root := t.TempDir()
+	for _, target := range []string{root + "/child/../controller", root + "/./controller", root + "//controller", root + "/"} {
+		if err := ValidateProtectedWriteTargets([]string{target}); err == nil {
+			t.Errorf("accepted unclean protected path %q", target)
+		}
+	}
+	if err := ValidateProtectedWriteTargets([]string{filepath.Join(root, "controller")}); err != nil {
+		t.Fatalf("clean missing target rejected: %v", err)
+	}
+}
 
 func requireProtectedError(t *testing.T, err error, wantRule string) *ProtectedWriteTargetError {
 	t.Helper()

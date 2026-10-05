@@ -220,12 +220,12 @@ func buildProfile(cfg Config) string {
 // every target unwritable. An empty protected set returns buildProfile output
 // unchanged.
 func buildCheckedProfile(cfg Config) (string, error) {
+	if err := ValidateProtectedWriteTargets(cfg.ProtectedWriteTargets); err != nil {
+		return "", err
+	}
 	profile := buildProfile(cfg)
 	if len(cfg.ProtectedWriteTargets) == 0 {
 		return profile, nil
-	}
-	if err := ValidateProtectedWriteTargets(cfg.ProtectedWriteTargets); err != nil {
-		return "", err
 	}
 	targets := make([]string, 0, len(cfg.ProtectedWriteTargets))
 	for _, t := range cfg.ProtectedWriteTargets {

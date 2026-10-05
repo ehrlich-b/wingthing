@@ -47,6 +47,9 @@ type daemonUpdateState struct {
 // lifecycle lock is held. In particular, an update must not stop a live daemon
 // and only then discover that its saved restart metadata is missing or corrupt.
 func daemonStateForUpdate() (*daemonUpdateState, error) {
+	if err := validateUpdateState(); err != nil {
+		return nil, err
+	}
 	pid, kind, err := readDaemon()
 	if err != nil {
 		if errors.Is(err, errNoDaemonRunning) {
@@ -235,7 +238,7 @@ func updateCmd() *cobra.Command {
 			// Serialize the atomic replacement with daemon start/stop. Without this
 			// lock, a concurrent start can race between daemon inspection and the
 			// rename, leaving an old process running with misleading new metadata.
-			lifecycleLock, err := acquireDaemonLifecycleLock()
+			lifecycleLock, err := acquireUpdateLifecycleLock()
 			if err != nil {
 				return err
 			}
