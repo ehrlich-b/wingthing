@@ -18,6 +18,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
 // The test binary is not wt: a real broker launch would re-run the test suite
@@ -68,13 +69,13 @@ func newBrokerFixture(t *testing.T, surface control.Surface, actor string) broke
 	root := fixtureConversation(t, db, cfg, "root", "", "owner", "idle")
 	child := fixtureConversation(t, db, cfg, "child", root.ID, "owner", "completed")
 	other := fixtureConversation(t, db, cfg, "other", "", "owner", "idle")
-	workspace := canonicalPolicyPath(t.TempDir())
+	workspace := wingpolicy.CanonicalPolicyPath(t.TempDir())
 	snapshot, err := brokerChildPolicySnapshot(egg.DefaultEggConfig(), workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reg := conversationBrokerRegistration{
-		Version: 1, StateDir: canonicalPolicyPath(cfg.Dir), ConversationID: root.ID, RootID: root.RootID, SessionID: root.SessionID,
+		Version: 1, StateDir: wingpolicy.CanonicalPolicyPath(cfg.Dir), ConversationID: root.ID, RootID: root.RootID, SessionID: root.SessionID,
 		Principal: "owner", LauncherActor: actor, LauncherSurface: string(surface), Tools: conversationBrokerTools,
 		MaxSessions: 8, MaxSpawnsPerHour: 60, Workspace: workspace, Mailbox: filepath.Join(".wingthing-conversations", root.ID, root.SessionID, "mailbox"),
 		EggConfig: snapshot, Executable: "/usr/bin/false", RegisteredAt: time.Now().Unix(),
@@ -653,7 +654,7 @@ func TestHostMailboxDurableSpawnRateSurvivesBrokerRestart(t *testing.T) {
 }
 
 func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *testing.T) {
-	workspace := canonicalPolicyPath(t.TempDir())
+	workspace := wingpolicy.CanonicalPolicyPath(t.TempDir())
 	direct := &localMCPServer{cfg: &config.Config{Dir: filepath.Join(workspace, "state")}, principal: "owner"}
 	c := &store.Conversation{ID: "parent", RootID: "parent", SessionID: "parent-exec", CWD: workspace, Agent: "claude"}
 	args, err := direct.prepareBoundParentMCP(c, egg.DefaultEggConfig(), nil)
@@ -705,7 +706,7 @@ func TestHostMailboxActivationKeepsDirectTransportAndCapturesFiniteAuthority(t *
 	}
 	// The whole canonical state directory and the resolved controller, not a
 	// list of individual state files.
-	if want := []string{canonicalPolicyPath(exposed.cfg.Dir), canonicalPolicyPath(executable)}; !slices.Equal(protectedTargets, want) {
+	if want := []string{wingpolicy.CanonicalPolicyPath(exposed.cfg.Dir), wingpolicy.CanonicalPolicyPath(executable)}; !slices.Equal(protectedTargets, want) {
 		t.Fatalf("protected targets %v, want %v", protectedTargets, want)
 	}
 	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, EggIdentity, []string) error { return nil }
@@ -784,7 +785,7 @@ func TestProviderWriteModelFollowsSeatbeltWriteRules(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("the provider write model describes the macOS Seatbelt profile")
 	}
-	base := canonicalPolicyPath(t.TempDir())
+	base := wingpolicy.CanonicalPolicyPath(t.TempDir())
 	tmp, workspace := filepath.Join(base, "tmp"), filepath.Join(base, "workspace")
 	for _, dir := range []string{tmp, workspace} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -842,7 +843,7 @@ func TestHostMailboxRequiresProviderDataHomeOutsideState(t *testing.T) {
 	oldChannel := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = oldChannel })
-	state := canonicalPolicyPath(t.TempDir())
+	state := wingpolicy.CanonicalPolicyPath(t.TempDir())
 	// The default preview provider home lies inside the state directory.
 	inside := &config.Config{Dir: state}
 	if err := brokerProviderHomeOutsideState(inside); err == nil || !strings.Contains(err.Error(), "overlaps protected state") {
@@ -865,7 +866,7 @@ func TestStableConversationHostMailboxOptIn(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cfg.Dir, "wing.yaml"), []byte("conversations: enabled\nroost: https://wingthing.ai\nhosted_relay: allow\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	workspace := canonicalPolicyPath(t.TempDir())
+	workspace := wingpolicy.CanonicalPolicyPath(t.TempDir())
 	c := &store.Conversation{ID: "parent", RootID: "parent", SessionID: "parent-exec", CWD: workspace, Agent: "claude"}
 	launcher := &localMCPServer{cfg: cfg, principal: roostSessionPrincipal("user"), actor: "browser", surface: control.SurfaceHTTPMCP, identity: EggIdentity{UserID: "user"}}
 	policy := &egg.EggConfig{FS: []string{"ro:/", "rw:./"}}
@@ -873,7 +874,7 @@ func TestStableConversationHostMailboxOptIn(t *testing.T) {
 	var protected int
 	conversationBrokerProtection = func(got *config.Config, gotPolicy *egg.EggConfig, agent, cwd, session string, identity EggIdentity, targets []string) error {
 		protected++
-		if got != cfg || gotPolicy != policy || agent != "claude" || cwd != workspace || session != c.SessionID || identity.UserID != "user" || len(targets) != 2 || targets[0] != canonicalPolicyPath(cfg.Dir) {
+		if got != cfg || gotPolicy != policy || agent != "claude" || cwd != workspace || session != c.SessionID || identity.UserID != "user" || len(targets) != 2 || targets[0] != wingpolicy.CanonicalPolicyPath(cfg.Dir) {
 			t.Fatalf("lost launch protection: cfg=%+v identity=%+v targets=%v", got, identity, targets)
 		}
 		return nil
@@ -971,7 +972,7 @@ func TestStableHostMailboxUsesNormalProviderHomeWriteProtection(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("write protection is modeled only for macOS")
 	}
-	workspace := canonicalPolicyPath(t.TempDir())
+	workspace := wingpolicy.CanonicalPolicyPath(t.TempDir())
 	model, err := modelProviderWrites(cfg, &egg.EggConfig{FS: []string{"ro:/", "rw:./"}}, "claude", workspace, "parent-exec", EggIdentity{})
 	if err != nil {
 		t.Fatal(err)
@@ -987,10 +988,10 @@ func TestStableHostMailboxUsesNormalProviderHomeWriteProtection(t *testing.T) {
 }
 
 func TestHostMailboxChildLaunchCarriesContract(t *testing.T) {
-	cfg := &config.Config{Dir: canonicalPolicyPath(t.TempDir())}
+	cfg := &config.Config{Dir: wingpolicy.CanonicalPolicyPath(t.TempDir())}
 	reg := &conversationBrokerRegistration{SessionID: "parent-exec", Executable: "/opt/wt/bin/wt"}
 	opts := reg.launchOpts(cfg, spawnEggOpts{Kind: "agent", Principal: "owner"})
-	if !opts.OmitBrowserBridge || !slices.Equal(opts.ProtectedWriteTargets, []string{cfg.Dir, canonicalPolicyPath(reg.Executable)}) || opts.Principal != "owner" {
+	if !opts.OmitBrowserBridge || !slices.Equal(opts.ProtectedWriteTargets, []string{cfg.Dir, wingpolicy.CanonicalPolicyPath(reg.Executable)}) || opts.Principal != "owner" {
 		t.Fatalf("child launch options %+v", opts)
 	}
 	args, err := protectedWriteTargetArgs(opts.ProtectedWriteTargets)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -130,7 +131,7 @@ func previewEggProcessMatches(pid int, sessionID string) bool {
 		return false
 	}
 	exe, err := os.Executable()
-	if err != nil || canonicalPolicyPath(argv[0]) != canonicalPolicyPath(exe) || argv[1] != "egg" || argv[2] != "run" {
+	if err != nil || wingpolicy.CanonicalPolicyPath(argv[0]) != wingpolicy.CanonicalPolicyPath(exe) || argv[1] != "egg" || argv[2] != "run" {
 		return false
 	}
 	for i, arg := range argv {

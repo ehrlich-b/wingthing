@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -31,7 +32,7 @@ func continuationFixture(t *testing.T) (*localMCPServer, *store.Store, *store.Co
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
 	t.Cleanup(func() { config.ReleaseChannel = old })
-	cfg := &config.Config{Dir: canonicalSessionPath(t.TempDir())}
+	cfg := &config.Config{Dir: wingpolicy.CanonicalSessionPath(t.TempDir())}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)

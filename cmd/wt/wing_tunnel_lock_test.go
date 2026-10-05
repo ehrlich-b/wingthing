@@ -88,18 +88,6 @@ func TestTunnelResponseBackpressureDoesNotBlockWingConfigReload(t *testing.T) {
 	}
 }
 
-func TestRequestAgainstWingConfigRevalidatesLocalAdmin(t *testing.T) {
-	req := ws.TunnelRequest{SenderUserID: "member-1", SenderEmail: "member@example.com", SenderOrgRole: "admin"}
-	withoutOverride := requestAgainstWingConfig(req, "member", &config.WingConfig{})
-	if withoutOverride.SenderOrgRole != "member" {
-		t.Fatalf("removed override retained stale role %q", withoutOverride.SenderOrgRole)
-	}
-	withOverride := requestAgainstWingConfig(req, "member", &config.WingConfig{Admins: []string{"MEMBER@example.com"}})
-	if withOverride.SenderOrgRole != "admin" {
-		t.Fatalf("live override role = %q, want admin", withOverride.SenderOrgRole)
-	}
-}
-
 func TestTunnelRejectsPathShapedSessionIDBeforeFilesystemAccess(t *testing.T) {
 	serverKey, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {

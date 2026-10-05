@@ -11,6 +11,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
 // providerWriteRegion is one place a sandboxed provider may write.
@@ -48,7 +49,7 @@ func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, c
 	if err != nil || home == "" {
 		return model, errors.New("egg HOME is unavailable, so no write-deny root exists")
 	}
-	model.DenyRoot = canonicalPolicyPath(home)
+	model.DenyRoot = wingpolicy.CanonicalPolicyPath(home)
 	if model.DenyRoot == string(filepath.Separator) {
 		return model, errors.New("egg HOME is the filesystem root")
 	}
@@ -72,7 +73,7 @@ func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, c
 	}
 	mounts, _, _ := egg.ParseFSRules(resolved, dataHome)
 	add := func(path, reason string, prefix, exact bool) {
-		model.Regions = append(model.Regions, providerWriteRegion{Path: canonicalPolicyPath(path), Prefix: prefix, Exact: exact, Reason: reason})
+		model.Regions = append(model.Regions, providerWriteRegion{Path: wingpolicy.CanonicalPolicyPath(path), Prefix: prefix, Exact: exact, Reason: reason})
 	}
 	for _, mount := range mounts {
 		if !mount.ReadOnly {
@@ -97,16 +98,16 @@ func modelProviderWrites(cfg *config.Config, eggCfg *egg.EggConfig, agentName, c
 // writable reports whether the modeled provider can create, change, rename or
 // remove path, and why.
 func (m providerWriteModel) writable(path string) (string, bool) {
-	path = canonicalPolicyPath(path)
+	path = wingpolicy.CanonicalPolicyPath(path)
 	for _, region := range m.Regions {
 		switch {
 		case region.Exact && path == region.Path,
 			region.Prefix && strings.HasPrefix(path, region.Path),
-			!region.Exact && !region.Prefix && sessionPolicyContains(region.Path, path):
+			!region.Exact && !region.Prefix && wingpolicy.SessionPolicyContains(region.Path, path):
 			return region.Reason + " " + region.Path, true
 		}
 	}
-	if !sessionPolicyContains(m.DenyRoot, path) {
+	if !wingpolicy.SessionPolicyContains(m.DenyRoot, path) {
 		return "outside the sandbox HOME write-deny root " + m.DenyRoot, true
 	}
 	return "", false
@@ -115,7 +116,7 @@ func (m providerWriteModel) writable(path string) (string, bool) {
 // verifyProtected refuses a layout in which the provider could alter
 // authoritative state, its directory, or a directory it could rename.
 func (m providerWriteModel) verifyProtected(stateDir string, targets []string) error {
-	state := canonicalPolicyPath(stateDir)
+	state := wingpolicy.CanonicalPolicyPath(stateDir)
 	for _, target := range append([]string{state}, targets...) {
 		if reason, exposed := m.writable(target); exposed {
 			return fmt.Errorf("%s is provider-writable (%s)", target, reason)
@@ -124,7 +125,7 @@ func (m providerWriteModel) verifyProtected(stateDir string, targets []string) e
 	// No provider write region may lie inside the state tree: the provider data
 	// home is required to be outside it and the browser bridge is omitted.
 	for _, region := range m.Regions {
-		inside := sessionPolicyContains(state, region.Path)
+		inside := wingpolicy.SessionPolicyContains(state, region.Path)
 		if region.Prefix {
 			inside = inside || strings.HasPrefix(state, region.Path)
 		}

@@ -26,6 +26,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -1756,8 +1757,8 @@ func sealedSharedHostEggConfig(cfg *config.Config, source *egg.EggConfig, cwd st
 	if err != nil {
 		return nil, err
 	}
-	resolvedCWD := canonicalSessionPath(cwd)
-	if !isUnderPaths(resolvedCWD, canonical) {
+	resolvedCWD := wingpolicy.CanonicalSessionPath(cwd)
+	if !wingpolicy.IsUnderPaths(resolvedCWD, canonical) {
 		return nil, fmt.Errorf("working directory %q is outside this user's roost paths", cwd)
 	}
 	declared := source.ToSandboxConfig("")
@@ -1794,7 +1795,7 @@ func containsExactPath(paths []string, target string) bool {
 
 func rejectSharedHostRootMount(mounts []sandbox.Mount) error {
 	for _, mount := range mounts {
-		if canonicalSessionPath(mount.Source) == string(filepath.Separator) {
+		if wingpolicy.CanonicalSessionPath(mount.Source) == string(filepath.Separator) {
 			return errors.New("shared-host egg config must not mount the filesystem root")
 		}
 	}
@@ -1802,13 +1803,13 @@ func rejectSharedHostRootMount(mounts []sandbox.Mount) error {
 }
 
 func validateSharedHostWorkspacePaths(cfg *config.Config, allowedPaths []string) ([]string, error) {
-	canonical := canonicalPaths(allowedPaths)
+	canonical := wingpolicy.CanonicalPaths(allowedPaths)
 	if len(canonical) == 0 {
 		return nil, errors.New("shared-host sessions require at least one configured workspace path")
 	}
-	stateDir := canonicalSessionPath(cfg.Dir)
+	stateDir := wingpolicy.CanonicalSessionPath(cfg.Dir)
 	hostHome, _ := os.UserHomeDir()
-	hostHome = canonicalSessionPath(hostHome)
+	hostHome = wingpolicy.CanonicalSessionPath(hostHome)
 	for _, path := range canonical {
 		if path == string(filepath.Separator) {
 			return nil, errors.New("the filesystem root cannot be a shared-roost workspace path")
@@ -1820,10 +1821,10 @@ func validateSharedHostWorkspacePaths(cfg *config.Config, allowedPaths []string)
 			}
 			return nil, fmt.Errorf("shared-roost workspace %q: %w", path, err)
 		}
-		if isUnderPaths(stateDir, []string{path}) || isUnderPaths(path, []string{stateDir}) {
+		if wingpolicy.IsUnderPaths(stateDir, []string{path}) || wingpolicy.IsUnderPaths(path, []string{stateDir}) {
 			return nil, fmt.Errorf("shared-roost workspace %q overlaps Wingthing state", path)
 		}
-		if hostHome != "." && isUnderPaths(hostHome, []string{path}) {
+		if hostHome != "." && wingpolicy.IsUnderPaths(hostHome, []string{path}) {
 			return nil, fmt.Errorf("shared-roost workspace %q contains the host account home", path)
 		}
 	}

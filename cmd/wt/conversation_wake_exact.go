@@ -12,6 +12,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"golang.org/x/sys/unix"
 )
 
@@ -49,7 +50,7 @@ func (s *localMCPServer) resolveExactWakeTarget(db *store.Store, c *store.Conver
 	meta := readEggMetaValues(dir)
 	pid, _ := readAliveEggPID(dir)
 	session := localSession{ID: id, Name: readSessionName(dir), Principal: readSessionPrincipal(dir), Agent: meta["agent"], Kind: meta["kind"], CWD: meta["cwd"], PID: pid}
-	if !s.ownsSession(session) || (s.enforcePathBounds && (len(s.allowedPaths) == 0 || !isUnderPaths(canonicalSessionPath(session.CWD), s.allowedPaths))) {
+	if !s.ownsSession(session) || (s.enforcePathBounds && (len(s.allowedPaths) == 0 || !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(session.CWD), s.allowedPaths))) {
 		return localSession{}, errors.New("session not found or not owned by caller")
 	}
 	return session, nil

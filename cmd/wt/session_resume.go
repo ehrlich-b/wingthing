@@ -14,6 +14,7 @@ import (
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -27,7 +28,7 @@ var browserProviderResumes = providerResumeRegistry{active: make(map[string]stri
 const providerResumeMetadataFile = "provider.resume"
 
 func providerResumeKey(home, agent, providerSessionID string) string {
-	hash := sha256.Sum256([]byte(canonicalPolicyPath(home)))
+	hash := sha256.Sum256([]byte(wingpolicy.CanonicalPolicyPath(home)))
 	return hex.EncodeToString(hash[:]) + "\x00" + agent + "\x00" + providerSessionID
 }
 
@@ -162,7 +163,7 @@ func sessionResumeStatus(sessionDir, agent, cwd string) (bool, string) {
 		return false, "provider conversation was not captured"
 	}
 	meta := egg.ParseChatMeta(string(metaData))
-	if !validProviderSessionID(meta["agent_session_id"]) || meta["agent"] != agent || canonicalSessionPath(meta["cwd"]) != canonicalSessionPath(cwd) {
+	if !validProviderSessionID(meta["agent_session_id"]) || meta["agent"] != agent || wingpolicy.CanonicalSessionPath(meta["cwd"]) != wingpolicy.CanonicalSessionPath(cwd) {
 		return false, "provider conversation metadata is invalid"
 	}
 	reservationInfo, err := os.Lstat(filepath.Join(sessionDir, providerResumeMetadataFile))
@@ -189,7 +190,7 @@ func validProviderSessionID(id string) bool {
 }
 
 func prepareBrowserResume(cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, userPaths []string, sharedHost bool) (providerSessionID, cwd string, release func(bool), err error) {
-	userPaths = canonicalPaths(userPaths)
+	userPaths = wingpolicy.CanonicalPaths(userPaths)
 	if err := validateSessionID(start.ResumeSessionID); err != nil {
 		return "", "", nil, errors.New("invalid resume session ID")
 	}
@@ -207,11 +208,11 @@ func prepareBrowserResume(cfg *config.Config, wingCfg *config.WingConfig, start 
 	if agent == "" || cwd == "" || agent != start.Agent {
 		return "", "", nil, errors.New("resume source does not match the requested agent")
 	}
-	cwd = canonicalSessionPath(cwd)
-	if start.CWD != "" && canonicalSessionPath(start.CWD) != cwd {
+	cwd = wingpolicy.CanonicalSessionPath(cwd)
+	if start.CWD != "" && wingpolicy.CanonicalSessionPath(start.CWD) != cwd {
 		return "", "", nil, errors.New("resume source does not match the requested working directory")
 	}
-	if isMemberRole(start.OrgRole) && len(userPaths) == 0 || len(userPaths) > 0 && !isUnderPaths(cwd, userPaths) {
+	if wingpolicy.IsMemberRole(start.OrgRole) && len(userPaths) == 0 || len(userPaths) > 0 && !wingpolicy.IsUnderPaths(cwd, userPaths) {
 		return "", "", nil, errors.New("resume source is outside current path policy")
 	}
 	if ok, reason := sessionResumeStatus(sourceDir, agent, cwd); !ok {

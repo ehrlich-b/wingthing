@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -31,6 +30,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/skill"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/thread"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -461,8 +461,8 @@ func runTaskToWithOptions(ctx context.Context, cfg *config.Config, s *store.Stor
 		return fmt.Errorf("working directory %q: %w", workDir, statErr)
 	}
 	if options.SharedHost {
-		canonicalWorkDir := canonicalSessionPath(workDir)
-		if len(options.AllowedPaths) == 0 || !isUnderPaths(canonicalWorkDir, options.AllowedPaths) {
+		canonicalWorkDir := wingpolicy.CanonicalSessionPath(workDir)
+		if len(options.AllowedPaths) == 0 || !wingpolicy.IsUnderPaths(canonicalWorkDir, options.AllowedPaths) {
 			err := fmt.Errorf("working directory %q is outside this user's roost paths", workDir)
 			return err
 		}
@@ -1432,96 +1432,6 @@ func restartWingDaemonIfRunning() error {
 	return nil
 }
 
-// resolveRelayHTTPURL returns the relay's HTTP base URL from config.
-func resolveRelayHTTPURL(cfg *config.Config) string {
-	relayURL := cfg.RoostURL
-	if relayURL == "" {
-		if wc, err := config.LoadWingConfig(cfg.Dir); err == nil && wc.Roost != "" {
-			relayURL = wc.Roost
-		}
-	}
-	if relayURL == "" {
-		relayURL = config.DefaultRelayURL()
-	}
-	return normalizeRelayHTTPURL(relayURL)
-}
-
-// normalizeRelayHTTPURL converts a wing/coordinator URL to an HTTP base URL.
-func normalizeRelayHTTPURL(relayURL string) string {
-	if relayURL == "" {
-		return ""
-	}
-	relayURL = strings.TrimRight(relayURL, "/")
-	relayURL = strings.Replace(relayURL, "wss://", "https://", 1)
-	relayURL = strings.Replace(relayURL, "ws://", "http://", 1)
-	if !strings.HasPrefix(relayURL, "http://") && !strings.HasPrefix(relayURL, "https://") {
-		relayURL = "https://" + relayURL
-	}
-	return relayURL
-}
-
-// relayMetadataURL removes URL components that must not be persisted or copied
-// into support bundles. Coordinator API routing can retain a path prefix, but
-// userinfo, queries, and fragments are never part of the coordinator identity.
-func relayMetadataURL(relayURL string) string {
-	normalized := normalizeRelayHTTPURL(relayURL)
-	parsed, err := url.Parse(normalized)
-	if err != nil || parsed.Hostname() == "" {
-		return ""
-	}
-	parsed.User = nil
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return strings.TrimRight(parsed.String(), "/")
-}
-
-// resolveWingRelayHTTPURL mirrors the daemon's precedence: explicit flag,
-// wing.yaml, local default, config.yaml, then the hosted coordinator.
-func resolveWingRelayHTTPURL(cfg *config.Config, explicit string, local bool) string {
-	relayURL := explicit
-	if relayURL == "" && cfg != nil {
-		if wingCfg, err := config.LoadWingConfig(cfg.Dir); err == nil {
-			relayURL = wingCfg.Roost
-		}
-	}
-	if relayURL == "" && local {
-		relayURL = config.DefaultLocalRelayURL()
-	}
-	if relayURL == "" && cfg != nil {
-		relayURL = cfg.RoostURL
-	}
-	if relayURL == "" {
-		relayURL = config.DefaultRelayURL()
-	}
-	return normalizeRelayHTTPURL(relayURL)
-}
-
-// roostBrowserURL returns the UI served by the selected coordinator. The
-// public service has split ws/app hosts; a self-hosted roost serves its app at
-// /app/ on the same origin.
-func roostBrowserURL(roostURL string) string {
-	httpURL := normalizeRelayHTTPURL(roostURL)
-	parsed, err := url.Parse(httpURL)
-	if err != nil || parsed.Hostname() == "" {
-		return httpURL
-	}
-	// The browser destination is display output. Never echo URL credentials,
-	// even if a caller supplied a credentialed coordinator URL.
-	parsed.User = nil
-	switch strings.ToLower(parsed.Hostname()) {
-	case "ws.wingthing.ai", "wingthing.ai", "app.wingthing.ai":
-		parsed.Scheme = "https"
-		parsed.Host = "app.wingthing.ai"
-		parsed.Path = "/"
-	default:
-		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/app/"
-	}
-	parsed.RawPath = ""
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String()
-}
-
 func wingRoostFlags(args []string) (roost string, local bool) {
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -1542,17 +1452,17 @@ func wingRoostFlags(args []string) (roost string, local bool) {
 // then falls back to saved launch args for an already-running older daemon.
 func activeWingRelayHTTPURL(cfg *config.Config, status *wingStatus) string {
 	if status != nil && status.RoostURL != "" {
-		if relayURL := relayMetadataURL(status.RoostURL); relayURL != "" {
+		if relayURL := wingpolicy.RelayMetadataURL(status.RoostURL); relayURL != "" {
 			return relayURL
 		}
 	}
 	if data, err := os.ReadFile(wingArgsPath()); err == nil {
 		if args, parseErr := parseSavedDaemonArgs(data, wingDaemon); parseErr == nil {
 			roost, local := wingRoostFlags(args)
-			return resolveWingRelayHTTPURL(cfg, roost, local)
+			return wingpolicy.ResolveWingRelayHTTPURL(cfg, roost, local)
 		}
 	}
-	return resolveWingRelayHTTPURL(cfg, "", false)
+	return wingpolicy.ResolveWingRelayHTTPURL(cfg, "", false)
 }
 
 // formatUserIdentity formats a user identity string from auth.UserInfo.
@@ -1592,7 +1502,7 @@ func whoamiCmd() *cobra.Command {
 				return fmt.Errorf("not logged in — run: wt login")
 			}
 
-			relayURL := resolveRelayHTTPURL(cfg)
+			relayURL := wingpolicy.ResolveRelayHTTPURL(cfg)
 			info, err := auth.FetchUserInfo(relayURL, tok.Token)
 			if err != nil {
 				if errors.Is(err, auth.ErrAuthFailed) {
@@ -1657,7 +1567,7 @@ func supportCmd() *cobra.Command {
 			if status, statusErr := readWingStatus(); statusErr == nil {
 				currentWingStatus = status
 				meta["wing_status"] = status.State
-				if roostURL := relayMetadataURL(status.RoostURL); roostURL != "" {
+				if roostURL := wingpolicy.RelayMetadataURL(status.RoostURL); roostURL != "" {
 					meta["wing_status_roost"] = roostURL
 				}
 				if status.Error != "" {

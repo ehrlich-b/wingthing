@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -60,11 +61,11 @@ func TestSessionFilePolicyUsesWritableDataAreaAndHonorsEffectiveDeny(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if destination != canonicalSessionPath(data) {
-		t.Fatalf("destination = %q, want %q", destination, canonicalSessionPath(data))
+	if destination != wingpolicy.CanonicalSessionPath(data) {
+		t.Fatalf("destination = %q, want %q", destination, wingpolicy.CanonicalSessionPath(data))
 	}
 	if _, ok := policy.writableRoot(filepath.Join(data, "result.txt")); !ok {
-		t.Fatalf("writable data file was denied: policy=%#v path=%q", policy, canonicalPolicyPath(filepath.Join(data, "result.txt")))
+		t.Fatalf("writable data file was denied: policy=%#v path=%q", policy, wingpolicy.CanonicalPolicyPath(filepath.Join(data, "result.txt")))
 	}
 	if _, ok := policy.writableRoot(filepath.Join(data, "protected.txt")); ok {
 		t.Fatal("deny-write file was writable")
@@ -97,13 +98,6 @@ func TestSessionFilePolicyRootDenyMatchesRuntimeAndDenyWriteAlwaysWins(t *testin
 	policy = sessionFilePolicy{writableRoots: []string{data}, denyWrite: []string{string(filepath.Separator)}}
 	if _, allowed := policy.writableRoot(path); allowed {
 		t.Fatal("deny-write:/ did not override writable root")
-	}
-}
-
-func TestSessionPolicyContainsFilesystemRoot(t *testing.T) {
-	root := filepath.VolumeName(t.TempDir()) + string(filepath.Separator)
-	if !sessionPolicyContains(root, filepath.Join(root, "private", "data.txt")) {
-		t.Fatal("filesystem root did not contain an absolute child")
 	}
 }
 
@@ -142,8 +136,8 @@ func TestPersonalOwnerSessionFilesWorkWithoutConfiguredWingPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("personal owner upload destination failed: %v", err)
 	}
-	if destination != canonicalSessionPath(dataDir) {
-		t.Fatalf("destination = %q, want %q", destination, canonicalSessionPath(dataDir))
+	if destination != wingpolicy.CanonicalSessionPath(dataDir) {
+		t.Fatalf("destination = %q, want %q", destination, wingpolicy.CanonicalSessionPath(dataDir))
 	}
 	path := filepath.Join(dataDir, "result.txt")
 	if err := os.WriteFile(path, []byte("result"), 0o600); err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -37,10 +38,10 @@ func browserSessionControl(ctx context.Context, cfg *config.Config, wc *config.W
 	if len(arguments) > 1<<20 {
 		return nil, errors.New("session operation arguments exceed 1 MiB")
 	}
-	paths := canonicalPaths(pathsForRequest(wc.Paths, req.SenderEmail, req.SenderOrgRole, home))
+	paths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, req.SenderEmail, req.SenderOrgRole, home))
 	server := &localMCPServer{cfg: cfg, logs: os.Stderr, principal: roostSessionPrincipal(req.SenderUserID), actor: "browser", surface: control.SurfaceHTTPMCP,
 		grants: grantSet(defaultDirectMCPGrants), maxSessions: defaultDirectMCPMaxSessions, maxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour, admission: browserConversationAdmission,
-		allowedPaths: paths, enforcePathBounds: len(paths) > 0 || isMemberFiltered(req), identity: EggIdentity{UserID: req.SenderUserID, Email: req.SenderEmail, OrgWing: wc.Org != "", SharedHost: sharedHost, SealedFS: sharedHost, AllowedPaths: paths}}
+		allowedPaths: paths, enforcePathBounds: len(paths) > 0 || wingpolicy.IsMemberFiltered(req), identity: EggIdentity{UserID: req.SenderUserID, Email: req.SenderEmail, OrgWing: wc.Org != "", SharedHost: sharedHost, SealedFS: sharedHost, AllowedPaths: paths}}
 	if operation == "agent_start" || operation == "conversation_checkpoint" || operation == "conversation_wake" {
 		if wc.Org != "" || sharedHost {
 			return nil, errors.New("personal conversation mutations are unavailable on organization or shared wings")
@@ -70,7 +71,7 @@ func browserSessionControl(ctx context.Context, cfg *config.Config, wc *config.W
 			return nil, errors.New("session not found or not owned by caller")
 		}
 		if operation == "session_prompt" || operation == "terminal_send" {
-			if !canAttachSession(req.SenderUserID, req.SenderOrgRole, readEggOwner(dir)) {
+			if !wingpolicy.CanAttachSession(req.SenderUserID, req.SenderOrgRole, readEggOwner(dir)) {
 				return nil, errors.New("session not found or not owned by caller")
 			}
 		}

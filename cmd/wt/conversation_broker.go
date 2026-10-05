@@ -40,6 +40,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
 	"golang.org/x/sys/unix"
 )
@@ -149,7 +150,7 @@ func conversationBrokerRelative(c *store.Conversation) string {
 // egg carries this set to the final-profile checker in sandbox.New, which
 // refuses any emitted write rule that could reach either one.
 func (r *conversationBrokerRegistration) protectedTargets(cfg *config.Config) []string {
-	return []string{canonicalPolicyPath(cfg.Dir), canonicalPolicyPath(r.Executable)}
+	return []string{wingpolicy.CanonicalPolicyPath(cfg.Dir), wingpolicy.CanonicalPolicyPath(r.Executable)}
 }
 
 // launchOpts applies the broker-managed launch contract to an egg spawn: the
@@ -169,9 +170,9 @@ func brokerProviderHomeOutsideState(cfg *config.Config) error {
 	if config.Channel() != "preview" {
 		return nil
 	}
-	state := canonicalPolicyPath(cfg.Dir)
-	home := canonicalPolicyPath(cfg.ProviderDataHome())
-	if sessionPolicyContains(state, home) || sessionPolicyContains(home, state) {
+	state := wingpolicy.CanonicalPolicyPath(cfg.Dir)
+	home := wingpolicy.CanonicalPolicyPath(cfg.ProviderDataHome())
+	if wingpolicy.SessionPolicyContains(state, home) || wingpolicy.SessionPolicyContains(home, state) {
 		return fmt.Errorf("provider data home %s overlaps protected state %s; the host mailbox requires a provider data home outside the state directory", home, state)
 	}
 	return nil
@@ -257,17 +258,17 @@ func (s *localMCPServer) prepareBrokerParentMCP(c *store.Conversation, eggCfg *e
 	if err != nil {
 		return nil, nil, err
 	}
-	executable = canonicalPolicyPath(executable)
-	workspace := canonicalPolicyPath(c.CWD)
+	executable = wingpolicy.CanonicalPolicyPath(executable)
+	workspace := wingpolicy.CanonicalPolicyPath(c.CWD)
 	snapshot, err := brokerChildPolicySnapshot(eggCfg, workspace)
 	if err != nil {
 		return nil, nil, err
 	}
 	relative := conversationBrokerRelative(c)
-	paths := canonicalPaths(s.allowedPaths)
+	paths := wingpolicy.CanonicalPaths(s.allowedPaths)
 	sort.Strings(paths)
 	reg := conversationBrokerRegistration{
-		Version: conversationBrokerVersion, StateDir: canonicalPolicyPath(s.cfg.Dir),
+		Version: conversationBrokerVersion, StateDir: wingpolicy.CanonicalPolicyPath(s.cfg.Dir),
 		ConversationID: c.ID, RootID: c.RootID, SessionID: c.SessionID,
 		Principal: s.clientPrincipal(), LauncherActor: s.clientActor(), LauncherSurface: string(s.controlSurface()),
 		UserID: s.identity.UserID, Email: s.identity.Email, Tools: tools,
@@ -415,7 +416,7 @@ func loadConversationBrokerRegistration(cfg *config.Config, session string) (con
 	if err := decodeMailbox(data, &reg); err != nil {
 		return reg, fmt.Errorf("invalid host mailbox registration: %w", err)
 	}
-	if reg.Version != conversationBrokerVersion || reg.SessionID != session || reg.StateDir != canonicalPolicyPath(cfg.Dir) {
+	if reg.Version != conversationBrokerVersion || reg.SessionID != session || reg.StateDir != wingpolicy.CanonicalPolicyPath(cfg.Dir) {
 		return reg, errors.New("host mailbox registration does not belong to this execution and state directory")
 	}
 	if validateSessionID(reg.ConversationID) != nil || validateSessionID(reg.RootID) != nil || validateSessionName(reg.Principal) != nil || reg.Principal == "" {
@@ -506,7 +507,7 @@ func (r *conversationBrokerRegistration) server(cfg *config.Config, admission *m
 		}
 	}
 	home, _ := os.UserHomeDir()
-	paths, enforce := intersectBrokerPaths(r.AllowedPaths, r.EnforcePathBounds, canonicalPaths(pathsForRequest(wc.Paths, r.Email, "owner", home)))
+	paths, enforce := intersectBrokerPaths(r.AllowedPaths, r.EnforcePathBounds, wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, r.Email, "owner", home)))
 	reg := *r
 	return &localMCPServer{
 		cfg: cfg, logs: os.Stderr, principal: r.Principal, actor: brokerActor(r.ConversationID, r.SessionID),
@@ -532,9 +533,9 @@ func intersectBrokerPaths(captured []string, enforced bool, current []string) ([
 	for _, a := range captured {
 		for _, b := range current {
 			switch {
-			case sessionPolicyContains(a, b):
+			case wingpolicy.SessionPolicyContains(a, b):
 				paths = append(paths, b)
-			case sessionPolicyContains(b, a):
+			case wingpolicy.SessionPolicyContains(b, a):
 				paths = append(paths, a)
 			}
 		}
@@ -546,7 +547,7 @@ func intersectBrokerPaths(captured []string, enforced bool, current []string) ([
 // childEggConfig returns the parent's captured policy for a child inside the
 // parent workspace.
 func (r *conversationBrokerRegistration) childEggConfig(cwd string) (*egg.EggConfig, error) {
-	if !sessionPolicyContains(r.Workspace, canonicalPolicyPath(cwd)) {
+	if !wingpolicy.SessionPolicyContains(r.Workspace, wingpolicy.CanonicalPolicyPath(cwd)) {
 		return nil, errors.New("a host mailbox child must run inside the parent's workspace")
 	}
 	return egg.LoadEggConfigFromYAML(r.EggConfig)
@@ -559,7 +560,7 @@ func (s *localMCPServer) preflightBrokerChild(eggCfg *egg.EggConfig, agentName, 
 	if s.broker == nil {
 		return nil
 	}
-	if err := conversationBrokerProtection(s.cfg, eggCfg, agentName, canonicalPolicyPath(cwd), sessionID, s.identity, s.broker.protectedTargets(s.cfg)); err != nil {
+	if err := conversationBrokerProtection(s.cfg, eggCfg, agentName, wingpolicy.CanonicalPolicyPath(cwd), sessionID, s.identity, s.broker.protectedTargets(s.cfg)); err != nil {
 		return fmt.Errorf("child policy preflight: %w", err)
 	}
 	db, err := s.openMessageStore()
@@ -799,7 +800,7 @@ func (b *conversationBroker) waitForParent(ctx context.Context) error {
 		}
 	}
 	meta := readEggMetaValues(dir)
-	if readSessionPrincipal(dir) != b.reg.Principal || (b.reg.UserID != "" && readEggOwner(dir) != b.reg.UserID) || meta["agent"] != "claude" || canonicalPolicyPath(meta["cwd"]) != b.reg.Workspace {
+	if readSessionPrincipal(dir) != b.reg.Principal || (b.reg.UserID != "" && readEggOwner(dir) != b.reg.UserID) || meta["agent"] != "claude" || wingpolicy.CanonicalPolicyPath(meta["cwd"]) != b.reg.Workspace {
 		return errors.New("parent execution does not match the registered owner, provider and workspace")
 	}
 	b.provider = meta["provider_session_id"]

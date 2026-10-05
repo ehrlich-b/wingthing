@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -279,7 +280,7 @@ func runConversationWakeController(ctx context.Context, cfg *config.Config, poli
 				return
 			}
 			after = c.ID
-			paths := canonicalPaths(wc.Paths.Strings())
+			paths := wingpolicy.CanonicalPaths(wc.Paths.Strings())
 			// This private helper only reconciles owned artifacts and the opted
 			// root prompt. It is never registered as a general MCP grant server.
 			s := &localMCPServer{cfg: cfg, principal: c.OwnerID, logs: os.Stderr, allowedPaths: paths, enforcePathBounds: len(paths) > 0}

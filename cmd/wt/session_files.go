@@ -23,6 +23,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -58,35 +59,6 @@ type sessionFilePolicy struct {
 	denyWrite     []string
 }
 
-func sessionPolicyContains(root, path string) bool {
-	root = filepath.Clean(root)
-	path = filepath.Clean(path)
-	if filepath.IsAbs(root) && filepath.Dir(root) == root {
-		return filepath.IsAbs(path) && filepath.VolumeName(path) == filepath.VolumeName(root)
-	}
-	return isUnderPaths(path, []string{root})
-}
-
-func canonicalPolicyPath(path string) string {
-	path = filepath.Clean(path)
-	current := path
-	var suffix []string
-	for {
-		if resolved, err := filepath.EvalSymlinks(current); err == nil {
-			for index := len(suffix) - 1; index >= 0; index-- {
-				resolved = filepath.Join(resolved, suffix[index])
-			}
-			return filepath.Clean(resolved)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return path
-		}
-		suffix = append(suffix, filepath.Base(current))
-		current = parent
-	}
-}
-
 func loadSessionFilePolicy(session ws.SessionInfo, effectiveHome string) (sessionFilePolicy, error) {
 	if session.CWD == "" || session.EggConfig == "" {
 		return sessionFilePolicy{}, errors.New("session effective filesystem policy is unavailable")
@@ -95,7 +67,7 @@ func loadSessionFilePolicy(session ws.SessionInfo, effectiveHome string) (sessio
 	if err != nil {
 		return sessionFilePolicy{}, fmt.Errorf("parse session filesystem policy: %w", err)
 	}
-	policy := sessionFilePolicy{cwd: canonicalPolicyPath(session.CWD)}
+	policy := sessionFilePolicy{cwd: wingpolicy.CanonicalPolicyPath(session.CWD)}
 	for _, entry := range cfg.FS {
 		mode, path, ok := strings.Cut(entry, ":")
 		if !ok {
@@ -108,7 +80,7 @@ func loadSessionFilePolicy(session ws.SessionInfo, effectiveHome string) (sessio
 		} else if !filepath.IsAbs(path) {
 			path = filepath.Join(policy.cwd, path)
 		}
-		path = canonicalPolicyPath(path)
+		path = wingpolicy.CanonicalPolicyPath(path)
 		switch mode {
 		case "deny":
 			policy.deny = append(policy.deny, path)
@@ -127,10 +99,10 @@ func loadSessionFilePolicy(session ws.SessionInfo, effectiveHome string) (sessio
 }
 
 func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
-	path = canonicalPolicyPath(path)
+	path = wingpolicy.CanonicalPolicyPath(path)
 	best := ""
 	for _, root := range p.writableRoots {
-		if sessionPolicyContains(root, path) && len(root) > len(best) {
+		if wingpolicy.SessionPolicyContains(root, path) && len(root) > len(best) {
 			best = root
 		}
 	}
@@ -138,7 +110,7 @@ func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
 		return "", false
 	}
 	for _, root := range p.readOnlyRoots {
-		if sessionPolicyContains(root, path) && len(root) >= len(best) {
+		if wingpolicy.SessionPolicyContains(root, path) && len(root) >= len(best) {
 			return "", false
 		}
 	}
@@ -149,12 +121,12 @@ func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
 		if runtime.GOOS == "linux" && filepath.Clean(rule) == string(filepath.Separator) {
 			continue
 		}
-		if sessionPolicyContains(rule, path) {
+		if wingpolicy.SessionPolicyContains(rule, path) {
 			return "", false
 		}
 	}
 	for _, rule := range p.denyWrite {
-		if sessionPolicyContains(rule, path) {
+		if wingpolicy.SessionPolicyContains(rule, path) {
 			return "", false
 		}
 	}
@@ -162,8 +134,8 @@ func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
 }
 
 func (p sessionFilePolicy) uploadDirectory(userPaths []string) (string, error) {
-	userPaths = canonicalPaths(userPaths)
-	if _, ok := p.writableRoot(p.cwd); ok && (len(userPaths) == 0 || isUnderPaths(p.cwd, userPaths)) {
+	userPaths = wingpolicy.CanonicalPaths(userPaths)
+	if _, ok := p.writableRoot(p.cwd); ok && (len(userPaths) == 0 || wingpolicy.IsUnderPaths(p.cwd, userPaths)) {
 		return p.cwd, nil
 	}
 	best := ""
@@ -181,9 +153,9 @@ func (p sessionFilePolicy) uploadDirectory(userPaths []string) (string, error) {
 		for _, allowed := range userPaths {
 			candidate := ""
 			switch {
-			case isUnderPaths(allowed, []string{writable}):
+			case wingpolicy.IsUnderPaths(allowed, []string{writable}):
 				candidate = allowed
-			case isUnderPaths(writable, []string{allowed}):
+			case wingpolicy.IsUnderPaths(writable, []string{allowed}):
 				candidate = writable
 			}
 			if candidate == "" {
@@ -217,7 +189,7 @@ func resolveOwnedSessionFileTarget(req ws.TunnelRequest, sessionID string, sessi
 }
 
 func resolveOwnedActiveSession(req ws.TunnelRequest, sessionID string, sessions []ws.SessionInfo, userPaths []string) (ws.SessionInfo, error) {
-	userPaths = canonicalPaths(userPaths)
+	userPaths = wingpolicy.CanonicalPaths(userPaths)
 	for _, session := range sessions {
 		if session.SessionID != sessionID {
 			continue
@@ -225,8 +197,8 @@ func resolveOwnedActiveSession(req ws.TunnelRequest, sessionID string, sessions 
 		if session.UserID == "" || session.UserID != req.SenderUserID {
 			break
 		}
-		session.CWD = canonicalSessionPath(session.CWD)
-		if !canAccessSessionPath(req, session.CWD, userPaths) {
+		session.CWD = wingpolicy.CanonicalSessionPath(session.CWD)
+		if !wingpolicy.CanAccessSessionPath(req, session.CWD, userPaths) {
 			break
 		}
 		return session, nil
@@ -535,7 +507,7 @@ func (r *boundedSessionFileReader) Read(buffer []byte) (int, error) {
 }
 
 func openSessionFile(session ws.SessionInfo, policy sessionFilePolicy, userPaths []string, requested string) (*os.File, string, os.FileInfo, error) {
-	userPaths = canonicalPaths(userPaths)
+	userPaths = wingpolicy.CanonicalPaths(userPaths)
 	path := requested
 	if path == "" {
 		return nil, "", nil, errors.New("missing path")
@@ -543,8 +515,8 @@ func openSessionFile(session ws.SessionInfo, policy sessionFilePolicy, userPaths
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(session.CWD, path)
 	}
-	path = canonicalSessionPath(path)
-	if len(userPaths) > 0 && !isUnderPaths(path, userPaths) {
+	path = wingpolicy.CanonicalSessionPath(path)
+	if len(userPaths) > 0 && !wingpolicy.IsUnderPaths(path, userPaths) {
 		return nil, "", nil, errors.New("file is outside current path policy")
 	}
 	rootPath, ok := policy.writableRoot(path)

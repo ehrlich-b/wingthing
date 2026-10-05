@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
 )
@@ -91,7 +92,7 @@ func (s *localMCPServer) reserveAgentConversation(agent, cwd, title, role, paren
 	defer cmdutil.CloseWithLog("conversation launch store", db)
 	if parent != "" {
 		c, err := db.GetConversation(s.clientPrincipal(), parent)
-		if err != nil || (s.enforcePathBounds && !isUnderPaths(canonicalSessionPath(c.CWD), s.allowedPaths)) {
+		if err != nil || (s.enforcePathBounds && !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(c.CWD), s.allowedPaths)) {
 			return nil, false, errors.New("parent conversation not found or not owned by caller")
 		}
 	}
@@ -149,7 +150,7 @@ func (s *localMCPServer) ownedConversation(db *store.Store, id string) (*store.C
 	if err != nil {
 		return nil, errors.New("conversation not found or not owned by caller")
 	}
-	if s.enforcePathBounds && !isUnderPaths(canonicalSessionPath(c.CWD), s.allowedPaths) {
+	if s.enforcePathBounds && !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(c.CWD), s.allowedPaths) {
 		return nil, errors.New("conversation not found or not owned by caller")
 	}
 	if s.boundConversation != "" {
@@ -185,7 +186,7 @@ func (s *localMCPServer) toolConversationList(arguments json.RawMessage) (map[st
 	}
 	visible := make([]*store.Conversation, 0, len(nodes))
 	for _, node := range nodes {
-		if !s.enforcePathBounds || isUnderPaths(canonicalSessionPath(node.CWD), s.allowedPaths) {
+		if !s.enforcePathBounds || wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(node.CWD), s.allowedPaths) {
 			visible = append(visible, node)
 		}
 	}
@@ -226,7 +227,7 @@ func (s *localMCPServer) toolConversationRead(ctx context.Context, arguments jso
 	tasks := make([]map[string]any, 0, len(nodes))
 	var continuation map[string]any
 	for _, node := range nodes {
-		if s.enforcePathBounds && !isUnderPaths(canonicalSessionPath(node.CWD), s.allowedPaths) {
+		if s.enforcePathBounds && !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(node.CWD), s.allowedPaths) {
 			continue
 		}
 		task := map[string]any{"conversation": node, "coordinator_context": contextForConversation(node)}
@@ -517,7 +518,7 @@ func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *eg
 		if err != nil {
 			return nil, nil, err
 		}
-		if _, ok := policy.writableRoot(canonicalPolicyPath(s.cfg.Dir)); !ok {
+		if _, ok := policy.writableRoot(wingpolicy.CanonicalPolicyPath(s.cfg.Dir)); !ok {
 			refusal := fmt.Errorf("parent MCP cannot write isolated Wingthing state %q under the existing sandbox policy; use an already writable workspace containing that state directory (no mounts or grants were changed)", s.cfg.Dir)
 			// Activation contract: the direct in-sandbox server is unchanged
 			// wherever it was accepted. Stable keeps this exact refusal unless
@@ -528,7 +529,7 @@ func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *eg
 					return nil, nil, refusal
 				}
 			}
-			if _, ok := policy.writableRoot(canonicalPolicyPath(c.CWD)); !ok {
+			if _, ok := policy.writableRoot(wingpolicy.CanonicalPolicyPath(c.CWD)); !ok {
 				return nil, nil, errors.New("parent MCP configuration requires an already writable workspace")
 			}
 			args, reg, brokerErr := s.prepareBrokerParentMCP(c, cfg, args)
@@ -537,7 +538,7 @@ func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *eg
 			}
 			return args, reg, nil
 		}
-		if _, ok := policy.writableRoot(canonicalPolicyPath(c.CWD)); !ok {
+		if _, ok := policy.writableRoot(wingpolicy.CanonicalPolicyPath(c.CWD)); !ok {
 			return nil, nil, errors.New("parent MCP configuration requires an already writable workspace")
 		}
 	}
@@ -617,7 +618,7 @@ func prepareConversationResumeMCP(cfg *config.Config, wc *config.WingConfig, sta
 	// browserSessionControl. A host mailbox registration captures this finite
 	// ceiling; the direct transport does not consult it.
 	home, _ := os.UserHomeDir()
-	paths := canonicalPaths(pathsForRequest(wc.Paths, start.Email, "owner", home))
+	paths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, start.Email, "owner", home))
 	server := &localMCPServer{cfg: cfg, principal: principal, actor: "browser", surface: control.SurfaceHTTPMCP,
 		grants: grantSet(defaultDirectMCPGrants), maxSessions: defaultDirectMCPMaxSessions, maxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour,
 		allowedPaths: paths, enforcePathBounds: len(paths) > 0, identity: EggIdentity{UserID: start.UserID, Email: start.Email},

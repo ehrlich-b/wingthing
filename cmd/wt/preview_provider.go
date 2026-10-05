@@ -17,6 +17,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -156,7 +157,7 @@ func resolvePreviewProviderProfile() (previewProviderProfile, error) {
 	if err != nil {
 		return previewProviderProfile{}, err
 	}
-	dir = canonicalPolicyPath(dir)
+	dir = wingpolicy.CanonicalPolicyPath(dir)
 	home, bound, err := config.ResolvePreviewProviderHome(dir)
 	if err != nil {
 		return previewProviderProfile{}, err
@@ -289,7 +290,7 @@ func inspectPreviewClaude(ctx context.Context, profile previewProviderProfile, t
 		SubscriptionType *string `json:"subscriptionType"`
 	}
 	if err := json.Unmarshal(stdout.Data.Bytes(), &report); err != nil || report.LoggedIn == nil ||
-		!filepath.IsAbs(report.ConfigDirectory) || canonicalPolicyPath(report.ConfigDirectory) != canonicalPolicyPath(profile.ConfigDirectory) {
+		!filepath.IsAbs(report.ConfigDirectory) || wingpolicy.CanonicalPolicyPath(report.ConfigDirectory) != wingpolicy.CanonicalPolicyPath(profile.ConfigDirectory) {
 		result.Diagnostic = "Claude status did not return valid metadata for the selected configuration directory. Use Claude Code 2.1.268 or later; authentication is unknown."
 		return result
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -98,10 +99,10 @@ func TestPrepareBrowserResumeRestoresOwnedProviderConversationWithoutChangingSou
 		t.Fatal(err)
 	}
 	defer release(true)
-	if providerID != "provider-id" || restoredCWD != canonicalSessionPath(cwd) {
+	if providerID != "provider-id" || restoredCWD != wingpolicy.CanonicalSessionPath(cwd) {
 		t.Fatalf("provider=%q cwd=%q", providerID, restoredCWD)
 	}
-	restored := filepath.Join(cfg.Dir, "user-homes", userHash("alice"), ".claude", "projects", strings.ReplaceAll(canonicalSessionPath(cwd), "/", "-"), "provider-id.jsonl")
+	restored := filepath.Join(cfg.Dir, "user-homes", userHash("alice"), ".claude", "projects", strings.ReplaceAll(wingpolicy.CanonicalSessionPath(cwd), "/", "-"), "provider-id.jsonl")
 	data, err := os.ReadFile(restored)
 	if err != nil || string(data) != "conversation\n" {
 		t.Fatalf("restored=%q err=%v", data, err)

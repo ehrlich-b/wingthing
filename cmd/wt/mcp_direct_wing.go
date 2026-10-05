@@ -13,6 +13,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	pionwebrtc "github.com/pion/webrtc/v4"
 )
 
@@ -127,7 +128,7 @@ func resolveDirectMCPPolicy(wingCfg *config.WingConfig, home string, sharedHost 
 	}
 
 	member := role == "member"
-	paths := canonicalPaths(pathsForRequest(wingCfg.Paths, identity.Email, role, home))
+	paths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, identity.Email, role, home))
 	sealedBoundary := sharedHost || member
 	return directMCPPolicy{
 		role: role, grants: grants,
@@ -284,7 +285,7 @@ func directMCPAuthorizationError(wingCfg *config.WingConfig, allowedKeys []confi
 	if wingCfg == nil {
 		return "wing policy is unavailable"
 	}
-	protectedUser := len(passkeysForSubject(allowedKeys, userID)) > 0
+	protectedUser := len(wingpolicy.PasskeysForSubject(allowedKeys, userID)) > 0
 	if wingCfg.Locked && !protectedUser {
 		return "direct MCP access denied by this wing's local lock policy"
 	}

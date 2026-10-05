@@ -14,6 +14,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
 )
@@ -155,11 +156,11 @@ func wingsCmd() *cobra.Command {
 
 func finderRelayURL(cfg *config.Config, override string) string {
 	if strings.TrimSpace(override) == "" {
-		return resolveRelayHTTPURL(cfg)
+		return wingpolicy.ResolveRelayHTTPURL(cfg)
 	}
 	copy := *cfg
 	copy.RoostURL = override
-	return resolveRelayHTTPURL(&copy)
+	return wingpolicy.ResolveRelayHTTPURL(&copy)
 }
 
 func printWingFinderEntries(entries []wingFinderEntry, noProbe bool) error {

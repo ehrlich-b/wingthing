@@ -14,6 +14,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -50,7 +51,7 @@ func phoneCmd() *cobra.Command {
 			if origin == "" {
 				origin = config.DefaultRelayURL()
 			}
-			origin = normalizeRelayHTTPURL(origin)
+			origin = wingpolicy.NormalizeRelayHTTPURL(origin)
 			if err := checkPhoneOrigin(origin); err != nil {
 				return err
 			}

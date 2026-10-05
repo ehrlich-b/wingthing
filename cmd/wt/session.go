@@ -15,6 +15,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
 )
@@ -356,7 +357,7 @@ func sessionSyncCmd() *cobra.Command {
 				return fmt.Errorf("load key: %w", err)
 			}
 
-			relayURL := resolveRelayHTTPURL(cfg)
+			relayURL := wingpolicy.ResolveRelayHTTPURL(cfg)
 			tc := &ws.TunnelClient{
 				RelayURL:       relayURL,
 				DeviceToken:    tok.Token,

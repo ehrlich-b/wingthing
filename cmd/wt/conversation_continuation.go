@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
 const coordinatorModelFile = "coordinator.model"
@@ -86,7 +87,7 @@ func (s *localMCPServer) continuationAvailability(db *store.Store, c *store.Conv
 		return nil
 	}
 	session, err := s.resolveOwnedLifecycleSession(c.SessionID)
-	if err != nil || session.ID != c.SessionID || session.Agent != "claude" || canonicalSessionPath(session.CWD) != canonicalSessionPath(c.CWD) {
+	if err != nil || session.ID != c.SessionID || session.Agent != "claude" || wingpolicy.CanonicalSessionPath(session.CWD) != wingpolicy.CanonicalSessionPath(c.CWD) {
 		return nil
 	}
 	dir := filepath.Join(s.cfg.Dir, "eggs", c.SessionID)

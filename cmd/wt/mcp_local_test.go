@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
 func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
@@ -497,7 +498,7 @@ func TestRoostMCPSandboxExplainBoundsExplicitConfig(t *testing.T) {
 
 	server := &localMCPServer{
 		cfg: &config.Config{Dir: t.TempDir(), DefaultAgent: "claude"}, logs: &bytes.Buffer{},
-		allowedPaths: []string{canonicalSessionPath(workspace)}, enforcePathBounds: true,
+		allowedPaths: []string{wingpolicy.CanonicalSessionPath(workspace)}, enforcePathBounds: true,
 	}
 	for name, configPath := range map[string]string{
 		"outside":         outside,

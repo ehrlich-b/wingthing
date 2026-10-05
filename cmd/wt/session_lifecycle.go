@@ -12,6 +12,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
 )
 
@@ -80,7 +81,7 @@ func readLifecycleViewForSession(cfg *config.Config, session localSession, after
 func lifecycleProviderHome(cfg *config.Config, recorded string) (string, error) {
 	if config.Channel() == "preview" {
 		home := effectiveSessionHome(cfg, EggIdentity{})
-		if recorded != "" && canonicalSessionPath(recorded) != canonicalSessionPath(home) {
+		if recorded != "" && wingpolicy.CanonicalSessionPath(recorded) != wingpolicy.CanonicalSessionPath(home) {
 			return "", errors.New("preview session provider home does not belong to this preview state")
 		}
 		return home, nil
@@ -107,7 +108,7 @@ func (s *localMCPServer) resolveOwnedLifecycleSession(ref string) (localSession,
 	if err != nil {
 		return localSession{}, err
 	}
-	if !s.ownsSession(session) || (s.enforcePathBounds && (len(s.allowedPaths) == 0 || !isUnderPaths(canonicalSessionPath(session.CWD), s.allowedPaths))) {
+	if !s.ownsSession(session) || (s.enforcePathBounds && (len(s.allowedPaths) == 0 || !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(session.CWD), s.allowedPaths))) {
 		return localSession{}, errors.New("session not found or not owned by caller")
 	}
 	return session, nil

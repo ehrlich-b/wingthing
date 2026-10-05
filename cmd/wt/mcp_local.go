@@ -28,6 +28,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
@@ -469,19 +470,7 @@ func roostMCPPaths(cfg *config.Config, email string) ([]string, error) {
 		return nil, fmt.Errorf("load roost path policy: %w", err)
 	}
 	home, _ := os.UserHomeDir()
-	return canonicalPaths(pathsForRequest(wingCfg.Paths, email, "member", home)), nil
-}
-
-func canonicalPaths(paths []string) []string {
-	canonical := make([]string, 0, len(paths))
-	for _, path := range paths {
-		cleaned := filepath.Clean(path)
-		if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
-			cleaned = resolved
-		}
-		canonical = append(canonical, cleaned)
-	}
-	return canonical
+	return wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, email, "member", home)), nil
 }
 
 func localMCPToolResult(data map[string]any, isError bool) map[string]any {
@@ -1050,7 +1039,7 @@ func (s *localMCPServer) resolveConfigPath(path string) (string, error) {
 	if evaluated, evalErr := filepath.EvalSymlinks(canonical); evalErr == nil {
 		canonical = evaluated
 	}
-	if s.enforcePathBounds && (len(s.allowedPaths) == 0 || !isUnderPaths(canonical, s.allowedPaths)) {
+	if s.enforcePathBounds && (len(s.allowedPaths) == 0 || !wingpolicy.IsUnderPaths(canonical, s.allowedPaths)) {
 		return "", fmt.Errorf("sandbox config %q is outside this user's roost paths", path)
 	}
 	return canonical, nil
@@ -1072,7 +1061,7 @@ func (s *localMCPServer) resolveOwnedSession(ctx context.Context, ref string) (l
 	if !s.ownsSession(session) {
 		return localSession{}, errors.New("session not found or not owned by caller")
 	}
-	if s.enforcePathBounds && (len(s.allowedPaths) == 0 || !isUnderPaths(canonicalSessionPath(session.CWD), s.allowedPaths)) {
+	if s.enforcePathBounds && (len(s.allowedPaths) == 0 || !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(session.CWD), s.allowedPaths)) {
 		return localSession{}, errors.New("session not found or not owned by caller")
 	}
 	// A host mailbox connection was checked against its tree by exact ID; a
@@ -1082,14 +1071,6 @@ func (s *localMCPServer) resolveOwnedSession(ctx context.Context, ref string) (l
 		return localSession{}, errors.New("session is outside this MCP connection's bound task tree; use its exact execution session ID")
 	}
 	return session, nil
-}
-
-func canonicalSessionPath(path string) string {
-	cleaned := filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
-		return resolved
-	}
-	return cleaned
 }
 
 func (s *localMCPServer) checkSpawnBounds() error {
@@ -1259,7 +1240,7 @@ func (s *localMCPServer) toolTerminalList(ctx context.Context, arguments json.Ra
 		if root != "" && session.RootConversationID != root {
 			continue
 		}
-		if s.ownsSession(session) && (!s.enforcePathBounds || (len(s.allowedPaths) > 0 && isUnderPaths(canonicalSessionPath(session.CWD), s.allowedPaths))) {
+		if s.ownsSession(session) && (!s.enforcePathBounds || (len(s.allowedPaths) > 0 && wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(session.CWD), s.allowedPaths))) {
 			owned = append(owned, session)
 		}
 	}
@@ -2775,7 +2756,7 @@ func (s *localMCPServer) resolveWorkingDirectory(cwd string) (string, error) {
 	if s.enforcePathBounds && len(s.allowedPaths) == 0 {
 		return "", errors.New("this roost user has no configured workspace paths")
 	}
-	if len(s.allowedPaths) > 0 && !isUnderPaths(canonical, s.allowedPaths) {
+	if len(s.allowedPaths) > 0 && !wingpolicy.IsUnderPaths(canonical, s.allowedPaths) {
 		return "", fmt.Errorf("working directory %q is outside this user's roost paths", resolved)
 	}
 	return canonical, nil
