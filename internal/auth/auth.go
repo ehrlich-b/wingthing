@@ -32,6 +32,7 @@ type DeviceToken struct {
 	IssuedAt  int64  `json:"issued_at" yaml:"issued_at"`
 	DeviceID  string `json:"device_id" yaml:"device_id"`
 	PublicKey string `json:"public_key,omitempty" yaml:"public_key,omitempty"`
+	UserID    string `json:"user_id,omitempty" yaml:"user_id,omitempty"`
 }
 
 type DeviceCodeResponse struct {
