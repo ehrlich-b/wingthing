@@ -181,14 +181,18 @@ func TestLifecycleEndedProcessSkipsUnterminatedTranscriptTail(t *testing.T) {
 			}
 			lifecycleHook(t, home, filepath.Base(dir), "final", fmt.Sprintf(`{"session_id":"ours","hook_event_name":%q}`, hook))
 			before := lifecycleRead(t, dir, home, cwd, 0, 10)
-			if before.State != "working" || before.Status != "working" || before.StateSource != "native_import" || !before.HasMore {
-				t.Fatalf("live unterminated tail stopped being pending: %+v", before)
+			status := "idle"
+			if state == "failed" {
+				status = "unknown"
+			}
+			if before.State != state || before.Status != status || before.StateSource != "claude_hook" || !before.HasMore {
+				t.Fatalf("live unterminated tail hid native hook state: %+v", before)
 			}
 			if err := recordSessionProcessExit(dir, 0, false); err != nil {
 				t.Fatal(err)
 			}
 			v := lifecycleRead(t, dir, home, cwd, before.Cursor, 10)
-			status := "done"
+			status = "done"
 			if state == "failed" {
 				status = "exited"
 			}
@@ -224,8 +228,8 @@ func TestLifecycleEndedProcessKeepsBatchImportPending(t *testing.T) {
 
 func TestLifecyclePendingImportStatusUsesFinalState(t *testing.T) {
 	for _, tc := range []struct{ name, exitState, state, status string }{
-		{"live", "", "working", "working"},
-		{"clean exit", "completed", "working", "exited"},
+		{"live", "", "completed", "idle"},
+		{"clean exit", "completed", "completed", "done"},
 		{"failed exit", "failed", "failed", "exited"},
 		{"stopped exit", "stopped", "stopped", "exited"},
 	} {
@@ -252,6 +256,60 @@ func TestLifecyclePendingImportStatusUsesFinalState(t *testing.T) {
 			}
 			if v.State != state || v.Status != status || v.HasMore {
 				t.Fatalf("finished import status disagrees with final state: %+v", v)
+			}
+		})
+	}
+}
+
+func TestLifecycleTranscriptPendingKeepsHookState(t *testing.T) {
+	for _, backlog := range []string{"unterminated", "batch"} {
+		for _, hook := range []struct{ event, state, status string }{
+			{"PermissionRequest", "needs_input", "blocked"},
+			{"Stop", "completed", "idle"},
+			{"StopFailure", "failed", "unknown"},
+		} {
+			t.Run(backlog+"/"+hook.event, func(t *testing.T) {
+				dir, home, cwd, path := lifecycleFixture(t)
+				lifecycleHook(t, home, filepath.Base(dir), "seq.00000000000000000001", `{"session_id":"ours","hook_event_name":"SessionStart"}`)
+				lifecycleHook(t, home, filepath.Base(dir), "seq.00000000000000000002", fmt.Sprintf(`{"session_id":"ours","hook_event_name":%q}`, hook.event))
+				before := lifecycleRead(t, dir, home, cwd, 0, 10)
+				row := `{"type":"assistant","sessionId":"ours","message":{"content":"delayed transcript","stop_reason":"end_turn"}}`
+				if backlog == "batch" {
+					row = strings.Repeat(row+"\n", 501)
+				}
+				lifecycleWrite(t, path, row)
+				v := lifecycleRead(t, dir, home, cwd, before.Cursor, 10)
+				if v.State != hook.state || v.Status != hook.status || v.StateSource != "claude_hook" || v.StateCursor != before.StateCursor || v.Reason != before.Reason || v.Ready != before.Ready || !v.HasMore {
+					t.Fatalf("transcript backlog hid hook state: state=%s status=%s source=%s cursor=%d ready=%t more=%t", v.State, v.Status, v.StateSource, v.StateCursor, v.Ready, v.HasMore)
+				}
+			})
+		}
+	}
+}
+
+func TestLifecycleHookPendingKeepsBlockedOrUnknownState(t *testing.T) {
+	for _, state := range []string{"needs_input", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			dir, home, cwd, _ := lifecycleFixture(t)
+			for i := 1; i <= 501; i++ {
+				data := `{"session_id":"ours","hook_event_name":"Notification","notification_type":"unrelated"}`
+				if i == 1 {
+					data = `{"session_id":"ours","hook_event_name":"SessionStart"}`
+				} else if i == 2 {
+					data = `{"session_id":"ours","hook_event_name":"PermissionRequest"}`
+					if state == "unknown" {
+						data = strings.Repeat("x", maxLifecycleRecord+1)
+					}
+				}
+				lifecycleHook(t, home, filepath.Base(dir), fmt.Sprintf("seq.%020d", i), data)
+			}
+			v := lifecycleRead(t, dir, home, cwd, 0, 10)
+			status := "blocked"
+			if state == "unknown" {
+				status = "unknown"
+			}
+			if v.State != state || v.Status != status || v.StateSource != "claude_hook" || v.StateCursor != 2 || v.Ready || !v.HasMore || v.HeadCursor != 500 {
+				t.Fatalf("hook backlog hid %s state: state=%s status=%s source=%s cursor=%d ready=%t more=%t head=%d", state, v.State, v.Status, v.StateSource, v.StateCursor, v.Ready, v.HasMore, v.HeadCursor)
 			}
 		})
 	}
@@ -615,6 +673,52 @@ func TestLifecycleSkipsOversizedNativeRecordsAndPersistsProgress(t *testing.T) {
 			}
 			if again := lifecycleRead(t, dir, home, cwd, v.Cursor, 10); len(again.Events) != 0 || again.HeadCursor != v.HeadCursor {
 				t.Fatalf("restart retried skipped native row: %+v", again)
+			}
+		})
+	}
+}
+
+func TestLifecycleOversizedHookInvalidatesStateAndReadiness(t *testing.T) {
+	for _, agent := range []string{"claude", "codex"} {
+		t.Run(agent, func(t *testing.T) {
+			dir, home, cwd, path := lifecycleFixture(t)
+			spool := filepath.Join(home, "."+agent, "wingthing-events", filepath.Base(dir))
+			if err := os.MkdirAll(spool, 0700); err != nil {
+				t.Fatal(err)
+			}
+			write := func(sequence int, data string) {
+				t.Helper()
+				lifecycleWrite(t, filepath.Join(spool, fmt.Sprintf("seq.%020d.json", sequence)), data)
+			}
+			read := func(after int64) SessionView {
+				t.Helper()
+				v, err := ReadSessionLifecycle(dir, agent, cwd, home, "ours", true, after, 10)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return v
+			}
+			write(1, `{"session_id":"ours","hook_event_name":"SessionStart"}`)
+			write(2, `{"session_id":"ours","hook_event_name":"Stop"}`)
+			before := read(0)
+			if before.State != "completed" || before.Status != "idle" || !before.Ready {
+				t.Fatalf("fixture not ready after Stop: %+v", before)
+			}
+			write(3, `{"session_id":"ours","hook_event_name":"UserPromptSubmit","prompt":"`+strings.Repeat("x", maxLifecycleRecord)+`"}`)
+			v := read(before.Cursor)
+			if v.State != "unknown" || v.Status != "unknown" || v.Ready || v.StateSource != agent+"_hook" || v.StateCursor != before.HeadCursor+1 || !strings.Contains(v.Reason, "skipped") || len(v.Events) != 1 || !v.Events[0].Truncated {
+				t.Fatalf("skipped hook retained stale completion or readiness: %+v", v)
+			}
+			if agent == "claude" {
+				lifecycleWrite(t, path, `{"type":"assistant","sessionId":"ours","message":{"stop_reason":"end_turn"}}`+"\n")
+			}
+			again := read(v.Cursor)
+			if again.State != "unknown" || again.Status != "unknown" || again.Ready || again.StateCursor != v.StateCursor {
+				t.Fatalf("replay or transcript restored stale state: %+v", again)
+			}
+			write(4, `{"session_id":"ours","hook_event_name":"UserPromptSubmit","prompt":"next turn"}`)
+			if restored := read(again.Cursor); restored.State != "working" || restored.Status != "working" || !restored.Ready || restored.StateCursor <= v.StateCursor {
+				t.Fatalf("later native evidence did not restore state: %+v", restored)
 			}
 		})
 	}

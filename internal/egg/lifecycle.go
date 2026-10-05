@@ -66,10 +66,11 @@ type SessionView struct {
 }
 
 type lifecycleJournal struct {
-	root       *os.Root
-	lock, file *os.File
-	events     []SessionEvent
-	pending    bool
+	root              *os.Root
+	lock, file        *os.File
+	events            []SessionEvent
+	transcriptPending bool
+	hooksPending      bool
 }
 
 func openLifecycleJournal(dir string) (*lifecycleJournal, error) {
@@ -438,13 +439,16 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 				hookState = event
 				sessionEnded = event.Type == "provider_session_end"
 			}
+			if event.Type == "provider_warning" && event.State == "unknown" {
+				view.Ready = false
+			}
 		}
 		if event.Type == "session_ready" || event.Type == "prompt_submitted" {
 			view.Ready = true
 		}
 		view.HeadCursor = event.Sequence
 	}
-	if j.pending {
+	if j.transcriptPending || j.hooksPending {
 		view.HasMore = true
 	}
 	// Native hooks report provider transitions directly. Transcript flush may
@@ -470,12 +474,15 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.ProcessAlive = false
 		sessionEnded = true
 	}
-	if j.pending && !processInterrupted {
-		view.State = "working"
-		view.StateSource = "native_import"
-		view.StateCursor = 0
+	if (j.hooksPending || (j.transcriptPending && hookState.Sequence == 0)) && !processInterrupted {
 		view.Ready = false
-		view.Reason = "native lifecycle import has not reached the source head"
+		// Missing rows cannot dismiss an observed input request or unknown state.
+		if hookState.State != "needs_input" && hookState.State != "unknown" {
+			view.State = "working"
+			view.StateSource = "native_import"
+			view.StateCursor = 0
+			view.Reason = "native lifecycle import has not reached the source head"
+		}
 	}
 	if sessionEnded {
 		view.Ready = false
@@ -613,7 +620,7 @@ func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string, proces
 				return nil
 			}
 			if !processEnded {
-				j.pending = true
+				j.transcriptPending = true
 				return nil // incomplete trailing JSON can still grow
 			}
 		}
@@ -686,7 +693,7 @@ func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string, proces
 		if err != nil {
 			return err
 		}
-		j.pending = true
+		j.transcriptPending = true
 	}
 	return nil
 }
@@ -806,6 +813,7 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 		}
 		if info.Size() > maxLifecycleRecord || len(data) > maxLifecycleRecord {
 			e.Type = "provider_warning"
+			e.State = "unknown"
 			e.Reason = "native hook exceeds 1 MiB; skipped"
 			e.Truncated = true
 			e.OriginalBytes = info.Size()
@@ -902,7 +910,7 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 		}
 	}
 	if len(files) > 500 {
-		j.pending = true
+		j.hooksPending = true
 	}
 	return providerID, nil
 }
