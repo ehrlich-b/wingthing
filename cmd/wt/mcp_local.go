@@ -24,6 +24,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/google/uuid"
@@ -1794,7 +1795,7 @@ func (s *localMCPServer) ownedAgentRun(runID string) (*store.Task, *store.Store,
 	if task == nil || task.Type != "agent_run" || !s.ownsTask(task) {
 		return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("agent run %q not found or not owned by caller", runID))
 	}
-	if (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !ownedProcessIsAlive(task.RunnerPID) {
+	if (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !procinfo.OwnedProcessIsAlive(task.RunnerPID) {
 		if err := taskStore.SetTaskError(task.ID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID)); err != nil {
 			return nil, nil, closeAndJoin("task store", taskStore, fmt.Errorf("mark orphaned agent run failed: %w", err))
 		}

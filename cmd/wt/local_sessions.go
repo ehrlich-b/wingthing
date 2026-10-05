@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"golang.org/x/term"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -194,33 +195,13 @@ func readAliveEggPID(dir string) (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	if !ownedProcessIsAlive(pid) {
+	if !procinfo.OwnedProcessIsAlive(pid) {
 		return 0, false
 	}
 	if config.Channel() == "preview" && !previewEggProcessMatches(pid, filepath.Base(dir)) {
 		return 0, false
 	}
 	return pid, true
-}
-
-// ownedProcessIsAlive probes a process recorded by this wt instance. Every PID
-// stored in the daemon, task, and egg metadata belongs to a same-UID child (the
-// sandboxed agent may use another UID, but its supervising egg does not). EPERM
-// therefore means that the PID has been recycled by a foreign process, not that
-// the recorded child is still alive.
-func ownedProcessIsAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return ownedProcessSignalIndicatesAlive(proc.Signal(syscall.Signal(0)))
-}
-
-func ownedProcessSignalIndicatesAlive(err error) bool {
-	return err == nil
 }
 
 func readEggMetaValues(dir string) map[string]string {

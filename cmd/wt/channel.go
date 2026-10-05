@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/spf13/cobra"
 )
 
@@ -124,7 +125,7 @@ func defaultHTTPSAddr() string {
 }
 
 func previewEggProcessMatches(pid int, sessionID string) bool {
-	argv, err := processArgv(pid)
+	argv, err := procinfo.ProcessArgv(pid)
 	if err != nil || len(argv) < 5 {
 		return false
 	}

@@ -1,6 +1,6 @@
 //go:build darwin
 
-package main
+package procinfo
 
 import (
 	"encoding/binary"
@@ -9,10 +9,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// processArgv uses KERN_PROCARGS2 instead of ps. ps flattens argv into display
+// ProcessArgv uses KERN_PROCARGS2 instead of ps. ps flattens argv into display
 // text and cannot distinguish a space in the executable path from an argument
 // boundary, which made daemon lifecycle commands reject valid custom installs.
-func processArgv(pid int) ([]string, error) {
+func ProcessArgv(pid int) ([]string, error) {
 	data, err := unix.SysctlRaw("kern.procargs2", pid)
 	if err != nil {
 		return nil, err

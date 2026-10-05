@@ -17,6 +17,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	pionwebrtc "github.com/pion/webrtc/v4"
 )
@@ -301,7 +302,7 @@ func TestStopDaemonAndWaitNeverSignalsUnrelatedProcess(t *testing.T) {
 	if err := stopDaemonAndWait(os.Getpid(), wingDaemon, 20*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
-	if !ownedProcessIsAlive(os.Getpid()) {
+	if !procinfo.OwnedProcessIsAlive(os.Getpid()) {
 		t.Fatal("test process was signaled")
 	}
 }

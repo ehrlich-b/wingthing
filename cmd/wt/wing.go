@@ -40,6 +40,7 @@ import (
 	directpkg "github.com/ehrlich-b/wingthing/internal/direct"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	relaypkg "github.com/ehrlich-b/wingthing/internal/relay"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -1184,7 +1185,7 @@ func waitForWingStatus(pid int, timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		// Check if daemon died
-		if !ownedProcessIsAlive(pid) {
+		if !procinfo.OwnedProcessIsAlive(pid) {
 			// Process exited — check final status
 			if s, err := readWingStatus(); err == nil {
 				return s.State
@@ -1327,7 +1328,7 @@ func readPidFrom(path string, kind daemonKind) (int, error) {
 		_ = os.Remove(path)
 		return 0, fmt.Errorf("%w: invalid PID: %v", errStaleDaemonPID, err)
 	}
-	if !ownedProcessIsAlive(pid) {
+	if !procinfo.OwnedProcessIsAlive(pid) {
 		_ = os.Remove(path)
 		return 0, errStaleDaemonPID
 	}
@@ -1346,7 +1347,7 @@ func readPidFrom(path string, kind daemonKind) (int, error) {
 // roostStartCmd. Failure to inspect argv fails closed: a status check may call
 // a daemon stopped, but stop/update will never signal an unconfirmed process.
 func inspectDaemonPid(pid int, kind daemonKind) (bool, error) {
-	argv, err := processArgv(pid)
+	argv, err := procinfo.ProcessArgv(pid)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
 			return false, nil
@@ -1453,7 +1454,7 @@ func readPid() (int, error) {
 // keeps the lifecycle lock meaningful: callers must not delete metadata and
 // allow a replacement to start while the old listener is still shutting down.
 func stopDaemonAndWait(pid int, kind daemonKind, timeout time.Duration) error {
-	if !ownedProcessIsAlive(pid) {
+	if !procinfo.OwnedProcessIsAlive(pid) {
 		return nil
 	}
 	matches, inspectErr := inspectDaemonPid(pid, kind)
@@ -1468,7 +1469,7 @@ func stopDaemonAndWait(pid int, kind daemonKind, timeout time.Duration) error {
 		return fmt.Errorf("find %s daemon pid %d: %w", kind, pid, err)
 	}
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		if !ownedProcessIsAlive(pid) {
+		if !procinfo.OwnedProcessIsAlive(pid) {
 			return nil
 		}
 		matches, inspectErr = inspectDaemonPid(pid, kind)
@@ -1485,7 +1486,7 @@ func stopDaemonAndWait(pid int, kind daemonKind, timeout time.Duration) error {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if !ownedProcessIsAlive(pid) {
+		if !procinfo.OwnedProcessIsAlive(pid) {
 			return nil
 		}
 		matches, inspectErr = inspectDaemonPid(pid, kind)
@@ -3351,7 +3352,7 @@ func reapDeadEggs(cfg *config.Config) {
 			cleanEggDir(dir)
 			continue
 		}
-		if !ownedProcessIsAlive(pid) {
+		if !procinfo.OwnedProcessIsAlive(pid) {
 			// Dead process
 			log.Printf("egg: reaping dead egg %s (pid %d)", e.Name(), pid)
 			cleanEggDir(dir)
@@ -3405,7 +3406,7 @@ func listAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		if err != nil {
 			continue
 		}
-		if !ownedProcessIsAlive(pid) {
+		if !procinfo.OwnedProcessIsAlive(pid) {
 			continue
 		}
 
@@ -3728,7 +3729,7 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		if err != nil {
 			continue
 		}
-		if !ownedProcessIsAlive(pid) {
+		if !procinfo.OwnedProcessIsAlive(pid) {
 			cleanEggDir(dir)
 			continue
 		}
@@ -6131,7 +6132,7 @@ func collectSessionsHistory(cfg *config.Config) []pastSessionInfo {
 		pidData, err := os.ReadFile(filepath.Join(dir, "egg.pid"))
 		if err == nil {
 			pid, _ := strconv.Atoi(strings.TrimSpace(string(pidData)))
-			if ownedProcessIsAlive(pid) {
+			if procinfo.OwnedProcessIsAlive(pid) {
 				continue
 			}
 		}

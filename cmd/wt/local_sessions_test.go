@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -161,12 +160,6 @@ func TestReadEggMetaValuesPreservesEquals(t *testing.T) {
 	meta := readEggMetaValues(dir)
 	if got, want := meta["command"], `"sh" "-c" "A=B echo $A"`; got != want {
 		t.Fatalf("command = %q, want %q", got, want)
-	}
-}
-
-func TestOwnedProcessSignalPermissionDeniedMeansRecycledPID(t *testing.T) {
-	if ownedProcessSignalIndicatesAlive(syscall.EPERM) {
-		t.Fatal("permission-denied owned-process probe was treated as the recorded child")
 	}
 }
 

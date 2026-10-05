@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package procinfo
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func processArgv(pid int) ([]string, error) {
+func ProcessArgv(pid int) ([]string, error) {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil {
 		return nil, err
