@@ -106,6 +106,55 @@ func TestLifecycleExactIdentityPartialReplayAndConcurrentReaders(t *testing.T) {
 	}
 }
 
+func TestLifecycleEndedProcessSkipsUnterminatedTranscriptTail(t *testing.T) {
+	for _, state := range []string{"completed", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			dir, home, cwd, path := lifecycleFixture(t)
+			tail := `{"type":"user","sessionId":"ours","message":{"content":"unterminated tail"}}`
+			lifecycleWrite(t, path, tail)
+			hook := "Stop"
+			if state == "failed" {
+				hook = "StopFailure"
+			}
+			lifecycleHook(t, home, filepath.Base(dir), "final", fmt.Sprintf(`{"session_id":"ours","hook_event_name":%q}`, hook))
+			before := lifecycleRead(t, dir, home, cwd, 0, 10)
+			if before.State != "working" || before.StateSource != "native_import" || !before.HasMore {
+				t.Fatalf("live unterminated tail stopped being pending: %+v", before)
+			}
+			if err := recordSessionProcessExit(dir, 0, false); err != nil {
+				t.Fatal(err)
+			}
+			v := lifecycleRead(t, dir, home, cwd, before.Cursor, 10)
+			if v.State != state || v.StateSource != "claude_hook" || v.ProcessAlive || v.Ready || v.HasMore {
+				t.Fatalf("ended process remained pending on permanent tail: %+v", v)
+			}
+			if len(v.Events) != 2 || v.Events[1].Type != "provider_warning" || !strings.Contains(v.Events[1].Reason, "unterminated") || v.Events[1].SourceOffset != int64(len(tail)) {
+				t.Fatalf("unterminated tail warning or offset missing: %+v", v.Events)
+			}
+			if again := lifecycleRead(t, dir, home, cwd, v.Cursor, 10); again.State != state || again.HasMore || len(again.Events) != 0 || again.HeadCursor != v.HeadCursor {
+				t.Fatalf("permanent tail was retried: %+v", again)
+			}
+		})
+	}
+}
+
+func TestLifecycleEndedProcessKeepsBatchImportPending(t *testing.T) {
+	dir, home, cwd, path := lifecycleFixture(t)
+	row := `{"type":"assistant","sessionId":"ours","message":{"content":"done","stop_reason":"end_turn"}}` + "\n"
+	lifecycleWrite(t, path, strings.Repeat(row, 501)+`{"type":`)
+	if err := recordSessionProcessExit(dir, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	v := lifecycleRead(t, dir, home, cwd, 0, 200)
+	if v.State != "working" || v.StateSource != "native_import" || v.StateCursor != 0 || !v.HasMore || v.ProcessAlive || v.Ready {
+		t.Fatalf("ended process reported completion before import caught up: %+v", v)
+	}
+	v = lifecycleRead(t, dir, home, cwd, v.HeadCursor, 10)
+	if v.State != "completed" || v.StateSource != "claude_transcript" || v.HasMore || len(v.Events) != 2 || v.Events[1].Type != "provider_warning" {
+		t.Fatalf("ended process did not finish batch and warn about tail: %+v", v)
+	}
+}
+
 func TestLifecycleNativeHooksRemainAuthoritativeAfterDelayedTranscript(t *testing.T) {
 	for _, event := range []struct{ hook, state string }{{"Stop", "completed"}, {"PermissionRequest", "needs_input"}} {
 		t.Run(event.hook, func(t *testing.T) {
@@ -265,6 +314,59 @@ func TestClaudeLifecycleSettingsFileKeepsCredentialsPrivateAndCleansUp(t *testin
 	}
 	if _, err = os.Stat(filepath.Join(dir, "lifecycle.jsonl")); err != nil {
 		t.Fatalf("cleanup removed retained lifecycle: %v", err)
+	}
+}
+
+func TestClaudeLifecycleSettingsFileReplacesPreviousLaunch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, claudeLifecycleSettingsFile)
+	lifecycleWrite(t, path, strings.Repeat("previous launch settings", 1000))
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	args, err := prepareClaudeLifecycleArgs([]string{"--settings", `{"model":"new-model","disableAllHooks":true}`}, t.TempDir(), dir, "ours", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args[len(args)-1] != path {
+		t.Fatalf("relaunch changed settings path: %v", args)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err = json.Unmarshal(data, &settings); err != nil || settings["model"] != "new-model" || settings["disableAllHooks"] != true {
+		t.Fatalf("previous settings were not replaced: %s %v", data, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("reused settings permissions: %v %v", info, err)
+	}
+}
+
+func TestClaudeLifecycleSettingsFileRefusesLinks(t *testing.T) {
+	for _, link := range []struct {
+		name   string
+		create func(string, string) error
+	}{{"symlink", os.Symlink}, {"hardlink", os.Link}} {
+		t.Run(link.name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(t.TempDir(), "target.json")
+			lifecycleWrite(t, target, "target settings")
+			if err := link.create(target, filepath.Join(dir, claudeLifecycleSettingsFile)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := prepareClaudeLifecycleArgs(nil, t.TempDir(), dir, "ours", t.TempDir()); err == nil {
+				t.Fatal("accepted linked settings file")
+			}
+			if link.name == "symlink" {
+				data, err := os.ReadFile(target)
+				if err != nil || string(data) != "target settings" {
+					t.Fatalf("symlink target changed: %s %v", data, err)
+				}
+			}
+		})
 	}
 }
 

@@ -241,11 +241,22 @@ func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd str
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|unix.O_NOFOLLOW, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|unix.O_NOFOLLOW, 0600)
 	if err != nil {
 		return nil, err
 	}
-	_, err = io.WriteString(f, out[len(out)-1])
+	var stat unix.Stat_t
+	if err = unix.Fstat(int(f.Fd()), &stat); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Nlink != 1 {
+		_ = f.Close()
+		return nil, errors.New("lifecycle settings must be a regular file with one link")
+	}
+	if err = f.Chmod(0600); err == nil {
+		_, err = io.WriteString(f, out[len(out)-1])
+	}
 	closeErr := f.Close()
 	if err != nil || closeErr != nil {
 		_ = os.Remove(path)
@@ -358,16 +369,22 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		return view, err
 	}
 	defer j.close()
+	processEnded := false
+	var processEnd SessionEvent
+	for _, event := range j.events {
+		if event.Type == "session_exit" || event.Type == "session_failed" {
+			processEnded = true
+			processEnd = event
+		}
+	}
 	if agent == "claude" && validLifecycleID(exactProviderID) {
-		if err = j.importTranscript(eggDir, cwd, providerHome, exactProviderID); err != nil {
+		if err = j.importTranscript(eggDir, cwd, providerHome, exactProviderID, processEnded); err != nil {
 			return view, err
 		}
 		if err = j.importHooks(providerHome, view.SessionID, exactProviderID); err != nil {
 			return view, err
 		}
 	}
-	processEnded := false
-	var processEnd SessionEvent
 	var hookState SessionEvent
 	for _, event := range j.events {
 		if event.State != "" && event.Type != "session_exit" {
@@ -381,10 +398,6 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		}
 		if event.Type == "session_ready" || event.Type == "prompt_submitted" {
 			view.Ready = true
-		}
-		if event.Type == "session_exit" || event.Type == "session_failed" {
-			processEnded = true
-			processEnd = event
 		}
 		view.HeadCursor = event.Sequence
 	}
@@ -496,7 +509,7 @@ func boundedLifecycleString(value string) string {
 	return value
 }
 
-func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string) error {
+func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string, processEnded bool) error {
 	var offset int64
 	for _, e := range j.events {
 		if e.SourceKey == "transcript" && e.SourceOffset > offset {
@@ -546,17 +559,25 @@ func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string) error 
 	for count := 0; count < 500; count++ {
 		line, size, oversized, readErr := readNativeLifecycleLine(r)
 		if readErr == io.EOF && !oversized {
-			j.pending = j.pending || size > 0
-			return nil
-		} // incomplete trailing JSON is retried
+			if size == 0 {
+				return nil
+			}
+			if !processEnded {
+				j.pending = true
+				return nil // incomplete trailing JSON can still grow
+			}
+		}
 		if readErr != nil && readErr != io.EOF {
 			return readErr
 		}
 		offset += size
 		event := SessionEvent{Type: "provider_event", Source: "claude_transcript", SourceKey: "transcript", SourceOffset: offset, ProviderSessionID: id}
-		if oversized {
+		if oversized || readErr == io.EOF {
 			event.Type = "provider_warning"
 			event.Reason = "native transcript record exceeds 1 MiB; skipped"
+			if !oversized {
+				event.Reason = "unterminated native transcript record after provider exit; skipped"
+			}
 			event.Truncated = true
 			event.OriginalBytes = size
 			if err = j.append(event); err != nil {
