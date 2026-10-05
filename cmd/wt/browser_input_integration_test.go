@@ -31,7 +31,7 @@ import (
 func TestPreviewBrowserLeaseOnRealEgg(t *testing.T) {
 	binary := os.Getenv("WT_TEST_PREVIEW_BINARY")
 	if binary == "" {
-		t.Fatal("run make test-preview-input")
+		t.Skip("run make test-preview-input")
 	}
 	oldChannel := config.ReleaseChannel
 	config.ReleaseChannel = "preview"

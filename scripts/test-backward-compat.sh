@@ -1,7 +1,14 @@
 #!/bin/sh
 set -eu
 
-BASELINE_REF="${WT_COMPAT_BASELINE_REF:-v0.144.1}"
+if [ -z "${WT_COMPAT_BASELINE_REF:-}" ]; then
+    for baseline_ref in v0.144.1 v0.147.0; do
+        WT_COMPAT_BASELINE_REF="$baseline_ref" "$0"
+    done
+    exit 0
+fi
+
+BASELINE_REF="$WT_COMPAT_BASELINE_REF"
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 cd "$REPO_ROOT"
 
@@ -54,11 +61,11 @@ printf '%s\n' '<!doctype html><meta charset="utf-8"><title>compatibility fixture
 
 (
     cd "$BASELINE_TREE"
-    go build -buildvcs=false -ldflags "-X main.version=$BASELINE_REF" -o "$BASELINE_BIN" ./cmd/wt
+    nice -n 15 go build -p 2 -buildvcs=false -ldflags "-X main.version=$BASELINE_REF" -o "$BASELINE_BIN" ./cmd/wt
 )
-go build -buildvcs=false -ldflags "-X main.version=compat-candidate" -o "$CANDIDATE_BIN" ./cmd/wt
-go build -buildvcs=false -o "$CHECK_BIN" ./test/compat
-go build -buildvcs=false -o "$AGENT_DIR/claude" ./test/web/canary-agent
+nice -n 15 go build -p 2 -buildvcs=false -ldflags "-X main.version=compat-candidate" -o "$CANDIDATE_BIN" ./cmd/wt
+nice -n 15 go build -p 2 -buildvcs=false -o "$CHECK_BIN" ./test/compat
+nice -n 15 go build -p 2 -buildvcs=false -o "$AGENT_DIR/claude" ./test/web/canary-agent
 
 echo "== immutable historical migrations =="
 git ls-tree -r --name-only "$BASELINE_REF" -- internal/store/migrations internal/relay/migrations |
@@ -139,7 +146,11 @@ stop_gateway() {
 start_wing() {
     binary=$1
     log_path=$2
-    PATH="$AGENT_DIR:$PATH" WINGTHING_DIR="$STATE_DIR" "$binary" daemon start --foreground \
+    set --
+    if [ ! -s "$TMP_ROOT/baseline-device_token.yaml" ]; then
+        set -- --local
+    fi
+    HOME="$STATE_DIR" PATH="$AGENT_DIR:$PATH" WINGTHING_DIR="$STATE_DIR" "$binary" daemon start --foreground "$@" \
         --roost "http://127.0.0.1:$PORT" --paths "$STATE_DIR" \
         --egg-config "$REPO_ROOT/test/web/egg.yaml" >"$log_path" 2>&1 &
     WING_PID=$!
@@ -176,8 +187,27 @@ stop_wing() {
 echo "== create genuine $BASELINE_REF local state =="
 start_gateway "$BASELINE_BIN" "$TMP_ROOT/baseline-gateway-initial.log"
 stop_gateway
-test -s "$STATE_DIR/device_token.yaml"
-cp "$STATE_DIR/device_token.yaml" "$TMP_ROOT/legacy-device-token.yaml"
+BASELINE_TOKEN_FILES=""
+for token_file in device_token.yaml local_device_token.yaml; do
+    if [ -e "$STATE_DIR/$token_file" ]; then
+        test -s "$STATE_DIR/$token_file"
+        cp "$STATE_DIR/$token_file" "$TMP_ROOT/baseline-$token_file"
+        BASELINE_TOKEN_FILES="$BASELINE_TOKEN_FILES $token_file"
+    fi
+done
+test -n "$BASELINE_TOKEN_FILES"
+
+assert_compat_tokens() {
+    for token_file in $BASELINE_TOKEN_FILES; do
+        cmp -s "$TMP_ROOT/baseline-$token_file" "$STATE_DIR/$token_file"
+    done
+    test -s "$STATE_DIR/local_device_token.yaml"
+    if [ -s "$TMP_ROOT/baseline-device_token.yaml" ]; then
+        cmp -s "$STATE_DIR/device_token.yaml" "$STATE_DIR/local_device_token.yaml"
+    else
+        test ! -e "$STATE_DIR/device_token.yaml"
+    fi
+}
 
 # Additive current wing fields must remain parseable by the old binary during a
 # gateway-first rollout. The explicit allow value preserves old relay behavior.
@@ -188,14 +218,14 @@ printf '%s\n' \
 
 echo "== $BASELINE_REF wing -> current gateway, including PTY start =="
 start_gateway "$CANDIDATE_BIN" "$TMP_ROOT/candidate-gateway.log"
-cmp -s "$TMP_ROOT/legacy-device-token.yaml" "$STATE_DIR/device_token.yaml"
-cmp -s "$STATE_DIR/device_token.yaml" "$STATE_DIR/local_device_token.yaml"
+assert_compat_tokens
 start_wing "$BASELINE_BIN" "$TMP_ROOT/baseline-wing.log"
 stop_wing
 stop_gateway
 
 echo "== current wing -> $BASELINE_REF gateway, including PTY start =="
 start_gateway "$BASELINE_BIN" "$TMP_ROOT/baseline-gateway-rollback.log"
+assert_compat_tokens
 start_wing "$CANDIDATE_BIN" "$TMP_ROOT/candidate-wing.log"
 stop_wing
 stop_gateway
