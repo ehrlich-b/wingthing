@@ -94,7 +94,7 @@ func newPlatform(cfg Config) (Sandbox, error) {
 		return nil, fmt.Errorf("create sandbox tmpdir: %w", err)
 	}
 
-	// Create cgroup for real memory/PID limits (graceful fallback to prlimit-only)
+	// Create cgroup for real memory/PID limits (graceful fallback to rlimits only).
 	var cg *cgroupManager
 	if cfg.MemLimit > 0 || cfg.PidLimit > 0 {
 		cg, _ = newCgroupManager(cfg.SessionID, cfg.MemLimit, cfg.PidLimit)
@@ -270,8 +270,8 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 	needsNetworkRelay := s.cfg.ProxyPort > 0 || len(s.cfg.LocalPorts) > 0
 	needsWrapper := s.needsEnforcementWrapper()
 	if needsWrapper {
-		// Wrap through _sandbox_init to apply deny paths (tmpfs overmounts)
-		// and write isolation (HOME read-only + writable sub-mounts).
+		// Wrap through _deny_init to apply deny paths (tmpfs overmounts),
+		// write isolation (HOME read-only + writable sub-mounts), and rlimits.
 		// The wrapper runs as root in the namespace (needs CAP_SYS_ADMIN for mount),
 		// then drops to real UID via nested user namespace before exec'ing the agent.
 		exe, err := os.Executable()
@@ -285,6 +285,9 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 			"--uid", fmt.Sprintf("%d", uid),
 			"--gid", fmt.Sprintf("%d", gid),
 			"--log", logPath,
+		}
+		for _, rl := range s.rlimits() {
+			wrapArgs = append(wrapArgs, "--rlimit", fmt.Sprintf("%d=%d", rl.resource, rl.value))
 		}
 		if needsNetworkRelay {
 			wrapArgs = append(wrapArgs, "--net-relay-fd", "3")
@@ -399,29 +402,17 @@ func straceSupportsKillOnExit(bin string) bool {
 	return strings.Contains(string(out), "kill-on-exit")
 }
 
-// PostStart adds the sandboxed process to the cgroup (if available) then
-// applies prlimit resource limits as belt+suspenders.
-//
-// Known race: the child process is already running when PostStart is called,
-// so there's a brief window before cgroup limits apply. This is acceptable
-// because the child is _deny_init (doing mount setup, not the agent), and
-// prlimit covers the gap. CLONE_INTO_CGROUP (Linux 5.7+) would eliminate
-// this race but requires CAP_SYS_ADMIN.
+// PostStart closes the parent's relay descriptor and adds the sandboxed process
+// to the cgroup (if available). Cgroup attachment still happens after startup;
+// rlimits are applied by the wrapper before it launches the agent.
 func (s *linuxSandbox) PostStart(pid int) error {
 	if s.networkBridge != nil {
 		s.networkBridge.closeChild()
 	}
-	// Cgroup first — real memory (RSS) and PID tree limits
+	// Cgroup — real memory (RSS) and PID tree limits.
 	if s.cgroup != nil {
 		if err := s.cgroup.AddPID(pid); err != nil {
-			log.Printf("linux sandbox: cgroup AddPID(%d) failed: %v (prlimit still applied)", pid, err)
-		}
-	}
-	// Prlimit as belt+suspenders (virtual address space, CPU, FDs)
-	for _, rl := range s.rlimits() {
-		lim := unix.Rlimit{Cur: rl.value, Max: rl.value}
-		if err := unix.Prlimit(pid, rl.resource, &lim, nil); err != nil {
-			log.Printf("linux sandbox: prlimit(%d, %d, %d) failed: %v", pid, rl.resource, rl.value, err)
+			log.Printf("linux sandbox: cgroup AddPID(%d) failed: %v", pid, err)
 		}
 	}
 	return nil
@@ -559,11 +550,6 @@ func (s *linuxSandbox) rlimits() []rlimitPair {
 		pairs = append(pairs, rlimitPair{unix.RLIMIT_NOFILE, uint64(s.cfg.MaxFDs)})
 	}
 	return pairs
-}
-
-type rlimitPair struct {
-	resource int
-	value    uint64
 }
 
 // buildSeccompFilter constructs a BPF program that denies dangerous syscalls.

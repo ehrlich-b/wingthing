@@ -194,7 +194,8 @@ func verifyPrivateProcfs() error {
 //
 // Args format: --uid UID --gid GID [--log PATH] [--net-relay-fd FD]
 // [--proxy-port PORT] [--local-port PORT...] [--deny PATH...] [--home PATH]
-// [--writable PATH...] [--mount-ro PATH...] [--overlay-prefix PREFIX...] -- CMD ARGS...
+// [--writable PATH...] [--mount-ro PATH...] [--overlay-prefix PREFIX...]
+// [--rlimit RESOURCE=VALUE...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
 	var denyWritePaths []string
@@ -206,6 +207,7 @@ func DenyInit(args []string) {
 	var uid, gid int
 	var netRelayFD, proxyPort int
 	var localPorts []int
+	var limits []rlimitPair
 	var cmdStart int
 
 	for i := 0; i < len(args); i++ {
@@ -215,6 +217,13 @@ func DenyInit(args []string) {
 		}
 		if i+1 < len(args) {
 			switch args[i] {
+			case "--rlimit":
+				limit, err := parseRlimit(args[i+1])
+				if err != nil {
+					log.Fatalf("_deny_init: %v", err)
+				}
+				limits = append(limits, limit)
+				i++
 			case "--deny":
 				denyPaths = append(denyPaths, args[i+1])
 				i++
@@ -410,6 +419,12 @@ func DenyInit(args []string) {
 	// the resolved policy looking correct while the namespace is still readable.
 	if err := verifyExpectedMounts(expectedMounts); err != nil {
 		failEnforcement("verify filesystem policy", "/proc/self/mountinfo", err)
+	}
+
+	// Apply soft and hard limits before an agent process exists. They are also
+	// inherited through both re-execs of the sealed jail's init/drop stages.
+	if err := applyRlimits(limits); err != nil {
+		failEnforcement("apply resource limits", "agent process", err)
 	}
 
 	// Install seccomp after mounts. Jail mode delegates this to the PID-namespace

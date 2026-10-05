@@ -3,7 +3,9 @@
 package sandbox
 
 import (
+	"context"
 	"net"
+	"slices"
 	"syscall"
 	"testing"
 	"time"
@@ -243,6 +245,49 @@ func TestRlimitOnlyExplicit(t *testing.T) {
 	}
 	if limits[0].resource != unix.RLIMIT_CPU || limits[0].value != 60 {
 		t.Errorf("got resource=%d value=%d, want RLIMIT_CPU=60", limits[0].resource, limits[0].value)
+	}
+}
+
+func TestExecPassesRlimitsToWrapper(t *testing.T) {
+	limitsConfig := Config{
+		CPULimit: 60 * time.Second,
+		MemLimit: 1024 * 1024 * 1024,
+		MaxFDs:   32,
+	}
+	jailConfig := limitsConfig
+	jailConfig.Deny = []string{"/"}
+	for name, cfg := range map[string]Config{"none": {}, "limits": limitsConfig, "jail": jailConfig} {
+		t.Run(name, func(t *testing.T) {
+			s := &linuxSandbox{cfg: cfg, tmpDir: t.TempDir()}
+			cmd, err := s.Exec(context.Background(), "/bin/sh", []string{"-c", "ulimit -n"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cmd.Args[1] != "_deny_init" {
+				t.Fatalf("missing enforcement wrapper: %v", cmd.Args)
+			}
+			var got []rlimitPair
+			for i := 2; i < len(cmd.Args) && cmd.Args[i] != "--"; i++ {
+				if cmd.Args[i] == "--rlimit" {
+					if i+1 == len(cmd.Args) {
+						t.Fatal("missing rlimit value")
+					}
+					limit, err := parseRlimit(cmd.Args[i+1])
+					if err != nil {
+						t.Fatal(err)
+					}
+					got = append(got, limit)
+					i++
+				}
+			}
+			var want []rlimitPair
+			if cfg.MaxFDs > 0 {
+				want = []rlimitPair{{unix.RLIMIT_CPU, 60}, {unix.RLIMIT_AS, 4 * 1024 * 1024 * 1024}, {unix.RLIMIT_NOFILE, 32}}
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("wrapper rlimits = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

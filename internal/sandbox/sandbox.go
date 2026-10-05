@@ -16,7 +16,7 @@ import (
 // Sandbox provides isolated execution of commands.
 type Sandbox interface {
 	Exec(ctx context.Context, name string, args []string) (*exec.Cmd, error)
-	PostStart(pid int) error // apply rlimits etc. after process starts
+	PostStart(pid int) error // attach parent-managed resources after process starts
 	Destroy() error
 	DiagLog() string  // path to sandbox diagnostic log, or ""
 	TraceLog() string // path to strace output log, or ""

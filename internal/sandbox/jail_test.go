@@ -398,45 +398,37 @@ func TestJail_Seccomp_MountBlocked(t *testing.T) {
 
 func TestJail_ResourceLimits_FDs(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("prlimit only on Linux")
+		t.Skip("resource limits only on Linux")
 	}
 
-	mount := t.TempDir()
-	sb, err := newPlatform(Config{
-		NetworkNeed: NetworkNone,
-		Mounts:      []Mount{{Source: mount, Target: mount}},
-		MaxFDs:      32,
-	})
-	if err != nil {
-		t.Fatalf("newPlatform: %v", err)
-	}
-	defer sb.Destroy()
+	for name, deny := range map[string][]string{"namespace": nil, "sealed jail": {"/"}} {
+		t.Run(name, func(t *testing.T) {
+			mount := t.TempDir()
+			sb, err := newPlatform(Config{
+				NetworkNeed: NetworkNone,
+				Mounts:      []Mount{{Source: mount, Target: mount}},
+				Deny:        deny,
+				MaxFDs:      32,
+			})
+			if err != nil {
+				t.Fatalf("newPlatform: %v", err)
+			}
+			defer sb.Destroy()
 
-	cmd, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", "ulimit -n"})
-	if err != nil {
-		t.Fatalf("Exec: %v", err)
-	}
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	sb.PostStart(cmd.Process.Pid)
-	cmd.Wait()
-
-	val := strings.TrimSpace(out.String())
-	if val == "" {
-		t.Fatal("no output from ulimit -n")
-	}
-	// Should be <= 32
-	var n int
-	for _, c := range val {
-		if c >= '0' && c <= '9' {
-			n = n*10 + int(c-'0')
-		}
-	}
-	if n > 32 {
-		t.Errorf("ulimit -n = %d, want <= 32", n)
+			cmd, err := sb.Exec(context.Background(), "/bin/sh", []string{"-c", "ulimit -Sn; ulimit -Hn"})
+			if err != nil {
+				t.Fatalf("Exec: %v", err)
+			}
+			// Finish without PostStart so the first command cannot depend on
+			// the parent winning a scheduling race to apply its limits.
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if got := strings.TrimSpace(string(out)); got != "32\n32" {
+				t.Fatalf("first command's soft/hard FD limits = %q, want 32/32", got)
+			}
+		})
 	}
 }
 
