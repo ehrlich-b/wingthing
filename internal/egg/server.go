@@ -28,6 +28,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -637,11 +638,14 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	// Prepend ~/.local/bin to PATH so agents like Claude Code find their
 	// native installation and don't warn about missing PATH entries.
 	home := envMap["HOME"]
+	lifecycleSettingsPath := ""
 	if rc.Agent == "claude" && len(rc.Command) == 0 && rc.ProviderSessionID != "" {
-		args, err = ClaudeLifecycleArgs(args, home, filepath.Base(s.dir), rc.ProviderSessionID)
+		args, err = prepareClaudeLifecycleArgs(args, home, s.dir, rc.ProviderSessionID, rc.CWD)
 		if err != nil {
 			return fmt.Errorf("prepare native lifecycle hooks: %w", err)
 		}
+		lifecycleSettingsPath = args[len(args)-1]
+		defer func() { _ = os.Remove(lifecycleSettingsPath) }()
 	}
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")
@@ -764,6 +768,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			fsHome = rc.UserHome
 		}
 		mounts, deny, denyWrite := ParseFSRules(rc.FS, fsHome)
+		if lifecycleSettingsPath != "" {
+			mounts = append(mounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
+		}
 		if browserRequestsPath != "" {
 			mounts = append(mounts, sandbox.Mount{
 				Source: browserRequestsPath,
@@ -924,6 +931,17 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			return fmt.Errorf("start sandboxed PTY with user/mount/PID/network namespaces: %v. %s", err, sandbox.CapabilityFailureHelp())
 		}
 		return fmt.Errorf("start pty: %v", err)
+	}
+	if s.exclusiveInput {
+		if err := preparePTYInput(ptmx); err != nil {
+			_ = ptmx.Close()
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			if sb != nil {
+				_ = sb.Destroy()
+			}
+			return fmt.Errorf("prepare cancellable PTY input: %w", err)
+		}
 	}
 
 	// Apply post-start hooks (rlimits on Linux)
@@ -1108,14 +1126,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		sess.mu.Lock()
 		cancelled := sess.cancelled
 		sess.mu.Unlock()
-		state, reason := "completed", fmt.Sprintf("provider process exited with code %d", exitCode)
-		if exitCode != 0 || cancelled {
-			state = "failed"
-			if cancelled {
-				reason = "session cancelled by caller"
-			}
-		}
-		if err := RecordSessionProcessEvent(s.dir, "session_exit", state, reason); err != nil {
+		if err := recordSessionProcessExit(s.dir, exitCode, cancelled); err != nil {
 			log.Printf("egg: persist lifecycle exit: %v", err)
 		}
 
@@ -1332,7 +1343,7 @@ func (s *Server) cleanup() {
 	// Logs are not audits — always keep them so `wt support` can capture crash reasons.
 	s.preserveEggLog()
 
-	for _, name := range []string{"egg.sock", "egg.token", "egg.pid"} {
+	for _, name := range []string{"egg.sock", "egg.token", "egg.pid", claudeLifecycleSettingsFile} {
 		if err := os.Remove(filepath.Join(s.dir, name)); err != nil && !os.IsNotExist(err) {
 			log.Printf("egg: remove %s during cleanup: %v", name, err)
 		}
@@ -1454,6 +1465,11 @@ func (s *Server) readPTY(sess *Session) {
 	firstByte := true
 	for {
 		n, err := sess.ptmx.Read(buf)
+		if s.exclusiveInput && errors.Is(err, unix.EAGAIN) {
+			if err = waitPTYReady(context.Background(), sess.ptmx, unix.POLLIN); err == nil {
+				continue
+			}
+		}
 		if n > 0 {
 			if firstByte {
 				log.Printf("egg: first PTY output from pid %d after %s (%d bytes)", sess.PID, time.Since(sess.StartedAt).Round(time.Millisecond), n)
@@ -1663,7 +1679,7 @@ func (s *Server) Resize(ctx context.Context, req *pb.ResizeRequest) (*pb.ResizeR
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	if s.exclusiveInput {
-		if err := s.inputLease.resize(req.AttachmentId, req.InputEpoch, req.AttachmentToken, func() error { return s.resizeSession(sess, req.Rows, req.Cols) }); err != nil {
+		if err := s.inputLease.resize(ctx, req.AttachmentId, req.InputEpoch, req.AttachmentToken, func() error { return s.resizeSession(sess, req.Rows, req.Cols) }); err != nil {
 			return nil, err
 		}
 		return &pb.ResizeResponse{}, nil
@@ -1675,10 +1691,23 @@ func (s *Server) Resize(ctx context.Context, req *pb.ResizeRequest) (*pb.ResizeR
 }
 
 func (s *Server) resizeSession(sess *Session, rows, cols uint32) error {
-	if err := pty.Setsize(sess.ptmx, &pty.Winsize{
-		Cols: uint16(cols),
-		Rows: uint16(rows),
-	}); err != nil {
+	size := &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}
+	var err error
+	if s.exclusiveInput {
+		// os.File.Fd (used by pty.Setsize) can restore blocking mode on Linux.
+		var raw syscall.RawConn
+		raw, err = sess.ptmx.SyscallConn()
+		if err == nil {
+			var resizeErr error
+			err = raw.Control(func(fd uintptr) {
+				resizeErr = unix.IoctlSetWinsize(int(fd), unix.TIOCSWINSZ, &unix.Winsize{Row: uint16(rows), Col: uint16(cols)})
+			})
+			err = errors.Join(err, resizeErr)
+		}
+	} else {
+		err = pty.Setsize(sess.ptmx, size)
+	}
+	if err != nil {
 		return status.Errorf(codes.Internal, "resize PTY: %v", err)
 	}
 	select {
@@ -1758,7 +1787,7 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 	if options := msg.AttachOptions; options != nil && options.Rows != 0 {
 		resize := func() error { return s.resizeSession(sess, options.Rows, options.Cols) }
 		if s.exclusiveInput {
-			if err := s.inputLease.mutation(attachment, resize); err != nil {
+			if err := s.inputLease.mutation(stream.Context(), attachment, func(context.Context) error { return resize() }); err != nil {
 				return err
 			}
 		} else if err := resize(); err != nil {
@@ -1894,23 +1923,29 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 
 		switch p := msg.Payload.(type) {
 		case *pb.SessionMsg_Input:
-			writeInput := func() error {
+			writeInput := func(ctx context.Context) error {
 				sess.mu.Lock()
 				sess.lastInput = time.Now()
 				sess.mu.Unlock()
 				if sess.auditor != nil {
 					sess.auditor.Process(p.Input)
 				}
-				if _, err := sess.ptmx.Write(p.Input); err != nil {
+				var err error
+				if s.exclusiveInput {
+					err = writePTYInput(ctx, sess.ptmx, p.Input)
+				} else {
+					_, err = sess.ptmx.Write(p.Input)
+				}
+				if err != nil {
 					return status.Errorf(codes.Unavailable, "write PTY input: %v", err)
 				}
 				return nil
 			}
 			if s.exclusiveInput {
-				if err := s.inputLease.mutation(attachment, writeInput); err != nil {
+				if err := s.inputLease.mutation(stream.Context(), attachment, writeInput); err != nil {
 					return err
 				}
-			} else if err := writeInput(); err != nil {
+			} else if err := writeInput(stream.Context()); err != nil {
 				return err
 			}
 		case *pb.SessionMsg_Resize:
@@ -1919,7 +1954,7 @@ func (s *Server) Session(stream pb.Egg_SessionServer) error {
 			}
 			resize := func() error { return s.resizeSession(sess, p.Resize.Rows, p.Resize.Cols) }
 			if s.exclusiveInput {
-				if err := s.inputLease.mutation(attachment, resize); err != nil {
+				if err := s.inputLease.mutation(stream.Context(), attachment, func(context.Context) error { return resize() }); err != nil {
 					return err
 				}
 			} else if err := resize(); err != nil {

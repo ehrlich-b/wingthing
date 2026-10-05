@@ -2,6 +2,8 @@ package egg
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +13,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/auth"
+	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func lifecycleFixture(t *testing.T) (dir, home, cwd, path string) {
@@ -217,6 +222,261 @@ func TestClaudeLifecycleArgsPreserveSettingsAndNativeIdentity(t *testing.T) {
 	}
 	if _, err = ClaudeLifecycleArgs(nil, home, "session", "../foreign"); err == nil {
 		t.Fatal("accepted invalid provider identity")
+	}
+}
+
+func TestClaudeLifecycleSettingsFileKeepsCredentialsPrivateAndCleansUp(t *testing.T) {
+	dir, home := t.TempDir(), t.TempDir()
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	lifecycleWrite(t, settingsPath, `{"env":{"ANTHROPIC_API_KEY":"fixture-secret"},"model":"sonnet"}`)
+	args, err := prepareClaudeLifecycleArgs([]string{"--session-id", "ours", "--settings", settingsPath}, home, dir, "ours", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(args, " "), "fixture-secret") {
+		t.Fatal("merged settings credentials exposed in argv")
+	}
+	path := args[len(args)-1]
+	if path != filepath.Join(dir, claudeLifecycleSettingsFile) {
+		t.Fatalf("settings outside private egg directory: %q", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("settings permissions: %v %v", info, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err = json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings["env"].(map[string]any)["ANTHROPIC_API_KEY"] != "fixture-secret" || settings["hooks"] == nil || settings["model"] != "sonnet" {
+		t.Fatal("settings or lifecycle hooks lost")
+	}
+	// Lifecycle data retains the egg directory, but credentials must be removed.
+	if err = RecordSessionProcessEvent(dir, "session_exit", "", "test cleanup"); err != nil {
+		t.Fatal(err)
+	}
+	(&Server{dir: dir}).cleanup()
+	if _, err = os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("credentials survived egg cleanup: %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(dir, "lifecycle.jsonl")); err != nil {
+		t.Fatalf("cleanup removed retained lifecycle: %v", err)
+	}
+}
+
+func TestClaudeLifecycleSettingsResolveRelativePathsFromProviderCWD(t *testing.T) {
+	for _, equal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("equals=%t", equal), func(t *testing.T) {
+			cwd := t.TempDir()
+			lifecycleWrite(t, filepath.Join(cwd, "settings.json"), `{"model":"cwd-model","disableAllHooks":true}`)
+			args := []string{"--settings", "settings.json"}
+			if equal {
+				args = []string{"--settings=settings.json"}
+			}
+			out, err := prepareClaudeLifecycleArgs(args, t.TempDir(), t.TempDir(), "ours", cwd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(out[len(out)-1])
+			if err != nil || !strings.Contains(string(data), "cwd-model") || strings.Contains(string(data), "wingthing-events") {
+				t.Fatalf("provider cwd settings lost: %s %v", data, err)
+			}
+		})
+	}
+}
+
+func TestLifecyclePartialNativeImportCannotReportAuthoritativeCompletion(t *testing.T) {
+	for _, hooks := range []bool{false, true} {
+		t.Run(fmt.Sprintf("hooks=%t", hooks), func(t *testing.T) {
+			dir, home, cwd, path := lifecycleFixture(t)
+			var rows strings.Builder
+			for i := 1; i <= 501; i++ {
+				if hooks {
+					event := "Stop"
+					if i == 501 {
+						event = "UserPromptSubmit"
+					}
+					lifecycleHook(t, home, filepath.Base(dir), fmt.Sprintf("seq.%020d", i), fmt.Sprintf(`{"session_id":"ours","hook_event_name":%q}`, event))
+				} else if i == 501 {
+					rows.WriteString(`{"type":"user","sessionId":"ours","message":{"content":"next turn"}}` + "\n")
+				} else {
+					rows.WriteString(`{"type":"assistant","sessionId":"ours","message":{"content":"done","stop_reason":"end_turn"}}` + "\n")
+				}
+			}
+			if !hooks {
+				lifecycleWrite(t, path, rows.String())
+			}
+			v := lifecycleRead(t, dir, home, cwd, 0, 200)
+			if v.State != "working" || v.StateSource != "native_import" || v.StateCursor != 0 || v.Ready || !v.HasMore || v.HeadCursor != 500 {
+				t.Fatalf("partial import reported stale native completion: %+v", v)
+			}
+			v = lifecycleRead(t, dir, home, cwd, v.HeadCursor, 10)
+			if v.State != "working" || v.StateSource == "native_import" || v.StateCursor != 501 || v.HasMore || len(v.Events) != 1 {
+				t.Fatalf("source head not restored after import: %+v", v)
+			}
+		})
+	}
+}
+
+func TestLifecycleCleanProcessExitPreservesNativeTurnFailure(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {
+			dir, home, cwd, _ := lifecycleFixture(t)
+			lifecycleHook(t, home, filepath.Base(dir), "failure", `{"session_id":"ours","hook_event_name":"StopFailure"}`)
+			before := lifecycleRead(t, dir, home, cwd, 0, 10)
+			var err error
+			if legacy {
+				err = RecordSessionProcessEvent(dir, "session_exit", "completed", "provider process exited with code 0")
+			} else {
+				err = recordSessionProcessExit(dir, 0, false)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := lifecycleRead(t, dir, home, cwd, before.Cursor, 10)
+			if v.State != "failed" || v.StateSource != "claude_hook" || v.StateCursor != before.StateCursor || v.ProcessAlive || v.Ready {
+				t.Fatalf("clean process exit erased native turn failure: %+v", v)
+			}
+			if !legacy && (len(v.Events) != 1 || v.Events[0].State != "" || v.Events[0].ExitCode == nil || *v.Events[0].ExitCode != 0) {
+				t.Fatalf("process exit did not record a separate outcome: %+v", v.Events)
+			}
+		})
+	}
+	// Readers still understand the termination records written by live old eggs
+	// that have no native turn evidence, including unsupported providers.
+	dir := t.TempDir()
+	if err := RecordSessionProcessEvent(dir, "session_exit", "completed", "legacy exit"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := ReadSessionLifecycle(dir, "codex", "", "", "", false, 0, 10)
+	if err != nil || v.State != "completed" || v.StateSource != "egg_process" || v.ProcessAlive || v.Ready {
+		t.Fatalf("legacy exit fallback changed: %+v %v", v, err)
+	}
+}
+
+func TestLifecycleSkipsOversizedNativeRecordsAndPersistsProgress(t *testing.T) {
+	for _, hooks := range []bool{false, true} {
+		t.Run(fmt.Sprintf("hooks=%t", hooks), func(t *testing.T) {
+			dir, home, cwd, path := lifecycleFixture(t)
+			oversized := strings.Repeat("x", 3*maxLifecycleRecord) + "\n"
+			if hooks {
+				lifecycleHook(t, home, filepath.Base(dir), "seq.00000000000000000001", oversized)
+				lifecycleHook(t, home, filepath.Base(dir), "seq.00000000000000000002", `{"session_id":"ours","hook_event_name":"UserPromptSubmit","prompt":"after large row"}`)
+			} else {
+				lifecycleWrite(t, path, oversized+`{"type":"user","sessionId":"ours","message":{"content":"after large row"}}`+"\n")
+			}
+			v := lifecycleRead(t, dir, home, cwd, 0, 10)
+			if len(v.Events) != 2 || v.Events[0].Type != "provider_warning" || !v.Events[0].Truncated || v.Events[0].OriginalBytes != int64(len(oversized)) || v.Events[1].Text != "after large row" {
+				t.Fatalf("large row wedged native import: %+v", v)
+			}
+			if !hooks && v.Events[0].SourceOffset != int64(len(oversized)) {
+				t.Fatalf("warning lost skipped byte offset: %+v", v.Events[0])
+			}
+			if again := lifecycleRead(t, dir, home, cwd, v.Cursor, 10); len(again.Events) != 0 || again.HeadCursor != v.HeadCursor {
+				t.Fatalf("restart retried skipped native row: %+v", again)
+			}
+		})
+	}
+}
+
+func TestLifecycleResponseFitsEncryptedRelayEnvelopeAndReplaysEveryEvent(t *testing.T) {
+	dir, home, cwd, path := lifecycleFixture(t)
+	var rows strings.Builder
+	large, err := json.Marshal(map[string]any{"type": "user", "sessionId": "ours", "message": map[string]any{"content": []any{map[string]any{"type": "tool_result", "content": strings.Repeat("large result", 40000)}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows.Write(large)
+	rows.WriteByte('\n')
+	// Include both ordinary and JSON-escaped text to exercise serialized size.
+	for i := 0; i < 12; i++ {
+		text := strings.Repeat("x", 50000)
+		if i%2 == 0 {
+			text = strings.Repeat("\x01", 20000)
+		}
+		row, err := json.Marshal(map[string]any{"type": "user", "sessionId": "ours", "message": map[string]any{"content": text}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows.Write(row)
+		rows.WriteByte('\n')
+	}
+	lifecycleWrite(t, path, rows.String())
+	block, err := aes.NewCipher(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cursor int64
+	pages := 0
+	for {
+		v := lifecycleRead(t, dir, home, cwd, cursor, 200)
+		if len(v.Events) == 0 {
+			t.Fatal("response budget stalled cursor replay")
+		}
+		if pages == 0 && (!v.Events[0].Truncated || v.Events[0].OriginalBytes != int64(len(large)+1)) {
+			t.Fatalf("oversized tool result omitted truncation metadata: %+v", v.Events[0])
+		}
+		for _, event := range v.Events {
+			cursor++
+			if event.Sequence != cursor {
+				t.Fatalf("response skipped event %d: %d", cursor, event.Sequence)
+			}
+		}
+		data, err := json.Marshal(map[string]any{"session": v.SessionID, "lifecycle": v})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encrypted, err := auth.Encrypt(gcm, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		envelope, err := json.Marshal(ws.TunnelResponse{Type: ws.TypeTunnelResponse, RequestID: strings.Repeat("r", 240), Payload: encrypted})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(envelope) > 512<<10 {
+			t.Fatalf("encrypted lifecycle response exceeds relay read limit: %d", len(envelope))
+		}
+		pages++
+		if !v.HasMore {
+			break
+		}
+		if pages > 13 {
+			t.Fatal("cursor replay did not finish")
+		}
+	}
+	if cursor != 13 || pages < 2 {
+		t.Fatalf("response did not use bounded contiguous pages: cursor=%d pages=%d", cursor, pages)
+	}
+}
+
+func TestLifecycleLegacyLargeReasonDoesNotStallResponseCursor(t *testing.T) {
+	dir, home, cwd, _ := lifecycleFixture(t)
+	j, err := openLifecycleJournal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A running older egg can still append rows larger than the new page budget.
+	err = j.append(SessionEvent{Type: "notification", Source: "claude_hook", State: "needs_input", Reason: strings.Repeat("\x01", 60000)})
+	j.close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := lifecycleRead(t, dir, home, cwd, 0, 200)
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > maxLifecycleResponse || v.Cursor != 1 || v.HasMore || len(v.Events) != 1 || !v.Events[0].Truncated || v.Events[0].OriginalBytes == 0 {
+		t.Fatalf("legacy large metadata exhausted response budget: bytes=%d cursor=%d events=%d", len(data), v.Cursor, len(v.Events))
 	}
 }
 
