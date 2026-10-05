@@ -59,7 +59,7 @@ omitting it preserves the exact existing refusal. Opt-in is rechecked at broker
 startup and on every call. Preview remains personal and loopback-only. Both
 channels retain the same-owner workspace trust boundary and protection checks;
 the gate does not substitute for those checks. See
-[phone coordinator setup](phone-coordinator.md) for an isolated hosted wing.
+[phone coordinator setup](../phone-coordinator.md) for an isolated hosted wing.
 
 - The already-authorized launcher (browser owner or local MCP client) captures
   its principal, actor, surface, conversation, root and exact parent execution,

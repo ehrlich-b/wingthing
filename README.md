@@ -459,8 +459,9 @@ The contributor reading set is this README, [development guidance](CLAUDE.md),
 - [Fly and self-hosted operations](docs/fly-ops.md)
 
 Focused guides: [preview channel](docs/preview-channel.md),
-[provider onboarding](docs/preview-provider-onboarding.md), and
-[SSH remote sessions](docs/ssh-remote-sessions.md).
+[provider onboarding](docs/preview-provider-onboarding.md),
+[SSH remote sessions](docs/ssh-remote-sessions.md), and the
+[phone coordinator setup](docs/phone-coordinator.md).
 The [agent-facing skill](SKILL.md), [usage patterns](https://wingthing.ai/patterns)
 and [web documentation](https://wingthing.ai/docs) remain user entry points.
 Historical designs and dated evidence are preserved in `docs/archive/`.

@@ -56,4 +56,4 @@ WHERE e.user_id = '<account-id>' AND s.status = 'active';
 ```
 `users.tier='pro'` alone is insufficient. The alternative is `users.created_at` no later than the running `WT_RELAY_MIGRATION_BEFORE` cutoff (checked in: `2026-08-26T00:00:00Z`). `hosted_relay: allow` cannot grant entitlement; missing rows require operator/billing action.
 
-The inspected `origin/main` (`72c7be5`) already routes these encrypted operations; no relay code deploy is needed. The running hosted deployment/account was not verified. The [hosted native path](personal-conversations.md#hosted-native-path) lists all admission checks. No production change is made here.
+The inspected `origin/main` (`72c7be5`) already routes these encrypted operations; no relay code deploy is needed. The running hosted deployment/account was not verified. The [hosted native path](archive/personal-conversations.md#hosted-native-path) lists all admission checks. No production change is made here.
