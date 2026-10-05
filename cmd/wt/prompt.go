@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/spf13/cobra"
 )
 
@@ -231,7 +232,7 @@ func promptRunCmd() *cobra.Command {
 			if err := cmdutil.Writef(cmd.OutOrStdout(), "submitted: %s (%s@%s)\n", task.ID, asset.Name, asset.Revision); err != nil {
 				return err
 			}
-			return runTaskTo(cmd.Context(), cfg, taskStore, task, cmd.OutOrStdout())
+			return taskrun.RunTaskTo(cmd.Context(), cfg, taskStore, task, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&revision, "revision", "", "Run an immutable historical revision")

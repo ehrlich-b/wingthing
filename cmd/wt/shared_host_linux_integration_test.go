@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/taskrun"
 )
 
 func TestMain(m *testing.M) {
@@ -113,7 +114,7 @@ func TestSharedHostAgentRunPreservesExternalReadOnlyMount(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	err = runTaskToWithOptions(context.Background(), cfg, taskStore, task, &output, taskRunOptions{
+	err = taskrun.RunTaskToWithOptions(context.Background(), cfg, taskStore, task, &output, taskrun.TaskRunOptions{
 		UserHome:     userHome,
 		SharedHost:   true,
 		AllowedPaths: []string{workspace},

@@ -7,6 +7,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/taskrun"
 )
 
 func TestUnconfinedEgressAuditIsDurable(t *testing.T) {
@@ -19,7 +20,7 @@ func TestUnconfinedEgressAuditIsDurable(t *testing.T) {
 	if err := taskStore.CreateTask(task); err != nil {
 		t.Fatal(err)
 	}
-	detail, err := appendNetworkEnforcementAudit(taskStore, task.ID, "unconfined_egress", "outer-boundary", sandbox.NetworkFull, []string{"*"}, []int{11434})
+	detail, err := taskrun.AppendNetworkEnforcementAudit(taskStore, task.ID, "unconfined_egress", "outer-boundary", sandbox.NetworkFull, []string{"*"}, []int{11434})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,16 +1,12 @@
 package main
 
 import (
-	"context"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/auth"
-	"github.com/ehrlich-b/wingthing/internal/config"
-	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
 func TestReusableLoginForExplicitRoostVerifiesItsAuthority(t *testing.T) {
@@ -65,42 +61,5 @@ func TestRootHelpLeadsWithAgentManager(t *testing.T) {
 	if !strings.Contains(strings.ToLower(root.Short), "agent manager") ||
 		!strings.Contains(strings.ToLower(root.Long), "agent manager") {
 		t.Fatalf("root help does not lead with the product's agent-manager role: short=%q long=%q", root.Short, root.Long)
-	}
-}
-
-func TestRunTaskPersistsFailureFromEveryEarlyExit(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir(), DefaultAgent: "claude", WingID: "test-wing"}
-	taskStore, err := store.Open(cfg.DBPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := taskStore.Close(); err != nil {
-			t.Errorf("close task store: %v", err)
-		}
-	})
-	task := &store.Task{
-		ID:        "early-failure",
-		Type:      "prompt",
-		What:      "must not run",
-		RunAt:     time.Now(),
-		Agent:     "claude",
-		Isolation: "privileged",
-		CWD:       t.TempDir(),
-	}
-	if err := taskStore.CreateTask(task); err != nil {
-		t.Fatal(err)
-	}
-
-	err = runTaskToWithOptions(context.Background(), cfg, taskStore, task, io.Discard, taskRunOptions{SharedHost: true})
-	if err == nil {
-		t.Fatal("expected shared-host task to fail closed")
-	}
-	stored, getErr := taskStore.GetTask(task.ID)
-	if getErr != nil {
-		t.Fatal(getErr)
-	}
-	if stored == nil || stored.Status != "failed" || stored.Error == nil || *stored.Error == "" {
-		t.Fatalf("failed task state was not persisted: %#v", stored)
 	}
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -152,7 +153,7 @@ type localMCPServer struct {
 	surface           control.Surface
 	allowedPaths      []string
 	enforcePathBounds bool
-	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error
+	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskrun.TaskRunOptions) error
 	startContinuation func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error
 	// tools, when set, further limits callable tools by name; grants are
 	// per category and cannot express the host mailbox's fixed subset.
@@ -1720,7 +1721,7 @@ func (s *localMCPServer) startAgentRun(runID string, followup *agentRunFollowup)
 		if s.runAgentTask != nil {
 			runErr = s.runAgentTask(runCtx, s.cfg, taskStore, task, options)
 		} else {
-			runErr = runTaskToWithOptions(runCtx, s.cfg, taskStore, task, io.Discard, options)
+			runErr = taskrun.RunTaskToWithOptions(runCtx, s.cfg, taskStore, task, io.Discard, options)
 		}
 		if runErr != nil {
 			s.setAgentRunError(runID, runErr)
@@ -1728,8 +1729,8 @@ func (s *localMCPServer) startAgentRun(runID string, followup *agentRunFollowup)
 	}()
 }
 
-func (s *localMCPServer) agentTaskRunOptions() (taskRunOptions, error) {
-	options := taskRunOptions{
+func (s *localMCPServer) agentTaskRunOptions() (taskrun.TaskRunOptions, error) {
+	options := taskrun.TaskRunOptions{
 		SharedHost:   s.identity.SharedHost,
 		AllowedPaths: append([]string(nil), s.identity.AllowedPaths...),
 	}
@@ -1737,7 +1738,7 @@ func (s *localMCPServer) agentTaskRunOptions() (taskRunOptions, error) {
 		options.UserHome = filepath.Join(s.cfg.Dir, "user-homes", eggclient.UserHash(s.identity.UserID))
 		if !s.identity.SharedHost {
 			if err := os.MkdirAll(options.UserHome, 0700); err != nil {
-				return taskRunOptions{}, fmt.Errorf("create isolated agent home: %w", err)
+				return taskrun.TaskRunOptions{}, fmt.Errorf("create isolated agent home: %w", err)
 			}
 		}
 	}
@@ -2290,7 +2291,7 @@ func (s *localMCPServer) executePrompt(ctx context.Context, prompt, agentName, c
 	if err := taskStore.CreateTask(task); err != nil {
 		return nil, err
 	}
-	runErr := runTaskTo(ctx, s.cfg, taskStore, task, io.Discard)
+	runErr := taskrun.RunTaskTo(ctx, s.cfg, taskStore, task, io.Discard)
 	stored, getErr := taskStore.GetTask(task.ID)
 	if getErr != nil {
 		return task, errors.Join(runErr, getErr)
@@ -2550,7 +2551,7 @@ func (s *localMCPServer) toolSwarmRun(ctx context.Context, arguments json.RawMes
 				defer cmdutil.CloseWithLog("task store", taskStore)
 				task, getErr := taskStore.GetTask(taskIDs[node.ID])
 				if getErr == nil && task != nil {
-					runErr := runTaskTo(ctx, s.cfg, taskStore, task, io.Discard)
+					runErr := taskrun.RunTaskTo(ctx, s.cfg, taskStore, task, io.Discard)
 					refreshed, refreshErr := taskStore.GetTask(task.ID)
 					if refreshErr == nil {
 						task = refreshed

@@ -1,4 +1,4 @@
-package main
+package taskrun
 
 import (
 	"errors"
@@ -129,7 +129,7 @@ func TestRunEggConfigDiscoveryPersistsDomainWithoutActivatingEnvFiltering(t *tes
 		t.Fatal(err)
 	}
 
-	rendered, err := resolveRunEggConfigYAML("", workDir, false)
+	rendered, err := ResolveRunEggConfigYAML("", workDir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,13 +305,13 @@ func TestSharedHostDirectAgentPreservesAdministratorFilesystemPolicy(t *testing.
 func TestSharedHostTaskMountsValidatedWorkspaceRoots(t *testing.T) {
 	root := t.TempDir()
 	workDir := filepath.Join(root, "mutable", "checkout")
-	options := taskRunOptions{SharedHost: true, AllowedPaths: []string{root}}
+	options := TaskRunOptions{SharedHost: true, AllowedPaths: []string{root}}
 	mounts := taskSandboxMountPaths([]string{workDir, "/caller/widening"}, workDir, options)
 	if len(mounts) != 0 {
 		t.Fatalf("shared-host task mounts widened administrator policy: %#v", mounts)
 	}
 
-	personal := taskSandboxMountPaths([]string{"/prompt/mount"}, workDir, taskRunOptions{})
+	personal := taskSandboxMountPaths([]string{"/prompt/mount"}, workDir, TaskRunOptions{})
 	if len(personal) != 2 || personal[0] != "/prompt/mount" || personal[1] != workDir {
 		t.Fatalf("personal task mounts = %#v", personal)
 	}

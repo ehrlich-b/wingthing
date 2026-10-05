@@ -17,11 +17,11 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
-
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"github.com/ehrlich-b/wingthing/internal/taskrun"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
@@ -827,7 +827,7 @@ func TestLocalMCPAgentRunLifecycleIsSemanticAndOwnerScoped(t *testing.T) {
 	release := make(chan struct{})
 	server := &localMCPServer{
 		cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha",
-		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
 			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
 				return err
 			}
@@ -892,7 +892,7 @@ func TestAgentStopWinsCompletionRace(t *testing.T) {
 	started := make(chan struct{})
 	server := &localMCPServer{
 		cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, logs: &bytes.Buffer{}, principal: "alpha",
-		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
 			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
 				return err
 			}
@@ -931,7 +931,7 @@ func TestUnsandboxedAgentRunPersistsPrivilegedIsolation(t *testing.T) {
 	server := &localMCPServer{
 		cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, logs: &bytes.Buffer{},
 		principal: "alpha", unsandboxed: true,
-		runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+		runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
 			seen <- task.Isolation
 			return taskStore.UpdateTaskStatus(task.ID, "done")
 		},
@@ -1007,7 +1007,7 @@ func TestFailedParentDoesNotReleaseSteeredRun(t *testing.T) {
 	runnerCalled := make(chan struct{}, 1)
 	server := &localMCPServer{
 		cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha",
-		runAgentTask: func(context.Context, *config.Config, *store.Store, *store.Task, taskRunOptions) error {
+		runAgentTask: func(context.Context, *config.Config, *store.Store, *store.Task, taskrun.TaskRunOptions) error {
 			runnerCalled <- struct{}{}
 			return nil
 		},
@@ -1063,7 +1063,7 @@ func TestAgentSteerPassesAndPersistsPriorResult(t *testing.T) {
 	seenPrompt := make(chan string, 1)
 	server := &localMCPServer{
 		cfg: cfg, logs: &bytes.Buffer{}, principal: "alpha",
-		runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+		runAgentTask: func(_ context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
 			seenPrompt <- task.What
 			return taskStore.UpdateTaskStatus(task.ID, "done")
 		},
@@ -1117,7 +1117,7 @@ func TestStdioWaitDoesNotBlockStop(t *testing.T) {
 	server := &localMCPServer{
 		cfg: &config.Config{Dir: dir, DefaultAgent: "claude"}, in: inputReader, out: outputWriter,
 		logs: &bytes.Buffer{}, principal: "alpha",
-		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskRunOptions) error {
+		runAgentTask: func(ctx context.Context, _ *config.Config, taskStore *store.Store, task *store.Task, _ taskrun.TaskRunOptions) error {
 			if err := taskStore.UpdateTaskStatus(task.ID, "running"); err != nil {
 				return err
 			}
