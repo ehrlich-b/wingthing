@@ -45,8 +45,10 @@ func TestApplyRlimitsBeforeExec(t *testing.T) {
 		if runtime.GOOS == "linux" {
 			limits = append(limits, rlimitPair{unix.RLIMIT_AS, 4 * 1024 * 1024 * 1024})
 		}
-		if err := applyRlimits(limits); err != nil {
-			t.Fatal(err)
+		if mode != "reexec-init" && mode != "reexec-drop" {
+			if err := applyRlimits(limits); err != nil {
+				t.Fatal(err)
+			}
 		}
 		for _, rl := range limits {
 			var got unix.Rlimit
@@ -58,12 +60,22 @@ func TestApplyRlimitsBeforeExec(t *testing.T) {
 			}
 		}
 		args := []string{"/bin/sh", "-c", "ulimit -Sn; ulimit -Hn; ulimit -St; ulimit -Ht"}
-		if mode == "exec" {
+		if mode == "exec" || mode == "reexec-drop" {
 			if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
 				t.Fatal(err)
 			}
 		}
 		cmd := exec.Command(args[0], args[1:]...)
+		if mode == "reexec" || mode == "reexec-init" {
+			// Mirror the sealed jail's two Go re-execs without requiring
+			// Linux namespaces; neither child reapplies the limits.
+			nextMode := "reexec-init"
+			if mode == "reexec-init" {
+				nextMode = "reexec-drop"
+			}
+			cmd = exec.Command(os.Args[0], "-test.run=^TestApplyRlimitsBeforeExec$")
+			cmd.Env = append(os.Environ(), "WT_TEST_RLIMIT_MODE="+nextMode)
+		}
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
@@ -71,7 +83,7 @@ func TestApplyRlimitsBeforeExec(t *testing.T) {
 		}
 		os.Exit(0)
 	}
-	for _, mode := range []string{"spawn", "exec"} {
+	for _, mode := range []string{"spawn", "exec", "reexec"} {
 		t.Run(mode, func(t *testing.T) {
 			// Lowering hard limits is irreversible, so use a disposable helper.
 			cmd := exec.Command(os.Args[0], "-test.run=^TestApplyRlimitsBeforeExec$")

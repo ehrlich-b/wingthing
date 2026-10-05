@@ -404,9 +404,15 @@ func TestJail_ResourceLimits_FDs(t *testing.T) {
 	for name, deny := range map[string][]string{"namespace": nil, "sealed jail": {"/"}} {
 		t.Run(name, func(t *testing.T) {
 			mount := t.TempDir()
+			mounts := []Mount{{Source: mount, Target: mount}}
+			if len(deny) > 0 {
+				// The sealed jail needs the shell and its shared libraries on
+				// the allowlist, just like the other root-deny fixtures.
+				mounts = append(mounts, Mount{Source: "/usr", Target: "/usr", ReadOnly: true})
+			}
 			sb, err := newPlatform(Config{
 				NetworkNeed: NetworkNone,
-				Mounts:      []Mount{{Source: mount, Target: mount}},
+				Mounts:      mounts,
 				Deny:        deny,
 				MaxFDs:      32,
 			})
@@ -423,6 +429,9 @@ func TestJail_ResourceLimits_FDs(t *testing.T) {
 			// the parent winning a scheduling race to apply its limits.
 			out, err := cmd.Output()
 			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					t.Fatalf("Run: %v (stderr: %s)", err, exitErr.Stderr)
+				}
 				t.Fatalf("Run: %v", err)
 			}
 			if got := strings.TrimSpace(string(out)); got != "32\n32" {
