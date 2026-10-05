@@ -384,7 +384,7 @@ func buildTools() []Tool {
 			Name: "agent_start", Title: "Start persistent agent terminal",
 			Description: "Start a supported agent in a durable PTY under the MCP server's declared isolation mode and return immediately with its session ID.",
 			InputSchema: objectSchema(map[string]any{
-				"agent":                  stringProperty("Supported agent name"),
+				"agent":                  stringProperty("Supported agent name; required unless resume_session is set"),
 				"model":                  stringProperty("Provider model name, such as opus or gpt-5.6-terra"),
 				"cwd":                    stringProperty("Working directory; defaults to the MCP server's current directory"),
 				"label":                  stringProperty("Optional stable human-readable session label"),
@@ -581,12 +581,6 @@ func buildTools() []Tool {
 		}
 	}
 	for index := range tools {
-		if tools[index].Name == "agent_start" {
-			tools[index].InputSchema["anyOf"] = []any{
-				map[string]any{"required": []string{"agent"}},
-				map[string]any{"required": []string{"resume_session", "conversation_role", "input", "request_id"}},
-			}
-		}
 		tools[index].Version = ContractVersion
 		if tools[index].Authority == "" {
 			tools[index].Authority = AuthorityWing

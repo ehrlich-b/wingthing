@@ -111,9 +111,22 @@ func TestAgentStartSchemaAllowsExactContinuationWithoutAgent(t *testing.T) {
 	if _, globallyRequired := tool.InputSchema["required"]; globallyRequired {
 		t.Fatal("agent must not be required for a continuation")
 	}
-	want := []any{map[string]any{"required": []string{"agent"}}, map[string]any{"required": []string{"resume_session", "conversation_role", "input", "request_id"}}}
-	if !reflect.DeepEqual(tool.InputSchema["anyOf"], want) || tool.InputSchema["additionalProperties"] != false {
-		t.Fatalf("open or incomplete continuation schema %v", tool.InputSchema)
+	if tool.InputSchema["additionalProperties"] != false {
+		t.Fatalf("open continuation schema %v", tool.InputSchema)
+	}
+}
+
+func TestRegistryInputSchemasHaveNoTopLevelCombinators(t *testing.T) {
+	for _, surface := range []Surface{SurfaceLocalMCP, SurfaceHTTPMCP, SurfaceDirectMCP} {
+		t.Run(string(surface), func(t *testing.T) {
+			for _, tool := range Tools(surface) {
+				for _, keyword := range []string{"anyOf", "oneOf", "allOf"} {
+					if _, ok := tool.InputSchema[keyword]; ok {
+						t.Errorf("%s input schema has top-level %s", tool.Name, keyword)
+					}
+				}
+			}
+		})
 	}
 }
 
