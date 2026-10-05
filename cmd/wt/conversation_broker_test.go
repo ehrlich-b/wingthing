@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -56,6 +57,9 @@ type brokerFixture struct {
 func newBrokerFixture(t *testing.T, surface control.Surface, actor string) brokerFixture {
 	t.Helper()
 	cfg := &config.Config{Dir: t.TempDir()}
+	if err := config.SaveWingConfig(cfg.Dir, &config.WingConfig{Conversations: config.ConversationsEnabled}); err != nil {
+		t.Fatal(err)
+	}
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		t.Fatal(err)
@@ -308,7 +312,7 @@ func TestHostMailboxRecoveryRefusalKeepsPriorMutationUnconfirmed(t *testing.T) {
 				if err := f.b.writeJournal(entry); err != nil {
 					t.Fatal(err)
 				}
-				name, content := "wing.yaml", "locked: true\n"
+				name, content := "wing.yaml", "conversations: enabled\nlocked: true\n"
 				if refusal == "policy_changed" {
 					name, content = "clients.yaml", "clients:\n  codex:\n    owner: different-owner\n"
 				}
@@ -339,7 +343,7 @@ func TestHostMailboxReintersectsCurrentWingPathsPerCall(t *testing.T) {
 		t.Fatalf("captured bound %v %v", server.allowedPaths, err)
 	}
 	narrow := filepath.Join(workspace, "project")
-	if err := os.WriteFile(filepath.Join(f.cfg.Dir, "wing.yaml"), []byte("paths:\n  - "+narrow+"\n  - "+t.TempDir()+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(f.cfg.Dir, "wing.yaml"), []byte("conversations: enabled\npaths:\n  - "+narrow+"\n  - "+t.TempDir()+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if server, _, err = f.b.reg.server(f.cfg, f.b.admission); err != nil || !slices.Equal(server.allowedPaths, []string{narrow}) {
@@ -452,9 +456,11 @@ func TestHostMailboxBrokerJournalNeverRedispatchesAnEffect(t *testing.T) {
 		t.Fatalf("expired journal entry was replayed: %+v", envelope)
 	}
 	for name, publish := range map[string]func() string{
-		"stale epoch":    func() string { other, _ := newMailboxID(); return f.publish(t, other, time.Now(), `{"method":"ping"}`) },
-		"expired":        func() string { return f.publish(t, f.b.epoch, time.Now().Add(-time.Hour), `{"method":"ping"}`) },
-		"forged owner":   func() string { return f.publish(t, f.b.epoch, time.Now(), `{"method":"ping","principal":"someone-else"}`) },
+		"stale epoch": func() string { other, _ := newMailboxID(); return f.publish(t, other, time.Now(), `{"method":"ping"}`) },
+		"expired":     func() string { return f.publish(t, f.b.epoch, time.Now().Add(-time.Hour), `{"method":"ping"}`) },
+		"forged owner": func() string {
+			return f.publish(t, f.b.epoch, time.Now(), `{"method":"ping","principal":"someone-else"}`)
+		},
 		"raw method":     func() string { return f.publish(t, f.b.epoch, time.Now(), `{"method":"resources/read"}`) },
 		"future request": func() string { return f.publish(t, f.b.epoch, time.Now().Add(time.Hour), `{"method":"ping"}`) },
 	} {
@@ -576,7 +582,7 @@ func TestHostMailboxPolicyIntersectsCurrentClientsAndWing(t *testing.T) {
 		}
 	}
 	write("clients.yaml", "clients:\n  codex:\n    owner: owner\n    grants: [terminal.read, terminal.send, terminal.start, capabilities.read]\n")
-	write("wing.yaml", "locked: true\n")
+	write("wing.yaml", "conversations: enabled\nlocked: true\n")
 	envelope, _ := f.call(t, "conversation_checkpoint", map[string]any{"conversation_id": f.root.ID, "expected_revision": 0, "after_cursor": 0, "checkpoint": "locked"})
 	if envelope.Dispatched || !strings.Contains(envelope.Error, "locked") {
 		t.Fatalf("locked wing accepted a mutation: %+v", envelope)
@@ -584,7 +590,7 @@ func TestHostMailboxPolicyIntersectsCurrentClientsAndWing(t *testing.T) {
 	if _, structured := f.call(t, "conversation_list", map[string]any{}); structured["conversations"] == nil {
 		t.Fatalf("locked wing blocked a read: %v", structured)
 	}
-	write("wing.yaml", "org: team\n")
+	write("wing.yaml", "conversations: enabled\norg: team\n")
 	if envelope, _ := f.call(t, "conversation_list", map[string]any{}); envelope.Dispatched {
 		t.Fatal("organization wing dispatched through a personal host mailbox")
 	}
@@ -799,7 +805,7 @@ func TestProviderWriteModelFollowsSeatbeltWriteRules(t *testing.T) {
 	for path, expected := range map[string]bool{
 		filepath.Join(home, ".wingthing", "wt.db"):                    false,
 		filepath.Join(home, ".wingthing", "conversation-brokers"):     false,
-		filepath.Join(home, ".claude", "projects", "x.jsonl"):          true,
+		filepath.Join(home, ".claude", "projects", "x.jsonl"):         true,
 		filepath.Join(home, ".claude.json"):                           true,
 		filepath.Join(home, ".cache", "go-build"):                     true,
 		filepath.Join(home, "Library", "Keychains", "login.keychain"): true,
@@ -807,8 +813,8 @@ func TestProviderWriteModelFollowsSeatbeltWriteRules(t *testing.T) {
 		filepath.Join(workspace, ".wingthing-conversations"):          true,
 		// Broker-managed eggs omit the browser bridge mount.
 		filepath.Join(home, ".wingthing", "eggs", "parent-exec", "browser-requests"): false,
-		"/private/tmp/x":   true,
-		"/usr/local/x":     true,
+		"/private/tmp/x":    true,
+		"/usr/local/x":      true,
 		filepath.Join(home): false,
 	} {
 		if _, writable := model.writable(path); writable != expected {
@@ -833,6 +839,9 @@ func TestProviderWriteModelFollowsSeatbeltWriteRules(t *testing.T) {
 }
 
 func TestHostMailboxRequiresProviderDataHomeOutsideState(t *testing.T) {
+	oldChannel := config.ReleaseChannel
+	config.ReleaseChannel = "preview"
+	t.Cleanup(func() { config.ReleaseChannel = oldChannel })
 	state := canonicalPolicyPath(t.TempDir())
 	// The default preview provider home lies inside the state directory.
 	inside := &config.Config{Dir: state}
@@ -841,6 +850,139 @@ func TestHostMailboxRequiresProviderDataHomeOutsideState(t *testing.T) {
 	}
 	if err := defaultConversationBrokerProtection(inside, egg.DefaultEggConfig(), "claude", state, "parent-exec", EggIdentity{}, nil); err == nil || !strings.Contains(err.Error(), "overlaps protected state") {
 		t.Fatalf("protection preflight ignored the provider data home: %v", err)
+	}
+}
+
+func TestStableConversationHostMailboxOptIn(t *testing.T) {
+	oldChannel := config.ReleaseChannel
+	config.ReleaseChannel = "stable"
+	oldProtection, oldStart := conversationBrokerProtection, startConversationBroker
+	t.Cleanup(func() {
+		config.ReleaseChannel = oldChannel
+		conversationBrokerProtection, startConversationBroker = oldProtection, oldStart
+	})
+	cfg := &config.Config{Dir: t.TempDir()}
+	if err := os.WriteFile(filepath.Join(cfg.Dir, "wing.yaml"), []byte("conversations: enabled\nroost: https://wingthing.ai\nhosted_relay: allow\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	workspace := canonicalPolicyPath(t.TempDir())
+	c := &store.Conversation{ID: "parent", RootID: "parent", SessionID: "parent-exec", CWD: workspace, Agent: "claude"}
+	launcher := &localMCPServer{cfg: cfg, principal: roostSessionPrincipal("user"), actor: "browser", surface: control.SurfaceHTTPMCP, identity: EggIdentity{UserID: "user"}}
+	policy := &egg.EggConfig{FS: []string{"ro:/", "rw:./"}}
+	before, _ := policy.YAML()
+	var protected int
+	conversationBrokerProtection = func(got *config.Config, gotPolicy *egg.EggConfig, agent, cwd, session string, identity EggIdentity, targets []string) error {
+		protected++
+		if got != cfg || gotPolicy != policy || agent != "claude" || cwd != workspace || session != c.SessionID || identity.UserID != "user" || len(targets) != 2 || targets[0] != canonicalPolicyPath(cfg.Dir) {
+			t.Fatalf("lost launch protection: cfg=%+v identity=%+v targets=%v", got, identity, targets)
+		}
+		return nil
+	}
+	var started []conversationBrokerRegistration
+	startConversationBroker = func(_ *config.Config, reg conversationBrokerRegistration) error {
+		started = append(started, reg)
+		return nil
+	}
+	args, managed, err := launcher.prepareBoundParentLaunch(c, policy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if managed == nil || protected != 1 || len(started) != 1 || managed.Principal != launcher.principal || managed.UserID != "user" || managed.MaxSessions != defaultDirectMCPMaxSessions || managed.MaxSpawnsPerHour != defaultDirectMCPMaxSpawnsPerHour || !slices.Equal(managed.Tools, conversationBrokerTools) {
+		t.Fatalf("stable opted-in launch did not capture its owner: managed=%+v protected=%d started=%d", managed, protected, len(started))
+	}
+	data, err := os.ReadFile(args[1])
+	if err != nil || !bytes.Contains(data, []byte("--host-mailbox")) || bytes.Contains(data, []byte("WINGTHING_DIR")) {
+		t.Fatalf("parent must use the mailbox without reopening state: %s %v", data, err)
+	}
+	after, _ := policy.YAML()
+	opts := managed.launchOpts(cfg, spawnEggOpts{})
+	if before != after || !opts.OmitBrowserBridge || !slices.Equal(opts.ProtectedWriteTargets, managed.protectedTargets(cfg)) {
+		t.Fatalf("sandbox contract changed: before=%s after=%s opts=%+v", before, after, opts)
+	}
+	// The subprocess must admit stable opt-in too, then recheck protection.
+	conversationBrokerProtection = func(*config.Config, *egg.EggConfig, string, string, string, EggIdentity, []string) error {
+		return errors.New("startup protection checked")
+	}
+	if err := runConversationBroker(context.Background(), cfg, c.SessionID, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "startup protection checked") {
+		t.Fatalf("stable broker did not reach its protection check: %v", err)
+	}
+	// Revocation is checked by the dispatcher on every call, including reads.
+	if err := os.WriteFile(filepath.Join(cfg.Dir, "wing.yaml"), []byte("conversations: disabled\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := managed.server(cfg, newMCPAdmissionState()); err == nil {
+		t.Fatal("stable broker survived revocation of the opt-in")
+	}
+	// A disabled stable launch retains the historical refusal exactly.
+	want := fmt.Sprintf("parent MCP cannot write isolated Wingthing state %q under the existing sandbox policy; use an already writable workspace containing that state directory (no mounts or grants were changed)", cfg.Dir)
+	if _, _, err := launcher.prepareBoundParentLaunch(c, policy, nil); err == nil || err.Error() != want || len(started) != 1 {
+		t.Fatalf("disabled stable behavior changed: %v", err)
+	}
+	if err := os.Remove(filepath.Join(cfg.Dir, "wing.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := launcher.prepareBoundParentLaunch(c, policy, nil); err == nil || err.Error() != want || len(started) != 1 {
+		t.Fatalf("default stable behavior changed: %v", err)
+	}
+	// A writable-state launch keeps identical direct configuration and argv,
+	// whether or not stable has opted in.
+	direct := &store.Conversation{ID: "direct", CWD: filepath.Dir(cfg.Dir), Agent: "claude"}
+	directArgs, reg, err := launcher.prepareBoundParentLaunch(direct, policy, nil)
+	if err != nil || reg != nil {
+		t.Fatalf("default direct launch: %+v %v", reg, err)
+	}
+	directData, err := os.ReadFile(directArgs[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveWingConfig(cfg.Dir, &config.WingConfig{Conversations: config.ConversationsEnabled}); err != nil {
+		t.Fatal(err)
+	}
+	optedArgs, reg, err := launcher.prepareBoundParentLaunch(direct, policy, nil)
+	if err != nil || reg != nil || !slices.Equal(directArgs, optedArgs) || len(started) != 1 {
+		t.Fatalf("opt-in changed direct launch: args=%v reg=%+v err=%v", optedArgs, reg, err)
+	}
+	optedData, err := os.ReadFile(optedArgs[1])
+	if err != nil || !bytes.Equal(directData, optedData) {
+		t.Fatalf("opt-in changed direct configuration: %s %v", optedData, err)
+	}
+	for _, identity := range []EggIdentity{{UserID: "user", OrgWing: true}, {UserID: "user", SharedHost: true}} {
+		launcher.identity = identity
+		if _, _, err := launcher.prepareBoundParentLaunch(c, policy, nil); err == nil || !strings.Contains(err.Error(), "only for personal wings") || len(started) != 1 {
+			t.Fatalf("nonpersonal stable wing admitted: identity=%+v err=%v", identity, err)
+		}
+	}
+}
+
+func TestStableHostMailboxUsesNormalProviderHomeWriteProtection(t *testing.T) {
+	oldChannel := config.ReleaseChannel
+	config.ReleaseChannel = "stable"
+	t.Cleanup(func() { config.ReleaseChannel = oldChannel })
+	// Stable has no preview provider-home binding: its ordinary HOME remains
+	// write-denied except for the provider profile and configured workspace.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Dir: filepath.Join(home, ".wingthing-phone")}
+	if err := brokerProviderHomeOutsideState(cfg); err != nil {
+		t.Fatalf("stable incorrectly checked the preview data home: %v", err)
+	}
+	if runtime.GOOS != "darwin" {
+		t.Skip("write protection is modeled only for macOS")
+	}
+	workspace := canonicalPolicyPath(t.TempDir())
+	model, err := modelProviderWrites(cfg, &egg.EggConfig{FS: []string{"ro:/", "rw:./"}}, "claude", workspace, "parent-exec", EggIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, writable := model.writable(cfg.Dir); writable {
+		t.Fatal("stable state became writable")
+	}
+	for _, exposed := range []string{workspace, filepath.Join(home, ".claude-phone-state"), os.TempDir()} {
+		if err := model.verifyProtected(exposed, nil); err == nil || !strings.Contains(err.Error(), "provider-writable") {
+			t.Fatalf("writable stable state %s accepted: %v", exposed, err)
+		}
 	}
 }
 

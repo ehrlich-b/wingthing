@@ -508,11 +508,13 @@ func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *eg
 		if _, ok := policy.writableRoot(canonicalPolicyPath(s.cfg.Dir)); !ok {
 			refusal := fmt.Errorf("parent MCP cannot write isolated Wingthing state %q under the existing sandbox policy; use an already writable workspace containing that state directory (no mounts or grants were changed)", s.cfg.Dir)
 			// Activation contract: the direct in-sandbox server is unchanged
-			// wherever it was accepted, and stable keeps this refusal. Only in
-			// preview does this layout, where the provider cannot write the
-			// state, use the host mailbox.
+			// wherever it was accepted. Stable keeps this exact refusal unless
+			// the host explicitly opts into the personal mailbox rollout.
 			if config.Channel() != "preview" {
-				return nil, nil, refusal
+				wc, err := config.LoadWingConfig(s.cfg.Dir)
+				if err != nil || !conversationBrokerEnabled(wc) {
+					return nil, nil, refusal
+				}
 			}
 			if _, ok := policy.writableRoot(canonicalPolicyPath(c.CWD)); !ok {
 				return nil, nil, errors.New("parent MCP configuration requires an already writable workspace")

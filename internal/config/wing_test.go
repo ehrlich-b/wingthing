@@ -1,12 +1,64 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestWingConversationsOptInRoundTrip(t *testing.T) {
+	for _, value := range []string{"", ConversationsEnabled, ConversationsDisabled} {
+		t.Run(value, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := SaveWingConfig(dir, &WingConfig{WingID: "wing-1", Conversations: value}); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadWingConfig(dir)
+			if err != nil || cfg.Conversations != value {
+				t.Fatalf("conversations did not round trip: %+v %v", cfg, err)
+			}
+			if value == "" {
+				data, err := os.ReadFile(filepath.Join(dir, "wing.yaml"))
+				if err != nil || !bytes.Equal(data, []byte("wing_id: wing-1\n")) {
+					t.Fatalf("default config bytes changed: %s %v", data, err)
+				}
+			}
+		})
+	}
+	for _, invalid := range []string{"allow", "true", "enable"} {
+		dir := t.TempDir()
+		if err := SaveWingConfig(dir, &WingConfig{Conversations: invalid}); err == nil {
+			t.Fatalf("saved invalid conversations value %q", invalid)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("conversations: "+invalid+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadWingConfig(dir); err == nil {
+			t.Fatalf("loaded invalid conversations value %q", invalid)
+		}
+	}
+}
+
+func TestPreviewConversationsOptInStillRefusesHostedRelays(t *testing.T) {
+	oldChannel := ReleaseChannel
+	ReleaseChannel = "preview"
+	t.Cleanup(func() { ReleaseChannel = oldChannel })
+	for _, relay := range []string{"https://wingthing.ai", "https://ws.wingthing.ai", "wss://wingthing.ai"} {
+		if err := ValidatePreviewRelay(relay); err == nil {
+			t.Fatalf("preview accepted hosted relay %s", relay)
+		}
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("conversations: enabled\nhosted_relay: allow\nroost: "+relay+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadWingConfig(dir); err == nil {
+			t.Fatalf("preview opt-in accepted hosted relay %s", relay)
+		}
+	}
+}
 
 func TestSaveWingConfigRestrictsSigningKeyFile(t *testing.T) {
 	dir := t.TempDir()

@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	HostedRelayAllow = "allow"
-	HostedRelayDeny  = "deny"
+	HostedRelayAllow      = "allow"
+	HostedRelayDeny       = "deny"
+	ConversationsEnabled  = "enabled"
+	ConversationsDisabled = "disabled"
 )
 
 // WingConfig holds wing-specific settings persisted in ~/.wingthing/wing.yaml.
@@ -38,6 +40,7 @@ type WingConfig struct {
 	IdleTimeout    string         `yaml:"idle_timeout,omitempty"`    // kill sessions idle for this long (e.g. "4h")
 	ConnectionMode string         `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
 	HostedRelay    string         `yaml:"hosted_relay,omitempty"`    // "allow" (default) or "deny"
+	Conversations  string         `yaml:"conversations,omitempty"`   // opt-in stable host mailbox: "enabled" or "disabled" (default)
 
 	// P2P / Direct mode settings
 	ICEServers []ICEServer `yaml:"ice_servers,omitempty"` // STUN/TURN servers for WebRTC
@@ -401,6 +404,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	if cfg.HostedRelay != "" && cfg.HostedRelay != HostedRelayAllow && cfg.HostedRelay != HostedRelayDeny {
 		return nil, fmt.Errorf("validate %s hosted_relay: expected %q or %q, got %q", path, HostedRelayAllow, HostedRelayDeny, cfg.HostedRelay)
 	}
+	if err := validateConversations(cfg.Conversations); err != nil {
+		return nil, fmt.Errorf("validate %s: %w", path, err)
+	}
 	// Migrate legacy root -> paths before validating export isolation.
 	if cfg.Root != "" && len(cfg.Paths) == 0 {
 		cfg.Paths = PathList{{Path: cfg.Root}}
@@ -414,6 +420,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 // SaveWingConfig writes wing.yaml to dir. The file may contain the roost's JWT signing
 // key, so it must never be readable by other local users.
 func SaveWingConfig(dir string, cfg *WingConfig) error {
+	if err := validateConversations(cfg.Conversations); err != nil {
+		return err
+	}
 	if Channel() == "preview" && cfg.Org != "" {
 		return fmt.Errorf("preview is personal-only; organization enrollment is disabled")
 	}
@@ -466,6 +475,13 @@ func SaveWingConfig(dir string, cfg *WingConfig) error {
 	// otherwise permit a successful rename to disappear after sudden power loss.
 	if err := fsutil.SyncDirectory(dir); err != nil {
 		return fmt.Errorf("persist wing config replacement: %w", err)
+	}
+	return nil
+}
+
+func validateConversations(value string) error {
+	if value != "" && value != ConversationsEnabled && value != ConversationsDisabled {
+		return fmt.Errorf("conversations: expected %q or %q, got %q", ConversationsEnabled, ConversationsDisabled, value)
 	}
 	return nil
 }
