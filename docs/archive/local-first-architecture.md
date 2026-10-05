@@ -242,7 +242,7 @@ hostage. SSH remains the excellent free path for a laptop that can already
 reach a VM.
 
 Application encryption is part of that value, with the limits in
-[`security.md`](security.md): routing metadata is visible, the hosted service
+[`security.md`](../security.md): routing metadata is visible, the hosted service
 delivers the browser code, and a compromised wing/client endpoint is outside
 the promise. Native clients and self-hosting remain the higher-assurance paths.
 

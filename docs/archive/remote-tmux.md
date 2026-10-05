@@ -32,7 +32,7 @@ The VTE also maintains a 50,000-line scrollback ring buffer. Lines that scroll o
 **Fresh client keys, without a forward-secrecy claim.** Each browser tab generates
 a fresh X25519 keypair in session storage, but the wing's X25519 key is persistent.
 Later theft of that wing key can therefore expose previously recorded exchanges.
-The exact current boundary is documented in [security.md](security.md#no-forward-secrecy-claim).
+The exact current boundary is documented in [security.md](../security.md#no-forward-secrecy-claim).
 
 **Passkey auth.** A passkey is just a P-256 keypair where the private key never leaves your device. The wing stores your public key. On reattach, the wing sends a 32-byte random challenge, the browser calls `navigator.credentials.get()` (biometric/PIN prompt), and the device signs the challenge with ECDSA-SHA256. The wing verifies the signature against the stored public key. Same concept as SSH keys, but the key lives in your device's secure enclave instead of `~/.ssh/`, and you unlock it with a fingerprint instead of a passphrase.
 

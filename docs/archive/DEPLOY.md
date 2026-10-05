@@ -51,4 +51,4 @@ gate can find its published baseline.
 
 Do not replace this sequence with a bare `fly deploy`. For split login/edge
 rollouts, relay policy, DNS, scaling, rollback constraints, and verification, use
-the [Fly operations guide](docs/fly-ops.md).
+the [Fly operations guide](../fly-ops.md).

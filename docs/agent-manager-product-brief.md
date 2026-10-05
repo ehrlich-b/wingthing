@@ -6,13 +6,13 @@ Last reviewed: 2026-08-28
 
 Related designs:
 
-- [Direct agent manager and coordination-only free tier](direct-agent-manager-design.md)
-- [Bryan direct-control field report](bryan-wingthing-direct-control-field-report.md)
-- [wingthing.ai production canary](wingthing-ai-production-canary-2026-08-25.md)
-- [Roost deployment model](roost_design.md)
-- [Local agent meta-layer](agent-meta-layer.md)
-- [MCP service accounts and API credentials](mcp-service-accounts-design.md)
-- [Sandbox enhancement design](sandbox-enhancement-design.md)
+- [Direct agent manager and coordination-only free tier](archive/direct-agent-manager-design.md)
+- [Bryan direct-control field report](archive/bryan-wingthing-direct-control-field-report.md)
+- [wingthing.ai production canary](archive/wingthing-ai-production-canary-2026-08-25.md)
+- [Roost deployment model](archive/roost_design.md)
+- [Local agent meta-layer](archive/agent-meta-layer.md)
+- [MCP service accounts and API credentials](archive/mcp-service-accounts-design.md)
+- [Sandbox enhancement design](archive/sandbox-enhancement-design.md)
 
 ## Why this document exists
 
@@ -170,6 +170,104 @@ and routing that do not exist yet.
 | Peer roost federation | Missing | A client selects a gateway URL; independent roosts are separate inventories. |
 | Durable context/memory sync | Missing | Context sync remains backlog work. |
 | Generated app hosting | Non-goal | Wingthing should give agents tools and context; a separate service should publish apps. |
+
+## Runtime and control surfaces
+
+A wing is the durable runtime. Eggs own agent processes and PTYs; clients,
+transports, access policy and deployment bundles surround that runtime. Closing
+an observer does not stop an execution. A gateway owns account and routing
+metadata; a roost bundles a gateway with one embedded wing. External wings keep
+their workspaces, provider credentials, sessions and task stores on their own
+machines. A `cwd` selects an existing directory; it does not copy a workspace.
+
+| Surface | Shipped boundary |
+| --- | --- |
+| Local CLI and `wt mcp stdio` | OS-user authority; optional named owner/actor, grants, bounds and audit. No hosted account or wing daemon is required for local stdio. |
+| Shared-roost HTTP `POST /mcp` | OAuth and owner/role policy; native tools operate only the embedded wing. Its roster can list external wings without controlling them. |
+| Native `wt mcp connect` | Authenticated direct WebRTC to an explicitly selected `wing_id`; qualified resources, wing-derived authority and no automatic hosted-relay fallback. |
+| Browser encrypted tunnel | Access-filtered wing roster and separate encrypted session/directory controls; hosted relay requires account entitlement and wing policy. |
+| REST `/api/...` | Account, organization, enrollment, usage and roster plumbing; no general agent-orchestration REST API. |
+
+`internal/control` defines operation names, schemas, grants, annotations,
+transport availability and audit targets. Local, HTTP and native direct MCP
+consume that registry. Their shared handler extraction remains in progress;
+browser tunnel and REST contracts still differ. A unified qualified session/run
+inventory, a wing-owned control service and `/api/v1` adapters are target work.
+Tool membership comes from the registry, rather than a prose count.
+
+Free native MCP is separate from hosted browser relay. Browser-direct terminal
+transport has not shipped for free hosted accounts. The connector never changes
+to the hosted relay when direct connectivity fails. An optional relay topology
+is not an automatic fallback claim. Independent roosts do not federate.
+
+### Terminal state and recovery
+
+VTerm snapshots and bounded scrollback by default reconstruct terminal views;
+raw replay remains a compatibility path. Live detach/reconnect, control-process
+restart and exact native provider continuation preserve different resources.
+Terminal output or silence is not proof of native readiness, accepted input or
+successful work. Native evidence carries state, source, reason, provider identity
+and cursor; absent or unsupported evidence stays explicitly unknown.
+
+## Personal conversations
+
+A logical conversation retains owner, root/parent lineage, title, checkpoint and
+acknowledged event cursor across executions. Each execution has its own session
+and exact provider conversation ID. Headless runs remain a separate resource.
+Wing-qualified IDs, rather than friendly labels or a mutable selected wing, bind
+cross-wing inventory, content caches and actions.
+
+Linked launch reserves a request ID before spawning. Identical retries return the
+same execution; changed arguments fail and unresolved starting reservations do
+not authorize relaunch. Native event import and its per-execution cursor commit
+together. Reconciliation drains old execution tails as well as the latest one.
+Reading is replayable; `conversation_checkpoint` acknowledges through a revision
+compare-and-swap. Recovery does not promise exactly-once arbitrary model effects.
+
+`session_prompt` reserves input before transport and reconciles retries against
+the same request. Exact provider user text after the reserved cursor is a native
+text receipt, with causality unverified without a provider request ID. A single
+writer lease coordinates browser, terminal and MCP input. Unknown delivery stays
+unconfirmed; reconnect never licenses a new send or an automatic permission reply.
+
+A bound parent receives invocation-specific MCP configuration and root-scoped
+owner/grant/path checks. The macOS host mailbox broker carries typed operations
+without adding a sandbox exception. State, executable and controller targets must
+stay outside provider-writable roots; revocation/lock stops subsequent mutations.
+A configured direct-server fixture still records the nested proxy bind blocker.
+Fixture evidence is separate from authenticated parent-to-two-child acceptance.
+
+### Hosted native path
+
+The phone uses a selected HTTPS home, authenticated account, exact wing ID and
+pinned wing key. Encrypted `session.control` requires current hosted relay access,
+wing `hosted_relay: allow`, ownership, paths, grants and finite launch bounds.
+Locked wings and enrolled passkey users additionally require a locally pinned
+key and a client-identity-bound token. Native iOS has no passkey ceremony; an
+existing lock must remain intact. See the [phone setup recipe](fly-ops.md#phone-coordinator-through-wingthingai).
+
+`headless_continuation` advertises an ended, owned, resumable personal Claude
+root with retained history, exact provider identity and model. `agent_start` with
+`resume_session`, `conversation_role: parent`, input and immutable `request_id`
+reserves a new linked execution of that same conversation. Changed retries fail.
+Bound callers, children and organization/shared-host continuations are excluded.
+Interactive browser parent resume remains a separate unsupported broker path.
+
+## Personal home identity
+
+The public parent role describes a persistent coordinator that preserves intent
+and delegates inspectable tasks. DotID is the logical conversation, ExecutorID
+names the executing wing/session/provider and HomeRoostID would name durable
+home ownership. Current typed context knows the local root/executor; home
+identity and owner epoch stay unimplemented. Cross-host adoption, effect claims,
+a general home inbox, QR pairing, per-phone revocation and generic push are
+proposals. They do not follow from the existing wake outbox or role prompt.
+
+LAN discovery and a user-selected home/VPN/relay are a future default direction.
+Existing hosted coordination still exists. A new no-vendor-contact default needs
+its own ordinary test before it is claimed. Discovery is not authority, a QR
+cannot open a NAT, and the no-login portal remains loopback-only. Do not silently
+select a different endpoint or infer receipt/processing from a connection.
 
 ## Security and policy invariants
 
@@ -614,7 +712,7 @@ No test is removed or weakened merely because a product path is being reposition
 If an assertion represented obsolete behavior, replace it with a test of the explicit
 migration or denial contract and record why the old behavior is no longer supported.
 
-## Branch and deployment snapshot
+## Historical branch and deployment snapshot (2026-08-27)
 
 At the time of this review:
 
@@ -649,3 +747,110 @@ prepare a worktree, launch different durable agents, leave, reconnect, inspect a
 steer them, and schedule follow-up work—while the owner can prove which machine ran
 what, which policy bounded it, whether payload bytes were relayed, and how to revoke
 access without taking the machines apart.
+
+## Durable parent wake delivery
+
+Wake delivery is an explicit opt-in on an existing personal root conversation.
+It runs in the host wing daemon, using that parent's retained owner/principal,
+exact native provider identity, existing prompt transport and single writer
+lease. No provider, listener, credential, client grant, sandbox exception or
+permission response is created by this controller. Organization and shared
+wings cannot opt in; a locked wing pauses its controller.
+
+```sh
+wt conversation wake ROOT enable --client EXISTING_OWNER
+wt conversation wake ROOT status --client EXISTING_OWNER
+wt conversation wake ROOT retry --client EXISTING_OWNER
+wt conversation wake ROOT disable --client EXISTING_OWNER
+```
+
+The corresponding typed MCP/browser operation is `conversation_wake` with
+`conversation_id` and optional boolean `enabled`. Omit `enabled` to inspect the
+policy and pending delivery. Enabling also drains eligible retained native
+events that have not yet been scanned by this root's wake controller. Disable
+pauses delivery and retains its outbox; it does not cancel an in-flight send.
+
+Native Claude child `needs_input`, `completed`, `stopped` and `failed`
+observations are eligible, along with exact `egg_process` runtime
+`session_exit`/`session_failed` records in `stopped`/`failed` state. A plain PTY
+row, unsupported source, or successful process exit does not become native
+foreground completion. Reconciliation imports all linked execution tails,
+including executions resumed before the controller observed their final state.
+The message contains bounded conversation, execution, provider, wing and event
+identities, a native state/source, a host-written reason and an inspection link.
+It excludes child prose, titles, tool output and approval question text. Startup
+failure before a provider identity is available explicitly marks that child
+identity unknown rather than inventing one.
+`completed` means foreground completion was observed; it does not declare the
+child task done. `needs_input` requests inspection and leaves permissions to a
+human.
+
+The parent receives input only with living exact-provider native foreground
+idle/completion readiness. While it is working, stopped, or awaiting input or
+approval, the event stays queued. This controller does not answer permissions
+or turn an approval wait into readiness. One ordered event is outstanding per
+root. The host loop has concurrency one, processes four roots per page (the
+store bounds pages to fifteen), scans at most fifty tree events per root step,
+and uses a cancellable three-second step and a fixed 500ms prompt receipt wait.
+Existing conversation/execution inventory bounds and lifecycle import bounds
+also apply. This is polling, not an immediate event subscription.
+The private host helper retains owner checks and current wing path bounds; it
+exposes no general MCP server or spawn/admission surface. `paused` in the status
+response indicates a locked wing, including when opt-in is configured while
+locked.
+
+Before any prompt call, the SQLite outbox saves an immutable request ID,
+execution, provider identity and message. The native prompt reservation adds its
+existing persist-before-send protection. Restart retries the same request ID on
+the same execution and provider to reconcile native history. It never redirects
+an uncertain send to a resumed parent, and missing retained evidence or a
+changed provider blocks reconciliation instead of resending.
+
+Only the prompt transport's explicit `not_sent` plus `definitely_not_sent=true`
+allows a new attempt ID. A zero byte count or generic error does not. Known
+no-input failures wait at least five seconds and initially permit three attempts
+for that event; exhaustion exposes `blocked` in the pending status. The explicit
+user action `retry_not_sent:true` (CLI `retry`) authorizes an additional three
+attempt cycle only while the retained result is `not_sent` or `blocked`. It
+preserves previous request evidence and the monotonically increasing attempt
+number, so a new ID cannot collide with an old reservation. Each additional
+cycle requires explicit authorization, with a total limit of twelve attempts
+per event. Pending status exposes `attempt_limit`, and the response exposes
+`total_attempt_cap`. A five-second cooldown still applies after authorization.
+Queued, pending or uncertain deliveries cannot use this action; combining retry
+and enable/disable in one call is rejected. Unknown
+delivery remains `unconfirmed` and holds subsequent events. Inspect the original
+session and request evidence; disabling wake retains that evidence. Automatic
+abandonment, manual outbox resets and rerouting unknown requests are unsupported.
+
+An exact native user text receipt advances only `wake_delivery_cursor`.
+`conversation.delivered_cursor`, `checkpoint` and `revision` remain unchanged
+until the parent explicitly calls `conversation_checkpoint`. Receipt causality
+remains unverified without a native provider request acknowledgement. Observed
+outbox rows retain the latest 128 deliveries; persistent scan/delivery cursors
+prevent their deletion from generating duplicate wakes.
+
+### Evidence and limits
+
+Store tests reopen a real SQLite database after an unknown delivery, preserve
+the request/target, deliver an attention event before its subsequent completion,
+keep checkpoint acknowledgement unchanged, and enforce cooldown/attempt bounds.
+Controller tests use the actual typed `SubmitSessionPrompt` reservation and
+receipt parser with a synthetic sender: a parent permission wait queues input,
+one send becomes unknown, then a restarted controller sees native user text
+while the parent is working without sending again. Additional tests cover
+unknown delivery across parent resume and provider replacement, owner/personal
+scope and retained child execution tails. An additional typed prompt fixture rejects three sends with explicit no-input
+proof, releases its synthetic competing writer, requires a deliberate user
+retry, and observes one fresh-ID native receipt without changing checkpoint ACK.
+Store tests exhaust all twelve unique IDs and reject unknown delivery recovery.
+These tests do not invoke a model.
+
+The host wake loop is wired into the wing daemon, but no authenticated live
+provider acceptance is claimed. The separate parent MCP-to-child spawn path on
+macOS remains blocked by its nested network-proxy listener unless an existing
+authorized host transport becomes available. Wake delivery neither depends on
+nor repairs that bridge. A complete acceptance journey still requires a
+deliberately personal provider, two real children, foreground completion wake,
+human approval handoff, restart and native receipt recovery under the unchanged
+runtime policy.

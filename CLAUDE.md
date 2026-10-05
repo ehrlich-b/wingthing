@@ -57,7 +57,7 @@ wings, and docs must not imply that it does.
 
 When adding a capability, the checklist is: runtime primitive → CLI verb with
 `--json` → MCP tool with a schema → tests at two tiers → doc line. See
-`docs/agent-meta-layer.md` for the object model.
+`docs/archive/agent-meta-layer.md` for the object model.
 
 ## Design Philosophy
 
@@ -170,7 +170,7 @@ Wings can be shared via organizations. The relay has a full org system:
 
 ### Roost Mode
 
-`wt roost` runs relay + wing in one process for self-hosted deployments. See `docs/roost_design.md`.
+`wt roost` runs relay + wing in one process for self-hosted deployments. See `docs/archive/roost_design.md`.
 
 - Two auth modes: local (no OAuth, single user auto-created) and roost (with OAuth, enrolled users access the embedded wing). Private OAuth roosts should set exact emails in `WT_ROOST_ALLOWED_EMAILS`; empty retains the historical accept-any-authenticated-account behavior.
 - Daemon mode with `~/.wingthing/roost.pid` and `~/.wingthing/roost.log`
@@ -267,7 +267,7 @@ proxy on both platforms. Linux keeps a route-less `CLONE_NEWNET` namespace and
 exposes the proxy through an inherited-FD loopback relay, so ignoring
 `HTTPS_PROXY` fails closed. Declared host-loopback ports use the same relay.
 The Linux relay currently covers TCP proxy/loopback traffic, not arbitrary UDP,
-ICMP, or non-proxied protocols. See `docs/egg-sandbox-design.md` for details.
+ICMP, or non-proxied protocols. See `docs/archive/egg-sandbox-design.md` for details.
 
 ## Key Packages
 
@@ -294,24 +294,14 @@ ICMP, or non-proxied protocols. See `docs/egg-sandbox-design.md` for details.
 | `internal/parse` | Parsing utilities (structured output markers, etc.) |
 | `internal/ntfy` | Push notifications via ntfy.sh |
 
-## Build
+## Build and test
 
 **Always use `make`, never bare `go build` / `go test`.**
 
-| Command | What it does |
-|---------|-------------|
-| `make check` | Run tests then build (the default verification step) |
-| `make ops ACTION=build` | Build the `wt` binary |
-| `make gate GATE=integration` | Integration tier — relay/wing/PTY protocol with simulated endpoints |
-| `make e2e-linux` (Debian and Ubuntu) | E2E tier — privileged Linux sandbox battery in Docker |
-| `make e2e-web` | Browser E2E tier — seeded shared-roost org-mode canary + Playwright in Docker (`test/web/`) |
-| `make gate GATE=provider-swap` | Opt-in real-harness/Ollama/LiteLLM release smoke matrix |
-| `make gate GATE=coverage` | Statement coverage report |
-| `make web` | Build vite output (`cd web && npm run build`) |
-| `make serve` | Build then run `wt serve` in foreground |
-| `make clean` | Remove built binary |
-
-Run `make check` to verify changes; it includes `make web`.
+Use [the test matrix](docs/testing.md) for commands, prerequisites and promotion
+coverage. `make check` is the default fast verification; `make gate` adds
+integration, compatibility and static checks. Native sandbox and browser E2E
+have separate Linux, macOS and web targets; real-provider profiles are opt-in.
 
 `make ops ACTION=build` and the Go test targets seed a placeholder `web/dist` when it is
 missing, because `web/embed.go` embeds it and the built assets are gitignored.
@@ -330,11 +320,7 @@ contract: an exact argv, a wire message, a sandbox denial, a reconnect.
 
 Three tiers, and every new capability lands with tests in **at least two**:
 
-| Tier | Command | Proves |
-|------|---------|--------|
-| Unit | `make check` | Exact contracts — argv, parsing, schemas, validation, config resolution |
-| Integration | `make gate GATE=integration` | Component protocol against simulated endpoints — no real agent, no network |
-| E2E | `make e2e-linux LINUX_DISTROS=ubuntu` | Real enforcement and real lifecycle on a real kernel |
+Use the unit, integration and E2E rows in [the test matrix](docs/testing.md).
 
 Rules:
 

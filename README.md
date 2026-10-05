@@ -242,7 +242,7 @@ terminal created with MCP is the same durable egg a browser or CLI can inspect.
 
 Headless runs do not yet have a browser view, locked wings still need a native
 passkey ceremony, and independent self-hosted roosts do not yet federate their
-directories. See the [direct agent manager design](docs/direct-agent-manager-design.md)
+directories. See the [direct agent manager design](docs/archive/direct-agent-manager-design.md)
 for the rollout and security boundary.
 
 ## Sandbox
@@ -260,7 +260,7 @@ environment, and allow only the network domains required by the selected agent.
 On Linux, even `network: "*"` uses the route-less namespace and permits any TCP
 target presented through HTTP CONNECT; it is not a general routed interface for
 ordinary raw-socket clients, UDP, or programs that ignore proxy configuration.
-CONNECT policies filter hosts rather than ports. See [sandbox limitations](docs/sandbox.md#network-protocol-coverage).
+CONNECT policies filter hosts rather than ports. See [sandbox limitations](docs/security.md#egg-sandbox).
 
 Project policy is additive:
 
@@ -336,7 +336,7 @@ uses the current user's Chromium NSS database and requires `certutil` from
 WT verifies the trust-store result before reporting the CA as installed; on
 macOS it evaluates the generated leaf under the `localhost` SSL policy. A
 failed or incomplete trust change is not cached as success.
-See [the local HTTPS design](docs/local_https.md) for the listener topology,
+See [the local HTTPS design](docs/fly-ops.md#local-https) for the listener topology,
 certificate lifecycle, and compatibility matrix.
 
 Port 8443 is the browser listener. WT also keeps a loopback-only HTTP listener
@@ -428,7 +428,7 @@ content.
 
 Support has several evidence levels: catalog, exact headless invocation,
 synthetic PTY lifecycle, real sandbox startup, live model completion, and MCP
-orchestration. See [supported agent evidence](docs/agent-support.md) for the
+orchestration. See [supported agent evidence](docs/archive/agent-support.md) for the
 latest checked-in verification snapshot and [testing](docs/testing.md) for the
 promotion policy.
 
@@ -450,14 +450,20 @@ Update an installed binary with `wt update`.
 
 ## Documentation
 
-- [Agent-facing Wingthing skill](SKILL.md)
-- [Choose a usage pattern](https://wingthing.ai/patterns)
-- [Web documentation](https://wingthing.ai/docs)
-- [Historical LLM-first architecture review](docs/llm-first-review.md)
-- [Test strategy and commands](docs/testing.md)
-- [Agent meta-layer](docs/agent-meta-layer.md)
-- [AI API surface](docs/ai-api-surface.md)
-- [Security model](docs/security.md)
+The contributor reading set is this README, [development guidance](CLAUDE.md),
+[current gaps](TODO.md), and the four canonical references below:
+
+- [Architecture and agent-manager contracts](docs/agent-manager-product-brief.md)
+- [Security and sandbox policy](docs/security.md)
+- [Test strategy, gates and provider acceptance](docs/testing.md)
+- [Fly and self-hosted operations](docs/fly-ops.md)
+
+Focused guides: [preview channel](docs/preview-channel.md),
+[provider onboarding](docs/preview-provider-onboarding.md), and
+[SSH remote sessions](docs/ssh-remote-sessions.md).
+The [agent-facing skill](SKILL.md), [usage patterns](https://wingthing.ai/patterns)
+and [web documentation](https://wingthing.ai/docs) remain user entry points.
+Historical designs and dated evidence are preserved in `docs/archive/`.
 
 ## License
 

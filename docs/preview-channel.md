@@ -97,7 +97,7 @@ failed the unprivileged mount capability probe before session creation. Existing
 SSH transport worked. The preview's `doctor --fix` refuses the shared Linux
 installer because it uses the stable `wingthing` AppArmor profile. A separately
 reviewed root-owned preview executable and executable-specific profile is a
-live host setup action; see `personal-access-review.md`. No host policy was
+live host setup action; see [the archived access review](archive/personal-access-review.md). No host policy was
 changed and no outer-boundary fallback was used for those tests.
 
 ## Local package journey

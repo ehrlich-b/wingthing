@@ -149,4 +149,4 @@ the browser `session.control` allowlist. Pending input stays on
   QA of the panel, cards and pending cards has **not** been performed and must
   be done in a supported runtime.
 - The full authenticated parent → two children provider journey remains as
-  described in `docs/personal-conversations.md`.
+  described in `docs/agent-manager-product-brief.md`.

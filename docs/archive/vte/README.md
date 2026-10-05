@@ -3,7 +3,7 @@
 Server-side Virtual Terminal Emulator using a fork of `charmbracelet/x/vt`.
 Replaces the 2MB replay buffer hacks with proper terminal state.
 
-See also: `docs/vt_design.md` (the original design document with rationale).
+See also: `docs/archive/vt_design.md` (the original design document with rationale).
 
 ## Key Dependencies
 

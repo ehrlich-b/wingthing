@@ -4,7 +4,7 @@ Audit date: 2026-08-23.
 
 Status: historical snapshot for the superseded local-first branch; not a current
 merge verdict. Current scope and promotion gates live in the
-[agent-manager product brief](agent-manager-product-brief.md) and the checked-in
+[agent-manager product brief](../agent-manager-product-brief.md) and the checked-in
 CI/release workflows.
 
 Branch: `feature-local-first-terminal-routing`, audited from the immutable

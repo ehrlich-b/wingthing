@@ -169,4 +169,4 @@ Write isolation makes HOME read-only but still readable. Add `deny:~/.secrets` t
 
 macOS agents can consume unbounded CPU and memory.
 
-See `docs/egg-sandbox-design.md` for full design details, agent profiles, and SBPL reference.
+See `docs/archive/egg-sandbox-design.md` for full design details, agent profiles, and SBPL reference.

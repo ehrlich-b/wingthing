@@ -6,7 +6,7 @@ Reviewed: 2026-08-24
 Repository snapshot: `c87a778`
 
 For current implementation state, gaps, and promotion gates, read the
-[Agent Manager Product Brief](agent-manager-product-brief.md). This review is kept
+[Agent Manager Product Brief](../agent-manager-product-brief.md). This review is kept
 to explain the decisions that led to the shared operation registry; statements
 using “current” below refer to the recorded snapshot.
 
@@ -351,7 +351,7 @@ The gaps now line up with the product gap:
    documents will go stale. Machines should emit a signed or hashed manifest
    that the docs link to.
 
-[Testing](testing.md) turns these findings into a proposed command and
+[Testing](../testing.md) turns these findings into a proposed command and
 acceptance matrix.
 
 ## Recommended implementation branch

@@ -24,7 +24,7 @@ the free hosted terminal path: free remote MCP is direct, while browser terminal
 startup still requires relay entitlement or a self-hosted roost. The current
 architectural direction is to make the existing runtime local-first and
 client-agnostic, then layer collaboration on top; see
-`docs/local-first-architecture.md`. The former August vacation freeze is an expired
+`docs/agent-manager-product-brief.md`. The former August vacation freeze is an expired
 historical record; current scope and promotion gates live in the agent-manager
 product brief and CI workflows.
 
@@ -90,10 +90,10 @@ The bar: someone new can use a wing without confusion or broken UX.
 - [x] Human-readable session names, native picker, and local read/send/wait CLI
 - [x] Local MCP meta-access — terminal control, agent prompt runs, bounded loops,
   dependency-DAG swarms, durable task output, and versioned prompt assets; see
-  `docs/agent-meta-layer.md`
+  `docs/archive/agent-meta-layer.md`
 - [x] Trusted outer-boundary mode for dedicated AI VMs — local CLI and MCP can
   keep durable sessions without requiring nested Ubuntu user namespaces; see
-  `docs/sandboxed-ai-vm.md`
+  `docs/security.md`
 - [ ] PTY watch mode — multiple concurrent consumers of same PTY (pair programming, monitoring)
 
 ### Revenue
@@ -133,12 +133,12 @@ The bar: someone new can use a wing without confusion or broken UX.
 The VTE snapshot reconnect path is shipped. The 2MB raw replay path and
 `findSafeCut`, `trackCursorPos`, and `agentPreamble` compatibility code remain for
 fallback and older modes; remove them only after the VTE path has enough field time.
-See `docs/vte/README.md` for the current phased cleanup plan.
+See `docs/archive/vte/README.md` for the current phased cleanup plan.
 
 ### P2P: WebRTC Direct Connection for Same-LAN Wings
 Opt-in `p2p`/`p2p_only` browser migration and the native direct-MCP WebRTC transport
 are shipped. Browser P2P still begins from entitled or self-hosted signaling and is
-not a browser-direct free hosted terminal. See `docs/p2p_design.md` for the current
+not a browser-direct free hosted terminal. See `docs/archive/p2p_design.md` for the current
 transport design.
 
 ---
@@ -265,7 +265,7 @@ account management, org settings, audit display.
   provider connection, denied vendor domains, same-IP host separation, raw-IP
   bypass, DNS behavior, loopback ports, observe mode, and the default-merge
   compatibility row. Linux enforce mode depends on the netns proxy path in
-  `docs/sandbox-enhancement-design.md`.
+  `docs/archive/sandbox-enhancement-design.md`.
 
 ### Factory deploy environments
 
@@ -348,3 +348,27 @@ and `roost.pid`), `wt update` auto-restarts the correct daemon type. Signal hand
 refactored: `runWingWithContext` takes caller-owned context + SIGHUP channel.
 
 </details>
+
+## Personal preview acceptance
+
+Fixture coverage does not close authenticated-provider, browser, physical-host
+or mobile-device acceptance. Run the [current acceptance journey](docs/testing.md#provider-evidence-and-preview-acceptance)
+under the existing sandbox and explicit access policy.
+
+- [ ] Real preview credential save/read and personal account/model entitlement.
+  The original relocated-HOME attempt failed after browser OAuth; human retries
+  remain held until independent review of the frozen coherent auth/runtime path.
+- [ ] Authenticated personal provider startup, multiline composer and cold
+  continuation through the packaged preview.
+- [ ] Native Codex live supervisor integration. The exact-thread protocol
+  parser, command plan and journal fixtures are implemented; readiness stays
+  unsupported until a real provider connection is owned by the session runtime.
+- [ ] Physical owned-VM session journey. Two admitted SSH routes passed package
+  verification but failed the existing mount policy before creating a session.
+- [ ] Visual/interactive browser QA. The supported JS browser runtime is absent
+  from this execution environment; markup and pure-function fixtures passed.
+- [ ] Full configured parent-to-two-child execution. On Mac the nested child
+  proxy cannot bind under the parent's existing sandbox; no policy was weakened.
+- [ ] Authenticated parent continuation and synthesis after child events.
+- [ ] Human decision/approval handoff with exact request identity and routing.
+- [ ] Second-provider and cross-machine linked-child extension.

@@ -6,7 +6,7 @@ Verified: 2026-08-08
 
 The versions and model results below are evidence captured on the verification
 date. Current releases must produce a new machine-readable manifest. See
-[Testing Wingthing](testing.md) for the proposed evidence and promotion policy.
+[Testing Wingthing](../testing.md) for the proposed evidence and promotion policy.
 
 "Supported" is not a boolean. Wingthing tracks several independent contracts:
 

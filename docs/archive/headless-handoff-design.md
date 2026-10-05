@@ -91,7 +91,7 @@ type Capabilities struct {
 }
 ```
 
-This is the shape `docs/agent-support.md` already argued for. It also makes the
+This is the shape `docs/archive/agent-support.md` already argued for. It also makes the
 matrix testable: a capability claim without a test is a lie.
 
 ### Storage

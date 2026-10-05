@@ -2,7 +2,7 @@
 
 Status: historical pre-v301 migration plan. Production crossed this transition on
 2026-08-25 and now runs the `login` process group with the SQLite volume attached.
-Use [fly-ops.md](fly-ops.md) for current operations and
+Use [fly-ops.md](../fly-ops.md) for current operations and
 [wingthing-ai-production-canary-2026-08-25.md](wingthing-ai-production-canary-2026-08-25.md)
 for the deployment record. The commands and unchecked boxes below are retained only
 as the original risk analysis; they are not a current deploy runbook.

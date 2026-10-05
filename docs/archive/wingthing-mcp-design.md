@@ -11,7 +11,7 @@ External multi-wing typed control is a separate direct connector,
 `wt mcp connect`, whose model-facing side is stdio and whose wing transport is
 WebRTC/DTLS. This document does not describe that connector.
 See [the AI API surface](ai-api-surface.md) and
-[the current product brief](agent-manager-product-brief.md).
+[the current product brief](../agent-manager-product-brief.md).
 
 A roost can expose its privileged tools to remote MCP clients at `POST /mcp`. The endpoint
 uses OAuth authorization-code flow with PKCE and applies a role policy before listing or

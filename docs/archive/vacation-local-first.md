@@ -6,7 +6,7 @@ Window: 2026-08-08 through approximately 2026-08-20
 
 This freeze is no longer in force. It is retained as a record of the development
 window, not as current merge, tag, or deployment instruction. Use the current
-[agent-manager product brief](agent-manager-product-brief.md) and CI/release
+[agent-manager product brief](../agent-manager-product-brief.md) and CI/release
 workflows for present promotion gates.
 
 ## The contract
@@ -68,7 +68,7 @@ It exposes terminals, named/versioned prompt templates, prompt runs, bounded
 loops, and bounded dependency swarms over MCP stdio. MCP clients inherit the
 authority of the local user that starts the server, so continue to use isolated
 `WINGTHING_DIR` and test homes while dogfooding. See
-`docs/agent-meta-layer.md` for the object and safety model.
+`docs/archive/agent-meta-layer.md` for the object and safety model.
 
 `wt session read` intentionally returns the terminal's ANSI snapshot. It is a
 raw terminal primitive, not a chat transcript. Agent-aware state and structured

@@ -5,7 +5,7 @@ Status: implementation design for `feature/direct-control-free-tier`
 Reviewed: 2026-08-27
 
 The broader product contract, Slack-derived use cases, gap audit, and ordered
-roadmap live in [Agent Manager Product Brief and Gap Audit](agent-manager-product-brief.md).
+roadmap live in [Agent Manager Product Brief and Gap Audit](../agent-manager-product-brief.md).
 This document remains the design for the direct transport and entitlement slice.
 
 ## Product thesis

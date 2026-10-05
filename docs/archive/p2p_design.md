@@ -2,8 +2,8 @@
 
 Status: historical implementation design for the browser PTY migration path.
 Current product and trust claims live in
-[the agent-manager product brief](agent-manager-product-brief.md) and
-[security model](security.md).
+[the agent-manager product brief](../agent-manager-product-brief.md) and
+[security model](../security.md).
 
 ## Context
 

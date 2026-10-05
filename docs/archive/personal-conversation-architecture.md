@@ -135,6 +135,6 @@ provider isolation and preflight in a separate cloud checkout. Their live
 integration was not verified here, and they do not constitute this controller.
 
 See [the acceptance backlog](personal-preview-parity-plan.md),
-[preview setup and promotion](preview-channel.md),
-[remote sessions](ssh-remote-sessions.md) and
+[preview setup and promotion](../preview-channel.md),
+[remote sessions](../ssh-remote-sessions.md) and
 [the existing resource model](agent-meta-layer.md).
