@@ -49,6 +49,60 @@ func lifecycleRead(t *testing.T, dir, home, cwd string, after int64, limit int) 
 	return v
 }
 
+func TestLifecycleStatusMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name, state, want   string
+		hooks, alive, ended bool
+	}{
+		{"prompt", "working", "working", true, true, false},
+		{"permission or elicitation", "needs_input", "blocked", true, true, false},
+		{"ready", "idle", "idle", true, true, false},
+		{"turn stopped", "completed", "idle", true, true, false},
+		{"session ended before egg exits", "completed", "done", true, true, true},
+		{"clean exit", "completed", "done", true, false, true},
+		{"crash", "working", "exited", true, false, false},
+		{"failed exit", "failed", "exited", true, false, true},
+		{"failed live turn", "failed", "unknown", true, true, false},
+		{"unsupported", "unknown", "unknown", false, true, false},
+		{"transcript only", "completed", "unknown", false, true, false},
+		{"legacy dead egg", "unknown", "unknown", false, false, false},
+		{"exit without hooks", "completed", "unknown", false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lifecycleStatus(tc.state, tc.hooks, tc.alive, tc.ended); got != tc.want {
+				t.Fatalf("status = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLifecycleClaudeStatusRequiresHooksAndDistinguishesSessionEnd(t *testing.T) {
+	dir, home, cwd, path := lifecycleFixture(t)
+	lifecycleWrite(t, path, `{"type":"assistant","sessionId":"ours","message":{"stop_reason":"end_turn"}}`+"\n")
+	if v := lifecycleRead(t, dir, home, cwd, 0, 10); v.Status != "unknown" {
+		t.Fatalf("transcript invented status: %+v", v)
+	}
+	for i, tc := range []struct{ event, notification, want string }{
+		{"UserPromptSubmit", "", "working"},
+		{"Notification", "permission_prompt", "blocked"},
+		{"Notification", "elicitation_dialog", "blocked"},
+		{"Notification", "elicitation_url_dialog", "blocked"},
+		{"Stop", "", "idle"},
+		{"Notification", "unrelated", "idle"},
+		{"SessionEnd", "", "done"},
+	} {
+		lifecycleHook(t, home, filepath.Base(dir), fmt.Sprintf("seq.%020d", i+1), fmt.Sprintf(`{"session_id":"ours","hook_event_name":%q,"notification_type":%q}`, tc.event, tc.notification))
+		v := lifecycleRead(t, dir, home, cwd, 0, 10)
+		if v.Status != tc.want {
+			t.Fatalf("%s/%s: %+v", tc.event, tc.notification, v)
+		}
+	}
+	v, err := ReadSessionLifecycle(dir, "claude", cwd, home, "ours", false, 0, 10)
+	if err != nil || v.Status != "done" || v.Ready {
+		t.Fatalf("lost clean native end: %+v, %v", v, err)
+	}
+}
+
 func TestLifecycleExactIdentityPartialReplayAndConcurrentReaders(t *testing.T) {
 	dir, home, cwd, path := lifecycleFixture(t)
 	lifecycleWrite(t, filepath.Join(filepath.Dir(path), "other.jsonl"), `{"type":"assistant","sessionId":"other","message":{"content":"foreign-secret","stop_reason":"end_turn"}}`+"\n")
