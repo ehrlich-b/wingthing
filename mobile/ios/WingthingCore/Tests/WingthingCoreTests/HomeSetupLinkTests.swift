@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 import WingthingUI
@@ -162,6 +163,55 @@ private actor SetupPreviewWire: HomeWire {
         await model.restoreHome(wire: wire)
         expectNil(model.profile); expectFalse(model.connected); expectTrue(await wire.calls.isEmpty)
         expectEqual(credentials.saves.count, 1)
+    }
+
+    @Test func linkArrivingDuringLaunchRestorationFencesThePreviousHome() async throws {
+        for beforeRefresh in [false, true] {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("home-setup-race-\(UUID())")
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let credentials = MemoryCredentials(), home = try profile(), wire = FixtureWire()
+            try credentials.save("synthetic-existing-token", for: home)
+            let selected = SelectedHomeStore(file: dir.appendingPathComponent("selected-home.json"))
+            try selected.save(home)
+            await wire.route(["conversation_list:": .object(["conversations": .array([])])])
+            let model = WingthingModel(cacheDirectory: dir, credentialStore: credentials)
+            let incoming = link(origin: "https://replacement-home.example")
+            var started = false, arrived = false
+            var observation: AnyCancellable?
+            if beforeRefresh {
+                // Deliver immediately after installation's actor suspensions,
+                // before restoration can begin its network refresh.
+                observation = model.$busy.sink { busy in
+                    if busy { started = true }
+                    if started && !busy && !arrived {
+                        arrived = true
+                        model.receiveHomeSetupLink(incoming)
+                    }
+                }
+                await model.restoreHome(wire: wire)
+            } else {
+                let restoring = Task(priority: .background) { await model.restoreHome(wire: wire) }
+                await withCheckedContinuation { ready in
+                    observation = model.$busy.first(where: { $0 }).sink { _ in ready.resume() }
+                }
+                // The restoring task has yielded inside installation.
+                expectTrue(model.busy)
+                model.receiveHomeSetupLink(incoming); arrived = true
+                await restoring.value
+            }
+            observation?.cancel()
+            expectTrue(arrived); expectFalse(model.connected); expectFalse(model.busy)
+            expectTrue(await wire.calls.isEmpty); expectTrue(await wire.requests.isEmpty)
+            expectEqual(try selected.load(), home); expectEqual(credentials.saves.count, 1)
+            let setup = try unwrap(model.takeHomeSetupLink())
+            await model.restoreHome(wire: wire)
+            expectTrue(await wire.calls.isEmpty)
+
+            // Only the explicit Connect action may contact the imported home.
+            await model.connect(origin: setup.profile.origin.absoluteString, transport: setup.profile.transport, userID: setup.profile.expectedUserID, wingID: setup.profile.homeWingID, wingPublicKey: setup.profile.homeWingPublicKey, existingBearer: setup.token!, wire: wire)
+            expectTrue(model.connected); expectEqual(model.profile?.origin.host, "replacement-home.example")
+            expectTrue(await wire.calls.allSatisfy { $0.host == "replacement-home.example" })
+        }
     }
 
     @Test func importingAnotherHomeDoesNotReplaceLiveConnectionOrSaveItsToken() async throws {

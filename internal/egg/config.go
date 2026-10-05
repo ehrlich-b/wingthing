@@ -380,7 +380,7 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 
 // resolveBasePath turns a base value into an absolute path.
 // - Relative path (starts with . or /) -> resolve relative to configDir
-// - Named base -> ~/.wingthing/bases/<name>.yaml
+// - Named base -> state directory's bases/<name>.yaml, with a stable legacy fallback
 func resolveBasePath(base, configDir string) string {
 	if filepath.IsAbs(base) {
 		return base
@@ -388,12 +388,18 @@ func resolveBasePath(base, configDir string) string {
 	if strings.HasPrefix(base, "./") || strings.HasPrefix(base, "../") {
 		return filepath.Join(configDir, base)
 	}
-	// Named base: ~/.wingthing/bases/<name>.yaml
 	dir, err := wingconfig.StateDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "bases", base+".yaml")
+	path := filepath.Join(dir, "bases", base+".yaml")
+	if _, err := os.Stat(path); os.IsNotExist(err) && wingconfig.Channel() == "stable" {
+		legacy := filepath.Join(wingconfig.DefaultDir(), "bases", base+".yaml")
+		if info, err := os.Stat(legacy); err == nil && !info.IsDir() {
+			return legacy
+		}
+	}
+	return path
 }
 
 // applySectionMasks replaces individual sections of the parent config based on

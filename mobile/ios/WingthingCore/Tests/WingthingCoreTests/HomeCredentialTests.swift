@@ -74,12 +74,57 @@ import WingthingUI
         try await local.selectParent(ParentSelection(reference: root, title: "Saved parent"))
         let tasks = try JSONDecoder().decode([ConversationTask].self, from: JSONEncoder().encode(JSONValue.array([.object(["conversation": conversationJSON("root")])])))
         try await local.cache(CachedConversation(reference: root, tasks: tasks, transcript: TranscriptState()))
+        let savedTokens = credentials.tokens
+        credentials.tokens.removeAll()
+        let withoutAccess = WingthingModel(cacheDirectory: dir, credentialStore: credentials), offlineWire = await wire()
+        await withoutAccess.restoreHome(wire: offlineWire)
+        expectEqual(withoutAccess.phase, .disconnected); expectEqual(withoutAccess.profile, home); expectTrue(await offlineWire.calls.isEmpty)
+        expectEqual(withoutAccess.tasks, tasks); expectEqual(withoutAccess.selected, root); expectEqual(withoutAccess.currentStatus, .offline)
+        credentials.tokens = savedTokens
         await restored.disconnect()
-        expectNil(try credentials.token(for: home)); expectEqual(credentials.forgets, [home]); expectEqual(try selected.load(), home)
+        expectNil(try credentials.token(for: home)); expectEqual(credentials.forgets, [home]); expectNil(try selected.load())
         let afterForget = WingthingModel(cacheDirectory: dir, credentialStore: credentials), quietWire = await wire()
         await afterForget.restoreHome(wire: quietWire)
-        expectEqual(afterForget.phase, .disconnected); expectEqual(afterForget.profile, home); expectTrue(await quietWire.calls.isEmpty)
-        expectEqual(afterForget.tasks, tasks); expectEqual(afterForget.selected, root); expectEqual(afterForget.currentStatus, .offline)
+        expectEqual(afterForget.phase, .notConfigured); expectNil(afterForget.profile); expectTrue(await quietWire.calls.isEmpty)
+        expectEqual(withoutAccess.tasks, tasks)
+    }
+
+    @Test func disconnectAfterFailedReplacementForgetsSavedAndAttemptedHomes() async throws {
+        for invalidForm in [false, true] {
+            let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+            let credentials = MemoryCredentials(), model = WingthingModel(cacheDirectory: dir, credentialStore: credentials)
+            await connect(model, await wire())
+            let saved = try unwrap(model.profile), selected = SelectedHomeStore(file: dir.appendingPathComponent("selected-home.json"))
+            let other = try HomeProfile(origin: URL(string: "https://other.example")!, transport: .userOwnedEndpoint, expectedUserID: "fixture-user", homeWingID: "mac", homeWingPublicKey: wingPublic)
+            try credentials.save("other-saved-token", for: other)
+            let failed = await wire(); await failed.configure(user: "wrong-account")
+            await model.connect(origin: other.origin.absoluteString, transport: other.transport, userID: invalidForm ? "" : other.expectedUserID, wingID: other.homeWingID, wingPublicKey: other.homeWingPublicKey, existingBearer: "other-saved-token", wire: failed)
+            expectFalse(model.connected); expectEqual(try selected.load(), saved)
+            await model.disconnect()
+            expectNil(try selected.load()); expectNil(try credentials.token(for: saved))
+            if !invalidForm { expectNil(try credentials.token(for: other)) }
+            let restarted = WingthingModel(cacheDirectory: dir, credentialStore: credentials), quiet = await wire()
+            await restarted.restoreHome(wire: quiet)
+            expectNil(restarted.profile); expectTrue(await quiet.calls.isEmpty)
+        }
+    }
+
+    @Test func failedForgetOfPreviousHomeStillClearsRestorationAndCanBeRetried() async throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let credentials = MemoryCredentials(), model = WingthingModel(cacheDirectory: dir, credentialStore: credentials)
+        await connect(model, await wire())
+        let saved = try unwrap(model.profile), selected = SelectedHomeStore(file: dir.appendingPathComponent("selected-home.json"))
+        let failed = await wire(); await failed.configure(user: "wrong-account")
+        await model.connect(origin: "https://other.example", transport: .userOwnedEndpoint, userID: "fixture-user", wingID: "mac", wingPublicKey: wingPublic, existingBearer: token, wire: failed)
+        credentials.unavailable = true; await model.disconnect()
+        expectNil(try selected.load()); expectTrue(model.canDisconnect)
+        expectTrue(model.error?.contains("couldn't be forgotten") == true)
+        credentials.unavailable = false
+        let restarted = WingthingModel(cacheDirectory: dir, credentialStore: credentials), quiet = await wire()
+        await restarted.restoreHome(wire: quiet)
+        expectNil(restarted.profile); expectTrue(await quiet.calls.isEmpty)
+        await model.disconnect()
+        expectNil(try credentials.token(for: saved)); expectNil(model.error); expectFalse(model.canDisconnect)
     }
     @Test func changedAccountOrPinOnLaunchFailsBeforeEncryptedInventory() async throws {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }

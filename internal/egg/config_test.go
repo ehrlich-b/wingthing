@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	wingconfig "github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"gopkg.in/yaml.v3"
 )
@@ -22,6 +23,52 @@ func makeEggConfigTestDir(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestResolveEggConfigNamedBaseLookup(t *testing.T) {
+	for _, tc := range []struct {
+		name, channel, current, wantShell string
+		wantError                         bool
+	}{
+		{name: "stable legacy fallback", channel: "stable", wantShell: "/legacy/sh"},
+		{name: "stable current preferred", channel: "stable", current: "base: none\nshell: /current/sh\n", wantShell: "/current/sh"},
+		{name: "stable invalid current fails", channel: "stable", current: "[invalid yaml", wantError: true},
+		{name: "preview no stable fallback", channel: "preview", wantError: true},
+		{name: "preview current base", channel: "preview", current: "base: none\nshell: /preview/sh\n", wantShell: "/preview/sh"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := wingconfig.ReleaseChannel
+			wingconfig.ReleaseChannel = tc.channel
+			t.Cleanup(func() { wingconfig.ReleaseChannel = previous })
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			state := filepath.Join(home, "alternate-state")
+			t.Setenv("WINGTHING_DIR", state)
+			t.Setenv("WINGTHING_PREVIEW_DIR", "")
+			legacy := filepath.Join(home, ".wingthing", "bases")
+			makeEggConfigTestDir(t, legacy)
+			writeEggConfigTestFile(t, filepath.Join(legacy, "work.yaml"), "base: none\nshell: /legacy/sh\n")
+			if tc.current != "" {
+				makeEggConfigTestDir(t, filepath.Join(state, "bases"))
+				writeEggConfigTestFile(t, filepath.Join(state, "bases", "work.yaml"), tc.current)
+			}
+			path := filepath.Join(home, "egg.yaml")
+			writeEggConfigTestFile(t, path, "base: work\n")
+			cfg, err := ResolveEggConfig(path)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("expected base lookup to fail")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Shell != tc.wantShell {
+				t.Fatalf("shell = %q, want %q", cfg.Shell, tc.wantShell)
+			}
+		})
 	}
 }
 
