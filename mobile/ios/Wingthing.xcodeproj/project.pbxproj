@@ -1,0 +1,45 @@
+// !$*UTF8*$!
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 56;
+    objects = {
+        A00000000000000000000001 = { isa = PBXBuildFile; fileRef = A00000000000000000000002; };
+        A00000000000000000000002 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WingthingApp.swift; sourceTree = "<group>"; };
+        A00000000000000000000003 = { isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+        A00000000000000000000004 = { isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Wingthing.app; sourceTree = BUILT_PRODUCTS_DIR; };
+        A00000000000000000000005 = { isa = PBXGroup; children = (A00000000000000000000006, A00000000000000000000020, A00000000000000000000007); sourceTree = "<group>"; };
+        A00000000000000000000006 = { isa = PBXGroup; path = WingthingApp; sourceTree = "<group>"; children = (A00000000000000000000002, A00000000000000000000003); };
+        A00000000000000000000007 = { isa = PBXGroup; name = Products; sourceTree = "<group>"; children = (A00000000000000000000004, A00000000000000000000023); };
+        A00000000000000000000008 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000009 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A0000000000000000000000A); runOnlyForDeploymentPostprocessing = 0; };
+        A0000000000000000000000A = { isa = PBXBuildFile; productRef = A0000000000000000000000B; };
+        A0000000000000000000000B = { isa = XCSwiftPackageProductDependency; package = A0000000000000000000000C; productName = WingthingUI; };
+        A0000000000000000000000C = { isa = XCLocalSwiftPackageReference; relativePath = WingthingCore; };
+        A0000000000000000000000D = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A0000000000000000000000E = { isa = PBXNativeTarget; name = Wingthing; productName = Wingthing; productType = "com.apple.product-type.application"; productReference = A00000000000000000000004; buildConfigurationList = A00000000000000000000010; buildPhases = (A00000000000000000000008, A00000000000000000000009, A0000000000000000000000D); buildRules = (); dependencies = (); packageProductDependencies = (A0000000000000000000000B); };
+        A0000000000000000000000F = { isa = PBXProject; attributes = { BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1600; }; buildConfigurationList = A00000000000000000000011; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000005; productRefGroup = A00000000000000000000007; projectDirPath = ""; projectRoot = ""; packageReferences = (A0000000000000000000000C); targets = (A0000000000000000000000E, A00000000000000000000027); };
+        A00000000000000000000010 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012, A00000000000000000000013); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A00000000000000000000011 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000014, A00000000000000000000015); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A00000000000000000000012 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; CODE_SIGN_IDENTITY = ""; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = WingthingApp/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = dev.wingthing.personal; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; }; };
+        A00000000000000000000013 = { isa = XCBuildConfiguration; name = Release; buildSettings = { CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; CODE_SIGN_IDENTITY = ""; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = WingthingApp/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = dev.wingthing.personal; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; }; };
+        A00000000000000000000014 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { CLANG_ENABLE_MODULES = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; }; };
+        A00000000000000000000015 = { isa = XCBuildConfiguration; name = Release; buildSettings = { CLANG_ENABLE_MODULES = YES; SWIFT_COMPILATION_MODE = wholemodule; }; };
+        A00000000000000000000020 = { isa = PBXGroup; path = WingthingUIAcceptance; sourceTree = "<group>"; children = (A00000000000000000000021, A00000000000000000000030); };
+        A00000000000000000000021 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeInspectionTests.swift; sourceTree = "<group>"; };
+        A00000000000000000000022 = { isa = PBXBuildFile; fileRef = A00000000000000000000021; };
+        A00000000000000000000023 = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WingthingUIAcceptance.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        A00000000000000000000024 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000022, A00000000000000000000031); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000025 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000026 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000027 = { isa = PBXNativeTarget; name = WingthingUIAcceptance; productName = WingthingUIAcceptance; productType = "com.apple.product-type.bundle.ui-testing"; productReference = A00000000000000000000023; buildConfigurationList = A00000000000000000000028; buildPhases = (A00000000000000000000024, A00000000000000000000025, A00000000000000000000026); buildRules = (); dependencies = (A0000000000000000000002C); };
+        A00000000000000000000028 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000029, A0000000000000000000002A); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A00000000000000000000029 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = dev.wingthing.personal.uiacceptance; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = Wingthing; }; };
+        A0000000000000000000002A = { isa = XCBuildConfiguration; name = Release; buildSettings = { CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = dev.wingthing.personal.uiacceptance; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = Wingthing; }; };
+        A0000000000000000000002B = { isa = PBXContainerItemProxy; containerPortal = A0000000000000000000000F; proxyType = 1; remoteGlobalIDString = A0000000000000000000000E; remoteInfo = Wingthing; };
+        A0000000000000000000002C = { isa = PBXTargetDependency; target = A0000000000000000000000E; targetProxy = A0000000000000000000002B; };
+        A00000000000000000000030 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeInteractiveTests.swift; sourceTree = "<group>"; };
+        A00000000000000000000031 = { isa = PBXBuildFile; fileRef = A00000000000000000000030; };
+    };
+    rootObject = A0000000000000000000000F;
+}
