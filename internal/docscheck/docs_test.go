@@ -71,7 +71,11 @@ func TestPublicDocumentationContractsStayAligned(t *testing.T) {
 		"README.md",
 		"SKILL.md",
 		"docs/fly-ops.md",
-		"docs/sandbox.md",
+		"docs/agent-manager-product-brief.md",
+		"docs/testing.md",
+		"docs/preview-channel.md",
+		"docs/preview-provider-onboarding.md",
+		"docs/ssh-remote-sessions.md",
 		"docs/security.md",
 		"docs/skills/create-egg/SKILL.md",
 		"web/index.html",
@@ -448,8 +452,6 @@ func TestCompatibilityDocumentationNamesTheConfiguredBaseline(t *testing.T) {
 		{path: "Makefile", mustHave: []string{"configured historical", "v0.144.1", "v0.147.0", "WT_COMPAT_BASELINE_REF"}, mustNotHave: []string{"against the last published"}},
 		{path: "docs/fly-ops.md", mustHave: []string{"configured historical-baseline", "v0.144.1", "v0.147.0", "WT_COMPAT_BASELINE_REF"}, mustNotHave: []string{"real N-1/current"}},
 		{path: "docs/testing.md", mustHave: []string{"configured-baseline and candidate", "v0.144.1", "v0.147.0", "WT_COMPAT_BASELINE_REF"}, mustNotHave: []string{"real last-release", "live N-1/N gateway-wing"}},
-		{path: "docs/direct-agent-manager-design.md", mustHave: []string{"configured historical baseline", "v0.144.1", "v0.147.0", "WT_COMPAT_BASELINE_REF"}, mustNotHave: []string{"runs real N-1 and candidate"}},
-		{path: "docs/bryan-wingthing-direct-control-field-report.md", mustHave: []string{"configured historical-baseline/candidate", "v0.144.1", "v0.147.0", "WT_COMPAT_BASELINE_REF"}, mustNotHave: []string{"real N-1/candidate"}},
 	}
 	for _, check := range checks {
 		data, err := os.ReadFile(filepath.Join(root, check.path))
@@ -492,8 +494,11 @@ func TestCurrentDesignDocsDoNotHardCodeMCPToolCounts(t *testing.T) {
 	countClaim := regexp.MustCompile(`(?i)(?:all\s+)?\d+\s+(?:local\s+)?(?:mcp\s+)?tool(?:s|\s+schemas)\b`)
 	for _, rel := range []string{
 		"docs/agent-manager-product-brief.md",
-		"docs/agent-meta-layer.md",
-		"docs/ai-api-surface.md",
+		"docs/security.md",
+		"docs/fly-ops.md",
+		"docs/preview-channel.md",
+		"docs/preview-provider-onboarding.md",
+		"docs/ssh-remote-sessions.md",
 		"docs/testing.md",
 	} {
 		data, err := os.ReadFile(filepath.Join(root, rel))
@@ -506,97 +511,61 @@ func TestCurrentDesignDocsDoNotHardCodeMCPToolCounts(t *testing.T) {
 	}
 }
 
-func TestSandboxDocumentationMatchesImplementedBoundary(t *testing.T) {
-	root := repositoryRoot(t)
-	checks := []struct {
-		path        string
-		mustHave    []string
-		mustNotHave []string
-	}{
-		{
-			path:        "docs/skills/create-egg/SKILL.md",
-			mustHave:    []string{"HOME write isolation", "not a filesystem allowlist", "locations outside HOME", "one uniform raw-networking mode", "route-less namespace", "no Seatbelt network deny"},
-			mustNotHave: []string{"root filesystem read-only", "read-only root mount", "Unrestricted network defeats"},
-		},
-		{
-			path:        "docs/egg-inheritance-design.md",
-			mustHave:    []string{"broadest platform policy", "any CONNECT destination on Linux without a general route", "macOS emits no Seatbelt network deny"},
-			mustNotHave: []string{`"*" in any layer = full network`},
-		},
-		{
-			path:        "docs/container-mode.md",
-			mustHave:    []string{"fresh mount namespace starts with a cloned view"},
-			mustNotHave: []string{"inherits the parent's mount namespace"},
-		},
-		{
-			path:        "docs/remote-tmux.md",
-			mustHave:    []string{"Free native MCP is separate", "browser-direct terminal transport has not shipped"},
-			mustNotHave: []string{"Today, all bytes flow through the roost", "The roost transits all traffic today"},
-		},
-		{
-			path:     "docs/sandbox.md",
-			mustHave: []string{"filesystem-denial and Unix-socket", "`network-outbound` rules", "overlapping mandatory deny still wins", "listing only `localhost` does not forward every host"},
-		},
+// These checks name current boundaries and protocol terms in living references.
+// Line wrapping and the wording of historical receipts are not contracts.
+func checkDocumentationBoundary(t *testing.T, path string, required, stale []string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), path))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, check := range checks {
-		data, err := os.ReadFile(filepath.Join(root, check.path))
-		if err != nil {
-			t.Fatal(err)
+	normalize := func(text string) string { return strings.Join(strings.Fields(text), " ") }
+	text := normalize(string(data))
+	for _, phrase := range required {
+		if !strings.Contains(text, normalize(phrase)) {
+			t.Errorf("%s must document %q", path, phrase)
 		}
-		text := string(data)
-		for _, phrase := range check.mustHave {
-			if !strings.Contains(text, phrase) {
-				t.Errorf("%s must contain %q", check.path, phrase)
-			}
-		}
-		for _, phrase := range check.mustNotHave {
-			if strings.Contains(text, phrase) {
-				t.Errorf("%s contains stale sandbox claim %q", check.path, phrase)
-			}
+	}
+	for _, phrase := range stale {
+		if strings.Contains(text, normalize(phrase)) {
+			t.Errorf("%s contains stale boundary claim %q", path, phrase)
 		}
 	}
 }
 
-func TestArchitectureDocumentationDistinguishesHistoryTargetsAndShippedBehavior(t *testing.T) {
-	root := repositoryRoot(t)
-	checks := []struct {
-		path     string
-		mustHave []string
-	}{
-		{
-			path:     "docs/vt_design.md",
-			mustHave: []string{"Status: historical implementation design", "VTerm snapshots and bounded scrollback by default"},
-		},
-		{
-			path:     "docs/egg-sandbox-design.md",
-			mustHave: []string{"permissive default below did not ship", "[sandbox reference](sandbox.md) for current behavior"},
-		},
-		{
-			path:     "docs/egg-inheritance-design.md",
-			mustHave: []string{"Deferred; this syntax is not implemented", "`domain:port` and `*:port` are not accepted policy forms"},
-		},
-		{
-			path:     "docs/local-first-architecture.md",
-			mustHave: []string{"not an automatic fallback claim", "never changes to the hosted relay"},
-		},
-		{
-			path:     "docs/sandboxed-ai-vm.md",
-			mustHave: []string{"A free account uses that connection", "wt mcp connect", "An account with hosted-relay access"},
-		},
-	}
+func TestSandboxDocumentationMatchesImplementedBoundary(t *testing.T) {
+	checkDocumentationBoundary(t, "docs/skills/create-egg/SKILL.md", []string{
+		"HOME write isolation", "not a filesystem allowlist", "locations outside HOME",
+		"one uniform raw-networking mode", "route-less namespace", "no Seatbelt network deny",
+	}, []string{"root filesystem read-only", "read-only root mount", "Unrestricted network defeats"})
 
-	for _, check := range checks {
-		data, err := os.ReadFile(filepath.Join(root, check.path))
-		if err != nil {
-			t.Fatal(err)
-		}
-		text := string(data)
-		for _, phrase := range check.mustHave {
-			if !strings.Contains(text, phrase) {
-				t.Errorf("%s must contain %q", check.path, phrase)
-			}
-		}
-	}
+	checkDocumentationBoundary(t, "docs/security.md", []string{
+		"HOME write isolation", "not a filesystem allowlist",
+		"fresh mount namespace starts with a cloned view", "locations outside HOME",
+		"broadest platform policy", "any CONNECT destination", "route-less namespace",
+		"macOS emits no Seatbelt network deny", "`domain:port` and `*:port` are not accepted policy forms",
+		"filesystem-denial and Unix-socket", "`network-outbound` rules",
+		"overlapping mandatory deny still wins", "listing only `localhost` does not forward every host",
+	}, []string{"root filesystem read-only", "inherits the parent's mount namespace", `"*" in any layer = full network`})
+}
+
+func TestCurrentArchitectureDocumentsShippedAndDeferredBoundaries(t *testing.T) {
+	checkDocumentationBoundary(t, "docs/agent-manager-product-brief.md", []string{
+		"VTerm snapshots and bounded scrollback by default",
+		"Free native MCP is separate", "Browser-direct terminal transport has not shipped",
+		"not an automatic fallback claim", "never changes to the hosted relay",
+		"`conversation_checkpoint`", "native text receipt", "causality unverified",
+		"home identity and owner epoch stay unimplemented",
+	}, []string{"Today, all bytes flow through the roost", "The roost transits all traffic today"})
+	checkDocumentationBoundary(t, "docs/security.md", []string{
+		"`wt mcp stdio --unsandboxed`", "`outer-boundary`",
+		"no nested filesystem, network, syscall or resource restriction",
+		"A free account uses `wt mcp connect`", "an account with hosted-relay access",
+	}, nil)
+	checkDocumentationBoundary(t, "docs/testing.md", []string{
+		"A fake protocol pass does not establish authenticated provider acceptance",
+		"Native Codex parser/journal fixtures do not establish live supervisor readiness",
+	}, nil)
 }
 
 func TestReleasePublishesArtifactsFromTheDeterministicGate(t *testing.T) {
