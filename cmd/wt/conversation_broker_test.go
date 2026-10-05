@@ -274,6 +274,62 @@ func TestHostMailboxInterruptedMutationIsStructuredUnconfirmed(t *testing.T) {
 	}
 }
 
+func TestHostMailboxRecoveryRefusalKeepsPriorMutationUnconfirmed(t *testing.T) {
+	for _, tool := range []string{"agent_start", "session_prompt"} {
+		for _, refusal := range []string{"locked", "policy_changed"} {
+			t.Run(tool+"/"+refusal, func(t *testing.T) {
+				f := newBrokerFixture(t, control.SurfaceLocalMCP, "codex")
+				arguments := map[string]any{"agent": "claude", "cwd": f.cfg.Dir, "request_id": f.child.LaunchKey}
+				if tool == "agent_start" {
+					if err := (&localMCPServer{cfg: f.cfg}).markConversationLaunch(f.child, nil); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					arguments = map[string]any{"session": f.child.SessionID, "request_id": "interrupted-prompt", "input": "hello"}
+					sends := 0
+					result, err := egg.SubmitSessionPrompt(context.Background(), filepath.Join(f.cfg.Dir, "eggs", f.child.SessionID), egg.SessionPromptOptions{
+						RequestID: "interrupted-prompt", Input: "hello", Timeout: 100 * time.Millisecond,
+						Read: func(context.Context, int64, int) (egg.SessionView, error) {
+							return egg.SessionView{SessionID: f.child.SessionID, Agent: "claude", ProviderSessionID: "provider-child", State: "idle", StateSource: "claude_hook", ProcessAlive: true, Ready: true}, nil
+						},
+						Send: func(context.Context, string) (egg.PromptDelivery, error) {
+							sends++
+							return egg.PromptDelivery{BytesEnqueued: 5}, nil
+						},
+					})
+					if err != nil || sends != 1 || !result.TransportEnqueued {
+						t.Fatalf("prior prompt effect: %+v sends=%d err=%v", result, sends, err)
+					}
+				}
+				// The effect survived, but the broker crashed before saving its response.
+				payload, _ := json.Marshal(map[string]any{"method": "tools/call", "params": map[string]any{"name": tool, "arguments": arguments}})
+				id, _ := newMailboxID()
+				entry := conversationBrokerJournal{Version: 1, ID: id, Method: "tools/call", Tool: tool, Payload: payload, AcceptedAt: time.Now().Unix(), Phase: "dispatching"}
+				if err := f.b.writeJournal(entry); err != nil {
+					t.Fatal(err)
+				}
+				name, content := "wing.yaml", "locked: true\n"
+				if refusal == "policy_changed" {
+					name, content = "clients.yaml", "clients:\n  codex:\n    owner: different-owner\n"
+				}
+				if err := os.WriteFile(filepath.Join(f.cfg.Dir, name), []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+				f.b.reconcileJournal(context.Background())
+				f.b.calls.Wait()
+				envelope, _ := f.response(t, id)
+				response := forwardMailboxCallError(t, envelope)
+				if response["dispatched"] != "unknown" || response["outcome"] != brokerOutcomeUnconfirmed || response["retry_safe"] != false {
+					t.Fatalf("recovery forgot the earlier effect: %v", response)
+				}
+				if saved, ok := f.b.readJournal(id); !ok || saved.Outcome != brokerOutcomeUnconfirmed {
+					t.Fatalf("recovery persisted an unsafe outcome: %+v", saved)
+				}
+			})
+		}
+	}
+}
+
 func TestHostMailboxReintersectsCurrentWingPathsPerCall(t *testing.T) {
 	f := newBrokerFixture(t, control.SurfaceHTTPMCP, "browser")
 	workspace := f.b.reg.Workspace
@@ -441,6 +497,51 @@ func TestHostMailboxReadsNeverConsumeTheMutationJournal(t *testing.T) {
 	envelope, _ := f.call(t, "conversation_checkpoint", map[string]any{"conversation_id": f.root.ID, "expected_revision": 0, "after_cursor": 0, "checkpoint": "full"})
 	if envelope.Dispatched || envelope.Outcome != brokerOutcomeNotDispatched || !strings.Contains(envelope.Error, "journal is full") {
 		t.Fatalf("full journal accepted a mutation: %+v", envelope)
+	}
+}
+
+func TestHostMailboxSweepExpiresOrphanResponsesBeyondEntryLimit(t *testing.T) {
+	f := newBrokerFixture(t, control.SurfaceHTTPMCP, "browser")
+	old := time.Now().Add(-conversationMailboxRequestMaxAge - time.Minute)
+	var abandoned []string
+	for i := 0; i <= conversationMailboxEntryLimit; i++ {
+		payload := `{"method":"ping"}`
+		if i%2 == 0 {
+			payload = `{"method":"tools/call","params":{"name":"conversation_list","arguments":{}}}`
+		}
+		id := f.publish(t, f.b.epoch, time.Now(), payload)
+		f.b.accept(context.Background(), id)
+		path := filepath.Join(f.b.reg.Workspace, f.b.reg.Mailbox, mailboxResponseName(id))
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+		abandoned = append(abandoned, id)
+	}
+	if f.b.journalCount() != 0 {
+		t.Fatal("read/protocol calls consumed the mutation journal")
+	}
+	fresh := f.publish(t, f.b.epoch, time.Now(), `{"method":"ping"}`)
+	f.b.accept(context.Background(), fresh)
+	pending := f.publish(t, f.b.epoch, time.Now(), `{"method":"ping"}`)
+	if _, err := mailboxEntries(f.b.mailbox, conversationMailboxEntryLimit); err == nil {
+		t.Fatal("fixture did not exceed the mailbox dispatch limit")
+	}
+	f.b.sweep()
+	for _, id := range abandoned {
+		if _, err := f.b.mailbox.Lstat(mailboxResponseName(id)); !os.IsNotExist(err) {
+			t.Fatalf("orphan response survived retention: %s: %v", id, err)
+		}
+	}
+	if _, err := f.b.mailbox.Lstat(mailboxResponseName(fresh)); err != nil {
+		t.Fatalf("fresh response was swept: %v", err)
+	}
+	if _, err := f.b.mailbox.Lstat(mailboxRequestName(pending)); err != nil {
+		t.Fatalf("pending request was swept: %v", err)
+	}
+	f.b.scan(context.Background())
+	f.b.calls.Wait()
+	if envelope, _ := f.response(t, pending); envelope.Outcome != brokerOutcomeCompleted {
+		t.Fatalf("dispatch did not resume after sweeping: %+v", envelope)
 	}
 }
 

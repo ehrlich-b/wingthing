@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"golang.org/x/sys/unix"
 )
 
 func TestConversationWakeQueuesApprovalAndReconcilesNativeReceiptAfterRestart(t *testing.T) {
@@ -178,10 +181,18 @@ func TestConversationWakeNeverRedirectsUnknownToResumedParent(t *testing.T) {
 	var destinations, requests []string
 	runtime := conversationWakeRuntime{Now: time.Now, Read: func(_ context.Context, session localSession) (egg.SessionView, error) {
 		return egg.SessionView{SessionID: session.ID, Agent: "claude", ProviderSessionID: readEggMetaValues(filepath.Join(cfg.Dir, "eggs", session.ID))["provider_session_id"], State: "idle", StateSource: "claude_hook", Ready: true, ProcessAlive: true}, nil
-	}, Prompt: func(_ context.Context, session localSession, id, _ string) (egg.SessionPromptResult, error) {
+	}, Prompt: func(ctx context.Context, session localSession, id, text string) (egg.SessionPromptResult, error) {
 		destinations = append(destinations, session.ID)
 		requests = append(requests, id)
-		return egg.SessionPromptResult{Status: "unconfirmed"}, nil
+		return egg.SubmitSessionPrompt(ctx, filepath.Join(cfg.Dir, "eggs", session.ID), egg.SessionPromptOptions{
+			RequestID: id, Input: text, Timeout: 100 * time.Millisecond,
+			Read: func(context.Context, int64, int) (egg.SessionView, error) {
+				return egg.SessionView{SessionID: session.ID, Agent: "claude", ProviderSessionID: "provider-root", State: "idle", StateSource: "claude_hook", Ready: true, ProcessAlive: true}, nil
+			},
+			Send: func(context.Context, string) (egg.PromptDelivery, error) {
+				return egg.PromptDelivery{BytesEnqueued: len(text)}, nil
+			},
+		})
 	}}
 	_ = db.Close()
 	if err = processConversationWake(context.Background(), s, root.ID, runtime); err != nil {
@@ -212,6 +223,100 @@ func TestConversationWakeNeverRedirectsUnknownToResumedParent(t *testing.T) {
 	}
 	if len(destinations) != 2 {
 		t.Fatal("called changed native target")
+	}
+}
+
+func TestConversationWakeRebindsOnlyAfterLockedReservationAbsence(t *testing.T) {
+	for _, evidence := range []string{"absent", "writer_holds_lock", "reservation_exists", "invalid_reservation"} {
+		t.Run(evidence, func(t *testing.T) {
+			cfg := &config.Config{Dir: t.TempDir()}
+			root := wakeExactTree(t, cfg, wakeExactLegacy)
+			db := wakeExactOpen(t, cfg)
+			defer func() { _ = db.Close() }()
+			s := &localMCPServer{cfg: cfg, principal: "owner"}
+			args, _ := json.Marshal(map[string]any{"conversation_id": root.ID})
+			if _, err := s.toolConversationRead(context.Background(), args); err != nil {
+				t.Fatal(err)
+			}
+			w, err := db.QueueConversationWake(root.ID)
+			if err != nil || w == nil {
+				t.Fatalf("queue: %+v %v", w, err)
+			}
+			now := time.Now()
+			if err := db.BindConversationWake(w, root.SessionID, wakeExactProvider, "bound before crash", now.Unix()); err != nil {
+				t.Fatal(err)
+			}
+			oldRequest := w.RequestID
+			spy := newWakeExactSpy(cfg)
+			if evidence == "reservation_exists" {
+				if _, err := spy.runtime().Prompt(context.Background(), localSession{ID: root.SessionID}, w.RequestID, w.Input); err != nil {
+					t.Fatal(err)
+				}
+				spy.reset()
+			}
+			if evidence == "invalid_reservation" {
+				key := sha256.Sum256([]byte(w.RequestID))
+				if err := os.WriteFile(filepath.Join(cfg.Dir, "eggs", root.SessionID, fmt.Sprintf("prompt.%x.json", key)), []byte("invalid"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wakeExactEgg(t, cfg, wakeExactNative, "owner", "provider-resumed")
+			if err := db.ResumeConversationExecution(root.SessionID, wakeExactNative); err != nil {
+				t.Fatal(err)
+			}
+			// The old execution is retained, but its native reader is unavailable.
+			spy.configure(true, map[string]string{})
+			runtime := spy.runtime()
+			runtime.Now = func() time.Time { return now }
+			read := runtime.Read
+			runtime.Read = func(ctx context.Context, session localSession) (egg.SessionView, error) {
+				if session.ID == root.SessionID {
+					return egg.SessionView{}, errors.New("original execution stopped")
+				}
+				return read(ctx, session)
+			}
+			var lock *os.File
+			if evidence == "writer_holds_lock" {
+				lock, err = os.OpenFile(filepath.Join(cfg.Dir, "eggs", root.SessionID, "prompt.lock"), os.O_CREATE|os.O_RDWR, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = lock.Close() }()
+				if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = processConversationWake(context.Background(), s, root.ID, runtime)
+			if evidence != "absent" {
+				pending, _ := db.PendingConversationWake(root.ID)
+				if err == nil || pending.Status != "pending" || pending.RequestID != oldRequest || pending.SessionID != root.SessionID {
+					t.Fatalf("rebound without absence proof: %+v %v", pending, err)
+				}
+				if evidence != "writer_holds_lock" {
+					return
+				}
+				if err := unix.Flock(int(lock.Fd()), unix.LOCK_UN); err != nil {
+					t.Fatal(err)
+				}
+				err = processConversationWake(context.Background(), s, root.ID, runtime)
+			}
+			pending, _ := db.PendingConversationWake(root.ID)
+			if err != nil || pending.Status != "not_sent" || pending.RequestID != oldRequest || pending.Attempt != 1 {
+				t.Fatalf("missing reservation did not become proven not_sent: %+v %v", pending, err)
+			}
+			if _, prompts, sends := spy.calls(); len(prompts) != 0 || len(sends) != 0 {
+				t.Fatalf("absence reconciliation sent input: %v %v", prompts, sends)
+			}
+			now = now.Add(6 * time.Second)
+			if err := processConversationWake(context.Background(), s, root.ID, runtime); err != nil {
+				t.Fatal(err)
+			}
+			rows := wakeExactOutbox(t, cfg)
+			_, _, sends := spy.calls()
+			if len(rows) != 1 || rows[0].Status != "observed" || rows[0].Request == oldRequest || rows[0].Session != wakeExactNative || rows[0].Attempt != 2 || len(sends) != 1 || sends[0] != wakeExactNative {
+				t.Fatalf("resumed wake: %+v sends=%v", rows, sends)
+			}
+		})
 	}
 }
 

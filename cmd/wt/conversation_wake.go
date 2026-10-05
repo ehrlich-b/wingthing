@@ -197,6 +197,15 @@ func processConversationWake(ctx context.Context, s *localMCPServer, root string
 	if session.Principal != c.OwnerID || (owner != "" && roostSessionPrincipal(owner) != c.OwnerID) {
 		return errors.New("wake parent ownership does not match retained principal")
 	}
+	if !fresh && target != c.SessionID {
+		// Binding precedes prompt reservation. After a resume, prove that the
+		// original execution never reserved this request before allowing a
+		// fresh attempt to select the current execution.
+		absent, err := reconcileUnreservedConversationWake(ctx, s.cfg, db, w, runtime.Now().Unix())
+		if err != nil || absent {
+			return err
+		}
+	}
 	view, err := runtime.Read(ctx, session)
 	if err != nil {
 		return err

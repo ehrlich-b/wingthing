@@ -944,11 +944,17 @@ func (b *conversationBroker) accept(ctx context.Context, id string) {
 		return
 	}
 	_ = b.mailbox.Remove(name)
-	b.complete(ctx, entry, call)
+	b.complete(ctx, entry, call, false)
 }
 
-func (b *conversationBroker) complete(ctx context.Context, entry conversationBrokerJournal, call conversationMailboxCall) {
+func (b *conversationBroker) complete(ctx context.Context, entry conversationBrokerJournal, call conversationMailboxCall, recovering bool) {
 	payload, outcome, message := b.dispatch(ctx, call, entry.Tool)
+	if recovering && outcome == brokerOutcomeNotDispatched {
+		// A refusal proves only that this replay did not dispatch. The original
+		// interrupted call may already have taken effect before the crash.
+		outcome = brokerOutcomeUnconfirmed
+		message = "host broker could not reconcile interrupted " + entry.Tool + "; its outcome is unconfirmed; reread the conversation before acting again"
+	}
 	if len(payload) > conversationMailboxResponseBytes-4096 {
 		payload, message = nil, "the operation ran but its result exceeds the mailbox bound; read with a smaller limit"
 	}
@@ -1015,7 +1021,7 @@ func (b *conversationBroker) recover(ctx context.Context, entry conversationBrok
 	if fresh && conversationBrokerReplaySafe[entry.Tool] && decodeMailbox(entry.Payload, &call) == nil {
 		replay, cancel := context.WithTimeout(ctx, conversationBrokerRecoveryTimeout)
 		defer cancel()
-		b.complete(replay, entry, call)
+		b.complete(replay, entry, call, true)
 		return
 	}
 	entry.Phase, entry.Outcome = "completed", brokerOutcomeUnconfirmed
@@ -1056,6 +1062,7 @@ func (b *conversationBroker) journalCount() int {
 // retention bound. A swept request ID cannot be redispatched: its artifact is
 // then outside the request age bound, and a restart changes the epoch.
 func (b *conversationBroker) sweep() {
+	b.sweepResponses()
 	for _, id := range b.journalIDs() {
 		entry, ok := b.readJournal(id)
 		if !ok || entry.Phase != "completed" {
@@ -1067,6 +1074,33 @@ func (b *conversationBroker) sweep() {
 		}
 		if age > conversationBrokerJournalTTL {
 			_ = os.Remove(b.journalPath(id))
+		}
+	}
+}
+
+// Read and protocol calls have no journal entry. Sweep their abandoned responses
+// by artifact age as well, streaming bounded batches even when the directory is
+// already above the count limit that pauses dispatch.
+func (b *conversationBroker) sweepResponses() {
+	file, err := b.mailbox.Open(".")
+	if err != nil {
+		return
+	}
+	defer closeWithLog("host mailbox response sweep", file)
+	now := time.Now()
+	for {
+		entries, err := file.ReadDir(conversationMailboxEntryLimit)
+		for _, entry := range entries {
+			if _, ok := mailboxResponseID(entry.Name()); !ok {
+				continue
+			}
+			info, err := b.mailbox.Lstat(entry.Name())
+			if err == nil && info.Mode().IsRegular() && now.Sub(info.ModTime()) > conversationMailboxRequestMaxAge {
+				_ = b.mailbox.Remove(entry.Name())
+			}
+		}
+		if err != nil {
+			return
 		}
 	}
 }

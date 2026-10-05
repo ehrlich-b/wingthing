@@ -7,11 +7,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -195,6 +197,76 @@ func TestAutomaticParentMCPUsesExistingSandboxAndRejectsConfigCollision(t *testi
 	server.cfg = &config.Config{Dir: t.TempDir()}
 	if _, err := server.prepareBoundParentMCP(&store.Conversation{ID: "outside", CWD: workspace}, egg.DefaultEggConfig(), nil); err == nil {
 		t.Fatal("inaccessible state silently mounted")
+	}
+}
+
+func TestConversationDirectMCPPreservesConfiguredClientAndOwner(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := &config.Config{Dir: filepath.Join(workspace, "state")}
+	if err := os.MkdirAll(cfg.Dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	root := fixtureConversation(t, db, cfg, "root", "", "alice", "idle")
+	root.CWD = workspace
+	if err := os.WriteFile(filepath.Join(cfg.Dir, "clients.yaml"), []byte("require_client: true\nclients:\n  coordinator:\n    owner: alice\n    grants: [terminal.read]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	launcher := &localMCPServer{cfg: cfg, principal: "alice", actor: "coordinator", surface: control.SurfaceLocalMCP}
+	args, err := launcher.prepareBoundParentMCP(root, egg.DefaultEggConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(args[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, err := launcher.toolConversationBootstrap(json.RawMessage(`{"conversation_id":"root"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapData, _ := json.Marshal(bootstrap["configuration"])
+	for name, data := range map[string][]byte{"automatic": data, "bootstrap": bootstrapData} {
+		t.Run(name, func(t *testing.T) {
+			var configuration struct {
+				Servers map[string]struct {
+					Args []string          `json:"args"`
+					Env  map[string]string `json:"env"`
+				} `json:"mcpServers"`
+			}
+			if err := json.Unmarshal(data, &configuration); err != nil {
+				t.Fatal(err)
+			}
+			server := configuration.Servers["wingthing"]
+			if !slices.Equal(server.Args, []string{"mcp", "stdio", "--client", "coordinator", "--conversation", root.ID}) || server.Env["WINGTHING_DIR"] != cfg.Dir {
+				t.Fatalf("launcher client replaced in config: %s", data)
+			}
+			clients, err := loadLocalMCPClientsConfig(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, ok := clients.Clients[server.Args[3]]
+			if !ok || client.Owner != "alice" {
+				t.Fatalf("injected client lost configured owner mapping: %+v", client)
+			}
+			bound := &localMCPServer{cfg: cfg, principal: client.Owner, actor: server.Args[3], boundConversation: root.ID, grants: grantSet(client.Grants)}
+			if err := validateBoundConversation(bound); err != nil || !bound.toolAllowed("session_read") || bound.toolAllowed("agent_start") {
+				t.Fatalf("bound client lost configured owner or grants: %v", err)
+			}
+		})
+	}
+	if bootstrap["mcp_client"] != "coordinator" {
+		t.Fatalf("bootstrap advertised the owner as its client: %v", bootstrap["mcp_client"])
+	}
+	// Browser audit actors do not name a clients.yaml client.
+	launcher.surface, launcher.actor = control.SurfaceHTTPMCP, "browser"
+	browser, err := launcher.toolConversationBootstrap(json.RawMessage(`{"conversation_id":"root"}`))
+	if err != nil || browser["mcp_client"] != "alice" {
+		t.Fatalf("browser bootstrap identity changed: %v %v", browser, err)
 	}
 }
 

@@ -117,6 +117,15 @@ func mailboxRequestID(name string) (string, bool) {
 	return id, ok && validMailboxID(id)
 }
 
+func mailboxResponseID(name string) (string, bool) {
+	id, ok := strings.CutPrefix(name, "response.")
+	if !ok {
+		return "", false
+	}
+	id, ok = strings.CutSuffix(id, ".json")
+	return id, ok && validMailboxID(id)
+}
+
 func mailboxRead(root *os.Root, name string, maximum int64) ([]byte, error) {
 	if maximum <= 0 {
 		return nil, errors.New("mailbox artifact bound must be positive")

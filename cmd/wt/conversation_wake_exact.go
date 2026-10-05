@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/store"
+	"golang.org/x/sys/unix"
 )
 
 // resolveExactWakeTarget resolves a wake destination that the host recorded
@@ -19,15 +24,8 @@ import (
 // real directory (a symlink is refused, not followed), or the caller does not
 // own it within its path bounds.
 //
-// Known limit, deliberately not recovered here: BindConversationWake commits
-// the request before SubmitSessionPrompt persists its reservation. A crash in
-// between leaves a pending binding with no reservation, which proves that
-// request was never sent. If that exact execution is still ready, the next step
-// reserves and sends the same request once. If its directory is gone, the row
-// stays pending here. If it is retained but not ready, the readiness error is
-// recorded as unconfirmed. Either way this root's single outstanding wake then
-// blocks every later child event. Nothing rebinds it, and retry_not_sent
-// refuses it, because the outbox holds no typed no-input evidence.
+// A missing directory retains the binding: losing the execution's artifacts
+// cannot prove that input was never attempted.
 func (s *localMCPServer) resolveExactWakeTarget(db *store.Store, c *store.Conversation, id string) (localSession, error) {
 	if err := validateSessionID(id); err != nil {
 		return localSession{}, errors.New("wake target is not an exact execution ID")
@@ -54,4 +52,48 @@ func (s *localMCPServer) resolveExactWakeTarget(db *store.Store, c *store.Conver
 		return localSession{}, errors.New("session not found or not owned by caller")
 	}
 	return session, nil
+}
+
+// Called only after resolving the retained original execution. SubmitSessionPrompt
+// holds this same lock and durably reserves before sending; absence under the
+// lock proves that the binding-before-reservation crash did not attempt input.
+// Any existing artifact, including unreadable or malformed evidence, prevents
+// rebinding. Persist the proof before releasing the lock.
+func reconcileUnreservedConversationWake(ctx context.Context, cfg *config.Config, db *store.Store, w *store.ConversationWake, now int64) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	root, err := os.OpenRoot(filepath.Join(cfg.Dir, "eggs", w.SessionID))
+	if err != nil {
+		return false, err
+	}
+	defer closeWithLog("wake original execution", root)
+	lock, err := root.OpenFile("prompt.lock", os.O_CREATE|os.O_EXCL|os.O_RDWR|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
+	if errors.Is(err, os.ErrExist) || errors.Is(err, os.ErrNotExist) {
+		// Match the prompt writer's Darwin first-creation race handling without
+		// replacing an existing lock inode.
+		lock, err = root.OpenFile("prompt.lock", os.O_RDWR|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
+	}
+	if err != nil {
+		return false, err
+	}
+	defer closeWithLog("wake original prompt lock", lock)
+	info, statErr := lock.Stat()
+	named, namedErr := root.Lstat("prompt.lock")
+	if statErr != nil || namedErr != nil || !info.Mode().IsRegular() || !os.SameFile(info, named) {
+		return false, errors.New("original prompt lock is not a bound regular file")
+	}
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return false, err
+	}
+	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
+	key := sha256.Sum256([]byte(w.RequestID))
+	if _, err := root.Lstat(fmt.Sprintf("prompt.%x.json", key)); !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	err = db.RecordConversationWake(w, "not_sent", "prompt reservation absent under original execution's prompt lock; no input attempted", 0, now)
+	return err == nil, err
 }

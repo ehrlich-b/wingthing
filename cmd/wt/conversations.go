@@ -473,6 +473,17 @@ func (s *localMCPServer) prepareBoundParentMCP(c *store.Conversation, cfg *egg.E
 	return args, err
 }
 
+// Local launchers already resolved clients.yaml's client-to-owner mapping.
+// Reuse that client so the injected server loads the same owner and grants.
+// Remote audit actors are not local client names; their bootstrap keeps the
+// existing principal identity.
+func (s *localMCPServer) conversationMCPClient() string {
+	if s.controlSurface() == control.SurfaceLocalMCP {
+		return s.clientActor()
+	}
+	return s.clientPrincipal()
+}
+
 // prepareBoundParentLaunch also returns the host mailbox registration when the
 // parent is broker-managed; its launchOpts must then be applied to the spawn.
 func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *egg.EggConfig, args []string) ([]string, *conversationBrokerRegistration, error) {
@@ -520,7 +531,7 @@ func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *eg
 	if err != nil {
 		return nil, nil, err
 	}
-	configuration := map[string]any{"mcpServers": map[string]any{"wingthing": map[string]any{"command": executable, "args": []string{"mcp", "stdio", "--client", s.clientPrincipal(), "--conversation", c.ID}, "env": map[string]string{"WINGTHING_DIR": filepath.Clean(s.cfg.Dir)}}}}
+	configuration := map[string]any{"mcpServers": map[string]any{"wingthing": map[string]any{"command": executable, "args": []string{"mcp", "stdio", "--client", s.conversationMCPClient(), "--conversation", c.ID}, "env": map[string]string{"WINGTHING_DIR": filepath.Clean(s.cfg.Dir)}}}}
 	data, err := json.MarshalIndent(configuration, "", "  ")
 	if err != nil {
 		return nil, nil, err
@@ -627,6 +638,6 @@ func (s *localMCPServer) toolConversationBootstrap(arguments json.RawMessage) (m
 	if err != nil {
 		return nil, err
 	}
-	configuration := map[string]any{"mcpServers": map[string]any{"wingthing": map[string]any{"command": executable, "args": []string{"mcp", "stdio", "--client", s.clientPrincipal(), "--conversation", c.ID}, "env": map[string]string{"WINGTHING_DIR": filepath.Clean(s.cfg.Dir)}}}}
-	return map[string]any{"conversation_id": c.ID, "coordinator_context": contextForConversation(c), "coordinator_prompt": publicCoordinatorPrompt(c), "mcp_client": s.clientPrincipal(), "configuration": configuration, "automatic": false, "requirements": []string{"existing clients.yaml must already authorize this client if configured", "provider sandbox must already permit the executable, state directory and transport", "configure the provider with this file; no credential or permission migration is performed"}}, nil
+	configuration := map[string]any{"mcpServers": map[string]any{"wingthing": map[string]any{"command": executable, "args": []string{"mcp", "stdio", "--client", s.conversationMCPClient(), "--conversation", c.ID}, "env": map[string]string{"WINGTHING_DIR": filepath.Clean(s.cfg.Dir)}}}}
+	return map[string]any{"conversation_id": c.ID, "coordinator_context": contextForConversation(c), "coordinator_prompt": publicCoordinatorPrompt(c), "mcp_client": s.conversationMCPClient(), "configuration": configuration, "automatic": false, "requirements": []string{"existing clients.yaml must already authorize this client if configured", "provider sandbox must already permit the executable, state directory and transport", "configure the provider with this file; no credential or permission migration is performed"}}, nil
 }
