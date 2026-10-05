@@ -15,12 +15,16 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
 )
 
 const maxLifecycleRecord = 1 << 20
-const maxLifecycleResponse = 2 << 20
+
+// Leave room below 512 KiB for AES-GCM, base64 and the tunnel response wrapper.
+const maxLifecycleResponse = 350 << 10
+const maxLifecycleEvent = 128 << 10
 
 type SessionEvent struct {
 	Sequence          int64           `json:"sequence"`
@@ -34,6 +38,9 @@ type SessionEvent struct {
 	Timestamp         string          `json:"timestamp,omitempty"`
 	Reason            string          `json:"reason,omitempty"`
 	Truncated         bool            `json:"truncated,omitempty"`
+	// Native record length, or serialized event length for legacy journal rows.
+	OriginalBytes int64 `json:"original_bytes,omitempty"`
+	ExitCode      *int  `json:"exit_code,omitempty"`
 	// Import positions are persisted with each event in the same transaction.
 	// This prevents duplicates if the reader or wing exits between imports.
 	SourceKey    string `json:"source_key,omitempty"`
@@ -116,15 +123,30 @@ func openLifecycleJournal(dir string) (*lifecycleJournal, error) {
 }
 
 func readLifecycleLine(r *bufio.Reader) ([]byte, error) {
+	data, _, oversized, err := readNativeLifecycleLine(r)
+	if oversized {
+		return nil, errors.New("lifecycle record exceeds 1 MiB")
+	}
+	return data, err
+}
+
+// Drain oversized native rows without retaining their bodies. The consumed byte
+// count lets the warning and import position commit together in the journal.
+func readNativeLifecycleLine(r *bufio.Reader) ([]byte, int64, bool, error) {
 	var data []byte
+	var size int64
+	oversized := false
 	for {
 		chunk, err := r.ReadSlice('\n')
-		if len(data)+len(chunk) > maxLifecycleRecord {
-			return nil, errors.New("lifecycle record exceeds 1 MiB")
+		size += int64(len(chunk))
+		if size > maxLifecycleRecord {
+			data = nil
+			oversized = true
+		} else if !oversized {
+			data = append(data, chunk...)
 		}
-		data = append(data, chunk...)
 		if err != bufio.ErrBufferFull {
-			return data, err
+			return data, size, oversized, err
 		}
 	}
 }
@@ -175,6 +197,22 @@ func RecordSessionProcessEvent(dir, eventType, state, reason string) error {
 	return j.append(SessionEvent{Type: eventType, State: state, Source: "egg_process", Reason: reason})
 }
 
+func recordSessionProcessExit(dir string, exitCode int, cancelled bool) error {
+	j, err := openLifecycleJournal(dir)
+	if err != nil {
+		return err
+	}
+	defer j.close()
+	event := SessionEvent{Type: "session_exit", Source: "egg_process", ExitCode: &exitCode, Reason: fmt.Sprintf("provider process exited with code %d", exitCode)}
+	if exitCode != 0 || cancelled {
+		event.State = "failed"
+		if cancelled {
+			event.Reason = "session cancelled by caller"
+		}
+	}
+	return j.append(event)
+}
+
 func lifecycleHookDir(home, sessionID string) string {
 	return filepath.Join(home, ".claude", "wingthing-events", sessionID)
 }
@@ -187,6 +225,37 @@ func shellQuoteLifecycle(value string) string {
 // It preserves supplied settings and leaves disableAllHooks effective. The spool
 // is inside the provider's existing writable directory; no permissions change.
 func ClaudeLifecycleArgs(args []string, home, sessionID, providerID string) ([]string, error) {
+	return claudeLifecycleArgs(args, home, sessionID, providerID, "")
+}
+
+const claudeLifecycleSettingsFile = "claude-settings.json"
+
+// prepareClaudeLifecycleArgs keeps merged credentials out of the process argv.
+// Only this file, rather than the egg directory, is exposed to the sandbox.
+func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd string) ([]string, error) {
+	out, err := claudeLifecycleArgs(args, home, filepath.Base(eggDir), providerID, cwd)
+	if err != nil {
+		return nil, err
+	}
+	path, err := filepath.Abs(filepath.Join(eggDir, claudeLifecycleSettingsFile))
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|unix.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, err
+	}
+	_, err = io.WriteString(f, out[len(out)-1])
+	closeErr := f.Close()
+	if err != nil || closeErr != nil {
+		_ = os.Remove(path)
+		return nil, errors.Join(err, closeErr)
+	}
+	out[len(out)-1] = path
+	return out, nil
+}
+
+func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string) ([]string, error) {
 	if home == "" || !validLifecycleID(sessionID) || !validLifecycleID(providerID) {
 		return nil, errors.New("exact session identity and provider home required for lifecycle hooks")
 	}
@@ -208,6 +277,9 @@ func ClaudeLifecycleArgs(args []string, home, sessionID, providerID string) ([]s
 		}
 		data := []byte(value)
 		if !strings.HasPrefix(strings.TrimSpace(value), "{") {
+			if !filepath.IsAbs(value) {
+				value = filepath.Join(cwd, value)
+			}
 			f, err := openBoundRegularFile(value)
 			if err != nil {
 				return nil, fmt.Errorf("read lifecycle settings: %w", err)
@@ -294,12 +366,11 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			return view, err
 		}
 	}
-	var responseBytes int
 	processEnded := false
 	var processEnd SessionEvent
 	var hookState SessionEvent
 	for _, event := range j.events {
-		if event.State != "" {
+		if event.State != "" && event.Type != "session_exit" {
 			view.State = event.State
 			view.StateSource = event.Source
 			view.Reason = event.Reason
@@ -315,16 +386,6 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			processEnded = true
 			processEnd = event
 		}
-		if event.Sequence > after {
-			encoded, _ := json.Marshal(event)
-			if !view.HasMore && len(view.Events) < limit && responseBytes+len(encoded) <= maxLifecycleResponse {
-				view.Events = append(view.Events, event)
-				view.Cursor = event.Sequence
-				responseBytes += len(encoded)
-			} else {
-				view.HasMore = true
-			}
-		}
 		view.HeadCursor = event.Sequence
 	}
 	if j.pending {
@@ -339,11 +400,23 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.StateCursor = hookState.Sequence
 	}
 	if processEnded {
-		view.State = processEnd.State
-		view.StateSource = processEnd.Source
-		view.Reason = processEnd.Reason
+		// Older eggs recorded completed on exit code zero. Keep that fallback
+		// when no native turn outcome exists, but preserve native evidence.
+		if processEnd.State == "failed" || (processEnd.State == "completed" && (view.StateSource == "egg_process" || view.StateSource == "unsupported")) {
+			view.State = processEnd.State
+			view.StateSource = processEnd.Source
+			view.Reason = processEnd.Reason
+			view.StateCursor = processEnd.Sequence
+		}
 		view.Ready = false
-		view.StateCursor = processEnd.Sequence
+		view.ProcessAlive = false
+	}
+	if j.pending && (!processEnded || processEnd.State != "failed") {
+		view.State = "working"
+		view.StateSource = "native_import"
+		view.StateCursor = 0
+		view.Ready = false
+		view.Reason = "native lifecycle import has not reached the source head"
 	}
 	if after > view.HeadCursor {
 		return view, errors.New("after_cursor is ahead of this session's event history")
@@ -362,7 +435,65 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			view.Reason = "provider process unavailable without a recorded exit"
 		}
 	}
+	encodedReason, _ := json.Marshal(view.Reason)
+	if len(encodedReason) > maxLifecycleEvent {
+		view.Reason = boundedLifecycleString(view.Reason)
+	}
+	// Size the complete JSON view, including metadata and escaped strings.
+	// Keep cursor replay contiguous; a full page never skips the next event.
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		return view, err
+	}
+	responseBytes := len(encoded)
+	for _, event := range j.events {
+		if event.Sequence <= after {
+			continue
+		}
+		event = boundedLifecycleEvent(event)
+		encoded, err = json.Marshal(event)
+		if err != nil {
+			return view, err
+		}
+		if len(view.Events) >= limit || responseBytes+len(encoded)+1+32 > maxLifecycleResponse {
+			view.HasMore = true
+			break
+		}
+		view.Events = append(view.Events, event)
+		view.Cursor = event.Sequence
+		responseBytes += len(encoded) + 1
+	}
 	return view, nil
+}
+
+func boundedLifecycleEvent(event SessionEvent) SessionEvent {
+	encoded, _ := json.Marshal(event)
+	if len(encoded) > maxLifecycleEvent {
+		if event.OriginalBytes == 0 {
+			event.OriginalBytes = int64(len(encoded))
+		}
+		event.Raw = nil
+		event.Truncated = true
+		encoded, _ = json.Marshal(event)
+		if len(encoded) > maxLifecycleEvent {
+			event.Text = ""
+			event.Reason = boundedLifecycleString(event.Reason)
+			event.Role = boundedLifecycleString(event.Role)
+			event.Timestamp = boundedLifecycleString(event.Timestamp)
+		}
+	}
+	return event
+}
+
+func boundedLifecycleString(value string) string {
+	if len(value) <= 512 {
+		return value
+	}
+	value = value[:512]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string) error {
@@ -413,15 +544,26 @@ func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string) error 
 	}
 	r := bufio.NewReader(reader)
 	for count := 0; count < 500; count++ {
-		line, readErr := readLifecycleLine(r)
-		if readErr == io.EOF {
+		line, size, oversized, readErr := readNativeLifecycleLine(r)
+		if readErr == io.EOF && !oversized {
+			j.pending = j.pending || size > 0
 			return nil
 		} // incomplete trailing JSON is retried
-		if readErr != nil {
+		if readErr != nil && readErr != io.EOF {
 			return readErr
 		}
-		offset += int64(len(line))
+		offset += size
 		event := SessionEvent{Type: "provider_event", Source: "claude_transcript", SourceKey: "transcript", SourceOffset: offset, ProviderSessionID: id}
+		if oversized {
+			event.Type = "provider_warning"
+			event.Reason = "native transcript record exceeds 1 MiB; skipped"
+			event.Truncated = true
+			event.OriginalBytes = size
+			if err = j.append(event); err != nil {
+				return err
+			}
+			continue
+		}
 		var record struct {
 			Type      string `json:"type"`
 			SessionID string `json:"sessionId"`
@@ -452,7 +594,7 @@ func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string) error 
 				}
 			}
 			// Bound response data independently from native transcript size.
-			if len(event.Raw) > 512<<10 {
+			if len(event.Raw) > maxLifecycleEvent {
 				event.Raw = nil
 				event.Truncated = true
 			}
@@ -461,11 +603,20 @@ func (j *lifecycleJournal) importTranscript(eggDir, cwd, home, id string) error 
 				event.Truncated = true
 			}
 		}
+		event = boundedLifecycleEvent(event)
+		if event.Truncated {
+			event.OriginalBytes = size
+		}
 		if err = j.append(event); err != nil {
 			return err
 		}
 	}
-	j.pending = true
+	if _, err = r.Peek(1); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		j.pending = true
+	}
 	return nil
 }
 
@@ -551,13 +702,29 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 		if err != nil {
 			return err
 		}
-		data, err := io.ReadAll(io.LimitReader(f, maxLifecycleRecord+1))
+		info, err := f.Stat()
+		if err != nil {
+			_ = f.Close()
+			return err
+		}
+		e := SessionEvent{Source: "claude_hook", SourceKey: "hook:" + file.name, ProviderSessionID: providerID, Timestamp: file.modified.UTC().Format(time.RFC3339Nano)}
+		var data []byte
+		if info.Size() <= maxLifecycleRecord {
+			data, err = io.ReadAll(io.LimitReader(f, maxLifecycleRecord+1))
+		}
 		_ = f.Close()
 		if err != nil {
 			return err
 		}
-		if len(data) > maxLifecycleRecord {
-			return errors.New("native hook exceeds 1 MiB")
+		if info.Size() > maxLifecycleRecord || len(data) > maxLifecycleRecord {
+			e.Type = "provider_warning"
+			e.Reason = "native hook exceeds 1 MiB; skipped"
+			e.Truncated = true
+			e.OriginalBytes = info.Size()
+			if err = j.append(e); err != nil {
+				return err
+			}
+			continue
 		}
 		var hook struct {
 			SessionID    string            `json:"session_id"`
@@ -569,7 +736,6 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 		if json.Unmarshal(data, &hook) != nil {
 			return errors.New("invalid published native lifecycle hook")
 		}
-		e := SessionEvent{Source: "claude_hook", SourceKey: "hook:" + file.name, ProviderSessionID: providerID, Timestamp: file.modified.UTC().Format(time.RFC3339Nano)}
 		if hook.SessionID != providerID {
 			e.Type = "provider_warning"
 			e.Reason = "native hook belongs to another provider session"
@@ -610,7 +776,7 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 				e.State = "failed"
 				e.Reason = "native provider reported a failed turn"
 			case "SessionEnd":
-				e.Type = "provider_session_end" // authoritative process exit records final state
+				e.Type = "provider_session_end" // process termination is recorded separately
 			default:
 				e.Type = "provider_event"
 			}
@@ -618,6 +784,11 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 		if len(e.Text) > 64<<10 {
 			e.Text = ""
 			e.Truncated = true
+			e.OriginalBytes = int64(len(data))
+		}
+		e = boundedLifecycleEvent(e)
+		if e.Truncated {
+			e.OriginalBytes = int64(len(data))
 		}
 		if err = j.append(e); err != nil {
 			return err
