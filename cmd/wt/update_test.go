@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 )
 
 func TestStableUpdateRejectsPreviewStateBeforeAnyWork(t *testing.T) {
@@ -224,14 +225,14 @@ func TestWaitForProcessExitDoesNotConfuseRunningWithStopped(t *testing.T) {
 }
 
 func TestDaemonRestartArgsDropsOnlyForegroundAndValidatesKind(t *testing.T) {
-	args, err := daemonRestartArgs([]byte("roost\nstart\n--addr\n127.0.0.1:8080\n--foreground\n--https"), roostDaemon)
+	args, err := daemonRestartArgs([]byte("roost\nstart\n--addr\n127.0.0.1:8080\n--foreground\n--https"), daemonctl.RoostDaemon)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(args, "|"); got != "roost|start|--addr|127.0.0.1:8080|--https" {
 		t.Fatalf("restart args = %q", got)
 	}
-	if _, err := daemonRestartArgs([]byte("wing\nstart\n--foreground"), roostDaemon); err == nil {
+	if _, err := daemonRestartArgs([]byte("wing\nstart\n--foreground"), daemonctl.RoostDaemon); err == nil {
 		t.Fatal("wing metadata was accepted as a roost restart command")
 	}
 }

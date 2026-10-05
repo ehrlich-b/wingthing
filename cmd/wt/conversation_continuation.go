@@ -17,6 +17,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
@@ -43,7 +44,7 @@ func saveCoordinatorModel(cfgDir, session, model string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	return writeAtomicMetadataFile(filepath.Join(dir, coordinatorModelFile), []byte(model), 0600)
+	return daemonctl.WriteAtomicMetadataFile(filepath.Join(dir, coordinatorModelFile), []byte(model), 0600)
 }
 
 // Older executions have no launch-time model record. Native assistant records

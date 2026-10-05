@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 )
 
 // Synthetic selected and default preview states only. The planted pid files
@@ -96,8 +97,8 @@ func assertLifecycleTreeUnchanged(t *testing.T, label, root string, before map[s
 func assertDaemonPathsAvoid(t *testing.T, defaultDir string) {
 	t.Helper()
 	for name, path := range map[string]string{
-		"wing.pid": wingPidPath(), "wing.args": wingArgsPath(), "wing.log": wingLogPath(), "wing.status": wingStatusPath(),
-		"roost.pid": roostPidPath(), "roost.args": roostArgsPath(), "roost.log": roostLogPath(),
+		"wing.pid": daemonctl.WingPidPath(), "wing.args": daemonctl.WingArgsPath(), "wing.log": daemonctl.WingLogPath(), "wing.status": daemonctl.WingStatusPath(),
+		"roost.pid": daemonctl.RoostPidPath(), "roost.args": daemonctl.RoostArgsPath(), "roost.log": daemonctl.RoostLogPath(),
 	} {
 		if path != "" && filepath.Dir(path) == defaultDir {
 			t.Errorf("%s path %q falls back to the default state", name, path)
@@ -115,7 +116,7 @@ func runLifecycleCommand(cmd *cobra.Command, args ...string) error {
 func TestPreviewLifecycleBindingInvalidRefusesWithoutTouchingEitherState(t *testing.T) {
 	cases := map[string]func() error{
 		"lock": func() error {
-			lock, err := acquireDaemonLifecycleLock()
+			lock, err := daemonctl.AcquireDaemonLifecycleLock()
 			if lock != nil {
 				_ = lock.Close()
 			}
@@ -150,7 +151,7 @@ func TestPreviewLifecycleBindingStateDirErrorNeverBecomesDefault(t *testing.T) {
 		t.Fatal("setup: conflicting state selection resolved")
 	}
 	defaultBefore := lifecycleTreeSnapshot(t, defaultDir)
-	lock, err := acquireDaemonLifecycleLock()
+	lock, err := daemonctl.AcquireDaemonLifecycleLock()
 	if lock != nil {
 		_ = lock.Close()
 	}
@@ -174,7 +175,7 @@ func TestPreviewLifecycleBindingValidSelectionUsesSelectedState(t *testing.T) {
 					t.Fatalf("setup: %v", err)
 				}
 			}
-			lock, err := acquireDaemonLifecycleLock()
+			lock, err := daemonctl.AcquireDaemonLifecycleLock()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,10 +183,10 @@ func TestPreviewLifecycleBindingValidSelectionUsesSelectedState(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(state, "daemon.lock")); err != nil {
 				t.Errorf("lifecycle lock not in selected state: %v", err)
 			}
-			if got := wingPidPath(); got != filepath.Join(state, "wing.pid") {
+			if got := daemonctl.WingPidPath(); got != filepath.Join(state, "wing.pid") {
 				t.Errorf("wing pid path = %q, want selected state", got)
 			}
-			if got := roostLogPath(); got != filepath.Join(state, "roost.log") {
+			if got := daemonctl.RoostLogPath(); got != filepath.Join(state, "roost.log") {
 				t.Errorf("roost log path = %q, want selected state", got)
 			}
 			if _, err := os.Stat(config.DefaultDir()); !os.IsNotExist(err) {
@@ -204,7 +205,7 @@ func TestPreviewLifecycleBindingStableDefaultUnchanged(t *testing.T) {
 	t.Setenv("WINGTHING_DIR", "")
 	t.Setenv("WINGTHING_PREVIEW_DIR", "")
 	want := filepath.Join(home, ".wingthing")
-	lock, err := acquireDaemonLifecycleLock()
+	lock, err := daemonctl.AcquireDaemonLifecycleLock()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,10 +213,10 @@ func TestPreviewLifecycleBindingStableDefaultUnchanged(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(want, "daemon.lock")); err != nil {
 		t.Errorf("stable lifecycle lock not in default state: %v", err)
 	}
-	if got := wingPidPath(); got != filepath.Join(want, "wing.pid") {
+	if got := daemonctl.WingPidPath(); got != filepath.Join(want, "wing.pid") {
 		t.Errorf("stable wing pid path = %q, want %q", got, filepath.Join(want, "wing.pid"))
 	}
-	if got := roostArgsPath(); got != filepath.Join(want, "roost.args") {
+	if got := daemonctl.RoostArgsPath(); got != filepath.Join(want, "roost.args") {
 		t.Errorf("stable roost args path = %q", got)
 	}
 }

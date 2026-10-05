@@ -23,6 +23,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
@@ -199,20 +200,20 @@ func stopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the daemon (alias for wt wing stop / wt daemon stop)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			lifecycleLock, lockErr := acquireDaemonLifecycleLock()
+			lifecycleLock, lockErr := daemonctl.AcquireDaemonLifecycleLock()
 			if lockErr != nil {
 				return lockErr
 			}
 			defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
-			pid, kind, err := readDaemon()
+			pid, kind, err := daemonctl.ReadDaemon()
 			if err != nil {
 				return fmt.Errorf("no wing daemon running")
 			}
-			if err := stopDaemonAndWait(pid, kind, 5*time.Second); err != nil {
+			if err := daemonctl.StopDaemonAndWait(pid, kind, 5*time.Second); err != nil {
 				return err
 			}
 			// Clean up both wing and roost pid/args files
-			if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), roostPidPath(), roostArgsPath()); err != nil {
+			if err := cmdutil.RemoveFiles(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.RoostPidPath(), daemonctl.RoostArgsPath()); err != nil {
 				return fmt.Errorf("remove daemon metadata: %w", err)
 			}
 			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
@@ -1275,7 +1276,7 @@ func loginCmd() *cobra.Command {
 			}
 
 			// If a daemon was running, restart it so it picks up the new token
-			if err := restartWingDaemonIfRunning(); err != nil {
+			if err := daemonctl.RestartWingDaemonIfRunning(); err != nil {
 				fmt.Printf("warning: failed to restart wing daemon: %v\n", err)
 			}
 			return nil
@@ -1312,19 +1313,19 @@ func logoutCmd() *cobra.Command {
 				return err
 			}
 
-			lifecycleLock, lockErr := acquireDaemonLifecycleLock()
+			lifecycleLock, lockErr := daemonctl.AcquireDaemonLifecycleLock()
 			if lockErr != nil {
 				return lockErr
 			}
 			defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
 
 			// Stop wing daemon if running (prevents orphaned daemon with revoked token)
-			if pid, kind, pidErr := readDaemon(); pidErr == nil {
+			if pid, kind, pidErr := daemonctl.ReadDaemon(); pidErr == nil {
 				fmt.Printf("stopping wing daemon (pid %d)...\n", pid)
-				if stopErr := stopDaemonAndWait(pid, kind, 5*time.Second); stopErr != nil {
+				if stopErr := daemonctl.StopDaemonAndWait(pid, kind, 5*time.Second); stopErr != nil {
 					return fmt.Errorf("refusing to delete login while daemon is still running: %w", stopErr)
 				}
-				if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), roostPidPath(), roostArgsPath()); err != nil {
+				if err := cmdutil.RemoveFiles(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.RoostPidPath(), daemonctl.RoostArgsPath()); err != nil {
 					return fmt.Errorf("remove stopped daemon metadata: %w", err)
 				}
 			}
@@ -1338,132 +1339,6 @@ func logoutCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// restartWingDaemonIfRunning stops the running wing daemon and starts a new one
-// with the same args so it picks up the new auth token.
-func restartWingDaemonIfRunning() error {
-	lifecycleLock, lockErr := acquireDaemonLifecycleLock()
-	if lockErr != nil {
-		return lockErr
-	}
-	defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
-
-	pid, err := readPidFrom(wingPidPath(), wingDaemon)
-	if err != nil {
-		if daemonAbsentError(err) {
-			return nil // no standalone wing daemon running, nothing to do
-		}
-		return fmt.Errorf("inspect wing daemon state: %w", err)
-	}
-
-	// Read saved args so we can restart with same flags
-	argsData, err := os.ReadFile(wingArgsPath())
-	if err != nil {
-		return fmt.Errorf("can't read wing.args (stop and restart manually: wt stop && wt start): %w", err)
-	}
-	savedArgs, err := parseSavedDaemonArgs(argsData, wingDaemon)
-	if err != nil {
-		return fmt.Errorf("can't use wing.args (stop and restart manually: wt stop && wt start): %w", err)
-	}
-
-	// Stop the old daemon
-	fmt.Printf("restarting wing daemon (pid %d)...\n", pid)
-	if err := stopDaemonAndWait(pid, wingDaemon, 5*time.Second); err != nil {
-		return fmt.Errorf("refusing to start a competing daemon: %w", err)
-	}
-	if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
-		return fmt.Errorf("remove stopped daemon metadata: %w", err)
-	}
-
-	// Start new daemon with same args
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("find executable: %w", err)
-	}
-
-	if err := rotateLog(wingLogPath()); err != nil {
-		return err
-	}
-	logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return fmt.Errorf("open log: %w", err)
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		cmdutil.CloseWithLog("wing log", logFile)
-		return fmt.Errorf("resolve user home: %w", err)
-	}
-	child := exec.Command(exe, savedArgs...)
-	child.Dir = home
-	child.Stdout = logFile
-	child.Stderr = logFile
-	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-
-	if err := child.Start(); err != nil {
-		cmdutil.CloseWithLog("wing log", logFile)
-		return fmt.Errorf("start daemon: %w", err)
-	}
-	cmdutil.CloseWithLog("wing log", logFile)
-
-	if err := writeDaemonMetadata(wingPidPath(), wingArgsPath(), child.Process.Pid, savedArgs); err != nil {
-		abandonStartedDaemon(child)
-		return fmt.Errorf("restart daemon: %w", err)
-	}
-
-	result := waitForWingStatus(child.Process.Pid, 5*time.Second)
-	switch result {
-	case "connected":
-		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
-		fmt.Printf("  relay: connected\n")
-	case "auth_failed":
-		abandonStartedDaemon(child)
-		if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
-			return errors.Join(fmt.Errorf("wing daemon restarted but auth failed — run: wt logout && wt login"), fmt.Errorf("remove failed daemon metadata: %w", err))
-		}
-		return fmt.Errorf("wing daemon restarted but auth failed — run: wt logout && wt login")
-	default:
-		fmt.Printf("wing daemon restarted (pid %d)\n", child.Process.Pid)
-		fmt.Printf("  relay: connecting...\n")
-	}
-	if err := child.Process.Release(); err != nil {
-		log.Printf("warning: failed to release restarted daemon process handle: %v", err)
-	}
-	return nil
-}
-
-func wingRoostFlags(args []string) (roost string, local bool) {
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		switch {
-		case arg == "--local":
-			local = true
-		case arg == "--roost" && index+1 < len(args):
-			index++
-			roost = args[index]
-		case strings.HasPrefix(arg, "--roost="):
-			roost = strings.TrimPrefix(arg, "--roost=")
-		}
-	}
-	return roost, local
-}
-
-// activeWingRelayHTTPURL uses the exact coordinator recorded by a new daemon,
-// then falls back to saved launch args for an already-running older daemon.
-func activeWingRelayHTTPURL(cfg *config.Config, status *wingStatus) string {
-	if status != nil && status.RoostURL != "" {
-		if relayURL := wingpolicy.RelayMetadataURL(status.RoostURL); relayURL != "" {
-			return relayURL
-		}
-	}
-	if data, err := os.ReadFile(wingArgsPath()); err == nil {
-		if args, parseErr := parseSavedDaemonArgs(data, wingDaemon); parseErr == nil {
-			roost, local := wingRoostFlags(args)
-			return wingpolicy.ResolveWingRelayHTTPURL(cfg, roost, local)
-		}
-	}
-	return wingpolicy.ResolveWingRelayHTTPURL(cfg, "", false)
 }
 
 // formatUserIdentity formats a user identity string from auth.UserInfo.
@@ -1556,7 +1431,7 @@ func supportCmd() *cobra.Command {
 				"version":   version,
 				"timestamp": time.Now().UTC().Format(time.RFC3339),
 			}
-			if pid, pidErr := readPid(); pidErr == nil {
+			if pid, pidErr := daemonctl.ReadPid(); pidErr == nil {
 				meta["daemon_pid"] = pid
 			}
 			tok, _ := auth.NewTokenStore(cfg.Dir).Load()
@@ -1564,8 +1439,8 @@ func supportCmd() *cobra.Command {
 				meta["token_expires_at"] = tok.ExpiresAt
 				meta["token_device_id"] = tok.DeviceID
 			}
-			var currentWingStatus *wingStatus
-			if status, statusErr := readWingStatus(); statusErr == nil {
+			var currentWingStatus *daemonctl.WingStatus
+			if status, statusErr := daemonctl.ReadWingStatus(); statusErr == nil {
 				currentWingStatus = status
 				meta["wing_status"] = status.State
 				if roostURL := wingpolicy.RelayMetadataURL(status.RoostURL); roostURL != "" {
@@ -1577,7 +1452,7 @@ func supportCmd() *cobra.Command {
 			}
 			// Try whoami
 			if tok != nil {
-				relayURL := activeWingRelayHTTPURL(cfg, currentWingStatus)
+				relayURL := daemonctl.ActiveWingRelayHTTPURL(cfg, currentWingStatus)
 				if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
 					meta["account"] = formatUserIdentity(info)
 				} else {
@@ -1593,7 +1468,7 @@ func supportCmd() *cobra.Command {
 			}
 
 			// wing.log (last 10000 lines)
-			if err := addZipTail(zw, "wing.log", wingLogPath(), 10000); err != nil {
+			if err := addZipTail(zw, "wing.log", daemonctl.WingLogPath(), 10000); err != nil {
 				return err
 			}
 
@@ -1619,7 +1494,7 @@ func supportCmd() *cobra.Command {
 			}
 
 			// wing.status
-			if err := addZipCopy(zw, "wing.status", wingStatusPath()); err != nil {
+			if err := addZipCopy(zw, "wing.status", daemonctl.WingStatusPath()); err != nil {
 				return err
 			}
 

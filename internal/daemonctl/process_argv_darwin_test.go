@@ -1,6 +1,6 @@
 //go:build darwin
 
-package main
+package daemonctl
 
 import (
 	"os"
@@ -41,7 +41,7 @@ func TestInspectDaemonPidPreservesExecutablePathSpacesOnDarwin(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		matches, err := inspectDaemonPid(child.Process.Pid, wingDaemon)
+		matches, err := inspectDaemonPid(child.Process.Pid, WingDaemon)
 		if err == nil && matches {
 			return
 		}

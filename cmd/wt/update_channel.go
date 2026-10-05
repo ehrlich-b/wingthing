@@ -16,6 +16,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
 )
 
@@ -78,7 +79,7 @@ func acquireUpdateLifecycleLock() (*os.File, error) {
 	if err := validateUpdateState(); err != nil {
 		return nil, err
 	}
-	return acquireDaemonLifecycleLock()
+	return daemonctl.AcquireDaemonLifecycleLock()
 }
 
 func validateChannelUpdatePath(path string) error {
@@ -180,12 +181,12 @@ func updatePreviewFile(ctx context.Context, source, manifest string) (runErr err
 		return err
 	}
 	if state != nil {
-		if err := stopDaemonAndWait(state.pid, state.kind, 5*time.Second); err != nil {
+		if err := daemonctl.StopDaemonAndWait(state.pid, state.kind, 5*time.Second); err != nil {
 			return fmt.Errorf("preview replaced but restart failed: %w", err)
 		}
-		paths := []string{wingPidPath(), wingArgsPath(), wingStatusPath()}
-		if state.kind == roostDaemon {
-			paths = []string{roostPidPath(), roostArgsPath()}
+		paths := []string{daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.WingStatusPath()}
+		if state.kind == daemonctl.RoostDaemon {
+			paths = []string{daemonctl.RoostPidPath(), daemonctl.RoostArgsPath()}
 		}
 		if err := cmdutil.RemoveFiles(paths...); err != nil {
 			return err

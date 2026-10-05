@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 )
 
 const failedEggLogBytes = 64 << 10
@@ -46,7 +48,7 @@ func preserveEggFailure(dir string, failure error) (string, error) {
 	}
 	tail = append(tail, []byte("\nEgg startup failure: "+reason+"\n")...)
 	path := filepath.Join(dir, "egg.failed.log")
-	if err := writeAtomicMetadataFile(path, tail, 0600); err != nil {
+	if err := daemonctl.WriteAtomicMetadataFile(path, tail, 0600); err != nil {
 		return "", err
 	}
 	return path, nil

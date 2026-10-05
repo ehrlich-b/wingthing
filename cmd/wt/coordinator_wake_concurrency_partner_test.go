@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
@@ -393,7 +394,7 @@ func TestOpusWakeRecoveryCompetingControllersShareOneRootLock(t *testing.T) {
 	// a separate controller process would. Closing it is what the kernel does at
 	// holder exit. No process is spawned, signaled or killed.
 	h.appendHook(t, alphaChild.SessionID, "completed")
-	foreign, err := acquireDaemonLifecycleLockAt(h.lockPath(alpha.ID))
+	foreign, err := daemonctl.AcquireDaemonLifecycleLockAt(h.lockPath(alpha.ID))
 	if err != nil {
 		t.Fatal(err)
 	}

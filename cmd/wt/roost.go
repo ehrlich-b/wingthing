@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/relay"
@@ -93,7 +94,7 @@ func roostStartCmd() *cobra.Command {
 			var lifecycleLock *os.File
 			if !foregroundFlag {
 				var err error
-				lifecycleLock, err = acquireDaemonLifecycleLock()
+				lifecycleLock, err = daemonctl.AcquireDaemonLifecycleLock()
 				if err != nil {
 					return err
 				}
@@ -113,12 +114,12 @@ func roostStartCmd() *cobra.Command {
 			if !foregroundFlag {
 				// Check before the trust ceremony so a failed duplicate start has
 				// no certificate or trust-store side effects.
-				if pid, kind, err := readDaemon(); err == nil {
-					if kind == roostDaemon {
+				if pid, kind, err := daemonctl.ReadDaemon(); err == nil {
+					if kind == daemonctl.RoostDaemon {
 						return fmt.Errorf("roost daemon already running (pid %d)", pid)
 					}
 					return fmt.Errorf("wing daemon already running (pid %d) — stop it first with: wt stop", pid)
-				} else if !errors.Is(err, errNoDaemonRunning) {
+				} else if !errors.Is(err, daemonctl.ErrNoDaemonRunning) {
 					return fmt.Errorf("inspect daemon state: %w", err)
 				}
 			}
@@ -174,10 +175,10 @@ func roostStartCmd() *cobra.Command {
 				childArgs = append(childArgs, "--debug")
 			}
 
-			if err := rotateLog(roostLogPath()); err != nil {
+			if err := daemonctl.RotateLog(daemonctl.RoostLogPath()); err != nil {
 				return err
 			}
-			logFile, err := os.OpenFile(roostLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			logFile, err := os.OpenFile(daemonctl.RoostLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 			if err != nil {
 				return fmt.Errorf("open log: %w", err)
 			}
@@ -208,29 +209,29 @@ func roostStartCmd() *cobra.Command {
 				return fmt.Errorf("start daemon: %w", err)
 			}
 			if err := readyWriter.Close(); err != nil {
-				abandonStartedDaemon(child)
+				daemonctl.AbandonStartedDaemon(child)
 				cmdutil.CloseWithLog("roost readiness reader", readyReader)
 				cmdutil.CloseWithLog("roost log", logFile)
 				return fmt.Errorf("close parent readiness writer: %w", err)
 			}
 			if err := logFile.Close(); err != nil {
-				abandonStartedDaemon(child)
+				daemonctl.AbandonStartedDaemon(child)
 				cmdutil.CloseWithLog("roost readiness reader", readyReader)
 				return fmt.Errorf("close roost log: %w", err)
 			}
 			if err := awaitRoostReady(readyReader, roostDaemonReadyTimeout); err != nil {
-				abandonStartedDaemon(child)
-				return fmt.Errorf("roost daemon did not become ready: %w (see %s)", err, roostLogPath())
+				daemonctl.AbandonStartedDaemon(child)
+				return fmt.Errorf("roost daemon did not become ready: %w (see %s)", err, daemonctl.RoostLogPath())
 			}
-			if err := writeDaemonMetadata(roostPidPath(), roostArgsPath(), child.Process.Pid, childArgs); err != nil {
-				abandonStartedDaemon(child)
+			if err := daemonctl.WriteDaemonMetadata(daemonctl.RoostPidPath(), daemonctl.RoostArgsPath(), child.Process.Pid, childArgs); err != nil {
+				daemonctl.AbandonStartedDaemon(child)
 				return fmt.Errorf("start roost daemon: %w", err)
 			}
 			if err := child.Process.Release(); err != nil {
 				log.Printf("warning: failed to release daemon process handle: %v", err)
 			}
 			fmt.Printf("roost daemon started (pid %d)\n", child.Process.Pid)
-			fmt.Printf("  log: %s\n", roostLogPath())
+			fmt.Printf("  log: %s\n", daemonctl.RoostLogPath())
 			fmt.Println()
 			if localHTTPS != nil {
 				fmt.Printf("open %s to start a terminal\n", localHTTPS.URL)
@@ -461,12 +462,12 @@ func runRoostForeground(addrFlag string, devFlag bool, labelsFlag, pathsFlag, eg
 	// A status file from an earlier standalone wing or roost must not satisfy
 	// this process's readiness check. The new embedded wing will recreate it as
 	// it moves through connecting to connected.
-	_ = os.Remove(wingStatusPath())
+	_ = os.Remove(daemonctl.WingStatusPath())
 	wingErrCh := make(chan error, 1)
 	go func() {
 		wingErrCh <- runWingWithContext(ctx, sighupCh, localHTTPURL(addrFlag), labelsFlag, "auto", eggConfigFlag, orgFlag, nil, pathsFlag, debugFlag, auditFlag, true, false, hasAuth, embeddedWingToken)
 	}()
-	if err := awaitEmbeddedWingReady(ctx, wingErrCh, listeners.errCh, readWingStatus, roostWingReadyTimeout); err != nil {
+	if err := awaitEmbeddedWingReady(ctx, wingErrCh, listeners.errCh, daemonctl.ReadWingStatus, roostWingReadyTimeout); err != nil {
 		_ = listeners.Shutdown(srv, 8*time.Second)
 		return fmt.Errorf("embedded wing did not become ready: %w", err)
 	}
@@ -565,7 +566,7 @@ func signalRoostReady() (resultErr error) {
 	return nil
 }
 
-func awaitEmbeddedWingReady(ctx context.Context, wingErrors <-chan error, relayErrors <-chan namedServerError, readStatus func() (*wingStatus, error), timeout time.Duration) error {
+func awaitEmbeddedWingReady(ctx context.Context, wingErrors <-chan error, relayErrors <-chan namedServerError, readStatus func() (*daemonctl.WingStatus, error), timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	ticker := time.NewTicker(25 * time.Millisecond)
@@ -641,19 +642,19 @@ func roostStopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the roost daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			lifecycleLock, lockErr := acquireDaemonLifecycleLock()
+			lifecycleLock, lockErr := daemonctl.AcquireDaemonLifecycleLock()
 			if lockErr != nil {
 				return lockErr
 			}
 			defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
-			pid, err := readPidFrom(roostPidPath(), roostDaemon)
+			pid, err := daemonctl.ReadPidFrom(daemonctl.RoostPidPath(), daemonctl.RoostDaemon)
 			if err != nil {
 				return fmt.Errorf("no roost daemon running")
 			}
-			if err := stopDaemonAndWait(pid, roostDaemon, 5*time.Second); err != nil {
+			if err := daemonctl.StopDaemonAndWait(pid, daemonctl.RoostDaemon, 5*time.Second); err != nil {
 				return err
 			}
-			if err := cmdutil.RemoveFiles(roostPidPath(), roostArgsPath()); err != nil {
+			if err := cmdutil.RemoveFiles(daemonctl.RoostPidPath(), daemonctl.RoostArgsPath()); err != nil {
 				return fmt.Errorf("remove roost daemon metadata: %w", err)
 			}
 			fmt.Printf("roost daemon stopped (pid %d)\n", pid)
@@ -667,16 +668,16 @@ func roostStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Check roost daemon status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pid, err := readPidFrom(roostPidPath(), roostDaemon)
+			pid, err := daemonctl.ReadPidFrom(daemonctl.RoostPidPath(), daemonctl.RoostDaemon)
 			if err != nil {
-				if daemonAbsentError(err) {
+				if daemonctl.DaemonAbsentError(err) {
 					fmt.Println("roost daemon is not running")
 					return nil
 				}
 				return fmt.Errorf("inspect roost daemon state: %w", err)
 			}
 			fmt.Printf("roost daemon is running (pid %d)\n", pid)
-			fmt.Printf("  log: %s\n", roostLogPath())
+			fmt.Printf("  log: %s\n", daemonctl.RoostLogPath())
 
 			cfg, _ := config.Load()
 			if cfg != nil {

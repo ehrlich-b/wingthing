@@ -13,6 +13,7 @@ import (
 
 	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -127,7 +128,7 @@ func (r *providerResumeRegistry) reserveWithAlive(cfg *config.Config, home, agen
 		return nil, fmt.Errorf("create resume reservation: %w", err)
 	}
 	metadataPath := filepath.Join(sessionDir, providerResumeMetadataFile)
-	if err := writeAtomicMetadataFile(metadataPath, providerResumeMetadata(key, sourceSessionID), 0o600); err != nil {
+	if err := daemonctl.WriteAtomicMetadataFile(metadataPath, providerResumeMetadata(key, sourceSessionID), 0o600); err != nil {
 		return nil, fmt.Errorf("persist resume reservation: %w", err)
 	}
 	r.active[key] = wingSessionID

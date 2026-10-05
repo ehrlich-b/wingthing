@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 )
 
 func TestAwaitRoostReadyRequiresExactToken(t *testing.T) {
@@ -114,12 +116,12 @@ func TestSignalRoostReadyRejectsInvalidDescriptor(t *testing.T) {
 
 func TestAwaitEmbeddedWingReadyRequiresConnectedStatus(t *testing.T) {
 	reads := 0
-	err := awaitEmbeddedWingReady(context.Background(), make(chan error), make(chan namedServerError), func() (*wingStatus, error) {
+	err := awaitEmbeddedWingReady(context.Background(), make(chan error), make(chan namedServerError), func() (*daemonctl.WingStatus, error) {
 		reads++
 		if reads == 1 {
-			return &wingStatus{State: "connecting"}, nil
+			return &daemonctl.WingStatus{State: "connecting"}, nil
 		}
-		return &wingStatus{State: "connected"}, nil
+		return &daemonctl.WingStatus{State: "connected"}, nil
 	}, time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +135,7 @@ func TestAwaitEmbeddedWingReadyReportsEarlyFailures(t *testing.T) {
 	t.Run("wing", func(t *testing.T) {
 		wingErrors := make(chan error, 1)
 		wingErrors <- errors.New("authentication transport failed")
-		err := awaitEmbeddedWingReady(context.Background(), wingErrors, make(chan namedServerError), func() (*wingStatus, error) {
+		err := awaitEmbeddedWingReady(context.Background(), wingErrors, make(chan namedServerError), func() (*daemonctl.WingStatus, error) {
 			return nil, os.ErrNotExist
 		}, time.Second)
 		if err == nil || !strings.Contains(err.Error(), "authentication transport failed") {
@@ -143,7 +145,7 @@ func TestAwaitEmbeddedWingReadyReportsEarlyFailures(t *testing.T) {
 	t.Run("relay", func(t *testing.T) {
 		relayErrors := make(chan namedServerError, 1)
 		relayErrors <- namedServerError{listener: "browser HTTPS", err: os.ErrPermission}
-		err := awaitEmbeddedWingReady(context.Background(), make(chan error), relayErrors, func() (*wingStatus, error) {
+		err := awaitEmbeddedWingReady(context.Background(), make(chan error), relayErrors, func() (*daemonctl.WingStatus, error) {
 			return nil, os.ErrNotExist
 		}, time.Second)
 		if err == nil || !strings.Contains(err.Error(), "browser HTTPS") {
@@ -151,8 +153,8 @@ func TestAwaitEmbeddedWingReadyReportsEarlyFailures(t *testing.T) {
 		}
 	})
 	t.Run("auth status", func(t *testing.T) {
-		err := awaitEmbeddedWingReady(context.Background(), make(chan error), make(chan namedServerError), func() (*wingStatus, error) {
-			return &wingStatus{State: "auth_failed", Error: "token rejected"}, nil
+		err := awaitEmbeddedWingReady(context.Background(), make(chan error), make(chan namedServerError), func() (*daemonctl.WingStatus, error) {
+			return &daemonctl.WingStatus{State: "auth_failed", Error: "token rejected"}, nil
 		}, time.Second)
 		if err == nil || !strings.Contains(err.Error(), "token rejected") {
 			t.Fatalf("error = %v", err)
@@ -161,8 +163,8 @@ func TestAwaitEmbeddedWingReadyReportsEarlyFailures(t *testing.T) {
 }
 
 func TestAwaitEmbeddedWingReadyTimesOut(t *testing.T) {
-	err := awaitEmbeddedWingReady(context.Background(), make(chan error), make(chan namedServerError), func() (*wingStatus, error) {
-		return &wingStatus{State: "connecting"}, nil
+	err := awaitEmbeddedWingReady(context.Background(), make(chan error), make(chan namedServerError), func() (*daemonctl.WingStatus, error) {
+		return &daemonctl.WingStatus{State: "connecting"}, nil
 	}, 10*time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("error = %v", err)

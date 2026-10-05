@@ -23,6 +23,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
@@ -1074,7 +1075,7 @@ func prepareIsolatedClaudeConfig(home string, envMap map[string]string) error {
 			if err := os.MkdirAll(claudeDir, 0700); err != nil {
 				return fmt.Errorf("prepare Claude config directory: %w", err)
 			}
-			if err := writeAtomicMetadataFile(newCfg, data, 0600); err != nil {
+			if err := daemonctl.WriteAtomicMetadataFile(newCfg, data, 0600); err != nil {
 				return fmt.Errorf("migrate Claude config: %w", err)
 			}
 		} else if legacyErr != nil && !errors.Is(legacyErr, os.ErrNotExist) {
@@ -1387,7 +1388,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// Keep the exact execution/provider reference inspectable even when startup
 	// fails before the provider process or its endpoint becomes available.
 	meta := fmt.Sprintf("agent=%s\nkind=%s\ncwd=%s\nprovider_session_id=%s\nprovider_home=%s\n", agentName, o.Kind, cwd, providerSessionID, effectiveHome)
-	if err := writeAtomicMetadataFile(filepath.Join(dir, "egg.meta"), []byte(meta), 0600); err != nil {
+	if err := daemonctl.WriteAtomicMetadataFile(filepath.Join(dir, "egg.meta"), []byte(meta), 0600); err != nil {
 		return nil, fmt.Errorf("persist startup identity: %w", err)
 	}
 	var releaseProviderSession func(bool)
@@ -1597,7 +1598,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				if err != nil {
 					return nil, fmt.Errorf("encode agent settings: %w", err)
 				}
-				if err := writeAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
+				if err := daemonctl.WriteAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
 					return nil, fmt.Errorf("write agent settings: %w", err)
 				}
 			}
@@ -1723,7 +1724,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	providerProcessStarted = true
 	if err := logFile.Close(); err != nil {
-		abandonStartedDaemon(child)
+		daemonctl.AbandonStartedDaemon(child)
 		providerProcessStarted = false
 		return nil, fmt.Errorf("close egg log: %w", err)
 	}
@@ -1739,7 +1740,7 @@ func spawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 	}
 
-	abandonStartedDaemon(child)
+	daemonctl.AbandonStartedDaemon(child)
 	providerProcessStarted = false
 	failure := errors.New("egg did not start within 5s")
 	diagnostic, diagnosticErr := preserveEggFailure(dir, failure)
@@ -1889,7 +1890,7 @@ func setupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 	if err := os.MkdirAll(effectiveHome, 0700); err != nil {
 		return fmt.Errorf("prepare API key helper directory: %w", err)
 	}
-	if err := writeAtomicMetadataFile(keyFile, []byte(v), 0400); err != nil {
+	if err := daemonctl.WriteAtomicMetadataFile(keyFile, []byte(v), 0400); err != nil {
 		return fmt.Errorf("write API key helper: %w", err)
 	}
 	agentProfile := egg.Profile(agentName)
@@ -1917,7 +1918,7 @@ func setupAPIKeyHelper(agentName string, envMap map[string]string, effectiveHome
 	if err != nil {
 		return fmt.Errorf("encode API key settings: %w", err)
 	}
-	if err := writeAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
+	if err := daemonctl.WriteAtomicMetadataFile(settingsDst, append(data, '\n'), 0644); err != nil {
 		return fmt.Errorf("write API key settings: %w", err)
 	}
 	return nil

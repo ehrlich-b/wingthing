@@ -37,6 +37,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/control"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	directpkg "github.com/ehrlich-b/wingthing/internal/direct"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -787,471 +788,6 @@ func sendReplayChunked(sessionID string, raw []byte, gcm cipher.AEAD, write ws.P
 	sendReplayChunkedTagged(sessionID, "", raw, gcm, write)
 }
 
-// daemonStateDir selects the state that owns daemon pid/args/log/status and
-// the lifecycle lock. It never substitutes DefaultDir for a selection that
-// failed: an unresolvable StateDir is an error, and a selected preview state
-// that cannot load (for example an invalid provider binding) returns its own
-// directory with the load error so lifecycle mutations fail closed.
-func daemonStateDir() (string, error) {
-	cfg, loadErr := config.Load()
-	if loadErr == nil {
-		return cfg.Dir, nil
-	}
-	dir, err := config.StateDir()
-	if err != nil {
-		return "", err
-	}
-	if config.Channel() == "preview" {
-		return dir, loadErr
-	}
-	return dir, nil
-}
-
-// daemonStatePath is empty when no state can be selected. Lifecycle
-// mutations never reach it then: acquireDaemonLifecycleLock refuses first.
-func daemonStatePath(name string) string {
-	dir, _ := daemonStateDir()
-	if dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, name)
-}
-
-func wingPidPath() string {
-	return daemonStatePath("wing.pid")
-}
-
-const maxLogSize = 1 << 20 // 1MB
-
-// rotateLog rotates path when it exceeds maxLogSize.
-// Chain: .log -> .log.1 -> .log.2.gz -> deleted
-func rotateLog(path string) error {
-	info, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) || (err == nil && info.Size() < maxLogSize) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect log for rotation: %w", err)
-	}
-
-	// Delete oldest (.log.2.gz)
-	if err := cmdutil.RemoveIfExists(path + ".2.gz"); err != nil {
-		return fmt.Errorf("remove oldest rotated log: %w", err)
-	}
-
-	// Compress .log.1 -> .log.2.gz
-	if data, err := os.ReadFile(path + ".1"); err == nil {
-		if gz, err := os.Create(path + ".2.gz"); err == nil {
-			w := gzip.NewWriter(gz)
-			if _, werr := w.Write(data); werr != nil {
-				cmdutil.CloseWithLog("rotated gzip stream", w)
-				cmdutil.CloseWithLog("rotated log", gz)
-				return fmt.Errorf("compress rotated log: %w", werr)
-			}
-			if err := w.Close(); err != nil {
-				cmdutil.CloseWithLog("rotated log", gz)
-				return fmt.Errorf("finish rotated log compression: %w", err)
-			}
-			if err := gz.Close(); err != nil {
-				return fmt.Errorf("close rotated log: %w", err)
-			}
-			if err := cmdutil.RemoveIfExists(path + ".1"); err != nil {
-				return fmt.Errorf("remove compressed source log: %w", err)
-			}
-		} else {
-			return fmt.Errorf("create compressed rotated log: %w", err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read rotated log: %w", err)
-	}
-
-	// Rotate current -> .log.1
-	if err := os.Rename(path, path+".1"); err != nil {
-		return fmt.Errorf("rotate current log: %w", err)
-	}
-	return nil
-}
-
-func wingArgsPath() string {
-	return daemonStatePath("wing.args")
-}
-
-func wingLogPath() string {
-	return daemonStatePath("wing.log")
-}
-
-func wingStatusPath() string {
-	return daemonStatePath("wing.status")
-}
-
-// wingStatus is the JSON schema for wing.status.
-type wingStatus struct {
-	State    string `json:"state"` // connecting, connected, auth_failed, disconnected
-	Error    string `json:"error,omitempty"`
-	TS       string `json:"ts"`
-	RoostURL string `json:"roost_url,omitempty"`
-}
-
-func writeWingStatus(state, lastErr string) {
-	writeWingStatusForRoost(state, lastErr, "")
-}
-
-func writeWingStatusForRoost(state, lastErr, roostURL string) {
-	s := wingStatus{
-		State:    state,
-		Error:    lastErr,
-		TS:       time.Now().UTC().Format(time.RFC3339),
-		RoostURL: wingpolicy.RelayMetadataURL(roostURL),
-	}
-	data, err := json.Marshal(s)
-	if err != nil {
-		log.Printf("encode wing status: %v", err)
-		return
-	}
-	// A custom coordinator URL can itself carry deployment metadata. Keep the
-	// status private just like the saved daemon arguments that selected it.
-	if err := writeAtomicMetadataFile(wingStatusPath(), data, 0600); err != nil {
-		log.Printf("write wing status: %v", err)
-	}
-}
-
-func readWingStatus() (*wingStatus, error) {
-	data, err := os.ReadFile(wingStatusPath())
-	if err != nil {
-		return nil, err
-	}
-	var s wingStatus
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
-// waitForWingStatus polls wing.status for up to timeout, returning the final state.
-// Returns "connected", "auth_failed", or "" (timeout/still connecting).
-func waitForWingStatus(pid int, timeout time.Duration) string {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		// Check if daemon died
-		if !procinfo.OwnedProcessIsAlive(pid) {
-			// Process exited — check final status
-			if s, err := readWingStatus(); err == nil {
-				return s.State
-			}
-			return "auth_failed" // daemon died, likely auth
-		}
-		if s, err := readWingStatus(); err == nil {
-			switch s.State {
-			case "connected", "auth_failed":
-				return s.State
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return ""
-}
-
-func roostPidPath() string {
-	return daemonStatePath("roost.pid")
-}
-
-func roostArgsPath() string {
-	return daemonStatePath("roost.args")
-}
-
-func roostLogPath() string {
-	return daemonStatePath("roost.log")
-}
-
-func writeDaemonMetadata(pidPath, argsPath string, pid int, args []string) error {
-	if err := writeAtomicMetadataFile(argsPath, []byte(strings.Join(args, "\n")), 0600); err != nil {
-		return fmt.Errorf("write daemon args: %w", err)
-	}
-	if err := writeAtomicMetadataFile(pidPath, []byte(strconv.Itoa(pid)), 0644); err != nil {
-		_ = os.Remove(argsPath)
-		return fmt.Errorf("write daemon pid: %w", err)
-	}
-	return nil
-}
-
-func writeAtomicMetadataFile(path string, data []byte, mode os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".wt-daemon-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer cmdutil.RemoveWithLog(tmpPath)
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer cmdutil.CloseWithLog("metadata directory", dir)
-	return dir.Sync()
-}
-
-func acquireDaemonLifecycleLock() (*os.File, error) {
-	dir, err := daemonStateDir()
-	if err != nil {
-		return nil, fmt.Errorf("select daemon state: %w", err)
-	}
-	return acquireDaemonLifecycleLockAt(filepath.Join(dir, "daemon.lock"))
-}
-
-func acquireDaemonLifecycleLockAt(path string) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("open daemon lifecycle lock: %w", err)
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = file.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return nil, fmt.Errorf("another daemon start/stop is already in progress")
-		}
-		return nil, fmt.Errorf("lock daemon lifecycle: %w", err)
-	}
-	return file, nil
-}
-
-// abandonStartedDaemon terminates and reaps a child whose startup could not be
-// committed to disk. This prevents a successful exec from becoming an
-// invisible daemon when readiness or metadata persistence fails.
-func abandonStartedDaemon(child *exec.Cmd) {
-	if child == nil || child.Process == nil {
-		return
-	}
-	_ = child.Process.Signal(syscall.SIGTERM)
-	done := make(chan struct{})
-	go func() {
-		_ = child.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		_ = child.Process.Kill()
-		<-done
-	}
-}
-
-type daemonKind string
-
-const (
-	wingDaemon  daemonKind = "wing"
-	roostDaemon daemonKind = "roost"
-)
-
-var (
-	errNoDaemonRunning = errors.New("no daemon running")
-	errStaleDaemonPID  = errors.New("stale daemon pid")
-)
-
-// readPidFrom reads a PID from a specific file and verifies that it still
-// identifies the expected wt foreground daemon. PIDs are recycled, so merely
-// finding a live same-UID process is not enough before callers send signals.
-func readPidFrom(path string, kind daemonKind) (int, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		_ = os.Remove(path)
-		return 0, fmt.Errorf("%w: invalid PID: %v", errStaleDaemonPID, err)
-	}
-	if !procinfo.OwnedProcessIsAlive(pid) {
-		_ = os.Remove(path)
-		return 0, errStaleDaemonPID
-	}
-	matches, inspectErr := inspectDaemonPid(pid, kind)
-	if inspectErr != nil {
-		return 0, inspectErr
-	}
-	if !matches {
-		_ = os.Remove(path)
-		return 0, errStaleDaemonPID
-	}
-	return pid, nil
-}
-
-// daemonPidMatches confirms the command shape emitted by wingStartCmd or
-// roostStartCmd. Failure to inspect argv fails closed: a status check may call
-// a daemon stopped, but stop/update will never signal an unconfirmed process.
-func inspectDaemonPid(pid int, kind daemonKind) (bool, error) {
-	argv, err := procinfo.ProcessArgv(pid)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
-			return false, nil
-		}
-		return false, fmt.Errorf("inspect %s daemon pid %d: %w", kind, pid, err)
-	}
-	return daemonArgvMatches(argv, kind), nil
-}
-
-func daemonArgvMatches(argv []string, kind daemonKind) bool {
-	if config.Channel() == "preview" {
-		exe, err := os.Executable()
-		if err != nil || len(argv) == 0 || wingpolicy.CanonicalPolicyPath(argv[0]) != wingpolicy.CanonicalPolicyPath(exe) {
-			return false
-		}
-	}
-	if len(argv) < 4 || argv[2] != "start" {
-		return false
-	}
-	switch kind {
-	case wingDaemon:
-		if argv[1] != "wing" && argv[1] != "daemon" {
-			return false
-		}
-	case roostDaemon:
-		if argv[1] != "roost" {
-			return false
-		}
-	default:
-		return false
-	}
-	for _, arg := range argv[3:] {
-		if arg == "--foreground" {
-			return true
-		}
-	}
-	return false
-}
-
-func parseSavedDaemonArgs(data []byte, kind daemonKind) ([]string, error) {
-	trimmed := strings.TrimSpace(string(data))
-	if trimmed == "" {
-		return nil, fmt.Errorf("empty daemon args")
-	}
-	args := strings.Split(trimmed, "\n")
-	executable := "wt"
-	if config.Channel() == "preview" {
-		var err error
-		executable, err = os.Executable()
-		if err != nil {
-			return nil, err
-		}
-	}
-	argv := append([]string{executable}, args...)
-	if !daemonArgvMatches(argv, kind) {
-		return nil, fmt.Errorf("saved args do not describe a %s foreground daemon", kind)
-	}
-	return args, nil
-}
-
-// readDaemon returns the one live daemon represented by local metadata. A
-// healthy installation cannot run a standalone wing and a roost at once. If
-// both metadata files identify live daemons, fail closed so lifecycle commands
-// do not stop an arbitrary half of the conflicting installation.
-func readDaemon() (int, daemonKind, error) {
-	wingPID, wingErr := readPidFrom(wingPidPath(), wingDaemon)
-	roostPID, roostErr := readPidFrom(roostPidPath(), roostDaemon)
-	if wingErr == nil && roostErr == nil {
-		return 0, "", fmt.Errorf("both wing (pid %d) and roost (pid %d) daemons are running", wingPID, roostPID)
-	}
-	if wingErr == nil {
-		if !daemonAbsentError(roostErr) {
-			return 0, "", roostErr
-		}
-		return wingPID, wingDaemon, nil
-	}
-	if roostErr == nil {
-		if !daemonAbsentError(wingErr) {
-			return 0, "", wingErr
-		}
-		return roostPID, roostDaemon, nil
-	}
-	if !daemonAbsentError(wingErr) {
-		return 0, "", wingErr
-	}
-	if !daemonAbsentError(roostErr) {
-		return 0, "", roostErr
-	}
-	return 0, "", errNoDaemonRunning
-}
-
-func daemonAbsentError(err error) bool {
-	return os.IsNotExist(err) || errors.Is(err, errStaleDaemonPID)
-}
-
-// readPid tries wing.pid first, then roost.pid. Returns the first live daemon PID.
-func readPid() (int, error) {
-	pid, _, err := readDaemon()
-	return pid, err
-}
-
-// stopDaemonAndWait revalidates the daemon command immediately before
-// signaling it, then waits until that specific daemon identity is gone. This
-// keeps the lifecycle lock meaningful: callers must not delete metadata and
-// allow a replacement to start while the old listener is still shutting down.
-func stopDaemonAndWait(pid int, kind daemonKind, timeout time.Duration) error {
-	if !procinfo.OwnedProcessIsAlive(pid) {
-		return nil
-	}
-	matches, inspectErr := inspectDaemonPid(pid, kind)
-	if inspectErr != nil {
-		return inspectErr
-	}
-	if !matches {
-		return nil
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("find %s daemon pid %d: %w", kind, pid, err)
-	}
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		if !procinfo.OwnedProcessIsAlive(pid) {
-			return nil
-		}
-		matches, inspectErr = inspectDaemonPid(pid, kind)
-		if inspectErr != nil {
-			return inspectErr
-		}
-		if !matches {
-			return nil
-		}
-		return fmt.Errorf("stop %s daemon pid %d: %w", kind, pid, err)
-	}
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if !procinfo.OwnedProcessIsAlive(pid) {
-			return nil
-		}
-		matches, inspectErr = inspectDaemonPid(pid, kind)
-		if inspectErr != nil {
-			return inspectErr
-		}
-		if !matches {
-			return nil
-		}
-		select {
-		case <-deadline.C:
-			return fmt.Errorf("%s daemon pid %d did not stop within %s", kind, pid, timeout)
-		case <-ticker.C:
-		}
-	}
-}
-
 func wingCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "daemon",
@@ -1295,16 +831,16 @@ func wingStartCmd() *cobra.Command {
 			if foregroundFlag {
 				return runWingForeground(cmd, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag, allowFlags, pathsFlag, debugFlag, auditFlag, localFlag, !rawReplayFlag)
 			}
-			lifecycleLock, err := acquireDaemonLifecycleLock()
+			lifecycleLock, err := daemonctl.AcquireDaemonLifecycleLock()
 			if err != nil {
 				return err
 			}
 			defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
 
 			// Daemon mode (default): re-exec detached, write PID file, return
-			if pid, _, err := readDaemon(); err == nil {
+			if pid, _, err := daemonctl.ReadDaemon(); err == nil {
 				return fmt.Errorf("wing daemon already running (pid %d)", pid)
-			} else if !errors.Is(err, errNoDaemonRunning) {
+			} else if !errors.Is(err, daemonctl.ErrNoDaemonRunning) {
 				return fmt.Errorf("inspect daemon state: %w", err)
 			}
 
@@ -1372,14 +908,14 @@ func wingStartCmd() *cobra.Command {
 			}
 
 			// Remove stale status from previous run
-			if err := cmdutil.RemoveIfExists(wingStatusPath()); err != nil {
+			if err := cmdutil.RemoveIfExists(daemonctl.WingStatusPath()); err != nil {
 				return fmt.Errorf("remove stale wing status: %w", err)
 			}
 
-			if err := rotateLog(wingLogPath()); err != nil {
+			if err := daemonctl.RotateLog(daemonctl.WingLogPath()); err != nil {
 				return err
 			}
-			logFile, err := os.OpenFile(wingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			logFile, err := os.OpenFile(daemonctl.WingLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 			if err != nil {
 				return fmt.Errorf("open log: %w", err)
 			}
@@ -1401,22 +937,22 @@ func wingStartCmd() *cobra.Command {
 				return fmt.Errorf("start daemon: %w", err)
 			}
 			if err := logFile.Close(); err != nil {
-				abandonStartedDaemon(child)
+				daemonctl.AbandonStartedDaemon(child)
 				return fmt.Errorf("close wing log: %w", err)
 			}
 
-			if err := writeDaemonMetadata(wingPidPath(), wingArgsPath(), child.Process.Pid, childArgs); err != nil {
-				abandonStartedDaemon(child)
+			if err := daemonctl.WriteDaemonMetadata(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), child.Process.Pid, childArgs); err != nil {
+				daemonctl.AbandonStartedDaemon(child)
 				return fmt.Errorf("start daemon: %w", err)
 			}
 
 			// Wait for daemon to report initial connection state
-			startupResult := waitForWingStatus(child.Process.Pid, 5*time.Second)
+			startupResult := daemonctl.WaitForWingStatus(child.Process.Pid, 5*time.Second)
 			switch startupResult {
 			case "auth_failed":
 				// Kill daemon, clean up
-				abandonStartedDaemon(child)
-				if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+				daemonctl.AbandonStartedDaemon(child)
+				if err := cmdutil.RemoveFiles(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.WingStatusPath()); err != nil {
 					return errors.Join(fmt.Errorf("login expired — run: wt login"), fmt.Errorf("remove failed daemon metadata: %w", err))
 				}
 				return fmt.Errorf("login expired — run: wt login")
@@ -1440,7 +976,7 @@ func wingStartCmd() *cobra.Command {
 					}
 				}
 			}
-			fmt.Printf("  log: %s\n", wingLogPath())
+			fmt.Printf("  log: %s\n", daemonctl.WingLogPath())
 			fmt.Println()
 			if cfgLoaded, cfgErr := config.Load(); cfgErr == nil {
 				browserURL := wingpolicy.RoostBrowserURL(wingpolicy.ResolveWingRelayHTTPURL(cfgLoaded, roostFlag, localFlag))
@@ -1476,7 +1012,7 @@ func wingStartCmd() *cobra.Command {
 func runWingForeground(cmd *cobra.Command, roostFlag, labelsFlag, convFlag, eggConfigFlag, orgFlag string, allowFlags []string, pathsFlag string, debug, audit, local, vte bool) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	defer cmdutil.RemoveWithLog(wingStatusPath())
+	defer cmdutil.RemoveWithLog(daemonctl.WingStatusPath())
 
 	sighupCh := make(chan os.Signal, 1)
 	signal.Notify(sighupCh, syscall.SIGHUP)
@@ -1828,7 +1364,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		if stateErr != nil {
 			errMsg = stateErr.Error()
 		}
-		writeWingStatusForRoost(state, errMsg, roostURL)
+		daemonctl.WriteWingStatusForRoost(state, errMsg, roostURL)
 		switch state {
 		case "auth_failed":
 			log.Printf("FATAL: relay rejected authentication — run: wt logout && wt login && wt start")
@@ -2195,19 +1731,19 @@ func wingStopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the wing daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			lifecycleLock, lockErr := acquireDaemonLifecycleLock()
+			lifecycleLock, lockErr := daemonctl.AcquireDaemonLifecycleLock()
 			if lockErr != nil {
 				return lockErr
 			}
 			defer cmdutil.CloseWithLog("daemon lifecycle lock", lifecycleLock)
-			pid, kind, err := readDaemon()
+			pid, kind, err := daemonctl.ReadDaemon()
 			if err != nil {
 				return fmt.Errorf("no wing daemon running")
 			}
-			if err := stopDaemonAndWait(pid, kind, 5*time.Second); err != nil {
+			if err := daemonctl.StopDaemonAndWait(pid, kind, 5*time.Second); err != nil {
 				return err
 			}
-			if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+			if err := cmdutil.RemoveFiles(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.WingStatusPath()); err != nil {
 				return fmt.Errorf("remove wing daemon metadata: %w", err)
 			}
 			fmt.Printf("wing daemon stopped (pid %d)\n", pid)
@@ -2221,9 +1757,9 @@ func wingStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Check wing daemon status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pid, err := readPid()
+			pid, err := daemonctl.ReadPid()
 			if err != nil {
-				if errors.Is(err, errNoDaemonRunning) {
+				if errors.Is(err, daemonctl.ErrNoDaemonRunning) {
 					fmt.Println("wing daemon is not running")
 					return nil
 				}
@@ -2232,12 +1768,12 @@ func wingStatusCmd() *cobra.Command {
 			fmt.Printf("wing daemon is running (pid %d)\n", pid)
 
 			cfg, _ := config.Load()
-			status, _ := readWingStatus()
+			status, _ := daemonctl.ReadWingStatus()
 
 			// Show account identity and relay verification
 			var relayVerified bool
 			if cfg != nil {
-				relayURL := activeWingRelayHTTPURL(cfg, status)
+				relayURL := daemonctl.ActiveWingRelayHTTPURL(cfg, status)
 				if tok, tokErr := auth.NewTokenStore(cfg.Dir).Load(); tokErr == nil && tok != nil {
 					if info, infoErr := auth.FetchUserInfo(relayURL, tok.Token); infoErr == nil {
 						fmt.Printf("  account: %s\n", formatUserIdentity(info))
@@ -2277,7 +1813,7 @@ func wingStatusCmd() *cobra.Command {
 			if cfg != nil {
 				fmt.Printf("  wing_id: %s\n", cfg.WingID)
 			}
-			fmt.Printf("  log: %s\n", wingLogPath())
+			fmt.Printf("  log: %s\n", daemonctl.WingLogPath())
 
 			// Show egg sessions from filesystem
 			if cfg != nil {
@@ -2533,7 +2069,7 @@ func wingAllowCmd() *cobra.Command {
 					if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 						return err
 					}
-					if err := signalDaemon(syscall.SIGHUP); err != nil {
+					if err := daemonctl.SignalDaemon(syscall.SIGHUP); err != nil {
 						return err
 					}
 				}
@@ -2609,7 +2145,7 @@ func wingAllowCmd() *cobra.Command {
 				display = keyB64[:12] + "..."
 			}
 			fmt.Printf("allowed %s\n", display)
-			return signalDaemon(syscall.SIGHUP)
+			return daemonctl.SignalDaemon(syscall.SIGHUP)
 		},
 	}
 	cmd.Flags().StringVar(&userIDFlag, "user-id", "", "relay user ID to allow")
@@ -2646,7 +2182,7 @@ func wingRevokeCmd() *cobra.Command {
 					return err
 				}
 				fmt.Printf("revoked all %d entries\n", count)
-				return signalDaemon(syscall.SIGHUP)
+				return daemonctl.SignalDaemon(syscall.SIGHUP)
 			}
 
 			if len(args) == 0 {
@@ -2694,29 +2230,11 @@ func wingRevokeCmd() *cobra.Command {
 				display = removed.Key[:12] + "..."
 			}
 			fmt.Printf("revoked: %s\n", display)
-			return signalDaemon(syscall.SIGHUP)
+			return daemonctl.SignalDaemon(syscall.SIGHUP)
 		},
 	}
 	cmd.Flags().Bool("all", false, "Revoke all entries from the allowlist")
 	return cmd
-}
-
-func signalDaemon(sig os.Signal) error {
-	pid, err := readPid()
-	if err != nil {
-		if daemonAbsentError(err) {
-			return nil
-		}
-		return fmt.Errorf("find daemon to signal: %w", err)
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("find daemon process %d: %w", pid, err)
-	}
-	if err := proc.Signal(sig); err != nil {
-		return fmt.Errorf("signal daemon process %d: %w", pid, err)
-	}
-	return nil
 }
 
 func wingLockCmd() *cobra.Command {
@@ -2766,7 +2284,7 @@ func wingLockCmd() *cobra.Command {
 			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 				return err
 			}
-			if err := signalDaemon(syscall.SIGHUP); err != nil {
+			if err := daemonctl.SignalDaemon(syscall.SIGHUP); err != nil {
 				return err
 			}
 			fmt.Println("wing locked")
@@ -2796,7 +2314,7 @@ func wingUnlockCmd() *cobra.Command {
 			if err := config.SaveWingConfig(cfg.Dir, wingCfg); err != nil {
 				return err
 			}
-			if err := signalDaemon(syscall.SIGHUP); err != nil {
+			if err := daemonctl.SignalDaemon(syscall.SIGHUP); err != nil {
 				return err
 			}
 			fmt.Println("wing unlocked")
@@ -2820,7 +2338,7 @@ func wingConfigCmd() *cobra.Command {
 			}
 
 			daemonStatus := "(daemon stopped)"
-			if _, err := readPid(); err == nil {
+			if _, err := daemonctl.ReadPid(); err == nil {
 				daemonStatus = "(daemon running)"
 			}
 
@@ -2996,7 +2514,7 @@ func wingConfigSetCmd() *cobra.Command {
 				return err
 			}
 
-			if err := signalDaemon(syscall.SIGHUP); err != nil {
+			if err := daemonctl.SignalDaemon(syscall.SIGHUP); err != nil {
 				return err
 			}
 

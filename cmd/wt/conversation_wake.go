@@ -14,6 +14,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
@@ -150,7 +151,7 @@ func conversationWakeText(cfg *config.Config, c *store.Conversation, w *store.Co
 // saved execution/provider. A resumed parent cannot receive a replacement send.
 func processConversationWake(ctx context.Context, s *localMCPServer, root string, runtime conversationWakeRuntime) error {
 	digest := sha256.Sum256([]byte(root))
-	lock, err := acquireDaemonLifecycleLockAt(filepath.Join(s.cfg.Dir, fmt.Sprintf("wake-%x.lock", digest[:8])))
+	lock, err := daemonctl.AcquireDaemonLifecycleLockAt(filepath.Join(s.cfg.Dir, fmt.Sprintf("wake-%x.lock", digest[:8])))
 	if err != nil {
 		return err
 	}

@@ -20,6 +20,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
 	"github.com/spf13/cobra"
 )
@@ -40,7 +41,7 @@ type ghAsset struct {
 
 type daemonUpdateState struct {
 	pid       int
-	kind      daemonKind
+	kind      daemonctl.DaemonKind
 	startArgs []string
 }
 
@@ -51,16 +52,16 @@ func daemonStateForUpdate() (*daemonUpdateState, error) {
 	if err := validateUpdateState(); err != nil {
 		return nil, err
 	}
-	pid, kind, err := readDaemon()
+	pid, kind, err := daemonctl.ReadDaemon()
 	if err != nil {
-		if errors.Is(err, errNoDaemonRunning) {
+		if errors.Is(err, daemonctl.ErrNoDaemonRunning) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	argsPath := wingArgsPath()
-	if kind == roostDaemon {
-		argsPath = roostArgsPath()
+	argsPath := daemonctl.WingArgsPath()
+	if kind == daemonctl.RoostDaemon {
+		argsPath = daemonctl.RoostArgsPath()
 	}
 	saved, err := os.ReadFile(argsPath)
 	if err != nil {
@@ -73,8 +74,8 @@ func daemonStateForUpdate() (*daemonUpdateState, error) {
 	return &daemonUpdateState{pid: pid, kind: kind, startArgs: startArgs}, nil
 }
 
-func daemonRestartArgs(saved []byte, kind daemonKind) ([]string, error) {
-	foregroundArgs, err := parseSavedDaemonArgs(saved, kind)
+func daemonRestartArgs(saved []byte, kind daemonctl.DaemonKind) ([]string, error) {
+	foregroundArgs, err := daemonctl.ParseSavedDaemonArgs(saved, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -275,15 +276,15 @@ func updateCmd() *cobra.Command {
 			if daemonState != nil {
 				kind := string(daemonState.kind)
 				fmt.Printf("restarting %s daemon (pid %d)...\n", kind, daemonState.pid)
-				if err := stopDaemonAndWait(daemonState.pid, daemonState.kind, 5*time.Second); err != nil {
+				if err := daemonctl.StopDaemonAndWait(daemonState.pid, daemonState.kind, 5*time.Second); err != nil {
 					return fmt.Errorf("updated to %s but could not restart daemon: %w; run 'wt %s stop' and 'wt %s start' manually", rel.TagName, err, kind, kind)
 				}
-				if daemonState.kind == roostDaemon {
-					if err := cmdutil.RemoveFiles(roostPidPath(), roostArgsPath()); err != nil {
+				if daemonState.kind == daemonctl.RoostDaemon {
+					if err := cmdutil.RemoveFiles(daemonctl.RoostPidPath(), daemonctl.RoostArgsPath()); err != nil {
 						return fmt.Errorf("remove stopped roost metadata: %w", err)
 					}
 				} else {
-					if err := cmdutil.RemoveFiles(wingPidPath(), wingArgsPath(), wingStatusPath()); err != nil {
+					if err := cmdutil.RemoveFiles(daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.WingStatusPath()); err != nil {
 						return fmt.Errorf("remove stopped wing metadata: %w", err)
 					}
 				}
