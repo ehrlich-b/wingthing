@@ -1,7 +1,9 @@
 package egg
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -10,6 +12,54 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
+
+func TestPreviewClaudeLifecycleSettingsAndHooksKeepDataHome(t *testing.T) {
+	dir := t.TempDir()
+	dataHome := config.CanonicalProviderPath(t.TempDir())
+	cwd := t.TempDir()
+	args, err := prepareClaudeLifecycleArgs(nil, dataHome, dir, "ours", cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := args[len(args)-1]
+	env := map[string]string{"HOME": dataHome, "PATH": "/usr/bin:/bin"}
+	osHome, err := ApplyPreviewClaudeOSContext(env, dataHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Hooks map[string][]struct {
+			Hooks []struct{ Command string }
+		}
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	command := settings.Hooks["SessionStart"][0].Hooks[0].Command
+	spool := lifecycleHookDir(dataHome, filepath.Base(dir))
+	if !strings.Contains(command, spool) || strings.Contains(command, filepath.Join(osHome, ".claude")) {
+		t.Fatalf("native hooks switched to OS home: %s", command)
+	}
+	// Read the owner-only settings and run the generated hook with the final
+	// OS-account environment, without starting a nested Seatbelt or an egg.
+	cmd := exec.Command("/bin/sh", "-c", `cat "$1" >/dev/null && `+command, "fixture", settingsPath)
+	for key, value := range env {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
+	cmd.Dir = cwd
+	cmd.Stdin = strings.NewReader(`{"session_id":"ours","hook_event_name":"SessionStart"}`)
+	if output, err := cmd.CombinedOutput(); err != nil || len(output) != 0 {
+		t.Fatalf("OS context could not read settings or publish hook: %v %s", err, output)
+	}
+	view, err := ReadSessionLifecycle(dir, "claude", cwd, dataHome, "ours", true, 0, 10)
+	if err != nil || !view.Ready || view.StateSource != "claude_hook" || view.State != "idle" {
+		t.Fatalf("hook writer and importer disagree about data home: %+v %v", view, err)
+	}
+}
 
 func TestPreviewClaudeOSContextRejectsOuterBoundary(t *testing.T) {
 	previous := config.ReleaseChannel

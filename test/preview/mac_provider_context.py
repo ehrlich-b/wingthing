@@ -16,6 +16,71 @@ SELECTORS = ("HOME", "USER", "LOGNAME", "CLAUDE_CONFIG_DIR",
              "CLAUDE_SECURESTORAGE_CONFIG_DIR", "CFFIXED_USER_HOME")
 
 
+def write_fake_provider(fake, calls):
+    fake.write_text(f'''#!{sys.executable}
+import hashlib,json,os,pathlib,signal,subprocess,sys,unicodedata
+args=sys.argv[1:]
+if args==['--version']:
+    print('Disposable context fixture; not Claude');sys.exit(0)
+env={{k:os.environ.get(k) for k in {SELECTORS!r}}}
+config=env['CLAUDE_CONFIG_DIR']
+suffix=hashlib.sha256(unicodedata.normalize('NFC',config).encode()).hexdigest()[:8]
+kind='status' if args==['auth','status','--json'] else 'headless' if '-p' in args else 'native'
+settings=[]
+for i,arg in enumerate(args):
+    if arg=='--settings': value=args[i+1]
+    elif arg.startswith('--settings='): value=arg.split('=',1)[1]
+    else: continue
+    settings.append(json.loads(value) if value.lstrip().startswith('{{') else json.loads(pathlib.Path(value).read_text()))
+receipt={{'route':kind,'selectors':env,'cwd':os.getcwd(),'argv':args,
+          'synthetic_service_suffix':suffix,'settings':settings}}
+if kind=='native':
+    provider=args[args.index('--session-id')+1]
+    project=pathlib.Path(config)/'projects'/os.getcwd().replace('/','-')
+    project.mkdir(parents=True,exist_ok=True)
+    (project/(provider+'.jsonl')).write_text(json.dumps({{'type':'assistant','sessionId':provider,'message':{{'role':'assistant','content':[{{'type':'text','text':'fixture only'}}]}}}})+'\\n')
+    for value in settings:
+        for entry in value.get('hooks',{{}}).get('SessionStart',[]):
+            for action in entry.get('hooks',[]):
+                subprocess.run(['/bin/sh','-c',action['command']],input=json.dumps({{'session_id':provider,'hook_event_name':'SessionStart'}}).encode(),check=True)
+with pathlib.Path({str(calls)!r}).open('a') as output:output.write(json.dumps(receipt)+'\\n')
+if kind=='status':
+    print(json.dumps({{'loggedIn':True,'authMethod':'claude.ai','apiProvider':'firstParty','configDirectory':config,'email':'fixture@example.invalid','orgName':'Fixture','subscriptionType':'max'}}));sys.exit(0)
+if kind=='headless':
+    print(json.dumps({{'type':'assistant','message':{{'content':[{{'type':'text','text':'fixture headless output'}}]}}}}))
+    print(json.dumps({{'type':'result','input_tokens':1,'output_tokens':1}}));sys.exit(0)
+print('FIXTURE_CONTEXT_READY',flush=True)
+signal.pause()
+''')
+    fake.chmod(0o700)
+
+
+def native_hook_published(spool, provider_id):
+    return spool.is_dir() and any(
+        (value := json.loads(path.read_text())).get("session_id") == provider_id
+        and value.get("hook_event_name") == "SessionStart"
+        for path in spool.glob("*.json"))
+
+
+def read_jsonl(path):
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines(keepends=True)
+            if line.endswith("\n")]
+
+
+def stop_session(binary, environment, workspace, session):
+    primary_failure = sys.exc_info()[1]
+    try:
+        result = subprocess.run([str(binary), "egg", "stop", session], env=environment,
+                                cwd=workspace, capture_output=True, text=True, timeout=15)
+        assert result.returncode == 0 or f'session "{session}" not found' in result.stderr, result.stderr[-1800:]
+    except (AssertionError, subprocess.TimeoutExpired) as cleanup_failure:
+        if primary_failure is None:
+            raise
+        print(f"fixture cleanup failed: {cleanup_failure}", file=sys.stderr)
+
+
 def main():
     if sys.platform != "darwin":
         raise SystemExit("mac_provider_context requires macOS; no substitute backend")
@@ -41,39 +106,7 @@ def main():
         cfg = data / ".claude"
         calls = workspace / "calls.jsonl"
         fake = fake_bin / "claude"
-        fake.write_text(f'''#!{sys.executable}
-import hashlib,json,os,pathlib,subprocess,sys,time,unicodedata
-args=sys.argv[1:]
-if args==['--version']:
-    print('Disposable context fixture; not Claude');sys.exit(0)
-env={{k:os.environ.get(k) for k in {SELECTORS!r}}}
-config=env['CLAUDE_CONFIG_DIR']
-suffix=hashlib.sha256(unicodedata.normalize('NFC',config).encode()).hexdigest()[:8]
-kind='status' if args==['auth','status','--json'] else 'headless' if '-p' in args else 'native'
-settings=[]
-for i,arg in enumerate(args[:-1]):
-    if arg=='--settings': settings.append(json.loads(args[i+1]))
-receipt={{'route':kind,'selectors':env,'cwd':os.getcwd(),'argv':args,
-          'synthetic_service_suffix':suffix,'settings':settings}}
-if kind=='native':
-    provider=args[args.index('--session-id')+1]
-    project=pathlib.Path(config)/'projects'/os.getcwd().replace('/','-')
-    project.mkdir(parents=True,exist_ok=True)
-    (project/(provider+'.jsonl')).write_text(json.dumps({{'type':'assistant','sessionId':provider,'message':{{'role':'assistant','content':[{{'type':'text','text':'fixture only'}}]}}}})+'\\n')
-    for value in settings:
-        for entry in value.get('hooks',{{}}).get('SessionStart',[]):
-            for action in entry.get('hooks',[]):
-                subprocess.run(['/bin/sh','-c',action['command']],input=json.dumps({{'session_id':provider,'hook_event_name':'SessionStart'}}).encode(),check=True)
-with pathlib.Path({str(calls)!r}).open('a') as output:output.write(json.dumps(receipt)+'\\n')
-if kind=='status':
-    print(json.dumps({{'loggedIn':True,'authMethod':'claude.ai','apiProvider':'firstParty','configDirectory':config,'email':'fixture@example.invalid','orgName':'Fixture','subscriptionType':'max'}}));sys.exit(0)
-if kind=='headless':
-    print(json.dumps({{'type':'assistant','message':{{'content':[{{'type':'text','text':'fixture headless output'}}]}}}}))
-    print(json.dumps({{'type':'result','input_tokens':1,'output_tokens':1}}));sys.exit(0)
-print('FIXTURE_CONTEXT_READY',flush=True)
-time.sleep(40)
-''')
-        fake.chmod(0o700)
+        write_fake_provider(fake, calls)
         base = {"HOME": str(host), "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
                 "LANG": "en_US.UTF-8", "TERM": "xterm-256color", "TMPDIR": "/private/tmp",
                 "USER": "fixture-user", "LOGNAME": "fixture-logname",
@@ -89,7 +122,7 @@ time.sleep(40)
             return result
 
         def receipts():
-            return [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+            return read_jsonl(calls)
 
         checked = []
         for spelling in (lexical / "state", state):
@@ -102,17 +135,31 @@ time.sleep(40)
             launch = json.loads(invoke(environment, "egg", "claude", "--json", "--cwd", str(workspace)).stdout)
             session = launch["session"]
             assert launch["isolation"] == "wingthing-sandbox"
+            egg_dir = state / "eggs" / session
+
+            def diagnostics():
+                paths = (egg_dir / "egg.log", state / "logs" / (session + ".log"),
+                         egg_dir / "lifecycle.jsonl")
+                return "\n".join(path.read_text()[-3000:] for path in paths if path.is_file())
+
             try:
-                deadline = time.monotonic() + 10
+                deadline = time.monotonic() + 15
                 while time.monotonic() < deadline:
                     new = receipts()[before:]
                     if any(item["route"] == "native" for item in new):
                         break
+                    if any(event.get("type") in ("session_exit", "session_failed")
+                           for event in read_jsonl(egg_dir / "lifecycle.jsonl")):
+                        raise AssertionError("fake native provider exited before readiness\n" + diagnostics())
                     time.sleep(0.05)
                 else:
-                    raise AssertionError("fake native provider did not reach final process")
-                checked.append(next(item for item in new if item["route"] == "native"))
-                meta_path = state / "eggs" / session / "egg.meta"
+                    raise AssertionError("fake native provider did not reach final process\n" + diagnostics())
+                native = next(item for item in new if item["route"] == "native")
+                checked.append(native)
+                settings_path = Path(native["argv"][native["argv"].index("--settings") + 1])
+                assert settings_path == egg_dir / "claude-settings.json", "native settings escaped the egg directory"
+                assert settings_path.stat().st_mode & 0o777 == 0o600, "native settings are not private"
+                meta_path = egg_dir / "egg.meta"
                 deadline = time.monotonic() + 3
                 while time.monotonic() < deadline:
                     meta = dict(line.split("=", 1) for line in meta_path.read_text().splitlines() if "=" in line)
@@ -122,10 +169,10 @@ time.sleep(40)
                 assert meta["provider_home"] == str(data) and meta["cwd"] == str(workspace)
                 assert meta["isolation"] == "wingthing-sandbox"
                 spool = cfg / "wingthing-events" / session
-                assert spool.is_dir() and list(spool.glob("event.*.json")), "native hook was not executed in data home"
+                assert native_hook_published(spool, meta["provider_session_id"]), "native hook was not executed in data home"
                 assert list((cfg / "projects").rglob(meta["provider_session_id"] + ".jsonl"))
             finally:
-                invoke(environment, "egg", "stop", session)
+                stop_session(binary, environment, workspace, session)
             result = invoke(environment, "run", "--agent", "claude", "synthetic context fixture")
             assert "fixture headless output" in result.stdout
             checked.append(receipts()[-1])

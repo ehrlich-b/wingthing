@@ -166,7 +166,8 @@ e2e-mac: web
 	$(stable-build)
 	$(preview-build)
 	WT_TEST_PREVIEW_BINARY="$(CURDIR)/wt-preview" $(GO) test -p 2 -count=1 -tags integration -v -timeout 120s ./internal/sandbox ./cmd/wt
-	$(GO) test -p 2 ./internal/egg -run 'TestPreviewClaude(GuardRejectsSymlinkAliases|ContextRejectsAliasedForeignSelector)$$' -count=1
+	$(GO) test -p 2 ./internal/egg -run 'TestPreviewClaude(GuardRejectsSymlinkAliases|ContextRejectsAliasedForeignSelector|LifecycleSettingsAndHooksKeepDataHome)$$' -count=1
+	python3 -B -m unittest discover -s test/preview -p test_mac_provider_context.py
 	python3 test/preview/mac_provider_context.py "$(PREVIEW_CONTEXT_BINARY)"
 	$(NODE) test/conversation/proof.mjs ./wt-preview --expect-nested-proxy-block
 	$(NODE) test/conversation/proof.mjs "$(or $(strip $(CONVERSATION_BINARY)),./wt-preview)" --state-root "$(CONVERSATION_FIXTURE_ROOT)"$(if $(strip $(CONVERSATION_BINARY_SHA256)), --expect-sha256 "$(strip $(CONVERSATION_BINARY_SHA256))")
