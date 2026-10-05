@@ -18,8 +18,17 @@ import (
 
 func TestCodexLifecycleInstalledHookTrust(t *testing.T) {
 	binary, err := exec.LookPath("codex")
-	if err != nil || !codexLifecycleSupported(binary) {
-		t.Skip("installed Codex has no native hook trust support")
+	if err != nil {
+		t.Skip("Codex is not installed")
+	}
+	if !codexLifecycleSupported(binary) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		version, err := exec.CommandContext(ctx, binary, "--version").Output()
+		if err != nil {
+			t.Skipf("installed Codex has no native hook trust support (version unavailable: %v)", err)
+		}
+		t.Skipf("installed Codex has no native hook trust support: %s", strings.TrimSpace(string(version)))
 	}
 	// Codex canonicalizes source paths (including macOS's /var symlink).
 	home, err := filepath.EvalSymlinks(t.TempDir())
