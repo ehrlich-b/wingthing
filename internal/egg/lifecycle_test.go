@@ -54,6 +54,69 @@ func lifecycleRead(t *testing.T, dir, home, cwd string, after int64, limit int) 
 	return v
 }
 
+func TestLifecycleStatusMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name, state, want   string
+		hooks, alive, ended bool
+	}{
+		{"prompt", "working", "working", true, true, false},
+		{"permission or elicitation", "needs_input", "blocked", true, true, false},
+		{"ready", "idle", "idle", true, true, false},
+		{"turn stopped", "completed", "idle", true, true, false},
+		{"session ended before egg exits", "completed", "done", true, true, true},
+		{"clean exit", "completed", "done", true, false, true},
+		{"crash", "working", "exited", true, false, false},
+		{"failed exit", "failed", "exited", true, false, true},
+		{"failed live turn", "failed", "unknown", true, true, false},
+		{"unsupported", "unknown", "unknown", false, true, false},
+		{"transcript only", "completed", "unknown", false, true, false},
+		{"legacy dead egg", "unknown", "unknown", false, false, false},
+		{"exit without hooks", "completed", "unknown", false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lifecycleStatus(tc.state, tc.hooks, tc.alive, tc.ended); got != tc.want {
+				t.Fatalf("status = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLifecycleClaudeStatusRequiresHooksAndDistinguishesSessionEnd(t *testing.T) {
+	dir, home, cwd, path := lifecycleFixture(t)
+	lifecycleWrite(t, path, `{"type":"assistant","sessionId":"ours","message":{"stop_reason":"end_turn"}}`+"\n")
+	if v := lifecycleRead(t, dir, home, cwd, 0, 10); v.Status != "unknown" {
+		t.Fatalf("transcript invented status: %+v", v)
+	}
+	for i, tc := range []struct{ event, notification, want string }{
+		{"UserPromptSubmit", "", "working"},
+		{"Notification", "permission_prompt", "blocked"},
+		{"Notification", "elicitation_dialog", "blocked"},
+		{"Notification", "elicitation_url_dialog", "blocked"},
+		{"Stop", "", "idle"},
+		{"Notification", "unrelated", "idle"},
+		{"SessionEnd", "", "done"},
+	} {
+		lifecycleHook(t, home, filepath.Base(dir), fmt.Sprintf("seq.%020d", i+1), fmt.Sprintf(`{"session_id":"ours","hook_event_name":%q,"notification_type":%q}`, tc.event, tc.notification))
+		v := lifecycleRead(t, dir, home, cwd, 0, 10)
+		if v.Status != tc.want {
+			t.Fatalf("%s/%s: %+v", tc.event, tc.notification, v)
+		}
+	}
+	v, err := ReadSessionLifecycle(dir, "claude", cwd, home, "ours", false, 0, 10)
+	if err != nil || v.Status != "done" || v.Ready {
+		t.Fatalf("lost clean native end: %+v, %v", v, err)
+	}
+}
+
+func TestLifecycleMissingProcessWithHooksReportsExited(t *testing.T) {
+	dir, home, cwd, _ := lifecycleFixture(t)
+	lifecycleHook(t, home, filepath.Base(dir), "prompt", `{"session_id":"ours","hook_event_name":"UserPromptSubmit"}`)
+	v, err := ReadSessionLifecycle(dir, "claude", cwd, home, "ours", false, 0, 10)
+	if err != nil || v.Status != "exited" || v.ProcessAlive || v.Ready {
+		t.Fatalf("unclean process loss: %+v, %v", v, err)
+	}
+}
+
 func TestLifecycleExactIdentityPartialReplayAndConcurrentReaders(t *testing.T) {
 	dir, home, cwd, path := lifecycleFixture(t)
 	lifecycleWrite(t, filepath.Join(filepath.Dir(path), "other.jsonl"), `{"type":"assistant","sessionId":"other","message":{"content":"foreign-secret","stop_reason":"end_turn"}}`+"\n")
@@ -118,20 +181,24 @@ func TestLifecycleEndedProcessSkipsUnterminatedTranscriptTail(t *testing.T) {
 			}
 			lifecycleHook(t, home, filepath.Base(dir), "final", fmt.Sprintf(`{"session_id":"ours","hook_event_name":%q}`, hook))
 			before := lifecycleRead(t, dir, home, cwd, 0, 10)
-			if before.State != "working" || before.StateSource != "native_import" || !before.HasMore {
+			if before.State != "working" || before.Status != "working" || before.StateSource != "native_import" || !before.HasMore {
 				t.Fatalf("live unterminated tail stopped being pending: %+v", before)
 			}
 			if err := recordSessionProcessExit(dir, 0, false); err != nil {
 				t.Fatal(err)
 			}
 			v := lifecycleRead(t, dir, home, cwd, before.Cursor, 10)
-			if v.State != state || v.StateSource != "claude_hook" || v.ProcessAlive || v.Ready || v.HasMore {
+			status := "done"
+			if state == "failed" {
+				status = "exited"
+			}
+			if v.State != state || v.Status != status || v.StateSource != "claude_hook" || v.ProcessAlive || v.Ready || v.HasMore {
 				t.Fatalf("ended process remained pending on permanent tail: %+v", v)
 			}
 			if len(v.Events) != 2 || v.Events[1].Type != "provider_warning" || !strings.Contains(v.Events[1].Reason, "unterminated") || v.Events[1].SourceOffset != int64(len(tail)) {
 				t.Fatalf("unterminated tail warning or offset missing: %+v", v.Events)
 			}
-			if again := lifecycleRead(t, dir, home, cwd, v.Cursor, 10); again.State != state || again.HasMore || len(again.Events) != 0 || again.HeadCursor != v.HeadCursor {
+			if again := lifecycleRead(t, dir, home, cwd, v.Cursor, 10); again.State != state || again.Status != status || again.HasMore || len(again.Events) != 0 || again.HeadCursor != v.HeadCursor {
 				t.Fatalf("permanent tail was retried: %+v", again)
 			}
 		})
@@ -152,6 +219,41 @@ func TestLifecycleEndedProcessKeepsBatchImportPending(t *testing.T) {
 	v = lifecycleRead(t, dir, home, cwd, v.HeadCursor, 10)
 	if v.State != "completed" || v.StateSource != "claude_transcript" || v.HasMore || len(v.Events) != 2 || v.Events[1].Type != "provider_warning" {
 		t.Fatalf("ended process did not finish batch and warn about tail: %+v", v)
+	}
+}
+
+func TestLifecyclePendingImportStatusUsesFinalState(t *testing.T) {
+	for _, tc := range []struct{ name, exitState, state, status string }{
+		{"live", "", "working", "working"},
+		{"clean exit", "completed", "working", "exited"},
+		{"failed exit", "failed", "failed", "exited"},
+		{"stopped exit", "stopped", "stopped", "exited"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, home, cwd, path := lifecycleFixture(t)
+			lifecycleHook(t, home, filepath.Base(dir), "final", `{"session_id":"ours","hook_event_name":"Stop"}`)
+			if tc.exitState != "" {
+				if err := RecordSessionProcessEvent(dir, "session_exit", tc.exitState, tc.name); err != nil {
+					t.Fatal(err)
+				}
+			}
+			row := `{"type":"assistant","sessionId":"ours","message":{"content":"done","stop_reason":"end_turn"}}` + "\n"
+			lifecycleWrite(t, path, strings.Repeat(row, 501))
+			v := lifecycleRead(t, dir, home, cwd, 0, 200)
+			if v.State != tc.state || v.Status != tc.status || v.ProcessAlive != (tc.exitState == "") || v.Ready || !v.HasMore {
+				t.Fatalf("pending import status disagrees with final state: %+v", v)
+			}
+			v = lifecycleRead(t, dir, home, cwd, v.HeadCursor, 10)
+			state, status := tc.state, tc.status
+			if tc.exitState == "" {
+				state, status = "completed", "idle"
+			} else if tc.exitState == "completed" {
+				state, status = "completed", "done"
+			}
+			if v.State != state || v.Status != status || v.HasMore {
+				t.Fatalf("finished import status disagrees with final state: %+v", v)
+			}
+		})
 	}
 }
 
@@ -478,7 +580,7 @@ func TestLifecycleStoppedProcessExitOverridesNativeState(t *testing.T) {
 				lifecycleWrite(t, path, strings.Repeat(row, 501))
 			}
 			v := lifecycleRead(t, dir, home, cwd, before.Cursor, 10)
-			if v.State != "stopped" || v.StateSource != "egg_process" || v.StateCursor != before.HeadCursor+1 || v.Reason != reason || v.ProcessAlive || v.Ready {
+			if v.State != "stopped" || v.Status != "exited" || v.StateSource != "egg_process" || v.StateCursor != before.HeadCursor+1 || v.Reason != reason || v.ProcessAlive || v.Ready {
 				t.Fatalf("native state hid stopped process: %+v", v)
 			}
 			if len(v.Events) == 0 || v.Events[0].Type != "session_exit" || v.Events[0].State != "stopped" {
@@ -488,7 +590,7 @@ func TestLifecycleStoppedProcessExitOverridesNativeState(t *testing.T) {
 				t.Fatalf("pending transcript import lost: %+v", v)
 			}
 			again := lifecycleRead(t, dir, home, cwd, v.HeadCursor, 10)
-			if again.State != "stopped" || again.StateSource != "egg_process" || again.StateCursor != v.StateCursor || again.ProcessAlive || again.Ready || again.HasMore {
+			if again.State != "stopped" || again.Status != "exited" || again.StateSource != "egg_process" || again.StateCursor != v.StateCursor || again.ProcessAlive || again.Ready || again.HasMore {
 				t.Fatalf("later import regressed stopped process: %+v", again)
 			}
 		})

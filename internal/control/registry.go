@@ -299,7 +299,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "terminal_list", Title: "List persistent terminals",
-			Description: "List live Wingthing sessions with stable IDs, labels, process kind, agent, activity, and working directory. Defaults to local sessions; remote selects one configured SSH name on an unrestricted MCP connection.",
+			Description: "List live Wingthing sessions with stable IDs, labels, process kind, agent, activity, working directory, and hook-derived status: working, blocked, idle, done, exited, or unknown. Older eggs and unsupported agents report unknown. Defaults to local sessions; remote selects one configured SSH name on an unrestricted MCP connection.",
 			InputSchema: objectSchema(map[string]any{
 				"remote": stringProperty("Configured SSH remote name; omit for local sessions only"),
 			}), Annotations: readOnly,

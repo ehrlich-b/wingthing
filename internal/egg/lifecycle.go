@@ -52,6 +52,7 @@ type SessionView struct {
 	Agent             string `json:"agent"`
 	ProviderSessionID string `json:"provider_session_id,omitempty"`
 	State             string `json:"state"`
+	Status            string `json:"status"`
 	StateSource       string `json:"state_source"`
 	StateCursor       int64  `json:"state_cursor"`
 	Reason            string `json:"reason,omitempty"`
@@ -221,6 +222,40 @@ func shellQuoteLifecycle(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
+// lifecycleStatus is the shared inventory vocabulary. Process/transcript
+// activity alone cannot establish agent status, including for legacy eggs.
+func lifecycleStatus(state string, hookEvidence, processAlive, sessionEnded bool) string {
+	if !hookEvidence {
+		return "unknown"
+	}
+	if sessionEnded && state == "completed" {
+		return "done"
+	}
+	if !processAlive {
+		return "exited"
+	}
+	switch state {
+	case "working":
+		return "working"
+	case "needs_input":
+		return "blocked"
+	case "idle", "completed":
+		return "idle"
+	default:
+		return "unknown"
+	}
+}
+
+func lifecycleHookCommand(spool string) string {
+	// Publish atomically in sequence order, including concurrent hook writers.
+	return "umask 077; wt_hook_dir=" + shellQuoteLifecycle(spool) + "; wt_hook_file=$(mktemp \"$wt_hook_dir/event.XXXXXX\") || exit 0; cat > \"$wt_hook_file\" || exit 0; " +
+		"while :; do " +
+		"wt_hook_seq=$(LC_ALL=C ls \"$wt_hook_dir\" 2>/dev/null | sed -n 's/^seq\\.\\([0-9]\\{20\\}\\)\\.json$/\\1/p' | tail -n 1); " +
+		"wt_hook_seq=$(printf '%020d' \"$(expr \"${wt_hook_seq:-0}\" + 1)\"); " +
+		"ln \"$wt_hook_file\" \"$wt_hook_dir/seq.$wt_hook_seq.json\" 2>/dev/null && { rm -f \"$wt_hook_file\"; exit 0; }; " +
+		"[ -e \"$wt_hook_dir/seq.$wt_hook_seq.json\" ] || break; done; mv \"$wt_hook_file\" \"$wt_hook_file.json\"; exit 0"
+}
+
 // ClaudeLifecycleArgs adds observational native hooks to this invocation only.
 // It preserves supplied settings and leaves disableAllHooks effective. The spool
 // is inside the provider's existing writable directory; no permissions change.
@@ -328,12 +363,7 @@ func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string)
 		// won the name, so retry (the hook timeout bounds this; an unpublished temp
 		// is never imported). Only a failure without collision, e.g. a filesystem
 		// without links, falls back to the legacy mtime-ordered name.
-		command := "umask 077; wt_hook_dir=" + shellQuoteLifecycle(spool) + "; wt_hook_file=$(mktemp \"$wt_hook_dir/event.XXXXXX\") || exit 0; cat > \"$wt_hook_file\" || exit 0; " +
-			"while :; do " +
-			"wt_hook_seq=$(LC_ALL=C ls \"$wt_hook_dir\" 2>/dev/null | sed -n 's/^seq\\.\\([0-9]\\{20\\}\\)\\.json$/\\1/p' | tail -n 1); " +
-			"wt_hook_seq=$(printf '%020d' \"$(expr \"${wt_hook_seq:-0}\" + 1)\"); " +
-			"ln \"$wt_hook_file\" \"$wt_hook_dir/seq.$wt_hook_seq.json\" 2>/dev/null && { rm -f \"$wt_hook_file\"; exit 0; }; " +
-			"[ -e \"$wt_hook_dir/seq.$wt_hook_seq.json\" ] || break; done; mv \"$wt_hook_file\" \"$wt_hook_file.json\"; exit 0"
+		command := lifecycleHookCommand(spool)
 		for _, event := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Notification", "Stop", "StopFailure", "SessionEnd"} {
 			entries, _ := hooks[event].([]any)
 			if event == "Notification" {
@@ -360,7 +390,7 @@ func validLifecycleID(id string) bool {
 // returns bounded cursor replay. State completion means the foreground turn;
 // process_alive separately identifies whether this conversation can accept work.
 func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID string, processAlive bool, after int64, limit int) (SessionView, error) {
-	view := SessionView{SessionID: filepath.Base(eggDir), Agent: agent, ProviderSessionID: exactProviderID, State: "unknown", StateSource: "unsupported", ProcessAlive: processAlive, Events: []SessionEvent{}, Cursor: after}
+	view := SessionView{SessionID: filepath.Base(eggDir), Agent: agent, ProviderSessionID: exactProviderID, State: "unknown", Status: "unknown", StateSource: "unsupported", ProcessAlive: processAlive, Events: []SessionEvent{}, Cursor: after}
 	if after < 0 || limit < 1 || limit > 200 {
 		return view, errors.New("after_cursor must be non-negative and limit between 1 and 200")
 	}
@@ -384,8 +414,14 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		if err = j.importHooks(providerHome, view.SessionID, exactProviderID); err != nil {
 			return view, err
 		}
+	} else if agent == "codex" {
+		view.ProviderSessionID, err = j.importCodexHooks(providerHome, view.SessionID, exactProviderID)
+		if err != nil {
+			return view, err
+		}
 	}
 	var hookState SessionEvent
+	hookEvidence, sessionEnded := false, false
 	for _, event := range j.events {
 		if event.State != "" && event.Type != "session_exit" {
 			view.State = event.State
@@ -393,8 +429,12 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			view.Reason = event.Reason
 			view.StateCursor = event.Sequence
 		}
-		if event.Source == "claude_hook" && event.State != "" {
-			hookState = event
+		if event.Source == "claude_hook" || event.Source == "codex_hook" {
+			if event.State != "" {
+				hookEvidence = true
+				hookState = event
+				sessionEnded = event.Type == "provider_session_end"
+			}
 		}
 		if event.Type == "session_ready" || event.Type == "prompt_submitted" {
 			view.Ready = true
@@ -425,6 +465,7 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		}
 		view.Ready = false
 		view.ProcessAlive = false
+		sessionEnded = true
 	}
 	if j.pending && !processInterrupted {
 		view.State = "working"
@@ -433,10 +474,13 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.Ready = false
 		view.Reason = "native lifecycle import has not reached the source head"
 	}
+	if sessionEnded {
+		view.Ready = false
+	}
 	if after > view.HeadCursor {
 		return view, errors.New("after_cursor is ahead of this session's event history")
 	}
-	if agent != "claude" && !processEnded {
+	if agent != "claude" && hookState.Sequence == 0 && !processEnded {
 		view.State = "unknown"
 		view.StateSource = "unsupported"
 		view.Ready = false
@@ -444,12 +488,13 @@ func ReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 	}
 	if !processAlive {
 		view.Ready = false
-		if !processEnded {
+		if !processEnded && !sessionEnded {
 			view.State = "unknown"
 			view.StateSource = "egg_process"
 			view.Reason = "provider process unavailable without a recorded exit"
 		}
 	}
+	view.Status = lifecycleStatus(view.State, hookEvidence, view.ProcessAlive, sessionEnded)
 	encodedReason, _ := json.Marshal(view.Reason)
 	if len(encodedReason) > maxLifecycleEvent {
 		view.Reason = boundedLifecycleString(view.Reason)
@@ -678,17 +723,34 @@ func sequencedLifecycleHook(name string) bool {
 }
 
 func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error {
-	spool := lifecycleHookDir(home, sessionID)
+	_, err := j.importProviderHooks(lifecycleHookDir(home, sessionID), providerID, "claude")
+	return err
+}
+
+func (j *lifecycleJournal) importCodexHooks(home, sessionID, providerID string) (string, error) {
+	return j.importProviderHooks(filepath.Join(home, ".codex", "wingthing-events", sessionID), providerID, "codex")
+}
+
+func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) (string, error) {
+	source := agent + "_hook"
+	if providerID == "" && agent == "codex" {
+		for _, e := range j.events {
+			if e.Source == source && e.Type == "session_ready" {
+				providerID = e.ProviderSessionID
+				break
+			}
+		}
+	}
 	entries, err := os.ReadDir(spool)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return providerID, nil
 	}
 	if err != nil {
-		return err
+		return providerID, err
 	}
 	seen := map[string]bool{}
 	for _, e := range j.events {
-		if e.Source == "claude_hook" {
+		if e.Source == source {
 			seen[e.SourceKey] = true
 		}
 	}
@@ -723,21 +785,21 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 	for _, file := range files[:min(len(files), 500)] {
 		f, err := openBoundRegularFile(filepath.Join(spool, file.name))
 		if err != nil {
-			return err
+			return providerID, err
 		}
 		info, err := f.Stat()
 		if err != nil {
 			_ = f.Close()
-			return err
+			return providerID, err
 		}
-		e := SessionEvent{Source: "claude_hook", SourceKey: "hook:" + file.name, ProviderSessionID: providerID, Timestamp: file.modified.UTC().Format(time.RFC3339Nano)}
+		e := SessionEvent{Source: source, SourceKey: "hook:" + file.name, ProviderSessionID: providerID, Timestamp: file.modified.UTC().Format(time.RFC3339Nano)}
 		var data []byte
 		if info.Size() <= maxLifecycleRecord {
 			data, err = io.ReadAll(io.LimitReader(f, maxLifecycleRecord+1))
 		}
 		_ = f.Close()
 		if err != nil {
-			return err
+			return providerID, err
 		}
 		if info.Size() > maxLifecycleRecord || len(data) > maxLifecycleRecord {
 			e.Type = "provider_warning"
@@ -745,7 +807,7 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 			e.Truncated = true
 			e.OriginalBytes = info.Size()
 			if err = j.append(e); err != nil {
-				return err
+				return providerID, err
 			}
 			continue
 		}
@@ -755,11 +817,18 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 			Prompt       string            `json:"prompt"`
 			Notification string            `json:"notification_type"`
 			Background   []json.RawMessage `json:"background_tasks"`
+			ToolName     string            `json:"tool_name"`
 		}
 		if json.Unmarshal(data, &hook) != nil {
-			return errors.New("invalid published native lifecycle hook")
+			return providerID, errors.New("invalid published native lifecycle hook")
 		}
-		if hook.SessionID != providerID {
+		// A fresh Codex thread chooses its own ID. Bind once from SessionStart
+		// in this egg's private spool, then reject other threads (and subagents).
+		if agent == "codex" && providerID == "" && hook.Event == "SessionStart" && validLifecycleID(hook.SessionID) {
+			providerID = hook.SessionID
+		}
+		e.ProviderSessionID = providerID
+		if providerID == "" || hook.SessionID != providerID {
 			e.Type = "provider_warning"
 			e.Reason = "native hook belongs to another provider session"
 		} else {
@@ -774,6 +843,17 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 			case "PreToolUse", "PostToolUse":
 				e.Type = "tool_activity"
 				e.State = "working"
+				if agent == "codex" && hook.Event == "PreToolUse" && hook.ToolName == "request_user_input" {
+					e.Type, e.State, e.Reason = "input_requested", "needs_input", "provider user input requested"
+				} else if agent == "codex" && hook.Event == "PreToolUse" && strings.HasPrefix(hook.ToolName, "mcp__") {
+					// Codex has no hook for elicitation inside an MCP call.
+					// Until PostToolUse, it could be running or awaiting input.
+					e.State, e.Reason = "unknown", "provider has no native MCP elicitation hook"
+				}
+			case "PreCompact", "PostCompact":
+				e.Type, e.State = "provider_compaction", "working"
+			case "Interrupt":
+				e.Type, e.State = "turn_interrupted", "idle"
 			case "PermissionRequest":
 				e.Type = "input_requested"
 				e.State = "needs_input"
@@ -782,7 +862,7 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 				e.Type = "notification"
 				if hook.Notification == "idle_prompt" {
 					e.State = "idle"
-				} else {
+				} else if hook.Notification == "permission_prompt" || hook.Notification == "elicitation_dialog" || hook.Notification == "elicitation_url_dialog" {
 					e.State = "needs_input"
 					e.Reason = hook.Notification
 				}
@@ -800,6 +880,7 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 				e.Reason = "native provider reported a failed turn"
 			case "SessionEnd":
 				e.Type = "provider_session_end" // process termination is recorded separately
+				e.State = "completed"
 			default:
 				e.Type = "provider_event"
 			}
@@ -814,11 +895,11 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 			e.OriginalBytes = int64(len(data))
 		}
 		if err = j.append(e); err != nil {
-			return err
+			return providerID, err
 		}
 	}
 	if len(files) > 500 {
 		j.pending = true
 	}
-	return nil
+	return providerID, nil
 }

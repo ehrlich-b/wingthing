@@ -647,6 +647,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		lifecycleSettingsPath = args[len(args)-1]
 		defer func() { _ = os.Remove(lifecycleSettingsPath) }()
 	}
+	if rc.Agent == "codex" && len(rc.Command) == 0 && codexLifecycleSupported(binPath) {
+		args, err = CodexLifecycleArgs(args, home, filepath.Base(s.dir))
+		if err != nil {
+			return fmt.Errorf("prepare Codex lifecycle hooks: %w", err)
+		}
+	}
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")
 		if p, ok := envMap["PATH"]; ok {

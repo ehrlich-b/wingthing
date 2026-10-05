@@ -151,17 +151,17 @@ func writeMachineSessions(out io.Writer, rows []machineSession, jsonOutput bool)
 		return err
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "MACHINE\tNAME\tID\tKIND\tPROCESS\tISOLATION\tREADERS\tUPTIME\tIDLE\tCWD\tERROR"); err != nil {
+	if _, err := fmt.Fprintln(w, "MACHINE\tNAME\tID\tKIND\tPROCESS\tSTATUS\tISOLATION\tREADERS\tUPTIME\tIDLE\tCWD\tERROR"); err != nil {
 		return err
 	}
 	for _, row := range rows {
 		if row.Error != "" {
-			if _, err := fmt.Fprintf(w, "%s\t-\t-\t-\t-\t-\t-\t-\t-\t-\t%s\n", row.Machine, strings.Join(strings.Fields(row.Error), " ")); err != nil {
+			if _, err := fmt.Fprintf(w, "%s\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t%s\n", row.Machine, strings.Join(strings.Fields(row.Error), " ")); err != nil {
 				return err
 			}
 			continue
 		}
-		name, process, isolation := row.Name, row.Agent, row.Isolation
+		name, process, status, isolation := row.Name, row.Agent, row.Status, row.Isolation
 		if name == "" {
 			name = "-"
 		}
@@ -171,11 +171,14 @@ func writeMachineSessions(out io.Writer, rows []machineSession, jsonOutput bool)
 		if process == "" {
 			process = "-"
 		}
+		if status == "" {
+			status = "unknown"
+		}
 		if isolation == "" {
 			isolation = "unknown"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t\n", row.Machine,
-			name, row.ID, row.Kind, process, isolation, row.Readers,
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t\n", row.Machine,
+			name, row.ID, row.Kind, process, status, isolation, row.Readers,
 			humanDuration(time.Duration(row.UptimeSecs)*time.Second), humanDuration(time.Duration(row.IdleSecs)*time.Second), shortenPath(row.CWD)); err != nil {
 			return err
 		}

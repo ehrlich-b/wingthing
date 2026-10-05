@@ -3,9 +3,14 @@ import { notificationForSession } from './session-reference.js';
 export { sessionResourceKey } from './session-reference.js';
 
 var agentLabels = {
-    starting: 'starting', working: 'working', idle: 'ready',
-    completed: 'completed', needs_input: 'needs input', failed: 'failed', unknown: 'agent state unknown'
+    working: 'working', blocked: 'blocked', idle: 'idle',
+    done: 'done', exited: 'exited', unknown: 'agent state unknown'
 };
+
+export function sessionStatusDot(status, tab) {
+    if (!Object.hasOwn(agentLabels, status)) status = 'unknown';
+    return '<span class="' + (tab ? 'tab-dot' : 'session-dot') + ' agent-status-' + status + '" aria-hidden="true"></span>';
+}
 
 export function findSessionResource(sessions, id, wingId) {
     var matches = sessions.filter(function(session) { return session.id === id && (!wingId || session.wing_id === wingId); });
@@ -27,20 +32,24 @@ export function sessionInventoryState(session, wing, attention) {
     if (wing && wing.online === false) connection = 'offline';
 
     var lifecycle = session.lifecycle || {};
-    var knownSource = ['claude_hook', 'claude_transcript', 'egg_process'].includes(lifecycle.state_source);
-    var state = knownSource && agentLabels[lifecycle.state] ? lifecycle.state : 'unknown';
-    var needsAttention = state === 'needs_input' || !!attention || !!session.needs_attention;
-    var agentLabel = agentLabels[state];
-    if (connection !== 'available' && state !== 'unknown') agentLabel = 'last reported: ' + agentLabel;
-    if (needsAttention && state !== 'needs_input') agentLabel += ' · attention signal';
+    var knownSource = ['claude_hook', 'codex_hook', 'egg_process'].includes(lifecycle.state_source);
+    // The egg owns the lifecycle-to-status mapping. Old wings without this
+    // field remain unknown; attachment and terminal bells are separate facts.
+    var status = knownSource && Object.hasOwn(agentLabels, lifecycle.status) ? lifecycle.status : 'unknown';
+    var state = knownSource && lifecycle.state ? lifecycle.state : 'unknown';
+    var needsAttention = status === 'blocked' || !!attention || !!session.needs_attention;
+    var agentLabel = agentLabels[status];
+    if (connection !== 'available' && status !== 'unknown') agentLabel = 'last reported: ' + agentLabel;
+    if (needsAttention && status !== 'blocked') agentLabel += ' · attention signal';
     return {
         connection: connection,
         connectionLabel: { available: 'wing online', checking: 'checking connection', unreachable: 'wing unreachable', locked: 'wing locked', offline: 'wing offline' }[connection],
         attachment: session.status === 'active' ? 'attached' : 'detached',
         state: state,
+        status: status,
         agentLabel: agentLabel,
         attention: needsAttention,
-        tone: connection !== 'available' ? 'offline' : needsAttention ? 'attention' : state === 'failed' ? 'failed' : 'live',
+        tone: connection !== 'available' ? 'offline' : needsAttention ? 'attention' : status === 'exited' ? 'failed' : status === 'unknown' ? 'offline' : 'live',
         canAttach: connection === 'available'
     };
 }

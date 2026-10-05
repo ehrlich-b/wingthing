@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sessionInventoryState, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey } from '../src/session-inventory.js';
+import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey } from '../src/session-inventory.js';
 import { sessionRoute, parseSessionRoute } from '../src/session-route.js';
 
 const wing = { wing_id: 'mac', wing_label: 'Personal Mac', hostname: 'mac-mini', online: true, capabilities: ['session.rename.v1'] };
@@ -17,16 +17,16 @@ test('terminal attachment, silence and bell signals never invent provider comple
 });
 
 test('provider hooks report agent state independently of detached attachment', () => {
-    const state = sessionInventoryState({ ...session, lifecycle: { state: 'needs_input', state_source: 'claude_hook' } }, wing);
+    const state = sessionInventoryState({ ...session, lifecycle: { state: 'needs_input', status: 'blocked', state_source: 'claude_hook' } }, wing);
     assert.equal(state.state, 'needs_input');
-    assert.equal(state.agentLabel, 'needs input');
+    assert.equal(state.agentLabel, 'blocked');
     assert.equal(state.attention, true);
     assert.equal(state.attachment, 'detached');
     assert.equal(state.canAttach, true);
 });
 
 test('disconnects disable attachment and label provider events as last reported', () => {
-    const running = { ...session, lifecycle: { state: 'working', state_source: 'claude_transcript' } };
+    const running = { ...session, lifecycle: { state: 'working', status: 'working', state_source: 'claude_hook' } };
     const offline = sessionInventoryState(running, { ...wing, online: false });
     assert.equal(offline.connection, 'offline');
     assert.equal(offline.agentLabel, 'last reported: working');
@@ -64,8 +64,25 @@ test('search combines name, exact wing, agent and workspace terms without changi
 });
 
 test('semantic needs-input participates in attention filtering without a terminal bell', () => {
-    const child = { ...session, conversation_role: 'child', lifecycle: { state: 'needs_input', state_source: 'claude_hook' } };
+    const child = { ...session, conversation_role: 'child', lifecycle: { state: 'needs_input', status: 'blocked', state_source: 'claude_hook' } };
     assert.deepEqual(filterSessionInventory([child], [wing], {}, { query: 'child', status: 'attention' }), [child]);
+});
+
+test('inventory dots and labels use the shared six-value status for both providers', () => {
+    for (const source of ['claude_hook', 'codex_hook', 'egg_process']) {
+        for (const status of ['working', 'blocked', 'idle', 'done', 'exited', 'unknown']) {
+            const state = sessionInventoryState({ ...session, lifecycle: { state: 'completed', status, state_source: source } }, wing);
+            assert.equal(state.status, status);
+            assert.equal(state.agentLabel, status === 'unknown' ? 'agent state unknown' : status);
+            assert.equal(state.attention, status === 'blocked');
+            assert.equal(sessionStatusDot(state.status), `<span class="session-dot agent-status-${status}" aria-hidden="true"></span>`);
+            assert.equal(sessionStatusDot(state.status, true), `<span class="tab-dot agent-status-${status}" aria-hidden="true"></span>`);
+        }
+    }
+    for (const lifecycle of [{ state: 'completed', state_source: 'claude_hook' }, { status: 'working', state_source: 'terminal_idle' }]) {
+        assert.equal(sessionInventoryState({ ...session, lifecycle }, wing).status, 'unknown');
+    }
+    assert.equal(sessionStatusDot('" onmouseover="alert(1)'), sessionStatusDot('unknown'));
 });
 
 test('refresh restores focused action on its exact wing, including IDs unsafe in selectors', () => {
