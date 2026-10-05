@@ -334,8 +334,8 @@ test-claude-policy: | web/dist
 	WT_REQUIRE_REAL_CLAUDE=1 go test -count=1 -tags integration -v -timeout 180s ./cmd/wt -run '^TestRealClaudeModelPolicyPreservesPersonalSettings$$'
 
 # Black-box rolling-upgrade and rollback gate against the configured historical
-# baseline (WT_COMPAT_BASELINE_REF, defaulted by the script). Requires that tag
-# to be available in the local clone.
+# baselines v0.144.1 and v0.147.0 by default; WT_COMPAT_BASELINE_REF selects one
+# override baseline. Requires the selected tags to be available in the local clone.
 test-compat: | web/dist
 	scripts/test-backward-compat.sh
 

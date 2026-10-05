@@ -13,7 +13,7 @@ disagree about which sessions exist.
 | `make check` | web build, `make test`, binary build | every tagged and external E2E tier |
 | `make test-vuln` | pinned `govulncheck` plus npm's current advisory database | unreachable vulnerable Go symbols and non-Go/npm dependencies |
 | `make test-integ` | in-process relay, PTY routing, P2P, tunnel, and synthetic agent lifecycle | native sandbox enforcement and browser rendering |
-| `make test-compat` | real configured-baseline and candidate binaries: historical migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup, and rollback reopen. `WT_COMPAT_BASELINE_REF` overrides the script's pinned default | third-party wrappers, releases newer than a stale pin, and unsupported pre-baseline releases |
+| `make test-compat` | real configured-baseline and candidate binaries: historical migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup, and rollback reopen. Defaults to both `v0.144.1` and `v0.147.0`; `WT_COMPAT_BASELINE_REF` selects a single override baseline | third-party wrappers, releases newer than stale pins, and unsupported pre-baseline releases |
 | `make test-linux` | Debian container with privileged Linux sandbox, CLI, and namespace batteries | Ubuntu-specific behavior |
 | `make test-linux-ubuntu` | Ubuntu 24.04 version of the Linux battery | macOS and browser |
 | `make test-web` | seeded organization-mode roost (including per-identity provider-profile routing), empty-enrollment legacy org canary, and hosted direct-free/relay-entitlement deployments driven by Playwright | local MCP, headless runs, real OAuth provider |

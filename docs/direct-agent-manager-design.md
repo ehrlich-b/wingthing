@@ -165,8 +165,10 @@ The deterministic connector canary now crosses JSON-RPC stdio and two independen
 real WebRTC data channels, verifies qualified `home`/`office` routing, reconnects, and
 checks that the coordinator handled signaling only. The compatibility gate separately
 runs the configured historical baseline and candidate binaries in both gateway/wing
-upgrade orders, starts a PTY through the old browser message shape, and proves the
-baseline binary can reopen candidate state. The pin is not automatically the
-immediately previous release. The direct-MCP canary remains an in-process network
-test; the release gate still requires the built `wt mcp connect` process and a real
-Codex/Claude client against two distinct hosts, including the WSL rig.
+upgrade orders, using both `v0.144.1` and `v0.147.0` by default or a single baseline
+selected by `WT_COMPAT_BASELINE_REF`. It starts a PTY through the old browser message
+shape and proves each selected baseline binary can reopen candidate state. Neither
+default pin is automatically the immediately previous release. The direct-MCP
+canary remains an in-process network test; the release gate still requires the built
+`wt mcp connect` process and a real Codex/Claude client against two distinct hosts,
+including the WSL rig.

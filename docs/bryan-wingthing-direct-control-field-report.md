@@ -272,7 +272,9 @@ The direct manager is credible but not yet a polished default:
 - Fresh authenticated enrollment and the remaining production account-cohort
   canaries still precede broad rollout. The physical two-machine canary and the
   configured historical-baseline/candidate compatibility battery now pass; the
-  pinned baseline is not an assertion about the immediately previous release.
+  defaults run both `v0.144.1` and `v0.147.0`, and `WT_COMPAT_BASELINE_REF` selects
+  a single override baseline. Neither pin is an assertion about the immediately
+  previous release.
 
 The two-machine canary also found three custom-roost UX/privacy defects. `wt start
 --roost` printed the public app URL, `wt wing status` validated the token against a

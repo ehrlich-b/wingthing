@@ -90,9 +90,10 @@ make deploy
 `make deploy` runs the web build, Go tests, binary build, release command-surface
 contract, and the configured historical-baseline compatibility gate before
 `fly deploy`; it does not publish a GitHub release. The compatibility script uses
-`WT_COMPAT_BASELINE_REF` when set and otherwise uses the pinned default declared in
-`scripts/test-backward-compat.sh`. It exercises that baseline and the candidate in
-both gateway/wing orders; it is not a claim that the pin is always the immediately
+`WT_COMPAT_BASELINE_REF` as a single override baseline when set and otherwise runs
+both pinned defaults, `v0.144.1` and `v0.147.0`, declared in
+`scripts/test-backward-compat.sh`. It exercises each selected baseline and the candidate
+in both gateway/wing orders; it is not a claim that either pin is always the immediately
 previous release, and it does not exercise a mixed Fly login/edge fleet.
 
 Deploying the site before the matching release creates an installation outage: the

@@ -442,14 +442,14 @@ func TestCompatibilityDocumentationNamesTheConfiguredBaseline(t *testing.T) {
 	root := repositoryRoot(t)
 	checks := []struct {
 		path        string
-		mustHave    string
+		mustHave    []string
 		mustNotHave []string
 	}{
-		{path: "Makefile", mustHave: "configured historical", mustNotHave: []string{"against the last published"}},
-		{path: "docs/fly-ops.md", mustHave: "configured historical-baseline", mustNotHave: []string{"real N-1/current"}},
-		{path: "docs/testing.md", mustHave: "configured-baseline and candidate", mustNotHave: []string{"real last-release", "live N-1/N gateway-wing"}},
-		{path: "docs/direct-agent-manager-design.md", mustHave: "configured historical baseline", mustNotHave: []string{"runs real N-1 and candidate"}},
-		{path: "docs/bryan-wingthing-direct-control-field-report.md", mustHave: "configured historical-baseline/candidate", mustNotHave: []string{"real N-1/candidate"}},
+		{path: "Makefile", mustHave: []string{"configured historical", "v0.144.1", "v0.147.0", "WT_COMPAT_BASELINE_REF"}, mustNotHave: []string{"against the last published"}},
+		{path: "docs/fly-ops.md", mustHave: []string{"configured historical-baseline", "v0.144.1", "v0.147.0", "WT_COMPAT_BASELINE_REF"}, mustNotHave: []string{"real N-1/current"}},
+		{path: "docs/testing.md", mustHave: []string{"configured-baseline and candidate", "v0.144.1", "v0.147.0", "WT_COMPAT_BASELINE_REF"}, mustNotHave: []string{"real last-release", "live N-1/N gateway-wing"}},
+		{path: "docs/direct-agent-manager-design.md", mustHave: []string{"configured historical baseline", "v0.144.1", "v0.147.0", "WT_COMPAT_BASELINE_REF"}, mustNotHave: []string{"runs real N-1 and candidate"}},
+		{path: "docs/bryan-wingthing-direct-control-field-report.md", mustHave: []string{"configured historical-baseline/candidate", "v0.144.1", "v0.147.0", "WT_COMPAT_BASELINE_REF"}, mustNotHave: []string{"real N-1/candidate"}},
 	}
 	for _, check := range checks {
 		data, err := os.ReadFile(filepath.Join(root, check.path))
@@ -457,8 +457,10 @@ func TestCompatibilityDocumentationNamesTheConfiguredBaseline(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := string(data)
-		if !strings.Contains(text, check.mustHave) {
-			t.Errorf("%s must name %q", check.path, check.mustHave)
+		for _, phrase := range check.mustHave {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s must name %q", check.path, phrase)
+			}
 		}
 		for _, stale := range check.mustNotHave {
 			if strings.Contains(text, stale) {
@@ -471,8 +473,15 @@ func TestCompatibilityDocumentationNamesTheConfiguredBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(script), `BASELINE_REF="${WT_COMPAT_BASELINE_REF:-`) {
-		t.Fatal("compatibility script must keep an explicit overridable baseline")
+	for _, phrase := range []string{
+		`if [ -z "${WT_COMPAT_BASELINE_REF:-}" ]; then`,
+		`for baseline_ref in v0.144.1 v0.147.0; do`,
+		`WT_COMPAT_BASELINE_REF="$baseline_ref" "$0"`,
+		`BASELINE_REF="$WT_COMPAT_BASELINE_REF"`,
+	} {
+		if !strings.Contains(string(script), phrase) {
+			t.Errorf("compatibility script must keep both default baselines and an explicit override: missing %q", phrase)
+		}
 	}
 }
 
