@@ -128,7 +128,7 @@ func browserStreamEnded(sessionID, controllerID string, err error, write ws.PTYW
 		return
 	}
 	if err != nil && (status.Code(err) == codes.Aborted || status.Code(err) == codes.FailedPrecondition || status.Code(err) == codes.PermissionDenied) {
-		writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: sessionID, ControllerID: controllerID, Message: err.Error()})
+		ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: sessionID, ControllerID: controllerID, Message: err.Error()})
 	}
 	releaseBrowserInput(sessionID, controllerID)
 }
@@ -174,7 +174,7 @@ func watchPreviewBrowserEgg(ctx context.Context, client *egg.Client, sessionID, 
 					hadBell = false
 				}
 			case *pb.SessionMsg_ExitCode:
-				writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(payload.ExitCode)})
+				ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(payload.ExitCode)})
 				clearAttentionCooldown(sessionID)
 				sessionCancel()
 				return

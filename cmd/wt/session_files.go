@@ -553,7 +553,7 @@ func streamSessionFile(ctx context.Context, file *os.File, path string, info os.
 		contentType = "application/octet-stream"
 	}
 	meta, _ := json.Marshal(map[string]any{"name": info.Name(), "size": info.Size(), "mime": contentType})
-	if err := tunnelStreamChunk(gcm, requestID, meta, false, write); err != nil {
+	if err := ws.TunnelStreamChunk(gcm, requestID, meta, false, write); err != nil {
 		return err
 	}
 	hash := sha256.New()
@@ -574,7 +574,7 @@ func streamSessionFile(ctx context.Context, file *os.File, path string, info os.
 			}
 			_, _ = hash.Write(buffer[:count])
 			chunk, _ := json.Marshal(map[string]string{"data": base64.StdEncoding.EncodeToString(buffer[:count])})
-			if err := tunnelStreamChunk(gcm, requestID, chunk, false, write); err != nil {
+			if err := ws.TunnelStreamChunk(gcm, requestID, chunk, false, write); err != nil {
 				return err
 			}
 		}
@@ -586,7 +586,7 @@ func streamSessionFile(ctx context.Context, file *os.File, path string, info os.
 		}
 	}
 	final, _ := json.Marshal(map[string]string{"sha256": hex.EncodeToString(hash.Sum(nil))})
-	return tunnelStreamChunk(gcm, requestID, final, true, write)
+	return ws.TunnelStreamChunk(gcm, requestID, final, true, write)
 }
 
 func streamSessionFileError(gcm cipher.AEAD, requestID, message string, write ws.PTYWriteFunc) error {
@@ -594,7 +594,7 @@ func streamSessionFileError(gcm cipher.AEAD, requestID, message string, write ws
 	if err != nil {
 		return err
 	}
-	return tunnelStreamChunk(gcm, requestID, payload, true, write)
+	return ws.TunnelStreamChunk(gcm, requestID, payload, true, write)
 }
 
 var openSessionExportOwnerRoot = (*os.Root).OpenRoot

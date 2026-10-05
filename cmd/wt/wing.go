@@ -76,12 +76,6 @@ var sessionStates sync.Map // sessionID -> *sessionIdleState
 
 const attentionCooldown = 30 * time.Second
 
-func writePTYMessage(write ws.PTYWriteFunc, message any) {
-	if err := write(message); err != nil {
-		log.Printf("send PTY message %T: %v", message, err)
-	}
-}
-
 // checkAndSendAttention fires session.attention if the cooldown has elapsed.
 // Returns true if the attention was sent.
 func checkAndSendAttention(sessionID, agent, cwd string, write ws.PTYWriteFunc) bool {
@@ -565,7 +559,7 @@ func watchBrowserRequests(ctx context.Context, path, sessionID string, lastOffse
 			}
 			lastOffset += int64(len(data))
 			consumeBrowserRequestChunk(data, &pending, &discarding, func(line string) {
-				writePTYMessage(write, ws.PTYBrowserOpen{Type: ws.TypePTYBrowserOpen, SessionID: sessionID, URL: line})
+				ws.WritePTYMessage(write, ws.PTYBrowserOpen{Type: ws.TypePTYBrowserOpen, SessionID: sessionID, URL: line})
 			})
 		case <-ctx.Done():
 			return
@@ -722,7 +716,7 @@ func sendPTYOutputTagged(sessionID, viewerID string, data []byte, gcm cipher.AEA
 			log.Printf("pty session %s: encrypt error: %v", sessionID, err)
 			return
 		}
-		writePTYMessage(write, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, ViewerID: viewerID})
+		ws.WritePTYMessage(write, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, ViewerID: viewerID})
 		return
 	}
 	for sent := 0; sent < len(data); {
@@ -735,7 +729,7 @@ func sendPTYOutputTagged(sessionID, viewerID string, data []byte, gcm cipher.AEA
 			log.Printf("pty session %s: chunk encrypt error: %v", sessionID, err)
 			return
 		}
-		writePTYMessage(write, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, ViewerID: viewerID})
+		ws.WritePTYMessage(write, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, ViewerID: viewerID})
 		sent = end
 	}
 }
@@ -781,7 +775,7 @@ func sendReplayChunkedTagged(sessionID, viewerID string, raw []byte, gcm cipher.
 			log.Printf("pty session %s: replay chunk encrypt error: %v", sessionID, encErr)
 			return
 		}
-		writePTYMessage(write, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed, ViewerID: viewerID})
+		ws.WritePTYMessage(write, ws.PTYOutput{Type: ws.TypePTYOutput, SessionID: sessionID, Data: encrypted, Compressed: isCompressed, ViewerID: viewerID})
 		totalCompressed += len(compressed)
 		sent = end
 		chunks++
@@ -1861,7 +1855,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		// Per-user path ACLs: members only see their tagged folders
 		userPaths := wingpolicy.PathsForRequest(sessionWingCfg.Paths, start.Email, start.OrgRole, home)
 		if wingpolicy.IsMemberRole(start.OrgRole) && len(userPaths) == 0 {
-			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no accessible folders on this machine"})
+			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no accessible folders on this machine"})
 			return
 		}
 		// Clamp CWD to exact configured paths (not subdirectories).
@@ -1875,7 +1869,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		// Members require egg.yaml in CWD (sandbox jail)
 		if wingpolicy.IsMemberRole(start.OrgRole) && len(sessionWingCfg.Paths) > 0 {
 			if _, err := os.Stat(filepath.Join(start.CWD, "egg.yaml")); os.IsNotExist(err) {
-				writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no egg.yaml in " + start.CWD + " — ask the wing owner to add a sandbox config"})
+				ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no egg.yaml in " + start.CWD + " — ask the wing owner to add a sandbox config"})
 				return
 			}
 		}
@@ -3466,7 +3460,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
 	if privKeyErr != nil {
 		log.Printf("pty session %s: FATAL: load private key: %v (reclaim aborted)", sessionID, privKeyErr)
-		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: 1, Error: "E2E encryption required but wing private key missing"})
+		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: 1, Error: "E2E encryption required but wing private key missing"})
 		return
 	}
 	wingPubKeyB64 := base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
@@ -3558,7 +3552,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				sendPTYOutput(sessionID, p.Output, currentGCM, write)
 			case *pb.SessionMsg_ExitCode:
 				log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
-				writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
+				ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
 				clearAttentionCooldown(sessionID)
 				sessionCancel()
 				return
@@ -3585,7 +3579,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 			case <-pendingAuth.timeout():
 				for _, pending := range pendingAuth.expire(time.Now()) {
 					log.Printf("pty session %s: reattach passkey timed out", sessionID)
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
 				}
 				continue
 			case inputData, ok := <-input:
@@ -3614,12 +3608,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				signature, _ := base64.StdEncoding.DecodeString(response.Signature)
 				rawKey, verifyErr := wingpolicy.VerifySubjectPasskey(allowedKeys, pending.attach.UserID, pending.challenge, authData, clientData, signature, passkeyPolicy)
 				if verifyErr != nil {
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
 					continue
 				}
 				token, tokenErr := auth.GenerateAuthToken()
 				if tokenErr != nil {
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: sessionID, ViewerID: pending.attach.ViewerID})
 					continue
 				}
 				passkeyCache.Put(token, rawKey, pending.subject)
@@ -3636,12 +3630,12 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					}
 				}
 				if !wingpolicy.CanAttachSession(attach.UserID, attach.OrgRole, readEggOwner(eggDir)) {
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: sessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: sessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 				clearAttentionCooldown(sessionID)
 				if attach.PublicKey == "" {
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: sessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: sessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 
@@ -3650,7 +3644,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				attachSubject := wingpolicy.PasskeySubject(attach.UserID, attach.PublicKey)
 				attachUserHasPasskey := len(wingpolicy.PasskeysForSubject(allowedKeys, attach.UserID)) > 0
 				if wingCfg.Locked && (attachSubject == "" || !attachUserHasPasskey) {
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: sessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: sessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 				if attachUserHasPasskey {
@@ -3668,7 +3662,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							log.Printf("pty session %s: reattach challenge generation failed: %v", sessionID, chalErr)
 							continue
 						}
-						writePTYMessage(write, ws.PasskeyChallenge{
+						ws.WritePTYMessage(write, ws.PasskeyChallenge{
 							Type:      ws.TypePasskeyChallenge,
 							SessionID: sessionID,
 							Challenge: base64.RawURLEncoding.EncodeToString(challenge),
@@ -3685,23 +3679,23 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				// the controller, including after a wing daemon reclaim.
 				if attach.Spectate {
 					if !wingCfg.Spectate {
-						writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: 1, Error: "spectate not enabled", ViewerID: attach.ViewerID})
+						ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: 1, Error: "spectate not enabled", ViewerID: attach.ViewerID})
 						continue
 					}
 					spectatorGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 					if deriveErr != nil {
-						writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: sessionID, ViewerID: attach.ViewerID})
+						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: sessionID, ViewerID: attach.ViewerID})
 						continue
 					}
 					specCtx, specCancel := context.WithCancel(ctx)
 					specStream, specErr := ec.AttachSessionWithOptions(specCtx, sessionID, egg.AttachOptions{ReadOnly: true, Owner: "browser:observer"})
 					if specErr != nil {
 						specCancel()
-						writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: sessionID, ViewerID: attach.ViewerID})
+						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: sessionID, ViewerID: attach.ViewerID})
 						continue
 					}
 					bindBrowserViewer(sessionID, attach.ViewerID, ec, specCancel)
-					writePTYMessage(write, ws.PTYStarted{
+					ws.WritePTYMessage(write, ws.PTYStarted{
 						Type: ws.TypePTYStarted, SessionID: sessionID, Agent: reclaimAgent,
 						PublicKey: wingPubKeyB64, AuthToken: attachAuthToken, ViewerID: attach.ViewerID,
 					})
@@ -3723,7 +3717,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 							case *pb.SessionMsg_Output:
 								sendPTYOutputTagged(sessionID, viewerID, payload.Output, g, write)
 							case *pb.SessionMsg_ExitCode:
-								writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(payload.ExitCode), ViewerID: viewerID})
+								ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(payload.ExitCode), ViewerID: viewerID})
 								return
 							}
 						}
@@ -3737,7 +3731,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				newGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 				if deriveErr != nil {
 					log.Printf("pty session %s: reattach derive key failed: %v", sessionID, deriveErr)
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: sessionID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: sessionID})
 					continue
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", sessionID)
@@ -3746,7 +3740,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 				if reErr != nil {
 					newSCancel()
 					log.Printf("pty session %s: reattach to egg failed: %v", sessionID, reErr)
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: reErr.Error(), SessionID: sessionID, ControllerID: attach.ControllerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: reErr.Error(), SessionID: sessionID, ControllerID: attach.ControllerID})
 					continue
 				}
 
@@ -3776,7 +3770,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 					if attachAuthToken != "" {
 						started.AuthToken = attachAuthToken
 					}
-					writePTYMessage(write, started)
+					ws.WritePTYMessage(write, started)
 				}
 
 				// Read replay (first message) and send to browser in chunks.
@@ -3825,7 +3819,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 								return
 							}
 							log.Printf("pty session %s: exited with code %d", sessionID, p.ExitCode)
-							writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
+							ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: sessionID, ExitCode: int(p.ExitCode)})
 							clearAttentionCooldown(sessionID)
 							sessionCancel()
 							return
@@ -3917,14 +3911,14 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.WingConfig, start ws.PTYStart, write ws.PTYWriteFunc, input <-chan []byte, eggCfg *egg.EggConfig, debug, vte bool, allowedKeysPtr *[]config.AllowKey, passkeyCache *auth.AuthCache, passkeyPolicy auth.PasskeyPolicy, authTTL time.Duration, idleTimeout time.Duration, sw *webrtcpkg.SwappableWriter, dcSessions *sync.Map, tools []*config.ToolConfig, sharedHost bool) {
 	allowedKeys := *allowedKeysPtr
 	if start.PublicKey == "" {
-		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E client key required"})
+		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E client key required"})
 		return
 	}
 	subject := wingpolicy.PasskeySubject(start.UserID, start.PublicKey)
 	userHasPasskey := len(wingpolicy.PasskeysForSubject(allowedKeys, start.UserID)) > 0
 	if wingCfg.Locked && (subject == "" || !userHasPasskey) {
 		log.Printf("pty session %s: locked wing rejected user without a locally approved passkey", start.SessionID)
-		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "not allowed by wing"})
+		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "not allowed by wing"})
 		return
 	}
 	if userHasPasskey {
@@ -3939,11 +3933,11 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.W
 		// Generate and send challenge
 		challenge, chalErr := auth.GenerateChallenge()
 		if chalErr != nil {
-			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "challenge generation failed"})
+			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "challenge generation failed"})
 			return
 		}
 
-		writePTYMessage(write, ws.PasskeyChallenge{
+		ws.WritePTYMessage(write, ws.PasskeyChallenge{
 			Type:      ws.TypePasskeyChallenge,
 			SessionID: start.SessionID,
 			Challenge: base64.RawURLEncoding.EncodeToString(challenge),
@@ -3970,7 +3964,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.W
 				}
 				var resp ws.PasskeyResponse
 				if err := json.Unmarshal(data, &resp); err != nil {
-					writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey response"})
+					ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey response"})
 					return
 				}
 
@@ -3981,7 +3975,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.W
 
 				matchedRawKey, verifyErr := wingpolicy.VerifySubjectPasskey(allowedKeys, start.UserID, challenge, authData, clientJSON, sig, passkeyPolicy)
 				if verifyErr != nil {
-					writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey signature"})
+					ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "invalid passkey signature"})
 					return
 				}
 				log.Printf("pty session %s: passkey verified", start.SessionID)
@@ -3995,7 +3989,7 @@ func handlePTYSession(ctx context.Context, cfg *config.Config, wingCfg *config.W
 				passkeyVerified = true
 
 			case <-timer.C:
-				writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "passkey authentication timed out"})
+				ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "passkey authentication timed out"})
 				return
 
 			case <-ctx.Done():
@@ -4014,7 +4008,7 @@ authDone:
 	privKey, privKeyErr := auth.LoadPrivateKey(cfg.Dir)
 	if privKeyErr != nil {
 		log.Printf("pty session %s: FATAL: load private key: %v", start.SessionID, privKeyErr)
-		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E encryption required but wing private key missing"})
+		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E encryption required but wing private key missing"})
 		return
 	}
 	wingPubKeyB64 = base64.StdEncoding.EncodeToString(privKey.PublicKey().Bytes())
@@ -4022,7 +4016,7 @@ authDone:
 		derived, deriveErr := auth.DeriveSharedKey(privKey, start.PublicKey, "wt-pty")
 		if deriveErr != nil {
 			log.Printf("pty session %s: FATAL: derive shared key: %v", start.SessionID, deriveErr)
-			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E key exchange failed"})
+			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "E2E key exchange failed"})
 			return
 		}
 		gcm = derived
@@ -4038,7 +4032,7 @@ authDone:
 		toolsDir := filepath.Join(eggDir, ".tools")
 		if err := os.MkdirAll(toolsDir, 0700); err != nil {
 			log.Printf("pty session %s: create tool directory: %v", start.SessionID, err)
-			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "create tool directory: " + err.Error()})
+			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "create tool directory: " + err.Error()})
 			return
 		}
 		toolSocketPath = filepath.Join(toolsDir, "tool.sock")
@@ -4065,14 +4059,14 @@ authDone:
 		var resumeErr error
 		providerResumeID, start.CWD, releaseProviderResume, resumeErr = prepareBrowserResume(cfg, wingCfg, start, sharedAllowedPaths, sharedHost)
 		if resumeErr != nil {
-			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeErr.Error()})
+			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeErr.Error()})
 			return
 		}
 		defer func() { releaseProviderResume(providerResumeSpawned) }()
 	}
 	resumeArgs, resumePrincipal, resumeBindingErr := prepareConversationResumeMCP(cfg, wingCfg, start, eggCfg, sharedHost)
 	if resumeBindingErr != nil {
-		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
+		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
 		return
 	}
 	ec, err := spawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace, EggIdentity{
@@ -4098,7 +4092,7 @@ authDone:
 		if strings.Contains(crashInfo, "no log available") || strings.Contains(crashInfo, "empty log") {
 			crashInfo = err.Error()
 		}
-		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
+		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: crashInfo})
 		return
 	}
 	defer cmdutil.CloseWithLog("PTY egg client", ec)
@@ -4107,7 +4101,7 @@ authDone:
 		killCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		_ = ec.Kill(killCtx, start.SessionID)
 		cancel()
-		writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "persist resumed conversation identity: " + err.Error()})
+		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "persist resumed conversation identity: " + err.Error()})
 		return
 	}
 
@@ -4132,10 +4126,10 @@ authDone:
 		log.Printf("pty: egg attach failed: %v", err)
 		if config.Channel() != "preview" {
 			sCancel()
-			writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
+			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1})
 			return
 		}
-		writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: start.SessionID, ControllerID: start.ControllerID, Message: err.Error()})
+		ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: start.SessionID, ControllerID: start.ControllerID, Message: err.Error()})
 		if grpcstatus.Code(err) != codes.FailedPrecondition {
 			sCancel()
 			return
@@ -4157,7 +4151,7 @@ authDone:
 	if writerConfirmed {
 		bindBrowserInput(start.SessionID, start.ControllerID, start.PublicKey, start.UserID, ec, stream, sCancel)
 		// Notify browser
-		writePTYMessage(write, ws.PTYStarted{
+		ws.WritePTYMessage(write, ws.PTYStarted{
 			Type:                 ws.TypePTYStarted,
 			SessionID:            start.SessionID,
 			ControllerID:         start.ControllerID,
@@ -4173,7 +4167,7 @@ authDone:
 	defer sessionCancel()
 	if config.Channel() == "preview" {
 		if err := watchPreviewBrowserEgg(sessionCtx, ec, start.SessionID, start.Agent, start.CWD, idleState, write, sessionCancel); err != nil {
-			writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: start.SessionID, Message: err.Error()})
+			ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, SessionID: start.SessionID, Message: err.Error()})
 			return
 		}
 	}
@@ -4226,7 +4220,7 @@ authDone:
 					return
 				}
 				log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
-				writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
+				ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
 				clearAttentionCooldown(start.SessionID)
 				sessionCancel()
 				return
@@ -4253,7 +4247,7 @@ authDone:
 			case <-pendingAuth.timeout():
 				for _, pending := range pendingAuth.expire(time.Now()) {
 					log.Printf("pty session %s: reattach passkey timed out", start.SessionID)
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "passkey timed out", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
 				}
 				continue
 			case inputData, ok := <-input:
@@ -4282,12 +4276,12 @@ authDone:
 				signature, _ := base64.StdEncoding.DecodeString(response.Signature)
 				rawKey, verifyErr := wingpolicy.VerifySubjectPasskey(allowedKeys, pending.attach.UserID, pending.challenge, authData, clientData, signature, passkeyPolicy)
 				if verifyErr != nil {
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "invalid passkey", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
 					continue
 				}
 				token, tokenErr := auth.GenerateAuthToken()
 				if tokenErr != nil {
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "auth token generation failed", SessionID: start.SessionID, ViewerID: pending.attach.ViewerID})
 					continue
 				}
 				passkeyCache.Put(token, rawKey, pending.subject)
@@ -4304,19 +4298,19 @@ authDone:
 					}
 				}
 				if !wingpolicy.CanAttachSession(attach.UserID, attach.OrgRole, start.UserID) {
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "session not found or not owned by caller", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 				clearAttentionCooldown(start.SessionID)
 				if attach.PublicKey == "" {
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption key required", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 
 				attachSubject := wingpolicy.PasskeySubject(attach.UserID, attach.PublicKey)
 				attachUserHasPasskey := len(wingpolicy.PasskeysForSubject(allowedKeys, attach.UserID)) > 0
 				if wingCfg.Locked && (attachSubject == "" || !attachUserHasPasskey) {
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "not allowed by wing", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 					continue
 				}
 				var attachAuthToken string
@@ -4329,10 +4323,10 @@ authDone:
 					if attachAuthToken == "" {
 						challenge, chalErr := auth.GenerateChallenge()
 						if chalErr != nil {
-							writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "challenge generation failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+							ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "challenge generation failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 							continue
 						}
-						writePTYMessage(write, ws.PasskeyChallenge{
+						ws.WritePTYMessage(write, ws.PasskeyChallenge{
 							Type:      ws.TypePasskeyChallenge,
 							SessionID: start.SessionID,
 							Challenge: base64.RawURLEncoding.EncodeToString(challenge),
@@ -4348,14 +4342,14 @@ authDone:
 				if attach.Spectate {
 					if !wingCfg.Spectate {
 						log.Printf("pty session %s: spectate rejected (not enabled in wing config)", start.SessionID)
-						writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "spectate not enabled", ViewerID: attach.ViewerID})
+						ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "spectate not enabled", ViewerID: attach.ViewerID})
 						continue
 					}
 					// Derive spectator-specific E2E key (independent of controller)
 					spectatorGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 					if deriveErr != nil {
 						log.Printf("pty session %s: spectator key derive failed: %v", start.SessionID, deriveErr)
-						writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator encryption setup failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 						continue
 					}
 					log.Printf("pty session %s: spectator E2E enabled (viewer=%s)", start.SessionID, attach.ViewerID)
@@ -4366,13 +4360,13 @@ authDone:
 					if specErr != nil {
 						specCancel()
 						log.Printf("pty session %s: spectator attach to egg failed: %v", start.SessionID, specErr)
-						writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
+						ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "spectator attach failed", SessionID: start.SessionID, ViewerID: attach.ViewerID})
 						continue
 					}
 
 					// Send pty.started only after the independent stream exists.
 					bindBrowserViewer(start.SessionID, attach.ViewerID, ec, specCancel)
-					writePTYMessage(write, ws.PTYStarted{
+					ws.WritePTYMessage(write, ws.PTYStarted{
 						Type:      ws.TypePTYStarted,
 						SessionID: start.SessionID,
 						Agent:     start.Agent,
@@ -4406,7 +4400,7 @@ authDone:
 									sendPTYOutputTagged(start.SessionID, viewerID, p.Output, g, write)
 								}
 							case *pb.SessionMsg_ExitCode:
-								writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode), ViewerID: viewerID})
+								ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode), ViewerID: viewerID})
 								return
 							}
 						}
@@ -4420,7 +4414,7 @@ authDone:
 				newGCM, deriveErr := auth.DeriveSharedKey(privKey, attach.PublicKey, "wt-pty")
 				if deriveErr != nil {
 					log.Printf("pty session %s: reattach derive key failed: %v", start.SessionID, deriveErr)
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: start.SessionID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: "client encryption setup failed", SessionID: start.SessionID})
 					continue
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", start.SessionID)
@@ -4429,7 +4423,7 @@ authDone:
 				if reErr != nil {
 					newSCancel()
 					log.Printf("pty session %s: reattach to egg failed: %v", start.SessionID, reErr)
-					writePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: reErr.Error(), SessionID: start.SessionID, ControllerID: attach.ControllerID})
+					ws.WritePTYMessage(write, ws.ErrorMsg{Type: ws.TypeError, Message: reErr.Error(), SessionID: start.SessionID, ControllerID: attach.ControllerID})
 					continue
 				}
 
@@ -4453,7 +4447,7 @@ authDone:
 				idleState.mu.Lock()
 				idleState.connected = true
 				idleState.mu.Unlock()
-				writePTYMessage(write, ws.PTYStarted{
+				ws.WritePTYMessage(write, ws.PTYStarted{
 					ControllerID: attach.ControllerID,
 					Type:         ws.TypePTYStarted,
 					SessionID:    start.SessionID,
@@ -4508,7 +4502,7 @@ authDone:
 								return
 							}
 							log.Printf("pty session %s: exited with code %d", start.SessionID, p.ExitCode)
-							writePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
+							ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: int(p.ExitCode)})
 							clearAttentionCooldown(start.SessionID)
 							sessionCancel()
 							return
@@ -4692,25 +4686,6 @@ type pastSessionInfo struct {
 	ResumeUnavailableReason string `json:"resume_unavailable_reason,omitempty"`
 }
 
-// tunnelRespond encrypts a JSON response and sends it as a tunnel.res message.
-func tunnelRespond(gcm cipher.AEAD, requestID string, result any, write ws.PTYWriteFunc) {
-	data, _ := json.Marshal(result)
-	encrypted, err := auth.Encrypt(gcm, data)
-	if err != nil {
-		return
-	}
-	writePTYMessage(write, ws.TunnelResponse{Type: ws.TypeTunnelResponse, RequestID: requestID, Payload: encrypted})
-}
-
-// tunnelStreamChunk encrypts a streaming chunk and sends it as a tunnel.stream message.
-func tunnelStreamChunk(gcm cipher.AEAD, requestID string, chunk []byte, done bool, write ws.PTYWriteFunc) error {
-	encrypted, err := auth.Encrypt(gcm, chunk)
-	if err != nil {
-		return err
-	}
-	return write(ws.TunnelStream{Type: ws.TypeTunnelStream, RequestID: requestID, Payload: encrypted, Done: done})
-}
-
 // canAccessSessionArtifact applies the same current owner-and-workspace policy
 // used by session listings before exposing a persisted audit or chat artifact.
 // Missing legacy metadata fails closed for members; owners and admins retain
@@ -4801,19 +4776,19 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	}
 	if inner.SessionID != "" && !ws.ValidSessionID(inner.SessionID) {
 		log.Printf("tunnel %s: rejected invalid session ID %q", req.RequestID, inner.SessionID)
-		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid session ID"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid session ID"}, write)
 		return
 	}
 	if req.Purpose != "" && !ws.TunnelPurposeMatches(req.Purpose, inner.Type) {
 		log.Printf("tunnel %s: declared purpose %q does not match inner type %q", req.RequestID, req.Purpose, inner.Type)
-		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "tunnel purpose mismatch"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "tunnel purpose mismatch"}, write)
 		return
 	}
 	// Every supported coordinator, including the N-1 org deployment, injects
 	// authenticated sender identity. Treat its absence as a protocol failure,
 	// not as legacy administrator authority.
 	if req.SenderUserID == "" {
-		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "authenticated user identity required"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "authenticated user identity required"}, write)
 		return
 	}
 
@@ -4828,7 +4803,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 		if !inList {
 			// Not in allow list at all — locked
-			tunnelRespond(gcm, req.RequestID, map[string]any{
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{
 				"error": "not_allowed",
 			}, write)
 			return
@@ -4850,7 +4825,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 		if !authorized {
 			// In list but not yet authenticated — passkey challenge
-			tunnelRespond(gcm, req.RequestID, map[string]any{
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{
 				"error":    "passkey_required",
 				"hostname": client.Hostname,
 				"platform": client.Platform,
@@ -4879,7 +4854,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 					}
 				}
 				if !authorized {
-					tunnelRespond(gcm, req.RequestID, map[string]any{
+					ws.TunnelRespond(gcm, req.RequestID, map[string]any{
 						"error":    "passkey_required",
 						"hostname": client.Hostname,
 						"platform": client.Platform,
@@ -4898,7 +4873,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	case "dir.list":
 		userPaths := wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
 		entries := wingpolicy.RequestDirEntries(req, inner.Path, userPaths)
-		tunnelRespond(gcm, req.RequestID, map[string]any{"entries": entries}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"entries": entries}, write)
 
 	case "wing.info":
 		userPaths := wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
@@ -4965,25 +4940,25 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 				resp["passkey_enrolled"] = true
 			}
 		}
-		tunnelRespond(gcm, req.RequestID, resp, write)
+		ws.TunnelRespond(gcm, req.RequestID, resp, write)
 
 	case "webrtc.offer":
 		if peerMgr == nil {
-			tunnelRespond(gcm, req.RequestID, map[string]any{"error": "p2p not enabled"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": "p2p not enabled"}, write)
 			return
 		}
 		if inner.SDP == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]any{"error": "missing sdp"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": "missing sdp"}, write)
 			return
 		}
 		answerSDP, err := peerMgr.HandleOffer(req.SenderPub, req.SenderUserID, req.SenderEmail, req.SenderOrgRole, req.SenderPasskeys, inner.SDP)
 		if err != nil {
 			log.Printf("[P2P] webrtc.offer failed: %v", err)
-			tunnelRespond(gcm, req.RequestID, map[string]any{"error": fmt.Sprintf("webrtc offer: %v", err)}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": fmt.Sprintf("webrtc offer: %v", err)}, write)
 			return
 		}
 		log.Printf("[P2P] webrtc.offer accepted from %s, answer SDP %d bytes", cmdutil.ShortLogValue(req.SenderPub), len(answerSDP))
-		tunnelRespond(gcm, req.RequestID, map[string]any{"sdp": answerSDP}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sdp": answerSDP}, write)
 
 	case "sessions.list":
 		sessions := listAliveEggSessions(cfg)
@@ -4997,15 +4972,15 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 			sessions = filtered
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
 
 	case "session.control":
 		result, err := browserSessionControl(ctx, cfg, wingCfg, req, inner.Operation, inner.Arguments, home, sharedHost)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]any{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": err.Error()}, write)
 			return
 		}
-		tunnelRespond(gcm, req.RequestID, result, write)
+		ws.TunnelRespond(gcm, req.RequestID, result, write)
 
 	case "sessions.history":
 		sessions := collectSessionsHistory(cfg)
@@ -5014,48 +4989,48 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			sessions = filterSessionsHistoryForRequest(req, sessions, userPaths)
 		}
 		sessions, total := paginateSessionsHistory(sessions, inner.Offset, inner.Limit)
-		tunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions, "total": total}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions, "total": total}, write)
 
 	case "sessions.rename":
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
 		if err := renameTunnelSession(cfg, req, inner.SessionID, inner.Name, listAliveEggSessions(cfg), userPaths); err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]any{"ok": true, "name": inner.Name}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"ok": true, "name": inner.Name}, write)
 
 	case "file.upload.begin":
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
 		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
 		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
 		upload, err := sessionUploads.begin(session, policy, userPaths, req, inner.Name, inner.Size)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]any{"upload_id": upload.id, "chunk_size": maxSessionUploadChunk, "path": filepath.Join(upload.destination, upload.name)}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"upload_id": upload.id, "chunk_size": maxSessionUploadChunk, "path": filepath.Join(upload.destination, upload.name)}, write)
 
 	case "file.upload.chunk":
 		chunk, err := base64.StdEncoding.DecodeString(inner.Data)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid upload chunk"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid upload chunk"}, write)
 			return
 		}
 		received, err := sessionUploads.append(inner.UploadID, req.SenderUserID, req.SenderPub, int64(inner.Offset), chunk)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]int64{"received": received}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]int64{"received": received}, write)
 
 	case "file.upload.finish":
 		upload, err := sessionUploads.finish(inner.UploadID, req.SenderUserID, req.SenderPub)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
 		defer func() { _ = upload.root.Close() }()
@@ -5063,29 +5038,29 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
 		session, policy, err := resolveOwnedSessionFileTarget(req, upload.sessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload policy changed"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload policy changed"}, write)
 			return
 		}
 		destination, err := policy.uploadDirectory(userPaths)
 		if err != nil || session.SessionID != upload.sessionID || destination != upload.destination {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload destination changed"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload destination changed"}, write)
 			return
 		}
 		sha, size, err := upload.commit(destination)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
 		path := filepath.Join(upload.destination, upload.name)
 		log.Printf("session upload complete (user=%s session=%s path=%q size=%d)", req.SenderUserID, upload.sessionID, path, size)
-		tunnelRespond(gcm, req.RequestID, map[string]any{"name": upload.name, "path": path, "size": size, "sha256": sha}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"name": upload.name, "path": path, "size": size, "sha256": sha}, write)
 
 	case "file.upload.cancel":
 		if err := sessionUploads.cancel(inner.UploadID, req.SenderUserID, req.SenderPub); err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]any{"ok": true}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"ok": true}, write)
 
 	case "file.download":
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
@@ -5111,14 +5086,14 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		effectiveHome := effectiveSessionHome(cfg, EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
 		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
 		wingCfgMu.Lock()
 		exportCfg := liveWingCfg.Clone()
 		wingCfgMu.Unlock()
 		if err := config.ValidateExports(cfg.Dir, exportCfg); err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "export destinations are invalid: " + err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "export destinations are invalid: " + err.Error()}, write)
 			return
 		}
 		var exportTarget *config.ExportTarget
@@ -5130,22 +5105,22 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			}
 		}
 		if exportTarget == nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "export destination is unavailable for this user"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "export destination is unavailable for this user"}, write)
 			return
 		}
 		file, _, info, err := openSessionFile(session, policy, userPaths, inner.Path)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
 		defer cmdutil.CloseWithLog("session export source", file)
 		sha, size, err := exportSessionFile(file, info, *exportTarget, req.SenderUserID)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
 		log.Printf("session export complete (user=%s session=%s target=%s name=%q size=%d)", req.SenderUserID, inner.SessionID, exportTarget.Name, info.Name(), size)
-		tunnelRespond(gcm, req.RequestID, map[string]any{"ok": true, "target": exportTarget.Name, "name": info.Name(), "size": size, "sha256": sha}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"ok": true, "target": exportTarget.Name, "name": info.Name(), "size": size, "sha256": sha}, write)
 
 	case "audit.request":
 		if inner.SessionID != "" && wingpolicy.IsMemberFiltered(req) {
@@ -5153,7 +5128,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			userPaths := wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
 			if !canAccessSessionArtifact(req, sessionDir, userPaths) {
 				log.Printf("tunnel %s: denied audit outside current owner/path policy (user=%s session=%s)", req.RequestID, req.SenderUserID, inner.SessionID)
-				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
+				ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 				return
 			}
 		}
@@ -5163,49 +5138,49 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		// Rewrites the egg policy every session on this host runs under —
 		// wing-wide administration, not a per-path member capability.
 		if wingpolicy.IsMemberFiltered(req) {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
 			return
 		}
 		if inner.YAML == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing yaml"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing yaml"}, write)
 			return
 		}
 		newCfg, err := egg.LoadEggConfigFromYAML(inner.YAML)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
 		wingEggMu.Lock()
 		*wingEggCfg = newCfg
 		wingEggMu.Unlock()
 		log.Printf("egg: config updated from tunnel (network=%s)", newCfg.NetworkSummary())
-		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "pty.kill":
 		if inner.SessionID == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing session_id"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing session_id"}, write)
 			return
 		}
 		if wingpolicy.IsMemberFiltered(req) {
 			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", inner.SessionID))
 			if !wingpolicy.CanSeeSession(req, owner) {
 				log.Printf("tunnel %s: denied kill (user=%s session_owner=%s)", req.RequestID, req.SenderUserID, owner)
-				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
+				ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 				return
 			}
 		}
 		killOrphanEgg(cfg, inner.SessionID)
-		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "pty.resize":
 		if inner.SessionID == "" || inner.Rows <= 0 || inner.Cols <= 0 {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing session_id or dimensions"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing session_id or dimensions"}, write)
 			return
 		}
 		if wingpolicy.IsMemberFiltered(req) {
 			owner := readEggOwner(filepath.Join(cfg.Dir, "eggs", inner.SessionID))
 			if !wingpolicy.CanSeeSession(req, owner) {
-				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
+				ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 				return
 			}
 		}
@@ -5216,47 +5191,47 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			resizeErr = resizeEgg(cfg, inner.SessionID, uint32(inner.Rows), uint32(inner.Cols))
 		}
 		if err := resizeErr; err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "wing.update":
 		// Replaces the host executable — wing-wide administration.
 		if wingpolicy.IsMemberFiltered(req) {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
 			return
 		}
 		log.Println("tunnel: remote update requested")
 		exe, exeErr := os.Executable()
 		if exeErr != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": exeErr.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": exeErr.Error()}, write)
 			return
 		}
 		c := exec.Command(exe, "update")
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
 		if err := c.Run(); err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "passkey.auth.begin":
 		if subject == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "authenticated client identity required"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "authenticated client identity required"}, write)
 			return
 		}
 		if len(wingpolicy.PasskeysForSubject(allowedKeys, req.SenderUserID)) == 0 {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "not_allowed"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "not_allowed"}, write)
 			return
 		}
 		challengeID, challenge, err := passkeyChallenges.Put(subject, time.Minute)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "challenge generation failed"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "challenge generation failed"}, write)
 			return
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]string{
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{
 			"challenge_id": challengeID,
 			"challenge":    base64.RawURLEncoding.EncodeToString(challenge),
 			"rp_id":        passkeyPolicy.RPID,
@@ -5264,46 +5239,46 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 
 	case "passkey.auth.finish":
 		if subject == "" || inner.ChallengeID == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing passkey challenge"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing passkey challenge"}, write)
 			return
 		}
 		challenge, ok := passkeyChallenges.Consume(inner.ChallengeID, subject)
 		if !ok {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid or expired passkey challenge"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid or expired passkey challenge"}, write)
 			return
 		}
 		if _, err := base64.RawURLEncoding.DecodeString(inner.CredentialID); err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid credential ID"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid credential ID"}, write)
 			return
 		}
 		authData, err := base64.StdEncoding.DecodeString(inner.AuthenticatorData)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid authenticator data"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid authenticator data"}, write)
 			return
 		}
 		cdJSON, err := base64.StdEncoding.DecodeString(inner.ClientDataJSON)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid client data"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid client data"}, write)
 			return
 		}
 		sig, err := base64.StdEncoding.DecodeString(inner.Signature)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid signature encoding"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid signature encoding"}, write)
 			return
 		}
 
 		matchedKey, err := wingpolicy.VerifySubjectPasskey(allowedKeys, req.SenderUserID, challenge, authData, cdJSON, sig, passkeyPolicy)
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "passkey verification failed"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "passkey verification failed"}, write)
 			return
 		}
 		token, err := auth.GenerateAuthToken()
 		if err != nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "auth token generation failed"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "auth token generation failed"}, write)
 			return
 		}
 		passkeyCache.Put(token, matchedKey, subject)
-		tunnelRespond(gcm, req.RequestID, map[string]string{"auth_token": token}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"auth_token": token}, write)
 
 	case "allow.list":
 		type allowInfo struct {
@@ -5315,18 +5290,18 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		for _, ak := range wingpolicy.VisibleAllowKeys(req, allowedKeys) {
 			allowed = append(allowed, allowInfo{Key: ak.Key, UserID: ak.UserID, Email: ak.Email})
 		}
-		tunnelRespond(gcm, req.RequestID, map[string]any{"allowed": allowed}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"allowed": allowed}, write)
 
 	case "allow.add":
 		if req.SenderUserID == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "no user identity"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "no user identity"}, write)
 			return
 		}
 		// Validate key if provided
 		if inner.Key != "" {
 			keyBytes, decErr := base64.StdEncoding.DecodeString(inner.Key)
 			if decErr != nil || !auth.IsValidP256Point(keyBytes) {
-				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid key"}, write)
+				ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid key"}, write)
 				return
 			}
 		}
@@ -5342,27 +5317,27 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		wingCfgMu.Lock()
 		if liveWingCfg.Locked {
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "locked wings require local approval via wt wing allow"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "locked wings require local approval via wt wing allow"}, write)
 			return
 		}
 		for _, ak := range *allowedKeysPtr {
 			if ak.UserID == req.SenderUserID {
 				wingCfgMu.Unlock()
-				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "already allowed"}, write)
+				ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "already allowed"}, write)
 				return
 			}
 		}
 		*allowedKeysPtr = append(*allowedKeysPtr, newEntry)
 		wingCfgMu.Unlock()
 		log.Printf("allowed: user=%s email=%s has_passkey=%v (session-scoped)", req.SenderUserID, req.SenderEmail, inner.Key != "")
-		tunnelRespond(gcm, req.RequestID, map[string]any{
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{
 			"ok": "true", "email": req.SenderEmail, "user_id": req.SenderUserID,
 			"has_passkey": inner.Key != "",
 		}, write)
 
 	case "allow.remove":
 		if req.SenderUserID == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "no user identity"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "no user identity"}, write)
 			return
 		}
 		wingCfgMu.Lock()
@@ -5382,14 +5357,14 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		if target == "" {
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing allow_user_id or key"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing allow_user_id or key"}, write)
 			return
 		}
 		// Only wing owner or the entry's own user can remove
 		isOwner := liveReq.SenderOrgRole == "owner" || liveReq.SenderOrgRole == "admin"
 		if !isOwner && req.SenderUserID != target {
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "access denied"}, write)
 			return
 		}
 		// Remove from persisted config (if present). Revocation is an ACL
@@ -5409,7 +5384,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			if saveErr := config.SaveWingConfig(cfg.Dir, liveWingCfg); saveErr != nil {
 				liveWingCfg.AllowKeys = oldAllowKeys
 				wingCfgMu.Unlock()
-				tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
+				ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 				return
 			}
 		}
@@ -5424,7 +5399,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		if !persistedRemoved && !memRemoved {
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "entry not found"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "entry not found"}, write)
 			return
 		}
 		*allowedKeysPtr = allowedKeys
@@ -5438,27 +5413,27 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			log.Printf("advertise access config after revoke: %v", err)
 		}
 		log.Printf("revoked: target=%s by=%s persisted=%v", target, req.SenderUserID, persistedRemoved)
-		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "paths.list":
 		if !wingpolicy.IsMemberFiltered(req) {
 			// Admin/owner: return full PathList with members
-			tunnelRespond(gcm, req.RequestID, map[string]any{"paths": wingCfg.Paths}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"paths": wingCfg.Paths}, write)
 		} else {
 			// Member: return only their accessible paths, no member lists
 			userPaths := wingCfg.Paths.PathsForUser(req.SenderEmail, req.SenderOrgRole)
-			tunnelRespond(gcm, req.RequestID, map[string]any{"paths": userPaths}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"paths": userPaths}, write)
 		}
 
 	case "paths.set":
 		if inner.Paths == nil {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing paths"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing paths"}, write)
 			return
 		}
 		wingCfgMu.Lock()
 		if wingpolicy.IsMemberFiltered(wingpolicy.RequestAgainstWingConfig(req, authenticatedOrgRole, liveWingCfg)) {
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
 			return
 		}
 		oldPaths, oldRoot := liveWingCfg.Paths, liveWingCfg.Root
@@ -5469,24 +5444,24 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			// live authorization until restart.
 			liveWingCfg.Paths, liveWingCfg.Root = oldPaths, oldRoot
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 			return
 		}
 		paths := wingpolicy.ClonePathList(liveWingCfg.Paths)
 		wingCfgMu.Unlock()
 		log.Printf("paths.set: %d entries by %s", len(paths), req.SenderUserID)
 		go killSessionsViolatingACLs(cfg, paths, home)
-		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "paths.add_member":
 		if inner.Path == "" || inner.Email == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing path or email"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing path or email"}, write)
 			return
 		}
 		wingCfgMu.Lock()
 		if wingpolicy.IsMemberFiltered(wingpolicy.RequestAgainstWingConfig(req, authenticatedOrgRole, liveWingCfg)) {
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
 			return
 		}
 		found := false
@@ -5511,28 +5486,28 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		if !found {
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "path not found"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "path not found"}, write)
 			return
 		}
 		if saveErr := config.SaveWingConfig(cfg.Dir, liveWingCfg); saveErr != nil {
 			liveWingCfg.Paths = oldPaths
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 			return
 		}
 		wingCfgMu.Unlock()
 		log.Printf("paths.add_member: %s to %s by %s", inner.Email, inner.Path, req.SenderUserID)
-		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	case "paths.remove_member":
 		if inner.Path == "" || inner.Email == "" {
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing path or email"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "missing path or email"}, write)
 			return
 		}
 		wingCfgMu.Lock()
 		if wingpolicy.IsMemberFiltered(wingpolicy.RequestAgainstWingConfig(req, authenticatedOrgRole, liveWingCfg)) {
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "admin required"}, write)
 			return
 		}
 		found := false
@@ -5545,7 +5520,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 				// path public instead of revoking access. Fail closed.
 				if len(e.Members) == 1 && strings.ToLower(e.Members[0]) == emailLower {
 					wingCfgMu.Unlock()
-					tunnelRespond(gcm, req.RequestID, map[string]string{"error": "cannot remove the last member — an empty list opens the path to everyone; remove the path entry instead"}, write)
+					ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "cannot remove the last member — an empty list opens the path to everyone; remove the path entry instead"}, write)
 					return
 				}
 				for j, m := range e.Members {
@@ -5560,23 +5535,23 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		}
 		if !found {
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "path or member not found"}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "path or member not found"}, write)
 			return
 		}
 		if saveErr := config.SaveWingConfig(cfg.Dir, liveWingCfg); saveErr != nil {
 			liveWingCfg.Paths = oldPaths
 			wingCfgMu.Unlock()
-			tunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
+			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "persist wing.yaml: " + saveErr.Error()}, write)
 			return
 		}
 		paths := wingpolicy.ClonePathList(liveWingCfg.Paths)
 		wingCfgMu.Unlock()
 		log.Printf("paths.remove_member: %s from %s by %s", inner.Email, inner.Path, req.SenderUserID)
 		go killSessionsViolatingACLs(cfg, paths, home)
-		tunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"ok": "true"}, write)
 
 	default:
-		tunnelRespond(gcm, req.RequestID, map[string]string{"error": "unknown type: " + inner.Type}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "unknown type: " + inner.Type}, write)
 	}
 }
 
@@ -5867,7 +5842,7 @@ func streamPTYAudit(reader io.Reader, fallbackCols, fallbackRows int, emit func(
 // streamAuditData reads audit data from disk and streams encrypted chunks via tunnel.stream.
 func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD, requestID string, write ws.PTYWriteFunc) {
 	if !ws.ValidSessionID(sessionID) {
-		tunnelRespond(gcm, requestID, map[string]string{"error": "invalid session ID"}, write)
+		ws.TunnelRespond(gcm, requestID, map[string]string{"error": "invalid session ID"}, write)
 		return
 	}
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
@@ -5884,29 +5859,29 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		tunnelRespond(gcm, requestID, map[string]string{"error": "file not found: " + kind}, write)
+		ws.TunnelRespond(gcm, requestID, map[string]string{"error": "file not found: " + kind}, write)
 		return
 	}
 	defer cmdutil.CloseWithLog("audit stream", file)
 	emit := func(chunk []byte) error {
-		return tunnelStreamChunk(gcm, requestID, chunk, false, write)
+		return ws.TunnelStreamChunk(gcm, requestID, chunk, false, write)
 	}
 
 	if kind == "chat" {
 		if err := streamAuditFile(file, true, emit); err != nil {
-			_ = tunnelStreamChunk(gcm, requestID, auditStreamErrorPayload("read chat audit: "+err.Error()), true, write)
+			_ = ws.TunnelStreamChunk(gcm, requestID, auditStreamErrorPayload("read chat audit: "+err.Error()), true, write)
 			return
 		}
-		_ = tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
+		_ = ws.TunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
 		return
 	}
 
 	if kind != "pty" {
 		if err := streamAuditFile(file, false, emit); err != nil {
-			_ = tunnelStreamChunk(gcm, requestID, auditStreamErrorPayload("read keylog audit: "+err.Error()), true, write)
+			_ = ws.TunnelStreamChunk(gcm, requestID, auditStreamErrorPayload("read keylog audit: "+err.Error()), true, write)
 			return
 		}
-		_ = tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
+		_ = ws.TunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
 		return
 	}
 
@@ -5914,7 +5889,7 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 	// an incomplete trailing frame from a live writer.
 	gr, gzErr := gzip.NewReader(file)
 	if gzErr != nil {
-		tunnelRespond(gcm, requestID, map[string]string{"error": "decompress: " + gzErr.Error()}, write)
+		ws.TunnelRespond(gcm, requestID, map[string]string{"error": "decompress: " + gzErr.Error()}, write)
 		return
 	}
 	cols, rows := auditDimensions(dir)
@@ -5923,8 +5898,8 @@ func streamAuditData(cfg *config.Config, sessionID, kind string, gcm cipher.AEAD
 		streamErr = closeErr
 	}
 	if streamErr != nil {
-		_ = tunnelStreamChunk(gcm, requestID, auditStreamErrorPayload("read PTY audit: "+streamErr.Error()), true, write)
+		_ = ws.TunnelStreamChunk(gcm, requestID, auditStreamErrorPayload("read PTY audit: "+streamErr.Error()), true, write)
 		return
 	}
-	_ = tunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
+	_ = ws.TunnelStreamChunk(gcm, requestID, []byte(`{"done":true}`), true, write)
 }
