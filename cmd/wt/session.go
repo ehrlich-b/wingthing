@@ -65,6 +65,17 @@ func sessionPSCmd() *cobra.Command {
 				encoder.SetIndent("", "  ")
 				return encoder.Encode(remoteSessionInventory{Version: version, ContractVersion: remoteSessionContractVersion, Sessions: sessions})
 			}
+			remotes, err := config.LoadRemotes(cfg.Dir)
+			if err != nil {
+				return err
+			}
+			if len(remotes) == 0 {
+				sessions, err := discoverActiveSessions(cmd.Context(), cfg)
+				if err != nil {
+					return err
+				}
+				return writeLocalSessions(cmd.OutOrStdout(), sessions, jsonFlag)
+			}
 			rows, err := discoverMachineSessions(cmd.Context(), cfg, remoteStreams(cmd.Context()))
 			if err != nil {
 				return err
