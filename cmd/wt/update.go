@@ -1,92 +1,25 @@
 package main
 
 import (
-	"context"
 	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
+	"github.com/ehrlich-b/wingthing/internal/updater"
 	"github.com/spf13/cobra"
 )
-
-const githubRepo = "ehrlich-b/wingthing"
-
-type ghRelease struct {
-	TagName    string    `json:"tag_name"`
-	Assets     []ghAsset `json:"assets"`
-	Prerelease bool      `json:"prerelease"`
-	Draft      bool      `json:"draft"`
-}
-
-type ghAsset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
-}
-
-type daemonUpdateState struct {
-	pid       int
-	kind      daemonctl.DaemonKind
-	startArgs []string
-}
-
-// daemonStateForUpdate snapshots and validates the restart command while the
-// lifecycle lock is held. In particular, an update must not stop a live daemon
-// and only then discover that its saved restart metadata is missing or corrupt.
-func daemonStateForUpdate() (*daemonUpdateState, error) {
-	if err := validateUpdateState(); err != nil {
-		return nil, err
-	}
-	pid, kind, err := daemonctl.ReadDaemon()
-	if err != nil {
-		if errors.Is(err, daemonctl.ErrNoDaemonRunning) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	argsPath := daemonctl.WingArgsPath()
-	if kind == daemonctl.RoostDaemon {
-		argsPath = daemonctl.RoostArgsPath()
-	}
-	saved, err := os.ReadFile(argsPath)
-	if err != nil {
-		return nil, fmt.Errorf("read saved %s daemon args: %w", kind, err)
-	}
-	startArgs, err := daemonRestartArgs(saved, kind)
-	if err != nil {
-		return nil, fmt.Errorf("validate saved %s daemon args: %w", kind, err)
-	}
-	return &daemonUpdateState{pid: pid, kind: kind, startArgs: startArgs}, nil
-}
-
-func daemonRestartArgs(saved []byte, kind daemonctl.DaemonKind) ([]string, error) {
-	foregroundArgs, err := daemonctl.ParseSavedDaemonArgs(saved, kind)
-	if err != nil {
-		return nil, err
-	}
-	startArgs := make([]string, 0, len(foregroundArgs)-1)
-	for _, arg := range foregroundArgs {
-		if arg != "--foreground" {
-			startArgs = append(startArgs, arg)
-		}
-	}
-	return startArgs, nil
-}
 
 func updateCmd() *cobra.Command {
 	var localFile, checksumFile string
@@ -94,21 +27,21 @@ func updateCmd() *cobra.Command {
 		Use:   "update",
 		Short: "Update wt to the latest release",
 		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
-			if err := validateUpdateTarget(); err != nil {
+			if err := updater.ValidateUpdateTarget(); err != nil {
 				return err
 			}
 			if localFile != "" {
-				return updatePreviewFile(cmd.Context(), localFile, checksumFile)
+				return updater.UpdatePreviewFile(cmd.Context(), localFile, checksumFile)
 			}
 			fmt.Printf("current version: %s\n", version)
 
 			// Fetch latest release.
-			req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, releaseMetadataURL(), nil)
+			req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, updater.ReleaseMetadataURL(), nil)
 			if err != nil {
 				return fmt.Errorf("create latest release request: %w", err)
 			}
 			req.Header.Set("Accept", "application/vnd.github+json")
-			resp, err := releaseHTTPClient(30 * time.Second).Do(req)
+			resp, err := updater.ReleaseHTTPClient(30 * time.Second).Do(req)
 			if err != nil {
 				return fmt.Errorf("fetch latest release: %w", err)
 			}
@@ -121,7 +54,7 @@ func updateCmd() *cobra.Command {
 				return fmt.Errorf("github API error: %s", resp.Status)
 			}
 
-			rel, err := decodeChannelRelease(resp.Body)
+			rel, err := updater.DecodeChannelRelease(resp.Body)
 			if err != nil {
 				return fmt.Errorf("parse release: %w", err)
 			}
@@ -132,7 +65,7 @@ func updateCmd() *cobra.Command {
 			}
 
 			// Find the matching binary and its release checksum manifest.
-			wantName := releaseAssetName()
+			wantName := updater.ReleaseAssetName()
 			var downloadURL string
 			var sumsURL string
 			for _, a := range rel.Assets {
@@ -154,14 +87,14 @@ func updateCmd() *cobra.Command {
 			if sumsURL == "" {
 				return fmt.Errorf("release %s has no SHA256SUMS manifest; refusing an unverified update", rel.TagName)
 			}
-			if err := validateReleaseAssetURL(downloadURL); err != nil {
+			if err := updater.ValidateReleaseAssetURL(downloadURL); err != nil {
 				return fmt.Errorf("binary asset URL: %w", err)
 			}
-			if err := validateReleaseAssetURL(sumsURL); err != nil {
+			if err := updater.ValidateReleaseAssetURL(sumsURL); err != nil {
 				return fmt.Errorf("checksum asset URL: %w", err)
 			}
 
-			expected, err := fetchReleaseChecksum(cmd.Context(), sumsURL, wantName)
+			expected, err := updater.FetchReleaseChecksum(cmd.Context(), sumsURL, wantName)
 			if err != nil {
 				return fmt.Errorf("verify release manifest: %w", err)
 			}
@@ -173,7 +106,7 @@ func updateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("download request: %w", err)
 			}
-			dlResp, err := releaseHTTPClient(5 * time.Minute).Do(dlReq)
+			dlResp, err := updater.ReleaseHTTPClient(5 * time.Minute).Do(dlReq)
 			if err != nil {
 				return fmt.Errorf("download: %w", err)
 			}
@@ -233,14 +166,14 @@ func updateCmd() *cobra.Command {
 			if !strings.EqualFold(actual, expected) {
 				return fmt.Errorf("checksum mismatch for %s", wantName)
 			}
-			if err := validateReleaseBinary(cmd.Context(), tmp); err != nil {
+			if err := updater.ValidateReleaseBinary(cmd.Context(), tmp); err != nil {
 				return fmt.Errorf("release contract: %w", err)
 			}
 
 			// Serialize the atomic replacement with daemon start/stop. Without this
 			// lock, a concurrent start can race between daemon inspection and the
 			// rename, leaving an old process running with misleading new metadata.
-			lifecycleLock, err := acquireUpdateLifecycleLock()
+			lifecycleLock, err := updater.AcquireUpdateLifecycleLock()
 			if err != nil {
 				return err
 			}
@@ -252,7 +185,7 @@ func updateCmd() *cobra.Command {
 					}
 				}
 			}()
-			daemonState, err := daemonStateForUpdate()
+			daemonState, err := updater.DaemonStateForUpdate()
 			if err != nil {
 				return fmt.Errorf("inspect running daemon before update: %w", err)
 			}
@@ -274,12 +207,12 @@ func updateCmd() *cobra.Command {
 			// start after release wins the same lock and the loser sees a live PID;
 			// neither can create a duplicate listener.
 			if daemonState != nil {
-				kind := string(daemonState.kind)
-				fmt.Printf("restarting %s daemon (pid %d)...\n", kind, daemonState.pid)
-				if err := daemonctl.StopDaemonAndWait(daemonState.pid, daemonState.kind, 5*time.Second); err != nil {
+				kind := string(daemonState.Kind)
+				fmt.Printf("restarting %s daemon (pid %d)...\n", kind, daemonState.Pid)
+				if err := daemonctl.StopDaemonAndWait(daemonState.Pid, daemonState.Kind, 5*time.Second); err != nil {
 					return fmt.Errorf("updated to %s but could not restart daemon: %w; run 'wt %s stop' and 'wt %s start' manually", rel.TagName, err, kind, kind)
 				}
-				if daemonState.kind == daemonctl.RoostDaemon {
+				if daemonState.Kind == daemonctl.RoostDaemon {
 					if err := cmdutil.RemoveFiles(daemonctl.RoostPidPath(), daemonctl.RoostArgsPath()); err != nil {
 						return fmt.Errorf("remove stopped roost metadata: %w", err)
 					}
@@ -293,7 +226,7 @@ func updateCmd() *cobra.Command {
 				}
 				lockHeld = false
 
-				child := exec.Command(exe, daemonState.startArgs...)
+				child := exec.Command(exe, daemonState.StartArgs...)
 				child.Stdout = os.Stdout
 				child.Stderr = os.Stderr
 				if err := child.Run(); err != nil {
@@ -312,157 +245,4 @@ func updateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&localFile, "file", "", "preview only: install a checksummed local preview artifact")
 	cmd.Flags().StringVar(&checksumFile, "checksum-file", "", "SHA256SUMS manifest for --file (default: beside artifact)")
 	return cmd
-}
-
-func waitForProcessExit(process *os.Process, timeout time.Duration) bool {
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if err := process.Signal(syscall.Signal(0)); err != nil {
-			return true
-		}
-		select {
-		case <-deadline.C:
-			return false
-		case <-ticker.C:
-		}
-	}
-}
-
-func releaseHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if !strings.EqualFold(req.URL.Scheme, "https") {
-				return fmt.Errorf("refusing release redirect to non-HTTPS URL")
-			}
-			if len(via) >= 10 {
-				return fmt.Errorf("too many release redirects")
-			}
-			return nil
-		},
-	}
-}
-
-func validateReleaseAssetURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return err
-	}
-	if !strings.EqualFold(u.Scheme, "https") || u.Host == "" {
-		return fmt.Errorf("must be an absolute HTTPS URL")
-	}
-	return nil
-}
-
-func decodeGitHubRelease(body io.Reader) (ghRelease, error) {
-	const maxReleaseMetadataBytes = 1 << 20
-	data, err := io.ReadAll(io.LimitReader(body, maxReleaseMetadataBytes+1))
-	if err != nil {
-		return ghRelease{}, err
-	}
-	if len(data) > maxReleaseMetadataBytes {
-		return ghRelease{}, fmt.Errorf("release metadata exceeds %d bytes", maxReleaseMetadataBytes)
-	}
-	var release ghRelease
-	if err := json.Unmarshal(data, &release); err != nil {
-		return ghRelease{}, err
-	}
-	return release, nil
-}
-
-func fetchReleaseChecksum(ctx context.Context, manifestURL, binaryName string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := releaseHTTPClient(30 * time.Second).Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer cmdutil.CloseWithLog("release checksum response", resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download SHA256SUMS: %s", resp.Status)
-	}
-	const maxManifestBytes = 1 << 20
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestBytes+1))
-	if err != nil {
-		return "", err
-	}
-	if len(data) > maxManifestBytes {
-		return "", fmt.Errorf("SHA256SUMS exceeds %d bytes", maxManifestBytes)
-	}
-	return releaseChecksum(data, binaryName)
-}
-
-func releaseChecksum(manifest []byte, binaryName string) (string, error) {
-	found := ""
-	for _, line := range strings.Split(string(manifest), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == binaryName {
-			if len(fields[0]) != sha256.Size*2 {
-				return "", fmt.Errorf("invalid checksum length for %s", binaryName)
-			}
-			if _, err := hex.DecodeString(fields[0]); err != nil {
-				return "", fmt.Errorf("invalid checksum for %s", binaryName)
-			}
-			if found != "" {
-				return "", fmt.Errorf("SHA256SUMS contains duplicate entries for %s", binaryName)
-			}
-			found = strings.ToLower(fields[0])
-		}
-	}
-	if found != "" {
-		return found, nil
-	}
-	return "", fmt.Errorf("SHA256SUMS does not contain %s", binaryName)
-}
-
-func validateReleaseBinary(ctx context.Context, path string) error {
-	if config.Channel() == "preview" {
-		checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		output, err := exec.CommandContext(checkCtx, path, "--expected-channel", "preview", "channel", "--json").CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("preview identity: %w", err)
-		}
-		var identity struct {
-			Channel    string `json:"release_channel"`
-			Executable string `json:"executable"`
-		}
-		if err := json.Unmarshal(output, &identity); err != nil {
-			return err
-		}
-		if identity.Channel != "preview" || identity.Executable != "wt-preview" {
-			return fmt.Errorf("downloaded binary is not preview")
-		}
-	}
-	checks := []struct {
-		args     []string
-		contains string
-	}{
-		{args: []string{"--version"}, contains: config.BinaryName() + " version"},
-		{args: []string{"mcp", "connect", "--help"}, contains: "connect"},
-		{args: []string{"serve", "--help"}, contains: "--https"},
-		{args: []string{"roost", "start", "--help"}, contains: "--https"},
-		{args: []string{"local-cert", "status", "--help"}, contains: "status"},
-	}
-	for _, check := range checks {
-		checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		output, err := exec.CommandContext(checkCtx, path, check.args...).CombinedOutput()
-		contextErr := checkCtx.Err()
-		cancel()
-		if err != nil {
-			if contextErr != nil {
-				return fmt.Errorf("%s timed out or was canceled: %w", strings.Join(check.args, " "), contextErr)
-			}
-			return fmt.Errorf("%s failed: %w", strings.Join(check.args, " "), err)
-		}
-		if !strings.Contains(string(output), check.contains) {
-			return fmt.Errorf("%s output does not contain %q", strings.Join(check.args, " "), check.contains)
-		}
-	}
-	return nil
 }

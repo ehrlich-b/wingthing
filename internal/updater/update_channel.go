@@ -1,4 +1,4 @@
-package main
+package updater
 
 import (
 	"context"
@@ -22,41 +22,41 @@ import (
 
 // Stable's latest feed deliberately excludes GitHub prereleases. Preview has a
 // separate prerelease selection and asset namespace; publication is a later act.
-func releaseMetadataURL() string {
+func ReleaseMetadataURL() string {
 	if config.Channel() == "preview" {
 		return fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=100", githubRepo)
 	}
 	return fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", githubRepo)
 }
 
-func decodeChannelRelease(body io.Reader) (ghRelease, error) {
+func DecodeChannelRelease(body io.Reader) (GhRelease, error) {
 	if config.Channel() != "preview" {
 		return decodeGitHubRelease(body)
 	}
 	data, err := io.ReadAll(io.LimitReader(body, (1<<20)+1))
 	if err != nil {
-		return ghRelease{}, err
+		return GhRelease{}, err
 	}
 	if len(data) > 1<<20 {
-		return ghRelease{}, errors.New("preview release metadata exceeds 1 MiB")
+		return GhRelease{}, errors.New("preview release metadata exceeds 1 MiB")
 	}
-	var releases []ghRelease
+	var releases []GhRelease
 	if err := json.Unmarshal(data, &releases); err != nil {
-		return ghRelease{}, err
+		return GhRelease{}, err
 	}
 	for _, release := range releases {
 		if release.Prerelease && !release.Draft && strings.HasPrefix(release.TagName, "v") && strings.Contains(release.TagName, "-preview.") {
 			return release, nil
 		}
 	}
-	return ghRelease{}, errors.New("no published preview release; use update --file with a reviewed local preview package")
+	return GhRelease{}, errors.New("no published preview release; use update --file with a reviewed local preview package")
 }
 
-func releaseAssetName() string {
+func ReleaseAssetName() string {
 	return fmt.Sprintf("%s-%s-%s", config.BinaryName(), runtime.GOOS, runtime.GOARCH)
 }
 
-func validateUpdateTarget() error {
+func ValidateUpdateTarget() error {
 	if err := validateUpdateState(); err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func validateUpdateState() error {
 	return config.ValidateStateDirectory(dir)
 }
 
-func acquireUpdateLifecycleLock() (*os.File, error) {
+func AcquireUpdateLifecycleLock() (*os.File, error) {
 	if err := validateUpdateState(); err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func validateChannelUpdatePath(path string) error {
 		return err
 	}
 	base := filepath.Base(resolved)
-	if base != "wt-preview" && base != releaseAssetName() {
+	if base != "wt-preview" && base != ReleaseAssetName() {
 		return fmt.Errorf("preview update refuses executable %q; install it as wt-preview", resolved)
 	}
 	stable := filepath.Join(filepath.Dir(resolved), "wt")
@@ -105,7 +105,7 @@ func validateChannelUpdatePath(path string) error {
 	return nil
 }
 
-func updatePreviewFile(ctx context.Context, source, manifest string) (runErr error) {
+func UpdatePreviewFile(ctx context.Context, source, manifest string) (runErr error) {
 	if config.Channel() != "preview" {
 		return errors.New("--file updates are available only in preview")
 	}
@@ -119,7 +119,7 @@ func updatePreviewFile(ctx context.Context, source, manifest string) (runErr err
 	if len(data) > 1<<20 {
 		return errors.New("SHA256SUMS exceeds 1 MiB")
 	}
-	expected, err := releaseChecksum(data, releaseAssetName())
+	expected, err := releaseChecksum(data, ReleaseAssetName())
 	if err != nil {
 		return err
 	}
@@ -158,10 +158,10 @@ func updatePreviewFile(ctx context.Context, source, manifest string) (runErr err
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := validateReleaseBinary(ctx, tmp); err != nil {
+	if err := ValidateReleaseBinary(ctx, tmp); err != nil {
 		return err
 	}
-	lock, err := acquireUpdateLifecycleLock()
+	lock, err := AcquireUpdateLifecycleLock()
 	if err != nil {
 		return err
 	}
@@ -170,7 +170,7 @@ func updatePreviewFile(ctx context.Context, source, manifest string) (runErr err
 			runErr = errors.Join(runErr, lock.Close())
 		}
 	}()
-	state, err := daemonStateForUpdate()
+	state, err := DaemonStateForUpdate()
 	if err != nil {
 		return err
 	}
@@ -181,11 +181,11 @@ func updatePreviewFile(ctx context.Context, source, manifest string) (runErr err
 		return err
 	}
 	if state != nil {
-		if err := daemonctl.StopDaemonAndWait(state.pid, state.kind, 5*time.Second); err != nil {
+		if err := daemonctl.StopDaemonAndWait(state.Pid, state.Kind, 5*time.Second); err != nil {
 			return fmt.Errorf("preview replaced but restart failed: %w", err)
 		}
 		paths := []string{daemonctl.WingPidPath(), daemonctl.WingArgsPath(), daemonctl.WingStatusPath()}
-		if state.kind == daemonctl.RoostDaemon {
+		if state.Kind == daemonctl.RoostDaemon {
 			paths = []string{daemonctl.RoostPidPath(), daemonctl.RoostArgsPath()}
 		}
 		if err := cmdutil.RemoveFiles(paths...); err != nil {
@@ -196,7 +196,7 @@ func updatePreviewFile(ctx context.Context, source, manifest string) (runErr err
 		}
 		lock = nil
 		// Defer observes nil to avoid a second close after restart.
-		child := exec.CommandContext(ctx, exe, state.startArgs...)
+		child := exec.CommandContext(ctx, exe, state.StartArgs...)
 		child.Stdout, child.Stderr = os.Stdout, os.Stderr
 		if err := child.Run(); err != nil {
 			return fmt.Errorf("restart preview daemon: %w", err)

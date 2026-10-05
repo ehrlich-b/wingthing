@@ -8,6 +8,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
+	"github.com/ehrlich-b/wingthing/internal/updater"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
 )
@@ -106,11 +107,11 @@ func channelCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			info := map[string]string{"release_channel": config.Channel(), "executable": config.BinaryName(), "channel_label": config.ChannelLabel(), "version": version, "state_dir": dir, "update_feed": releaseMetadataURL()}
+			info := map[string]string{"release_channel": config.Channel(), "executable": config.BinaryName(), "channel_label": config.ChannelLabel(), "version": version, "state_dir": dir, "update_feed": updater.ReleaseMetadataURL()}
 			if jsonOutput {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(info)
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s\nstate: %s\nupdates: %s\n", config.ChannelLabel(), version, dir, releaseMetadataURL())
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s\nstate: %s\nupdates: %s\n", config.ChannelLabel(), version, dir, updater.ReleaseMetadataURL())
 			return err
 		},
 	}
