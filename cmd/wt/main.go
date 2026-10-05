@@ -26,6 +26,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/memory"
 	"github.com/ehrlich-b/wingthing/internal/orchestrator"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/skill"
 	"github.com/ehrlich-b/wingthing/internal/store"
@@ -46,7 +47,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := executeCLI(ctx, os.Args[1:], remoteProcessIO()); err != nil {
+	if err := executeCLI(ctx, os.Args[1:], remotepkg.ProcessIO()); err != nil {
 		var exitErr *cmdutil.CommandExitError
 		if errors.As(err, &exitErr) {
 			if exitErr.Message != "" {

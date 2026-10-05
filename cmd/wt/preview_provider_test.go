@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 func previewProviderFixture(t *testing.T, script string) previewProviderProfile {
@@ -70,10 +71,10 @@ func TestPreviewProviderStatusUsesExactNamespaceAndScrubbedEnvironment(t *testin
 	for _, key := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "AWS_ACCESS_KEY_ID", "ANTHROPIC_BASE_URL", "HTTP_PROXY", "WT_PROVIDER_BASE_URL", "XPC_SERVICE_NAME"} {
 		t.Setenv(key, "foreign-credential-or-route")
 	}
-	script := `printf '%s\n' "$@" > ` + shellQuote(filepath.Join(profile.Home, "argv.fixture")) + `
-printf '%s\n' "$HOME" "$CLAUDE_CONFIG_DIR" "$PWD" > ` + shellQuote(filepath.Join(profile.Home, "namespace.fixture")) + `
-env > ` + shellQuote(filepath.Join(profile.Home, "env.fixture")) + `
-printf '%s' ` + shellQuote(previewProviderJSON(t, profile, true, "claude.ai")) + `
+	script := `printf '%s\n' "$@" > ` + remotepkg.ShellQuote(filepath.Join(profile.Home, "argv.fixture")) + `
+printf '%s\n' "$HOME" "$CLAUDE_CONFIG_DIR" "$PWD" > ` + remotepkg.ShellQuote(filepath.Join(profile.Home, "namespace.fixture")) + `
+env > ` + remotepkg.ShellQuote(filepath.Join(profile.Home, "env.fixture")) + `
+printf '%s' ` + remotepkg.ShellQuote(previewProviderJSON(t, profile, true, "claude.ai")) + `
 printf '%s' 'secret-stderr-never-publish' >&2
 `
 	writePreviewProviderScript(t, profile, script)
@@ -131,7 +132,7 @@ func TestPreviewProviderStatusDoesNotConvertErrorsToNoLogin(t *testing.T) {
 		{"trailing-output", valid + "\nsecret-trailing", "exit 0", "unknown"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			writePreviewProviderScript(t, profile, "printf '%s' "+shellQuote(tt.output)+"\n"+tt.suffix+"\n")
+			writePreviewProviderScript(t, profile, "printf '%s' "+remotepkg.ShellQuote(tt.output)+"\n"+tt.suffix+"\n")
 			result := inspectPreviewClaude(context.Background(), profile, time.Second)
 			if result.State != tt.state {
 				t.Fatalf("got %s, want %s", result.State, tt.state)
@@ -179,7 +180,7 @@ func TestPreviewProviderStatusBoundsProcessAndBothOutputStreams(t *testing.T) {
 
 func TestPreviewProviderGuideAndAbsentProfileNeverRunVendorOrWriteState(t *testing.T) {
 	profile := previewProviderFixture(t, "exit 99\n")
-	writePreviewProviderScript(t, profile, "printf 'ran' > "+shellQuote(filepath.Join(profile.Home, "vendor-ran.fixture"))+"\nexit 99\n")
+	writePreviewProviderScript(t, profile, "printf 'ran' > "+remotepkg.ShellQuote(filepath.Join(profile.Home, "vendor-ran.fixture"))+"\nexit 99\n")
 	t.Setenv("ANTHROPIC_API_KEY", "secret-ambient-never-publish")
 	t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", "/foreign-keychain-namespace")
 	guide, err := previewClaudeSetupGuide(profile)
@@ -189,7 +190,7 @@ func TestPreviewProviderGuideAndAbsentProfileNeverRunVendorOrWriteState(t *testi
 	if _, err := os.Stat(filepath.Join(profile.Home, "vendor-ran.fixture")); !os.IsNotExist(err) {
 		t.Fatal("setup guide invoked vendor")
 	}
-	if !strings.Contains(guide.LoginCommand, "'provider' 'login' 'claude'") || !strings.Contains(guide.LoginCommand, shellQuote("WINGTHING_DIR="+profile.StateDir)) || !strings.Contains(guide.LoginCommand, "env -i ") {
+	if !strings.Contains(guide.LoginCommand, "'provider' 'login' 'claude'") || !strings.Contains(guide.LoginCommand, remotepkg.ShellQuote("WINGTHING_DIR="+profile.StateDir)) || !strings.Contains(guide.LoginCommand, "env -i ") {
 		t.Fatal("manual command did not bind the first-class login route to exact state")
 	}
 	data, _ := json.Marshal(guide)
@@ -226,7 +227,7 @@ func TestPreviewProviderGuideAndAbsentProfileNeverRunVendorOrWriteState(t *testi
 
 func TestPreviewProviderCLIRegistrationAndArgumentBounds(t *testing.T) {
 	profile := previewProviderFixture(t, "exit 99\n")
-	writePreviewProviderScript(t, profile, "printf '%s' "+shellQuote(previewProviderJSON(t, profile, false, "none"))+"\nexit 1\n")
+	writePreviewProviderScript(t, profile, "printf '%s' "+remotepkg.ShellQuote(previewProviderJSON(t, profile, false, "none"))+"\nexit 1\n")
 	for _, argv := range [][]string{{"provider", "status", "codex", "--json"}, {"provider", "status", "claude", "--timeout", "0s"}, {"provider", "status", "claude", "--timeout", "31s"}, {"provider", "setup-guide", "claude", "extra"}} {
 		root := newRootCommand()
 		root.SetArgs(argv)
@@ -260,7 +261,7 @@ func TestPreviewProviderMissingExecutableAndUnsafeMetadata(t *testing.T) {
 	valid := previewProviderJSON(t, profile, true, "claude.ai")
 	valid = strings.Replace(valid, `"Personal fixture"`, `"untrusted\nterminal-control"`, 1)
 	valid = strings.Replace(valid, `"max"`, shellJSONValue(t, strings.Repeat("x", 513)), 1)
-	writePreviewProviderScript(t, profile, "printf '%s' "+shellQuote(valid)+"\n")
+	writePreviewProviderScript(t, profile, "printf '%s' "+remotepkg.ShellQuote(valid)+"\n")
 	result := inspectPreviewClaude(context.Background(), profile, time.Second)
 	if result.State != "reported_authenticated" || result.Account == nil || result.Account.OrgName != "" || result.Account.SubscriptionType != "" || result.Account.Email != "personal@example.com" {
 		t.Fatal("metadata controls or oversized values reached the report")

@@ -13,6 +13,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 func TestSocketPathCLIFailsBeforeStateOrProcessCreation(t *testing.T) {
@@ -29,7 +30,7 @@ func TestSocketPathCLIFailsBeforeStateOrProcessCreation(t *testing.T) {
 		} {
 			state := filepath.Join(t.TempDir(), strings.Repeat("x", 120))
 			t.Setenv("WINGTHING_DIR", state)
-			err := executeCLI(context.Background(), args, remoteIO{})
+			err := executeCLI(context.Background(), args, remotepkg.IO{})
 			assertSocketPathFailure(t, err)
 			if _, err := os.Stat(state); !os.IsNotExist(err) {
 				t.Fatalf("%s %v wrote state before rejecting path: %v", channel, args, err)

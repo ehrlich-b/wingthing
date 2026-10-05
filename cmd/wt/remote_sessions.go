@@ -16,6 +16,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 const (
@@ -41,11 +42,11 @@ type machineSession struct {
 
 type remoteIOContextKey struct{}
 
-func remoteStreams(ctx context.Context) remoteIO {
-	if streams, ok := ctx.Value(remoteIOContextKey{}).(remoteIO); ok {
+func remoteStreams(ctx context.Context) remotepkg.IO {
+	if streams, ok := ctx.Value(remoteIOContextKey{}).(remotepkg.IO); ok {
 		return streams
 	}
-	return remoteProcessIO()
+	return remotepkg.ProcessIO()
 }
 
 type remoteSessionBuffer struct {
@@ -70,15 +71,15 @@ func (b *remoteSessionBuffer) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 
-func queryRemoteSessions(ctx context.Context, name string, remote config.Remote, streams remoteIO) ([]localSession, error) {
+func queryRemoteSessions(ctx context.Context, name string, remote config.Remote, streams remotepkg.IO) ([]localSession, error) {
 	ctx, cancel := context.WithTimeout(ctx, remoteSessionTimeout)
 	defer cancel()
-	invocation := remoteInvocation{target: remote.SSHTarget, binary: config.BinaryName(), state: remote.WingthingDir}
+	invocation := remotepkg.Invocation{Target: remote.SSHTarget, Binary: config.BinaryName(), State: remote.WingthingDir}
 	stdout := remoteSessionBuffer{limit: remoteSessionStdoutLimit, stream: "stdout", cancel: cancel}
 	stderr := remoteSessionBuffer{limit: remoteSessionStderrLimit, stream: "stderr", cancel: cancel}
-	streams.in, streams.out, streams.errOut = nil, &stdout, &stderr
+	streams.In, streams.Out, streams.ErrOut = nil, &stdout, &stderr
 	run := func() error {
-		err := runRemoteInvocation(ctx, invocation, streams)
+		err := remotepkg.RunRemoteInvocation(ctx, invocation, streams)
 		// Cancellation also returns context.Canceled; retain the overflow cause.
 		if stdout.overflow != nil {
 			return stdout.overflow
@@ -88,7 +89,7 @@ func queryRemoteSessions(ctx context.Context, name string, remote config.Remote,
 		}
 		return err
 	}
-	invocation.args = []string{"--version"}
+	invocation.Args = []string{"--version"}
 	if err := run(); err != nil {
 		return nil, remoteQueryError(name, err, stderr.buffer.String())
 	}
@@ -100,7 +101,7 @@ func queryRemoteSessions(ctx context.Context, name string, remote config.Remote,
 	stderr.buffer.Reset()
 	// The receiver skips its registry entirely, so this never recursively fans
 	// out to that machine's configured remotes (even a cycle back to this one).
-	invocation.args = []string{"session", "ps", "--json", "--remote-inventory"}
+	invocation.Args = []string{"session", "ps", "--json", "--remote-inventory"}
 	err := run()
 	if err != nil {
 		var exitErr *cmdutil.CommandExitError
@@ -142,7 +143,7 @@ func remoteInventoryMismatch(name, remoteVersion, contract, detail string) error
 		name, version, remoteSessionContractVersion, remoteVersion, contract, detail)
 }
 
-func discoverMachineSessions(ctx context.Context, cfg *config.Config, streams remoteIO) ([]machineSession, error) {
+func discoverMachineSessions(ctx context.Context, cfg *config.Config, streams remotepkg.IO) ([]machineSession, error) {
 	remotes, err := config.LoadRemotes(cfg.Dir)
 	if err != nil {
 		return nil, err

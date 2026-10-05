@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 func TestSessionPSLocalFormatGolden(t *testing.T) {
@@ -64,7 +65,7 @@ func TestSessionPSLocalFormatGolden(t *testing.T) {
 						}
 					}
 					var output bytes.Buffer
-					if err := executeCLI(context.Background(), args, remoteIO{out: &output, errOut: io.Discard, sshPath: filepath.Join(cfg.Dir, "must-not-run-ssh")}); err != nil {
+					if err := executeCLI(context.Background(), args, remotepkg.IO{Out: &output, ErrOut: io.Discard, SSHPath: filepath.Join(cfg.Dir, "must-not-run-ssh")}); err != nil {
 						t.Fatal(err)
 					}
 					if output.String() != want {

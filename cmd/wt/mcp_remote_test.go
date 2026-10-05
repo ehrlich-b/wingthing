@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 func TestMCPTerminalListRemoteArgument(t *testing.T) {
@@ -18,7 +19,7 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := &localMCPServer{cfg: cfg, principal: "alpha", logs: io.Discard}
-	noSSH := context.WithValue(context.Background(), remoteIOContextKey{}, remoteIO{sshPath: filepath.Join(cfg.Dir, "must-not-run-ssh")})
+	noSSH := context.WithValue(context.Background(), remoteIOContextKey{}, remotepkg.IO{SSHPath: filepath.Join(cfg.Dir, "must-not-run-ssh")})
 	local, isError, protocolErr := server.callTool(noSSH, "terminal_list", json.RawMessage(`{}`))
 	if isError || protocolErr != nil {
 		t.Fatalf("default list: %#v, %v", local, protocolErr)
@@ -33,7 +34,7 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 	}
 	sshPath := fakeInventorySSH(t, remoteSessionInventory{Version: "remote-test", ContractVersion: remoteSessionContractVersion,
 		Sessions: []localSession{{ID: "remote-owned", Principal: "alpha"}, {ID: "remote-other", Principal: "beta"}}})
-	ctx := context.WithValue(context.Background(), remoteIOContextKey{}, remoteIO{sshPath: sshPath})
+	ctx := context.WithValue(context.Background(), remoteIOContextKey{}, remotepkg.IO{SSHPath: sshPath})
 	remote, isError, protocolErr := server.callTool(ctx, "terminal_list", json.RawMessage(`{"remote":"work"}`))
 	if isError || protocolErr != nil {
 		t.Fatalf("remote list: %#v, %v", remote, protocolErr)
@@ -59,7 +60,7 @@ func TestMCPTerminalListRemotePreservesConnectionBounds(t *testing.T) {
 		{enforcePathBounds: true}, {boundConversation: "conversation"},
 	} {
 		server.cfg = &config.Config{Dir: t.TempDir()}
-		ctx := context.WithValue(context.Background(), remoteIOContextKey{}, remoteIO{sshPath: filepath.Join(server.cfg.Dir, "must-not-run-ssh")})
+		ctx := context.WithValue(context.Background(), remoteIOContextKey{}, remotepkg.IO{SSHPath: filepath.Join(server.cfg.Dir, "must-not-run-ssh")})
 		_, err := server.toolTerminalList(ctx, json.RawMessage(`{"remote":"work"}`))
 		if err == nil || !strings.Contains(err.Error(), "bound MCP connection") {
 			t.Fatalf("restricted MCP connection queried a remote: %v", err)

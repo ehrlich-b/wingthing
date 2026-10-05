@@ -6,6 +6,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/spf13/cobra"
 )
 
@@ -18,11 +19,11 @@ func remoteCmd() *cobra.Command {
 			if err := config.ValidateRemoteName(args[0]); err != nil {
 				return err
 			}
-			if err := validateRemoteTarget(args[1]); err != nil {
+			if err := remotepkg.ValidateRemoteTarget(args[1]); err != nil {
 				return err
 			}
 			if cmd.Flags().Changed("wingthing-dir") {
-				if err := validateRemoteState(wingthingDir); err != nil {
+				if err := remotepkg.ValidateRemoteState(wingthingDir); err != nil {
 					return err
 				}
 			}

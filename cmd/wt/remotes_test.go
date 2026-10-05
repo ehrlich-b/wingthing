@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 func writeFakeRemoteSSH(t *testing.T, script string) string {
@@ -33,7 +34,7 @@ func fakeInventorySSH(t *testing.T, inventory remoteSessionInventory) string {
 	}
 	return writeFakeRemoteSSH(t, "case \"$3\" in\n"+
 		"*\"'--version'\"*) printf '%s\\n' 'wt version remote-test' ;;\n"+
-		"*\"'session' 'ps' '--json' '--remote-inventory'\"*) printf '%s\\n' "+shellQuote(string(data))+" ;;\n"+
+		"*\"'session' 'ps' '--json' '--remote-inventory'\"*) printf '%s\\n' "+remotepkg.ShellQuote(string(data))+" ;;\n"+
 		"*) printf 'unexpected command: %s\\n' \"$3\" >&2; exit 9 ;;\nesac\n")
 }
 
@@ -59,7 +60,7 @@ func TestConfiguredRemoteCommandsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("WINGTHING_DIR", dir)
 	var out bytes.Buffer
-	streams := remoteIO{out: &out, errOut: io.Discard, sshPath: filepath.Join(dir, "must-not-run-ssh")}
+	streams := remotepkg.IO{Out: &out, ErrOut: io.Discard, SSHPath: filepath.Join(dir, "must-not-run-ssh")}
 	run := func(args ...string) error { return executeCLI(context.Background(), args, streams) }
 	if err := run("remote", "add", "work", "me@host", "--wingthing-dir", "/home/me/state with space"); err != nil {
 		t.Fatal(err)
@@ -103,7 +104,7 @@ func TestConfiguredRemoteCommandsValidateBeforeWriting(t *testing.T) {
 	} {
 		dir := t.TempDir()
 		t.Setenv("WINGTHING_DIR", dir)
-		if err := executeCLI(context.Background(), args, remoteIO{out: io.Discard, errOut: io.Discard}); err == nil {
+		if err := executeCLI(context.Background(), args, remotepkg.IO{Out: io.Discard, ErrOut: io.Discard}); err == nil {
 			t.Errorf("accepted invalid add %v", args)
 		}
 		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
@@ -111,7 +112,7 @@ func TestConfiguredRemoteCommandsValidateBeforeWriting(t *testing.T) {
 		}
 	}
 	for _, target := range []string{"host arg", "host\targ", "host\x1b", "host\x7f"} {
-		if _, _, err := parseRemoteInvocation([]string{"--remote", target, "attach", "session"}, false); err == nil {
+		if _, _, err := remotepkg.ParseRemoteInvocation([]string{"--remote", target, "attach", "session"}, false, newRootCommand); err == nil {
 			t.Errorf("explicit --remote accepted invalid target %q", target)
 		}
 	}
@@ -143,31 +144,31 @@ func TestConfiguredRemoteAttachUsesRunner(t *testing.T) {
 	sshPath := writeFakeRemoteSSH(t, "printf '%s\\n' \"$1\" \"$2\" \"$3\"\ncat\n")
 	for _, flag := range []string{"--read-only", "--takeover"} {
 		var out bytes.Buffer
-		err := executeCLI(context.Background(), []string{"attach", "work:review", flag}, remoteIO{
-			in: strings.NewReader("attach input"), out: &out, errOut: io.Discard,
-			stdinTTY: true, stdoutTTY: true, sshPath: sshPath,
+		err := executeCLI(context.Background(), []string{"attach", "work:review", flag}, remotepkg.IO{
+			In: strings.NewReader("attach input"), Out: &out, ErrOut: io.Discard,
+			StdinTTY: true, StdoutTTY: true, SSHPath: sshPath,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "-t\nme@host\nWINGTHING_DIR=" + shellQuote("/home/me/wt state/it's isolated") +
-			" WINGTHING_PREVIEW_DIR=" + shellQuote("/home/me/wt state/it's isolated") +
-			" 'wt' '--expected-channel' 'stable' 'attach' " + shellQuote(flag) + " '--' 'review'\nattach input"
+		want := "-t\nme@host\nWINGTHING_DIR=" + remotepkg.ShellQuote("/home/me/wt state/it's isolated") +
+			" WINGTHING_PREVIEW_DIR=" + remotepkg.ShellQuote("/home/me/wt state/it's isolated") +
+			" 'wt' '--expected-channel' 'stable' 'attach' " + remotepkg.ShellQuote(flag) + " '--' 'review'\nattach input"
 		if out.String() != want {
 			t.Fatalf("attach transport = %q, want %q", out.String(), want)
 		}
 	}
 	var out bytes.Buffer
-	if err := executeCLI(context.Background(), []string{"attach", "work:--takeover"}, remoteIO{out: &out, errOut: io.Discard, sshPath: sshPath}); err != nil {
+	if err := executeCLI(context.Background(), []string{"attach", "work:--takeover"}, remotepkg.IO{Out: &out, ErrOut: io.Discard, SSHPath: sshPath}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(out.String(), "-T\nme@host\n") || !strings.Contains(out.String(), "'attach' '--' '--takeover'") {
 		t.Fatalf("session reference became an option or noninteractive attach allocated a TTY: %q", out.String())
 	}
-	if err := executeCLI(context.Background(), []string{"attach", "missing:review"}, remoteIO{sshPath: sshPath}); err == nil || !strings.Contains(err.Error(), `unknown remote "missing"`) {
+	if err := executeCLI(context.Background(), []string{"attach", "missing:review"}, remotepkg.IO{SSHPath: sshPath}); err == nil || !strings.Contains(err.Error(), `unknown remote "missing"`) {
 		t.Fatalf("unknown remote: %v", err)
 	}
-	if err := executeCLI(context.Background(), []string{"attach", "review"}, remoteIO{sshPath: filepath.Join(dir, "must-not-run-ssh")}); err == nil || strings.Contains(err.Error(), "ssh") {
+	if err := executeCLI(context.Background(), []string{"attach", "review"}, remotepkg.IO{SSHPath: filepath.Join(dir, "must-not-run-ssh")}); err == nil || strings.Contains(err.Error(), "ssh") {
 		t.Fatalf("plain SESSION did not stay local: %v", err)
 	}
 }
@@ -189,7 +190,7 @@ func TestSessionPSAggregatesHealthyAndFailingFakeRemotesInParallel(t *testing.T)
 		"  sleep 0.01\ndone\n"+
 		"if test \"$2\" = down; then echo 'host is unreachable' >&2; exit 255; fi\n"+
 		"case \"$3\" in\n*\"'--version'\"*) echo 'wt version remote-test' ;;\n"+
-		"*\"'session' 'ps' '--json' '--remote-inventory'\"*) printf '%s\\n' "+shellQuote(string(data))+" ;;\n"+
+		"*\"'session' 'ps' '--json' '--remote-inventory'\"*) printf '%s\\n' "+remotepkg.ShellQuote(string(data))+" ;;\n"+
 		"*) exit 9 ;;\nesac\n")
 	for _, jsonOutput := range []bool{true, false} {
 		var out bytes.Buffer
@@ -197,7 +198,7 @@ func TestSessionPSAggregatesHealthyAndFailingFakeRemotesInParallel(t *testing.T)
 		if jsonOutput {
 			args = append(args, "--json")
 		}
-		if err := executeCLI(context.Background(), args, remoteIO{out: &out, errOut: io.Discard, sshPath: sshPath}); err != nil {
+		if err := executeCLI(context.Background(), args, remotepkg.IO{Out: &out, ErrOut: io.Discard, SSHPath: sshPath}); err != nil {
 			t.Fatalf("down remote failed the command: %v", err)
 		}
 		if !jsonOutput {
@@ -227,7 +228,7 @@ func TestSessionPSRemoteTimeoutProducesOneRowPerRemote(t *testing.T) {
 	}
 	sshPath := writeFakeRemoteSSH(t, "exec sleep 30\n")
 	start := time.Now()
-	rows, err := discoverMachineSessions(context.Background(), cfg, remoteIO{sshPath: sshPath})
+	rows, err := discoverMachineSessions(context.Background(), cfg, remotepkg.IO{SSHPath: sshPath})
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("timed out remotes: %#v, %v", rows, err)
 	}
@@ -247,7 +248,7 @@ func TestRemoteTimeoutBoundsInheritedOutputPipes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := queryRemoteSessions(ctx, "slow", config.Remote{SSHTarget: "host"}, remoteIO{sshPath: sshPath})
+	_, err := queryRemoteSessions(ctx, "slow", config.Remote{SSHTarget: "host"}, remotepkg.IO{SSHPath: sshPath})
 	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Fatalf("timeout diagnostic: %v", err)
 	}
@@ -265,8 +266,8 @@ func TestSessionPSRemoteInventorySkipsConfiguredRemotes(t *testing.T) {
 	}
 	seedRemoteListSession(t, &config.Config{Dir: dir}, "receiver-session", "")
 	var out bytes.Buffer
-	if err := executeCLI(context.Background(), []string{"session", "ps", "--json", "--remote-inventory"}, remoteIO{
-		out: &out, errOut: io.Discard, sshPath: filepath.Join(dir, "must-not-run-ssh"),
+	if err := executeCLI(context.Background(), []string{"session", "ps", "--json", "--remote-inventory"}, remotepkg.IO{
+		Out: &out, ErrOut: io.Discard, SSHPath: filepath.Join(dir, "must-not-run-ssh"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +291,7 @@ func TestSessionPSRemoteVersionMismatchNamesBothVersions(t *testing.T) {
 				t.Fatal(err)
 			}
 			sshPath := writeFakeRemoteSSH(t, "case \"$3\" in\n*\"'--version'\"*) echo 'wt version v0.1.0' ;;\n*) "+test.response+" ;;\nesac\n")
-			rows, err := discoverMachineSessions(context.Background(), cfg, remoteIO{sshPath: sshPath})
+			rows, err := discoverMachineSessions(context.Background(), cfg, remotepkg.IO{SSHPath: sshPath})
 			if err != nil || len(rows) != 1 || rows[0].Machine != "old" {
 				t.Fatalf("mismatch rows: %#v, %v", rows, err)
 			}

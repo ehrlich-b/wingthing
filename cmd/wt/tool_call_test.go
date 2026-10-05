@@ -13,6 +13,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 func TestToolCallOwnHelpAndMissingTool(t *testing.T) {
@@ -76,11 +77,11 @@ func TestExecuteCLIPrivilegedToolPreservesNativeArgsAndAuthority(t *testing.T) {
 	t.Setenv("WT_TOOL_SOCKET", sockPath)
 
 	args := append([]string{"tool-call", "argv-canary"}, wantArgs...)
-	if err := executeCLI(context.Background(), args, remoteIO{}); err != nil {
+	if err := executeCLI(context.Background(), args, remotepkg.IO{}); err != nil {
 		t.Fatalf("tool-call exact argv: %v", err)
 	}
 
-	err = executeCLI(context.Background(), []string{"tool-call", "unconfigured", "--help"}, remoteIO{})
+	err = executeCLI(context.Background(), []string{"tool-call", "unconfigured", "--help"}, remotepkg.IO{})
 	var exitErr *cmdutil.CommandExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 || exitErr.Message != "unknown tool: unconfigured" {
 		t.Fatalf("unconfigured tool error = %#v, want exit 1 unknown-tool denial", err)
@@ -88,7 +89,7 @@ func TestExecuteCLIPrivilegedToolPreservesNativeArgsAndAuthority(t *testing.T) {
 }
 
 func TestExecuteCLIDoesNotExposeToolCallOverRemote(t *testing.T) {
-	err := executeCLI(context.Background(), []string{"--remote", "example", "tool-call", "argv-canary"}, remoteIO{})
+	err := executeCLI(context.Background(), []string{"--remote", "example", "tool-call", "argv-canary"}, remotepkg.IO{})
 	if err == nil || !strings.Contains(err.Error(), `command "tool-call" is not available over SSH`) {
 		t.Fatalf("remote tool-call error = %v, want unsupported command", err)
 	}

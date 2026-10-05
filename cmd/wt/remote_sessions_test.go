@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 func TestRemoteSessionOutputLimits(t *testing.T) {
@@ -34,7 +35,7 @@ func TestRemoteSessionOutputLimits(t *testing.T) {
 				script += fmt.Sprintf("head -c %d /dev/zero%s\nexec sleep 30\n", stream.limit+1, stream.redirect)
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
-				rows, err := discoverMachineSessions(ctx, cfg, remoteIO{sshPath: writeFakeRemoteSSH(t, script)})
+				rows, err := discoverMachineSessions(ctx, cfg, remotepkg.IO{SSHPath: writeFakeRemoteSSH(t, script)})
 				if err != nil || len(rows) != 2 || rows[0].ID != "local-session" || rows[1].Machine != "flood" || rows[1].ID != "" {
 					t.Fatalf("overflow rows = %#v, %v", rows, err)
 				}

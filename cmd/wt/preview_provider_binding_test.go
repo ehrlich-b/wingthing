@@ -16,6 +16,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 // A temporary state bound to a temporary provider data home outside it. No
@@ -77,7 +78,7 @@ func TestPreviewProviderBindingProfileStatusGuideAndLoginUseBoundHome(t *testing
 	}
 
 	report := previewProviderJSON(t, profile, true, "claude.ai")
-	writePreviewProviderScript(t, profile, "pwd -P > "+shellQuote(observed)+"\nprintf '%s' "+shellQuote(report)+"\n")
+	writePreviewProviderScript(t, profile, "pwd -P > "+remotepkg.ShellQuote(observed)+"\nprintf '%s' "+remotepkg.ShellQuote(report)+"\n")
 	status := inspectPreviewClaude(context.Background(), profile, 5*time.Second)
 	if status.State != "reported_authenticated" {
 		t.Fatalf("fake vendor status was not accepted for the bound namespace: %#v", status)
@@ -126,7 +127,7 @@ func TestPreviewProviderBindingStatusRechecksCredentialPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writePreviewProviderScript(t, profile, "printf ran > "+shellQuote(observed)+"\nexit 99\n")
+	writePreviewProviderScript(t, profile, "printf ran > "+remotepkg.ShellQuote(observed)+"\nexit 99\n")
 	// The binding is still valid, but a credential namespace was redirected
 	// after resolution into protected controller state.
 	if err := os.Symlink(state, filepath.Join(provider, ".claude")); err != nil {
@@ -154,7 +155,7 @@ func TestPreviewProviderBindingStatusRejectsChangedMacConfigDirectory(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	writePreviewProviderScript(t, profile, "printf ran > "+shellQuote(observed)+"\nexit 99\n")
+	writePreviewProviderScript(t, profile, "printf ran > "+remotepkg.ShellQuote(observed)+"\nexit 99\n")
 	if err := os.Remove(link); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestPreviewProviderBindingInvalidStopsBeforeVendor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writePreviewProviderScript(t, profile, "touch "+shellQuote(observed)+"\n")
+	writePreviewProviderScript(t, profile, "touch "+remotepkg.ShellQuote(observed)+"\n")
 	streams := previewLoginFixtureStreams(t)
 	streams.platform = runtime.GOOS
 	streams.run = func(*exec.Cmd) error {

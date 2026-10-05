@@ -15,6 +15,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -70,9 +71,9 @@ func attachCmd() *cobra.Command {
 				}
 				remoteArgs = append(remoteArgs, "--", remoteSession)
 				streams := remoteStreams(cmd.Context())
-				return runRemoteInvocation(cmd.Context(), remoteInvocation{
-					target: remote.SSHTarget, binary: config.BinaryName(), state: remote.WingthingDir,
-					args: remoteArgs, allocateTTY: streams.stdinTTY && streams.stdoutTTY,
+				return remotepkg.RunRemoteInvocation(cmd.Context(), remotepkg.Invocation{
+					Target: remote.SSHTarget, Binary: config.BinaryName(), State: remote.WingthingDir,
+					Args: remoteArgs, AllocateTTY: streams.StdinTTY && streams.StdoutTTY,
 				}, streams)
 			}
 			if sessionID == "" {

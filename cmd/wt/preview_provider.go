@@ -17,6 +17,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/spf13/cobra"
 )
@@ -334,7 +335,7 @@ func previewClaudeSetupGuide(profile previewProviderProfile) (previewProviderGui
 	prepare := []string{previewProviderShellCommand(initEnv, executable, "init")}
 	// A bound data home already exists by contract; never suggest changing it.
 	if profile.HomeBinding == "" {
-		prepare = append(prepare, "mkdir -p -m 700 "+shellQuote(profile.Home))
+		prepare = append(prepare, "mkdir -p -m 700 "+remotepkg.ShellQuote(profile.Home))
 	}
 	return previewProviderGuide{previewProviderProfile: profile,
 		PrepareCommands: prepare,
@@ -366,11 +367,11 @@ func previewProviderShellCommand(env []string, executable string, args ...string
 	sort.Strings(entries)
 	words := []string{"env", "-i"}
 	for _, entry := range entries {
-		words = append(words, shellQuote(entry))
+		words = append(words, remotepkg.ShellQuote(entry))
 	}
-	words = append(words, shellQuote(executable))
+	words = append(words, remotepkg.ShellQuote(executable))
 	for _, arg := range args {
-		words = append(words, shellQuote(arg))
+		words = append(words, remotepkg.ShellQuote(arg))
 	}
 	return strings.Join(words, " ")
 }

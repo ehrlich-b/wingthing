@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
 func previewLoginFixtureStreams(t *testing.T) previewProviderLoginIO {
@@ -149,7 +151,7 @@ func TestPreviewProviderCanonicalConfigIdentityAcrossMacStatusAndLogin(t *testin
 	if profile.ConfigDirectory != target || profile.OSHome == profile.Home {
 		t.Fatal("Mac preview config identity kept an alias or relocated the OS home")
 	}
-	writePreviewProviderScript(t, profile, "printf '%s' "+shellQuote(previewProviderJSON(t, profile, true, "claude.ai"))+"\n")
+	writePreviewProviderScript(t, profile, "printf '%s' "+remotepkg.ShellQuote(previewProviderJSON(t, profile, true, "claude.ai"))+"\n")
 	if status := inspectPreviewClaude(context.Background(), profile, time.Second); status.State != "reported_authenticated" || status.ConfigDirectory != target {
 		t.Fatal("status did not accept the shared canonical configuration identity")
 	}

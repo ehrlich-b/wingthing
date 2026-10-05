@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"golang.org/x/sys/unix"
 )
 
@@ -42,7 +43,7 @@ func TestSessionListingsDoNotWaitForLifecycleLock(t *testing.T) {
 				case "discovery":
 					sessions, err = discoverActiveSessions(ctx, cfg)
 				case "session ps":
-					err = executeCLI(ctx, []string{"session", "ps", "--json"}, remoteIO{out: &output})
+					err = executeCLI(ctx, []string{"session", "ps", "--json"}, remotepkg.IO{Out: &output})
 					if err == nil {
 						err = json.Unmarshal(output.Bytes(), &sessions)
 					}
