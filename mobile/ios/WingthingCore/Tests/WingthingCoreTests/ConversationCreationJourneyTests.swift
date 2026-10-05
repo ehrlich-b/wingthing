@@ -119,13 +119,16 @@ import WingthingUI
 
     @Test func receiptRequiresQualifiedRootAndClosedTemplateIncludesExactFirstMessageAndModel() throws {
         let home = try profile(), intent = try PendingConversationLaunch(profile: home, label: "parent", workspace: "/work", model: "claude-opus-5-5", input: "Exact first message 🦉")
-        let good: [String: JSONValue] = ["session": .string("new-session"), "conversation_id": .string("new-root"), "root_conversation_id": .string("new-root"),
+        let good: [String: JSONValue] = ["request_id": .string(intent.id.uuidString), "session": .string("new-session"), "conversation_id": .string("new-root"), "root_conversation_id": .string("new-root"),
             "agent": .string("claude"), "wing_id": .string(home.homeWingID), "label": .string(intent.label), "cwd": .string(intent.workspace), "launch_state": .string("started")]
         for change: [String: JSONValue] in [["wing_id": .string("other")], ["agent": .string("other")], ["cwd": .string("/other")], ["label": .string("other")],
             ["root_conversation_id": .string("other")], ["parent_conversation_id": .string("other")], ["session": .string(" ")], ["request_id": .string("other")]] {
             var value = intent; value.apply(.object(good.merging(change) { _, new in new }))
             expectEqual(value.progress, .unconfirmed); expectNil(value.target)
         }
+        var missingEcho = good; missingEcho.removeValue(forKey: "request_id")
+        var oldServer = intent; oldServer.apply(.object(missingEcho))
+        expectEqual(oldServer.progress, .unconfirmed); expectTrue(oldServer.detail?.contains("Update Wingthing") == true)
         var started = intent; started.apply(.object(good)); started.markUnconfirmed(); expectEqual(started.progress, .started)
         let argv = try unwrap(intent.arguments["args"]?.array?.compactMap(\.string))
         expectEqual(Array(argv.prefix(13)), ["-p", intent.input, "--output-format", "stream-json", "--verbose", "--restricted", "--setting-sources=", "--permission-mode", "dontAsk", "--permission-prompts", "none", "--max-turns", "40"])
@@ -148,10 +151,21 @@ import WingthingUI
         do { try await store.saveLaunch(changed); fail("Mutated saved intent") } catch { expectTrue(error is ClientError) }
         let second = try PendingConversationLaunch(profile: home, label: "other", workspace: "/work", model: first.model, input: "Second")
         do { try await store.saveLaunch(second); fail("Second uncertain launch") } catch { expectTrue(error is ClientError) }
-        var failed = first; failed.apply(.object(["session": .string("session"), "conversation_id": .string("root"), "root_conversation_id": .string("root"),
+        var failed = first; failed.apply(.object(["request_id": .string(first.id.uuidString), "session": .string("session"), "conversation_id": .string("root"), "root_conversation_id": .string("root"),
             "agent": .string("claude"), "wing_id": .string(home.homeWingID), "label": .string(first.label), "cwd": .string(first.workspace), "launch_state": .string("failed")]))
         try await store.saveLaunch(failed); try await store.saveLaunch(first)
         expectNil(try await store.unfinishedLaunch())
         try await store.saveLaunch(second); expectEqual(try await store.unfinishedLaunch()?.id, second.id)
     }
+    @Test func creationMissingOrReplayedEncryptedRequestIDNeverSelectsAParent() async throws {
+        for scenario in ["creation-missing-echo", "creation-wrong-echo"] {
+            let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+            let wire = ConversationTransportFixture(scenario: scenario), model = try await setup(wire, file: dir.appendingPathComponent("state.json"))
+            await create(model)
+            expectEqual(model.pendingLaunch?.progress, .unconfirmed); expectNil(model.selected); expectNil(model.execution)
+            expectEqual((await wire.counts()).launches, 1)
+            if scenario == "creation-missing-echo" { expectTrue(model.creationNotice?.contains("Update Wingthing") == true) }
+        }
+    }
+
 }

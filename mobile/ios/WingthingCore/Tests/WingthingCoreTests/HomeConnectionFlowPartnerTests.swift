@@ -343,7 +343,8 @@ private func isOffline(_ phase: HomeConnectionPhase) -> Bool { if case .offline 
 
     @Test func disconnectDuringConnectDiscardsTheLateResult() async throws {
         let directory = scratchDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
-        let model = WingthingModel(cacheDirectory: directory), wire = FlowWire(holdAt: 1)
+        let credentials = MemoryCredentials()
+        let model = WingthingModel(cacheDirectory: directory, credentialStore: credentials), wire = FlowWire(holdAt: 1)
         try await routeHome(wire)
         let connecting = Task { await connect(model, wire) }
         await wire.waitUntilHeld()
@@ -357,6 +358,8 @@ private func isOffline(_ phase: HomeConnectionPhase) -> Bool { if case .offline 
         await model.refresh()
         let after = await wire.attempts
         expectEqual(attempts, after)
+        expectTrue(credentials.saves.isEmpty)
+        expectNil(try SelectedHomeStore(file: directory.appendingPathComponent("selected-home.json")).load())
     }
 
     @Test func newerConnectWinsOverAnInFlightConnect() async throws {

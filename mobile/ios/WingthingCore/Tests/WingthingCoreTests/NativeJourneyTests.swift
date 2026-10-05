@@ -81,4 +81,35 @@ func lifecycleJSON(_ view: SessionLifecycle) throws -> JSONValue { try JSONDecod
         expectEqual(metadata.dotID, "root"); expectNil(metadata.homeRoostID); expectNil(metadata.ownerEpoch)
         expectFalse(metadata.hasPublishedHomeAndEpoch); expectFalse(metadata.crossHostAdoptionSupported)
     }
+    @Test func rejectedInputReturnsToComposerAndCanBeCorrectedAndSavedAgain() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rejected-input-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let home = try profile(), wire = FixtureWire(), model = WingthingModel()
+        let root = conversationJSON("root"), view = try lifecycleJSON(lifecycle("idle"))
+        await wire.route(["conversation_list:": .object(["conversations": .array([root])]),
+            "conversation_read:root": .object(["conversation": root, "tasks": .array([.object(["conversation": root, "lifecycle": view])])]),
+            "session_read:same-session": .object(["lifecycle": view])])
+        let file = directory.appendingPathComponent("state.json")
+        try await model.configure(profile: home, existingBearer: "synthetic-existing-token", cacheFile: file, wire: wire)
+        await model.refresh(); await model.open(reference(home))
+        for text in [String(repeating: "a", count: 65537), "bad\rinput"] {
+            model.draft = text; await model.sendOrCheck()
+            expectNil(model.pending); expectEqual(model.draft, text)
+            expectEqual((await wire.requests).filter { $0["operation"] == .string("session_prompt") }.count, 0)
+        }
+        model.draft = "Please inspect"
+        await wire.configure(reply: .object(["receipt": .object(["status": .string("not_sent"), "definitely_not_sent": .bool(true), "reason": .string("Provider busy before send")])]))
+        await model.sendOrCheck()
+        expectNil(model.pending); expectEqual(model.draft, "Please inspect"); expectEqual(model.error, "Provider busy before send")
+        model.draft = "Corrected input"
+        await wire.configure(reply: .object(["receipt": .object(["status": .string("unconfirmed")])]))
+        await model.sendOrCheck()
+        let corrected = try unwrap(model.pending)
+        expectEqual(corrected.input, "Corrected input")
+        await model.refresh()
+        expectEqual(model.pending?.id, corrected.id)
+        let restarted = try LocalConversationStore(profile: home, file: file)
+        expectEqual(await restarted.pending(for: corrected.execution)?.id, corrected.id)
+    }
+
 }

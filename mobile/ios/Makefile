@@ -1,4 +1,4 @@
-.PHONY: core-test ui-typecheck check live-preview-build live-preview live-preview-release-check simulator-preflight simulator-build simulator-ui-build simulator-ui-check simulator-fixture-check simulator-visual-check simulator-local-state-check simulator-first-connection-check simulator-creation-check device-unsigned-check
+.PHONY: core-test ui-typecheck check live-preview-build live-preview live-preview-release-check simulator-preflight simulator-build simulator-ui-build simulator-ui-check simulator-fixture-check simulator-visual-check simulator-local-state-check simulator-first-connection-check simulator-creation-check device-unsigned-check device-preflight device-build device-install
 
 IOS_SCRATCH ?= /tmp/wingthing-ios-swift-build
 IOS_CACHE ?= /tmp/wingthing-ios-swift-cache
@@ -50,6 +50,23 @@ IOS_DEVICE_DERIVED_DATA ?= /tmp/wingthing-ios-device-unsigned-build
 device-unsigned-check: simulator-preflight
 	@xcrun --sdk iphoneos --show-sdk-path
 	xcodebuild $(XCODEBUILD_FLAGS) -project Wingthing.xcodeproj -scheme Wingthing -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$(IOS_DEVICE_DERIVED_DATA)" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO OTHER_SWIFT_FLAGS='$$(inherited) -j2' build
+
+# Explicit personal-device signing overrides only this invocation. Xcode must
+# already have the Apple account, and the iPhone must trust this Mac.
+DEVELOPMENT_TEAM ?=
+IOS_DEVICE_ID ?=
+BUNDLE_ID ?= dev.ehrlich.wingthing.$(DEVELOPMENT_TEAM)
+IOS_DEVICE_CONFIGURATION ?= Debug
+IOS_SIGNED_DERIVED_DATA ?= /tmp/wingthing-ios-device-build
+IOS_SIGNED_APP = $(IOS_SIGNED_DERIVED_DATA)/Build/Products/$(IOS_DEVICE_CONFIGURATION)-iphoneos/Wingthing.app
+device-preflight:
+	@test -n "$(DEVELOPMENT_TEAM)" -a -n "$(IOS_DEVICE_ID)" -a -n "$(BUNDLE_ID)" || { echo 'DEVELOPMENT_TEAM, IOS_DEVICE_ID and BUNDLE_ID are required (BUNDLE_ID defaults to a team-specific identifier)' >&2; exit 2; }
+
+device-build: device-preflight
+	xcodebuild $(XCODEBUILD_FLAGS) -project Wingthing.xcodeproj -scheme Wingthing -configuration "$(IOS_DEVICE_CONFIGURATION)" -sdk iphoneos -destination 'platform=iOS,id=$(IOS_DEVICE_ID)' -derivedDataPath "$(IOS_SIGNED_DERIVED_DATA)" -allowProvisioningUpdates -allowProvisioningDeviceRegistration DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" PRODUCT_BUNDLE_IDENTIFIER="$(BUNDLE_ID)" CODE_SIGN_STYLE=Automatic CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES CODE_SIGN_IDENTITY='Apple Development' OTHER_SWIFT_FLAGS='$$(inherited) -j2' build
+
+device-install: device-build
+	xcrun devicectl device install app --device "$(IOS_DEVICE_ID)" "$(IOS_SIGNED_APP)"
 
 # Use an explicitly selected, dedicated simulator. These tests never send or
 # stop an existing conversation; their preview inputs contain no credentials.

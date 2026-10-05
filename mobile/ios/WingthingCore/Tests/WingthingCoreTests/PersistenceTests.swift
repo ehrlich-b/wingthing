@@ -27,12 +27,12 @@ import Testing
         let home = try profile(), target = ExecutionReference(conversation: reference(home), sessionID: "same-session")
         var pending = try PendingInput(execution: target, input: "hello")
         expectEqual(pending.delivery, .savedLocally)
-        pending.applyReceipt(.object(["status": .string("not_sent"), "bytes_written": .integer(0)]))
+        pending.applyReceipt(.object(["request_id": .string(pending.id.uuidString), "session_id": .string(target.sessionID), "status": .string("not_sent"), "bytes_written": .integer(0)]))
         expectEqual(pending.delivery, .unconfirmed)
-        pending.applyReceipt(.object(["status": .string("not_sent"), "definitely_not_sent": .bool(true), "reason": .string("Provider busy before send")]))
+        pending.applyReceipt(.object(["request_id": .string(pending.id.uuidString), "session_id": .string(target.sessionID), "status": .string("not_sent"), "definitely_not_sent": .bool(true), "reason": .string("Provider busy before send")]))
         expectEqual(pending.delivery, .definitelyNotSent)
         expectEqual(pending.notice, "Provider busy before send")
-        pending.applyReceipt(.object(["status": .string("native_receipt_observed")]))
+        pending.applyReceipt(.object(["request_id": .string(pending.id.uuidString), "session_id": .string(target.sessionID), "status": .string("native_receipt_observed")]))
         expectEqual(pending.delivery, .unconfirmed)
     }
 
@@ -49,4 +49,30 @@ import Testing
         expectEqual(restored?.transcript.status(connected: true), .unknown)
         expectEqual(restored?.transcript.status(connected: false), .offline)
     }
+    @Test func promptValidationMatchesServerBytesWhitespaceAndControlScalars() throws {
+        let target = ExecutionReference(conversation: reference(try profile()), sessionID: "same-session")
+        for text in [String(repeating: "a", count: 65536), String(repeating: "🦉", count: 16384), "line\n\tindent", "format\u{200d}join", "\u{200b}"] {
+            _ = try PendingInput(execution: target, input: text)
+        }
+        for text in ["", " \n\t\u{0085}\u{00a0}", String(repeating: "a", count: 65537), String(repeating: "🦉", count: 16385), "x\r", "x\0", "x\u{1b}", "x\u{7f}", "x\u{85}", "x\u{9f}"] {
+            expectThrows(try PendingInput(execution: target, input: text))
+        }
+    }
+
+    @Test func receiptRequiresEncryptedRequestAndSessionEvenForDefiniteRejection() throws {
+        let target = ExecutionReference(conversation: reference(try profile()), sessionID: "same-session")
+        let original = try PendingInput(execution: target, input: "hello")
+        for status in ["native_receipt_observed", "not_sent"] {
+            let good: [String: JSONValue] = ["request_id": .string(original.id.uuidString), "session_id": .string(target.sessionID),
+                "status": .string(status), "native_receipt_observed": .bool(true), "definitely_not_sent": .bool(true)]
+            for key in ["request_id", "session_id"] {
+                for value: JSONValue? in [nil, .string("earlier-receipt")] {
+                    var fields = good; fields[key] = value
+                    var pending = original; pending.applyReceipt(.object(fields))
+                    expectEqual(pending.delivery, .unconfirmed); expectTrue(pending.notice != nil)
+                }
+            }
+        }
+    }
+
 }

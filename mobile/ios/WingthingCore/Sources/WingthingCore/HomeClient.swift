@@ -249,6 +249,21 @@ public actor HomeClient {
             if error == "passkey_required" { throw ClientError.unsupported("This wing requires its existing passkey authorization. Native passkey approval is not connected yet.") }
             throw ClientError.response(String(error.prefix(1000)))
         }
+        // The relay envelope is unauthenticated. Mutation receipts must bind
+        // their immutable intent and destination inside the decrypted payload.
+        if let operation = inner["operation"]?.string, ["agent_start", "session_prompt"].contains(operation) {
+            let receipt = operation == "session_prompt" ? result["receipt"] ?? result["prompt"] ?? result : result
+            guard receipt["request_id"] != nil else {
+                throw ClientError.unsupported("Your computer didn't echo the request ID inside its encrypted reply. Update Wingthing on that computer. Delivery remains unconfirmed.")
+            }
+            guard receipt["request_id"] == inner["arguments"]?["request_id"] else { throw ClientError.staleReference }
+            if operation == "session_prompt" {
+                guard receipt["session_id"] != nil else {
+                    throw ClientError.unsupported("Your computer didn't echo the session ID inside its encrypted reply. Update Wingthing on that computer. Delivery remains unconfirmed.")
+                }
+                guard receipt["session_id"] == inner["arguments"]?["session"] else { throw ClientError.staleReference }
+            }
+        }
         return result
     }
 

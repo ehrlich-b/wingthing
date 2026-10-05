@@ -10,8 +10,10 @@ actor FixtureWire: HomeWire {
     var controlReply: JSONValue = .object(["ok": .bool(true)])
     var operationReplies: [String: JSONValue] = [:]
     var wrongRequestID = false
-    func configure(user: String? = nil, key: String? = nil, reply: JSONValue? = nil, wrongRequestID: Bool? = nil) {
+    var echoPromptIDs = true
+    func configure(user: String? = nil, key: String? = nil, reply: JSONValue? = nil, wrongRequestID: Bool? = nil, echoPromptIDs: Bool? = nil) {
         if let user { self.user = user }; if let key { self.key = key }; if let reply { controlReply = reply }; if let wrongRequestID { self.wrongRequestID = wrongRequestID }
+        if let echoPromptIDs { self.echoPromptIDs = echoPromptIDs }
     }
     func route(_ replies: [String: JSONValue]) { operationReplies = replies }
     func get(_ url: URL, bearer: String) async throws -> HTTPReply {
@@ -40,7 +42,12 @@ actor FixtureWire: HomeWire {
         expectEqual(envelope["wing_id"], .string("mac"))
         let operation = inner["operation"]?.string ?? ""
         let target = inner["arguments"]?["conversation_id"]?.string ?? inner["arguments"]?["session"]?.string ?? ""
-        let result = operationReplies[operation + ":" + target] ?? controlReply
+        var result = operationReplies[operation + ":" + target] ?? controlReply
+        if echoPromptIDs, operation == "session_prompt", case .object(var fields)? = result["receipt"], case .object(var reply) = result {
+            if fields["request_id"] == nil { fields["request_id"] = inner["arguments"]?["request_id"] }
+            if fields["session_id"] == nil { fields["session_id"] = inner["arguments"]?["session"] }
+            reply["receipt"] = .object(fields); result = .object(reply)
+        }
         let response: JSONValue = .object(["type": .string("tunnel.res"), "request_id": .string(wrongRequestID ? "old-request" : try unwrap(envelope["request_id"]?.string)), "payload": .string(try cipher.seal(JSONEncoder().encode(result)))])
         return try JSONEncoder().encode(response)
     }
@@ -108,4 +115,26 @@ actor FixtureWire: HomeWire {
         expectEqual(requests[0]["arguments"], requests[1]["arguments"])
         expectEqual(requests[1]["arguments"]?["session"], .string("same-session"))
     }
+    @Test func encryptedPromptCorrelationRejectsMissingOrReplayedInnerIDs() async throws {
+        let home = try profile(), wire = FixtureWire()
+        let client = try HomeClient(profile: home, existingBearer: "synthetic-existing-token", wire: wire)
+        _ = try await client.verifyHome()
+        let intent = try PendingInput(execution: ExecutionReference(conversation: reference(home), sessionID: "same-session"), input: "hello")
+        let good: [String: JSONValue] = ["request_id": .string(intent.id.uuidString), "session_id": .string("same-session"),
+            "status": .string("native_receipt_observed"), "native_receipt_observed": .bool(true)]
+        for key in ["request_id", "session_id"] {
+            for value: JSONValue? in [nil, .string("earlier-success")] {
+                var fields = good; fields[key] = value
+                await wire.configure(reply: .object(["receipt": .object(fields)]), echoPromptIDs: false)
+                do { _ = try await client.submit(intent); fail("Accepted unrelated encrypted success") }
+                catch {
+                    if value == nil { expectTrue(error.localizedDescription.contains("Update Wingthing")) }
+                    else { expectEqual(error as? ClientError, .staleReference) }
+                }
+            }
+        }
+        await wire.configure(reply: .object(["receipt": .object(good)]))
+        expectEqual(try await client.submit(intent).delivery, .nativeReceiptObserved)
+    }
+
 }

@@ -92,9 +92,10 @@ public struct PendingConversationLaunch: Codable, Equatable, Sendable, Identifia
     }
     public mutating func apply(_ result: JSONValue) {
         guard !progress.final else { return }
-        // HomeClient already authenticates and correlates the encrypted reply
-        // to this exact dispatch. Old servers do not echo the launch request ID.
-        guard result["request_id"] == nil || result["request_id"] == .string(id.uuidString),
+        guard result["request_id"] != nil else {
+            markUnconfirmed("Your computer didn't echo the request ID inside its encrypted reply. Update Wingthing on that computer. Creation remains unconfirmed."); return
+        }
+        guard result["request_id"] == .string(id.uuidString),
               result["wing_id"] == .string(wingID), result["agent"] == .string("claude"), result["label"] == .string(label), result["cwd"] == .string(workspace),
               let root = result["conversation_id"]?.string, Self.validID(root), result["root_conversation_id"] == .string(root),
               result["parent_conversation_id"] == nil || result["parent_conversation_id"] == .null || result["parent_conversation_id"] == .string(""),
