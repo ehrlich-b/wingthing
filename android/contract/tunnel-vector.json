@@ -1,0 +1,8 @@
+{
+  "encrypted_b64": "ycrLzM3Oz9DR0tPUxHbi7CRHVSNi0W8X0J5Xt5kgdBFFdJ0NckxmiVenJ5NI9SUFojDbipJ5cxI5wT5a9vJcf+kxigOBO1b/IKgN/2acJYme+NqnqgIY9qUt9MGX3gEtzWXyI4bE568JeFudekZn6pc51s8WK3ZW43ukXZ6fhg==",
+  "nonce_hex": "c9cacbcccdcecfd0d1d2d3d4",
+  "peer_public_b64": "VxR2nRFr92Q2rnS8eT0sMK0ZA8WaxSc4BcfiaYtBDDY=",
+  "plaintext": "{\"type\":\"session.control\",\"operation\":\"session_status\",\"arguments\":{\"session\":\"synthetic-session\"}}",
+  "private_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "public_b64": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw="
+}
