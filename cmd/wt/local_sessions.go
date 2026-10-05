@@ -85,7 +85,7 @@ func discoverActiveSessions(ctx context.Context, cfg *config.Config) ([]localSes
 				}
 			}
 		}
-		if view, err := lifecycleViewForSession(cfg, *session, 0, 1); err == nil {
+		if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
 			session.Status = view.Status
 		}
 	}
@@ -356,20 +356,24 @@ func printActiveSessions(ctx context.Context, cfg *config.Config, jsonOutput boo
 	if err != nil {
 		return err
 	}
+	return writeLocalSessions(os.Stdout, sessions, jsonOutput)
+}
+
+func writeLocalSessions(out io.Writer, sessions []localSession, jsonOutput bool) error {
 	if jsonOutput {
 		if sessions == nil {
 			sessions = []localSession{}
 		}
-		encoder := json.NewEncoder(os.Stdout)
+		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(sessions)
 	}
 	if len(sessions) == 0 {
-		fmt.Println("no active sessions")
-		return nil
+		_, err := fmt.Fprintln(out, "no active sessions")
+		return err
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(w, "NAME\tID\tKIND\tPROCESS\tSTATUS\tISOLATION\tREADERS\tUPTIME\tIDLE\tCWD"); err != nil {
 		return err
 	}

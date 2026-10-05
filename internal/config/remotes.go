@@ -28,6 +28,9 @@ func ValidateRemoteName(name string) error {
 	if name == "" {
 		return errors.New("remote name must not be empty")
 	}
+	if strings.EqualFold(name, "local") {
+		return errors.New("remote name 'local' is reserved for this machine")
+	}
 	for _, r := range name {
 		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
 			(r >= '0' && r <= '9') || r == '-' || r == '_') {

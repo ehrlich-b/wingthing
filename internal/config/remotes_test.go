@@ -32,6 +32,27 @@ func TestRemotesValidation(t *testing.T) {
 	}
 }
 
+func TestRemotesRejectReservedLocalName(t *testing.T) {
+	for _, name := range []string{"local", "LOCAL", "Local", "lOcAl"} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateRemoteName(name); err == nil {
+				t.Fatal("accepted reserved local machine name")
+			}
+			dir := t.TempDir()
+			if err := SaveRemotes(dir, map[string]Remote{name: {SSHTarget: "host"}}); err == nil {
+				t.Fatal("saved reserved remote name")
+			}
+			data := fmt.Sprintf("remotes:\n  %s:\n    ssh_target: host\n", name)
+			if err := os.WriteFile(filepath.Join(dir, "remotes.yaml"), []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadRemotes(dir); err == nil {
+				t.Fatal("loaded reserved remote name")
+			}
+		})
+	}
+}
+
 func TestRemotesRoundTripAtomicOwnerOnly(t *testing.T) {
 	dir := t.TempDir()
 	missing, err := LoadRemotes(dir)
