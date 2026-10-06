@@ -123,7 +123,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 		Store:           store,
 		Config:          cfg,
 		Wings:           NewWingRegistry(),
-		PTY:             NewPTYRoutes(),
+		PTY:             NewPTYRoutes(cfg.ResourceLimits),
 		mux:             http.NewServeMux(),
 		browserConns:    make(map[*websocket.Conn]*browserConnection),
 		tunnelRequests:  make(map[tunnelRequestKey]pendingTunnelRequest),

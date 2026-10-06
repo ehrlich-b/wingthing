@@ -15,6 +15,9 @@ type ResourceLimits struct {
 	MCPRegistrations   int
 	MCPClients         int
 	MCPRegistrationTTL time.Duration
+	Routes             int
+	RoutesPerUser      int
+	AbandonedRouteTTL  time.Duration
 }
 
 func (l ResourceLimits) withDefaults() ResourceLimits {
@@ -23,6 +26,9 @@ func (l ResourceLimits) withDefaults() ResourceLimits {
 	l.MCPRegistrations = relayLimitInt(l.MCPRegistrations, "MCP_REGISTRATIONS", 1000)
 	l.MCPClients = relayLimitInt(l.MCPClients, "MCP_CLIENTS", 1000)
 	l.MCPRegistrationTTL = relayLimitDuration(l.MCPRegistrationTTL, "MCP_REGISTRATION_TTL", time.Hour)
+	l.Routes = relayLimitInt(l.Routes, "ROUTES", 16384)
+	l.RoutesPerUser = relayLimitInt(l.RoutesPerUser, "ROUTES_PER_USER", 512)
+	l.AbandonedRouteTTL = relayLimitDuration(l.AbandonedRouteTTL, "ABANDONED_ROUTE_TTL", 24*time.Hour)
 	return l
 }
 
