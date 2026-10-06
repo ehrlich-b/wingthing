@@ -59,7 +59,7 @@ func New(cfg *config.ContextConfig) (*Client, error) {
 	}, tokens: make(map[string]cachedToken), tokenLock: make(chan struct{}, 1), now: time.Now}, nil
 }
 
-func (c *Client) token(ctx context.Context, owner string) (string, error) {
+func (c *Client) token(ctx context.Context, owner, rejected string) (string, error) {
 	select {
 	case c.tokenLock <- struct{}{}:
 		defer func() { <-c.tokenLock }()
@@ -67,6 +67,10 @@ func (c *Client) token(ctx context.Context, owner string) (string, error) {
 		return "", fmt.Errorf("context: request timed out or cancelled")
 	}
 	now := c.now()
+	// Invalidate only the rejected token, preserving any concurrent refresh.
+	if rejected != "" && c.tokens[owner].value == rejected {
+		delete(c.tokens, owner)
+	}
 	if token := c.tokens[owner]; now.Before(token.expires) {
 		return token.value, nil
 	}
@@ -117,7 +121,7 @@ func (c *Client) Call(ctx context.Context, owner, name string, arguments map[str
 	if err != nil || address.Address != owner {
 		return "", fmt.Errorf("context: verified owner email is required")
 	}
-	token, err := c.token(ctx, owner)
+	token, err := c.token(ctx, owner, "")
 	if err != nil {
 		return "", err
 	}
@@ -132,7 +136,19 @@ func (c *Client) Call(ctx context.Context, owner, name string, arguments map[str
 	if err != nil {
 		return "", fmt.Errorf("context: invalid tool arguments")
 	}
+	credentials := []string{token}
 	body, err := c.post(ctx, strings.TrimRight(c.cfg.URL, "/")+"/mcp", "application/json", token, request, name)
+	if status, ok := err.(*httpError); ok && status.code == http.StatusUnauthorized {
+		rejected := token
+		token, err = c.token(ctx, owner, rejected)
+		credentials = append(credentials, token)
+		if err == nil {
+			body, err = c.post(ctx, strings.TrimRight(c.cfg.URL, "/")+"/mcp", "application/json", token, request, name, rejected)
+		}
+		if err != nil {
+			return "", fmt.Errorf("%s", c.redact(err.Error(), credentials...))
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -155,7 +171,7 @@ func (c *Client) Call(ctx context.Context, owner, name string, arguments map[str
 		return "", fmt.Errorf("context: invalid MCP response")
 	}
 	if response.Error != nil {
-		return "", fmt.Errorf("context: MCP error %d: %s", response.Error.Code, c.redact(response.Error.Message, token))
+		return "", fmt.Errorf("context: MCP error %d: %s", response.Error.Code, c.redact(response.Error.Message, credentials...))
 	}
 	if response.Result == nil {
 		return "", fmt.Errorf("context: missing MCP result")
@@ -166,7 +182,7 @@ func (c *Client) Call(ctx context.Context, owner, name string, arguments map[str
 			texts = append(texts, content.Text)
 		}
 	}
-	output := c.redact(strings.Join(texts, "\n"), token)
+	output := c.redact(strings.Join(texts, "\n"), credentials...)
 	if response.Result.IsError {
 		return "", fmt.Errorf("context: %s", output)
 	}
@@ -181,6 +197,13 @@ func (c *Client) redact(text string, credentials ...string) string {
 	}
 	return text
 }
+
+type httpError struct {
+	code    int
+	message string
+}
+
+func (e *httpError) Error() string { return e.message }
 
 func (c *Client) post(ctx context.Context, endpoint, contentType, token string, body []byte, name string, sensitive ...string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -223,7 +246,7 @@ func (c *Client) post(ctx context.Context, endpoint, contentType, token string, 
 				message += ": " + string(text)
 			}
 		}
-		return nil, fmt.Errorf("%s", message)
+		return nil, &httpError{code: resp.StatusCode, message: message}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil || len(data) > maxResponseBytes {
