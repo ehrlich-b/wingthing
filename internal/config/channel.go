@@ -357,6 +357,12 @@ func validatePreviewProviderReentry(root, home string) (bool, error) {
 // Tests replace this to model physical aliases that EvalSymlinks cannot see.
 var statePathStat = os.Stat
 
+// PathsPhysicallyOverlap compares names and device/inode identities, including
+// missing suffixes beneath existing directories and bind-mounted aliases.
+func PathsPhysicallyOverlap(left, right string) (bool, error) {
+	return statePathsOverlap(left, right)
+}
+
 // statePathsOverlap compares resolved existing ancestors as well as names.
 // Missing suffixes must still overlap: two absent siblings sharing an existing
 // ancestor do not overlap, but a missing child of a physical alias does.

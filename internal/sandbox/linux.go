@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"golang.org/x/sys/unix"
 )
 
@@ -79,9 +80,7 @@ type linuxSandbox struct {
 // newPlatform tries to create a namespace+seccomp sandbox.
 // Returns an error if capabilities are insufficient so the factory falls back.
 func newPlatform(cfg Config) (Sandbox, error) {
-	// Writes outside HOME and through overlay prefixes are not a closed rule
-	// list here, so a protected set cannot be verified against final policy.
-	if err := refuseProtectedWriteTargets(cfg, "linux"); err != nil {
+	if err := verifyLinuxProtectedWriteTargets(cfg); err != nil {
 		return nil, err
 	}
 	hasNamespaceCapability := hasEffectiveCAPSYSADMIN()
@@ -102,6 +101,36 @@ func newPlatform(cfg Config) (Sandbox, error) {
 
 	log.Printf("linux sandbox: created tmpdir=%s network=%s cgroup=%v", dir, cfg.NetworkNeed, cg != nil)
 	return &linuxSandbox{cfg: cfg, tmpDir: dir, cgroup: cg, userNamespace: !hasNamespaceCapability}, nil
+}
+
+// A jail has a closed set of host write grants. Its private root, HOME and
+// temporary directories cannot rename host ancestors outside those binds.
+func verifyLinuxProtectedWriteTargets(cfg Config) error {
+	if len(cfg.ProtectedWriteTargets) == 0 {
+		return nil
+	}
+	if err := ValidateProtectedWriteTargets(cfg.ProtectedWriteTargets); err != nil {
+		return err
+	}
+	if !containsPath(cfg.Deny, "/") {
+		return refuseProtectedWriteTargets(cfg, "linux non-jail")
+	}
+	for _, target := range cfg.ProtectedWriteTargets {
+		for _, mount := range cfg.Mounts {
+			if mount.ReadOnly {
+				continue
+			}
+			path := mount.Source
+			overlaps, err := config.PathsPhysicallyOverlap(path, target)
+			if err != nil {
+				return &ProtectedWriteTargetError{Target: target, Reason: err.Error()}
+			}
+			if overlaps {
+				return &ProtectedWriteTargetError{Target: target, Rule: "writable bind " + path, Reason: "overlaps protected host state"}
+			}
+		}
+	}
+	return nil
 }
 
 func hasEffectiveCAPSYSADMIN() bool {

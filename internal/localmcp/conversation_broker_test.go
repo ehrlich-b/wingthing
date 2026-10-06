@@ -1052,3 +1052,32 @@ func TestHostMailboxChildLaunchCarriesContract(t *testing.T) {
 		t.Fatalf("protected argv %v %v", args, err)
 	}
 }
+
+func TestLinuxHostMailboxProviderWriteProtection(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux jail preflight")
+	}
+	home := t.TempDir()
+	workspace := filepath.Join(home, "workspace")
+	state := filepath.Join(home, ".wingthing")
+	t.Setenv("HOME", home)
+	cfg := &config.Config{Dir: state}
+	model, err := modelProviderWrites(cfg, egg.DefaultEggConfig(), "claude", workspace, "parent", eggclient.EggIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := model.verifyProtected(state, []string{"/opt/wt/bin/wt"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{workspace, filepath.Join(home, ".claude", "settings.json")} {
+		if _, writable := model.writable(path); !writable {
+			t.Fatalf("legitimate write refused: %s", path)
+		}
+	}
+	if err := model.verifyProtected(filepath.Join(workspace, "state"), nil); err == nil {
+		t.Fatal("workspace state accepted")
+	}
+	if _, writable := model.writable("/tmp/host-state"); writable {
+		t.Fatal("private tmp grants host write authority")
+	}
+}
