@@ -517,6 +517,7 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 	var userDisplayName string
 	var userOrgIDs []string
 	var userOrgRoles map[string]string
+	var credential ptyCredential
 	if u := s.sessionUser(r); u != nil {
 		userID = u.ID
 		userOrgIDs = u.OrgIDs
@@ -524,6 +525,15 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 		userDisplayName = u.DisplayName
 		if u.Email != nil {
 			userEmail = *u.Email
+		}
+		credential.local = s.LocalMode && s.localUser != nil
+		if !credential.local {
+			cookie, _ := r.Cookie(sessionCookieNameForChannel()) // sessionUser validated this cookie
+			credential.token, credential.session = cookie.Value, true
+			if !s.ptyCredentialValid(r.Context(), credential, userID) {
+				http.Error(w, "invalid session", http.StatusUnauthorized)
+				return
+			}
 		}
 	}
 	if userID == "" {
@@ -544,6 +554,7 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		userID = claims.Subject
+		credential.token = token
 	}
 	if !s.roostUserIDAllowed(userID) {
 		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
@@ -627,9 +638,12 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 	previousOrgs := initialOrgs
 	var orgMu sync.Mutex
-	refreshOrgs := func() (userOrgContext, bool) {
+	refreshAuthorization := func() (userOrgContext, bool) {
 		orgMu.Lock()
 		defer orgMu.Unlock()
+		if !s.ptyCredentialValid(ctx, credential, userID) {
+			return userOrgContext{}, false
+		}
 		current, ok := s.currentUserOrgContext(ctx, userID)
 		if !ok || !s.roostUserIDAllowed(userID) || orgAuthorityRevoked(previousOrgs, current) {
 			return userOrgContext{}, false
@@ -638,7 +652,7 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 		return current, true
 	}
 	go revalidatePTYAuthorization(ctx, conn, authInterval, func() bool {
-		_, ok := refreshOrgs()
+		_, ok := refreshAuthorization()
 		return ok
 	})
 
@@ -653,7 +667,7 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			return
 		}
-		current, ok := refreshOrgs()
+		current, ok := refreshAuthorization()
 		if !ok {
 			_ = conn.Close(websocket.StatusPolicyViolation, "authorization revoked")
 			return

@@ -7,6 +7,35 @@ import (
 	"github.com/coder/websocket"
 )
 
+// Pin the credential selected at admission; revalidation must not fall back to
+// another cookie, bearer token, or implicit local identity after revocation.
+type ptyCredential struct {
+	token   string
+	session bool
+	local   bool
+}
+
+func (s *Server) ptyCredentialValid(ctx context.Context, credential ptyCredential, userID string) bool {
+	if credential.local {
+		return s.LocalMode && s.localUser != nil && s.localUser.ID == userID
+	}
+	if credential.session {
+		if s.IsEdge() {
+			var result SessionValidation
+			// Bypass the browser-session cache so logout and expiry take effect
+			// on idle sockets within the revalidation interval.
+			return s.remoteCredential(ctx, "/internal/sessions/", credential.token, &result) == nil && result.UserID == userID
+		}
+		if s.Store == nil {
+			return false
+		}
+		user, err := s.Store.GetSession(credential.token)
+		return err == nil && user != nil && user.ID == userID
+	}
+	claims, err := s.validateWingCredential(ctx, credential.token)
+	return err == nil && claims.Subject == userID
+}
+
 func (s *Server) currentUserOrgContext(ctx context.Context, userID string) (userOrgContext, bool) {
 	if s.IsEdge() {
 		return s.remoteUserOrgContext(ctx, userID)
