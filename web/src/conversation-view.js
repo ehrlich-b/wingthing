@@ -19,6 +19,8 @@ import './conversation-recovery.css';
 
 var TREE_REFRESH_MS = 5000;
 var STOP_CONFIRM_MS = 6000;
+var PREVIEW_CACHE_LIMIT = 32;
+var PREVIEW_CACHE_BYTES = 256 * 1024;
 
 var treeCache = new Map();
 var refreshing = false;
@@ -64,6 +66,7 @@ function cachedWingTree(wingId) {
 function cacheWingTree(wingId, value) {
     treeCache.set(treeCacheKey(wingId), value);
     saveTree(storage(), userId(), wingId, { tasks: value.tasks, deliveries: value.deliveries, savedAt: value.observedAt || Date.now() });
+    prunePreviews();
 }
 
 // Freshness is per task: only tasks from a typed read in this page carry an
@@ -118,6 +121,31 @@ function observeTasks(wingId, tasks) {
 }
 
 function previewKey(wingId, sessionId) { return JSON.stringify([userId(), wingId, sessionId]); }
+
+function prunePreviews() {
+    if (!previews.size) return;
+    var current = new Set();
+    eligibleWings(true).forEach(function(wing) {
+        cachedWingTree(wing.wing_id).tasks.forEach(function(task) { current.add(previewKey(wing.wing_id, task.conversation.session_id)); });
+    });
+    previews.forEach(function(_preview, key) { if (!current.has(key)) previews.delete(key); });
+}
+
+function previewBytes(key, preview) { return new TextEncoder().encode(key + JSON.stringify(preview)).byteLength; }
+
+function cachePreview(key, preview) {
+    var bytes = previewBytes(key, preview);
+    if (bytes > PREVIEW_CACHE_BYTES) return;
+    previews.delete(key);
+    previews.forEach(function(value, key) { bytes += previewBytes(key, value); });
+    previews.set(key, preview);
+    while (previews.size > PREVIEW_CACHE_LIMIT || bytes > PREVIEW_CACHE_BYTES) {
+        var oldest = previews.keys().next().value;
+        bytes -= previewBytes(oldest, previews.get(oldest));
+        previews.delete(oldest);
+    }
+}
+
 function taskPreview(wingId, task) {
     var conversation = task.conversation;
     var live = chatSnapshot();
@@ -137,9 +165,11 @@ async function refreshRootPreview(wingId, task) {
     if (previous && previous.head === head) return previous;
     try {
         var result = await control(wingId, 'session_read', previewReadArguments(task));
+        if (key !== previewKey(wingId, conversation.session_id) || !eligibleWings(true).some(function(wing) { return wing.wing_id === wingId; })) return;
+        if (!cachedWingTree(wingId).tasks.some(function(task) { return task.conversation.session_id === conversation.session_id; })) return;
         var messages = previewMessagesFromRead(task, result);
         var preview = { head: head, text: lastMessagePreview(messages) || previous && previous.text || '', messages: messages.slice(-3) };
-        previews.set(key, preview);
+        cachePreview(key, preview);
         return preview;
     } catch (error) { return previous; /* Keep the last readable preview during reconnect. */ }
 }
@@ -598,6 +628,7 @@ export async function refreshConversationInventory() {
     if (!mount || refreshing) return;
     if (timer) clearTimeout(timer);
     var wings = eligibleWings(true);
+    prunePreviews();
     if (!wings.length) { mount.innerHTML = ''; return; }
     refreshing = true;
     await Promise.all(wings.map(async function(wing) {
