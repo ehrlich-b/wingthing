@@ -178,6 +178,7 @@ func (b BaseField) HasMasks() bool {
 
 // EggConfig holds the sandbox and environment configuration for egg sessions.
 type EggConfig struct {
+	SourcePath                 string            `yaml:"-"`
 	Base                       BaseField         `yaml:"base,omitempty"`
 	FS                         []string          `yaml:"fs"`
 	Network                    NetworkField      `yaml:"network"`
@@ -330,7 +331,11 @@ const maxBaseDepth = 10
 // a fully merged config. If base is empty, merges on top of DefaultEggConfig.
 // If base is "none", returns the config as-is (empty slate).
 func ResolveEggConfig(path string) (*EggConfig, error) {
-	return resolveEggConfig(path, make(map[string]bool), 0)
+	cfg, err := resolveEggConfig(path, make(map[string]bool), 0)
+	if err == nil {
+		cfg.SourcePath, err = filepath.Abs(path)
+	}
+	return cfg, err
 }
 
 func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConfig, error) {

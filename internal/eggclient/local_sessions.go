@@ -39,24 +39,26 @@ var ErrSessionNameInUse = errors.New("session name is already in use")
 
 type LocalSession struct {
 	ConversationLink
-	ID           string `json:"id"`
-	Name         string `json:"name,omitempty"`
-	Principal    string `json:"principal,omitempty"`
-	Kind         string `json:"kind"`
-	Agent        string `json:"agent,omitempty"`
-	Status       string `json:"status"`
-	Command      string `json:"command,omitempty"`
-	CWD          string `json:"cwd,omitempty"`
-	Isolation    string `json:"isolation,omitempty"`
-	PID          int    `json:"pid"`
-	Readers      int32  `json:"readers"`
-	WriterID     string `json:"writer_id,omitempty"`
-	WriterOwner  string `json:"writer_owner,omitempty"`
-	InputEpoch   uint64 `json:"input_epoch,omitempty"`
-	UptimeSecs   int64  `json:"uptime_seconds"`
-	IdleSecs     int64  `json:"idle_seconds"`
-	BufferBytes  int64  `json:"buffer_bytes"`
-	TotalWritten int64  `json:"total_written"`
+	ID            string `json:"id"`
+	Name          string `json:"name,omitempty"`
+	Principal     string `json:"principal,omitempty"`
+	Kind          string `json:"kind"`
+	Agent         string `json:"agent,omitempty"`
+	Status        string `json:"status"`
+	Recoverable   bool   `json:"recoverable,omitempty"`
+	RecoveredFrom string `json:"recovered_from,omitempty"`
+	Command       string `json:"command,omitempty"`
+	CWD           string `json:"cwd,omitempty"`
+	Isolation     string `json:"isolation,omitempty"`
+	PID           int    `json:"pid"`
+	Readers       int32  `json:"readers"`
+	WriterID      string `json:"writer_id,omitempty"`
+	WriterOwner   string `json:"writer_owner,omitempty"`
+	InputEpoch    uint64 `json:"input_epoch,omitempty"`
+	UptimeSecs    int64  `json:"uptime_seconds"`
+	IdleSecs      int64  `json:"idle_seconds"`
+	BufferBytes   int64  `json:"buffer_bytes"`
+	TotalWritten  int64  `json:"total_written"`
 }
 
 func DiscoverActiveSessions(ctx context.Context, cfg *config.Config) ([]LocalSession, error) {
@@ -89,6 +91,13 @@ func DiscoverActiveSessions(ctx context.Context, cfg *config.Config) ([]LocalSes
 		if view, err := tryLifecycleViewForSession(cfg, *session); err == nil {
 			session.Status = view.Status
 		}
+	}
+	recoverable, err := DiscoverRecoverableSessions(cfg)
+	if err != nil {
+		return nil, err
+	}
+	for _, recovered := range recoverable {
+		sessions = append(sessions, recovered.LocalSession)
 	}
 	sortLocalSessions(sessions)
 	return sessions, nil
@@ -137,6 +146,9 @@ func DiscoverSessionRefs(cfg *config.Config) ([]LocalSession, error) {
 			} else {
 				s.Kind = "command"
 			}
+		}
+		if intent, err := egg.ReadLaunchIntent(dir); err == nil {
+			s.RecoveredFrom = intent.RecoveredFrom
 		}
 
 		sessions = append(sessions, s)

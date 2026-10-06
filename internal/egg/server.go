@@ -1052,6 +1052,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if err := RecordSessionProcessEvent(s.dir, "session_started", "starting", "provider process started; awaiting native readiness"); err != nil {
 		log.Printf("egg: persist lifecycle startup: %v", err)
 	}
+	if err := UpdateLaunchIntent(s.dir, func(intent *LaunchIntent) { intent.Started = true }); err != nil {
+		log.Printf("egg: persist recoverable startup: %v", err)
+	}
 
 	s.grpcServer = grpc.NewServer(
 		grpc.ChainUnaryInterceptor(recoveryUnary, s.authUnary),
@@ -1628,6 +1631,9 @@ func (s *Server) Kill(ctx context.Context, req *pb.KillRequest) (*pb.KillRespons
 	s.mu.RUnlock()
 	if sess == nil {
 		return nil, status.Error(codes.NotFound, "no session")
+	}
+	if err := MarkDeliberateStop(s.dir, "kill"); err != nil {
+		return nil, status.Errorf(codes.Internal, "persist deliberate stop: %v", err)
 	}
 	sess.mu.Lock()
 	sess.cancelled = true

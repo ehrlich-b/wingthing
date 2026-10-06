@@ -204,6 +204,11 @@ func RecordSessionProcessEvent(dir, eventType, state, reason string) error {
 }
 
 func recordSessionProcessExit(dir string, exitCode int, cancelled bool) error {
+	if exitCode == 0 && !cancelled {
+		if err := MarkDeliberateStop(dir, "exit"); err != nil {
+			return err
+		}
+	}
 	j, err := openLifecycleJournal(dir)
 	if err != nil {
 		return err
@@ -436,6 +441,11 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.ProviderSessionID, err = j.importCodexHooks(providerHome, view.SessionID, exactProviderID)
 		if err != nil {
 			return view, err
+		}
+		if validLifecycleID(view.ProviderSessionID) {
+			if err := UpdateLaunchIntent(eggDir, func(intent *LaunchIntent) { intent.ProviderSessionID = view.ProviderSessionID }); err != nil {
+				return view, err
+			}
 		}
 	}
 	var hookState SessionEvent

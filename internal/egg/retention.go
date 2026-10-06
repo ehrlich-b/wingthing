@@ -10,7 +10,7 @@ import (
 // HasRetainedSessionData keeps ownership and provider identity alongside native
 // journals and retry reservations. An unreadable artifact is never absence.
 func HasRetainedSessionData(dir string) bool {
-	for _, name := range []string{"audit.pty.gz", "audit.log", "chat.jsonl.gz", "lifecycle.jsonl", "egg.failed.log", "prompt.lock"} {
+	for _, name := range []string{LaunchIntentFile, "audit.pty.gz", "audit.log", "chat.jsonl.gz", "lifecycle.jsonl", "egg.failed.log", "prompt.lock"} {
 		if _, err := os.Lstat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
 			return true
 		}

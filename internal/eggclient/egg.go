@@ -590,6 +590,9 @@ func validateExactAgentArgs(args []string) error {
 }
 
 type SpawnEggOpts struct {
+	RecoveredFrom          string
+	RecoveryBoot           string
+	RecoveryConversation   ConversationLink
 	ResumeSessionID        string
 	ResumeSourceSessionID  string
 	ProviderReserved       bool
@@ -830,6 +833,12 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		if err != nil {
 			return nil, err
 		}
+		if providerSessionID == "" && o.ResumeSessionID != "" {
+			if !ValidProviderSessionID(o.ResumeSessionID) {
+				return nil, errors.New("invalid provider resume session ID")
+			}
+			providerSessionID = o.ResumeSessionID
+		}
 	}
 	isolatedUser := config.Channel() == "preview" || identity.UserID != "" && (identity.OrgWing || identity.SharedHost)
 	policyArgs, err := IsolatedClaudePolicyArgs(agentName, isolatedUser && len(o.Command) == 0)
@@ -854,6 +863,19 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	meta := fmt.Sprintf("agent=%s\nkind=%s\ncwd=%s\nprovider_session_id=%s\nprovider_home=%s\n", agentName, o.Kind, cwd, providerSessionID, effectiveHome)
 	if err := daemonctl.WriteAtomicMetadataFile(filepath.Join(dir, "egg.meta"), []byte(meta), 0600); err != nil {
 		return nil, fmt.Errorf("persist startup identity: %w", err)
+	}
+	if len(o.Command) == 0 && agentName != "" {
+		link := SessionConversationLink(cfg, sessionID)
+		if o.RecoveryConversation.ConversationID != "" {
+			link = o.RecoveryConversation
+		}
+		intent := egg.LaunchIntent{Version: 1, Agent: agentName, CWD: cwd, Label: o.Label,
+			ConversationID: link.ConversationID, RootConversationID: link.RootConversationID, ParentConversationID: link.ParentConversationID,
+			ProviderSessionID: providerSessionID, Model: LaunchModel(o.AgentArgs), EggConfig: eggCfg.SourcePath,
+			RecoveredFrom: o.RecoveredFrom, AutoBoot: o.RecoveryBoot}
+		if err := egg.WriteLaunchIntent(dir, intent); err != nil {
+			return nil, fmt.Errorf("persist launch intent: %w", err)
+		}
 	}
 	var releaseProviderSession func(bool)
 	providerProcessStarted := false
