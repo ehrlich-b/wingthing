@@ -1,5 +1,5 @@
-import { sessionDisplayName, wingDisplayName } from './helpers.js';
-import { notificationForSession } from './session-reference.js';
+import { sessionDisplayName, wingDisplayName, escapeHtml, shortenPath } from './helpers.js';
+import { notificationForSession, sessionResourceKey } from './session-reference.js';
 export { sessionResourceKey } from './session-reference.js';
 
 var agentLabels = {
@@ -49,7 +49,7 @@ export function sessionInventoryState(session, wing, attention) {
         status: status,
         agentLabel: agentLabel,
         attention: needsAttention,
-        tone: connection !== 'available' ? 'offline' : needsAttention ? 'attention' : status === 'exited' ? 'failed' : status === 'unknown' ? 'offline' : 'live',
+        tone: needsAttention ? 'attention' : connection !== 'available' ? 'offline' : status === 'exited' ? 'failed' : status === 'unknown' ? 'offline' : 'live',
         canAttach: connection === 'available'
     };
 }
@@ -84,6 +84,62 @@ export function filterSessionInventory(sessions, wings, notifications, filters) 
             wing && wingDisplayName(wing), wing && wing.hostname, session.wing_id, session.conversation_role].join(' ').toLocaleLowerCase();
         return words.every(function(word) { return text.includes(word); });
     });
+}
+
+function normalizedProjectPath(path) {
+    return typeof path === 'string' && path ? path.replace(/\/+$/, '') || '/' : '';
+}
+
+export function sessionProjectRoot(session, wing) {
+    var cwd = normalizedProjectPath(session.cwd);
+    // Prefer the nearest catalogued project, without merging sibling repos or
+    // guessing a root from a shared directory/basename on another wing.
+    return ((wing && wing.projects) || []).map(function(project) { return normalizedProjectPath(project.path); }).filter(function(path) {
+        return path && (cwd === path || cwd.startsWith(path === '/' ? '/' : path + '/'));
+    }).sort(function(a, b) { return b.length - a.length; })[0] || cwd;
+}
+
+export function attentionPriority(status, unseen) {
+    return status === 'blocked' ? 0 : unseen ? 1 : status === 'working' ? 2 : 3;
+}
+
+export function groupSessionInventory(sessions, wings, notifications = {}, unseen = new Set(), statusForSession) {
+    var groups = new Map();
+    var wingById = new Map(wings.map(function(wing) { return [wing.wing_id, wing]; }));
+    var priorities = new Map();
+    sessions.forEach(function(session) {
+        var wing = wingById.get(session.wing_id);
+        var project = sessionProjectRoot(session, wing);
+        var key = JSON.stringify([session.wing_id || '', project]);
+        if (!groups.has(key)) groups.set(key, { key: key, wingId: session.wing_id || '', wing: wing, project: project,
+            sessions: [], rollup: { blocked: 0, working: 0, idle: 0, unseen: 0 }, priority: 3 });
+        var group = groups.get(key);
+        var status = statusForSession ? statusForSession(session) : sessionInventoryState(session, wing, notificationForSession(notifications, session)).status;
+        var unread = unseen.has(sessionResourceKey(session));
+        var priority = attentionPriority(status, unread);
+        priorities.set(session, priority);
+        group.sessions.push(session);
+        if (['blocked', 'working', 'idle'].includes(status)) group.rollup[status]++;
+        if (unread) group.rollup.unseen++;
+        group.priority = Math.min(group.priority, priority);
+    });
+    return Array.from(groups.values()).sort(function(a, b) { return a.priority - b.priority; }).map(function(group) {
+        group.sessions.sort(function(a, b) { return priorities.get(a) - priorities.get(b); });
+        return group;
+    });
+}
+
+export function unseenCompletionBadge(unseen) {
+    return unseen ? '<span class="unseen-completion">' + (typeof unseen === 'number' ? unseen + ' ' : '') + 'unseen completion' + (unseen > 1 ? 's' : '') + '</span>' : '';
+}
+
+export function sessionGroupHeader(group) {
+    var counts = group.rollup;
+    var wing = (wingDisplayName(group.wing) || 'unknown wing') + ' · ' + group.wingId;
+    var path = group.project ? shortenPath(group.project) : 'No project reported';
+    return '<header class="inventory-group-header"><h4><span class="inventory-group-wing">' + escapeHtml(wing) + '</span><span class="inventory-group-project" title="' + escapeHtml(group.project) + '">' + escapeHtml(path) + '</span></h4>' +
+        '<div class="inventory-rollup"><span class="rollup-blocked">' + counts.blocked + ' blocked</span><span>' + counts.working + ' working</span><span>' + counts.idle + ' idle</span>' + unseenCompletionBadge(counts.unseen) + '</div>' +
+        (counts.unseen ? '<button class="btn-sm inventory-acknowledge" type="button" data-focus-key="ack:' + escapeHtml(group.key) + '" aria-label="Acknowledge completions in ' + escapeHtml(path + ' on ' + wing) + '">Mark completions seen</button>' : '') + '</header>';
 }
 
 // Keep focus on the same qualified row/action after a status refresh. Do not
