@@ -435,3 +435,19 @@ func TestToolListenerControllerTaintIsPermanent(t *testing.T) {
 		t.Fatalf("command tool after taint: %+v", response)
 	}
 }
+
+func TestReclaimedSessionToolsFailClosedWithRestartMessage(t *testing.T) {
+	tools := []*config.ToolConfig{{Name: "context", Context: "jira-search"}, {Name: "command", Run: "printf allowed"}}
+	runner := newSessionToolRunner(tools, ToolContext{Reclaimed: true})
+	for _, owner := range []string{"", "owner@slide.tech"} {
+		runner.Reload(tools)
+		response := runner.CallAs("context", nil, owner, nil)
+		if response.Error != "Context tools are unavailable in sessions that survived a wing restart; start a new session" {
+			t.Fatalf("reclaimed Context: %+v", response)
+		}
+	}
+	response := runner.Call("command", nil)
+	if response.Error != "" || response.Stdout != "allowed" {
+		t.Fatalf("reclaimed command: %+v", response)
+	}
+}

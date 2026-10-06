@@ -1666,7 +1666,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 		toolsDir := filepath.Join(eggDir, ".tools")
 		if _, statErr := os.Stat(toolsDir); statErr == nil {
 			toolSocketPath := filepath.Join(toolsDir, "tool.sock")
-			if tl, tlErr := egg.NewToolListener(toolSocketPath, tools); tlErr != nil {
+			if tl, tlErr := egg.NewToolListener(toolSocketPath, tools, egg.ToolContext{Reclaimed: true}); tlErr != nil {
 				log.Printf("pty session %s: reclaim tool listener failed: %v", sessionID, tlErr)
 			} else {
 				log.Printf("pty session %s: reclaim tool listener restarted (%d tools)", sessionID, len(tools))

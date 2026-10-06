@@ -61,9 +61,10 @@ type ToolListener struct {
 
 // ToolContext binds a listener to its wing-owned Context client and verified owner.
 type ToolContext struct {
-	Client  *contextclient.Client
-	Owner   string // verified EggIdentity.Email, fixed for this listener's lifetime
-	OwnerID string // verified EggIdentity.UserID, also fixed
+	Client    *contextclient.Client
+	Owner     string // verified EggIdentity.Email, fixed for this listener's lifetime
+	OwnerID   string // verified EggIdentity.UserID, also fixed
+	Reclaimed bool   // surviving egg has no trusted owner/client binding after restart
 }
 
 // NewToolListener creates and starts a tool socket listener.
@@ -84,19 +85,28 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig, contexts ...To
 		_ = os.Remove(sockPath)
 		return nil, fmt.Errorf("secure tool socket: %w", err)
 	}
+	var tc ToolContext
+	if len(contexts) > 0 {
+		tc = contexts[0]
+	}
 	tl := &ToolListener{
-		runner:      NewToolRunner(tools),
+		owner:       tc.Owner,
+		ownerID:     tc.OwnerID,
+		runner:      newSessionToolRunner(tools, tc),
 		listener:    ln,
 		connections: make(chan struct{}, maxConcurrentToolSocketConnections),
-	}
-	if len(contexts) > 0 {
-		tl.owner = contexts[0].Owner
-		tl.ownerID = contexts[0].OwnerID
-		tl.runner.context = contexts[0].Client
 	}
 	tl.wg.Add(1)
 	go tl.acceptLoop()
 	return tl, nil
+}
+
+func newSessionToolRunner(tools []*config.ToolConfig, tc ToolContext) *ToolRunner {
+	runner := NewToolRunner(tools, tc.Client)
+	if tc.Reclaimed {
+		runner.contextUnavailable = "Context tools are unavailable in sessions that survived a wing restart; start a new session"
+	}
+	return runner
 }
 
 // ObserveController permanently revokes Context authority when another verified
