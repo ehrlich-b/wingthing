@@ -134,6 +134,9 @@ func runHardeningScenario(scenario, root string) error {
 			return err
 		}
 		denied := filepath.Join(home, ".ssh")
+		if err := probeHardeningOverlay(home, tmp); err != nil {
+			return err
+		}
 		args := []string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--deny", "/", "--deny", denied, "--home", home, "--mount-ro", home, "--writable", workspace}
 		for _, path := range []string{"/usr", "/bin", "/lib", "/lib64"} {
 			if _, err := os.Stat(path); err == nil {
@@ -233,7 +236,7 @@ func runHardeningScenario(scenario, root string) error {
 		command := `! mv policy relocated && ! mv policy/nested moved && ! printf evil > policy/nested/base.yaml && printf ordinary > policy/nested/source && printf workspace > source && test "$(cat policy/nested/base.yaml)" = sealed`
 		DenyInit([]string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--writable", workspace, "--deny-write", file, "--deny-rename", policy, "--deny-rename", filepath.Dir(policy), "--deny-rename", workspace, "--", "/bin/sh", "-c", command})
 		return fmt.Errorf("DenyInit returned")
-	case "deny-write":
+	case "deny-write", "jail-deny-write":
 		home, workspace, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "session")
 		for _, dir := range []string{home, workspace, tmp} {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -247,11 +250,29 @@ func runHardeningScenario(scenario, root string) error {
 		if err := os.Chdir(workspace); err != nil {
 			return err
 		}
-		command := `test "$(cat policy.yaml)" = "readable policy" && ! printf evil > policy.yaml && ! printf evil > egg.yaml && ! rm -rf egg.yaml && ! mv replacement egg.yaml && ! mkdir egg.yaml && printf allowed > ordinary`
+		if err := probeHardeningOverlay(workspace, tmp); err != nil {
+			return err
+		}
+		if err := os.Mkdir(filepath.Join(workspace, "dir"), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(workspace, "source"), []byte("old"), 0o600); err != nil {
+			return err
+		}
+		command := `test "$(cat policy.yaml)" = "readable policy" && ! printf evil > policy.yaml && ! printf evil > egg.yaml && ! rm -rf egg.yaml && ! mv replacement egg.yaml && ! mkdir egg.yaml && printf allowed > ordinary && printf new > source.tmp && mv source.tmp source && mv dir moved`
 		if err := os.WriteFile(filepath.Join(workspace, "replacement"), []byte("base: none"), 0o600); err != nil {
 			return err
 		}
-		DenyInit([]string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--home", home, "--writable", workspace, "--deny-write", existing, "--deny-write", filepath.Join(workspace, "egg.yaml"), "--", "/bin/sh", "-c", command})
+		args := []string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--home", home, "--writable", workspace, "--deny-write", existing, "--deny-write", filepath.Join(workspace, "egg.yaml")}
+		if scenario == "jail-deny-write" {
+			args = append(args, "--deny", "/")
+			for _, path := range []string{"/usr", "/bin", "/lib", "/lib64"} {
+				if _, err := os.Stat(path); err == nil {
+					args = append(args, "--mount-ro", path)
+				}
+			}
+		}
+		DenyInit(append(args, "--", "/bin/sh", "-c", command))
 		return fmt.Errorf("DenyInit returned")
 	case "readonly-prefix":
 		home := filepath.Join(root, "home")
@@ -411,6 +432,9 @@ func TestJailMasksMissingDeniedPathsUnderReadonlyHome(t *testing.T) {
 	if err != nil || string(data) != "sealed" {
 		t.Fatalf("jail did not launch with its deny mask: %q, %v", data, err)
 	}
+	if _, err := os.Lstat(filepath.Join(root, "home", ".ssh")); !os.IsNotExist(err) {
+		t.Fatalf("private read deny created a host directory: %v", err)
+	}
 }
 
 func TestJailCreatesMissingWritableDirectoriesUnderReadonlyHome(t *testing.T) {
@@ -458,14 +482,23 @@ func TestReadonlyHomeRejectsSiblingSymlinkWrites(t *testing.T) {
 }
 
 func TestDenyWriteMissingFileCannotBeCreatedOrReplaced(t *testing.T) {
-	root := t.TempDir()
-	runHardeningNamespace(t, "deny-write", root)
-	data, err := os.ReadFile(filepath.Join(root, "work", "ordinary"))
-	if err != nil || string(data) != "allowed" {
-		t.Fatalf("ordinary workspace writes failed: %q, %v", data, err)
-	}
-	if info, err := os.Stat(filepath.Join(root, "work", "egg.yaml")); err != nil || !info.IsDir() {
-		t.Fatalf("absent policy became a discoverable file: %v, %v", info, err)
+	for _, scenario := range []string{"deny-write", "jail-deny-write"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := t.TempDir()
+			runHardeningNamespace(t, scenario, root)
+			for file, want := range map[string]string{"ordinary": "allowed", "source": "new"} {
+				data, err := os.ReadFile(filepath.Join(root, "work", file))
+				if err != nil || string(data) != want {
+					t.Fatalf("ordinary workspace write %s failed: %q, %v", file, data, err)
+				}
+			}
+			if info, err := os.Stat(filepath.Join(root, "work", "moved")); err != nil || !info.IsDir() {
+				t.Fatalf("ordinary directory rename failed: %v, %v", info, err)
+			}
+			if _, err := os.Lstat(filepath.Join(root, "work", "egg.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("private deny-write created a host policy path: %v", err)
+			}
+		})
 	}
 }
 

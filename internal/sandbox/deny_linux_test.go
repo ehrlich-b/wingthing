@@ -126,7 +126,7 @@ func TestReadonlyRootPlanSealsInheritedWritableSubmounts(t *testing.T) {
 	}
 }
 
-func TestPrepareDenyMountpointsCreatesMissingAndPreservesExisting(t *testing.T) {
+func TestDenyMountpointPlanningLeavesHostPathsAbsent(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(root, ".aws")
 	existing := filepath.Join(root, ".ssh")
@@ -138,12 +138,15 @@ func TestPrepareDenyMountpointsCreatesMissingAndPreservesExisting(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	operation, path, err := prepareDenyMountpoints([]string{missing, existing})
+	plan, err := planDenyMountpoints([]string{missing, existing})
 	if err != nil {
-		t.Fatalf("prepareDenyMountpoints() operation=%q path=%q error=%v", operation, path, err)
+		t.Fatal(err)
 	}
-	if info, statErr := os.Stat(missing); statErr != nil || !info.IsDir() {
-		t.Fatalf("missing deny mountpoint was not prepared: info=%v error=%v", info, statErr)
+	if len(plan) != 1 || plan[0].Parent != root || len(plan[0].Paths) != 1 || plan[0].Paths[0] != missing {
+		t.Fatalf("private placeholder plan = %+v", plan)
+	}
+	if _, err := os.Lstat(missing); !os.IsNotExist(err) {
+		t.Fatalf("planning created a host deny path: %v", err)
 	}
 	data, readErr := os.ReadFile(marker)
 	if readErr != nil || string(data) != "host key" {
@@ -151,14 +154,13 @@ func TestPrepareDenyMountpointsCreatesMissingAndPreservesExisting(t *testing.T) 
 	}
 }
 
-func TestPrepareDenyMountpointsReportsUncreatablePath(t *testing.T) {
-	path := filepath.Join("/proc", "wingthing-deny-mountpoint-must-not-exist")
-	operation, gotPath, err := prepareDenyMountpoints([]string{path})
-	if err == nil {
-		t.Fatal("prepareDenyMountpoints() accepted an uncreatable mountpoint")
+func TestDenyMountpointPlanningRejectsNonDirectoryParent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if operation != "create deny mountpoint" || gotPath != path {
-		t.Fatalf("failure = operation %q path %q, want create failure for %q", operation, gotPath, path)
+	if _, err := planDenyMountpoints([]string{filepath.Join(path, "egg.yaml")}); err == nil {
+		t.Fatal("accepted a non-directory deny parent")
 	}
 }
 
@@ -317,16 +319,18 @@ func TestWritablePrefixFilesRejectsSymlinksAndUndeclaredExpansion(t *testing.T) 
 	}
 }
 
-func TestMissingDeniedPolicyUsesDirectoryPlaceholder(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "egg.yaml")
-	if _, _, err := prepareDenyMountpoints([]string{path}); err != nil {
+func TestMissingDeniedPolicyPlansPrivatePlaceholder(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "new", "egg.yaml")
+	plan, err := planDenyMountpoints([]string{path})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if info, err := os.Stat(path); err != nil || !info.IsDir() {
-		t.Fatalf("policy placeholder = %v, %v", info, err)
+	if len(plan) != 1 || plan[0].Parent != root || plan[0].Paths[0] != path {
+		t.Fatalf("private placeholder plan = %+v", plan)
 	}
-	if _, err := os.ReadFile(path); err == nil {
-		t.Fatal("missing policy became a loadable empty configuration")
+	if _, err := os.Lstat(filepath.Join(root, "new")); !os.IsNotExist(err) {
+		t.Fatalf("planning created an ancestor on the host: %v", err)
 	}
 }
 
@@ -335,7 +339,7 @@ func TestMissingDeniedPathRejectsSymlinkParent(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := prepareDenyMountpoints([]string{filepath.Join(root, "link", "egg.yaml")}); err == nil {
+	if _, err := planDenyMountpoints([]string{filepath.Join(root, "link", "egg.yaml")}); err == nil {
 		t.Fatal("created a denied mountpoint through a symlink")
 	}
 	if _, err := os.Stat(filepath.Join(outside, "egg.yaml")); !os.IsNotExist(err) {
