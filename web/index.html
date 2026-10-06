@@ -29,7 +29,7 @@
                     <span class="parent-dot-light" aria-hidden="true"></span><span class="parent-dot-name"></span><span class="parent-dot-state"></span>
                 </button>
                 <div id="header-center">
-                    <span id="header-title" title="Session details"></span>
+                    <button id="header-title" type="button" title="Session details"></button>
                     <span id="pty-status"></span>
                     <button id="terminal-copy-btn" class="btn-sm session-action" title="Select terminal text to copy" style="display:none" disabled>copy</button>
                     <button id="preview-toggle-btn" class="btn-sm session-action" title="Show preview" style="display:none" aria-pressed="false">preview</button>
@@ -200,7 +200,7 @@
     <!-- Detail modal overlay -->
     <div id="detail-overlay" class="box-detail-overlay">
         <div class="box-detail-backdrop" id="detail-backdrop"></div>
-        <div class="box-detail-dialog" id="detail-dialog"></div>
+        <div class="box-detail-dialog" id="detail-dialog" role="dialog" aria-modal="true" aria-label="Details" tabindex="-1"></div>
     </div>
 
     <!-- Audit replay overlay -->

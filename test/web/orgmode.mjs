@@ -571,7 +571,11 @@ try {
       // Rename lives in the open session's details, reached from its title.
       record('carol: sidebar rows carry no controls',
         await p.locator('#session-tabs .session-tab button').count() === 0);
-      await p.click('#header-title');
+      await p.focus('#header-title');
+      await p.keyboard.press('Enter');
+      await p.locator('#detail-egg-rename').waitFor({ state: 'visible', timeout: 5000 });
+      record('carol: the keyboard opens session details from the title and lands inside them',
+        await p.evaluate(() => document.getElementById('detail-dialog').contains(document.activeElement)));
       await p.click('#detail-egg-rename');
       await p.locator('#detail-dialog .session-name-input').fill('support-night-review');
       await p.locator('#detail-dialog .session-name-input').press('Enter');

@@ -14,7 +14,7 @@ import { updateCanvasSessionName } from './canvas.js';
 import { historyResumeState } from './session-resume.js';
 import { sessionForkAvailable, sessionForkControl } from './session-fork.js';
 import { notificationForSession } from './session-reference.js';
-import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey, groupSessionInventory, sessionGroupHeader, sessionProjectRoot, sessionTabMarkup, sessionCardMarkup, inventorySearchVisible, inventoryCountLabel } from './session-inventory.js';
+import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey, groupSessionInventory, groupSessionsByWing, sessionGroupHeader, sessionTabMarkup, sessionCardMarkup, inventorySearchVisible, inventoryCountLabel } from './session-inventory.js';
 import { refreshConversationInventory } from './conversation-view.js';
 import { refreshParentDot } from './parent-dot.js';
 import { unseenSessionCompletions } from './session-completion.js';
@@ -35,7 +35,7 @@ function renderChannelBanner() {
     var preview = S.currentUser && S.currentUser.release_channel === 'preview';
     banner.style.display = preview ? '' : 'none';
     if (preview) banner.textContent = (S.currentUser.channel_label || 'Wingthing Preview') +
-        ' · personal preview' + (S.currentUser.version ? ' · ' + S.currentUser.version : '');
+        (S.currentUser.version ? ' · ' + S.currentUser.version : '');
 }
 
 function wingNameById(wingId) {
@@ -1331,10 +1331,24 @@ function loadOrgMembers(org, containerId) {
         });
 }
 
+var detailReturnFocus = null;
+
+// Move focus into the dialog so keyboard users reach rename and fork, and
+// remember where it came from. A re-render of an open dialog keeps the origin.
+function openDetailModal() {
+    if (!DOM.detailOverlay.classList.contains('open')) detailReturnFocus = document.activeElement;
+    DOM.detailOverlay.classList.add('open');
+    var first = DOM.detailDialog.querySelector('.detail-actions button:not(:disabled):not([hidden])');
+    (first || DOM.detailDialog).focus({ preventScroll: true });
+}
+
 export function hideDetailModal() {
     DOM.detailOverlay.classList.remove('open');
     DOM.detailDialog.classList.remove('forking');
     DOM.detailDialog.innerHTML = '';
+    var origin = detailReturnFocus;
+    detailReturnFocus = null;
+    if (origin && origin.isConnected && typeof origin.focus === 'function') origin.focus({ preventScroll: true });
 }
 
 export function renderWingDetailPage(wingId) {
@@ -2298,7 +2312,7 @@ export function showEggDetail(sessionId, wingId) {
         '</div>';
 
     setupCopyable(DOM.detailDialog);
-    DOM.detailOverlay.classList.add('open');
+    openDetailModal();
 
     var connectBtn = document.getElementById('detail-egg-connect');
     if (connectBtn) connectBtn.addEventListener('click', function() {
@@ -2365,7 +2379,7 @@ export function showSessionInfo() {
         '<div class="detail-row"><span class="detail-key">agents</span><span class="detail-val">' + escapeHtml(wingAgents) + '</span></div>';
 
     setupCopyable(DOM.detailDialog);
-    DOM.detailOverlay.classList.add('open');
+    openDetailModal();
 }
 
 export function renderDashboard() {
@@ -2556,12 +2570,13 @@ export function renderSessionInventory() {
         });
     }
 
-    // A header names a group only when there is more than one to tell apart.
-    // Count groups over the whole inventory so a search cannot make them flicker.
-    var projects = new Set(allSessions.map(function(session) { return JSON.stringify([session.wing_id || '', sessionProjectRoot(session, sessionWing(session))]); }));
-    var groups = groupSessionInventory(sessions, S.wingsData, S.sessionNotifications, unseen);
+    // A wing name heads its cards only when more than one wing has sessions;
+    // the project stays in the card's details. Count wings over the whole
+    // inventory so a search cannot make headers flicker.
+    var wings = new Set(allSessions.map(function(session) { return session.wing_id || ''; }));
+    var groups = groupSessionsByWing(groupSessionInventory(sessions, S.wingsData, S.sessionNotifications, unseen));
     DOM.sessionsList.innerHTML = groups.map(function(group) {
-        return '<section class="inventory-project-group" data-group-key="' + escapeHtml(group.key) + '">' + (projects.size > 1 ? sessionGroupHeader(group, { compact: true }) : '') +
+        return '<section class="inventory-project-group" data-group-key="' + escapeHtml(group.key) + '">' + (wings.size > 1 ? sessionGroupHeader(group, { compact: true }) : '') +
             '<div class="egg-grid">' + group.sessions.map(renderEggCard).join('') + '</div></section>';
     }).join('');
     var cards = Array.from(DOM.sessionsList.querySelectorAll('.egg-box'));
@@ -2581,7 +2596,11 @@ export function renderSessionInventory() {
         card.querySelector('.inventory-details').addEventListener('click', function() { showEggDetail(session.id, session.wing_id); });
     });
     setupEggDrag();
-    if (focus && !restoreSessionFocus(DOM.sessionsList, focus)) document.getElementById('session-inventory-search').focus({ preventScroll: true });
+    if (focus && !restoreSessionFocus(DOM.sessionsList, focus)) {
+        // The search box is hidden on short lists; never focus a hidden field.
+        var fallback = inventorySearchVisible(allSessions.length, inventoryFilters.query) ? document.getElementById('session-inventory-search') : DOM.sessionsList.querySelector('.egg-box');
+        if (fallback) fallback.focus({ preventScroll: true });
+    }
 }
 
 function stopInventorySession(session, button, onStopped) {

@@ -117,7 +117,7 @@ export function groupSessionInventory(sessions, wings, notifications = {}, unsee
         var project = sessionProjectRoot(session, wing);
         var key = JSON.stringify([session.wing_id || '', project]);
         if (!groups.has(key)) groups.set(key, { key: key, wingId: session.wing_id || '', wing: wing, project: project,
-            sessions: [], rollup: { blocked: 0, working: 0, idle: 0, unseen: 0 }, priority: 3 });
+            sessions: [], rollup: { blocked: 0, working: 0, idle: 0, unseen: 0 }, priority: 3, priorities: priorities });
         var group = groups.get(key);
         var status = statusForSession ? statusForSession(session) : sessionInventoryState(session, wing, notificationForSession(notifications, session)).status;
         var unread = unseen.has(sessionResourceKey(session));
@@ -131,6 +131,22 @@ export function groupSessionInventory(sessions, wings, notifications = {}, unsee
     return Array.from(groups.values()).sort(function(a, b) { return a.priority - b.priority; }).map(function(group) {
         group.sessions.sort(function(a, b) { return priorities.get(a) - priorities.get(b); });
         return group;
+    });
+}
+
+// Home labels wings, not projects: project groups of one session each would
+// put a header over every card. Keeps the attention order across projects.
+export function groupSessionsByWing(groups) {
+    var wings = new Map();
+    groups.forEach(function(group) {
+        if (!wings.has(group.wingId)) wings.set(group.wingId, { key: JSON.stringify([group.wingId]), wingId: group.wingId, wing: group.wing, sessions: [] });
+        var wing = wings.get(group.wingId);
+        wing.sessions = wing.sessions.concat(group.sessions);
+        wing.priorities = group.priorities;
+    });
+    return Array.from(wings.values()).map(function(wing) {
+        wing.sessions.sort(function(a, b) { return wing.priorities.get(a) - wing.priorities.get(b); });
+        return wing;
     });
 }
 
@@ -166,9 +182,10 @@ function resourceAttributes(session) {
 export function sessionTabMarkup(session, state, opts) {
     opts = opts || {};
     var name = sessionDisplayName(session);
-    var title = [name, session.agent || '?', opts.wingName || '', state.connectionLabel, state.agentLabel].join(' · ') +
+    var title = [name, session.agent || '?', opts.wingName || '', session.cwd || '~', state.connectionLabel, state.agentLabel].join(' · ') +
         (opts.unseen ? ' · unseen completion' : '');
-    return '<div class="session-tab' + (opts.active ? ' active' : '') + '" data-blocked="' + (state.status === 'blocked') + '" data-unseen="' + !!opts.unseen + '" role="button" tabindex="0" ' +
+    // Attention short of blocked marks the dot, never the words "needs input".
+    return '<div class="session-tab' + (opts.active ? ' active' : '') + '" data-blocked="' + (state.status === 'blocked') + '" data-attention="' + (state.attention && state.status !== 'blocked') + '" data-unseen="' + !!opts.unseen + '" role="button" tabindex="0" ' +
         'aria-label="' + escapeHtml(title) + '" ' + (opts.active ? 'aria-current="page" ' : '') + 'title="' + escapeHtml(title) + '" ' + resourceAttributes(session) + '>' +
         sessionStatusDot(state.status, true) +
         '<span class="tab-letter">' + escapeHtml(name.charAt(0).toUpperCase()) + '</span>' +
@@ -182,11 +199,12 @@ export function sessionCardMarkup(session, state, opts) {
     var label = [name, session.agent || 'unknown agent', opts.wingName || 'unknown wing', session.cwd || '~'].concat(opts.owner ? [opts.owner] : [])
         .concat([state.connectionLabel, state.agentLabel]).join(' · ') + (opts.unseen ? ' · unseen completion' : '');
     return '<article class="egg-box inventory-session' + (opts.selected ? ' selected' : '') + '" data-blocked="' + (state.status === 'blocked') + '" data-unseen="' + !!opts.unseen + '" role="group" tabindex="0" ' +
-        resourceAttributes(session) + ' data-kind="' + escapeHtml(session.kind || 'terminal') + '" aria-label="' + escapeHtml(label) + '" title="' + escapeHtml(label) + '"' + (opts.selected ? ' aria-current="page"' : '') + '>' +
+        resourceAttributes(session) + ' data-kind="' + escapeHtml(session.kind || 'terminal') + '" aria-label="' + escapeHtml(label) + '"' + (opts.selected ? ' aria-current="page"' : '') + '>' +
         '<div class="egg-footer">' + sessionStatusDot(state.status) +
         '<span class="egg-label">' + escapeHtml(name) + '</span>' +
         (exception ? '<span class="inventory-exception status-' + state.tone + '">' + escapeHtml(exception) + '</span>' : '') +
-        '<button class="box-menu-btn inventory-details" type="button" data-session-action="details" title="Session details" aria-label="Details for ' + escapeHtml(name) + '">&#x22ef;</button></div>' +
+        // The facts tooltip sits on the details trigger, not over the whole row.
+        '<button class="box-menu-btn inventory-details" type="button" data-session-action="details" title="' + escapeHtml(label) + '" aria-label="Details for ' + escapeHtml(name) + '">&#x22ef;</button></div>' +
         (opts.error ? '<div class="inventory-action-status" role="status">' + escapeHtml(opts.error) + '</div>' : '') + '</article>';
 }
 
@@ -194,11 +212,10 @@ export function sessionGroupHeader(group, opts) {
     var counts = group.rollup;
     // The wing ID stays in the tooltip; the visible label is the wing's name.
     var wing = wingDisplayName(group.wing) || group.wingId || 'unknown wing';
-    var path = group.project ? shortenPath(group.project) : 'no project';
     if (opts && opts.compact) {
-        return '<header class="inventory-group-header"><h4><span class="inventory-group-project" title="' + escapeHtml(group.project) + '">' + escapeHtml(path) + '</span> · ' +
-            '<span class="inventory-group-wing" title="' + escapeHtml(wing + ' · ' + group.wingId) + '">' + escapeHtml(wing) + '</span></h4></header>';
+        return '<header class="inventory-group-header"><h4><span class="inventory-group-wing" title="' + escapeHtml(wing + ' · ' + group.wingId) + '">' + escapeHtml(wing) + '</span></h4></header>';
     }
+    var path = group.project ? shortenPath(group.project) : 'no project';
     var rollup = ['blocked', 'working', 'idle'].filter(function(status) { return counts[status] > 0; }).map(function(status) {
         return '<span' + (status === 'blocked' ? ' class="rollup-blocked"' : '') + '>' + counts[status] + ' ' + status + '</span>';
     }).join('') + unseenCompletionBadge(counts.unseen);

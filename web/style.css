@@ -68,7 +68,7 @@ body {
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    padding: 8px;
+    padding: 8px 6px;
     flex-shrink: 0;
     gap: 2px;
     overflow-y: auto;
@@ -157,8 +157,8 @@ body {
     flex-direction: row;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 0 8px;
+    gap: 6px;
+    padding: 0 6px;
     position: relative;
     transition: all 0.15s;
 }
@@ -245,6 +245,8 @@ body {
 
 .tab-dot.dot-live { background: var(--green); }
 .tab-dot.dot-detached { background: var(--yellow); }
+/* Attention rings the status dot; the fill still reports the agent state. */
+.session-tab[data-attention="true"] .tab-dot { box-shadow: 0 0 0 2px #12122a, 0 0 0 3.5px var(--yellow); }
 .tab-dot.dot-attention {
     background: var(--orange);
     animation: pulse 1s ease-in-out infinite;
@@ -328,13 +330,19 @@ body {
 }
 
 #header-title {
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
     font-size: 13px;
     color: var(--text-dim);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
     cursor: pointer;
 }
+#header-title:empty { display: none; }
 #header-title:hover { color: var(--text); }
 
 #pty-status {
@@ -483,10 +491,10 @@ body {
 
 /* === Wing boxes === */
 
-.wing-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+.wing-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .wing-box {
-    width: 240px;
+    width: 280px;
     height: 44px;
     display: flex;
     align-items: center;
@@ -501,7 +509,7 @@ body {
 }
 
 .wing-name { font-weight: 500; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wing-exception, .wing-pinned-badge { margin-left: auto; flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
+.wing-exception, .wing-pinned-badge { margin-left: auto; flex-shrink: 0; font-size: 12px; color: var(--text-dim); }
 
 .wing-dot {
     width: 8px;
@@ -632,12 +640,22 @@ body {
 
 .box-detail-dialog .detail-actions {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
     margin-top: 12px;
     border-top: 1px solid var(--border);
     padding-top: 12px;
 }
+
+.box-detail-dialog .detail-actions .btn-sm { width: auto; margin-top: 0; }
+.box-detail-dialog .detail-actions .btn-danger { margin-left: auto; }
+
+/* Rename feedback flows under the input; the row-anchored popover would
+   land at the dialog's bottom edge. */
+.box-detail-dialog h3.renaming .session-name-input { display: block; width: 100%; font-size: 14px; padding: 6px 8px; }
+.box-detail-dialog .session-rename-status:not(:empty) { position: static; display: block; margin-top: 6px; font-size: 12px; font-weight: 400; }
 
 .btn-accent {
     background: var(--accent);
@@ -2366,8 +2384,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 @media (max-width: 600px) {
     :root { --sidebar-w: 52px; }
-    #sidebar { padding: 8px; }
-    #home-btn, #new-session-btn { justify-content: center; font-size: 18px; }
+    #sidebar { padding: 8px 4px; }
+    #home-btn, #new-session-btn { justify-content: center; font-size: 18px; height: 44px; }
+    .session-tab { min-height: 44px; }
+    #main-header .session-action { min-height: 44px; padding: 0 6px; }
     .nav-label, #session-tabs .tab-label { display: none; }
     .nav-symbol, .tab-letter { display: inline; }
     .session-tab { justify-content: center; padding: 0; }
@@ -2385,7 +2405,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     .wing-name { font-size: 14px; }
     .egg-box { width: 100%; }
     .egg-preview { height: 120px; }
-    .egg-delete { opacity: 1; }
+    .inventory-session .box-menu-btn { opacity: 1; }
     #palette-dialog { margin: 0 12px; }
 }
 
@@ -2690,13 +2710,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 #sessions-list .egg-grid { gap: 8px; }
 #sessions-list .inventory-project-group { margin-bottom: 14px; }
 #sessions-list .inventory-group-header { display: block; margin: 0 0 6px; padding: 0; border: 0; }
-#sessions-list .inventory-group-header h4 { display: block; margin: 0; font-size: 12px; font-weight: 400; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sessions-list .inventory-group-header h4 { display: block; margin: 0; font-size: 12px; font-weight: 400; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #sessions-list .inventory-group-project, #sessions-list .inventory-group-wing { color: inherit; font-size: inherit; }
 #sessions-list .inventory-session { width: 280px; border-radius: 6px; }
 .inventory-session.selected { box-shadow: inset 2px 0 0 var(--accent); }
 .inventory-session .egg-footer { min-height: 44px; padding: 0 6px 0 12px; font-size: 13px; }
 .inventory-session .box-menu-btn { margin-left: 0; width: 28px; flex-shrink: 0; }
-.inventory-exception { flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
+.inventory-exception { flex-shrink: 0; font-size: 12px; color: var(--text-dim); }
 .inventory-exception.status-attention { color: var(--yellow); }
 .inventory-exception.status-failed { color: #ff8b84; }
 .session-dot.failed { background: var(--red); }
