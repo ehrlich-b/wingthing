@@ -3,22 +3,24 @@ package main
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"io"
-	"os"
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
 
+// Embedded so compiled test binaries run outside the source tree.
+//
+//go:embed testdata/root-help.golden
+var rootHelpGolden []byte
+
 func TestDashboardNoTTYHelpUnchanged(t *testing.T) {
 	previous := config.ReleaseChannel
 	config.ReleaseChannel = "stable"
 	t.Cleanup(func() { config.ReleaseChannel = previous })
-	want, err := os.ReadFile("testdata/root-help.golden")
-	if err != nil {
-		t.Fatal(err)
-	}
+	want := rootHelpGolden
 	for _, tty := range [][2]bool{{false, false}, {true, false}, {false, true}} {
 		var out bytes.Buffer
 		if err := executeCLI(context.Background(), nil, remotepkg.IO{
