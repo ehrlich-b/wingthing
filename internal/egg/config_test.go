@@ -463,6 +463,105 @@ func TestDiscoveredGlobalPolicyRefusesReplaceableSymlink(t *testing.T) {
 	}
 }
 
+func TestDefaultPolicyRefusesReplaceableToolLoaderPaths(t *testing.T) {
+	for _, kind := range []string{"directory", "ancestor", "missing", "dotdot", "definition", "chain", "wing config"} {
+		t.Run(kind, func(t *testing.T) {
+			home := canonicalPolicyTestPath(t, t.TempDir())
+			t.Setenv("HOME", home)
+			state := filepath.Join(home, ".wingthing")
+			t.Setenv("WINGTHING_DIR", state)
+			makeEggConfigTestDir(t, state)
+			work := filepath.Join(home, "work")
+			makeEggConfigTestDir(t, work)
+			real := filepath.Join(home, "host-tools")
+			makeEggConfigTestDir(t, real)
+			definition := filepath.Join(real, "host.yaml")
+			writeEggConfigTestFile(t, definition, "name: host\nrun: true\n")
+			toolsDir := real
+			link := filepath.Join(work, "tools")
+			switch kind {
+			case "directory", "ancestor", "missing", "dotdot":
+				if err := os.Symlink(real, link); err != nil {
+					t.Fatal(err)
+				}
+				toolsDir = link
+				if kind == "dotdot" {
+					toolsDir = link + "/../host-tools"
+				} else if kind != "directory" {
+					toolsDir = filepath.Join(link, "nested")
+					if kind == "ancestor" {
+						makeEggConfigTestDir(t, filepath.Join(real, "nested"))
+					}
+				}
+			case "definition", "chain":
+				toolsDir = filepath.Join(work, "definitions")
+				makeEggConfigTestDir(t, toolsDir)
+				if kind == "chain" {
+					link = filepath.Join(real, "chain.yaml")
+					if err := os.Symlink(definition, link); err != nil {
+						t.Fatal(err)
+					}
+					definition = link
+				}
+				if err := os.Symlink(definition, filepath.Join(toolsDir, "host.yaml")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wingPath := filepath.Join(state, "wing.yaml")
+			if kind == "wing config" {
+				wingSource := filepath.Join(work, "wing.yaml")
+				writeEggConfigTestFile(t, wingSource, "tools_dir: "+toolsDir+"\n")
+				if err := os.Symlink(wingSource, wingPath); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeEggConfigTestFile(t, wingPath, "tools_dir: "+toolsDir+"\n")
+			}
+			cfg := DefaultEggConfig()
+			if !isUnsafePolicyPath(cfg.ResolutionError()) {
+				t.Fatalf("replaceable tool %s admitted: %v", kind, cfg.ResolutionError())
+			}
+			if _, err := cfg.YAML(); !isUnsafePolicyPath(err) {
+				t.Fatalf("tool loader refusal lost during serialization: %v", err)
+			}
+			policy := filepath.Join(work, "egg.yaml")
+			writeEggConfigTestFile(t, policy, "fs: [rw:./]\n")
+			if _, err := ResolveEggConfig(policy); !isUnsafePolicyPath(err) {
+				t.Fatalf("inherited tool loader refusal lost: %v", err)
+			}
+		})
+	}
+}
+
+func TestToolLoaderSealsResolvedDirectory(t *testing.T) {
+	home := t.TempDir() // includes the immutable /var alias on macOS
+	t.Setenv("HOME", home)
+	state := filepath.Join(home, ".wingthing")
+	t.Setenv("WINGTHING_DIR", state)
+	tools := filepath.Join(home, "workspace", "tools")
+	makeEggConfigTestDir(t, state)
+	makeEggConfigTestDir(t, tools)
+	writeEggConfigTestFile(t, filepath.Join(state, "wing.yaml"), "tools_dir: "+tools+"\n")
+	cfg := DefaultEggConfig()
+	if err := cfg.ResolutionError(); err != nil {
+		t.Fatal(err)
+	}
+	_, deny, _ := ParseFSRules(cfg.FS, home)
+	resolved := canonicalPolicyTestPath(t, tools)
+	if !containsString(deny, resolved) {
+		t.Fatalf("resolved tools directory remains accessible: %v", deny)
+	}
+	mounts, err := isolateLinuxEggControl([]sandbox.Mount{{Source: filepath.Dir(tools)}}, deny, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mount := range mounts {
+		if controlPathWithin(resolved, mount.Source) {
+			t.Fatalf("resolved tools directory remains mounted: %+v", mount)
+		}
+	}
+}
+
 func TestResolvedPoliciesRefuseReplaceableSymlinkComponents(t *testing.T) {
 	for _, kind := range []string{"file", "directory", "chain", "section", "root"} {
 		t.Run(kind, func(t *testing.T) {

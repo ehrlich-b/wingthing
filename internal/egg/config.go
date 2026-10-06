@@ -204,16 +204,22 @@ type EggResources struct {
 
 // DefaultDenyPaths returns paths that should be blocked by default in sandboxed sessions.
 func DefaultDenyPaths() []string {
+	paths, _ := defaultDenyPaths()
+	return paths
+}
+
+func defaultDenyPaths() ([]string, error) {
 	paths := []string{
 		"~/.ssh", "~/.gnupg", "~/.aws", "~/.docker",
 		"~/.kube", "~/.netrc", "~/.bash_history", "~/.zsh_history",
 	}
-	return append(paths, eggControlDenyPaths("")...)
+	control, err := eggControlDenyPaths("")
+	return append(paths, control...), err
 }
 
 // Include both release channels and an explicitly selected state directory.
 // An egg never needs a controller token, even its own egg.token.
-func eggControlDenyPaths(sessionDir string) []string {
+func eggControlDenyPaths(sessionDir string) ([]string, error) {
 	home, _ := os.UserHomeDir()
 	states := []string{filepath.Join(home, ".wingthing"), filepath.Join(home, ".wingthing-preview")}
 	if state, err := wingconfig.StateDir(); err == nil {
@@ -224,9 +230,14 @@ func eggControlDenyPaths(sessionDir string) []string {
 	}
 	seen := make(map[string]bool)
 	var paths []string
+	var loaders []string
 	paths = append(paths, wingconfig.CanonicalProviderPath(filepath.Join(home, ".gnupg", "wingthing-control")))
 	for _, state := range states {
+		loaderState := state
 		state = wingconfig.CanonicalProviderPath(state)
+		// Validate the lexical path too, before canonicalization hides links
+		// that could redirect the host's next configuration load.
+		loaders = append(loaders, filepath.Join(loaderState, "wing.yaml"))
 		if seen[state] {
 			continue
 		}
@@ -234,22 +245,30 @@ func eggControlDenyPaths(sessionDir string) []string {
 		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "config.yaml", "roost.db", "wt.db"} {
 			paths = append(paths, filepath.Join(state, name))
 		}
-		toolsDir := filepath.Join(state, "tools")
+		toolsDir := filepath.Join(loaderState, "tools")
 		if cfg, err := wingconfig.LoadWingConfig(state); err == nil {
-			toolsDir = wingconfig.CanonicalProviderPath(wingconfig.ResolveToolsDir(state, cfg.ToolsDir))
-			paths = append(paths, toolsDir)
+			toolsDir = wingconfig.ResolveToolsDir(loaderState, cfg.ToolsDir)
 		}
+		loaders = append(loaders, toolsDir)
 		// YAML definitions can themselves be aliases to files outside the
 		// configured directory. Protect the files actually loaded by the host.
 		if entries, err := os.ReadDir(toolsDir); err == nil {
 			for _, entry := range entries {
 				if !entry.IsDir() && (strings.HasSuffix(entry.Name(), ".yaml") || strings.HasSuffix(entry.Name(), ".yml")) {
-					paths = append(paths, wingconfig.CanonicalProviderPath(filepath.Join(toolsDir, entry.Name())))
+					loader := filepath.Join(toolsDir, entry.Name())
+					loaders = append(loaders, loader)
 				}
 			}
 		}
 	}
-	return paths
+	for _, loader := range loaders {
+		resolved, err := resolveLoaderPath(loader, true)
+		if err != nil {
+			return paths, fmt.Errorf("protect tool loader %s: %w", loader, err)
+		}
+		paths = append(paths, resolved)
+	}
+	return paths, nil
 }
 
 // Linux deny masks cannot have holes: they are applied after writable mounts.
@@ -397,13 +416,15 @@ func DefaultEggConfig() *EggConfig {
 	for _, d := range DefaultCacheDirs() {
 		fs = append(fs, "rw:"+d)
 	}
-	for _, d := range DefaultDenyPaths() {
+	deny, err := defaultDenyPaths()
+	for _, d := range deny {
 		fs = append(fs, "deny:"+d)
 	}
 	fs = append(fs, "deny-write:./egg.yaml")
 	return &EggConfig{
-		FS:  fs,
-		Env: EnvField{"HOME", "PATH", "TERM", "LANG", "USER"},
+		resolutionError: err,
+		FS:              fs,
+		Env:             EnvField{"HOME", "PATH", "TERM", "LANG", "USER"},
 	}
 }
 
@@ -598,6 +619,9 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 			return nil, fmt.Errorf("resolve base %q: %w", child.Base.Name, err)
 		}
 	}
+	if err := parent.ResolutionError(); err != nil {
+		return nil, err
+	}
 
 	if child.Base.HasMasks() {
 		if err := applySectionMasks(parent, child.Base, filepath.Dir(abs), visited, depth); err != nil {
@@ -626,6 +650,21 @@ func isUnsafePolicyPath(err error) bool {
 // such as macOS /var remain usable when their ancestor entries are immutable to
 // this UID. A read-only child directory inside a writable tree is not enough.
 func validatePolicyPath(path string) error {
+	_, err := resolveLoaderPath(path, false)
+	return err
+}
+
+// Return the actual loader destination so immutable aliases are sealed at their
+// target too, including paths containing .. after a system symlink.
+func resolveLoaderPath(path string, allowMissing bool) (string, error) {
+	if !filepath.IsAbs(path) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		// Preserve .. components until their preceding symlinks are inspected.
+		path = cwd + "/" + path
+	}
 	pending := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	current := "/"
 	links := 0
@@ -638,7 +677,11 @@ func validatePolicyPath(path string) error {
 		next := filepath.Join(current, part)
 		info, err := os.Lstat(next)
 		if err != nil {
-			return fmt.Errorf("inspect policy path: %w", err)
+			if allowMissing && os.IsNotExist(err) {
+				// An absent tools directory is sealed before creation.
+				return filepath.Join(append([]string{next}, pending...)...), nil
+			}
+			return "", fmt.Errorf("inspect policy path: %w", err)
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
 			current = next
@@ -646,7 +689,7 @@ func validatePolicyPath(path string) error {
 		}
 		for parent := current; ; parent = filepath.Dir(parent) {
 			if unix.Access(parent, unix.W_OK|unix.X_OK) == nil {
-				return &PolicyPathError{Path: next}
+				return "", &PolicyPathError{Path: next}
 			}
 			if parent == "/" {
 				break
@@ -654,18 +697,18 @@ func validatePolicyPath(path string) error {
 		}
 		links++
 		if links > 255 {
-			return fmt.Errorf("policy path has too many symlinks: %s", path)
+			return "", fmt.Errorf("policy path has too many symlinks: %s", path)
 		}
 		target, err := os.Readlink(next)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if filepath.IsAbs(target) {
 			current = "/"
 		}
 		pending = append(strings.Split(target, "/"), pending...)
 	}
-	return nil
+	return current, nil
 }
 
 // ResolutionError preserves a security refusal through legacy discovery APIs.

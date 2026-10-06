@@ -862,7 +862,10 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			toolsDir := filepath.Dir(rc.ToolSocketPath)
 			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: toolsDir, Target: toolsDir, ReadOnly: true})
 		}
-		control := eggControlDenyPaths(s.dir)
+		control, err := eggControlDenyPaths(s.dir)
+		if err != nil {
+			return err
+		}
 		deny = append(deny, control...)
 		// The OS policies below handle the trees with exact bridge exceptions.
 		// Retain ordinary file denies.

@@ -148,7 +148,11 @@ func TestPrepareEndpointSupportsSymlinkedGnuPG(t *testing.T) {
 				t.Fatalf("resolved controller identity = %q: %v", path, err)
 			}
 			protected := false
-			for _, denied := range eggControlDenyPaths(dir) {
+			denies, err := eggControlDenyPaths(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, denied := range denies {
 				protected = protected || controlPathWithin(path, denied)
 			}
 			if !protected {
