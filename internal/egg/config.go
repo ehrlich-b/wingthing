@@ -257,7 +257,15 @@ func eggControlDenyPaths(sessionDir string) []string {
 // omitted, then add only this session's bridge mounts. Splitting ancestor
 // mounts also keeps future sibling eggs out; enumerating current eggs alone
 // would leave a race with the next session launch.
-func isolateLinuxEggControl(mounts []sandbox.Mount, control []string, bridges []sandbox.Mount) ([]sandbox.Mount, error) {
+func isolateLinuxEggControl(mounts []sandbox.Mount, control []string, bridges []sandbox.Mount, deny ...[]string) ([]sandbox.Mount, error) {
+	var denied []string
+	for _, paths := range deny {
+		for _, path := range sandbox.CanonicalDenyPaths(paths) {
+			if path != "/" { // jail marker, not a deny inside the allowlist
+				denied = append(denied, path)
+			}
+		}
+	}
 	var trees []string
 	for _, path := range control {
 		trees = append(trees, wingconfig.CanonicalProviderPath(path))
@@ -288,6 +296,11 @@ func isolateLinuxEggControl(mounts []sandbox.Mount, control []string, bridges []
 				m.Source, m.Target = path, path
 			}
 			if info, err := os.Lstat(m.Source); err == nil && info.Mode()&os.ModeSymlink != 0 {
+				for _, root := range denied {
+					if controlPathWithin(path, root) {
+						return nil // never reopen a masked target through an alias
+					}
+				}
 				// Safe HOME aliases remain readable, but never inherit a
 				// writable grant. Bind the resolved source into a synthetic
 				// target rather than following a symlink in the jail walker.

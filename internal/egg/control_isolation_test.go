@@ -353,6 +353,51 @@ func TestLinuxControlAllowlistPreservesReadOnlyDotfileAliases(t *testing.T) {
 	t.Fatal("ordinary HOME dotfile alias disappeared")
 }
 
+func TestLinuxControlAllowlistOmitsDeniedSymlinkAliases(t *testing.T) {
+	for _, directory := range []bool{false, true} {
+		t.Run(fmt.Sprintf("directory=%v", directory), func(t *testing.T) {
+			home := canonicalPolicyTestPath(t, t.TempDir())
+			tree := filepath.Join(home, ".wingthing", "eggs")
+			target := filepath.Join(home, "dotfiles", "netrc")
+			for _, dir := range []string{tree, filepath.Dir(target)} {
+				makeEggConfigTestDir(t, dir)
+			}
+			if directory {
+				makeEggConfigTestDir(t, target)
+				writeEggConfigTestFile(t, filepath.Join(target, "token"), "credential canary")
+			} else {
+				writeEggConfigTestFile(t, target, "credential canary")
+			}
+			alias := filepath.Join(home, ".netrc")
+			otherAlias := filepath.Join(home, "credential-alias")
+			for _, path := range []string{alias, otherAlias} {
+				linkTarget := target
+				if directory && path == otherAlias {
+					linkTarget = filepath.Join(target, "token")
+				}
+				if err := os.Symlink(linkTarget, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			masks := sandbox.CanonicalDenyPaths([]string{alias})
+			for _, path := range []string{alias, target} {
+				if !containsString(masks, path) {
+					t.Fatalf("deny mask missing at %s: %v", path, masks)
+				}
+			}
+			mounts, err := isolateLinuxEggControl([]sandbox.Mount{{Source: home}}, []string{tree}, nil, masks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, mount := range mounts {
+				if mount.Target == alias || mount.Target == otherAlias {
+					t.Fatalf("denied alias mounted readable: %+v", mount)
+				}
+			}
+		})
+	}
+}
+
 func TestAgentKeyHelperMountUsesOwnerReadOnlyFile(t *testing.T) {
 	owner, other := t.TempDir(), t.TempDir()
 	for _, home := range []string{owner, other} {

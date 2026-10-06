@@ -305,6 +305,10 @@ func DenyInit(args []string) {
 	}
 
 	tmpDir := filepath.Dir(logPath)
+	// Resolve host aliases before setupJail hides or recreates their names.
+	// Keep both masks even when a read alias is bound separately in the jail.
+	denyPaths = CanonicalDenyPaths(denyPaths)
+	denyWritePaths = CanonicalDenyPaths(denyWritePaths)
 
 	// Jail mode: deny:/ creates an allowlist filesystem. Only explicitly
 	// mounted paths are visible; everything else is inaccessible.

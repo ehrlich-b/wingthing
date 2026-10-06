@@ -882,7 +882,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		deny = filtered
 		sandboxHome := rc.UserHome
 		if runtime.GOOS == "linux" {
-			mounts, err = isolateLinuxEggControl(mounts, control, bridgeMounts)
+			// Resolve masks on the host before HOME links become independent
+			// jail mounts, retaining both the declared and resolved names.
+			deny = sandbox.CanonicalDenyPaths(deny)
+			denyWrite = sandbox.CanonicalDenyPaths(denyWrite)
+			mounts, err = isolateLinuxEggControl(mounts, control, bridgeMounts, deny)
 			if err != nil {
 				return err
 			}
