@@ -81,8 +81,8 @@ export function setNotification(sessionId, wingId, conversation) {
 }
 
 async function fireOSNotification(sessionId, wingId, conversation) {
-    var options = { body: conversation && conversation.title ? conversation.title + ' needs your attention' : 'A session needs your attention',
-        tag: JSON.stringify([wingId, sessionId]), data: { sessionId: sessionId, wingId: wingId, conversationId: conversation && conversation.conversationId || '' } };
+    var options = { body: conversation ? 'A coordinator task needs your attention' : 'A session needs your attention',
+        tag: JSON.stringify([wingId, sessionId]), data: { sessionId: sessionId, wingId: wingId, conversationId: conversation && conversation.conversationId || '', rootConversationId: conversation && conversation.rootConversationId || '' } };
     // Home Screen Safari requires persistent service-worker notifications.
     try {
         var registration = 'serviceWorker' in navigator && await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL);
@@ -92,11 +92,14 @@ async function fireOSNotification(sessionId, wingId, conversation) {
         var n = new Notification('wingthing', options);
         n.onclick = function() {
             window.focus();
-            if (conversation && conversation.conversationId) {
-                import('./conversation-view.js').then(function(mod) { mod.openConversationReference({ wingId: wingId, conversationId: conversation.conversationId }); });
+            var data = options.data;
+            if (data.conversationId) {
+                import('./conversation-view.js').then(function(mod) {
+                    mod.openConversationTranscript({ conversation_id: data.conversationId, root_conversation_id: data.rootConversationId, session_id: data.sessionId }, data.wingId);
+                });
             } else {
                 // Lazy import to avoid the nav/notify cycle.
-                import('./nav.js').then(function(mod) { mod.switchToSession(sessionId, undefined, wingId); });
+                import('./nav.js').then(function(mod) { mod.switchToSession(data.sessionId, undefined, data.wingId); });
             }
         };
     } catch (error) { /* Visible badges remain available without OS support. */ }

@@ -103,7 +103,7 @@ function taskStatus(wingId, task) {
 function observeStatus(wingId, conversation, status) {
     var key = JSON.stringify([userId(), wingId, conversation.conversation_id, conversation.session_id]);
     var transition = observeCoordinatorStatus(observedStatuses, key, status);
-    if (transition.blocked) setNotification(conversation.session_id, wingId, { conversationId: conversation.conversation_id, title: conversation.title });
+    if (transition.blocked) setNotification(conversation.session_id, wingId, { conversationId: conversation.conversation_id, rootConversationId: conversation.root_conversation_id });
     if (transition.cleared) clearNotification(conversation.session_id, wingId);
 }
 
