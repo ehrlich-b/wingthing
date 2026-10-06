@@ -21,6 +21,7 @@ func TestPrepareEndpointCreatesPrivateCompleteEndpoint(t *testing.T) {
 
 	for name, wantMode := range map[string]os.FileMode{
 		"egg.sock":    0o600,
+		"egg.token":   0o600,
 		"egg.control": 0o600,
 		"egg.pid":     0o644,
 	} {
@@ -36,8 +37,15 @@ func TestPrepareEndpointCreatesPrivateCompleteEndpoint(t *testing.T) {
 	if err != nil || string(token) != "test-token" {
 		t.Fatalf("token = %q, err=%v", token, err)
 	}
-	if _, err := os.Lstat(filepath.Join(dir, "egg.token")); !os.IsNotExist(err) {
-		t.Fatalf("token or escaping symlink in public state: %v", err)
+	compatible, err := os.ReadFile(filepath.Join(dir, "egg.token"))
+	if err != nil || string(compatible) != string(token) {
+		t.Fatalf("old controllers cannot read the same token: %q %v", compatible, err)
+	}
+	if info, err := os.Lstat(filepath.Join(dir, "egg.token")); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("compatibility token is not a regular file: %v", err)
+	}
+	if isolation := ReadLegacyIsolation(dir); isolation != nil {
+		t.Fatalf("no legacy sessions but admission degraded: %+v", isolation)
 	}
 	connection, err := net.Dial("unix", filepath.Join(dir, "egg.sock"))
 	if err != nil {

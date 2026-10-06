@@ -1357,8 +1357,11 @@ func (s *Server) prepareEndpoint() (net.Listener, error) {
 	if err := atomicWritePrivate(filepath.Join(controlDir, "egg.token"), []byte(s.token)); err != nil {
 		return fail("write token", err)
 	}
-	if err := os.Remove(tokenPath); err != nil && !os.IsNotExist(err) {
-		return fail("replace token", err)
+	// v0.147.0 controllers read this path directly. Current sandboxes deny the
+	// whole control tree; surviving policies that expose it require degraded
+	// admission (or a strict-mode refusal) before publishing either token.
+	if err := atomicWritePrivate(tokenPath, []byte(s.token)); err != nil {
+		return fail("write compatibility token", err)
 	}
 	if err := atomicWritePrivate(filepath.Join(s.dir, "egg.control"), []byte(controlDirectoryLocator(s.dir)+"\n")); err != nil {
 		return fail("write controller locator", err)

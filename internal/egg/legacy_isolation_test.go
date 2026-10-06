@@ -16,6 +16,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -127,6 +129,77 @@ func TestLegacyCustomPolicyStrictRefusesSecretExposingOperation(t *testing.T) {
 	}
 	if err := RequireLegacySecretProtection(dir, false); err != nil {
 		t.Fatalf("dead legacy blocks launch: %v", err)
+	}
+}
+
+func TestCompatibilityTokenSupportsOldControllerAndMarksLegacyExposure(t *testing.T) {
+	home := shortEndpointTempDir(t)
+	legacy := legacyPolicyFixture(t, home, "fs: [ro:/, 'deny:~/.gnupg']\n")
+	dir := filepath.Join(home, "state", "eggs", "new")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{dir: dir, token: "compatible-secret", session: &Session{ID: "new", StartedAt: time.Now(), replay: newReplayBuffer("claude")}}
+	listener, err := server.prepareEndpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.closeEndpoint(listener)
+	isolation := ReadLegacyIsolation(dir)
+	if isolation == nil || !strings.Contains(isolation.Reason, "compatibility controller token") || strings.Join(isolation.LegacySessions, ",") != "old" {
+		t.Fatalf("legacy compatibility exposure not reported: %+v", isolation)
+	}
+	token, err := os.ReadFile(filepath.Join(dir, "egg.token"))
+	if err != nil {
+		t.Fatalf("rollback token missing: %v", err)
+	}
+	rpc := grpc.NewServer(grpc.UnaryInterceptor(server.authUnary))
+	pb.RegisterEggServer(rpc, server)
+	go func() { _ = rpc.Serve(listener) }()
+	defer rpc.Stop()
+	// Reproduce the v0.147.0 controller: read egg.token and authenticate
+	// directly, without consulting egg.control or the new isolation marker.
+	conn, err := grpc.NewClient("unix://"+filepath.Join(dir, "egg.sock"), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", string(token))
+	if state, err := pb.NewEggClient(conn).Status(ctx, &pb.StatusRequest{}); err != nil || state.SessionId != "new" {
+		t.Fatalf("old controller cannot attach after rollback: %v %v", state, err)
+	}
+	if _, err := os.Stat(filepath.Join(legacy, "egg.sock")); err != nil {
+		t.Fatalf("surviving legacy PTY removed: %v", err)
+	}
+}
+
+func TestLegacyPolicyDenyingBothTokensKeepsFullIsolation(t *testing.T) {
+	home := shortEndpointTempDir(t)
+	dir := filepath.Join(home, "state", "eggs", "new")
+	legacyPolicyFixture(t, home, "fs: [ro:/, 'deny:~/.gnupg', 'deny:"+filepath.Dir(dir)+"']\n")
+	if isolation := InspectLegacyIsolation(dir, false); isolation != nil {
+		t.Fatalf("legacy denies both token locations but admission degraded: %+v", isolation)
+	}
+}
+
+func TestStrictLegacyModeRefusesCompatibilityTokenExposure(t *testing.T) {
+	home := shortEndpointTempDir(t)
+	legacyPolicyFixture(t, home, "fs: [ro:/, 'deny:~/.gnupg']\n")
+	dir := filepath.Join(home, "state", "eggs", "new")
+	if err := config.SaveWingConfig(filepath.Join(home, "state"), &config.WingConfig{LegacyIsolation: config.LegacyIsolationStrict}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{dir: dir, token: "secret"}
+	if listener, err := server.prepareEndpoint(); err == nil || !strings.Contains(err.Error(), "compatibility controller token") {
+		server.closeEndpoint(listener)
+		t.Fatalf("strict mode admitted exposed rollback token: %v", err)
+	}
+	for _, path := range []string{filepath.Join(dir, "egg.token"), filepath.Join(controlDirectory(dir), "egg.token")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("strict refusal published token %s: %v", path, err)
+		}
 	}
 }
 

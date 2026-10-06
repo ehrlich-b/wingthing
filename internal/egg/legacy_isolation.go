@@ -244,7 +244,7 @@ func InspectLegacyIsolation(sessionDir string, toolCapability bool) *LegacyIsola
 			if toolCapability && runtime.GOOS == "darwin" {
 				add(entry.Name(), "legacy policies permit reading new tool capability environments")
 			}
-			if err := legacyDeniesControlDirectory(dir, controlDirectory(sessionDir), home); err != nil {
+			if err := legacyDeniesControlDirectory(dir, controlDirectory(sessionDir), home, filepath.Join(sessionDir, "egg.token")); err != nil {
 				add(entry.Name(), "cannot exclude new controller secrets: "+err.Error())
 			}
 		}
@@ -266,8 +266,7 @@ func InspectLegacyIsolation(sessionDir string, toolCapability bool) *LegacyIsola
 	return result
 }
 
-func legacyDeniesControlDirectory(dir, target, home string) error {
-	target = config.CanonicalProviderPath(target)
+func legacyDeniesControlDirectory(dir, target, home string, compatibilityTokens ...string) error {
 	client, err := Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
 	if err != nil {
 		return err
@@ -295,12 +294,23 @@ func legacyDeniesControlDirectory(dir, target, home string) error {
 			}
 		}
 	}
-	for _, denied := range policy.ToSandboxConfig(home).Deny {
-		// The old Linux jail treats deny:/ as an allowlist switch, then
-		// mounts HOME implicitly. It is not a recursive HOME deny.
-		if denied != "/" && controlPathWithin(target, config.CanonicalProviderPath(denied)) {
-			return nil
+	denies := policy.ToSandboxConfig(home).Deny
+	for index, path := range append([]string{target}, compatibilityTokens...) {
+		protected := false
+		for _, denied := range denies {
+			// The old Linux jail treats deny:/ as an allowlist switch, then
+			// mounts HOME implicitly. It is not a recursive HOME deny.
+			if denied != "/" && controlPathWithin(config.CanonicalProviderPath(path), config.CanonicalProviderPath(denied)) {
+				protected = true
+				break
+			}
+		}
+		if !protected {
+			if index > 0 {
+				return fmt.Errorf("its policy permits reading the compatibility controller token")
+			}
+			return fmt.Errorf("its policy permits reading the controller directory")
 		}
 	}
-	return fmt.Errorf("its policy permits reading the controller directory")
+	return nil
 }
