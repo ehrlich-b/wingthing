@@ -874,11 +874,6 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// this lets the policy mask a live SSH agent socket when ~/.ssh is denied.
 	realHome, _ := os.UserHomeDir()
 	effectiveHome := EffectiveSessionHome(cfg, identity)
-	if len(o.Command) == 0 {
-		if err := SaveSessionLaunchConfig(dir, eggCfg, o.AgentArgs); err != nil {
-			return nil, err
-		}
-	}
 	// Keep the exact execution/provider reference inspectable even when startup
 	// fails before the provider process or its endpoint becomes available.
 	meta := fmt.Sprintf("agent=%s\nkind=%s\ncwd=%s\nprovider_session_id=%s\nprovider_home=%s\n", agentName, o.Kind, cwd, providerSessionID, effectiveHome)

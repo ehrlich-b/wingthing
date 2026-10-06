@@ -1,14 +1,10 @@
 package eggclient
 
 import (
-	"bufio"
-	"compress/gzip"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,62 +12,10 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
-	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
-
-const sessionLaunchConfigFile = "session.launch.json"
-
-type sessionLaunchConfig struct {
-	Config string `json:"config"`
-	Model  string `json:"model,omitempty"`
-}
-
-// SaveSessionLaunchConfig retains the effective policy and selected model, not
-// generated provider IDs, prompts, or another execution's MCP binding.
-func SaveSessionLaunchConfig(dir string, cfg *egg.EggConfig, args []string) error {
-	rendered, err := cfg.YAML()
-	if err != nil {
-		return err
-	}
-	launch := sessionLaunchConfig{Config: rendered}
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--" {
-			break
-		}
-		if args[i] == "--model" && i+1 < len(args) {
-			i++
-			launch.Model = args[i]
-		} else if value, ok := strings.CutPrefix(args[i], "--model="); ok {
-			launch.Model = value
-		}
-	}
-	data, err := json.Marshal(launch)
-	if err != nil {
-		return err
-	}
-	return daemonctl.WriteAtomicMetadataFile(filepath.Join(dir, sessionLaunchConfigFile), data, 0600)
-}
-
-func readForkLaunchConfig(dir string) (*egg.EggConfig, string, error) {
-	path := filepath.Join(dir, sessionLaunchConfigFile)
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
-		return nil, "", errors.New("source launch settings were not captured; start a new session with an updated wing")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, "", err
-	}
-	var launch sessionLaunchConfig
-	if err := json.Unmarshal(data, &launch); err != nil || launch.Config == "" {
-		return nil, "", errors.New("source launch settings are invalid")
-	}
-	cfg, err := egg.LoadEggConfigFromYAML(launch.Config)
-	return cfg, launch.Model, err
-}
 
 func forkProviderID(dir, agent, cwd string) (string, error) {
 	if agent != "claude" {
@@ -85,7 +29,11 @@ func forkProviderID(dir, agent, cwd string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return egg.ParseChatMeta(string(data))["agent_session_id"], nil
+		id := egg.ParseChatMeta(string(data))["agent_session_id"]
+		if !validForkProviderID(id) {
+			return "", errors.New("provider conversation metadata is invalid")
+		}
+		return id, nil
 	}
 	// Live sources need not have reached the periodic archive capture yet.
 	// Use their pinned identity, never the newest provider file in a workspace.
@@ -93,7 +41,7 @@ func forkProviderID(dir, agent, cwd string) (string, error) {
 	id := meta["provider_session_id"]
 	path := filepath.Join(dir, ProviderResumeMetadataFile)
 	info, err := os.Lstat(path)
-	if !ValidProviderSessionID(id) || err != nil || !info.Mode().IsRegular() {
+	if !validForkProviderID(id) || err != nil || !info.Mode().IsRegular() {
 		return "", errors.New("provider conversation identity was not verified")
 	}
 	data, err := os.ReadFile(path)
@@ -104,18 +52,23 @@ func forkProviderID(dir, agent, cwd string) (string, error) {
 	if reservation["agent"] != agent || reservation["provider_session_id"] != id {
 		return "", errors.New("provider conversation identity was not verified")
 	}
-	native := filepath.Join(meta["provider_home"], egg.Profile(agent).SessionDir, strings.ReplaceAll(cwd, "/", "-"), id+".jsonl")
-	if info, err := os.Lstat(native); meta["provider_home"] == "" || err != nil || !info.Mode().IsRegular() {
-		return "", errors.New("provider conversation was not captured")
-	}
 	return id, nil
+}
+
+func validForkProviderID(id string) bool {
+	if !ValidProviderSessionID(id) || id[0] == '-' {
+		return false
+	}
+	for _, c := range id {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func SessionForkStatus(dir, agent, cwd string) (bool, string) {
 	if _, err := forkProviderID(dir, agent, cwd); err != nil {
-		return false, err.Error()
-	}
-	if _, _, err := readForkLaunchConfig(dir); err != nil {
 		return false, err.Error()
 	}
 	return true, ""
@@ -125,6 +78,7 @@ type SessionForkPlan struct {
 	SessionID    string
 	Source       LocalSession
 	Config       *egg.EggConfig
+	Identity     EggIdentity
 	Options      SpawnEggOpts
 	Conversation *store.Conversation
 }
@@ -134,7 +88,10 @@ type SessionForkScope struct {
 	Identity          EggIdentity
 	AllowedPaths      []string
 	EnforcePathBounds bool
+	TraceFromConfig   bool
+	IdleTimeout       time.Duration
 	Admit             func(func() error) error
+	LoadConfig        func(string) (*egg.EggConfig, error)
 	Prepare           func(*SessionForkPlan) error
 	Spawn             func(*SessionForkPlan) error
 }
@@ -161,19 +118,15 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 		principal = "default"
 	}
 	owns := source.Principal == principal || principal == "default" && source.Principal == ""
+	if scope.Identity.UserID != "" {
+		owns = ReadEggOwner(dir) == scope.Identity.UserID
+	}
 	cwd := wingpolicy.CanonicalSessionPath(source.CWD)
 	paths := wingpolicy.CanonicalPaths(scope.AllowedPaths)
-	if !owns || scope.Identity.UserID != "" && ReadEggOwner(dir) != scope.Identity.UserID || scope.EnforcePathBounds && (len(paths) == 0 || !wingpolicy.IsUnderPaths(cwd, paths)) {
+	if !owns || scope.EnforcePathBounds && (len(paths) == 0 || !wingpolicy.IsUnderPaths(cwd, paths)) {
 		return nil, errors.New("session not found or not owned by caller")
 	}
-	if recordedHome := ReadEggMetaValues(dir)["provider_home"]; recordedHome != "" && wingpolicy.CanonicalSessionPath(recordedHome) != wingpolicy.CanonicalSessionPath(EffectiveSessionHome(cfg, scope.Identity)) {
-		return nil, errors.New("source provider home does not match the caller's execution identity")
-	}
 	providerID, err := forkProviderID(dir, source.Agent, cwd)
-	if err != nil {
-		return nil, err
-	}
-	eggCfg, model, err := readForkLaunchConfig(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +137,16 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 		return nil, errors.New("source working directory is unavailable")
 	}
 	source.CWD = cwd
+	// Policy and execution identity belong to a fresh launch by this caller.
+	// Source artifacts select history only; none can supply launch authority.
+	loadConfig := scope.LoadConfig
+	if loadConfig == nil {
+		loadConfig = func(cwd string) (*egg.EggConfig, error) { return LoadSpawnEggConfig("", cwd, false) }
+	}
+	eggCfg, err := loadConfig(cwd)
+	if err != nil {
+		return nil, err
+	}
 	id := cmdutil.NewRuntimeID()
 	if label == "" {
 		label = "fork-" + id
@@ -191,7 +154,7 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 	if err := ValidateSessionName(label); err != nil {
 		return nil, err
 	}
-	plan := &SessionForkPlan{SessionID: id, Source: source, Config: eggCfg,
+	plan := &SessionForkPlan{SessionID: id, Source: source, Config: eggCfg, Identity: scope.Identity,
 		Options: SpawnEggOpts{ForkSession: true, Label: label, Kind: "agent", Principal: principal, ResumeSessionID: providerID, ResumeSourceSessionID: source.ID}}
 	launch := func() error {
 		if err := ctx.Err(); err != nil {
@@ -213,19 +176,9 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 		}
 		spawned := false
 		defer func() { release(spawned) }()
-		historyDir := dir
 		if _, alive := ReadAliveEggPID(dir); alive {
-			// Capture to disposable state: never rewrite the original egg or its
-			// native provider conversation while it is still running.
-			historyDir, err = os.MkdirTemp(filepath.Join(cfg.Dir, "eggs"), ".fork-history-")
-			if err != nil {
-				return err
-			}
-			defer func() { _ = os.RemoveAll(historyDir) }()
-			if err := egg.CaptureSessionHistory(source.Agent, cwd, historyDir, home, time.Time{}, providerID); err != nil {
-				return err
-			}
-			if _, err := os.Stat(filepath.Join(historyDir, "chat.meta")); err != nil {
+			native := filepath.Join(home, egg.Profile(source.Agent).SessionDir, strings.ReplaceAll(cwd, "/", "-"), providerID+".jsonl")
+			if info, err := os.Lstat(native); err != nil || !info.Mode().IsRegular() {
 				return errors.New("provider conversation was not captured")
 			}
 		} else {
@@ -236,15 +189,6 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 			if restoredID != providerID {
 				return errors.New("source provider identity changed during fork")
 			}
-		}
-		if nativeModel := forkTranscriptModel(historyDir); nativeModel != "" {
-			model = nativeModel
-		}
-		if model != "" {
-			if strings.ContainsAny(model, "\x00\r\n") || len(model) > 128 {
-				return errors.New("source model is invalid")
-			}
-			plan.Options.AgentArgs = []string{"--model", model}
 		}
 		plan.Conversation, err = reserveForkConversation(cfg, source, id, label, principal)
 		if err != nil {
@@ -258,7 +202,7 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 				err = scope.Spawn(plan)
 			} else {
 				var client *egg.Client
-				client, err = SpawnEgg(cfg, id, source.Agent, plan.Config, 24, 80, cwd, false, false, false, scope.Identity, 0, plan.Options)
+				client, err = SpawnEgg(cfg, id, source.Agent, plan.Config, 24, 80, cwd, false, false, scope.TraceFromConfig && plan.Config.Trace, plan.Identity, scope.IdleTimeout, plan.Options)
 				if err == nil {
 					cmdutil.CloseWithLog("forked session client", client)
 				}
@@ -312,32 +256,4 @@ func reserveForkConversation(cfg *config.Config, source LocalSession, target, ti
 	// Roots fork into independent roots; a child keeps the source's parent.
 	sibling, _, err := db.ReserveConversation(store.Conversation{ID: cmdutil.NewRuntimeID(), OwnerID: principal, ParentID: c.ParentID, Title: title, Agent: source.Agent, CWD: source.CWD, WingID: c.WingID, SessionID: target, LaunchKey: "fork-" + target, SpecDigest: source.ID})
 	return sibling, err
-}
-
-func forkTranscriptModel(dir string) string {
-	file, err := os.Open(filepath.Join(dir, "chat.jsonl.gz"))
-	if err != nil {
-		return ""
-	}
-	defer cmdutil.CloseWithLog("fork transcript", file)
-	reader, err := gzip.NewReader(file)
-	if err != nil {
-		return ""
-	}
-	defer cmdutil.CloseWithLog("fork transcript gzip", reader)
-	scanner := bufio.NewScanner(io.LimitReader(reader, 16<<20))
-	scanner.Buffer(make([]byte, 4096), 1<<20)
-	model := ""
-	for scanner.Scan() {
-		var record struct {
-			Type    string `json:"type"`
-			Message struct {
-				Model string `json:"model"`
-			} `json:"message"`
-		}
-		if json.Unmarshal(scanner.Bytes(), &record) == nil && record.Type == "assistant" && record.Message.Model != "" {
-			model = record.Message.Model
-		}
-	}
-	return model
 }

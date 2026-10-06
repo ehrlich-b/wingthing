@@ -1054,35 +1054,14 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		sessionWingCfg := wingCfg.Clone()
 		sessionAllowedKeys := append([]config.AllowKey(nil), allowedKeys...)
 		wingCfgMu.Unlock()
-		// Wing-level admin override: admins get full access regardless of org role
-		if sessionWingCfg.IsAdmin(start.Email) && wingpolicy.IsMemberRole(start.OrgRole) {
-			start.OrgRole = "admin"
-		}
-		// Per-user path ACLs: members only see their tagged folders
-		userPaths := wingpolicy.PathsForRequest(sessionWingCfg.Paths, start.Email, start.OrgRole, home)
-		if wingpolicy.IsMemberRole(start.OrgRole) && len(userPaths) == 0 {
-			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no accessible folders on this machine"})
-			return
-		}
-		// Clamp CWD to exact configured paths (not subdirectories).
-		// Allowing subdirectories lets users write their own egg.yaml and
-		// boot into a self-defined sandbox — a sandbox escape.
-		if len(userPaths) > 0 {
-			if !wingpolicy.IsExactPath(start.CWD, userPaths) {
-				start.CWD = userPaths[0]
-			}
-		}
-		// Members require egg.yaml in CWD (sandbox jail)
-		if wingpolicy.IsMemberRole(start.OrgRole) && len(sessionWingCfg.Paths) > 0 {
-			if _, err := os.Stat(filepath.Join(start.CWD, "egg.yaml")); os.IsNotExist(err) {
-				ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "no egg.yaml in " + start.CWD + " — ask the wing owner to add a sandbox config"})
-				return
-			}
-		}
 		wingEggMu.Lock()
 		currentEggCfg := wingEggCfg
 		wingEggMu.Unlock()
-		eggCfg := egg.DiscoverEggConfig(start.CWD, currentEggCfg)
+		eggCfg, _, launchErr := eggclient.PrepareBrowserLaunch(sessionWingCfg, &start, home, sharedHost, currentEggCfg)
+		if launchErr != nil {
+			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: launchErr.Error()})
+			return
+		}
 		if auditLive.Load() {
 			eggCfg.Audit = true
 		}
@@ -2263,19 +2242,12 @@ authDone:
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
 		return
 	}
-	ec, err := eggclient.SpawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace, eggclient.EggIdentity{
-		UserID: start.UserID, Email: start.Email, DisplayName: start.DisplayName,
-		OrgWing: wingCfg.Org != "", SharedHost: sharedHost,
-		// Browser terminals get the same allowlist jail as MCP agent runs; a
-		// shared-roost PTY without SealedFS would retain the default ro:/ rule
-		// and read the host home, wing.yaml keys, and other users' agent homes.
-		SealedFS:     sharedHost,
-		AllowedPaths: sharedAllowedPaths,
-	}, idleTimeout, eggclient.SpawnEggOpts{
-		ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
-		ProviderReserved: providerResumeID != "", ToolNames: toolNames, ToolSocketPath: toolSocketPath,
-		Principal: resumePrincipal, AgentArgs: resumeArgs,
-	})
+	ec, err := eggclient.SpawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace,
+		eggclient.BrowserEggIdentity(wingCfg, start, hostHome, sharedHost), idleTimeout, eggclient.SpawnEggOpts{
+			ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
+			ProviderReserved: providerResumeID != "", ToolNames: toolNames, ToolSocketPath: toolSocketPath,
+			Principal: resumePrincipal, AgentArgs: resumeArgs,
+		})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
 		crashInfo := eggclient.ReadEggCrashInfo(eggDir)

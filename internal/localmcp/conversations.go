@@ -393,6 +393,9 @@ func (s *Server) prepareBoundParentMCP(c *store.Conversation, cfg *egg.EggConfig
 // Remote audit actors are not local client names; their bootstrap keeps the
 // existing principal identity.
 func (s *Server) conversationMCPClient() string {
+	if s.MCPClient != "" {
+		return s.MCPClient
+	}
 	if s.controlSurface() == control.SurfaceLocalMCP {
 		return s.clientActor()
 	}

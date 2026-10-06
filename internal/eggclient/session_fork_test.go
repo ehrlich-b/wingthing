@@ -58,7 +58,7 @@ func forkFixture(t *testing.T, live bool) (*config.Config, string, SessionForkSc
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveSessionLaunchConfig(dir, &egg.EggConfig{FS: []string{"rw:" + cwd}, Shell: "/bin/sh"}, []string{"--model", "claude-test-model"}); err != nil {
+	if err := os.WriteFile(filepath.Join(cwd, "egg.yaml"), []byte("base: none\nfs: [rw:"+cwd+"]\nshell: /bin/sh\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if live {
@@ -115,7 +115,7 @@ func TestSessionForkFakeClaudeArgvAndSourcePreserved(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				want := []string{"--resume", "provider", "--session-id", newProvider, "--fork-session", "--model", "claude-test-model"}
+				want := []string{"--resume", "provider", "--session-id", newProvider, "--fork-session"}
 				if !reflect.DeepEqual(strings.Split(strings.TrimSpace(string(output)), "\n"), want) {
 					t.Fatalf("fake Claude argv = %s, want %q", output, want)
 				}
@@ -147,14 +147,80 @@ func TestSessionForkFakeClaudeArgvAndSourcePreserved(t *testing.T) {
 	}
 }
 
+func TestSessionForkIgnoresEggDirectoryPolicyAndIdentity(t *testing.T) {
+	for _, snapshot := range []string{"missing", "edited", "symlink"} {
+		t.Run(snapshot, func(t *testing.T) {
+			cfg, dir, scope := forkFixture(t, false)
+			path := filepath.Join(dir, "session.launch.json")
+			if snapshot == "edited" {
+				if err := os.WriteFile(path, []byte(`{"config":"base: none\nnetwork: '*'\nenv: '*'","model":"untrusted-model"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else if snapshot == "symlink" {
+				if err := os.Symlink(filepath.Join(dir, "egg.yaml"), path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(dir, "egg.yaml"), []byte("base: none\nnetwork: '*'\nenv: '*'\nfs: [rw:/]\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\ncwd="+scope.AllowedPaths[0]+"\nprovider_home=/untrusted\nshared_host=false\norg_wing=false\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := WriteSessionPrincipal(dir, "agent-chosen-principal"); err != nil {
+				t.Fatal(err)
+			}
+			fresh, err := LoadSpawnEggConfig("", scope.AllowedPaths[0], false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scope.Identity.OrgWing, scope.Identity.SharedHost, scope.Identity.SealedFS = true, true, true
+			scope.Identity.AllowedPaths = scope.AllowedPaths
+			scope.Spawn = func(plan *SessionForkPlan) error {
+				if !reflect.DeepEqual(plan.Config, fresh) || !reflect.DeepEqual(plan.Identity, scope.Identity) || plan.Options.Principal != scope.Principal || len(plan.Options.AgentArgs) != 0 {
+					t.Fatalf("source supplied launch authority: %#v", plan)
+				}
+				return nil
+			}
+			if _, err := ForkSession(context.Background(), cfg, "source", "branch", scope); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestSessionForkRejectsMalformedProviderID(t *testing.T) {
+	for _, live := range []bool{false, true} {
+		for _, id := range []string{"../other", "--continue", "with space", `with\backslash`, "bad\x00id"} {
+			t.Run(strconv.FormatBool(live)+"/"+id, func(t *testing.T) {
+				cfg, dir, scope := forkFixture(t, live)
+				for file, value := range map[string]string{
+					"egg.meta":                 "agent=claude\ncwd=" + scope.AllowedPaths[0] + "\nprovider_session_id=" + id + "\n",
+					"chat.meta":                "agent=claude\ncwd=" + scope.AllowedPaths[0] + "\nagent_session_id=" + id + "\n",
+					ProviderResumeMetadataFile: "agent=claude\nprovider_session_id=" + id + "\n",
+				} {
+					if err := os.WriteFile(filepath.Join(dir, file), []byte(value), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				scope.Spawn = func(*SessionForkPlan) error { t.Fatal("invalid provider ID spawned"); return nil }
+				if _, err := ForkSession(context.Background(), cfg, "source", "branch", scope); err == nil {
+					t.Fatal("accepted malformed provider ID")
+				}
+			})
+		}
+	}
+}
+
 func TestSessionForkRejectsOwnershipPathsUnsupportedAndNameCollision(t *testing.T) {
-	for _, name := range []string{"principal", "browser owner", "revoked path", "empty member paths", "unsupported", "name collision", "missing config", "provider home", "unverified live provider"} {
+	for _, name := range []string{"principal", "browser owner", "revoked path", "empty member paths", "unsupported", "name collision", "unverified live provider"} {
 		t.Run(name, func(t *testing.T) {
 			cfg, dir, scope := forkFixture(t, name == "unverified live provider")
 			want := "owned"
 			switch name {
 			case "principal":
 				scope.Principal = "other"
+				scope.Identity = EggIdentity{}
 			case "browser owner":
 				scope.Identity.UserID = "bob"
 			case "revoked path":
@@ -178,14 +244,6 @@ func TestSessionForkRejectsOwnershipPathsUnsupportedAndNameCollision(t *testing.
 					t.Fatal(err)
 				}
 				want = ErrSessionNameInUse.Error()
-			case "missing config":
-				if err := os.Remove(filepath.Join(dir, sessionLaunchConfigFile)); err != nil {
-					t.Fatal(err)
-				}
-				want = "launch settings"
-			case "provider home":
-				scope.Identity.SharedHost = true
-				want = "provider home"
 			case "unverified live provider":
 				if err := os.Remove(filepath.Join(dir, ProviderResumeMetadataFile)); err != nil {
 					t.Fatal(err)

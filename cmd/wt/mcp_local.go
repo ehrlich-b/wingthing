@@ -43,54 +43,11 @@ func mcpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			principal := strings.TrimSpace(clientName)
-			if principal == "" {
-				principal = strings.TrimSpace(os.Getenv("WT_MCP_CLIENT"))
-			}
-			explicitClient := principal != ""
-			if principal == "" {
-				principal = "default"
-			}
-			if err := eggclient.ValidateSessionName(principal); err != nil {
-				return fmt.Errorf("invalid MCP client name: %w", err)
-			}
-			clientsConfig, err := localmcp.LoadLocalMCPClientsConfig(cfg)
+			server, err := newLocalMCPServer(cfg, clientName, unsandboxed)
 			if err != nil {
 				return err
 			}
-			if clientsConfig.RequireClient && !explicitClient {
-				return errors.New("clients.yaml requires an explicit MCP client; pass --client or WT_MCP_CLIENT")
-			}
-			clientConfig, configured := clientsConfig.Clients[principal]
-			if clientsConfig.RequireClient && !configured {
-				return fmt.Errorf("MCP client %q is not configured in clients.yaml", principal)
-			}
-			// Once an operator defines any clients, every principal must have an
-			// explicit entry. An omitted --client resolves to the literal
-			// "default" entry rather than acquiring the nil-grants full-access
-			// behavior intended only for installations without clients.yaml.
-			if len(clientsConfig.Clients) > 0 && !configured {
-				return fmt.Errorf("MCP client %q is not configured in clients.yaml", principal)
-			}
-			clientID := principal
-			owner := clientID
-			if configured && strings.TrimSpace(clientConfig.Owner) != "" {
-				owner = strings.TrimSpace(clientConfig.Owner)
-				if err := eggclient.ValidateSessionName(owner); err != nil {
-					return fmt.Errorf("invalid MCP owner name: %w", err)
-				}
-			}
-			server := &localmcp.Server{Version: version,
-				Cfg: cfg, In: os.Stdin, Out: os.Stdout, Logs: os.Stderr,
-				Principal: owner, Actor: clientID, Unsandboxed: unsandboxed,
-				Surface:           control.SurfaceLocalMCP,
-				BoundConversation: conversationID,
-			}
-			if configured {
-				server.Grants = localmcp.GrantSet(clientConfig.Grants)
-				server.MaxSessions = clientConfig.Bounds.MaxSessions
-				server.MaxSpawnsPerHour = clientConfig.Bounds.MaxSpawnsPerHour
-			}
+			server.BoundConversation = conversationID
 			if err := localmcp.ValidateBoundConversation(server); err != nil {
 				return err
 			}
@@ -105,4 +62,55 @@ func mcpCmd() *cobra.Command {
 	cmd.AddCommand(stdioCmd)
 	cmd.AddCommand(connectMCPCmd())
 	return cmd
+}
+
+func newLocalMCPServer(cfg *config.Config, clientName string, unsandboxed bool) (*localmcp.Server, error) {
+	principal := strings.TrimSpace(clientName)
+	if principal == "" {
+		principal = strings.TrimSpace(os.Getenv("WT_MCP_CLIENT"))
+	}
+	explicitClient := principal != ""
+	if principal == "" {
+		principal = "default"
+	}
+	if err := eggclient.ValidateSessionName(principal); err != nil {
+		return nil, fmt.Errorf("invalid MCP client name: %w", err)
+	}
+	clientsConfig, err := localmcp.LoadLocalMCPClientsConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if clientsConfig.RequireClient && !explicitClient {
+		return nil, errors.New("clients.yaml requires an explicit MCP client; pass --client or WT_MCP_CLIENT")
+	}
+	clientConfig, configured := clientsConfig.Clients[principal]
+	if clientsConfig.RequireClient && !configured {
+		return nil, fmt.Errorf("MCP client %q is not configured in clients.yaml", principal)
+	}
+	// Once an operator defines any clients, every principal must have an
+	// explicit entry. An omitted --client resolves to the literal
+	// "default" entry rather than acquiring the nil-grants full-access
+	// behavior intended only for installations without clients.yaml.
+	if len(clientsConfig.Clients) > 0 && !configured {
+		return nil, fmt.Errorf("MCP client %q is not configured in clients.yaml", principal)
+	}
+	clientID := principal
+	owner := clientID
+	if configured && strings.TrimSpace(clientConfig.Owner) != "" {
+		owner = strings.TrimSpace(clientConfig.Owner)
+		if err := eggclient.ValidateSessionName(owner); err != nil {
+			return nil, fmt.Errorf("invalid MCP owner name: %w", err)
+		}
+	}
+	server := &localmcp.Server{Version: version,
+		Cfg: cfg, In: os.Stdin, Out: os.Stdout, Logs: os.Stderr,
+		Principal: owner, Actor: clientID, MCPClient: clientID, Unsandboxed: unsandboxed,
+		Surface: control.SurfaceLocalMCP,
+	}
+	if configured {
+		server.Grants = localmcp.GrantSet(clientConfig.Grants)
+		server.MaxSessions = clientConfig.Bounds.MaxSessions
+		server.MaxSpawnsPerHour = clientConfig.Bounds.MaxSpawnsPerHour
+	}
+	return server, nil
 }

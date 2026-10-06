@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 )
 
@@ -22,19 +21,12 @@ func (s *Server) ToolSessionFork(ctx context.Context, arguments json.RawMessage)
 	}
 	result, err := eggclient.ForkSession(ctx, s.Cfg, args.Session, args.Name, eggclient.SessionForkScope{
 		Principal: s.clientPrincipal(), Identity: s.identity, AllowedPaths: s.allowedPaths, EnforcePathBounds: s.enforcePathBounds,
-		Admit: s.admitSpawn, Spawn: s.spawnFork,
+		Admit: s.admitSpawn, LoadConfig: s.loadLaunchConfig, Spawn: s.spawnFork, TraceFromConfig: s.forkTrace, IdleTimeout: s.forkIdleTimeout,
 		Prepare: func(plan *eggclient.SessionForkPlan) error {
 			if plan.Conversation == nil {
 				return nil
 			}
-			// The fork inherits the source's actual isolation policy. Bind its new
-			// logical identity with the caller's existing grants and bounds, even
-			// when that source was launched by an earlier unsandboxed connection.
-			binding := &Server{Version: s.Version, Cfg: s.Cfg, Principal: s.clientPrincipal(), Actor: s.Actor, Surface: s.Surface,
-				Unsandboxed: !egg.RequiresSandbox(plan.Config, plan.Source.Agent), Grants: s.Grants,
-				MaxSessions: s.MaxSessions, MaxSpawnsPerHour: s.MaxSpawnsPerHour, identity: s.identity,
-				allowedPaths: s.allowedPaths, enforcePathBounds: s.enforcePathBounds, tools: s.tools, hostMailboxUnavailable: s.hostMailboxUnavailable}
-			args, managed, err := binding.prepareBoundParentLaunch(plan.Conversation, plan.Config, plan.Options.AgentArgs)
+			args, managed, err := s.prepareBoundParentLaunch(plan.Conversation, plan.Config, plan.Options.AgentArgs)
 			if err != nil {
 				return err
 			}

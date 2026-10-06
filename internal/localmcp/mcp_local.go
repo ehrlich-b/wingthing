@@ -59,6 +59,7 @@ type Server struct {
 	admission         *AdmissionState // shared by remote connections on one wing
 	identity          eggclient.EggIdentity
 	Actor             string
+	MCPClient         string // local clients.yaml identity, independent of the audit actor
 	BoundConversation string
 	Surface           control.Surface
 	allowedPaths      []string
@@ -66,6 +67,9 @@ type Server struct {
 	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskrun.TaskRunOptions) error
 	startContinuation func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error
 	spawnFork         func(*eggclient.SessionForkPlan) error
+	launchConfig      func(string) (*egg.EggConfig, error)
+	forkTrace         bool
+	forkIdleTimeout   time.Duration
 	// tools, when set, further limits callable tools by name; grants are
 	// per category and cannot express the host mailbox's fixed subset.
 	tools map[string]bool
@@ -1309,7 +1313,7 @@ func (s *Server) toolTerminalStart(arguments json.RawMessage) (map[string]any, e
 		args.Command = []string{shell}
 		kind = "shell"
 	}
-	eggCfg, err := eggclient.LoadSpawnEggConfig("", args.CWD, s.Unsandboxed)
+	eggCfg, err := s.loadLaunchConfig(args.CWD)
 	if err != nil {
 		return nil, err
 	}
@@ -1377,13 +1381,7 @@ func (s *Server) toolAgentStart(arguments json.RawMessage) (map[string]any, erro
 	}
 	args.CWD = resolvedCWD
 	var eggCfg *egg.EggConfig
-	if s.broker != nil {
-		// Host mailbox children inherit the parent's captured launch policy;
-		// workspace egg.yaml files are writable by the parent provider.
-		eggCfg, err = s.broker.childEggConfig(args.CWD)
-	} else {
-		eggCfg, err = eggclient.LoadSpawnEggConfig("", args.CWD, s.Unsandboxed)
-	}
+	eggCfg, err = s.loadLaunchConfig(args.CWD)
 	if err != nil {
 		return nil, err
 	}
@@ -2829,6 +2827,21 @@ func (s *Server) resolveWorkingDirectory(cwd string) (string, error) {
 		return "", fmt.Errorf("working directory %q is outside this user's roost paths", resolved)
 	}
 	return canonical, nil
+}
+
+// Every launch on this surface rechecks cwd and uses the caller's current policy.
+func (s *Server) loadLaunchConfig(cwd string) (*egg.EggConfig, error) {
+	cwd, err := s.resolveWorkingDirectory(cwd)
+	if err != nil {
+		return nil, err
+	}
+	if s.launchConfig != nil {
+		return s.launchConfig(cwd)
+	}
+	if s.broker != nil {
+		return s.broker.childEggConfig(cwd)
+	}
+	return eggclient.LoadSpawnEggConfig("", cwd, s.Unsandboxed)
 }
 
 func ResolveWorkingDirectory(cwd string) (string, error) {

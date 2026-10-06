@@ -407,7 +407,18 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
 
 	case "session.control":
-		result, err := localmcp.BrowserSessionControl(version, ctx, cfg, wingCfg, req, inner.Operation, inner.Arguments, home, sharedHost)
+		wingEggMu.Lock()
+		var currentEggCfg *egg.EggConfig
+		if wingEggCfg != nil {
+			currentEggCfg = *wingEggCfg
+		}
+		if currentEggCfg != nil {
+			copyCfg := *currentEggCfg
+			currentEggCfg = &copyCfg
+			currentEggCfg.Audit = currentEggCfg.Audit || audit
+		}
+		wingEggMu.Unlock()
+		result, err := localmcp.BrowserSessionControl(version, ctx, cfg, wingCfg, req, inner.Operation, inner.Arguments, home, sharedHost, currentEggCfg)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": err.Error()}, write)
 			return
