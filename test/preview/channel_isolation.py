@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix="wtp-", dir="/tmp") as temporary:
     env = {k: v for k, v in os.environ.items() if not k.startswith(("WT_", "WINGTHING", "FLY_")) and k not in {"GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "SMTP_HOST"}}
     env.update(HOME=str(home), WT_PREVIEW_INSTALL_DIR=str(bin_dir), ANTHROPIC_API_KEY="nonsecret-ambient-fixture", CLAUDE_CODE_OAUTH_TOKEN="nonsecret-ambient-fixture", CODEX_HOME=str(home / ".codex"))
     def run(binary, *args, ok=True, extra=None):
-        result = subprocess.run([str(binary), *args], env={**env, **(extra or {})}, capture_output=True, text=True, timeout=35)
+        result = subprocess.run([str(binary), *args], cwd=base, env={**env, **(extra or {})}, capture_output=True, text=True, timeout=35)
         if (result.returncode == 0) != ok:
             logs = "\n".join(p.read_text(errors="replace") for p in home.glob(".wingthing*/eggs/*/egg.log"))
             raise AssertionError(f"{args}: expected success={ok}; {result.stdout} {result.stderr}\n{logs}")
