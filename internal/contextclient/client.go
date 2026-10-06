@@ -89,7 +89,7 @@ func (c *Client) token(ctx context.Context, owner string) (string, error) {
 	if len(c.cfg.Scopes) > 0 {
 		form.Set("scope", strings.Join(c.cfg.Scopes, " "))
 	}
-	body, err := c.post(ctx, endpoint, "application/x-www-form-urlencoded", "", []byte(form.Encode()), "")
+	body, err := c.post(ctx, endpoint, "application/x-www-form-urlencoded", "", []byte(form.Encode()), "", assertion, form.Encode())
 	if err != nil {
 		return "", err
 	}
@@ -140,7 +140,8 @@ func (c *Client) Call(ctx context.Context, owner, name string, arguments map[str
 		JSONRPC string `json:"jsonrpc"`
 		ID      int    `json:"id"`
 		Error   *struct {
-			Code int `json:"code"`
+			Code    int    `json:"code"`
+			Message string `json:"message"`
 		} `json:"error"`
 		Result *struct {
 			Content []struct {
@@ -153,15 +154,11 @@ func (c *Client) Call(ctx context.Context, owner, name string, arguments map[str
 	if json.Unmarshal(body, &response) != nil || response.JSONRPC != "2.0" || response.ID != 1 {
 		return "", fmt.Errorf("context: invalid MCP response")
 	}
-	// Upstream error bodies may contain credentials. Return only stable status/code information.
 	if response.Error != nil {
-		return "", fmt.Errorf("context: MCP error %d", response.Error.Code)
+		return "", fmt.Errorf("context: MCP error %d: %s", response.Error.Code, c.redact(response.Error.Message, token))
 	}
 	if response.Result == nil {
 		return "", fmt.Errorf("context: missing MCP result")
-	}
-	if response.Result.IsError {
-		return "", fmt.Errorf("context: operation failed (permission, arguments or upstream service)")
 	}
 	var texts []string
 	for _, content := range response.Result.Content {
@@ -169,13 +166,23 @@ func (c *Client) Call(ctx context.Context, owner, name string, arguments map[str
 			texts = append(texts, content.Text)
 		}
 	}
-	output := strings.Join(texts, "\n")
-	output = strings.ReplaceAll(output, string(c.secret), "[redacted]")
-	output = strings.ReplaceAll(output, token, "[redacted]")
+	output := c.redact(strings.Join(texts, "\n"), token)
+	if response.Result.IsError {
+		return "", fmt.Errorf("context: %s", output)
+	}
 	return output, nil
 }
 
-func (c *Client) post(ctx context.Context, endpoint, contentType, token string, body []byte, name string) ([]byte, error) {
+func (c *Client) redact(text string, credentials ...string) string {
+	for _, credential := range append(credentials, string(c.secret)) {
+		if credential != "" {
+			text = strings.ReplaceAll(text, credential, "[redacted]")
+		}
+	}
+	return text
+}
+
+func (c *Client) post(ctx context.Context, endpoint, contentType, token string, body []byte, name string, sensitive ...string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("context: cannot create request")
@@ -197,7 +204,26 @@ func (c *Client) post(ctx context.Context, endpoint, contentType, token string, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("context: HTTP %d (%s)", resp.StatusCode, http.StatusText(resp.StatusCode))
+		message := fmt.Sprintf("context: HTTP %d (%s)", resp.StatusCode, http.StatusText(resp.StatusCode))
+		data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+		var detail struct {
+			Message          string `json:"message"`
+			ErrorDescription string `json:"error_description"`
+		}
+		if err == nil && len(data) <= maxResponseBytes && json.Unmarshal(data, &detail) == nil {
+			if detail.Message == "" {
+				detail.Message = detail.ErrorDescription
+			}
+			// Redact before truncating so a credential at the boundary cannot leak.
+			text := []rune(c.redact(detail.Message, append(sensitive, token)...))
+			if len(text) > 500 {
+				text = text[:500]
+			}
+			if len(text) > 0 {
+				message += ": " + string(text)
+			}
+		}
+		return nil, fmt.Errorf("%s", message)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil || len(data) > maxResponseBytes {

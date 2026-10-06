@@ -132,7 +132,7 @@ func TestClientExchangeCacheAndErrors(t *testing.T) {
 	}
 	httpStatus = 0
 	rpcError = true
-	if _, err := client.Call(context.Background(), "owner@slide.tech", "jira-search", args); err == nil || err.Error() != "context: MCP error -32001" {
+	if _, err := client.Call(context.Background(), "owner@slide.tech", "jira-search", args); err == nil || err.Error() != "context: MCP error -32001: [redacted][redacted]" {
 		t.Fatalf("RPC error=%v", err)
 	}
 	rpcError = false
