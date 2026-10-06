@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/contextclient"
 )
 
 const (
@@ -50,15 +51,22 @@ type ToolListResponse struct {
 // shared ToolRunner. Egg sessions reach tools this way; the remote MCP server wraps the
 // same runner over HTTP.
 type ToolListener struct {
+	owner       string
 	runner      *ToolRunner
 	listener    net.Listener
 	connections chan struct{}
 	wg          sync.WaitGroup
 }
 
+// ToolContext binds a listener to its wing-owned Context client and verified owner.
+type ToolContext struct {
+	Client *contextclient.Client
+	Owner  string // verified EggIdentity.Email, fixed for this listener's lifetime
+}
+
 // NewToolListener creates and starts a tool socket listener.
 // sockPath is the path for the Unix socket (e.g. ~/.wingthing/eggs/<session>/tool.sock).
-func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener, error) {
+func NewToolListener(sockPath string, tools []*config.ToolConfig, contexts ...ToolContext) (*ToolListener, error) {
 	if err := ValidateSocketPath(sockPath); err != nil {
 		return nil, err
 	}
@@ -78,6 +86,10 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener
 		runner:      NewToolRunner(tools),
 		listener:    ln,
 		connections: make(chan struct{}, maxConcurrentToolSocketConnections),
+	}
+	if len(contexts) > 0 {
+		tl.owner = contexts[0].Owner
+		tl.runner.context = contexts[0].Client
 	}
 	tl.wg.Add(1)
 	go tl.acceptLoop()
@@ -168,7 +180,7 @@ func (tl *ToolListener) handleConn(conn net.Conn) {
 		log.Printf("tool socket extended deadline: %v", err)
 		return
 	}
-	if err := writeJSON(conn, tl.runner.Call(req.Tool, req.Args)); err != nil {
+	if err := writeJSON(conn, tl.runner.CallAs(req.Tool, req.Args, tl.owner, nil)); err != nil {
 		log.Printf("tool socket write response: %v", err)
 	}
 }

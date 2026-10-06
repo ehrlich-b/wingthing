@@ -9,22 +9,45 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/contextclient"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 )
 
 // PrepareBrowserTools supplies the same tool listener and launch options to
 // fresh browser PTYs and browser forks.
-func PrepareBrowserTools(cfg *config.Config, sessionID string, tools []*config.ToolConfig, opts *SpawnEggOpts) (*egg.ToolListener, error) {
+func PrepareBrowserTools(cfg *config.Config, sessionID string, tools []*config.ToolConfig, opts *SpawnEggOpts, identities ...EggIdentity) (*egg.ToolListener, error) {
 	if len(tools) == 0 {
 		return nil, nil
+	}
+	wingCfg, err := config.LoadWingConfig(cfg.Dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, tool := range tools {
+		if tool.Context != "" && wingCfg.Context == nil {
+			return nil, fmt.Errorf("tool %s: context requires a wing context block", tool.Name)
+		}
+	}
+	_, protected, err := protectContextSecret(egg.DefaultEggConfig(), wingCfg.Context)
+	if err != nil {
+		return nil, err
+	}
+	opts.ContextSecretFiles = protected
+	client, err := contextclient.New(wingCfg.Context)
+	if err != nil {
+		return nil, err
+	}
+	owner := ""
+	if len(identities) > 0 {
+		owner = identities[0].Email
 	}
 	toolsDir := filepath.Join(cfg.Dir, "eggs", sessionID, ".tools")
 	if err := os.MkdirAll(toolsDir, 0700); err != nil {
 		return nil, fmt.Errorf("create tool directory: %w", err)
 	}
 	opts.ToolSocketPath = filepath.Join(toolsDir, "tool.sock")
-	listener, err := egg.NewToolListener(opts.ToolSocketPath, tools)
+	listener, err := egg.NewToolListener(opts.ToolSocketPath, tools, egg.ToolContext{Client: client, Owner: owner})
 	if err != nil {
 		log.Printf("pty session %s: tool listener failed: %v", sessionID, err)
 		return nil, nil

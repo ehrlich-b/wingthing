@@ -9,12 +9,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/contextclient"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -898,4 +901,43 @@ func mcpCall(t *testing.T, base, token, name string, args []string) (string, boo
 		}
 	}
 	return text, isErr
+}
+
+func TestRoostMCPContextUsesAuthenticatedEmail(t *testing.T) {
+	srv, ts, session := mcpTestServer(t)
+	contextServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth/token" {
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
+			}
+			if r.Form.Get("subject_token") != "alice@example.com" {
+				t.Errorf("wrong Context subject: %q", r.Form.Get("subject_token"))
+			}
+			_, _ = io.WriteString(w, `{"access_token":"alice-context-token","expires_in":3600}`)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer alice-context-token" {
+			t.Error("missing impersonated token")
+		}
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"alice tickets"}]}}`)
+	}))
+	defer contextServer.Close()
+	secretPath := filepath.Join(t.TempDir(), "context.secret")
+	if err := os.WriteFile(secretPath, []byte("roost-only-secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := contextclient.New(&config.ContextConfig{URL: contextServer.URL, ClientID: "wingthing-stage", SecretFile: secretPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := egg.NewToolRunner([]*config.ToolConfig{{Name: "tickets", Context: "happyfox-tickets", Env: map[string]string{"WT_MCP_EMAIL": "spoof@slide.tech"}}}, client)
+	srv.ReloadMCP(runner, srv.mcpPolicySnapshot())
+	clientID := oauthRegister(t, ts.URL, "http://localhost:9999/cb")
+	verifier := "verifier-abcdefghijklmnopqrstuvwxyz-0123456789"
+	sum := sha256.Sum256([]byte(verifier))
+	code := oauthAuthorize(t, ts.URL, clientID, "http://localhost:9999/cb", base64.RawURLEncoding.EncodeToString(sum[:]), session)
+	token := oauthToken(t, ts.URL, clientID, "http://localhost:9999/cb", code, verifier)
+	if output, isError := mcpCall(t, ts.URL, token, "tickets", nil); isError || output != "alice tickets" {
+		t.Fatalf("roost Context: %q error=%v", output, isError)
+	}
 }

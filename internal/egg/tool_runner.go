@@ -2,7 +2,9 @@ package egg
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/ehrlich-b/wingthing/internal/contextclient"
 	"io"
 	"os"
 	"os/exec"
@@ -27,16 +29,20 @@ var inheritedToolEnv = map[string]bool{
 // server — so a tool behaves identically whether an in-egg agent or a remote MCP client
 // invokes it, and credentials stay in one place.
 type ToolRunner struct {
-	mu    sync.RWMutex
-	tools map[string]*config.ToolConfig
-	sema  map[string]chan struct{} // per-tool concurrency semaphores
+	context *contextclient.Client
+	mu      sync.RWMutex
+	tools   map[string]*config.ToolConfig
+	sema    map[string]chan struct{} // per-tool concurrency semaphores
 }
 
 // NewToolRunner builds a runner from tool configs.
-func NewToolRunner(tools []*config.ToolConfig) *ToolRunner {
+func NewToolRunner(tools []*config.ToolConfig, clients ...*contextclient.Client) *ToolRunner {
 	r := &ToolRunner{
 		tools: make(map[string]*config.ToolConfig, len(tools)),
 		sema:  make(map[string]chan struct{}),
+	}
+	if len(clients) > 0 {
+		r.context = clients[0]
 	}
 	for _, t := range tools {
 		r.tools[t.Name] = t
@@ -116,6 +122,11 @@ func (r *ToolRunner) Call(name string, args []string) ToolResponse {
 // CallWithEnv executes a tool with additional per-call identity metadata. Extra environment
 // values are appended last, so a static tool config cannot spoof caller identity.
 func (r *ToolRunner) CallWithEnv(name string, args []string, extraEnv map[string]string) ToolResponse {
+	return r.CallAs(name, args, "", extraEnv)
+}
+
+// CallAs receives an owner verified by the wing, never from tool args or environment.
+func (r *ToolRunner) CallAs(name string, args []string, owner string, extraEnv map[string]string) ToolResponse {
 	r.mu.RLock()
 	tc, ok := r.tools[name]
 	var sema chan struct{}
@@ -134,16 +145,29 @@ func (r *ToolRunner) CallWithEnv(name string, args []string, extraEnv map[string
 			return ToolResponse{Error: fmt.Sprintf("tool %s: max concurrent limit reached", name)}
 		}
 	}
-	return r.executeTool(tc, args, extraEnv)
+	return r.executeTool(tc, args, owner, extraEnv)
 }
 
-func (r *ToolRunner) executeTool(tc *config.ToolConfig, args []string, extraEnv map[string]string) ToolResponse {
+func (r *ToolRunner) executeTool(tc *config.ToolConfig, args []string, owner string, extraEnv map[string]string) ToolResponse {
 	timeout := tc.TimeoutDuration()
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	if tc.Context != "" {
+		arguments, err := contextArguments(tc.Params, args)
+		if err != nil {
+			return ToolResponse{Error: err.Error()}
+		}
+		output, err := r.context.Call(ctx, owner, tc.Context, arguments)
+		if err != nil {
+			return ToolResponse{Error: err.Error()}
+		}
+		var bounded cappedToolOutput
+		_, _ = bounded.Write([]byte(output))
+		return ToolResponse{Stdout: bounded.String()}
+	}
 	// sh -c 'script' tool arg1 arg2 ...
 	// "tool" is $0, args become $1, $2, etc.
 	cmdArgs := append([]string{"-c", tc.Run, "tool"}, args...)
@@ -229,3 +253,59 @@ func (w *cappedToolOutput) String() string {
 }
 
 var _ io.Writer = (*cappedToolOutput)(nil)
+
+func contextArguments(params []config.ToolParam, args []string) (map[string]any, error) {
+	if len(args) > len(params) {
+		return nil, fmt.Errorf("context: too many arguments")
+	}
+	values := make(map[string]any, len(args))
+	for i, param := range params {
+		if i >= len(args) || args[i] == "" && !param.Required {
+			if param.Required {
+				return nil, fmt.Errorf("context: missing parameter %s", param.Name)
+			}
+			continue
+		}
+		var value any = args[i]
+		if param.Type != "" && param.Type != "string" {
+			decoder := json.NewDecoder(strings.NewReader(args[i]))
+			decoder.UseNumber()
+			if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF {
+				return nil, fmt.Errorf("context: invalid parameter %s", param.Name)
+			}
+			valid := false
+			switch param.Type {
+			case "integer":
+				n, ok := value.(json.Number)
+				if ok {
+					_, err := n.Int64()
+					valid = err == nil
+				}
+			case "number":
+				_, valid = value.(json.Number)
+			case "boolean":
+				_, valid = value.(bool)
+			case "object":
+				_, valid = value.(map[string]any)
+			case "array":
+				_, valid = value.([]any)
+			}
+			if !valid {
+				return nil, fmt.Errorf("context: invalid parameter %s", param.Name)
+			}
+		}
+		if len(param.Enum) > 0 {
+			allowed := false
+			for _, item := range param.Enum {
+				if value == item {
+					allowed = true
+				}
+			}
+			if !allowed {
+				return nil, fmt.Errorf("context: invalid parameter %s", param.Name)
+			}
+		}
+		values[param.Name] = value
+	}
+	return values, nil
+}

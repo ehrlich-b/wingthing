@@ -786,7 +786,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 
 	// Load privileged tool configs
 	toolsDir := config.ResolveToolsDir(cfg.Dir, wingCfg.ToolsDir)
-	wingTools, toolErr := config.LoadToolsDir(toolsDir)
+	wingTools, toolErr := config.LoadWingTools(toolsDir, wingCfg.Context)
 	if toolErr != nil {
 		log.Printf("wing: load tools: %v (continuing without tools)", toolErr)
 	} else if len(wingTools) > 0 {
@@ -1181,6 +1181,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 					// Hot-reload egg config (if path changed)
 					oldEggConfig := wingCfg.EggConfig
 					wingCfg.EggConfig = newCfg.EggConfig
+					wingCfg.Context = newCfg.Context
 					if newCfg.EggConfig != oldEggConfig {
 						eggPath := newCfg.EggConfig
 						if eggPath == "" {
@@ -1198,7 +1199,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 
 					// Hot-reload tools
 					newToolsDir := config.ResolveToolsDir(cfg.Dir, newCfg.ToolsDir)
-					if newTools, tErr := config.LoadToolsDir(newToolsDir); tErr == nil {
+					if newTools, tErr := config.LoadWingTools(newToolsDir, newCfg.Context); tErr == nil {
 						wingToolsMu.Lock()
 						wingTools = newTools
 						wingToolsMu.Unlock()
@@ -2200,8 +2201,10 @@ authDone:
 		log.Printf("pty session %s: E2E encryption enabled", start.SessionID)
 	}
 
+	hostHome, _ := os.UserHomeDir()
+	identity := eggclient.BrowserEggIdentity(wingCfg, start, hostHome, sharedHost)
 	toolOpts := eggclient.SpawnEggOpts{}
-	toolListener, toolErr := eggclient.PrepareBrowserTools(cfg, start.SessionID, tools, &toolOpts)
+	toolListener, toolErr := eggclient.PrepareBrowserTools(cfg, start.SessionID, tools, &toolOpts, identity)
 	if toolErr != nil {
 		log.Printf("pty session %s: %v", start.SessionID, toolErr)
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: toolErr.Error()})
@@ -2212,7 +2215,6 @@ authDone:
 	}
 
 	// Spawn a per-session egg
-	hostHome, _ := os.UserHomeDir()
 	sharedAllowedPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, start.Email, start.OrgRole, hostHome))
 	providerResumeID := ""
 	var releaseProviderResume func(bool)
@@ -2232,10 +2234,11 @@ authDone:
 		return
 	}
 	ec, err := eggclient.SpawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace,
-		eggclient.BrowserEggIdentity(wingCfg, start, hostHome, sharedHost), idleTimeout, eggclient.SpawnEggOpts{
+		identity, idleTimeout, eggclient.SpawnEggOpts{
 			ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
 			ProviderReserved: providerResumeID != "", ToolNames: toolOpts.ToolNames, ToolSocketPath: toolOpts.ToolSocketPath,
-			Principal: resumePrincipal, AgentArgs: resumeArgs,
+			ContextSecretFiles: toolOpts.ContextSecretFiles,
+			Principal:          resumePrincipal, AgentArgs: resumeArgs,
 		})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)

@@ -99,6 +99,55 @@ Tools without `params` retain the compatibility schema:
 Tool YAML is decoded strictly. Unknown fields, malformed parameter metadata, invalid names,
 and multiple YAML documents fail loading instead of silently weakening the interface.
 
+### Slide Context tools
+
+Add a `context` block to `wing.yaml` to call Context operations as the verified human owner:
+
+```yaml
+context:
+  url: https://context.pants.taxi
+  client_id: wingthing-prod # use wingthing-stage with the stage URL and secret
+  secret_file: /etc/wingthing/context.secret
+  scopes: [happyfox] # optional; omit to use the client's permitted scopes
+```
+
+Keep the secret file private (mode `0600`) and outside agent workspaces. The wing reads it;
+Context secrets and per-user access tokens stay in wing memory. Egg calls go through the
+existing tool socket. Each socket is bound to the same verified owner identity used for
+`WT_USER_EMAIL`; changing arguments or environment cannot change the impersonated user.
+Roost MCP calls use the authenticated caller's email and existing role policy.
+Calls without a verified email fail; there is no service-token fallback.
+
+Example tool file in `tools_dir`:
+
+```yaml
+name: support-tickets
+description: Search HappyFox tickets as the session owner
+context: happyfox-tickets
+params:
+  - name: query
+    type: string
+  - name: page
+    type: integer
+  - name: size
+    type: integer
+timeout: 20s
+max_concurrent: 5
+```
+
+Use `context` instead of `run`; configuring both fails validation. Context tools require
+the wing Context block. Ordered arguments become named MCP arguments; non-string values
+use JSON, and omitted optional parameters retain Context's defaults. Text content becomes
+tool output. HTTP failures report the status, JSON-RPC errors report the code, and operation
+failures return a generic error; upstream error bodies are withheld to protect credentials.
+Tokens are cached per owner and exchanged again shortly before expiry with fresh assertions.
+
+Restart the wing and end existing eggs when enabling Context or changing `secret_file`:
+existing eggs retain their launch-time filesystem policy. New eggs deny access to the secret
+path and its symlink target. Linux masks them with deny mounts; macOS also adds both to
+Seatbelt's protected paths. Context requires an enforced egg sandbox. Roost MCP configuration reloads with `SIGHUP`; egg tool listeners
+keep their Context configuration for the session lifetime.
+
 ## OAuth and authorization
 
 The roost publishes protected-resource and authorization-server metadata under
