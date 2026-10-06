@@ -1051,6 +1051,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		audit:          rc.Audit,
 	}
 
+	if isolation := ReadLegacyIsolation(s.dir); isolation != nil {
+		warning := []byte("\r\n" + isolation.Warning() + "\r\n")
+		sess.replay.Write(warning)
+		_, _ = sess.vterm.Write(warning)
+	}
+
 	// Set up input auditor if audit is enabled
 	if rc.Audit {
 		auditPath := filepath.Join(s.dir, "audit.log")

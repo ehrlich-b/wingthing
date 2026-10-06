@@ -551,3 +551,28 @@ func TestWingConfigCloneIsDeep(t *testing.T) {
 		t.Fatal("nil config clone was not nil")
 	}
 }
+
+func TestWingLegacyIsolationModes(t *testing.T) {
+	for _, mode := range []string{"", LegacyIsolationDegraded, LegacyIsolationStrict} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := SaveWingConfig(dir, &WingConfig{LegacyIsolation: mode}); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadWingConfig(dir)
+			if err != nil || cfg.LegacyIsolation != mode {
+				t.Fatalf("legacy isolation round trip: %+v %v", cfg, err)
+			}
+		})
+	}
+	dir := t.TempDir()
+	if err := SaveWingConfig(dir, &WingConfig{LegacyIsolation: "strcit"}); err == nil {
+		t.Fatal("saved invalid legacy isolation mode")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("legacy_isolation: strcit\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadWingConfig(dir); err == nil {
+		t.Fatal("loaded invalid legacy isolation mode")
+	}
+}

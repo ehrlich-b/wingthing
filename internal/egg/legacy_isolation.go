@@ -3,11 +3,13 @@ package egg
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -113,15 +115,73 @@ func MarkLegacyEggForReplacement(dir string) {
 	log.Printf("egg: legacy session %s requires restart for tool capability recovery; preserving PTY", filepath.Base(dir))
 }
 
-// Inspect each surviving legacy policy instead of imposing a global launch
-// embargo. Custom policies may have removed the historical ~/.gnupg deny.
+// LegacyIsolation records exposure at admission separately from mutable PTY
+// metadata and the controller marker used to authorize capability recovery.
+type LegacyIsolation struct {
+	Reason         string   `json:"reason"`
+	LegacySessions []string `json:"legacy_sessions"`
+}
+
+func (i *LegacyIsolation) Warning() string {
+	return fmt.Sprintf("Warning: isolation: degraded; %s; legacy sessions: %s. Restart those sessions to restore isolation; their tool capabilities remain withheld.", i.Reason, strings.Join(i.LegacySessions, ", "))
+}
+
+func ReadLegacyIsolation(dir string) *LegacyIsolation {
+	data, err := os.ReadFile(filepath.Join(dir, "isolation-degraded"))
+	var result LegacyIsolation
+	if err != nil || json.Unmarshal(data, &result) != nil || result.Reason == "" || len(result.LegacySessions) == 0 {
+		return nil
+	}
+	return &result
+}
+
+// A live egg upgrade admits new sessions by default, retaining an explicit
+// warning about legacy policies. Strict mode restores the launch refusal.
 func RequireLegacySecretProtection(sessionDir string, toolCapability bool) error {
+	wingCfg, err := config.LoadWingConfig(filepath.Dir(filepath.Dir(sessionDir)))
+	if err != nil {
+		return err
+	}
+	isolation := InspectLegacyIsolation(sessionDir, toolCapability)
+	if isolation == nil {
+		return nil
+	}
+	if wingCfg.LegacyIsolation == config.LegacyIsolationStrict {
+		return fmt.Errorf("legacy isolation strict: %s (legacy sessions: %s); restart those sessions before starting new ones", isolation.Reason, strings.Join(isolation.LegacySessions, ", "))
+	}
+	if err := os.MkdirAll(sessionDir, 0700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(isolation)
+	if err != nil {
+		return err
+	}
+	previous, _ := os.ReadFile(filepath.Join(sessionDir, "isolation-degraded"))
+	if string(previous) == string(data) {
+		return nil
+	}
+	if err := atomicWritePrivate(filepath.Join(sessionDir, "isolation-degraded"), data); err != nil {
+		return err
+	}
+	log.Printf("session %s: %s", filepath.Base(sessionDir), isolation.Warning())
+	return nil
+}
+
+// Inspect each surviving policy. Failure to inspect a legacy egg is itself a
+// degraded boundary, not a reason to prevent the rest of the wing from working.
+func InspectLegacyIsolation(sessionDir string, toolCapability bool) *LegacyIsolation {
 	home, _ := os.UserHomeDir()
 	states := []string{filepath.Join(home, ".wingthing"), filepath.Join(home, ".wingthing-preview"), filepath.Dir(filepath.Dir(sessionDir))}
 	if state, err := config.StateDir(); err == nil {
 		states = append(states, state)
 	}
 	seen := make(map[string]bool)
+	legacy := make(map[string]bool)
+	reasons := make(map[string]bool)
+	add := func(id, reason string) {
+		legacy[id] = true
+		reasons[reason] = true
+	}
 	for _, state := range states {
 		state = config.CanonicalProviderPath(state)
 		if seen[state] {
@@ -133,7 +193,8 @@ func RequireLegacySecretProtection(sessionDir string, toolCapability bool) error
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("check legacy egg isolation: %w", err)
+			add(state, fmt.Sprintf("cannot inspect legacy sessions: %v", err))
+			continue
 		}
 		for _, entry := range entries {
 			if !entry.IsDir() {
@@ -148,7 +209,8 @@ func RequireLegacySecretProtection(sessionDir string, toolCapability bool) error
 				continue
 			}
 			if err != nil {
-				return fmt.Errorf("inspect legacy egg PID: %w", err)
+				add(entry.Name(), fmt.Sprintf("cannot inspect legacy egg PID: %v", err))
+				continue
 			}
 			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 			if err != nil || !procinfo.OwnedProcessIsAlive(pid) {
@@ -158,14 +220,28 @@ func RequireLegacySecretProtection(sessionDir string, toolCapability bool) error
 			// Old macOS policies permit process-info on siblings, exposing
 			// environment capabilities even when controller files are denied.
 			if toolCapability && runtime.GOOS == "darwin" {
-				return fmt.Errorf("legacy egg %s can inspect new tool capability environments; restart that session before enabling new tools; PTY sessions remain available", entry.Name())
+				add(entry.Name(), "legacy policies permit reading new tool capability environments")
 			}
 			if err := legacyDeniesControlDirectory(dir, controlDirectory(sessionDir), home); err != nil {
-				return fmt.Errorf("legacy egg %s cannot exclude new controller secrets: %w; restart that session; its PTY remains available", entry.Name(), err)
+				add(entry.Name(), "cannot exclude new controller secrets: "+err.Error())
 			}
 		}
 	}
-	return nil
+	if len(legacy) == 0 {
+		return nil
+	}
+	result := &LegacyIsolation{}
+	for id := range legacy {
+		result.LegacySessions = append(result.LegacySessions, id)
+	}
+	var messages []string
+	for reason := range reasons {
+		messages = append(messages, reason)
+	}
+	sort.Strings(result.LegacySessions)
+	sort.Strings(messages)
+	result.Reason = strings.Join(messages, "; ")
+	return result
 }
 
 func legacyDeniesControlDirectory(dir, target, home string) error {

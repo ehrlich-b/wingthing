@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -75,5 +76,26 @@ func TestSessionPSLocalFormatGolden(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestSessionPSReportsDegradedLegacyIsolation(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
+	t.Setenv("WINGTHING_DIR", cfg.Dir)
+	seedRemoteListSession(t, cfg, "new-session", "")
+	dir := filepath.Join(cfg.Dir, "eggs", "new-session")
+	if err := os.WriteFile(filepath.Join(dir, "isolation-degraded"), []byte(`{"reason":"legacy policy permits reading controller secrets","legacy_sessions":["old-a","old-b"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := executeCLI(context.Background(), []string{"session", "ps", "--json"}, remotepkg.IO{Out: &output, ErrOut: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	var sessions []eggclient.LocalSession
+	if err := json.Unmarshal(output.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].Isolation != "degraded" || sessions[0].IsolationReason == "" || fmt.Sprint(sessions[0].LegacySessions) != "[old-a old-b]" {
+		t.Fatalf("missing degradation details: %s", output.String())
 	}
 }

@@ -12,35 +12,38 @@ import (
 )
 
 const (
-	HostedRelayAllow      = "allow"
-	HostedRelayDeny       = "deny"
-	ConversationsEnabled  = "enabled"
-	ConversationsDisabled = "disabled"
+	HostedRelayAllow        = "allow"
+	HostedRelayDeny         = "deny"
+	ConversationsEnabled    = "enabled"
+	ConversationsDisabled   = "disabled"
+	LegacyIsolationDegraded = "degraded"
+	LegacyIsolationStrict   = "strict"
 )
 
 // WingConfig holds wing-specific settings persisted in ~/.wingthing/wing.yaml.
 type WingConfig struct {
-	WingID         string         `yaml:"wing_id"`
-	Label          string         `yaml:"label,omitempty"` // display name shown in the web UI
-	Roost          string         `yaml:"roost,omitempty"`
-	Org            string         `yaml:"org,omitempty"`
-	Paths          PathList       `yaml:"paths,omitempty"`
-	Root           string         `yaml:"root,omitempty"` // compat: folded into Paths on load
-	Labels         []string       `yaml:"labels,omitempty"`
-	EggConfig      string         `yaml:"egg_config,omitempty"`
-	Conv           string         `yaml:"conv,omitempty"`
-	Audit          bool           `yaml:"audit,omitempty"`
-	Debug          bool           `yaml:"debug,omitempty"`
-	Locked         bool           `yaml:"locked,omitempty"`   // explicit lock mode toggle
-	Spectate       bool           `yaml:"spectate,omitempty"` // allow spectator (read-only) session viewing
-	AuthTTL        string         `yaml:"auth_ttl,omitempty"` // passkey auth token duration (default "1h")
-	AllowKeys      []AllowKey     `yaml:"allow_keys,omitempty"`
-	Admins         []string       `yaml:"admins,omitempty"`          // emails with admin role (see all sessions, all paths)
-	Exports        []ExportTarget `yaml:"exports,omitempty"`         // explicitly allowed browser export destinations
-	IdleTimeout    string         `yaml:"idle_timeout,omitempty"`    // kill sessions idle for this long (e.g. "4h")
-	ConnectionMode string         `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
-	HostedRelay    string         `yaml:"hosted_relay,omitempty"`    // "allow" (default) or "deny"
-	Conversations  string         `yaml:"conversations,omitempty"`   // opt-in stable host mailbox: "enabled" or "disabled" (default)
+	WingID          string         `yaml:"wing_id"`
+	Label           string         `yaml:"label,omitempty"` // display name shown in the web UI
+	Roost           string         `yaml:"roost,omitempty"`
+	Org             string         `yaml:"org,omitempty"`
+	Paths           PathList       `yaml:"paths,omitempty"`
+	Root            string         `yaml:"root,omitempty"` // compat: folded into Paths on load
+	Labels          []string       `yaml:"labels,omitempty"`
+	EggConfig       string         `yaml:"egg_config,omitempty"`
+	Conv            string         `yaml:"conv,omitempty"`
+	Audit           bool           `yaml:"audit,omitempty"`
+	Debug           bool           `yaml:"debug,omitempty"`
+	Locked          bool           `yaml:"locked,omitempty"`   // explicit lock mode toggle
+	Spectate        bool           `yaml:"spectate,omitempty"` // allow spectator (read-only) session viewing
+	AuthTTL         string         `yaml:"auth_ttl,omitempty"` // passkey auth token duration (default "1h")
+	AllowKeys       []AllowKey     `yaml:"allow_keys,omitempty"`
+	Admins          []string       `yaml:"admins,omitempty"`           // emails with admin role (see all sessions, all paths)
+	Exports         []ExportTarget `yaml:"exports,omitempty"`          // explicitly allowed browser export destinations
+	IdleTimeout     string         `yaml:"idle_timeout,omitempty"`     // kill sessions idle for this long (e.g. "4h")
+	ConnectionMode  string         `yaml:"connection_mode,omitempty"`  // "relay" (default), "p2p", "p2p_only", "direct"
+	HostedRelay     string         `yaml:"hosted_relay,omitempty"`     // "allow" (default) or "deny"
+	Conversations   string         `yaml:"conversations,omitempty"`    // opt-in stable host mailbox: "enabled" or "disabled" (default)
+	LegacyIsolation string         `yaml:"legacy_isolation,omitempty"` // "degraded" (default) or "strict"
 
 	// P2P / Direct mode settings
 	ICEServers []ICEServer `yaml:"ice_servers,omitempty"` // STUN/TURN servers for WebRTC
@@ -407,6 +410,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	if err := validateConversations(cfg.Conversations); err != nil {
 		return nil, fmt.Errorf("validate %s: %w", path, err)
 	}
+	if err := validateLegacyIsolation(cfg.LegacyIsolation); err != nil {
+		return nil, fmt.Errorf("validate %s: %w", path, err)
+	}
 	// Migrate legacy root -> paths before validating export isolation.
 	if cfg.Root != "" && len(cfg.Paths) == 0 {
 		cfg.Paths = PathList{{Path: cfg.Root}}
@@ -420,6 +426,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 // SaveWingConfig writes wing.yaml to dir. The file may contain the roost's JWT signing
 // key, so it must never be readable by other local users.
 func SaveWingConfig(dir string, cfg *WingConfig) error {
+	if err := validateLegacyIsolation(cfg.LegacyIsolation); err != nil {
+		return err
+	}
 	if err := validateConversations(cfg.Conversations); err != nil {
 		return err
 	}
@@ -475,6 +484,13 @@ func SaveWingConfig(dir string, cfg *WingConfig) error {
 	// otherwise permit a successful rename to disappear after sudden power loss.
 	if err := fsutil.SyncDirectory(dir); err != nil {
 		return fmt.Errorf("persist wing config replacement: %w", err)
+	}
+	return nil
+}
+
+func validateLegacyIsolation(mode string) error {
+	if mode != "" && mode != LegacyIsolationDegraded && mode != LegacyIsolationStrict {
+		return fmt.Errorf("legacy_isolation: expected %q or %q, got %q", LegacyIsolationDegraded, LegacyIsolationStrict, mode)
 	}
 	return nil
 }

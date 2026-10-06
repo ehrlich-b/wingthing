@@ -19,8 +19,8 @@ func PrepareBrowserTools(cfg *config.Config, sessionID string, tools []*config.T
 	if len(tools) == 0 {
 		return nil, nil
 	}
-	if err := egg.RequireLegacySecretProtection(filepath.Join(cfg.Dir, "eggs", sessionID), true); err != nil {
-		log.Printf("pty session %s: tool capability unavailable: %v", sessionID, err)
+	if isolation := egg.InspectLegacyIsolation(filepath.Join(cfg.Dir, "eggs", sessionID), true); isolation != nil {
+		log.Printf("pty session %s: tool capability unavailable: %s", sessionID, isolation.Warning())
 		return nil, nil
 	}
 	toolsDir := filepath.Join(cfg.Dir, "eggs", sessionID, ".tools")

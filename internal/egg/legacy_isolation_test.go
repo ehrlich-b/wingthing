@@ -20,8 +20,12 @@ import (
 )
 
 func legacyPolicyFixture(t *testing.T, home, policy string) string {
+	return legacyPolicyFixtureID(t, home, "old", policy)
+}
+
+func legacyPolicyFixtureID(t *testing.T, home, id, policy string) string {
 	t.Helper()
-	dir := filepath.Join(home, ".wingthing-preview", "eggs", "old")
+	dir := filepath.Join(home, ".wingthing-preview", "eggs", id)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -103,11 +107,16 @@ func TestLegacyDefaultPolicyAllowsNewEndpointAndRestartRecovery(t *testing.T) {
 	}
 }
 
-func TestLegacyCustomPolicyRefusesOnlySecretExposingOperation(t *testing.T) {
+func TestLegacyCustomPolicyStrictRefusesSecretExposingOperation(t *testing.T) {
 	home := shortEndpointTempDir(t)
 	legacy := legacyPolicyFixture(t, home, "fs: [ro:/]\n")
 	dir := filepath.Join(home, "state", "eggs", "new")
-	if err := RequireLegacySecretProtection(dir, false); err == nil || !strings.Contains(err.Error(), "legacy egg old") {
+	if err := config.SaveWingConfig(filepath.Join(home, "state"), &config.WingConfig{LegacyIsolation: config.LegacyIsolationStrict}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{dir: dir, token: "new-secret"}
+	if listener, err := server.prepareEndpoint(); err == nil || !strings.Contains(err.Error(), "legacy sessions: old") {
+		server.closeEndpoint(listener)
 		t.Fatalf("exposed token admitted: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "egg.token")); !os.IsNotExist(err) {
@@ -118,6 +127,33 @@ func TestLegacyCustomPolicyRefusesOnlySecretExposingOperation(t *testing.T) {
 	}
 	if err := RequireLegacySecretProtection(dir, false); err != nil {
 		t.Fatalf("dead legacy blocks launch: %v", err)
+	}
+}
+
+func TestLegacyCustomPoliciesAdmitDegradedEndpointByDefault(t *testing.T) {
+	home := shortEndpointTempDir(t)
+	for _, id := range []string{"old-b", "old-a"} {
+		legacyPolicyFixtureID(t, home, id, "fs: [ro:/]\n")
+	}
+	dir := filepath.Join(home, "state", "eggs", "new")
+	server := &Server{dir: dir, token: "new-secret"}
+	listener, err := server.prepareEndpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.closeEndpoint(listener)
+	if !HasCurrentControlIsolation(dir) {
+		t.Fatal("new degraded endpoint lost its current controller identity")
+	}
+	isolation := ReadLegacyIsolation(dir)
+	if isolation == nil || strings.Join(isolation.LegacySessions, ",") != "old-a,old-b" || !strings.Contains(isolation.Reason, "permits reading the controller directory") {
+		t.Fatalf("degraded report = %+v", isolation)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("isolation=wingthing-sandbox\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if ReadLegacyIsolation(dir) == nil {
+		t.Fatal("metadata rewrite lost admission warning")
 	}
 }
 
@@ -138,8 +174,12 @@ func TestLegacyCapabilityReasonWrittenOnceAndPTYRetained(t *testing.T) {
 		t.Fatalf("legacy PTY endpoint lost: %v", err)
 	}
 	if runtime.GOOS == "darwin" {
-		if err := RequireLegacySecretProtection(filepath.Join(home, "state", "eggs", "new"), true); err == nil || !strings.Contains(err.Error(), "capability environments") {
-			t.Fatalf("legacy can read a new environment capability: %v", err)
+		dir := filepath.Join(home, "state", "eggs", "new")
+		if err := RequireLegacySecretProtection(dir, true); err != nil {
+			t.Fatalf("default mode blocked new tools session: %v", err)
+		}
+		if isolation := ReadLegacyIsolation(dir); isolation == nil || !strings.Contains(isolation.Reason, "capability environments") {
+			t.Fatalf("environment capability exposure was not reported: %+v", isolation)
 		}
 	}
 }
@@ -229,6 +269,7 @@ func TestLinuxCurrentEggStartsWithLegacyCredentialDirectoryDenied(t *testing.T) 
 	}
 	home := shortEndpointTempDir(t)
 	workspace := filepath.Join(home, "work")
+	legacyPolicyFixture(t, home, "fs: [ro:/]\n")
 	dir := filepath.Join(home, "state", "eggs", "current")
 	for _, path := range []string{workspace, dir} {
 		if err := os.MkdirAll(path, 0700); err != nil {
@@ -251,5 +292,9 @@ func TestLinuxCurrentEggStartsWithLegacyCredentialDirectoryDenied(t *testing.T) 
 	}
 	if server.session == nil || !strings.Contains(string(server.session.replay.Bytes()), "fixture-ready") {
 		t.Fatal("nested credential deny mask prevented the agent from starting")
+	}
+	output := string(server.session.replay.Bytes())
+	if strings.Count(output, "Warning: isolation: degraded") != 1 || !strings.Contains(output, "legacy sessions: old") {
+		t.Fatalf("missing or repeated user-facing warning: %q", output)
 	}
 }

@@ -1196,3 +1196,32 @@ func TestRoostControlToolsKeepTwoUsersSessionsSeparate(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalListReportsDegradedLegacyIsolation(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
+	dir := filepath.Join(cfg.Dir, "eggs", "new-session")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{
+		"egg.pid":            strconv.Itoa(os.Getpid()),
+		"egg.meta":           "agent=claude\nkind=agent\nisolation=wingthing-sandbox\n",
+		"isolation-degraded": `{"reason":"legacy policy permits reading controller secrets","legacy_sessions":["old-a","old-b"]}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := &Server{Version: "dev", Cfg: cfg, Logs: io.Discard}
+	result, err := server.ToolTerminalList(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"isolation":"degraded"`)) || !bytes.Contains(data, []byte(`"isolation_reason":"legacy policy permits reading controller secrets"`)) || !bytes.Contains(data, []byte(`"legacy_sessions":["old-a","old-b"]`)) {
+		t.Fatalf("missing degradation details: %s", data)
+	}
+}
