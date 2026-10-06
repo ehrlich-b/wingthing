@@ -1180,6 +1180,11 @@ func containsPath(paths []string, target string) bool {
 // /tmp). After pivot_root, the old root is lazily unmounted — nothing outside
 // the explicit mounts is accessible.
 func setupJail(tmpDir string, roMounts, writablePaths []string, home string, prefixes ...string) func() {
+	// Prepare persistent writable directories before a read-only ancestor is
+	// bound into the jail. Fresh homes may not yet have their declared caches.
+	if err := prepareJailWritablePaths(writablePaths); err != nil {
+		failEnforcement("prepare jail writable paths", home, err)
+	}
 	newRoot := filepath.Join(tmpDir, "newroot")
 	if err := os.MkdirAll(newRoot, 0755); err != nil {
 		log.Fatalf("_deny_init: jail mkdir newroot: %v", err)
@@ -1341,6 +1346,20 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string, pre
 	}
 	log.Printf("_deny_init: jail active (ro=%d rw=%d home=%s)", len(roMounts), len(writablePaths), home)
 	return persist
+}
+
+func prepareJailWritablePaths(paths []string) error {
+	for _, path := range paths {
+		file, err := openConfinedExisting("/", path)
+		if os.IsNotExist(err) {
+			file, err = createConfinedMountpoint("/", path, true)
+		}
+		if err != nil {
+			return fmt.Errorf("prepare %s: %w", path, err)
+		}
+		file.Close()
+	}
+	return nil
 }
 
 func prepareJailPrefixFiles(root, home string, readonly, writable, prefixes []string) (func(), []string, error) {

@@ -125,6 +125,33 @@ func TestPrepareDenyMountpointsReportsUncreatablePath(t *testing.T) {
 	}
 }
 
+func TestPrepareJailWritablePathsPreservesFilesAndRejectsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "existing")
+	if err := os.WriteFile(file, []byte("unchanged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareJailWritablePaths([]string{file}); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(file); err != nil || string(data) != "unchanged" {
+		t.Fatalf("existing writable file changed: %q, %v", data, err)
+	}
+	outside := t.TempDir()
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{link, filepath.Join(link, "new")} {
+		if err := prepareJailWritablePaths([]string{path}); err == nil {
+			t.Fatalf("accepted symlink writable path %s", path)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new")); !os.IsNotExist(err) {
+		t.Fatalf("created directory outside the declared path: %v", err)
+	}
+}
+
 func TestJailMountpointPreservesExistingFile(t *testing.T) {
 	root := t.TempDir()
 	path := "/workspace/config"

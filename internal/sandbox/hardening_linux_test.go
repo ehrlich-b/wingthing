@@ -101,6 +101,19 @@ func probeHardeningOverlay(home, tmp string) error {
 
 func runHardeningScenario(scenario, root string) error {
 	switch scenario {
+	case "jail-missing-writable":
+		home, tmp := filepath.Join(root, "home"), filepath.Join(root, "session")
+		for _, dir := range []string{home, tmp} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		cache := filepath.Join(home, ".cache", "new")
+		setupJail(tmp, []string{home}, []string{cache}, home)
+		if err := os.WriteFile(filepath.Join(home, "undeclared"), nil, 0o600); err == nil {
+			return fmt.Errorf("read-only HOME became writable")
+		}
+		return os.WriteFile(filepath.Join(cache, "state"), []byte("persisted"), 0o600)
 	case "jail-system-aliases":
 		home, workspace, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "session")
 		config := filepath.Join(home, ".claude")
@@ -328,6 +341,15 @@ func runHardeningScenario(scenario, root string) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown hardening scenario %q", scenario)
+	}
+}
+
+func TestJailCreatesMissingWritableDirectoriesUnderReadonlyHome(t *testing.T) {
+	root := t.TempDir()
+	runHardeningNamespace(t, "jail-missing-writable", root)
+	data, err := os.ReadFile(filepath.Join(root, "home", ".cache", "new", "state"))
+	if err != nil || string(data) != "persisted" {
+		t.Fatalf("new writable directory did not persist: %q, %v", data, err)
 	}
 }
 
