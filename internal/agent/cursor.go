@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 )
@@ -61,10 +61,7 @@ func (c *Cursor) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 
 	stream := newStream(ctx)
 	go func() {
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
+		readErr := readProviderLines(stdout, "cursor", func(line string) {
 			// Cursor stream-json uses the same event format as Claude Code
 			if text, ok := parseStreamEvent(line); ok {
 				stream.send(Chunk{Text: text})
@@ -72,10 +69,10 @@ func (c *Cursor) Run(ctx context.Context, prompt string, opts RunOpts) (_ *Strea
 			if input, output, ok := parseResultTokens(line); ok {
 				stream.SetTokens(input, output)
 			}
-		}
+		})
 		err := waitAgentCommand(cmd, diagnostics)
-		if scanErr := scanner.Err(); scanErr != nil && err == nil {
-			err = scanErr
+		if readErr != nil {
+			err = errors.Join(err, readErr)
 		}
 		stream.close(err)
 	}()
