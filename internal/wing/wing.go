@@ -1443,6 +1443,7 @@ func ListAliveEggSessions(cfg *config.Config) []ws.SessionInfo {
 		info := ws.SessionInfo{
 			SessionID: sessionID,
 			Name:      eggclient.ReadSessionName(dir),
+			Title:     egg.ReadSessionTitle(dir),
 			Agent:     agent,
 			CWD:       sessionCWD,
 			EggConfig: renderedConfig,

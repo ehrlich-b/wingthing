@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
@@ -24,6 +25,10 @@ type VTerm struct {
 	altScreen    bool
 	cursorHidden bool
 	cols, rows   int
+
+	title        string
+	titleChanged bool
+	onTitle      func(string)
 }
 
 // NewVTerm creates a VTerm with the given dimensions.
@@ -69,6 +74,17 @@ func NewVTerm(cols, rows int) *VTerm {
 			// mu already held by caller (Write)
 			v.cursorHidden = !visible
 		},
+		Title: func(raw string) {
+			// mu already held by caller (Write)
+			// The parser ends an OSC at byte 0x9C (C1 ST), which cuts Claude's idle
+			// glyph ✳ (e2 9c b3) to one byte; keep the last whole title instead.
+			if !utf8.ValidString(raw) {
+				return
+			}
+			if title := CleanSessionTitle(raw); title != v.title {
+				v.title, v.titleChanged = title, true
+			}
+		},
 	})
 	return v
 }
@@ -78,6 +94,22 @@ func (v *VTerm) Write(p []byte) (int, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.emu.Write(p)
+}
+
+// OnTitle registers fn to receive each change of the title the agent sets
+// for its terminal. fn runs on the VTerm goroutine, outside the lock.
+func (v *VTerm) OnTitle(fn func(string)) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.onTitle = fn
+}
+
+func (v *VTerm) takeTitleChange() (string, func(string), bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	changed := v.titleChanged
+	v.titleChanged = false
+	return v.title, v.onTitle, changed
 }
 
 // Resize changes the terminal dimensions.
@@ -194,6 +226,9 @@ func runVTermLoop(vt *VTerm, ch <-chan vtermMsg, done <-chan struct{}) {
 					return
 				}
 				lastOffset = msg.offset
+				if title, fn, changed := vt.takeTitleChange(); changed && fn != nil {
+					fn(title)
+				}
 			}
 			if msg.resize != nil {
 				vt.Resize(msg.resize.cols, msg.resize.rows)

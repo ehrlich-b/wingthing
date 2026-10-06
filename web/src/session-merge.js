@@ -18,6 +18,7 @@ export function reconcileWingSessions(existingSessions, wingId, remoteSessions) 
 
         session.agent = remote.agent;
         session.name = remote.name;
+        session.title = remote.title;
         session.cwd = remote.cwd;
         session.needs_attention = remote.needs_attention;
         session.audit = remote.audit;

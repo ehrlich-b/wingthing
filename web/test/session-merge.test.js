@@ -10,7 +10,7 @@ test('reconcileWingSessions refreshes one wing and preserves other wings', funct
         { id: 'other', wing_id: 'wing-b' },
     ];
     var remote = [
-        { id: 'keep', name: 'support-case-42', wing_id: 'wing-a', cwd: '/new', agent: 'codex' },
+        { id: 'keep', name: 'support-case-42', title: 'Refund lookup', wing_id: 'wing-a', cwd: '/new', agent: 'codex' },
         { id: 'added', wing_id: 'wing-a', cwd: '/added' },
     ];
 
@@ -19,6 +19,7 @@ test('reconcileWingSessions refreshes one wing and preserves other wings', funct
     assert.equal(result[0].cwd, '/new');
     assert.equal(result[0].agent, 'codex');
     assert.equal(result[0].name, 'support-case-42');
+    assert.equal(result[0].title, 'Refund lookup');
     assert.equal(result[0].swept, true);
     assert.equal(result[2].swept, true);
 });

@@ -1001,6 +1001,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 
 	log.Printf("egg: session %s kind=%s agent=%s command=%q pid=%d network=%s fs=%d", sessionID, rc.Kind, rc.Agent, rc.Command, cmd.Process.Pid, networkSummary, len(rc.FS))
 
+	// The agent's own terminal title labels the session in browser lists.
+	sess.vterm.OnTitle(func(title string) {
+		if err := WriteSessionTitle(s.dir, title); err != nil {
+			log.Printf("egg: save session title: %v", err)
+		}
+	})
+
 	// VTerm async processing goroutine — must start before readPTY
 	go runVTermLoop(sess.vterm, sess.vtermCh, sess.done)
 

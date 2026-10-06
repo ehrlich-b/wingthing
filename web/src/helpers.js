@@ -44,9 +44,14 @@ export function setupCopyable(container) {
     });
 }
 
+// A name the user chose wins, then the title the agent gave its terminal,
+// then the folder.
 export function sessionDisplayName(session) {
     if (session && typeof session.name === 'string' && session.name.trim()) {
         return session.name.trim();
+    }
+    if (session && typeof session.title === 'string' && session.title.trim()) {
+        return session.title.trim();
     }
     return projectName(session && session.cwd);
 }

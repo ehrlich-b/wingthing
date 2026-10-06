@@ -367,6 +367,7 @@ type SessionInfo struct {
 	Lifecycle             map[string]any `json:"lifecycle,omitempty"`
 	SessionID             string         `json:"session_id"`
 	Name                  string         `json:"name,omitempty"`
+	Title                 string         `json:"title,omitempty"` // agent-set terminal title, display only
 	Agent                 string         `json:"agent"`
 	CWD                   string         `json:"cwd,omitempty"`
 	EggConfig             string         `json:"-"` // server-only effective YAML config snapshot
