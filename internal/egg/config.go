@@ -313,6 +313,11 @@ func DiscoverEggConfig(cwd string, wingDefault *EggConfig) *EggConfig {
 	}
 	if dir, err := wingconfig.StateDir(); err == nil {
 		path := filepath.Join(dir, "egg.yaml")
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) && wingconfig.Channel() == "stable" {
+			if home, err := os.UserHomeDir(); err == nil {
+				path = filepath.Join(home, ".wingthing", "egg.yaml")
+			}
+		}
 		if _, statErr := os.Stat(path); statErr == nil {
 			cfg, resolveErr := ResolveEggConfig(path)
 			if resolveErr == nil {

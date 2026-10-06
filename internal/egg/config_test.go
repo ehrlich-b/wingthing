@@ -427,6 +427,50 @@ func TestDiscoverEggConfig_GlobalDefault(t *testing.T) {
 	}
 }
 
+func TestDiscoverEggConfigCustomStateLegacyFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name, channel, current, wantDeny string
+	}{
+		{name: "stable legacy policy", channel: "stable", wantDeny: "/legacy/secrets"},
+		{name: "stable current policy", channel: "stable", current: "fs: [deny:/current/secrets]\n", wantDeny: "/current/secrets"},
+		{name: "stable invalid current", channel: "stable", current: "[invalid yaml"},
+		{name: "preview isolated", channel: "preview"},
+		{name: "preview current policy", channel: "preview", current: "fs: [deny:/preview/secrets]\n", wantDeny: "/preview/secrets"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := wingconfig.ReleaseChannel
+			wingconfig.ReleaseChannel = tc.channel
+			t.Cleanup(func() { wingconfig.ReleaseChannel = previous })
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			state := filepath.Join(home, "alternate-state")
+			t.Setenv("WINGTHING_DIR", state)
+			t.Setenv("WINGTHING_PREVIEW_DIR", "")
+			legacy := filepath.Join(home, ".wingthing")
+			makeEggConfigTestDir(t, legacy)
+			writeEggConfigTestFile(t, filepath.Join(legacy, "egg.yaml"), "fs: [deny:/legacy/secrets]\n")
+			if tc.current != "" {
+				makeEggConfigTestDir(t, state)
+				writeEggConfigTestFile(t, filepath.Join(state, "egg.yaml"), tc.current)
+			}
+			cfg := DiscoverEggConfig(t.TempDir(), nil)
+			resolved := cfg.ToSandboxConfig(home)
+			found := false
+			for _, path := range resolved.Deny {
+				if path == tc.wantDeny {
+					found = true
+				}
+				if path == "/legacy/secrets" && tc.wantDeny != path {
+					t.Fatal("legacy sandbox policy overrode the selected channel policy")
+				}
+			}
+			if tc.wantDeny != "" && !found {
+				t.Fatalf("deny rules = %q, want %q", resolved.Deny, tc.wantDeny)
+			}
+		})
+	}
+}
+
 func TestDiscoverEggConfig_ProjectConfig(t *testing.T) {
 	dir := t.TempDir()
 	writeEggConfigTestFile(t, filepath.Join(dir, "egg.yaml"), `base: none
