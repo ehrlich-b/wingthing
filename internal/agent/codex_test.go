@@ -2,9 +2,12 @@ package agent
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestNewCodexDefaults(t *testing.T) {
@@ -51,12 +54,103 @@ func TestCodexRunCommandContract(t *testing.T) {
 	if err := stream.Err(); err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := []string{"exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.6-terra", "hello codex", "--json"}
+	wantArgs := []string{"exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.6-terra", "--json", "--", "hello codex"}
 	if gotName != "codex" || !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("invocation = %q %q, want codex %q", gotName, gotArgs, wantArgs)
 	}
 	if got := stream.Text(); got != "codex output" {
 		t.Fatalf("output = %q", got)
+	}
+}
+
+func TestCodexRunUsesExplicitPromptAndNullStdin(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "codex")
+	script := `#!/bin/sh
+if [ ! /dev/fd/0 -ef /dev/null ]; then
+    echo 'stdin is not /dev/null' >&2
+    exit 1
+fi
+if IFS= read -r input || [ -n "$input" ]; then
+    echo 'stdin contains input' >&2
+    exit 1
+fi
+previous=
+last=
+for arg do
+    previous=$last
+    last=$arg
+done
+if [ "$previous" != -- ] || [ -z "$last" ] || [ "$last" = - ] || [ "$last" != "$WT_TEST_CODEX_PROMPT" ]; then
+    echo 'prompt was not passed explicitly' >&2
+    exit 1
+fi
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"review complete"}}'
+`
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, prompt := range []string{"Review this branch without editing.\nReport findings only.", "--review without editing", "-"} {
+		for _, mode := range []string{"direct", "empty-pipe", "nonempty-pipe"} {
+			t.Run(prompt+"/"+mode, func(t *testing.T) {
+				wantPrompt := prompt
+				if wantPrompt == "-" {
+					wantPrompt += "\n"
+				}
+				t.Setenv("WT_TEST_CODEX_PROMPT", wantPrompt)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				var opts RunOpts
+				if mode != "direct" {
+					reader, writer, err := os.Pipe()
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer reader.Close()
+					defer writer.Close()
+					if mode == "nonempty-pipe" {
+						if _, err := writer.WriteString("coordinator input\n"); err != nil {
+							t.Fatal(err)
+						}
+					}
+					opts.CmdFactory = func(ctx context.Context, name string, args []string) (*exec.Cmd, error) {
+						cmd := exec.CommandContext(ctx, name, args...)
+						cmd.Stdin = reader
+						return cmd, nil
+					}
+				}
+				codex := NewCodex(0)
+				codex.command = binary
+				stream, err := codex.Run(ctx, prompt, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for {
+					if _, ok := stream.Next(); !ok {
+						break
+					}
+				}
+				if err := stream.Err(); err != nil {
+					t.Fatal(err)
+				}
+				if got := stream.Text(); got != "review complete" {
+					t.Fatalf("output = %q", got)
+				}
+			})
+		}
+	}
+}
+
+func TestCodexRunRejectsEmptyPrompt(t *testing.T) {
+	for _, prompt := range []string{"", " \n\t"} {
+		_, err := NewCodex(0).Run(context.Background(), prompt, RunOpts{
+			CmdFactory: func(context.Context, string, []string) (*exec.Cmd, error) {
+				t.Fatal("empty prompt reached command factory")
+				return nil, nil
+			},
+		})
+		if err == nil || err.Error() != "prompt is required" {
+			t.Fatalf("empty prompt error = %v", err)
+		}
 	}
 }
 

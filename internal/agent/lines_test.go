@@ -214,13 +214,15 @@ func TestReadProviderLinesLaterFinalReplacesSkippedResponse(t *testing.T) {
 func TestProviderOversizedFinalPreservesCommandError(t *testing.T) {
 	warnings := captureAgentWarnings(t)
 	line := sizedEvent(`{"type":"item.completed","item":{"type":"agent_message","text":"`, `"}}`, oversizedTestLine)
+	path := filepath.Join(t.TempDir(), "stdout")
+	if err := os.WriteFile(path, []byte(line), 0600); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stream, err := NewCodex(0).Run(ctx, "test", RunOpts{
 		CmdFactory: func(ctx context.Context, _ string, _ []string) (*exec.Cmd, error) {
-			cmd := exec.CommandContext(ctx, "sh", "-c", "cat; printf 'provider failed' >&2; exit 7")
-			cmd.Stdin = strings.NewReader(line)
-			return cmd, nil
+			return exec.CommandContext(ctx, "sh", "-c", `cat "$1"; printf 'provider failed' >&2; exit 7`, "sh", path), nil
 		},
 	})
 	if err != nil {
