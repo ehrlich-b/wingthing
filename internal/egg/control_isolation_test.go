@@ -377,3 +377,44 @@ func TestAgentKeyHelperMountUsesOwnerReadOnlyFile(t *testing.T) {
 		t.Fatal("another owner's helper alias accepted")
 	}
 }
+
+func TestControlProtectionIncludesConfiguredToolDefinitions(t *testing.T) {
+	home := canonicalPolicyTestPath(t, t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, ".wingthing"))
+	custom := filepath.Join(home, "workspace", "privileged-tools")
+	source := filepath.Join(home, "workspace", "host-command.yaml")
+	for _, dir := range []string{filepath.Join(home, ".wingthing"), custom} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(home, ".wingthing", "wing.yaml"), []byte("tools_dir: "+custom+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("name: host\nrun: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(source, filepath.Join(custom, "host.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	control := eggControlDenyPaths("")
+	for _, path := range []string{filepath.Join(home, ".wingthing", "tools"), filepath.Join(home, ".wingthing-preview", "tools"), custom, source} {
+		found := false
+		for _, protected := range control {
+			found = found || protected == path
+		}
+		if !found {
+			t.Fatalf("privileged definitions remain writable: %s", path)
+		}
+	}
+	mounts, err := isolateLinuxEggControl([]sandbox.Mount{{Source: home}}, control, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mount := range mounts {
+		if controlPathWithin(source, mount.Source) || controlPathWithin(custom, mount.Source) {
+			t.Fatalf("tool definition exposed: %+v", mount)
+		}
+	}
+}

@@ -227,8 +227,22 @@ func eggControlDenyPaths(sessionDir string) []string {
 			continue
 		}
 		seen[state] = true
-		for _, name := range []string{"eggs", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "config.yaml", "roost.db", "wt.db"} {
+		for _, name := range []string{"eggs", "tools", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "config.yaml", "roost.db", "wt.db"} {
 			paths = append(paths, filepath.Join(state, name))
+		}
+		toolsDir := filepath.Join(state, "tools")
+		if cfg, err := wingconfig.LoadWingConfig(state); err == nil {
+			toolsDir = wingconfig.CanonicalProviderPath(wingconfig.ResolveToolsDir(state, cfg.ToolsDir))
+			paths = append(paths, toolsDir)
+		}
+		// YAML definitions can themselves be aliases to files outside the
+		// configured directory. Protect the files actually loaded by the host.
+		if entries, err := os.ReadDir(toolsDir); err == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() && (strings.HasSuffix(entry.Name(), ".yaml") || strings.HasSuffix(entry.Name(), ".yml")) {
+					paths = append(paths, wingconfig.CanonicalProviderPath(filepath.Join(toolsDir, entry.Name())))
+				}
+			}
 		}
 	}
 	return paths

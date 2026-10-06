@@ -269,22 +269,17 @@ func buildSeatbeltProfile(cfg Config) (string, error) {
 	}
 
 	// A moved controller directory would carry its secrets outside the
-	// pathname denies. Protect its entry and HOME ancestors after bridges.
-	controlHome, _ := os.UserHomeDir()
-	controlHome, _ = resolvePath(controlHome)
+	// pathname denies. Protect its entry and ancestors after bridges, including custom tools.
 	pinned := make(map[string]bool)
 	for _, path := range cfg.ControlDenyPaths {
 		abs, err := resolvePath(path)
 		if err != nil {
 			continue
 		}
-		for dir := filepath.Dir(abs); controlHome != "" && pathWithin(dir, controlHome); dir = filepath.Dir(dir) {
+		for dir := filepath.Dir(abs); dir != "/"; dir = filepath.Dir(dir) {
 			if !pinned[dir] {
 				fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", dir)
 				pinned[dir] = true
-			}
-			if dir == controlHome {
-				break
 			}
 		}
 	}
