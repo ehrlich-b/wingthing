@@ -36,7 +36,7 @@ func worktreeCmd() *cobra.Command {
 		return worktree.Manager{AllowedPaths: paths, Root: os.Getenv("WINGTHING_WORKTREE_ROOT")}, nil
 	}
 	newCmd := &cobra.Command{
-		Use: "new NAME", Short: "Create a checkout on a new wt/NAME branch", Args: cobra.ExactArgs(1),
+		Use: "new NAME", Short: "Create an unpopulated worktree on a new wt/NAME branch", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m, err := manager()
 			if err != nil {
@@ -45,6 +45,11 @@ func worktreeCmd() *cobra.Command {
 			created, err := m.Create(repo, args[0], base)
 			if err != nil {
 				return err
+			}
+			if created.CheckoutRequired {
+				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "checkout_required: true; run git reset --hard HEAD in the child sandbox before working"); err != nil {
+					return err
+				}
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), created.Path)
 			return err

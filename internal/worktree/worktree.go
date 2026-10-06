@@ -2,10 +2,12 @@
 package worktree
 
 import (
+	"crypto/sha1"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"hash"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -20,11 +22,12 @@ type Manager struct {
 }
 
 type Worktree struct {
-	Name   string `json:"name"`
-	Repo   string `json:"repo"`
-	Path   string `json:"path"`
-	Branch string `json:"branch"`
-	Head   string `json:"head"`
+	Name             string `json:"name"`
+	Repo             string `json:"repo"`
+	Path             string `json:"path"`
+	Branch           string `json:"branch"`
+	Head             string `json:"head"`
+	CheckoutRequired bool   `json:"checkout_required,omitempty"`
 }
 
 func ValidateName(name string) error {
@@ -43,6 +46,9 @@ func (m Manager) Create(repo, name, base string) (*Worktree, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
+	if strings.HasPrefix(base, "-") {
+		return nil, errors.New("worktree base must not start with '-'")
+	}
 	repo, common, err := m.repository(repo)
 	if err != nil {
 		return nil, err
@@ -60,12 +66,6 @@ func (m Manager) Create(repo, name, base string) (*Worktree, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		if err != nil {
-			return nil, err
-		}
-		return nil, fmt.Errorf("worktree path %q already exists", path)
-	}
 	if base == "" {
 		base = "HEAD"
 	}
@@ -73,14 +73,42 @@ func (m Manager) Create(repo, name, base string) (*Worktree, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	parent, err := openDirectory(dir, true)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	if err := unix.Mkdirat(int(parent.Fd()), name, 0700); err != nil {
+		if errors.Is(err, unix.EEXIST) {
+			return nil, fmt.Errorf("worktree path %q already exists", path)
+		}
+		return nil, fmt.Errorf("create worktree path %q: %w", path, err)
+	}
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open worktree path %q: %w", path, err)
+	}
+	checkout := os.NewFile(uintptr(fd), path)
+	defer checkout.Close()
+	if err := m.verifyDirectory(checkout); err != nil {
 		return nil, err
 	}
 	branch := "wt/" + name
-	if _, err := git(repo, "worktree", "add", "-b", branch, "--", path, strings.TrimSpace(head)); err != nil {
+	// The manager has no caller sandbox policy. Do not populate files on the
+	// host: checkout (including hooks, LFS and filters) belongs in the child's
+	// sandbox. Git writes through the inherited checkout cwd, never its mutable
+	// absolute path, even if an ancestor is replaced after verification.
+	if _, err := gitAt(checkout, "--git-dir="+common, "--work-tree=.", "worktree", "add", "--no-checkout", "-b", branch, "--", ".", strings.TrimSpace(head)); err != nil {
+		// Only remove an empty leaf, through the pinned parent, on failure.
+		if m.verifyDirectory(checkout) == nil {
+			_ = unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR)
+		}
 		return nil, err
 	}
-	return &Worktree{Name: name, Repo: repo, Path: path, Branch: branch, Head: strings.TrimSpace(head)}, nil
+	if err := m.verifyDirectory(checkout); err != nil {
+		return nil, err
+	}
+	return &Worktree{Name: name, Repo: repo, Path: path, Branch: branch, Head: strings.TrimSpace(head), CheckoutRequired: true}, nil
 }
 
 // List returns the repository's registered worktrees beneath this manager's root.
@@ -127,19 +155,17 @@ func (m Manager) Remove(repo, name string, force bool) error {
 			return errors.New("worktree no longer belongs to this repository")
 		}
 		if !force {
-			status, err := git(entry.Path, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+			dirty, err := dirtyWorktree(entry.Path)
 			if err != nil {
 				return err
 			}
-			if status != "" {
+			if dirty {
 				return fmt.Errorf("worktree %q has uncommitted changes; use --force to remove it", name)
 			}
 		}
-		args := []string{"worktree", "remove"}
-		if force {
-			args = append(args, "--force")
-		}
-		_, err = git(repo, append(args, "--", entry.Path)...)
+		// Git's own non-forced removal runs status, which can execute clean
+		// filters. The filter-free safety check above replaces that check.
+		_, err = git(repo, "worktree", "remove", "--force", "--", entry.Path)
 		return err
 	}
 	return fmt.Errorf("unknown worktree %q", name)
@@ -259,32 +285,124 @@ func canonicalPath(path string) (string, error) {
 }
 
 func lockRepo(common string) (func(), error) {
-	fd, err := unix.Open(filepath.Join(common, "wingthing-worktree.lock"), unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+	dir, err := openDirectory(common, false)
 	if err != nil {
 		return nil, err
+	}
+	defer dir.Close()
+	flags := unix.O_RDWR | unix.O_CLOEXEC | unix.O_NOFOLLOW
+	fd, err := unix.Openat(int(dir.Fd()), "wingthing-worktree.lock", flags|unix.O_CREAT|unix.O_EXCL, 0600)
+	if errors.Is(err, unix.EEXIST) {
+		fd, err = unix.Openat(int(dir.Fd()), "wingthing-worktree.lock", flags, 0)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open repository lock: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), "wingthing-worktree.lock")
 	if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
 		_ = file.Close()
-		return nil, err
+		return nil, fmt.Errorf("lock repository: %w", err)
 	}
 	return func() { _ = unix.Flock(fd, unix.LOCK_UN); _ = file.Close() }, nil
 }
 
-func git(repo string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-	// Repository selection must come from argv rather than ambient Git overrides.
-	for _, env := range os.Environ() {
-		if !strings.HasPrefix(env, "GIT_") {
-			cmd.Env = append(cmd.Env, env)
+// dirtyWorktree deliberately compares raw blobs instead of running status:
+// status may execute arbitrary clean/process filters, even without a checkout.
+// Transformed files and submodules conservatively require force. ls-files
+// without exclude rules includes ALL untracked files, including ignored .envs.
+func dirtyWorktree(path string) (bool, error) {
+	dir, err := openDirectory(path, false)
+	if err != nil {
+		return false, err
+	}
+	defer dir.Close()
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return false, err
+	}
+	defer root.Close()
+	info, err := dir.Stat()
+	if err != nil {
+		return false, err
+	}
+	actual, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, actual) {
+		return false, fmt.Errorf("worktree path %q changed while opening", path)
+	}
+	other, err := gitAt(dir, "ls-files", "--others", "-z", "--")
+	if err != nil || other != "" {
+		return other != "", err
+	}
+	index, err := gitAt(dir, "rev-parse", "--path-format=absolute", "--git-path", "index")
+	if err != nil {
+		return false, err
+	}
+	// --no-checkout leaves no index. An empty, unpopulated worktree can be
+	// removed without treating its intentionally missing files as deletions.
+	if _, err := os.Stat(strings.TrimSpace(index)); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	staged, err := gitAt(dir, "diff-index", "--cached", "--raw", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "HEAD", "--")
+	if err != nil || staged != "" {
+		return staged != "", err
+	}
+	tracked, err := gitAt(dir, "ls-files", "--stage", "-z", "--")
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range strings.Split(strings.TrimSuffix(tracked, "\x00"), "\x00") {
+		if entry == "" {
+			continue
+		}
+		metadata, name, ok := strings.Cut(entry, "\t")
+		fields := strings.Fields(metadata)
+		if !ok || len(fields) != 3 {
+			return false, errors.New("invalid Git index entry")
+		}
+		if fields[2] != "0" || fields[0] == "160000" {
+			return true, nil
+		}
+		info, err := root.Lstat(name)
+		if errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		} else if err != nil {
+			return false, err
+		}
+		var content []byte
+		if fields[0] == "120000" {
+			if info.Mode()&os.ModeSymlink == 0 {
+				return true, nil
+			}
+			target, err := root.Readlink(name)
+			if err != nil {
+				return false, err
+			}
+			content = []byte(target)
+		} else {
+			if !info.Mode().IsRegular() || (fields[0] == "100755") != (info.Mode()&0111 != 0) {
+				return true, nil
+			}
+			content, err = root.ReadFile(name)
+			if err != nil {
+				return false, err
+			}
+		}
+		var digest hash.Hash
+		switch len(fields[1]) {
+		case 40:
+			digest = sha1.New()
+		case 64:
+			digest = sha256.New()
+		default:
+			return false, errors.New("invalid Git object ID")
+		}
+		_, _ = fmt.Fprintf(digest, "blob %d\x00", len(content))
+		_, _ = digest.Write(content)
+		if fmt.Sprintf("%x", digest.Sum(nil)) != fields[1] {
+			return true, nil
 		}
 	}
-	cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0")
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
-	}
-	return string(output), nil
+	return false, nil
 }

@@ -383,7 +383,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "worktree_create", Title: "Create isolated Git worktree",
-			Description: "Create an isolated checkout on a new wt/NAME branch in an allowed workspace. Pass the returned cwd to agent_start on the same wing. Creation uses the connection's spawn admission bounds.",
+			Description: "Create an unpopulated worktree on a new wt/NAME branch in an allowed workspace. Returns checkout_required: true; pass cwd to agent_start on the same wing and have the child run git reset --hard HEAD inside its sandbox before working. Creation uses the connection's spawn admission bounds.",
 			InputSchema: objectSchema(map[string]any{
 				"repo": stringProperty("Existing repository directory; defaults to the MCP server's current directory"),
 				"name": stringProperty("Checkout name containing only letters, digits, '-' and '_'"),

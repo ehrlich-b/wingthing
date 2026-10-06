@@ -44,6 +44,7 @@ func (s *Server) toolWorktreeCreate(arguments json.RawMessage) (map[string]any, 
 	return map[string]any{
 		"name": created.Name, "repo": created.Repo, "path": created.Path,
 		"cwd": created.Path, "branch": created.Branch, "head": created.Head,
+		"checkout_required": created.CheckoutRequired,
 	}, nil
 }
 
