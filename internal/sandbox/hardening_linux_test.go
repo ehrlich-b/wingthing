@@ -193,6 +193,24 @@ func runHardeningScenario(scenario, root string) error {
 		}
 		persist()
 		return nil
+	case "policy-ancestors":
+		workspace, tmp := filepath.Join(root, "work"), filepath.Join(root, "session")
+		policy := filepath.Join(workspace, "policy", "nested")
+		for _, dir := range []string{policy, tmp} {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return err
+			}
+		}
+		file := filepath.Join(policy, "base.yaml")
+		if err := os.WriteFile(file, []byte("sealed"), 0600); err != nil {
+			return err
+		}
+		if err := os.Chdir(workspace); err != nil {
+			return err
+		}
+		command := `! mv policy relocated && ! mv policy/nested moved && ! printf evil > policy/nested/base.yaml && printf ordinary > policy/nested/source && printf workspace > source && test "$(cat policy/nested/base.yaml)" = sealed`
+		DenyInit([]string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--writable", workspace, "--deny-write", file, "--deny-rename", policy, "--deny-rename", filepath.Dir(policy), "--deny-rename", workspace, "--", "/bin/sh", "-c", command})
+		return fmt.Errorf("DenyInit returned")
 	case "deny-write":
 		home, workspace, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "session")
 		for _, dir := range []string{home, workspace, tmp} {
@@ -501,4 +519,8 @@ func TestSealedJailSystemAliasesLaunchUnprivilegedAgent(t *testing.T) {
 			t.Fatalf("sealed jail agent output %s = %q, %v", path, data, err)
 		}
 	}
+}
+
+func TestPoliciesCannotBeReplacedThroughAncestorRename(t *testing.T) {
+	runHardeningNamespace(t, "policy-ancestors", t.TempDir())
 }

@@ -34,6 +34,7 @@ type Mount struct {
 type Config struct {
 	Mounts       []Mount
 	Deny         []string      // paths to mask (e.g. ~/.ssh) — deny read+write
+	DenyRename   []string      // pin directory entries without denying writes to descendants
 	DenyWrite    []string      // paths to deny writes only (e.g. ./egg.yaml) — read allowed
 	NetworkNeed  NetworkNeed   // granular network access required by the agent
 	NetworkMode  string        // ""/"enforce" or "observe" for domain decisions

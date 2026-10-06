@@ -199,6 +199,7 @@ func verifyPrivateProcfs() error {
 // [--rlimit RESOURCE=VALUE...] -- CMD ARGS...
 func DenyInit(args []string) {
 	var denyPaths []string
+	var denyRenamePaths []string
 	var denyWritePaths []string
 	var writablePaths []string
 	var overlayPrefixes []string
@@ -228,6 +229,9 @@ func DenyInit(args []string) {
 				i++
 			case "--deny":
 				denyPaths = append(denyPaths, args[i+1])
+				i++
+			case "--deny-rename":
+				denyRenamePaths = append(denyRenamePaths, args[i+1])
 				i++
 			case "--deny-write":
 				denyWritePaths = append(denyWritePaths, args[i+1])
@@ -430,6 +434,20 @@ func DenyInit(args []string) {
 		}
 		file.Close()
 		expectedMounts = append(expectedMounts, expectedMount{Path: p, ReadOnly: true})
+	}
+
+	// Linux cannot rename or unlink a mountpoint. Bind each policy ancestor
+	// to itself with its existing flags: descendants keep their write grants.
+	for _, path := range denyRenamePaths {
+		file, err := openConfinedExisting("/", path)
+		if err != nil {
+			failEnforcement("inspect protected ancestor", path, err)
+		}
+		if err := unix.Mount(mountFDPath(file), mountFDPath(file), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			failEnforcement("pin protected ancestor", path, err)
+		}
+		file.Close()
+		expectedMounts = append(expectedMounts, expectedMount{Path: path})
 	}
 
 	// Syscall success is necessary but the live mount table is the security

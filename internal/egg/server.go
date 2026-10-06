@@ -913,6 +913,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			Mounts:       mounts,
 			Deny:         deny,
 			DenyWrite:    denyWrite,
+			DenyRename:   denyRenamePaths(rc.FS, fsHome),
 			NetworkNeed:  netNeed,
 			NetworkMode:  networkPolicy.Mode,
 			Domains:      mergedDomains,

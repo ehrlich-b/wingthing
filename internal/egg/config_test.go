@@ -158,7 +158,7 @@ fs:
 			t.Errorf("base:none should not have deny entries, got %s", entry)
 		}
 	}
-	if len(cfg.FS) != 3 {
+	if mounts, _, denied := ParseFSRules(cfg.FS, ""); len(mounts) != 2 || len(denied) != 1 {
 		t.Errorf("expected 2 FS rules plus policy protection, got %d: %v", len(cfg.FS), cfg.FS)
 	}
 }
@@ -237,8 +237,8 @@ fs:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.FS) != 4 {
-		t.Errorf("expected 2 FS rules plus 2 protected policies, got %d: %v", len(cfg.FS), cfg.FS)
+	if mounts, _, denied := ParseFSRules(cfg.FS, ""); len(mounts) != 1 || len(denied) != 2 {
+		t.Errorf("expected filesystem grants plus 2 protected policies, got %d: %v", len(cfg.FS), cfg.FS)
 	}
 }
 
@@ -543,7 +543,7 @@ fs:
 `)
 
 	cfg := DiscoverEggConfig(dir, nil)
-	if len(cfg.FS) != 2 {
+	if mounts, _, denied := ParseFSRules(cfg.FS, ""); len(mounts) != 1 || len(denied) != 1 {
 		t.Errorf("expected 1 FS rule plus policy protection, got %d: %v", len(cfg.FS), cfg.FS)
 	}
 }
@@ -673,7 +673,7 @@ func TestSectionMask_None(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Masking defaults must leave the policy itself write-protected.
-	if len(cfg.FS) != 1 || cfg.FS[0] != "deny-write:"+canonicalPolicyTestPath(t, path) {
+	if len(cfg.FS) != 2 || cfg.FS[0] != "deny-write:"+canonicalPolicyTestPath(t, path) || cfg.FS[1] != "deny-rename:"+canonicalPolicyTestPath(t, dir) {
 		t.Errorf("fs should contain only policy protection, got %v", cfg.FS)
 	}
 	// Env should still come from defaults
@@ -780,8 +780,8 @@ func TestSectionMask_Combo(t *testing.T) {
 		t.Fatal(err)
 	}
 	// FS: masked to none, except protection for all three dependencies.
-	if len(cfg.FS) != 3 {
-		t.Errorf("fs should contain only 3 protected policies, got %v", cfg.FS)
+	if _, _, protected := ParseFSRules(cfg.FS, home); len(protected) != 3 {
+		t.Errorf("fs should contain 3 protected policies and their ancestors, got %v", cfg.FS)
 	}
 	// Network: from strict
 	if len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "api.internal.corp" {
@@ -832,7 +832,7 @@ func TestBaseField_BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.FS) != 2 || cfg.FS[0] != "rw:./" {
+	if mounts, _, denied := ParseFSRules(cfg.FS, ""); len(mounts) != 1 || len(denied) != 1 || cfg.FS[0] != "rw:./" {
 		t.Errorf("base:none backward compat failed, fs = %v", cfg.FS)
 	}
 
@@ -849,7 +849,7 @@ func TestBaseField_BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg2.FS) != 3 || cfg2.FS[0] != "rw:./" {
+	if mounts, _, denied := ParseFSRules(cfg2.FS, ""); len(mounts) != 1 || len(denied) != 2 || cfg2.FS[0] != "rw:./" {
 		t.Errorf("base:strict backward compat failed, fs = %v", cfg2.FS)
 	}
 	hasCustom := false
@@ -1225,4 +1225,27 @@ func canonicalPolicyTestPath(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return real
+}
+
+func TestResolvedPoliciesPinAncestorsToWorkspace(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "policy", "nested", "base.yaml")
+	makeEggConfigTestDir(t, filepath.Dir(base))
+	writeEggConfigTestFile(t, base, "base: none\nfs: [rw:./]\n")
+	policy := filepath.Join(root, "egg.yaml")
+	writeEggConfigTestFile(t, policy, "base: ./policy/nested/base.yaml\n")
+	cfg, err := ResolveEggConfig(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.ToSandboxConfig(root)
+	for _, dir := range []string{root, filepath.Dir(base), filepath.Dir(filepath.Dir(base))} {
+		found := false
+		for _, pinned := range got.DenyRename {
+			found = found || pinned == canonicalPolicyTestPath(t, dir)
+		}
+		if !found {
+			t.Fatalf("replaceable policy ancestor %s: %v", dir, got.DenyRename)
+		}
+	}
 }

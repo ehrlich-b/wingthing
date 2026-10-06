@@ -260,6 +260,14 @@ func buildSeatbeltProfile(cfg Config) (string, error) {
 		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
 	}
 
+	for _, path := range cfg.DenyRename {
+		abs, err := resolvePath(path)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
+	}
+
 	// Protected write targets — host-owned state the agent must never write.
 	// Emitted last so no earlier rule can reopen them. Like Deny, the literal
 	// covers creating a missing target and the subpath covers descendants.

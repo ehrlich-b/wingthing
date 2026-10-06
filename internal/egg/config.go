@@ -471,12 +471,22 @@ func ResolveEggConfig(path string) (*EggConfig, error) {
 	// Explicit trusted-host policies have no OS sandbox to enforce it.
 	if RequiresSandbox(cfg, "") {
 		protected := make(map[string]bool)
+		ancestors := make(map[string]bool)
+		workspace := wingconfig.CanonicalProviderPath(filepath.Dir(path))
 		for dependency := range dependencies {
 			real, err := filepath.EvalSymlinks(dependency)
 			if err != nil {
 				return nil, fmt.Errorf("resolve policy dependency: %w", err)
 			}
 			protected[real] = true
+			// Pin every directory entry that could relocate a loaded policy.
+			// External bases need their chain protected to the filesystem root.
+			for dir := filepath.Dir(real); dir != "/"; dir = filepath.Dir(dir) {
+				ancestors[dir] = true
+				if dir == workspace {
+					break
+				}
+			}
 		}
 		paths := make([]string, 0, len(protected))
 		for dependency := range protected {
@@ -485,6 +495,14 @@ func ResolveEggConfig(path string) (*EggConfig, error) {
 		sort.Strings(paths)
 		for _, dependency := range paths {
 			cfg.FS = append(cfg.FS, "deny-write:"+dependency)
+		}
+		paths = paths[:0]
+		for dir := range ancestors {
+			paths = append(paths, dir)
+		}
+		sort.Strings(paths)
+		for _, dir := range paths {
+			cfg.FS = append(cfg.FS, "deny-rename:"+dir)
 		}
 	}
 	return cfg, nil
@@ -799,6 +817,8 @@ func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string, []string
 		switch mode {
 		case "deny":
 			deny = append(deny, expanded)
+		case "deny-rename":
+			// Consumed separately by the runtime; never a writable grant.
 		case "deny-write":
 			denyWrite = append(denyWrite, expanded)
 		case "ro":
@@ -808,6 +828,18 @@ func ParseFSRules(fs []string, home string) ([]sandbox.Mount, []string, []string
 		}
 	}
 	return mounts, deny, denyWrite
+}
+
+// denyRenamePaths preserves directory contents' existing permissions while
+// preventing replacement of the directory entry itself.
+func denyRenamePaths(fs []string, home string) []string {
+	var paths []string
+	for _, entry := range fs {
+		if path, ok := strings.CutPrefix(entry, "deny-rename:"); ok {
+			paths = append(paths, expandTilde(path, home))
+		}
+	}
+	return paths
 }
 
 // ToSandboxConfig converts the egg config to a sandbox.Config.
@@ -824,6 +856,7 @@ func (c *EggConfig) ToSandboxConfig(home string) sandbox.Config {
 		Mounts:      mounts,
 		Deny:        deny,
 		DenyWrite:   denyWrite,
+		DenyRename:  denyRenamePaths(c.FS, home),
 		NetworkNeed: netNeed,
 		NetworkMode: c.Network.Mode,
 		Domains:     c.Network.Domains,

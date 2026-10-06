@@ -932,3 +932,24 @@ func TestSeatbeltDenyWriteBlocksWrite(t *testing.T) {
 		t.Fatal("expected write to deny-write file to fail, but it succeeded")
 	}
 }
+
+func TestBuildProfilePinsPolicyAncestorsWithoutSealingDescendants(t *testing.T) {
+	root, err := canonicalSandboxPath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ancestor := filepath.Join(root, "policy")
+	profile, err := buildCheckedProfile(Config{Mounts: []Mount{{Source: root}}, DenyRename: []string{root, ancestor}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{root, ancestor} {
+		rule := fmt.Sprintf("(deny file-write* (literal %q))", path)
+		if !strings.Contains(profile, rule) {
+			t.Fatalf("ancestor can be moved: %s", profile)
+		}
+	}
+	if strings.Contains(profile, fmt.Sprintf("(deny file-write* (subpath %q))", ancestor)) {
+		t.Fatal("ordinary policy-directory files were sealed")
+	}
+}
