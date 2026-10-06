@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"syscall"
 
 	"github.com/muesli/cancelreader"
 	"golang.org/x/term"
@@ -20,6 +21,7 @@ const (
 type terminal interface {
 	enter() error
 	leave() error
+	suspend() error
 	size() (int, int)
 }
 
@@ -27,6 +29,7 @@ type ansiTerminal struct {
 	out     io.Writer
 	raw     func() (func() error, error)
 	getSize func() (int, int)
+	stop    func() error
 	restore func() error
 	active  bool
 }
@@ -34,7 +37,8 @@ type ansiTerminal struct {
 func fileTerminal(input, output *os.File) *ansiTerminal {
 	fd := int(input.Fd())
 	return &ansiTerminal{
-		out: output,
+		out:  output,
+		stop: func() error { return syscall.Kill(os.Getpid(), syscall.SIGSTOP) },
 		raw: func() (func() error, error) {
 			previous, err := term.MakeRaw(fd)
 			if err != nil {
@@ -59,23 +63,36 @@ func (t *ansiTerminal) enter() error {
 	if err != nil {
 		return fmt.Errorf("put dashboard terminal in raw mode: %w", err)
 	}
-	t.restore, t.active = restore, true
+	// Keep the original cooked state across attach and suspension handoffs.
+	if t.restore == nil {
+		t.restore = restore
+	}
+	t.active = true
 	_, err = io.WriteString(t.out, enterScreen)
 	return err
 }
 
 func (t *ansiTerminal) leave() error {
-	if !t.active {
+	if t.restore == nil {
 		return nil
 	}
-	// Restore termios even if stdout is broken; retain a failed restore so the
-	// final deferred cleanup can retry it after a failed handoff.
+	// Restore even while inactive: an attached child may have changed termios.
+	// Keep the snapshot for later handoffs and retries if stdout or restore fails.
 	restoreErr := t.restore()
 	if restoreErr == nil {
-		t.active, t.restore = false, nil
+		t.active = false
 	}
 	_, writeErr := io.WriteString(t.out, leaveScreen)
 	return errors.Join(writeErr, restoreErr)
+}
+
+func (t *ansiTerminal) suspend() error {
+	if err := t.leave(); err != nil {
+		return err
+	}
+	// SIGSTOP cannot be intercepted by our SIGTSTP handler. SIGCONT will wake
+	// the dashboard event loop after the shell brings the job back.
+	return t.stop()
 }
 
 func (t *ansiTerminal) size() (int, int) { return t.getSize() }

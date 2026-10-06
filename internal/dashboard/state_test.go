@@ -173,10 +173,10 @@ func TestDashboardNewSessionWithoutInventory(t *testing.T) {
 func TestDashboardDecoderFragmentedUTF8AndEscapes(t *testing.T) {
 	d := &keyDecoder{}
 	var got []string
-	for _, b := range []byte("\x1b[B界\x7f\x1b[23x\x03") {
+	for _, b := range []byte("\x1b[B界\x7f\x1b[23x\x03\x1a") {
 		got = append(got, d.feed([]byte{b})...)
 	}
-	if want := []string{"down", "界", "backspace", "ctrl-c"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"down", "界", "backspace", "ctrl-c", "ctrl-z"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("keys = %q, want %q", got, want)
 	}
 	if len(d.feed([]byte{0x1b})) != 0 || !reflect.DeepEqual(d.escape(), []string{"escape"}) {

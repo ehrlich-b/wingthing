@@ -46,6 +46,8 @@ func (d *keyDecoder) feed(input []byte) []string {
 			key = "ctrl-c"
 		case 21:
 			key = "ctrl-u"
+		case 26:
+			key = "ctrl-z"
 		case 8, 127:
 			key = "backspace"
 		case '\r', '\n':

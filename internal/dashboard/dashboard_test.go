@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -204,11 +205,206 @@ func TestDashboardAttachHandoffReturnsOnDetachOrError(t *testing.T) {
 				if err := receive(t, finished); err != nil {
 					t.Fatal(err)
 				}
-				if restored.Load() != 2 || (s.message == "attachment failed") != fail {
+				if restored.Load() != 3 || (s.message == "attachment failed") != fail {
 					t.Fatalf("restores=%d message=%s", restored.Load(), s.message)
 				}
 			})
 		}
+	}
+}
+
+func TestDashboardAttachRestoresOriginalStateAfterChildExit(t *testing.T) {
+	for _, outcome := range []string{"detach", "sigterm cancellation", "panic"} {
+		t.Run(outcome, func(t *testing.T) {
+			input, writer := pipeInput(t)
+			var mode atomic.Int32 // 0: original cooked state, 1: dashboard, 2: child.
+			var output bytes.Buffer
+			entered := make(chan int32, 2)
+			terminal := &ansiTerminal{out: &output, getSize: func() (int, int) { return 80, 24 }, raw: func() (func() error, error) {
+				previous := mode.Swap(1)
+				entered <- previous
+				return func() error { mode.Store(previous); return nil }, nil
+			}}
+			called := make(chan struct{})
+			exitChild := make(chan struct{})
+			command := func(ctx context.Context, _ []string, _ remotepkg.IO) error {
+				if mode.Load() != 0 {
+					return errors.New("handoff did not restore cooked mode")
+				}
+				mode.Store(2)
+				close(called)
+				if outcome == "sigterm cancellation" {
+					<-ctx.Done()
+					return ctx.Err()
+				}
+				<-exitChild
+				if outcome == "panic" {
+					panic("child panic")
+				}
+				return nil
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			type result struct {
+				err   error
+				panic any
+			}
+			finished := make(chan result, 1)
+			go func() {
+				var got result
+				defer func() { got.panic = recover(); finished <- got }()
+				inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) { return nil, errors.New("offline") })
+				got.err = run(ctx, fixture(), inv, nil, terminal, remotepkg.IO{In: input, Out: &output}, command, nil)
+			}()
+			if previous := receive(t, entered); previous != 0 {
+				t.Fatal("initial state was not cooked")
+			}
+			if _, err := writer.Write([]byte{'\r'}); err != nil {
+				t.Fatal(err)
+			}
+			receive(t, called)
+			if outcome == "sigterm cancellation" {
+				cancel()
+			} else {
+				close(exitChild)
+			}
+			if outcome == "detach" {
+				if previous := receive(t, entered); previous != 0 {
+					t.Fatalf("dashboard captured the child's terminal state: %d", previous)
+				}
+				if _, err := writer.Write([]byte{'q'}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := receive(t, finished)
+			if got.err != nil || (got.panic != nil) != (outcome == "panic") {
+				t.Fatalf("err=%v panic=%v", got.err, got.panic)
+			}
+			if mode.Load() != 0 || terminal.active || !strings.HasSuffix(output.String(), leaveScreen) {
+				t.Fatalf("child exit left mode=%d active=%v", mode.Load(), terminal.active)
+			}
+		})
+	}
+}
+
+func TestDashboardSuspendRestoresAndResumeReenters(t *testing.T) {
+	for _, trigger := range []string{"sigtstp", "ctrl-z", "ctrl-z prompt"} {
+		t.Run(trigger, func(t *testing.T) {
+			input, writer := pipeInput(t)
+			var mode atomic.Int32
+			var output bytes.Buffer
+			entered := make(chan int32, 3)
+			stopping := make(chan struct{})
+			stopped := make(chan error, 1)
+			terminal := &ansiTerminal{out: &output, getSize: func() (int, int) { return 80, 24 }, raw: func() (func() error, error) {
+				previous := mode.Swap(1)
+				entered <- previous
+				return func() error { mode.Store(previous); return nil }, nil
+			}}
+			terminal.stop = func() error {
+				if mode.Load() != 0 || terminal.active || !strings.HasSuffix(output.String(), leaveScreen) {
+					return errors.New("suspended before restoring terminal, cursor, and screen")
+				}
+				close(stopping)
+				// A suspended dashboard reader must not steal shell input.
+				var buffer [1]byte
+				_, err := io.ReadFull(input, buffer[:])
+				if err == nil && buffer[0] != 's' {
+					err = errors.New("dashboard consumed shell input")
+				}
+				stopped <- err
+				return err
+			}
+			signals := make(chan os.Signal, 3)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			finished := make(chan error, 1)
+			s := &state{machines: map[string]machine{}}
+			if trigger == "ctrl-z prompt" {
+				s.mode, s.input = rename, "keep"
+			}
+			go func() {
+				finished <- run(ctx, s, emptyInventory(), nil, terminal, remotepkg.IO{In: input, Out: &output}, nil, signals)
+			}()
+			receive(t, entered)
+			// A stray SIGCONT must not acquire another terminal state.
+			signals <- syscall.SIGCONT
+			if trigger == "sigtstp" {
+				signals <- syscall.SIGTSTP
+			} else if _, err := writer.Write([]byte{26}); err != nil {
+				t.Fatal(err)
+			}
+			receive(t, stopping)
+			if _, err := writer.Write([]byte{'s'}); err != nil {
+				t.Fatal(err)
+			}
+			if err := receive(t, stopped); err != nil {
+				t.Fatal(err)
+			}
+			signals <- syscall.SIGCONT
+			if previous := receive(t, entered); previous != 0 {
+				t.Fatalf("resume started in mode %d", previous)
+			}
+			if _, err := writer.Write([]byte{3}); err != nil {
+				t.Fatal(err)
+			}
+			if err := receive(t, finished); err != nil {
+				t.Fatal(err)
+			}
+			if mode.Load() != 0 || terminal.active || !strings.HasSuffix(output.String(), leaveScreen) {
+				t.Fatal("resume lost final terminal cleanup")
+			}
+			if trigger == "ctrl-z prompt" && s.input != "keep" {
+				t.Fatal("Ctrl-Z modified the prompt")
+			}
+		})
+	}
+}
+
+func TestDashboardSuspensionCancellationAndErrorsRestoreTerminal(t *testing.T) {
+	for _, outcome := range []string{"canceled", "stop failure", "resume failure"} {
+		t.Run(outcome, func(t *testing.T) {
+			input, _ := pipeInput(t)
+			failure := errors.New("job control failure")
+			var restored atomic.Int32
+			terminal := fakeTerminal(io.Discard, &restored)
+			var enters int
+			terminal.raw = func() (func() error, error) {
+				enters++
+				if outcome == "resume failure" && enters == 2 {
+					return nil, failure
+				}
+				return func() error { restored.Add(1); return nil }, nil
+			}
+			stopped := make(chan struct{})
+			terminal.stop = func() error {
+				close(stopped)
+				if outcome == "stop failure" {
+					return failure
+				}
+				return nil
+			}
+			signals := make(chan os.Signal, 2)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			finished := make(chan error, 1)
+			go func() {
+				finished <- run(ctx, &state{machines: map[string]machine{}}, emptyInventory(), nil, terminal, remotepkg.IO{In: input, Out: io.Discard}, nil, signals)
+			}()
+			signals <- syscall.SIGTSTP
+			receive(t, stopped)
+			if outcome == "canceled" {
+				cancel()
+			} else if outcome == "resume failure" {
+				signals <- syscall.SIGCONT
+			}
+			if err := receive(t, finished); errors.Is(err, failure) != (outcome != "canceled") {
+				t.Fatal(err)
+			}
+			if terminal.active || restored.Load() < 1 || (outcome == "canceled" && enters != 1) {
+				t.Fatal("suspension exit lost restoration or re-entered a canceled terminal")
+			}
+		})
 	}
 }
 
@@ -280,5 +476,46 @@ func TestDashboardStopRunsInBackground(t *testing.T) {
 	receive(t, commandDone)
 	if restored.Load() != 1 {
 		t.Fatal("pending remote action prevented terminal cleanup")
+	}
+}
+
+func TestDashboardQuitWaitsForBackgroundProcessCleanup(t *testing.T) {
+	input, writer := pipeInput(t)
+	var restored atomic.Int32
+	called := make(chan struct{})
+	canceled := make(chan struct{})
+	reaped := make(chan struct{})
+	command := func(ctx context.Context, _ []string, _ remotepkg.IO) error {
+		close(called)
+		<-ctx.Done()
+		close(canceled)
+		<-reaped
+		return ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer close(reaped)
+	finished := make(chan error, 1)
+	inv := newInventory(func(context.Context, string) ([]eggclient.LocalSession, error) { return nil, errors.New("offline") })
+	go func() {
+		finished <- run(ctx, fixture(), inv, nil, fakeTerminal(io.Discard, &restored), remotepkg.IO{In: input, Out: io.Discard}, command, nil)
+	}()
+	if _, err := writer.Write([]byte("xy")); err != nil {
+		t.Fatal(err)
+	}
+	receive(t, called)
+	if _, err := writer.Write([]byte("q")); err != nil {
+		t.Fatal(err)
+	}
+	receive(t, canceled)
+	select {
+	case <-finished:
+		t.Fatal("dashboard exited before its background child was reaped")
+	case <-time.After(20 * time.Millisecond):
+	}
+	// Unblock the fake wait without closing a channel twice in deferred cleanup.
+	reaped <- struct{}{}
+	if err := receive(t, finished); err != nil || restored.Load() != 1 {
+		t.Fatalf("quit cleanup failed: %v, restores=%d", err, restored.Load())
 	}
 }

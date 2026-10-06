@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -48,15 +49,16 @@ func Run(ctx context.Context, version string, streams remotepkg.IO) error {
 		}
 		return eggclient.QueryRemoteSessions(version, ctx, name, remotes[name], streams)
 	})
-	resize := make(chan os.Signal, 1)
-	signal.Notify(resize, syscall.SIGWINCH)
-	defer signal.Stop(resize)
-	return run(ctx, s, inv, remotes, fileTerminal(input, output), streams, runCommand, resize)
+	signals := make(chan os.Signal, 8)
+	signal.Notify(signals, syscall.SIGWINCH, syscall.SIGTSTP, syscall.SIGCONT)
+	defer signal.Stop(signals)
+	return run(ctx, s, inv, remotes, fileTerminal(input, output), streams, runCommand, signals)
 }
 
-func run(ctx context.Context, s *state, inv *inventory, remotes map[string]config.Remote, terminal terminal, streams remotepkg.IO, command commandRunner, resize <-chan os.Signal) (err error) {
+func run(ctx context.Context, s *state, inv *inventory, remotes map[string]config.Remote, terminal terminal, streams remotepkg.IO, command commandRunner, signals <-chan os.Signal) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	var actions sync.WaitGroup
+	defer func() { cancel(); actions.Wait() }()
 	defer func() { err = errors.Join(err, terminal.leave()) }()
 	if err := terminal.enter(); err != nil {
 		return err
@@ -78,19 +80,53 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 	escapeTimer.Stop()
 	defer escapeTimer.Stop()
 	decoder := &keyDecoder{}
+	inputEvents := input.events
+	suspended := false
+	suspend := func() error {
+		if err := input.stop(); err != nil {
+			return err
+		}
+		input, inputEvents = nil, nil
+		decoder.pending = nil
+		escapeTimer.Stop()
+		suspended = true
+		return terminal.suspend()
+	}
 	actionDone := make(chan error, 1)
 	inv.refresh(ctx, s)
 	for {
-		width, height := terminal.size()
-		if _, err := io.WriteString(streams.Out, render(s, width, height, time.Now())); err != nil {
-			return err
+		if !suspended {
+			width, height := terminal.size()
+			if _, err := io.WriteString(streams.Out, render(s, width, height, time.Now())); err != nil {
+				return err
+			}
 		}
 		var keys []string
 		var inputErr error
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-resize:
+		case sig := <-signals:
+			switch sig {
+			case syscall.SIGTSTP:
+				if !suspended {
+					if err := suspend(); err != nil {
+						return err
+					}
+				}
+			case syscall.SIGCONT:
+				if suspended && ctx.Err() == nil {
+					if err := terminal.enter(); err != nil {
+						return err
+					}
+					input, err = readInput(ctx, streams.In)
+					if err != nil {
+						return err
+					}
+					inputEvents, suspended = input.events, false
+					inv.refresh(ctx, s)
+				}
+			}
 			continue
 		case result := <-inv.results:
 			inv.apply(s, result)
@@ -108,13 +144,20 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			continue
 		case <-escapeTimer.C:
 			keys = decoder.escape()
-		case event := <-input.events:
+		case event := <-inputEvents:
 			keys, inputErr = decoder.feed(event.data), event.err
 			if len(decoder.pending) == 1 && decoder.pending[0] == 0x1b {
 				escapeTimer.Reset(40 * time.Millisecond)
 			}
 		}
 		for _, key := range keys {
+			if key == "ctrl-z" {
+				if err := suspend(); err != nil {
+					return err
+				}
+				inputErr = nil
+				break
+			}
 			act, quit := s.handle(key)
 			if quit {
 				return nil
@@ -129,7 +172,9 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			}
 			if !act.attach && act.kind != newCWD {
 				s.busy, s.message = true, "Running…"
+				actions.Add(1)
 				go func() {
+					defer actions.Done()
 					actionCtx, stop := context.WithTimeout(ctx, eggclient.RemoteSessionTimeout)
 					defer stop()
 					var diagnostic bytes.Buffer
@@ -151,6 +196,11 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 				return err
 			}
 			actionErr = command(ctx, args, streams)
+			// The child may exit or be killed after changing termios. Restore
+			// our saved state before re-entering raw mode or returning on SIGTERM.
+			if err := terminal.leave(); err != nil {
+				return err
+			}
 			if actionErr != nil {
 				s.message = actionErr.Error()
 			}
@@ -164,6 +214,7 @@ func run(ctx context.Context, s *state, inv *inventory, remotes map[string]confi
 			if err != nil {
 				return err
 			}
+			inputEvents = input.events
 			decoder.pending = nil
 			escapeTimer.Stop()
 			inv.refresh(ctx, s)

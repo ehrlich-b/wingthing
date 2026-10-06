@@ -2,10 +2,12 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
@@ -20,7 +22,15 @@ func backgroundCommand(ctx context.Context, command commandRunner, args []string
 			err = fmt.Errorf("session action panic: %v", recovered)
 		}
 	}()
-	return command(ctx, args, streams)
+	err = command(ctx, args, streams)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		message := "timed out"
+		if len(args) > 0 && args[0] == "--remote" {
+			message += "; the remote may still complete"
+		}
+		return fmt.Errorf("%s: %w", message, ctx.Err())
+	}
+	return err
 }
 
 // Use a child for the existing attach/spawn paths. Their input goroutines live
@@ -30,10 +40,72 @@ func runCommand(ctx context.Context, args []string, streams remotepkg.IO) error 
 	if err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, executable, args...)
+	command := cliCommand(ctx, executable, args, streams)
+	if streams.In == nil {
+		return runActionProcess(ctx, command.Start, command.Wait, func(sig syscall.Signal) error {
+			return syscall.Kill(-command.Process.Pid, sig)
+		})
+	}
+	return command.Run()
+}
+
+func cliCommand(ctx context.Context, executable string, args []string, streams remotepkg.IO) *exec.Cmd {
+	command := exec.Command(executable, args...)
+	if streams.In == nil {
+		// Background actions isolate the CLI, SSH, and transport descendants.
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	} else {
+		// Attach must stay in the foreground process group to read the TTY.
+		command = exec.CommandContext(ctx, executable, args...)
+	}
 	command.WaitDelay = 100 * time.Millisecond
 	command.Stdin, command.Stdout, command.Stderr = streams.In, streams.Out, streams.ErrOut
-	return command.Run()
+	return command
+}
+
+// Give the CLI a chance to propagate cancellation and reap SSH before killing
+// any remaining group members. Always join Wait, including on dashboard exit.
+func runActionProcess(ctx context.Context, start, wait func() error, signalGroup func(syscall.Signal) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- wait() }()
+	exited := false
+	select {
+	case err := <-done:
+		if ctx.Err() == nil {
+			return err
+		}
+		exited = true
+	case <-ctx.Done():
+	}
+	signal := func(sig syscall.Signal) error {
+		err := signalGroup(sig)
+		if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
+			return nil
+		}
+		return err
+	}
+	termErr := signal(syscall.SIGTERM)
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	if !exited {
+		select {
+		case <-done:
+			exited = true
+		case <-timer.C:
+		}
+	}
+	// The CLI may exit before a transport descendant does.
+	killErr := signal(syscall.SIGKILL)
+	if !exited {
+		<-done
+	}
+	return errors.Join(ctx.Err(), termErr, killErr)
 }
 
 func actionArgs(act action, remotes map[string]config.Remote) ([]string, error) {
