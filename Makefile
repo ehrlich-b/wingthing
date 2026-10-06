@@ -95,6 +95,7 @@ ifneq ($(filter integration,$(GATE)),)
 	python3 test/preview/channel_isolation.py ./wt ./wt-preview ./dist-preview
 	python3 test/preview/provider_onboarding.py ./wt-preview
 	python3 test/preview/remote_reader_drain_regression.py
+	@if [ "$$(uname -s)" = Linux ]; then python3 test/preview/remote_isolation.py ./wt ./wt-preview; fi
 endif
 ifneq ($(filter compat,$(GATE)),)
 	scripts/test-backward-compat.sh
@@ -152,9 +153,6 @@ endif
 		docker run --rm --privileged "$$testimage" sh -lc \
 			'/root/run-tests -test.v -test.timeout 120s && /root/sandbox-tests -test.v -test.timeout 120s && /root/wt-tests -test.v -test.timeout 120s'; \
 	done
-	$(stable-build)
-	$(preview-build)
-	python3 test/preview/remote_isolation.py ./wt ./wt-preview
 
 e2e-web: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=$(WEB_TEST_ARCH) $(GO) build -p 2 -buildvcs=false -ldflags "-X main.version=test" -o test/web/wt ./cmd/wt

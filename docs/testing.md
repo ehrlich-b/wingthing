@@ -11,10 +11,10 @@ disagree about which sessions exist.
 | --- | --- |
 | `make check` | All untagged Go tests, including Android wire contract and every former focused unit selection; web syntax/Node unit tests, Vite and host binary build. Go and Node/npm; no provider or Docker requirement. |
 | `make gate` | Default `integration compat static` profiles below. Built stable/preview binaries use temporary fixture state. |
-| `make gate GATE=integration` | Tagged `e2e` protocol, Codex-native and lifecycle-order fixtures; packaged preview channel isolation, fake-provider onboarding and reader-drain proof. No vendor/model login. |
+| `make gate GATE=integration` | Tagged `e2e` protocol, Codex-native and lifecycle-order fixtures; packaged preview channel isolation, fake-provider onboarding and reader-drain proof; on Linux, fake-SSH remote isolation with sandboxed host eggs. No vendor/model login. |
 | `make gate GATE=compat` | Real configured-baseline and candidate binaries: migrations, CLI/flag surface, task-state round trip, both gateway/wing upgrade orders, PTY startup and rollback reopen. Defaults to `v0.144.1` and `v0.147.0`; `WT_COMPAT_BASELINE_REF` selects one override. Tags must exist locally; pins are not automatically the previous release. |
 | `make gate GATE=static` | Vet, race on touched Go packages, pinned `govulncheck`, npm advisory audit and release CLI contract. Network/advisory databases required. |
-| `make e2e-linux` | Debian and Ubuntu privileged Docker sandbox/CLI/namespace batteries plus fake-SSH remote isolation. `LINUX_DISTROS=debian` or `ubuntu` selects one; binaries must match the Docker daemon's native architecture. |
+| `make e2e-linux` | Debian and Ubuntu privileged Docker sandbox/CLI/namespace batteries. `LINUX_DISTROS=debian` or `ubuntu` selects one; binaries must match the Docker daemon's native architecture. |
 | `make e2e-web` | Seeded org-mode, legacy enrollment and hosted direct-free/relay-entitlement Playwright canaries in Docker; needs Node/npm, Docker and browser image. |
 | `make e2e-mac` | Native tagged sandbox/CLI tests (including jail and real-egg input lease), fake-provider context, nested-proxy and host-mailbox parent/child proofs. macOS required; no real model login. |
 | `make gate GATE=claude` | Installed real Claude CLI against a loopback fake API; missing vendor binary fails. CI pins Claude Code 2.1.260. |
