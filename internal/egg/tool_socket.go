@@ -1,6 +1,9 @@
 package egg
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,15 +18,41 @@ import (
 )
 
 const (
+	ToolCapabilityEnv                  = "WT_TOOL_CAPABILITY"
 	maxToolRequestBytes                = 256 << 10
 	maxConcurrentToolSocketConnections = 64
 )
 
 // ToolRequest is sent by `wt tool-call` over the Unix socket.
 type ToolRequest struct {
-	Action string   `json:"action,omitempty"` // "list" for tool discovery
-	Tool   string   `json:"tool,omitempty"`
-	Args   []string `json:"args,omitempty"`
+	Capability string   `json:"capability,omitempty"`
+	Action     string   `json:"action,omitempty"` // "list" for tool discovery
+	Tool       string   `json:"tool,omitempty"`
+	Args       []string `json:"args,omitempty"`
+}
+
+// MarshalJSON keeps tool-call's argv contract unchanged. Generated shims use
+// the session-only environment, including for discovery; host callers can
+// supply a capability explicitly. Never accept ambient environment on decode.
+func (req ToolRequest) MarshalJSON() ([]byte, error) {
+	if req.Capability == "" {
+		req.Capability = os.Getenv(ToolCapabilityEnv)
+	}
+	type wireRequest ToolRequest
+	return json.Marshal(wireRequest(req))
+}
+
+// Capabilities remain in controller memory, never in the readable state tree.
+// A restarted wing cannot recover a surviving egg's secret and fails closed.
+var toolSocketCapabilities sync.Map // canonical socket path -> *ToolListener
+
+// ToolSocketCapability supplies only the same-process egg spawn plumbing.
+func ToolSocketCapability(sockPath string) (string, error) {
+	listener, ok := toolSocketCapabilities.Load(config.CanonicalProviderPath(sockPath))
+	if !ok {
+		return "", fmt.Errorf("tool listener is not active for this egg")
+	}
+	return listener.(*ToolListener).capability, nil
 }
 
 // ToolResponse is returned to the client.
@@ -50,6 +79,7 @@ type ToolListResponse struct {
 // shared ToolRunner. Egg sessions reach tools this way; the remote MCP server wraps the
 // same runner over HTTP.
 type ToolListener struct {
+	capability  string
 	runner      *ToolRunner
 	listener    net.Listener
 	connections chan struct{}
@@ -62,6 +92,11 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener
 	if err := ValidateSocketPath(sockPath); err != nil {
 		return nil, err
 	}
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, fmt.Errorf("generate tool capability: %w", err)
+	}
+	capability := hex.EncodeToString(secret)
 	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("remove stale tool socket: %w", err)
 	}
@@ -75,10 +110,12 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener
 		return nil, fmt.Errorf("secure tool socket: %w", err)
 	}
 	tl := &ToolListener{
+		capability:  capability,
 		runner:      NewToolRunner(tools),
 		listener:    ln,
 		connections: make(chan struct{}, maxConcurrentToolSocketConnections),
 	}
+	toolSocketCapabilities.Store(config.CanonicalProviderPath(sockPath), tl)
 	tl.wg.Add(1)
 	go tl.acceptLoop()
 	return tl, nil
@@ -86,6 +123,7 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener
 
 // Close stops the listener and waits for in-flight requests to finish.
 func (tl *ToolListener) Close() error {
+	toolSocketCapabilities.CompareAndDelete(config.CanonicalProviderPath(tl.listener.Addr().String()), tl)
 	err := tl.listener.Close()
 	tl.wg.Wait()
 	return err
@@ -144,6 +182,12 @@ func (tl *ToolListener) handleConn(conn net.Conn) {
 	if err := json.Unmarshal(data, &req); err != nil {
 		if writeErr := writeJSON(conn, ToolResponse{Error: "invalid JSON: " + err.Error()}); writeErr != nil {
 			log.Printf("tool socket write JSON error: %v", writeErr)
+		}
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(req.Capability), []byte(tl.capability)) != 1 {
+		if err := writeJSON(conn, ToolResponse{Error: "tool authentication failed: missing or invalid egg capability; start a new egg session (legacy eggs and surviving eggs after a wing restart cannot authenticate)"}); err != nil {
+			log.Printf("tool socket write authentication error: %v", err)
 		}
 		return
 	}

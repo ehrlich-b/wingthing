@@ -585,6 +585,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	for k, v := range rc.Env {
 		envMap[k] = v
 	}
+	if rc.ToolSocketPath != "" {
+		// The parent injects this directly into this wrapper's environment,
+		// never into its argv or the one-shot environment file in state.
+		envMap[ToolCapabilityEnv] = os.Getenv(ToolCapabilityEnv)
+	}
 	// Merge required env vars from agent profile
 	if !rc.SkipHostAgentEnv {
 		for _, k := range profile.EnvVars {

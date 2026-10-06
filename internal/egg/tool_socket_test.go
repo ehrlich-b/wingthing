@@ -56,6 +56,123 @@ func TestToolListener_CallAndResponse(t *testing.T) {
 	}
 }
 
+func TestToolListenerRequiresCapabilityForCallsAndDiscovery(t *testing.T) {
+	t.Setenv(ToolCapabilityEnv, "")
+	sockPath := shortSockPath(t)
+	marker := filepath.Join(filepath.Dir(sockPath), "ran")
+	listener, err := NewToolListener(sockPath, []*config.ToolConfig{{Name: "mark", Run: "touch " + marker}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeToolListenerForTest(t, listener)
+	other, err := NewToolListener(shortSockPath(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeToolListenerForTest(t, other)
+	for _, action := range []string{"", "list"} {
+		for _, capability := range []string{"", "wrong", other.capability} {
+			// Use the old wire shape when capability is absent: the new
+			// marshaler must not hide a missing-capability compatibility bug.
+			data, err := json.Marshal(map[string]any{"tool": "mark", "action": action, "capability": capability})
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn, err := net.Dial("unix", sockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.Write(data); err != nil {
+				t.Fatal(err)
+			}
+			if err := conn.(*net.UnixConn).CloseWrite(); err != nil {
+				t.Fatal(err)
+			}
+			var response ToolResponse
+			if err := json.NewDecoder(conn).Decode(&response); err != nil {
+				t.Fatal(err)
+			}
+			_ = conn.Close()
+			if !strings.Contains(response.Error, "authentication failed") {
+				t.Fatalf("unauthenticated action %q: %#v", action, response)
+			}
+		}
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("unauthenticated request executed a tool")
+	}
+	response := toolCall(t, sockPath, ToolRequest{Tool: "mark", Capability: listener.capability})
+	if response.Error != "" || response.ExitCode != 0 {
+		t.Fatalf("authenticated request failed: %#v", response)
+	}
+}
+
+func TestToolCapabilityFailsClosedAfterListenerRestart(t *testing.T) {
+	path := shortSockPath(t)
+	first, err := NewToolListener(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := first.capability
+	closeToolListenerForTest(t, first)
+	second, err := NewToolListener(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeToolListenerForTest(t, second)
+	if second.capability == capability || len(capability) != 64 {
+		t.Fatal("reclaimed egg reused a capability")
+	}
+	response := toolCall(t, path, ToolRequest{Action: "list", Capability: capability})
+	if !strings.Contains(response.Error, "wing restart") {
+		t.Fatalf("surviving egg did not fail closed clearly: %#v", response)
+	}
+}
+
+func TestToolCapabilityNeverCreatesCredentialFile(t *testing.T) {
+	path := shortSockPath(t)
+	listener, err := NewToolListener(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
+		t.Fatal("tool capability was written to disk")
+	}
+	closeToolListenerForTest(t, listener)
+	if _, err := ToolSocketCapability(path); err == nil {
+		t.Fatal("closed listener retained its capability")
+	}
+}
+
+func TestToolRequestUsesShimEnvironmentWithoutChangingArgs(t *testing.T) {
+	t.Setenv(ToolCapabilityEnv, "session-secret")
+	args := []string{"--help", "spaces and quotes '\"", "--expected-channel", "stable"}
+	data, err := json.Marshal(ToolRequest{Tool: "tool", Args: args})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request ToolRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Capability != "session-secret" || strings.Join(request.Args, "\x00") != strings.Join(args, "\x00") {
+		t.Fatalf("shim request = %#v", request)
+	}
+	if err := json.Unmarshal([]byte(`{"action":"list"}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	// Decode into a fresh request: ambient environment must never authenticate
+	// an incoming old request inside the privileged listener.
+	var incoming ToolRequest
+	if err := json.Unmarshal([]byte(`{"action":"list"}`), &incoming); err != nil || incoming.Capability != "" {
+		t.Fatal("ambient capability authenticated an incoming request", err)
+	}
+}
+
 func TestToolListener_UnknownTool(t *testing.T) {
 	sockPath := shortSockPath(t)
 	tl, err := NewToolListener(sockPath, nil)
@@ -161,7 +278,7 @@ func TestToolListener_List(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	data, err := json.Marshal(ToolRequest{Action: "list"})
+	data, err := json.Marshal(ToolRequest{Action: "list", Capability: tl.capability})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,6 +502,13 @@ func TestToolListener_ReloadWhileRunning(t *testing.T) {
 // toolCall is a test helper that sends a request and reads the response.
 func toolCall(t *testing.T, sockPath string, req ToolRequest) ToolResponse {
 	t.Helper()
+	if req.Capability == "" {
+		var err error
+		req.Capability, err = ToolSocketCapability(sockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
 		t.Fatalf("dial: %v", err)

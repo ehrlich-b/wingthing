@@ -611,6 +611,24 @@ type SpawnEggOpts struct {
 	OmitBrowserBridge bool
 }
 
+func prepareToolSessionEnvironment(env map[string]string, socketPath string) error {
+	capability, err := egg.ToolSocketCapability(socketPath)
+	if err != nil {
+		return fmt.Errorf("prepare authenticated tools: %w", err)
+	}
+	env[egg.ToolCapabilityEnv] = capability
+	return nil
+}
+
+func privateToolEnvironment(env map[string]string) []string {
+	capability := env[egg.ToolCapabilityEnv]
+	delete(env, egg.ToolCapabilityEnv)
+	if capability == "" {
+		return nil
+	}
+	return []string{egg.ToolCapabilityEnv + "=" + capability}
+}
+
 const (
 	ProtectedWriteTargetArg = "protected-write-target"
 	OmitBrowserBridgeArg    = "omit-browser-bridge"
@@ -1156,6 +1174,9 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		args = append(args, "--provider-session-id", providerSessionID)
 	}
 	if o.ToolSocketPath != "" && len(o.ToolNames) > 0 {
+		if err := prepareToolSessionEnvironment(sessionEnv, o.ToolSocketPath); err != nil {
+			return nil, err
+		}
 		args = append(args, "--tool-socket", o.ToolSocketPath)
 		for _, tn := range o.ToolNames {
 			args = append(args, "--tool-name", tn)
@@ -1175,6 +1196,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err != nil {
 		return nil, fmt.Errorf("open egg log: %w", err)
 	}
+	toolEnv := privateToolEnvironment(sessionEnv)
 	args, envPath, err := prepareEggEnvironmentTransport(dir, args, sessionEnv)
 	if err != nil {
 		cmdutil.CloseWithLog("egg log", logFile)
@@ -1201,7 +1223,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				childEnv = append(childEnv, e)
 			}
 		}
-		child.Env = childEnv
+		child.Env = append(childEnv, toolEnv...)
 	}
 	child.Stdout = logFile
 	child.Stderr = logFile
