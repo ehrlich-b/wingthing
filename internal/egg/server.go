@@ -835,6 +835,13 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			}
 		}
 
+		if helper, err := agentKeyHelperMount(rc.Agent, profileHome); err != nil {
+			return err
+		} else if helper.Source != "" {
+			mounts = append(mounts, helper)
+			denyWrite = append(denyWrite, helper.Source)
+		}
+
 		// The Linux jail re-execs wt even without tools. Mount its binary
 		// directory explicitly, including when a development binary is in tmp.
 		if runtime.GOOS == "linux" || (rc.ToolSocketPath != "" && len(rc.ToolNames) > 0) {
@@ -2299,4 +2306,24 @@ func installRoot(binDir, home string) string {
 	}
 	parts := strings.SplitN(rel, string(filepath.Separator), 2)
 	return filepath.Join(home, parts[0])
+}
+
+// The shared-host Claude helper belongs to the effective session owner. Never
+// follow a substituted link to another owner's key or grant writes to the key.
+func agentKeyHelperMount(agentName, home string) (sandbox.Mount, error) {
+	if agentName != "claude" || home == "" {
+		return sandbox.Mount{}, nil
+	}
+	path := filepath.Join(home, ".anthropic_key")
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return sandbox.Mount{}, nil
+	}
+	if err != nil {
+		return sandbox.Mount{}, fmt.Errorf("inspect agent key helper: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return sandbox.Mount{}, fmt.Errorf("agent key helper must be a regular file: %s", path)
+	}
+	return sandbox.Mount{Source: path, Target: path, ReadOnly: true}, nil
 }

@@ -345,3 +345,28 @@ func TestLinuxControlAllowlistPreservesReadOnlyDotfileAliases(t *testing.T) {
 	}
 	t.Fatal("ordinary HOME dotfile alias disappeared")
 }
+
+func TestAgentKeyHelperMountUsesOwnerReadOnlyFile(t *testing.T) {
+	owner, other := t.TempDir(), t.TempDir()
+	for _, home := range []string{owner, other} {
+		if err := os.WriteFile(filepath.Join(home, ".anthropic_key"), []byte("fixture-key"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mount, err := agentKeyHelperMount("claude", owner)
+	if err != nil || mount.Source != filepath.Join(owner, ".anthropic_key") || mount.Target != mount.Source || !mount.ReadOnly {
+		t.Fatalf("owner helper mount: %+v %v", mount, err)
+	}
+	if mount, err := agentKeyHelperMount("codex", owner); err != nil || mount.Source != "" {
+		t.Fatalf("unrelated agent received key: %+v %v", mount, err)
+	}
+	if err := os.Remove(filepath.Join(owner, ".anthropic_key")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(other, ".anthropic_key"), filepath.Join(owner, ".anthropic_key")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentKeyHelperMount("claude", owner); err == nil {
+		t.Fatal("another owner's helper alias accepted")
+	}
+}
