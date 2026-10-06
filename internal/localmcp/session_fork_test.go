@@ -472,7 +472,11 @@ func TestBrowserForkInitializesCurrentToolsAndCleansUpFailedSpawn(t *testing.T) 
 		if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 			return err
 		}
-		if err := json.NewEncoder(conn).Encode(egg.ToolRequest{Tool: "current-tool"}); err != nil {
+		capability, err := egg.ToolSocketCapability(socket)
+		if err != nil {
+			return err
+		}
+		if err := json.NewEncoder(conn).Encode(egg.ToolRequest{Tool: "current-tool", Capability: capability}); err != nil {
 			return err
 		}
 		if err := conn.(*net.UnixConn).CloseWrite(); err != nil {

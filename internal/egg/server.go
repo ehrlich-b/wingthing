@@ -50,6 +50,7 @@ type Server struct {
 
 	dir            string // ~/.wingthing/eggs/<session-id>/
 	token          string
+	toolCapability string // private wrapper memory; recovered only via authenticated RPC
 	session        *Session
 	mu             sync.RWMutex
 	grpcServer     *grpc.Server
@@ -592,6 +593,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		// The parent injects this directly into this wrapper's environment,
 		// never into its argv or the one-shot environment file in state.
 		envMap[ToolCapabilityEnv] = os.Getenv(ToolCapabilityEnv)
+		s.toolCapability = envMap[ToolCapabilityEnv]
 	}
 	// Merge required env vars from agent profile
 	if !rc.SkipHostAgentEnv {
@@ -1792,6 +1794,10 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 	st := sess.replay.Stats()
 	lease := s.inputLease.info(nil)
 	idleSec := int64(sess.idleDuration().Seconds())
+	capability := ""
+	if req.ReclaimTools {
+		capability = s.toolCapability
+	}
 	return &pb.StatusResponse{
 		SessionId:      sess.ID,
 		Agent:          sess.Agent,
@@ -1803,7 +1809,8 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 		RenderedConfig: sess.RenderedConfig,
 		IdleSeconds:    idleSec,
 		WriterId:       lease.WriterId, WriterOwner: lease.WriterOwner, InputEpoch: lease.InputEpoch,
-		ProcessPid: int32(sess.PID),
+		ProcessPid:     int32(sess.PID),
+		ToolCapability: capability,
 	}, nil
 }
 

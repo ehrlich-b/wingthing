@@ -1654,14 +1654,19 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 
 	// Recreate the tool socket listener. It was owned by the previous daemon
 	// process and died with it, but the surviving egg still points at this path
-	// via --tool-socket. Re-listen on the same socket so privileged tools keep
-	// working after a daemon restart. Only sessions that were started with tools
+	// via --tool-socket. Recover its capability through the host-only egg RPC;
+	// generating a new secret would strand the surviving agent. Only sessions with tools
 	// have a .tools dir; skip the rest.
 	if len(tools) > 0 {
 		toolsDir := filepath.Join(eggDir, ".tools")
 		if _, statErr := os.Stat(toolsDir); statErr == nil {
 			toolSocketPath := filepath.Join(toolsDir, "tool.sock")
-			if tl, tlErr := egg.NewToolListener(toolSocketPath, tools); tlErr != nil {
+			toolCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			capability, capabilityErr := ec.ReclaimToolCapability(toolCtx)
+			cancel()
+			if capabilityErr != nil {
+				log.Printf("pty session %s: reclaim tool capability unavailable: %v", sessionID, capabilityErr)
+			} else if tl, tlErr := egg.NewToolListenerWithCapability(toolSocketPath, tools, capability); tlErr != nil {
 				log.Printf("pty session %s: reclaim tool listener failed: %v", sessionID, tlErr)
 			} else {
 				log.Printf("pty session %s: reclaim tool listener restarted (%d tools)", sessionID, len(tools))

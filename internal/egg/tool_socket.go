@@ -42,8 +42,7 @@ func (req ToolRequest) MarshalJSON() ([]byte, error) {
 	return json.Marshal(wireRequest(req))
 }
 
-// Capabilities remain in controller memory, never in the readable state tree.
-// A restarted wing cannot recover a surviving egg's secret and fails closed.
+// Capabilities remain in controller and egg wrapper memory, never on disk.
 var toolSocketCapabilities sync.Map // canonical socket path -> *ToolListener
 
 // ToolSocketCapability supplies only the same-process egg spawn plumbing.
@@ -97,6 +96,19 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig) (*ToolListener
 		return nil, fmt.Errorf("generate tool capability: %w", err)
 	}
 	capability := hex.EncodeToString(secret)
+	return NewToolListenerWithCapability(sockPath, tools, capability)
+}
+
+// NewToolListenerWithCapability restores authority recovered through an egg's
+// authenticated host endpoint. Missing/legacy capabilities must fail closed.
+func NewToolListenerWithCapability(sockPath string, tools []*config.ToolConfig, capability string) (*ToolListener, error) {
+	if err := ValidateSocketPath(sockPath); err != nil {
+		return nil, err
+	}
+	secret, err := hex.DecodeString(capability)
+	if err != nil || len(secret) != 32 {
+		return nil, fmt.Errorf("invalid egg tool capability")
+	}
 	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("remove stale tool socket: %w", err)
 	}
@@ -186,7 +198,7 @@ func (tl *ToolListener) handleConn(conn net.Conn) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(req.Capability), []byte(tl.capability)) != 1 {
-		if err := writeJSON(conn, ToolResponse{Error: "tool authentication failed: missing or invalid egg capability; start a new egg session (legacy eggs and surviving eggs after a wing restart cannot authenticate)"}); err != nil {
+		if err := writeJSON(conn, ToolResponse{Error: "tool authentication failed: missing or invalid egg capability; start a new egg session if this is a legacy egg"}); err != nil {
 			log.Printf("tool socket write authentication error: %v", err)
 		}
 		return

@@ -56,6 +56,19 @@ func (c *Client) Kill(ctx context.Context, sessionID string) error {
 	return err
 }
 
+// ReclaimToolCapability recovers a surviving egg's original tool authority.
+// The egg token is host-only; neither ordinary status nor the sandbox exposes it.
+func (c *Client) ReclaimToolCapability(ctx context.Context) (string, error) {
+	response, err := c.client.Status(c.authCtx(ctx), &pb.StatusRequest{ReclaimTools: true})
+	if err != nil {
+		return "", err
+	}
+	if response.ToolCapability == "" {
+		return "", fmt.Errorf("egg has no recoverable tool capability; start a new egg session")
+	}
+	return response.ToolCapability, nil
+}
+
 // Resize changes terminal dimensions.
 func (c *Client) Resize(ctx context.Context, sessionID string, rows, cols uint32) error {
 	c.leaseMu.Lock()

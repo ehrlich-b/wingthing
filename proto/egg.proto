@@ -9,7 +9,10 @@ service Egg {
     rpc Status(StatusRequest) returns (StatusResponse);
 }
 
-message StatusRequest {}
+message StatusRequest {
+    // Host controller recovery only; ordinary status never returns secrets.
+    bool reclaim_tools = 1;
+}
 message StatusResponse {
     string session_id = 1;
     string agent = 2;
@@ -24,6 +27,7 @@ message StatusResponse {
     string writer_owner = 11;
     uint64 input_epoch = 12;
     int32 process_pid = 13;
+    string tool_capability = 14;
 }
 
 message KillRequest { string session_id = 1; }

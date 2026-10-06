@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -12,7 +13,68 @@ import (
 	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+func TestToolCapabilityReclaimRequiresEggAuthenticationAndPreservesAuthority(t *testing.T) {
+	path := shortSockPath(t)
+	tools := []*config.ToolConfig{{Name: "echo", Run: "printf restored"}}
+	first, err := NewToolListener(path, tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := first.capability
+	closeToolListenerForTest(t, first)
+	dir := shortEndpointTempDir(t)
+	server := &Server{dir: dir, token: "host-only-token", toolCapability: secret,
+		session: &Session{ID: "fixture", StartedAt: time.Now(), replay: newReplayBuffer("claude")}}
+	endpoint, err := server.prepareEndpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.closeEndpoint(endpoint)
+	rpc := grpc.NewServer(grpc.UnaryInterceptor(server.authUnary))
+	defer rpc.Stop()
+	pb.RegisterEggServer(rpc, server)
+	go func() { _ = rpc.Serve(endpoint) }()
+	client, err := Dial(filepath.Join(dir, "egg.sock"), filepath.Join(dir, "egg.token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client.token = "wrong-token"
+	if _, err := client.ReclaimToolCapability(ctx); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("unauthenticated recovery admitted: %v", err)
+	}
+	client.token = server.token
+	ordinary, err := client.Status(ctx)
+	if err != nil || ordinary.ToolCapability != "" {
+		t.Fatalf("ordinary status disclosed tool authority: %v", err)
+	}
+	recovered, err := client.ReclaimToolCapability(ctx)
+	if err != nil || recovered != secret {
+		t.Fatalf("recovery lost the original capability: %v", err)
+	}
+	restarted, err := NewToolListenerWithCapability(path, tools, recovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeToolListenerForTest(t, restarted)
+	if result := toolCall(t, path, ToolRequest{Tool: "echo", Capability: secret}); result.Error != "" || result.Stdout != "restored" {
+		t.Fatalf("surviving agent cannot call restored tools: %#v", result)
+	}
+	if result := toolCall(t, path, ToolRequest{Tool: "echo", Capability: strings.Repeat("0", 64)}); result.Error == "" {
+		t.Fatal("another egg's capability authenticated")
+	}
+	if _, err := NewToolListenerWithCapability(path, tools, ""); err == nil {
+		t.Fatal("legacy capability bypassed authentication")
+	}
+}
 
 // shortSockPath returns a Unix socket path short enough for macOS (104 char limit).
 func shortSockPath(t *testing.T) string {
@@ -121,10 +183,10 @@ func TestToolCapabilityFailsClosedAfterListenerRestart(t *testing.T) {
 	}
 	defer closeToolListenerForTest(t, second)
 	if second.capability == capability || len(capability) != 64 {
-		t.Fatal("reclaimed egg reused a capability")
+		t.Fatal("fresh listener reused a capability")
 	}
 	response := toolCall(t, path, ToolRequest{Action: "list", Capability: capability})
-	if !strings.Contains(response.Error, "wing restart") {
+	if !strings.Contains(response.Error, "missing or invalid egg capability") {
 		t.Fatalf("surviving egg did not fail closed clearly: %#v", response)
 	}
 }
