@@ -440,8 +440,9 @@ async function refreshPanelTree(state) {
         if (!panelCurrent(state)) return;
         state.treeError = '';
         if (mergeRootTree(state.wingId, state.rootId, tree.tasks, tree.delivery, issuedAt)) {
-            observeTasks(state.wingId, tree.tasks);
-            var selected = tree.tasks.find(function(task) { return task.conversation.conversation_id === state.conversation.conversation_id; });
+            var tasks = cachedWingTree(state.wingId).tasks.filter(function(task) { return taskRootId(task) === state.rootId; });
+            observeTasks(state.wingId, tasks);
+            var selected = tasks.find(function(task) { return task.conversation.conversation_id === state.conversation.conversation_id; });
             state.newerSession = selected && selected.conversation.session_id && selected.conversation.session_id !== state.conversation.session_id ? selected.conversation.session_id : '';
         }
     } catch (error) {
