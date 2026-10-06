@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { trackSessionCompletions, acknowledgeSessionCompletions, unseenSessionCompletions, COMPLETION_LIMIT, COMPLETION_MAX_AGE_MS, COMPLETION_STORAGE_PREFIX } from '../src/session-completion.js';
+import { trackSessionCompletions, sessionCompletionObservation, acknowledgeSessionCompletions, unseenSessionCompletions, COMPLETION_LIMIT, COMPLETION_MAX_AGE_MS, COMPLETION_STORAGE_PREFIX } from '../src/session-completion.js';
 import { sessionResourceKey } from '../src/session-reference.js';
 import { userStorageKey, scopeBrowserStateToUser } from '../src/storage-scope.js';
 import { CACHE_OWNER_KEY } from '../src/state.js';
@@ -12,6 +12,12 @@ function storage() {
 }
 const observation = (status, cursor, extra = {}) => ({ id: 'session', wing_id: 'mac', status, cursor, ...extra });
 const key = sessionResourceKey(observation('idle', 0));
+
+test('observation adapters use qualified native cursors and the caller validated status', () => {
+    const session = { id: 'session', wing_id: 'mac', status: 'active', lifecycle: { status: 'done', state_cursor: 11 } };
+    assert.deepEqual(sessionCompletionObservation(session, 'unknown', false), { id: 'session', wing_id: 'mac', status: 'unknown', cursor: 11, seen: false });
+    assert.deepEqual(sessionCompletionObservation(session, 'done', true), observation('done', 11, { seen: true }));
+});
 
 test('done and idle after working remain unseen across reload until opened or acknowledged', () => {
     const saved = storage();

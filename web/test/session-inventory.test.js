@@ -1,10 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey, sessionProjectRoot, groupSessionInventory, sessionGroupHeader } from '../src/session-inventory.js';
+import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionIsViewed, sessionResourceKey, sessionProjectRoot, groupSessionInventory, sessionGroupHeader } from '../src/session-inventory.js';
 import { sessionRoute, parseSessionRoute } from '../src/session-route.js';
 
 const wing = { wing_id: 'mac', wing_label: 'Personal Mac', hostname: 'mac-mini', online: true, capabilities: ['session.rename.v1'] };
 const session = { id: 'session-1', wing_id: 'mac', user_id: 'owner', agent: 'claude', name: 'release-notes', cwd: '/home/bryan/repos/wingthing', swept: true, status: 'detached' };
+
+test('viewing marks only the visible exact terminal or current-user transcript as seen', () => {
+    const state = { activeView: 'terminal', ptySessionId: session.id, ptyWingId: 'mac', currentUser: { id: 'owner' } };
+    const chatTarget = { userId: 'owner', wingId: 'linux', sessionId: session.id };
+    assert.equal(sessionIsViewed(session, state, true), true);
+    assert.equal(sessionIsViewed(session, state, false), false);
+    assert.equal(sessionIsViewed({ ...session, wing_id: 'linux' }, state, true), false);
+    assert.equal(sessionIsViewed({ ...session, wing_id: 'linux' }, state, true, chatTarget), true);
+    assert.equal(sessionIsViewed({ ...session, wing_id: 'linux' }, state, true, { ...chatTarget, userId: 'other' }), false);
+    assert.equal(sessionIsViewed(session, { ...state, activeView: 'home' }, true, chatTarget), false);
+});
 
 test('groups use exact wing IDs and cwd roots, not names or basename collisions', () => {
     const wings = [wing, { ...wing, wing_id: 'linux' }];

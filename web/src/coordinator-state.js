@@ -1,5 +1,6 @@
 import { CONVERSATION_FRESH_MS, applyConversationRead, emptyConversationState } from './conversation-state.js';
 import { escapeMarkup } from './security.js';
+import { groupSessionInventory, unseenCompletionBadge } from './session-inventory.js';
 
 const STATUSES = ['working', 'blocked', 'idle', 'done', 'exited', 'unknown'];
 
@@ -19,6 +20,16 @@ export function coordinatorStatusMarkup(status) {
 // Preserve each wing's tree on desktop; on phones every root precedes children.
 export function orderCoordinatorInventory(rows, mobile) {
     return mobile ? rows.filter(function(row) { return !row.task.conversation.parent_conversation_id; }).concat(rows.filter(function(row) { return !!row.task.conversation.parent_conversation_id; })) : rows.slice();
+}
+
+export function groupCoordinatorInventory(rows, mobile, unseen, now = Date.now()) {
+    var sessions = orderCoordinatorInventory(rows, mobile).map(function(row) {
+        var conversation = row.task.conversation;
+        return { id: conversation.session_id || conversation.conversation_id, wing_id: row.wing.wing_id, cwd: conversation.cwd, row: row,
+            agentStatus: coordinatorStatus(row.task.lifecycle, { observedAt: row.task.observedAt, readError: row.error || row.task.lifecycle_error, now: now }) };
+    });
+    var wings = Array.from(new Map(rows.map(function(row) { return [row.wing.wing_id, row.wing]; })).values());
+    return groupSessionInventory(sessions, wings, {}, unseen, function(session) { return session.agentStatus; });
 }
 
 export function lastMessagePreview(messages) {
@@ -48,9 +59,10 @@ export function previewFromRead(task, result) {
     return lastMessagePreview(previewMessagesFromRead(task, result));
 }
 
-export function coordinatorCardHeading(conversation, status, preview) {
+export function coordinatorCardHeading(conversation, status, preview, unseen) {
     return '<span class="coordinator-name">' + escapeMarkup(conversation.title || conversation.agent || conversation.conversation_id) + '</span>' + coordinatorStatusMarkup(status) +
         (status === 'blocked' ? '<span class="coordinator-blocked">Needs attention</span>' : '') +
+        unseenCompletionBadge(unseen) +
         '<span class="coordinator-preview">' + escapeMarkup(preview || 'No message preview yet') + '</span>';
 }
 

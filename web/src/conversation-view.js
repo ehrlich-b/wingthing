@@ -6,11 +6,15 @@ import { detachPTY, connectPTY } from './pty.js';
 import { startChatPolling, setViewPreference, chatSelectionVersion, onChatSnapshot, chatSnapshot, stopChatExecution, refreshChat } from './chat-view.js';
 import { orderConversationTree } from './conversation-state.js';
 import { loadHome } from './data.js';
+import { renderSidebar, renderSessionInventory } from './render.js';
 import { conversationResponseCurrent, canStartFreshLaunch, conversationTaskAvailability, readPendingLaunch, planLaunchStart, launchFieldsFromPending } from './conversation-response.js';
 import { createNavigationGuard, resolveConversationExecution, readConversationTree, resumeInTerminalState, findArchivedExecution, taskRootId, mergeRootRead, mergeWingListing } from './conversation-recovery.js';
 import { readTree, saveTree, readSelection, saveSelection, readExecution } from './conversation-recovery-store.js';
-import { coordinatorStatus, coordinatorStatusMarkup, coordinatorCardHeading, orderCoordinatorInventory, lastMessagePreview, previewReadArguments, previewMessagesFromRead, blockedBadge, observeCoordinatorStatus } from './coordinator-state.js';
+import { coordinatorStatus, coordinatorStatusMarkup, coordinatorCardHeading, groupCoordinatorInventory, lastMessagePreview, previewReadArguments, previewMessagesFromRead, blockedBadge, observeCoordinatorStatus } from './coordinator-state.js';
 import { setNotification, clearNotification } from './notify.js';
+import { sessionGroupHeader, sessionIsViewed } from './session-inventory.js';
+import { sessionResourceKey } from './session-reference.js';
+import { trackSessionCompletions, sessionCompletionObservation, unseenSessionCompletions, acknowledgeSessionCompletions } from './session-completion.js';
 import './conversation-recovery.css';
 
 var TREE_REFRESH_MS = 5000;
@@ -104,6 +108,12 @@ function observeStatus(wingId, conversation, status) {
 }
 
 function observeTasks(wingId, tasks) {
+    var live = chatSnapshot();
+    trackSessionCompletions(storage(), userId(), tasks.map(function(task) {
+        var conversation = task.conversation;
+        var seen = sessionIsViewed({ id: conversation.session_id, wing_id: wingId }, S, document.visibilityState === 'visible', live && live.target);
+        return sessionCompletionObservation({ id: conversation.session_id, wing_id: wingId, lifecycle: task.lifecycle }, taskStatus(wingId, task), seen);
+    }));
     tasks.forEach(function(task) { observeStatus(wingId, task.conversation, taskStatus(wingId, task)); });
 }
 
@@ -174,8 +184,10 @@ function conversationCard(task, wingId, depth, options) {
     var execution = conversation.session_id ? 'execution ' + shortId(conversation.session_id) : 'no execution started';
     var status = taskStatus(wingId, task);
     var preview = taskPreview(wingId, task);
+    var unseen = !!options.unseen;
+    item.dataset.agentStatus = status;
     item.innerHTML = '<button class="conversation-open" type="button" data-focus-key="open:' + escapeHtml(key) + '"' + (options.selected ? ' aria-current="true"' : '') + '>' +
-        coordinatorCardHeading(conversation, status, preview) +
+        coordinatorCardHeading(conversation, status, preview, unseen) +
         '<small><span class="conversation-badge" data-state="' + escapeHtml(availability.state) + '">' + escapeHtml(availability.label) + '</span> · ' + role + ' · ' + escapeHtml(wingDisplayName(wingFor(wingId)) || wingId) + ' · ' + escapeHtml(execution) + '</small></button>' +
         (options.addChild ? '<button class="conversation-add-child" type="button" data-focus-key="child:' + escapeHtml(key) + '">Add child</button>' : '');
     var details = document.createElement('details');
@@ -221,9 +233,10 @@ function conversationCard(task, wingId, depth, options) {
     if (conversation.parent_conversation_id && window.innerWidth <= 600) {
         var child = document.createElement('details');
         child.className = 'conversation-child';
+        child.dataset.agentStatus = status;
         child.dataset.detailKey = 'child:' + key;
         child.setAttribute('role', 'listitem');
-        child.innerHTML = '<summary>' + coordinatorCardHeading(conversation, status, '') + '</summary>';
+        child.innerHTML = '<summary>' + coordinatorCardHeading(conversation, status, '', unseen) + '</summary>';
         item.removeAttribute('role');
         item.style.paddingLeft = '0';
         item.querySelector('.conversation-open').textContent = 'Open conversation';
@@ -373,11 +386,13 @@ function renderPanelTree() {
     var tasks = data.tasks.filter(function(task) { return taskRootId(task) === state.rootId; });
     var byId = new Map(tasks.map(function(task) { return [task.conversation.conversation_id, task]; }));
     var cards = toolbar.querySelector('.conversation-cards');
+    var unseen = unseenSessionCompletions(storage(), userId());
     stableRender(toolbar, function() {
         cards.innerHTML = '';
         orderConversationTree(tasks.map(function(task) { return task.conversation; })).forEach(function(row) {
             var card = conversationCard(byId.get(row.conversation.conversation_id), state.wingId, row.depth, {
                 selected: row.conversation.conversation_id === state.conversation.conversation_id,
+                unseen: unseen.has(sessionResourceKey({ id: row.conversation.session_id, wing_id: state.wingId })),
                 onOpen: function(conversation) { openFromCard({ wingId: state.wingId, conversationId: conversation.conversation_id }, toolbar.querySelector('.conversation-recovery-status')); },
             });
             if (!row.conversation.parent_conversation_id) card.classList.add('conversation-tree-root');
@@ -645,15 +660,38 @@ function renderInventory(mount, wings) {
             rows.push({ task: taskById.get(row.conversation.conversation_id), wing: wing, depth: row.depth, error: data.error });
         });
     });
-    orderCoordinatorInventory(rows, window.innerWidth <= 600).forEach(function(row) {
-        var conversation = row.task.conversation;
-        var wing = row.wing;
-        list.appendChild(conversationCard(row.task, wing.wing_id, row.depth, {
-            selected: !!selection && selection.wingId === wing.wing_id && selection.conversationId === conversation.conversation_id,
-            onOpen: function() { openFromCard({ wingId: wing.wing_id, conversationId: conversation.conversation_id }, status); },
-            addChild: !conversation.parent_conversation_id ? function() { showLaunchForm(mount, [wing], conversation); } : null,
-            addChildDisabled: wing.online === false || !!wing.tunnel_error || !!row.error,
-        }));
+    var unseen = unseenSessionCompletions(storage(), userId());
+    var groups = groupCoordinatorInventory(rows, window.innerWidth <= 600, unseen);
+    groups.forEach(function(group) {
+        var section = document.createElement('section');
+        section.className = 'inventory-project-group';
+        section.dataset.blocked = group.rollup.blocked > 0;
+        section.setAttribute('role', 'listitem');
+        section.innerHTML = sessionGroupHeader(group) + '<div class="conversation-group-cards" role="list"></div>';
+        var acknowledge = section.querySelector('.inventory-acknowledge');
+        if (acknowledge) acknowledge.addEventListener('click', function() {
+            acknowledgeSessionCompletions(storage(), userId(), group.sessions.map(function(session) { return { ...session, lifecycle: session.row.task.lifecycle }; }));
+            stableRender(mount, function() { renderInventory(mount, wings); });
+            renderSidebar();
+            if (S.activeView === 'home') renderSessionInventory();
+            var first = group.sessions[0].row;
+            var focusKey = 'open:' + first.wing.wing_id + ':' + first.task.conversation.conversation_id;
+            var target = Array.from(mount.querySelectorAll('[data-focus-key]')).find(function(item) { return item.dataset.focusKey === focusKey; });
+            if (target) target.focus({ preventScroll: true });
+        });
+        group.sessions.forEach(function(session) {
+            var row = session.row;
+            var conversation = row.task.conversation;
+            var wing = row.wing;
+            section.querySelector('.conversation-group-cards').appendChild(conversationCard(row.task, wing.wing_id, row.depth, {
+                selected: !!selection && selection.wingId === wing.wing_id && selection.conversationId === conversation.conversation_id,
+                unseen: unseen.has(sessionResourceKey(session)),
+                onOpen: function() { openFromCard({ wingId: wing.wing_id, conversationId: conversation.conversation_id }, status); },
+                addChild: !conversation.parent_conversation_id ? function() { showLaunchForm(mount, [wing], conversation); } : null,
+                addChildDisabled: wing.online === false || !!wing.tunnel_error || !!row.error,
+            }));
+        });
+        list.appendChild(section);
     });
     issues.forEach(function(issue) { list.appendChild(issue); });
     if (!list.children.length) list.innerHTML = '<p class="text-dim">Create a persistent parent conversation, then inspect its linked children here.</p>';

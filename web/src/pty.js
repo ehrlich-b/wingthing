@@ -18,6 +18,8 @@ import { safePreviewURL } from './security.js';
 import { refreshSessionFilesButton, hideSessionFiles } from './session-files.js';
 import { resumeAckMatches } from './pty-resume.js';
 import { terminalControlFailure, terminalControlOptions, ptyAttachRequest, currentTerminalResize, renderTerminalControlNotice } from './terminal-attachment.js';
+import { acknowledgeSessionCompletions } from './session-completion.js';
+import { browserLocalStorage } from './storage-scope.js';
 
 function clearTerminalControl() {
     S.ptyControllerId = null;
@@ -362,6 +364,7 @@ function setupPTYHandlers(ws, reattach, requestedSessionId) {
                 S.ptyControllerId = typeof msg.controller_id === 'string' ? msg.controller_id : null;
                 setPreviewSession(msg.session_id, S.ptyWingId);
                 var activeSession = findSessionResource(S.sessionsData, msg.session_id, S.ptyWingId);
+                if (document.visibilityState === 'visible') acknowledgeSessionCompletions(browserLocalStorage(), S.currentUser && S.currentUser.id, [activeSession || { id: msg.session_id, wing_id: S.ptyWingId }]);
                 if (S.spectating) {
                     var who = activeSession && activeSession.email ? activeSession.email : '';
                     DOM.headerTitle.textContent = 'watching' + (who ? ' ' + who : '') + ' · ' + (msg.agent || '?');

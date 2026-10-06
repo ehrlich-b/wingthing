@@ -6,7 +6,8 @@ import { S } from './state.js';
 import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { escapeMarkup, renderSafeSimpleMarkdown } from './security.js';
 import { createConversationReader } from './conversation-recovery.js';
-import { coordinatorComposer, chatEnterSubmits } from './coordinator-state.js';
+import { coordinatorComposer, chatEnterSubmits, coordinatorStatus } from './coordinator-state.js';
+import { trackSessionCompletions, sessionCompletionObservation, acknowledgeSessionCompletions } from './session-completion.js';
 
 var reader = null;
 var selectionVersion = 0;
@@ -38,6 +39,10 @@ function ensureReader() {
         },
         onChange: function(next) {
             snapshot = next;
+            if (next.target && next.target.userId === (S.currentUser && S.currentUser.id)) {
+                trackSessionCompletions(browserStorage('localStorage'), next.target.userId, [sessionCompletionObservation({ id: next.target.sessionId, wing_id: next.target.wingId, lifecycle: next.lifecycle },
+                    coordinatorStatus(next.lifecycle, next), S.activeView === 'terminal' && document.visibilityState === 'visible')]);
+            }
             render();
             listeners.forEach(function(listener) { try { listener(next); } catch (e) {} });
         },
@@ -121,6 +126,7 @@ export function startChatPolling(target) {
     pendingSignature = '';
     if (container) container.innerHTML = '';
     var t = target || { sessionId: S.ptySessionId, wingId: S.ptyWingId };
+    if (document.visibilityState === 'visible') acknowledgeSessionCompletions(browserStorage('localStorage'), S.currentUser && S.currentUser.id, [{ id: t.sessionId, wing_id: t.wingId }]);
     ensureReader().open({ userId: S.currentUser ? S.currentUser.id : '', wingId: t.wingId, sessionId: t.sessionId, conversationId: t.conversationId || '', providerSessionId: t.providerSessionId || '' });
 }
 

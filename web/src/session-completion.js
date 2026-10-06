@@ -8,6 +8,10 @@ var statuses = ['working', 'blocked', 'idle', 'done', 'exited'];
 
 function cursor(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
 
+export function sessionCompletionObservation(session, status, seen) {
+    return { id: session.id, wing_id: session.wing_id, status: status, cursor: (session.lifecycle || {}).state_cursor, seen: !!seen };
+}
+
 function readRecords(storage, userId, now) {
     var records = new Map();
     try {

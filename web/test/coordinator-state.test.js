@@ -1,7 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { coordinatorStatus, coordinatorStatusMarkup, coordinatorCardHeading, orderCoordinatorInventory, blockedBadge, observeCoordinatorStatus, coordinatorComposer, chatEnterSubmits, lastMessagePreview, previewReadArguments, previewFromRead } from '../src/coordinator-state.js';
+import { coordinatorStatus, coordinatorStatusMarkup, coordinatorCardHeading, orderCoordinatorInventory, groupCoordinatorInventory, blockedBadge, observeCoordinatorStatus, coordinatorComposer, chatEnterSubmits, lastMessagePreview, previewReadArguments, previewFromRead } from '../src/coordinator-state.js';
 import { createConversationReader } from '../src/conversation-recovery.js';
+import { sessionResourceKey } from '../src/session-reference.js';
+
+test('phone and desktop coordinator groups share qualified projects, rollups and attention sorting', () => {
+    const row = (id, status, wingId = 'mac', parent = '') => ({ wing: { wing_id: wingId, wing_label: 'Same label', projects: [{ path: '/repo' }] }, depth: parent ? 1 : 0,
+        task: { observedAt: 1000, lifecycle: { status, state_cursor: 10 }, conversation: { conversation_id: id, session_id: id, parent_conversation_id: parent, cwd: '/repo/src' } } });
+    const rows = [row('idle-root', 'idle'), row('working-root', 'working', 'linux'), row('blocked-child', 'blocked', 'mac', 'idle-root'), row('done-child', 'done', 'mac', 'idle-root'), row('blocked-root', 'blocked', 'other')];
+    const unseen = new Set([sessionResourceKey({ id: 'done-child', wing_id: 'mac' })]);
+    for (const mobile of [true, false]) {
+        const groups = groupCoordinatorInventory(rows, mobile, unseen, 1000);
+        assert.deepEqual(groups.map(group => group.wingId), ['mac', 'other', 'linux']);
+        assert.equal(groups[0].project, '/repo');
+        assert.deepEqual(groups[0].rollup, { blocked: 1, working: 0, idle: 1, unseen: 1 });
+        assert.deepEqual(groups[0].sessions.map(session => session.id), ['blocked-child', 'done-child', 'idle-root']);
+        assert.equal(groups[0].sessions[0].row.depth, 1);
+    }
+    assert.match(coordinatorCardHeading({ title: 'Child' }, 'blocked', '', true), /Needs attention.*unseen completion/);
+});
+
+test('cached coordinator lifecycle never invents live rollup counts but retains unseen completion', () => {
+    const row = { wing: { wing_id: 'mac' }, error: 'Offline', task: { observedAt: 1000, lifecycle: { status: 'working' }, conversation: { conversation_id: 'root', session_id: 'execution', cwd: '/repo' } } };
+    const unseen = new Set([sessionResourceKey({ id: 'execution', wing_id: 'mac' })]);
+    const [group] = groupCoordinatorInventory([row], true, unseen, 1000);
+    assert.deepEqual(group.rollup, { blocked: 0, working: 0, idle: 0, unseen: 1 });
+    assert.equal(group.sessions[0].agentStatus, 'unknown');
+});
 
 test('phone Return and IME composition keep editing while desktop Enter sends', () => {
     assert.equal(chatEnterSubmits({ key: 'Enter' }, true), false);

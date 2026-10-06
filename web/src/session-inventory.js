@@ -22,6 +22,11 @@ export function sessionIsSelected(session, sessionId, wingId) {
     return !!wingId && session.id === sessionId && session.wing_id === wingId;
 }
 
+export function sessionIsViewed(session, state, visible, chatTarget) {
+    return !!visible && state.activeView === 'terminal' && (sessionIsSelected(session, state.ptySessionId, state.ptyWingId) ||
+        !!(chatTarget && state.currentUser && chatTarget.userId === state.currentUser.id && sessionIsSelected(session, chatTarget.sessionId, chatTarget.wingId)));
+}
+
 // Connection, attachment and provider state are different facts. In particular,
 // a detached or quiet terminal never proves that an agent finished its work.
 export function sessionInventoryState(session, wing, attention) {
