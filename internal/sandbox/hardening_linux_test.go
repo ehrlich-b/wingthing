@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,7 +24,7 @@ func init() {
 	}
 	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		os.Exit(77)
 	}
 	if err := runHardeningScenario(os.Args[2], os.Args[3]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -51,6 +52,10 @@ func runHardeningNamespace(t *testing.T, scenario, root string) {
 		cmd.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}}
 	}
 	if output, err := cmd.CombinedOutput(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.Is(err, unix.EPERM) || errors.Is(err, unix.ENOSYS) || (errors.As(err, &exitErr) && exitErr.ExitCode() == 77) {
+			t.Skipf("Linux mount namespaces unavailable: %v: %s", err, output)
+		}
 		t.Fatalf("%s: %v\n%s", scenario, err, output)
 	}
 }
