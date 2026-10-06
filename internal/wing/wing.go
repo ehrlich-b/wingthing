@@ -2281,7 +2281,7 @@ authDone:
 
 	// Attach to egg session stream
 	streamCtx, sCancel := context.WithCancel(ctx)
-	stream, err := ec.AttachSessionWithOptions(streamCtx, start.SessionID, egg.AttachOptions{Claim: true, Owner: "browser:" + start.UserID})
+	stream, err := eggclient.AttachBrowserController(streamCtx, ec, start.SessionID, egg.AttachOptions{Claim: true, Owner: "browser:" + start.UserID}, toolListener, start.UserID)
 	writerConfirmed := err == nil
 	if err != nil {
 		log.Printf("pty: egg attach failed: %v", err)
@@ -2580,7 +2580,7 @@ authDone:
 				}
 				log.Printf("pty session %s: re-keyed E2E for reattach", start.SessionID)
 				newStreamCtx, newSCancel := context.WithCancel(ctx)
-				newStream, reErr := ec.AttachSessionWithOptions(newStreamCtx, start.SessionID, egg.AttachOptions{Claim: true, Takeover: attach.Takeover, Owner: "browser:" + attach.UserID, Rows: attach.Rows, Cols: attach.Cols})
+				newStream, reErr := eggclient.AttachBrowserController(newStreamCtx, ec, start.SessionID, egg.AttachOptions{Claim: true, Takeover: attach.Takeover, Owner: "browser:" + attach.UserID, Rows: attach.Rows, Cols: attach.Cols}, toolListener, attach.UserID)
 				if reErr != nil {
 					newSCancel()
 					log.Printf("pty session %s: reattach to egg failed: %v", start.SessionID, reErr)

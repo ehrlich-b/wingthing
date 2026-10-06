@@ -29,10 +29,11 @@ var inheritedToolEnv = map[string]bool{
 // server — so a tool behaves identically whether an in-egg agent or a remote MCP client
 // invokes it, and credentials stay in one place.
 type ToolRunner struct {
-	context *contextclient.Client
-	mu      sync.RWMutex
-	tools   map[string]*config.ToolConfig
-	sema    map[string]chan struct{} // per-tool concurrency semaphores
+	context            *contextclient.Client
+	contextUnavailable string
+	mu                 sync.RWMutex
+	tools              map[string]*config.ToolConfig
+	sema               map[string]chan struct{} // per-tool concurrency semaphores
 }
 
 // NewToolRunner builds a runner from tool configs.
@@ -129,6 +130,7 @@ func (r *ToolRunner) CallWithEnv(name string, args []string, extraEnv map[string
 func (r *ToolRunner) CallAs(name string, args []string, owner string, extraEnv map[string]string) ToolResponse {
 	r.mu.RLock()
 	tc, ok := r.tools[name]
+	unavailable := r.contextUnavailable
 	var sema chan struct{}
 	if ok {
 		sema = r.sema[name]
@@ -136,6 +138,9 @@ func (r *ToolRunner) CallAs(name string, args []string, owner string, extraEnv m
 	r.mu.RUnlock()
 	if !ok {
 		return ToolResponse{Error: "unknown tool: " + name}
+	}
+	if tc.Context != "" && unavailable != "" {
+		return ToolResponse{Error: unavailable}
 	}
 	if sema != nil {
 		select {

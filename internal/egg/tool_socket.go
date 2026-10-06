@@ -52,6 +52,7 @@ type ToolListResponse struct {
 // same runner over HTTP.
 type ToolListener struct {
 	owner       string
+	ownerID     string
 	runner      *ToolRunner
 	listener    net.Listener
 	connections chan struct{}
@@ -60,8 +61,9 @@ type ToolListener struct {
 
 // ToolContext binds a listener to its wing-owned Context client and verified owner.
 type ToolContext struct {
-	Client *contextclient.Client
-	Owner  string // verified EggIdentity.Email, fixed for this listener's lifetime
+	Client  *contextclient.Client
+	Owner   string // verified EggIdentity.Email, fixed for this listener's lifetime
+	OwnerID string // verified EggIdentity.UserID, also fixed
 }
 
 // NewToolListener creates and starts a tool socket listener.
@@ -89,11 +91,23 @@ func NewToolListener(sockPath string, tools []*config.ToolConfig, contexts ...To
 	}
 	if len(contexts) > 0 {
 		tl.owner = contexts[0].Owner
+		tl.ownerID = contexts[0].OwnerID
 		tl.runner.context = contexts[0].Client
 	}
 	tl.wg.Add(1)
 	go tl.acceptLoop()
 	return tl, nil
+}
+
+// ObserveController permanently revokes Context authority when another verified
+// user claims input. Returning to the original owner never restores it.
+func (tl *ToolListener) ObserveController(userID string) {
+	if tl == nil || userID == tl.ownerID {
+		return
+	}
+	tl.runner.mu.Lock()
+	tl.runner.contextUnavailable = "Context tools are disabled after another user took control of this session"
+	tl.runner.mu.Unlock()
 }
 
 // Close stops the listener and waits for in-flight requests to finish.

@@ -162,7 +162,9 @@ func TestContextThroughEggTools(t *testing.T) {
 			t.Fatalf("credential in tool output")
 		}
 	}
+	listener.ObserveController(identity.UserID) // owner reattach
 	call(opts.ToolSocketPath, "owner@slide.tech")
+	listener.ObserveController(identity.UserID) // owner takeover
 	call(opts.ToolSocketPath, "owner@slide.tech")
 	mu.Lock()
 	count := grants
@@ -210,6 +212,30 @@ func TestContextThroughEggTools(t *testing.T) {
 	environment := contextSocketCall(t, opts.ToolSocketPath, egg.ToolRequest{Tool: "environment"})
 	if environment.Error != "" || environment.ExitCode != 0 || strings.Contains(environment.Stdout, secret) || strings.Contains(environment.Stdout, "user-token-") {
 		t.Fatalf("credential in tool env: %+v", environment)
+	}
+	// Another controller (including an admin) must never inherit this owner's
+	// cached token; returning to the owner and reloading tools cannot undo taint.
+	mu.Lock()
+	beforeCalls, beforeGrants := calls, grants
+	mu.Unlock()
+	listener.ObserveController("different-admin")
+	for _, controller := range []string{"different-admin", identity.UserID} {
+		listener.ObserveController(controller)
+		listener.Reload(tools)
+		response := contextSocketCall(t, opts.ToolSocketPath, request)
+		if response.Error != "Context tools are disabled after another user took control of this session" {
+			t.Fatalf("cross-user call: %+v", response)
+		}
+	}
+	mu.Lock()
+	afterCalls, afterGrants := calls, grants
+	mu.Unlock()
+	if afterCalls != beforeCalls || afterGrants != beforeGrants {
+		t.Fatal("tainted listener reached Context")
+	}
+	environment = contextSocketCall(t, opts.ToolSocketPath, egg.ToolRequest{Tool: "environment"})
+	if environment.Error != "" || environment.ExitCode != 0 {
+		t.Fatalf("taint disabled command tools: %+v", environment)
 	}
 	// SpawnEgg builds its environment from this policy; credentials are never added to it.
 	protected, targets, err := protectContextSecret(egg.DefaultEggConfig(), wc.Context, root, root)

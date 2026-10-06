@@ -33,16 +33,17 @@ func PrepareBrowserTools(cfg *config.Config, sessionID string, tools []*config.T
 	if err != nil {
 		return nil, err
 	}
-	owner := ""
+	owner, ownerID := "", ""
 	if len(identities) > 0 {
 		owner = identities[0].Email
+		ownerID = identities[0].UserID
 	}
 	toolsDir := filepath.Join(cfg.Dir, "eggs", sessionID, ".tools")
 	if err := os.MkdirAll(toolsDir, 0700); err != nil {
 		return nil, fmt.Errorf("create tool directory: %w", err)
 	}
 	opts.ToolSocketPath = filepath.Join(toolsDir, "tool.sock")
-	listener, err := egg.NewToolListener(opts.ToolSocketPath, tools, egg.ToolContext{Client: client, Owner: owner})
+	listener, err := egg.NewToolListener(opts.ToolSocketPath, tools, egg.ToolContext{Client: client, Owner: owner, OwnerID: ownerID})
 	if err != nil {
 		log.Printf("pty session %s: tool listener failed: %v", sessionID, err)
 		return nil, nil
@@ -73,4 +74,14 @@ func serveBrowserSessionTools(client *egg.Client, listener *egg.ToolListener, se
 			return
 		}
 	}
+}
+
+// AttachBrowserController records only confirmed input claims, before any
+// browser input is routed to the replacement stream.
+func AttachBrowserController(ctx context.Context, client *egg.Client, sessionID string, options egg.AttachOptions, listener *egg.ToolListener, userID string) (pb.Egg_SessionClient, error) {
+	stream, err := client.AttachSessionWithOptions(ctx, sessionID, options)
+	if err == nil {
+		listener.ObserveController(userID)
+	}
+	return stream, err
 }
