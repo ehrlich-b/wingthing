@@ -782,7 +782,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err != nil {
 		return nil, err
 	}
-	eggCfg, protected, err := protectContextSecret(eggCfg, wingCfg.Context)
+	eggCfg, protected, err := protectContextSecret(eggCfg, wingCfg.Context, cwd, EffectiveSessionHome(cfg, identity))
 	if err != nil {
 		return nil, err
 	}

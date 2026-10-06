@@ -212,7 +212,7 @@ func TestContextThroughEggTools(t *testing.T) {
 		t.Fatalf("credential in tool env: %+v", environment)
 	}
 	// SpawnEgg builds its environment from this policy; credentials are never added to it.
-	protected, targets, err := protectContextSecret(egg.DefaultEggConfig(), wc.Context)
+	protected, targets, err := protectContextSecret(egg.DefaultEggConfig(), wc.Context, root, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestContextSecretProtectsSymlinkTarget(t *testing.T) {
 	}
 	original := egg.DefaultEggConfig()
 	before := append([]string(nil), original.FS...)
-	protected, targets, err := protectContextSecret(original, &config.ContextConfig{URL: "https://context.pants.taxi", ClientID: "wingthing-stage", SecretFile: alias})
+	protected, targets, err := protectContextSecret(original, &config.ContextConfig{URL: "https://context.pants.taxi", ClientID: "wingthing-stage", SecretFile: alias}, root, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestContextSecretNeverInEggOrToolEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, paths, err := protectContextSecret(egg.DefaultEggConfig(), contextConfig)
+	policy, paths, err := protectContextSecret(egg.DefaultEggConfig(), contextConfig, root, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,5 +292,81 @@ func TestContextSecretNeverInEggOrToolEnvironment(t *testing.T) {
 	response := runner.Call("env", nil)
 	if response.Error != "" || response.ExitCode != 0 || strings.Contains(fmt.Sprintf("%+v", response), secret) {
 		t.Fatalf("secret in tool environment/output: %+v", response)
+	}
+}
+
+func TestContextSecretRejectsGrantAliases(t *testing.T) {
+	root := t.TempDir()
+	private := filepath.Join(root, "private")
+	if err := os.Mkdir(private, 0700); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(private, "secret")
+	if err := os.WriteFile(secret, []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "leak")
+	if err := os.Symlink(secret, alias); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "nested")
+	if err := os.Symlink(alias, nested); err != nil {
+		t.Fatal(err)
+	}
+	c := &config.ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: secret}
+	for _, grant := range []string{"ro:" + alias, "rw:" + alias, "ro:" + nested, "ro:leak", "rw:~/nested", "ro:" + secret} {
+		t.Run(grant, func(t *testing.T) {
+			if _, _, err := protectContextSecret(&egg.EggConfig{FS: []string{grant}}, c, root, root); err == nil || !strings.Contains(err.Error(), "exposes protected secret path") {
+				t.Fatalf("grant accepted: %v", err)
+			}
+		})
+	}
+	// Protected paths can also be directories; no descendant may be granted.
+	c.SecretFile = private
+	if _, _, err := protectContextSecret(&egg.EggConfig{FS: []string{"ro:" + secret}}, c, root, root); err == nil {
+		t.Fatal("grant inside protected directory accepted")
+	}
+}
+
+func TestContextSecretMasksAncestorGrantAliases(t *testing.T) {
+	root := t.TempDir()
+	private := filepath.Join(root, "private")
+	if err := os.MkdirAll(filepath.Join(private, "sub"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(private, "sub", "secret")
+	if err := os.WriteFile(secret, []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(private, alias); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "nested")
+	if err := os.Symlink(alias, nested); err != nil {
+		t.Fatal(err)
+	}
+	c := &config.ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: secret}
+	for _, mode := range []string{"ro", "rw"} {
+		original := &egg.EggConfig{FS: []string{mode + ":" + alias, mode + ":" + nested}}
+		policy, targets, err := protectContextSecret(original, c, root, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{secret, filepath.Join(alias, "sub", "secret"), filepath.Join(nested, "sub", "secret")} {
+			if !ContainsExactPath(policy.FS, "deny:"+path) || !ContainsExactPath(targets, path) {
+				t.Fatalf("unprotected alias %s: %v, %v", path, policy.FS, targets)
+			}
+		}
+		// Both Linux deny mounts and macOS Seatbelt receive the projected paths.
+		sb := policy.ToSandboxConfig(root)
+		for _, path := range targets {
+			if !ContainsExactPath(sb.Deny, path) {
+				t.Fatalf("sandbox lost deny %s", path)
+			}
+		}
+		if len(original.FS) != 2 {
+			t.Fatal("mutated final caller policy")
+		}
 	}
 }
