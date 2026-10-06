@@ -29,7 +29,7 @@ func fakeAgentWaitRuns(t *testing.T, tasks ...*store.Task) (*Server, *store.Stor
 			t.Fatal(err)
 		}
 	}
-	return &Server{Cfg: cfg, Principal: "owner", Logs: io.Discard}, db
+	return &Server{Version: "test", Cfg: cfg, Principal: "owner", Logs: io.Discard}, db
 }
 
 func TestAgentWaitAnyReturnsFirstOfThreeFakeRuns(t *testing.T) {
@@ -218,7 +218,7 @@ func TestAgentWaitAnyCancellation(t *testing.T) {
 }
 
 func TestAgentWaitAnyValidatesBounds(t *testing.T) {
-	server := &Server{}
+	server := &Server{Version: "test"}
 	tooMany, _ := json.Marshal(map[string]any{"run_ids": make([]string, 65)})
 	for _, input := range []string{
 		`{}`, `{"run_ids":null}`, `{"run_ids":[]}`, string(tooMany),
