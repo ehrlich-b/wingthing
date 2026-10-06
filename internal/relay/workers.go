@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -403,6 +404,10 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 
 	claims, err := s.validateWingCredential(r.Context(), token)
 	if err != nil {
+		if errors.Is(err, errCredentialValidationUnavailable) {
+			http.Error(w, "credential validation unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}

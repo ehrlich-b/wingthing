@@ -131,3 +131,39 @@ func TestOpaqueTokenRefreshMigratesToExpiringJWT(t *testing.T) {
 		t.Fatal("opaque token survived rotation")
 	}
 }
+
+func TestWingAdmissionDistinguishesValidationOutagesFromRejection(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+		body   string
+		want   int
+	}{
+		{"unreachable", 0, "", http.StatusServiceUnavailable},
+		{"unavailable", http.StatusServiceUnavailable, "upstream unavailable", http.StatusServiceUnavailable},
+		{"internal error", http.StatusInternalServerError, "failed", http.StatusServiceUnavailable},
+		{"missing endpoint", http.StatusNotFound, "not found", http.StatusServiceUnavailable},
+		{"malformed response", http.StatusOK, "{", http.StatusServiceUnavailable},
+		{"missing identity", http.StatusOK, "{}", http.StatusServiceUnavailable},
+		{"oversized response", http.StatusOK, strings.Repeat("x", maxSessionValidationBytes+1), http.StatusServiceUnavailable},
+		{"unauthorized", http.StatusUnauthorized, "invalid token", http.StatusUnauthorized},
+		{"forbidden", http.StatusForbidden, "account rejected", http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			login := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer login.Close()
+			if test.status == 0 {
+				login.Close()
+			}
+			edge := NewServer(nil, ServerConfig{NodeRole: "edge", LoginNodeAddr: login.URL, InternalSecret: "secret"})
+			response := httptest.NewRecorder()
+			edge.handleWingWS(response, httptest.NewRequest(http.MethodGet, "/ws/wing?token=device-token", nil))
+			if response.Code != test.want {
+				t.Fatalf("wing admission = %d %s, want %d", response.Code, response.Body.String(), test.want)
+			}
+		})
+	}
+}

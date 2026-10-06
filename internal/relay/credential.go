@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 )
+
+var errCredentialValidationUnavailable = errors.New("credential validation unavailable")
 
 // validateWingCredential makes the device-token row authoritative, including
 // for legacy JWTs without a jti. Deleting or rotating that row revokes the JWT;
@@ -39,6 +42,9 @@ func (s *Server) validateWingCredential(ctx context.Context, token string) (*Win
 		if err := s.remoteCredential(ctx, "/internal/tokens/", token, &result); err != nil {
 			return nil, err
 		}
+		if result.UserID == "" || result.WingID == "" {
+			return nil, fmt.Errorf("%w: missing credential identity", errCredentialValidationUnavailable)
+		}
 		userID, wingID = result.UserID, result.WingID
 	} else {
 		if s.Store == nil {
@@ -61,30 +67,36 @@ func (s *Server) validateWingCredential(ctx context.Context, token string) (*Win
 
 func (s *Server) remoteCredential(ctx context.Context, path, token string, result any) error {
 	if s.Config.LoginNodeAddr == "" {
-		return fmt.Errorf("no login node")
+		return fmt.Errorf("%w: no login node", errCredentialValidationUnavailable)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		strings.TrimRight(s.Config.LoginNodeAddr, "/")+path+url.PathEscape(token), nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errCredentialValidationUnavailable, err)
 	}
 	s.authorizeInternalRequest(req)
 	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errCredentialValidationUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf("credential validation denied")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: HTTP %d", errCredentialValidationUnavailable, resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSessionValidationBytes+1))
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errCredentialValidationUnavailable, err)
 	}
 	if len(body) > maxSessionValidationBytes {
-		return fmt.Errorf("credential response too large")
+		return fmt.Errorf("%w: credential response too large", errCredentialValidationUnavailable)
 	}
-	return json.Unmarshal(body, result)
+	if err := json.Unmarshal(body, result); err != nil {
+		return fmt.Errorf("%w: %v", errCredentialValidationUnavailable, err)
+	}
+	return nil
 }
 
 func (s *Server) handleInternalToken(w http.ResponseWriter, r *http.Request) {
