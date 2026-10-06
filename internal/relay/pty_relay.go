@@ -70,13 +70,14 @@ func roleForWingUser(s *Server, wing *ConnectedWing, userID string, orgIDs []str
 	if wing.OrgID == "" {
 		return ""
 	}
-	if role := orgRoles[wing.OrgID]; role == "owner" || role == "admin" || role == "member" {
-		return role
-	}
 	if !s.IsEdge() && s.Store != nil {
 		if role := s.Store.GetOrgMemberRole(wing.OrgID, userID); role == "owner" || role == "admin" || role == "member" {
 			return role
 		}
+		return ""
+	}
+	if role := orgRoles[wing.OrgID]; role == "owner" || role == "admin" || role == "member" {
+		return role
 	}
 	// N-1 login nodes return membership IDs but not the additive exact-role map.
 	// Preserve ordinary member access while refusing to infer elevated authority.
@@ -506,6 +507,10 @@ func (r *PTYRoutes) NotifyWingOffline(wingID string) {
 
 // handlePTYWS handles the browser WebSocket for a PTY session.
 func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
+	s.handlePTYWSWithAuthInterval(w, r, 30*time.Second)
+}
+
+func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Request, authInterval time.Duration) {
 	// Auth
 	var userID string
 	var userEmail string
@@ -554,24 +559,14 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				userEmail = *storedUser.Email
 			}
 		}
-		orgs, _ := s.Store.ListOrgsForUser(userID)
-		userOrgIDs = make([]string, 0, len(orgs))
-		userOrgRoles = make(map[string]string, len(orgs))
-		for _, org := range orgs {
-			userOrgIDs = append(userOrgIDs, org.ID)
-			if role := s.Store.GetOrgMemberRole(org.ID, userID); role != "" {
-				userOrgRoles[org.ID] = role
-			}
-		}
-	} else if s.IsEdge() && s.Config.LoginNodeAddr != "" {
-		if remote, ok := s.remoteUserOrgContext(r.Context(), userID); ok {
-			userOrgIDs = remote.OrgIDs
-			userOrgRoles = remote.OrgRoles
-			// A successful current lookup is authoritative, including an empty
-			// address after the login provider cleared a stale email.
-			userEmail = remote.Email
-		}
 	}
+	initialOrgs, ok := s.currentUserOrgContext(r.Context(), userID)
+	if !ok {
+		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	userOrgIDs, userOrgRoles = initialOrgs.OrgIDs, initialOrgs.OrgRoles
+	userEmail = initialOrgs.Email
 
 	// Cross-node routing: if target wing is on another machine, fly-replay BEFORE WebSocket upgrade.
 	// Retries for up to 5s to handle wing reconnection after deploy.
@@ -628,7 +623,24 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 	defer s.untrackBrowser(conn)
 	defer s.clearTunnelRequests(conn)
 
-	ctx := r.Context()
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	previousOrgs := initialOrgs
+	var orgMu sync.Mutex
+	refreshOrgs := func() (userOrgContext, bool) {
+		orgMu.Lock()
+		defer orgMu.Unlock()
+		current, ok := s.currentUserOrgContext(ctx, userID)
+		if !ok || !s.roostUserIDAllowed(userID) || orgAuthorityRevoked(previousOrgs, current) {
+			return userOrgContext{}, false
+		}
+		previousOrgs = current
+		return current, true
+	}
+	go revalidatePTYAuthorization(ctx, conn, authInterval, func() bool {
+		_, ok := refreshOrgs()
+		return ok
+	})
 
 	// On browser disconnect: clear BrowserConn on all owned routes
 	defer func() { s.forwardBrowserDetach(conn, ""); s.PTY.ClearBrowser(conn) }()
@@ -641,6 +653,13 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
+		current, ok := refreshOrgs()
+		if !ok {
+			_ = conn.Close(websocket.StatusPolicyViolation, "authorization revoked")
+			return
+		}
+		userOrgIDs, userOrgRoles = current.OrgIDs, current.OrgRoles
+		userEmail = current.Email
 
 		var env ws.Envelope
 		if err := json.Unmarshal(data, &env); err != nil {
