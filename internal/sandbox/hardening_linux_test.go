@@ -57,6 +57,33 @@ func runHardeningNamespace(t *testing.T, scenario, root string) {
 
 func runHardeningScenario(scenario, root string) error {
 	switch scenario {
+	case "readonly-prefix":
+		home := filepath.Join(root, "home")
+		writable := []string{filepath.Join(home, ".cache"), filepath.Join(home, ".claude")}
+		for _, dir := range writable {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		for _, name := range []string{".zshrc", ".cache-sibling", ".claude.json"} {
+			if err := os.WriteFile(filepath.Join(home, name), []byte("unchanged"), 0o600); err != nil {
+				return err
+			}
+		}
+		for _, name := range []string{".cache-host", ".claude-host"} {
+			if err := os.Symlink(filepath.Join(home, ".zshrc"), filepath.Join(home, name)); err != nil {
+				return err
+			}
+		}
+		if err := setupReadonlyHome(home, writable, []string{".claude"}); err != nil {
+			return err
+		}
+		for _, name := range []string{".zshrc", ".cache-host", ".claude-host", ".cache-sibling"} {
+			if err := os.WriteFile(filepath.Join(home, name), []byte("overwritten"), 0o600); err == nil {
+				return fmt.Errorf("undeclared prefix write allowed: %s", name)
+			}
+		}
+		return os.WriteFile(filepath.Join(home, ".claude.json"), []byte("allowed"), 0o600)
 	case "overlay-home", "overlay-root-agent":
 		home, tmp := filepath.Join(root, "home"), filepath.Join(root, "session")
 		config := filepath.Join(home, ".claude")
@@ -177,6 +204,10 @@ func TestOverlayRootAgentCannotReadWrapperBackingFDs(t *testing.T) {
 	if err != nil || string(data) != "persisted" {
 		t.Fatalf("root agent's prefix config did not persist: %q, %v", data, err)
 	}
+}
+
+func TestReadonlyHomeRejectsSiblingSymlinkWrites(t *testing.T) {
+	runHardeningNamespace(t, "readonly-prefix", t.TempDir())
 }
 
 func TestJailExposesOnlyDeclaredHomePaths(t *testing.T) {

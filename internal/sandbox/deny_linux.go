@@ -332,7 +332,7 @@ func DenyInit(args []string) {
 		}
 		if overlayPersistFn == nil {
 			// No overlay needed or overlay failed — fall back to bind-mount approach.
-			if err := setupReadonlyHome(home, writablePaths); err != nil {
+			if err := setupReadonlyHome(home, writablePaths, overlayPrefixes); err != nil {
 				failEnforcement("isolate HOME writes", home, err)
 			}
 		}
@@ -698,7 +698,7 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 // punch writable holes for specific paths + prefix-matching files, then
 // remount HOME read-only. Works for overwriting existing files but cannot
 // handle new file creation or renames in HOME.
-func setupReadonlyHome(home string, writablePaths []string) error {
+func setupReadonlyHome(home string, writablePaths, prefixes []string) error {
 	if err := unix.Mount(home, home, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 		return fmt.Errorf("bind HOME: %w", err)
 	}
@@ -715,30 +715,23 @@ func setupReadonlyHome(home string, writablePaths []string) error {
 		expected = append(expected, expectedMount{Path: p, Writable: true})
 	}
 
-	// Bind-mount files adjacent to writable dirs that share the same prefix.
-	// e.g., writable ~/.claude also makes ~/.claude.json writable.
-	for _, p := range writablePaths {
-		dir := filepath.Dir(p)
-		base := filepath.Base(p)
-		entries, err := os.ReadDir(dir)
+	// Only explicitly declared UseRegex mounts may expand to adjacent files.
+	files, err := writablePrefixFiles(home, writablePaths, prefixes)
+	if err != nil {
+		return err
+	}
+	for _, p := range files {
+		file, err := openConfinedExisting("/", p)
 		if err != nil {
-			continue
+			return err
 		}
-		for _, e := range entries {
-			name := e.Name()
-			if name == base || !strings.HasPrefix(name, base) {
-				continue
-			}
-			if e.IsDir() {
-				continue
-			}
-			fp := filepath.Join(dir, name)
-			if err := unix.Mount(fp, fp, "", unix.MS_BIND, ""); err != nil {
-				return fmt.Errorf("bind writable prefix file %s: %w", fp, err)
-			}
-			expected = append(expected, expectedMount{Path: fp, Writable: true})
-			log.Printf("_deny_init: bind writable file %s (prefix match)", fp)
+		err = unix.Mount(mountFDPath(file), mountFDPath(file), "", unix.MS_BIND, "")
+		file.Close()
+		if err != nil {
+			return fmt.Errorf("bind writable prefix file %s: %w", p, err)
 		}
+		expected = append(expected, expectedMount{Path: p, Writable: true})
+		log.Printf("_deny_init: bind writable file %s (prefix match)", p)
 	}
 
 	// Remount HOME read-only. Child bind-mounts stay read-write.
@@ -751,6 +744,48 @@ func setupReadonlyHome(home string, writablePaths []string) error {
 	}
 	log.Printf("_deny_init: write isolation: HOME=%s ro, %d writable paths", home, len(writablePaths))
 	return nil
+}
+
+func writablePrefixFiles(home string, writablePaths, prefixes []string) ([]string, error) {
+	var files []string
+	for _, prefix := range prefixes {
+		p := filepath.Join(home, prefix)
+		if !isPathWithin(p, home) || p == home || !containsPath(writablePaths, p) {
+			return nil, fmt.Errorf("writable prefix is not a declared HOME mount: %s", prefix)
+		}
+		dir := filepath.Dir(p)
+		parent, err := openConfinedExisting("/", dir)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := os.ReadDir(mountFDPath(parent))
+		if err != nil {
+			parent.Close()
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.Name() == filepath.Base(p) || !strings.HasPrefix(entry.Name(), filepath.Base(p)) || entry.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			file, err := openMountpointAt(parent, entry.Name(), path)
+			if err != nil {
+				parent.Close()
+				return nil, err
+			}
+			info, err := file.Stat()
+			file.Close()
+			if err != nil {
+				parent.Close()
+				return nil, err
+			}
+			if info.Mode().IsRegular() {
+				files = append(files, path)
+			}
+		}
+		parent.Close()
+	}
+	return files, nil
 }
 
 // prepareWritableMountpoint makes target suitable for a bind mount of source.

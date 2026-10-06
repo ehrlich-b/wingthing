@@ -202,3 +202,34 @@ func TestJailMountpointRejectsTraversal(t *testing.T) {
 		}
 	}
 }
+
+func TestWritablePrefixFilesRejectsSymlinksAndUndeclaredExpansion(t *testing.T) {
+	home := t.TempDir()
+	for _, name := range []string{".cache", ".claude"} {
+		if err := os.Mkdir(filepath.Join(home, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{".zshrc", ".cache-sibling", ".claude.json"} {
+		if err := os.WriteFile(filepath.Join(home, name), []byte("unchanged"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{".cache-host", ".claude-host"} {
+		if err := os.Symlink(filepath.Join(home, ".zshrc"), filepath.Join(home, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writable := []string{filepath.Join(home, ".cache"), filepath.Join(home, ".claude")}
+	files, err := writablePrefixFiles(home, writable, []string{".claude"})
+	if err != nil || len(files) != 1 || files[0] != filepath.Join(home, ".claude.json") {
+		t.Fatalf("prefix expansion = %v, %v", files, err)
+	}
+	files, err = writablePrefixFiles(home, writable, nil)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("ordinary writable mounts expanded: %v, %v", files, err)
+	}
+	if _, err := writablePrefixFiles(home, writable, []string{".zshrc"}); err == nil {
+		t.Fatal("accepted undeclared prefix")
+	}
+}
