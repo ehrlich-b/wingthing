@@ -434,8 +434,8 @@ func TestFlyOperationsDocumentationMatchesActiveConfiguration(t *testing.T) {
 		}
 	}
 
-	serve := read("cmd/wt/serve.go")
-	detect := strings.Index(serve, `if runtime.flyMachineID != "" && runtime.nodeRole == ""`)
+	serve := read("internal/localrelay/serve.go")
+	detect := strings.Index(serve, `if runtime.FlyMachineID != "" && runtime.NodeRole == ""`)
 	load := strings.Index(serve, "cfg, err := config.Load()")
 	if detect < 0 || load < 0 || detect > load {
 		t.Fatal("Fly role detection must remain before config.Load so config initialization cannot fabricate /data")
