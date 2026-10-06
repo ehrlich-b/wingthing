@@ -641,6 +641,9 @@ func EffectiveProviderSession(agentName, generatedResumeID string, agentArgs []s
 	forkSession := false
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
+		if arg == "--" {
+			break
+		}
 		if agentName == "claude" {
 			if strings.HasPrefix(arg, "-r") && arg != "-r" {
 				// Preserve attached short-option spellings for Claude to parse,
@@ -832,7 +835,11 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 	}
 	isolatedUser := config.Channel() == "preview" || identity.UserID != "" && (identity.OrgWing || identity.SharedHost)
-	policyArgs, err := IsolatedClaudePolicyArgs(agentName, isolatedUser && len(o.Command) == 0)
+	claudeSettingsSource := ""
+	if !identity.SharedHost {
+		claudeSettingsSource = eggCfg.AgentSettings["claude"]
+	}
+	policyArgs, err := isolatedClaudePolicyArgs(agentName, isolatedUser && len(o.Command) == 0, claudeSettingsSource)
 	if err != nil {
 		return nil, err
 	}

@@ -644,7 +644,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		if err != nil {
 			return fmt.Errorf("prepare native lifecycle hooks: %w", err)
 		}
-		lifecycleSettingsPath = args[len(args)-1]
+		lifecycleSettingsPath = args[providerOptionsEnd(args)-1]
 		defer func() { _ = os.Remove(lifecycleSettingsPath) }()
 	}
 	if rc.Agent == "codex" && len(rc.Command) == 0 && codexLifecycleSupported(binPath) {

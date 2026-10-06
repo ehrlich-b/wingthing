@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -150,5 +151,37 @@ func TestEffectiveProviderSessionPreservesEmptyDisablingFlags(t *testing.T) {
 		if args[i+2] != value {
 			t.Fatalf("provider argv[%d] = %q, want %q", i, args[i+2], value)
 		}
+	}
+}
+
+func TestEffectiveProviderSessionStopsAtNativeTerminator(t *testing.T) {
+	for _, tc := range []struct {
+		name, resume, wantProvider string
+		args                       []string
+	}{
+		{name: "wt egg claude -- -- --session-id", args: []string{"--", "--session-id"}},
+		{name: "literal native flags", args: []string{"--model", "opus", "--", "--", "--session-id", "--continue", "--fork-session", "--resume=literal"}},
+		{name: "explicit ID before prompt", args: []string{"--session-id", "caller-id", "--", "--session-id=prompt-id"}, wantProvider: "caller-id"},
+		{name: "generated resume before prompt", resume: "restored-id", args: []string{"--", "--resume", "prompt-id"}, wantProvider: "restored-id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := slices.Clone(tc.args)
+			providerID, args, resumeID, err := EffectiveProviderSession("claude", tc.resume, tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resumeID != tc.resume || !ValidProviderSessionID(providerID) {
+				t.Fatalf("provider identity = %q, resume = %q", providerID, resumeID)
+			}
+			want := tc.args
+			if tc.wantProvider == "" {
+				want = append([]string{"--session-id", providerID}, want...)
+			} else if providerID != tc.wantProvider {
+				t.Fatalf("provider ID = %q, want %q", providerID, tc.wantProvider)
+			}
+			if !slices.Equal(args, want) || !slices.Equal(tc.args, original) {
+				t.Fatalf("native arguments changed: got %q, want %q; caller %q", args, want, tc.args)
+			}
+		})
 	}
 }

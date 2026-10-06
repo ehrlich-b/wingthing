@@ -13,6 +13,10 @@ import (
 // Only deployment model policy crosses from the host profile into an isolated
 // session. Pass it to Claude for this launch; never merge it into the user's file.
 func IsolatedClaudePolicyArgs(agentName string, isolated bool) ([]string, error) {
+	return isolatedClaudePolicyArgs(agentName, isolated, "")
+}
+
+func isolatedClaudePolicyArgs(agentName string, isolated bool, settingsSource string) ([]string, error) {
 	if agentName != "claude" || !isolated {
 		return nil, nil
 	}
@@ -21,11 +25,14 @@ func IsolatedClaudePolicyArgs(agentName string, isolated bool) ([]string, error)
 	if config.Channel() == "preview" {
 		return nil, nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
+	if settingsSource == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		settingsSource = filepath.Join(home, ".claude", "settings.json")
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	data, err := os.ReadFile(settingsSource)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

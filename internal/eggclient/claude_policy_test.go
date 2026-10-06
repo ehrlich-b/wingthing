@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient/testutil"
 )
 
@@ -98,6 +99,40 @@ func TestIsolatedClaudePolicyReloadsWithoutTouchingUserProfiles(t *testing.T) {
 			testutil.AssertPolicyFixture(t, filepath.Join(user, ".claude", ".claude.json"), `{"hasCompletedOnboarding":true,"theme":"dark","projects":{"keep":true}}`)
 			testutil.AssertPolicyFixture(t, filepath.Join(user, ".claude", ".credentials.json"), `{"fixture":"owner-only"}`)
 		}
+	}
+}
+
+func TestIsolatedClaudePolicyUsesConfiguredSettingsSource(t *testing.T) {
+	previous := config.ReleaseChannel
+	config.ReleaseChannel = "stable"
+	t.Cleanup(func() { config.ReleaseChannel = previous })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	hostPath := filepath.Join(home, ".claude", "settings.json")
+	host := `{"model":"opus","effortLevel":"low"}`
+	testutil.WritePolicyFixture(t, hostPath, host)
+	settingsPath := filepath.Join(t.TempDir(), "org-settings.json")
+	for _, model := range []string{"sonnet", "claude-sonnet-5"} {
+		source := `{"model":"` + model + `","effortLevel":"high","env":{"CLAUDE_CODE_EFFORT_LEVEL":"max","ANTHROPIC_API_KEY":"source-secret"},"hooks":{"Stop":[]},"theme":"host-theme"}`
+		testutil.WritePolicyFixture(t, settingsPath, source)
+		args, err := isolatedClaudePolicyArgs("claude", true, settingsPath)
+		want := []string{"--model", model, "--settings", `{"effortLevel":"high","env":{"CLAUDE_CODE_EFFORT_LEVEL":"max"}}`}
+		if err != nil || !reflect.DeepEqual(args, want) {
+			t.Fatalf("configured model policy = %q, %v; want %q", args, err, want)
+		}
+		testutil.AssertPolicyFixture(t, settingsPath, source)
+		testutil.AssertPolicyFixture(t, hostPath, host)
+	}
+	if err := os.Remove(settingsPath); err != nil {
+		t.Fatal(err)
+	}
+	if args, err := isolatedClaudePolicyArgs("claude", true, settingsPath); err != nil || len(args) != 0 {
+		t.Fatalf("missing configured source imported host policy: %q, %v", args, err)
+	}
+	config.ReleaseChannel = "preview"
+	testutil.WritePolicyFixture(t, settingsPath, "invalid configured settings must not be opened")
+	if args, err := isolatedClaudePolicyArgs("claude", true, settingsPath); err != nil || len(args) != 0 {
+		t.Fatalf("preview imported configured stable policy: %q, %v", args, err)
 	}
 }
 

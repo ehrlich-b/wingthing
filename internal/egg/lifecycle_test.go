@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -399,6 +400,50 @@ func TestLifecyclePaginationAndCrashTailRecovery(t *testing.T) {
 	}
 	if _, err = ReadSessionLifecycle(dir, "claude", cwd, home, "ours", true, 206, 10); err == nil {
 		t.Fatal("accepted a future cursor")
+	}
+}
+
+func TestClaudeLifecycleArgsStopAtNativeTerminator(t *testing.T) {
+	for _, supplied := range [][]string{
+		{"--session-id", "ours", "--", "--session-id"},
+		{"--model", "sonnet", "--", "--", "--settings", "literal-settings"},
+		{"--settings", `{"model":"sonnet","disableAllHooks":true}`, "--", "--settings=literal-settings"},
+	} {
+		t.Run(strings.Join(supplied, " "), func(t *testing.T) {
+			home, dir, cwd := t.TempDir(), t.TempDir(), t.TempDir()
+			original := slices.Clone(supplied)
+			args, err := ClaudeLifecycleArgs(supplied, home, filepath.Base(dir), "ours")
+			if err != nil {
+				t.Fatal(err)
+			}
+			end := slices.Index(args, "--")
+			if end < 2 || args[end-2] != "--settings" || !slices.Equal(args[end:], supplied[slices.Index(supplied, "--"):]) {
+				t.Fatalf("lifecycle options changed the native prompt: %q", args)
+			}
+			var settings map[string]any
+			if err := json.Unmarshal([]byte(args[end-1]), &settings); err != nil {
+				t.Fatal(err)
+			}
+			if supplied[0] == "--settings" && (settings["model"] != "sonnet" || settings["disableAllHooks"] != true) {
+				t.Fatalf("explicit settings changed: %v", settings)
+			}
+			prepared, err := prepareClaudeLifecycleArgs(supplied, home, dir, "ours", cwd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			end = slices.Index(prepared, "--")
+			path := filepath.Join(dir, claudeLifecycleSettingsFile)
+			if end < 2 || prepared[end-2] != "--settings" || prepared[end-1] != path || !slices.Equal(prepared[end:], supplied[slices.Index(supplied, "--"):]) {
+				t.Fatalf("settings file was not inserted before the native terminator: %q", prepared)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != args[slices.Index(args, "--")-1] {
+				t.Fatalf("merged settings file = %q, %v", data, err)
+			}
+			if !slices.Equal(supplied, original) {
+				t.Fatalf("caller arguments changed: %q", supplied)
+			}
+		})
 	}
 }
 

@@ -268,6 +268,15 @@ func ClaudeLifecycleArgs(args []string, home, sessionID, providerID string) ([]s
 	return claudeLifecycleArgs(args, home, sessionID, providerID, "")
 }
 
+func providerOptionsEnd(args []string) int {
+	for i, arg := range args {
+		if arg == "--" {
+			return i
+		}
+	}
+	return len(args)
+}
+
 const claudeLifecycleSettingsFile = "claude-settings.json"
 
 // prepareClaudeLifecycleArgs keeps merged credentials out of the process argv.
@@ -277,6 +286,7 @@ func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd str
 	if err != nil {
 		return nil, err
 	}
+	settingsIndex := providerOptionsEnd(out) - 1
 	path, err := filepath.Abs(filepath.Join(eggDir, claudeLifecycleSettingsFile))
 	if err != nil {
 		return nil, err
@@ -298,14 +308,14 @@ func prepareClaudeLifecycleArgs(args []string, home, eggDir, providerID, cwd str
 		err = f.Truncate(0)
 	}
 	if err == nil {
-		_, err = io.WriteString(f, out[len(out)-1])
+		_, err = io.WriteString(f, out[settingsIndex])
 	}
 	closeErr := f.Close()
 	if err != nil || closeErr != nil {
 		_ = os.Remove(path)
 		return nil, errors.Join(err, closeErr)
 	}
-	out[len(out)-1] = path
+	out[settingsIndex] = path
 	return out, nil
 }
 
@@ -315,10 +325,11 @@ func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string)
 	}
 	settings := map[string]any{}
 	out := make([]string, 0, len(args)+2)
-	for i := 0; i < len(args); i++ {
+	optionsEnd := providerOptionsEnd(args)
+	for i := 0; i < optionsEnd; i++ {
 		value := ""
 		if args[i] == "--settings" {
-			if i+1 >= len(args) {
+			if i+1 >= optionsEnd {
 				return nil, errors.New("--settings requires a value")
 			}
 			i++
@@ -387,7 +398,8 @@ func claudeLifecycleArgs(args []string, home, sessionID, providerID, cwd string)
 	if err != nil {
 		return nil, err
 	}
-	return append(out, "--settings", string(encoded)), nil
+	out = append(out, "--settings", string(encoded))
+	return append(out, args[optionsEnd:]...), nil
 }
 
 func validLifecycleID(id string) bool {
