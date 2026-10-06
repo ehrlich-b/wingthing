@@ -297,9 +297,10 @@ func DenyInit(args []string) {
 
 	// Jail mode: deny:/ creates an allowlist filesystem. Only explicitly
 	// mounted paths are visible; everything else is inaccessible.
+	var overlayPersistFn func()
 	jailMode := containsPath(denyPaths, "/")
 	if jailMode {
-		setupJail(tmpDir, roMounts, writablePaths, home)
+		overlayPersistFn = setupJail(tmpDir, roMounts, writablePaths, home, overlayPrefixes...)
 		var filtered []string
 		for _, d := range denyPaths {
 			if d != "/" {
@@ -325,7 +326,6 @@ func DenyInit(args []string) {
 	// instead of simple bind-mount+RO. Overlayfs provides a copy-on-write layer
 	// so new files can be created and renames work (needed for atomic writes).
 	// Prefix-matching files are persisted back to the real HOME on exit.
-	var overlayPersistFn func()
 	if !jailMode && home != "" && len(writablePaths) > 0 && !containsPath(writablePaths, home) {
 		if len(overlayPrefixes) > 0 {
 			overlayPersistFn = setupOverlayHome(home, writablePaths, overlayPrefixes, tmpDir)
@@ -1162,7 +1162,7 @@ func containsPath(paths []string, target string) bool {
 // writablePaths (read-write), plus essential virtual filesystems (/proc, /dev,
 // /tmp). After pivot_root, the old root is lazily unmounted — nothing outside
 // the explicit mounts is accessible.
-func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
+func setupJail(tmpDir string, roMounts, writablePaths []string, home string, prefixes ...string) func() {
 	newRoot := filepath.Join(tmpDir, "newroot")
 	if err := os.MkdirAll(newRoot, 0755); err != nil {
 		log.Fatalf("_deny_init: jail mkdir newroot: %v", err)
@@ -1249,6 +1249,14 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		}
 		homeFD.Close()
 	}
+	// Prefix config files live in the otherwise empty jail HOME, where atomic
+	// replacement remains possible. Persist only those declared prefixes; the
+	// agent's config directories already persist through their bind mounts.
+	persist, extraWritable, err := prepareJailPrefixFiles(newRoot, home, roMounts, writablePaths, prefixes)
+	if err != nil {
+		failEnforcement("prepare jail prefix config", home, err)
+	}
+	writablePaths = append(append([]string(nil), writablePaths...), extraWritable...)
 	// Mount parents before children so each declared child retains its mode.
 	expected := []expectedMount{
 		{Path: "/", FSType: "tmpfs", Writable: true},
@@ -1310,6 +1318,116 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		failEnforcement("verify jail filesystem policy", "/proc/self/mountinfo", err)
 	}
 	log.Printf("_deny_init: jail active (ro=%d rw=%d home=%s)", len(roMounts), len(writablePaths), home)
+	return persist
+}
+
+func prepareJailPrefixFiles(root, home string, readonly, writable, prefixes []string) (func(), []string, error) {
+	files, err := writablePrefixFiles(home, writable, prefixes)
+	if err != nil {
+		return nil, nil, err
+	}
+	declared := append(append([]string(nil), readonly...), writable...)
+	covered := func(path string) bool {
+		for _, mount := range declared {
+			if isPathWithin(path, mount) {
+				return true
+			}
+		}
+		return false
+	}
+	var extraWritable []string
+	for _, path := range files {
+		if covered(path) {
+			// Keep explicit file mounts' modes. Otherwise, a declared prefix
+			// punches a writable file hole in its explicitly mounted parent.
+			if !containsPath(declared, path) {
+				extraWritable = append(extraWritable, path)
+			}
+			continue
+		}
+		source, err := openConfinedExisting("/", path)
+		if err != nil {
+			return nil, nil, err
+		}
+		target, err := createConfinedMountpoint(root, path, false)
+		if err == nil {
+			err = copyPinnedFile(source, target)
+			target.Close()
+		}
+		source.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	type prefixDirectory struct {
+		path, prefix string
+		host         *os.File
+	}
+	var directories []prefixDirectory
+	for _, prefix := range prefixes {
+		path := filepath.Join(home, prefix)
+		parent := filepath.Dir(path)
+		if covered(parent) {
+			continue
+		}
+		host, err := openConfinedExisting("/", parent)
+		if err != nil {
+			for _, directory := range directories {
+				directory.host.Close()
+			}
+			return nil, nil, err
+		}
+		directories = append(directories, prefixDirectory{parent, filepath.Base(path), host})
+	}
+	if len(directories) == 0 {
+		return nil, extraWritable, nil
+	}
+	return func() {
+		for _, directory := range directories {
+			entries, err := os.ReadDir(directory.path)
+			if err == nil {
+				for _, entry := range entries {
+					path := filepath.Join(directory.path, entry.Name())
+					if entry.Name() == directory.prefix || !strings.HasPrefix(entry.Name(), directory.prefix) || covered(path) || !entry.Type().IsRegular() {
+						continue
+					}
+					if err := copyFile(path, filepath.Join(mountFDPath(directory.host), entry.Name())); err != nil {
+						log.Printf("_deny_init: persist jail prefix %s: %v", path, err)
+					}
+				}
+			}
+			directory.host.Close()
+		}
+	}, extraWritable, nil
+}
+
+func copyPinnedFile(source, target *os.File) error {
+	in, err := os.Open(mountFDPath(source))
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	targetInfo, err := target.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || !targetInfo.Mode().IsRegular() || targetInfo.Size() != 0 {
+		return fmt.Errorf("refusing to initialize a nonempty or non-regular jail config target")
+	}
+	out, err := os.OpenFile(mountFDPath(target), os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if err := out.Chmod(info.Mode().Perm()); err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	return err
 }
 
 func isPathWithin(path, root string) bool {

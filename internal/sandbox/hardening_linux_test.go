@@ -57,6 +57,38 @@ func runHardeningNamespace(t *testing.T, scenario, root string) {
 
 func runHardeningScenario(scenario, root string) error {
 	switch scenario {
+	case "jail-prefix":
+		home := filepath.Join(root, "home")
+		config := filepath.Join(home, ".claude")
+		if err := os.MkdirAll(config, 0o755); err != nil {
+			return err
+		}
+		path := filepath.Join(home, ".claude.json")
+		if err := os.WriteFile(path, []byte("initial config"), 0o600); err != nil {
+			return err
+		}
+		persist := setupJail(root, []string{"/usr"}, []string{config}, home, ".claude")
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != "initial config" {
+			return fmt.Errorf("jail lost existing prefix config: %q, %v", data, err)
+		}
+		if err := os.WriteFile(path+".tmp", []byte("atomic update"), 0o600); err != nil {
+			return err
+		}
+		if err := os.Rename(path+".tmp", path); err != nil {
+			return fmt.Errorf("atomic prefix replacement failed: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(home, ".claude-new.json"), []byte("new config"), 0o600); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte("ephemeral"), 0o600); err != nil {
+			return err
+		}
+		if persist == nil {
+			return fmt.Errorf("missing jail prefix persistence")
+		}
+		persist()
+		return nil
 	case "deny-write":
 		home, workspace, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "session")
 		for _, dir := range []string{home, workspace, tmp} {
@@ -239,6 +271,20 @@ func TestDenyWriteMissingFileCannotBeCreatedOrReplaced(t *testing.T) {
 	}
 	if info, err := os.Stat(filepath.Join(root, "work", "egg.yaml")); err != nil || !info.IsDir() {
 		t.Fatalf("absent policy became a discoverable file: %v, %v", info, err)
+	}
+}
+
+func TestJailPreservesAtomicAgentPrefixConfig(t *testing.T) {
+	root := t.TempDir()
+	runHardeningNamespace(t, "jail-prefix", root)
+	for name, want := range map[string]string{".claude.json": "atomic update", ".claude-new.json": "new config"} {
+		data, err := os.ReadFile(filepath.Join(root, "home", name))
+		if err != nil || string(data) != want {
+			t.Fatalf("jail prefix did not persist: %s: %q, %v", name, data, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "home", ".zshrc")); !os.IsNotExist(err) {
+		t.Fatalf("undeclared HOME write persisted: %v", err)
 	}
 }
 

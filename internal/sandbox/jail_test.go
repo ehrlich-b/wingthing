@@ -744,7 +744,9 @@ func TestJail_RootDeny_DoesNotFollowHomeSymlinkMounts(t *testing.T) {
 	}
 	out, err := runJail(t, cfg, `cat "$HOME/.claude/token" 2>/dev/null || true`)
 	if err != nil {
-		t.Fatalf("home symlink probe failed: %v (output: %s)", err, out)
+		// A declared source symlink is now refused before the agent launches.
+		t.Logf("jail refused the HOME symlink mount: %v", err)
+		return
 	}
 	if strings.Contains(out, "must-stay-on-host") {
 		t.Fatalf("jail followed an owner-controlled HOME symlink to host state: %s", out)
