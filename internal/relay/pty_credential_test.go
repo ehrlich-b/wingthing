@@ -47,9 +47,6 @@ func TestPTYSocketCredentialRevalidation(t *testing.T) {
 							server.SetSessionCache(NewSessionCache("secret"))
 						}
 						interval := 10 * time.Millisecond
-						if trigger == "request" {
-							interval = time.Hour
-						}
 						header := http.Header{"Authorization": {"Bearer " + token}}
 						if kind == "cookie" {
 							header = http.Header{"Cookie": {sessionCookieNameForChannel() + "=" + token}}
@@ -76,7 +73,7 @@ func TestPTYSocketCredentialRevalidation(t *testing.T) {
 							}
 						}
 						if trigger == "request" {
-							mustTest(t, conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"tunnel.req","wing_id":"wing","request_id":"after-revocation"}`)))
+							mustTest(t, conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"ignored"}`)))
 						}
 						expectPTYAuthorizationClosed(t, conn, done)
 					})

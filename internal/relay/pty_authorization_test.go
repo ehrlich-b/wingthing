@@ -5,10 +5,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+
+	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
 func TestWingAccessDoesNotTrustStaleOrgSnapshots(t *testing.T) {
@@ -34,6 +38,58 @@ func TestWingAccessDoesNotTrustStaleOrgSnapshots(t *testing.T) {
 	}
 	if !server.canAccessWing("owner", wing) {
 		t.Fatal("personal wing ownership was lost")
+	}
+}
+
+func TestPTYFramesUseAuthorizationSnapshot(t *testing.T) {
+	store := testStore(t)
+	mustTest(t, store.CreateUser("user"))
+	mustTest(t, store.CreateDeviceToken("device-token", "user", "wing", nil))
+	login := NewServer(store, ServerConfig{InternalSecret: "secret"})
+	var validations atomic.Int64
+	var holdRefresh atomic.Bool
+	blocked, unblock := make(chan struct{}), make(chan struct{})
+	loginHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		validations.Add(1)
+		if holdRefresh.Load() && strings.HasPrefix(r.URL.Path, "/internal/user-orgs/") {
+			close(blocked)
+			select {
+			case <-unblock:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		login.ServeHTTP(w, r)
+	}))
+	defer loginHTTP.Close()
+	defer close(unblock)
+	edge := NewServer(nil, ServerConfig{NodeRole: "edge", LoginNodeAddr: loginHTTP.URL, InternalSecret: "secret"})
+	conn, _ := openPTYAuthTestSocket(t, edge, time.Hour, http.Header{"Authorization": {"Bearer device-token"}}, "")
+	admissionChecks := validations.Load()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	for range 20 {
+		mustTest(t, conn.Write(ctx, websocket.MessageText, []byte(`{"type":"tunnel.req","wing_id":"missing","request_id":"snapshot"}`)))
+		_, _, err := conn.Read(ctx)
+		mustTest(t, err)
+	}
+	if got := validations.Load(); got != admissionChecks {
+		t.Fatalf("20 frames triggered %d login checks, want cached authorization", got-admissionChecks)
+	}
+	// An in-flight refresh must not hold the snapshot lock across login RTTs.
+	holdRefresh.Store(true)
+	edge.Wings.notify("user", WingEvent{Type: "org.changed"})
+	select {
+	case <-blocked:
+	case <-ctx.Done():
+		t.Fatal("org-change signal did not refresh authorization")
+	}
+	checksDuringRefresh := validations.Load()
+	mustTest(t, conn.Write(ctx, websocket.MessageText, []byte(`{"type":"tunnel.req","wing_id":"missing","request_id":"during-refresh"}`)))
+	_, _, err := conn.Read(ctx)
+	mustTest(t, err)
+	if validations.Load() != checksDuringRefresh {
+		t.Fatal("frame revalidated while periodic refresh was in flight")
 	}
 }
 
@@ -82,7 +138,7 @@ func expectPTYAuthorizationClosed(t *testing.T, conn *websocket.Conn, done <-cha
 func TestPTYSocketClosesWhenOrgAuthorityRevoked(t *testing.T) {
 	for _, node := range []string{"login", "edge"} {
 		for _, change := range []string{"membership", "role"} {
-			for _, trigger := range []string{"idle", "request"} {
+			for _, trigger := range []string{"idle", "request", "signal"} {
 				t.Run(node+"/"+change+"/"+trigger, func(t *testing.T) {
 					store := testStore(t)
 					mustTest(t, store.CreateUser("owner"))
@@ -102,7 +158,7 @@ func TestPTYSocketClosesWhenOrgAuthorityRevoked(t *testing.T) {
 						server.SetSessionCache(NewSessionCache("secret"))
 					}
 					interval := 10 * time.Millisecond
-					if trigger == "request" {
+					if trigger == "signal" {
 						interval = time.Hour
 					}
 					conn, done := openPTYAuthTestSocket(t, server, interval, http.Header{"Cookie": {sessionCookieNameForChannel() + "=session"}}, "")
@@ -116,7 +172,13 @@ func TestPTYSocketClosesWhenOrgAuthorityRevoked(t *testing.T) {
 						t.Fatal("test lost personal Pro entitlement")
 					}
 					if trigger == "request" {
-						mustTest(t, conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"tunnel.req","wing_id":"org-wing","request_id":"after-revocation"}`)))
+						mustTest(t, conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"ignored"}`)))
+					} else if trigger == "signal" {
+						if node == "edge" {
+							server.refreshRemoteUserOrgs("admin")
+						} else {
+							login.refreshUserOrgSubs("admin")
+						}
 					}
 					expectPTYAuthorizationClosed(t, conn, done)
 				})
@@ -145,16 +207,30 @@ func TestPTYSocketRevalidatesAuthorityAcquiredAfterAdmission(t *testing.T) {
 	mustTest(t, store.CreateUser("user"))
 	mustTest(t, store.CreateSession("session", "user", time.Now().Add(time.Hour)))
 	mustTest(t, store.CreateOrgWithSeats("org", "Org", "org", "owner", 2))
-	server := NewServer(store, ServerConfig{})
+	login := NewServer(store, ServerConfig{InternalSecret: "secret"})
+	loginHTTP := httptest.NewServer(login)
+	defer loginHTTP.Close()
+	server := NewServer(nil, ServerConfig{NodeRole: "edge", LoginNodeAddr: loginHTTP.URL, InternalSecret: "secret"})
+	server.SetSessionCache(NewSessionCache("secret"))
+	// A denied hosted payload proves org access without needing a real wing.
+	server.Wings.Add(&ConnectedWing{ID: "connection", WingID: "org-wing", UserID: "owner", OrgID: "org", HostedRelay: ws.HostedRelayDeny})
 	conn, done := openPTYAuthTestSocket(t, server, 10*time.Millisecond, http.Header{"Cookie": {sessionCookieNameForChannel() + "=session"}}, "")
 	mustTest(t, store.AddOrgMember("org", "user", "admin"))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	// A reply proves the new org authority was observed by the request loop.
-	mustTest(t, conn.Write(ctx, websocket.MessageText, []byte(`{"type":"tunnel.req","wing_id":"missing","request_id":"refresh"}`)))
-	_, _, err := conn.Read(ctx)
-	mustTest(t, err)
-	_, err = store.RemoveOrgMemberAndEntitlement("org", "user")
+	for {
+		mustTest(t, conn.Write(ctx, websocket.MessageText, []byte(`{"type":"tunnel.req","wing_id":"org-wing","request_id":"refresh"}`)))
+		var response ws.ErrorMsg
+		mustTest(t, wsjson.Read(ctx, conn, &response))
+		if response.Message != "wing not found" {
+			if !strings.Contains(response.Message, "hosted relay") {
+				t.Fatalf("unexpected org access response: %#v", response)
+			}
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_, err := store.RemoveOrgMemberAndEntitlement("org", "user")
 	mustTest(t, err)
 	expectPTYAuthorizationClosed(t, conn, done)
 }

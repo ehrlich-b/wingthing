@@ -105,7 +105,7 @@ func orgRoleAuthority(role string) int {
 	}
 }
 
-func revalidatePTYAuthorization(ctx context.Context, conn *websocket.Conn, interval time.Duration, validate func() bool) {
+func revalidatePTYAuthorization(ctx context.Context, conn *websocket.Conn, interval time.Duration, changes <-chan WingEvent, validate func() bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -113,10 +113,14 @@ func revalidatePTYAuthorization(ctx context.Context, conn *websocket.Conn, inter
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !validate() {
-				_ = conn.Close(websocket.StatusPolicyViolation, "authorization revoked")
-				return
+		case event := <-changes:
+			if event.Type != "org.changed" {
+				continue
 			}
+		}
+		if !validate() {
+			_ = conn.Close(websocket.StatusPolicyViolation, "authorization revoked")
+			return
 		}
 	}
 }

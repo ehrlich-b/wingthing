@@ -733,6 +733,9 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 		log.Printf("[pty-route] no FlyMachineID set, skipping cross-node routing for wing %s", targetWingID)
 	}
 
+	changes := make(chan WingEvent, 16)
+	s.Wings.Subscribe(userID, nil, changes)
+	defer s.Wings.Unsubscribe(userID, changes)
 	conn, ctx, release, err := s.acceptSocket(w, r, userID, s.browserWebSocketAcceptOptions())
 	if err != nil {
 		log.Printf("pty websocket accept: %v", err)
@@ -747,24 +750,30 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 	defer s.clearTunnelRequests(conn)
 
 	previousOrgs := initialOrgs
+	authorizationValid := true
 	var orgMu sync.Mutex
-	refreshAuthorization := func() (userOrgContext, bool) {
+	authCtx, cancelAuthorization := context.WithCancel(ctx)
+	refreshAuthorization := func() bool {
+		valid := s.ptyCredentialValid(authCtx, credential, userID)
+		var current userOrgContext
+		if valid {
+			current, valid = s.currentUserOrgContext(authCtx, userID)
+		}
 		orgMu.Lock()
 		defer orgMu.Unlock()
-		if !s.ptyCredentialValid(ctx, credential, userID) {
-			return userOrgContext{}, false
-		}
-		current, ok := s.currentUserOrgContext(ctx, userID)
-		if !ok || !s.roostUserIDAllowed(userID) || orgAuthorityRevoked(previousOrgs, current) {
-			return userOrgContext{}, false
+		if !valid || !s.roostUserIDAllowed(userID) || orgAuthorityRevoked(previousOrgs, current) {
+			authorizationValid = false
+			return false
 		}
 		previousOrgs = current
-		return current, true
+		return true
 	}
-	go revalidatePTYAuthorization(ctx, conn, authInterval, func() bool {
-		_, ok := refreshAuthorization()
-		return ok
-	})
+	authorizationDone := make(chan struct{})
+	go func() {
+		defer close(authorizationDone)
+		revalidatePTYAuthorization(authCtx, conn, authInterval, changes, refreshAuthorization)
+	}()
+	defer func() { cancelAuthorization(); <-authorizationDone }()
 
 	// On browser disconnect: clear BrowserConn on all owned routes
 	defer func() { s.forwardBrowserDetach(conn, ""); s.PTY.ClearBrowser(conn) }()
@@ -777,7 +786,11 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			return
 		}
-		current, ok := refreshAuthorization()
+		// Frames use the bounded snapshot refreshed by the idle check and explicit
+		// org-change signals; typing must never make synchronous login requests.
+		orgMu.Lock()
+		current, ok := previousOrgs, authorizationValid
+		orgMu.Unlock()
 		if !ok {
 			_ = conn.Close(websocket.StatusPolicyViolation, "authorization revoked")
 			return
