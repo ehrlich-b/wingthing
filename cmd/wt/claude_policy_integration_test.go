@@ -15,6 +15,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/eggclient/testutil"
 )
 
 // This uses the installed vendor CLI against a loopback fake API, with no real
@@ -53,16 +56,16 @@ func TestRealClaudeModelPolicyPreservesPersonalSettings(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			host := t.TempDir()
 			t.Setenv("HOME", host)
-			writePolicyFixture(t, filepath.Join(host, ".claude", "settings.json"), tc.policy)
-			policy, err := isolatedClaudePolicyArgs("claude", true)
+			testutil.WritePolicyFixture(t, filepath.Join(host, ".claude", "settings.json"), tc.policy)
+			policy, err := eggclient.IsolatedClaudePolicyArgs("claude", true)
 			if err != nil {
 				t.Fatal(err)
 			}
 			user := t.TempDir()
 			settings := filepath.Join(user, ".claude", "settings.json")
 			const personal = `{"model":"claude-opus-5","theme":"dark","env":{"ANTHROPIC_MODEL":"claude-opus-5","CLAUDE_CODE_EFFORT_LEVEL":"max"},"effortLevel":"low"}`
-			writePolicyFixture(t, settings, personal)
-			writePolicyFixture(t, filepath.Join(user, ".claude", ".claude.json"), `{"hasCompletedOnboarding":true,"theme":"dark"}`)
+			testutil.WritePolicyFixture(t, settings, personal)
+			testutil.WritePolicyFixture(t, filepath.Join(user, ".claude", ".claude.json"), `{"hasCompletedOnboarding":true,"theme":"dark"}`)
 			var mu sync.Mutex
 			var requests []map[string]any
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +127,7 @@ func TestRealClaudeModelPolicyPreservesPersonalSettings(t *testing.T) {
 					t.Fatalf("vendor request model=%v effort=%v, want %s/%s", request["model"], config["effort"], tc.model, tc.effort)
 				}
 			}
-			assertPolicyFixture(t, settings, personal)
+			testutil.AssertPolicyFixture(t, settings, personal)
 		})
 	}
 }

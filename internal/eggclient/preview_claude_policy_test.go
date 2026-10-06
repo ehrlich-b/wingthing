@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/eggclient/testutil"
 )
 
 func TestPreviewClaudeDoesNotImportHostModelPolicy(t *testing.T) {
@@ -14,10 +15,10 @@ func TestPreviewClaudeDoesNotImportHostModelPolicy(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	path := filepath.Join(home, ".claude", "settings.json")
-	writePolicyFixture(t, path, "invalid host policy must not be opened")
+	testutil.WritePolicyFixture(t, path, "invalid host policy must not be opened")
 	args, err := IsolatedClaudePolicyArgs("claude", true)
 	if err != nil || len(args) != 0 {
 		t.Fatalf("preview imported host policy: %q %v", args, err)
 	}
-	assertPolicyFixture(t, path, "invalid host policy must not be opened")
+	testutil.AssertPolicyFixture(t, path, "invalid host policy must not be opened")
 }

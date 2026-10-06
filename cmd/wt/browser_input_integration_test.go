@@ -21,6 +21,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -186,7 +187,7 @@ func TestPreviewBrowserLeaseOnRealEgg(t *testing.T) {
 	}
 	send(ws.PTYAttach{Type: ws.TypePTYAttach, SessionID: started.Session, ControllerID: "browser-one", PublicKey: pub(firstKey), UserID: "fixture", OrgRole: "admin", Takeover: true, Rows: 35, Cols: 110})
 	await(ws.TypePTYStarted, "browser-one", "")
-	dimensions := readEggMetaValues(eggDir)
+	dimensions := eggclient.ReadEggMetaValues(eggDir)
 	if dimensions["rows"] != "35" || dimensions["cols"] != "110" {
 		t.Fatalf("snapshot acknowledged before initial dimensions: rows=%s cols=%s", dimensions["rows"], dimensions["cols"])
 	}

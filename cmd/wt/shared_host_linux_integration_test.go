@@ -15,6 +15,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/eggclient/testutil"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
@@ -36,7 +37,7 @@ func TestSharedHostAgentRunPreservesExternalReadOnlyMount(t *testing.T) {
 	root := t.TempDir()
 	hostHome := filepath.Join(root, "host-home")
 	t.Setenv("HOME", hostHome)
-	writePolicyFixture(t, filepath.Join(hostHome, ".claude", "settings.json"), `{"model":"claude-sonnet-5","env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh","HOST_SECRET":"must-not-cross"},"theme":"host-theme"}`)
+	testutil.WritePolicyFixture(t, filepath.Join(hostHome, ".claude", "settings.json"), `{"model":"claude-sonnet-5","env":{"CLAUDE_CODE_EFFORT_LEVEL":"xhigh","HOST_SECRET":"must-not-cross"},"theme":"host-theme"}`)
 	workspace := filepath.Join(root, "workspace")
 	repos := filepath.Join(root, "repos")
 	otherRole := filepath.Join(root, "other-role")
@@ -71,7 +72,7 @@ func TestSharedHostAgentRunPreservesExternalReadOnlyMount(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(userHome, ".claude", "credentials-fixture"), []byte("personal-login-state"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writePolicyFixture(t, filepath.Join(userHome, ".claude", "settings.json"), `{"model":"opus","theme":"user-theme"}`)
+	testutil.WritePolicyFixture(t, filepath.Join(userHome, ".claude", "settings.json"), `{"model":"opus","theme":"user-theme"}`)
 	secretPath := filepath.Join(otherUserHome, ".claude", "credentials-fixture")
 	if err := os.WriteFile(secretPath, []byte("other-user-login-state"), 0o600); err != nil {
 		t.Fatal(err)

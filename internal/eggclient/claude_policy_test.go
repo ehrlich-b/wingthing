@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/agent"
+	"github.com/ehrlich-b/wingthing/internal/eggclient/testutil"
 )
 
 func TestIsolatedClaudePolicyProjectsOnlyModelAndEffort(t *testing.T) {
@@ -31,7 +32,7 @@ func TestIsolatedClaudePolicyProjectsOnlyModelAndEffort(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			path := filepath.Join(home, ".claude", "settings.json")
-			writePolicyFixture(t, path, tc.source)
+			testutil.WritePolicyFixture(t, path, tc.source)
 			args, err := IsolatedClaudePolicyArgs("claude", true)
 			if tc.invalid {
 				if err == nil || len(args) != 0 {
@@ -68,7 +69,7 @@ func TestIsolatedClaudePolicyProjectsOnlyModelAndEffort(t *testing.T) {
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("policy = %#v, want %#v", got, want)
 			}
-			assertPolicyFixture(t, path, tc.source)
+			testutil.AssertPolicyFixture(t, path, tc.source)
 		})
 	}
 }
@@ -79,12 +80,12 @@ func TestIsolatedClaudePolicyReloadsWithoutTouchingUserProfiles(t *testing.T) {
 	policyPath := filepath.Join(host, ".claude", "settings.json")
 	users := []string{t.TempDir(), t.TempDir()}
 	for _, user := range users {
-		writePolicyFixture(t, filepath.Join(user, ".claude", "settings.json"), `{"model":"opus","theme":"dark","env":{"PERSONAL":"keep"}}`)
-		writePolicyFixture(t, filepath.Join(user, ".claude", ".claude.json"), `{"hasCompletedOnboarding":true,"theme":"dark","projects":{"keep":true}}`)
-		writePolicyFixture(t, filepath.Join(user, ".claude", ".credentials.json"), `{"fixture":"owner-only"}`)
+		testutil.WritePolicyFixture(t, filepath.Join(user, ".claude", "settings.json"), `{"model":"opus","theme":"dark","env":{"PERSONAL":"keep"}}`)
+		testutil.WritePolicyFixture(t, filepath.Join(user, ".claude", ".claude.json"), `{"hasCompletedOnboarding":true,"theme":"dark","projects":{"keep":true}}`)
+		testutil.WritePolicyFixture(t, filepath.Join(user, ".claude", ".credentials.json"), `{"fixture":"owner-only"}`)
 	}
 	for _, model := range []string{"claude-sonnet-4-6", "claude-sonnet-5"} {
-		writePolicyFixture(t, policyPath, `{"model":"`+model+`"}`)
+		testutil.WritePolicyFixture(t, policyPath, `{"model":"`+model+`"}`)
 		for _, user := range users {
 			if err := PrepareIsolatedClaudeConfig(user, map[string]string{}); err != nil {
 				t.Fatal(err)
@@ -93,9 +94,9 @@ func TestIsolatedClaudePolicyReloadsWithoutTouchingUserProfiles(t *testing.T) {
 			if err != nil || len(args) != 2 || args[0] != "--model" || args[1] != model {
 				t.Fatalf("new launch did not load current policy: %q, %v", args, err)
 			}
-			assertPolicyFixture(t, filepath.Join(user, ".claude", "settings.json"), `{"model":"opus","theme":"dark","env":{"PERSONAL":"keep"}}`)
-			assertPolicyFixture(t, filepath.Join(user, ".claude", ".claude.json"), `{"hasCompletedOnboarding":true,"theme":"dark","projects":{"keep":true}}`)
-			assertPolicyFixture(t, filepath.Join(user, ".claude", ".credentials.json"), `{"fixture":"owner-only"}`)
+			testutil.AssertPolicyFixture(t, filepath.Join(user, ".claude", "settings.json"), `{"model":"opus","theme":"dark","env":{"PERSONAL":"keep"}}`)
+			testutil.AssertPolicyFixture(t, filepath.Join(user, ".claude", ".claude.json"), `{"hasCompletedOnboarding":true,"theme":"dark","projects":{"keep":true}}`)
+			testutil.AssertPolicyFixture(t, filepath.Join(user, ".claude", ".credentials.json"), `{"fixture":"owner-only"}`)
 		}
 	}
 }
@@ -103,7 +104,7 @@ func TestIsolatedClaudePolicyReloadsWithoutTouchingUserProfiles(t *testing.T) {
 func TestIsolatedClaudePolicyKeepsExplicitSessionModel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	writePolicyFixture(t, filepath.Join(home, ".claude", "settings.json"), `{"model":"claude-sonnet-5"}`)
+	testutil.WritePolicyFixture(t, filepath.Join(home, ".claude", "settings.json"), `{"model":"claude-sonnet-5"}`)
 	policy, err := IsolatedClaudePolicyArgs("claude", true)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +119,7 @@ func TestIsolatedClaudePolicyKeepsExplicitSessionModel(t *testing.T) {
 func TestIsolatedClaudePolicyDoesNotReadHostForPersonalOrOtherAgents(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	writePolicyFixture(t, filepath.Join(home, ".claude", "settings.json"), "invalid")
+	testutil.WritePolicyFixture(t, filepath.Join(home, ".claude", "settings.json"), "invalid")
 	for _, tc := range []struct {
 		agent    string
 		isolated bool
@@ -153,30 +154,12 @@ func TestExistingClaudeHelperDoesNotRewritePersonalSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	personal := "{\n  \"theme\": \"user-theme\", \"model\": \"opus\",\n  \"apiKeyHelper\": " + string(helper) + "\n}\n"
-	writePolicyFixture(t, path, personal)
+	testutil.WritePolicyFixture(t, path, personal)
 	for _, key := range []string{"fixture-key-before", "fixture-key-after"} {
 		if err := SetupAPIKeyHelper("claude", map[string]string{"ANTHROPIC_API_KEY": key}, home); err != nil {
 			t.Fatal(err)
 		}
-		assertPolicyFixture(t, path, personal)
-		assertPolicyFixture(t, filepath.Join(home, ".anthropic_key"), key)
-	}
-}
-
-func writePolicyFixture(t *testing.T, path, data string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func assertPolicyFixture(t *testing.T, path, want string) {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil || string(data) != want {
-		t.Fatalf("profile changed at %s: %q, %v", path, data, err)
+		testutil.AssertPolicyFixture(t, path, personal)
+		testutil.AssertPolicyFixture(t, filepath.Join(home, ".anthropic_key"), key)
 	}
 }
