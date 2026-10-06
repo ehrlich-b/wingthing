@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,10 @@ func (c *ContextConfig) Validate() error {
 	u, err := url.Parse(c.URL)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("context: url must be an HTTP(S) base URL without credentials, query or fragment")
+	}
+	// Assertions and bearer tokens must not cross a network in cleartext.
+	if host := u.Hostname(); u.Scheme == "http" && host != "localhost" && !net.ParseIP(host).IsLoopback() {
+		return fmt.Errorf("context: url must use https unless it is a loopback address")
 	}
 	if strings.TrimSpace(c.ClientID) == "" || !filepath.IsAbs(c.SecretFile) || strings.ContainsAny(c.SecretFile, "\x00\r\n") {
 		return fmt.Errorf("context: client_id and absolute secret_file are required")

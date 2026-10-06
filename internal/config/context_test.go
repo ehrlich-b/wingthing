@@ -61,3 +61,16 @@ func TestWingContextRoundTripAndValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestContextConfigRequiresHTTPSOffLoopback(t *testing.T) {
+	cfg := ContextConfig{URL: "http://context.example.test", ClientID: "wingthing-dev", SecretFile: "/tmp/secret"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("plain http to a remote host must be rejected")
+	}
+	for _, url := range []string{"http://127.0.0.1:8080", "http://localhost:9", "https://context.example.test"} {
+		cfg.URL = url
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("%s: %v", url, err)
+		}
+	}
+}
