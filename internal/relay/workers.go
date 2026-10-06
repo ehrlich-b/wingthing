@@ -401,30 +401,12 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try JWT validation first, fall back to DB token
-	var userID string
-	var wingPublicKey string
-	var credentialWingID string
-	if s.JWTPubKey() != nil {
-		claims, jwtErr := ValidateWingJWT(s.JWTPubKey(), token)
-		if jwtErr == nil {
-			userID = claims.Subject
-			wingPublicKey = claims.PublicKey
-			credentialWingID = claims.WingID
-		}
-	}
-	if userID == "" && s.Store != nil {
-		var err error
-		userID, credentialWingID, err = s.Store.ValidateToken(token)
-		if err != nil {
-			http.Error(w, "invalid token", http.StatusUnauthorized)
-			return
-		}
-	}
-	if userID == "" {
+	claims, err := s.validateWingCredential(r.Context(), token)
+	if err != nil {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}
+	userID, credentialWingID, wingPublicKey := claims.Subject, claims.WingID, claims.PublicKey
 	if !s.roostUserIDAllowed(userID) {
 		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
 		return

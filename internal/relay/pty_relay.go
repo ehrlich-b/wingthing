@@ -533,23 +533,12 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if s.JWTPubKey() != nil {
-			if claims, err := ValidateWingJWT(s.JWTPubKey(), token); err == nil {
-				userID = claims.Subject
-			}
-		}
-		if userID == "" && s.Store != nil {
-			var err error
-			userID, _, err = s.Store.ValidateToken(token)
-			if err != nil {
-				http.Error(w, "invalid token", http.StatusUnauthorized)
-				return
-			}
-		}
-		if userID == "" {
+		claims, err := s.validateWingCredential(r.Context(), token)
+		if err != nil {
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
 		}
+		userID = claims.Subject
 	}
 	if !s.roostUserIDAllowed(userID) {
 		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)

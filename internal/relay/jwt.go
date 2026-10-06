@@ -42,6 +42,8 @@ type MCPClaims struct {
 
 const mcpAccessTokenTTL = time.Hour
 
+const wingTokenTTL = 30 * 24 * time.Hour
+
 const jwtSecretDerivationContext = "wingthing/jwt-signing-key/es256/v1"
 
 // DeriveECKeyStringFromSecret deterministically derives a P-256 signing key from an existing
@@ -134,7 +136,7 @@ func parseECKey(data string) (*ecdsa.PrivateKey, error) {
 
 // IssueWingJWT creates an ES256-signed JWT for a wing connection.
 func IssueWingJWT(key *ecdsa.PrivateKey, userID, publicKey, wingID string) (string, time.Time, error) {
-	exp := time.Now().Add(365 * 24 * time.Hour)
+	exp := time.Now().Add(wingTokenTTL)
 	claims := WingClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
