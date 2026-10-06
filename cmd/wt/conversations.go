@@ -17,6 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/control"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/sessionfiles"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -480,11 +481,11 @@ func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *eg
 			return nil, nil, err
 		}
 		home := eggclient.EffectiveSessionHome(s.cfg, s.identity)
-		policy, err := loadSessionFilePolicy(ws.SessionInfo{CWD: c.CWD, EggConfig: rendered}, home)
+		policy, err := sessionfiles.LoadSessionFilePolicy(ws.SessionInfo{CWD: c.CWD, EggConfig: rendered}, home)
 		if err != nil {
 			return nil, nil, err
 		}
-		if _, ok := policy.writableRoot(wingpolicy.CanonicalPolicyPath(s.cfg.Dir)); !ok {
+		if _, ok := policy.WritableRoot(wingpolicy.CanonicalPolicyPath(s.cfg.Dir)); !ok {
 			refusal := fmt.Errorf("parent MCP cannot write isolated Wingthing state %q under the existing sandbox policy; use an already writable workspace containing that state directory (no mounts or grants were changed)", s.cfg.Dir)
 			// Activation contract: the direct in-sandbox server is unchanged
 			// wherever it was accepted. Stable keeps this exact refusal unless
@@ -495,7 +496,7 @@ func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *eg
 					return nil, nil, refusal
 				}
 			}
-			if _, ok := policy.writableRoot(wingpolicy.CanonicalPolicyPath(c.CWD)); !ok {
+			if _, ok := policy.WritableRoot(wingpolicy.CanonicalPolicyPath(c.CWD)); !ok {
 				return nil, nil, errors.New("parent MCP configuration requires an already writable workspace")
 			}
 			args, reg, brokerErr := s.prepareBrokerParentMCP(c, cfg, args)
@@ -504,7 +505,7 @@ func (s *localMCPServer) prepareBoundParentLaunch(c *store.Conversation, cfg *eg
 			}
 			return args, reg, nil
 		}
-		if _, ok := policy.writableRoot(wingpolicy.CanonicalPolicyPath(c.CWD)); !ok {
+		if _, ok := policy.WritableRoot(wingpolicy.CanonicalPolicyPath(c.CWD)); !ok {
 			return nil, nil, errors.New("parent MCP configuration requires an already writable workspace")
 		}
 	}

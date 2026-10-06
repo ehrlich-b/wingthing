@@ -1,4 +1,4 @@
-package main
+package sessionfiles
 
 import (
 	"bytes"
@@ -29,12 +29,12 @@ import (
 )
 
 const (
-	maxSessionUploadSize       = 25 << 20
-	maxSessionUploadChunk      = 128 << 10
+	MaxSessionUploadSize       = 25 << 20
+	MaxSessionUploadChunk      = 128 << 10
 	maxActiveSessionUploads    = 8
 	maxSessionUploadsPerSender = 2
 	maxReservedSessionUpload   = 64 << 20
-	maxSessionDownloadSize     = 100 << 20
+	MaxSessionDownloadSize     = 100 << 20
 	sessionFileStreamChunk     = 32 << 10
 	sessionUploadExpiration    = 10 * time.Minute
 	capabilitySessionRename    = "session.rename.v1"
@@ -44,7 +44,7 @@ const (
 	capabilitySessionExport    = "session.file_export.v1"
 )
 
-func browserSessionCapabilities(hasExport bool) []string {
+func BrowserSessionCapabilities(hasExport bool) []string {
 	capabilities := []string{capabilitySessionRename, capabilitySessionUpload, capabilitySessionDownload, capabilitySessionResume}
 	if hasExport {
 		capabilities = append(capabilities, capabilitySessionExport)
@@ -60,7 +60,7 @@ type sessionFilePolicy struct {
 	denyWrite     []string
 }
 
-func loadSessionFilePolicy(session ws.SessionInfo, effectiveHome string) (sessionFilePolicy, error) {
+func LoadSessionFilePolicy(session ws.SessionInfo, effectiveHome string) (sessionFilePolicy, error) {
 	if session.CWD == "" || session.EggConfig == "" {
 		return sessionFilePolicy{}, errors.New("session effective filesystem policy is unavailable")
 	}
@@ -99,7 +99,7 @@ func loadSessionFilePolicy(session ws.SessionInfo, effectiveHome string) (sessio
 	return policy, nil
 }
 
-func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
+func (p sessionFilePolicy) WritableRoot(path string) (string, bool) {
 	path = wingpolicy.CanonicalPolicyPath(path)
 	best := ""
 	for _, root := range p.writableRoots {
@@ -134,15 +134,15 @@ func (p sessionFilePolicy) writableRoot(path string) (string, bool) {
 	return best, best != ""
 }
 
-func (p sessionFilePolicy) uploadDirectory(userPaths []string) (string, error) {
+func (p sessionFilePolicy) UploadDirectory(userPaths []string) (string, error) {
 	userPaths = wingpolicy.CanonicalPaths(userPaths)
-	if _, ok := p.writableRoot(p.cwd); ok && (len(userPaths) == 0 || wingpolicy.IsUnderPaths(p.cwd, userPaths)) {
+	if _, ok := p.WritableRoot(p.cwd); ok && (len(userPaths) == 0 || wingpolicy.IsUnderPaths(p.cwd, userPaths)) {
 		return p.cwd, nil
 	}
 	best := ""
 	for _, writable := range p.writableRoots {
 		if len(userPaths) == 0 {
-			if _, ok := p.writableRoot(writable); !ok {
+			if _, ok := p.WritableRoot(writable); !ok {
 				continue
 			}
 			info, err := os.Stat(writable)
@@ -162,7 +162,7 @@ func (p sessionFilePolicy) uploadDirectory(userPaths []string) (string, error) {
 			if candidate == "" {
 				continue
 			}
-			if _, ok := p.writableRoot(candidate); !ok {
+			if _, ok := p.WritableRoot(candidate); !ok {
 				continue
 			}
 			info, err := os.Stat(candidate)
@@ -177,19 +177,19 @@ func (p sessionFilePolicy) uploadDirectory(userPaths []string) (string, error) {
 	return best, nil
 }
 
-func resolveOwnedSessionFileTarget(req ws.TunnelRequest, sessionID string, sessions []ws.SessionInfo, userPaths []string, effectiveHome string) (ws.SessionInfo, sessionFilePolicy, error) {
-	session, err := resolveOwnedActiveSession(req, sessionID, sessions, userPaths)
+func ResolveOwnedSessionFileTarget(req ws.TunnelRequest, sessionID string, sessions []ws.SessionInfo, userPaths []string, effectiveHome string) (ws.SessionInfo, sessionFilePolicy, error) {
+	session, err := ResolveOwnedActiveSession(req, sessionID, sessions, userPaths)
 	if err != nil {
 		return ws.SessionInfo{}, sessionFilePolicy{}, err
 	}
-	policy, err := loadSessionFilePolicy(session, effectiveHome)
+	policy, err := LoadSessionFilePolicy(session, effectiveHome)
 	if err != nil {
 		return ws.SessionInfo{}, sessionFilePolicy{}, err
 	}
 	return session, policy, nil
 }
 
-func resolveOwnedActiveSession(req ws.TunnelRequest, sessionID string, sessions []ws.SessionInfo, userPaths []string) (ws.SessionInfo, error) {
+func ResolveOwnedActiveSession(req ws.TunnelRequest, sessionID string, sessions []ws.SessionInfo, userPaths []string) (ws.SessionInfo, error) {
 	userPaths = wingpolicy.CanonicalPaths(userPaths)
 	for _, session := range sessions {
 		if session.SessionID != sessionID {
@@ -243,23 +243,23 @@ func openBoundDirectoryRoot(path string) (*os.Root, error) {
 }
 
 type sessionUpload struct {
-	id, sessionID, name, destination, userID, senderPub string
+	ID, SessionID, Name, Destination, userID, senderPub string
 	size                                                int64
 	data                                                []byte
 	updatedAt                                           time.Time
-	root                                                *os.Root
+	Root                                                *os.Root
 }
 
-func (u *sessionUpload) commit(destination string) (string, int64, error) {
+func (u *sessionUpload) Commit(destination string) (string, int64, error) {
 	validate := func() error { return u.validateDestination(destination) }
 	if err := validate(); err != nil {
 		return "", 0, err
 	}
-	return writeSessionFileRootChecked(u.root, u.name, bytes.NewReader(u.data), validate)
+	return writeSessionFileRootChecked(u.Root, u.Name, bytes.NewReader(u.data), validate)
 }
 
 func (u *sessionUpload) validateDestination(destination string) error {
-	if destination != u.destination {
+	if destination != u.Destination {
 		return errors.New("session upload destination changed")
 	}
 	current, err := openBoundDirectoryRoot(destination)
@@ -268,7 +268,7 @@ func (u *sessionUpload) validateDestination(destination string) error {
 	}
 	defer func() { _ = current.Close() }()
 	currentInfo, currentErr := current.Stat(".")
-	retainedInfo, retainedErr := u.root.Stat(".")
+	retainedInfo, retainedErr := u.Root.Stat(".")
 	if currentErr != nil || retainedErr != nil || !os.SameFile(currentInfo, retainedInfo) {
 		return errors.New("session upload destination changed")
 	}
@@ -285,20 +285,20 @@ func newSessionUploadRegistry() *sessionUploadRegistry {
 	return &sessionUploadRegistry{uploads: make(map[string]*sessionUpload), now: time.Now}
 }
 
-var sessionUploads = newSessionUploadRegistry()
+var SessionUploads = newSessionUploadRegistry()
 
-func (r *sessionUploadRegistry) begin(session ws.SessionInfo, policy sessionFilePolicy, userPaths []string, req ws.TunnelRequest, name string, size int64) (*sessionUpload, error) {
+func (r *sessionUploadRegistry) Begin(session ws.SessionInfo, policy sessionFilePolicy, userPaths []string, req ws.TunnelRequest, name string, size int64) (*sessionUpload, error) {
 	if !validSessionFileName(name) {
 		return nil, errors.New("invalid file name")
 	}
-	if size < 0 || size > maxSessionUploadSize {
-		return nil, fmt.Errorf("file exceeds %d byte upload limit", maxSessionUploadSize)
+	if size < 0 || size > MaxSessionUploadSize {
+		return nil, fmt.Errorf("file exceeds %d byte upload limit", MaxSessionUploadSize)
 	}
-	destination, err := policy.uploadDirectory(userPaths)
+	destination, err := policy.UploadDirectory(userPaths)
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := policy.writableRoot(filepath.Join(destination, name)); !ok {
+	if _, ok := policy.WritableRoot(filepath.Join(destination, name)); !ok {
 		return nil, errors.New("file name is denied by the session write policy")
 	}
 	root, err := openBoundDirectoryRoot(destination)
@@ -340,15 +340,15 @@ func (r *sessionUploadRegistry) begin(session ws.SessionInfo, policy sessionFile
 	if err != nil {
 		return nil, fmt.Errorf("create upload ID: %w", err)
 	}
-	upload := &sessionUpload{id: id, sessionID: session.SessionID, name: name, destination: destination, userID: req.SenderUserID, senderPub: req.SenderPub, size: size, updatedAt: r.now(), root: root}
+	upload := &sessionUpload{ID: id, SessionID: session.SessionID, Name: name, Destination: destination, userID: req.SenderUserID, senderPub: req.SenderPub, size: size, updatedAt: r.now(), Root: root}
 	r.uploads[id] = upload
 	keepRoot = true
 	return upload, nil
 }
 
-func (r *sessionUploadRegistry) append(id, userID, senderPub string, offset int64, chunk []byte) (int64, error) {
-	if len(chunk) == 0 || len(chunk) > maxSessionUploadChunk {
-		return 0, fmt.Errorf("upload chunk must contain 1 to %d bytes", maxSessionUploadChunk)
+func (r *sessionUploadRegistry) Append(id, userID, senderPub string, offset int64, chunk []byte) (int64, error) {
+	if len(chunk) == 0 || len(chunk) > MaxSessionUploadChunk {
+		return 0, fmt.Errorf("upload chunk must contain 1 to %d bytes", MaxSessionUploadChunk)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -368,7 +368,7 @@ func (r *sessionUploadRegistry) append(id, userID, senderPub string, offset int6
 	return int64(len(upload.data)), nil
 }
 
-func (r *sessionUploadRegistry) finish(id, userID, senderPub string) (*sessionUpload, error) {
+func (r *sessionUploadRegistry) Finish(id, userID, senderPub string) (*sessionUpload, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sweepExpiredLocked()
@@ -383,7 +383,7 @@ func (r *sessionUploadRegistry) finish(id, userID, senderPub string) (*sessionUp
 	return upload, nil
 }
 
-func (r *sessionUploadRegistry) cancel(id, userID, senderPub string) error {
+func (r *sessionUploadRegistry) Cancel(id, userID, senderPub string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	upload, err := r.boundUploadLocked(id, userID, senderPub)
@@ -391,7 +391,7 @@ func (r *sessionUploadRegistry) cancel(id, userID, senderPub string) error {
 		return err
 	}
 	delete(r.uploads, id)
-	return upload.root.Close()
+	return upload.Root.Close()
 }
 
 func (r *sessionUploadRegistry) boundUploadLocked(id, userID, senderPub string) (*sessionUpload, error) {
@@ -407,7 +407,7 @@ func (r *sessionUploadRegistry) sweepExpiredLocked() {
 	for id, upload := range r.uploads {
 		if now.Sub(upload.updatedAt) > sessionUploadExpiration {
 			delete(r.uploads, id)
-			_ = upload.root.Close()
+			_ = upload.Root.Close()
 		}
 	}
 }
@@ -507,7 +507,7 @@ func (r *boundedSessionFileReader) Read(buffer []byte) (int, error) {
 	return count, err
 }
 
-func openSessionFile(session ws.SessionInfo, policy sessionFilePolicy, userPaths []string, requested string) (*os.File, string, os.FileInfo, error) {
+func OpenSessionFile(session ws.SessionInfo, policy sessionFilePolicy, userPaths []string, requested string) (*os.File, string, os.FileInfo, error) {
 	userPaths = wingpolicy.CanonicalPaths(userPaths)
 	path := requested
 	if path == "" {
@@ -520,7 +520,7 @@ func openSessionFile(session ws.SessionInfo, policy sessionFilePolicy, userPaths
 	if len(userPaths) > 0 && !wingpolicy.IsUnderPaths(path, userPaths) {
 		return nil, "", nil, errors.New("file is outside current path policy")
 	}
-	rootPath, ok := policy.writableRoot(path)
+	rootPath, ok := policy.WritableRoot(path)
 	if !ok {
 		return nil, "", nil, errors.New("file is outside the session writable data policy")
 	}
@@ -541,14 +541,14 @@ func openSessionFile(session ws.SessionInfo, policy sessionFilePolicy, userPaths
 		_ = file.Close()
 		return nil, "", nil, errors.New("only regular files can be downloaded or exported")
 	}
-	if info.Size() < 0 || info.Size() > maxSessionDownloadSize {
+	if info.Size() < 0 || info.Size() > MaxSessionDownloadSize {
 		_ = file.Close()
-		return nil, "", nil, fmt.Errorf("file exceeds %d byte limit", maxSessionDownloadSize)
+		return nil, "", nil, fmt.Errorf("file exceeds %d byte limit", MaxSessionDownloadSize)
 	}
 	return file, path, info, nil
 }
 
-func streamSessionFile(ctx context.Context, file *os.File, path string, info os.FileInfo, gcm cipher.AEAD, requestID string, write ws.PTYWriteFunc) error {
+func StreamSessionFile(ctx context.Context, file *os.File, path string, info os.FileInfo, gcm cipher.AEAD, requestID string, write ws.PTYWriteFunc) error {
 	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(info.Name())))
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -567,7 +567,7 @@ func streamSessionFile(ctx context.Context, file *os.File, path string, info os.
 		count, readErr := file.Read(buffer)
 		if count > 0 {
 			streamed += int64(count)
-			if streamed > maxSessionDownloadSize {
+			if streamed > MaxSessionDownloadSize {
 				return errSessionFileTooLarge
 			}
 			if streamed > info.Size() {
@@ -590,7 +590,7 @@ func streamSessionFile(ctx context.Context, file *os.File, path string, info os.
 	return ws.TunnelStreamChunk(gcm, requestID, final, true, write)
 }
 
-func streamSessionFileError(gcm cipher.AEAD, requestID, message string, write ws.PTYWriteFunc) error {
+func StreamSessionFileError(gcm cipher.AEAD, requestID, message string, write ws.PTYWriteFunc) error {
 	payload, err := json.Marshal(map[string]string{"error": message})
 	if err != nil {
 		return err
@@ -600,7 +600,7 @@ func streamSessionFileError(gcm cipher.AEAD, requestID, message string, write ws
 
 var openSessionExportOwnerRoot = (*os.Root).OpenRoot
 
-func exportSessionFile(source *os.File, info os.FileInfo, target config.ExportTarget, ownerID string) (string, int64, error) {
+func ExportSessionFile(source *os.File, info os.FileInfo, target config.ExportTarget, ownerID string) (string, int64, error) {
 	if !validSessionFileName(info.Name()) {
 		return "", 0, errors.New("invalid export file name")
 	}
@@ -645,5 +645,5 @@ func exportSessionFile(source *os.File, info os.FileInfo, target config.ExportTa
 	if err := ownerRoot.Chmod(".", 0o700); err != nil {
 		return "", 0, fmt.Errorf("protect owner export directory: %w", err)
 	}
-	return writeSessionFileRoot(ownerRoot, info.Name(), &boundedSessionFileReader{reader: source, remaining: maxSessionDownloadSize})
+	return writeSessionFileRoot(ownerRoot, info.Name(), &boundedSessionFileReader{reader: source, remaining: MaxSessionDownloadSize})
 }

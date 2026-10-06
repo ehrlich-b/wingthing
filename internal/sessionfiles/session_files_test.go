@@ -1,4 +1,4 @@
-package main
+package sessionfiles
 
 import (
 	"errors"
@@ -33,7 +33,7 @@ func filePolicyFixture(t *testing.T) (ws.SessionInfo, sessionFilePolicy, []strin
 	}
 	rendered := fmt.Sprintf("fs:\n%s  - ro:%s\n  - rw:%s\n  - deny-write:%s\n", rootDeny, repo, data, filepath.Join(data, "protected.txt"))
 	session := ws.SessionInfo{SessionID: "session-1", UserID: "alice", CWD: repo, EggConfig: rendered}
-	policy, err := loadSessionFilePolicy(session, filepath.Join(root, "home"))
+	policy, err := LoadSessionFilePolicy(session, filepath.Join(root, "home"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func filePolicyFixture(t *testing.T) (ws.SessionInfo, sessionFilePolicy, []strin
 }
 
 func TestBrowserSessionCapabilitiesGateExportExplicitly(t *testing.T) {
-	withoutExport := strings.Join(browserSessionCapabilities(false), ",")
+	withoutExport := strings.Join(BrowserSessionCapabilities(false), ",")
 	for _, capability := range []string{capabilitySessionRename, capabilitySessionUpload, capabilitySessionDownload, capabilitySessionResume} {
 		if !strings.Contains(withoutExport, capability) {
 			t.Fatalf("missing capability %q from %q", capability, withoutExport)
@@ -50,7 +50,7 @@ func TestBrowserSessionCapabilitiesGateExportExplicitly(t *testing.T) {
 	if strings.Contains(withoutExport, capabilitySessionExport) {
 		t.Fatal("export capability advertised without a destination")
 	}
-	withExport := browserSessionCapabilities(true)
+	withExport := BrowserSessionCapabilities(true)
 	if withExport[len(withExport)-1] != capabilitySessionExport {
 		t.Fatalf("export capability list = %v", withExport)
 	}
@@ -58,20 +58,20 @@ func TestBrowserSessionCapabilitiesGateExportExplicitly(t *testing.T) {
 
 func TestSessionFilePolicyUsesWritableDataAreaAndHonorsEffectiveDeny(t *testing.T) {
 	_, policy, userPaths, data := filePolicyFixture(t)
-	destination, err := policy.uploadDirectory(userPaths)
+	destination, err := policy.UploadDirectory(userPaths)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if destination != wingpolicy.CanonicalSessionPath(data) {
 		t.Fatalf("destination = %q, want %q", destination, wingpolicy.CanonicalSessionPath(data))
 	}
-	if _, ok := policy.writableRoot(filepath.Join(data, "result.txt")); !ok {
+	if _, ok := policy.WritableRoot(filepath.Join(data, "result.txt")); !ok {
 		t.Fatalf("writable data file was denied: policy=%#v path=%q", policy, wingpolicy.CanonicalPolicyPath(filepath.Join(data, "result.txt")))
 	}
-	if _, ok := policy.writableRoot(filepath.Join(data, "protected.txt")); ok {
+	if _, ok := policy.WritableRoot(filepath.Join(data, "protected.txt")); ok {
 		t.Fatal("deny-write file was writable")
 	}
-	if _, ok := policy.writableRoot(filepath.Join(userPaths[0], "source.go")); ok {
+	if _, ok := policy.WritableRoot(filepath.Join(userPaths[0], "source.go")); ok {
 		t.Fatal("read-only cwd was writable")
 	}
 }
@@ -83,7 +83,7 @@ func TestSessionFilePolicyBroadExplicitDenyOverridesNarrowWritableRoot(t *testin
 		writableRoots: []string{data},
 		deny:          []string{root},
 	}
-	if _, ok := policy.writableRoot(filepath.Join(data, "report.txt")); ok {
+	if _, ok := policy.WritableRoot(filepath.Join(data, "report.txt")); ok {
 		t.Fatal("narrow writable root overrode a covering explicit deny")
 	}
 }
@@ -92,12 +92,12 @@ func TestSessionFilePolicyRootDenyMatchesRuntimeAndDenyWriteAlwaysWins(t *testin
 	data := filepath.Join(t.TempDir(), "data")
 	path := filepath.Join(data, "report.txt")
 	policy := sessionFilePolicy{writableRoots: []string{data}, deny: []string{string(filepath.Separator)}}
-	_, allowed := policy.writableRoot(path)
+	_, allowed := policy.WritableRoot(path)
 	if allowed != (runtime.GOOS == "linux") {
 		t.Fatalf("deny:/ writable result = %v on %s", allowed, runtime.GOOS)
 	}
 	policy = sessionFilePolicy{writableRoots: []string{data}, denyWrite: []string{string(filepath.Separator)}}
-	if _, allowed := policy.writableRoot(path); allowed {
+	if _, allowed := policy.WritableRoot(path); allowed {
 		t.Fatal("deny-write:/ did not override writable root")
 	}
 }
@@ -105,7 +105,7 @@ func TestSessionFilePolicyRootDenyMatchesRuntimeAndDenyWriteAlwaysWins(t *testin
 func TestResolveOwnedSessionFileTargetRequiresOwnerPathAndEffectiveConfig(t *testing.T) {
 	session, _, userPaths, _ := filePolicyFixture(t)
 	req := ws.TunnelRequest{SenderUserID: "alice"}
-	if _, _, err := resolveOwnedSessionFileTarget(req, session.SessionID, []ws.SessionInfo{session}, userPaths, t.TempDir()); err != nil {
+	if _, _, err := ResolveOwnedSessionFileTarget(req, session.SessionID, []ws.SessionInfo{session}, userPaths, t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	for name, test := range map[string]struct {
@@ -119,7 +119,7 @@ func TestResolveOwnedSessionFileTargetRequiresOwnerPathAndEffectiveConfig(t *tes
 		"missing effective config": {req: req, paths: userPaths, session: func() ws.SessionInfo { copy := session; copy.EggConfig = ""; return copy }()},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := resolveOwnedSessionFileTarget(test.req, test.session.SessionID, []ws.SessionInfo{test.session}, test.paths, t.TempDir()); err == nil {
+			if _, _, err := ResolveOwnedSessionFileTarget(test.req, test.session.SessionID, []ws.SessionInfo{test.session}, test.paths, t.TempDir()); err == nil {
 				t.Fatal("access unexpectedly allowed")
 			}
 		})
@@ -129,11 +129,11 @@ func TestResolveOwnedSessionFileTargetRequiresOwnerPathAndEffectiveConfig(t *tes
 func TestPersonalOwnerSessionFilesWorkWithoutConfiguredWingPaths(t *testing.T) {
 	session, policy, _, dataDir := filePolicyFixture(t)
 	owner := ws.TunnelRequest{SenderUserID: session.UserID, SenderOrgRole: "owner"}
-	resolved, err := resolveOwnedActiveSession(owner, session.SessionID, []ws.SessionInfo{session}, nil)
+	resolved, err := ResolveOwnedActiveSession(owner, session.SessionID, []ws.SessionInfo{session}, nil)
 	if err != nil {
 		t.Fatalf("personal owner session resolution failed: %v", err)
 	}
-	destination, err := policy.uploadDirectory(nil)
+	destination, err := policy.UploadDirectory(nil)
 	if err != nil {
 		t.Fatalf("personal owner upload destination failed: %v", err)
 	}
@@ -144,13 +144,13 @@ func TestPersonalOwnerSessionFilesWorkWithoutConfiguredWingPaths(t *testing.T) {
 	if err := os.WriteFile(path, []byte("result"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	file, _, _, err := openSessionFile(resolved, policy, nil, path)
+	file, _, _, err := OpenSessionFile(resolved, policy, nil, path)
 	if err != nil {
 		t.Fatalf("personal owner download failed: %v", err)
 	}
 	_ = file.Close()
 	member := ws.TunnelRequest{SenderUserID: session.UserID, SenderOrgRole: "member"}
-	if _, err := resolveOwnedActiveSession(member, session.SessionID, []ws.SessionInfo{session}, nil); err == nil {
+	if _, err := ResolveOwnedActiveSession(member, session.SessionID, []ws.SessionInfo{session}, nil); err == nil {
 		t.Fatal("org member without a current path grant was allowed")
 	}
 }
@@ -159,25 +159,25 @@ func TestSessionUploadIsBoundPrivateAndNoClobber(t *testing.T) {
 	session, policy, userPaths, dataDir := filePolicyFixture(t)
 	registry := newSessionUploadRegistry()
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderPub: "browser-key"}
-	upload, err := registry.begin(session, policy, userPaths, req, "evidence.bin", 4)
+	upload, err := registry.Begin(session, policy, userPaths, req, "evidence.bin", 4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.append(upload.id, "bob", req.SenderPub, 0, []byte("no")); err == nil {
+	if _, err := registry.Append(upload.ID, "bob", req.SenderPub, 0, []byte("no")); err == nil {
 		t.Fatal("different owner appended")
 	}
-	if _, err := registry.append(upload.id, req.SenderUserID, "other-browser", 0, []byte("no")); err == nil {
+	if _, err := registry.Append(upload.ID, req.SenderUserID, "other-browser", 0, []byte("no")); err == nil {
 		t.Fatal("different browser appended")
 	}
-	if _, err := registry.append(upload.id, req.SenderUserID, req.SenderPub, 0, []byte("data")); err != nil {
+	if _, err := registry.Append(upload.ID, req.SenderUserID, req.SenderPub, 0, []byte("data")); err != nil {
 		t.Fatal(err)
 	}
-	finished, err := registry.finish(upload.id, req.SenderUserID, req.SenderPub)
+	finished, err := registry.Finish(upload.ID, req.SenderUserID, req.SenderPub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = finished.root.Close() }()
-	if _, _, err := finished.commit(finished.destination); err != nil {
+	defer func() { _ = finished.Root.Close() }()
+	if _, _, err := finished.Commit(finished.Destination); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dataDir, "evidence.bin")
@@ -188,7 +188,7 @@ func TestSessionUploadIsBoundPrivateAndNoClobber(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %o", info.Mode().Perm())
 	}
-	if _, _, err := writeSessionFileRoot(finished.root, finished.name, strings.NewReader("replace")); err == nil {
+	if _, _, err := writeSessionFileRoot(finished.Root, finished.Name, strings.NewReader("replace")); err == nil {
 		t.Fatal("existing file overwritten")
 	}
 	got, _ := os.ReadFile(path)
@@ -222,13 +222,13 @@ func TestOpenSessionFileRejectsTraversalSymlinkNonRegularAndOversize(t *testing.
 	if err := os.Symlink(outside, filepath.Join(dataDir, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := openSessionFile(session, policy, userPaths, filepath.Join(dataDir, "escape")); err == nil {
+	if _, _, _, err := OpenSessionFile(session, policy, userPaths, filepath.Join(dataDir, "escape")); err == nil {
 		t.Fatal("symlink escape opened")
 	}
 	if err := os.Mkdir(filepath.Join(dataDir, "directory"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := openSessionFile(session, policy, userPaths, filepath.Join(dataDir, "directory")); err == nil {
+	if _, _, _, err := OpenSessionFile(session, policy, userPaths, filepath.Join(dataDir, "directory")); err == nil {
 		t.Fatal("directory opened")
 	}
 	large := filepath.Join(dataDir, "large.bin")
@@ -236,14 +236,14 @@ func TestOpenSessionFileRejectsTraversalSymlinkNonRegularAndOversize(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := file.Truncate(maxSessionDownloadSize + 1); err != nil {
+	if err := file.Truncate(MaxSessionDownloadSize + 1); err != nil {
 		t.Fatal(err)
 	}
 	_ = file.Close()
-	if _, _, _, err := openSessionFile(session, policy, userPaths, large); err == nil {
+	if _, _, _, err := OpenSessionFile(session, policy, userPaths, large); err == nil {
 		t.Fatal("oversized file opened")
 	}
-	if _, _, _, err := openSessionFile(session, policy, userPaths, "../outside"); err == nil {
+	if _, _, _, err := OpenSessionFile(session, policy, userPaths, "../outside"); err == nil {
 		t.Fatal("traversal opened")
 	}
 }
@@ -279,7 +279,7 @@ func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T)
 		}
 		defer func() { _ = source.Close() }()
 		info, _ := source.Stat()
-		_, _, err = exportSessionFile(source, info, config.ExportTarget{Name: "isolated", Path: root, Members: []string{"support@example.com"}}, owner)
+		_, _, err = ExportSessionFile(source, info, config.ExportTarget{Name: "isolated", Path: root, Members: []string{"support@example.com"}}, owner)
 		return err
 	}
 	if err := export("alice"); err != nil {
@@ -304,7 +304,7 @@ func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T)
 	source, _ := os.Open(sourcePath)
 	defer func() { _ = source.Close() }()
 	info, _ := source.Stat()
-	if _, _, err := exportSessionFile(source, info, config.ExportTarget{Name: "bad", Path: symlink, Members: []string{"support@example.com"}}, "carol"); err == nil {
+	if _, _, err := ExportSessionFile(source, info, config.ExportTarget{Name: "bad", Path: symlink, Members: []string{"support@example.com"}}, "carol"); err == nil {
 		t.Fatal("symlink export root accepted")
 	}
 	maliciousRoot := t.TempDir()
@@ -315,7 +315,7 @@ func TestExportSessionFileIsPerOwnerNoClobberAndRejectsSymlinkRoot(t *testing.T)
 	if _, err := source.Seek(0, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := exportSessionFile(source, info, config.ExportTarget{Name: "bad-owner", Path: maliciousRoot, Members: []string{"support@example.com"}}, "carol"); err == nil {
+	if _, _, err := ExportSessionFile(source, info, config.ExportTarget{Name: "bad-owner", Path: maliciousRoot, Members: []string{"support@example.com"}}, "carol"); err == nil {
 		t.Fatal("symlink owner export directory accepted")
 	}
 	if _, err := os.Stat(filepath.Join(outside, "report.txt")); !os.IsNotExist(err) {
@@ -357,7 +357,7 @@ func TestExportSessionFileRejectsOwnerDirectorySwap(t *testing.T) {
 		}
 		return originalOpen(parent, name)
 	}
-	if _, _, err := exportSessionFile(source, info, config.ExportTarget{Name: "isolated", Path: root}, "alice"); err == nil {
+	if _, _, err := ExportSessionFile(source, info, config.ExportTarget{Name: "isolated", Path: root}, "alice"); err == nil {
 		t.Fatal("export accepted an owner directory swapped after validation")
 	}
 	if _, err := os.Stat(filepath.Join(otherPath, info.Name())); !os.IsNotExist(err) {
@@ -388,7 +388,7 @@ func TestExportSessionFileRejectsOwnerDirectorySwap(t *testing.T) {
 		}
 		return bound, nil
 	}
-	if _, _, err := exportSessionFile(source, info, config.ExportTarget{Name: "isolated", Path: root}, "alice"); err != nil {
+	if _, _, err := ExportSessionFile(source, info, config.ExportTarget{Name: "isolated", Path: root}, "alice"); err != nil {
 		t.Fatalf("export through the retained owner root failed: %v", err)
 	}
 	if data, err := os.ReadFile(filepath.Join(parked, info.Name())); err != nil || string(data) != "answer" {
@@ -407,15 +407,15 @@ func TestSessionUploadCommitRejectsReplacedDestination(t *testing.T) {
 	session, policy, paths, destination := filePolicyFixture(t)
 	registry := newSessionUploadRegistry()
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderPub: "browser"}
-	upload, err := registry.begin(session, policy, paths, req, "report.txt", 0)
+	upload, err := registry.Begin(session, policy, paths, req, "report.txt", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	finished, err := registry.finish(upload.id, req.SenderUserID, req.SenderPub)
+	finished, err := registry.Finish(upload.ID, req.SenderUserID, req.SenderPub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = finished.root.Close() }()
+	defer func() { _ = finished.Root.Close() }()
 	moved := destination + "-moved"
 	if err := os.Rename(destination, moved); err != nil {
 		t.Fatal(err)
@@ -423,15 +423,15 @@ func TestSessionUploadCommitRejectsReplacedDestination(t *testing.T) {
 	if err := os.Mkdir(destination, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	current, err := policy.uploadDirectory(paths)
-	if err != nil || current != finished.destination {
+	current, err := policy.UploadDirectory(paths)
+	if err != nil || current != finished.Destination {
 		t.Fatalf("replacement did not preserve the authorized pathname: %q, %v", current, err)
 	}
-	if _, _, err := finished.commit(current); err == nil {
+	if _, _, err := finished.Commit(current); err == nil {
 		t.Fatal("upload committed through a handle to a replaced destination")
 	}
 	for _, path := range []string{destination, moved} {
-		if _, err := os.Stat(filepath.Join(path, finished.name)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(path, finished.Name)); !os.IsNotExist(err) {
 			t.Fatalf("rejected upload wrote to %q: %v", path, err)
 		}
 	}
@@ -454,16 +454,16 @@ func TestSessionUploadRechecksDestinationBeforeLink(t *testing.T) {
 	session, policy, paths, destination := filePolicyFixture(t)
 	registry := newSessionUploadRegistry()
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderPub: "browser"}
-	upload, err := registry.begin(session, policy, paths, req, "report.txt", 0)
+	upload, err := registry.Begin(session, policy, paths, req, "report.txt", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	finished, err := registry.finish(upload.id, req.SenderUserID, req.SenderPub)
+	finished, err := registry.Finish(upload.ID, req.SenderUserID, req.SenderPub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = finished.root.Close() }()
-	if err := finished.validateDestination(finished.destination); err != nil {
+	defer func() { _ = finished.Root.Close() }()
+	if err := finished.validateDestination(finished.Destination); err != nil {
 		t.Fatal(err)
 	}
 	moved := destination + "-moved"
@@ -475,8 +475,8 @@ func TestSessionUploadRechecksDestinationBeforeLink(t *testing.T) {
 			t.Fatal(err)
 		}
 	}}
-	if _, _, err := writeSessionFileRootChecked(finished.root, finished.name, source, func() error {
-		return finished.validateDestination(finished.destination)
+	if _, _, err := writeSessionFileRootChecked(finished.Root, finished.Name, source, func() error {
+		return finished.validateDestination(finished.Destination)
 	}); err == nil {
 		t.Fatal("upload committed after the destination changed during its write")
 	}

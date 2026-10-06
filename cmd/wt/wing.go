@@ -44,6 +44,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	relaypkg "github.com/ehrlich-b/wingthing/internal/relay"
+	"github.com/ehrlich-b/wingthing/internal/sessionfiles"
 	webrtcpkg "github.com/ehrlich-b/wingthing/internal/webrtc"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -4158,13 +4159,13 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			"allowed_count": len(wingCfg.AllowKeys),
 			"hosted_relay":  wingCfg.EffectiveHostedRelay(),
 			"file_limits": map[string]int64{
-				"upload_bytes":   maxSessionUploadSize,
-				"download_bytes": maxSessionDownloadSize,
-				"export_bytes":   maxSessionDownloadSize,
+				"upload_bytes":   sessionfiles.MaxSessionUploadSize,
+				"download_bytes": sessionfiles.MaxSessionDownloadSize,
+				"export_bytes":   sessionfiles.MaxSessionDownloadSize,
 			},
 		}
 		visibleExports := wingCfg.ExportsForUser(req.SenderEmail, req.SenderOrgRole)
-		resp["capabilities"] = append(browserSessionCapabilities(len(visibleExports) > 0), "session.lifecycle.v1")
+		resp["capabilities"] = append(sessionfiles.BrowserSessionCapabilities(len(visibleExports) > 0), "session.lifecycle.v1")
 		if wingCfg.Org == "" && !sharedHost {
 			resp["capabilities"] = append(resp["capabilities"].([]string), "conversation.personal.v1")
 		}
@@ -4271,17 +4272,17 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	case "file.upload.begin":
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
 		effectiveHome := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
-		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
+		session, policy, err := sessionfiles.ResolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		upload, err := sessionUploads.begin(session, policy, userPaths, req, inner.Name, inner.Size)
+		upload, err := sessionfiles.SessionUploads.Begin(session, policy, userPaths, req, inner.Name, inner.Size)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"upload_id": upload.id, "chunk_size": maxSessionUploadChunk, "path": filepath.Join(upload.destination, upload.name)}, write)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"upload_id": upload.ID, "chunk_size": sessionfiles.MaxSessionUploadChunk, "path": filepath.Join(upload.Destination, upload.Name)}, write)
 
 	case "file.upload.chunk":
 		chunk, err := base64.StdEncoding.DecodeString(inner.Data)
@@ -4289,7 +4290,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "invalid upload chunk"}, write)
 			return
 		}
-		received, err := sessionUploads.append(inner.UploadID, req.SenderUserID, req.SenderPub, int64(inner.Offset), chunk)
+		received, err := sessionfiles.SessionUploads.Append(inner.UploadID, req.SenderUserID, req.SenderPub, int64(inner.Offset), chunk)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
@@ -4297,35 +4298,35 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		ws.TunnelRespond(gcm, req.RequestID, map[string]int64{"received": received}, write)
 
 	case "file.upload.finish":
-		upload, err := sessionUploads.finish(inner.UploadID, req.SenderUserID, req.SenderPub)
+		upload, err := sessionfiles.SessionUploads.Finish(inner.UploadID, req.SenderUserID, req.SenderPub)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		defer func() { _ = upload.root.Close() }()
+		defer func() { _ = upload.Root.Close() }()
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
 		effectiveHome := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
-		session, policy, err := resolveOwnedSessionFileTarget(req, upload.sessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
+		session, policy, err := sessionfiles.ResolveOwnedSessionFileTarget(req, upload.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload policy changed"}, write)
 			return
 		}
-		destination, err := policy.uploadDirectory(userPaths)
-		if err != nil || session.SessionID != upload.sessionID || destination != upload.destination {
+		destination, err := policy.UploadDirectory(userPaths)
+		if err != nil || session.SessionID != upload.SessionID || destination != upload.Destination {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "session upload destination changed"}, write)
 			return
 		}
-		sha, size, err := upload.commit(destination)
+		sha, size, err := upload.Commit(destination)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
-		path := filepath.Join(upload.destination, upload.name)
-		log.Printf("session upload complete (user=%s session=%s path=%q size=%d)", req.SenderUserID, upload.sessionID, path, size)
-		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"name": upload.name, "path": path, "size": size, "sha256": sha}, write)
+		path := filepath.Join(upload.Destination, upload.Name)
+		log.Printf("session upload complete (user=%s session=%s path=%q size=%d)", req.SenderUserID, upload.SessionID, path, size)
+		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"name": upload.Name, "path": path, "size": size, "sha256": sha}, write)
 
 	case "file.upload.cancel":
-		if err := sessionUploads.cancel(inner.UploadID, req.SenderUserID, req.SenderPub); err != nil {
+		if err := sessionfiles.SessionUploads.Cancel(inner.UploadID, req.SenderUserID, req.SenderPub); err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
@@ -4334,26 +4335,26 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 	case "file.download":
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
 		effectiveHome := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
-		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
+		session, policy, err := sessionfiles.ResolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
-			_ = streamSessionFileError(gcm, req.RequestID, err.Error(), write)
+			_ = sessionfiles.StreamSessionFileError(gcm, req.RequestID, err.Error(), write)
 			return
 		}
-		file, path, info, err := openSessionFile(session, policy, userPaths, inner.Path)
+		file, path, info, err := sessionfiles.OpenSessionFile(session, policy, userPaths, inner.Path)
 		if err != nil {
-			_ = streamSessionFileError(gcm, req.RequestID, err.Error(), write)
+			_ = sessionfiles.StreamSessionFileError(gcm, req.RequestID, err.Error(), write)
 			return
 		}
 		defer cmdutil.CloseWithLog("session download", file)
-		if err := streamSessionFile(ctx, file, path, info, gcm, req.RequestID, write); err != nil {
+		if err := sessionfiles.StreamSessionFile(ctx, file, path, info, gcm, req.RequestID, write); err != nil {
 			log.Printf("session download failed (user=%s session=%s): %v", req.SenderUserID, inner.SessionID, err)
-			_ = streamSessionFileError(gcm, req.RequestID, err.Error(), write)
+			_ = sessionfiles.StreamSessionFileError(gcm, req.RequestID, err.Error(), write)
 		}
 
 	case "file.export":
 		userPaths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home))
 		effectiveHome := eggclient.EffectiveSessionHome(cfg, eggclient.EggIdentity{UserID: req.SenderUserID, OrgWing: wingCfg.Org != "", SharedHost: sharedHost})
-		session, policy, err := resolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
+		session, policy, err := sessionfiles.ResolveOwnedSessionFileTarget(req, inner.SessionID, listAliveEggSessions(cfg), userPaths, effectiveHome)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
@@ -4377,13 +4378,13 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": "export destination is unavailable for this user"}, write)
 			return
 		}
-		file, _, info, err := openSessionFile(session, policy, userPaths, inner.Path)
+		file, _, info, err := sessionfiles.OpenSessionFile(session, policy, userPaths, inner.Path)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
 		}
 		defer cmdutil.CloseWithLog("session export source", file)
-		sha, size, err := exportSessionFile(file, info, *exportTarget, req.SenderUserID)
+		sha, size, err := sessionfiles.ExportSessionFile(file, info, *exportTarget, req.SenderUserID)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]string{"error": err.Error()}, write)
 			return
@@ -4828,7 +4829,7 @@ func renameTunnelSession(cfg *config.Config, req ws.TunnelRequest, sessionID, na
 	if err := eggclient.ValidateSessionName(name); err != nil {
 		return err
 	}
-	if _, err := resolveOwnedActiveSession(req, sessionID, sessions, userPaths); err != nil {
+	if _, err := sessionfiles.ResolveOwnedActiveSession(req, sessionID, sessions, userPaths); err != nil {
 		return err
 	}
 	lock, err := eggclient.AcquireSessionNameLock(cfg)
