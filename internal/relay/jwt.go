@@ -42,7 +42,9 @@ type MCPClaims struct {
 
 const mcpAccessTokenTTL = time.Hour
 
-const wingTokenTTL = 30 * 24 * time.Hour
+// Shortening this lifetime requires persisted renewal in wing, native MCP and
+// iOS clients first. The authoritative device-token row enforces revocation.
+const wingTokenTTL = 365 * 24 * time.Hour
 
 const jwtSecretDerivationContext = "wingthing/jwt-signing-key/es256/v1"
 

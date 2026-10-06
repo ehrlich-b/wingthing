@@ -12,6 +12,25 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+func TestIssueWingJWTPreservesLifetimeForClientsWithoutRenewal(t *testing.T) {
+	key, _, err := GenerateECKey()
+	mustTest(t, err)
+	before := time.Now()
+	token, exp, err := IssueWingJWT(key, "user", "public-key", "wing")
+	mustTest(t, err)
+	lifetime := 365 * 24 * time.Hour
+	if exp.Before(before.Add(lifetime)) || exp.After(time.Now().Add(lifetime)) {
+		t.Fatalf("wing JWT expiry = %v, want one-year lifetime", exp)
+	}
+	_, err = jwt.ParseWithClaims(token, &WingClaims{}, func(*jwt.Token) (any, error) {
+		return &key.PublicKey, nil
+	}, jwt.WithValidMethods([]string{"ES256"}), jwt.WithExpirationRequired(),
+		jwt.WithTimeFunc(func() time.Time { return before.Add(31 * 24 * time.Hour) }))
+	if err != nil {
+		t.Fatalf("client without renewal locked out on day 31: %v", err)
+	}
+}
+
 func TestValidateWingJWTAcceptsLegacyTokenUseOnlyForWing(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
