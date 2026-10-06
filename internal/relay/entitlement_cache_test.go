@@ -3,9 +3,11 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -224,5 +226,133 @@ func TestInternalEntitlementsAdvertisesVersionedDecisions(t *testing.T) {
 	}
 	if len(legacyEntries) != 1 || legacyEntries[0].UserID != "existing" || legacyEntries[0].Tier != "free" {
 		t.Fatalf("legacy entries = %#v", legacyEntries)
+	}
+}
+
+func TestEntitlementCacheRefetchesAtTTLAndFailsClosedAfterGrace(t *testing.T) {
+	var fail, allow atomic.Bool
+	var calls atomic.Int32
+	allow.Store(true)
+	login := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if fail.Load() {
+			http.Error(w, "unavailable", 503)
+			return
+		}
+		w.Header().Set(entitlementDecisionVersionHeader, "2")
+		_ = json.NewEncoder(w).Encode([]EntitlementEntry{{UserID: "user", Tier: "pro", RelayAllowed: allow.Load(), RelayReason: "pro", Enrolled: true}})
+	}))
+	defer login.Close()
+	cache := NewEntitlementCache(login.URL)
+	cache.fetch(context.Background())
+	age := func(d time.Duration) {
+		cache.mu.Lock()
+		cache.updatedAt = time.Now().Add(-d)
+		cache.retryAt = time.Time{}
+		cache.mu.Unlock()
+	}
+	allow.Store(false)
+	age(16 * time.Minute)
+	if access := cache.GetRelayAccess("user"); access.Allowed || calls.Load() != 2 {
+		t.Fatalf("expired allow was not refetched: %#v calls=%d", access, calls.Load())
+	}
+	allow.Store(true)
+	cache.fetch(context.Background())
+	fail.Store(true)
+	age(16 * time.Minute)
+	if access := cache.GetRelayAccess("user"); !access.Allowed {
+		t.Fatalf("bounded grace was not honored: %#v", access)
+	}
+	age(21 * time.Minute)
+	if access := cache.GetRelayAccess("user"); access.Allowed || access.Reason != "entitlement-stale" {
+		t.Fatalf("stale paid access survived failed sync: %#v", access)
+	}
+	if tier := cache.GetTier("user"); tier != "free" {
+		t.Fatalf("stale paid tier = %q", tier)
+	}
+	if allowed, known := cache.GetEnrollment("user"); allowed || known {
+		t.Fatal("stale enrollment remained authoritative")
+	}
+	before := calls.Load()
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Go(func() { _ = cache.GetRelayAccess("user") })
+	}
+	wg.Wait()
+	if calls.Load() != before {
+		t.Fatal("stale reads caused a retry storm")
+	}
+	fail.Store(false)
+	age(21 * time.Minute)
+	if access := cache.GetRelayAccess("user"); !access.Allowed {
+		t.Fatalf("healthy refetch did not restore access: %#v", access)
+	}
+}
+
+func TestEntitlementCacheLegacyAllowAlsoExpires(t *testing.T) {
+	cache := NewEntitlementCache("http://127.0.0.1:1")
+	cache.initialized = true
+	cache.updatedAt = time.Now().Add(-21 * time.Minute)
+	cache.retryAt = time.Now().Add(time.Minute)
+	if access := cache.GetRelayAccess("legacy"); access.Allowed || access.Reason != "entitlement-stale" {
+		t.Fatalf("legacy allow survived TTL: %#v", access)
+	}
+}
+
+func TestEntitlementCachePaginatesAndPublishesOnlyCompleteSyncs(t *testing.T) {
+	store := testStore(t)
+	for i := range 5 {
+		mustTest(t, store.CreateUser(fmt.Sprintf("user-%d", i)))
+	}
+	server := NewServer(store, ServerConfig{})
+	var fail atomic.Bool
+	var calls atomic.Int32
+	login := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if fail.Load() && r.URL.Query().Get("after") != "" {
+			http.Error(w, "failed later page", 503)
+			return
+		}
+		server.handleInternalEntitlements(w, r)
+	}))
+	defer login.Close()
+	cache := NewEntitlementCache(login.URL)
+	cache.pageSize = 2
+	cache.fetch(context.Background())
+	if calls.Load() != 3 || len(cache.tiers) != 5 || !cache.GetRelayAccess("user-4").Allowed {
+		t.Fatalf("incomplete paginated sync: calls=%d users=%d", calls.Load(), len(cache.tiers))
+	}
+	updated := cache.updatedAt
+	mustTestExec(t, store.DB(), "DELETE FROM users WHERE id = 'user-0'")
+	fail.Store(true)
+	cache.fetch(context.Background())
+	if !cache.updatedAt.Equal(updated) || len(cache.tiers) != 5 || !cache.GetRelayAccess("user-0").Allowed {
+		t.Fatal("failed later page published partial decisions or refreshed their age")
+	}
+	fail.Store(false)
+	cache.fetch(context.Background())
+	if cache.GetRelayAccess("user-0").Allowed || len(cache.tiers) != 4 {
+		t.Fatal("complete paginated sync retained removed user")
+	}
+	for _, query := range []string{"limit=1001", "limit=0", "limit=oops", "after=user-0"} {
+		rr := httptest.NewRecorder()
+		server.handleInternalEntitlements(rr, httptest.NewRequest(http.MethodGet, "/internal/entitlements?"+query, nil))
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("invalid page query %q accepted", query)
+		}
+	}
+}
+
+func TestEntitlementCacheRejectsNonAdvancingPagination(t *testing.T) {
+	login := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(entitlementDecisionVersionHeader, "2")
+		w.Header().Set(entitlementNextHeader, "user")
+		_ = json.NewEncoder(w).Encode([]EntitlementEntry{{UserID: "user", Tier: "pro", RelayAllowed: true, RelayReason: "pro"}})
+	}))
+	defer login.Close()
+	cache := NewEntitlementCache(login.URL)
+	cache.fetch(context.Background())
+	if access := cache.GetRelayAccess("user"); access.Allowed {
+		t.Fatal("repeated pagination cursor published an allow")
 	}
 }
