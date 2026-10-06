@@ -123,6 +123,29 @@ func canonicalPolicyTestPathIfMissing(path string) string {
 	return filepath.Join(canonicalPolicyTestPathIfMissing(parent), filepath.Base(path))
 }
 
+func TestLinuxControlAllowlistSplitsAncestorAliasesIntoCanonicalMounts(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	tree := filepath.Join(state, "eggs")
+	logs := filepath.Join(state, "logs")
+	for _, path := range []string{tree, logs} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(state, alias); err != nil {
+		t.Fatal(err)
+	}
+	mounts, err := isolateLinuxEggControl([]sandbox.Mount{{Source: alias, Target: alias, ReadOnly: true}}, []string{tree}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mounts) != 1 || mounts[0].Source != canonicalPolicyTestPathIfMissing(logs) || mounts[0].Target != mounts[0].Source || !mounts[0].ReadOnly {
+		t.Fatalf("split alias emitted an unsafe or missing mount: %+v", mounts)
+	}
+}
+
 // The child runs inside the OS policy against disposable files and sockets.
 func TestEggControlIsolationProcess(t *testing.T) {
 	root := os.Getenv("WT_TEST_CONTROL_ROOT")

@@ -267,12 +267,14 @@ func isolateLinuxEggControl(mounts []sandbox.Mount, control []string, bridges []
 		}
 		splitting[path] = true
 		defer delete(splitting, path)
-		entries, err := os.ReadDir(m.Source)
+		// Split the resolved ancestor, so an alias cannot leave symlink
+		// components in the child sources handed to the confined jail builder.
+		entries, err := os.ReadDir(path)
 		if err != nil {
 			return fmt.Errorf("split control-tree ancestor %s: %w", m.Source, err)
 		}
 		for _, entry := range entries {
-			child := filepath.Join(m.Source, entry.Name())
+			child := filepath.Join(path, entry.Name())
 			if filepath.Clean(m.Source) == "/" {
 				// The jail supplies private proc, dev and tmp. It recreates
 				// merged-usr aliases before installing the other mounts.
