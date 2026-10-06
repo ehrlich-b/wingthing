@@ -160,6 +160,10 @@ func KillOrphanEgg(cfg *config.Config, sessionID string) {
 		return
 	}
 	dir := filepath.Join(cfg.Dir, "eggs", sessionID)
+	if err := egg.MarkDeliberateStop(dir, "kill"); err != nil {
+		log.Printf("pty session %s: persist orphan stop: %v", sessionID, err)
+		return
+	}
 	sockPath := filepath.Join(dir, "egg.sock")
 	tokenPath := filepath.Join(dir, "egg.token")
 

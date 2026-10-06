@@ -9,6 +9,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestRecoveryWingConfigOptIn(t *testing.T) {
+	for _, value := range []string{"", "off", "coordinators"} {
+		dir := t.TempDir()
+		if err := SaveWingConfig(dir, &WingConfig{Recover: value}); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadWingConfig(dir)
+		if err != nil || cfg.Recover != value {
+			t.Fatalf("recover %q: %+v %v", value, cfg, err)
+		}
+	}
+	dir := t.TempDir()
+	if err := SaveWingConfig(dir, &WingConfig{Recover: "all"}); err == nil {
+		t.Fatal("unsafe recovery opt-in accepted")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wing.yaml"), []byte("recover: all\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadWingConfig(dir); err == nil {
+		t.Fatal("invalid recovery policy loaded")
+	}
+}
+
 func TestWingConversationsOptInRoundTrip(t *testing.T) {
 	for _, value := range []string{"", ConversationsEnabled, ConversationsDisabled} {
 		t.Run(value, func(t *testing.T) {

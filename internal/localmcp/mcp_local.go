@@ -442,6 +442,8 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.toolTerminalRead(ctx, arguments)
 	case "session_status":
 		data, err = s.toolSessionStatus(ctx, arguments)
+	case "session_recover":
+		data, err = s.ToolSessionRecover(ctx, arguments)
 	case "session_read":
 		data, err = s.toolSessionRead(ctx, arguments)
 	case "session_wait":

@@ -1239,6 +1239,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		wingCfgMu.Unlock()
 		return &copyCfg, sharedHost
 	})
+	wingCfgMu.Lock()
+	recoveryWingCfg := wingCfg.Clone()
+	wingCfgMu.Unlock()
+	go localmcp.RunSessionRecovery(version, ctx, cfg, recoveryWingCfg, sharedHost)
 
 	// Idle session reaper — kills sessions that have been idle too long.
 	// Always runs; reads wingCfg.IdleTimeout dynamically so SIGHUP reload works.
@@ -1594,19 +1598,12 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		}
 		sessionID := e.Name()
 		dir := filepath.Join(eggsDir, sessionID)
-		pidPath := filepath.Join(dir, "egg.pid")
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			continue
-		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			continue
-		}
-		if !procinfo.OwnedProcessIsAlive(pid) {
+		classified := eggclient.ClassifyEgg(cfg, sessionID)
+		if classified.Class != eggclient.RecoveryAlive {
 			eggclient.CleanEggDir(dir)
 			continue
 		}
+		pid := classified.PID
 
 		// If a goroutine is already handling this session (survived the
 		// reconnect), skip — don't create a duplicate subscriber or

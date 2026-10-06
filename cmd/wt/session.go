@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
@@ -39,6 +40,50 @@ func sessionCmd() *cobra.Command {
 	cmd.AddCommand(sessionWaitCmd())
 	cmd.AddCommand(sessionRenameCmd())
 	cmd.AddCommand(sessionKillCmd())
+	cmd.AddCommand(sessionRecoverCmd())
+	return cmd
+}
+
+func sessionRecoverCmd() *cobra.Command {
+	var list bool
+	cmd := &cobra.Command{
+		Use: "recover [session-id]", Short: "List or recover interrupted agent sessions",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if list {
+				if len(args) != 0 {
+					return fmt.Errorf("--list does not accept a session ID")
+				}
+				sessions, err := eggclient.DiscoverRecoverableSessions(cfg)
+				if err != nil {
+					return err
+				}
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"sessions": sessions})
+			}
+			if len(args) != 1 {
+				return fmt.Errorf("specify a session ID or --list")
+			}
+			if err := eggclient.ValidateSessionID(args[0]); err != nil {
+				return err
+			}
+			principal := eggclient.ReadSessionPrincipal(filepath.Join(cfg.Dir, "eggs", args[0]))
+			server := &localmcp.Server{Version: version, Cfg: cfg, Principal: principal, Logs: cmd.ErrOrStderr()}
+			if err := localmcp.ConfigureRecoveryClient(server, args[0]); err != nil {
+				return err
+			}
+			arguments, _ := json.Marshal(map[string]string{"session": args[0]})
+			result, err := server.ToolSessionRecover(cmd.Context(), arguments)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+		},
+	}
+	cmd.Flags().BoolVar(&list, "list", false, "list eligible interrupted sessions")
 	return cmd
 }
 
