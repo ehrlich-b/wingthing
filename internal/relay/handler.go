@@ -327,18 +327,27 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, deviceID, err := s.Store.ValidateToken(req.Token)
+	claims, err := s.validateWingCredential(r.Context(), req.Token)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
+	userID, deviceID := claims.Subject, claims.WingID
 	if !s.roostUserIDAllowed(userID) {
 		writeError(w, http.StatusForbidden, "this account is not enrolled in this roost")
 		return
 	}
 
-	newToken := uuid.New().String()
-	if err := s.Store.RotateDeviceToken(req.Token, newToken, userID, deviceID, nil); err != nil {
+	if s.jwtKey == nil {
+		writeError(w, http.StatusInternalServerError, "jwt key not initialized")
+		return
+	}
+	newToken, exp, err := IssueWingJWT(s.jwtKey, userID, claims.PublicKey, deviceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "issue jwt: "+err.Error())
+		return
+	}
+	if err := s.Store.RotateDeviceToken(req.Token, newToken, userID, deviceID, &exp); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -349,7 +358,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      newToken,
-		"expires_at": 0,
+		"expires_at": exp.Unix(),
 	})
 }
 
@@ -400,23 +409,12 @@ func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 
-	// Try JWT first
-	if s.JWTPubKey() != nil {
-		if claims, err := ValidateWingJWT(s.JWTPubKey(), token); err == nil {
-			if !s.roostUserIDAllowed(claims.Subject) {
-				writeError(w, http.StatusForbidden, "this account is not enrolled in this roost")
-				return ""
-			}
-			return claims.Subject
-		}
-	}
-
-	// Fall back to DB token
-	userID, _, err := s.Store.ValidateToken(token)
+	claims, err := s.validateWingCredential(r.Context(), token)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid or expired token")
 		return ""
 	}
+	userID := claims.Subject
 	if !s.roostUserIDAllowed(userID) {
 		writeError(w, http.StatusForbidden, "this account is not enrolled in this roost")
 		return ""

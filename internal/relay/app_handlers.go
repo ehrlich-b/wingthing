@@ -30,11 +30,11 @@ func (s *Server) tokenUser(r *http.Request) *User {
 	if s.Store == nil {
 		return nil
 	}
-	userID, _, err := s.Store.ValidateToken(token)
+	claims, err := s.validateWingCredential(r.Context(), token)
 	if err != nil {
 		return nil
 	}
-	user, err := s.Store.GetUserByID(userID)
+	user, err := s.Store.GetUserByID(claims.Subject)
 	if err != nil || !s.roostUserAllowed(user) {
 		return nil
 	}

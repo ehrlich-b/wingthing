@@ -70,13 +70,14 @@ func roleForWingUser(s *Server, wing *ConnectedWing, userID string, orgIDs []str
 	if wing.OrgID == "" {
 		return ""
 	}
-	if role := orgRoles[wing.OrgID]; role == "owner" || role == "admin" || role == "member" {
-		return role
-	}
 	if !s.IsEdge() && s.Store != nil {
 		if role := s.Store.GetOrgMemberRole(wing.OrgID, userID); role == "owner" || role == "admin" || role == "member" {
 			return role
 		}
+		return ""
+	}
+	if role := orgRoles[wing.OrgID]; role == "owner" || role == "admin" || role == "member" {
+		return role
 	}
 	// N-1 login nodes return membership IDs but not the additive exact-role map.
 	// Preserve ordinary member access while refusing to infer elevated authority.
@@ -602,12 +603,17 @@ func (r *PTYRoutes) NotifyWingOffline(wingID string) {
 
 // handlePTYWS handles the browser WebSocket for a PTY session.
 func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
+	s.handlePTYWSWithAuthInterval(w, r, 30*time.Second)
+}
+
+func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Request, authInterval time.Duration) {
 	// Auth
 	var userID string
 	var userEmail string
 	var userDisplayName string
 	var userOrgIDs []string
 	var userOrgRoles map[string]string
+	var credential ptyCredential
 	if u := s.sessionUser(r); u != nil {
 		userID = u.ID
 		userOrgIDs = u.OrgIDs
@@ -615,6 +621,15 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		userDisplayName = u.DisplayName
 		if u.Email != nil {
 			userEmail = *u.Email
+		}
+		credential.local = s.LocalMode && s.localUser != nil
+		if !credential.local {
+			cookie, _ := r.Cookie(sessionCookieNameForChannel()) // sessionUser validated this cookie
+			credential.token, credential.session = cookie.Value, true
+			if !s.ptyCredentialValid(r.Context(), credential, userID) {
+				http.Error(w, "invalid session", http.StatusUnauthorized)
+				return
+			}
 		}
 	}
 	if userID == "" {
@@ -629,23 +644,13 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if s.JWTPubKey() != nil {
-			if claims, err := ValidateWingJWT(s.JWTPubKey(), token); err == nil {
-				userID = claims.Subject
-			}
-		}
-		if userID == "" && s.Store != nil {
-			var err error
-			userID, _, err = s.Store.ValidateToken(token)
-			if err != nil {
-				http.Error(w, "invalid token", http.StatusUnauthorized)
-				return
-			}
-		}
-		if userID == "" {
+		claims, err := s.validateWingCredential(r.Context(), token)
+		if err != nil {
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
 		}
+		userID = claims.Subject
+		credential.token = token
 	}
 	if !s.roostUserIDAllowed(userID) {
 		http.Error(w, "this account is not enrolled in this roost", http.StatusForbidden)
@@ -661,24 +666,14 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 				userEmail = *storedUser.Email
 			}
 		}
-		orgs, _ := s.Store.ListOrgsForUser(userID)
-		userOrgIDs = make([]string, 0, len(orgs))
-		userOrgRoles = make(map[string]string, len(orgs))
-		for _, org := range orgs {
-			userOrgIDs = append(userOrgIDs, org.ID)
-			if role := s.Store.GetOrgMemberRole(org.ID, userID); role != "" {
-				userOrgRoles[org.ID] = role
-			}
-		}
-	} else if s.IsEdge() && s.Config.LoginNodeAddr != "" {
-		if remote, ok := s.remoteUserOrgContext(r.Context(), userID); ok {
-			userOrgIDs = remote.OrgIDs
-			userOrgRoles = remote.OrgRoles
-			// A successful current lookup is authoritative, including an empty
-			// address after the login provider cleared a stale email.
-			userEmail = remote.Email
-		}
 	}
+	initialOrgs, ok := s.currentUserOrgContext(r.Context(), userID)
+	if !ok {
+		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	userOrgIDs, userOrgRoles = initialOrgs.OrgIDs, initialOrgs.OrgRoles
+	userEmail = initialOrgs.Email
 
 	// Cross-node routing: if target wing is on another machine, fly-replay BEFORE WebSocket upgrade.
 	// Retries for up to 5s to handle wing reconnection after deploy.
@@ -736,6 +731,26 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 	defer s.untrackBrowser(conn)
 	defer s.clearTunnelRequests(conn)
 
+	previousOrgs := initialOrgs
+	var orgMu sync.Mutex
+	refreshAuthorization := func() (userOrgContext, bool) {
+		orgMu.Lock()
+		defer orgMu.Unlock()
+		if !s.ptyCredentialValid(ctx, credential, userID) {
+			return userOrgContext{}, false
+		}
+		current, ok := s.currentUserOrgContext(ctx, userID)
+		if !ok || !s.roostUserIDAllowed(userID) || orgAuthorityRevoked(previousOrgs, current) {
+			return userOrgContext{}, false
+		}
+		previousOrgs = current
+		return current, true
+	}
+	go revalidatePTYAuthorization(ctx, conn, authInterval, func() bool {
+		_, ok := refreshAuthorization()
+		return ok
+	})
+
 	// On browser disconnect: clear BrowserConn on all owned routes
 	defer func() { s.forwardBrowserDetach(conn, ""); s.PTY.ClearBrowser(conn) }()
 
@@ -747,6 +762,13 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
+		current, ok := refreshAuthorization()
+		if !ok {
+			_ = conn.Close(websocket.StatusPolicyViolation, "authorization revoked")
+			return
+		}
+		userOrgIDs, userOrgRoles = current.OrgIDs, current.OrgRoles
+		userEmail = current.Email
 
 		var env ws.Envelope
 		if err := json.Unmarshal(data, &env); err != nil {

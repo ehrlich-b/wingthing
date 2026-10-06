@@ -34,6 +34,7 @@ func (s *Server) registerInternalRoutes() {
 	s.mux.HandleFunc("GET /internal/status", s.withInternalAuth(s.handleInternalStatus))
 	s.mux.HandleFunc("GET /internal/entitlements", s.withInternalAuth(s.handleInternalEntitlements))
 	s.mux.HandleFunc("GET /internal/sessions/{token}", s.withInternalAuth(s.handleInternalSession))
+	s.mux.HandleFunc("GET /internal/tokens/{token}", s.withInternalAuth(s.handleInternalToken))
 	s.mux.HandleFunc("POST /internal/wing-register", s.withInternalAuth(s.handleWingRegister))
 	s.mux.HandleFunc("POST /internal/wing-deregister", s.withInternalAuth(s.handleWingDeregister))
 	s.mux.HandleFunc("GET /internal/wing-locate/{wingID}", s.withInternalAuth(s.handleWingLocate))
