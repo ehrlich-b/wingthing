@@ -242,12 +242,16 @@ func eggControlDenyPaths(sessionDir string) []string {
 func isolateLinuxEggControl(mounts []sandbox.Mount, control []string, bridges []sandbox.Mount) ([]sandbox.Mount, error) {
 	var trees []string
 	for _, path := range control {
-		if filepath.Base(path) == "eggs" {
-			trees = append(trees, wingconfig.CanonicalProviderPath(path))
-		}
+		trees = append(trees, wingconfig.CanonicalProviderPath(path))
+	}
+	var err error
+	trees, err = physicalControlAliases(trees)
+	if err != nil {
+		return nil, err
 	}
 	var result []sandbox.Mount
 	splitting := make(map[string]bool)
+	var splittingIdentity []os.FileInfo
 	var split func(sandbox.Mount) error
 	split = func(m sandbox.Mount) error {
 		path := wingconfig.CanonicalProviderPath(m.Source)
@@ -280,6 +284,17 @@ func isolateLinuxEggControl(mounts []sandbox.Mount, control []string, bridges []
 		if splitting[path] {
 			return nil // an alias back to an ancestor must not reopen the tree
 		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		for _, active := range splittingIdentity {
+			if os.SameFile(info, active) {
+				return nil
+			}
+		}
+		splittingIdentity = append(splittingIdentity, info)
+		defer func() { splittingIdentity = splittingIdentity[:len(splittingIdentity)-1] }()
 		splitting[path] = true
 		defer delete(splitting, path)
 		// Split the resolved ancestor, so an alias cannot leave symlink

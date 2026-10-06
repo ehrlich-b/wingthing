@@ -175,6 +175,13 @@ func TestEggControlIsolationProcess(t *testing.T) {
 			t.Errorf("connected to denied controller socket %s", path)
 		}
 	}
+	if os.Getenv("WT_TEST_BIND_ALIASES") != "" {
+		for _, path := range []string{filepath.Join(root, "mnt", "state", "wing_key"), filepath.Join(root, "mnt", "state", "eggs", "future", "egg.token"), filepath.Join(root, "mnt", "sibling", "egg.token")} {
+			if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+				t.Errorf("physical control alias readable: %s", path)
+			}
+		}
+	}
 	if target, err := os.ReadFile(filepath.Join(root, "process-target")); err == nil {
 		output, _ := exec.Command("/bin/ps", "eww", "-p", strings.TrimSpace(string(target))).CombinedOutput()
 		if strings.Contains(string(output), "WT_OTHER_EGG_CAPABILITY=fixture-only-secret") {

@@ -4,9 +4,12 @@ package egg
 
 import (
 	"context"
+	"golang.org/x/sys/unix"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -34,6 +37,22 @@ func TestLinuxControlPolicyPreservesBridgesAndBlocksFutureSiblings(t *testing.T)
 	}
 	if err := os.Symlink(dotfile, filepath.Join(root, ".zshrc")); err != nil {
 		t.Fatal(err)
+	}
+	if os.Getenv("WT_TEST_BIND_ALIASES") != "" {
+		if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
+			t.Fatal(err)
+		}
+		for name, source := range map[string]string{"state": filepath.Join(root, "state"), "sibling": filepath.Join(root, "state", "eggs", "sibling")} {
+			alias := filepath.Join(root, "mnt", name)
+			if err := os.MkdirAll(alias, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := unix.Mount(source, alias, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = unix.Unmount(alias, unix.MNT_DETACH) })
+		}
+		control = append(control, filepath.Join(root, "state", "wing_key"), filepath.Join(root, "state", "device_token.yaml"))
 	}
 	own := filepath.Join(root, "state", "eggs", "own")
 	ownControl, err := net.Listen("unix", filepath.Join(own, "egg.sock"))
@@ -80,5 +99,26 @@ func TestLinuxControlPolicyPreservesBridgesAndBlocksFutureSiblings(t *testing.T)
 	if err != nil {
 		diag, _ := os.ReadFile(sb.DiagLog())
 		t.Fatalf("control isolation: %v\n%s\n%s", err, output, diag)
+	}
+}
+
+func TestLinuxControlPolicyExcludesPhysicalBindAliases(t *testing.T) {
+	if ok, reason := sandbox.CheckCapability(); !ok {
+		t.Skipf("namespaces unavailable: %s", reason)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "-test.run=^TestLinuxControlPolicyPreservesBridgesAndBlocksFutureSiblings$", "-test.v")
+	cmd.Env = append(os.Environ(), "WT_TEST_BIND_ALIASES=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWNS}
+	if os.Getuid() != 0 {
+		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWUSER
+		cmd.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}}
+		cmd.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}}
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("physical aliases: %v\n%s", err, output)
 	}
 }
