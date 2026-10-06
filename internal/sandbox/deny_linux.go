@@ -473,12 +473,14 @@ func DenyInit(args []string) {
 		// never leaves survivors running detached from the runtime.
 		Pdeathsig: syscall.SIGKILL,
 	}
-	if uid != 0 {
+	if uid != 0 || overlayPersistFn != nil {
+		// Even a root agent must not share the wrapper's user namespace when
+		// it retains backing-directory FDs: /proc/PID/fd must remain private.
 		// CLONE_NEWNS must accompany CLONE_NEWUSER: the nested user namespace
 		// holds no capabilities over the wrapper's mount namespace, so without
 		// its own namespace the PID-namespace init cannot swap /proc at all —
 		// every mount call fails EPERM (observed on 5.15 shared hosts; masked
-		// on root runs, which skip CLONE_NEWUSER and keep full capabilities).
+		// on root runs without persistence, which keep full capabilities).
 		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS
 		// Jail mode maps the init to inner-UID 0 so it keeps CAP_SYS_ADMIN across
 		// execve and can swap /proc; _jail_agent_init then drops to the real
@@ -565,6 +567,13 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 		log.Printf("_deny_init: bind real-home: %v", err)
 		return nil
 	}
+	// Never leave the saved HOME alias visible, including fallback paths. The
+	// overlay and writable bind mounts retain their own kernel references.
+	defer func() {
+		if err := unix.Unmount(realHome, unix.MNT_DETACH); err != nil {
+			failEnforcement("hide overlay backing HOME", realHome, err)
+		}
+	}()
 
 	// Create overlay upper (COW layer) and work dirs.
 	upperDir := filepath.Join(tmpDir, "overlay-upper")
@@ -634,10 +643,19 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 		log.Printf("_deny_init: overlay aborted, falling back to bind-mount")
 		return nil
 	}
+	// Keep a CLOEXEC directory handle for the wrapper's post-exit persistence.
+	// It is not inherited by the agent; the nested user namespace also denies
+	// access to the ancestor wrapper's /proc/PID/fd directory.
+	realHomeFD, err := os.Open(realHome)
+	if err != nil {
+		failEnforcement("retain overlay persistence directory", realHome, err)
+	}
+	persistHome := mountFDPath(realHomeFD)
 
 	// Return function that persists prefix-matching files from overlay upper
 	// back to real HOME. Called after the agent process exits.
 	return func() {
+		defer realHomeFD.Close()
 		entries, err := os.ReadDir(upperDir)
 		if err != nil {
 			return
@@ -657,11 +675,11 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 			if e.IsDir() {
 				// Persist directory contents if they ended up in the overlay
 				// upper (shouldn't happen with working bind-mounts, but be safe).
-				persistDir(filepath.Join(upperDir, name), filepath.Join(realHome, name))
+				persistDir(filepath.Join(upperDir, name), filepath.Join(persistHome, name))
 				continue
 			}
 			src := filepath.Join(upperDir, name)
-			dst := filepath.Join(realHome, name)
+			dst := filepath.Join(persistHome, name)
 			// Remove symlinks at dst so we don't follow them and write
 			// outside the per-user home (e.g. stale symlink to /opt/wingthing/.claude.json).
 			if fi, err := os.Lstat(dst); err == nil && fi.Mode()&os.ModeSymlink != 0 {

@@ -57,6 +57,67 @@ func runHardeningNamespace(t *testing.T, scenario, root string) {
 
 func runHardeningScenario(scenario, root string) error {
 	switch scenario {
+	case "overlay-home", "overlay-root-agent":
+		home, tmp := filepath.Join(root, "home"), filepath.Join(root, "session")
+		config := filepath.Join(home, ".claude")
+		for _, dir := range []string{config, tmp} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		secret := filepath.Join(home, ".ssh", "key")
+		if err := os.MkdirAll(filepath.Dir(secret), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(secret, []byte("host secret"), 0o600); err != nil {
+			return err
+		}
+		if scenario == "overlay-root-agent" {
+			command := fmt.Sprintf(`for fd in /proc/%d/fd/*; do if test -r "$fd/.ssh/key"; then exit 1; fi; done; test ! -r %s/real-home/.ssh/key && printf persisted > %s/.claude.json`, os.Getpid(), tmp, home)
+			DenyInit([]string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--home", home, "--writable", config, "--overlay-prefix", ".claude", "--", "/bin/sh", "-c", command})
+			return fmt.Errorf("DenyInit returned")
+		}
+		persist := setupOverlayHome(home, []string{config}, []string{".claude"}, tmp)
+		if persist == nil {
+			return fmt.Errorf("overlayfs unavailable")
+		}
+		alias := filepath.Join(tmp, "real-home")
+		if _, err := os.ReadFile(filepath.Join(alias, ".ssh", "key")); !os.IsNotExist(err) {
+			return fmt.Errorf("overlay exposed backing secrets: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(alias, ".claude")); !os.IsNotExist(err) {
+			return fmt.Errorf("overlay exposed a writable backing config alias: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(config, "state"), []byte("persistent config"), 0o600); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte("atomic config"), 0o600); err != nil {
+			return err
+		}
+		persist()
+		return nil
+	case "overlay-fallback":
+		home, tmp := filepath.Join(root, "home"), filepath.Join(root, "session")
+		for _, dir := range []string{home, tmp} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		if err := os.WriteFile(filepath.Join(home, "secret"), []byte("host secret"), 0o600); err != nil {
+			return err
+		}
+		// A regular file makes upperdir setup fail after real-home was bound.
+		if err := os.WriteFile(filepath.Join(tmp, "overlay-upper"), nil, 0o600); err != nil {
+			return err
+		}
+		if persist := setupOverlayHome(home, nil, nil, tmp); persist != nil {
+			return fmt.Errorf("expected overlay fallback")
+		}
+		entries, err := os.ReadDir(filepath.Join(tmp, "real-home"))
+		if err != nil || len(entries) != 0 {
+			return fmt.Errorf("fallback retained backing HOME: %v, %v", entries, err)
+		}
+		return nil
 	case "jail-home", "jail-home-ro":
 		home := filepath.Join(root, "home")
 		config := filepath.Join(home, ".codex")
@@ -91,6 +152,30 @@ func runHardeningScenario(scenario, root string) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown hardening scenario %q", scenario)
+	}
+}
+
+func TestOverlayBackingHomeIsHidden(t *testing.T) {
+	root := t.TempDir()
+	runHardeningNamespace(t, "overlay-home", root)
+	for _, file := range []string{".claude/state", ".claude.json"} {
+		data, err := os.ReadFile(filepath.Join(root, "home", file))
+		if err != nil || len(data) == 0 {
+			t.Fatalf("overlay config did not persist: %s: %q, %v", file, data, err)
+		}
+	}
+}
+
+func TestOverlayFallbackHidesBackingHome(t *testing.T) {
+	runHardeningNamespace(t, "overlay-fallback", t.TempDir())
+}
+
+func TestOverlayRootAgentCannotReadWrapperBackingFDs(t *testing.T) {
+	root := t.TempDir()
+	runHardeningNamespace(t, "overlay-root-agent", root)
+	data, err := os.ReadFile(filepath.Join(root, "home", ".claude.json"))
+	if err != nil || string(data) != "persisted" {
+		t.Fatalf("root agent's prefix config did not persist: %q, %v", data, err)
 	}
 }
 
