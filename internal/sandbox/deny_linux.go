@@ -1188,11 +1188,16 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string, pre
 		log.Fatalf("_deny_init: jail mount newroot: %v", err)
 	}
 	// Recreate merged-usr symlinks (/bin -> usr/bin, etc.) if the host uses them.
+	aliases := make(map[string]string)
 	for _, link := range [][2]string{
 		{"bin", "usr/bin"}, {"sbin", "usr/sbin"}, {"lib", "usr/lib"}, {"lib64", "usr/lib64"},
 	} {
 		if target, err := os.Readlink("/" + link[0]); err == nil {
-			if err := os.Symlink(target, filepath.Join(newRoot, link[0])); err != nil {
+			if target != link[1] && target != "/"+link[1] {
+				failEnforcement("validate jail system symlink", "/"+link[0], fmt.Errorf("unexpected target %q", target))
+			}
+			aliases["/"+link[0]] = "/" + link[1]
+			if err := os.Symlink(link[1], filepath.Join(newRoot, link[0])); err != nil {
 				failEnforcement("recreate jail symlink", "/"+link[0], err)
 			}
 			log.Printf("_deny_init: jail symlink /%s -> %s", link[0], target)
@@ -1282,7 +1287,7 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string, pre
 		{Path: "/dev/shm", FSType: "tmpfs", Writable: true},
 		{Path: "/tmp", FSType: "tmpfs", Writable: true},
 	}
-	for _, mount := range jailMounts(roMounts, writablePaths) {
+	for _, mount := range jailMounts(roMounts, writablePaths, aliases) {
 		p := mount.Path
 		sourceFD, targetFD, err := jailMkTarget(newRoot, p)
 		if err != nil {
@@ -1453,14 +1458,26 @@ func isPathWithin(path, root string) bool {
 	return cleanPath == cleanRoot || strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
 }
 
-func jailMounts(readonly, writable []string) []expectedMount {
+func jailMounts(readonly, writable []string, aliases map[string]string) []expectedMount {
+	// Bind the validated merged-usr destinations directly. The confined walker
+	// still rejects every symlink in the source and target; aliases recreated by
+	// setupJail must not be mistaken for agent-controlled mountpoint symlinks.
+	canonical := func(path string) string {
+		path = filepath.Clean(path)
+		for alias, target := range aliases {
+			if path == alias || strings.HasPrefix(path, alias+"/") {
+				return target + strings.TrimPrefix(path, alias)
+			}
+		}
+		return path
+	}
 	byPath := make(map[string]expectedMount)
 	for _, p := range readonly {
-		p = filepath.Clean(p)
+		p = canonical(p)
 		byPath[p] = expectedMount{Path: p, ReadOnly: true}
 	}
 	for _, p := range writable {
-		p = filepath.Clean(p)
+		p = canonical(p)
 		byPath[p] = expectedMount{Path: p, Writable: true}
 	}
 	mounts := make([]expectedMount, 0, len(byPath))

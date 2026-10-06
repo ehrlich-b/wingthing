@@ -62,6 +62,33 @@ func runHardeningNamespace(t *testing.T, scenario, root string) {
 
 func runHardeningScenario(scenario, root string) error {
 	switch scenario {
+	case "jail-system-aliases":
+		home, workspace, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "session")
+		config := filepath.Join(home, ".claude")
+		for _, dir := range []string{config, workspace, tmp} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		secret := filepath.Join(home, "private")
+		if err := os.WriteFile(secret, []byte("host secret"), 0o600); err != nil {
+			return err
+		}
+		if err := os.Chdir(workspace); err != nil {
+			return err
+		}
+		args := []string{"--uid", "1000", "--gid", "1000", "--log", filepath.Join(tmp, "deny.log"), "--deny", "/", "--home", home, "--writable", workspace, "--writable", config}
+		for _, path := range []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"} {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				continue
+			} else if err != nil {
+				return err
+			}
+			args = append(args, "--mount-ro", path)
+		}
+		command := fmt.Sprintf(`test "$(id -u)" = 1000 && test ! -e %q && printf launched > result && printf persisted > %q`, secret, filepath.Join(config, "state"))
+		DenyInit(append(args, "--", "/bin/sh", "-c", command))
+		return fmt.Errorf("DenyInit returned")
 	case "jail-prefix":
 		home := filepath.Join(root, "home")
 		config := filepath.Join(home, ".claude")
@@ -312,7 +339,7 @@ func TestJailExposesOnlyDeclaredHomePaths(t *testing.T) {
 }
 
 func TestJailMountOrderPreservesDeclaredModes(t *testing.T) {
-	mounts := jailMounts([]string{"/home/u/.codex/config", "/home/u", "/usr"}, []string{"/home/u/.codex"})
+	mounts := jailMounts([]string{"/home/u/.codex/config", "/home/u", "/usr"}, []string{"/home/u/.codex"}, nil)
 	want := []expectedMount{
 		{Path: "/usr", ReadOnly: true},
 		{Path: "/home/u", ReadOnly: true},
@@ -321,5 +348,39 @@ func TestJailMountOrderPreservesDeclaredModes(t *testing.T) {
 	}
 	if fmt.Sprint(mounts) != fmt.Sprint(want) {
 		t.Fatalf("mount order = %v, want %v", mounts, want)
+	}
+}
+
+func TestJailMountsPreserveMergedUsrAliases(t *testing.T) {
+	aliases := map[string]string{
+		"/bin": "/usr/bin", "/sbin": "/usr/sbin", "/lib": "/usr/lib", "/lib64": "/usr/lib64",
+	}
+	mounts := jailMounts(
+		[]string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/lib/protected", "/binary"},
+		[]string{"/usr/bin", "/lib/state"}, aliases,
+	)
+	want := []expectedMount{
+		{Path: "/binary", ReadOnly: true},
+		{Path: "/usr", ReadOnly: true},
+		{Path: "/usr/bin", Writable: true},
+		{Path: "/usr/lib", ReadOnly: true},
+		{Path: "/usr/lib64", ReadOnly: true},
+		{Path: "/usr/sbin", ReadOnly: true},
+		{Path: "/usr/lib/protected", ReadOnly: true},
+		{Path: "/usr/lib/state", Writable: true},
+	}
+	if fmt.Sprint(mounts) != fmt.Sprint(want) {
+		t.Fatalf("merged-usr mount policy = %v, want %v", mounts, want)
+	}
+}
+
+func TestSealedJailSystemAliasesLaunchUnprivilegedAgent(t *testing.T) {
+	root := t.TempDir()
+	runHardeningNamespace(t, "jail-system-aliases", root)
+	for path, want := range map[string]string{"work/result": "launched", "home/.claude/state": "persisted"} {
+		data, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil || string(data) != want {
+			t.Fatalf("sealed jail agent output %s = %q, %v", path, data, err)
+		}
 	}
 }
