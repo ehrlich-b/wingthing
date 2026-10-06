@@ -452,6 +452,12 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.toolTerminalSend(ctx, arguments)
 	case "terminal_wait":
 		data, err = s.toolTerminalWait(ctx, arguments)
+	case "worktree_create":
+		data, err = s.toolWorktreeCreate(arguments)
+	case "worktree_list":
+		data, err = s.toolWorktreeList(arguments)
+	case "worktree_remove":
+		data, err = s.toolWorktreeRemove(arguments)
 	case "terminal_start":
 		data, err = s.toolTerminalStart(arguments)
 	case "agent_start":

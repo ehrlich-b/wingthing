@@ -58,6 +58,28 @@ local server uses the current OS user's authority. `--client` supplies ownership
 and audit attribution inside Wingthing, not a new operating-system security
 boundary. Optional grants and spawn bounds live in `~/.wingthing/clients.yaml`.
 
+### Isolated worktrees for parallel tasks
+
+Create a separate checkout for each child task without preparing branches by hand:
+
+```bash
+wt worktree new api-fix --repo /path/to/project --base HEAD
+wt worktree ls --repo /path/to/project
+wt worktree rm api-fix --repo /path/to/project
+```
+
+The checkout lives at `<repo>/../.wingthing-worktrees/<repo-name>/<name>` on a new
+`wt/<name>` branch. Set `WINGTHING_WORKTREE_ROOT` to use another root. Names accept
+letters, digits, `-`, and `_`. Removal refuses uncommitted changes unless `--force`
+is supplied and always keeps the branch.
+
+MCP exposes `worktree_create` and `worktree_remove` with `worktree.write`, and
+`worktree_list` with `worktree.read`. Pass the returned `cwd` to `agent_start` on
+the same wing. Both the repository and destination must fit the caller's allowed
+workspace paths; set the root inside an admitted directory when sibling paths
+are excluded. Creation uses the connection's existing spawn admission bounds,
+and all three calls use the normal MCP audit trail.
+
 ## 2. Local human terminal: sandboxed agent
 
 Use the same runtime directly when a person wants the terminal:
@@ -219,7 +241,7 @@ person: CLI or browser ----------------/  (inspect or take over)
 | Question | Wingthing's contract |
 | --- | --- |
 | **Execution** | Select the wing that will run the process. Direct remote calls require its `wing_id`; Wingthing never substitutes another wing. |
-| **Workspace** | Pass a `cwd` that already exists on that wing. Wingthing does not clone, create, or synchronize repositories. |
+| **Workspace** | Pass an existing `cwd` on that wing, or create an isolated checkout of an existing repository with `worktree_create`. Wingthing does not clone or synchronize repositories. |
 | **Display** | Use `agent_run` for semantic status and a final result without a live browser view. Use `agent_start` when the task needs a PTY that a person can attach to from the CLI, SSH, or an entitled/self-hosted browser. |
 | **Credentials** | The provider CLI reads credentials from the execution owner's agent home on that wing. Shared hosts separate those homes by owner. Do not put provider tokens or SSH keys in prompts or MCP arguments. |
 | **Durable memory** | Wingthing stores task, result, message, and thread records in `~/.wingthing/wt.db`, session state under `~/.wingthing/eggs`, and optional prompt memory under `~/.wingthing/memory`. Provider-native history stays in the provider home. These are wing-local unless the operator arranges replication. |

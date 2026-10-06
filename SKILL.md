@@ -42,8 +42,23 @@ Before launching, identify:
 - which Wingthing owner and provider-agent home supply credentials; and
 - which wing holds the task record, provider history, and optional Wingthing memory.
 
-Wingthing routes control. It does not create or synchronize workspaces, credentials,
-or memory across wings.
+Wingthing routes control and can create worktrees from an existing repository.
+It does not synchronize workspaces, credentials, or memory across wings.
+
+Worktree tools for parallel coding:
+
+- `worktree_create` (`repo`, `name`, optional `base`): creates a new `wt/<name>`
+  branch and returns a `cwd` for `agent_start` on the same wing; requires
+  `worktree.write` and consumes spawn admission.
+- `worktree_list` (`repo`): lists managed checkouts; requires `worktree.read`.
+- `worktree_remove` (`repo`, `name`, optional `force`): removes a registered
+  checkout while retaining its branch; requires `worktree.write`. Dirty checkouts
+  require `force`.
+
+Names contain only letters, digits, `-`, and `_`. Both the source and checkout
+must be inside allowed workspace paths. The default root is the repository's
+sibling `.wingthing-worktrees` directory; `WINGTHING_WORKTREE_ROOT` can place it
+inside an admitted path.
 
 ## Run safely
 
