@@ -373,6 +373,34 @@ func buildTools() []Tool {
 			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"session"},
 		},
 		{
+			Name: "worktree_create", Title: "Create isolated Git worktree",
+			Description: "Create an isolated checkout on a new wt/NAME branch in an allowed workspace. Pass the returned cwd to agent_start on the same wing. Creation uses the connection's spawn admission bounds.",
+			InputSchema: objectSchema(map[string]any{
+				"repo": stringProperty("Existing repository directory; defaults to the MCP server's current directory"),
+				"name": stringProperty("Checkout name containing only letters, digits, '-' and '_'"),
+				"base": stringProperty("Starting Git ref; defaults to the repository's current HEAD"),
+			}, "name"), Annotations: mutating,
+			Grant: "worktree.write", Surfaces: both, AuditTargetKeys: []string{"name"},
+		},
+		{
+			Name: "worktree_list", Title: "List isolated Git worktrees",
+			Description: "List registered Wingthing worktrees for an allowed repository beneath the configured worktree root.",
+			InputSchema: objectSchema(map[string]any{
+				"repo": stringProperty("Existing repository directory; defaults to the MCP server's current directory"),
+			}), Annotations: readOnly,
+			Grant: "worktree.read", Surfaces: both,
+		},
+		{
+			Name: "worktree_remove", Title: "Remove isolated Git worktree",
+			Description: "Remove a registered Wingthing checkout, retaining its branch. Dirty checkouts require force.",
+			InputSchema: objectSchema(map[string]any{
+				"repo":  stringProperty("Existing repository directory; defaults to the MCP server's current directory"),
+				"name":  stringProperty("Checkout name containing only letters, digits, '-' and '_'"),
+				"force": map[string]any{"type": "boolean", "default": false, "description": "Discard uncommitted checkout changes"},
+			}, "name"), Annotations: destructive,
+			Grant: "worktree.write", Surfaces: both, AuditTargetKeys: []string{"name"},
+		},
+		{
 			Name: "terminal_start", Title: "Start persistent terminal",
 			Description: "Start a durable shell or command terminal under the MCP server's declared isolation mode and return immediately with its session ID.",
 			InputSchema: objectSchema(map[string]any{

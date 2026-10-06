@@ -116,6 +116,7 @@ func newRootCommand() *cobra.Command {
 		terminalCmd(),
 		attachCmd(),
 		sessionCmd(),
+		worktreeCmd(),
 		conversationCmd(),
 		wingsCmd(),
 		keygenCmd(),
