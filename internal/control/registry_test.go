@@ -137,7 +137,7 @@ func TestAgentWaitAnySchemaAndPolicy(t *testing.T) {
 		t.Fatal("missing agent_wait_any")
 	}
 	wait, _ := Lookup("agent_wait")
-	if tool.Grant != wait.Grant || tool.AuditArguments != wait.AuditArguments || !reflect.DeepEqual(tool.AuditTargetKeys, wait.AuditTargetKeys) || !reflect.DeepEqual(tool.Annotations, wait.Annotations) {
+	if tool.Grant != wait.Grant || tool.AuditArguments != wait.AuditArguments || !reflect.DeepEqual(tool.AuditTargetKeys, []string{"run_ids"}) || !reflect.DeepEqual(tool.Annotations, wait.Annotations) {
 		t.Fatalf("agent_wait_any policy differs from agent_wait: %#v", tool)
 	}
 	if !strings.Contains(tool.Description, "max_wait_hint_seconds: 110") || !strings.Contains(tool.Description, "under 110 seconds") {
@@ -151,7 +151,7 @@ func TestAgentWaitAnySchemaAndPolicy(t *testing.T) {
 	if !reflect.DeepEqual(tool.InputSchema["required"], []string{"run_ids"}) {
 		t.Fatalf("required = %v", tool.InputSchema["required"])
 	}
-	if timeout := properties["timeout_seconds"].(map[string]any); timeout["default"] != 30 || timeout["maximum"] != 3600 {
+	if timeout := properties["timeout_seconds"].(map[string]any); timeout["default"] != 30 || timeout["maximum"] != 600 {
 		t.Fatalf("timeout schema = %#v", timeout)
 	}
 }
@@ -184,6 +184,37 @@ func TestAuditTargetUsesOnlyDeclaredResourceFields(t *testing.T) {
 	}
 	if got := AuditTarget("wingthing_capabilities", json.RawMessage(`{"name":"not-approved"}`), nil); got != "" {
 		t.Fatalf("capabilities leaked undeclared target %q", got)
+	}
+}
+
+func TestAgentWaitAnyAuditTargetIsBounded(t *testing.T) {
+	ids := []string{"first", "second", strings.Repeat("\n", 1000), strings.Repeat("界", 1000), "omitted"}
+	arguments, err := json.Marshal(map[string]any{"run_ids": ids, "prompt": "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := AuditTarget("agent_wait_any", arguments, nil)
+	var data struct {
+		RunIDs []string `json:"run_ids"`
+		Count  int      `json:"count"`
+	}
+	if err := json.Unmarshal([]byte(target), &data); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"first", "second", strings.Repeat("\n", 61) + "...", strings.Repeat("界", 61) + "..."}
+	if data.Count != len(ids) || !reflect.DeepEqual(data.RunIDs, want) || len(target) > 1600 {
+		t.Fatalf("audit target = %q", target)
+	}
+	if strings.Contains(target, "omitted") || strings.Contains(target, "secret") {
+		t.Fatalf("audit target leaked omitted arguments: %q", target)
+	}
+	for _, input := range []string{`{}`, `{"run_ids":[]}`, `{"run_ids":"invalid"}`, `{"run_ids":["first",1]}`} {
+		if got := AuditTarget("agent_wait_any", json.RawMessage(input), nil); got != "" {
+			t.Fatalf("invalid target for %s = %q", input, got)
+		}
+	}
+	if got := AuditTarget("agent_wait", arguments, nil); got != "" {
+		t.Fatalf("single-run audit used undeclared IDs: %q", got)
 	}
 }
 

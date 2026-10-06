@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
@@ -40,15 +42,17 @@ func TestAgentWaitAnyCLI(t *testing.T) {
 		wantError  string
 		finishedID string
 		pendingID  string
+		exitCode   int
 	}{
 		{name: "completion", args: []string{"wait-any", "done", "running"}, finishedID: "done", pendingID: "running"},
-		{name: "timeout", args: []string{"wait-any", "running", "--timeout", "0.1"}, pendingID: "running"},
+		{name: "timeout", args: []string{"wait-any", "running", "--timeout", "0.1"}, pendingID: "running", exitCode: 2},
+		{name: "all unknown", args: []string{"wait-any", "unknown"}},
 		{name: "client owner", args: []string{"wait-any", "owner-run", "--client", "reader"}, clients: clients, finishedID: "owner-run"},
 		{name: "grant denied", args: []string{"wait-any", "owner-run", "--client", "observer"}, clients: clients, wantError: `lacks grant "agent.read"`},
 		{name: "unknown client", args: []string{"wait-any", "owner-run", "--client", "unknown"}, clients: clients, wantError: `MCP client "unknown" is not configured`},
 		{name: "implicit client", args: []string{"wait-any", "owner-run"}, clients: clients, wantError: `MCP client "default" is not configured`},
 		{name: "missing IDs", args: []string{"wait-any"}, wantError: "accepts between 1 and 64 arg(s)"},
-		{name: "invalid timeout", args: []string{"wait-any", "done", "--timeout", "3601"}, wantError: "timeout_seconds must be between"},
+		{name: "invalid timeout", args: []string{"wait-any", "done", "--timeout", "600.1"}, wantError: "timeout_seconds must be between"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if test.clients != "" {
@@ -58,6 +62,8 @@ func TestAgentWaitAnyCLI(t *testing.T) {
 				t.Cleanup(func() { _ = os.Remove(filepath.Join(dir, "clients.yaml")) })
 			}
 			cmd := agentCmd()
+			cmd.SilenceErrors = true
+			cmd.SilenceUsage = true
 			var output bytes.Buffer
 			cmd.SetOut(&output)
 			cmd.SetErr(io.Discard)
@@ -69,8 +75,16 @@ func TestAgentWaitAnyCLI(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
+			var exitErr *cmdutil.CommandExitError
+			if test.exitCode != 0 {
+				if !errors.As(err, &exitErr) || exitErr.Code != test.exitCode {
+					t.Fatalf("CLI error = %#v, want exit %d", err, test.exitCode)
+				}
+			} else if err != nil {
 				t.Fatal(err)
+			}
+			if test.exitCode == 2 && output.String() != "{\"finished\":[],\"pending\":[\"running\"]}\n" {
+				t.Fatalf("timeout JSON changed: %q", output.String())
 			}
 			var data struct {
 				Finished []struct {
