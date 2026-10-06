@@ -451,6 +451,12 @@ func ValidateStateDirectory(dir string) error {
 		// selected directory itself is an alias of this preview state.
 		return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
+				// Providers cannot read the host's recovery authority. A bound
+				// MCP client still validates every accessible state path; host
+				// commands also validate recovery whenever it is readable.
+				if path == filepath.Join(root, "recovery") && entry != nil && entry.IsDir() && errors.Is(walkErr, os.ErrPermission) {
+					return filepath.SkipDir
+				}
 				return walkErr
 			}
 			if entry.Type()&os.ModeSymlink == 0 {

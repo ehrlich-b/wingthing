@@ -48,6 +48,75 @@ func TestLoadRestrictsExistingStateDirectory(t *testing.T) {
 	}
 }
 
+func TestLoadWithUnreadableRecoveryStorage(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("fixture requires ordinary permission enforcement")
+	}
+	originalChannel := ReleaseChannel
+	ReleaseChannel = "preview"
+	t.Cleanup(func() { ReleaseChannel = originalChannel })
+	dir := t.TempDir()
+	t.Setenv("WINGTHING_DIR", dir)
+	t.Setenv("WINGTHING_PREVIEW_DIR", "")
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+	recovery := filepath.Join(dir, "recovery")
+	if err := os.Mkdir(recovery, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(recovery, 0700) })
+	if _, err := Load(); err != nil {
+		t.Fatalf("sandboxed MCP cannot load existing preview state: %v", err)
+	}
+	// Host-side validation still inspects readable recovery storage.
+	if err := os.Chmod(recovery, 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(recovery, "foreign")
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("readable recovery storage bypassed symlink validation")
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	// A different unreadable subtree still fails channel validation.
+	other := filepath.Join(dir, "unreadable")
+	if err := os.Mkdir(other, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(other, 0700) })
+	if _, err := Load(); err == nil {
+		t.Fatal("unreadable provider state bypassed validation")
+	}
+}
+
+func TestLoadAlreadyPrivateStateDoesNotRequireChmod(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WINGTHING_DIR", dir)
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+	originalChmod := chmodStateDirectory
+	chmodStateDirectory = func(path string, mode os.FileMode) error {
+		return &os.PathError{Op: "chmod", Path: path, Err: syscall.EPERM}
+	}
+	t.Cleanup(func() { chmodStateDirectory = originalChmod })
+	if _, err := Load(); err != nil {
+		t.Fatalf("sandboxed MCP tried to chmod protected state: %v", err)
+	}
+	// Existing permissive state must still be tightened or refused.
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("permissive state accepted without chmod")
+	}
+}
+
 func TestDefaultWingIDConcurrentFirstLoadIsStable(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "new-config")
 	const callers = 32

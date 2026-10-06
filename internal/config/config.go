@@ -20,6 +20,9 @@ var wingIDRegex = regexp.MustCompile(`^[0-9a-f]{20,32}$`)
 // exercised deterministically without requiring a special test filesystem.
 var linkWingIDFile = os.Link
 
+// Sandboxed MCP clients may read existing state without permission to chmod it.
+var chmodStateDirectory = os.Chmod
+
 type Config struct {
 	Dir               string            `yaml:"-"`
 	DefaultAgent      string            `yaml:"default_agent"`
@@ -119,7 +122,16 @@ func ensureStateDirectory(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create wing config directory: %w", err)
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("inspect wing config directory: %w", err)
+	}
+	// Recovery storage pins this ancestor against metadata changes in a
+	// provider sandbox. Already-private state needs no permission mutation.
+	if info.Mode().Perm() == 0o700 {
+		return nil
+	}
+	if err := chmodStateDirectory(dir, 0o700); err != nil {
 		return fmt.Errorf("protect wing config directory: %w", err)
 	}
 	return nil
