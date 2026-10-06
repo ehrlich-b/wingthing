@@ -93,6 +93,19 @@ func TestBuildProfileDeclaredPortsAndSocketsSurviveProxyDeny(t *testing.T) {
 	}
 }
 
+func TestBuildProfileProxyHasNoDirectDNS(t *testing.T) {
+	for _, need := range []NetworkNeed{NetworkNone, NetworkLocal, NetworkHTTPS, NetworkFull} {
+		t.Run(need.String(), func(t *testing.T) {
+			profile := buildProfile(Config{NetworkNeed: need, ProxyPort: 43210})
+			want := "(version 1)\n(allow default)\n(deny network*)\n" +
+				"(allow network-outbound (remote tcp \"localhost:43210\"))\n"
+			if profile != want {
+				t.Fatalf("proxy must be the only IP/resolver endpoint:\n%s\nwant\n%s", profile, want)
+			}
+		})
+	}
+}
+
 func TestBuildProfileDenyPaths(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	profile := buildProfile(Config{
@@ -346,6 +359,81 @@ func TestSeatbeltLocalPortsEnforced(t *testing.T) {
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("declared Unix control socket failed: %v: %s", err, out)
+	}
+}
+
+func TestSeatbeltProxyResolverBlocked(t *testing.T) {
+	requireSeatbeltEnforcement(t)
+	const resolverSocket = "/private/var/run/mDNSResponder"
+	conn, err := net.DialTimeout("unix", resolverSocket, 2*time.Second)
+	if err != nil {
+		t.Fatalf("unsandboxed resolver socket must be reachable: %v", err)
+	}
+	_ = conn.Close()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("seatbelt-proxy-ok"))
+	}))
+	defer server.Close()
+	proxy, err := StartProxy([]string{"localhost"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	sb, err := newPlatform(Config{NetworkNeed: NetworkHTTPS, ProxyPort: proxy.Port()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destroySandboxForTest(t, sb)
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxy.Port())
+	targetURL := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
+	for _, tc := range []struct {
+		name  string
+		url   string
+		proxy bool
+		allow bool
+	}{
+		{"allowed HTTPS through proxy", targetURL, true, true},
+		{"blocked CONNECT domain", "https://seatbelt-blocked.invalid", true, false},
+		{"direct HTTPS bypass", server.URL, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"--silent", "--show-error", "--fail", "--insecure", "--max-time", "3"}
+			if tc.proxy {
+				args = append(args, "--noproxy", "", "--proxy", proxyURL)
+			} else {
+				args = append(args, "--noproxy", "*")
+			}
+			args = append(args, tc.url)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			cmd, err := sb.Exec(ctx, "/usr/bin/curl", args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := cmd.CombinedOutput()
+			if tc.allow && (err != nil || string(out) != "seatbelt-proxy-ok") {
+				t.Fatalf("proxied HTTPS failed without agent DNS: %v: %s", err, out)
+			}
+			if !tc.allow && (err == nil || ctx.Err() != nil) {
+				t.Fatalf("forbidden connection must fail: %v: %s", err, out)
+			}
+		})
+	}
+	if events := proxy.Events(); len(events) != 2 || events[0].Blocked || !events[1].Blocked || events[1].Host != "seatbelt-blocked.invalid:443" {
+		t.Fatalf("expected an allowed tunnel and a domain-filter refusal, got %#v", events)
+	}
+
+	t.Setenv("WT_SEATBELT_TEST_SOCKET", resolverSocket)
+	t.Setenv("WT_SEATBELT_TEST_DENY_SOCKET", "1")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd, err := sb.Exec(ctx, os.Args[0], []string{"-test.run=^TestSeatbeltSocketProbe$"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("resolver socket must be denied while proxied HTTPS works: %v: %s", err, out)
 	}
 }
 

@@ -76,10 +76,10 @@ func buildProfile(cfg Config) string {
 	// or per-domain ("host must be * or localhost"). DNS on macOS goes through
 	// /private/var/run/mDNSResponder (Unix socket), not UDP 53.
 	if cfg.ProxyPort > 0 {
-		// Domain-filtering proxy active: block ALL direct outbound,
-		// only allow connection to the local proxy + DNS.
+		// The proxy URL uses 127.0.0.1, and the host-side proxy resolves CONNECT
+		// destinations after domain filtering. Agent-side DNS would bypass it.
 		sb.WriteString("(deny network*)\n")
-		fmt.Fprintf(&sb, "(allow network-outbound (literal \"/private/var/run/mDNSResponder\") (remote tcp \"localhost:%d\"))\n", cfg.ProxyPort)
+		fmt.Fprintf(&sb, "(allow network-outbound (remote tcp \"localhost:%d\"))\n", cfg.ProxyPort)
 	} else {
 		switch cfg.NetworkNeed {
 		case NetworkNone:
