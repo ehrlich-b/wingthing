@@ -114,7 +114,7 @@ func TestResumedCoordinatorRoleUsesNewInvocationWithSameLogicalRoot(t *testing.T
 	defer func() { _ = db.Close() }()
 	user := "role-personal-owner"
 	c := fixtureConversation(t, db, cfg, "resume-role", "", roostSessionPrincipal(user), "idle")
-	args, principal, err := PrepareConversationResumeMCP(cfg, &config.WingConfig{}, ws.PTYStart{SessionID: "new-execution", ResumeSessionID: c.SessionID, UserID: user, CWD: c.CWD}, egg.DefaultEggConfig(), false)
+	args, principal, err := PrepareConversationResumeMCP("dev", cfg, &config.WingConfig{}, ws.PTYStart{SessionID: "new-execution", ResumeSessionID: c.SessionID, UserID: user, CWD: c.CWD}, egg.DefaultEggConfig(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

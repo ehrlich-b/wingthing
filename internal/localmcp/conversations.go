@@ -493,7 +493,7 @@ func parentMCPArguments(args []string, c *store.Conversation, relative string) [
 
 // Called only after prepareBrowserResume has verified the source owner,
 // provider identity and current workspace policy.
-func PrepareConversationResumeMCP(cfg *config.Config, wc *config.WingConfig, start ws.PTYStart, eggCfg *egg.EggConfig, sharedHost bool) ([]string, string, error) {
+func PrepareConversationResumeMCP(version string, cfg *config.Config, wc *config.WingConfig, start ws.PTYStart, eggCfg *egg.EggConfig, sharedHost bool) ([]string, string, error) {
 	if start.ResumeSessionID == "" {
 		return nil, "", nil
 	}
@@ -521,7 +521,7 @@ func PrepareConversationResumeMCP(cfg *config.Config, wc *config.WingConfig, sta
 	// ceiling; the direct transport does not consult it.
 	home, _ := os.UserHomeDir()
 	paths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, start.Email, "owner", home))
-	server := &Server{Cfg: cfg, Principal: principal, Actor: "browser", Surface: control.SurfaceHTTPMCP,
+	server := &Server{Version: version, Cfg: cfg, Principal: principal, Actor: "browser", Surface: control.SurfaceHTTPMCP,
 		Grants: GrantSet(defaultDirectMCPGrants), MaxSessions: defaultDirectMCPMaxSessions, MaxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour,
 		allowedPaths: paths, enforcePathBounds: len(paths) > 0, identity: eggclient.EggIdentity{UserID: start.UserID, Email: start.Email},
 		// The browser PTY spawn cannot yet apply the broker launch contract

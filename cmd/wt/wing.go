@@ -1522,7 +1522,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		}
 	}()
 
-	go localmcp.RunConversationWakeController(ctx, cfg, func() (*config.WingConfig, bool) {
+	go localmcp.RunConversationWakeController(version, ctx, cfg, func() (*config.WingConfig, bool) {
 		wingCfgMu.Lock()
 		copyCfg := *wingCfg
 		wingCfgMu.Unlock()
@@ -3347,7 +3347,7 @@ authDone:
 		}
 		defer func() { releaseProviderResume(providerResumeSpawned) }()
 	}
-	resumeArgs, resumePrincipal, resumeBindingErr := localmcp.PrepareConversationResumeMCP(cfg, wingCfg, start, eggCfg, sharedHost)
+	resumeArgs, resumePrincipal, resumeBindingErr := localmcp.PrepareConversationResumeMCP(version, cfg, wingCfg, start, eggCfg, sharedHost)
 	if resumeBindingErr != nil {
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
 		return

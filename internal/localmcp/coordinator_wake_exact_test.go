@@ -28,6 +28,7 @@ const (
 // misdirected attempt leaves a prompt.*.json file in the wrong egg directory.
 type wakeExactSpy struct {
 	cfg     *config.Config
+	timeout time.Duration
 	mu      sync.Mutex
 	receipt bool
 	view    map[string]string // native reader provider override per execution
@@ -38,7 +39,7 @@ type wakeExactSpy struct {
 }
 
 func newWakeExactSpy(cfg *config.Config) *wakeExactSpy {
-	return &wakeExactSpy{cfg: cfg, view: map[string]string{}, events: map[string][]egg.SessionEvent{}}
+	return &wakeExactSpy{cfg: cfg, timeout: 100 * time.Millisecond, view: map[string]string{}, events: map[string][]egg.SessionEvent{}}
 }
 
 func (w *wakeExactSpy) nativeView(id string, after int64, limit int) egg.SessionView {
@@ -107,7 +108,7 @@ func (w *wakeExactSpy) runtime() conversationWakeRuntime {
 			w.mu.Lock()
 			w.prompts = append(w.prompts, s.ID+":"+id)
 			w.mu.Unlock()
-			return egg.SubmitSessionPrompt(ctx, filepath.Join(w.cfg.Dir, "eggs", s.ID), egg.SessionPromptOptions{RequestID: id, Input: text, Timeout: 100 * time.Millisecond,
+			return egg.SubmitSessionPrompt(ctx, filepath.Join(w.cfg.Dir, "eggs", s.ID), egg.SessionPromptOptions{RequestID: id, Input: text, Timeout: w.timeout,
 				Read: func(_ context.Context, after int64, limit int) (egg.SessionView, error) {
 					return w.nativeView(s.ID, after, limit), nil
 				},

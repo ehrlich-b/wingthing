@@ -213,7 +213,7 @@ func processConversationWake(ctx context.Context, s *Server, root string, runtim
 
 // Started by the existing host wing daemon. No provider process, credentials,
 // grants, permission replies, or new transport listeners are created here.
-func RunConversationWakeController(ctx context.Context, cfg *config.Config, policy func() (*config.WingConfig, bool)) {
+func RunConversationWakeController(version string, ctx context.Context, cfg *config.Config, policy func() (*config.WingConfig, bool)) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	after := ""
@@ -253,7 +253,7 @@ func RunConversationWakeController(ctx context.Context, cfg *config.Config, poli
 			paths := wingpolicy.CanonicalPaths(wc.Paths.Strings())
 			// This private helper only reconciles owned artifacts and the opted
 			// root prompt. It is never registered as a general MCP grant server.
-			s := &Server{Cfg: cfg, Principal: c.OwnerID, Logs: os.Stderr, allowedPaths: paths, enforcePathBounds: len(paths) > 0}
+			s := &Server{Version: version, Cfg: cfg, Principal: c.OwnerID, Logs: os.Stderr, allowedPaths: paths, enforcePathBounds: len(paths) > 0}
 			step, cancel := context.WithTimeout(ctx, 3*time.Second)
 			err = processConversationWake(step, s, c.ID, nativeConversationWakeRuntime(cfg))
 			cancel()

@@ -251,6 +251,10 @@ func TestConversationWakeRebindsOnlyAfterLockedReservationAbsence(t *testing.T) 
 			}
 			oldRequest := w.RequestID
 			spy := newWakeExactSpy(cfg)
+			if evidence == "absent" || evidence == "writer_holds_lock" {
+				// Allow reservation fsyncs under load without changing the retry clock below.
+				spy.timeout = 5 * time.Second
+			}
 			if evidence == "reservation_exists" {
 				if _, err := spy.runtime().Prompt(context.Background(), eggclient.LocalSession{ID: root.SessionID}, w.RequestID, w.Input); err != nil {
 					t.Fatal(err)

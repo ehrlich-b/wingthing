@@ -136,7 +136,7 @@ func TestOpusProcessRecoveryHelperProcess(t *testing.T) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	case "controller-loop":
 		// The production daemon loop with its production runtime, personal policy.
-		RunConversationWakeController(context.Background(), h.cfg, func() (*config.WingConfig, bool) { return &config.WingConfig{}, false })
+		RunConversationWakeController("dev", context.Background(), h.cfg, func() (*config.WingConfig, bool) { return &config.WingConfig{}, false })
 	case "wake-step":
 		opusPRWakeStep(h, os.Getenv("OPUS_PR_BOUNDARY"))
 	case "checkpoint-commit":
