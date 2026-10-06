@@ -657,7 +657,12 @@ func validatePolicyPath(path string) error {
 
 // ResolutionError preserves a security refusal through legacy discovery APIs.
 // Callers must check it before rendering or executing the returned config.
-func (c *EggConfig) ResolutionError() error { return c.resolutionError }
+func (c *EggConfig) ResolutionError() error {
+	if c == nil {
+		return nil
+	}
+	return c.resolutionError
+}
 
 // resolveBasePath turns a base value into an absolute path.
 // - Relative path (starts with . or /) -> resolve relative to configDir
