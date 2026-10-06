@@ -85,11 +85,11 @@ func TestPTYRoutesRejectCrossWingAttach(t *testing.T) {
 	pending := &websocket.Conn{}
 	routes.Set("session", &PTYRoute{BrowserConn: controller, WingID: "wing-a"})
 
-	if routes.AddViewer("session", "viewer", "wing-b", viewer) {
-		t.Fatal("another wing attached a spectator to an existing route")
+	if err := routes.addViewer("session", "viewer", "wing-b", viewer); err != errPTYWingMismatch {
+		t.Fatalf("cross-wing viewer rejection lost its reason: %v", err)
 	}
-	if routes.SetPendingController("session", "wing-b", "user-b", pending) {
-		t.Fatal("another wing attached a pending controller to an existing route")
+	if err := routes.setPendingController("session", "wing-b", "user-b", pending); err != errPTYWingMismatch {
+		t.Fatalf("cross-wing controller rejection lost its reason: %v", err)
 	}
 	if routes.CanAuthenticate("session", "viewer", viewer) || routes.CanAuthenticate("session", "", pending) {
 		t.Fatal("rejected cross-wing connection remained associated with the route")
@@ -99,6 +99,12 @@ func TestPTYRoutesRejectCrossWingAttach(t *testing.T) {
 	}
 	if !routes.SetPendingController("session", "wing-a", "user-a", pending) {
 		t.Fatal("same-wing pending controller was rejected")
+	}
+	if err := routes.setPendingController("session", "wing-a", "user-a", pending); err != errPTYControllerPending {
+		t.Fatalf("pending controller rejection lost its reason: %v", err)
+	}
+	if err := routes.setPendingController("session", "wing-b", "user-b", pending); err != errPTYWingMismatch {
+		t.Fatalf("pending controller hid a wing mismatch: %v", err)
 	}
 }
 

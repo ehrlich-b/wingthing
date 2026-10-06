@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -341,7 +342,21 @@ func (r *PTYRoutes) Remove(sessionID string) {
 
 // AddViewer adds a spectator connection to a session route, creating the
 // minimal route when the relay restarted after the egg was created.
+var (
+	errPTYWingMismatch      = errors.New("session not found")
+	errPTYCapacity          = errors.New("session attachment capacity reached; retry after abandoned routes expire")
+	errPTYControllerPending = errors.New("session controller attach pending")
+)
+
 func (r *PTYRoutes) AddViewer(sessionID, viewerID, wingID string, conn *websocket.Conn, userIDs ...string) bool {
+	return r.addViewer(sessionID, viewerID, wingID, conn, userIDs...) == nil
+}
+
+func (r *PTYRoutes) SetPendingController(sessionID, wingID, userID string, conn *websocket.Conn, controllerIDs ...string) bool {
+	return r.setPendingController(sessionID, wingID, userID, conn, controllerIDs...) == nil
+}
+
+func (r *PTYRoutes) addViewer(sessionID, viewerID, wingID string, conn *websocket.Conn, userIDs ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sweepLocked(time.Now())
@@ -352,7 +367,7 @@ func (r *PTYRoutes) AddViewer(sessionID, viewerID, wingID string, conn *websocke
 			userID = userIDs[0]
 		}
 		if !r.admitRouteLocked(userID) || !r.admitProvisionalLocked(conn) {
-			return false
+			return errPTYCapacity
 		}
 		route = &PTYRoute{WingID: wingID, LimitUserID: userID, Provisional: true, CreatedAt: time.Now()}
 		r.routes[sessionID] = route
@@ -361,36 +376,36 @@ func (r *PTYRoutes) AddViewer(sessionID, viewerID, wingID string, conn *websocke
 	route.mu.Lock()
 	if route.WingID != "" && route.WingID != wingID {
 		route.mu.Unlock()
-		return false
+		return errPTYWingMismatch
 	}
 	if route.WingID == "" {
 		route.WingID = wingID
 	}
 	if route.Provisional && !routeReferencesBrowserLocked(route, conn) && provisionalForBrowser >= maxProvisionalRoutesPerBrowser {
 		route.mu.Unlock()
-		return false
+		return errPTYCapacity
 	}
 	if route.Viewers == nil {
 		route.Viewers = make(map[string]*websocket.Conn)
 	}
 	if _, exists := route.Viewers[viewerID]; !exists && len(route.Viewers) >= maxViewersPerRoute {
 		route.mu.Unlock()
-		return false
+		return errPTYCapacity
 	}
 	route.Viewers[viewerID] = conn
 	route.markAbandonedLocked()
 	route.mu.Unlock()
-	return true
+	return nil
 }
 
-func (r *PTYRoutes) SetPendingController(sessionID, wingID, userID string, conn *websocket.Conn, controllerIDs ...string) bool {
+func (r *PTYRoutes) setPendingController(sessionID, wingID, userID string, conn *websocket.Conn, controllerIDs ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sweepLocked(time.Now())
 	route := r.routes[sessionID]
 	if route == nil {
 		if !r.admitRouteLocked(userID) || !r.admitProvisionalLocked(conn) {
-			return false
+			return errPTYCapacity
 		}
 		route = &PTYRoute{WingID: wingID, LimitUserID: userID, Provisional: true, CreatedAt: time.Now()}
 		r.routes[sessionID] = route
@@ -399,18 +414,18 @@ func (r *PTYRoutes) SetPendingController(sessionID, wingID, userID string, conn 
 	route.mu.Lock()
 	if route.WingID != "" && route.WingID != wingID {
 		route.mu.Unlock()
-		return false
+		return errPTYWingMismatch
 	}
 	// The wing's authorization response carries only the session ID. Keep one
 	// controller attach in flight so a second browser cannot replace the pending
 	// connection and receive the first browser's successful authorization.
 	if route.PendingController != nil {
 		route.mu.Unlock()
-		return false
+		return errPTYControllerPending
 	}
 	if route.Provisional && !routeReferencesBrowserLocked(route, conn) && provisionalForBrowser >= maxProvisionalRoutesPerBrowser {
 		route.mu.Unlock()
-		return false
+		return errPTYCapacity
 	}
 	if route.WingID == "" {
 		route.WingID = wingID
@@ -422,7 +437,7 @@ func (r *PTYRoutes) SetPendingController(sessionID, wingID, userID string, conn 
 		route.PendingControllerID = controllerIDs[0]
 	}
 	route.mu.Unlock()
-	return true
+	return nil
 }
 
 // RemoveViewer removes a spectator connection from a session route.
@@ -910,8 +925,8 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 				// before emitting any viewer-tagged terminal content.
 				viewerID := newRelayRouteID()
 				attach.ViewerID = viewerID
-				if !s.PTY.AddViewer(attach.SessionID, viewerID, wing.WingID, conn, userID) {
-					if err := writeWebSocketJSON(ctx, conn, ws.ErrorMsg{Type: ws.TypeError, Message: "session attachment unavailable: route or viewer capacity reached, or wing mismatch"}); err != nil {
+				if attachErr := s.PTY.addViewer(attach.SessionID, viewerID, wing.WingID, conn, userID); attachErr != nil {
+					if err := writeWebSocketJSON(ctx, conn, ws.ErrorMsg{Type: ws.TypeError, Message: attachErr.Error()}); err != nil {
 						log.Printf("report missing spectator session: %v", err)
 						return
 					}
@@ -925,8 +940,8 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 				// Normal reattach remains pending until the wing returns pty.started.
 				// This prevents a caller who fails wing-local passkey policy from
 				// displacing the currently authorized controller at the relay.
-				if !s.PTY.SetPendingController(attach.SessionID, wing.WingID, userID, conn, attach.ControllerID) {
-					if err := writeWebSocketJSON(ctx, conn, ws.ErrorMsg{Type: ws.TypeError, Message: "session attachment unavailable: route capacity reached, wing mismatch or controller attach pending"}); err != nil {
+				if attachErr := s.PTY.setPendingController(attach.SessionID, wing.WingID, userID, conn, attach.ControllerID); attachErr != nil {
+					if err := writeWebSocketJSON(ctx, conn, ws.ErrorMsg{Type: ws.TypeError, Message: attachErr.Error()}); err != nil {
 						log.Printf("report missing controller session: %v", err)
 						return
 					}
