@@ -221,6 +221,7 @@ func eggControlDenyPaths(sessionDir string) []string {
 	}
 	seen := make(map[string]bool)
 	var paths []string
+	paths = append(paths, wingconfig.CanonicalProviderPath(filepath.Join(home, ".gnupg", "wingthing-control")))
 	for _, state := range states {
 		state = wingconfig.CanonicalProviderPath(state)
 		if seen[state] {

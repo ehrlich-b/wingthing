@@ -3,8 +3,10 @@ package wing
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -537,7 +539,15 @@ func TestReclaimedLegacyEggKeepsPTYButRequiresReplacement(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(dir, "egg.pid")); err != nil || string(data) != "fixture-pid" {
 		t.Fatalf("legacy PTY was removed: %q %v", data, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("control_isolation="+egg.ControlIsolationVersion+"\n"), 0600); err != nil {
+	key := sha256.Sum256([]byte(config.CanonicalProviderPath(dir)))
+	control := filepath.Join(home, ".gnupg", "wingthing-control", fmt.Sprintf("%x", key))
+	if err := os.MkdirAll(control, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "egg.control"), []byte(control+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(control, "isolation"), []byte(egg.ControlIsolationVersion+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if !prepareReclaimedEggIsolation(dir) {

@@ -1632,13 +1632,10 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 // sandboxes. The marker makes the required replacement visible to the owner.
 func prepareReclaimedEggIsolation(dir string) bool {
 	if !egg.HasCurrentControlIsolation(dir) {
-		if err := os.WriteFile(filepath.Join(dir, "replacement-required"), []byte("Legacy sandbox isolation: keep this PTY, then stop and replace this egg before starting new sandboxed sessions; privileged tools are not recovered.\n"), 0600); err != nil {
-			log.Printf("egg: mark legacy session %s for replacement: %v", filepath.Base(dir), err)
-		}
-		log.Printf("egg: legacy session %s requires replacement; preserving PTY without tools", filepath.Base(dir))
+		egg.MarkLegacyEggForReplacement(dir)
 		return false
 	}
-	return egg.RequireCurrentEggIsolation(dir) == nil
+	return true
 }
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.

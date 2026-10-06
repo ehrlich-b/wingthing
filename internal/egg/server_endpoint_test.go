@@ -19,9 +19,9 @@ func TestPrepareEndpointCreatesPrivateCompleteEndpoint(t *testing.T) {
 	defer server.closeEndpoint(listener)
 
 	for name, wantMode := range map[string]os.FileMode{
-		"egg.sock":  0o600,
-		"egg.token": 0o600,
-		"egg.pid":   0o644,
+		"egg.sock":    0o600,
+		"egg.control": 0o600,
+		"egg.pid":     0o644,
 	} {
 		info, statErr := os.Stat(filepath.Join(dir, name))
 		if statErr != nil {
@@ -31,9 +31,12 @@ func TestPrepareEndpointCreatesPrivateCompleteEndpoint(t *testing.T) {
 			t.Errorf("%s mode = %o, want %o", name, got, wantMode)
 		}
 	}
-	token, err := os.ReadFile(filepath.Join(dir, "egg.token"))
+	token, err := os.ReadFile(filepath.Join(controlDirectory(dir), "egg.token"))
 	if err != nil || string(token) != "test-token" {
 		t.Fatalf("token = %q, err=%v", token, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "egg.token")); !os.IsNotExist(err) {
+		t.Fatalf("token or escaping symlink in public state: %v", err)
 	}
 	connection, err := net.Dial("unix", filepath.Join(dir, "egg.sock"))
 	if err != nil {
@@ -68,6 +71,12 @@ func TestPrepareEndpointRollsBackOnCredentialFailure(t *testing.T) {
 			}
 			if _, statErr := os.Stat(filepath.Join(dir, "egg.sock")); !os.IsNotExist(statErr) {
 				t.Fatalf("socket survived rollback: %v", statErr)
+			}
+			if HasCurrentControlIsolation(dir) {
+				t.Fatal("failed creation retained a current isolation marker")
+			}
+			if _, statErr := os.Stat(controlDirectory(dir)); !os.IsNotExist(statErr) {
+				t.Fatalf("controller credentials survived rollback: %v", statErr)
 			}
 			if blocked == "egg.pid" {
 				if _, statErr := os.Stat(filepath.Join(dir, "egg.token")); !os.IsNotExist(statErr) {
@@ -107,5 +116,7 @@ func shortEndpointTempDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("HOME", dir)
+	t.Setenv("WINGTHING_DIR", filepath.Join(dir, "state"))
 	return dir
 }

@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +46,8 @@ func TestBrowserForkToolsLiveUntilSessionExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	t.Setenv("HOME", root)
+	t.Setenv("WINGTHING_DIR", root)
 	cfg := &config.Config{Dir: root}
 	opts := SpawnEggOpts{}
 	listener, err := PrepareBrowserTools(cfg, "fork", []*config.ToolConfig{{Name: "tool", Run: "true"}}, &opts)
@@ -109,12 +113,38 @@ func TestPrepareBrowserToolsWithoutTools(t *testing.T) {
 	}
 }
 
+func TestLegacyMacSessionWithholdsNewToolsWithoutBlockingBrowserPTY(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("legacy process-info exposure is macOS-specific")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
+	legacy := filepath.Join(home, ".wingthing-preview", "eggs", "old")
+	if err := os.MkdirAll(legacy, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+		t.Fatal(err)
+	}
+	opts := SpawnEggOpts{}
+	listener, err := PrepareBrowserTools(&config.Config{Dir: filepath.Join(home, "state")}, "new", []*config.ToolConfig{{Name: "tool", Run: "true"}}, &opts)
+	if err != nil || listener != nil || opts.ToolSocketPath != "" || len(opts.ToolNames) != 0 {
+		t.Fatalf("new browser PTY blocked or exposed a tool capability: %#v %v", opts, err)
+	}
+	if reason, err := os.ReadFile(filepath.Join(legacy, "replacement-required")); err != nil || !strings.Contains(string(reason), "tool capability") {
+		t.Fatalf("legacy capability reason unavailable: %q %v", reason, err)
+	}
+}
+
 func TestToolCapabilityTravelsOnlyInSessionEnvironment(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "wt-tool-env-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	t.Setenv("HOME", root)
+	t.Setenv("WINGTHING_DIR", root)
 	opts := SpawnEggOpts{}
 	listener, err := PrepareBrowserTools(&config.Config{Dir: root}, "own", []*config.ToolConfig{{Name: "tool", Run: "true"}}, &opts)
 	if err != nil || listener == nil {

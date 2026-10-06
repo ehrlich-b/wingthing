@@ -813,10 +813,8 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err := egg.ValidateProtectedWriteTargetBoundary(o.ProtectedWriteTargets, !outerBoundary); err != nil {
 		return nil, err
 	}
-	if egg.RequiresSandbox(eggCfg, agentName) {
-		if err := egg.RequireCurrentEggIsolation(dir); err != nil {
-			return nil, err
-		}
+	if err := egg.RequireLegacySecretProtection(dir, o.ToolSocketPath != ""); err != nil {
+		return nil, err
 	}
 	// Pre-flight: verify the sandbox can work before spawning a child process.
 	// Catches AppArmor userns restrictions, missing sysctl, etc. with a clear
@@ -909,7 +907,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	effectiveHome := EffectiveSessionHome(cfg, identity)
 	// Keep the exact execution/provider reference inspectable even when startup
 	// fails before the provider process or its endpoint becomes available.
-	meta := fmt.Sprintf("control_isolation="+egg.ControlIsolationVersion+"\nagent=%s\nkind=%s\ncwd=%s\nprovider_session_id=%s\nprovider_home=%s\n", agentName, o.Kind, cwd, providerSessionID, effectiveHome)
+	meta := fmt.Sprintf("agent=%s\nkind=%s\ncwd=%s\nprovider_session_id=%s\nprovider_home=%s\n", agentName, o.Kind, cwd, providerSessionID, effectiveHome)
 	if err := daemonctl.WriteAtomicMetadataFile(filepath.Join(dir, "egg.meta"), []byte(meta), 0600); err != nil {
 		return nil, fmt.Errorf("persist startup identity: %w", err)
 	}

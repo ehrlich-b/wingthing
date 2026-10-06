@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -417,43 +416,5 @@ func TestControlProtectionIncludesConfiguredToolDefinitions(t *testing.T) {
 		if controlPathWithin(source, mount.Source) || controlPathWithin(custom, mount.Source) {
 			t.Fatalf("tool definition exposed: %+v", mount)
 		}
-	}
-}
-
-func TestLegacyEggsRequireReplacementBeforeNewSecrets(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("WINGTHING_DIR", filepath.Join(home, ".wingthing"))
-	legacy := filepath.Join(home, ".wingthing-preview", "eggs", "legacy")
-	fresh := filepath.Join(home, ".wingthing", "eggs", "fresh")
-	if err := os.MkdirAll(legacy, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacy, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacy, "egg.meta"), []byte("agent=claude\nisolation=wingthing-sandbox\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if HasCurrentControlIsolation(legacy) {
-		t.Fatal("legacy isolation accepted")
-	}
-	if err := RequireCurrentEggIsolation(fresh); err == nil || !strings.Contains(err.Error(), "requires replacement") {
-		t.Fatalf("new sibling secrets would be exposed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(legacy, "egg.meta"), []byte("control_isolation="+ControlIsolationVersion+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := RequireCurrentEggIsolation(fresh); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacy, "egg.meta"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacy, "egg.pid"), []byte("0"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := RequireCurrentEggIsolation(fresh); err != nil {
-		t.Fatalf("dead legacy egg blocks replacement: %v", err)
 	}
 }

@@ -23,11 +23,14 @@ verification. Neither path uses Wingthing's relay encryption.
 
 Surviving eggs from v0.147.0 and earlier isolation builds keep their PTYs so
 owners can finish or save work. The wing marks them `replacement-required` and
-does not restore their privileged tool listeners. New sandboxed launches and
-tool recovery wait until every live legacy egg in either release channel or
-selected state directory has been stopped and replaced. This prevents old
-sandboxes from reading a newly launched sibling's controller token and reclaiming
-its tool capability. Existing eggs are never terminated automatically.
+does not restore their privileged tool listeners. New controller tokens and
+durable isolation markers live under `~/.gnupg/wingthing-control`, which the
+v0.147.0 default policy denies. New PTYs can start alongside those sessions.
+A custom legacy policy that exposes this directory requires that specific
+session to restart before publishing new controller credentials. Legacy macOS
+policies also permit inspecting sibling process environments, so new privileged
+tool capabilities are withheld until those sessions restart; new browser PTYs
+still start without tools. Existing eggs are never terminated automatically.
 
 ## Local self-hosted HTTPS
 

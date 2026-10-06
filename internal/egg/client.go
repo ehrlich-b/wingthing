@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
@@ -25,6 +26,15 @@ type Client struct {
 
 // Dial connects to an egg's Unix socket and reads its auth token.
 func Dial(socketPath, tokenPath string) (*Client, error) {
+	dir := filepath.Dir(tokenPath)
+	if controlDir, err := readControlDirectory(dir); err == nil {
+		if !hasControlIsolationAt(controlDir) {
+			return nil, fmt.Errorf("egg controller isolation marker is unavailable")
+		}
+		tokenPath = filepath.Join(controlDir, "egg.token")
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 	tokenData, err := os.ReadFile(tokenPath)
 	if err != nil {
 		return nil, fmt.Errorf("read egg token: %w", err)

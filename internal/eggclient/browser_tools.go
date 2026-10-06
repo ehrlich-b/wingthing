@@ -19,6 +19,10 @@ func PrepareBrowserTools(cfg *config.Config, sessionID string, tools []*config.T
 	if len(tools) == 0 {
 		return nil, nil
 	}
+	if err := egg.RequireLegacySecretProtection(filepath.Join(cfg.Dir, "eggs", sessionID), true); err != nil {
+		log.Printf("pty session %s: tool capability unavailable: %v", sessionID, err)
+		return nil, nil
+	}
 	toolsDir := filepath.Join(cfg.Dir, "eggs", sessionID, ".tools")
 	if err := os.MkdirAll(toolsDir, 0700); err != nil {
 		return nil, fmt.Errorf("create tool directory: %w", err)

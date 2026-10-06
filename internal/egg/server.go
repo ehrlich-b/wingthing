@@ -565,10 +565,8 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if err := ValidateProtectedWriteTargetBoundary(rc.ProtectedWriteTargets, hasSandbox); err != nil {
 		return err
 	}
-	if hasSandbox {
-		if err := RequireCurrentEggIsolation(s.dir); err != nil {
-			return err
-		}
+	if err := RequireLegacySecretProtection(s.dir, rc.ToolSocketPath != ""); err != nil {
+		return err
 	}
 	if hasSandbox {
 		if ok, help := sandbox.CheckCapability(); !ok {
@@ -872,7 +870,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		for _, path := range deny {
 			isTree := false
 			for _, target := range control {
-				if filepath.Base(target) == "eggs" && config.CanonicalProviderPath(path) == target {
+				if (filepath.Base(target) == "eggs" || filepath.Base(target) == "wingthing-control") && config.CanonicalProviderPath(path) == target {
 					isTree = true
 					break
 				}
@@ -977,15 +975,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	// untrusted process. Binding the socket and durably creating its credentials
 	// first makes endpoint setup atomic and prevents a permissions or filesystem
 	// error from leaving an unreachable agent running in the background.
-	// Publish the isolation marker before the endpoint's PID. Concurrent
-	// launches must not mistake a current egg still starting for a legacy one.
-	startupMeta, err := os.ReadFile(filepath.Join(s.dir, "egg.meta"))
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := atomicWritePrivate(filepath.Join(s.dir, "egg.meta"), append([]byte("control_isolation="+ControlIsolationVersion+"\n"), startupMeta...)); err != nil {
-		return err
-	}
 	lis, err := s.prepareEndpoint()
 	if err != nil {
 		if sb != nil {
@@ -1123,7 +1112,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if hasSandbox {
 		isolationMode = "wingthing-sandbox"
 	}
-	metaContent := fmt.Sprintf("control_isolation="+ControlIsolationVersion+"\nagent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nprovider_session_id=%s\nprovider_home=%s\n",
+	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nprovider_session_id=%s\nprovider_home=%s\n",
 		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix(), rc.ProviderSessionID, captureHome)
 	if err := atomicWritePrivate(metaPath, []byte(metaContent)); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)
@@ -1335,6 +1324,9 @@ func (s *Server) prepareEndpoint() (net.Listener, error) {
 	if err := ValidateSocketPath(sockPath); err != nil {
 		return nil, err
 	}
+	if err := RequireLegacySecretProtection(s.dir, s.toolCapability != ""); err != nil {
+		return nil, err
+	}
 	tokenPath := filepath.Join(s.dir, "egg.token")
 	pidPath := filepath.Join(s.dir, "egg.pid")
 
@@ -1352,8 +1344,21 @@ func (s *Server) prepareEndpoint() (net.Listener, error) {
 	if err := os.Chmod(sockPath, 0o600); err != nil {
 		return fail("secure socket", err)
 	}
-	if err := os.WriteFile(tokenPath, []byte(s.token), 0o600); err != nil {
+	controlDir, err := prepareControlDirectory(s.dir)
+	if err != nil {
+		return fail("prepare controller directory", err)
+	}
+	if err := atomicWritePrivate(filepath.Join(controlDir, "egg.token"), []byte(s.token)); err != nil {
 		return fail("write token", err)
+	}
+	if err := os.Remove(tokenPath); err != nil && !os.IsNotExist(err) {
+		return fail("replace token", err)
+	}
+	if err := atomicWritePrivate(filepath.Join(s.dir, "egg.control"), []byte(controlDir+"\n")); err != nil {
+		return fail("write controller locator", err)
+	}
+	if err := atomicWritePrivate(filepath.Join(controlDir, "isolation"), []byte(ControlIsolationVersion+"\n")); err != nil {
+		return fail("write isolation marker", err)
 	}
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
 		return fail("write pid", err)
@@ -1369,6 +1374,8 @@ func (s *Server) closeEndpoint(lis net.Listener) {
 	_ = os.Remove(filepath.Join(s.dir, "egg.sock"))
 	_ = os.Remove(filepath.Join(s.dir, "egg.token"))
 	_ = os.Remove(filepath.Join(s.dir, "egg.pid"))
+	RemoveControlCredentials(s.dir)
+	_ = os.Remove(filepath.Join(s.dir, "egg.control"))
 }
 
 func runConfigPolicy(rc RunConfig) *EggConfig {
@@ -1428,7 +1435,8 @@ func (s *Server) cleanup() {
 	// Logs are not audits — always keep them so `wt support` can capture crash reasons.
 	s.preserveEggLog()
 
-	for _, name := range []string{"egg.sock", "egg.token", "egg.pid", claudeLifecycleSettingsFile} {
+	RemoveControlCredentials(s.dir)
+	for _, name := range []string{"egg.sock", "egg.token", "egg.control", "egg.pid", claudeLifecycleSettingsFile} {
 		if err := os.Remove(filepath.Join(s.dir, name)); err != nil && !os.IsNotExist(err) {
 			log.Printf("egg: remove %s during cleanup: %v", name, err)
 		}
@@ -1818,6 +1826,9 @@ func (s *Server) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusR
 	idleSec := int64(sess.idleDuration().Seconds())
 	capability := ""
 	if req.ReclaimTools {
+		if !HasCurrentControlIsolation(s.dir) {
+			return nil, status.Error(codes.FailedPrecondition, "legacy egg tool capability recovery requires restarting this session; its PTY remains available")
+		}
 		capability = s.toolCapability
 	}
 	return &pb.StatusResponse{
