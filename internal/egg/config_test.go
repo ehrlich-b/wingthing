@@ -1,6 +1,7 @@
 package egg
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -443,6 +444,7 @@ func TestDiscoveredGlobalPolicyRefusesReplaceableSymlink(t *testing.T) {
 	state := filepath.Join(home, "state")
 	t.Setenv("WINGTHING_DIR", state)
 	makeEggConfigTestDir(t, state)
+	t.Chdir(home)
 	base := filepath.Join(home, "base.yaml")
 	alias := filepath.Join(state, "alias.yaml")
 	policy := filepath.Join(state, "egg.yaml")
@@ -473,6 +475,7 @@ func TestDefaultPolicyRefusesReplaceableToolLoaderPaths(t *testing.T) {
 			makeEggConfigTestDir(t, state)
 			work := filepath.Join(home, "work")
 			makeEggConfigTestDir(t, work)
+			t.Chdir(work)
 			real := filepath.Join(home, "host-tools")
 			makeEggConfigTestDir(t, real)
 			definition := filepath.Join(real, "host.yaml")
@@ -562,10 +565,88 @@ func TestToolLoaderSealsResolvedDirectory(t *testing.T) {
 	}
 }
 
+func TestUserManagedLoaderAliasesFollowSandboxWriteGrants(t *testing.T) {
+	for _, loaderName := range []string{"wing.yaml", "egg.yaml"} {
+		for _, writable := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/writable=%t", loaderName, writable), func(t *testing.T) {
+				home := canonicalPolicyTestPath(t, t.TempDir())
+				t.Setenv("HOME", home)
+				state, dotfiles, work := filepath.Join(home, ".wingthing"), filepath.Join(home, "dotfiles"), filepath.Join(home, "work")
+				for _, dir := range []string{state, dotfiles, work} {
+					makeEggConfigTestDir(t, dir)
+				}
+				t.Setenv("WINGTHING_DIR", state)
+				t.Chdir(work)
+				target, loader := filepath.Join(dotfiles, loaderName), filepath.Join(state, loaderName)
+				writeEggConfigTestFile(t, target, "fs: [rw:./]\n")
+				if err := os.Symlink(target, loader); err != nil {
+					t.Fatal(err)
+				}
+				if writable {
+					t.Chdir(dotfiles)
+				}
+				cfg := DefaultEggConfig()
+				if writable {
+					if !isUnsafePolicyPath(cfg.ResolutionError()) {
+						t.Fatalf("agent-writable loader target admitted: %v", cfg.ResolutionError())
+					}
+					return
+				}
+				if err := cfg.ResolutionError(); err != nil {
+					t.Fatalf("read-only dotfiles layout refused: %v", err)
+				}
+				_, deny, _ := ParseFSRules(cfg.FS, home)
+				if !containsString(deny, loader) || !containsString(deny, target) {
+					t.Fatalf("controller loader alias was not sealed: %v", deny)
+				}
+				if loaderName == "egg.yaml" {
+					loaded, err := ResolveEggConfig(loader)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, _, denied := ParseFSRules(loaded.FS, home)
+					if !containsString(denied, target) {
+						t.Fatalf("resolved policy file remains writable: %v", denied)
+					}
+				}
+				// Later grants must not make an already admitted alias unsafe.
+				mounts := []sandbox.Mount{{Source: work}, {Source: dotfiles}}
+				if _, err := eggControlDenyPaths("", mounts); !isUnsafePolicyPath(err) {
+					t.Fatalf("runtime write grant bypassed alias guard: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestLoaderAliasRejectsAgentProfileWriteGrant(t *testing.T) {
+	home := canonicalPolicyTestPath(t, t.TempDir())
+	t.Setenv("HOME", home)
+	state, codex, work := filepath.Join(home, ".wingthing"), filepath.Join(home, ".codex"), filepath.Join(home, "work")
+	for _, dir := range []string{state, codex, work} {
+		makeEggConfigTestDir(t, dir)
+	}
+	t.Setenv("WINGTHING_DIR", state)
+	t.Chdir(work)
+	target := filepath.Join(codex, "wing.yaml")
+	writeEggConfigTestFile(t, target, "{}\n")
+	if err := os.Symlink(target, filepath.Join(state, "wing.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultEggConfig()
+	if err := cfg.ResolutionError(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolvePolicyWithProvider(cfg, "codex", home, ""); !isUnsafePolicyPath(err) {
+		t.Fatalf("agent profile reopened a loader alias: %v", err)
+	}
+}
+
 func TestResolvedPoliciesRefuseReplaceableSymlinkComponents(t *testing.T) {
 	for _, kind := range []string{"file", "directory", "chain", "section", "root"} {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
+			t.Chdir(root)
 			outside := t.TempDir()
 			base := filepath.Join(outside, "base.yaml")
 			writeEggConfigTestFile(t, base, "base: none\nfs: [rw:./]\n")

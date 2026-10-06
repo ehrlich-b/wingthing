@@ -862,7 +862,12 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			toolsDir := filepath.Dir(rc.ToolSocketPath)
 			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: toolsDir, Target: toolsDir, ReadOnly: true})
 		}
-		control, err := eggControlDenyPaths(s.dir)
+		for _, path := range denyWrite {
+			if _, err := resolveLoaderPath(path, true, mounts); err != nil {
+				return err
+			}
+		}
+		control, err := eggControlDenyPaths(s.dir, mounts)
 		if err != nil {
 			return err
 		}

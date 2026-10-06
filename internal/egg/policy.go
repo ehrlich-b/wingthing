@@ -146,6 +146,19 @@ func ResolvePolicyWithProvider(cfg *EggConfig, agent, home, providerURL string) 
 		}
 	}
 
+	// Agent profile holes are part of the final write surface. Recheck lexical
+	// policy aliases and controller loaders after those holes have been added.
+	for _, path := range policy.DenyWrite {
+		if _, err := resolveLoaderPath(path, true, policy.Mounts); err != nil {
+			return EffectivePolicy{}, err
+		}
+	}
+	if RequiresSandbox(cfg, agent) {
+		if _, err := eggControlDenyPaths("", policy.Mounts); err != nil {
+			return EffectivePolicy{}, err
+		}
+	}
+
 	policy.NetworkNeed = sandbox.NetworkNeedFromDomains(policy.Domains)
 	policy.LocalPorts = InferLocalPorts(cfg, agent, providerURL)
 	for _, port := range policy.LocalPorts {

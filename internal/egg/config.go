@@ -219,7 +219,7 @@ func defaultDenyPaths() ([]string, error) {
 
 // Include both release channels and an explicitly selected state directory.
 // An egg never needs a controller token, even its own egg.token.
-func eggControlDenyPaths(sessionDir string) ([]string, error) {
+func eggControlDenyPaths(sessionDir string, grants ...[]sandbox.Mount) ([]string, error) {
 	home, _ := os.UserHomeDir()
 	states := []string{filepath.Join(home, ".wingthing"), filepath.Join(home, ".wingthing-preview")}
 	if state, err := wingconfig.StateDir(); err == nil {
@@ -262,7 +262,7 @@ func eggControlDenyPaths(sessionDir string) ([]string, error) {
 		}
 	}
 	for _, loader := range loaders {
-		resolved, err := resolveLoaderPath(loader, true)
+		resolved, err := resolveLoaderPath(loader, true, grants...)
 		if err != nil {
 			return paths, fmt.Errorf("protect tool loader %s: %w", loader, err)
 		}
@@ -543,15 +543,22 @@ func ResolveEggConfig(path string) (*EggConfig, error) {
 	// section cannot discard protection for a policy that was already read.
 	// Explicit trusted-host policies have no OS sandbox to enforce it.
 	if RequiresSandbox(cfg, "") {
+		home, _ := os.UserHomeDir()
+		mounts, _, _ := ParseFSRules(cfg.FS, home)
 		protected := make(map[string]bool)
 		ancestors := make(map[string]bool)
 		workspace := wingconfig.CanonicalProviderPath(filepath.Dir(path))
 		for dependency := range dependencies {
-			real, err := filepath.EvalSymlinks(dependency)
+			real, err := resolveLoaderPath(dependency, false, mounts)
 			if err != nil {
 				return nil, fmt.Errorf("resolve policy dependency: %w", err)
 			}
 			protected[real] = true
+			// System aliases are immutable; only user-managed aliases need a
+			// lexical rule to recheck after later agent grants are installed.
+			if _, err := resolveLoaderPath(dependency, false, []sandbox.Mount{{Source: "/"}}); isUnsafePolicyPath(err) {
+				protected[dependency] = true
+			}
 			// Pin every directory entry that could relocate a loaded policy.
 			// External bases need their chain protected to the filesystem root.
 			for dir := filepath.Dir(real); dir != "/"; dir = filepath.Dir(dir) {
@@ -593,7 +600,8 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 		return nil, fmt.Errorf("egg config circular base reference: %s", abs)
 	}
 	visited[abs] = true
-	if err := validatePolicyPath(abs); err != nil {
+	// Read the chain before checking aliases against the final inherited FS.
+	if _, err := resolveLoaderPath(abs, false, nil); err != nil {
 		return nil, err
 	}
 
@@ -632,9 +640,8 @@ func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConf
 	return MergeEggConfig(parent, child), nil
 }
 
-// PolicyPathError refuses aliases whose entry or ancestors the agent's UID
-// could replace. Resolved-file denies cannot pin a symlink on Linux. Check host
-// permissions conservatively, including paths a later agent profile may open.
+// PolicyPathError refuses aliases whose entry or ancestors the sandboxed agent
+// could replace. Host-user write permissions alone do not make an alias unsafe.
 type PolicyPathError struct{ Path string }
 
 func (e *PolicyPathError) Error() string {
@@ -656,7 +663,28 @@ func validatePolicyPath(path string) error {
 
 // Return the actual loader destination so immutable aliases are sealed at their
 // target too, including paths containing .. after a system symlink.
-func resolveLoaderPath(path string, allowMissing bool) (string, error) {
+func resolveLoaderPath(path string, allowMissing bool, grants ...[]sandbox.Mount) (string, error) {
+	var mounts []sandbox.Mount
+	if len(grants) > 0 {
+		mounts = grants[0]
+	} else {
+		home, _ := os.UserHomeDir()
+		fs := []string{"rw:./"}
+		for _, cache := range DefaultCacheDirs() {
+			fs = append(fs, "rw:"+cache)
+		}
+		mounts, _, _ = ParseFSRules(fs, home)
+	}
+	checkAncestors := func(dir, alias string) error {
+		for parent := dir; ; parent = filepath.Dir(parent) {
+			if loaderDirectoryWritable(parent, mounts) && unix.Access(parent, unix.W_OK|unix.X_OK) == nil {
+				return &PolicyPathError{Path: alias}
+			}
+			if parent == "/" {
+				return nil
+			}
+		}
+	}
 	if !filepath.IsAbs(path) {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -668,6 +696,7 @@ func resolveLoaderPath(path string, allowMissing bool) (string, error) {
 	pending := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	current := "/"
 	links := 0
+	var mutableAlias string
 	for len(pending) > 0 {
 		part := pending[0]
 		pending = pending[1:]
@@ -678,7 +707,12 @@ func resolveLoaderPath(path string, allowMissing bool) (string, error) {
 		info, err := os.Lstat(next)
 		if err != nil {
 			if allowMissing && os.IsNotExist(err) {
-				// An absent tools directory is sealed before creation.
+				if mutableAlias != "" {
+					if err := checkAncestors(current, mutableAlias); err != nil {
+						return "", err
+					}
+				}
+				// An absent loader is sealed before creation.
 				return filepath.Join(append([]string{next}, pending...)...), nil
 			}
 			return "", fmt.Errorf("inspect policy path: %w", err)
@@ -687,13 +721,13 @@ func resolveLoaderPath(path string, allowMissing bool) (string, error) {
 			current = next
 			continue
 		}
-		for parent := current; ; parent = filepath.Dir(parent) {
-			if unix.Access(parent, unix.W_OK|unix.X_OK) == nil {
-				return "", &PolicyPathError{Path: next}
-			}
-			if parent == "/" {
-				break
-			}
+		if err := checkAncestors(current, next); err != nil {
+			return "", err
+		}
+		// Immutable system aliases need no target-chain check. User-managed
+		// links also require their destination's ancestors to remain unwritable.
+		if unix.Access(current, unix.W_OK|unix.X_OK) == nil {
+			mutableAlias = next
 		}
 		links++
 		if links > 255 {
@@ -708,7 +742,25 @@ func resolveLoaderPath(path string, allowMissing bool) (string, error) {
 		}
 		pending = append(strings.Split(target, "/"), pending...)
 	}
+	if mutableAlias != "" {
+		if err := checkAncestors(filepath.Dir(current), mutableAlias); err != nil {
+			return "", err
+		}
+	}
 	return current, nil
+}
+
+func loaderDirectoryWritable(path string, mounts []sandbox.Mount) bool {
+	for _, mount := range mounts {
+		if mount.ReadOnly {
+			continue
+		}
+		root := wingconfig.CanonicalProviderPath(mount.Source)
+		if controlPathWithin(path, root) || (mount.UseRegex && strings.HasPrefix(path, root)) {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolutionError preserves a security refusal through legacy discovery APIs.
