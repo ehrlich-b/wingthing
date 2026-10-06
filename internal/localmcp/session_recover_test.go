@@ -117,14 +117,14 @@ func TestRecoveryRestoresBrowserOwnerWithoutLocalClientSubstitution(t *testing.T
 	if err := os.WriteFile(filepath.Join(cfg.Dir, "clients.yaml"), []byte("require_client: true\nclients:\n  local-agent:\n    grants: [terminal.read]\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{Cfg: cfg, Principal: roostSessionPrincipal("browser-owner")}
+	s := &Server{Version: "test", Cfg: cfg, Principal: roostSessionPrincipal("browser-owner")}
 	if err := ConfigureRecoveryClient(s, "browser-session"); err != nil {
 		t.Fatal(err)
 	}
 	if s.identity.UserID != "browser-owner" || s.identity.Email != "owner@example.com" || s.Surface != control.SurfaceHTTPMCP || !s.Grants["terminal.start"] || s.conversationMCPClient() != s.Principal {
 		t.Fatalf("lost original browser admission: %+v", s)
 	}
-	local := &Server{Cfg: cfg, Principal: "local-agent"}
+	local := &Server{Version: "test", Cfg: cfg, Principal: "local-agent"}
 	if err := ConfigureRecoveryClient(local, "browser-session"); err != nil {
 		t.Fatal(err)
 	}
