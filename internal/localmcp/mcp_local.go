@@ -578,6 +578,7 @@ func (s *Server) toolCapabilities(arguments json.RawMessage) (map[string]any, er
 			"max_parallel":          definition.MaxParallel,
 			"network_domains":       profile.Domains,
 			"persistent_storage":    append(append([]string(nil), profile.WriteRegex...), profile.WriteDirs...),
+			"status_source":         definition.StatusSource, "status_reason": definition.StatusReason,
 		})
 	}
 	surface := s.controlSurface()

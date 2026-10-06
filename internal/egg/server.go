@@ -653,6 +653,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			return fmt.Errorf("prepare Codex lifecycle hooks: %w", err)
 		}
 	}
+	if err = prepareProviderLifecycle(rc, binPath, s.dir, args, envMap); err != nil {
+		return fmt.Errorf("prepare provider lifecycle hooks: %w", err)
+	}
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")
 		if p, ok := envMap["PATH"]; ok {

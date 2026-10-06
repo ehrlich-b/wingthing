@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	agentpkg "github.com/ehrlich-b/wingthing/internal/agent"
 	"golang.org/x/sys/unix"
 )
 
@@ -437,6 +438,11 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		if err != nil {
 			return view, err
 		}
+	} else if agent == "gemini" || agent == "opencode" {
+		view.ProviderSessionID, err = j.importProviderHooks(providerLifecycleHookDir(agent, providerHome, view.SessionID), exactProviderID, agent)
+		if err != nil {
+			return view, err
+		}
 	}
 	var hookState SessionEvent
 	hookEvidence, sessionEnded := false, false
@@ -447,7 +453,7 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			view.Reason = event.Reason
 			view.StateCursor = event.Sequence
 		}
-		if event.Source == "claude_hook" || event.Source == "codex_hook" {
+		if event.Source == "claude_hook" || event.Source == "codex_hook" || event.Source == "gemini_hook" || event.Source == "opencode_hook" {
 			if event.State != "" {
 				hookEvidence = true
 				hookState = event
@@ -509,6 +515,9 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.StateSource = "unsupported"
 		view.Ready = false
 		view.Reason = "provider has no native interactive lifecycle adapter"
+		if definition, ok := agentpkg.LookupDefinition(agent); ok && agent != "codex" && definition.StatusReason != "" {
+			view.Reason = definition.StatusReason
+		}
 	}
 	if !processAlive {
 		view.Ready = false
@@ -757,7 +766,8 @@ func (j *lifecycleJournal) importCodexHooks(home, sessionID, providerID string) 
 
 func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) (string, error) {
 	source := agent + "_hook"
-	if providerID == "" && agent == "codex" {
+	bindsIdentity := agent == "codex" || agent == "gemini" || agent == "opencode"
+	if providerID == "" && bindsIdentity {
 		for _, e := range j.events {
 			if e.Source == source && e.Type == "session_ready" {
 				providerID = e.ProviderSessionID
@@ -773,9 +783,13 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 		return providerID, err
 	}
 	seen := map[string]bool{}
+	geminiState := ""
 	for _, e := range j.events {
 		if e.Source == source {
 			seen[e.SourceKey] = true
+			if agent == "gemini" && e.State != "" {
+				geminiState = e.State
+			}
 		}
 	}
 	type hookFile struct {
@@ -843,14 +857,28 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 			Notification string            `json:"notification_type"`
 			Background   []json.RawMessage `json:"background_tasks"`
 			ToolName     string            `json:"tool_name"`
+			Reason       string            `json:"reason"`
+			MCPContext   json.RawMessage   `json:"mcp_context"`
 		}
 		if json.Unmarshal(data, &hook) != nil {
 			return providerID, errors.New("invalid published native lifecycle hook")
 		}
-		// A fresh Codex thread chooses its own ID. Bind once from SessionStart
-		// in this egg's private spool, then reject other threads (and subagents).
-		if agent == "codex" && providerID == "" && hook.Event == "SessionStart" && validLifecycleID(hook.SessionID) {
+		// These providers choose their own IDs. Bind once from SessionStart in
+		// this egg's private spool, then reject other threads (and subagents).
+		if bindsIdentity && providerID == "" && hook.Event == "SessionStart" && validLifecycleID(hook.SessionID) {
 			providerID = hook.SessionID
+		}
+		if agent == "gemini" {
+			switch hook.Event {
+			case "BeforeAgent":
+				hook.Event = "UserPromptSubmit"
+			case "BeforeTool":
+				hook.Event = "PreToolUse"
+			case "AfterTool":
+				hook.Event = "PostToolUse"
+			case "AfterAgent":
+				hook.Event = "Stop"
+			}
 		}
 		e.ProviderSessionID = providerID
 		if providerID == "" || hook.SessionID != providerID {
@@ -874,9 +902,24 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 					// Codex has no hook for elicitation inside an MCP call.
 					// Until PostToolUse, it could be running or awaiting input.
 					e.State, e.Reason = "unknown", "provider has no native MCP elicitation hook"
+				} else if agent == "gemini" && hook.Event == "PreToolUse" && hook.ToolName == "ask_user" {
+					e.Type, e.State, e.Reason = "input_requested", "needs_input", "provider user input requested"
+				} else if agent == "gemini" && hook.Event == "PreToolUse" && len(hook.MCPContext) > 0 && string(hook.MCPContext) != "null" {
+					e.State, e.Reason = "unknown", "provider has no native MCP elicitation hook"
+				} else if agent == "gemini" && (geminiState == "needs_input" || geminiState == "unknown") {
+					// Gemini can ask for several tool approvals concurrently and
+					// exposes no request IDs or permission-replied hook. One tool
+					// running does not prove that all requests were answered.
+					e.State, e.Reason = "unknown", "Gemini tool activity cannot establish that all input requests were resolved"
 				}
 			case "PreCompact", "PostCompact":
 				e.Type, e.State = "provider_compaction", "working"
+			case "BeforeModel":
+				if agent == "gemini" {
+					e.Type, e.State = "provider_activity", "working"
+				} else {
+					e.Type = "provider_event"
+				}
 			case "Interrupt":
 				e.Type, e.State = "turn_interrupted", "idle"
 			case "PermissionRequest":
@@ -890,11 +933,16 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 				} else if hook.Notification == "permission_prompt" || hook.Notification == "elicitation_dialog" || hook.Notification == "elicitation_url_dialog" {
 					e.State = "needs_input"
 					e.Reason = hook.Notification
+				} else if agent == "gemini" && hook.Notification == "ToolPermission" {
+					e.State, e.Reason = "needs_input", "provider permission decision requested"
 				}
 			case "Stop":
 				e.Type = "turn_completed"
 				e.State = "completed"
 				e.Reason = "native Stop observed for foreground response; other Stop hooks or later prompts may continue the conversation"
+				if agent == "gemini" {
+					e.Reason = "native AfterAgent observed; later hooks or prompts may continue the conversation"
+				}
 				if len(hook.Background) > 0 {
 					e.State = "idle"
 					e.Reason = "foreground response ended with background tasks pending"
@@ -906,6 +954,9 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 			case "SessionEnd":
 				e.Type = "provider_session_end" // process termination is recorded separately
 				e.State = "completed"
+				if agent == "gemini" && hook.Reason != "exit" && hook.Reason != "prompt_input_exit" {
+					e.Type, e.State, e.Reason = "provider_event", "unknown", "Gemini session ended without a verified exit reason"
+				}
 			default:
 				e.Type = "provider_event"
 			}
@@ -921,6 +972,9 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 		}
 		if err = j.append(e); err != nil {
 			return providerID, err
+		}
+		if agent == "gemini" && e.State != "" {
+			geminiState = e.State
 		}
 	}
 	if len(files) > 500 {
