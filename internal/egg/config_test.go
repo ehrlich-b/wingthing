@@ -158,8 +158,8 @@ fs:
 			t.Errorf("base:none should not have deny entries, got %s", entry)
 		}
 	}
-	if len(cfg.FS) != 2 {
-		t.Errorf("expected 2 FS rules, got %d: %v", len(cfg.FS), cfg.FS)
+	if len(cfg.FS) != 3 {
+		t.Errorf("expected 2 FS rules plus policy protection, got %d: %v", len(cfg.FS), cfg.FS)
 	}
 }
 
@@ -237,8 +237,8 @@ fs:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.FS) != 2 {
-		t.Errorf("expected 2 FS rules, got %d: %v", len(cfg.FS), cfg.FS)
+	if len(cfg.FS) != 4 {
+		t.Errorf("expected 2 FS rules plus 2 protected policies, got %d: %v", len(cfg.FS), cfg.FS)
 	}
 }
 
@@ -402,6 +402,70 @@ func TestResolveEggConfig_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestResolvedPoliciesDenyWriteEveryDependency(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WINGTHING_DIR", filepath.Join(home, "state"))
+	bases := filepath.Join(home, "state", "bases")
+	makeEggConfigTestDir(t, bases)
+	project := t.TempDir()
+	base := filepath.Join(project, "base.yaml")
+	named := filepath.Join(bases, "team.yaml")
+	env := filepath.Join(project, "env.yaml")
+	network := filepath.Join(project, "network.yaml")
+	policy := filepath.Join(project, "egg.yaml")
+	writeEggConfigTestFile(t, base, "base: none\nfs: [rw:./]\n")
+	writeEggConfigTestFile(t, named, "base: "+base+"\n")
+	writeEggConfigTestFile(t, env, "base: none\nenv: [HOME]\n")
+	writeEggConfigTestFile(t, network, "base: none\nnetwork: [example.com]\n")
+	writeEggConfigTestFile(t, policy, "base:\n  name: team\n  fs: none\n  env: ./env.yaml\n  network: ./network.yaml\nfs: [rw:"+base+"]\n")
+	cfg, err := ResolveEggConfig(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, denied := ParseFSRules(cfg.FS, home)
+	for _, dependency := range []string{policy, base, named, env, network} {
+		found := false
+		for _, path := range denied {
+			if path == canonicalPolicyTestPath(t, dependency) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("dependency %s can be overwritten: %v", dependency, denied)
+		}
+	}
+}
+
+func TestResolvedPoliciesProtectGlobalAndSymlinkTargets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	state := filepath.Join(home, "state")
+	t.Setenv("WINGTHING_DIR", state)
+	makeEggConfigTestDir(t, state)
+	base := filepath.Join(home, "base.yaml")
+	alias := filepath.Join(state, "alias.yaml")
+	policy := filepath.Join(state, "egg.yaml")
+	writeEggConfigTestFile(t, base, "fs: [rw:./]\n")
+	if err := os.Symlink(base, alias); err != nil {
+		t.Fatal(err)
+	}
+	writeEggConfigTestFile(t, policy, "base: ./alias.yaml\n")
+	cfg := DiscoverEggConfig(t.TempDir(), nil)
+	_, _, denied := ParseFSRules(cfg.FS, home)
+	for _, dependency := range []string{policy, alias, base} {
+		found := false
+		for _, path := range denied {
+			if path == canonicalPolicyTestPath(t, dependency) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("global dependency %s can be overwritten: %v", dependency, denied)
+		}
+	}
+}
+
 func TestDiscoverEggConfig_FallsBackToDefault(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := DiscoverEggConfig("/nonexistent", nil)
@@ -479,8 +543,8 @@ fs:
 `)
 
 	cfg := DiscoverEggConfig(dir, nil)
-	if len(cfg.FS) != 1 {
-		t.Errorf("expected 1 FS rule from project config, got %d: %v", len(cfg.FS), cfg.FS)
+	if len(cfg.FS) != 2 {
+		t.Errorf("expected 1 FS rule plus policy protection, got %d: %v", len(cfg.FS), cfg.FS)
 	}
 }
 
@@ -608,9 +672,9 @@ func TestSectionMask_None(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// FS should be empty (cut from defaults)
-	if len(cfg.FS) != 0 {
-		t.Errorf("fs should be empty with base.fs: none, got %v", cfg.FS)
+	// Masking defaults must leave the policy itself write-protected.
+	if len(cfg.FS) != 1 || cfg.FS[0] != "deny-write:"+canonicalPolicyTestPath(t, path) {
+		t.Errorf("fs should contain only policy protection, got %v", cfg.FS)
 	}
 	// Env should still come from defaults
 	hasHome := false
@@ -715,9 +779,9 @@ func TestSectionMask_Combo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// FS: masked to none, so empty
-	if len(cfg.FS) != 0 {
-		t.Errorf("fs should be empty (masked none), got %v", cfg.FS)
+	// FS: masked to none, except protection for all three dependencies.
+	if len(cfg.FS) != 3 {
+		t.Errorf("fs should contain only 3 protected policies, got %v", cfg.FS)
 	}
 	// Network: from strict
 	if len(cfg.Network.Domains) != 1 || cfg.Network.Domains[0] != "api.internal.corp" {
@@ -768,7 +832,7 @@ func TestBaseField_BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.FS) != 1 || cfg.FS[0] != "rw:./" {
+	if len(cfg.FS) != 2 || cfg.FS[0] != "rw:./" {
 		t.Errorf("base:none backward compat failed, fs = %v", cfg.FS)
 	}
 
@@ -785,7 +849,7 @@ func TestBaseField_BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg2.FS) != 1 || cfg2.FS[0] != "rw:./" {
+	if len(cfg2.FS) != 3 || cfg2.FS[0] != "rw:./" {
 		t.Errorf("base:strict backward compat failed, fs = %v", cfg2.FS)
 	}
 	hasCustom := false
@@ -1152,4 +1216,13 @@ func TestSectionMask_EnvNone_RemovesEssentials(t *testing.T) {
 			t.Errorf("BuildEnv should not include %s with env: none mask", k)
 		}
 	}
+}
+
+func canonicalPolicyTestPath(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
 }

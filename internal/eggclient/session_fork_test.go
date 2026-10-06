@@ -97,7 +97,7 @@ func TestSessionForkFakeClaudeArgvAndSourcePreserved(t *testing.T) {
 				t.Fatal(err)
 			}
 			scope.Spawn = func(plan *SessionForkPlan) error {
-				if plan.Source.ID != "source" || plan.Options.Label != "branch" || !plan.Options.ForkSession || plan.Config.Shell != "/bin/sh" || !reflect.DeepEqual(plan.Config.FS, []string{"rw:" + scope.AllowedPaths[0]}) {
+				if plan.Source.ID != "source" || plan.Options.Label != "branch" || !plan.Options.ForkSession || plan.Config.Shell != "/bin/sh" || !reflect.DeepEqual(plan.Config.FS, []string{"rw:" + scope.AllowedPaths[0], "deny-write:" + filepath.Join(scope.AllowedPaths[0], "egg.yaml")}) {
 					t.Fatalf("fork plan: %#v", plan)
 				}
 				newProvider, args, resume, err := effectiveSpawnProviderSession(plan.Source.Agent, plan.Options)

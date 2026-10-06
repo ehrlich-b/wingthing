@@ -1,9 +1,11 @@
 package eggclient
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,5 +106,62 @@ func TestPrepareBrowserToolsWithoutTools(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cfg.Dir, "eggs")); !os.IsNotExist(err) {
 		t.Fatalf("empty tools created session artifacts: %v", err)
+	}
+}
+
+func TestToolCapabilityTravelsOnlyInSessionEnvironment(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "wt-tool-env-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	opts := SpawnEggOpts{}
+	listener, err := PrepareBrowserTools(&config.Config{Dir: root}, "own", []*config.ToolConfig{{Name: "tool", Run: "true"}}, &opts)
+	if err != nil || listener == nil {
+		t.Fatal("prepare listener", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	env := map[string]string{"TERM": "xterm"}
+	if err := prepareToolSessionEnvironment(env, opts.ToolSocketPath); err != nil {
+		t.Fatal(err)
+	}
+	secret := env[egg.ToolCapabilityEnv]
+	if len(secret) != 64 {
+		t.Fatal("no per-egg capability injected")
+	}
+	toolEnv := privateToolEnvironment(env)
+	if len(toolEnv) != 1 || toolEnv[0] != egg.ToolCapabilityEnv+"="+secret {
+		t.Fatal("tool capability missing from wrapper environment")
+	}
+	args, path, err := prepareEggEnvironmentTransport(filepath.Join(root, "eggs", "own"), []string{"egg", "run", "--tool-socket", opts.ToolSocketPath}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(args, " "), secret) {
+		t.Fatal("tool secret entered child argv")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(data), secret) {
+		t.Fatal("tool capability entered readable state", err)
+	}
+	transported, err := ReadEggEnvironment(path, toolEnv, true)
+	if err != nil || transported[egg.ToolCapabilityEnv] != secret {
+		t.Fatal("tool capability lost in wrapper environment", err)
+	}
+	t.Setenv(egg.ToolCapabilityEnv, secret)
+	conn, err := net.Dial("unix", opts.ToolSocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if err := json.NewEncoder(conn).Encode(egg.ToolRequest{Tool: "tool"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.(*net.UnixConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	var response egg.ToolResponse
+	if err := json.NewDecoder(conn).Decode(&response); err != nil || response.Error != "" || response.ExitCode != 0 {
+		t.Fatal("transported shim capability failed", err)
 	}
 }

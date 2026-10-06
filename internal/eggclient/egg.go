@@ -551,6 +551,16 @@ func PrepareIsolatedClaudeConfig(home string, envMap map[string]string) error {
 	return nil
 }
 
+func prepareSpawnClaudeConfig(home string, env map[string]string, agentName, platform string, isolated, outerBoundary bool) error {
+	if agentName != "claude" || (!isolated && (outerBoundary || platform != "linux" || env["CLAUDE_CONFIG_DIR"] != "")) {
+		return nil
+	}
+	// The control-tree jail keeps HOME ancestors private. Put Claude's
+	// atomically replaced profile and lockfiles inside its persistent
+	// writable directory, preserving an existing personal profile.
+	return PrepareIsolatedClaudeConfig(home, env)
+}
+
 func WriteEggOwner(dir, userID, email string) error {
 	if userID == "" {
 		return nil
@@ -609,6 +619,24 @@ type SpawnEggOpts struct {
 	// OmitBrowserBridge launches without the optional browser-open bridge.
 	// False preserves ordinary launches.
 	OmitBrowserBridge bool
+}
+
+func prepareToolSessionEnvironment(env map[string]string, socketPath string) error {
+	capability, err := egg.ToolSocketCapability(socketPath)
+	if err != nil {
+		return fmt.Errorf("prepare authenticated tools: %w", err)
+	}
+	env[egg.ToolCapabilityEnv] = capability
+	return nil
+}
+
+func privateToolEnvironment(env map[string]string) []string {
+	capability := env[egg.ToolCapabilityEnv]
+	delete(env, egg.ToolCapabilityEnv)
+	if capability == "" {
+		return nil
+	}
+	return []string{egg.ToolCapabilityEnv + "=" + capability}
 }
 
 const (
@@ -1037,10 +1065,8 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// Point CLAUDE_CONFIG_DIR at ~/.claude, which is bind-mounted read-write to
 	// the per-user home: onboarding and theme now land there immediately and
 	// survive across sessions regardless of how the previous one ended.
-	if isolatedUser && agentName == "claude" {
-		if err := PrepareIsolatedClaudeConfig(effectiveHome, envMap); err != nil {
-			return nil, err
-		}
+	if err := prepareSpawnClaudeConfig(effectiveHome, envMap, agentName, runtime.GOOS, isolatedUser, outerBoundary); err != nil {
+		return nil, err
 	}
 	// Rebuild agent settings every session for org wing users.
 	// Reads existing prefs, layers host settings on top (host always wins
@@ -1156,6 +1182,9 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		args = append(args, "--provider-session-id", providerSessionID)
 	}
 	if o.ToolSocketPath != "" && len(o.ToolNames) > 0 {
+		if err := prepareToolSessionEnvironment(sessionEnv, o.ToolSocketPath); err != nil {
+			return nil, err
+		}
 		args = append(args, "--tool-socket", o.ToolSocketPath)
 		for _, tn := range o.ToolNames {
 			args = append(args, "--tool-name", tn)
@@ -1175,6 +1204,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	if err != nil {
 		return nil, fmt.Errorf("open egg log: %w", err)
 	}
+	toolEnv := privateToolEnvironment(sessionEnv)
 	args, envPath, err := prepareEggEnvironmentTransport(dir, args, sessionEnv)
 	if err != nil {
 		cmdutil.CloseWithLog("egg log", logFile)
@@ -1184,8 +1214,9 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 
 	child := exec.Command(exe, args...)
 	// Always build a clean env for the wt-egg-run child process.
-	// Base system vars only. Session values move through an owner-only file so
-	// credentials never appear in the wrapper's argv or ambient environment.
+	// Base system vars plus this egg's tool capability. Other session values
+	// move through an owner-only file so provider credentials never appear in
+	// the wrapper's argv or ambient environment.
 	// This prevents server secrets (WT_JWT_SECRET, GOOGLE_CLIENT_SECRET)
 	// from leaking when eggs are spawned from the roost process (org wings),
 	// while still passing platform vars agents need (e.g. macOS Keychain).
@@ -1201,7 +1232,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 				childEnv = append(childEnv, e)
 			}
 		}
-		child.Env = childEnv
+		child.Env = append(childEnv, toolEnv...)
 	}
 	child.Stdout = logFile
 	child.Stderr = logFile
