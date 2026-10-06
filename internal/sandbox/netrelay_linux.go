@@ -23,7 +23,7 @@ import (
 // host validates the requested listener and connects it either to DomainProxy
 // or to one explicitly allowed host-loopback port.
 type networkBridge struct {
-	parent      *os.File
+	parent      *net.UnixConn
 	child       *os.File
 	targets     map[uint16]string
 	connections chan struct{}
@@ -32,6 +32,7 @@ type networkBridge struct {
 	active      map[net.Conn]struct{}
 	closeOnce   sync.Once
 	childOnce   sync.Once
+	receiveDone chan struct{}
 }
 
 func newNetworkBridge(proxyPort int, localPorts []int) (*networkBridge, *os.File, error) {
@@ -65,12 +66,20 @@ func newNetworkBridge(proxyPort int, localPorts []int) (*networkBridge, *os.File
 	if err != nil {
 		return nil, nil, fmt.Errorf("socketpair: %w", err)
 	}
+	parentFile := os.NewFile(uintptr(pair[0]), "wt-net-relay-parent")
+	parent, err := net.FileConn(parentFile)
+	_ = parentFile.Close()
+	if err != nil {
+		_ = unix.Close(pair[1])
+		return nil, nil, fmt.Errorf("network relay connection: %w", err)
+	}
 	bridge := &networkBridge{
-		parent:      os.NewFile(uintptr(pair[0]), "wt-net-relay-parent"),
+		parent:      parent.(*net.UnixConn),
 		child:       os.NewFile(uintptr(pair[1]), "wt-net-relay-child"),
 		targets:     targets,
 		connections: make(chan struct{}, defaultNetworkConnectionLimit),
 		active:      make(map[net.Conn]struct{}),
+		receiveDone: make(chan struct{}),
 	}
 	go bridge.serve()
 	return bridge, bridge.child, nil
@@ -100,6 +109,9 @@ func (b *networkBridge) Close() {
 		}
 		for _, connection := range active {
 			_ = connection.Close()
+		}
+		if b.receiveDone != nil {
+			<-b.receiveDone
 		}
 	})
 }
@@ -144,12 +156,15 @@ func (b *networkBridge) trackConnections(client, upstream net.Conn) (func(), boo
 }
 
 func (b *networkBridge) serve() {
+	defer close(b.receiveDone)
 	data := make([]byte, 2)
 	oob := make([]byte, unix.CmsgSpace(4))
 	for {
-		n, oobn, flags, _, err := unix.Recvmsg(int(b.parent.Fd()), data, oob, unix.MSG_CMSG_CLOEXEC)
+		// ReadMsgUnix holds the descriptor through the read and lets Close wake
+		// the runtime poller. Raw Fd/Recvmsg races Close and descriptor reuse.
+		n, oobn, flags, _, err := b.parent.ReadMsgUnix(data, oob)
 		if err != nil {
-			if !errors.Is(err, os.ErrClosed) && !errors.Is(err, unix.EBADF) && !errors.Is(err, unix.ECONNRESET) {
+			if !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) && !errors.Is(err, unix.EBADF) && !errors.Is(err, unix.ECONNRESET) {
 				log.Printf("linux network relay: receive: %v", err)
 			}
 			return

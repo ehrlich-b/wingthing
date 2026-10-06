@@ -4,7 +4,10 @@ package sandbox
 
 import (
 	"context"
+	"encoding/binary"
+	"io"
 	"net"
+	"os"
 	"slices"
 	"syscall"
 	"testing"
@@ -12,6 +15,85 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+// Keep a duplicate of the child endpoint open to model the descriptor inherited
+// by a still-running jail. Closing the bridge must interrupt its blocked read.
+func TestNetworkBridgeCloseStopsReceiverWithLiveChild(t *testing.T) {
+	for range 64 {
+		bridge, child, err := newNetworkBridge(12345, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		heldChild, err := unix.Dup(int(child.Fd()))
+		if err != nil {
+			bridge.Close()
+			t.Fatal(err)
+		}
+		closed := make(chan struct{})
+		go func() {
+			bridge.Close()
+			close(closed)
+		}()
+		select {
+		case <-closed:
+		case <-time.After(time.Second):
+			_ = unix.Close(heldChild)
+			t.Fatal("bridge close did not interrupt receive with a live child")
+		}
+		_ = unix.Close(heldChild)
+		select {
+		case <-bridge.receiveDone:
+		default:
+			t.Fatal("bridge close returned with receiver still running")
+		}
+	}
+}
+
+func TestNetworkBridgeRelaysPassedSocket(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			defer conn.Close()
+			_, _ = io.Copy(conn, conn)
+		}
+	}()
+	port := listener.Addr().(*net.TCPAddr).Port
+	bridge, child, err := newNetworkBridge(port, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridge.Close()
+	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := os.NewFile(uintptr(pair[0]), "bridge-client")
+	client, err := net.FileConn(file)
+	_ = file.Close()
+	defer unix.Close(pair[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	data := make([]byte, 2)
+	binary.BigEndian.PutUint16(data, uint16(port))
+	if err := unix.Sendmsg(int(child.Fd()), data, unix.UnixRights(pair[1]), nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := client.Write([]byte("fixture")); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, len("fixture"))
+	if _, err := io.ReadFull(client, response); err != nil || string(response) != "fixture" {
+		t.Fatalf("relayed response = %q, %v", response, err)
+	}
+}
 
 func TestNetworkBridgeConnectionLimit(t *testing.T) {
 	bridge := &networkBridge{
