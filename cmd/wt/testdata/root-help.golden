@@ -1,0 +1,54 @@
+An agent manager for agents: one typed control plane for durable agent runs and terminals across your machines, with human inspection and takeover when useful.
+
+Usage:
+  wt [flags]
+  wt [command]
+
+Available Commands:
+  agent        Manage agent adapters
+  attach       Attach this terminal to a running egg session
+  channel      Show executable channel, isolated state, and update feed
+  completion   Generate the autocompletion script for the specified shell
+  conversation Inspect persistent parent and child conversations
+  daemon       Connect this machine to a relay, accessible from anywhere
+  doctor       Check available agents, embedders, and API keys
+  embed        Generate embeddings
+  help         Help about any command
+  init         Initialize ~/.wingthing directory
+  keygen       Generate a JWT signing key (EC P-256)
+  local-cert   Manage the on-demand localhost HTTPS certificate
+  log          Show task log events
+  login        Authenticate this device with the roost
+  logout       Remove device authentication
+  mcp          Expose Wingthing to LLM clients
+  phone        Set up the phone app
+  prompt       Manage named, versioned prompt templates
+  relay        Start the relay server (web UI + WebSocket relay)
+  remote       Manage configured SSH remotes
+  retry        Retry a failed task
+  roost        Run relay + wing in a single process (self-hosted mode)
+  run          Run a prompt or skill
+  sandbox      Run an agent in a sandboxed session
+  schedule     Manage recurring tasks
+  session      Inspect and automate persistent terminal sessions
+  start        Start the daemon (alias for wt wing start / wt daemon start)
+  status       Task counts and token usage
+  stop         Stop the daemon (alias for wt wing stop / wt daemon stop)
+  support      Collect diagnostic bundle for troubleshooting
+  terminal     Start a persistent shell or command
+  thread       Print today's daily thread
+  timeline     Show upcoming and recent tasks
+  tool-list    List available privileged tools
+  update       Update wt to the latest release
+  whoami       Show the currently logged-in user
+  wings        Find online wings available through a roost
+
+Flags:
+  -h, --help                   help for wt
+  -r, --remote string          run a supported command on this SSH host or alias
+      --remote-binary string   channel-matching executable or absolute path on the remote host (default "wt")
+      --remote-cwd string      remote working directory for bare interactive entry
+      --remote-state string    absolute state directory on the remote host (sets WINGTHING_DIR and WINGTHING_PREVIEW_DIR there)
+  -v, --version                version for wt
+
+Use "wt [command] --help" for more information about a command.

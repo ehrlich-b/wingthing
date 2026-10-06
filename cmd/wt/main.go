@@ -24,6 +24,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
+	"github.com/ehrlich-b/wingthing/internal/dashboard"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
@@ -76,6 +77,10 @@ func newRootCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("remote") || cmd.Flags().Changed("remote-binary") || cmd.Flags().Changed("remote-state") || cmd.Flags().Changed("remote-cwd") {
 				return errors.New("remote routing was not initialized")
+			}
+			streams := remotepkg.Streams(cmd.Context())
+			if len(args) == 0 && streams.StdinTTY && streams.StdoutTTY {
+				return dashboard.Run(cmd.Context(), version, streams)
 			}
 			return cmd.Help()
 		},
