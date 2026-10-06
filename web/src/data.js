@@ -200,7 +200,7 @@ export async function fetchWingSessions(wingId) {
     try {
         var result = await sendTunnelRequest(wingId, { type: 'sessions.list' }, { skipPasskey: true });
         return (result.sessions || []).map(function(s) {
-            return { id: s.session_id, name: s.name, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit, user_id: s.user_id, email: s.email, lifecycle: s.lifecycle, lifecycle_seen_at: Date.now(), conversation_id: s.conversation_id, root_conversation_id: s.root_conversation_id, parent_conversation_id: s.parent_conversation_id, conversation_role: s.conversation_role };
+            return { id: s.session_id, name: s.name, wing_id: (S.wingsData.find(function(w) { return w.wing_id === wingId; }) || {}).wing_id || '', agent: s.agent, cwd: s.cwd, status: 'detached', needs_attention: s.needs_attention, audit: s.audit, user_id: s.user_id, email: s.email, lifecycle: s.lifecycle, lifecycle_seen_at: Date.now(), conversation_id: s.conversation_id, root_conversation_id: s.root_conversation_id, parent_conversation_id: s.parent_conversation_id, conversation_role: s.conversation_role, forkable: s.forkable, fork_unavailable_reason: s.fork_unavailable_reason };
         });
     } catch (e) { return null; }
 }

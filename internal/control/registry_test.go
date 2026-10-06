@@ -13,7 +13,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"message_send", "message_list", "message_wait",
 		"sandbox_explain",
 		"terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
-		"terminal_start", "agent_start",
+		"session_fork", "terminal_start", "agent_start",
 		"agent_run", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
@@ -25,7 +25,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"message_send", "message_list", "message_wait",
 		"sandbox_explain",
 		"terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
-		"terminal_start", "agent_start",
+		"session_fork", "terminal_start", "agent_start",
 		"agent_run", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
@@ -184,6 +184,20 @@ func TestAuditTargetUsesOnlyDeclaredResourceFields(t *testing.T) {
 	}
 	if got := AuditTarget("wingthing_capabilities", json.RawMessage(`{"name":"not-approved"}`), nil); got != "" {
 		t.Fatalf("capabilities leaked undeclared target %q", got)
+	}
+}
+
+func TestSessionForkFlatSchemaGrantAndSourceAudit(t *testing.T) {
+	tool, ok := Lookup("session_fork")
+	if !ok || tool.Grant != "terminal.start" || tool.Annotations["readOnlyHint"] != false || tool.Annotations["destructiveHint"] != false {
+		t.Fatalf("fork authority: %#v", tool)
+	}
+	properties := tool.InputSchema["properties"].(map[string]any)
+	if len(properties) != 2 || properties["session"] == nil || properties["name"] == nil || tool.InputSchema["additionalProperties"] != false {
+		t.Fatalf("fork schema: %#v", tool.InputSchema)
+	}
+	if target := AuditTarget("session_fork", json.RawMessage(`{"session":"source","name":"new-name"}`), map[string]any{"session": "new-session"}); target != "source" {
+		t.Fatalf("fork audit target: %q", target)
 	}
 }
 

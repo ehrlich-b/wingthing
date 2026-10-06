@@ -29,6 +29,8 @@ export function reconcileWingSessions(existingSessions, wingId, remoteSessions) 
         session.root_conversation_id = remote.root_conversation_id;
         session.parent_conversation_id = remote.parent_conversation_id;
         session.conversation_role = remote.conversation_role;
+        session.forkable = remote.forkable;
+        session.fork_unavailable_reason = remote.fork_unavailable_reason;
         session.swept = true;
         kept.push(session);
         remoteMap.delete(session.id);

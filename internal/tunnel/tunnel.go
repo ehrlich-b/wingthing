@@ -136,6 +136,8 @@ type pastSessionInfo struct {
 	UserID                  string `json:"user_id,omitempty"`
 	Resumable               bool   `json:"resumable,omitempty"`
 	ResumeUnavailableReason string `json:"resume_unavailable_reason,omitempty"`
+	Forkable                bool   `json:"forkable,omitempty"`
+	ForkUnavailableReason   string `json:"fork_unavailable_reason,omitempty"`
 }
 
 // handleTunnelRequest decrypts and dispatches an encrypted tunnel request from the browser.
@@ -321,7 +323,7 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 			},
 		}
 		visibleExports := wingCfg.ExportsForUser(req.SenderEmail, req.SenderOrgRole)
-		resp["capabilities"] = append(sessionfiles.BrowserSessionCapabilities(len(visibleExports) > 0), "session.lifecycle.v1")
+		resp["capabilities"] = append(sessionfiles.BrowserSessionCapabilities(len(visibleExports) > 0), "session.lifecycle.v1", "session.fork.v1")
 		if wingCfg.Org == "" && !sharedHost {
 			resp["capabilities"] = append(resp["capabilities"].([]string), "conversation.personal.v1")
 		}
@@ -388,6 +390,10 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 
 	case "sessions.list":
 		sessions := listAliveEggSessions(cfg)
+		for i := range sessions {
+			session := &sessions[i]
+			session.Forkable, session.ForkUnavailableReason = eggclient.SessionForkStatus(filepath.Join(cfg.Dir, "eggs", session.SessionID), session.Agent, session.CWD)
+		}
 		if wingpolicy.IsMemberFiltered(req) {
 			userPaths := wingpolicy.PathsForRequest(wingCfg.Paths, req.SenderEmail, req.SenderOrgRole, home)
 			var filtered []ws.SessionInfo
@@ -1059,6 +1065,7 @@ func collectSessionsHistory(cfg *config.Config) []pastSessionInfo {
 			info.StartedAt = stat.ModTime().Unix()
 		}
 		info.Resumable, info.ResumeUnavailableReason = eggclient.SessionResumeStatus(dir, agentName, cwd)
+		info.Forkable, info.ForkUnavailableReason = eggclient.SessionForkStatus(dir, agentName, cwd)
 		dead = append(dead, info)
 	}
 

@@ -90,6 +90,7 @@ wt session read api --json
 wt session send api r --enter --json
 wt session wait api --contains ready --json
 wt session rename api frontend --json
+wt session fork api --name experiment --json  # Claude only; keeps the source intact
 wt session kill frontend --json
 ```
 

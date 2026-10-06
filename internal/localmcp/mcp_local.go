@@ -65,6 +65,7 @@ type Server struct {
 	enforcePathBounds bool
 	runAgentTask      func(context.Context, *config.Config, *store.Store, *store.Task, taskrun.TaskRunOptions) error
 	startContinuation func(*store.Conversation, *egg.EggConfig, eggclient.SpawnEggOpts) error
+	spawnFork         func(*eggclient.SessionForkPlan) error
 	// tools, when set, further limits callable tools by name; grants are
 	// per category and cannot express the host mailbox's fixed subset.
 	tools map[string]bool
@@ -456,6 +457,8 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.toolSessionWait(ctx, arguments)
 	case "session_prompt":
 		data, err = s.toolSessionPrompt(ctx, arguments)
+	case "session_fork":
+		data, err = s.ToolSessionFork(ctx, arguments)
 	case "terminal_send":
 		data, err = s.toolTerminalSend(ctx, arguments)
 	case "terminal_wait":

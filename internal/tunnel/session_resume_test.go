@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 )
 
@@ -24,6 +25,24 @@ func TestCollectSessionsHistoryUsesDurableNameStartAndProviderResumeStatus(t *te
 	got := history[0]
 	if got.SessionID != "old-session" || got.Name != "support-case" || got.StartedAt != 100 || !got.Resumable || got.ResumeUnavailableReason != "" {
 		t.Fatalf("history entry = %#v", got)
+	}
+}
+
+func TestSessionHistoryForkAvailabilityRequiresCapturedClaudeLaunch(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
+	cwd := t.TempDir()
+	claude := writeResumeSessionFixture(t, cfg, "claude-source", "alice", "claude", cwd, "provider", "{}\n")
+	writeResumeSessionFixture(t, cfg, "codex-source", "alice", "codex", cwd, "other", "{}\n")
+	if err := eggclient.SaveSessionLaunchConfig(claude, egg.DefaultEggConfig(), []string{"--model", "sonnet"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, session := range collectSessionsHistory(cfg) {
+		if session.SessionID == "claude-source" && (!session.Forkable || session.ForkUnavailableReason != "") {
+			t.Fatalf("Claude fork unavailable: %#v", session)
+		}
+		if session.SessionID == "codex-source" && (session.Forkable || session.ForkUnavailableReason == "") {
+			t.Fatalf("unsupported fork visible: %#v", session)
+		}
 	}
 }
 func writeResumeSessionFixture(t *testing.T, cfg *config.Config, sessionID, owner, agent, cwd, providerID, content string) string {

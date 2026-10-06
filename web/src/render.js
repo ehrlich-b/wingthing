@@ -13,6 +13,7 @@ import { safeTerminalThumbnail } from './security.js';
 import { shouldFetchWingSessions } from './session-merge.js';
 import { updateCanvasSessionName } from './canvas.js';
 import { historyResumeState } from './session-resume.js';
+import { sessionForkAvailable, sessionForkControl } from './session-fork.js';
 import { readSessionContent, notificationForSession } from './session-reference.js';
 import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey, groupSessionInventory, sessionGroupHeader, unseenCompletionBadge } from './session-inventory.js';
 import { refreshConversationInventory } from './conversation-view.js';
@@ -64,7 +65,7 @@ export function renderSidebar() {
     renderChannelBanner();
     refreshParentDot();
     // Live inventory refreshes must not discard an unfinished rename.
-    if (DOM.sessionTabs.querySelector('.renaming')) return;
+    if (DOM.sessionTabs.querySelector('.renaming, .forking')) return;
     var focus = captureSessionFocus(DOM.sessionTabs, document.activeElement);
     var unseen = unseenSessionCompletions(browserLocalStorage(), S.currentUser && S.currentUser.id);
     var sessions = S.sessionsData.filter(function(s) {
@@ -92,6 +93,7 @@ export function renderSidebar() {
             '<span class="tab-copy"><span class="tab-label">' + escapeHtml(name) + '</span>' +
             '<span class="tab-meta">' + escapeHtml((s.agent || '?') + ' · ' + state.agentLabel + ' · ' + (wingNameById(s.wing_id) || 'unknown wing')) + '</span>' + unseenCompletionBadge(unseen.has(sessionResourceKey(s))) + '</span>' +
             (canRename ? '<button class="session-rename-btn" type="button" data-session-action="rename" aria-label="Rename ' + escapeHtml(name) + '" title="Rename session">rename</button>' : '') +
+            sessionForkControl(s, sessionWing(s), S.currentUser) +
         '</div>';
     }
     var groups = groupSessionInventory(sessions, S.wingsData, S.sessionNotifications, unseen);
@@ -109,17 +111,23 @@ export function renderSidebar() {
             switchToSession(sid, undefined, tab.dataset.wingId);
         }
         tab.addEventListener('click', function(e) {
-            if (e.target.closest('.session-rename-btn, .session-name-input')) return;
+            if (e.target.closest('button, input, .forking')) return;
             openSession();
         });
         tab.addEventListener('keydown', function(e) {
             if (e.target === tab && navigateSessionRows(e, Array.from(DOM.sessionTabs.querySelectorAll('.session-tab')), tab)) return;
-            if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('.session-rename-btn, .session-name-input')) {
+            if ((e.key === 'Enter' || e.key === ' ') && e.target === tab) {
                 e.preventDefault();
                 openSession();
             }
         });
         var rename = tab.querySelector('.session-rename-btn');
+        var fork = tab.querySelector('.session-fork-btn');
+        if (fork) fork.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var session = findSessionResource(S.sessionsData, tab.dataset.sid, tab.dataset.wingId);
+            if (session) beginSessionFork(tab, session, session.wing_id, fork);
+        });
         if (rename) {
             rename.addEventListener('click', function(e) {
                 e.stopPropagation();
@@ -129,6 +137,69 @@ export function renderSidebar() {
         }
     });
     restoreSessionFocus(DOM.sessionTabs, focus);
+}
+
+function beginSessionFork(container, session, wingId, button) {
+    var wing = S.wingsData.find(function(w) { return w.wing_id === wingId; });
+    if (!sessionForkAvailable(session, wing, S.currentUser) || container.classList.contains('forking')) return;
+    container.classList.add('forking');
+    var form = document.createElement('form');
+    var input = document.createElement('input');
+    input.className = 'session-name-input';
+    input.setAttribute('aria-label', 'New session name');
+    input.maxLength = 64;
+    input.value = ((session.name || 'session').slice(0, 59) + '-fork');
+    var submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.className = 'btn-sm';
+    submit.textContent = 'Fork';
+    var cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn-sm';
+    cancel.textContent = 'cancel';
+    var status = document.createElement('span');
+    status.setAttribute('role', 'status');
+    form.append(input, submit, cancel, status);
+    button.hidden = true;
+    button.after(form);
+    cancel.addEventListener('click', function() {
+        form.remove();
+        container.classList.remove('forking');
+        button.hidden = false;
+        button.focus();
+    });
+    form.addEventListener('submit', async function(event) {
+        event.preventDefault();
+        if (submit.disabled) return;
+        if (!input.value || !validSessionName(input.value)) {
+            status.textContent = 'Use a name of up to 64 letters, numbers, dots, underscores or dashes.';
+            return;
+        }
+        submit.disabled = true;
+        cancel.disabled = true;
+        input.disabled = true;
+        status.textContent = 'forking…';
+        var sourceId = session.id || session.session_id;
+        try {
+            var result = await sendTunnelRequest(wingId, { type: 'session.control', operation: 'session_fork', arguments: { session: sourceId, name: input.value } });
+            if (!result.session || result.session === sourceId || result.source_session !== sourceId) throw new Error('Fork was not confirmed');
+            S.sessionsData.push({ id: result.session, name: result.label, agent: result.agent, cwd: result.cwd, wing_id: wingId, user_id: session.user_id, status: 'detached', swept: true,
+                conversation_id: result.conversation_id, root_conversation_id: result.root_conversation_id, parent_conversation_id: result.parent_conversation_id });
+            container.classList.remove('forking');
+            saveSessionCache();
+            renderSidebar();
+            refreshConversationInventory();
+            showTerminal();
+            switchToSession(result.session, undefined, wingId);
+        } catch (err) {
+            status.textContent = (err && err.message) || 'Fork failed';
+            submit.disabled = false;
+            cancel.disabled = false;
+            input.disabled = false;
+        }
+    });
+    input.focus();
+    input.select();
 }
 
 function beginSessionRename(tab, session) {
@@ -2157,6 +2228,7 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
             auditBtns +
             chatBtn +
             resumeBtn +
+            sessionForkControl(s, S.wingsData.find(function(w) { return w.wing_id === wingId; }), S.currentUser) +
         '</div>';
     }).join('');
 
@@ -2195,6 +2267,10 @@ function renderPastSessions(container, wingId, sessions, hasMore) {
             showTerminal();
             connectPTY(session.agent || 'claude', session.cwd || '', wingId, session.session_id);
         });
+    });
+    container.querySelectorAll('.wd-past-row').forEach(function(row, index) {
+        var fork = row.querySelector('.session-fork-btn');
+        if (fork) fork.addEventListener('click', function() { beginSessionFork(row, sessions[index], wingId, fork); });
     });
 }
 
@@ -2467,7 +2543,7 @@ function updateInventoryOptions(id, entries, allLabel, value) {
 
 export function renderSessionInventory() {
     // Preserve the active editor while background status probes finish.
-    if (DOM.sessionsList.querySelector('.renaming')) return;
+    if (DOM.sessionsList.querySelector('.renaming, .forking')) return;
     var focus = captureSessionFocus(DOM.sessionsList, document.activeElement);
     var allSessions = visibleInventorySessions();
     var hasWings = S.wingsData.some(function(wing) { return wingDisplayName(wing); });
@@ -2533,6 +2609,7 @@ export function renderSessionInventory() {
                 '<button class="btn-sm btn-accent inventory-attach" type="button" data-session-action="attach"' + (!actions.attach ? ' disabled title="' + escapeHtml(state.connectionLabel) + '"' : '') + '>attach</button>' +
                 '<button class="btn-sm inventory-details" type="button" data-session-action="details">details</button>' +
                 (actions.rename ? '<button class="btn-sm inventory-rename" type="button" data-session-action="rename">rename</button>' : '') +
+                sessionForkControl(session, wing, S.currentUser) +
                 (actions.stop ? '<button class="btn-sm btn-danger inventory-stop" type="button" data-session-action="stop"' + (sessionStopPending.has(resourceKey) ? ' disabled' : '') + '>' + (sessionStopPending.has(resourceKey) ? 'stopping…' : (sessionStopConfirm.get(resourceKey) || 0) > Date.now() ? 'stop now?' : 'stop') + '</button>' : '') +
             '</div><div class="inventory-action-status" role="status">' + escapeHtml(error || '') + '</div></article>';
     }
@@ -2557,6 +2634,8 @@ export function renderSessionInventory() {
         card.querySelector('.inventory-attach').addEventListener('click', attach);
         card.querySelector('.inventory-details').addEventListener('click', function() { showEggDetail(session.id, session.wing_id); });
         var rename = card.querySelector('.inventory-rename');
+        var fork = card.querySelector('.session-fork-btn');
+        if (fork) fork.addEventListener('click', function() { beginSessionFork(card, session, session.wing_id, fork); });
         if (rename) rename.addEventListener('click', function() { beginSessionRename(card, session); });
         var stop = card.querySelector('.inventory-stop');
         if (stop) stop.addEventListener('click', function() { stopInventorySession(session, stop); });

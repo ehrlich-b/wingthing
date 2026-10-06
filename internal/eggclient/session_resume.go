@@ -90,6 +90,17 @@ func (r *providerResumeRegistry) Reserve(cfg *config.Config, home, agent, provid
 }
 
 func (r *providerResumeRegistry) reserveWithAlive(cfg *config.Config, home, agent, providerSessionID, sourceSessionID, wingSessionID string, alive func(string) bool) (func(bool), error) {
+	return r.reserve(cfg, home, agent, providerSessionID, sourceSessionID, wingSessionID, alive, false)
+}
+
+// ReserveFork serializes provider restoration with ordinary resumes, while
+// allowing the source conversation to remain active. A fork never claims the
+// source's provider identity as its own running conversation.
+func (r *providerResumeRegistry) ReserveFork(cfg *config.Config, home, agent, providerSessionID, sourceSessionID, wingSessionID string) (func(bool), error) {
+	return r.reserve(cfg, home, agent, providerSessionID, sourceSessionID, wingSessionID, nil, true)
+}
+
+func (r *providerResumeRegistry) reserve(cfg *config.Config, home, agent, providerSessionID, sourceSessionID, wingSessionID string, alive func(string) bool, fork bool) (func(bool), error) {
 	key := ProviderResumeKey(home, agent, providerSessionID)
 	r.Mu.Lock()
 	defer r.Mu.Unlock()
@@ -120,7 +131,7 @@ func (r *providerResumeRegistry) reserveWithAlive(cfg *config.Config, home, agen
 	}
 	// Keep the descriptor locked through pending launch and PID publication.
 	// Never unlink this file: contenders must always lock the same inode.
-	if ActiveProviderResumeConflict(cfg, key, wingSessionID, alive) {
+	if !fork && ActiveProviderResumeConflict(cfg, key, wingSessionID, alive) {
 		return nil, errors.New("provider conversation is already running in another session")
 	}
 	sessionDir := filepath.Join(cfg.Dir, "eggs", wingSessionID)
@@ -128,6 +139,9 @@ func (r *providerResumeRegistry) reserveWithAlive(cfg *config.Config, home, agen
 		return nil, fmt.Errorf("create resume reservation: %w", err)
 	}
 	metadataPath := filepath.Join(sessionDir, ProviderResumeMetadataFile)
+	if fork {
+		metadataPath = filepath.Join(sessionDir, "provider.fork")
+	}
 	if err := daemonctl.WriteAtomicMetadataFile(metadataPath, providerResumeMetadata(key, sourceSessionID), 0o600); err != nil {
 		return nil, fmt.Errorf("persist resume reservation: %w", err)
 	}

@@ -405,6 +405,15 @@ func buildTools() []Tool {
 			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"session"},
 		},
 		{
+			Name: "session_fork", Title: "Fork a provider session",
+			Description: "Start a new named Claude session from an owned live or ended provider conversation without changing the source. Inherits its workspace, model and captured egg policy; linked conversations become siblings.",
+			InputSchema: objectSchema(map[string]any{
+				"session": stringProperty("Source session ID or label"),
+				"name":    stringProperty("New session name; omit for a generated name"),
+			}, "session"), Annotations: mutating,
+			Grant: "terminal.start", Surfaces: both, AuditTargetKeys: []string{"session"},
+		},
+		{
 			Name: "terminal_start", Title: "Start persistent terminal",
 			Description: "Start a durable shell or command terminal under the MCP server's declared isolation mode and return immediately with its session ID.",
 			InputSchema: objectSchema(map[string]any{

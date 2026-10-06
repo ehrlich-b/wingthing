@@ -360,21 +360,23 @@ type SessionAttention struct {
 
 // SessionInfo describes one active session on a wing (used in tunnel sessions.list responses).
 type SessionInfo struct {
-	ConversationID       string         `json:"conversation_id,omitempty"`
-	RootConversationID   string         `json:"root_conversation_id,omitempty"`
-	ParentConversationID string         `json:"parent_conversation_id,omitempty"`
-	ConversationRole     string         `json:"conversation_role,omitempty"`
-	Lifecycle            map[string]any `json:"lifecycle,omitempty"`
-	SessionID            string         `json:"session_id"`
-	Name                 string         `json:"name,omitempty"`
-	Agent                string         `json:"agent"`
-	CWD                  string         `json:"cwd,omitempty"`
-	EggConfig            string         `json:"-"` // server-only effective YAML config snapshot
-	NeedsAttention       bool           `json:"needs_attention,omitempty"`
-	Audit                bool           `json:"audit,omitempty"` // true if session has audit recording
-	Chat                 bool           `json:"chat,omitempty"`  // true if session has chat history
-	UserID               string         `json:"user_id,omitempty"`
-	Email                string         `json:"email,omitempty"`
+	ConversationID        string         `json:"conversation_id,omitempty"`
+	RootConversationID    string         `json:"root_conversation_id,omitempty"`
+	ParentConversationID  string         `json:"parent_conversation_id,omitempty"`
+	ConversationRole      string         `json:"conversation_role,omitempty"`
+	Lifecycle             map[string]any `json:"lifecycle,omitempty"`
+	SessionID             string         `json:"session_id"`
+	Name                  string         `json:"name,omitempty"`
+	Agent                 string         `json:"agent"`
+	CWD                   string         `json:"cwd,omitempty"`
+	EggConfig             string         `json:"-"` // server-only effective YAML config snapshot
+	NeedsAttention        bool           `json:"needs_attention,omitempty"`
+	Audit                 bool           `json:"audit,omitempty"` // true if session has audit recording
+	Chat                  bool           `json:"chat,omitempty"`  // true if session has chat history
+	UserID                string         `json:"user_id,omitempty"`
+	Email                 string         `json:"email,omitempty"`
+	Forkable              bool           `json:"forkable,omitempty"`
+	ForkUnavailableReason string         `json:"fork_unavailable_reason,omitempty"`
 }
 
 // DirEntry is a single entry in a directory listing.

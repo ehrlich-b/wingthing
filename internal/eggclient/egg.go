@@ -590,6 +590,8 @@ func validateExactAgentArgs(args []string) error {
 }
 
 type SpawnEggOpts struct {
+	ForkSession            bool
+	nameLock               *os.File // held by the owner-scoped fork operation
 	ResumeSessionID        string
 	ResumeSourceSessionID  string
 	ProviderReserved       bool
@@ -711,6 +713,22 @@ func EffectiveProviderSession(agentName, generatedResumeID string, agentArgs []s
 	return providerID, args, generatedResumeID, nil
 }
 
+func effectiveSpawnProviderSession(agentName string, opts SpawnEggOpts) (string, []string, string, error) {
+	providerID, args, resumeID, err := EffectiveProviderSession(agentName, opts.ResumeSessionID, opts.AgentArgs)
+	if err != nil || !opts.ForkSession {
+		return providerID, args, resumeID, err
+	}
+	if agentName != "claude" || resumeID == "" || opts.ProviderReserved {
+		return "", nil, "", errors.New("fork requires an unclaimed Claude resume source")
+	}
+	providerID = uuid.NewString()
+	// Put both fork controls before any literal-argument separator. Native
+	// --fork-session launches outside this typed operation retain their existing
+	// unverified identity behavior in EffectiveProviderSession.
+	args = append([]string{"--session-id", providerID, "--fork-session"}, args...)
+	return providerID, args, resumeID, nil
+}
+
 // spawnEgg starts a per-session egg child process and returns a connected client.
 func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggConfig, rows, cols uint32, cwd string, debug, vte, trace bool, identity EggIdentity, idleTimeout time.Duration, opts ...SpawnEggOpts) (*egg.Client, error) {
 	if err := ValidateSessionID(sessionID); err != nil {
@@ -740,7 +758,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			return nil, errors.New("command arguments cannot contain NUL bytes")
 		}
 	}
-	if o.Label != "" {
+	if o.Label != "" && o.nameLock == nil {
 		lock, err := AcquireSessionNameLock(cfg)
 		if err != nil {
 			return nil, err
@@ -829,7 +847,7 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	effectiveResumeSessionID := o.ResumeSessionID
 	effectiveAgentArgs := append([]string(nil), o.AgentArgs...)
 	if len(o.Command) == 0 {
-		providerSessionID, effectiveAgentArgs, effectiveResumeSessionID, err = EffectiveProviderSession(agentName, o.ResumeSessionID, o.AgentArgs)
+		providerSessionID, effectiveAgentArgs, effectiveResumeSessionID, err = effectiveSpawnProviderSession(agentName, o)
 		if err != nil {
 			return nil, err
 		}
@@ -856,6 +874,11 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	// this lets the policy mask a live SSH agent socket when ~/.ssh is denied.
 	realHome, _ := os.UserHomeDir()
 	effectiveHome := EffectiveSessionHome(cfg, identity)
+	if len(o.Command) == 0 {
+		if err := SaveSessionLaunchConfig(dir, eggCfg, o.AgentArgs); err != nil {
+			return nil, err
+		}
+	}
 	// Keep the exact execution/provider reference inspectable even when startup
 	// fails before the provider process or its endpoint becomes available.
 	meta := fmt.Sprintf("agent=%s\nkind=%s\ncwd=%s\nprovider_session_id=%s\nprovider_home=%s\n", agentName, o.Kind, cwd, providerSessionID, effectiveHome)

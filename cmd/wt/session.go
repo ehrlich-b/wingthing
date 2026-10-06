@@ -38,6 +38,7 @@ func sessionCmd() *cobra.Command {
 	cmd.AddCommand(sessionSendCmd())
 	cmd.AddCommand(sessionWaitCmd())
 	cmd.AddCommand(sessionRenameCmd())
+	cmd.AddCommand(sessionForkCmd())
 	cmd.AddCommand(sessionKillCmd())
 	return cmd
 }

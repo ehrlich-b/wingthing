@@ -21,7 +21,7 @@ var browserConversationAdmission = NewMCPAdmissionState()
 // access is checked independently before selecting a legacy session principal.
 func BrowserSessionControl(version string, ctx context.Context, cfg *config.Config, wc *config.WingConfig, req ws.TunnelRequest, operation string, arguments json.RawMessage, home string, sharedHost bool) (map[string]any, error) {
 	switch operation {
-	case "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "conversation_list", "conversation_bootstrap", "conversation_read", "conversation_checkpoint", "conversation_wake", "agent_start":
+	case "session_fork", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "conversation_list", "conversation_bootstrap", "conversation_read", "conversation_checkpoint", "conversation_wake", "agent_start":
 	default:
 		return nil, errors.New("unsupported browser session operation")
 	}
@@ -49,7 +49,7 @@ func BrowserSessionControl(version string, ctx context.Context, cfg *config.Conf
 			return nil, errors.New("browser agent_start requires a linked personal conversation")
 		}
 	}
-	if operation == "session_status" || operation == "session_read" || operation == "session_wait" || (operation == "session_prompt" || operation == "terminal_send") {
+	if operation == "session_fork" || operation == "session_status" || operation == "session_read" || operation == "session_wait" || (operation == "session_prompt" || operation == "terminal_send") {
 		var selector struct {
 			Session string `json:"session"`
 		}
@@ -62,6 +62,11 @@ func BrowserSessionControl(version string, ctx context.Context, cfg *config.Conf
 		dir := filepath.Join(cfg.Dir, "eggs", selector.Session)
 		if _, err := os.Stat(dir); err != nil || !eggclient.CanAccessSessionArtifact(req, dir, paths) {
 			return nil, errors.New("session not found or not owned by caller")
+		}
+		if operation == "session_fork" {
+			if eggclient.ReadEggOwner(dir) != req.SenderUserID {
+				return nil, errors.New("session not found or not owned by caller")
+			}
 		}
 		if operation == "session_prompt" || operation == "terminal_send" {
 			if !wingpolicy.CanAttachSession(req.SenderUserID, req.SenderOrgRole, eggclient.ReadEggOwner(dir)) {
