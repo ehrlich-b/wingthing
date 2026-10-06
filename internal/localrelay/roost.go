@@ -175,7 +175,13 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 
 	// Authenticated roost users always receive the typed owner-scoped control
 	// surface. wing.yaml can add role-scoped executable tools beside it.
-	tools, policy, err := loadRoostMCPConfig(cfg.Dir)
+	wingCfg, err := config.LoadWingConfig(cfg.Dir)
+	if err != nil {
+		return err
+	}
+	contextCfg, releaseContext := config.FreezeContextConfig(cfg.Dir, wingCfg.Context)
+	defer releaseContext()
+	tools, policy, err := loadRoostMCPConfig(cfg.Dir, contextCfg)
 	if err != nil {
 		return err
 	}
@@ -220,7 +226,7 @@ func RunRoostForeground(version string, addrFlag string, devFlag bool, labelsFla
 				case <-ctx.Done():
 					return
 				case <-mcpSIGHUPCh:
-					newTools, newPolicy, reloadErr := loadRoostMCPConfig(cfg.Dir)
+					newTools, newPolicy, reloadErr := loadRoostMCPConfig(cfg.Dir, contextCfg)
 					if reloadErr != nil {
 						log.Printf("mcp: reload failed; keeping previous configuration: %v", reloadErr)
 						continue
@@ -413,10 +419,13 @@ func roostMCPControlTools(version string, srv *relay.Server, cfg *config.Config,
 	return append(tools, srv.PortalNativeMCPTools(cfg.WingID)...)
 }
 
-func loadRoostMCPConfig(configDir string) ([]*config.ToolConfig, *config.MCPConfig, error) {
+func loadRoostMCPConfig(configDir string, contexts ...*config.ContextConfig) ([]*config.ToolConfig, *config.MCPConfig, error) {
 	wingCfg, err := config.LoadWingConfig(configDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load wing config for mcp: %w", err)
+	}
+	if len(contexts) > 0 {
+		config.RetainContextConfig(wingCfg, contexts[0])
 	}
 	if wingCfg.MCP == nil || !wingCfg.MCP.Enabled {
 		return nil, nil, nil
@@ -441,11 +450,11 @@ func loadRoostMCPConfig(configDir string) ([]*config.ToolConfig, *config.MCPConf
 }
 
 func roostToolRunner(dir string, tools []*config.ToolConfig) (*egg.ToolRunner, error) {
-	wingCfg, err := config.LoadWingConfig(dir)
+	contextCfg, err := config.LoadContextConfig(dir)
 	if err != nil {
 		return nil, err
 	}
-	client, err := contextclient.New(wingCfg.Context)
+	client, err := contextclient.New(contextCfg)
 	if err != nil {
 		return nil, err
 	}

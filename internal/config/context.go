@@ -2,10 +2,13 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 )
 
 // ContextConfig enrolls the wing as an impersonation client. Only the wing reads SecretFile.
@@ -54,4 +57,38 @@ func LoadWingTools(dir string, c *ContextConfig) ([]*ToolConfig, error) {
 		}
 	}
 	return tools, nil
+}
+
+// Context enrollment is process-scoped, including when roost and wing share a
+// process. Separate config loads for forks and tool listeners use this snapshot.
+var runtimeContexts sync.Map // config directory -> *WingConfig (Context may be nil)
+
+func FreezeContextConfig(dir string, c *ContextConfig) (*ContextConfig, func()) {
+	snapshot := &WingConfig{Context: c}
+	value, loaded := runtimeContexts.LoadOrStore(filepath.Clean(dir), snapshot)
+	return value.(*WingConfig).Context, func() {
+		if !loaded {
+			runtimeContexts.CompareAndDelete(filepath.Clean(dir), snapshot)
+		}
+	}
+}
+
+func LoadContextConfig(dir string) (*ContextConfig, error) {
+	if value, ok := runtimeContexts.Load(filepath.Clean(dir)); ok {
+		return value.(*WingConfig).Context, nil
+	}
+	cfg, err := LoadWingConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Context, nil
+}
+
+// RetainContextConfig lets SIGHUP reload other settings without changing the
+// credentials or secret masks of surviving sessions.
+func RetainContextConfig(next *WingConfig, current *ContextConfig) {
+	if !reflect.DeepEqual(next.Context, current) {
+		log.Print("context config change requires a restart")
+	}
+	next.Context = current
 }

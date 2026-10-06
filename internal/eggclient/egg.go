@@ -778,11 +778,11 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 		}
 		eggCfg = sealed
 	}
-	wingCfg, err := config.LoadWingConfig(cfg.Dir)
+	contextCfg, err := config.LoadContextConfig(cfg.Dir)
 	if err != nil {
 		return nil, err
 	}
-	eggCfg, protected, err := protectContextSecret(eggCfg, wingCfg.Context, cwd, EffectiveSessionHome(cfg, identity))
+	eggCfg, protected, err := protectContextSecret(eggCfg, contextCfg, cwd, EffectiveSessionHome(cfg, identity))
 	if err != nil {
 		return nil, err
 	}

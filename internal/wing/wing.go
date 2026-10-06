@@ -703,6 +703,10 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 		return err
 	}
 
+	var releaseContext func()
+	wingCfg.Context, releaseContext = config.FreezeContextConfig(cfg.Dir, wingCfg.Context)
+	defer releaseContext()
+
 	// Merge wing.yaml with CLI flags (CLI extends yaml)
 	if roostFlag == "" && wingCfg.Roost != "" {
 		roostFlag = wingCfg.Roost
@@ -1149,6 +1153,7 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 						continue
 					}
 					wingCfgMu.Lock()
+					config.RetainContextConfig(newCfg, wingCfg.Context)
 					wingCfg.Locked = newCfg.Locked
 					wingCfg.Spectate = newCfg.Spectate
 					wingCfg.AllowKeys = newCfg.AllowKeys
@@ -1181,7 +1186,6 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 					// Hot-reload egg config (if path changed)
 					oldEggConfig := wingCfg.EggConfig
 					wingCfg.EggConfig = newCfg.EggConfig
-					wingCfg.Context = newCfg.Context
 					if newCfg.EggConfig != oldEggConfig {
 						eggPath := newCfg.EggConfig
 						if eggPath == "" {

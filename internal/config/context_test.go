@@ -1,6 +1,9 @@
 package config
 
 import (
+	"bytes"
+	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -72,5 +75,69 @@ func TestContextConfigRequiresHTTPSOffLoopback(t *testing.T) {
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("%s: %v", url, err)
 		}
+	}
+}
+
+func TestContextConfigReloadRequiresRestart(t *testing.T) {
+	original := &ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: "/config/secret", Scopes: []string{"jira"}}
+	cases := []struct {
+		name          string
+		current, next *ContextConfig
+		changed       bool
+	}{
+		{"unchanged", original, original, false},
+		{"enable", nil, original, true},
+		{"disable", original, nil, true},
+		{"url", original, &ContextConfig{URL: "https://new.example", ClientID: original.ClientID, SecretFile: original.SecretFile, Scopes: original.Scopes}, true},
+		{"client_id", original, &ContextConfig{URL: original.URL, ClientID: "new", SecretFile: original.SecretFile, Scopes: original.Scopes}, true},
+		{"secret_file", original, &ContextConfig{URL: original.URL, ClientID: original.ClientID, SecretFile: "/config/new", Scopes: original.Scopes}, true},
+		{"scopes", original, &ContextConfig{URL: original.URL, ClientID: original.ClientID, SecretFile: original.SecretFile, Scopes: []string{"happyfox"}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			previous := log.Writer()
+			log.SetOutput(&output)
+			defer log.SetOutput(previous)
+			next := &WingConfig{Context: tc.next, Debug: true}
+			RetainContextConfig(next, tc.current)
+			if next.Context != tc.current || !next.Debug {
+				t.Fatalf("reload changed startup Context or lost other settings: %+v", next)
+			}
+			if strings.Contains(output.String(), "context config change requires a restart") != tc.changed {
+				t.Fatalf("reload log: %s", output.String())
+			}
+		})
+	}
+}
+
+func TestContextConfigFrozenAcrossSeparateLoads(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			dir := t.TempDir()
+			var initial *ContextConfig
+			if enabled {
+				initial = &ContextConfig{URL: "https://context.example", ClientID: "wing", SecretFile: filepath.Join(dir, "old")}
+			}
+			current, release := FreezeContextConfig(dir, initial)
+			defer release()
+			changed := &ContextConfig{URL: "https://new.example", ClientID: "new", SecretFile: filepath.Join(dir, "new")}
+			if err := SaveWingConfig(dir, &WingConfig{Context: changed}); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := LoadContextConfig(dir)
+			if err != nil || loaded != current {
+				t.Fatalf("separate launch load changed Context: %+v, %v", loaded, err)
+			}
+			shared, sharedRelease := FreezeContextConfig(dir, changed)
+			sharedRelease()
+			if shared != current {
+				t.Fatal("embedded wing replaced roost Context")
+			}
+			loaded, err = LoadContextConfig(dir)
+			if err != nil || loaded != current {
+				t.Fatal("embedded wing released roost Context")
+			}
+		})
 	}
 }

@@ -20,16 +20,16 @@ func PrepareBrowserTools(cfg *config.Config, sessionID string, tools []*config.T
 	if len(tools) == 0 {
 		return nil, nil
 	}
-	wingCfg, err := config.LoadWingConfig(cfg.Dir)
+	contextCfg, err := config.LoadContextConfig(cfg.Dir)
 	if err != nil {
 		return nil, err
 	}
 	for _, tool := range tools {
-		if tool.Context != "" && wingCfg.Context == nil {
+		if tool.Context != "" && contextCfg == nil {
 			return nil, fmt.Errorf("tool %s: context requires a wing context block", tool.Name)
 		}
 	}
-	client, err := contextclient.New(wingCfg.Context)
+	client, err := contextclient.New(contextCfg)
 	if err != nil {
 		return nil, err
 	}
