@@ -201,10 +201,118 @@ type EggResources struct {
 
 // DefaultDenyPaths returns paths that should be blocked by default in sandboxed sessions.
 func DefaultDenyPaths() []string {
-	return []string{
+	paths := []string{
 		"~/.ssh", "~/.gnupg", "~/.aws", "~/.docker",
 		"~/.kube", "~/.netrc", "~/.bash_history", "~/.zsh_history",
 	}
+	return append(paths, eggControlDenyPaths("")...)
+}
+
+// Include both release channels and an explicitly selected state directory.
+// An egg never needs a controller token, even its own egg.token.
+func eggControlDenyPaths(sessionDir string) []string {
+	home, _ := os.UserHomeDir()
+	states := []string{filepath.Join(home, ".wingthing"), filepath.Join(home, ".wingthing-preview")}
+	if state, err := wingconfig.StateDir(); err == nil {
+		states = append(states, state)
+	}
+	if filepath.Base(filepath.Dir(sessionDir)) == "eggs" {
+		states = append(states, filepath.Dir(filepath.Dir(sessionDir)))
+	}
+	seen := make(map[string]bool)
+	var paths []string
+	for _, state := range states {
+		state = wingconfig.CanonicalProviderPath(state)
+		if seen[state] {
+			continue
+		}
+		seen[state] = true
+		for _, name := range []string{"eggs", "device_token.yaml", "local_device_token.yaml", "wing_key", "sync.key", "wing.yaml", "config.yaml", "roost.db", "wt.db"} {
+			paths = append(paths, filepath.Join(state, name))
+		}
+	}
+	return paths
+}
+
+// Linux deny masks cannot have holes: they are applied after writable mounts.
+// Compile the existing mounts into a jail allowlist with the control trees
+// omitted, then add only this session's bridge mounts. Splitting ancestor
+// mounts also keeps future sibling eggs out; enumerating current eggs alone
+// would leave a race with the next session launch.
+func isolateLinuxEggControl(mounts []sandbox.Mount, control []string, bridges []sandbox.Mount) ([]sandbox.Mount, error) {
+	var trees []string
+	for _, path := range control {
+		if filepath.Base(path) == "eggs" {
+			trees = append(trees, wingconfig.CanonicalProviderPath(path))
+		}
+	}
+	var result []sandbox.Mount
+	splitting := make(map[string]bool)
+	var split func(sandbox.Mount) error
+	split = func(m sandbox.Mount) error {
+		path := wingconfig.CanonicalProviderPath(m.Source)
+		ancestor := false
+		for _, tree := range trees {
+			if controlPathWithin(path, tree) {
+				return nil
+			}
+			ancestor = ancestor || controlPathWithin(tree, path)
+		}
+		if !ancestor {
+			result = append(result, m)
+			return nil
+		}
+		if splitting[path] {
+			return nil // an alias back to an ancestor must not reopen the tree
+		}
+		splitting[path] = true
+		defer delete(splitting, path)
+		entries, err := os.ReadDir(m.Source)
+		if err != nil {
+			return fmt.Errorf("split control-tree ancestor %s: %w", m.Source, err)
+		}
+		for _, entry := range entries {
+			child := filepath.Join(m.Source, entry.Name())
+			if filepath.Clean(m.Source) == "/" {
+				// The jail supplies private proc, dev and tmp. It recreates
+				// merged-usr aliases before installing the other mounts.
+				mergedUSR := child == "/bin" || child == "/sbin" || child == "/lib" || child == "/lib64"
+				if child == "/proc" || child == "/dev" || child == "/tmp" || (mergedUSR && entry.Type()&os.ModeSymlink != 0) {
+					continue
+				}
+			}
+			if err := split(sandbox.Mount{Source: child, Target: child, ReadOnly: m.ReadOnly}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, m := range mounts {
+		if err := split(m); err != nil {
+			return nil, err
+		}
+	}
+	return append(result, bridges...), nil
+}
+
+func controlPathWithin(path, root string) bool {
+	return path == root || strings.HasPrefix(path, strings.TrimSuffix(root, "/")+"/")
+}
+
+func linuxEggReadMounts(mounts []sandbox.Mount, deny []string) []sandbox.Mount {
+	for _, path := range deny {
+		if path == "/" {
+			return mounts // an explicit jail already has an allowlist
+		}
+	}
+	for _, mount := range mounts {
+		if filepath.Clean(mount.Source) == "/" {
+			return mounts
+		}
+	}
+	// Outside explicit jail mode, the Linux backend implicitly allows reads
+	// everywhere. Preserve those reads when compiling control-tree isolation.
+	return append([]sandbox.Mount{{Source: "/", Target: "/", ReadOnly: true}}, mounts...)
 }
 
 // DefaultCacheDirs returns OS-standard cache directories that build tools need.

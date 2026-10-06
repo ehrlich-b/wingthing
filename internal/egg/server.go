@@ -526,6 +526,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if err := ValidateSocketPath(filepath.Join(s.dir, "egg.sock")); err != nil {
 		return err
 	}
+	if rc.ToolSocketPath != "" && config.CanonicalProviderPath(rc.ToolSocketPath) != config.CanonicalProviderPath(filepath.Join(s.dir, ".tools", "tool.sock")) {
+		return errors.New("tool socket must belong to this egg's .tools directory")
+	}
 	defer func() {
 		if runErr != nil {
 			if err := RecordSessionProcessEvent(s.dir, "session_failed", "failed", "egg startup or control process failed"); err != nil {
@@ -779,11 +782,16 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			fsHome = rc.UserHome
 		}
 		mounts, deny, denyWrite := ParseFSRules(rc.FS, fsHome)
+		if runtime.GOOS == "linux" {
+			mounts = linuxEggReadMounts(mounts, deny)
+		}
+		var bridgeMounts []sandbox.Mount
 		if lifecycleSettingsPath != "" {
-			mounts = append(mounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
+			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: lifecycleSettingsPath, Target: lifecycleSettingsPath, ReadOnly: true})
 		}
 		if browserRequestsPath != "" {
-			mounts = append(mounts, sandbox.Mount{
+			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: shimDir, Target: shimDir, ReadOnly: true})
+			bridgeMounts = append(bridgeMounts, sandbox.Mount{
 				Source: browserRequestsPath,
 				Target: browserRequestsPath,
 			})
@@ -825,10 +833,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			}
 		}
 
-		// Mount wt binary dir and .tools dir for tool shim access in jail mode.
-		// Only .tools is mounted — the rest of the session dir (audit logs, chat
-		// data) stays invisible to the sandboxed agent.
-		if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
+		// The Linux jail re-execs wt even without tools. Mount its binary
+		// directory explicitly, including when a development binary is in tmp.
+		if runtime.GOOS == "linux" || (rc.ToolSocketPath != "" && len(rc.ToolNames) > 0) {
 			wtBin, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("locate wt binary for sandbox mounts: %w", err)
@@ -837,9 +844,46 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 				wtBin = resolved
 			}
 			wtDir := filepath.Dir(wtBin)
-			toolsDir := filepath.Dir(rc.ToolSocketPath)
 			mounts = append(mounts, sandbox.Mount{Source: wtDir, Target: wtDir, ReadOnly: true})
-			mounts = append(mounts, sandbox.Mount{Source: toolsDir, Target: toolsDir, ReadOnly: true})
+		}
+		if rc.ToolSocketPath != "" && len(rc.ToolNames) > 0 {
+			toolsDir := filepath.Dir(rc.ToolSocketPath)
+			bridgeMounts = append(bridgeMounts, sandbox.Mount{Source: toolsDir, Target: toolsDir, ReadOnly: true})
+		}
+		control := eggControlDenyPaths(s.dir)
+		deny = append(deny, control...)
+		// The OS policies below handle the trees with exact bridge exceptions.
+		// Retain ordinary file denies.
+		var filtered []string
+		for _, path := range deny {
+			isTree := false
+			for _, target := range control {
+				if filepath.Base(target) == "eggs" && config.CanonicalProviderPath(path) == target {
+					isTree = true
+					break
+				}
+			}
+			if !isTree {
+				filtered = append(filtered, path)
+			}
+		}
+		deny = filtered
+		sandboxHome := rc.UserHome
+		if runtime.GOOS == "linux" {
+			mounts, err = isolateLinuxEggControl(mounts, control, bridgeMounts)
+			if err != nil {
+				return err
+			}
+			deny = append(deny, "/")
+			// The existing jail always binds its HOME writable. Give that
+			// implicit mount an empty directory; real HOME and agent config
+			// directories keep their explicitly compiled mount permissions.
+			sandboxHome = filepath.Join(s.dir, ".sandbox-home")
+			if err := os.MkdirAll(sandboxHome, 0o700); err != nil {
+				return fmt.Errorf("create private sandbox home mount: %w", err)
+			}
+		} else {
+			mounts = append(mounts, bridgeMounts...)
 		}
 
 		proxyPort := 0
@@ -870,7 +914,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			MaxFDs:       rc.MaxFDs,
 			PidLimit:     rc.PidLimit,
 			SessionID:    sessionID,
-			UserHome:     rc.UserHome,
+			UserHome:     sandboxHome,
 			Trace:        rc.Trace,
 			AllowSockets: allowSockets,
 			// Enforced against the final emitted policy inside sandbox.New.
@@ -881,7 +925,15 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		if err != nil {
 			return fmt.Errorf("sandbox: %w", err)
 		}
-		cmd, err = sb.Exec(context.Background(), binPath, args)
+		sandboxBin, sandboxArgs := binPath, args
+		if runtime.GOOS == "darwin" {
+			// A second Seatbelt policy supplies narrow exceptions to the
+			// control-tree deny. Nested policies intersect, so it cannot
+			// weaken the filesystem or network policy in the outer sandbox.
+			sandboxBin = "/usr/bin/sandbox-exec"
+			sandboxArgs = append([]string{"-p", eggControlProfile(control, bridgeMounts, rc.ToolSocketPath), binPath}, args...)
+		}
+		cmd, err = sb.Exec(context.Background(), sandboxBin, sandboxArgs)
 		if err != nil {
 			if destroyErr := sb.Destroy(); destroyErr != nil {
 				log.Printf("egg: destroy sandbox after exec failure: %v", destroyErr)
@@ -1220,6 +1272,29 @@ func installBrowserShimAlias(dir, name, script string) error {
 		return os.WriteFile(path, []byte(script), 0755)
 	}
 	return os.Symlink("wt-browser", path)
+}
+
+func eggControlProfile(control []string, bridges []sandbox.Mount, toolSocket string) string {
+	var profile strings.Builder
+	profile.WriteString("(version 1)\n(allow default)\n")
+	// Other eggs' environments carry their capabilities. Seatbelt shares the
+	// host PID namespace, so filesystem isolation alone cannot protect them.
+	profile.WriteString("(deny process-info*)\n")
+	for _, path := range control {
+		path = config.CanonicalProviderPath(path)
+		fmt.Fprintf(&profile, "(deny file-read* file-write* network-outbound (literal %q) (subpath %q))\n", path, path)
+	}
+	for _, bridge := range bridges {
+		path := config.CanonicalProviderPath(bridge.Source)
+		fmt.Fprintf(&profile, "(allow file-read* (literal %q) (subpath %q))\n", path, path)
+		if !bridge.ReadOnly {
+			fmt.Fprintf(&profile, "(allow file-write* (literal %q))\n", path)
+		}
+	}
+	if toolSocket != "" {
+		fmt.Fprintf(&profile, "(allow network-outbound (literal %q))\n", config.CanonicalProviderPath(toolSocket))
+	}
+	return profile.String()
 }
 
 // sandboxAllowedSockets converts already-filtered endpoint environment into
