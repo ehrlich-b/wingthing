@@ -51,9 +51,8 @@ function handleTerminalControlError(ws, sessionId, wingId, message) {
 }
 
 function setSessionActions(active) {
-    // Copy appears only once there is a selection (see terminal.js).
-    DOM.terminalCopyBtn.style.display = 'none';
-    DOM.terminalCopyBtn.disabled = true;
+    DOM.terminalCopyBtn.style.display = active ? '' : 'none';
+    if (!active) DOM.terminalCopyBtn.disabled = true;
     // Leaving a terminal must not leave its end-session control in the header.
     if (!active) {
         DOM.sessionCloseBtn.style.display = 'none';

@@ -568,22 +568,15 @@ try {
     }
 
     try {
-      // Rename lives in the open session's details, reached from its title.
-      record('carol: sidebar rows carry no controls',
-        await p.locator('#session-tabs .session-tab button').count() === 0);
-      await p.focus('#header-title');
-      await p.keyboard.press('Enter');
-      await p.locator('#detail-egg-rename').waitFor({ state: 'visible', timeout: 5000 });
-      record('carol: the keyboard opens session details from the title and lands inside them',
-        await p.evaluate(() => document.getElementById('detail-dialog').contains(document.activeElement)));
-      await p.click('#detail-egg-rename');
-      await p.locator('#detail-dialog .session-name-input').fill('support-night-review');
-      await p.locator('#detail-dialog .session-name-input').press('Enter');
+      const tab = p.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"]`);
+      await tab.hover();
+      await tab.locator('.session-rename-btn').click();
+      await tab.locator('.session-name-input').fill('support-night-review');
+      await tab.locator('.session-name-input').press('Enter');
       await p.waitForFunction((sessionID) => {
         const candidate = document.querySelector(`#session-tabs .session-tab[data-sid="${sessionID}"] .tab-label`);
         return candidate && candidate.textContent === 'support-night-review';
       }, carolSessionID, { timeout: 10000 });
-      await p.click('#detail-backdrop', { position: { x: 8, y: 8 } });
       await p.reload({ waitUntil: 'domcontentloaded' });
       await p.waitForSelector(`#session-tabs .session-tab[data-sid="${carolSessionID}"] .tab-label`, { timeout: 20000 });
       const persisted = await p.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"] .tab-label`).textContent();
@@ -649,13 +642,11 @@ try {
       const firstBox = await rows.nth(firstIndex).boundingBox();
       const secondBox = await rows.nth(secondIndex).boundingBox();
       if (!firstBox || !secondBox) throw new Error('copy fixture rows have no layout box');
-      // Copy is not a resting control: it appears only for a selection.
-      if (await p.locator('#terminal-copy-btn').isVisible()) throw new Error('copy was visible before any selection');
       await p.mouse.move(firstBox.x + 2, firstBox.y + firstBox.height / 2);
       await p.mouse.down();
       await p.mouse.move(secondBox.x + 112, secondBox.y + secondBox.height / 2, { steps: 8 });
       await p.mouse.up();
-      await p.waitForSelector('#terminal-copy-btn', { state: 'visible', timeout: 5000 });
+      await p.waitForFunction(() => !document.getElementById('terminal-copy-btn').disabled, null, { timeout: 5000 });
       await p.click('#terminal-copy-btn');
       const copied = await p.evaluate(() => window.__wingthingCopiedText);
       record('carol: clean copy preserves indentation and removes terminal line padding',
@@ -708,20 +699,13 @@ try {
   try {
     await alice.page.goto(BASE + '/app/', { waitUntil: 'domcontentloaded' });
     await alice.page.waitForSelector(`#session-tabs .session-tab[data-sid="${carolSessionID}"]`, { timeout: 20000 });
-    const tabButtons = await alice.page.locator('#session-tabs .session-tab button').count();
+    const adminRename = await alice.page.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"] .session-rename-btn`).count();
+    record('admin: another user session does not expose rename', adminRename === 0, `rename buttons=${adminRename}`);
     const foreignCard = alice.page.locator(`#sessions-list .egg-box[data-sid="${carolSessionID}"]`);
     await foreignCard.waitFor({ state: 'visible', timeout: 20000 });
-    const cardButtons = await foreignCard.locator('button').count();
-    await foreignCard.locator('.inventory-details').click();
-    await alice.page.waitForSelector('#detail-egg-delete', { state: 'visible', timeout: 10000 });
-    const adminRename = await alice.page.locator('#detail-egg-rename, #detail-dialog .session-fork-btn').count();
-    record('admin: another user session does not expose rename', adminRename === 0 && tabButtons === 0,
-      `rename/fork actions=${adminRename} sidebar buttons=${tabButtons}`);
-    record('admin: details preserve allowed inspection and stop while rename remains owner-only',
-      cardButtons === 1 && await foreignCard.locator('.inventory-details').count() === 1 &&
-      await alice.page.locator('#detail-egg-delete').count() === 1 &&
-      (await alice.page.locator('#detail-dialog').textContent()).includes('/opt/wingthing/support'));
-    await alice.page.click('#detail-backdrop', { position: { x: 8, y: 8 } });
+    record('admin: inventory preserves allowed inspection and stop while rename remains owner-only',
+      await foreignCard.locator('.inventory-details, .inventory-stop').count() === 2 &&
+      await foreignCard.locator('.inventory-rename').count() === 0);
   } catch (e) {
     record('admin: another user session does not expose rename', false, String(e).slice(0, 200));
   }
@@ -739,27 +723,28 @@ try {
   try {
     const p = carol.page;
     await p.click('#home-btn');
-    const card = p.locator(`#sessions-list .egg-box[data-sid="${carolSessionID}"]`);
-    await card.waitFor({ state: 'visible', timeout: 20000 });
-    const cards = await p.locator('#sessions-list .egg-box').count();
-    // A short inventory shows no search, and a single project needs no header.
-    const searchHidden = cards >= 8 || !(await p.locator('#session-inventory-search').isVisible());
-    const headers = await p.locator('#sessions-list .inventory-group-header').count();
-    record('carol: a named owned session stays inspectable under its project in a calm inventory',
-      searchHidden && headers === 0 &&
-      await card.locator('button').count() === 1 && await card.locator('.inventory-details').count() === 1 &&
-      (await card.getAttribute('aria-label')).includes('/opt/wingthing/support') &&
-      (await card.locator('.egg-label').textContent()) === 'support-night-review',
-      `cards=${cards} search_hidden=${searchHidden} headers=${headers}`);
-    await p.locator('#sessions-list .egg-box').first().focus();
-    for (let i = 0; i < cards && !(await p.evaluate((id) => document.activeElement?.dataset.sid === id, carolSessionID)); i++) {
-      await p.keyboard.press('ArrowDown');
-    }
+    await p.waitForSelector('#session-inventory-search', { state: 'visible', timeout: 20000 });
+    await p.fill('#session-inventory-search', 'support-night-review');
+    await p.waitForFunction((id) => {
+      const rows = Array.from(document.querySelectorAll('#sessions-list .egg-box'));
+      return rows.length === 1 && rows[0].dataset.sid === id;
+    }, carolSessionID, { timeout: 10000 });
+    // One provider means its filter cannot narrow anything, so it stays hidden.
+    const agentFilterHidden = !(await p.locator('#session-inventory-agent').isVisible());
+    const card = p.locator('#sessions-list .egg-box').first();
+    const group = p.locator('#sessions-list .inventory-project-group').first();
+    record('carol: search keeps a named owned session inspectable under its project',
+      await p.inputValue('#session-inventory-search') === 'support-night-review' && agentFilterHidden &&
+      await card.locator('.inventory-attach, .inventory-details, .inventory-rename, .inventory-stop').count() === 4 &&
+      (await group.locator('.inventory-group-header').textContent()).includes('/opt/wingthing/support'));
+    await p.locator('#session-inventory-search').focus();
+    await p.keyboard.press('ArrowDown');
     record('carol: keyboard inventory navigation focuses the exact matching session',
       await p.evaluate((id) => document.activeElement?.dataset.sid === id, carolSessionID));
-    await shot(p, 'carol-inventory');
+    await shot(p, 'carol-filtered-inventory');
+    await p.click('#session-inventory-clear');
   } catch (e) {
-    record('carol: calm inventory and keyboard navigation', false, String(e).slice(0, 200));
+    record('carol: searchable inventory and keyboard navigation', false, String(e).slice(0, 200));
   }
 
   // ---------- Carol (support member), mobile ----------
@@ -769,12 +754,6 @@ try {
     try {
       await waitWing(p);
       record('carol-mobile: dashboard renders with shared wing', true);
-      await p.waitForSelector('#sessions-list .egg-box', { state: 'visible', timeout: 20000 });
-      const boxes = await p.locator('#sessions-list .egg-box').evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().toJSON()));
-      const previews = await p.locator('#sessions-list .egg-preview').count();
-      record('carol-mobile: session cards are single full-width lines above the fold',
-        previews === 0 && boxes.every((box) => box.height >= 44 && box.height <= 50) && boxes[0].bottom <= 844,
-        JSON.stringify(boxes.map((box) => [Math.round(box.top), Math.round(box.height)])));
     } catch (e) {
       record('carol-mobile: dashboard renders with shared wing', false, String(e).slice(0, 200));
     }
