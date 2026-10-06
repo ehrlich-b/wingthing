@@ -200,7 +200,7 @@
 <tr><td>idle_timeout</td><td>kill idle sessions after this duration (e.g. <code>4h</code>). Default: disabled</td><td>live</td></tr>
 <tr><td>egg_config</td><td>path to default <code>egg.yaml</code> for sessions on this wing</td><td>live</td></tr>
 <tr><td>tools_dir</td><td>directory containing privileged tool YAML files</td><td>live for roost MCP; new sessions for egg tools</td></tr>
-<tr><td>context</td><td>Slide Context endpoint, client ID, private <code>secret_file</code>, and optional scopes</td><td>restart wing and end existing eggs when enabling or changing the secret path</td></tr>
+<tr><td>context</td><td>Slide Context endpoint, client ID, private <code>secret_file</code>, and optional scopes</td><td>restart wing or roost for any Context config change</td></tr>
 <tr><td>audit</td><td>record session terminal output for replay</td><td>live</td></tr>
 <tr><td>debug</td><td>verbose daemon logging</td><td>live</td></tr>
 <tr><td>conv</td><td>conversation context file path</td><td>live</td></tr>
@@ -222,10 +222,10 @@ tools_dir: ~/.wingthing/tools<br>
 context:<br>
 &nbsp;&nbsp;url: https://context.pants.taxi<br>
 &nbsp;&nbsp;client_id: wingthing-prod <span class="comment"># use wingthing-stage with the stage URL and secret</span><br>
-&nbsp;&nbsp;secret_file: /etc/wingthing/context.secret<br>
+&nbsp;&nbsp;secret_file: /home/wing/.wingthing/context.secret<br>
 &nbsp;&nbsp;scopes: [happyfox] <span class="comment"># optional; omit to use the client's permitted scopes</span>
 </div>
-<p>Keep the secret file private (mode <code>0600</code>) and outside agent workspaces. The wing reads it; Context secrets and per-user access tokens stay in wing memory. Egg calls go through the existing tool socket. Each socket is bound to the same verified owner identity used for <code>WT_USER_EMAIL</code>; changing arguments or environment cannot change the impersonated user. Roost MCP calls use the authenticated caller's email and existing role policy. Calls without a verified email fail; there is no service-token fallback.</p>
+<p><code>secret_file</code> must live in the wing config directory (for example <code>/home/wing/.wingthing</code>), which eggs must never mount. Keep the file private (mode <code>0600</code>). The wing reads it; Context secrets and per-user access tokens stay in wing memory. Egg calls go through the existing tool socket. Each socket is bound to the same verified owner identity used for <code>WT_USER_EMAIL</code>; changing arguments or environment cannot change the impersonated user. Once a different user takes control of the session, including an admin, its Context tools are permanently disabled; the original owner must start a new session. Roost MCP calls use the authenticated caller's email and existing role policy. Calls without a verified email fail; there is no service-token fallback.</p>
 <p>Example tool file in <code>tools_dir</code>:</p>
 <div class="docs-code">
 name: support-tickets<br>
@@ -243,7 +243,7 @@ max_concurrent: 5
 </div>
 <p>Use <code>context</code> instead of <code>run</code>; configuring both fails validation. Context tools require the wing Context block. Ordered arguments become named MCP arguments; non-string values use JSON, and omitted optional parameters retain Context's defaults. Text content becomes tool output. Operation errors preserve Context's text, JSON-RPC errors include their code and message, and HTTP errors include their status and up to 500 characters of JSON <code>message</code> or <code>error_description</code>. Client secrets, bearer tokens, and token-exchange assertions are redacted.</p>
 <p>Tokens are cached per owner and exchanged again shortly before expiry with fresh assertions. An HTTP 401 from <code>/mcp</code> invalidates that owner's rejected token and retries the call once with a refreshed token.</p>
-<p>Restart the wing and end existing eggs when enabling Context or changing <code>secret_file</code>: existing eggs retain their launch-time filesystem policy. New eggs deny access to the secret path and its symlink target. Linux masks them with deny mounts; macOS also adds both to Seatbelt's protected paths. Context requires an enforced egg sandbox. Roost MCP configuration reloads with <code>SIGHUP</code>; egg tool listeners keep their Context configuration for the session lifetime.</p>
+<p>All Context config changes require a wing or roost restart, including <code>url</code>, <code>client_id</code>, <code>secret_file</code>, and scopes. <code>SIGHUP</code> keeps the startup Context block and logs <code>context config change requires a restart</code>; other tool and MCP settings can still reload. End existing eggs when enabling Context or changing the secret path because their filesystem policies were fixed at launch. Sessions that survive a wing restart cannot use Context tools; start a new session. New eggs deny access to the secret path, its symlink target, and projected paths under directory aliases; grants resolving directly to protected secrets are refused. Linux uses deny mounts; macOS also protects these paths with Seatbelt. Context requires an enforced egg sandbox.</p>
 </div>
 
 <div class="docs-section" id="access-control">
