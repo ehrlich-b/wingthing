@@ -280,9 +280,11 @@ the host's old settings when an isolated Claude session exits. Personal local
 sandboxes retain their existing host-config snapshot protection.
 
 For isolated Claude launches, the service account's `~/.claude/settings.json`
-supplies only the deployment `model`, `effortLevel`, and
-`env.CLAUDE_CODE_EFFORT_LEVEL`. Wingthing passes the model with `--model` and
-effort policy with `--settings`,
+supplies only the deployment `model`, `effortLevel`,
+`env.CLAUDE_CODE_EFFORT_LEVEL`, and `env.DISABLE_AUTOUPDATER` when it is `"1"`
+(a host-managed install is read-only inside the jail, so its updater can only
+fail there). Wingthing passes the model with `--model` and the rest with
+`--settings`,
 without rewriting the user's saved settings or exposing the host settings file
 inside the jail. Existing deployments using Sonnet 4.6 and environment effort
 `max` keep that policy:
