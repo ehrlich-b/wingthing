@@ -1,10 +1,75 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey } from '../src/session-inventory.js';
+import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionIsViewed, sessionResourceKey, sessionProjectRoot, groupSessionInventory, sessionGroupHeader } from '../src/session-inventory.js';
 import { sessionRoute, parseSessionRoute } from '../src/session-route.js';
 
 const wing = { wing_id: 'mac', wing_label: 'Personal Mac', hostname: 'mac-mini', online: true, capabilities: ['session.rename.v1'] };
 const session = { id: 'session-1', wing_id: 'mac', user_id: 'owner', agent: 'claude', name: 'release-notes', cwd: '/home/bryan/repos/wingthing', swept: true, status: 'detached' };
+
+test('viewing marks only the visible exact terminal or current-user transcript as seen', () => {
+    const state = { activeView: 'terminal', ptySessionId: session.id, ptyWingId: 'mac', currentUser: { id: 'owner' } };
+    const chatTarget = { userId: 'owner', wingId: 'linux', sessionId: session.id };
+    assert.equal(sessionIsViewed(session, state, true), true);
+    assert.equal(sessionIsViewed(session, state, false), false);
+    assert.equal(sessionIsViewed({ ...session, wing_id: 'linux' }, state, true), false);
+    assert.equal(sessionIsViewed({ ...session, wing_id: 'linux' }, state, true, chatTarget), true);
+    assert.equal(sessionIsViewed({ ...session, wing_id: 'linux' }, state, true, { ...chatTarget, userId: 'other' }), false);
+    assert.equal(sessionIsViewed(session, { ...state, activeView: 'home' }, true, chatTarget), false);
+});
+
+test('groups use exact wing IDs and cwd roots, not names or basename collisions', () => {
+    const wings = [wing, { ...wing, wing_id: 'linux' }];
+    const sessions = [session, { ...session, id: 'second', cwd: session.cwd + '/' },
+        { ...session, wing_id: 'linux' }, { ...session, cwd: '/srv/wingthing' }, { ...session, id: 'no-cwd', cwd: '' }];
+    const groups = groupSessionInventory(sessions, wings);
+    assert.equal(groups.length, 4);
+    assert.deepEqual(groups.map(group => group.sessions.length), [2, 1, 1, 1]);
+    assert.equal(new Set(groups.map(group => group.key)).size, 4);
+    assert.equal(groups[3].project, '');
+});
+
+test('project grouping uses the nearest known root and respects path boundaries', () => {
+    const known = { ...wing, projects: [{ path: '/repos/app/' }, { path: '/repos/app/nested' }] };
+    assert.equal(sessionProjectRoot({ cwd: '/repos/app/src' }, known), '/repos/app');
+    assert.equal(sessionProjectRoot({ cwd: '/repos/app/nested/src/' }, known), '/repos/app/nested');
+    assert.equal(sessionProjectRoot({ cwd: '/repos/application/src' }, known), '/repos/application/src');
+    assert.equal(sessionProjectRoot({ cwd: '/' }, known), '/');
+    assert.equal(sessionProjectRoot({ cwd: '/repos/app/src/' }, undefined), '/repos/app/src');
+});
+
+test('rollups count statuses and unseen completions separately without double-counting attention', () => {
+    const sessions = ['blocked', 'working', 'idle', 'done', 'exited', 'unknown'].map((status, index) => ({ ...session, id: String(index), needs_attention: true, lifecycle: { status, state_source: 'claude_hook' } }));
+    const unseen = new Set([sessionResourceKey(sessions[0]), sessionResourceKey(sessions[3])]);
+    const [group] = groupSessionInventory(sessions, [wing], {}, unseen);
+    assert.deepEqual(group.rollup, { blocked: 1, working: 1, idle: 1, unseen: 2 });
+    assert.deepEqual(group.sessions.map(session => session.lifecycle.status), ['blocked', 'done', 'working', 'idle', 'exited', 'unknown']);
+});
+
+test('groups and their rows sort blocked, unseen, working, rest with stable ties', () => {
+    const row = (id, status, cwd = '/' + id) => ({ ...session, id, cwd, lifecycle: { status, state_source: 'codex_hook' } });
+    const sessions = [row('idle-a', 'idle'), row('work-a', 'working'), row('done-a', 'done'), row('blocked-a', 'blocked'),
+        row('idle-b', 'idle'), row('done-b', 'done'), row('blocked-b', 'blocked'), row('work-b', 'working')];
+    const unseen = new Set([sessionResourceKey(sessions[2]), sessionResourceKey(sessions[5])]);
+    const groups = groupSessionInventory(sessions, [wing], {}, unseen);
+    assert.deepEqual(groups.map(group => group.sessions[0].id), ['blocked-a', 'blocked-b', 'done-a', 'done-b', 'work-a', 'work-b', 'idle-a', 'idle-b']);
+    assert.deepEqual(groupSessionInventory(sessions.map(session => ({ ...session, cwd: '/same' })), [wing], {}, unseen)[0].sessions.map(session => session.id),
+        ['blocked-a', 'blocked-b', 'done-a', 'done-b', 'work-a', 'work-b', 'idle-a', 'idle-b']);
+    assert.equal(sessions[0].id, 'idle-a', 'sorting does not mutate the source array');
+});
+
+test('blocked keeps the attention tone offline and group headers escape remote paths and IDs', () => {
+    const blocked = { ...session, lifecycle: { status: 'blocked', state_source: 'claude_hook' } };
+    assert.equal(sessionInventoryState(blocked, { ...wing, online: false }).tone, 'attention');
+    const hostile = { ...blocked, wing_id: 'mac<svg>', cwd: '/repo/<script>' };
+    const [group] = groupSessionInventory([hostile], [{ ...wing, wing_id: hostile.wing_id, wing_label: '<img>' }], {}, new Set([sessionResourceKey(hostile)]));
+    const markup = sessionGroupHeader(group);
+    assert.doesNotMatch(markup, /<script>|<svg>|<img>/);
+    assert.match(markup, /1 blocked/);
+    assert.match(markup, /0 working/);
+    assert.match(markup, /1 unseen completion/);
+    assert.match(markup, /Mark completions seen/);
+    assert.match(markup, /mac&lt;svg&gt;/);
+});
 
 test('terminal attachment, silence and bell signals never invent provider completion', () => {
     for (const status of ['active', 'detached', 'idle', 'completed']) {

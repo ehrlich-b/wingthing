@@ -20,6 +20,7 @@ import { initSessionFiles } from './session-files.js';
 import { sessionRoute, parseSessionRoute } from './session-route.js';
 import { restoreConversationRoute } from './conversation-view.js';
 import { initParentDot } from './parent-dot.js';
+import { conversationViewport } from './mobile-viewport.js';
 
 function denyBrowserRelayView() {
     history.replaceState({ view: 'home' }, '', location.pathname);
@@ -317,9 +318,14 @@ async function init() {
         var fullHeight = window.visualViewport.height;
         var fitTimer = null;
         function syncViewport() {
-            var vh = window.visualViewport.height;
+            var conversation = window.innerWidth <= 600 && DOM.terminalSection.classList.contains('chat-active');
+            var metrics = conversationViewport(window.visualViewport, window.innerHeight, conversation);
+            if (!metrics) return;
+            var vh = metrics.height;
             appEl.style.height = vh + 'px';
-            window.scrollTo(0, 0);
+            appEl.style.transform = metrics.top ? 'translateY(' + metrics.top + 'px)' : '';
+            appEl.classList.toggle('chat-keyboard', metrics.keyboard);
+            if (!conversation) window.scrollTo(0, 0);
             if (vh >= fullHeight) {
                 fullHeight = vh;
                 // Debounce fit() — keyboard dismiss fires many resize events
@@ -331,6 +337,8 @@ async function init() {
         }
         window.visualViewport.addEventListener('resize', syncViewport);
         window.visualViewport.addEventListener('scroll', syncViewport);
+        new MutationObserver(syncViewport).observe(DOM.terminalSection, { attributes: true, attributeFilter: ['class'] });
+        syncViewport();
     }
 
     // Detail modal close

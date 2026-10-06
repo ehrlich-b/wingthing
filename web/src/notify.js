@@ -2,7 +2,10 @@ import { S, DOM } from './state.js';
 import { renderSidebar } from './render.js';
 import { renderDashboard } from './render.js';
 import { sessionResourceKey, changeSessionNotification } from './session-reference.js';
-import { findSessionResource } from './session-inventory.js';
+import { findSessionResource, sessionIsViewed } from './session-inventory.js';
+import { chatSnapshot } from './chat-view.js';
+import { acknowledgeSessionCompletions, COMPLETION_STORAGE_PREFIX } from './session-completion.js';
+import { browserLocalStorage, userStorageKey } from './storage-scope.js';
 
 var notifyChannel = null;
 
@@ -29,11 +32,11 @@ export function sendAttentionAck(sessionId, wingId) {
 }
 
 function isViewingSession(sessionId, wingId) {
-    return S.activeView === 'terminal' && sessionId === S.ptySessionId && wingId === S.ptyWingId &&
-           document.visibilityState === 'visible';
+    var snapshot = chatSnapshot();
+    return sessionIsViewed({ id: sessionId, wing_id: wingId }, S, document.visibilityState === 'visible', snapshot && snapshot.target);
 }
 
-export function setNotification(sessionId, wingId) {
+export function setNotification(sessionId, wingId, conversation) {
     wingId = notificationWing(sessionId, wingId);
     if (!sessionId || !wingId) return;
 
@@ -55,8 +58,8 @@ export function setNotification(sessionId, wingId) {
 
     if (document.hidden && 'Notification' in window) {
         if (Notification.permission === 'granted') {
-            fireOSNotification(sessionId, wingId);
-        } else if (Notification.permission === 'default') {
+            fireOSNotification(sessionId, wingId, conversation);
+        } else if (!conversation && Notification.permission === 'default') {
             Notification.requestPermission().then(function(p) {
                 if (p === 'granted') fireOSNotification(sessionId, wingId);
             });
@@ -77,13 +80,26 @@ export function setNotification(sessionId, wingId) {
     }
 }
 
-function fireOSNotification(sessionId, wingId) {
-    var n = new Notification('wingthing', { body: 'A session needs your attention' });
-    n.onclick = function() {
-        window.focus();
-        // Lazy import to avoid circular dependency (nav.js imports from notify.js)
-        import('./nav.js').then(function(mod) { mod.switchToSession(sessionId, undefined, wingId); });
-    };
+async function fireOSNotification(sessionId, wingId, conversation) {
+    var options = { body: conversation && conversation.title ? conversation.title + ' needs your attention' : 'A session needs your attention',
+        tag: JSON.stringify([wingId, sessionId]), data: { sessionId: sessionId, wingId: wingId, conversationId: conversation && conversation.conversationId || '' } };
+    // Home Screen Safari requires persistent service-worker notifications.
+    try {
+        var registration = 'serviceWorker' in navigator && await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL);
+        if (registration) { await registration.showNotification('wingthing', options); return; }
+    } catch (error) { /* Other browsers can still use the page notification. */ }
+    try {
+        var n = new Notification('wingthing', options);
+        n.onclick = function() {
+            window.focus();
+            if (conversation && conversation.conversationId) {
+                import('./conversation-view.js').then(function(mod) { mod.openConversationReference({ wingId: wingId, conversationId: conversation.conversationId }); });
+            } else {
+                // Lazy import to avoid the nav/notify cycle.
+                import('./nav.js').then(function(mod) { mod.switchToSession(sessionId, undefined, wingId); });
+            }
+        };
+    } catch (error) { /* Visible badges remain available without OS support. */ }
 }
 
 export function clearNotification(sessionId, wingId) {
@@ -103,11 +119,22 @@ export function clearNotification(sessionId, wingId) {
 
 export function initNotifyListeners() {
     document.addEventListener('visibilitychange', function() {
-        if (document.visibilityState === 'visible' && S.activeView === 'terminal' && S.ptySessionId) {
-            if (S.sessionNotifications[sessionResourceKey({ id: S.ptySessionId, wingId: S.ptyWingId })]) {
-                clearNotification(S.ptySessionId, S.ptyWingId);
+        if (document.visibilityState === 'visible' && S.activeView === 'terminal') {
+            var snapshot = chatSnapshot();
+            var target = snapshot && snapshot.target;
+            var viewed = target ? { id: target.sessionId, wing_id: target.wingId } : { id: S.ptySessionId, wing_id: S.ptyWingId };
+            acknowledgeSessionCompletions(browserLocalStorage(), S.currentUser && S.currentUser.id, [viewed]);
+            renderSidebar();
+            if (S.sessionNotifications[sessionResourceKey(viewed)]) {
+                clearNotification(viewed.id, viewed.wing_id);
             }
         }
+    });
+
+    window.addEventListener('storage', function(event) {
+        if (event.key !== userStorageKey(COMPLETION_STORAGE_PREFIX, S.currentUser && S.currentUser.id)) return;
+        renderSidebar();
+        if (S.activeView === 'home') renderDashboard();
     });
 
     // Multi-tab dedup: only the tab that receives the WebSocket event fires the OS notification.

@@ -8,7 +8,10 @@ import { sendTunnelRequest, saveTunnelAuthTokens } from './tunnel.js';
 import { setNotification, clearNotification } from './notify.js';
 import { reconcileWingSessions } from './session-merge.js';
 import { notificationForSession, sessionResourceKey, orderSessionReferences } from './session-reference.js';
-import { sessionIsSelected } from './session-inventory.js';
+import { sessionIsSelected, sessionIsViewed, sessionInventoryState } from './session-inventory.js';
+import { chatSnapshot } from './chat-view.js';
+import { trackSessionCompletions, sessionCompletionObservation } from './session-completion.js';
+import { browserLocalStorage } from './storage-scope.js';
 
 // localStorage CRUD
 
@@ -204,6 +207,12 @@ export async function fetchWingSessions(wingId) {
 
 export function mergeWingSessions(wingId, remoteSessions) {
     S.sessionsData = sortSessionsByOrder(reconcileWingSessions(S.sessionsData, wingId, remoteSessions));
+    var wing = S.wingsData.find(function(wing) { return wing.wing_id === wingId; });
+    var chat = chatSnapshot();
+    trackSessionCompletions(browserLocalStorage(), S.currentUser && S.currentUser.id, remoteSessions.map(function(session) {
+        var seen = sessionIsViewed(session, S, document.visibilityState === 'visible', chat && chat.target);
+        return sessionCompletionObservation(session, sessionInventoryState(session, wing).status, seen);
+    }));
     setEggOrder(S.sessionsData.map(sessionResourceKey));
     saveSessionCache();
 }
@@ -345,9 +354,10 @@ async function _loadHomeInner() {
     });
 
     S.sessionsData.forEach(function(s) {
+        var blocked = sessionInventoryState(s, S.wingsData.find(function(wing) { return wing.wing_id === s.wing_id; })).status === 'blocked';
         if (s.needs_attention && !sessionIsSelected(s, S.ptySessionId, S.ptyWingId)) {
             setNotification(s.id, s.wing_id);
-        } else if (!s.needs_attention && notificationForSession(S.sessionNotifications, s)) {
+        } else if (!s.needs_attention && !blocked && notificationForSession(S.sessionNotifications, s)) {
             clearNotification(s.id, s.wing_id);
         }
     });
