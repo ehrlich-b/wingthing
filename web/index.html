@@ -96,16 +96,6 @@
                 </div>
                 <div id="wing-status"></div>
                 <section id="conversation-inventory" aria-label="Conversations"></section>
-                <div id="session-inventory-controls" style="display:none;" role="search" aria-label="Filter sessions">
-                    <div class="inventory-heading"><h3 class="section-label">sessions</h3><span id="session-inventory-count" role="status" aria-live="polite"></span></div>
-                    <div class="inventory-filters">
-                        <label class="inventory-search"><span class="sr-only">Search sessions by name, agent, wing or folder</span><input id="session-inventory-search" type="search" placeholder="search sessions…" title="Search by name, agent, wing or folder. ↑/↓ browse sessions, Enter opens." autocomplete="off" spellcheck="false" aria-controls="sessions-list"></label>
-                        <label><span class="sr-only">Execution wing</span><select id="session-inventory-wing" aria-controls="sessions-list"><option value="">all wings</option></select></label>
-                        <label><span class="sr-only">Agent provider</span><select id="session-inventory-agent" aria-controls="sessions-list"><option value="">all agents</option></select></label>
-                        <label><span class="sr-only">Session status</span><select id="session-inventory-status" aria-controls="sessions-list"><option value="">all states</option><option value="attention">needs attention</option><option value="available">available</option><option value="offline">unavailable</option></select></label>
-                        <button id="session-inventory-clear" class="btn-sm" type="button" hidden>clear filters</button>
-                    </div>
-                </div>
                 <div id="sessions-list"></div>
                 <div id="empty-state" style="display:none;">
                     <div class="empty-icon">~</div>

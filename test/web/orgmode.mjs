@@ -703,9 +703,12 @@ try {
     record('admin: another user session does not expose rename', adminRename === 0, `rename buttons=${adminRename}`);
     const foreignCard = alice.page.locator(`#sessions-list .egg-box[data-sid="${carolSessionID}"]`);
     await foreignCard.waitFor({ state: 'visible', timeout: 20000 });
-    record('admin: inventory preserves allowed inspection and stop while rename remains owner-only',
-      await foreignCard.locator('.inventory-details, .inventory-stop').count() === 2 &&
-      await foreignCard.locator('.inventory-rename').count() === 0);
+    await foreignCard.locator('.box-menu-btn').click();
+    await alice.page.waitForSelector('#detail-egg-delete', { state: 'visible', timeout: 10000 });
+    record('admin: inventory preserves allowed inspection and stop while rename and fork remain owner-only',
+      await foreignCard.locator('.box-menu-btn, .egg-delete').count() === 2 &&
+      await alice.page.locator('#detail-dialog .session-fork-btn').count() === 0);
+    await alice.page.click('#detail-backdrop', { position: { x: 8, y: 8 } });
   } catch (e) {
     record('admin: another user session does not expose rename', false, String(e).slice(0, 200));
   }
@@ -723,28 +726,21 @@ try {
   try {
     const p = carol.page;
     await p.click('#home-btn');
-    await p.waitForSelector('#session-inventory-search', { state: 'visible', timeout: 20000 });
-    await p.fill('#session-inventory-search', 'support-night-review');
-    await p.waitForFunction((id) => {
-      const rows = Array.from(document.querySelectorAll('#sessions-list .egg-box'));
-      return rows.length === 1 && rows[0].dataset.sid === id;
-    }, carolSessionID, { timeout: 10000 });
-    // One provider means its filter cannot narrow anything, so it stays hidden.
-    const agentFilterHidden = !(await p.locator('#session-inventory-agent').isVisible());
-    const card = p.locator('#sessions-list .egg-box').first();
-    const group = p.locator('#sessions-list .inventory-project-group').first();
-    record('carol: search keeps a named owned session inspectable under its project',
-      await p.inputValue('#session-inventory-search') === 'support-night-review' && agentFilterHidden &&
-      await card.locator('.inventory-attach, .inventory-details, .inventory-rename, .inventory-stop').count() === 4 &&
-      (await group.locator('.inventory-group-header').textContent()).includes('/opt/wingthing/support'));
-    await p.locator('#session-inventory-search').focus();
-    await p.keyboard.press('ArrowDown');
-    record('carol: keyboard inventory navigation focuses the exact matching session',
-      await p.evaluate((id) => document.activeElement?.dataset.sid === id, carolSessionID));
-    await shot(p, 'carol-filtered-inventory');
-    await p.click('#session-inventory-clear');
+    const card = p.locator(`#sessions-list .egg-box[data-sid="${carolSessionID}"]`);
+    await card.waitFor({ state: 'visible', timeout: 20000 });
+    // Home is the v0.147.0 inventory: a terminal thumbnail, the name and agent,
+    // details and stop, in the saved order, with no search or filter controls.
+    record('carol: Home shows the named session with its terminal thumbnail',
+      (await card.locator('.egg-label').textContent()).startsWith('support-night-review') &&
+      await card.locator('.egg-preview img').count() === 1 &&
+      await card.locator('.box-menu-btn, .egg-delete').count() === 2 &&
+      await p.locator('#session-inventory-search, #session-inventory-agent').count() === 0);
+    const dots = await p.locator('#session-tabs .session-tab .tab-dot').evaluateAll((els) => els.map((el) => el.className));
+    record('carol: sidebar dots show connection, not agent activity',
+      dots.length > 0 && dots.every((name) => /dot-(detached|live|offline|attention)/.test(name) && !/agent-status/.test(name)), JSON.stringify(dots));
+    await shot(p, 'carol-inventory');
   } catch (e) {
-    record('carol: searchable inventory and keyboard navigation', false, String(e).slice(0, 200));
+    record('carol: Home inventory', false, String(e).slice(0, 200));
   }
 
   // ---------- Carol (support member), mobile ----------

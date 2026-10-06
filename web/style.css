@@ -172,33 +172,34 @@ body {
     text-align: left;
 }
 
-.session-tab:has(.session-tab-actions) { flex-wrap: wrap; }
-
-.session-tab-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 2px 12px;
-    flex-basis: 100%;
-    padding-left: 14px;
-}
-
-.session-tab-actions button {
-    background: none;
+.session-rename-btn {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    transform: translateY(-50%);
     border: 0;
-    border-radius: 0;
-    padding: 2px 0;
-    color: var(--text-dim);
-    font-family: var(--font);
-    font-size: 11px;
-    font-weight: 400;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 10px;
     cursor: pointer;
+    padding: 3px 0 3px 8px;
+    opacity: 0;
+    pointer-events: none;
 }
 
-.session-tab-actions button:hover:not(:disabled) { background: none; color: var(--accent); }
+.session-tab:hover .session-rename-btn,
+.session-tab:focus-within .session-rename-btn {
+    opacity: 1;
+    pointer-events: auto;
+}
 
-.session-tab.renaming .session-tab-actions,
-.session-tab.forking .session-rename-btn { display: none; }
+.session-tab:hover .tab-label,
+.session-tab:focus-within .tab-label { padding-right: 42px; }
+
+.session-tab.renaming .session-rename-btn { display: none; }
+
+.session-rename-btn:hover { color: var(--accent); }
 
 .session-fork-form {
     display: flex;

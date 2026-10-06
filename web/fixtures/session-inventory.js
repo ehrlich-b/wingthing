@@ -39,7 +39,7 @@ document.getElementById('fixture-disconnect').addEventListener('click', function
 // Filters, focus navigation, detail inspection and disconnect simulation work.
 document.addEventListener('click', function(event) {
     var rowAction = event.target.closest('.egg-box, .session-tab') && !event.target.closest('.inventory-details');
-    if (rowAction || event.target.closest('.inventory-attach, .inventory-rename, .inventory-stop, .session-rename-btn, #detail-egg-connect, #detail-egg-delete, .wing-box, #parent-dot')) {
+    if (rowAction || event.target.closest('.inventory-attach, .inventory-rename, .inventory-stop, .egg-delete, .session-rename-btn, #detail-egg-connect, #detail-egg-delete, .wing-box, #parent-dot')) {
         event.preventDefault(); event.stopImmediatePropagation();
         document.getElementById('fixture-notice').textContent = 'Synthetic UI fixture: runtime actions are disabled.';
     }
