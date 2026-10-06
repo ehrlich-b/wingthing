@@ -6,6 +6,8 @@ import { S } from './state.js';
 import { sendTunnelRequest, randomUUID } from './tunnel.js';
 import { escapeMarkup, renderSafeSimpleMarkdown } from './security.js';
 import { createConversationReader } from './conversation-recovery.js';
+import { coordinatorComposer, chatEnterSubmits, coordinatorStatus } from './coordinator-state.js';
+import { trackSessionCompletions, sessionCompletionObservation, acknowledgeSessionCompletions } from './session-completion.js';
 
 var reader = null;
 var selectionVersion = 0;
@@ -15,9 +17,11 @@ var container = null;
 var inputEl = null;
 var sendBtn = null;
 var statusEl = null;
+var detailEl = null;
 var pendingEl = null;
 var renderedSignature = '';
 var pendingSignature = '';
+var followsLatest = true;
 
 function browserStorage(kind) {
     try { return window[kind]; } catch (e) { return null; }
@@ -35,6 +39,10 @@ function ensureReader() {
         },
         onChange: function(next) {
             snapshot = next;
+            if (next.target && next.target.userId === (S.currentUser && S.currentUser.id)) {
+                trackSessionCompletions(browserStorage('localStorage'), next.target.userId, [sessionCompletionObservation({ id: next.target.sessionId, wing_id: next.target.wingId, lifecycle: next.lifecycle },
+                    coordinatorStatus(next.lifecycle, next), S.activeView === 'terminal' && document.visibilityState === 'visible')]);
+            }
             render();
             listeners.forEach(function(listener) { try { listener(next); } catch (e) {} });
         },
@@ -47,17 +55,19 @@ export function initChatView() {
     inputEl = document.getElementById('chat-input');
     sendBtn = document.getElementById('chat-send');
     statusEl = document.getElementById('chat-view-status');
-    statusEl.setAttribute('role', 'status');
+    detailEl = document.getElementById('chat-view-detail');
+    document.getElementById('chat-state-details').open = window.innerWidth > 600;
     statusEl.setAttribute('aria-live', 'polite');
     pendingEl = document.createElement('div');
     pendingEl.id = 'chat-pending';
     pendingEl.className = 'chat-pending';
     pendingEl.hidden = true;
-    statusEl.parentNode.insertBefore(pendingEl, statusEl);
+    var stateDetails = document.getElementById('chat-state-details');
+    stateDetails.parentNode.insertBefore(pendingEl, stateDetails);
 
     sendBtn.addEventListener('click', submitInput);
     inputEl.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (chatEnterSubmits(e, window.matchMedia('(hover: none) and (pointer: coarse)').matches)) {
             e.preventDefault();
             submitInput();
         }
@@ -69,6 +79,8 @@ export function initChatView() {
         var button = event.target.closest('[data-check-request]');
         if (button && reader) reader.checkReceipt(button.dataset.checkRequest).then(restoreDraft);
     });
+    container.addEventListener('scroll', function() { followsLatest = container.scrollHeight - container.scrollTop - container.clientHeight < 48; });
+    if ('ResizeObserver' in window) new ResizeObserver(function() { if (followsLatest) container.scrollTop = container.scrollHeight; }).observe(container);
 }
 
 function autoGrow() {
@@ -109,10 +121,12 @@ export function refreshChat() { if (reader) reader.refresh(); }
 // never prompts, checks receipts, checkpoints, or attaches a terminal writer.
 export function startChatPolling(target) {
     selectionVersion++;
+    followsLatest = true;
     renderedSignature = '';
     pendingSignature = '';
     if (container) container.innerHTML = '';
     var t = target || { sessionId: S.ptySessionId, wingId: S.ptyWingId };
+    if (document.visibilityState === 'visible') acknowledgeSessionCompletions(browserStorage('localStorage'), S.currentUser && S.currentUser.id, [{ id: t.sessionId, wing_id: t.wingId }]);
     ensureReader().open({ userId: S.currentUser ? S.currentUser.id : '', wingId: t.wingId, sessionId: t.sessionId, conversationId: t.conversationId || '', providerSessionId: t.providerSessionId || '' });
 }
 
@@ -144,13 +158,15 @@ function render() {
 }
 
 function updateInput() {
-    var ready = snapshot.inputReady && !S.spectating;
+    var composer = coordinatorComposer(snapshot, S.spectating);
+    var ready = composer.ready;
+    document.getElementById('chat-input-bar').dataset.mode = composer.mode;
     if (inputEl) {
         inputEl.disabled = !ready;
-        inputEl.placeholder = ready ? (snapshot.continuationReady ? 'Send a follow-up…' : 'Send a message…') : (snapshot.pending || snapshot.continuation ? 'Resolve the unconfirmed input above first' : 'Input is available when the session is ready or a follow-up is offered');
+        inputEl.placeholder = composer.placeholder;
     }
     if (sendBtn) {
-        sendBtn.textContent = snapshot.continuationReady ? 'Send follow-up' : 'Send';
+        sendBtn.textContent = 'Send';
         sendBtn.disabled = !ready;
     }
     if (!statusEl) return;
@@ -161,7 +177,11 @@ function updateInput() {
     if (snapshot.notice) parts.push(snapshot.notice);
     // A polite live region: rewrite only on change so polls do not re-announce.
     var text = parts.join(' · ');
-    if (statusEl.textContent !== text) statusEl.textContent = text;
+    var label = composer.label || shown.label;
+    if (snapshot.pending || snapshot.continuation) label = 'Unconfirmed input · Check receipt';
+    else if (snapshot.readError) label = 'Connection interrupted · Details';
+    if (statusEl.textContent !== label) statusEl.textContent = label;
+    if (detailEl && detailEl.textContent !== text) detailEl.textContent = text;
     statusEl.dataset.state = shown.state;
 }
 

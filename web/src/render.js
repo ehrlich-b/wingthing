@@ -14,9 +14,11 @@ import { shouldFetchWingSessions } from './session-merge.js';
 import { updateCanvasSessionName } from './canvas.js';
 import { historyResumeState } from './session-resume.js';
 import { readSessionContent, notificationForSession } from './session-reference.js';
-import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey } from './session-inventory.js';
+import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey, groupSessionInventory, sessionGroupHeader, unseenCompletionBadge } from './session-inventory.js';
 import { refreshConversationInventory } from './conversation-view.js';
 import { refreshParentDot } from './parent-dot.js';
+import { unseenSessionCompletions, acknowledgeSessionCompletions } from './session-completion.js';
+import { browserLocalStorage } from './storage-scope.js';
 
 var inventoryFilters = { query: '', wing: '', agent: '', status: '' };
 var sessionStopPending = new Set();
@@ -64,11 +66,13 @@ export function renderSidebar() {
     // Live inventory refreshes must not discard an unfinished rename.
     if (DOM.sessionTabs.querySelector('.renaming')) return;
     var focus = captureSessionFocus(DOM.sessionTabs, document.activeElement);
-    var tabs = S.sessionsData.filter(function(s) {
+    var unseen = unseenSessionCompletions(browserLocalStorage(), S.currentUser && S.currentUser.id);
+    var sessions = S.sessionsData.filter(function(s) {
         if ((s.kind || 'terminal') === 'chat') return false;
         if (sessionIsSelected(s, S.ptySessionId, S.ptyWingId)) return true;
         return isWingVisible(s.wing_id);
-    }).map(function(s) {
+    });
+    function renderTab(s) {
         var name = sessionDisplayName(s);
         var letter = name.charAt(0).toUpperCase();
         var isActive = S.activeView === 'terminal' && sessionIsSelected(s, S.ptySessionId, S.ptyWingId);
@@ -78,18 +82,23 @@ export function renderSidebar() {
         var title = name + ' \u00b7 ' + (s.agent || '?') + ' \u00b7 ' + wingNameById(s.wing_id) + ' \u00b7 ' + state.connectionLabel + ' \u00b7 ' + state.agentLabel;
         if (!ownsSession) title += ' \u00b7 only the session owner can rename';
         else if (!canRename) title += ' \u00b7 update this wing to rename';
-        return '<div class="session-tab' + (isActive ? ' active' : '') + '" role="button" tabindex="0" ' +
+        if (unseen.has(sessionResourceKey(s))) title += ' · unseen completion';
+        return '<div class="session-tab' + (isActive ? ' active' : '') + '" data-blocked="' + (state.status === 'blocked') + '" role="button" tabindex="0" ' +
             'aria-label="' + escapeHtml(title) + '" ' + (isActive ? 'aria-current="page" ' : '') +
             'title="' + escapeHtml(title) + '" ' +
             'data-sid="' + escapeHtml(s.id) + '" data-wing-id="' + escapeHtml(s.wing_id || '') + '">' +
             sessionStatusDot(state.status, true) +
             '<span class="tab-letter">' + escapeHtml(letter) + '</span>' +
             '<span class="tab-copy"><span class="tab-label">' + escapeHtml(name) + '</span>' +
-            '<span class="tab-meta">' + escapeHtml((s.agent || '?') + ' · ' + state.agentLabel + ' · ' + (wingNameById(s.wing_id) || 'unknown wing')) + '</span></span>' +
+            '<span class="tab-meta">' + escapeHtml((s.agent || '?') + ' · ' + state.agentLabel + ' · ' + (wingNameById(s.wing_id) || 'unknown wing')) + '</span>' + unseenCompletionBadge(unseen.has(sessionResourceKey(s))) + '</span>' +
             (canRename ? '<button class="session-rename-btn" type="button" data-session-action="rename" aria-label="Rename ' + escapeHtml(name) + '" title="Rename session">rename</button>' : '') +
         '</div>';
+    }
+    var groups = groupSessionInventory(sessions, S.wingsData, S.sessionNotifications, unseen);
+    DOM.sessionTabs.innerHTML = groups.map(function(group) {
+        return '<section class="inventory-project-group" data-group-key="' + escapeHtml(group.key) + '" data-blocked="' + (group.rollup.blocked > 0) + '">' + sessionGroupHeader(group) + group.sessions.map(renderTab).join('') + '</section>';
     }).join('');
-    DOM.sessionTabs.innerHTML = tabs;
+    bindGroupAcknowledgements(DOM.sessionTabs, groups);
 
     DOM.sessionTabs.querySelectorAll('.session-tab').forEach(function(tab) {
         function openSession() {
@@ -2447,7 +2456,7 @@ function updateInventoryOptions(id, entries, allLabel, value) {
     select.value = value;
 }
 
-function renderSessionInventory() {
+export function renderSessionInventory() {
     // Preserve the active editor while background status probes finish.
     if (DOM.sessionsList.querySelector('.renaming')) return;
     var focus = captureSessionFocus(DOM.sessionsList, document.activeElement);
@@ -2475,6 +2484,7 @@ function renderSessionInventory() {
         return session.agent;
     }).filter(Boolean))).sort().map(function(agent) { return { value: agent, label: agent }; }), 'all agents', inventoryFilters.agent);
     var sessions = filterSessionInventory(allSessions, S.wingsData, S.sessionNotifications, inventoryFilters);
+    var unseen = unseenSessionCompletions(browserLocalStorage(), S.currentUser && S.currentUser.id);
     var count = document.getElementById('session-inventory-count');
     if (count) count.textContent = sessions.length + ' of ' + allSessions.length + ' · ' + allSessions.filter(function(session) {
         return sessionInventoryState(session, sessionWing(session), notificationForSession(S.sessionNotifications, session)).attention;
@@ -2500,14 +2510,16 @@ function renderSessionInventory() {
         var label = name + ' · ' + (session.agent || 'unknown agent') + ' · ' + (wing && wingDisplayName(wing) || 'unknown wing');
         var resourceKey = sessionResourceKey(session);
         var error = sessionActionErrors.get(resourceKey);
-        return '<article class="egg-box inventory-session' + (selected ? ' selected' : '') + '" role="group" tabindex="0" data-sid="' + sid + '" data-wing-id="' + escapeHtml(session.wing_id || '') + '" data-kind="' + escapeHtml(session.kind || 'terminal') + '" aria-label="' + escapeHtml(label + ' · ' + state.connectionLabel + ' · ' + state.agentLabel) + '"' + (selected ? ' aria-current="page"' : '') + '>' +
+        var unread = unseen.has(resourceKey);
+        return '<article class="egg-box inventory-session' + (selected ? ' selected' : '') + '" data-blocked="' + (state.status === 'blocked') + '" role="group" tabindex="0" data-sid="' + sid + '" data-wing-id="' + escapeHtml(session.wing_id || '') + '" data-kind="' + escapeHtml(session.kind || 'terminal') + '" aria-label="' + escapeHtml(label + ' · ' + state.connectionLabel + ' · ' + state.agentLabel + (unread ? ' · unseen completion' : '')) + '"' + (selected ? ' aria-current="page"' : '') + '>' +
             (thumbnail ? '<div class="egg-preview"><img src="' + thumbnail + '" alt="" loading="lazy"></div>' : '') +
             '<div class="egg-footer">' + sessionStatusDot(state.status) +
             '<span class="egg-label tab-label">' + escapeHtml(name) + '</span>' +
             (role ? '<span class="session-role">' + escapeHtml(role) + '</span>' : '') + '</div>' +
             '<div class="inventory-session-meta">' + agentWithIcon(session.agent || '?') + '<span>·</span><span>' + escapeHtml(wing && wingDisplayName(wing) || 'unknown wing') + '</span></div>' +
+            (S.currentUser && S.currentUser.roost_mode ? '<div class="inventory-session-owner">' + escapeHtml(session.user_id === S.currentUser.id ? 'my session' : session.email || 'unknown owner') + '</div>' : '') +
             '<div class="inventory-session-path" title="' + escapeHtml(session.cwd || '') + '">' + escapeHtml(shortenPath(session.cwd || '~')) + '</div>' +
-            '<div class="inventory-session-state"><span class="inventory-status status-' + state.tone + '">' + escapeHtml(state.agentLabel) + '</span><span>' + escapeHtml(state.connectionLabel + ' · ' + state.attachment) + '</span></div>' +
+            '<div class="inventory-session-state"><span class="inventory-status status-' + state.tone + '">' + escapeHtml(state.agentLabel) + '</span>' + unseenCompletionBadge(unread) + '<span>' + escapeHtml(state.connectionLabel + ' · ' + state.attachment) + '</span></div>' +
             '<div class="inventory-session-actions">' +
                 '<button class="btn-sm btn-accent inventory-attach" type="button" data-session-action="attach"' + (!actions.attach ? ' disabled title="' + escapeHtml(state.connectionLabel) + '"' : '') + '>attach</button>' +
                 '<button class="btn-sm inventory-details" type="button" data-session-action="details">details</button>' +
@@ -2516,24 +2528,11 @@ function renderSessionInventory() {
             '</div><div class="inventory-action-status" role="status">' + escapeHtml(error || '') + '</div></article>';
     }
 
-    var html = '';
-    if (S.currentUser && S.currentUser.roost_mode) {
-        var groups = new Map();
-        sessions.forEach(function(session) {
-            var owner = session.user_id || '_unknown';
-            if (!groups.has(owner)) groups.set(owner, { email: session.email || 'unknown owner', sessions: [] });
-            groups.get(owner).sessions.push(session);
-        });
-        Array.from(groups.keys()).sort(function(a, b) {
-            if (a === S.currentUser.id) return -1;
-            if (b === S.currentUser.id) return 1;
-            return groups.get(a).email.localeCompare(groups.get(b).email);
-        }).forEach(function(owner) {
-            var group = groups.get(owner);
-            html += '<div class="egg-group"><h4 class="egg-group-label">' + escapeHtml(owner === S.currentUser.id ? 'my sessions' : group.email) + ' (' + group.sessions.length + ')</h4><div class="egg-grid">' + group.sessions.map(renderEggCard).join('') + '</div></div>';
-        });
-    } else html = '<div class="egg-grid">' + sessions.map(renderEggCard).join('') + '</div>';
-    DOM.sessionsList.innerHTML = html;
+    var groups = groupSessionInventory(sessions, S.wingsData, S.sessionNotifications, unseen);
+    DOM.sessionsList.innerHTML = groups.map(function(group) {
+        return '<section class="inventory-project-group" data-group-key="' + escapeHtml(group.key) + '" data-blocked="' + (group.rollup.blocked > 0) + '">' + sessionGroupHeader(group) + '<div class="egg-grid">' + group.sessions.map(renderEggCard).join('') + '</div></section>';
+    }).join('');
+    bindGroupAcknowledgements(DOM.sessionsList, groups);
     var cards = Array.from(DOM.sessionsList.querySelectorAll('.egg-box'));
     cards.forEach(function(card) {
         var session = findSessionResource(S.sessionsData, card.dataset.sid, card.dataset.wingId);
@@ -2555,6 +2554,23 @@ function renderSessionInventory() {
     });
     setupEggDrag();
     if (focus && !restoreSessionFocus(DOM.sessionsList, focus)) document.getElementById('session-inventory-search').focus({ preventScroll: true });
+}
+
+function bindGroupAcknowledgements(container, groups) {
+    container.querySelectorAll('.inventory-project-group').forEach(function(section) {
+        var button = section.querySelector('.inventory-acknowledge');
+        if (!button) return;
+        var group = groups.find(function(group) { return group.key === section.dataset.groupKey; });
+        button.addEventListener('click', function() {
+            acknowledgeSessionCompletions(browserLocalStorage(), S.currentUser && S.currentUser.id, group.sessions);
+            renderSidebar();
+            if (S.activeView === 'home') renderSessionInventory();
+            refreshConversationInventory();
+            var first = group.sessions[0];
+            var row = Array.from(container.querySelectorAll('[data-sid]')).find(function(row) { return row.dataset.sid === first.id && row.dataset.wingId === first.wing_id; });
+            if (row) row.focus({ preventScroll: true });
+        });
+    });
 }
 
 function stopInventorySession(session, button, onStopped) {

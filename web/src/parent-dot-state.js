@@ -83,6 +83,7 @@ export function parentDotPresentation(selection, wings, sessions, evidence, now)
     if (matches.length === 1 && isFresh(matches[0].lifecycle_seen_at, now)) native.push({ lifecycle: matches[0].lifecycle, observedAt: matches[0].lifecycle_seen_at });
     native.sort(function(a, b) { return b.observedAt - a.observedAt; });
     var lifecycle = native.length ? native[0].lifecycle || {} : {};
+    if (['working', 'blocked', 'idle', 'done', 'exited', 'unknown'].includes(lifecycle.status)) return { state: lifecycle.status, label: lifecycle.status, title: title };
     var known = ['claude_hook', 'claude_transcript', 'egg_process'].includes(lifecycle.state_source);
     var labels = { starting: 'starting', working: 'working', idle: 'ready', completed: 'completed', needs_input: 'needs input', failed: 'failed' };
     // A successful process exit is availability evidence, not completion of a

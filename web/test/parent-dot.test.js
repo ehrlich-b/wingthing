@@ -8,6 +8,13 @@ const online = [{ wing_id: 'mac', online: true }, { wing_id: 'linux', online: tr
 const now = 100000;
 const working = { state: 'working', state_source: 'claude_hook', process_alive: true };
 const rootSession = { id: 'same-provider-id', user_id: 'owner', wing_id: 'mac', conversation_id: root.conversationId, lifecycle: working, lifecycle_seen_at: now };
+
+test('the parent shortcut uses fresh agent status when the native view reports it', () => {
+    for (const status of ['working', 'blocked', 'idle', 'done', 'exited', 'unknown']) {
+        assert.deepEqual(parentDotPresentation(root, online, [{ ...rootSession, lifecycle: { ...working, status } }], null, now), { state: status, label: status, title: root.title });
+    }
+    assert.equal(parentDotPresentation(root, online, [{ ...rootSession, lifecycle: { ...working, status: 'blocked' }, lifecycle_seen_at: 0 }], null, now).state, 'unknown');
+});
 function memoryStorage() {
     const values = new Map();
     return { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value) };

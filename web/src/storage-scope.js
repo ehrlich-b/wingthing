@@ -1,5 +1,13 @@
 import { CACHE_OWNER_KEY, S } from './state.js';
 
+export function userStorageKey(prefix, userId) {
+    return userId ? prefix + JSON.stringify([userId]) : null;
+}
+
+export function browserLocalStorage() {
+    try { return globalThis.localStorage; } catch (e) { return null; }
+}
+
 function removeWingthingStorage(storage) {
     if (!storage) return;
     var keys = [];
