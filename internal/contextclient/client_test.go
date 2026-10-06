@@ -232,6 +232,13 @@ func TestClientPreservesUsefulErrorsAndRedactsCredentials(t *testing.T) {
 			want: "context: HTTP 403 (Forbidden): missing entitlement: request jira access; [redacted] [redacted]",
 		},
 		{
+			name: "HTTP JSON-RPC error body", status: 400,
+			body: map[string]any{"jsonrpc": "2.0", "id": 1, "error": map[string]any{
+				"code": -32602, "message": "unknown or not permitted tool: happyfox-staff; " + secret + " " + token,
+			}},
+			want: "context: HTTP 400 (Bad Request): unknown or not permitted tool: happyfox-staff; [redacted] [redacted]",
+		},
+		{
 			name: "HTTP message takes precedence", status: 500,
 			body: map[string]string{"message": "useful message", "error_description": "ignored description"},
 			want: "context: HTTP 500 (Internal Server Error): useful message",

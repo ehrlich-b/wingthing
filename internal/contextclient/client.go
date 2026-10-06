@@ -232,10 +232,17 @@ func (c *Client) post(ctx context.Context, endpoint, contentType, token string, 
 		var detail struct {
 			Message          string `json:"message"`
 			ErrorDescription string `json:"error_description"`
+			// MCP rejects unknown or unpermitted tools with a JSON-RPC error body.
+			RPCError *struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		if err == nil && len(data) <= maxResponseBytes && json.Unmarshal(data, &detail) == nil {
 			if detail.Message == "" {
 				detail.Message = detail.ErrorDescription
+			}
+			if detail.Message == "" && detail.RPCError != nil {
+				detail.Message = detail.RPCError.Message
 			}
 			// Redact before truncating so a credential at the boundary cannot leak.
 			text := []rune(c.redact(detail.Message, append(sensitive, token)...))
