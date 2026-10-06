@@ -21,14 +21,8 @@ func TestCodexLifecycleInstalledHookTrust(t *testing.T) {
 	if err != nil {
 		t.Skip("Codex is not installed")
 	}
-	if !codexLifecycleSupported(binary) {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		version, err := exec.CommandContext(ctx, binary, "--version").Output()
-		if err != nil {
-			t.Skipf("installed Codex hook trust requires codex-cli >= 0.159.3 (version unavailable: %v)", err)
-		}
-		t.Skipf("installed Codex hook trust requires codex-cli >= 0.159.3: %s", strings.TrimSpace(string(version)))
+	if supported, reason := codexLifecycleSupported(binary, lifecycleProbePolicy{}); !supported {
+		t.Skipf("installed Codex hook trust requires a trusted codex-cli >= 0.159.3: %s", reason)
 	}
 	// Codex canonicalizes source paths (including macOS's /var symlink).
 	home, err := filepath.EvalSymlinks(t.TempDir())
@@ -256,7 +250,7 @@ func TestCodexLifecycleSupportedUsesBinaryVersion(t *testing.T) {
 		if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if got := codexLifecycleSupported(path); got != tc.want {
+		if got, reason := codexLifecycleSupported(path, lifecycleProbePolicy{}); got != tc.want || reason != "" {
 			t.Fatalf("capability for %q = %t, want %t", tc.version, got, tc.want)
 		}
 		if !tc.want {
@@ -293,7 +287,7 @@ func TestCodexLifecycleSupportedCachesByBinaryPathAndMtime(t *testing.T) {
 				var wg sync.WaitGroup
 				for range 6 {
 					wg.Go(func() {
-						if got := codexLifecycleSupported(binary); got != want {
+						if got, reason := codexLifecycleSupported(binary, lifecycleProbePolicy{}); got != want || reason != "" {
 							t.Errorf("capability = %t, want %t", got, want)
 						}
 					})
@@ -314,7 +308,7 @@ func TestCodexLifecycleSupportedCachesByBinaryPathAndMtime(t *testing.T) {
 			if err := os.Remove(binary); err != nil {
 				t.Fatal(err)
 			}
-			if codexLifecycleSupported(binary) {
+			if supported, _ := codexLifecycleSupported(binary, lifecycleProbePolicy{}); supported {
 				t.Fatal("removed binary retained cached capability")
 			}
 		})

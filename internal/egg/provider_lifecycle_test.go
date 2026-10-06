@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
 
 // The fake CLIs read the actual invocation config and execute its generated
@@ -40,6 +42,7 @@ for await (const line of createInterface({input:process.stdin})) {
     }
   } else if (input.type === 'prompt') await plugin['chat.message']({sessionID:input.sessionID});
   else if (input.type === 'dispose') await plugin.dispose();
+  else if (input.type === 'reload') plugin = await (await import(settings.plugin.at(-1) + '?reload=1')).WingthingLifecycle();
   else await plugin.event({event:input});
   console.log('ok');
 }
@@ -87,9 +90,9 @@ func startLifecycleFixture(t *testing.T, provider, resumeID string) *nativeLifec
 	}
 	env := map[string]string{"HOME": home, "PATH": os.Getenv("PATH")}
 	if provider == "gemini" {
-		env["GEMINI_CLI_SYSTEM_DEFAULTS_PATH"] = filepath.Join(home, "missing-defaults")
+		env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = filepath.Join(home, "settings.json")
 	}
-	if err := prepareProviderLifecycle(RunConfig{Agent: provider, ResumeSessionID: resumeID}, binary, dir, nil, env); err != nil {
+	if err := prepareProviderLifecycle(RunConfig{Agent: provider, ResumeSessionID: resumeID}, binary, dir, nil, env, lifecycleProbePolicy{}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -193,6 +196,150 @@ func TestGeminiLifecycleUnverifiedTransitionsStayUnknown(t *testing.T) {
 	f.read("unknown")
 }
 
+func TestGeminiLifecycleExitRequiresCompletedTurn(t *testing.T) {
+	for _, events := range [][]string{{"SessionStart"}, {"SessionStart", "BeforeAgent"}, {"SessionStart", "BeforeAgent", "AfterAgent", "BeforeAgent"}} {
+		for _, reason := range []string{"exit", "prompt_input_exit"} {
+			t.Run(strings.Join(events, "/")+"/"+reason, func(t *testing.T) {
+				f := startLifecycleFixture(t, "gemini", "")
+				for _, event := range events {
+					f.fire(map[string]string{"hook_event_name": event, "session_id": "session-exact"})
+					f.read(map[string]string{"SessionStart": "idle", "BeforeAgent": "working", "AfterAgent": "idle"}[event])
+				}
+				f.fire(map[string]string{"hook_event_name": "SessionEnd", "session_id": "session-exact", "reason": reason})
+				if v := f.read("unknown"); v.Reason == "" {
+					t.Fatal("unverified completion omitted its reason")
+				}
+				if err := recordSessionProcessExit(f.dir, 0, false); err != nil {
+					t.Fatal(err)
+				}
+				f.read("exited")
+			})
+		}
+	}
+}
+
+func TestGeminiLifecycleCompletedTurnSurvivesIdleNotification(t *testing.T) {
+	for _, replay := range []bool{false, true} {
+		t.Run(fmt.Sprint(replay), func(t *testing.T) {
+			f := startLifecycleFixture(t, "gemini", "")
+			for _, event := range []string{"SessionStart", "BeforeAgent", "AfterAgent", "Notification"} {
+				f.fire(map[string]string{"hook_event_name": event, "session_id": "session-exact", "notification_type": "idle_prompt"})
+			}
+			if replay {
+				f.read("idle")
+			}
+			f.fire(map[string]string{"hook_event_name": "SessionEnd", "session_id": "session-exact", "reason": "exit"})
+			f.read("done")
+		})
+	}
+}
+
+func TestOpenCodeLifecycleDisposalAndReloadPreserveBinding(t *testing.T) {
+	for _, resumeID := range []string{"", "session-exact"} {
+		t.Run("resume="+resumeID, func(t *testing.T) {
+			f := startLifecycleFixture(t, "opencode", resumeID)
+			if resumeID == "" {
+				f.fire(map[string]any{"type": "session.created", "properties": map[string]any{"info": map[string]string{"id": "session-exact"}}})
+			}
+			f.read("idle")
+			f.fire(map[string]string{"type": "dispose"})
+			f.read("unknown")
+			f.fire(map[string]string{"type": "reload"})
+			f.read("unknown")
+			f.fire(map[string]any{"type": "session.created", "properties": map[string]any{"info": map[string]string{"id": "foreign-root"}}})
+			f.fire(map[string]string{"type": "prompt", "sessionID": "foreign-root"})
+			f.read("unknown")
+			f.fire(map[string]string{"type": "prompt", "sessionID": "session-exact"})
+			f.read("working")
+		})
+	}
+}
+
+func TestGeminiLifecycleDefaultsStayPrivate(t *testing.T) {
+	for _, mode := range []string{"explicit", "explicit-missing", "discovered", "absent"} {
+		t.Run(mode, func(t *testing.T) {
+			home, dir := t.TempDir(), t.TempDir()
+			defaults := filepath.Join(home, "system-defaults.json")
+			content := `{"mcpServers":{"private":{"token":"must-stay-private"}}}`
+			if mode != "absent" && mode != "explicit-missing" {
+				if err := os.WriteFile(defaults, []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			env := map[string]string{"HOME": home, "GEMINI_CLI_SYSTEM_SETTINGS_PATH": filepath.Join(home, "settings.json")}
+			if strings.HasPrefix(mode, "explicit") {
+				env["GEMINI_CLI_SYSTEM_DEFAULTS_PATH"] = defaults
+			}
+			before := make(map[string]string)
+			for k, v := range env {
+				before[k] = v
+			}
+			binary := fakeLifecycleBinary(t, "gemini", providerLifecycleVersions["gemini"])
+			if err := prepareProviderLifecycle(RunConfig{Agent: "gemini"}, binary, dir, nil, env, lifecycleProbePolicy{}); err != nil {
+				t.Fatal(err)
+			}
+			if mode != "absent" {
+				if !reflect.DeepEqual(env, before) {
+					t.Fatalf("defaults override changed: %+v", env)
+				}
+				if mode != "explicit-missing" {
+					data, err := os.ReadFile(defaults)
+					if err != nil || string(data) != content {
+						t.Fatalf("original defaults changed: %s, %v", data, err)
+					}
+				}
+				if _, err := os.Stat(providerLifecycleHookDir("gemini", home, filepath.Base(dir))); !os.IsNotExist(err) {
+					t.Fatalf("private defaults produced a spool: %v", err)
+				}
+				v, err := ReadSessionLifecycle(dir, "gemini", "", home, "", true, 0, 100)
+				if err != nil || v.Status != "unknown" || !strings.Contains(v.Reason, "system defaults") {
+					t.Fatalf("missing skip reason: %+v, %v", v, err)
+				}
+			} else {
+				data, err := os.ReadFile(env["GEMINI_CLI_SYSTEM_DEFAULTS_PATH"])
+				var settings map[string]json.RawMessage
+				if err != nil || json.Unmarshal(data, &settings) != nil || len(settings) != 1 || settings["hooks"] == nil {
+					t.Fatalf("expected hooks-only defaults: %s, %v", data, err)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenCodeLifecycleJSONCAndInvalidConfig(t *testing.T) {
+	for _, content := range []string{
+		`{/* defaults */"model":"provider/model", "plugin":["file:///keep.mjs",], "permission":{"*":"ask",},}`,
+		"{\"model\":\"provider/model\", // keep URL and comma\n\"plugin\":[\"file:///keep.mjs\",],\"permission\":{\"*\":\"ask\",},}",
+		`{"model":`, `{"plugin":{}}`, `{"model":true,,}`, `null`,
+	} {
+		t.Run(content, func(t *testing.T) {
+			home, dir := t.TempDir(), t.TempDir()
+			env := map[string]string{"HOME": home, "OPENCODE_CONFIG_CONTENT": content}
+			binary := fakeLifecycleBinary(t, "opencode", providerLifecycleVersions["opencode"])
+			if err := prepareProviderLifecycle(RunConfig{Agent: "opencode"}, binary, dir, nil, env, lifecycleProbePolicy{}); err != nil {
+				t.Fatalf("hook injection blocked launch: %v", err)
+			}
+			if strings.Contains(content, "provider/model") {
+				var config struct {
+					Model      string
+					Plugin     []string
+					Permission map[string]string
+				}
+				if err := json.Unmarshal([]byte(env["OPENCODE_CONFIG_CONTENT"]), &config); err != nil || config.Model != "provider/model" || len(config.Plugin) != 2 || config.Plugin[0] != "file:///keep.mjs" || config.Permission["*"] != "ask" {
+					t.Fatalf("JSONC invocation config lost: %+v, %v", config, err)
+				}
+			} else {
+				if env["OPENCODE_CONFIG_CONTENT"] != content {
+					t.Fatal("invalid config changed")
+				}
+				if _, err := os.Stat(providerLifecycleHookDir("opencode", home, filepath.Base(dir))); !os.IsNotExist(err) {
+					t.Fatalf("invalid config produced a spool: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestOpenCodeLifecycleFakeCLITransitions(t *testing.T) {
 	f := startLifecycleFixture(t, "opencode", "")
 	f.read("unknown")
@@ -217,8 +364,8 @@ func TestOpenCodeLifecycleFakeCLITransitions(t *testing.T) {
 	f.fire(map[string]string{"type": "prompt", "sessionID": "foreign-child"})
 	f.read("idle")
 	f.fire(map[string]string{"type": "dispose"})
-	v := f.read("done")
-	if replay, err := ReadSessionLifecycle(f.dir, f.provider, "", f.home, "", false, v.HeadCursor, 100); err != nil || len(replay.Events) != 0 || replay.Status != "done" {
+	v := f.read("unknown")
+	if replay, err := ReadSessionLifecycle(f.dir, f.provider, "", f.home, "", false, v.HeadCursor, 100); err != nil || len(replay.Events) != 0 || replay.Status != "exited" {
 		t.Fatalf("duplicate/end import: %+v, %v", replay, err)
 	}
 }
@@ -255,13 +402,13 @@ func TestProviderLifecycleVersionGating(t *testing.T) {
 			t.Run(provider+"/"+version, func(t *testing.T) {
 				binary := fakeLifecycleBinary(t, provider, version)
 				want := version == verified
-				if got := providerLifecycleSupported(provider, binary); got != want {
+				if got, reason := providerLifecycleSupported(provider, binary, lifecycleProbePolicy{}); got != want || reason != "" {
 					t.Fatalf("version %q: supported=%v, want %v", version, got, want)
 				}
 				env := map[string]string{"HOME": t.TempDir()}
-				env["GEMINI_CLI_SYSTEM_DEFAULTS_PATH"] = filepath.Join(env["HOME"], "missing")
+				env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = filepath.Join(env["HOME"], "settings.json")
 				before := env["GEMINI_CLI_SYSTEM_DEFAULTS_PATH"]
-				if err := prepareProviderLifecycle(RunConfig{Agent: provider}, binary, t.TempDir(), nil, env); err != nil {
+				if err := prepareProviderLifecycle(RunConfig{Agent: provider}, binary, t.TempDir(), nil, env, lifecycleProbePolicy{}); err != nil {
 					t.Fatal(err)
 				}
 				installed := env["GEMINI_CLI_SYSTEM_DEFAULTS_PATH"] != before || env["OPENCODE_CONFIG_CONTENT"] != ""
@@ -271,43 +418,153 @@ func TestProviderLifecycleVersionGating(t *testing.T) {
 			})
 		}
 	}
-	if providerLifecycleSupported("cursor", fakeLifecycleBinary(t, "cursor", "2026.02.13-41ac335")) {
+	if supported, _ := providerLifecycleSupported("cursor", fakeLifecycleBinary(t, "cursor", "2026.02.13-41ac335"), lifecycleProbePolicy{}); supported {
 		t.Fatal("Cursor has no invocation hook contract")
+	}
+}
+
+func TestLifecycleVersionProbesRespectWritableRoots(t *testing.T) {
+	for _, provider := range []string{"gemini", "opencode", "codex"} {
+		for _, mode := range []string{"writable", "PATH", "binary-symlink", "root-symlink", "cwd", "relative", "regex-prefix"} {
+			t.Run(provider+"/"+mode, func(t *testing.T) {
+				root, cwd, home, dir := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+				binary, counter := filepath.Join(root, "cli"), filepath.Join(home, "probes")
+				version := providerLifecycleVersions[provider]
+				if provider == "codex" {
+					version = "codex-cli 0.159.3"
+				}
+				body := "#!/bin/sh\nprintf 'probe\\n' >> " + shellQuoteLifecycle(counter) + "\nprintf '%s\\n' " + shellQuoteLifecycle(version) + "\n"
+				if err := os.WriteFile(binary, []byte(body), 0700); err != nil {
+					t.Fatal(err)
+				}
+				policy := lifecycleProbePolicy{cwd: cwd, mounts: []sandbox.Mount{{Source: root}}}
+				switch mode {
+				case "PATH":
+					t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+					binary = "cli"
+				case "binary-symlink":
+					link := filepath.Join(cwd, "cli")
+					if err := os.Symlink(binary, link); err != nil {
+						t.Fatal(err)
+					}
+					binary = link
+				case "root-symlink":
+					link := filepath.Join(cwd, "writable")
+					if err := os.Symlink(root, link); err != nil {
+						t.Fatal(err)
+					}
+					policy.mounts[0].Source = link
+				case "cwd":
+					policy.cwd, policy.mounts = root, nil
+				case "relative":
+					t.Chdir(root)
+					binary, policy.mounts = "./cli", nil
+				case "regex-prefix":
+					policy.mounts[0].Source = strings.TrimSuffix(root, filepath.Base(root))
+					policy.mounts[0].UseRegex = true
+				}
+				supported, reason := lifecycleTestSupported(provider, binary, policy)
+				if supported || reason == "" {
+					t.Fatalf("unsafe probe accepted: %v, %q", supported, reason)
+				}
+				env := map[string]string{"HOME": home}
+				args := []string{"--model", "keep"}
+				if provider == "codex" {
+					got, err := prepareCodexLifecycle(RunConfig{Agent: provider}, binary, dir, args, home, policy)
+					if err != nil || !reflect.DeepEqual(got, args) {
+						t.Fatalf("skip changed invocation: %v, %v", got, err)
+					}
+				} else if err := prepareProviderLifecycle(RunConfig{Agent: provider}, binary, dir, args, env, policy); err != nil {
+					t.Fatal(err)
+				}
+				if len(env) != 1 {
+					t.Fatalf("skip injected config: %+v", env)
+				}
+				if _, err := os.Stat(counter); !os.IsNotExist(err) {
+					t.Fatalf("unsafe binary was executed: %v", err)
+				}
+				v, err := ReadSessionLifecycle(dir, provider, cwd, home, "", true, 0, 100)
+				if err != nil || v.Status != "unknown" || v.Ready || v.Reason != reason {
+					t.Fatalf("skip status/reason lost: %+v, %v", v, err)
+				}
+			})
+		}
+	}
+}
+
+func lifecycleTestSupported(provider, binary string, policy lifecycleProbePolicy) (bool, string) {
+	if provider == "codex" {
+		return codexLifecycleSupported(binary, policy)
+	}
+	return providerLifecycleSupported(provider, binary, policy)
+}
+
+func TestLifecycleVersionProbeCachesRecheckPolicy(t *testing.T) {
+	for _, provider := range []string{"gemini", "opencode", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			root, cwd := t.TempDir(), t.TempDir()
+			binary, counter := filepath.Join(root, "cli"), filepath.Join(root, "probes")
+			version := providerLifecycleVersions[provider]
+			if provider == "codex" {
+				version = "codex-cli 0.159.3"
+			}
+			body := "#!/bin/sh\nprintf 'probe\\n' >> " + shellQuoteLifecycle(counter) + "\nprintf '%s\\n' " + shellQuoteLifecycle(version) + "\n"
+			if err := os.WriteFile(binary, []byte(body), 0700); err != nil {
+				t.Fatal(err)
+			}
+			policy := lifecycleProbePolicy{cwd: cwd, mounts: []sandbox.Mount{{Source: root, ReadOnly: true}}}
+			for range 2 {
+				if supported, reason := lifecycleTestSupported(provider, binary, policy); !supported || reason != "" {
+					t.Fatalf("trusted probe rejected: %v, %q", supported, reason)
+				}
+			}
+			// An unrelated writable mount does not invalidate the cached binary.
+			policy.mounts[0] = sandbox.Mount{Source: cwd}
+			if supported, _ := lifecycleTestSupported(provider, binary, policy); !supported {
+				t.Fatal("unrelated mount rejected")
+			}
+			policy.mounts[0] = sandbox.Mount{Source: root}
+			if supported, reason := lifecycleTestSupported(provider, binary, policy); supported || reason == "" {
+				t.Fatal("cached capability bypassed the current policy")
+			}
+			data, err := os.ReadFile(counter)
+			if err != nil || string(data) != "probe\n" {
+				t.Fatalf("cache did not avoid repeated probes: %q, %v", data, err)
+			}
+			info, err := os.Stat(binary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(binary, info.ModTime().Add(time.Second), info.ModTime().Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			policy.mounts = nil
+			if supported, _ := lifecycleTestSupported(provider, binary, policy); !supported {
+				t.Fatal("new binary mtime was not probed")
+			}
+			data, err = os.ReadFile(counter)
+			if err != nil || string(data) != "probe\nprobe\n" {
+				t.Fatalf("mtime did not invalidate cache: %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestLifecycleProbeIncludesImplicitWritableRoots(t *testing.T) {
+	cwd := t.TempDir()
+	for _, sandboxed := range []bool{true, false} {
+		binary := fakeLifecycleBinary(t, "gemini", providerLifecycleVersions["gemini"])
+		policy := sessionLifecycleProbePolicy(cwd, []sandbox.Mount{{Source: cwd}}, sandboxed)
+		if path, reason := lifecycleProbePath(binary, policy); path != "" || reason == "" {
+			t.Fatalf("implicit writable binary accepted: %s, %s", path, reason)
+		}
 	}
 }
 
 func TestProviderLifecyclePreservesInvocationConfig(t *testing.T) {
 	home := t.TempDir()
-	defaults := filepath.Join(home, "system-defaults.json")
-	content := `{"model":{"name":"keep"}, /* retained settings */ "hooksConfig":{"enabled":false}, "hooks":{"AfterAgent":[{"hooks":[{"type":"command","command":"echo keep"}]}]}}`
-	if err := os.WriteFile(defaults, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-	env := map[string]string{"GEMINI_CLI_SYSTEM_DEFAULTS_PATH": defaults, "GEMINI_CLI_SYSTEM_SETTINGS_PATH": "/keep/settings.json"}
-	if err := prepareGeminiLifecycleEnv(home, "fixture", env); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(defaults)
-	if err != nil || string(data) != content {
-		t.Fatalf("original defaults changed: %q, %v", data, err)
-	}
-	data, err = os.ReadFile(env["GEMINI_CLI_SYSTEM_DEFAULTS_PATH"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	var settings struct {
-		Model       map[string]string
-		HooksConfig map[string]bool
-		Hooks       map[string][]json.RawMessage
-	}
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatal(err)
-	}
-	if settings.Model["name"] != "keep" || settings.HooksConfig["enabled"] || len(settings.Hooks["AfterAgent"]) != 2 || env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] != "/keep/settings.json" {
-		t.Fatalf("defaults/policy/hooks lost: %+v", settings)
-	}
-	env = map[string]string{"OPENCODE_CONFIG": "/keep/opencode.json", "OPENCODE_CONFIG_CONTENT": `{"model":"keep/model", "plugin":["file:///keep.mjs"], "permission":{"*":"ask"}}`}
-	if err := prepareOpenCodeLifecycleEnv(home, "fixture", "", env); err != nil {
+	env := map[string]string{"OPENCODE_CONFIG": "/keep/opencode.json", "OPENCODE_CONFIG_CONTENT": `{"model":"keep/model", "plugin":["file:///keep.mjs"], "permission":{"*":"ask"}}`}
+	if reason, err := prepareOpenCodeLifecycleEnv(home, "fixture", "", env); err != nil || reason != "" {
 		t.Fatal(err)
 	}
 	var config struct {
@@ -340,7 +597,7 @@ func TestProviderLifecycleRespectsExplicitCommandAndPure(t *testing.T) {
 		for k, v := range env {
 			before[k] = v
 		}
-		if err := prepareProviderLifecycle(RunConfig{Agent: tc.provider, Command: tc.command}, binary, t.TempDir(), tc.args, env); err != nil || !reflect.DeepEqual(env, before) {
+		if err := prepareProviderLifecycle(RunConfig{Agent: tc.provider, Command: tc.command}, binary, t.TempDir(), tc.args, env, lifecycleProbePolicy{}); err != nil || !reflect.DeepEqual(env, before) {
 			t.Fatalf("explicit opt-out changed invocation: %v, %+v", err, env)
 		}
 	}

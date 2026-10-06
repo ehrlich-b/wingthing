@@ -44,24 +44,20 @@ var codexLifecycleCapabilityCache = struct {
 	byPath map[string]codexLifecycleCapability
 }{byPath: make(map[string]codexLifecycleCapability)}
 
-func codexLifecycleSupported(binary string) bool {
-	path, err := exec.LookPath(binary)
-	if err != nil {
-		return false
-	}
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return false
+func codexLifecycleSupported(binary string, policy lifecycleProbePolicy) (bool, string) {
+	path, reason := lifecycleProbePath(binary, policy)
+	if reason != "" {
+		return false, reason
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return false
+		return false, "native lifecycle binary version could not be checked"
 	}
 	// Serialize probes so concurrent launches only run --version once per version.
 	codexLifecycleCapabilityCache.Lock()
 	defer codexLifecycleCapabilityCache.Unlock()
 	if cached, ok := codexLifecycleCapabilityCache.byPath[path]; ok && cached.modTime.Equal(info.ModTime()) {
-		return cached.supported
+		return cached.supported, ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -79,7 +75,7 @@ func codexLifecycleSupported(binary string) bool {
 		}
 	}
 	codexLifecycleCapabilityCache.byPath[path] = codexLifecycleCapability{modTime: info.ModTime(), supported: supported}
-	return supported
+	return supported, ""
 }
 
 func parseCodexVersion(output string) ([3]uint64, bool) {

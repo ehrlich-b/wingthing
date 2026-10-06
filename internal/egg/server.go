@@ -647,15 +647,6 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		lifecycleSettingsPath = args[len(args)-1]
 		defer func() { _ = os.Remove(lifecycleSettingsPath) }()
 	}
-	if rc.Agent == "codex" && len(rc.Command) == 0 && codexLifecycleSupported(binPath) {
-		args, err = CodexLifecycleArgs(args, home, filepath.Base(s.dir))
-		if err != nil {
-			return fmt.Errorf("prepare Codex lifecycle hooks: %w", err)
-		}
-	}
-	if err = prepareProviderLifecycle(rc, binPath, s.dir, args, envMap); err != nil {
-		return fmt.Errorf("prepare provider lifecycle hooks: %w", err)
-	}
 	if home != "" {
 		localBin := filepath.Join(home, ".local", "bin")
 		if p, ok := envMap["PATH"]; ok {
@@ -756,13 +747,19 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			return err
 		}
 	}
-	// Build envSlice AFTER proxy and OS-context setup.
-	var envSlice []string
-	for k, v := range envMap {
-		envSlice = append(envSlice, k+"="+v)
-	}
 
 	sessionID := filepath.Base(s.dir)
+
+	prepareLifecycle := func(policy lifecycleProbePolicy) error {
+		args, err = prepareCodexLifecycle(rc, binPath, s.dir, args, home, policy)
+		if err != nil {
+			return fmt.Errorf("prepare Codex lifecycle hooks: %w", err)
+		}
+		if err = prepareProviderLifecycle(rc, binPath, s.dir, args, envMap, policy); err != nil {
+			return fmt.Errorf("prepare provider lifecycle hooks: %w", err)
+		}
+		return nil
+	}
 
 	// Build sandbox and command
 	var sb sandbox.Sandbox
@@ -875,6 +872,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
 		}
 
+		if err = prepareLifecycle(sessionLifecycleProbePolicy(rc.CWD, sbCfg.Mounts, true)); err != nil {
+			return err
+		}
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
 			return fmt.Errorf("sandbox: %w", err)
@@ -886,18 +886,26 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			}
 			return fmt.Errorf("sandbox exec: %v", err)
 		}
-		cmd.Env = envSlice
 		if rc.CWD != "" {
 			cmd.Dir = rc.CWD
 		}
 	} else {
+		if err = prepareLifecycle(sessionLifecycleProbePolicy(rc.CWD, nil, false)); err != nil {
+			return err
+		}
 		log.Printf("SECURITY: egg runs in outer-boundary mode with the full authority of the local OS user; Wingthing filesystem, network, syscall, and resource isolation is disabled")
 		cmd = exec.CommandContext(context.Background(), binPath, args...)
-		cmd.Env = envSlice
 		if rc.CWD != "" {
 			cmd.Dir = rc.CWD
 		}
 	}
+
+	// Build the environment after invocation hook preparation and OS context.
+	var envSlice []string
+	for k, v := range envMap {
+		envSlice = append(envSlice, k+"="+v)
+	}
+	cmd.Env = envSlice
 
 	// Graceful termination
 	cmd.Cancel = func() error {
