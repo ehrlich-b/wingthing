@@ -583,7 +583,7 @@ try {
         const candidate = document.querySelector(`#session-tabs .session-tab[data-sid="${sessionID}"] .tab-label`);
         return candidate && candidate.textContent === 'support-night-review';
       }, carolSessionID, { timeout: 10000 });
-      await p.click('#detail-backdrop');
+      await p.click('#detail-backdrop', { position: { x: 8, y: 8 } });
       await p.reload({ waitUntil: 'domcontentloaded' });
       await p.waitForSelector(`#session-tabs .session-tab[data-sid="${carolSessionID}"] .tab-label`, { timeout: 20000 });
       const persisted = await p.locator(`#session-tabs .session-tab[data-sid="${carolSessionID}"] .tab-label`).textContent();
@@ -721,7 +721,7 @@ try {
       cardButtons === 1 && await foreignCard.locator('.inventory-details').count() === 1 &&
       await alice.page.locator('#detail-egg-delete').count() === 1 &&
       (await alice.page.locator('#detail-dialog').textContent()).includes('/opt/wingthing/support'));
-    await alice.page.click('#detail-backdrop');
+    await alice.page.click('#detail-backdrop', { position: { x: 8, y: 8 } });
   } catch (e) {
     record('admin: another user session does not expose rename', false, String(e).slice(0, 200));
   }
