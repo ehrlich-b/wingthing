@@ -203,6 +203,25 @@ func TestJailMountpointRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestJailMountpointRejectsSymlinkInRootPath(t *testing.T) {
+	parent, outside := t.TempDir(), t.TempDir()
+	if err := os.Mkdir(filepath.Join(outside, "root"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(parent, "link")); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "link", "root")
+	file, err := createConfinedMountpoint(root, "/config", false)
+	if err == nil {
+		file.Close()
+		t.Fatal("accepted a symlink in the confinement root")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "root", "config")); !os.IsNotExist(err) {
+		t.Fatalf("created a file outside the confinement root: %v", err)
+	}
+}
+
 func TestWritablePrefixFilesRejectsSymlinksAndUndeclaredExpansion(t *testing.T) {
 	home := t.TempDir()
 	for _, name := range []string{".cache", ".claude"} {

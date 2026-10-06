@@ -1503,7 +1503,7 @@ func mountFDPath(file *os.File) string {
 // component. mkdirat/openat also keep creation confined if a component is
 // replaced while setup is running.
 func openConfinedParent(root, path string, create bool) (*os.File, string, error) {
-	if !filepath.IsAbs(path) {
+	if !filepath.IsAbs(path) || !filepath.IsAbs(root) {
 		return nil, "", fmt.Errorf("mount path must be absolute: %s", path)
 	}
 	for _, part := range strings.Split(path, "/") {
@@ -1511,14 +1511,19 @@ func openConfinedParent(root, path string, create bool) (*os.File, string, error
 			return nil, "", fmt.Errorf("mount path contains parent traversal: %s", path)
 		}
 	}
-	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, "", err
 	}
 	parts := strings.Split(strings.TrimPrefix(filepath.Clean(path), "/"), "/")
-	for _, part := range parts[:len(parts)-1] {
+	var rootParts []string
+	if filepath.Clean(root) != "/" {
+		rootParts = strings.Split(strings.TrimPrefix(filepath.Clean(root), "/"), "/")
+	}
+	parents := append(append([]string(nil), rootParts...), parts[:len(parts)-1]...)
+	for i, part := range parents {
 		next, openErr := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		if openErr == unix.ENOENT && create {
+		if openErr == unix.ENOENT && create && i >= len(rootParts) {
 			if mkdirErr := unix.Mkdirat(fd, part, 0o755); mkdirErr != nil && mkdirErr != unix.EEXIST {
 				unix.Close(fd)
 				return nil, "", mkdirErr
