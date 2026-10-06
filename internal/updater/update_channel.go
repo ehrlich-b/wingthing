@@ -31,7 +31,14 @@ func ReleaseMetadataURL() string {
 
 func DecodeChannelRelease(body io.Reader) (GhRelease, error) {
 	if config.Channel() != "preview" {
-		return decodeGitHubRelease(body)
+		release, err := decodeGitHubRelease(body)
+		if err != nil {
+			return GhRelease{}, err
+		}
+		if release.Prerelease || release.Draft || strings.Contains(release.TagName, "-preview.") {
+			return GhRelease{}, errors.New("stable update refuses prerelease or draft releases")
+		}
+		return release, nil
 	}
 	data, err := io.ReadAll(io.LimitReader(body, (1<<20)+1))
 	if err != nil {
