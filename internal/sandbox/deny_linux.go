@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -1166,7 +1167,16 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		failEnforcement("create sandbox temp directory inside jail", tmpDir, err)
 	}
 	tmpFD.Close()
-	// Bind-mount read-only paths from real root.
+	// HOME itself is an empty jail directory unless explicitly declared. Agent
+	// config directories are already included in writablePaths by its profile.
+	if home != "" {
+		homeFD, err := createConfinedMountpoint(newRoot, home, true)
+		if err != nil {
+			failEnforcement("create jail HOME directory", home, err)
+		}
+		homeFD.Close()
+	}
+	// Mount parents before children so each declared child retains its mode.
 	expected := []expectedMount{
 		{Path: "/", FSType: "tmpfs", Writable: true},
 		{Path: "/proc"},
@@ -1174,56 +1184,30 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 		{Path: "/dev/shm", FSType: "tmpfs", Writable: true},
 		{Path: "/tmp", FSType: "tmpfs", Writable: true},
 	}
-	for _, p := range roMounts {
+	for _, mount := range jailMounts(roMounts, writablePaths) {
+		p := mount.Path
 		target := filepath.Join(newRoot, p)
 		sourceFD, targetFD, err := jailMkTarget(newRoot, p)
 		if err != nil {
-			failEnforcement("create jail read-only mountpoint", p, err)
+			failEnforcement("create jail mountpoint", p, err)
 		}
 		if err := unix.Mount(mountFDPath(sourceFD), mountFDPath(targetFD), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			failEnforcement("bind jail read-only path", p, err)
+			failEnforcement("bind jail path", p, err)
 		}
-		if err := remountBindReadonlyAt(target, mountFDPath(targetFD)); err != nil {
-			failEnforcement("make jail path read-only", p, err)
+		if mount.ReadOnly {
+			if err := remountBindReadonlyAt(target, mountFDPath(targetFD)); err != nil {
+				failEnforcement("make jail path read-only", p, err)
+			}
 		}
 		sourceFD.Close()
 		targetFD.Close()
-		expected = append(expected, expectedMount{Path: p, ReadOnly: true})
-		log.Printf("_deny_init: jail ro %s", p)
-	}
-	// Bind-mount writable paths (order matters: rw mounts override ro parents).
-	for _, p := range writablePaths {
-		// HOME is mounted as one persistent owner-scoped tree below. Mounting a
-		// child separately is redundant and would follow a user-created symlink
-		// on the host side before pivot_root.
-		if home != "" && isPathWithin(p, home) {
-			continue
-		}
-		sourceFD, targetFD, err := jailMkTarget(newRoot, p)
-		if err != nil {
-			failEnforcement("create jail writable mountpoint", p, err)
-		}
-		if err := unix.Mount(mountFDPath(sourceFD), mountFDPath(targetFD), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			failEnforcement("bind jail writable path", p, err)
-		}
-		sourceFD.Close()
-		targetFD.Close()
-		expected = append(expected, expectedMount{Path: p, Writable: true})
-		log.Printf("_deny_init: jail rw %s", p)
-	}
-	// Bind-mount home directory (writable).
-	if home != "" {
-		sourceFD, targetFD, err := jailMkTarget(newRoot, home)
-		if err != nil {
-			failEnforcement("create jail HOME mountpoint", home, err)
-		} else if err := unix.Mount(mountFDPath(sourceFD), mountFDPath(targetFD), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			failEnforcement("bind jail HOME", home, err)
+		if mount.ReadOnly {
+			expected = append(expected, expectedMount{Path: p, ReadOnly: true})
+			log.Printf("_deny_init: jail ro %s", p)
 		} else {
-			expected = append(expected, expectedMount{Path: home, Writable: true})
-			log.Printf("_deny_init: jail home %s", home)
+			expected = append(expected, expectedMount{Path: p, Writable: true})
+			log.Printf("_deny_init: jail rw %s", p)
 		}
-		sourceFD.Close()
-		targetFD.Close()
 	}
 	// pivot_root: swap new root into place, old root at .pivot.
 	// Save cwd so we can restore it after pivot (cmd.Dir set by parent).
@@ -1260,6 +1244,30 @@ func isPathWithin(path, root string) bool {
 	cleanPath := filepath.Clean(path)
 	cleanRoot := filepath.Clean(root)
 	return cleanPath == cleanRoot || strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
+}
+
+func jailMounts(readonly, writable []string) []expectedMount {
+	byPath := make(map[string]expectedMount)
+	for _, p := range readonly {
+		p = filepath.Clean(p)
+		byPath[p] = expectedMount{Path: p, ReadOnly: true}
+	}
+	for _, p := range writable {
+		p = filepath.Clean(p)
+		byPath[p] = expectedMount{Path: p, Writable: true}
+	}
+	mounts := make([]expectedMount, 0, len(byPath))
+	for _, mount := range byPath {
+		mounts = append(mounts, mount)
+	}
+	sort.Slice(mounts, func(i, j int) bool {
+		left, right := mounts[i].Path, mounts[j].Path
+		if strings.Count(left, "/") != strings.Count(right, "/") {
+			return strings.Count(left, "/") < strings.Count(right, "/")
+		}
+		return left < right
+	})
+	return mounts
 }
 
 // jailMkTarget pins both sides of a jail bind mount. No component may be a
