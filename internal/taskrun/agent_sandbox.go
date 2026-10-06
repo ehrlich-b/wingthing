@@ -131,6 +131,7 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 
 	result := sandbox.Config{
 		Mounts:      mounts,
+		DenyRename:  declared.DenyRename,
 		NetworkMode: policy.Mode,
 		Domains:     domains,
 		LocalPorts:  append([]int(nil), policy.LocalPorts...),

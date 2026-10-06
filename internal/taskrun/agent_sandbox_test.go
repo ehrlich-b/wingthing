@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,47 @@ func TestDirectAgentSandboxConfigAppliesTaskEggPolicy(t *testing.T) {
 	}
 	if cfg.CPULimit != 45*time.Second || cfg.MemLimit != 64*1024*1024 || cfg.MaxFDs != 128 || cfg.PidLimit != 32 || !cfg.Trace {
 		t.Fatalf("resource policy was lost: %#v", cfg)
+	}
+}
+
+func TestDirectAgentSandboxConfigPreservesPolicyAncestorPins(t *testing.T) {
+	t.Setenv("WT_PROVIDER_BASE_URL", "")
+	workspace := t.TempDir()
+	policyDir := filepath.Join(workspace, "policy")
+	if err := os.Mkdir(policyDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "base.yaml"), []byte("base: none\nfs: [rw:./]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	policy := filepath.Join(workspace, "egg.yaml")
+	if err := os.WriteFile(policy, []byte("base: ./policy/base.yaml\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	eggCfg, err := egg.ResolveEggConfig(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sharedHost := range []bool{false, true} {
+		t.Run(boolKey(sharedHost), func(t *testing.T) {
+			cfg := *eggCfg
+			cfg.FS = append([]string(nil), eggCfg.FS...)
+			if sharedHost {
+				cfg.FS = append(cfg.FS, "deny:/")
+			}
+			home := t.TempDir()
+			want := cfg.ToSandboxConfig(home).DenyRename
+			if len(want) == 0 {
+				t.Fatal("resolved inherited policy has no ancestor pins")
+			}
+			got, err := directAgentSandboxConfigForTask(&cfg, "codex", "standard", home, workspace, nil, sharedHost)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got.DenyRename, want) {
+				t.Fatalf("headless pins = %v, want declared pins %v", got.DenyRename, want)
+			}
+		})
 	}
 }
 
