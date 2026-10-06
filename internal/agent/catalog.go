@@ -10,9 +10,11 @@ type Definition struct {
 	UnattendedArgs       []string
 	ResumeFlag           string
 	ResumeSubcommand     bool
-	ProviderSubstitution bool // accepts a non-vendor/local provider endpoint without patching the harness
-	ReleaseCanary        bool // covered by the opt-in provider-substitution release matrix
-	MaxParallel          int  // 0 means no agent-specific limit beyond the caller's budget
+	ProviderSubstitution bool   // accepts a non-vendor/local provider endpoint without patching the harness
+	ReleaseCanary        bool   // covered by the opt-in provider-substitution release matrix
+	MaxParallel          int    // 0 means no agent-specific limit beyond the caller's budget
+	StatusSource         string // native interactive lifecycle source, or none
+	StatusReason         string // one-line limits or reason native status is unavailable
 }
 
 var definitions = []Definition{
@@ -23,6 +25,8 @@ var definitions = []Definition{
 		ResumeFlag:           "--resume",
 		ProviderSubstitution: true,
 		ReleaseCanary:        true,
+		StatusSource:         "claude_hook",
+		StatusReason:         "Native Claude invocation hooks; status is unknown until a hook is observed",
 	},
 	{
 		Name:    "codex",
@@ -37,12 +41,16 @@ var definitions = []Definition{
 		ResumeSubcommand:     true,
 		ProviderSubstitution: true,
 		ReleaseCanary:        true,
+		StatusSource:         "codex_hook",
+		StatusReason:         "Native Codex hooks require codex-cli >= 0.159.3; status is unknown until a hook is observed",
 	},
 	{
 		Name:           "cursor",
 		Command:        "agent",
 		UnattendedArgs: []string{"--yolo"},
 		ResumeFlag:     "--resume",
+		StatusSource:   "none",
+		StatusReason:   "Cursor agent 2026.02.13-41ac335 loads hooks only from config files and has no permission-prompt hook or invocation override",
 	},
 	{
 		Name:                 "gemini",
@@ -51,6 +59,8 @@ var definitions = []Definition{
 		ResumeFlag:           "--resume",
 		ProviderSubstitution: true,
 		ReleaseCanary:        true,
+		StatusSource:         "gemini_hook",
+		StatusReason:         "Native Gemini hooks require verified CLI 0.34.0, enabled hooks and a trusted workspace; status is unknown until a hook is observed",
 	},
 	{
 		Name:                 "hermes",
@@ -59,6 +69,8 @@ var definitions = []Definition{
 		ResumeFlag:           "--resume",
 		ProviderSubstitution: true,
 		ReleaseCanary:        true,
+		StatusSource:         "none",
+		StatusReason:         "Hermes has no verified invocation-scoped native lifecycle adapter",
 	},
 	{
 		Name:                 "ollama",
@@ -66,6 +78,8 @@ var definitions = []Definition{
 		InteractiveArgs:      []string{"run", DefaultOllamaModel},
 		ProviderSubstitution: true,
 		ReleaseCanary:        true,
+		StatusSource:         "none",
+		StatusReason:         "Ollama has no verified native interactive lifecycle hook mechanism",
 	},
 	{
 		Name:                 "opencode",
@@ -74,6 +88,8 @@ var definitions = []Definition{
 		ResumeFlag:           "--session",
 		ProviderSubstitution: true,
 		ReleaseCanary:        true,
+		StatusSource:         "opencode_hook",
+		StatusReason:         "Native OpenCode plugins require verified CLI 1.18.13 without --pure; status is unknown until a hook is observed",
 		// OpenCode uses one SQLite database in its XDG data directory and its
 		// current CLI fails immediately when two headless instances share it.
 		MaxParallel: 1,

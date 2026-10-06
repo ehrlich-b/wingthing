@@ -37,7 +37,7 @@ export function sessionInventoryState(session, wing, attention) {
     if (wing && wing.online === false) connection = 'offline';
 
     var lifecycle = session.lifecycle || {};
-    var knownSource = ['claude_hook', 'codex_hook', 'egg_process'].includes(lifecycle.state_source);
+    var knownSource = ['claude_hook', 'codex_hook', 'gemini_hook', 'opencode_hook', 'egg_process'].includes(lifecycle.state_source);
     // The egg owns the lifecycle-to-status mapping. Old wings without this
     // field remain unknown; attachment and terminal bells are separate facts.
     var status = knownSource && Object.hasOwn(agentLabels, lifecycle.status) ? lifecycle.status : 'unknown';

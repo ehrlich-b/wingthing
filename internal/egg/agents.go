@@ -70,7 +70,7 @@ var agentProfiles = map[string]AgentProfile{
 	},
 	"gemini": {
 		Domains:    []string{"*.googleapis.com", "*.google.com", "*.googleusercontent.com", "generativelanguage.googleapis.com", "localhost", "127.0.0.1"},
-		EnvVars:    []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_GENAI_API_VERSION", "GEMINI_CLI_TRUST_WORKSPACE", "WT_PROVIDER_BASE_URL"},
+		EnvVars:    []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_GENAI_API_VERSION", "GEMINI_CLI_TRUST_WORKSPACE", "GEMINI_CLI_SYSTEM_SETTINGS_PATH", "GEMINI_CLI_SYSTEM_DEFAULTS_PATH", "WT_PROVIDER_BASE_URL"},
 		WriteDirs:  []string{".gemini"},
 		SessionDir: ".gemini/tmp",
 		ResumeFlag: "--resume",

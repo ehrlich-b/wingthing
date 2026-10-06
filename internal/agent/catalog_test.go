@@ -2,6 +2,7 @@ package agent
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -33,6 +34,18 @@ func TestInteractiveInvocation(t *testing.T) {
 				t.Fatalf("InteractiveInvocation(%q) = %q %q, want %q %q", test.agent, command, args, test.command, test.args)
 			}
 		})
+	}
+}
+
+func TestCatalogExplainsNativeStatusCoverage(t *testing.T) {
+	for _, definition := range Definitions() {
+		want := definition.Name + "_hook"
+		if definition.Name == "cursor" || definition.Name == "ollama" || definition.Name == "hermes" {
+			want = "none"
+		}
+		if definition.StatusSource != want || definition.StatusReason == "" || strings.Contains(definition.StatusReason, "\n") {
+			t.Errorf("%s status contract = %q, %q", definition.Name, definition.StatusSource, definition.StatusReason)
+		}
 	}
 }
 
