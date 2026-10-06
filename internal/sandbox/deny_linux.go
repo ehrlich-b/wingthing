@@ -300,6 +300,19 @@ func DenyInit(args []string) {
 	var overlayPersistFn func()
 	jailMode := containsPath(denyPaths, "/")
 	if jailMode {
+		// A missing deny target under a declared read-only mount needs its
+		// placeholder in the backing tree before that parent is bound read-only.
+		// Other targets can be prepared in the jail's private filesystem below.
+		for _, path := range append(append([]string(nil), denyPaths...), denyWritePaths...) {
+			for _, parent := range roMounts {
+				if isPathWithin(path, parent) {
+					if operation, target, err := prepareDenyMountpoints([]string{path}); err != nil {
+						failEnforcement(operation, target, err)
+					}
+					break
+				}
+			}
+		}
 		overlayPersistFn = setupJail(tmpDir, roMounts, writablePaths, home, overlayPrefixes...)
 		var filtered []string
 		for _, d := range denyPaths {

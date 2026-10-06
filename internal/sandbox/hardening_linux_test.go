@@ -101,6 +101,26 @@ func probeHardeningOverlay(home, tmp string) error {
 
 func runHardeningScenario(scenario, root string) error {
 	switch scenario {
+	case "jail-missing-deny":
+		home, workspace, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "session")
+		for _, dir := range []string{home, workspace, tmp} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		if err := os.Chdir(workspace); err != nil {
+			return err
+		}
+		denied := filepath.Join(home, ".ssh")
+		args := []string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--deny", "/", "--deny", denied, "--home", home, "--mount-ro", home, "--writable", workspace}
+		for _, path := range []string{"/usr", "/bin", "/lib", "/lib64"} {
+			if _, err := os.Stat(path); err == nil {
+				args = append(args, "--mount-ro", path)
+			}
+		}
+		command := fmt.Sprintf(`! printf secret > %q && ! printf undeclared > %q && printf sealed > result`, filepath.Join(denied, "key"), filepath.Join(home, "undeclared"))
+		DenyInit(append(args, "--", "/bin/sh", "-c", command))
+		return fmt.Errorf("DenyInit returned")
 	case "jail-missing-writable":
 		home, tmp := filepath.Join(root, "home"), filepath.Join(root, "session")
 		for _, dir := range []string{home, tmp} {
@@ -341,6 +361,15 @@ func runHardeningScenario(scenario, root string) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown hardening scenario %q", scenario)
+	}
+}
+
+func TestJailMasksMissingDeniedPathsUnderReadonlyHome(t *testing.T) {
+	root := t.TempDir()
+	runHardeningNamespace(t, "jail-missing-deny", root)
+	data, err := os.ReadFile(filepath.Join(root, "work", "result"))
+	if err != nil || string(data) != "sealed" {
+		t.Fatalf("jail did not launch with its deny mask: %q, %v", data, err)
 	}
 }
 
