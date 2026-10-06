@@ -36,10 +36,10 @@ document.getElementById('fixture-disconnect').addEventListener('click', function
     render();
 });
 // Block every runtime action in this fixture, including keyboard attachment.
-// Filters, focus navigation, detail inspection and disconnect simulation work.
+// Search, focus navigation, detail inspection and disconnect simulation work.
 document.addEventListener('click', function(event) {
     var rowAction = event.target.closest('.egg-box, .session-tab') && !event.target.closest('.inventory-details');
-    if (rowAction || event.target.closest('.inventory-attach, .inventory-rename, .inventory-stop, .session-rename-btn, #detail-egg-connect, #detail-egg-delete, .wing-box, #parent-dot')) {
+    if (rowAction || event.target.closest('#detail-egg-connect, #detail-egg-rename, #detail-egg-delete, .session-fork-btn, .wing-box, #parent-dot')) {
         event.preventDefault(); event.stopImmediatePropagation();
         document.getElementById('fixture-notice').textContent = 'Synthetic UI fixture: runtime actions are disabled.';
     }

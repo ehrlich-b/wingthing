@@ -29,7 +29,7 @@
                     <span class="parent-dot-light" aria-hidden="true"></span><span class="parent-dot-name"></span><span class="parent-dot-state"></span>
                 </button>
                 <div id="header-center">
-                    <span id="header-title"></span>
+                    <span id="header-title" title="Session details"></span>
                     <span id="pty-status"></span>
                     <button id="terminal-copy-btn" class="btn-sm session-action" title="Select terminal text to copy" style="display:none" disabled>copy</button>
                     <button id="preview-toggle-btn" class="btn-sm session-action" title="Show preview" style="display:none" aria-pressed="false">preview</button>
@@ -100,10 +100,7 @@
                     <div class="inventory-heading"><h3 class="section-label">sessions</h3><span id="session-inventory-count" role="status" aria-live="polite"></span></div>
                     <div class="inventory-filters">
                         <label class="inventory-search"><span class="sr-only">Search sessions by name, agent, wing or folder</span><input id="session-inventory-search" type="search" placeholder="search sessions…" title="Search by name, agent, wing or folder. ↑/↓ browse sessions, Enter opens." autocomplete="off" spellcheck="false" aria-controls="sessions-list"></label>
-                        <label><span class="sr-only">Execution wing</span><select id="session-inventory-wing" aria-controls="sessions-list"><option value="">all wings</option></select></label>
-                        <label><span class="sr-only">Agent provider</span><select id="session-inventory-agent" aria-controls="sessions-list"><option value="">all agents</option></select></label>
-                        <label><span class="sr-only">Session status</span><select id="session-inventory-status" aria-controls="sessions-list"><option value="">all states</option><option value="attention">needs attention</option><option value="available">available</option><option value="offline">unavailable</option></select></label>
-                        <button id="session-inventory-clear" class="btn-sm" type="button" hidden>clear filters</button>
+                        <button id="session-inventory-clear" class="btn-sm" type="button" hidden>clear</button>
                     </div>
                 </div>
                 <div id="sessions-list"></div>

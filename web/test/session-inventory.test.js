@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionIsViewed, sessionResourceKey, sessionProjectRoot, groupSessionInventory, sessionGroupHeader } from '../src/session-inventory.js';
+import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionIsViewed, sessionResourceKey, sessionProjectRoot, groupSessionInventory, sessionGroupHeader, sessionExceptionLabel, sessionTabMarkup, sessionCardMarkup, inventorySearchVisible, inventoryCountLabel } from '../src/session-inventory.js';
 import { sessionRoute, parseSessionRoute } from '../src/session-route.js';
 
 const wing = { wing_id: 'mac', wing_label: 'Personal Mac', hostname: 'mac-mini', online: true, capabilities: ['session.rename.v1'] };
@@ -70,6 +70,63 @@ test('blocked keeps the attention tone offline and group headers escape remote p
     assert.match(markup, />mark seen</);
     assert.match(markup, /&lt;img&gt;<\/span>/, 'the visible wing label is its name');
     assert.match(markup, /title="&lt;img&gt; · mac&lt;svg&gt;"/, 'the wing ID stays in the tooltip');
+});
+
+test('the compact Home group header is one escaped line with no rollup or action', () => {
+    const hostile = { ...session, wing_id: 'mac<svg>', cwd: '/repo/<script>', lifecycle: { status: 'blocked', state_source: 'claude_hook' } };
+    const [group] = groupSessionInventory([hostile], [{ ...wing, wing_id: hostile.wing_id, wing_label: '<img>' }], {}, new Set([sessionResourceKey(hostile)]));
+    const markup = sessionGroupHeader(group, { compact: true });
+    assert.doesNotMatch(markup, /<script>|<svg>|<img>/);
+    assert.equal(markup.match(/<h4>/g).length, 1);
+    assert.doesNotMatch(markup, /<button|\d+ (blocked|working|idle)|unseen completion|mark seen/);
+    assert.match(markup, /\/repo\/&lt;script&gt;<\/span> · <span class="inventory-group-wing" title="&lt;img&gt; · mac&lt;svg&gt;">&lt;img&gt;<\/span>/);
+});
+
+test('only exceptions earn a visible status word', () => {
+    const state = (status, wingState = wing, attention) => sessionInventoryState({ ...session, lifecycle: { status, state_source: 'claude_hook' } }, wingState, attention);
+    for (const status of ['working', 'idle', 'done', 'unknown']) assert.equal(sessionExceptionLabel(state(status)), '', status);
+    assert.equal(sessionExceptionLabel(state('blocked')), 'needs input');
+    assert.equal(sessionExceptionLabel(state('exited')), 'exited');
+    assert.equal(sessionExceptionLabel(state('idle', wing, true)), 'attention', 'a bell is not relabelled as needing input');
+    assert.equal(sessionExceptionLabel(state('working', { ...wing, online: false })), 'wing offline');
+    assert.equal(sessionExceptionLabel(state('working', { ...wing, tunnel_error: 'passkey_required' })), 'wing locked');
+    assert.equal(sessionExceptionLabel(sessionInventoryState({ ...session, swept: false }, wing)), '', 'checking is transient');
+});
+
+test('a sidebar row is one actionless line that keeps every fact in its label', () => {
+    const state = sessionInventoryState({ ...session, lifecycle: { status: 'working', state_source: 'claude_hook' } }, wing);
+    const markup = sessionTabMarkup(session, state, { wingName: 'Personal Mac', unseen: true, active: true });
+    assert.equal(markup.match(/class="tab-label"/g).length, 1);
+    assert.doesNotMatch(markup, /<button|tab-meta|session-tab-actions|inventory-group-header/);
+    assert.match(markup, /data-unseen="true"/);
+    assert.match(markup, /aria-current="page"/);
+    assert.match(markup, /title="release-notes · claude · Personal Mac · wing online · working · unseen completion"/);
+    assert.match(sessionTabMarkup(session, state, {}), /data-unseen="false"/);
+    const hostile = sessionTabMarkup({ ...session, id: '"><img>', name: '<b>x' }, state, { wingName: '<svg>' });
+    assert.doesNotMatch(hostile, /<img>|<b>|<svg>/);
+});
+
+test('a Home card is one line with a single details trigger and no runtime actions', () => {
+    const idle = sessionInventoryState({ ...session, lifecycle: { status: 'idle', state_source: 'claude_hook' } }, wing);
+    const markup = sessionCardMarkup(session, idle, { wingName: 'Personal Mac', owner: 'carol@example.com' });
+    assert.equal(markup.match(/<button/g).length, 1);
+    assert.match(markup, /class="box-menu-btn inventory-details"/);
+    assert.doesNotMatch(markup, /inventory-attach|inventory-rename|inventory-stop|session-fork-btn|session-role|inventory-session-meta|egg-preview|<img/);
+    assert.doesNotMatch(markup, /inventory-exception/, 'idle prints no status word');
+    assert.match(markup, /aria-label="release-notes · claude · Personal Mac · \/home\/bryan\/repos\/wingthing · carol@example.com · wing online · idle"/);
+    const blocked = sessionInventoryState({ ...session, lifecycle: { status: 'blocked', state_source: 'claude_hook' } }, wing);
+    assert.match(sessionCardMarkup(session, blocked, {}), /<span class="inventory-exception status-attention">needs input<\/span>/);
+    assert.match(sessionCardMarkup(session, idle, { error: '<b>failed' }), /role="status">&lt;b&gt;failed</);
+    const hostile = sessionCardMarkup({ ...session, id: '"><img>', name: '<b>x', cwd: '/<script>' }, idle, { wingName: '<svg>' });
+    assert.doesNotMatch(hostile, /<img>|<b>|<svg>|<script>/);
+});
+
+test('search appears for long or filtered inventories and the count only while filtered', () => {
+    assert.equal(inventorySearchVisible(7, ''), false);
+    assert.equal(inventorySearchVisible(8, ''), true);
+    assert.equal(inventorySearchVisible(2, 'case'), true);
+    assert.equal(inventoryCountLabel(2, 2, false), '');
+    assert.equal(inventoryCountLabel(12, 3, true), '3 of 12');
 });
 
 test('terminal attachment, silence and bell signals never invent provider completion', () => {

@@ -138,11 +138,67 @@ export function unseenCompletionBadge(unseen) {
     return unseen ? '<span class="unseen-completion">' + (typeof unseen === 'number' ? unseen + ' ' : '') + 'unseen completion' + (unseen > 1 ? 's' : '') + '</span>' : '';
 }
 
-export function sessionGroupHeader(group) {
+// Only exceptions earn a visible word; the dot already carries normal states.
+// A wing still being checked is transient, so it prints nothing either.
+export function sessionExceptionLabel(state) {
+    if (state.connection !== 'available' && state.connection !== 'checking') return state.connectionLabel;
+    if (state.status === 'blocked') return 'needs input';
+    if (state.status === 'exited') return 'exited';
+    return state.attention ? 'attention' : '';
+}
+
+export var INVENTORY_SEARCH_MIN = 8;
+
+export function inventorySearchVisible(total, query) {
+    return !!query || total >= INVENTORY_SEARCH_MIN;
+}
+
+export function inventoryCountLabel(total, shown, filtered) {
+    return filtered ? shown + ' of ' + total : '';
+}
+
+function resourceAttributes(session) {
+    return 'data-sid="' + escapeHtml(session.id) + '" data-wing-id="' + escapeHtml(session.wing_id || '') + '"';
+}
+
+// One line per session: dot and name. Every other fact stays in the tooltip
+// and accessible label; actions live in the details dialog.
+export function sessionTabMarkup(session, state, opts) {
+    opts = opts || {};
+    var name = sessionDisplayName(session);
+    var title = [name, session.agent || '?', opts.wingName || '', state.connectionLabel, state.agentLabel].join(' · ') +
+        (opts.unseen ? ' · unseen completion' : '');
+    return '<div class="session-tab' + (opts.active ? ' active' : '') + '" data-blocked="' + (state.status === 'blocked') + '" data-unseen="' + !!opts.unseen + '" role="button" tabindex="0" ' +
+        'aria-label="' + escapeHtml(title) + '" ' + (opts.active ? 'aria-current="page" ' : '') + 'title="' + escapeHtml(title) + '" ' + resourceAttributes(session) + '>' +
+        sessionStatusDot(state.status, true) +
+        '<span class="tab-letter">' + escapeHtml(name.charAt(0).toUpperCase()) + '</span>' +
+        '<span class="tab-label">' + escapeHtml(name) + '</span></div>';
+}
+
+export function sessionCardMarkup(session, state, opts) {
+    opts = opts || {};
+    var name = sessionDisplayName(session);
+    var exception = sessionExceptionLabel(state);
+    var label = [name, session.agent || 'unknown agent', opts.wingName || 'unknown wing', session.cwd || '~'].concat(opts.owner ? [opts.owner] : [])
+        .concat([state.connectionLabel, state.agentLabel]).join(' · ') + (opts.unseen ? ' · unseen completion' : '');
+    return '<article class="egg-box inventory-session' + (opts.selected ? ' selected' : '') + '" data-blocked="' + (state.status === 'blocked') + '" data-unseen="' + !!opts.unseen + '" role="group" tabindex="0" ' +
+        resourceAttributes(session) + ' data-kind="' + escapeHtml(session.kind || 'terminal') + '" aria-label="' + escapeHtml(label) + '" title="' + escapeHtml(label) + '"' + (opts.selected ? ' aria-current="page"' : '') + '>' +
+        '<div class="egg-footer">' + sessionStatusDot(state.status) +
+        '<span class="egg-label">' + escapeHtml(name) + '</span>' +
+        (exception ? '<span class="inventory-exception status-' + state.tone + '">' + escapeHtml(exception) + '</span>' : '') +
+        '<button class="box-menu-btn inventory-details" type="button" data-session-action="details" title="Session details" aria-label="Details for ' + escapeHtml(name) + '">&#x22ef;</button></div>' +
+        (opts.error ? '<div class="inventory-action-status" role="status">' + escapeHtml(opts.error) + '</div>' : '') + '</article>';
+}
+
+export function sessionGroupHeader(group, opts) {
     var counts = group.rollup;
     // The wing ID stays in the tooltip; the visible label is the wing's name.
     var wing = wingDisplayName(group.wing) || group.wingId || 'unknown wing';
     var path = group.project ? shortenPath(group.project) : 'no project';
+    if (opts && opts.compact) {
+        return '<header class="inventory-group-header"><h4><span class="inventory-group-project" title="' + escapeHtml(group.project) + '">' + escapeHtml(path) + '</span> · ' +
+            '<span class="inventory-group-wing" title="' + escapeHtml(wing + ' · ' + group.wingId) + '">' + escapeHtml(wing) + '</span></h4></header>';
+    }
     var rollup = ['blocked', 'working', 'idle'].filter(function(status) { return counts[status] > 0; }).map(function(status) {
         return '<span' + (status === 'blocked' ? ' class="rollup-blocked"' : '') + '>' + counts[status] + ' ' + status + '</span>';
     }).join('') + unseenCompletionBadge(counts.unseen);
