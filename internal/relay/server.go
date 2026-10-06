@@ -24,6 +24,7 @@ import (
 )
 
 type ServerConfig struct {
+	ResourceLimits       ResourceLimits
 	BaseURL              string
 	AppHost              string // e.g. "app.wingthing.ai" — serve SPA at root
 	WSHost               string // e.g. "ws.wingthing.ai" — WebSocket only
@@ -117,6 +118,7 @@ type Server struct {
 const maxRelayRequestBodyBytes int64 = 1 << 20
 
 func NewServer(store *RelayStore, cfg ServerConfig) *Server {
+	cfg.ResourceLimits = cfg.ResourceLimits.withDefaults()
 	s := &Server{
 		Store:           store,
 		Config:          cfg,
