@@ -360,10 +360,23 @@ func fetchLatestGitHubVersion(ctx context.Context) (string, error) {
 
 // handleAppWS is a dashboard WebSocket that pushes wing.online/wing.offline events.
 func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
+	s.handleAppWSWithAuthInterval(w, r, 30*time.Second)
+}
+
+func (s *Server) handleAppWSWithAuthInterval(w http.ResponseWriter, r *http.Request, authInterval time.Duration) {
 	user := s.sessionUser(r)
 	if user == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
+	}
+	credential := ptyCredential{local: s.LocalMode && s.localUser != nil}
+	if !credential.local {
+		cookie, _ := r.Cookie(sessionCookieNameForChannel()) // sessionUser selected this cookie
+		credential.token, credential.session = cookie.Value, true
+		if !s.ptyCredentialValid(r.Context(), credential, user.ID) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	conn, socketCtx, release, err := s.acceptSocket(w, r, user.ID, s.browserWebSocketAcceptOptions())
@@ -396,8 +409,15 @@ func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
 	defer s.Wings.Unsubscribe(user.ID, ch)
 
 	ctx := conn.CloseRead(socketCtx)
+	authTicker := time.NewTicker(authInterval)
+	defer authTicker.Stop()
 	for {
 		select {
+		case <-authTicker.C:
+			if !s.ptyCredentialValid(ctx, credential, user.ID) || !s.roostUserIDAllowed(user.ID) {
+				_ = conn.Close(websocket.StatusPolicyViolation, "authorization revoked")
+				return
+			}
 		case ev := <-ch:
 			data, _ := json.Marshal(ev)
 			writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
