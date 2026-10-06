@@ -173,6 +173,11 @@ func runHardeningScenario(scenario, root string) error {
 		if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte("atomic config"), 0o600); err != nil {
 			return err
 		}
+		for _, dir := range []string{"overlay-upper", "overlay-work"} {
+			if err := os.WriteFile(filepath.Join(tmp, dir, ".claude.json"), []byte("bypass"), 0o600); err == nil {
+				return fmt.Errorf("raw overlay backing directory remained writable: %s", dir)
+			}
+		}
 		persist()
 		return nil
 	case "overlay-fallback":

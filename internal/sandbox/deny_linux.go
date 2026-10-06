@@ -660,12 +660,29 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 		failEnforcement("retain overlay persistence directory", realHome, err)
 	}
 	persistHome := mountFDPath(realHomeFD)
+	upperFD, err := os.Open(upperDir)
+	if err != nil {
+		failEnforcement("retain overlay upper directory", upperDir, err)
+	}
+	persistUpper := mountFDPath(upperFD)
+	// Raw upper/work aliases would let the agent bypass visible deny mounts
+	// and inject files that the wrapper later persists. Keep only private FDs.
+	for _, path := range []string{upperDir, workDir} {
+		if err := unix.Mount("tmpfs", path, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV, "size=0"); err != nil {
+			failEnforcement("hide overlay backing directory", path, err)
+		}
+		expected = append(expected, expectedMount{Path: path, FSType: "tmpfs", ReadOnly: true})
+	}
+	if err := verifyExpectedMounts(expected); err != nil {
+		failEnforcement("verify hidden overlay backing directories", tmpDir, err)
+	}
 
 	// Return function that persists prefix-matching files from overlay upper
 	// back to real HOME. Called after the agent process exits.
 	return func() {
 		defer realHomeFD.Close()
-		entries, err := os.ReadDir(upperDir)
+		defer upperFD.Close()
+		entries, err := os.ReadDir(persistUpper)
 		if err != nil {
 			return
 		}
@@ -684,10 +701,10 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 			if e.IsDir() {
 				// Persist directory contents if they ended up in the overlay
 				// upper (shouldn't happen with working bind-mounts, but be safe).
-				persistDir(filepath.Join(upperDir, name), filepath.Join(persistHome, name))
+				persistDir(filepath.Join(persistUpper, name), filepath.Join(persistHome, name))
 				continue
 			}
-			src := filepath.Join(upperDir, name)
+			src := filepath.Join(persistUpper, name)
 			dst := filepath.Join(persistHome, name)
 			// Remove symlinks at dst so we don't follow them and write
 			// outside the per-user home (e.g. stale symlink to /opt/wingthing/.claude.json).
