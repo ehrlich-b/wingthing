@@ -12,11 +12,17 @@ import (
 type ResourceLimits struct {
 	PendingGrants      int
 	PendingGrantsPerIP int
+	MCPRegistrations   int
+	MCPClients         int
+	MCPRegistrationTTL time.Duration
 }
 
 func (l ResourceLimits) withDefaults() ResourceLimits {
 	l.PendingGrants = relayLimitInt(l.PendingGrants, "PENDING_GRANTS", 10000)
 	l.PendingGrantsPerIP = relayLimitInt(l.PendingGrantsPerIP, "PENDING_GRANTS_PER_IP", 64)
+	l.MCPRegistrations = relayLimitInt(l.MCPRegistrations, "MCP_REGISTRATIONS", 1000)
+	l.MCPClients = relayLimitInt(l.MCPClients, "MCP_CLIENTS", 1000)
+	l.MCPRegistrationTTL = relayLimitDuration(l.MCPRegistrationTTL, "MCP_REGISTRATION_TTL", time.Hour)
 	return l
 }
 

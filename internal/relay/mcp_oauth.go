@@ -21,11 +21,10 @@ import (
 
 const (
 	maxOAuthBodyBytes = 64 << 10
-	maxOAuthClients   = 1000
 	maxOAuthPending   = 1000
 	maxOAuthCodes     = 1000
 	maxRefreshTokens  = 10000
-	// DCR exposes no client-ID expiry to callers, so registrations need a long lifetime.
+	// Authorized clients need a long lifetime because callers retain client IDs.
 	// They are public identifiers (not credentials); access and refresh tokens remain short-lived.
 	oauthClientTTL  = 10 * 365 * 24 * time.Hour
 	refreshTokenTTL = 30 * 24 * time.Hour
@@ -143,12 +142,12 @@ func (s *Server) handleOAuthRegister(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	client := oauthClient{
 		name: req.ClientName, redirectURIs: append([]string(nil), req.RedirectURIs...),
-		expiresAt: now.Add(oauthClientTTL),
+		expiresAt: now.Add(s.Config.ResourceLimits.MCPRegistrationTTL),
 	}
 	stored, err := s.Store.SaveMCPClientRegistrationLimited(MCPClientRegistration{
 		ClientID: clientID, ClientName: client.name,
 		RedirectURIs: client.redirectURIs, ExpiresAt: client.expiresAt,
-	}, now, maxOAuthClients)
+	}, now, s.Config.ResourceLimits.MCPRegistrations)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "store client registration")
 		return
@@ -470,6 +469,23 @@ func (s *Server) handleAuthorizationCodeGrant(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid_grant")
 		return
 	}
+	now := time.Now()
+	expiresAt := now.Add(oauthClientTTL)
+	admitted, err := s.Store.AuthorizeMCPClient(ac.clientID, now, expiresAt, s.Config.ResourceLimits.MCPClients)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "store authorized client registration")
+		return
+	}
+	if !admitted {
+		writeError(w, http.StatusTooManyRequests, "authorized client capacity reached or registration expired; register again")
+		return
+	}
+	s.mcpOAuth.mu.Lock()
+	if client, ok := s.mcpOAuth.clients[ac.clientID]; ok {
+		client.expiresAt = expiresAt
+		s.mcpOAuth.clients[ac.clientID] = client
+	}
+	s.mcpOAuth.mu.Unlock()
 	refreshToken, err := randomOpaqueToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "generate refresh token")

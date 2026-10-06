@@ -62,6 +62,7 @@ type MCPClientRegistration struct {
 	ClientName   string
 	RedirectURIs []string
 	ExpiresAt    time.Time
+	Authorized   bool
 }
 
 func (s *RelayStore) SaveMCPClientRegistration(reg MCPClientRegistration) error {
@@ -70,13 +71,14 @@ func (s *RelayStore) SaveMCPClientRegistration(reg MCPClientRegistration) error 
 		return fmt.Errorf("marshal MCP client redirect URIs: %w", err)
 	}
 	_, err = s.db.Exec(
-		`INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, expires_at)
-		 VALUES (?, ?, ?, ?)
+		`INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, expires_at, authorized)
+		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(client_id) DO UPDATE SET
 		   client_name = excluded.client_name,
 		   redirect_uris = excluded.redirect_uris,
-		   expires_at = excluded.expires_at`,
-		reg.ClientID, reg.ClientName, string(redirectURIs), reg.ExpiresAt.UTC().Format("2006-01-02 15:04:05"),
+		   expires_at = excluded.expires_at,
+		   authorized = excluded.authorized`,
+		reg.ClientID, reg.ClientName, string(redirectURIs), reg.ExpiresAt.UTC().Format("2006-01-02 15:04:05"), reg.Authorized,
 	)
 	if err != nil {
 		return fmt.Errorf("save MCP client registration: %w", err)
@@ -85,7 +87,7 @@ func (s *RelayStore) SaveMCPClientRegistration(reg MCPClientRegistration) error 
 }
 
 // SaveMCPClientRegistrationLimited prunes expired registrations, checks the
-// durable capacity, and installs the new public client in one transaction.
+// capacity of the temporary or authorized pool, and installs the client in one transaction.
 // Keeping these operations together prevents concurrent anonymous DCR calls
 // from racing past the resource bound.
 func (s *RelayStore) SaveMCPClientRegistrationLimited(reg MCPClientRegistration, now time.Time, limit int) (bool, error) {
@@ -104,18 +106,17 @@ func (s *RelayStore) SaveMCPClientRegistrationLimited(reg MCPClientRegistration,
 		return false, fmt.Errorf("delete expired MCP client registrations: %w", err)
 	}
 	var count int
-	if err := tx.QueryRow("SELECT COUNT(*) FROM mcp_oauth_clients").Scan(&count); err != nil {
+	if err := tx.QueryRow("SELECT COUNT(*) FROM mcp_oauth_clients WHERE authorized = ?", reg.Authorized).Scan(&count); err != nil {
 		rollback()
 		return false, fmt.Errorf("count MCP client registrations: %w", err)
 	}
 	if limit <= 0 || count >= limit {
-		rollback()
-		return false, nil
+		return false, tx.Commit()
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, expires_at)
-		 VALUES (?, ?, ?, ?)`,
-		reg.ClientID, reg.ClientName, string(redirectURIs), reg.ExpiresAt.UTC().Format("2006-01-02 15:04:05"),
+		`INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, expires_at, authorized)
+		 VALUES (?, ?, ?, ?, ?)`,
+		reg.ClientID, reg.ClientName, string(redirectURIs), reg.ExpiresAt.UTC().Format("2006-01-02 15:04:05"), reg.Authorized,
 	); err != nil {
 		rollback()
 		return false, fmt.Errorf("save MCP client registration: %w", err)
@@ -128,13 +129,13 @@ func (s *RelayStore) SaveMCPClientRegistrationLimited(reg MCPClientRegistration,
 
 func (s *RelayStore) GetMCPClientRegistration(clientID string, now time.Time) (*MCPClientRegistration, error) {
 	row := s.db.QueryRow(
-		`SELECT client_id, client_name, redirect_uris, expires_at
+		`SELECT client_id, client_name, redirect_uris, expires_at, authorized
 		 FROM mcp_oauth_clients WHERE client_id = ? AND expires_at > ?`,
 		clientID, now.UTC().Format("2006-01-02 15:04:05"),
 	)
 	var reg MCPClientRegistration
 	var redirectURIs string
-	if err := row.Scan(&reg.ClientID, &reg.ClientName, &redirectURIs, &reg.ExpiresAt); err != nil {
+	if err := row.Scan(&reg.ClientID, &reg.ClientName, &redirectURIs, &reg.ExpiresAt, &reg.Authorized); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -158,6 +159,40 @@ func (s *RelayStore) CountMCPClientRegistrations(now time.Time) (int, error) {
 		return 0, fmt.Errorf("count MCP client registrations: %w", err)
 	}
 	return count, nil
+}
+
+// AuthorizeMCPClient reserves a durable slot only after the PKCE-bound code is
+// redeemed. Existing authorized clients can reauthorize even when the pool is full.
+func (s *RelayStore) AuthorizeMCPClient(clientID string, now, expiresAt time.Time, limit int) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	formattedNow := now.UTC().Format("2006-01-02 15:04:05")
+	if _, err := tx.Exec("DELETE FROM mcp_oauth_clients WHERE expires_at <= ?", formattedNow); err != nil {
+		return false, err
+	}
+	var authorized bool
+	if err := tx.QueryRow("SELECT authorized FROM mcp_oauth_clients WHERE client_id = ?", clientID).Scan(&authorized); err != nil {
+		if err == sql.ErrNoRows {
+			return false, tx.Commit()
+		}
+		return false, err
+	}
+	if !authorized {
+		var count int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM mcp_oauth_clients WHERE authorized = 1").Scan(&count); err != nil {
+			return false, err
+		}
+		if count >= limit {
+			return false, tx.Commit()
+		}
+	}
+	if _, err := tx.Exec("UPDATE mcp_oauth_clients SET authorized = 1, expires_at = ? WHERE client_id = ?", expiresAt.UTC().Format("2006-01-02 15:04:05"), clientID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 func OpenRelay(dsn string) (*RelayStore, error) {
@@ -250,7 +285,11 @@ func (s *RelayStore) Close() error {
 }
 
 func (s *RelayStore) purgeExpiredGrants(now time.Time) error {
-	_, err := s.db.Exec("DELETE FROM device_codes WHERE claimed = 0 AND expires_at <= ?", now.UTC().Format("2006-01-02 15:04:05"))
+	formattedNow := now.UTC().Format("2006-01-02 15:04:05")
+	if _, err := s.db.Exec("DELETE FROM device_codes WHERE claimed = 0 AND expires_at <= ?", formattedNow); err != nil {
+		return err
+	}
+	_, err := s.db.Exec("DELETE FROM mcp_oauth_clients WHERE expires_at <= ?", formattedNow)
 	return err
 }
 
