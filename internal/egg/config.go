@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -335,7 +336,33 @@ const maxBaseDepth = 10
 // a fully merged config. If base is empty, merges on top of DefaultEggConfig.
 // If base is "none", returns the config as-is (empty slate).
 func ResolveEggConfig(path string) (*EggConfig, error) {
-	return resolveEggConfig(path, make(map[string]bool), 0)
+	dependencies := make(map[string]bool)
+	cfg, err := resolveEggConfig(path, dependencies, 0)
+	if err != nil {
+		return nil, err
+	}
+	// Add these after all inheritance and section masks, so clearing the FS
+	// section cannot discard protection for a policy that was already read.
+	// Explicit trusted-host policies have no OS sandbox to enforce it.
+	if RequiresSandbox(cfg, "") {
+		protected := make(map[string]bool)
+		for dependency := range dependencies {
+			real, err := filepath.EvalSymlinks(dependency)
+			if err != nil {
+				return nil, fmt.Errorf("resolve policy dependency: %w", err)
+			}
+			protected[real] = true
+		}
+		paths := make([]string, 0, len(protected))
+		for dependency := range protected {
+			paths = append(paths, dependency)
+		}
+		sort.Strings(paths)
+		for _, dependency := range paths {
+			cfg.FS = append(cfg.FS, "deny-write:"+dependency)
+		}
+	}
+	return cfg, nil
 }
 
 func resolveEggConfig(path string, visited map[string]bool, depth int) (*EggConfig, error) {
