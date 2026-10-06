@@ -2,6 +2,7 @@ package relay
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,6 +55,22 @@ func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "wing_id is required")
 		return
 	}
+	// Historical wings may omit the key and use hostname-like IDs. New keys
+	// are raw 32-byte X25519/ed25519 public keys in standard padded base64.
+	if len(req.WingID) > 256 || strings.IndexFunc(req.WingID, func(c rune) bool {
+		return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || strings.ContainsRune("._:-", c))
+	}) >= 0 {
+		writeError(w, http.StatusBadRequest, "wing_id must be at most 256 letters, digits, dots, underscores, colons or hyphens")
+		return
+	}
+	if req.PublicKey != "" {
+		key, err := base64.StdEncoding.Strict().DecodeString(req.PublicKey)
+		if len(req.PublicKey) != 44 || err != nil || len(key) != 32 || base64.StdEncoding.EncodeToString(key) != req.PublicKey {
+			writeError(w, http.StatusBadRequest, "public_key must be a base64-encoded 32-byte X25519 or ed25519 key")
+			return
+		}
+	}
 
 	expiresAt := time.Now().Add(deviceCodeExpiry)
 	var deviceCode, userCode string
@@ -65,11 +82,16 @@ func (s *Server) handleAuthDevice(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "generate secure device code")
 			return
 		}
-		err = s.Store.CreateDeviceCodeWithKey(deviceCode, userCode, req.WingID, req.PublicKey, expiresAt)
+		err = s.Store.createDeviceCode(deviceCode, userCode, req.WingID, req.PublicKey, expiresAt,
+			deviceGrantAdmission{IP: clientIP(r), Limits: s.Config.ResourceLimits})
 		if err == nil {
 			break
 		}
 		if !errors.Is(err, ErrDeviceUserCodeExists) {
+			if errors.Is(err, ErrDeviceGrantLimit) || errors.Is(err, ErrDeviceGrantIPLimit) {
+				writeError(w, http.StatusTooManyRequests, err.Error())
+				return
+			}
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

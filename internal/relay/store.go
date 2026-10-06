@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"modernc.org/sqlite"
@@ -18,13 +20,18 @@ import (
 var migrationsFS embed.FS
 
 type RelayStore struct {
-	db *sql.DB
+	db             *sql.DB
+	cleanupDone    chan struct{}
+	cleanupStopped chan struct{}
+	cleanupOnce    sync.Once
 }
 
 var (
 	ErrActivePersonalSubscription = errors.New("user already has an active personal subscription")
 	ErrActiveOrgSubscription      = errors.New("organization has an active subscription")
 	ErrDeviceUserCodeExists       = errors.New("device user code already exists")
+	ErrDeviceGrantLimit           = errors.New("pending device enrollment capacity reached; retry after grants expire")
+	ErrDeviceGrantIPLimit         = errors.New("pending device enrollment limit for this IP reached; retry after grants expire")
 	ErrOrgInviteExists            = errors.New("organization invite already exists")
 	ErrOrgLimitReached            = errors.New("organization ownership limit reached")
 	ErrOrgMutationUnauthorized    = errors.New("organization mutation is not authorized")
@@ -55,6 +62,7 @@ type MCPClientRegistration struct {
 	ClientName   string
 	RedirectURIs []string
 	ExpiresAt    time.Time
+	Authorized   bool
 }
 
 func (s *RelayStore) SaveMCPClientRegistration(reg MCPClientRegistration) error {
@@ -63,13 +71,14 @@ func (s *RelayStore) SaveMCPClientRegistration(reg MCPClientRegistration) error 
 		return fmt.Errorf("marshal MCP client redirect URIs: %w", err)
 	}
 	_, err = s.db.Exec(
-		`INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, expires_at)
-		 VALUES (?, ?, ?, ?)
+		`INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, expires_at, authorized)
+		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(client_id) DO UPDATE SET
 		   client_name = excluded.client_name,
 		   redirect_uris = excluded.redirect_uris,
-		   expires_at = excluded.expires_at`,
-		reg.ClientID, reg.ClientName, string(redirectURIs), reg.ExpiresAt.UTC().Format("2006-01-02 15:04:05"),
+		   expires_at = excluded.expires_at,
+		   authorized = excluded.authorized`,
+		reg.ClientID, reg.ClientName, string(redirectURIs), reg.ExpiresAt.UTC().Format("2006-01-02 15:04:05"), reg.Authorized,
 	)
 	if err != nil {
 		return fmt.Errorf("save MCP client registration: %w", err)
@@ -78,7 +87,7 @@ func (s *RelayStore) SaveMCPClientRegistration(reg MCPClientRegistration) error 
 }
 
 // SaveMCPClientRegistrationLimited prunes expired registrations, checks the
-// durable capacity, and installs the new public client in one transaction.
+// capacity of the temporary or authorized pool, and installs the client in one transaction.
 // Keeping these operations together prevents concurrent anonymous DCR calls
 // from racing past the resource bound.
 func (s *RelayStore) SaveMCPClientRegistrationLimited(reg MCPClientRegistration, now time.Time, limit int) (bool, error) {
@@ -97,18 +106,17 @@ func (s *RelayStore) SaveMCPClientRegistrationLimited(reg MCPClientRegistration,
 		return false, fmt.Errorf("delete expired MCP client registrations: %w", err)
 	}
 	var count int
-	if err := tx.QueryRow("SELECT COUNT(*) FROM mcp_oauth_clients").Scan(&count); err != nil {
+	if err := tx.QueryRow("SELECT COUNT(*) FROM mcp_oauth_clients WHERE authorized = ?", reg.Authorized).Scan(&count); err != nil {
 		rollback()
 		return false, fmt.Errorf("count MCP client registrations: %w", err)
 	}
 	if limit <= 0 || count >= limit {
-		rollback()
-		return false, nil
+		return false, tx.Commit()
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, expires_at)
-		 VALUES (?, ?, ?, ?)`,
-		reg.ClientID, reg.ClientName, string(redirectURIs), reg.ExpiresAt.UTC().Format("2006-01-02 15:04:05"),
+		`INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris, expires_at, authorized)
+		 VALUES (?, ?, ?, ?, ?)`,
+		reg.ClientID, reg.ClientName, string(redirectURIs), reg.ExpiresAt.UTC().Format("2006-01-02 15:04:05"), reg.Authorized,
 	); err != nil {
 		rollback()
 		return false, fmt.Errorf("save MCP client registration: %w", err)
@@ -121,13 +129,13 @@ func (s *RelayStore) SaveMCPClientRegistrationLimited(reg MCPClientRegistration,
 
 func (s *RelayStore) GetMCPClientRegistration(clientID string, now time.Time) (*MCPClientRegistration, error) {
 	row := s.db.QueryRow(
-		`SELECT client_id, client_name, redirect_uris, expires_at
+		`SELECT client_id, client_name, redirect_uris, expires_at, authorized
 		 FROM mcp_oauth_clients WHERE client_id = ? AND expires_at > ?`,
 		clientID, now.UTC().Format("2006-01-02 15:04:05"),
 	)
 	var reg MCPClientRegistration
 	var redirectURIs string
-	if err := row.Scan(&reg.ClientID, &reg.ClientName, &redirectURIs, &reg.ExpiresAt); err != nil {
+	if err := row.Scan(&reg.ClientID, &reg.ClientName, &redirectURIs, &reg.ExpiresAt, &reg.Authorized); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -151,6 +159,40 @@ func (s *RelayStore) CountMCPClientRegistrations(now time.Time) (int, error) {
 		return 0, fmt.Errorf("count MCP client registrations: %w", err)
 	}
 	return count, nil
+}
+
+// AuthorizeMCPClient reserves a durable slot only after the PKCE-bound code is
+// redeemed. Existing authorized clients can reauthorize even when the pool is full.
+func (s *RelayStore) AuthorizeMCPClient(clientID string, now, expiresAt time.Time, limit int) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	formattedNow := now.UTC().Format("2006-01-02 15:04:05")
+	if _, err := tx.Exec("DELETE FROM mcp_oauth_clients WHERE expires_at <= ?", formattedNow); err != nil {
+		return false, err
+	}
+	var authorized bool
+	if err := tx.QueryRow("SELECT authorized FROM mcp_oauth_clients WHERE client_id = ?", clientID).Scan(&authorized); err != nil {
+		if err == sql.ErrNoRows {
+			return false, tx.Commit()
+		}
+		return false, err
+	}
+	if !authorized {
+		var count int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM mcp_oauth_clients WHERE authorized = 1").Scan(&count); err != nil {
+			return false, err
+		}
+		if count >= limit {
+			return false, tx.Commit()
+		}
+	}
+	if _, err := tx.Exec("UPDATE mcp_oauth_clients SET authorized = 1, expires_at = ? WHERE client_id = ?", expiresAt.UTC().Format("2006-01-02 15:04:05"), clientID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 func OpenRelay(dsn string) (*RelayStore, error) {
@@ -180,6 +222,7 @@ func OpenRelay(dsn string) (*RelayStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	s.startGrantCleanup(relayLimitDuration(0, "SWEEP_INTERVAL", time.Minute))
 	return s, nil
 }
 
@@ -234,7 +277,40 @@ func configureRelayDSN(dsn string) (string, error) {
 }
 
 func (s *RelayStore) Close() error {
+	if s.cleanupDone != nil {
+		s.cleanupOnce.Do(func() { close(s.cleanupDone) })
+		<-s.cleanupStopped
+	}
 	return s.db.Close()
+}
+
+func (s *RelayStore) purgeExpiredGrants(now time.Time) error {
+	formattedNow := now.UTC().Format("2006-01-02 15:04:05")
+	if _, err := s.db.Exec("DELETE FROM device_codes WHERE claimed = 0 AND expires_at <= ?", formattedNow); err != nil {
+		return err
+	}
+	_, err := s.db.Exec("DELETE FROM mcp_oauth_clients WHERE expires_at <= ?", formattedNow)
+	return err
+}
+
+func (s *RelayStore) startGrantCleanup(interval time.Duration) {
+	s.cleanupDone = make(chan struct{})
+	s.cleanupStopped = make(chan struct{})
+	go func() {
+		defer close(s.cleanupStopped)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.cleanupDone:
+				return
+			case now := <-ticker.C:
+				if err := s.purgeExpiredGrants(now); err != nil {
+					log.Printf("purge expired device grants: %v", err)
+				}
+			}
+		}
+	}()
 }
 
 func (s *RelayStore) CreateUser(id string) error {
@@ -257,17 +333,47 @@ func (s *RelayStore) CreateDeviceCodeWithKey(code, userCode, deviceID, publicKey
 
 }
 
+type deviceGrantAdmission struct {
+	IP     string
+	Limits ResourceLimits
+}
+
 // createDeviceCode reserves the short, human-entered user code and stores the
 // opaque device code in one immediate transaction. user_code is intentionally
-// not a durable UNIQUE column because expired rows are retained for audit and
-// the same short code may safely be reused after expiry.
-func (s *RelayStore) createDeviceCode(code, userCode, deviceID, publicKey string, expiresAt time.Time) error {
+// not a durable UNIQUE column: the same short code may be reused after expiry.
+func (s *RelayStore) createDeviceCode(code, userCode, deviceID, publicKey string, expiresAt time.Time, admission ...deviceGrantAdmission) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin device code creation: %w", err)
 	}
 	rollback := func() { _ = tx.Rollback() }
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	if _, err := tx.Exec("DELETE FROM device_codes WHERE claimed = 0 AND expires_at <= ?", now); err != nil {
+		rollback()
+		return fmt.Errorf("purge expired device grants: %w", err)
+	}
+	ip := ""
+	if len(admission) > 0 {
+		ip = admission[0].IP
+		limits := admission[0].Limits
+		var total, perIP int
+		if err := tx.QueryRow("SELECT COUNT(*), COALESCE(SUM(source_ip = ?), 0) FROM device_codes WHERE claimed = 0 AND expires_at > ?", ip, now).Scan(&total, &perIP); err != nil {
+			rollback()
+			return fmt.Errorf("count pending device grants: %w", err)
+		}
+		var limitErr error
+		if total >= limits.PendingGrants {
+			limitErr = ErrDeviceGrantLimit
+		} else if perIP >= limits.PendingGrantsPerIP {
+			limitErr = ErrDeviceGrantIPLimit
+		}
+		if limitErr != nil {
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+			return limitErr
+		}
+	}
 	var exists int
 	if err := tx.QueryRow(
 		"SELECT EXISTS(SELECT 1 FROM device_codes WHERE user_code = ? AND expires_at > ?)",
@@ -281,8 +387,8 @@ func (s *RelayStore) createDeviceCode(code, userCode, deviceID, publicKey string
 		return ErrDeviceUserCodeExists
 	}
 	if _, err := tx.Exec(
-		"INSERT INTO device_codes (code, user_code, device_id, public_key, expires_at) VALUES (?, ?, ?, ?, ?)",
-		code, userCode, deviceID, publicKey, expiresAt.UTC().Format("2006-01-02 15:04:05"),
+		"INSERT INTO device_codes (code, user_code, device_id, public_key, expires_at, source_ip) VALUES (?, ?, ?, ?, ?, ?)",
+		code, userCode, deviceID, publicKey, expiresAt.UTC().Format("2006-01-02 15:04:05"), ip,
 	); err != nil {
 		rollback()
 		return fmt.Errorf("create device code: %w", err)
