@@ -300,7 +300,12 @@ func extractRawP256Key(coseKey []byte) ([]byte, error) {
 func (s *Server) handlePasskeyList(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
-		user = s.tokenUser(r)
+		var err error
+		user, err = s.tokenUser(r)
+		if err != nil {
+			writeCredentialError(w, err)
+			return
+		}
 	}
 	if user == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

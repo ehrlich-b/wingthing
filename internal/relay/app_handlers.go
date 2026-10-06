@@ -21,24 +21,27 @@ import (
 )
 
 // tokenUser authenticates a request via Bearer token (CLI device auth).
-func (s *Server) tokenUser(r *http.Request) *User {
+func (s *Server) tokenUser(r *http.Request) (*User, error) {
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
-		return nil
+		return nil, nil
 	}
 	token := strings.TrimPrefix(auth, "Bearer ")
 	if s.Store == nil {
-		return nil
+		return nil, fmt.Errorf("%w: no credential store", errCredentialValidationUnavailable)
 	}
 	claims, err := s.validateWingCredential(r.Context(), token)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	user, err := s.Store.GetUserByID(claims.Subject)
-	if err != nil || !s.roostUserAllowed(user) {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errCredentialValidationUnavailable, err)
 	}
-	return user
+	if !s.roostUserAllowed(user) {
+		return nil, errInvalidCredential
+	}
+	return user, nil
 }
 
 // handleResolveEmail resolves an email to a user ID.
@@ -46,7 +49,12 @@ func (s *Server) tokenUser(r *http.Request) *User {
 func (s *Server) handleResolveEmail(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
-		user = s.tokenUser(r)
+		var err error
+		user, err = s.tokenUser(r)
+		if err != nil {
+			writeCredentialError(w, err)
+			return
+		}
 	}
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")
@@ -119,7 +127,12 @@ func (s *Server) handleAppWings(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		// Native wing discovery (wt wings, wt session sync) authenticates with
 		// the device token from wt login rather than a web session cookie.
-		user = s.tokenUser(r)
+		var err error
+		user, err = s.tokenUser(r)
+		if err != nil {
+			writeCredentialError(w, err)
+			return
+		}
 	}
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")

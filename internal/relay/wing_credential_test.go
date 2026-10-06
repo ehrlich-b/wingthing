@@ -2,9 +2,11 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -152,4 +154,57 @@ func TestWingSocketClosesAtJWTExpiryWithLiveRow(t *testing.T) {
 	mustTest(t, server.Store.CreateDeviceToken(token, "user", "wing", nil))
 	conn, done := openWingAuthTestSocket(t, server, token, "wing", 10*time.Millisecond)
 	expectPTYAuthorizationClosed(t, conn, done)
+}
+
+func TestWingClientRecoversFromCredentialStoreOutage(t *testing.T) {
+	for _, node := range []string{"login", "edge"} {
+		t.Run(node, func(t *testing.T) {
+			store := testStore(t)
+			token, _ := createTestToken(t, store, "wing")
+			login := NewServer(store, ServerConfig{InternalSecret: "secret"})
+			server := login
+			if node == "edge" {
+				loginHTTP := httptest.NewServer(login)
+				defer loginHTTP.Close()
+				server = NewServer(nil, ServerConfig{NodeRole: "edge", LoginNodeAddr: loginHTTP.URL, InternalSecret: "secret"})
+			}
+			mustTestExec(t, store.DB(), "ALTER TABLE device_tokens RENAME TO unavailable_tokens")
+			var attempts atomic.Int32
+			firstStatus := make(chan int, 1)
+			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if attempts.Add(1) == 1 {
+					response := httptest.NewRecorder()
+					server.handleWingWS(response, r)
+					firstStatus <- response.Code
+					if _, err := store.DB().Exec("ALTER TABLE unavailable_tokens RENAME TO device_tokens"); err != nil {
+						t.Errorf("restore credential store: %v", err)
+					}
+					w.WriteHeader(response.Code)
+					_, _ = w.Write(response.Body.Bytes())
+					return
+				}
+				server.handleWingWS(w, r)
+			}))
+			defer httpServer.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			registered := false
+			client := &ws.Client{
+				RoostURL: "ws" + strings.TrimPrefix(httpServer.URL, "http"), Token: token, WingID: "wing",
+				OnRegistered: func(ws.RegisteredMsg) {
+					registered = true
+					cancel()
+				},
+			}
+			if err := client.Run(ctx); !errors.Is(err, context.Canceled) || !registered {
+				t.Fatalf("wing failed to recover: registered=%v error=%v", registered, err)
+			}
+			if status := <-firstStatus; status != http.StatusServiceUnavailable {
+				t.Fatalf("store outage = HTTP %d, want 503", status)
+			}
+			if got := attempts.Load(); got != 2 {
+				t.Fatalf("handshake attempts = %d, want outage then recovery", got)
+			}
+		})
+	}
 }

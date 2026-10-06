@@ -90,7 +90,12 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
-		user = s.tokenUser(r)
+		var err error
+		user, err = s.tokenUser(r)
+		if err != nil {
+			writeCredentialError(w, err)
+			return
+		}
 	}
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")
@@ -170,7 +175,12 @@ func (s *Server) handleGetOrg(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListOrgMembers(w http.ResponseWriter, r *http.Request) {
 	user := s.sessionUser(r)
 	if user == nil {
-		user = s.tokenUser(r)
+		var err error
+		user, err = s.tokenUser(r)
+		if err != nil {
+			writeCredentialError(w, err)
+			return
+		}
 	}
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "not logged in")

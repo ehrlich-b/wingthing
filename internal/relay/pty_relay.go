@@ -661,7 +661,7 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 		}
 		claims, err := s.validateWingCredential(r.Context(), token)
 		if err != nil {
-			http.Error(w, "invalid token", http.StatusUnauthorized)
+			writeCredentialError(w, err)
 			return
 		}
 		userID = claims.Subject

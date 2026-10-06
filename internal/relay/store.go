@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"encoding/json"
@@ -489,14 +490,18 @@ func (s *RelayStore) ExchangeClaimedDeviceCode(code, token, userID, deviceID str
 }
 
 func (s *RelayStore) ValidateToken(token string) (userID string, deviceID string, err error) {
+	return s.ValidateTokenContext(context.Background(), token)
+}
+
+func (s *RelayStore) ValidateTokenContext(ctx context.Context, token string) (userID string, deviceID string, err error) {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	row := s.db.QueryRow(
+	row := s.db.QueryRowContext(ctx,
 		"SELECT user_id, device_id FROM device_tokens WHERE token = ? AND (expires_at IS NULL OR expires_at > ?)",
 		token, now,
 	)
 	err = row.Scan(&userID, &deviceID)
-	if err == sql.ErrNoRows {
-		return "", "", fmt.Errorf("invalid or expired token")
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", fmt.Errorf("invalid or expired token: %w", err)
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("validate token: %w", err)

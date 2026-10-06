@@ -29,7 +29,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	userID := s.requireToken(w, r)
 	if userID == "" {
-		return // requireToken already wrote 401
+		return // requireToken already wrote an error response
 	}
 	resp := map[string]any{"ok": true, "user_id": userID}
 	if u, _ := s.Store.GetUserByID(userID); u != nil {
@@ -329,7 +329,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 
 	claims, err := s.validateWingCredential(r.Context(), req.Token)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid token")
+		writeCredentialError(w, err)
 		return
 	}
 	userID, deviceID := claims.Subject, claims.WingID
@@ -411,7 +411,7 @@ func (s *Server) requireToken(w http.ResponseWriter, r *http.Request) string {
 
 	claims, err := s.validateWingCredential(r.Context(), token)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		writeCredentialError(w, err)
 		return ""
 	}
 	userID := claims.Subject

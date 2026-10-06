@@ -2,13 +2,17 @@ package relay
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"modernc.org/sqlite"
 )
 
 func TestRotatedJWTRejectedOnEveryAuthSurface(t *testing.T) {
@@ -159,11 +163,167 @@ func TestWingAdmissionDistinguishesValidationOutagesFromRejection(t *testing.T) 
 				login.Close()
 			}
 			edge := NewServer(nil, ServerConfig{NodeRole: "edge", LoginNodeAddr: login.URL, InternalSecret: "secret"})
-			response := httptest.NewRecorder()
-			edge.handleWingWS(response, httptest.NewRequest(http.MethodGet, "/ws/wing?token=device-token", nil))
-			if response.Code != test.want {
-				t.Fatalf("wing admission = %d %s, want %d", response.Code, response.Body.String(), test.want)
+			for surface, handler := range map[string]http.HandlerFunc{
+				"http": func(w http.ResponseWriter, r *http.Request) { edge.requireToken(w, r) },
+				"pty":  edge.handlePTYWS,
+				"wing": edge.handleWingWS,
+			} {
+				t.Run(surface, func(t *testing.T) {
+					response := httptest.NewRecorder()
+					handler(response, httptest.NewRequest(http.MethodGet, "/?token=device-token", nil))
+					if response.Code != test.want {
+						t.Fatalf("admission = %d %s, want %d", response.Code, response.Body.String(), test.want)
+					}
+				})
 			}
 		})
+	}
+}
+
+func TestWingCredentialMissingBackendIsUnavailable(t *testing.T) {
+	key, _, err := GenerateECKey()
+	mustTest(t, err)
+	token, _, err := IssueWingJWT(key, "user", "public-key", "wing")
+	mustTest(t, err)
+	for _, failure := range []string{"store", "verification key"} {
+		t.Run(failure, func(t *testing.T) {
+			server := NewServer(nil, ServerConfig{})
+			if failure == "store" {
+				server.SetJWTKey(key)
+			}
+			_, err := server.validateWingCredential(context.Background(), token)
+			if !errors.Is(err, errCredentialValidationUnavailable) {
+				t.Fatalf("missing backend = %v, want retryable error", err)
+			}
+			response := httptest.NewRecorder()
+			server.handleWingWS(response, httptest.NewRequest(http.MethodGet, "/?token="+token, nil))
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("missing backend = HTTP %d, want 503", response.Code)
+			}
+		})
+	}
+}
+
+func TestCredentialStoreFailuresOnEveryAuthSurface(t *testing.T) {
+	for _, kind := range []string{"opaque", "jwt", "legacy-jwt"} {
+		for _, failure := range []string{"missing row", "expired row", "read failure", "closed database", "canceled", "deadline", "lock timeout"} {
+			t.Run(kind+"/"+failure, func(t *testing.T) {
+				var store *RelayStore
+				var err error
+				var dsn string
+				if failure == "lock timeout" {
+					dsn = filepath.Join(t.TempDir(), "relay.db") + "?_pragma=busy_timeout(0)"
+					store, err = OpenRelay(dsn)
+					mustTest(t, err)
+					t.Cleanup(func() { mustTest(t, store.Close()) })
+					mustTestExec(t, store.DB(), "PRAGMA journal_mode=DELETE")
+				} else {
+					store = testStore(t)
+				}
+				ctx := context.Background()
+				mustTest(t, store.CreateUser("user"))
+				key, _, err := GenerateECKey()
+				mustTest(t, err)
+				login := NewServer(store, ServerConfig{InternalSecret: "secret"})
+				login.SetJWTKey(key)
+				token := "device-token"
+				if kind != "opaque" {
+					use := "wing"
+					if kind == "legacy-jwt" {
+						use = ""
+					}
+					token, err = jwt.NewWithClaims(jwt.SigningMethodES256, WingClaims{
+						RegisteredClaims: jwt.RegisteredClaims{Subject: "user", ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+						WingID:           "wing", TokenUse: use,
+					}).SignedString(key)
+					mustTest(t, err)
+				}
+				mustTest(t, store.CreateDeviceToken(token, "user", "wing", nil))
+				want := http.StatusUnauthorized
+				switch failure {
+				case "missing row":
+					mustTest(t, store.DeleteToken(token))
+				case "expired row":
+					mustTestExec(t, store.DB(), "UPDATE device_tokens SET expires_at = ?", time.Now().Add(-time.Hour).UTC().Format("2006-01-02 15:04:05"))
+				case "read failure":
+					mustTestExec(t, store.DB(), "ALTER TABLE device_tokens RENAME TO unavailable_tokens")
+					want = http.StatusServiceUnavailable
+				case "closed database":
+					mustTest(t, store.DB().Close())
+					want = http.StatusServiceUnavailable
+				case "canceled":
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithCancel(ctx)
+					cancel()
+					want = http.StatusServiceUnavailable
+				case "deadline":
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Second))
+					defer cancel()
+					want = http.StatusServiceUnavailable
+				case "lock timeout":
+					blocker, err := sql.Open("sqlite", dsn)
+					mustTest(t, err)
+					defer func() { mustTest(t, blocker.Close()) }()
+					mustTestExec(t, blocker, "BEGIN EXCLUSIVE")
+					defer mustTestExec(t, blocker, "ROLLBACK")
+					want = http.StatusServiceUnavailable
+				}
+				_, _, err = store.ValidateTokenContext(ctx, token)
+				if err == nil || errors.Is(err, sql.ErrNoRows) != (want == http.StatusUnauthorized) {
+					t.Errorf("store error = %v, want ErrNoRows only for definitive rejection", err)
+				}
+				if ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
+					t.Errorf("store error = %v, want %v", err, ctx.Err())
+				}
+				if failure == "lock timeout" {
+					var sqliteErr *sqlite.Error
+					if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != 5 {
+						t.Fatalf("store error = %v, want SQLITE_BUSY", err)
+					}
+				}
+				_, validationErr := login.validateWingCredential(ctx, token)
+				wantError := errInvalidCredential
+				if want == http.StatusServiceUnavailable {
+					wantError = errCredentialValidationUnavailable
+				}
+				if !errors.Is(validationErr, wantError) || (ctx.Err() != nil && !errors.Is(validationErr, ctx.Err())) {
+					t.Fatalf("credential error lost classification or backend cause: %v", validationErr)
+				}
+				loginHTTP := httptest.NewServer(login)
+				defer loginHTTP.Close()
+				edge := NewServer(nil, ServerConfig{NodeRole: "edge", LoginNodeAddr: loginHTTP.URL, InternalSecret: "secret"})
+				edge.SetJWTKey(key)
+				for node, server := range map[string]*Server{"login": login, "edge": edge} {
+					handlers := map[string]http.HandlerFunc{
+						"http": func(w http.ResponseWriter, r *http.Request) { server.requireToken(w, r) },
+						"pty":  server.handlePTYWS,
+						"wing": server.handleWingWS,
+					}
+					if node == "login" {
+						handlers["internal"] = server.handleInternalToken
+						handlers["refresh"] = server.handleAuthRefresh
+						handlers["discovery"] = server.handleAppWings
+						handlers["resolve-email"] = server.handleResolveEmail
+						handlers["orgs"] = server.handleListOrgs
+						handlers["org-members"] = server.handleListOrgMembers
+						handlers["passkeys"] = server.handlePasskeyList
+					}
+					for surface, handler := range handlers {
+						t.Run(node+"/"+surface, func(t *testing.T) {
+							request := httptest.NewRequest(http.MethodGet, "/?token="+token, strings.NewReader(`{"token":"`+token+`"}`))
+							request.Header.Set("Authorization", "Bearer "+token)
+							request.SetPathValue("token", token)
+							request = request.WithContext(ctx)
+							response := httptest.NewRecorder()
+							handler(response, request)
+							if response.Code != want {
+								t.Fatalf("admission = %d %s, want %d", response.Code, response.Body.String(), want)
+							}
+						})
+					}
+				}
+			})
+		}
 	}
 }
