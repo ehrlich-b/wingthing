@@ -19,6 +19,16 @@ Local CLI and MCP access use authenticated Unix sockets and operating-system fil
 permissions. SSH attach uses OpenSSH's authentication, encryption, and host-key
 verification. Neither path uses Wingthing's relay encryption.
 
+## Replacing legacy eggs after a sandbox upgrade
+
+Surviving eggs from v0.147.0 and earlier isolation builds keep their PTYs so
+owners can finish or save work. The wing marks them `replacement-required` and
+does not restore their privileged tool listeners. New sandboxed launches and
+tool recovery wait until every live legacy egg in either release channel or
+selected state directory has been stopped and replaced. This prevents old
+sandboxes from reading a newly launched sibling's controller token and reclaiming
+its tool capability. Existing eggs are never terminated automatically.
+
 ## Local self-hosted HTTPS
 
 `wt serve --local --https` and `wt roost start --https` add an HTTPS browser

@@ -566,6 +566,11 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 		return err
 	}
 	if hasSandbox {
+		if err := RequireCurrentEggIsolation(s.dir); err != nil {
+			return err
+		}
+	}
+	if hasSandbox {
 		if ok, help := sandbox.CheckCapability(); !ok {
 			return fmt.Errorf("sandbox not available: %s\nrun: wt doctor --fix", help)
 		}
@@ -972,6 +977,15 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	// untrusted process. Binding the socket and durably creating its credentials
 	// first makes endpoint setup atomic and prevents a permissions or filesystem
 	// error from leaving an unreachable agent running in the background.
+	// Publish the isolation marker before the endpoint's PID. Concurrent
+	// launches must not mistake a current egg still starting for a legacy one.
+	startupMeta, err := os.ReadFile(filepath.Join(s.dir, "egg.meta"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := atomicWritePrivate(filepath.Join(s.dir, "egg.meta"), append([]byte("control_isolation="+ControlIsolationVersion+"\n"), startupMeta...)); err != nil {
+		return err
+	}
 	lis, err := s.prepareEndpoint()
 	if err != nil {
 		if sb != nil {
@@ -1109,7 +1123,7 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 	if hasSandbox {
 		isolationMode = "wingthing-sandbox"
 	}
-	metaContent := fmt.Sprintf("agent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nprovider_session_id=%s\nprovider_home=%s\n",
+	metaContent := fmt.Sprintf("control_isolation="+ControlIsolationVersion+"\nagent=%s\nkind=%s\ncommand=%s\ncwd=%s\nnetwork=%s\nisolation=%s\ncols=%d\nrows=%d\nstarted_at=%d\nprovider_session_id=%s\nprovider_home=%s\n",
 		rc.Agent, rc.Kind, formatCommand(rc.Command), rc.CWD, networkSummary, isolationMode, rc.Cols, rc.Rows, sess.StartedAt.Unix(), rc.ProviderSessionID, captureHome)
 	if err := atomicWritePrivate(metaPath, []byte(metaContent)); err != nil {
 		log.Printf("egg: warning: write meta: %v", err)

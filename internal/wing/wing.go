@@ -1600,6 +1600,7 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 		}
 
 		agent, _ := eggclient.ReadEggMeta(dir)
+		prepareReclaimedEggIsolation(dir)
 
 		// Alive — dial and set up input routing
 		sockPath := filepath.Join(dir, "egg.sock")
@@ -1625,6 +1626,19 @@ func reclaimEggSessions(ctx context.Context, cfg *config.Config, wsClient *ws.Cl
 			handleReclaimedPTY(ctx, cfg, ec, sid, dir, write, input, wingCfg, allowedKeys, passkeyCache, passkeyPolicy, authTTL, tools)
 		}(sessionID, ec, dir)
 	}
+}
+
+// Preserve terminal access while withholding privileged authority from old
+// sandboxes. The marker makes the required replacement visible to the owner.
+func prepareReclaimedEggIsolation(dir string) bool {
+	if !egg.HasCurrentControlIsolation(dir) {
+		if err := os.WriteFile(filepath.Join(dir, "replacement-required"), []byte("Legacy sandbox isolation: keep this PTY, then stop and replace this egg before starting new sandboxed sessions; privileged tools are not recovered.\n"), 0600); err != nil {
+			log.Printf("egg: mark legacy session %s for replacement: %v", filepath.Base(dir), err)
+		}
+		log.Printf("egg: legacy session %s requires replacement; preserving PTY without tools", filepath.Base(dir))
+		return false
+	}
+	return egg.RequireCurrentEggIsolation(dir) == nil
 }
 
 // handleReclaimedPTY sets up I/O routing for a reclaimed (surviving) egg session.
@@ -1657,7 +1671,7 @@ func handleReclaimedPTY(ctx context.Context, cfg *config.Config, ec *egg.Client,
 	// via --tool-socket. Recover its capability through the host-only egg RPC;
 	// generating a new secret would strand the surviving agent. Only sessions with tools
 	// have a .tools dir; skip the rest.
-	if len(tools) > 0 {
+	if len(tools) > 0 && prepareReclaimedEggIsolation(eggDir) {
 		toolsDir := filepath.Join(eggDir, ".tools")
 		if _, statErr := os.Stat(toolsDir); statErr == nil {
 			toolSocketPath := filepath.Join(toolsDir, "tool.sock")
