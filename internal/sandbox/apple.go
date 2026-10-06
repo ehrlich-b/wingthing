@@ -86,13 +86,17 @@ func buildProfile(cfg Config) string {
 			sb.WriteString("(deny network*)\n")
 		case NetworkLocal:
 			sb.WriteString("(deny network*)\n")
-			sb.WriteString("(allow network-outbound (literal \"/private/var/run/mDNSResponder\") (remote ip \"localhost:*\"))\n")
 		case NetworkHTTPS:
 			sb.WriteString("(deny network*)\n")
 			sb.WriteString("(allow network-outbound (literal \"/private/var/run/mDNSResponder\") (remote tcp \"*:443\" \"*:80\"))\n")
 		case NetworkFull:
 			// no deny — full network access
 		}
+	}
+	// Explicit loopback services remain reachable alongside the domain proxy.
+	// Agent/provider defaults are resolved into LocalPorts by the caller.
+	for _, port := range cfg.LocalPorts {
+		fmt.Fprintf(&sb, "(allow network-outbound (remote ip \"localhost:%d\"))\n", port)
 	}
 
 	// Allow outbound connections to specific Unix sockets (e.g. tool sockets).

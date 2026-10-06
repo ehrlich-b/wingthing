@@ -5,11 +5,18 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func sandboxExecAvailable(t *testing.T) {
@@ -38,6 +45,51 @@ func TestBuildProfileNetworkAllow(t *testing.T) {
 	profile := buildProfile(Config{NetworkNeed: NetworkFull})
 	if strings.Contains(profile, "(deny network*)") {
 		t.Errorf("NetworkFull profile should not deny network, got:\n%s", profile)
+	}
+}
+
+func TestBuildProfileLocalPorts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		ports []int
+	}{
+		{name: "no declared ports"},
+		{name: "declared provider ports", ports: []int{11434, 4000, 65535}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile := buildProfile(Config{NetworkNeed: NetworkLocal, LocalPorts: tc.ports})
+			want := "(version 1)\n(allow default)\n(deny network*)\n"
+			for _, port := range tc.ports {
+				want += fmt.Sprintf("(allow network-outbound (remote ip \"localhost:%d\"))\n", port)
+			}
+			if profile != want {
+				t.Fatalf("local profile =\n%s\nwant\n%s", profile, want)
+			}
+		})
+	}
+}
+
+func TestBuildProfileDeclaredPortsAndSocketsSurviveProxyDeny(t *testing.T) {
+	socket, err := canonicalSandboxPath(filepath.Join(t.TempDir(), "tool.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := buildProfile(Config{
+		NetworkNeed:  NetworkHTTPS,
+		ProxyPort:    43210,
+		LocalPorts:   []int{4000},
+		AllowSockets: []string{socket},
+	})
+	for _, rule := range []string{
+		`(allow network-outbound (remote ip "localhost:4000"))`,
+		fmt.Sprintf("(allow network-outbound (literal %q))", socket),
+	} {
+		if i := strings.Index(profile, rule); i < strings.Index(profile, "(deny network*)") || i < 0 {
+			t.Fatalf("declared endpoint must be allowed after network deny: %s\n%s", rule, profile)
+		}
+	}
+	if strings.Contains(profile, "localhost:*") {
+		t.Fatalf("profile permits undeclared loopback ports:\n%s", profile)
 	}
 }
 
@@ -206,6 +258,96 @@ func TestBuildProfileDenyWritePaths(t *testing.T) {
 }
 
 // Integration tests — actually run sandboxed processes
+
+// Opt in outside a nested sandbox; an unavailable Seatbelt must fail this gate,
+// rather than silently skipping the enforcement checks requested by the caller.
+func requireSeatbeltEnforcement(t *testing.T) {
+	t.Helper()
+	if os.Getenv("WT_TEST_SEATBELT_ENFORCEMENT") != "1" {
+		t.Skip("set WT_TEST_SEATBELT_ENFORCEMENT=1 on an unsandboxed Mac")
+	}
+	if out, err := exec.Command("sandbox-exec", "-p", "(version 1)(allow default)", "/bin/echo", "ok").CombinedOutput(); err != nil {
+		t.Fatalf("Seatbelt enforcement unavailable: %v: %s", err, out)
+	}
+}
+
+// A subprocess helper tests Unix-socket access with the same Go runtime as the
+// parent. The parent first establishes that the host socket is reachable.
+func TestSeatbeltSocketProbe(t *testing.T) {
+	socket := os.Getenv("WT_SEATBELT_TEST_SOCKET")
+	if socket == "" {
+		t.Skip("subprocess helper")
+	}
+	conn, err := net.DialTimeout("unix", socket, 2*time.Second)
+	if err == nil {
+		_ = conn.Close()
+	}
+	if os.Getenv("WT_SEATBELT_TEST_DENY_SOCKET") == "1" {
+		if !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.EACCES) {
+			t.Fatalf("socket access must be denied by Seatbelt, got %v", err)
+		}
+	} else if err != nil {
+		t.Fatalf("declared socket access failed: %v", err)
+	}
+}
+
+func TestSeatbeltLocalPortsEnforced(t *testing.T) {
+	requireSeatbeltEnforcement(t)
+	// Keep the test socket within macOS's sockaddr_un path limit.
+	t.Setenv("TMPDIR", "/tmp")
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("seatbelt-local-ok"))
+	})
+	allowed := httptest.NewServer(handler)
+	defer allowed.Close()
+	blocked := httptest.NewServer(handler)
+	defer blocked.Close()
+	socket := filepath.Join(t.TempDir(), "tool.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	sb, err := newPlatform(Config{
+		NetworkNeed:  NetworkLocal,
+		LocalPorts:   []int{allowed.Listener.Addr().(*net.TCPAddr).Port},
+		AllowSockets: []string{socket},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destroySandboxForTest(t, sb)
+	for _, tc := range []struct {
+		name  string
+		url   string
+		allow bool
+	}{{"declared port", allowed.URL, true}, {"undeclared port", blocked.URL, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			cmd, err := sb.Exec(ctx, "/usr/bin/curl", []string{"--silent", "--show-error", "--fail", "--max-time", "3", "--noproxy", "*", tc.url})
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := cmd.CombinedOutput()
+			if tc.allow && (err != nil || string(out) != "seatbelt-local-ok") {
+				t.Fatalf("declared loopback port failed: %v: %s", err, out)
+			}
+			if !tc.allow && (err == nil || ctx.Err() != nil) {
+				t.Fatalf("undeclared loopback port must be blocked: %v: %s", err, out)
+			}
+		})
+	}
+	t.Setenv("WT_SEATBELT_TEST_SOCKET", socket)
+	t.Setenv("WT_SEATBELT_TEST_DENY_SOCKET", "0")
+	cmd, err := sb.Exec(context.Background(), os.Args[0], []string{"-test.run=^TestSeatbeltSocketProbe$"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("declared Unix control socket failed: %v: %s", err, out)
+	}
+}
 
 func TestSeatbeltNetworkBlocked(t *testing.T) {
 	sandboxExecAvailable(t)
