@@ -50,7 +50,7 @@ func attachCmd() *cobra.Command {
 				return err
 			}
 			if remoteName != "" {
-				remote, err := configuredRemote(cfg.Dir, remoteName)
+				remote, err := remotepkg.ConfiguredRemote(cfg.Dir, remoteName)
 				if err != nil {
 					return err
 				}
@@ -62,7 +62,7 @@ func attachCmd() *cobra.Command {
 					remoteArgs = append(remoteArgs, "--takeover")
 				}
 				remoteArgs = append(remoteArgs, "--", remoteSession)
-				streams := remoteStreams(cmd.Context())
+				streams := remotepkg.Streams(cmd.Context())
 				return remotepkg.RunRemoteInvocation(cmd.Context(), remotepkg.Invocation{
 					Target: remote.SSHTarget, Binary: config.BinaryName(), State: remote.WingthingDir,
 					Args: remoteArgs, AllocateTTY: streams.StdinTTY && streams.StdoutTTY,

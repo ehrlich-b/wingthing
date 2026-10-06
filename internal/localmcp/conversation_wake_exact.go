@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"context"
@@ -29,7 +29,7 @@ import (
 //
 // A missing directory retains the binding: losing the execution's artifacts
 // cannot prove that input was never attempted.
-func (s *localMCPServer) resolveExactWakeTarget(db *store.Store, c *store.Conversation, id string) (eggclient.LocalSession, error) {
+func (s *Server) resolveExactWakeTarget(db *store.Store, c *store.Conversation, id string) (eggclient.LocalSession, error) {
 	if err := eggclient.ValidateSessionID(id); err != nil {
 		return eggclient.LocalSession{}, errors.New("wake target is not an exact execution ID")
 	}
@@ -40,7 +40,7 @@ func (s *localMCPServer) resolveExactWakeTarget(db *store.Store, c *store.Conver
 	if !slices.Contains(executions, id) {
 		return eggclient.LocalSession{}, errors.New("wake target is not a recorded execution of this root conversation")
 	}
-	dir := filepath.Join(s.cfg.Dir, "eggs", id)
+	dir := filepath.Join(s.Cfg.Dir, "eggs", id)
 	info, err := os.Lstat(dir)
 	if errors.Is(err, os.ErrNotExist) || (err == nil && !info.IsDir()) {
 		return eggclient.LocalSession{}, errors.New("wake target execution not found; its original binding is retained")

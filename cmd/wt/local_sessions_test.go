@@ -14,6 +14,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"golang.org/x/sys/unix"
 )
@@ -56,7 +57,7 @@ func TestSessionListingsDoNotWaitForLifecycleLock(t *testing.T) {
 					}
 				case "MCP terminal_list":
 					var listed map[string]any
-					listed, err = (&localMCPServer{cfg: cfg}).toolTerminalList(ctx, json.RawMessage(`{}`))
+					listed, err = (&localmcp.Server{Version: version, Cfg: cfg}).ToolTerminalList(ctx, json.RawMessage(`{}`))
 					if err == nil {
 						sessions = listed["sessions"].([]eggclient.LocalSession)
 					}

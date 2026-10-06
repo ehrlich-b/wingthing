@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"bufio"
@@ -81,18 +81,18 @@ func archivedCoordinatorModel(dir string) string {
 	return model
 }
 
-func (s *localMCPServer) continuationAvailability(db *store.Store, c *store.Conversation, view egg.SessionView) map[string]any {
-	if s.boundConversation != "" || s.identity.OrgWing || s.identity.SharedHost || c == nil || c.OwnerID != s.clientPrincipal() || c.ParentID != "" || c.ID != c.RootID || c.Agent != "claude" || c.SessionID != view.SessionID || view.Agent != "claude" || view.ProcessAlive || !eggclient.ValidProviderSessionID(view.ProviderSessionID) {
+func (s *Server) continuationAvailability(db *store.Store, c *store.Conversation, view egg.SessionView) map[string]any {
+	if s.BoundConversation != "" || s.identity.OrgWing || s.identity.SharedHost || c == nil || c.OwnerID != s.clientPrincipal() || c.ParentID != "" || c.ID != c.RootID || c.Agent != "claude" || c.SessionID != view.SessionID || view.Agent != "claude" || view.ProcessAlive || !eggclient.ValidProviderSessionID(view.ProviderSessionID) {
 		return nil
 	}
-	if wc, err := config.LoadWingConfig(s.cfg.Dir); err != nil || wc.Org != "" {
+	if wc, err := config.LoadWingConfig(s.Cfg.Dir); err != nil || wc.Org != "" {
 		return nil
 	}
 	session, err := s.resolveOwnedLifecycleSession(c.SessionID)
 	if err != nil || session.ID != c.SessionID || session.Agent != "claude" || wingpolicy.CanonicalSessionPath(session.CWD) != wingpolicy.CanonicalSessionPath(c.CWD) {
 		return nil
 	}
-	dir := filepath.Join(s.cfg.Dir, "eggs", c.SessionID)
+	dir := filepath.Join(s.Cfg.Dir, "eggs", c.SessionID)
 	if s.identity.UserID != "" && eggclient.ReadEggOwner(dir) != s.identity.UserID {
 		return nil
 	}
@@ -107,12 +107,12 @@ func (s *localMCPServer) continuationAvailability(db *store.Store, c *store.Conv
 	if err := db.DB().QueryRow(`SELECT COUNT(*) FROM conversation_continuations WHERE conversation_id = ? AND launch_state = 'starting'`, c.ID).Scan(&pending); err != nil || pending != 0 {
 		return nil
 	}
-	home := eggclient.EffectiveSessionHome(s.cfg, s.identity)
+	home := eggclient.EffectiveSessionHome(s.Cfg, s.identity)
 	key := eggclient.ProviderResumeKey(home, "claude", view.ProviderSessionID)
 	eggclient.BrowserProviderResumes.Mu.Lock()
 	_, reserved := eggclient.BrowserProviderResumes.Active[key]
 	eggclient.BrowserProviderResumes.Mu.Unlock()
-	if reserved || eggclient.ActiveProviderResumeConflict(s.cfg, key, "", func(dir string) bool { _, alive := eggclient.ReadAliveEggPID(dir); return alive }) {
+	if reserved || eggclient.ActiveProviderResumeConflict(s.Cfg, key, "", func(dir string) bool { _, alive := eggclient.ReadAliveEggPID(dir); return alive }) {
 		return nil
 	}
 	model := archivedCoordinatorModel(dir)
@@ -122,8 +122,8 @@ func (s *localMCPServer) continuationAvailability(db *store.Store, c *store.Conv
 	return map[string]any{"available": true, "source_session": c.SessionID, "conversation_id": c.ID, "provider_session_id": view.ProviderSessionID, "model": model}
 }
 
-func (s *localMCPServer) addSessionContinuation(result map[string]any, view egg.SessionView) {
-	if _, err := os.Stat(s.cfg.DBPath()); err != nil {
+func (s *Server) addSessionContinuation(result map[string]any, view egg.SessionView) {
+	if _, err := os.Stat(s.Cfg.DBPath()); err != nil {
 		return
 	}
 	db, err := s.openMessageStore()
@@ -160,15 +160,15 @@ func continuationLaunchResult(c *store.Conversation, turn *store.ConversationCon
 	return out
 }
 
-func (s *localMCPServer) toolAgentContinue(arguments json.RawMessage) (map[string]any, error) {
+func (s *Server) toolAgentContinue(arguments json.RawMessage) (map[string]any, error) {
 	var args continuationArgs
 	if err := decodeStrict(arguments, &args); err != nil {
 		return nil, err
 	}
-	if s.boundConversation != "" || s.identity.OrgWing || s.identity.SharedHost {
+	if s.BoundConversation != "" || s.identity.OrgWing || s.identity.SharedHost {
 		return nil, errors.New("only an unbound personal caller can continue a root conversation")
 	}
-	if wc, err := config.LoadWingConfig(s.cfg.Dir); err != nil || wc.Org != "" {
+	if wc, err := config.LoadWingConfig(s.Cfg.Dir); err != nil || wc.Org != "" {
 		return nil, errors.New("headless continuation requires a personal wing")
 	}
 	if err := eggclient.ValidateSessionID(args.SourceSession); err != nil {
@@ -216,7 +216,7 @@ func (s *localMCPServer) toolAgentContinue(arguments json.RawMessage) (map[strin
 	if err != nil || source.ID != args.SourceSession {
 		return nil, errors.New("continuation source not found or not owned by caller")
 	}
-	view, err := readExactExecutionLifecycleView(context.Background(), s.cfg, args.SourceSession, 0, 1)
+	view, err := readExactExecutionLifecycleView(context.Background(), s.Cfg, args.SourceSession, 0, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -258,20 +258,20 @@ func (s *localMCPServer) toolAgentContinue(arguments json.RawMessage) (map[strin
 	return continuationLaunchResult(c, turn, false), nil
 }
 
-func (s *localMCPServer) launchHeadlessContinuation(c *store.Conversation, turn *store.ConversationContinuation, model, input string) error {
-	eggCfg, err := eggclient.LoadSpawnEggConfig("", c.CWD, s.unsandboxed)
+func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.ConversationContinuation, model, input string) error {
+	eggCfg, err := eggclient.LoadSpawnEggConfig("", c.CWD, s.Unsandboxed)
 	if err != nil {
 		return err
 	}
 	return s.admitSpawn(func() error {
-		home := eggclient.EffectiveSessionHome(s.cfg, s.identity)
-		release, err := eggclient.BrowserProviderResumes.Reserve(s.cfg, home, "claude", turn.ProviderSessionID, turn.SourceSession, turn.SessionID)
+		home := eggclient.EffectiveSessionHome(s.Cfg, s.identity)
+		release, err := eggclient.BrowserProviderResumes.Reserve(s.Cfg, home, "claude", turn.ProviderSessionID, turn.SourceSession, turn.SessionID)
 		if err != nil {
 			return err
 		}
 		spawned := false
 		defer func() { release(spawned) }()
-		provider, err := egg.RestoreSessionHistory("claude", c.CWD, filepath.Join(s.cfg.Dir, "eggs", turn.SourceSession), home)
+		provider, err := egg.RestoreSessionHistory("claude", c.CWD, filepath.Join(s.Cfg.Dir, "eggs", turn.SourceSession), home)
 		if err != nil {
 			return err
 		}
@@ -282,18 +282,18 @@ func (s *localMCPServer) launchHeadlessContinuation(c *store.Conversation, turn 
 		if err != nil {
 			return err
 		}
-		if err := saveCoordinatorModel(s.cfg.Dir, c.SessionID, model); err != nil {
+		if err := saveCoordinatorModel(s.Cfg.Dir, c.SessionID, model); err != nil {
 			return err
 		}
 		opts := eggclient.SpawnEggOpts{Label: c.Title, Kind: "agent", AgentArgs: args, Principal: s.clientPrincipal(), ResumeSessionID: provider, ResumeSourceSessionID: turn.SourceSession, ProviderReserved: true}
 		if managed != nil {
-			opts = managed.launchOpts(s.cfg, opts)
+			opts = managed.launchOpts(s.Cfg, opts)
 		}
 		if s.startContinuation != nil {
 			err = s.startContinuation(c, eggCfg, opts)
 		} else {
 			var client *egg.Client
-			client, err = eggclient.SpawnEgg(s.cfg, c.SessionID, "claude", eggCfg, 24, 80, c.CWD, false, false, false, s.identity, 0, opts)
+			client, err = eggclient.SpawnEgg(s.Cfg, c.SessionID, "claude", eggCfg, 24, 80, c.CWD, false, false, false, s.identity, 0, opts)
 			if err == nil {
 				cmdutil.CloseWithLog("continued agent egg client", client)
 			}

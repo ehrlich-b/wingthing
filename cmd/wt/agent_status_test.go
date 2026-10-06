@@ -18,6 +18,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 )
 
 // The test executable doubles as a fake agent binary. It receives the actual
@@ -166,8 +167,8 @@ func TestAgentStatusSessionPSAndMCPFromFakeAgentHooks(t *testing.T) {
 				if !strings.Contains(table, "STATUS") || !strings.Contains(table, step.status) {
 					t.Fatalf("human status omitted: %s", table)
 				}
-				server := &localMCPServer{cfg: cfg}
-				listed, err := server.toolTerminalList(ctx, json.RawMessage(`{}`))
+				server := &localmcp.Server{Version: version, Cfg: cfg}
+				listed, err := server.ToolTerminalList(ctx, json.RawMessage(`{}`))
 				if err != nil || len(listed["sessions"].([]eggclient.LocalSession)) != 1 || listed["sessions"].([]eggclient.LocalSession)[0].Status != step.status {
 					t.Fatalf("MCP status: %v, %v", listed, err)
 				}

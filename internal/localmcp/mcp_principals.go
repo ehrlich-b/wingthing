@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"errors"
@@ -26,7 +26,7 @@ type localMCPClientsConfig struct {
 	Clients       map[string]localMCPClientConfig `yaml:"clients"`
 }
 
-func loadLocalMCPClientsConfig(cfg *config.Config) (localMCPClientsConfig, error) {
+func LoadLocalMCPClientsConfig(cfg *config.Config) (localMCPClientsConfig, error) {
 	path := filepath.Join(cfg.Dir, "clients.yaml")
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -45,7 +45,7 @@ func loadLocalMCPClientsConfig(cfg *config.Config) (localMCPClientsConfig, error
 	return clients, nil
 }
 
-func grantSet(grants []string) map[string]bool {
+func GrantSet(grants []string) map[string]bool {
 	set := make(map[string]bool, len(grants))
 	for _, grant := range grants {
 		set[grant] = true

@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type directConnectorTestWing struct {
 	manager   *webrtcpkg.PeerManager
 	cfg       *config.Config
 	wingCfg   *config.WingConfig
-	admission *mcpAdmissionState
+	admission *AdmissionState
 }
 
 type directConnectorTestTunnel struct {
@@ -117,10 +117,10 @@ func newDirectConnectorTestTunnel(t *testing.T) *directConnectorTestTunnel {
 			manager:   webrtcpkg.NewPeerManager(nil),
 			cfg:       &config.Config{Dir: t.TempDir(), DefaultAgent: "claude", WingID: wingID},
 			wingCfg:   &config.WingConfig{WingID: wingID, HostedRelay: config.HostedRelayDeny},
-			admission: newMCPAdmissionState(),
+			admission: NewMCPAdmissionState(),
 		}
 		wing.manager.OnDC(func(_ string, _ string, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
-			serveDirectMCPChannel(wing.cfg, wing.wingCfg, wing.cfg.Dir, false, nil, wing.admission, identity, dc)
+			serveDirectMCPChannel("dev", wing.cfg, wing.wingCfg, wing.cfg.Dir, false, nil, wing.admission, identity, dc)
 		})
 		t.Cleanup(wing.manager.Close)
 		tunnel.wings[wingID] = wing
@@ -200,7 +200,7 @@ type connectMCPStdioHarness struct {
 	output *json.Decoder
 	done   <-chan error
 	nextID int
-	server *connectMCPServer
+	server *ConnectMCPServer
 }
 
 func newConnectMCPStdioHarness(t *testing.T, tunnel connectMCPTunnel) *connectMCPStdioHarness {
@@ -208,13 +208,13 @@ func newConnectMCPStdioHarness(t *testing.T, tunnel connectMCPTunnel) *connectMC
 	inputReader, inputWriter := io.Pipe()
 	outputReader, outputWriter := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
-	server := &connectMCPServer{
-		in: inputReader, out: outputWriter, actor: "codex", tunnel: tunnel,
-		timeout: 10 * time.Second, controls: map[string]*webrtcpkg.ControlClient{},
+	server := &ConnectMCPServer{Version: "dev",
+		In: inputReader, Out: outputWriter, Actor: "codex", Tunnel: tunnel,
+		Timeout: 10 * time.Second, Controls: map[string]*webrtcpkg.ControlClient{},
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- server.serve(ctx)
+		done <- server.Serve(ctx)
 		_ = outputWriter.Close()
 	}()
 	return &connectMCPStdioHarness{
@@ -265,7 +265,7 @@ func (h *connectMCPStdioHarness) close() {
 	case <-time.After(2 * time.Second):
 		h.t.Fatal("connector did not stop after stdin closed")
 	}
-	h.server.close()
+	h.server.Close()
 	h.cancel()
 }
 
@@ -348,12 +348,12 @@ func TestConnectMCPStdioBoundsConcurrentToolCalls(t *testing.T) {
 		fmt.Fprintf(&input, `{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"wing_list","arguments":{}}}`+"\n", id)
 	}
 	var output strings.Builder
-	server := &connectMCPServer{
-		in: strings.NewReader(input.String()), out: &output, actor: "test", tunnel: tunnel,
-		controls: map[string]*webrtcpkg.ControlClient{},
+	server := &ConnectMCPServer{Version: "dev",
+		In: strings.NewReader(input.String()), Out: &output, Actor: "test", Tunnel: tunnel,
+		Controls: map[string]*webrtcpkg.ControlClient{},
 	}
 	done := make(chan error, 1)
-	go func() { done <- server.serve(context.Background()) }()
+	go func() { done <- server.Serve(context.Background()) }()
 	for index := 0; index < maxConcurrentConnectMCPCalls; index++ {
 		select {
 		case <-tunnel.started:
@@ -395,12 +395,12 @@ func TestConnectMCPStdioEOFCancelsOutstandingRemoteWait(t *testing.T) {
 	inputReader, inputWriter := io.Pipe()
 	tunnel := &disconnectAwareConnectTunnel{started: make(chan struct{}), canceled: make(chan struct{})}
 	var output strings.Builder
-	server := &connectMCPServer{
-		in: inputReader, out: &output, actor: "test", tunnel: tunnel,
-		controls: map[string]*webrtcpkg.ControlClient{},
+	server := &ConnectMCPServer{Version: "dev",
+		In: inputReader, Out: &output, Actor: "test", Tunnel: tunnel,
+		Controls: map[string]*webrtcpkg.ControlClient{},
 	}
 	done := make(chan error, 1)
-	go func() { done <- server.serve(context.Background()) }()
+	go func() { done <- server.Serve(context.Background()) }()
 	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"wing_list","arguments":{}}}`+"\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -429,9 +429,9 @@ func TestConnectMCPStdioEOFCancelsOutstandingRemoteWait(t *testing.T) {
 
 func TestConnectMCPCoalescesConcurrentSetupForOneWing(t *testing.T) {
 	tunnel := &blockingDiscoverTunnel{started: make(chan struct{}), release: make(chan struct{})}
-	server := &connectMCPServer{
-		actor: "test", tunnel: tunnel, timeout: 2 * time.Second,
-		controls: make(map[string]*webrtcpkg.ControlClient),
+	server := &ConnectMCPServer{Version: "dev",
+		Actor: "test", Tunnel: tunnel, Timeout: 2 * time.Second,
+		Controls: make(map[string]*webrtcpkg.ControlClient),
 	}
 	leaderDone := make(chan error, 1)
 	go func() {

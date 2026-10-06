@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"context"
@@ -16,11 +16,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
-
-// A wake target is a host-recorded execution identity, never a human selector.
-// These fixtures use synthetic egg directories and an in-process transport: no
-// provider process, credential, network endpoint or permission reply. Real
-// process-death durability is covered by the partner acceptance suite.
 
 const (
 	wakeExactLegacy   = "a1b2c3d4"         // legacy 8-hex execution ID
@@ -184,7 +179,7 @@ func wakeExactTree(t *testing.T, cfg *config.Config, session string) *store.Conv
 }
 
 func wakeExactStep(cfg *config.Config, spy *wakeExactSpy) error {
-	return processConversationWake(context.Background(), &localMCPServer{cfg: cfg, principal: "owner"}, "root", spy.runtime())
+	return processConversationWake(context.Background(), &Server{Version: "dev", Cfg: cfg, Principal: "owner"}, "root", spy.runtime())
 }
 
 type wakeExactReservation struct {
@@ -540,7 +535,7 @@ func TestWakeExactBindingWithoutReservationOnRetiredTargetStaysPending(t *testin
 	spy.configure(true, map[string]string{})
 	db := wakeExactOpen(t, cfg)
 	args, _ := json.Marshal(map[string]any{"conversation_id": "root", "limit": 1})
-	if _, err := (&localMCPServer{cfg: cfg, principal: "owner"}).toolConversationRead(context.Background(), args); err != nil {
+	if _, err := (&Server{Version: "dev", Cfg: cfg, Principal: "owner"}).ToolConversationRead(context.Background(), args); err != nil {
 		t.Fatal(err)
 	}
 	w, err := db.QueueConversationWake("root")
@@ -580,7 +575,7 @@ func TestWakeExactResolverRejectsHumanSelectorsAndUnsafeIDs(t *testing.T) {
 	if err := eggclient.WriteSessionName(filepath.Join(cfg.Dir, "eggs", wakeExactLegacy), "parent"); err != nil {
 		t.Fatal(err)
 	}
-	s := &localMCPServer{cfg: cfg, principal: "owner"}
+	s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
 	for _, ref := range []string{"a1b2", "parent"} {
 		if got, err := s.resolveOwnedLifecycleSession(ref); err != nil || got.ID != wakeExactLegacy {
 			t.Fatalf("public selector %q no longer resolves: %#v %v", ref, got, err)
@@ -597,7 +592,7 @@ func TestWakeExactResolverRejectsHumanSelectorsAndUnsafeIDs(t *testing.T) {
 	if err != nil || got.ID != wakeExactLegacy || got.Principal != "owner" || got.Agent != "claude" || got.CWD != cfg.Dir || got.Name != "parent" {
 		t.Fatalf("exact execution %#v %v", got, err)
 	}
-	bounded := &localMCPServer{cfg: cfg, principal: "owner", enforcePathBounds: true, allowedPaths: []string{filepath.Join(cfg.Dir, "elsewhere")}}
+	bounded := &Server{Version: "dev", Cfg: cfg, Principal: "owner", enforcePathBounds: true, allowedPaths: []string{filepath.Join(cfg.Dir, "elsewhere")}}
 	if _, err = bounded.resolveExactWakeTarget(db, root, wakeExactLegacy); err == nil {
 		t.Fatal("exact wake resolver ignored path bounds")
 	}

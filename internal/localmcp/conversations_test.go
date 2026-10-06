@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"bytes"
@@ -71,9 +71,9 @@ func TestConversationReadKeepsIntermediateNativeStatesAcrossReconnectAndResume(t
 	if err := db.ResumeConversationExecution(child.SessionID, next.SessionID); err != nil {
 		t.Fatal(err)
 	}
-	server := &localMCPServer{cfg: cfg, principal: "owner", boundConversation: root.ID, logs: &bytes.Buffer{}}
+	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: root.ID, Logs: &bytes.Buffer{}}
 	args, _ := json.Marshal(map[string]any{"conversation_id": root.ID})
-	result, err := server.toolConversationRead(context.Background(), args)
+	result, err := server.ToolConversationRead(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,8 +87,8 @@ func TestConversationReadKeepsIntermediateNativeStatesAcrossReconnectAndResume(t
 	if strings.Join(childStates, ",") != "working,needs_input,completed,working" {
 		t.Fatalf("lost native transitions %v", childStates)
 	}
-	server = &localMCPServer{cfg: cfg, principal: "owner", boundConversation: root.ID, logs: &bytes.Buffer{}}
-	again, err := server.toolConversationRead(context.Background(), args)
+	server = &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: root.ID, Logs: &bytes.Buffer{}}
+	again, err := server.ToolConversationRead(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,8 +116,8 @@ func TestBoundConversationBootstrapPreservesBrowserOwnerAndRejectsOtherTrees(t *
 	if err := eggclient.WriteEggOwner(dir, user, "fixture@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
-	server := &localMCPServer{cfg: cfg, principal: owner, boundConversation: root.ID, logs: &bytes.Buffer{}}
-	if err := validateBoundConversation(server); err != nil {
+	server := &Server{Version: "dev", Cfg: cfg, Principal: owner, BoundConversation: root.ID, Logs: &bytes.Buffer{}}
+	if err := ValidateBoundConversation(server); err != nil {
 		t.Fatal(err)
 	}
 	if server.identity.UserID != user {
@@ -146,18 +146,18 @@ func TestBoundConversationBootstrapPreservesBrowserOwnerAndRejectsOtherTrees(t *
 	if _, _, err := server.reserveAgentConversation("claude", cfg.Dir, "bad", "child", unrelated.ID, "bad-request", "bad-child", nil); err == nil {
 		t.Fatal("explicit other parent accepted")
 	}
-	listing, err := server.toolConversationList(json.RawMessage(`{}`))
+	listing, err := server.ToolConversationList(json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(listing["conversations"].([]*store.Conversation)) != 2 {
 		t.Fatalf("bound listing %v", listing)
 	}
-	browser, err := browserSessionControl(context.Background(), cfg, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: user, SenderOrgRole: "owner"}, "conversation_list", json.RawMessage(`{}`), cfg.Dir, false)
+	browser, err := BrowserSessionControl("dev", context.Background(), cfg, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: user, SenderOrgRole: "owner"}, "conversation_list", json.RawMessage(`{}`), cfg.Dir, false)
 	if err != nil || len(browser["conversations"].([]*store.Conversation)) != 3 {
 		t.Fatalf("shared browser inventory %v %v", browser, err)
 	}
-	foreign, err := browserSessionControl(context.Background(), cfg, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: "different-user", SenderOrgRole: "owner"}, "conversation_list", json.RawMessage(`{}`), cfg.Dir, false)
+	foreign, err := BrowserSessionControl("dev", context.Background(), cfg, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: "different-user", SenderOrgRole: "owner"}, "conversation_list", json.RawMessage(`{}`), cfg.Dir, false)
 	if err != nil || len(foreign["conversations"].([]*store.Conversation)) != 0 {
 		t.Fatalf("foreign inventory %v %v", foreign, err)
 	}
@@ -167,7 +167,7 @@ func TestAutomaticParentMCPUsesExistingSandboxAndRejectsConfigCollision(t *testi
 	workspace := t.TempDir()
 	cfg := &config.Config{Dir: filepath.Join(workspace, "preview-state")}
 	c := &store.Conversation{ID: "parent", CWD: workspace, OwnerID: "owner"}
-	server := &localMCPServer{cfg: cfg, principal: "owner"}
+	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
 	args, err := server.prepareBoundParentMCP(c, egg.DefaultEggConfig(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +195,7 @@ func TestAutomaticParentMCPUsesExistingSandboxAndRejectsConfigCollision(t *testi
 	if _, err := server.prepareBoundParentMCP(c, egg.DefaultEggConfig(), []string{"--mcp-config", "existing.json"}); err == nil {
 		t.Fatal("config collision accepted")
 	}
-	server.cfg = &config.Config{Dir: t.TempDir()}
+	server.Cfg = &config.Config{Dir: t.TempDir()}
 	if _, err := server.prepareBoundParentMCP(&store.Conversation{ID: "outside", CWD: workspace}, egg.DefaultEggConfig(), nil); err == nil {
 		t.Fatal("inaccessible state silently mounted")
 	}
@@ -217,7 +217,7 @@ func TestConversationDirectMCPPreservesConfiguredClientAndOwner(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cfg.Dir, "clients.yaml"), []byte("require_client: true\nclients:\n  coordinator:\n    owner: alice\n    grants: [terminal.read]\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	launcher := &localMCPServer{cfg: cfg, principal: "alice", actor: "coordinator", surface: control.SurfaceLocalMCP}
+	launcher := &Server{Version: "dev", Cfg: cfg, Principal: "alice", Actor: "coordinator", Surface: control.SurfaceLocalMCP}
 	args, err := launcher.prepareBoundParentMCP(root, egg.DefaultEggConfig(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +246,7 @@ func TestConversationDirectMCPPreservesConfiguredClientAndOwner(t *testing.T) {
 			if !slices.Equal(server.Args, []string{"mcp", "stdio", "--client", "coordinator", "--conversation", root.ID}) || server.Env["WINGTHING_DIR"] != cfg.Dir {
 				t.Fatalf("launcher client replaced in config: %s", data)
 			}
-			clients, err := loadLocalMCPClientsConfig(cfg)
+			clients, err := LoadLocalMCPClientsConfig(cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -254,8 +254,8 @@ func TestConversationDirectMCPPreservesConfiguredClientAndOwner(t *testing.T) {
 			if !ok || client.Owner != "alice" {
 				t.Fatalf("injected client lost configured owner mapping: %+v", client)
 			}
-			bound := &localMCPServer{cfg: cfg, principal: client.Owner, actor: server.Args[3], boundConversation: root.ID, grants: grantSet(client.Grants)}
-			if err := validateBoundConversation(bound); err != nil || !bound.toolAllowed("session_read") || bound.toolAllowed("agent_start") {
+			bound := &Server{Version: "dev", Cfg: cfg, Principal: client.Owner, Actor: server.Args[3], BoundConversation: root.ID, Grants: GrantSet(client.Grants)}
+			if err := ValidateBoundConversation(bound); err != nil || !bound.toolAllowed("session_read") || bound.toolAllowed("agent_start") {
 				t.Fatalf("bound client lost configured owner or grants: %v", err)
 			}
 		})
@@ -264,7 +264,7 @@ func TestConversationDirectMCPPreservesConfiguredClientAndOwner(t *testing.T) {
 		t.Fatalf("bootstrap advertised the owner as its client: %v", bootstrap["mcp_client"])
 	}
 	// Browser audit actors do not name a clients.yaml client.
-	launcher.surface, launcher.actor = control.SurfaceHTTPMCP, "browser"
+	launcher.Surface, launcher.Actor = control.SurfaceHTTPMCP, "browser"
 	browser, err := launcher.toolConversationBootstrap(json.RawMessage(`{"conversation_id":"root"}`))
 	if err != nil || browser["mcp_client"] != "alice" {
 		t.Fatalf("browser bootstrap identity changed: %v %v", browser, err)

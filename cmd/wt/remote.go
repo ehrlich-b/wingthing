@@ -40,7 +40,7 @@ func executeCLI(ctx context.Context, args []string, streams remotepkg.IO) error 
 	root.SetIn(streams.In)
 	root.SetOut(streams.Out)
 	root.SetErr(streams.ErrOut)
-	return root.ExecuteContext(context.WithValue(ctx, remoteIOContextKey{}, streams))
+	return root.ExecuteContext(context.WithValue(ctx, remotepkg.IOContextKey{}, streams))
 }
 
 func remoteEnterCmd() *cobra.Command {

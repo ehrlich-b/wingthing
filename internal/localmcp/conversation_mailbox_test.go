@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"bufio"
@@ -319,7 +319,7 @@ func TestHostMailboxStdioClientRestoresCallerIDsAndSkipsNotifications(t *testing
 	outputReader, outputWriter := io.Pipe()
 	finished := make(chan error, 1)
 	go func() {
-		finished <- serveConversationMailboxClient(context.Background(), inputReader, outputWriter, dir, "conv", "exec")
+		finished <- ServeConversationMailboxClient(context.Background(), inputReader, outputWriter, dir, "conv", "exec")
 	}()
 	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","method":"notifications/initialized"}`+"\n"+`{"jsonrpc":"2.0","id":"call-7","method":"tools/list"}`+"\n"); err != nil {
 		t.Fatal(err)
@@ -343,7 +343,7 @@ func TestHostMailboxStdioClientRestoresCallerIDsAndSkipsNotifications(t *testing
 		t.Fatalf("forwarded %q plus %d more; notifications must stay local", method, len(served))
 	}
 	var output strings.Builder
-	if err := serveConversationMailboxClient(context.Background(), strings.NewReader(""), &output, "relative/mailbox", "conv", "exec"); err == nil {
+	if err := ServeConversationMailboxClient(context.Background(), strings.NewReader(""), &output, "relative/mailbox", "conv", "exec"); err == nil {
 		t.Fatal("relative mailbox accepted")
 	}
 }

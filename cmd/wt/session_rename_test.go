@@ -15,6 +15,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
@@ -43,9 +44,9 @@ func TestSessionRenameCLIAndMCPShareStoreLock(t *testing.T) {
 	command.SetOut(&bytes.Buffer{})
 	command.SetErr(&bytes.Buffer{})
 	go func() { done <- result{"CLI", command.Execute()} }()
-	server := &localMCPServer{cfg: cfg}
+	server := &localmcp.Server{Version: version, Cfg: cfg}
 	go func() {
-		_, err := server.toolTerminalRename(context.Background(), json.RawMessage(`{"session":"second","name":"shared"}`))
+		_, err := server.ToolTerminalRename(context.Background(), json.RawMessage(`{"session":"second","name":"shared"}`))
 		done <- result{"MCP", err}
 	}()
 	select {

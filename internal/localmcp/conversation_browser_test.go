@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"context"
@@ -18,7 +18,7 @@ func TestBrowserConversationLaunchEchoesSavedRequestID(t *testing.T) {
 	}
 	cfg.Dir = canonical
 	const requestID = "phone-launch-1"
-	server := &localMCPServer{cfg: cfg, principal: roostSessionPrincipal("phone-owner")}
+	server := &Server{Version: "dev", Cfg: cfg, Principal: roostSessionPrincipal("phone-owner")}
 	// Reserve the normalized handler spec so this test only reads a saved
 	// launch. It never starts a provider process or touches a live session.
 	spec := struct {
@@ -40,7 +40,7 @@ func TestBrowserConversationLaunchEchoesSavedRequestID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := browserSessionControl(context.Background(), cfg, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: "phone-owner", SenderOrgRole: "owner"}, "agent_start", arguments, cfg.Dir, false)
+	result, err := BrowserSessionControl("dev", context.Background(), cfg, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: "phone-owner", SenderOrgRole: "owner"}, "agent_start", arguments, cfg.Dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}

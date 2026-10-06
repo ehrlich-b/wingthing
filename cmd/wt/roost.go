@@ -19,6 +19,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	mcppkg "github.com/ehrlich-b/wingthing/internal/mcp"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/spf13/cobra"
@@ -606,7 +607,7 @@ func awaitEmbeddedWingReady(ctx context.Context, wingErrors <-chan error, relayE
 }
 
 func roostMCPControlTools(srv *relay.Server, cfg *config.Config, sharedHost bool) []mcppkg.NativeTool {
-	tools := roostNativeMCPTools(cfg, sharedHost)
+	tools := localmcp.RoostNativeMCPTools(version, cfg, sharedHost)
 	return append(tools, srv.PortalNativeMCPTools(cfg.WingID)...)
 }
 

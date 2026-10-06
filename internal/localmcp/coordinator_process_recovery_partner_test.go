@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 // Real OS process crash/restart acceptance for personal conversation wake.
 //
@@ -108,9 +108,6 @@ type opusPRReservation struct {
 	Result            egg.SessionPromptResult `json:"result"`
 }
 
-// ---------------------------------------------------------------------------
-// Subprocess side.
-
 type opusPRHelper struct {
 	root, state, ledger, transcript string
 	cfg                             *config.Config
@@ -139,7 +136,7 @@ func TestOpusProcessRecoveryHelperProcess(t *testing.T) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	case "controller-loop":
 		// The production daemon loop with its production runtime, personal policy.
-		runConversationWakeController(context.Background(), h.cfg, func() (*config.WingConfig, bool) { return &config.WingConfig{}, false })
+		RunConversationWakeController(context.Background(), h.cfg, func() (*config.WingConfig, bool) { return &config.WingConfig{}, false })
 	case "wake-step":
 		opusPRWakeStep(h, os.Getenv("OPUS_PR_BOUNDARY"))
 	case "checkpoint-commit":
@@ -225,7 +222,7 @@ func opusPRAppendDurable(path string, record any) error {
 // One production processConversationWake step. Only the PTY transport is
 // replaced (as promptSession would compose it, but without gRPC to an egg).
 func opusPRWakeStep(h opusPRHelper, boundary string) {
-	s := &localMCPServer{cfg: h.cfg, principal: opusPROwner}
+	s := &Server{Version: "dev", Cfg: h.cfg, Principal: opusPROwner}
 	runtime := nativeConversationWakeRuntime(h.cfg)
 	runtime.Prompt = func(ctx context.Context, session eggclient.LocalSession, id, text string) (egg.SessionPromptResult, error) {
 		if boundary == "bound_before_reservation" {
@@ -279,18 +276,18 @@ func opusPRSyntheticTransport(h opusPRHelper, boundary, requestID, provider, inp
 	return egg.PromptDelivery{BytesEnqueued: len(input)}, nil
 }
 
-func opusPRRead(s *localMCPServer, after int64, limit int) (map[string]any, error) {
+func opusPRRead(s *Server, after int64, limit int) (map[string]any, error) {
 	args, _ := json.Marshal(map[string]any{"conversation_id": opusPRRootID, "after_cursor": after, "limit": limit})
-	return s.toolConversationRead(context.Background(), args)
+	return s.ToolConversationRead(context.Background(), args)
 }
 
-func opusPRCheckpoint(s *localMCPServer, expected, after int64, text string) (map[string]any, error) {
+func opusPRCheckpoint(s *Server, expected, after int64, text string) (map[string]any, error) {
 	args, _ := json.Marshal(map[string]any{"conversation_id": opusPRRootID, "expected_revision": expected, "after_cursor": after, "checkpoint": text})
 	return s.toolConversationCheckpoint(args)
 }
 
 func opusPRCheckpointCommit(h opusPRHelper) {
-	s := &localMCPServer{cfg: h.cfg, principal: opusPROwner}
+	s := &Server{Version: "dev", Cfg: h.cfg, Principal: opusPROwner}
 	read, err := opusPRRead(s, 0, 1)
 	if err != nil {
 		opusPREmit("OPUS_PR_RESULT", opusPRReport{Error: err.Error()})
@@ -308,7 +305,7 @@ func opusPRCheckpointCommit(h opusPRHelper) {
 }
 
 func opusPRCheckpointRecover(h opusPRHelper) {
-	s := &localMCPServer{cfg: h.cfg, principal: opusPROwner}
+	s := &Server{Version: "dev", Cfg: h.cfg, Principal: opusPROwner}
 	text := os.Getenv("OPUS_PR_CHECKPOINT")
 	expected, _ := strconv.ParseInt(os.Getenv("OPUS_PR_EXPECTED"), 10, 64)
 	after, _ := strconv.ParseInt(os.Getenv("OPUS_PR_AFTER"), 10, 64)
@@ -347,9 +344,6 @@ func opusPRCheckpointRecover(h opusPRHelper) {
 	}
 	opusPREmit("OPUS_PR_RESULT", report)
 }
-
-// ---------------------------------------------------------------------------
-// Parent side: owned temp world and owned process handles.
 
 type opusPRWorld struct {
 	t          *testing.T
@@ -856,9 +850,6 @@ func opusPRRequireSends(t *testing.T, entries []opusPRLedgerEntry, pid int, requ
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance tests.
 
 func TestOpusProcessRecoveryQueuedWakeSurvivesKilledControllerLoop(t *testing.T) {
 	w := opusPRNewWorld(t)

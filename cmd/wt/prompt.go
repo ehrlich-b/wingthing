@@ -14,6 +14,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/promptmgr"
 	"github.com/ehrlich-b/wingthing/internal/store"
 	"github.com/ehrlich-b/wingthing/internal/taskrun"
@@ -213,7 +214,7 @@ func promptRunCmd() *cobra.Command {
 			if cwd == "" {
 				cwd = asset.CWD
 			}
-			cwd, err = resolveWorkingDirectory(cwd)
+			cwd, err = localmcp.ResolveWorkingDirectory(cwd)
 			if err != nil {
 				return err
 			}

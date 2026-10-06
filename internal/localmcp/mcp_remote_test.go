@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"context"
@@ -19,8 +19,8 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 	if err := config.SaveRemotes(cfg.Dir, map[string]config.Remote{"work": {SSHTarget: "me@host"}}); err != nil {
 		t.Fatal(err)
 	}
-	server := &localMCPServer{cfg: cfg, principal: "alpha", logs: io.Discard}
-	noSSH := context.WithValue(context.Background(), remoteIOContextKey{}, remotepkg.IO{SSHPath: filepath.Join(cfg.Dir, "must-not-run-ssh")})
+	server := &Server{Version: "dev", Cfg: cfg, Principal: "alpha", Logs: io.Discard}
+	noSSH := context.WithValue(context.Background(), remotepkg.IOContextKey{}, remotepkg.IO{SSHPath: filepath.Join(cfg.Dir, "must-not-run-ssh")})
 	local, isError, protocolErr := server.callTool(noSSH, "terminal_list", json.RawMessage(`{}`))
 	if isError || protocolErr != nil {
 		t.Fatalf("default list: %#v, %v", local, protocolErr)
@@ -35,7 +35,7 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 	}
 	sshPath := fakeInventorySSH(t, eggclient.RemoteSessionInventory{Version: "remote-test", ContractVersion: eggclient.RemoteSessionContractVersion,
 		Sessions: []eggclient.LocalSession{{ID: "remote-owned", Principal: "alpha"}, {ID: "remote-other", Principal: "beta"}}})
-	ctx := context.WithValue(context.Background(), remoteIOContextKey{}, remotepkg.IO{SSHPath: sshPath})
+	ctx := context.WithValue(context.Background(), remotepkg.IOContextKey{}, remotepkg.IO{SSHPath: sshPath})
 	remote, isError, protocolErr := server.callTool(ctx, "terminal_list", json.RawMessage(`{"remote":"work"}`))
 	if isError || protocolErr != nil {
 		t.Fatalf("remote list: %#v, %v", remote, protocolErr)
@@ -57,12 +57,12 @@ func TestMCPTerminalListRemoteArgument(t *testing.T) {
 }
 
 func TestMCPTerminalListRemotePreservesConnectionBounds(t *testing.T) {
-	for _, server := range []*localMCPServer{
-		{enforcePathBounds: true}, {boundConversation: "conversation"},
+	for _, server := range []*Server{
+		{enforcePathBounds: true}, {BoundConversation: "conversation"},
 	} {
-		server.cfg = &config.Config{Dir: t.TempDir()}
-		ctx := context.WithValue(context.Background(), remoteIOContextKey{}, remotepkg.IO{SSHPath: filepath.Join(server.cfg.Dir, "must-not-run-ssh")})
-		_, err := server.toolTerminalList(ctx, json.RawMessage(`{"remote":"work"}`))
+		server.Cfg = &config.Config{Dir: t.TempDir()}
+		ctx := context.WithValue(context.Background(), remotepkg.IOContextKey{}, remotepkg.IO{SSHPath: filepath.Join(server.Cfg.Dir, "must-not-run-ssh")})
+		_, err := server.ToolTerminalList(ctx, json.RawMessage(`{"remote":"work"}`))
 		if err == nil || !strings.Contains(err.Error(), "bound MCP connection") {
 			t.Fatalf("restricted MCP connection queried a remote: %v", err)
 		}
@@ -70,7 +70,7 @@ func TestMCPTerminalListRemotePreservesConnectionBounds(t *testing.T) {
 }
 
 func TestMCPTerminalListRemoteSchemaIsLimitedToList(t *testing.T) {
-	for _, tool := range localMCPTools() {
+	for _, tool := range LocalMCPTools() {
 		properties := tool.InputSchema["properties"].(map[string]any)
 		remote, hasRemote := properties["remote"]
 		if tool.Name == "terminal_list" {

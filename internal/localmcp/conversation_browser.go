@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"context"
@@ -14,12 +14,12 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
-var browserConversationAdmission = newMCPAdmissionState()
+var browserConversationAdmission = NewMCPAdmissionState()
 
 // browserSessionControl is a narrow adapter over the same typed MCP handlers.
 // Authentication/passkey/purpose checks occur before this dispatcher; artifact
 // access is checked independently before selecting a legacy session principal.
-func browserSessionControl(ctx context.Context, cfg *config.Config, wc *config.WingConfig, req ws.TunnelRequest, operation string, arguments json.RawMessage, home string, sharedHost bool) (map[string]any, error) {
+func BrowserSessionControl(version string, ctx context.Context, cfg *config.Config, wc *config.WingConfig, req ws.TunnelRequest, operation string, arguments json.RawMessage, home string, sharedHost bool) (map[string]any, error) {
 	switch operation {
 	case "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "conversation_list", "conversation_bootstrap", "conversation_read", "conversation_checkpoint", "conversation_wake", "agent_start":
 	default:
@@ -32,8 +32,8 @@ func browserSessionControl(ctx context.Context, cfg *config.Config, wc *config.W
 		return nil, errors.New("session operation arguments exceed 1 MiB")
 	}
 	paths := wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, req.SenderEmail, req.SenderOrgRole, home))
-	server := &localMCPServer{cfg: cfg, logs: os.Stderr, principal: roostSessionPrincipal(req.SenderUserID), actor: "browser", surface: control.SurfaceHTTPMCP,
-		grants: grantSet(defaultDirectMCPGrants), maxSessions: defaultDirectMCPMaxSessions, maxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour, admission: browserConversationAdmission,
+	server := &Server{Version: version, Cfg: cfg, Logs: os.Stderr, Principal: roostSessionPrincipal(req.SenderUserID), Actor: "browser", Surface: control.SurfaceHTTPMCP,
+		Grants: GrantSet(defaultDirectMCPGrants), MaxSessions: defaultDirectMCPMaxSessions, MaxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour, admission: browserConversationAdmission,
 		allowedPaths: paths, enforcePathBounds: len(paths) > 0 || wingpolicy.IsMemberFiltered(req), identity: eggclient.EggIdentity{UserID: req.SenderUserID, Email: req.SenderEmail, OrgWing: wc.Org != "", SharedHost: sharedHost, SealedFS: sharedHost, AllowedPaths: paths}}
 	if operation == "agent_start" || operation == "conversation_checkpoint" || operation == "conversation_wake" {
 		if wc.Org != "" || sharedHost {
@@ -70,9 +70,9 @@ func browserSessionControl(ctx context.Context, cfg *config.Config, wc *config.W
 		}
 		// Legacy browser sessions have no MCP principal. Preserve access only
 		// after the current browser ownership and workspace checks above.
-		server.principal = eggclient.ReadSessionPrincipal(dir)
-		if server.principal == "" {
-			server.principal = "default"
+		server.Principal = eggclient.ReadSessionPrincipal(dir)
+		if server.Principal == "" {
+			server.Principal = "default"
 		}
 	}
 	result, isError, protocolErr := server.callTool(ctx, operation, arguments)

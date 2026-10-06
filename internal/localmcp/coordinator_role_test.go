@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ func TestPublicCoordinatorRoleInjectedAndInspectableThroughBootstrap(t *testing.
 	}
 	defer func() { _ = db.Close() }()
 	c := fixtureConversation(t, db, cfg, "root-role", "", "owner", "idle")
-	server := &localMCPServer{cfg: cfg, principal: c.OwnerID, boundConversation: c.ID, logs: &bytes.Buffer{}}
+	server := &Server{Version: "dev", Cfg: cfg, Principal: c.OwnerID, BoundConversation: c.ID, Logs: &bytes.Buffer{}}
 	args, err := server.prepareBoundParentMCP(c, egg.DefaultEggConfig(), []string{"--model", "already-selected-model"})
 	if err != nil {
 		t.Fatal(err)
@@ -84,9 +84,9 @@ func TestConversationReadReportsContextForActualLocalTasks(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	root := fixtureConversation(t, db, cfg, "role-root", "", "owner", "idle")
 	child := fixtureConversation(t, db, cfg, "role-child", root.ID, "owner", "completed")
-	server := &localMCPServer{cfg: cfg, principal: "owner", boundConversation: root.ID}
+	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: root.ID}
 	request, _ := json.Marshal(map[string]any{"conversation_id": root.ID})
-	read, err := server.toolConversationRead(context.Background(), request)
+	read, err := server.ToolConversationRead(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestResumedCoordinatorRoleUsesNewInvocationWithSameLogicalRoot(t *testing.T
 	defer func() { _ = db.Close() }()
 	user := "role-personal-owner"
 	c := fixtureConversation(t, db, cfg, "resume-role", "", roostSessionPrincipal(user), "idle")
-	args, principal, err := prepareConversationResumeMCP(cfg, &config.WingConfig{}, ws.PTYStart{SessionID: "new-execution", ResumeSessionID: c.SessionID, UserID: user, CWD: c.CWD}, egg.DefaultEggConfig(), false)
+	args, principal, err := PrepareConversationResumeMCP(cfg, &config.WingConfig{}, ws.PTYStart{SessionID: "new-execution", ResumeSessionID: c.SessionID, UserID: user, CWD: c.CWD}, egg.DefaultEggConfig(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

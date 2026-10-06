@@ -16,6 +16,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 	"github.com/ehrlich-b/wingthing/internal/ws"
 	"github.com/spf13/cobra"
@@ -79,7 +80,7 @@ func sessionPSCmd() *cobra.Command {
 				}
 				return writeLocalSessions(cmd.OutOrStdout(), sessions, jsonFlag)
 			}
-			rows, err := eggclient.DiscoverMachineSessions(version, cmd.Context(), cfg, remoteStreams(cmd.Context()))
+			rows, err := eggclient.DiscoverMachineSessions(version, cmd.Context(), cfg, remotepkg.Streams(cmd.Context()))
 			if err != nil {
 				return err
 			}

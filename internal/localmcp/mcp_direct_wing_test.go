@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"context"
@@ -140,9 +140,9 @@ func TestResolveDirectMCPPolicyHonorsAdditiveWingRestrictions(t *testing.T) {
 	if policy.maxSessions != 2 || policy.maxSpawnsPerHour != 3 {
 		t.Fatalf("restricted bounds = sessions:%d spawns:%d", policy.maxSessions, policy.maxSpawnsPerHour)
 	}
-	server := &localMCPServer{
-		cfg: &config.Config{Dir: t.TempDir()}, principal: "owner", actor: "codex",
-		surface: control.SurfaceDirectMCP, grants: policy.grants,
+	server := &Server{Version: "dev",
+		Cfg: &config.Config{Dir: t.TempDir()}, Principal: "owner", Actor: "codex",
+		Surface: control.SurfaceDirectMCP, Grants: policy.grants,
 	}
 	result, isError, protocolErr := server.callTool(context.Background(), "terminal_list", json.RawMessage(`{}`))
 	if protocolErr != nil || !isError || !strings.Contains(result["error"].(string), "lacks grant") {
@@ -176,10 +176,10 @@ func TestResolveDirectMCPPolicyRejectsDisabledAndUnknownGrant(t *testing.T) {
 }
 
 func TestDirectMCPSpawnRateSurvivesClientReconnect(t *testing.T) {
-	admission := newMCPAdmissionState()
-	one := &localMCPServer{principal: "same-owner", maxSpawnsPerHour: 1, admission: admission}
-	two := &localMCPServer{principal: "same-owner", maxSpawnsPerHour: 1, admission: admission}
-	other := &localMCPServer{principal: "other-owner", maxSpawnsPerHour: 1, admission: admission}
+	admission := NewMCPAdmissionState()
+	one := &Server{Version: "dev", Principal: "same-owner", MaxSpawnsPerHour: 1, admission: admission}
+	two := &Server{Version: "dev", Principal: "same-owner", MaxSpawnsPerHour: 1, admission: admission}
+	other := &Server{Version: "dev", Principal: "other-owner", MaxSpawnsPerHour: 1, admission: admission}
 
 	if err := one.admitSpawn(func() error { return nil }); err != nil {
 		t.Fatalf("first spawn: %v", err)
@@ -208,12 +208,12 @@ func TestDirectMCPMaxSessionsIsSharedAcrossConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	admission := newMCPAdmissionState()
-	sameOwner := &localMCPServer{
-		cfg: &config.Config{Dir: dir}, principal: "same-owner", maxSessions: 1, admission: admission,
+	admission := NewMCPAdmissionState()
+	sameOwner := &Server{Version: "dev",
+		Cfg: &config.Config{Dir: dir}, Principal: "same-owner", MaxSessions: 1, admission: admission,
 	}
-	otherOwner := &localMCPServer{
-		cfg: &config.Config{Dir: dir}, principal: "other-owner", maxSessions: 1, admission: admission,
+	otherOwner := &Server{Version: "dev",
+		Cfg: &config.Config{Dir: dir}, Principal: "other-owner", MaxSessions: 1, admission: admission,
 	}
 	if err := sameOwner.admitSpawn(func() error { return nil }); err == nil || !strings.Contains(err.Error(), "max_sessions=1") {
 		t.Fatalf("same owner session bound error = %v", err)
@@ -237,9 +237,9 @@ func connectDirectMCPTestClientWithPolicySourceAndLease(t *testing.T, cfg *confi
 	t.Helper()
 	manager := webrtcpkg.NewPeerManager(nil)
 	t.Cleanup(manager.Close)
-	admission := newMCPAdmissionState()
+	admission := NewMCPAdmissionState()
 	manager.OnDC(func(_ string, _ string, authenticated webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
-		serveDirectMCPChannelWithPolicySourceAndLease(cfg, home, sharedHost, admission, authenticated, dc, policySource, identityLease)
+		serveDirectMCPChannelWithPolicySourceAndLease("dev", cfg, home, sharedHost, admission, authenticated, dc, policySource, identityLease)
 	})
 	client, err := webrtcpkg.NewControlClient("codex", nil)
 	if err != nil {

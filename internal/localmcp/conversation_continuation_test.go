@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"bytes"
@@ -28,7 +28,7 @@ import (
 
 const continuationModel = "claude-opus-4-6"
 
-func continuationFixture(t *testing.T) (*localMCPServer, *store.Store, *store.Conversation, string) {
+func continuationFixture(t *testing.T) (*Server, *store.Store, *store.Conversation, string) {
 	t.Helper()
 	old := config.ReleaseChannel
 	config.ReleaseChannel = "preview"
@@ -57,7 +57,7 @@ func continuationFixture(t *testing.T) (*localMCPServer, *store.Store, *store.Co
 	if err := eggclient.WriteSessionPrincipal(dir, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	server := &localMCPServer{cfg: cfg, principal: "owner", unsandboxed: true, logs: &bytes.Buffer{}}
+	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner", Unsandboxed: true, Logs: &bytes.Buffer{}}
 	return server, db, c, dir
 }
 
@@ -81,7 +81,7 @@ func TestHeadlessContinuationAdvertisementEligibility(t *testing.T) {
 				config.ReleaseChannel = "stable"
 				write("egg.pid", strconv.Itoa(os.Getpid()))
 			case "foreign principal":
-				s.principal = "someone-else"
+				s.Principal = "someone-else"
 			case "foreign browser owner":
 				s.identity.UserID = "someone-else"
 			case "child":
@@ -101,7 +101,7 @@ func TestHeadlessContinuationAdvertisementEligibility(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "unknown model":
-				writeResumeSessionFixture(t, s.cfg, c.SessionID, "owner", "claude", c.CWD, "provider", "{}\n")
+				writeResumeSessionFixture(t, s.Cfg, c.SessionID, "owner", "claude", c.CWD, "provider", "{}\n")
 			case "other agent":
 				write("egg.meta", "agent=codex\ncwd="+c.CWD+"\nprovider_session_id=provider\n")
 			case "superseded":
@@ -109,7 +109,7 @@ func TestHeadlessContinuationAdvertisementEligibility(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "bound MCP":
-				s.boundConversation = c.ID
+				s.BoundConversation = c.ID
 			case "shared host":
 				s.identity.SharedHost = true
 			case "path revoked":
@@ -127,7 +127,7 @@ func TestHeadlessContinuationAdvertisementEligibility(t *testing.T) {
 				if !bytes.Equal(got, want) {
 					t.Fatalf("advertisement %s want %s", got, want)
 				}
-				tree, err := s.toolConversationRead(context.Background(), json.RawMessage(`{"conversation_id":"root"}`))
+				tree, err := s.ToolConversationRead(context.Background(), json.RawMessage(`{"conversation_id":"root"}`))
 				if err != nil || tree["headless_continuation"] == nil || tree["tasks"].([]map[string]any)[0]["headless_continuation"] == nil {
 					t.Fatalf("tree advertisement %v %v", tree, err)
 				}
@@ -181,7 +181,7 @@ func TestHeadlessContinuationReplayMismatchAndTreeLinkage(t *testing.T) {
 	if err != nil || current.SessionID != first["session"] {
 		t.Fatalf("current %v %v", current, err)
 	}
-	link := eggclient.SessionConversationLink(s.cfg, first["session"].(string))
+	link := eggclient.SessionConversationLink(s.Cfg, first["session"].(string))
 	if link.ConversationID != root.ID || link.RootConversationID != root.ID || link.ParentConversationID != "" {
 		t.Fatalf("tree link %v", link)
 	}
@@ -192,17 +192,17 @@ func TestHeadlessContinuationReplayMismatchAndTreeLinkage(t *testing.T) {
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
 	}
-	reconnected := &localMCPServer{cfg: s.cfg, principal: s.principal, logs: &bytes.Buffer{}, startContinuation: s.startContinuation}
+	reconnected := &Server{Version: "dev", Cfg: s.Cfg, Principal: s.Principal, Logs: &bytes.Buffer{}, startContinuation: s.startContinuation}
 	replay, err := reconnected.toolAgentStart(args)
 	if err != nil || replay["session"] != first["session"] || replay["reused"] != true || starts != 1 {
 		t.Fatalf("replay %v %v starts %d", replay, err, starts)
 	}
-	for _, change := range []json.RawMessage{continuationRequest("source", input+"changed", "followup"), continuationRequest("different", input, "followup"), json.RawMessage(`{"agent":"claude","cwd":"` + s.cfg.Dir + `","conversation_role":"parent","request_id":"followup"}`)} {
+	for _, change := range []json.RawMessage{continuationRequest("source", input+"changed", "followup"), continuationRequest("different", input, "followup"), json.RawMessage(`{"agent":"claude","cwd":"` + s.Cfg.Dir + `","conversation_role":"parent","request_id":"followup"}`)} {
 		if _, err := reconnected.toolAgentStart(change); err == nil {
 			t.Fatalf("mismatched retry accepted: %s", change)
 		}
 	}
-	if _, err := (&localMCPServer{cfg: s.cfg, principal: "foreign"}).toolAgentStart(args); err == nil {
+	if _, err := (&Server{Version: "dev", Cfg: s.Cfg, Principal: "foreign"}).toolAgentStart(args); err == nil {
 		t.Fatal("foreign replay accepted")
 	}
 }
@@ -270,9 +270,9 @@ func TestHeadlessContinuationKeepsLegacyLaunchRetryDigest(t *testing.T) {
 		ParentConversationID string   `json:"parent_conversation_id"`
 		RequestID            string   `json:"request_id"`
 	}
-	legacy.Agent, legacy.Model, legacy.CWD, legacy.Label, legacy.ConversationRole = "claude", continuationModel, s.cfg.Dir, "legacy", "parent"
+	legacy.Agent, legacy.Model, legacy.CWD, legacy.Label, legacy.ConversationRole = "claude", continuationModel, s.Cfg.Dir, "legacy", "parent"
 	legacy.Args = []string{"--model", continuationModel, "-p", "Original turn"}
-	c, _, err := s.reserveAgentConversation("claude", s.cfg.Dir, "legacy", "parent", "", "legacy-request", "legacy-execution", legacy)
+	c, _, err := s.reserveAgentConversation("claude", s.Cfg.Dir, "legacy", "parent", "", "legacy-request", "legacy-execution", legacy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestHeadlessContinuationConcurrentReplay(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("launch not reached")
 	}
-	replay, err := (&localMCPServer{cfg: s.cfg, principal: "owner"}).toolAgentStart(args)
+	replay, err := (&Server{Version: "dev", Cfg: s.Cfg, Principal: "owner"}).toolAgentStart(args)
 	close(release)
 	wg.Wait()
 	if err != nil || firstErr != nil || replay["session"] != first["session"] || replay["launch_state"] != "starting" || starts != 1 {
@@ -327,12 +327,12 @@ func TestHeadlessContinuationBrowserAdapterMatchesNativeContract(t *testing.T) {
 	if err := eggclient.WriteSessionPrincipal(dir, principal); err != nil {
 		t.Fatal(err)
 	}
-	s.principal = principal
+	s.Principal = principal
 	s.identity.UserID = user
 	req := ws.TunnelRequest{SenderUserID: user, SenderOrgRole: "owner"}
 	wc := &config.WingConfig{WingID: "wing"}
 	for operation, args := range map[string]string{"session_read": `{"session":"source"}`, "conversation_read": `{"conversation_id":"root"}`} {
-		result, err := browserSessionControl(context.Background(), s.cfg, wc, req, operation, json.RawMessage(args), s.cfg.Dir, false)
+		result, err := BrowserSessionControl("dev", context.Background(), s.Cfg, wc, req, operation, json.RawMessage(args), s.Cfg.Dir, false)
 		if err != nil || result["headless_continuation"] == nil {
 			t.Fatalf("browser advertisement %v %v", result, err)
 		}
@@ -343,7 +343,7 @@ func TestHeadlessContinuationBrowserAdapterMatchesNativeContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := browserSessionControl(context.Background(), s.cfg, wc, req, "agent_start", args, s.cfg.Dir, false)
+	replay, err := BrowserSessionControl("dev", context.Background(), s.Cfg, wc, req, "agent_start", args, s.Cfg.Dir, false)
 	if err != nil || replay["session"] != first["session"] || replay["wing_id"] != "wing" || replay["request_id"] != "native-request" || replay["reused"] != true {
 		t.Fatalf("browser continuation replay %v %v", replay, err)
 	}
@@ -383,12 +383,12 @@ func TestHeadlessContinuationFakeClaudeResumesSameProvider(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, python, append([]string{fake}, argv...)...)
 		cmd.Dir = c.CWD
-		home := eggclient.EffectiveSessionHome(s.cfg, s.identity)
+		home := eggclient.EffectiveSessionHome(s.Cfg, s.identity)
 		cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "CLAUDE_CONFIG_DIR=" + filepath.Join(home, ".claude")}
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fake Claude: %v %s", err, output)
 		}
-		dir := filepath.Join(s.cfg.Dir, "eggs", c.SessionID)
+		dir := filepath.Join(s.Cfg.Dir, "eggs", c.SessionID)
 		if err := eggclient.WriteSessionPrincipal(dir, "owner"); err != nil {
 			return err
 		}
@@ -417,7 +417,7 @@ func TestHeadlessContinuationFakeClaudeResumesSameProvider(t *testing.T) {
 	if !strings.Contains(strings.Join(text, "\n"), "First answer") || !strings.Contains(strings.Join(text, "\n"), "fixture-result:Follow-up 🦉") {
 		t.Fatalf("provider history was not continued: %v", text)
 	}
-	tree, err := s.toolConversationRead(context.Background(), json.RawMessage(`{"conversation_id":"root"}`))
+	tree, err := s.ToolConversationRead(context.Background(), json.RawMessage(`{"conversation_id":"root"}`))
 	if err != nil || len(tree["tasks"].([]map[string]any)) != 1 {
 		t.Fatalf("continued tree %v %v", tree, err)
 	}

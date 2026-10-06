@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 
 	"fmt"
@@ -15,17 +14,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
-	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 )
-
-type remoteIOContextKey struct{}
-
-func remoteStreams(ctx context.Context) remotepkg.IO {
-	if streams, ok := ctx.Value(remoteIOContextKey{}).(remotepkg.IO); ok {
-		return streams
-	}
-	return remotepkg.ProcessIO()
-}
 
 func writeMachineSessions(out io.Writer, rows []eggclient.MachineSession, jsonOutput bool) error {
 	if jsonOutput {
@@ -98,16 +87,4 @@ func parseRemoteSession(ref string) (name, session string, err error) {
 		return "", "", fmt.Errorf("invalid remote session %q; use NAME:SESSION", ref)
 	}
 	return name, session, nil
-}
-
-func configuredRemote(dir, name string) (config.Remote, error) {
-	remotes, err := config.LoadRemotes(dir)
-	if err != nil {
-		return config.Remote{}, err
-	}
-	remote, exists := remotes[name]
-	if !exists {
-		return config.Remote{}, fmt.Errorf("unknown remote %q; configure it with 'wt remote add'", name)
-	}
-	return remote, nil
 }

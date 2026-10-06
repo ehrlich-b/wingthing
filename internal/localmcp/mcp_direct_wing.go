@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"context"
@@ -45,7 +45,7 @@ func knownDirectMCPGrants() map[string]bool {
 	return known
 }
 
-func validateDirectMCPGrantConfig(wingCfg *config.WingConfig) error {
+func ValidateDirectMCPGrantConfig(wingCfg *config.WingConfig) error {
 	if wingCfg == nil || wingCfg.DirectMCP == nil {
 		return nil
 	}
@@ -100,7 +100,7 @@ func resolveDirectMCPPolicy(wingCfg *config.WingConfig, home string, sharedHost 
 		return directMCPPolicy{}, fmt.Errorf("unsupported authenticated organization role %q", role)
 	}
 
-	if err := validateDirectMCPGrantConfig(wingCfg); err != nil {
+	if err := ValidateDirectMCPGrantConfig(wingCfg); err != nil {
 		return directMCPPolicy{}, err
 	}
 	knownGrants := knownDirectMCPGrants()
@@ -143,17 +143,17 @@ func resolveDirectMCPPolicy(wingCfg *config.WingConfig, home string, sharedHost 
 	}, nil
 }
 
-func serveDirectMCPChannel(cfg *config.Config, wingCfg *config.WingConfig, home string, sharedHost bool, allowedKeys []config.AllowKey, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
-	serveDirectMCPChannelWithPolicySource(cfg, home, sharedHost, admission, identity, dc, func() (*config.WingConfig, []config.AllowKey) {
+func serveDirectMCPChannel(version string, cfg *config.Config, wingCfg *config.WingConfig, home string, sharedHost bool, allowedKeys []config.AllowKey, admission *AdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel) {
+	ServeDirectMCPChannelWithPolicySource(version, cfg, home, sharedHost, admission, identity, dc, func() (*config.WingConfig, []config.AllowKey) {
 		return wingCfg.Clone(), append([]config.AllowKey(nil), allowedKeys...)
 	})
 }
 
-func serveDirectMCPChannelWithPolicySource(cfg *config.Config, home string, sharedHost bool, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey)) {
-	serveDirectMCPChannelWithPolicySourceAndLease(cfg, home, sharedHost, admission, identity, dc, policySource, directMCPIdentityLease)
+func ServeDirectMCPChannelWithPolicySource(version string, cfg *config.Config, home string, sharedHost bool, admission *AdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey)) {
+	serveDirectMCPChannelWithPolicySourceAndLease(version, cfg, home, sharedHost, admission, identity, dc, policySource, directMCPIdentityLease)
 }
 
-func serveDirectMCPChannelWithPolicySourceAndLease(cfg *config.Config, home string, sharedHost bool, admission *mcpAdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey), identityLease time.Duration) {
+func serveDirectMCPChannelWithPolicySourceAndLease(version string, cfg *config.Config, home string, sharedHost bool, admission *AdmissionState, identity webrtcpkg.PeerIdentity, dc *pionwebrtc.DataChannel, policySource func() (*config.WingConfig, []config.AllowKey), identityLease time.Duration) {
 	actor := strings.TrimPrefix(dc.Label(), control.DirectChannelPrefix)
 	if actor == dc.Label() || eggclient.ValidateSessionName(actor) != nil || identity.UserID == "" || identityLease <= 0 {
 		log.Printf("[P2P] rejected direct MCP channel %q: invalid actor or identity", dc.Label())
@@ -222,14 +222,14 @@ func serveDirectMCPChannelWithPolicySourceAndLease(cfg *config.Config, home stri
 				send(response)
 				return
 			}
-			server := &localMCPServer{
-				cfg: cfg, logs: os.Stderr,
-				principal:         roostSessionPrincipal(identity.UserID),
-				actor:             actor,
-				surface:           control.SurfaceDirectMCP,
-				grants:            policy.grants,
-				maxSessions:       policy.maxSessions,
-				maxSpawnsPerHour:  policy.maxSpawnsPerHour,
+			server := &Server{Version: version,
+				Cfg: cfg, Logs: os.Stderr,
+				Principal:         roostSessionPrincipal(identity.UserID),
+				Actor:             actor,
+				Surface:           control.SurfaceDirectMCP,
+				Grants:            policy.grants,
+				MaxSessions:       policy.maxSessions,
+				MaxSpawnsPerHour:  policy.maxSpawnsPerHour,
 				admission:         admission,
 				allowedPaths:      policy.allowedPaths,
 				enforcePathBounds: policy.enforcePathBounds,

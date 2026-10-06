@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 // The conversation mailbox carries MCP requests from a sandboxed parent's
 // injected stdio client to its host broker through regular files in the
@@ -378,7 +378,7 @@ func (c conversationMailboxClient) exchange(ctx context.Context, call conversati
 // serveConversationMailboxClient is `wt mcp stdio --host-mailbox`. It needs no
 // Wingthing state access: it forwards each MCP request to the host broker and
 // writes back the broker's response with the caller's JSON-RPC ID.
-func serveConversationMailboxClient(ctx context.Context, in io.Reader, out io.Writer, dir, conversation, session string) error {
+func ServeConversationMailboxClient(ctx context.Context, in io.Reader, out io.Writer, dir, conversation, session string) error {
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
 		return errors.New("--host-mailbox must be a clean absolute directory")
 	}

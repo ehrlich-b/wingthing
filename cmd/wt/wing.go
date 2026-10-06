@@ -42,6 +42,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	pb "github.com/ehrlich-b/wingthing/internal/egg/pb"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	"github.com/ehrlich-b/wingthing/internal/procinfo"
 	relaypkg "github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/ehrlich-b/wingthing/internal/sessionfiles"
@@ -1205,7 +1206,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 	// P2P: track DataChannels and SwappableWriters per session
 	var dcSessions sync.Map // sessionID → *pionwebrtc.DataChannel
 	var swSessions sync.Map // sessionID → *webrtcpkg.SwappableWriter
-	directMCPAdmission := newMCPAdmissionState()
+	directMCPAdmission := localmcp.NewMCPAdmissionState()
 
 	var client *ws.Client // declared early so peerMgr.OnDC closure can capture it
 	var directSrv *directpkg.Server
@@ -1221,7 +1222,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 					}
 					return
 				}
-				serveDirectMCPChannelWithPolicySource(cfg, home, sharedHost, directMCPAdmission, ident, dc, func() (*config.WingConfig, []config.AllowKey) {
+				localmcp.ServeDirectMCPChannelWithPolicySource(version, cfg, home, sharedHost, directMCPAdmission, ident, dc, func() (*config.WingConfig, []config.AllowKey) {
 					wingCfgMu.Lock()
 					defer wingCfgMu.Unlock()
 					return wingCfg.Clone(), append([]config.AllowKey(nil), allowedKeys...)
@@ -1449,7 +1450,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 						log.Printf("reload failed: %v", err)
 						continue
 					}
-					if err := validateDirectMCPGrantConfig(newCfg); err != nil {
+					if err := localmcp.ValidateDirectMCPGrantConfig(newCfg); err != nil {
 						log.Printf("reload failed: %v", err)
 						continue
 					}
@@ -1521,7 +1522,7 @@ func runWingWithContext(ctx context.Context, sighupCh <-chan os.Signal, roostFla
 		}
 	}()
 
-	go runConversationWakeController(ctx, cfg, func() (*config.WingConfig, bool) {
+	go localmcp.RunConversationWakeController(ctx, cfg, func() (*config.WingConfig, bool) {
 		wingCfgMu.Lock()
 		copyCfg := *wingCfg
 		wingCfgMu.Unlock()
@@ -1674,7 +1675,7 @@ func loadWingConfigForStart(dir string) (*config.WingConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load wing.yaml: %w", err)
 	}
-	if err := validateDirectMCPGrantConfig(wingCfg); err != nil {
+	if err := localmcp.ValidateDirectMCPGrantConfig(wingCfg); err != nil {
 		return nil, fmt.Errorf("load wing.yaml: %w", err)
 	}
 	return wingCfg, nil
@@ -3346,7 +3347,7 @@ authDone:
 		}
 		defer func() { releaseProviderResume(providerResumeSpawned) }()
 	}
-	resumeArgs, resumePrincipal, resumeBindingErr := prepareConversationResumeMCP(cfg, wingCfg, start, eggCfg, sharedHost)
+	resumeArgs, resumePrincipal, resumeBindingErr := localmcp.PrepareConversationResumeMCP(cfg, wingCfg, start, eggCfg, sharedHost)
 	if resumeBindingErr != nil {
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
 		return
@@ -3379,7 +3380,7 @@ authDone:
 	}
 	defer cmdutil.CloseWithLog("PTY egg client", ec)
 	providerResumeSpawned = providerResumeID != ""
-	if err := inheritConversationExecution(cfg, start.ResumeSessionID, start.SessionID); err != nil {
+	if err := localmcp.InheritConversationExecution(cfg, start.ResumeSessionID, start.SessionID); err != nil {
 		killCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		_ = ec.Kill(killCtx, start.SessionID)
 		cancel()
@@ -4245,7 +4246,7 @@ func handleTunnelRequest(ctx context.Context, cfg *config.Config, wingCfg *confi
 		ws.TunnelRespond(gcm, req.RequestID, map[string]any{"sessions": sessions}, write)
 
 	case "session.control":
-		result, err := browserSessionControl(ctx, cfg, wingCfg, req, inner.Operation, inner.Arguments, home, sharedHost)
+		result, err := localmcp.BrowserSessionControl(version, ctx, cfg, wingCfg, req, inner.Operation, inner.Arguments, home, sharedHost)
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": err.Error()}, write)
 			return

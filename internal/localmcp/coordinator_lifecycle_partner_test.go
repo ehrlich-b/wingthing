@@ -1,4 +1,4 @@
-package main
+package localmcp
 
 import (
 	"bytes"
@@ -20,13 +20,6 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 	"github.com/ehrlich-b/wingthing/internal/store"
 )
-
-// These journeys join the coordinator pieces end to end. Synthetic: native
-// lifecycle.jsonl records, provider transcript echoes and the PTY Send
-// callback. Real: the SQLite store, MCP reservation/read/checkpoint/wake
-// tools, the wake controller step, the lifecycle journal reader and
-// SubmitSessionPrompt's durable reservations. No provider or network starts,
-// and receipts remain observational (never exactly-once delivery claims).
 
 // opusExecutionEgg retains an execution directory for an ID that was reserved
 // through MCP rather than fixtureConversation.
@@ -104,11 +97,11 @@ func opusNativeReader(cfg *config.Config, session eggclient.LocalSession) func(c
 	}
 }
 
-func opusServer(cfg *config.Config, bound string) *localMCPServer {
-	return &localMCPServer{cfg: cfg, principal: "owner", boundConversation: bound, logs: &bytes.Buffer{}}
+func opusServer(cfg *config.Config, bound string) *Server {
+	return &Server{Version: "dev", Cfg: cfg, Principal: "owner", BoundConversation: bound, Logs: &bytes.Buffer{}}
 }
 
-func opusCall(t *testing.T, s *localMCPServer, tool string, args map[string]any) (map[string]any, error) {
+func opusCall(t *testing.T, s *Server, tool string, args map[string]any) (map[string]any, error) {
 	t.Helper()
 	input, err := json.Marshal(args)
 	if err != nil {
@@ -218,7 +211,7 @@ func TestOpusCoordinatorLinkedChildJourneyAcrossReconnectRestartAndCheckpoint(t 
 	// retries the same intention with a freshly generated execution ID.
 	spec := map[string]any{"agent": "claude", "label": "child", "cwd": cfg.Dir}
 	parent := opusServer(cfg, root.ID)
-	if err := validateBoundConversation(parent); err != nil {
+	if err := ValidateBoundConversation(parent); err != nil {
 		t.Fatal(err)
 	}
 	child, created, err := parent.reserveAgentConversation("claude", cfg.Dir, "child", "child", "", "launch-child-1", "execution-child-a", spec)
@@ -463,7 +456,7 @@ func TestOpusCoordinatorWakeOutboxKeepsUnknownBindingAcrossParentResumeAndProofG
 		t.Fatalf("wake reservation %+v", saved)
 	}
 	retry, _ := json.Marshal(map[string]any{"conversation_id": root.ID, "retry_not_sent": true})
-	if _, err := opusServer(cfg, "").toolConversationWake(retry); err == nil {
+	if _, err := opusServer(cfg, "").ToolConversationWake(retry); err == nil {
 		t.Fatal("ambiguous delivery accepted an explicit not-sent retry")
 	}
 
@@ -579,7 +572,7 @@ func TestOpusCoordinatorWakeOutboxKeepsUnknownBindingAcrossParentResumeAndProofG
 	}
 
 	// A deliberate user retry adds bounded attempts and keeps the cooldown.
-	if _, err = opusServer(cfg, "").toolConversationWake(retry); err != nil {
+	if _, err = opusServer(cfg, "").ToolConversationWake(retry); err != nil {
 		t.Fatal(err)
 	}
 	authorized := pending()
