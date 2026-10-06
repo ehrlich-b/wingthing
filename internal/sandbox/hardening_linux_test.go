@@ -129,7 +129,7 @@ func runHardeningScenario(scenario, root string) error {
 			}
 		}
 		cache := filepath.Join(home, ".cache", "new")
-		setupJail(tmp, []string{home}, []string{cache}, home)
+		setupJail(tmp, []string{home}, []string{cache}, home, nil)
 		if err := os.WriteFile(filepath.Join(home, "undeclared"), nil, 0o600); err == nil {
 			return fmt.Errorf("read-only HOME became writable")
 		}
@@ -171,7 +171,7 @@ func runHardeningScenario(scenario, root string) error {
 		if err := os.WriteFile(path, []byte("initial config"), 0o600); err != nil {
 			return err
 		}
-		persist := setupJail(root, []string{"/usr"}, []string{config}, home, ".claude")
+		persist := setupJail(root, []string{"/usr"}, []string{config}, home, nil, ".claude")
 		data, err := os.ReadFile(path)
 		if err != nil || string(data) != "initial config" {
 			return fmt.Errorf("jail lost existing prefix config: %q, %v", data, err)
@@ -344,7 +344,7 @@ func runHardeningScenario(scenario, root string) error {
 		if scenario == "jail-home-ro" {
 			ro = append(ro, home)
 		}
-		setupJail(root, ro, []string{config}, home)
+		setupJail(root, ro, []string{config}, home, nil)
 		if scenario == "jail-home" {
 			if _, err := os.ReadFile(secret); !os.IsNotExist(err) {
 				return fmt.Errorf("undeclared HOME file exposed: %v", err)

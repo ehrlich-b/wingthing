@@ -25,6 +25,16 @@ func TestLinuxControlPolicyPreservesBridgesAndBlocksFutureSiblings(t *testing.T)
 	}
 	root, control, bridges, capability := controlIsolationFixture(t)
 	createIsolationSibling(t, root, "sibling")
+	dotfile := filepath.Join(root, "dotfiles", "zshrc")
+	if err := os.MkdirAll(filepath.Dir(dotfile), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dotfile, []byte("real dotfile symlink"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dotfile, filepath.Join(root, ".zshrc")); err != nil {
+		t.Fatal(err)
+	}
 	own := filepath.Join(root, "state", "eggs", "own")
 	ownControl, err := net.Listen("unix", filepath.Join(own, "egg.sock"))
 	if err != nil {
@@ -65,9 +75,10 @@ func TestLinuxControlPolicyPreservesBridgesAndBlocksFutureSiblings(t *testing.T)
 		t.Fatal(err)
 	}
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "WT_TEST_CONTROL_ROOT="+root, ToolCapabilityEnv+"="+capability)
+	cmd.Env = append(os.Environ(), "WT_TEST_CONTROL_ROOT="+root, "HOME="+root, "WT_TEST_DOTFILE_ALIAS=1", ToolCapabilityEnv+"="+capability)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("control isolation: %v\n%s", err, output)
+		diag, _ := os.ReadFile(sb.DiagLog())
+		t.Fatalf("control isolation: %v\n%s\n%s", err, output, diag)
 	}
 }

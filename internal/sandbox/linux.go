@@ -319,7 +319,11 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 			if d == "/" {
 				for _, m := range s.cfg.Mounts {
 					if m.ReadOnly && m.Source != "/" {
-						wrapArgs = append(wrapArgs, "--mount-ro", m.Source)
+						if m.Target != "" && m.Target != m.Source {
+							wrapArgs = append(wrapArgs, "--mount-ro-alias", m.Source, m.Target)
+						} else {
+							wrapArgs = append(wrapArgs, "--mount-ro", m.Source)
+						}
 					}
 				}
 				break

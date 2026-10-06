@@ -203,6 +203,7 @@ func DenyInit(args []string) {
 	var writablePaths []string
 	var overlayPrefixes []string
 	var roMounts []string
+	var readAliases []Mount
 	var home string
 	var logPath string
 	var uid, gid int
@@ -237,6 +238,12 @@ func DenyInit(args []string) {
 			case "--overlay-prefix":
 				overlayPrefixes = append(overlayPrefixes, args[i+1])
 				i++
+			case "--mount-ro-alias":
+				if i+2 >= len(args) {
+					log.Fatal("_deny_init: read alias needs source and target")
+				}
+				readAliases = append(readAliases, Mount{Source: args[i+1], Target: args[i+2], ReadOnly: true})
+				i += 2
 			case "--mount-ro":
 				roMounts = append(roMounts, args[i+1])
 				i++
@@ -313,7 +320,7 @@ func DenyInit(args []string) {
 				}
 			}
 		}
-		overlayPersistFn = setupJail(tmpDir, roMounts, writablePaths, home, overlayPrefixes...)
+		overlayPersistFn = setupJail(tmpDir, roMounts, writablePaths, home, readAliases, overlayPrefixes...)
 		var filtered []string
 		for _, d := range denyPaths {
 			if d != "/" {
@@ -1192,7 +1199,7 @@ func containsPath(paths []string, target string) bool {
 // writablePaths (read-write), plus essential virtual filesystems (/proc, /dev,
 // /tmp). After pivot_root, the old root is lazily unmounted — nothing outside
 // the explicit mounts is accessible.
-func setupJail(tmpDir string, roMounts, writablePaths []string, home string, prefixes ...string) func() {
+func setupJail(tmpDir string, roMounts, writablePaths []string, home string, readAliases []Mount, prefixes ...string) func() {
 	// Prepare persistent writable directories before a read-only ancestor is
 	// bound into the jail. Fresh homes may not yet have their declared caches.
 	if err := prepareJailWritablePaths(writablePaths); err != nil {
@@ -1328,6 +1335,23 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string, pre
 			expected = append(expected, expectedMount{Path: p, Writable: true})
 			log.Printf("_deny_init: jail rw %s", p)
 		}
+	}
+	// Aliases use resolved, confined sources and synthetic read-only targets.
+	// A changed symlink is never followed during mountpoint creation.
+	for _, alias := range readAliases {
+		sourceFD, targetFD, err := jailMkTargetAt(newRoot, alias.Source, alias.Target)
+		if err != nil {
+			failEnforcement("create jail read alias", alias.Target, err)
+		}
+		if err := unix.Mount(mountFDPath(sourceFD), mountFDPath(targetFD), "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			failEnforcement("bind jail read alias", alias.Target, err)
+		}
+		if err := remountConfinedBindReadonly(newRoot, alias.Target); err != nil {
+			failEnforcement("make jail read alias read-only", alias.Target, err)
+		}
+		sourceFD.Close()
+		targetFD.Close()
+		expected = append(expected, expectedMount{Path: alias.Target, ReadOnly: true})
 	}
 	// pivot_root: swap new root into place, old root at .pivot.
 	// Save cwd so we can restore it after pivot (cmd.Dir set by parent).
@@ -1529,13 +1553,17 @@ func jailMounts(readonly, writable []string, aliases map[string]string) []expect
 // jailMkTarget pins both sides of a jail bind mount. No component may be a
 // symlink, and existing target files are opened without truncating them.
 func jailMkTarget(root, src string) (source, target *os.File, err error) {
+	return jailMkTargetAt(root, src, src)
+}
+
+func jailMkTargetAt(root, src, dst string) (source, target *os.File, err error) {
 	source, err = openConfinedExisting("/", src)
 	if err != nil {
 		return nil, nil, err
 	}
 	info, err := source.Stat()
 	if err == nil {
-		target, err = createConfinedMountpoint(root, src, info.IsDir())
+		target, err = createConfinedMountpoint(root, dst, info.IsDir())
 	}
 	if err != nil {
 		source.Close()

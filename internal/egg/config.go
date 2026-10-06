@@ -259,6 +259,21 @@ func isolateLinuxEggControl(mounts []sandbox.Mount, control []string, bridges []
 			ancestor = ancestor || controlPathWithin(tree, path)
 		}
 		if !ancestor {
+			// The jail recreates fixed merged-usr links itself. Mount their
+			// destinations directly instead of trying to overmount the link.
+			source := filepath.Clean(m.Source)
+			if (source == "/bin" || source == "/sbin" || source == "/lib" || source == "/lib64") && path == "/usr"+source {
+				m.Source, m.Target = path, path
+			}
+			if info, err := os.Lstat(m.Source); err == nil && info.Mode()&os.ModeSymlink != 0 {
+				// Safe HOME aliases remain readable, but never inherit a
+				// writable grant. Bind the resolved source into a synthetic
+				// target rather than following a symlink in the jail walker.
+				if _, err := os.Stat(path); os.IsNotExist(err) {
+					return nil // dangling aliases were unreadable on the host too
+				}
+				m.Target, m.Source, m.ReadOnly = m.Source, path, true
+			}
 			result = append(result, m)
 			return nil
 		}

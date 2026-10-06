@@ -152,6 +152,15 @@ func TestEggControlIsolationProcess(t *testing.T) {
 	if root == "" {
 		t.Skip("sandbox subprocess only")
 	}
+	if os.Getenv("WT_TEST_DOTFILE_ALIAS") != "" {
+		path := filepath.Join(root, ".zshrc")
+		if data, err := os.ReadFile(path); err != nil || string(data) != "real dotfile symlink" {
+			t.Fatalf("dotfile alias: %q %v", data, err)
+		}
+		if err := os.WriteFile(path, []byte("changed"), 0600); err == nil {
+			t.Fatal("dotfile alias writable")
+		}
+	}
 	tree := filepath.Join(root, "state", "eggs")
 	own := filepath.Join(tree, "own")
 	for _, path := range []string{filepath.Join(own, "egg.token"), filepath.Join(tree, "sibling", "egg.token"), filepath.Join(tree, "future", "egg.token"), filepath.Join(root, "state", "wing_key"), filepath.Join(root, "state", "device_token.yaml")} {
@@ -299,4 +308,40 @@ func TestDarwinControlPolicyPreservesBridgesAndBlocksFutureSiblings(t *testing.T
 	if err != nil {
 		t.Fatalf("control isolation: %v\n%s", err, output)
 	}
+}
+
+func TestLinuxControlAllowlistPreservesReadOnlyDotfileAliases(t *testing.T) {
+	home := canonicalPolicyTestPath(t, t.TempDir())
+	t.Setenv("HOME", home)
+	tree := filepath.Join(home, ".wingthing", "eggs")
+	dotfiles := filepath.Join(home, "dotfiles")
+	for _, dir := range []string{tree, dotfiles} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := filepath.Join(dotfiles, "zshrc")
+	if err := os.WriteFile(target, []byte("safe dotfile"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(home, ".zshrc")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(tree, filepath.Join(home, "unsafe")); err != nil {
+		t.Fatal(err)
+	}
+	mounts, err := isolateLinuxEggControl([]sandbox.Mount{{Source: home}}, []string{tree}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range mounts {
+		if m.Target == alias {
+			if m.Source != canonicalPolicyTestPath(t, target) || !m.ReadOnly {
+				t.Fatalf("unsafe alias: %+v", m)
+			}
+			return
+		}
+	}
+	t.Fatal("ordinary HOME dotfile alias disappeared")
 }
