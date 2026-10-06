@@ -434,6 +434,18 @@ func buildTools() []Tool {
 			Grant: "agent.read", Surfaces: both, AuditTargetKeys: []string{"run_id"},
 		},
 		{
+			Name: "agent_wait_any", Title: "Wait for any agent run",
+			Description: "Wait until any of 1-64 owned agent runs reaches a terminal state. Return finished runs and pending IDs; on timeout return no finished runs without an error. Unknown or foreign IDs appear only as indistinguishable errors. max_wait_hint_seconds: 110; keep each call under 110 seconds to stay within client tool-call timeouts and loop over pending IDs.",
+			InputSchema: objectSchema(map[string]any{
+				"run_ids": map[string]any{
+					"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1, "maxItems": 64,
+					"description": "Wingthing agent run IDs owned by this caller",
+				},
+				"timeout_seconds": map[string]any{"type": "number", "minimum": 0.1, "maximum": 3600, "default": 30},
+			}, "run_ids"), Annotations: readOnly,
+			Grant: "agent.read", Surfaces: both, AuditTargetKeys: []string{"run_id"},
+		},
+		{
 			Name: "agent_result", Title: "Read agent result",
 			Description: "Read the final semantic output or error for one completed run, with an explicit response bound.",
 			InputSchema: objectSchema(map[string]any{

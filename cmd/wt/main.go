@@ -24,6 +24,8 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/daemonctl"
+	"github.com/ehrlich-b/wingthing/internal/eggclient"
+	"github.com/ehrlich-b/wingthing/internal/localmcp"
 	remotepkg "github.com/ehrlich-b/wingthing/internal/remote"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 	"github.com/ehrlich-b/wingthing/internal/skill"
@@ -536,6 +538,64 @@ func agentCmd() *cobra.Command {
 			return w.Flush()
 		},
 	})
+	var timeoutSeconds float64
+	var clientName string
+	waitAny := &cobra.Command{
+		Use:   "wait-any RUN_ID...",
+		Short: "Wait for any owned agent run to finish and print JSON",
+		Args:  cobra.RangeArgs(1, 64),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			clientID := strings.TrimSpace(clientName)
+			if clientID == "" {
+				clientID = strings.TrimSpace(os.Getenv("WT_MCP_CLIENT"))
+			}
+			explicitClient := clientID != ""
+			if clientID == "" {
+				clientID = "default"
+			}
+			if err := eggclient.ValidateSessionName(clientID); err != nil {
+				return fmt.Errorf("invalid MCP client name: %w", err)
+			}
+			clients, err := localmcp.LoadLocalMCPClientsConfig(cfg)
+			if err != nil {
+				return err
+			}
+			if clients.RequireClient && !explicitClient {
+				return errors.New("clients.yaml requires an explicit MCP client; pass --client or WT_MCP_CLIENT")
+			}
+			client, configured := clients.Clients[clientID]
+			if (clients.RequireClient || len(clients.Clients) > 0) && !configured {
+				return fmt.Errorf("MCP client %q is not configured in clients.yaml", clientID)
+			}
+			owner := clientID
+			if configured && strings.TrimSpace(client.Owner) != "" {
+				owner = strings.TrimSpace(client.Owner)
+				if err := eggclient.ValidateSessionName(owner); err != nil {
+					return fmt.Errorf("invalid MCP owner name: %w", err)
+				}
+			}
+			server := &localmcp.Server{Version: version, Cfg: cfg, Principal: owner, Actor: clientID, Logs: cmd.ErrOrStderr()}
+			if configured {
+				server.Grants = localmcp.GrantSet(client.Grants)
+			}
+			arguments, err := json.Marshal(map[string]any{"run_ids": args, "timeout_seconds": timeoutSeconds})
+			if err != nil {
+				return err
+			}
+			result, err := server.AgentWaitAny(cmd.Context(), arguments)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+		},
+	}
+	waitAny.Flags().Float64Var(&timeoutSeconds, "timeout", 30, "wait timeout in seconds (0.1-3600)")
+	waitAny.Flags().StringVar(&clientName, "client", "", "local MCP client name (or WT_MCP_CLIENT)")
+	ag.AddCommand(waitAny)
 	return ag
 }
 

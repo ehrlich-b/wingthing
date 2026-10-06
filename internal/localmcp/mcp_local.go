@@ -472,6 +472,8 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.toolAgentStatus(arguments)
 	case "agent_wait":
 		data, err = s.toolAgentWait(ctx, arguments)
+	case "agent_wait_any":
+		data, err = s.toolAgentWaitAny(ctx, arguments)
 	case "agent_result":
 		data, err = s.toolAgentResult(arguments)
 	case "agent_events":
@@ -1679,26 +1681,37 @@ func (s *Server) ownedAgentRun(runID string) (*store.Task, *store.Store, error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	task, err := taskStore.GetTask(runID)
+	task, err := s.loadOwnedAgentRun(taskStore, runID)
+	if err == nil && task == nil {
+		err = fmt.Errorf("agent run %q not found or not owned by caller", runID)
+	}
 	if err != nil {
 		return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, err)
 	}
+	return task, taskStore, nil
+}
+
+func (s *Server) loadOwnedAgentRun(taskStore *store.Store, runID string) (*store.Task, error) {
+	task, err := taskStore.GetTask(runID)
+	if err != nil {
+		return nil, err
+	}
 	if task == nil || task.Type != "agent_run" || !s.ownsTask(task) {
-		return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, fmt.Errorf("agent run %q not found or not owned by caller", runID))
+		return nil, nil
 	}
 	if (task.Status == "pending" || task.Status == "running") && task.RunnerPID > 0 && !procinfo.OwnedProcessIsAlive(task.RunnerPID) {
 		if err := taskStore.SetTaskError(task.ID, fmt.Sprintf("supervising Wingthing process %d exited", task.RunnerPID)); err != nil {
-			return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, fmt.Errorf("mark orphaned agent run failed: %w", err))
+			return nil, fmt.Errorf("mark orphaned agent run failed: %w", err)
 		}
 		task, err = taskStore.GetTask(runID)
 		if err != nil {
-			return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, err)
+			return nil, err
 		}
 		if task == nil {
-			return nil, nil, cmdutil.CloseAndJoin("task store", taskStore, fmt.Errorf("agent run %q disappeared after orphan cleanup", runID))
+			return nil, fmt.Errorf("agent run %q disappeared after orphan cleanup", runID)
 		}
 	}
-	return task, taskStore, nil
+	return task, nil
 }
 
 func agentRunTerminal(status string) bool {
@@ -1775,19 +1788,26 @@ func (s *Server) waitForAgentRunTerminal(ctx context.Context, runID string) erro
 	if agentRunTerminal(task.Status) {
 		return nil
 	}
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-	for {
+	return waitForAgentRunCondition(ctx, func() (bool, error) {
 		task, err = taskStore.GetTask(runID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if task == nil || task.Type != "agent_run" || !s.ownsTask(task) {
-			return fmt.Errorf("agent run %q not found", runID)
+			return false, fmt.Errorf("agent run %q not found", runID)
 		}
-		terminal := agentRunTerminal(task.Status)
-		if terminal {
-			return nil
+		return agentRunTerminal(task.Status), nil
+	})
+}
+
+// The task store has no notifications, so both agent wait tools share one
+// bounded polling cadence, including when updates come from another process.
+func waitForAgentRunCondition(ctx context.Context, ready func() (bool, error)) error {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if done, err := ready(); err != nil || done {
+			return err
 		}
 		select {
 		case <-ctx.Done():
@@ -1795,6 +1815,77 @@ func (s *Server) waitForAgentRunTerminal(ctx context.Context, runID string) erro
 		case <-ticker.C:
 		}
 	}
+}
+
+// AgentWaitAny exposes the same authorized and audited operation to the CLI.
+func (s *Server) AgentWaitAny(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
+	data, isError, protocolErr := s.callTool(ctx, "agent_wait_any", arguments)
+	if protocolErr != nil {
+		return nil, errors.New(protocolErr.Message)
+	}
+	if isError {
+		return nil, fmt.Errorf("%v", data["error"])
+	}
+	return data, nil
+}
+
+func (s *Server) toolAgentWaitAny(ctx context.Context, arguments json.RawMessage) (map[string]any, error) {
+	var args struct {
+		RunIDs         []string `json:"run_ids"`
+		TimeoutSeconds float64  `json:"timeout_seconds"`
+	}
+	if err := decodeStrict(arguments, &args); err != nil {
+		return nil, err
+	}
+	if len(args.RunIDs) < 1 || len(args.RunIDs) > 64 {
+		return nil, errors.New("run_ids must contain between 1 and 64 IDs")
+	}
+	if args.TimeoutSeconds == 0 {
+		args.TimeoutSeconds = 30
+	}
+	if args.TimeoutSeconds < 0.1 || args.TimeoutSeconds > 3600 {
+		return nil, errors.New("timeout_seconds must be between 0.1 and 3600")
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, durationSeconds(args.TimeoutSeconds))
+	defer cancel()
+	taskStore, err := store.Open(s.Cfg.DBPath())
+	if err != nil {
+		return nil, err
+	}
+	defer cmdutil.CloseWithLog("task store", taskStore)
+	var data map[string]any
+	err = waitForAgentRunCondition(waitCtx, func() (bool, error) {
+		finished := []map[string]any{}
+		pending := []string{}
+		lookupErrors := []map[string]any{}
+		seen := make(map[string]bool, len(args.RunIDs))
+		for _, runID := range args.RunIDs {
+			if seen[runID] {
+				continue
+			}
+			seen[runID] = true
+			task, err := s.loadOwnedAgentRun(taskStore, runID)
+			if err != nil {
+				return false, err
+			}
+			if task == nil {
+				lookupErrors = append(lookupErrors, map[string]any{"run_id": runID, "error": fmt.Sprintf("agent run %q not found or not owned by caller", runID)})
+			} else if agentRunTerminal(task.Status) {
+				finished = append(finished, map[string]any{"run_id": runID, "status": task.Status})
+			} else {
+				pending = append(pending, runID)
+			}
+		}
+		data = map[string]any{"finished": finished, "pending": pending}
+		if len(lookupErrors) > 0 {
+			data["errors"] = lookupErrors
+		}
+		return len(finished) > 0 || len(pending) == 0, nil
+	})
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return data, nil
+	}
+	return data, err
 }
 
 func (s *Server) toolAgentResult(arguments json.RawMessage) (map[string]any, error) {

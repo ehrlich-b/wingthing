@@ -3,6 +3,7 @@ package control
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -13,7 +14,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"sandbox_explain",
 		"terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
 		"terminal_start", "agent_start",
-		"agent_run", "agent_status", "agent_wait", "agent_result",
+		"agent_run", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
 		"prompt_list", "prompt_get", "prompt_save", "prompt_run", "task_get",
@@ -25,7 +26,7 @@ func TestRegistryDefinesExpectedSurfaceOperations(t *testing.T) {
 		"sandbox_explain",
 		"terminal_list", "terminal_read", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "terminal_wait",
 		"terminal_start", "agent_start",
-		"agent_run", "agent_status", "agent_wait", "agent_result",
+		"agent_run", "agent_status", "agent_wait", "agent_wait_any", "agent_result",
 		"agent_events", "agent_steer", "agent_stop",
 		"terminal_rename", "terminal_stop",
 		"conversation_bootstrap", "conversation_list", "conversation_read", "conversation_checkpoint", "conversation_wake",
@@ -127,6 +128,31 @@ func TestRegistryInputSchemasHaveNoTopLevelCombinators(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAgentWaitAnySchemaAndPolicy(t *testing.T) {
+	tool, ok := Lookup("agent_wait_any")
+	if !ok {
+		t.Fatal("missing agent_wait_any")
+	}
+	wait, _ := Lookup("agent_wait")
+	if tool.Grant != wait.Grant || tool.AuditArguments != wait.AuditArguments || !reflect.DeepEqual(tool.AuditTargetKeys, wait.AuditTargetKeys) || !reflect.DeepEqual(tool.Annotations, wait.Annotations) {
+		t.Fatalf("agent_wait_any policy differs from agent_wait: %#v", tool)
+	}
+	if !strings.Contains(tool.Description, "max_wait_hint_seconds: 110") || !strings.Contains(tool.Description, "under 110 seconds") {
+		t.Fatalf("missing client timeout hint: %s", tool.Description)
+	}
+	properties := tool.InputSchema["properties"].(map[string]any)
+	ids := properties["run_ids"].(map[string]any)
+	if ids["type"] != "array" || ids["minItems"] != 1 || ids["maxItems"] != 64 || ids["items"].(map[string]any)["type"] != "string" {
+		t.Fatalf("run_ids schema = %#v", ids)
+	}
+	if !reflect.DeepEqual(tool.InputSchema["required"], []string{"run_ids"}) {
+		t.Fatalf("required = %v", tool.InputSchema["required"])
+	}
+	if timeout := properties["timeout_seconds"].(map[string]any); timeout["default"] != 30 || timeout["maximum"] != 3600 {
+		t.Fatalf("timeout schema = %#v", timeout)
 	}
 }
 

@@ -53,6 +53,9 @@ or memory across wings.
 3. Call `sandbox_explain` for the selected agent and `cwd` before starting work.
 4. Use `agent_run` when the caller needs semantic status and a final result. Keep
    its `run_id`, wait with `agent_wait`, and read completion with `agent_result`.
+   Use `agent_wait_any` with 1-64 `run_ids` to wait for the first finished run.
+   Its `max_wait_hint_seconds` is 110: keep calls under 110 seconds and loop over
+   the returned `pending` IDs to stay within client tool-call timeouts.
 5. Use `agent_start` only when an interactive PTY and later human attachment are
    part of the task. Keep its session ID; do not infer semantic completion from
    terminal text.
