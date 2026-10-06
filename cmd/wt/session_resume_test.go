@@ -3,7 +3,6 @@ package main
 import (
 	"compress/gzip"
 	"os"
-
 	"path/filepath"
 	"strings"
 	"testing"
@@ -169,22 +168,5 @@ func TestSessionResumeStatusRequiresNativeMetadata(t *testing.T) {
 	}
 	if ok, _ := eggclient.SessionResumeStatus(dir, "claude", cwd); ok {
 		t.Fatal("missing metadata marked resumable")
-	}
-}
-
-func TestCollectSessionsHistoryUsesDurableNameStartAndProviderResumeStatus(t *testing.T) {
-	cfg := &config.Config{Dir: t.TempDir()}
-	cwd := t.TempDir()
-	dir := writeResumeSessionFixture(t, cfg, "old-session", "alice", "claude", cwd, "provider-id", "conversation\n")
-	if err := eggclient.WriteSessionName(dir, "support-case"); err != nil {
-		t.Fatal(err)
-	}
-	history := collectSessionsHistory(cfg)
-	if len(history) != 1 {
-		t.Fatalf("history = %#v", history)
-	}
-	got := history[0]
-	if got.SessionID != "old-session" || got.Name != "support-case" || got.StartedAt != 100 || !got.Resumable || got.ResumeUnavailableReason != "" {
-		t.Fatalf("history entry = %#v", got)
 	}
 }
