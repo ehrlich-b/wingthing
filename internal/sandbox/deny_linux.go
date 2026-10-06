@@ -766,51 +766,52 @@ func setupOverlayHome(home string, writablePaths, prefixes []string, tmpDir stri
 	}
 }
 
-// setupReadonlyHome is the original write isolation approach: bind-mount HOME,
-// punch writable holes for specific paths + prefix-matching files, then
-// remount HOME read-only. Works for overwriting existing files but cannot
+// setupReadonlyHome binds and recursively seals HOME, then reopens only
+// declared writable paths and prefix-matching files. Works for overwriting existing files but cannot
 // handle new file creation or renames in HOME.
 func setupReadonlyHome(home string, writablePaths, prefixes []string) error {
-	if err := unix.Mount(home, home, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-		return fmt.Errorf("bind HOME: %w", err)
-	}
-
-	// Bind-mount each writable path BEFORE remounting HOME read-only.
-	var expected []expectedMount
-	for _, p := range writablePaths {
-		if err := prepareWritableMountpoint(p, p); err != nil {
-			return fmt.Errorf("create writable mountpoint %s: %w", p, err)
-		}
-		if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
-			return fmt.Errorf("bind writable path %s: %w", p, err)
-		}
-		expected = append(expected, expectedMount{Path: p, Writable: true})
-	}
-
-	// Only explicitly declared UseRegex mounts may expand to adjacent files.
+	// Pin original writable mounts before sealing the new HOME tree. Binding a
+	// source resolved afterward would inherit the newly read-only mount flags.
 	files, err := writablePrefixFiles(home, writablePaths, prefixes)
 	if err != nil {
 		return err
 	}
-	for _, p := range files {
+	paths := append(append([]string(nil), writablePaths...), files...)
+	var sources []*os.File
+	defer func() {
+		for _, source := range sources {
+			source.Close()
+		}
+	}()
+	for _, p := range paths {
+		if err := prepareWritableMountpoint(p, p); err != nil {
+			return fmt.Errorf("create writable mountpoint %s: %w", p, err)
+		}
 		file, err := openConfinedExisting("/", p)
 		if err != nil {
 			return err
 		}
-		err = unix.Mount(mountFDPath(file), mountFDPath(file), "", unix.MS_BIND, "")
-		file.Close()
-		if err != nil {
-			return fmt.Errorf("bind writable prefix file %s: %w", p, err)
-		}
-		expected = append(expected, expectedMount{Path: p, Writable: true})
-		log.Printf("_deny_init: bind writable file %s (prefix match)", p)
+		sources = append(sources, file)
 	}
-
-	// Remount HOME read-only. Child bind-mounts stay read-write.
+	if err := unix.Mount(home, home, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		return fmt.Errorf("bind HOME: %w", err)
+	}
 	if err := remountBindReadonly(home); err != nil {
 		return fmt.Errorf("remount HOME read-only: %w", err)
 	}
-	expected = append(expected, expectedMount{Path: home, ReadOnly: true})
+	expected := []expectedMount{{Path: home, ReadOnly: true, RecursiveReadOnly: true}}
+	for i, p := range paths {
+		target, err := openConfinedExisting("/", p)
+		if err != nil {
+			return err
+		}
+		err = unix.Mount(mountFDPath(sources[i]), mountFDPath(target), "", unix.MS_BIND|unix.MS_REC, "")
+		target.Close()
+		if err != nil {
+			return fmt.Errorf("bind writable path %s: %w", p, err)
+		}
+		expected = append(expected, expectedMount{Path: p, Writable: true})
+	}
 	if err := verifyExpectedMounts(expected); err != nil {
 		return fmt.Errorf("verify HOME write isolation: %w", err)
 	}
@@ -987,10 +988,11 @@ func copyFile(src, dst string) error {
 }
 
 type expectedMount struct {
-	Path     string
-	FSType   string
-	ReadOnly bool
-	Writable bool
+	Path              string
+	FSType            string
+	ReadOnly          bool
+	Writable          bool
+	RecursiveReadOnly bool
 }
 
 type mountInfoEntry struct {
@@ -998,8 +1000,8 @@ type mountInfoEntry struct {
 	Options map[string]bool
 }
 
-// remountBindReadonly changes only the bind mount's read-only state while
-// preserving its current per-mount flags. Passing a minimal flag set works on
+// remountBindReadonly seals the bind and every inherited submount while
+// preserving each mount's current flags. Passing a minimal flag set works on
 // many Linux kernels, but WSL returns EPERM when a remount would implicitly
 // discard flags inherited from the source mount.
 func remountBindReadonly(path string) error {
@@ -1011,13 +1013,58 @@ func remountBindReadonlyAt(path, target string) error {
 	if err != nil {
 		return err
 	}
-	entry, ok := effectiveMountEntry(entries, path)
-	if !ok {
-		return fmt.Errorf("bind mount missing at %s", path)
+	plan, err := readonlyBindMountPlan(entries, path)
+	if err != nil {
+		return err
 	}
-	flags := uintptr(unix.MS_REMOUNT | unix.MS_BIND | unix.MS_RDONLY)
-	flags |= mountFlagsFromOptions(entry.Options)
-	return unix.Mount("", target, "", flags, "")
+	var expected []expectedMount
+	for _, step := range plan {
+		mountTarget := target
+		var file *os.File
+		if step.Path != filepath.Clean(path) {
+			file, err = openConfinedExisting("/", step.Path)
+			if err != nil {
+				return err
+			}
+			mountTarget = mountFDPath(file)
+		}
+		err = unix.Mount("", mountTarget, "", step.Flags, "")
+		if file != nil {
+			file.Close()
+		}
+		if err != nil {
+			return fmt.Errorf("seal inherited mount %s: %w", step.Path, err)
+		}
+		expected = append(expected, expectedMount{Path: step.Path, ReadOnly: true})
+	}
+	return verifyExpectedMounts(expected)
+}
+
+type bindRemount struct {
+	Path  string
+	Flags uintptr
+}
+
+func readonlyBindMountPlan(entries map[string]mountInfoEntry, root string) ([]bindRemount, error) {
+	root = filepath.Clean(root)
+	if _, ok := entries[root]; !ok {
+		return nil, fmt.Errorf("bind mount missing at %s", root)
+	}
+	var plan []bindRemount
+	for path, entry := range entries {
+		if isPathWithin(path, root) {
+			plan = append(plan, bindRemount{path, uintptr(unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY) | mountFlagsFromOptions(entry.Options)})
+		}
+	}
+	// Seal children first, so inherited writable mounts cannot survive sealing
+	// their parent. Explicit writable grants are rebound only after this pass.
+	sort.Slice(plan, func(i, j int) bool {
+		if len(plan[i].Path) != len(plan[j].Path) {
+			return len(plan[i].Path) > len(plan[j].Path)
+		}
+		return plan[i].Path < plan[j].Path
+	})
+	return plan, nil
 }
 
 func remountConfinedBindReadonly(root, path string) error {
@@ -1101,6 +1148,22 @@ func verifyMountEntries(entries map[string]mountInfoEntry, expected []expectedMo
 		}
 		if want.Writable && !got.Options["rw"] {
 			return fmt.Errorf("mount at %s is read-only", want.Path)
+		}
+		if want.RecursiveReadOnly {
+			for path, entry := range entries {
+				if !isPathWithin(path, want.Path) || entry.Options["ro"] {
+					continue
+				}
+				mode := want
+				for _, grant := range expected {
+					if (grant.ReadOnly || grant.Writable) && isPathWithin(path, grant.Path) && len(grant.Path) > len(mode.Path) {
+						mode = grant
+					}
+				}
+				if !mode.Writable {
+					return fmt.Errorf("inherited mount at %s is writable", path)
+				}
+			}
 		}
 	}
 	return nil
@@ -1355,7 +1418,7 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string, rea
 		sourceFD.Close()
 		targetFD.Close()
 		if mount.ReadOnly {
-			expected = append(expected, expectedMount{Path: p, ReadOnly: true})
+			expected = append(expected, expectedMount{Path: p, ReadOnly: true, RecursiveReadOnly: true})
 			log.Printf("_deny_init: jail ro %s", p)
 		} else {
 			expected = append(expected, expectedMount{Path: p, Writable: true})
@@ -1377,7 +1440,7 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string, rea
 		}
 		sourceFD.Close()
 		targetFD.Close()
-		expected = append(expected, expectedMount{Path: alias.Target, ReadOnly: true})
+		expected = append(expected, expectedMount{Path: alias.Target, ReadOnly: true, RecursiveReadOnly: true})
 	}
 	// pivot_root: swap new root into place, old root at .pivot.
 	// Save cwd so we can restore it after pivot (cmd.Dir set by parent).
@@ -1537,7 +1600,7 @@ func copyPinnedFile(source, target *os.File) error {
 func isPathWithin(path, root string) bool {
 	cleanPath := filepath.Clean(path)
 	cleanRoot := filepath.Clean(root)
-	return cleanPath == cleanRoot || strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
+	return cleanPath == cleanRoot || strings.HasPrefix(cleanPath, strings.TrimSuffix(cleanRoot, string(filepath.Separator))+string(filepath.Separator))
 }
 
 func jailMounts(readonly, writable []string, aliases map[string]string) []expectedMount {

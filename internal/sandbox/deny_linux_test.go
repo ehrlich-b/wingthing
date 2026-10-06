@@ -89,6 +89,43 @@ func TestMountFlagsFromOptionsPreservesRemountState(t *testing.T) {
 	}
 }
 
+func TestReadonlyRootPlanSealsInheritedWritableSubmounts(t *testing.T) {
+	entries := map[string]mountInfoEntry{
+		"/":                {Options: map[string]bool{"rw": true, "relatime": true}},
+		"/mnt/data":        {Options: map[string]bool{"rw": true, "nosuid": true, "nodev": true}},
+		"/mnt/data/nested": {Options: map[string]bool{"rw": true, "noexec": true}},
+		"/workspace":       {Options: map[string]bool{"rw": true}},
+	}
+	plan, err := readonlyBindMountPlan(entries, "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan) != len(entries) || plan[len(plan)-1].Path != "/" {
+		t.Fatalf("ro:/ did not seal every inherited mount before its parent: %+v", plan)
+	}
+	for _, step := range plan {
+		want := uintptr(unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY) | mountFlagsFromOptions(entries[step.Path].Options)
+		if step.Flags != want {
+			t.Fatalf("mount %s flags = %#x, want %#x", step.Path, step.Flags, want)
+		}
+		entries[step.Path] = mountInfoEntry{Options: map[string]bool{"ro": true}}
+	}
+	// Only the explicit workspace grant is reopened after the recursive seal.
+	entries["/workspace"] = mountInfoEntry{Options: map[string]bool{"rw": true}}
+	expected := []expectedMount{{Path: "/", ReadOnly: true, RecursiveReadOnly: true}, {Path: "/workspace", Writable: true}}
+	if err := verifyMountEntries(entries, expected); err != nil {
+		t.Fatal(err)
+	}
+	entries["/mnt/data"] = mountInfoEntry{Options: map[string]bool{"rw": true}}
+	if err := verifyMountEntries(entries, expected); err == nil {
+		t.Fatal("ro:/ verification accepted an undeclared writable inherited mount")
+	}
+	// A grant for another subtree must not reopen /mnt/data.
+	if _, err := readonlyBindMountPlan(entries, "/missing"); err == nil {
+		t.Fatal("accepted a missing bind root")
+	}
+}
+
 func TestPrepareDenyMountpointsCreatesMissingAndPreservesExisting(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(root, ".aws")

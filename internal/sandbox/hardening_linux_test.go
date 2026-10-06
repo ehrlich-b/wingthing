@@ -101,6 +101,28 @@ func probeHardeningOverlay(home, tmp string) error {
 
 func runHardeningScenario(scenario, root string) error {
 	switch scenario {
+	case "readonly-inherited-submount":
+		home := filepath.Join(root, "home")
+		inherited, workspace := filepath.Join(home, "inherited"), filepath.Join(home, "workspace")
+		for _, dir := range []string{inherited, workspace} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		if err := unix.Mount("tmpfs", inherited, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "size=64k"); err != nil {
+			return err
+		}
+		file := filepath.Join(inherited, "host-state")
+		if err := os.WriteFile(file, []byte("unchanged"), 0o600); err != nil {
+			return err
+		}
+		if err := setupReadonlyHome(home, []string{workspace}, nil); err != nil {
+			return err
+		}
+		if err := os.WriteFile(file, []byte("changed"), 0o600); err == nil {
+			return fmt.Errorf("inherited writable submount bypassed read-only HOME")
+		}
+		return os.WriteFile(filepath.Join(workspace, "result"), []byte("allowed"), 0o600)
 	case "jail-missing-deny":
 		home, workspace, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "session")
 		for _, dir := range []string{home, workspace, tmp} {
@@ -523,4 +545,13 @@ func TestSealedJailSystemAliasesLaunchUnprivilegedAgent(t *testing.T) {
 
 func TestPoliciesCannotBeReplacedThroughAncestorRename(t *testing.T) {
 	runHardeningNamespace(t, "policy-ancestors", t.TempDir())
+}
+
+func TestReadonlyHomeSealsInheritedWritableSubmount(t *testing.T) {
+	root := t.TempDir()
+	runHardeningNamespace(t, "readonly-inherited-submount", root)
+	data, err := os.ReadFile(filepath.Join(root, "home", "workspace", "result"))
+	if err != nil || string(data) != "allowed" {
+		t.Fatalf("explicit writable grant did not persist: %q, %v", data, err)
+	}
 }
