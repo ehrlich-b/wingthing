@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ehrlich-b/wingthing/internal/agent"
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
@@ -83,6 +84,24 @@ func directAgentSandboxConfigForTask(eggCfg *egg.EggConfig, agentName, isolation
 
 	for _, mount := range declared.Mounts {
 		appendMount(mount)
+	}
+	if sharedHost {
+		definition, ok := agent.LookupDefinition(agentName)
+		if !ok {
+			return sandbox.Config{}, fmt.Errorf("unknown shared-host agent %q", agentName)
+		}
+		// Expose only the copied runtime and this owner's credential helper;
+		// the rest of the shared-host HOME stays outside the jail allowlist.
+		runtimePath := filepath.Join(home, ".local", "bin", definition.Command)
+		appendMount(sandbox.Mount{Source: runtimePath, Target: runtimePath, ReadOnly: true})
+		if agentName == "claude" {
+			keyPath := filepath.Join(home, ".anthropic_key")
+			if _, err := os.Lstat(keyPath); err == nil {
+				appendMount(sandbox.Mount{Source: keyPath, Target: keyPath, ReadOnly: true})
+			} else if !os.IsNotExist(err) {
+				return sandbox.Config{}, fmt.Errorf("inspect shared-host credential helper: %w", err)
+			}
+		}
 	}
 	// On shared hosts egg.yaml is the administrator-authored filesystem policy.
 	// Prompt-derived mounts must never widen it.

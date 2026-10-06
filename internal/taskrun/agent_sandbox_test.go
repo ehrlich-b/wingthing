@@ -302,6 +302,34 @@ func TestSharedHostDirectAgentPreservesAdministratorFilesystemPolicy(t *testing.
 	}
 }
 
+func TestSharedHostDirectAgentMountsOnlyOwnerRuntimeAndHelperReadonly(t *testing.T) {
+	for _, agentName := range []string{"claude", "codex"} {
+		t.Run(agentName, func(t *testing.T) {
+			home := t.TempDir()
+			key := filepath.Join(home, ".anthropic_key")
+			if err := os.WriteFile(key, []byte("owner-key"), 0400); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := directAgentSandboxConfigForTask(&egg.EggConfig{FS: []string{"deny:/"}}, agentName, "standard", home, "", nil, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			binary := filepath.Join(home, ".local", "bin", agentName)
+			if !hasReadOnlySandboxMount(cfg.Mounts, binary) {
+				t.Fatalf("owner runtime is not mounted read-only: %+v", cfg.Mounts)
+			}
+			if hasReadOnlySandboxMount(cfg.Mounts, key) != (agentName == "claude") {
+				t.Fatalf("wrong credential helper exposure: %+v", cfg.Mounts)
+			}
+			for _, mount := range cfg.Mounts {
+				if mount.Source == home || mount.Source == filepath.Dir(binary) || (mount.Source == key && !mount.ReadOnly) {
+					t.Fatalf("shared-host runtime widened HOME access: %+v", mount)
+				}
+			}
+		})
+	}
+}
+
 func TestSharedHostTaskMountsValidatedWorkspaceRoots(t *testing.T) {
 	root := t.TempDir()
 	workDir := filepath.Join(root, "mutable", "checkout")
