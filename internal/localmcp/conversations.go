@@ -423,29 +423,26 @@ func (s *Server) prepareBoundParentLaunch(c *store.Conversation, cfg *egg.EggCon
 		if err != nil {
 			return nil, nil, err
 		}
-		if _, ok := policy.WritableRoot(wingpolicy.CanonicalPolicyPath(s.Cfg.Dir)); !ok {
-			refusal := fmt.Errorf("parent MCP cannot write isolated Wingthing state %q under the existing sandbox policy; use an already writable workspace containing that state directory (no mounts or grants were changed)", s.Cfg.Dir)
-			// Activation contract: the direct in-sandbox server is unchanged
-			// wherever it was accepted. Stable keeps this exact refusal unless
-			// the host explicitly opts into the personal mailbox rollout.
-			if config.Channel() != "preview" {
-				wc, err := config.LoadWingConfig(s.Cfg.Dir)
-				if err != nil || !conversationBrokerEnabled(wc) {
-					return nil, nil, refusal
-				}
+		// Every sandboxed egg seals the controller tree, including its own
+		// token and the conversation database. Workspace write permission does
+		// not make an in-sandbox MCP server able to reserve or control children.
+		// The host broker retains that authority outside the agent sandbox.
+		refusal := fmt.Errorf("parent MCP cannot access sealed Wingthing state %q from a sandboxed egg; use the personal host mailbox with protected state outside the writable workspace (stable requires conversations: enabled)", s.Cfg.Dir)
+		// Stable still requires the personal mailbox rollout opt-in.
+		if config.Channel() != "preview" {
+			wc, err := config.LoadWingConfig(s.Cfg.Dir)
+			if err != nil || !conversationBrokerEnabled(wc) {
+				return nil, nil, refusal
 			}
-			if _, ok := policy.WritableRoot(wingpolicy.CanonicalPolicyPath(c.CWD)); !ok {
-				return nil, nil, errors.New("parent MCP configuration requires an already writable workspace")
-			}
-			args, reg, brokerErr := s.prepareBrokerParentMCP(c, cfg, args)
-			if brokerErr != nil {
-				return nil, nil, fmt.Errorf("%w; host mailbox unavailable: %w", refusal, brokerErr)
-			}
-			return args, reg, nil
 		}
 		if _, ok := policy.WritableRoot(wingpolicy.CanonicalPolicyPath(c.CWD)); !ok {
 			return nil, nil, errors.New("parent MCP configuration requires an already writable workspace")
 		}
+		args, reg, brokerErr := s.prepareBrokerParentMCP(c, cfg, args)
+		if brokerErr != nil {
+			return nil, nil, fmt.Errorf("%w; host mailbox unavailable: %w", refusal, brokerErr)
+		}
+		return args, reg, nil
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -496,7 +493,7 @@ func parentMCPArguments(args []string, c *store.Conversation, relative string) [
 
 // Called only after prepareBrowserResume has verified the source owner,
 // provider identity and current workspace policy.
-func PrepareConversationResumeMCP(version string, cfg *config.Config, wc *config.WingConfig, start ws.PTYStart, eggCfg *egg.EggConfig, sharedHost bool) ([]string, string, error) {
+func PrepareConversationResumeMCP(version string, cfg *config.Config, wc *config.WingConfig, start ws.PTYStart, eggCfg *egg.EggConfig, sharedHost bool, launchOpts *eggclient.SpawnEggOpts) ([]string, string, error) {
 	if start.ResumeSessionID == "" {
 		return nil, "", nil
 	}
@@ -527,14 +524,18 @@ func PrepareConversationResumeMCP(version string, cfg *config.Config, wc *config
 	server := &Server{Version: version, Cfg: cfg, Principal: principal, Actor: "browser", Surface: control.SurfaceHTTPMCP,
 		Grants: GrantSet(defaultDirectMCPGrants), MaxSessions: defaultDirectMCPMaxSessions, MaxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour,
 		allowedPaths: paths, enforcePathBounds: len(paths) > 0, identity: eggclient.EggIdentity{UserID: start.UserID, Email: start.Email},
-		// The browser PTY spawn cannot yet apply the broker launch contract
-		// (protected targets, no browser bridge), so resume keeps the refusal.
-		hostMailboxUnavailable: "a resumed browser parent cannot apply the host mailbox launch contract"}
+		Unsandboxed: !egg.RequiresSandbox(eggCfg, c.Agent)}
+	if launchOpts == nil {
+		server.hostMailboxUnavailable = "a resumed browser parent cannot apply the host mailbox launch contract"
+	}
 	// Logical linkage is committed after spawn. The public role facts must already
 	// identify this invocation, rather than the source execution being resumed.
 	invocation := *c
 	invocation.SessionID = start.SessionID
-	args, err := server.prepareBoundParentMCP(&invocation, eggCfg, nil)
+	args, managed, err := server.prepareBoundParentLaunch(&invocation, eggCfg, nil)
+	if err == nil && managed != nil {
+		*launchOpts = managed.launchOpts(cfg, *launchOpts)
+	}
 	return args, principal, err
 }
 

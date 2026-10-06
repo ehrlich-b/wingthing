@@ -198,6 +198,7 @@ func TestBrowserSessionForkSharedOwnerRules(t *testing.T) {
 }
 
 func TestSessionForkMCPBindsNewRootWithFreshIsolation(t *testing.T) {
+	mockParentBroker(t)
 	s := forkServerFixture(t)
 	dir := filepath.Join(s.Cfg.Dir, "eggs", "source")
 	if err := os.WriteFile(filepath.Join(dir, "session.launch.json"), []byte(`{"config":"base: none\nnetwork: '*'\nenv: '*'","model":"attacker-model"}`), 0600); err != nil {
@@ -344,6 +345,7 @@ func TestBrowserForkRefusesCWDThatFreshPTYWouldRedirect(t *testing.T) {
 }
 
 func TestSessionForkCLIClientIsIndependentOfAuditActor(t *testing.T) {
+	started := mockParentBroker(t)
 	s := forkServerFixture(t)
 	s.Actor, s.MCPClient = "cli:session-fork", "coordinator"
 	if err := os.WriteFile(filepath.Join(s.Cfg.Dir, "clients.yaml"), []byte("require_client: true\nclients:\n  coordinator:\n    owner: owner\n    grants: [terminal.start]\n"), 0600); err != nil {
@@ -372,10 +374,15 @@ func TestSessionForkCLIClientIsIndependentOfAuditActor(t *testing.T) {
 				if err := json.Unmarshal(data, &binding); err != nil {
 					return err
 				}
-				client := binding.Servers["wingthing"].Args[3]
-				clients, err := LoadLocalMCPClientsConfig(s.Cfg)
-				if err != nil || eggclient.ValidateSessionName(client) != nil || client != "coordinator" || clients.Clients[client].Owner != "owner" || s.clientActor() != "cli:session-fork" {
-					t.Fatalf("invalid fork binding: %s, %v", data, err)
+				if len(*started) != 1 {
+					t.Fatal("fork omitted its host broker")
+				}
+				reg := (*started)[0]
+				if reg.LauncherClient != "coordinator" || reg.Principal != "owner" || reg.LauncherActor != "cli:session-fork" {
+					t.Fatalf("invalid fork broker identity: %+v", reg)
+				}
+				if _, _, err := reg.server("dev", s.Cfg, NewMCPAdmissionState()); err != nil {
+					return err
 				}
 				return nil
 			}

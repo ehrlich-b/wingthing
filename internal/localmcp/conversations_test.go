@@ -163,11 +163,11 @@ func TestBoundConversationBootstrapPreservesBrowserOwnerAndRejectsOtherTrees(t *
 	}
 }
 
-func TestAutomaticParentMCPUsesExistingSandboxAndRejectsConfigCollision(t *testing.T) {
+func TestAutomaticOuterBoundaryParentMCPRejectsConfigCollision(t *testing.T) {
 	workspace := t.TempDir()
 	cfg := &config.Config{Dir: filepath.Join(workspace, "preview-state")}
 	c := &store.Conversation{ID: "parent", CWD: workspace, OwnerID: "owner"}
-	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+	server := &Server{Version: "dev", Cfg: cfg, Principal: "owner", Unsandboxed: true}
 	args, err := server.prepareBoundParentMCP(c, egg.DefaultEggConfig(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -195,6 +195,7 @@ func TestAutomaticParentMCPUsesExistingSandboxAndRejectsConfigCollision(t *testi
 	if _, err := server.prepareBoundParentMCP(c, egg.DefaultEggConfig(), []string{"--mcp-config", "existing.json"}); err == nil {
 		t.Fatal("config collision accepted")
 	}
+	server.Unsandboxed = false
 	server.Cfg = &config.Config{Dir: t.TempDir()}
 	if _, err := server.prepareBoundParentMCP(&store.Conversation{ID: "outside", CWD: workspace}, egg.DefaultEggConfig(), nil); err == nil {
 		t.Fatal("inaccessible state silently mounted")
@@ -217,7 +218,7 @@ func TestConversationDirectMCPPreservesConfiguredClientAndOwner(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cfg.Dir, "clients.yaml"), []byte("require_client: true\nclients:\n  coordinator:\n    owner: alice\n    grants: [terminal.read]\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	launcher := &Server{Version: "dev", Cfg: cfg, Principal: "alice", Actor: "coordinator", Surface: control.SurfaceLocalMCP}
+	launcher := &Server{Version: "dev", Cfg: cfg, Principal: "alice", Actor: "coordinator", Surface: control.SurfaceLocalMCP, Unsandboxed: true}
 	args, err := launcher.prepareBoundParentMCP(root, egg.DefaultEggConfig(), nil)
 	if err != nil {
 		t.Fatal(err)

@@ -2231,7 +2231,7 @@ authDone:
 		}
 		defer func() { releaseProviderResume(providerResumeSpawned) }()
 	}
-	resumeArgs, resumePrincipal, resumeBindingErr := localmcp.PrepareConversationResumeMCP(version, cfg, wingCfg, start, eggCfg, sharedHost)
+	resumeArgs, resumePrincipal, resumeBindingErr := localmcp.PrepareConversationResumeMCP(version, cfg, wingCfg, start, eggCfg, sharedHost, &toolOpts)
 	if resumeBindingErr != nil {
 		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: resumeBindingErr.Error()})
 		return
@@ -2241,6 +2241,7 @@ authDone:
 			ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
 			ProviderReserved: providerResumeID != "", ToolNames: toolOpts.ToolNames, ToolSocketPath: toolOpts.ToolSocketPath,
 			Principal: resumePrincipal, AgentArgs: resumeArgs,
+			ProtectedWriteTargets: toolOpts.ProtectedWriteTargets, OmitBrowserBridge: toolOpts.OmitBrowserBridge,
 		})
 	if err != nil {
 		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
