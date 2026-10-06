@@ -1,9 +1,16 @@
 {
     "name": "wingthing",
-    "short_name": "wt",
-    "start_url": "/app",
+    "short_name": "wingthing",
+    "id": "/app/",
+    "start_url": "/app/",
+    "scope": "/app/",
     "display": "standalone",
     "background_color": "#1a1a2e",
     "theme_color": "#1a1a2e",
-    "description": "Local-first AI task runner"
+    "description": "Talk to your persistent coordinator",
+    "icons": [
+        { "src": "icons/wt.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+        { "src": "icons/wt-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+        { "src": "icons/wt-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    ]
 }

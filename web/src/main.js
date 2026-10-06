@@ -461,14 +461,9 @@ window.addEventListener('popstate', function(e) {
     }
 });
 
-// Unregister stale service workers that cache old assets
+// The worker intercepts only allowlisted public static assets.
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(function(regs) {
-        regs.forEach(function(r) { r.unregister(); });
-    });
-    caches.keys().then(function(names) {
-        names.forEach(function(n) { caches.delete(n); });
-    });
+    navigator.serviceWorker.register(import.meta.env.BASE_URL + 'sw.js').catch(function() {});
 }
 
 init();
