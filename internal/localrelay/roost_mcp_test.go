@@ -1,4 +1,4 @@
-package main
+package localrelay
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 
 func TestRoostAllowedEmailsFromEnv(t *testing.T) {
 	t.Setenv("WT_ROOST_ALLOWED_EMAILS", " Alice@Example.com, bob@example.com,alice@example.com ")
-	got, err := roostAllowedEmailsFromEnv()
+	got, err := RoostAllowedEmailsFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +20,7 @@ func TestRoostAllowedEmailsFromEnv(t *testing.T) {
 
 	for _, invalid := range []string{"not-an-email", "missing@", "@missing", "two@@example.com", "white space@example.com", "alice@example.com,"} {
 		t.Setenv("WT_ROOST_ALLOWED_EMAILS", invalid)
-		if _, err := roostAllowedEmailsFromEnv(); err == nil {
+		if _, err := RoostAllowedEmailsFromEnv(); err == nil {
 			t.Fatalf("invalid enrollment email %q accepted", invalid)
 		}
 	}
@@ -63,7 +63,7 @@ mcp:
 func TestJWTKeyFromEnvironmentUsesExistingSecretAndPrefersExplicitKey(t *testing.T) {
 	t.Setenv("WT_JWT_KEY", "")
 	t.Setenv("WT_JWT_SECRET", "0123456789abcdef-existing-deployment-secret")
-	derived, err := jwtKeyFromEnvironment()
+	derived, err := JwtKeyFromEnvironment()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestJWTKeyFromEnvironmentUsesExistingSecretAndPrefersExplicitKey(t *testing
 	}
 
 	t.Setenv("WT_JWT_KEY", "explicit-key")
-	got, err := jwtKeyFromEnvironment()
+	got, err := JwtKeyFromEnvironment()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package main
+package localrelay
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func ensureSelfHostedPro(store *relay.RelayStore, userID, plan string) error {
+func EnsureSelfHostedPro(store *relay.RelayStore, userID, plan string) error {
 	subID := uuid.New().String()
 	sub := &relay.Subscription{ID: subID, UserID: &userID, Plan: plan, Status: "active", Seats: 1}
 	ent := &relay.Entitlement{ID: uuid.New().String(), UserID: userID, SubscriptionID: subID}

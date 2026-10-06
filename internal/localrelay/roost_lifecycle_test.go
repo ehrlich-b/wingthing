@@ -1,4 +1,4 @@
-package main
+package localrelay
 
 import (
 	"context"
@@ -32,7 +32,7 @@ func TestAwaitRoostReadyRequiresExactToken(t *testing.T) {
 				_, _ = io.WriteString(writer, test.payload)
 				_ = writer.Close()
 			}()
-			err := awaitRoostReady(reader, time.Second)
+			err := AwaitRoostReady(reader, time.Second)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("awaitRoostReady error = %v, wantErr=%v", err, test.wantErr)
 			}
@@ -43,7 +43,7 @@ func TestAwaitRoostReadyRequiresExactToken(t *testing.T) {
 func TestAwaitRoostReadyTimesOutAndClosesReader(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer closeForTest(t, "readiness writer", writer)
-	if err := awaitRoostReady(reader, 10*time.Millisecond); err == nil || !strings.Contains(err.Error(), "timed out") {
+	if err := AwaitRoostReady(reader, 10*time.Millisecond); err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("timeout error = %v", err)
 	}
 	if _, err := writer.Write([]byte("late")); err == nil {
@@ -73,7 +73,7 @@ func TestSignalRoostReadyWritesOnlyToInheritedDescriptor(t *testing.T) {
 		}
 	}()
 	closeForTest(t, "readiness writer", writer)
-	t.Setenv(roostReadyFDEnv, strconv.Itoa(inheritedFD))
+	t.Setenv(RoostReadyFDEnv, strconv.Itoa(inheritedFD))
 	if err := signalRoostReady(); err != nil {
 		t.Fatal(err)
 	}
@@ -100,15 +100,15 @@ func TestSignalRoostReadyWritesOnlyToInheritedDescriptor(t *testing.T) {
 }
 
 func TestReplaceEnvironmentValueRemovesInheritedSpoof(t *testing.T) {
-	got := replaceEnvironmentValue([]string{"A=1", roostReadyFDEnv + "=99", "B=2", roostReadyFDEnv + "=100"}, roostReadyFDEnv, "3")
-	want := []string{"A=1", "B=2", roostReadyFDEnv + "=3"}
+	got := ReplaceEnvironmentValue([]string{"A=1", RoostReadyFDEnv + "=99", "B=2", RoostReadyFDEnv + "=100"}, RoostReadyFDEnv, "3")
+	want := []string{"A=1", "B=2", RoostReadyFDEnv + "=3"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("environment = %#v, want %#v", got, want)
 	}
 }
 
 func TestSignalRoostReadyRejectsInvalidDescriptor(t *testing.T) {
-	t.Setenv(roostReadyFDEnv, "stdout")
+	t.Setenv(RoostReadyFDEnv, "stdout")
 	if err := signalRoostReady(); err == nil {
 		t.Fatal("invalid readiness descriptor accepted")
 	}

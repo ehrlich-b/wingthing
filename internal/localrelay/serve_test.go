@@ -1,4 +1,4 @@
-package main
+package localrelay
 
 import (
 	"os"
@@ -20,15 +20,15 @@ func TestLoadServeRuntimeDetectsFlyRoleBeforeConfigCreatesDataDirectory(t *testi
 		t.Setenv("WT_NODE_ROLE", "")
 		t.Setenv("WT_LOGIN_ADDR", "")
 
-		runtime, err := loadServeRuntime(dataDir)
+		runtime, err := LoadServeRuntime(dataDir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if runtime.nodeRole != "edge" || !runtime.autoRole {
-			t.Fatalf("role = %q auto=%v, want auto-detected edge", runtime.nodeRole, runtime.autoRole)
+		if runtime.NodeRole != "edge" || !runtime.AutoRole {
+			t.Fatalf("role = %q auto=%v, want auto-detected edge", runtime.NodeRole, runtime.AutoRole)
 		}
-		if want := "http://login.process.wingthing-test.internal:8080"; runtime.loginAddr != want || !runtime.autoLogin {
-			t.Fatalf("login address = %q auto=%v, want %q", runtime.loginAddr, runtime.autoLogin, want)
+		if want := "http://login.process.wingthing-test.internal:8080"; runtime.LoginAddr != want || !runtime.AutoLogin {
+			t.Fatalf("login address = %q auto=%v, want %q", runtime.LoginAddr, runtime.AutoLogin, want)
 		}
 		if _, err := os.Stat(dataDir); err != nil {
 			t.Fatalf("config load did not create its state directory after role detection: %v", err)
@@ -46,15 +46,15 @@ func TestLoadServeRuntimeDetectsFlyRoleBeforeConfigCreatesDataDirectory(t *testi
 		t.Setenv("WT_NODE_ROLE", "")
 		t.Setenv("WT_LOGIN_ADDR", "")
 
-		runtime, err := loadServeRuntime(dataDir)
+		runtime, err := LoadServeRuntime(dataDir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if runtime.nodeRole != "login" || !runtime.autoRole {
-			t.Fatalf("role = %q auto=%v, want auto-detected login", runtime.nodeRole, runtime.autoRole)
+		if runtime.NodeRole != "login" || !runtime.AutoRole {
+			t.Fatalf("role = %q auto=%v, want auto-detected login", runtime.NodeRole, runtime.AutoRole)
 		}
-		if runtime.loginAddr != "" || runtime.autoLogin {
-			t.Fatalf("login node derived an edge address: %q auto=%v", runtime.loginAddr, runtime.autoLogin)
+		if runtime.LoginAddr != "" || runtime.AutoLogin {
+			t.Fatalf("login node derived an edge address: %q auto=%v", runtime.LoginAddr, runtime.AutoLogin)
 		}
 	})
 }
@@ -70,15 +70,15 @@ func TestLoadServeRuntimePreservesExplicitNodeRoleAndLoginAddress(t *testing.T) 
 	t.Setenv("WT_NODE_ROLE", "edge")
 	t.Setenv("WT_LOGIN_ADDR", "http://login.internal:9090")
 
-	runtime, err := loadServeRuntime(dataDir)
+	runtime, err := LoadServeRuntime(dataDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.nodeRole != "edge" || runtime.autoRole {
-		t.Fatalf("role = %q auto=%v, want explicit edge", runtime.nodeRole, runtime.autoRole)
+	if runtime.NodeRole != "edge" || runtime.AutoRole {
+		t.Fatalf("role = %q auto=%v, want explicit edge", runtime.NodeRole, runtime.AutoRole)
 	}
-	if runtime.loginAddr != "http://login.internal:9090" || runtime.autoLogin {
-		t.Fatalf("login address = %q auto=%v, want explicit address", runtime.loginAddr, runtime.autoLogin)
+	if runtime.LoginAddr != "http://login.internal:9090" || runtime.AutoLogin {
+		t.Fatalf("login address = %q auto=%v, want explicit address", runtime.LoginAddr, runtime.AutoLogin)
 	}
 }
 
@@ -88,7 +88,7 @@ func TestSaveLocalServeTokenPreservesOrdinaryPortalLogin(t *testing.T) {
 	if err := ordinary.Save(&auth.DeviceToken{Token: "hosted-login", DeviceID: "hosted"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveLocalServeToken(dir, "localhost-login"); err != nil {
+	if err := SaveLocalServeToken(dir, "localhost-login"); err != nil {
 		t.Fatal(err)
 	}
 	hosted, err := ordinary.Load()
@@ -109,7 +109,7 @@ func TestRelayPolicyFromEnvDefaultsPrivateGatewaysToLegacy(t *testing.T) {
 	t.Setenv("WT_RELAY_MIGRATION_BEFORE", "")
 	t.Setenv("WT_RELAY_GRANDFATHER_BEFORE", "")
 
-	policy, cutoff, err := relayPolicyFromEnv()
+	policy, cutoff, err := RelayPolicyFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestRelayPolicyFromEnvRequiresExplicitHostedMigrationState(t *testing.T) {
 	t.Setenv("WT_RELAY_MIGRATION_BEFORE", "2026-08-26T00:00:00Z")
 	t.Setenv("WT_RELAY_GRANDFATHER_BEFORE", "")
 
-	policy, cutoff, err := relayPolicyFromEnv()
+	policy, cutoff, err := RelayPolicyFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestRelayPolicyFromEnvAcceptsCompatibleLegacyCutoffName(t *testing.T) {
 	t.Setenv("WT_RELAY_POLICY", relay.RelayPolicyDirectFree)
 	t.Setenv("WT_RELAY_MIGRATION_BEFORE", "")
 	t.Setenv("WT_RELAY_GRANDFATHER_BEFORE", "2026-08-26T00:00:00Z")
-	_, cutoff, err := relayPolicyFromEnv()
+	_, cutoff, err := RelayPolicyFromEnv()
 	if err != nil || cutoff.IsZero() {
 		t.Fatalf("legacy cutoff: cutoff=%s err=%v", cutoff, err)
 	}
@@ -148,7 +148,7 @@ func TestRelayPolicyFromEnvRejectsAmbiguousOrInvalidConfiguration(t *testing.T) 
 		t.Setenv("WT_RELAY_POLICY", "surprise")
 		t.Setenv("WT_RELAY_MIGRATION_BEFORE", "")
 		t.Setenv("WT_RELAY_GRANDFATHER_BEFORE", "")
-		if _, _, err := relayPolicyFromEnv(); err == nil {
+		if _, _, err := RelayPolicyFromEnv(); err == nil {
 			t.Fatal("unknown policy accepted")
 		}
 	})
@@ -156,7 +156,7 @@ func TestRelayPolicyFromEnvRejectsAmbiguousOrInvalidConfiguration(t *testing.T) 
 		t.Setenv("WT_RELAY_POLICY", relay.RelayPolicyDirectFree)
 		t.Setenv("WT_RELAY_MIGRATION_BEFORE", "yesterday")
 		t.Setenv("WT_RELAY_GRANDFATHER_BEFORE", "")
-		if _, _, err := relayPolicyFromEnv(); err == nil {
+		if _, _, err := RelayPolicyFromEnv(); err == nil {
 			t.Fatal("invalid timestamp accepted")
 		}
 	})
@@ -164,7 +164,7 @@ func TestRelayPolicyFromEnvRejectsAmbiguousOrInvalidConfiguration(t *testing.T) 
 		t.Setenv("WT_RELAY_POLICY", relay.RelayPolicyDirectFree)
 		t.Setenv("WT_RELAY_MIGRATION_BEFORE", "2026-08-26T00:00:00Z")
 		t.Setenv("WT_RELAY_GRANDFATHER_BEFORE", "2026-08-25T00:00:00Z")
-		if _, _, err := relayPolicyFromEnv(); err == nil {
+		if _, _, err := RelayPolicyFromEnv(); err == nil {
 			t.Fatal("conflicting migration timestamps accepted")
 		}
 	})

@@ -7,9 +7,8 @@ import (
 	"strings"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
-
+	"github.com/ehrlich-b/wingthing/internal/localrelay"
 	"github.com/ehrlich-b/wingthing/internal/updater"
-
 	"github.com/spf13/cobra"
 )
 
@@ -88,7 +87,7 @@ func validatePreviewInvocation(args []string) error {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
-	if authProvidersConfigured() {
+	if localrelay.AuthProvidersConfigured() {
 		return fmt.Errorf("preview requires local personal mode; ambient OAuth or SMTP configuration is disabled")
 	}
 	// Roost mode would import OAuth/enrollment authority from ambient env.
@@ -117,11 +116,4 @@ func channelCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print structured channel information")
 	return cmd
-}
-
-func defaultHTTPSAddr() string {
-	if config.Channel() == "preview" {
-		return "127.0.0.1:8181"
-	}
-	return defaultLocalHTTPSAddr
 }

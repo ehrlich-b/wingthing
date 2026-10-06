@@ -9,98 +9,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ehrlich-b/wingthing/internal/auth"
 	"github.com/ehrlich-b/wingthing/internal/cmdutil"
 	"github.com/ehrlich-b/wingthing/internal/config"
+	"github.com/ehrlich-b/wingthing/internal/localrelay"
 	"github.com/ehrlich-b/wingthing/internal/relay"
 	"github.com/spf13/cobra"
 )
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func relayPolicyFromEnv() (string, time.Time, error) {
-	policy := strings.TrimSpace(envOr("WT_RELAY_POLICY", relay.RelayPolicyLegacy))
-	if policy != relay.RelayPolicyLegacy && policy != relay.RelayPolicyDirectFree {
-		return "", time.Time{}, fmt.Errorf("WT_RELAY_POLICY must be %q or %q", relay.RelayPolicyLegacy, relay.RelayPolicyDirectFree)
-	}
-
-	// The migration boundary is deployment state, not a compile-time product
-	// default. Prefer the accurately named variable while retaining the old one
-	// as a compatibility alias for existing operators.
-	raw := strings.TrimSpace(os.Getenv("WT_RELAY_MIGRATION_BEFORE"))
-	legacyRaw := strings.TrimSpace(os.Getenv("WT_RELAY_GRANDFATHER_BEFORE"))
-	if raw != "" && legacyRaw != "" && raw != legacyRaw {
-		return "", time.Time{}, fmt.Errorf("WT_RELAY_MIGRATION_BEFORE and deprecated WT_RELAY_GRANDFATHER_BEFORE disagree")
-	}
-	if raw == "" {
-		raw = legacyRaw
-	}
-	if raw == "" {
-		return policy, time.Time{}, nil
-	}
-	cutoff, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("WT_RELAY_MIGRATION_BEFORE must be RFC3339: %w", err)
-	}
-	return policy, cutoff, nil
-}
-
-func saveLocalServeToken(configDir, token string) error {
-	return auth.NewLocalTokenStore(configDir).Save(&auth.DeviceToken{
-		Token:    token,
-		DeviceID: "local",
-	})
-}
-
-type serveRuntime struct {
-	config       *config.Config
-	nodeRole     string
-	loginAddr    string
-	flyMachineID string
-	flyRegion    string
-	flyApp       string
-	autoRole     bool
-	autoLogin    bool
-}
-
-func loadServeRuntime(flyDataDir string) (*serveRuntime, error) {
-	runtime := &serveRuntime{
-		nodeRole:     os.Getenv("WT_NODE_ROLE"),
-		loginAddr:    os.Getenv("WT_LOGIN_ADDR"),
-		flyMachineID: os.Getenv("FLY_MACHINE_ID"),
-		flyRegion:    os.Getenv("FLY_REGION"),
-		flyApp:       os.Getenv("FLY_APP_NAME"),
-	}
-
-	// Detect an unmounted Fly edge before config.Load can create its state
-	// directory under /data and make that edge look like the volume-owning login
-	// process. Explicit WT_NODE_ROLE always wins.
-	if runtime.flyMachineID != "" && runtime.nodeRole == "" {
-		if info, err := os.Stat(flyDataDir); err == nil && info.IsDir() {
-			runtime.nodeRole = "login"
-		} else {
-			runtime.nodeRole = "edge"
-		}
-		runtime.autoRole = true
-	}
-
-	if runtime.nodeRole == "edge" && runtime.loginAddr == "" && runtime.flyApp != "" {
-		runtime.loginAddr = "http://login.process." + runtime.flyApp + ".internal:8080"
-		runtime.autoLogin = true
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		return nil, err
-	}
-	runtime.config = cfg
-	return runtime, nil
-}
 
 func serveCmd() *cobra.Command {
 	var addrFlag string
@@ -115,24 +29,24 @@ func serveCmd() *cobra.Command {
 		Short:   "Start the relay server (web UI + WebSocket relay)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !localFlag {
-				if err := validateAuthProviderEnvironment(); err != nil {
+				if err := localrelay.ValidateAuthProviderEnvironment(); err != nil {
 					return err
 				}
 			}
-			runtime, err := loadServeRuntime("/data")
+			runtime, err := localrelay.LoadServeRuntime("/data")
 			if err != nil {
 				return err
 			}
-			cfg := runtime.config
-			nodeRole := runtime.nodeRole
-			loginAddr := runtime.loginAddr
-			flyMachineID := runtime.flyMachineID
-			flyRegion := runtime.flyRegion
-			flyApp := runtime.flyApp
-			if runtime.autoRole {
+			cfg := runtime.Config
+			nodeRole := runtime.NodeRole
+			loginAddr := runtime.LoginAddr
+			flyMachineID := runtime.FlyMachineID
+			flyRegion := runtime.FlyRegion
+			flyApp := runtime.FlyApp
+			if runtime.AutoRole {
 				fmt.Printf("auto-detected node role: %s\n", nodeRole)
 			}
-			if runtime.autoLogin {
+			if runtime.AutoLogin {
 				fmt.Printf("auto-derived login addr: %s\n", loginAddr)
 			}
 
@@ -161,42 +75,42 @@ func serveCmd() *cobra.Command {
 			githubID := strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID"))
 			googleID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
 			smtpHost := strings.TrimSpace(os.Getenv("SMTP_HOST"))
-			if !localFlag && !isEdge && !authProvidersConfigured() {
+			if !localFlag && !isEdge && !localrelay.AuthProvidersConfigured() {
 				localFlag = true
 				fmt.Println("no auth providers configured — enabling local mode")
 			}
 			if localFlag && !httpsFlag {
-				addrFlag, err = prepareLocalHTTPAddress(addrFlag, cmd.Flags().Changed("addr"))
+				addrFlag, err = localrelay.PrepareLocalHTTPAddress(addrFlag, cmd.Flags().Changed("addr"))
 				if err != nil {
 					return err
 				}
 			}
-			if err := validateLocalHTTPSMode(httpsFlag, localFlag, isEdge); err != nil {
+			if err := localrelay.ValidateLocalHTTPSMode(httpsFlag, localFlag, isEdge); err != nil {
 				return err
 			}
-			var localHTTPS *localHTTPSConfig
+			var localHTTPS *localrelay.LocalHTTPSConfig
 			if httpsFlag {
-				localHTTPS, err = prepareLocalHTTPS(cmd.Context(), cfg.Dir, addrFlag, httpsAddrFlag, cmd.Flags().Changed("addr"))
+				localHTTPS, err = localrelay.PrepareLocalHTTPS(cmd.Context(), cfg.Dir, addrFlag, httpsAddrFlag, cmd.Flags().Changed("addr"))
 				if err != nil {
 					return err
 				}
 				addrFlag = localHTTPS.HTTPAddr
 			}
-			jwtKey, err := jwtKeyFromEnvironment()
+			jwtKey, err := localrelay.JwtKeyFromEnvironment()
 			if err != nil {
 				return fmt.Errorf("jwt key: %w", err)
 			}
-			relayPolicy, relayMigrationBefore, err := relayPolicyFromEnv()
+			relayPolicy, relayMigrationBefore, err := localrelay.RelayPolicyFromEnv()
 			if err != nil {
 				return err
 			}
-			allowedEmails, err := roostAllowedEmailsFromEnv()
+			allowedEmails, err := localrelay.RoostAllowedEmailsFromEnv()
 			if err != nil {
 				return err
 			}
 
 			srvCfg := relay.ServerConfig{
-				BaseURL:              defaultBaseURL(localHTTPS),
+				BaseURL:              localrelay.DefaultBaseURL(localHTTPS),
 				AppHost:              os.Getenv("WT_APP_HOST"),
 				WSHost:               os.Getenv("WT_WS_HOST"),
 				JWTKey:               jwtKey,
@@ -206,7 +120,7 @@ func serveCmd() *cobra.Command {
 				GoogleClientID:       googleID,
 				GoogleClientSecret:   os.Getenv("GOOGLE_CLIENT_SECRET"),
 				SMTPHost:             smtpHost,
-				SMTPPort:             envOr("SMTP_PORT", "587"),
+				SMTPPort:             localrelay.EnvOr("SMTP_PORT", "587"),
 				SMTPUser:             os.Getenv("SMTP_USER"),
 				SMTPPass:             os.Getenv("SMTP_PASS"),
 				SMTPFrom:             os.Getenv("SMTP_FROM"),
@@ -225,7 +139,7 @@ func serveCmd() *cobra.Command {
 			// Local mode loads/generates key from wing.yaml.
 			if srvCfg.JWTKey == "" {
 				if localFlag {
-					key, err := ensureJWTKeyInWingYaml(cfg.Dir)
+					key, err := localrelay.EnsureJWTKeyInWingYaml(cfg.Dir)
 					if err != nil {
 						return fmt.Errorf("jwt key: %w", err)
 					}
@@ -294,20 +208,20 @@ func serveCmd() *cobra.Command {
 				srv.SetLocalUser(user)
 
 				// Grant pro tier — self-hosted has no bandwidth cap
-				if err := ensureSelfHostedPro(store, user.ID, "local"); err != nil {
+				if err := localrelay.EnsureSelfHostedPro(store, user.ID, "local"); err != nil {
 					return err
 				}
 
 				// Keep the localhost credential separate from the ordinary portal
 				// login so starting a self-hosted UI cannot log this profile out of
 				// wingthing.ai or an operator's private roost.
-				if err := saveLocalServeToken(cfg.Dir, token); err != nil {
+				if err := localrelay.SaveLocalServeToken(cfg.Dir, token); err != nil {
 					return fmt.Errorf("save local device token: %w", err)
 				}
 				fmt.Println("local mode: single-user, no login required")
 			}
 
-			listeners := newRelayListeners(srv, addrFlag, localHTTPS)
+			listeners := localrelay.NewRelayListeners(srv, addrFlag, localHTTPS)
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -332,7 +246,7 @@ func serveCmd() *cobra.Command {
 				return err
 			}
 			if localHTTPS != nil {
-				fmt.Printf("wt serve wing endpoint (loopback HTTP): %s\n", localHTTPURL(addrFlag))
+				fmt.Printf("wt serve wing endpoint (loopback HTTP): %s\n", localrelay.LocalHTTPURL(addrFlag))
 				fmt.Printf("wt serve browser UI (local HTTPS): %s\n", localHTTPS.URL)
 			} else {
 				fmt.Printf("wt serve listening on %s\n", addrFlag)
@@ -351,8 +265,8 @@ func serveCmd() *cobra.Command {
 			case <-ctx.Done():
 				fmt.Println("graceful shutdown (sending relay.restart to all connections)...")
 				return listeners.Shutdown(srv, 8*time.Second)
-			case result := <-listeners.errCh:
-				err := listenerResult(result)
+			case result := <-listeners.ErrCh:
+				err := localrelay.ListenerResult(result)
 				if err != nil {
 					_ = listeners.Shutdown(srv, 8*time.Second)
 				}
@@ -365,45 +279,7 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&devFlag, "dev", false, "reload templates from disk on each request")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "single-user mode, no login required")
 	cmd.Flags().BoolVar(&httpsFlag, "https", false, "serve the local browser UI over HTTPS using an on-demand, device-local CA")
-	cmd.Flags().StringVar(&httpsAddrFlag, "https-addr", defaultHTTPSAddr(), "loopback HTTPS address for the local browser UI")
+	cmd.Flags().StringVar(&httpsAddrFlag, "https-addr", localrelay.DefaultHTTPSAddr(), "loopback HTTPS address for the local browser UI")
 
 	return cmd
-}
-
-// jwtKeyFromEnvironment prefers an explicit encoded P-256 key. Existing deployments that
-// provide only WT_JWT_SECRET get a stable, domain-separated P-256 key without another secret.
-func jwtKeyFromEnvironment() (string, error) {
-	if key := os.Getenv("WT_JWT_KEY"); key != "" {
-		return key, nil
-	}
-	if secret := os.Getenv("WT_JWT_SECRET"); secret != "" {
-		return relay.DeriveECKeyStringFromSecret(secret)
-	}
-	return "", nil
-}
-
-// ensureJWTKeyInWingYaml loads the JWT signing key from wing.yaml, or generates
-// one and saves it. Used by local/roost mode where there's no external secrets manager.
-func ensureJWTKeyInWingYaml(configDir string) (string, error) {
-	wingCfg, err := config.LoadWingConfig(configDir)
-	if err != nil {
-		return "", fmt.Errorf("load wing config: %w", err)
-	}
-
-	if wingCfg.JWTKey != "" {
-		return wingCfg.JWTKey, nil
-	}
-
-	// Auto-generate and persist
-	_, encoded, err := relay.GenerateECKey()
-	if err != nil {
-		return "", err
-	}
-
-	wingCfg.JWTKey = encoded
-	if err := config.SaveWingConfig(configDir, wingCfg); err != nil {
-		return "", fmt.Errorf("save wing config: %w", err)
-	}
-	fmt.Println("generated JWT signing key → wing.yaml")
-	return encoded, nil
 }

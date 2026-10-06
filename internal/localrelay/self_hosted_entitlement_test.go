@@ -1,4 +1,4 @@
-package main
+package localrelay
 
 import (
 	"path/filepath"
@@ -17,10 +17,10 @@ func TestEnsureSelfHostedProIsAtomicAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ensureSelfHostedPro(store, "local-user", "local"); err != nil {
+	if err := EnsureSelfHostedPro(store, "local-user", "local"); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureSelfHostedPro(store, "local-user", "local"); err != nil {
+	if err := EnsureSelfHostedPro(store, "local-user", "local"); err != nil {
 		t.Fatal(err)
 	}
 	if !store.IsUserPro("local-user") {
@@ -54,7 +54,7 @@ func TestEnsureSelfHostedProRepairsExistingSubscriptionWithoutEntitlement(t *tes
 		t.Fatal(err)
 	}
 
-	if err := ensureSelfHostedPro(store, userID, "local"); err != nil {
+	if err := EnsureSelfHostedPro(store, userID, "local"); err != nil {
 		t.Fatal(err)
 	}
 	if !store.IsUserPro(userID) {
