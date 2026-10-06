@@ -259,18 +259,15 @@ func (s *Server) toolAgentContinue(arguments json.RawMessage) (map[string]any, e
 }
 
 func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.ConversationContinuation, model, input string, recovery ...*eggclient.RecoverySession) error {
-	configPath := ""
+	unsandboxed := s.Unsandboxed
+	var eggCfg *egg.EggConfig
+	var err error
 	if len(recovery) > 0 {
-		configPath = recovery[0].Intent.EggConfig
-		if configPath == "" {
-			wc, err := config.LoadWingConfig(s.Cfg.Dir)
-			if err != nil {
-				return err
-			}
-			configPath = wc.EggConfig
-		}
+		unsandboxed = !recovery[0].Record.Sandboxed
+		eggCfg, err = eggclient.LoadRecoveryEggConfig(recovery[0].Record)
+	} else {
+		eggCfg, err = eggclient.LoadSpawnEggConfig("", c.CWD, unsandboxed)
 	}
-	eggCfg, err := eggclient.LoadSpawnEggConfig(configPath, c.CWD, s.Unsandboxed)
 	if err != nil {
 		return err
 	}
@@ -293,7 +290,7 @@ func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.C
 		if model == "" {
 			launchArgs = launchArgs[2:]
 		}
-		args, managed, err := s.prepareBoundParentLaunch(c, eggCfg, launchArgs)
+		args, managed, err := s.prepareBoundParentLaunch(c, eggCfg, launchArgs, unsandboxed)
 		if err != nil {
 			return err
 		}

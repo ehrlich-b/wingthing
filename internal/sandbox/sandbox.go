@@ -53,6 +53,9 @@ type Config struct {
 	// refused with ProtectedWriteTargetError on any overlap, and backends that
 	// cannot verify their final policy refuse a nonempty set. Empty = no contract.
 	ProtectedWriteTargets []string
+	// RecoveryDir is a host-owned directory masked from every egg provider.
+	// Its ancestors are pinned so a writable ancestor cannot replace the tree.
+	RecoveryDir string
 }
 
 // EnforcementError is returned when the system cannot enforce the requested sandbox config.
@@ -72,6 +75,11 @@ func (e *EnforcementError) Error() string {
 // New creates a platform-appropriate sandbox. Returns EnforcementError if the
 // platform cannot enforce the requested isolation — no silent fallback.
 func New(cfg Config) (Sandbox, error) {
+	if cfg.RecoveryDir != "" {
+		if err := ValidateProtectedWriteTargets([]string{cfg.RecoveryDir}); err != nil {
+			return nil, err
+		}
+	}
 	s, err := newPlatform(cfg)
 	if err == nil {
 		return s, nil

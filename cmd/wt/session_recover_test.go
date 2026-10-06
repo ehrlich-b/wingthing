@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
 	"github.com/ehrlich-b/wingthing/internal/eggclient"
 )
@@ -20,13 +21,23 @@ func TestRecoveryCLIListsEligibleSessions(t *testing.T) {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\ncwd="+state+"\n"), 0600); err != nil {
+		home := eggclient.EffectiveSessionHome(&config.Config{Dir: state}, eggclient.EggIdentity{})
+		if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=claude\ncwd="+state+"\nprovider_home="+home+"\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
 		if id == "legacy" {
 			continue
 		}
-		if err := egg.WriteLaunchIntent(dir, egg.LaunchIntent{Version: 1, Agent: "claude", CWD: state, ProviderSessionID: "provider", Started: true}); err != nil {
+		intent := egg.LaunchIntent{Version: 1, Agent: "claude", CWD: state, ProviderSessionID: "provider", Started: true}
+		if err := egg.WriteLaunchIntent(dir, intent); err != nil {
+			t.Fatal(err)
+		}
+		record, err := egg.NewRecoveryRecord(intent, egg.UnsandboxedEggConfig())
+		if err != nil {
+			t.Fatal(err)
+		}
+		record.ProviderHome = home
+		if err := egg.WriteRecoveryRecord(dir, record); err != nil {
 			t.Fatal(err)
 		}
 		if id == "stopped" {

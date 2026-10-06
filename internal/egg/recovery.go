@@ -1,6 +1,8 @@
 package egg
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +11,8 @@ import (
 	"syscall"
 
 	"github.com/ehrlich-b/wingthing/internal/fsutil"
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
+	"github.com/ehrlich-b/wingthing/internal/wingpolicy"
 )
 
 const LaunchIntentFile = "launch.intent.json"
@@ -34,6 +38,162 @@ type LaunchIntent struct {
 	AutoFailures         int    `json:"auto_failures,omitempty"`
 	RetryAfter           int64  `json:"retry_after,omitempty"`
 	RecoveryError        string `json:"recovery_error,omitempty"`
+}
+
+// RecoveryRecord is host authority, kept outside the provider-writable egg
+// directory. Only digests of policy are retained; rendered policy can contain
+// credentials. Egg-directory metadata is never a source of admission policy.
+type RecoveryRecord struct {
+	Intent       LaunchIntent `json:"intent"`
+	Principal    string       `json:"principal"`
+	OwnerID      string       `json:"owner_id"`
+	OwnerEmail   string       `json:"owner_email"`
+	ProviderHome string       `json:"provider_home"`
+	Sandboxed    bool         `json:"sandboxed"`
+	ConfigSHA256 string       `json:"config_sha256"`
+	PolicySHA256 string       `json:"policy_sha256"`
+	Archived     bool         `json:"archived,omitempty"`
+	Stopped      bool         `json:"stopped,omitempty"`
+}
+
+func RecoveryDir(eggDir string) string {
+	return filepath.Join(filepath.Dir(filepath.Dir(eggDir)), "recovery")
+}
+
+func protectRecoveryStorage(cfg *sandbox.Config, eggDir string) error {
+	dir := RecoveryDir(eggDir)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return err
+	}
+	cfg.RecoveryDir, err = filepath.Abs(resolved)
+	return err
+}
+
+func recoveryRecordPath(eggDir string) (string, error) {
+	if filepath.Base(filepath.Dir(eggDir)) != "eggs" || !validLifecycleID(filepath.Base(eggDir)) {
+		return "", errors.New("invalid recovery egg directory")
+	}
+	return filepath.Join(RecoveryDir(eggDir), filepath.Base(eggDir)+".json"), nil
+}
+
+func recoveryDigest(data []byte) string {
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
+}
+
+func RecoveryPolicyDigest(policy *EggConfig, agent string) (string, error) {
+	// Profile changes and host provider routing can also add filesystem or
+	// network authority without changing the egg.yaml file.
+	data, err := json.Marshal(struct {
+		Policy      *EggConfig
+		Profile     AgentProfile
+		ProviderURL string
+	}{policy, Profile(agent), os.Getenv("WT_PROVIDER_BASE_URL")})
+	return recoveryDigest(data), err
+}
+
+func RecoveryConfigDigest(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(path)
+	return recoveryDigest(data), err
+}
+
+func NewRecoveryRecord(intent LaunchIntent, policy *EggConfig) (RecoveryRecord, error) {
+	r := RecoveryRecord{Intent: intent, Sandboxed: RequiresSandbox(policy, intent.Agent)}
+	r.Intent.CWD = wingpolicy.CanonicalPolicyPath(intent.CWD)
+	r.Intent.EggConfig = ""
+	if policy.SourcePath != "" {
+		path, err := filepath.EvalSymlinks(policy.SourcePath)
+		if err != nil {
+			return r, err
+		}
+		r.Intent.EggConfig, err = filepath.Abs(path)
+		if err != nil {
+			return r, err
+		}
+	}
+	copy := *policy
+	copy.SourcePath = r.Intent.EggConfig
+	var err error
+	r.ConfigSHA256, err = RecoveryConfigDigest(r.Intent.EggConfig)
+	if err != nil {
+		return r, err
+	}
+	r.PolicySHA256, err = RecoveryPolicyDigest(&copy, intent.Agent)
+	return r, err
+}
+
+func ReadRecoveryRecord(eggDir string) (RecoveryRecord, error) {
+	var r RecoveryRecord
+	path, err := recoveryRecordPath(eggDir)
+	if err != nil {
+		return r, err
+	}
+	file, err := openBoundRegularFile(path)
+	if err != nil {
+		return r, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 64<<10+1))
+	if err != nil {
+		return r, err
+	}
+	if len(data) > 64<<10 {
+		return r, errors.New("recovery record too large")
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return r, err
+	}
+	if r.Intent.Version != 1 || r.PolicySHA256 == "" {
+		return r, errors.New("invalid recovery record")
+	}
+	return r, nil
+}
+
+func WriteRecoveryRecord(eggDir string, r RecoveryRecord) error {
+	path, err := recoveryRecordPath(eggDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	r.ProviderHome = wingpolicy.CanonicalPolicyPath(r.ProviderHome)
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	if err := atomicWritePrivate(path, data); err != nil {
+		return err
+	}
+	return fsutil.SyncDirectory(filepath.Dir(path))
+}
+
+func UpdateRecoveryRecord(eggDir string, update func(*RecoveryRecord)) error {
+	path, err := recoveryRecordPath(eggDir)
+	if err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	r, err := ReadRecoveryRecord(eggDir)
+	if err != nil {
+		return err
+	}
+	update(&r)
+	return WriteRecoveryRecord(eggDir, r)
 }
 
 func ReadLaunchIntent(dir string) (LaunchIntent, error) {
@@ -71,6 +231,30 @@ func WriteLaunchIntent(dir string, intent LaunchIntent) error {
 }
 
 func UpdateLaunchIntent(dir string, update func(*LaunchIntent)) error {
+	if _, err := ReadRecoveryRecord(dir); err == nil {
+		mismatch := false
+		err := UpdateRecoveryRecord(dir, func(r *RecoveryRecord) {
+			provider := r.Intent.ProviderSessionID
+			update(&r.Intent)
+			if provider != "" && r.Intent.ProviderSessionID != provider {
+				r.Intent.ProviderSessionID = provider
+				mismatch = true
+			}
+		})
+		if err != nil {
+			return err
+		}
+		if mismatch {
+			return errors.New("provider identity does not match recovery record")
+		}
+		r, err := ReadRecoveryRecord(dir)
+		if err != nil {
+			return err
+		}
+		return WriteLaunchIntent(dir, r.Intent)
+	} else if !errors.Is(err, os.ErrNotExist) && filepath.Base(filepath.Dir(dir)) == "eggs" {
+		return err
+	}
 	lock, err := os.OpenFile(filepath.Join(dir, "launch.intent.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
@@ -91,6 +275,13 @@ func UpdateLaunchIntent(dir string, update func(*LaunchIntent)) error {
 }
 
 func MarkDeliberateStop(dir, reason string) error {
+	if _, err := ReadRecoveryRecord(dir); err == nil {
+		if err := UpdateRecoveryRecord(dir, func(r *RecoveryRecord) { r.Stopped = true }); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) && filepath.Base(filepath.Dir(dir)) == "eggs" {
+		return err
+	}
 	if err := atomicWritePrivate(filepath.Join(dir, DeliberateStopFile), []byte(reason+"\n")); err != nil {
 		return err
 	}

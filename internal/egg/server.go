@@ -874,6 +874,9 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			// Enforced against the final emitted policy inside sandbox.New.
 			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
 		}
+		if err := protectRecoveryStorage(&sbCfg, s.dir); err != nil {
+			return fmt.Errorf("protect recovery storage: %w", err)
+		}
 
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
@@ -2206,24 +2209,25 @@ func (s *Server) idleWatchdog(sess *Session) {
 		idle := sess.idleDuration()
 		if idle > sess.idleTimeout {
 			log.Printf("egg: idle timeout (%s idle, limit %s) — terminating", idle.Round(time.Second), sess.idleTimeout)
-			if sess.cmd != nil && sess.cmd.Process != nil {
-				if err := sess.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-					log.Printf("egg: signal idle session: %v", err)
-				}
-				select {
-				case <-sess.done:
-					return
-				case <-time.After(5 * time.Second):
-					if err := sess.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-						log.Printf("egg: kill idle session: %v", err)
-					}
-				}
+			if err := s.stopIdleSession(sess); err != nil {
+				log.Printf("egg: terminate idle session: %v", err)
+				continue
 			}
 			// Wait for normal cleanup path (cmd.Wait -> close(done) -> gRPC stop)
 			<-sess.done
 			return
 		}
 	}
+}
+
+func (s *Server) stopIdleSession(sess *Session) error {
+	if err := MarkDeliberateStop(s.dir, "idle"); err != nil {
+		return err
+	}
+	sess.mu.Lock()
+	sess.cancelled = true
+	sess.mu.Unlock()
+	return terminateSession(context.Background(), sess, 5*time.Second)
 }
 
 // networkSummaryFromDomains returns a short description of the network config.

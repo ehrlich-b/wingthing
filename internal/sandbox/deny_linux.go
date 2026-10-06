@@ -203,6 +203,7 @@ func DenyInit(args []string) {
 	var overlayPrefixes []string
 	var roMounts []string
 	var home string
+	var recoveryDir string
 	var logPath string
 	var uid, gid int
 	var netRelayFD, proxyPort int
@@ -229,6 +230,9 @@ func DenyInit(args []string) {
 				i++
 			case "--deny-write":
 				denyWritePaths = append(denyWritePaths, args[i+1])
+				i++
+			case "--recovery-dir":
+				recoveryDir = args[i+1]
 				i++
 			case "--writable":
 				writablePaths = append(writablePaths, args[i+1])
@@ -307,6 +311,15 @@ func DenyInit(args []string) {
 		}
 		denyPaths = filtered
 	}
+	if recoveryDir != "" {
+		if _, err := os.Stat(recoveryDir); err == nil {
+			denyPaths = append(denyPaths, recoveryDir)
+		} else if !jailMode || !os.IsNotExist(err) {
+			failEnforcement("inspect recovery storage", recoveryDir, err)
+		} else {
+			recoveryDir = "" // absent from the sealed allowlist filesystem
+		}
+	}
 
 	// Deny mounts need a concrete mountpoint. Prepare absent paths while their
 	// parent is still writable; write isolation below may remount HOME read-only.
@@ -340,6 +353,29 @@ func DenyInit(args []string) {
 	// Mount empty read-only tmpfs over each deny path to hide its contents.
 	// We're UID 0 in the namespace -> have CAP_SYS_ADMIN -> can mount.
 	var expectedMounts []expectedMount
+	if recoveryDir != "" {
+		// Bind ancestor directories without changing their write permissions.
+		// Mountpoints cannot be renamed or removed, even under a writable HOME.
+		var ancestors []string
+		for path := filepath.Dir(recoveryDir); path != "/"; path = filepath.Dir(path) {
+			ancestors = append(ancestors, path)
+		}
+		for i := len(ancestors) - 1; i >= 0; i-- {
+			path := ancestors[i]
+			if err := unix.Mount(path, path, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+				failEnforcement("pin recovery ancestor", path, err)
+			}
+		}
+		entries, err := readMountInfo("/proc/self/mountinfo")
+		if err != nil {
+			failEnforcement("verify recovery ancestors", recoveryDir, err)
+		}
+		for _, path := range ancestors {
+			if _, ok := entries[path]; !ok {
+				failEnforcement("verify recovery ancestor mountpoint", path, fmt.Errorf("required mount missing"))
+			}
+		}
+	}
 	for _, p := range denyPaths {
 		// Stat to determine if path is a file or directory. Files can't
 		// be overmounted with tmpfs — bind-mount /dev/null instead.

@@ -304,6 +304,9 @@ func (s *linuxSandbox) Exec(ctx context.Context, name string, args []string) (*e
 		for _, d := range s.cfg.DenyWrite {
 			wrapArgs = append(wrapArgs, "--deny-write", d)
 		}
+		if s.cfg.RecoveryDir != "" {
+			wrapArgs = append(wrapArgs, "--recovery-dir", s.cfg.RecoveryDir)
+		}
 		home := s.cfg.UserHome
 		if home == "" {
 			home, _ = os.UserHomeDir()

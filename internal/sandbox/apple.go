@@ -211,6 +211,17 @@ func buildProfile(cfg Config) string {
 		fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", abs)
 		fmt.Fprintf(&sb, "(deny file-write* (subpath %q))\n", abs)
 	}
+	if cfg.RecoveryDir != "" {
+		abs, err := canonicalSandboxPath(cfg.RecoveryDir)
+		if err == nil {
+			fmt.Fprintf(&sb, "(deny file-read* file-write* (subpath %q))\n", abs)
+			// Literal ancestor denials prevent renaming/substituting storage
+			// while preserving writable siblings such as provider homes.
+			for path := abs; path != "/"; path = filepath.Dir(path) {
+				fmt.Fprintf(&sb, "(deny file-write* (literal %q))\n", path)
+			}
+		}
+	}
 
 	return sb.String()
 }

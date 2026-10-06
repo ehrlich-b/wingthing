@@ -27,8 +27,34 @@ const (
 
 type RecoverySession struct {
 	LocalSession
-	Intent egg.LaunchIntent `json:"intent"`
-	Class  RecoveryClass    `json:"class"`
+	Intent egg.LaunchIntent   `json:"intent"`
+	Class  RecoveryClass      `json:"class"`
+	Record egg.RecoveryRecord `json:"-"`
+}
+
+// LoadRecoveryEggConfig uses only the protected admission record. An exact
+// resolved-policy digest also covers changes to inherited bases and defaults.
+func LoadRecoveryEggConfig(record egg.RecoveryRecord) (*egg.EggConfig, error) {
+	digest, err := egg.RecoveryConfigDigest(record.Intent.EggConfig)
+	if err != nil || digest != record.ConfigSHA256 {
+		return nil, errors.New("recovery egg config changed")
+	}
+	var policy *egg.EggConfig
+	if record.Intent.EggConfig != "" {
+		policy, err = egg.ResolveEggConfig(record.Intent.EggConfig)
+	} else if record.Sandboxed {
+		policy = egg.DefaultEggConfig()
+	} else {
+		policy = egg.UnsandboxedEggConfig()
+	}
+	if err != nil {
+		return nil, err
+	}
+	digest, err = egg.RecoveryPolicyDigest(policy, record.Intent.Agent)
+	if err != nil || digest != record.PolicySHA256 || egg.RequiresSandbox(policy, record.Intent.Agent) != record.Sandboxed {
+		return nil, errors.New("recovery policy exceeds its recorded ceiling")
+	}
+	return policy, nil
 }
 
 func LaunchModel(args []string) string {
@@ -52,14 +78,8 @@ func ClassifyEgg(cfg *config.Config, id string) RecoverySession {
 	dir := filepath.Join(cfg.Dir, "eggs", id)
 	meta := ReadEggMetaValues(dir)
 	pid, alive := ReadAliveEggPID(dir)
-	intent, err := egg.ReadLaunchIntent(dir)
-	if err == nil && intent.Started && intent.Agent == "codex" && intent.ProviderSessionID == "" {
-		if home, homeErr := LifecycleProviderHome(cfg, meta["provider_home"]); homeErr == nil {
-			if _, readErr := egg.TryReadSessionLifecycle(dir, intent.Agent, intent.CWD, home, "", alive, 0, 1); readErr == nil {
-				intent, err = egg.ReadLaunchIntent(dir)
-			}
-		}
-	}
+	record, err := egg.ReadRecoveryRecord(dir)
+	intent := record.Intent
 	r := RecoverySession{LocalSession: LocalSession{ID: id, Name: ReadSessionName(dir), Principal: ReadSessionPrincipal(dir), Agent: meta["agent"], CWD: meta["cwd"], Kind: meta["kind"], PID: pid}, Intent: intent, Class: RecoveryArchived}
 	if r.Kind == "" && r.Agent != "" {
 		r.Kind = "agent"
@@ -75,9 +95,37 @@ func ClassifyEgg(cfg *config.Config, id string) RecoverySession {
 		r.Class = RecoveryStopped
 		return r
 	}
-	if err != nil || !intent.Started || intent.RecoveredSession != "" || intent.Agent != r.Agent || wingpolicy.CanonicalSessionPath(intent.CWD) != wingpolicy.CanonicalSessionPath(r.CWD) || !ValidProviderSessionID(intent.ProviderSessionID) {
+	if record.Stopped {
+		r.Class = RecoveryStopped
 		return r
 	}
+	if err != nil || record.Archived || !intent.Started || intent.RecoveredSession != "" || intent.Agent != r.Agent || wingpolicy.CanonicalSessionPath(intent.CWD) != wingpolicy.CanonicalSessionPath(r.CWD) || record.Principal != r.Principal || record.OwnerID != ReadEggOwner(dir) || record.OwnerEmail != ReadEggOwnerEmail(dir) || wingpolicy.CanonicalSessionPath(record.ProviderHome) != wingpolicy.CanonicalSessionPath(meta["provider_home"]) {
+		return r
+	}
+	// Reject forged policy/identity hints before importing native lifecycle data.
+	hint, hintErr := egg.ReadLaunchIntent(dir)
+	if hintErr == nil && (hint.Agent != intent.Agent || wingpolicy.CanonicalSessionPath(hint.CWD) != wingpolicy.CanonicalSessionPath(intent.CWD) || hint.EggConfig != intent.EggConfig || hint.ProviderSessionID != "" && intent.ProviderSessionID != "" && hint.ProviderSessionID != intent.ProviderSessionID) {
+		return r
+	}
+	if _, err := LoadRecoveryEggConfig(record); err != nil {
+		return r
+	}
+	if intent.ProviderSessionID == "" {
+		switch intent.Agent {
+		case "claude", "codex", "gemini", "opencode":
+			if home, homeErr := LifecycleProviderHome(cfg, record.ProviderHome); homeErr == nil {
+				if _, readErr := egg.TryReadSessionLifecycle(dir, intent.Agent, intent.CWD, home, "", alive, 0, 1); readErr == nil {
+					record, err = egg.ReadRecoveryRecord(dir)
+					intent = record.Intent
+				}
+			}
+		}
+	}
+	if err != nil || !ValidProviderSessionID(intent.ProviderSessionID) || hintErr == nil && hint.ProviderSessionID != "" && hint.ProviderSessionID != intent.ProviderSessionID {
+		return r
+	}
+	r.Intent, r.Record = intent, record
+	r.CWD, r.Agent, r.Principal = intent.CWD, intent.Agent, record.Principal
 	definition, ok := agentpkg.LookupDefinition(intent.Agent)
 	if !ok || definition.ResumeFlag == "" {
 		return r
@@ -116,7 +164,7 @@ func AcquireRecoveryLock(cfg *config.Config, id string) (*os.File, error) {
 	if err := ValidateSessionID(id); err != nil {
 		return nil, err
 	}
-	lock, err := os.OpenFile(filepath.Join(cfg.Dir, "eggs", id, "recovery.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	lock, err := os.OpenFile(filepath.Join(cfg.Dir, "recovery", id+".lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +191,8 @@ func RecoveryBootID() (string, error) {
 // the boot before launching, so a daemon restart cannot repeat an attempt.
 func ClaimAutoRecovery(dir, boot string, now time.Time) (bool, error) {
 	claimed := false
-	err := egg.UpdateLaunchIntent(dir, func(intent *egg.LaunchIntent) {
+	err := egg.UpdateRecoveryRecord(dir, func(r *egg.RecoveryRecord) {
+		intent := &r.Intent
 		if boot != "" && intent.AutoBoot != boot && intent.RetryAfter <= now.Unix() {
 			intent.AutoBoot = boot
 			claimed = true
@@ -153,7 +202,8 @@ func ClaimAutoRecovery(dir, boot string, now time.Time) (bool, error) {
 }
 
 func RecordRecoveryFailure(dir string, failure error, automatic bool, now time.Time) error {
-	return egg.UpdateLaunchIntent(dir, func(intent *egg.LaunchIntent) {
+	return egg.UpdateRecoveryRecord(dir, func(r *egg.RecoveryRecord) {
+		intent := &r.Intent
 		// Provider/config errors can contain environment values. Keep only the
 		// failure state here; the caller receives the detailed error directly.
 		intent.RecoveryError = "recovery launch failed"

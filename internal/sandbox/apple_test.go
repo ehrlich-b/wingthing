@@ -20,6 +20,40 @@ func sandboxExecAvailable(t *testing.T) {
 	}
 }
 
+func TestRecoveryStorageProfileDeniesAuthorityAndAncestorReplacement(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(filepath.Join(state, "recovery"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	state, err := canonicalSandboxPath(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := buildProfile(Config{Mounts: []Mount{{Source: state, Target: state}}, RecoveryDir: filepath.Join(state, "recovery")})
+	rules, err := parseWriteRules(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := func(path string) bool {
+		write := false
+		for _, rule := range rules {
+			matches := rule.kind == writeRuleAll || rule.kind == writeRuleLiteral && rule.path == path || rule.kind == writeRuleSubpath && (path == rule.path || strings.HasPrefix(path, rule.path+"/")) || rule.kind == writeRulePrefix && strings.HasPrefix(path, rule.path)
+			if matches {
+				write = rule.allow
+			}
+		}
+		return write
+	}
+	for _, path := range []string{filepath.Join(state, "recovery", "session.json"), filepath.Join(state, "recovery"), state, filepath.Dir(state)} {
+		if allowed(path) {
+			t.Fatalf("authority or ancestor remains writable: %s", path)
+		}
+	}
+	if !allowed(filepath.Join(state, "sibling")) {
+		t.Fatal("recovery guard blocks unrelated state writes")
+	}
+}
+
 func destroySandboxForTest(t *testing.T, sb Sandbox) {
 	t.Helper()
 	if err := sb.Destroy(); err != nil {

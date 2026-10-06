@@ -414,6 +414,13 @@ func TryReadSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID s
 }
 
 func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID string, processAlive bool, after int64, limit, lockFlags int) (SessionView, error) {
+	record, recordErr := ReadRecoveryRecord(eggDir)
+	protectedIdentity := recordErr == nil
+	if protectedIdentity {
+		// A journal in the egg directory cannot select recovery identity.
+		exactProviderID = record.Intent.ProviderSessionID
+		agent, cwd, providerHome = record.Intent.Agent, record.Intent.CWD, record.ProviderHome
+	}
 	view := SessionView{SessionID: filepath.Base(eggDir), Agent: agent, ProviderSessionID: exactProviderID, State: "unknown", Status: "unknown", StateSource: "unsupported", ProcessAlive: processAlive, Events: []SessionEvent{}, Cursor: after}
 	if after < 0 || limit < 1 || limit > 200 {
 		return view, errors.New("after_cursor must be non-negative and limit between 1 and 200")
@@ -431,15 +438,26 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			processEnd = event
 		}
 	}
-	if agent == "claude" && validLifecycleID(exactProviderID) {
-		if err = j.importTranscript(eggDir, cwd, providerHome, exactProviderID, processEnded); err != nil {
+	if agent == "claude" {
+		if validLifecycleID(exactProviderID) {
+			if err = j.importTranscript(eggDir, cwd, providerHome, exactProviderID, processEnded); err != nil {
+				return view, err
+			}
+		}
+		view.ProviderSessionID, err = j.importProviderHooks(lifecycleHookDir(providerHome, view.SessionID), exactProviderID, agent, protectedIdentity)
+		if err != nil {
 			return view, err
 		}
-		if err = j.importHooks(providerHome, view.SessionID, exactProviderID); err != nil {
-			return view, err
+		if exactProviderID == "" && validLifecycleID(view.ProviderSessionID) {
+			if err = j.importTranscript(eggDir, cwd, providerHome, view.ProviderSessionID, processEnded); err != nil {
+				return view, err
+			}
+			if err := UpdateLaunchIntent(eggDir, func(intent *LaunchIntent) { intent.ProviderSessionID = view.ProviderSessionID }); err != nil {
+				return view, err
+			}
 		}
 	} else if agent == "codex" {
-		view.ProviderSessionID, err = j.importCodexHooks(providerHome, view.SessionID, exactProviderID)
+		view.ProviderSessionID, err = j.importCodexHooks(providerHome, view.SessionID, exactProviderID, protectedIdentity)
 		if err != nil {
 			return view, err
 		}
@@ -449,7 +467,7 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 			}
 		}
 	} else if agent == "gemini" || agent == "opencode" {
-		view.ProviderSessionID, err = j.importProviderHooks(providerLifecycleHookDir(agent, providerHome, view.SessionID), exactProviderID, agent)
+		view.ProviderSessionID, err = j.importProviderHooks(providerLifecycleHookDir(agent, providerHome, view.SessionID), exactProviderID, agent, protectedIdentity)
 		if err != nil {
 			return view, err
 		}
@@ -775,14 +793,15 @@ func (j *lifecycleJournal) importHooks(home, sessionID, providerID string) error
 	return err
 }
 
-func (j *lifecycleJournal) importCodexHooks(home, sessionID, providerID string) (string, error) {
-	return j.importProviderHooks(filepath.Join(home, ".codex", "wingthing-events", sessionID), providerID, "codex")
+func (j *lifecycleJournal) importCodexHooks(home, sessionID, providerID string, protected ...bool) (string, error) {
+	return j.importProviderHooks(filepath.Join(home, ".codex", "wingthing-events", sessionID), providerID, "codex", protected...)
 }
 
-func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) (string, error) {
+func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string, protected ...bool) (string, error) {
 	source := agent + "_hook"
-	bindsIdentity := agent == "codex" || agent == "gemini" || agent == "opencode"
-	if providerID == "" && bindsIdentity {
+	bindsIdentity := agent == "claude" || agent == "codex" || agent == "gemini" || agent == "opencode"
+	bindFromNative := providerID == "" && len(protected) > 0 && protected[0]
+	if providerID == "" && bindsIdentity && !bindFromNative {
 		for _, e := range j.events {
 			if e.Source == source && e.Type == "session_ready" {
 				providerID = e.ProviderSessionID
@@ -813,7 +832,7 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 	}
 	var files []hookFile
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") && !seen["hook:"+entry.Name()] {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") && (!seen["hook:"+entry.Name()] || bindFromNative) {
 			info, e := entry.Info()
 			if e == nil {
 				files = append(files, hookFile{entry.Name(), info.ModTime()})
@@ -855,6 +874,9 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 			return providerID, err
 		}
 		if info.Size() > maxLifecycleRecord || len(data) > maxLifecycleRecord {
+			if seen[e.SourceKey] {
+				continue
+			}
 			e.Type = "provider_warning"
 			e.State = "unknown"
 			e.Reason = "native hook exceeds 1 MiB; skipped"
@@ -882,6 +904,9 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 		// this egg's private spool, then reject other threads (and subagents).
 		if bindsIdentity && providerID == "" && hook.Event == "SessionStart" && validLifecycleID(hook.SessionID) {
 			providerID = hook.SessionID
+		}
+		if seen[e.SourceKey] {
+			continue
 		}
 		if agent == "gemini" {
 			switch hook.Event {

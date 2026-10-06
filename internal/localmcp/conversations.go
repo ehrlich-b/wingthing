@@ -401,7 +401,11 @@ func (s *Server) conversationMCPClient() string {
 
 // prepareBoundParentLaunch also returns the host mailbox registration when the
 // parent is broker-managed; its launchOpts must then be applied to the spawn.
-func (s *Server) prepareBoundParentLaunch(c *store.Conversation, cfg *egg.EggConfig, args []string) ([]string, *conversationBrokerRegistration, error) {
+func (s *Server) prepareBoundParentLaunch(c *store.Conversation, cfg *egg.EggConfig, args []string, executionMode ...bool) ([]string, *conversationBrokerRegistration, error) {
+	unsandboxed := s.Unsandboxed
+	if len(executionMode) > 0 {
+		unsandboxed = executionMode[0]
+	}
 	if c == nil || c.ParentID != "" {
 		return args, nil, nil
 	}
@@ -410,7 +414,7 @@ func (s *Server) prepareBoundParentLaunch(c *store.Conversation, cfg *egg.EggCon
 			return nil, nil, errors.New("linked parent supplies its own wingthing MCP configuration; caller --mcp-config/--strict-mcp-config conflicts with that binding")
 		}
 	}
-	if !s.Unsandboxed {
+	if !unsandboxed {
 		rendered, err := cfg.YAML()
 		if err != nil {
 			return nil, nil, err
@@ -434,7 +438,7 @@ func (s *Server) prepareBoundParentLaunch(c *store.Conversation, cfg *egg.EggCon
 			if _, ok := policy.WritableRoot(wingpolicy.CanonicalPolicyPath(c.CWD)); !ok {
 				return nil, nil, errors.New("parent MCP configuration requires an already writable workspace")
 			}
-			args, reg, brokerErr := s.prepareBrokerParentMCP(c, cfg, args)
+			args, reg, brokerErr := s.prepareBrokerParentMCP(c, cfg, args, unsandboxed)
 			if brokerErr != nil {
 				return nil, nil, fmt.Errorf("%w; host mailbox unavailable: %w", refusal, brokerErr)
 			}
