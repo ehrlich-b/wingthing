@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -431,12 +432,24 @@ func (s *Server) handleWingWSWithAuthInterval(w http.ResponseWriter, r *http.Req
 	// Pin the admitted credential and identity for the entire socket, including
 	// idle wings and registrations whose runtime ID differs in local/roost mode.
 	authCtx, cancelAuthorization := context.WithCancel(ctx)
+	var registeredOrg atomic.Pointer[string]
 	authorizationDone := make(chan struct{})
 	go func() {
 		defer close(authorizationDone)
 		revalidateSocketAuthorization(authCtx, conn, authInterval, nil, func() bool {
 			current, err := s.validateWingCredential(authCtx, token)
-			return err == nil && current.Subject == userID && current.WingID == credentialWingID && s.roostUserIDAllowed(userID)
+			if err != nil || current.Subject != userID || current.WingID != credentialWingID || !s.roostUserIDAllowed(userID) {
+				return false
+			}
+			orgID := registeredOrg.Load()
+			if orgID == nil || *orgID == "" {
+				return true
+			}
+			if s.Store != nil {
+				return s.Store.GetOrgMemberRole(*orgID, userID) != ""
+			}
+			orgs, ok := s.currentUserOrgContext(authCtx, userID)
+			return ok && orgs.OrgRoles[*orgID] != ""
 		})
 	}()
 	defer func() { cancelAuthorization(); <-authorizationDone }()
@@ -557,6 +570,10 @@ func (s *Server) handleWingWSWithAuthInterval(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	// Publish only the immutable, resolved registration scope to the validator;
+	// the read loop may replace wing with later registry snapshots.
+	orgID := wing.OrgID
+	registeredOrg.Store(&orgID)
 	var superseded []*ConnectedWing
 	var active bool
 	wing, superseded, active = s.Wings.Activate(wing)

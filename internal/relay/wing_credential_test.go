@@ -17,7 +17,7 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/ws"
 )
 
-func openWingAuthTestSocket(t *testing.T, server *Server, token, wingID string, interval time.Duration) (*websocket.Conn, <-chan struct{}) {
+func openWingAuthTestSocket(t *testing.T, server *Server, token, wingID string, interval time.Duration, orgRefs ...string) (*websocket.Conn, <-chan struct{}) {
 	t.Helper()
 	done := make(chan struct{})
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,13 +41,52 @@ func openWingAuthTestSocket(t *testing.T, server *Server, token, wingID string, 
 			t.Error("wing socket handler did not finish cleanup")
 		}
 	})
-	mustTest(t, wsjson.Write(ctx, conn, ws.WingRegister{Type: ws.TypeWingRegister, WingID: wingID}))
+	reg := ws.WingRegister{Type: ws.TypeWingRegister, WingID: wingID}
+	if len(orgRefs) > 0 {
+		reg.OrgSlug = orgRefs[0]
+	}
+	mustTest(t, wsjson.Write(ctx, conn, reg))
 	var ack ws.RegisteredMsg
 	mustTest(t, wsjson.Read(ctx, conn, &ack))
 	if ack.Type != ws.TypeRegistered {
 		t.Fatalf("wing registration = %#v", ack)
 	}
 	return conn, done
+}
+
+func TestWingSocketRevalidatesRegisteredOrgMembership(t *testing.T) {
+	for _, node := range []string{"login", "edge", "roost"} {
+		t.Run(node, func(t *testing.T) {
+			store := testStore(t)
+			mustTest(t, store.CreateUser("owner"))
+			mustTest(t, store.CreateUser("member"))
+			mustTest(t, store.CreateOrgWithSeats("org-id", "Org", "org-slug", "owner", 2))
+			mustTest(t, store.AddOrgMember("org-id", "member", "admin"))
+			mustTest(t, store.CreateDeviceToken("token", "member", "wing", nil))
+			login := NewServer(store, ServerConfig{InternalSecret: "secret"})
+			server := login
+			if node == "edge" {
+				loginHTTP := httptest.NewServer(login)
+				defer loginHTTP.Close()
+				server = NewServer(nil, ServerConfig{NodeRole: "edge", LoginNodeAddr: loginHTTP.URL, InternalSecret: "secret"})
+			} else if node == "roost" {
+				server.RoostMode = true
+			}
+			conn, done := openWingAuthTestSocket(t, server, "token", "wing", 30*time.Millisecond, "org-slug")
+			_, err := store.RemoveOrgMemberAndEntitlement("org-id", "member")
+			mustTest(t, err)
+			expectPTYAuthorizationClosed(t, conn, done)
+			if got := server.Wings.FindByID("wing"); got != nil {
+				t.Fatalf("removed member's wing remained registered: %#v", got)
+			}
+			if _, _, err := store.ValidateToken("token"); err != nil {
+				t.Fatal("test must leave the device credential valid")
+			}
+			if role := store.GetOrgMemberRole("org-id", "member"); role != "" {
+				t.Fatalf("revalidation restored removed membership: %q", role)
+			}
+		})
+	}
 }
 
 func TestWingSocketCredentialRevalidation(t *testing.T) {
