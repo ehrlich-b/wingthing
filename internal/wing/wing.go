@@ -1094,7 +1094,11 @@ func RunWingWithContext(options EntryOptions, ctx context.Context, sighupCh <-ch
 	}
 
 	client.OnTunnel = func(ctx context.Context, req ws.TunnelRequest, write ws.PTYWriteFunc) {
-		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs}, ctx, cfg, req, write, passkeyCache, passkeyChallenges, currentPasskeyPolicy(), privKey, home, auditLive.Load(), debugLive.Load(), client, peerMgr, &dcSessions, sharedHost)
+		tunnel.HandleTunnelRequest(tunnel.References{Version: version, WingCfg: wingCfg, WingCfgMu: &wingCfgMu, AllowedKeys: &allowedKeys, WingEggMu: &wingEggMu, WingEggCfg: &wingEggCfg, ListAliveEggSessions: ListAliveEggSessions, ResizeBrowserInput: resizeBrowserInput, KillSessionsViolatingACLs: killSessionsViolatingACLs, BrowserTools: func() []*config.ToolConfig {
+			wingToolsMu.Lock()
+			defer wingToolsMu.Unlock()
+			return append([]*config.ToolConfig(nil), wingTools...)
+		}}, ctx, cfg, req, write, passkeyCache, passkeyChallenges, currentPasskeyPolicy(), privKey, home, auditLive.Load(), debugLive.Load(), client, peerMgr, &dcSessions, sharedHost)
 	}
 
 	client.OnOrphanKill = func(ctx context.Context, sessionID string) {
@@ -2196,27 +2200,12 @@ authDone:
 		log.Printf("pty session %s: E2E encryption enabled", start.SessionID)
 	}
 
-	// Start tool socket listener if tools are configured
-	var toolListener *egg.ToolListener
-	var toolSocketPath string
-	var toolNames []string
-	if len(tools) > 0 {
-		eggDir := filepath.Join(cfg.Dir, "eggs", start.SessionID)
-		toolsDir := filepath.Join(eggDir, ".tools")
-		if err := os.MkdirAll(toolsDir, 0700); err != nil {
-			log.Printf("pty session %s: create tool directory: %v", start.SessionID, err)
-			ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: "create tool directory: " + err.Error()})
-			return
-		}
-		toolSocketPath = filepath.Join(toolsDir, "tool.sock")
-		var tlErr error
-		toolListener, tlErr = egg.NewToolListener(toolSocketPath, tools)
-		if tlErr != nil {
-			log.Printf("pty session %s: tool listener failed: %v", start.SessionID, tlErr)
-		} else {
-			toolNames = config.ToolNames(tools)
-			log.Printf("pty session %s: tool listener started (%d tools)", start.SessionID, len(toolNames))
-		}
+	toolOpts := eggclient.SpawnEggOpts{}
+	toolListener, toolErr := eggclient.PrepareBrowserTools(cfg, start.SessionID, tools, &toolOpts)
+	if toolErr != nil {
+		log.Printf("pty session %s: %v", start.SessionID, toolErr)
+		ws.WritePTYMessage(write, ws.PTYExited{Type: ws.TypePTYExited, SessionID: start.SessionID, ExitCode: 1, Error: toolErr.Error()})
+		return
 	}
 	if toolListener != nil {
 		defer cmdutil.CloseWithLog("egg tool listener", toolListener)
@@ -2245,7 +2234,7 @@ authDone:
 	ec, err := eggclient.SpawnEgg(cfg, start.SessionID, start.Agent, eggCfg, uint32(start.Rows), uint32(start.Cols), start.CWD, debug, vte, eggCfg.Trace,
 		eggclient.BrowserEggIdentity(wingCfg, start, hostHome, sharedHost), idleTimeout, eggclient.SpawnEggOpts{
 			ResumeSessionID: providerResumeID, ResumeSourceSessionID: start.ResumeSessionID,
-			ProviderReserved: providerResumeID != "", ToolNames: toolNames, ToolSocketPath: toolSocketPath,
+			ProviderReserved: providerResumeID != "", ToolNames: toolOpts.ToolNames, ToolSocketPath: toolOpts.ToolSocketPath,
 			Principal: resumePrincipal, AgentArgs: resumeArgs,
 		})
 	if err != nil {

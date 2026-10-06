@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Server) resolveOwnedLifecycleSession(ref string) (eggclient.LocalSession, error) {
-	session, err := eggclient.ResolveLifecycleSession(s.Cfg, ref)
+	session, err := eggclient.ResolveOwnedLifecycleSession(s.Cfg, ref, s.ownsSession)
 	if err != nil {
 		return eggclient.LocalSession{}, err
 	}

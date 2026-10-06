@@ -18,6 +18,7 @@ type References struct {
 	AllowedKeys               *[]config.AllowKey
 	WingEggMu                 *sync.Mutex
 	WingEggCfg                **egg.EggConfig
+	BrowserTools              func() []*config.ToolConfig
 	ListAliveEggSessions      func(*config.Config) []ws.SessionInfo
 	ResizeBrowserInput        func(context.Context, string, string, string, string, uint32, uint32) error
 	KillSessionsViolatingACLs func(*config.Config, config.PathList, string)

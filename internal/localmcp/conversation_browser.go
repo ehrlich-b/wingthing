@@ -18,10 +18,15 @@ import (
 
 var browserConversationAdmission = NewMCPAdmissionState()
 
+type BrowserLaunchConfig struct {
+	EggConfig *egg.EggConfig
+	Tools     []*config.ToolConfig
+}
+
 // browserSessionControl is a narrow adapter over the same typed MCP handlers.
 // Authentication/passkey/purpose checks occur before this dispatcher; artifact
 // access is checked independently before selecting a legacy session principal.
-func BrowserSessionControl(version string, ctx context.Context, cfg *config.Config, wc *config.WingConfig, req ws.TunnelRequest, operation string, arguments json.RawMessage, home string, sharedHost bool, wingDefault ...*egg.EggConfig) (map[string]any, error) {
+func BrowserSessionControl(version string, ctx context.Context, cfg *config.Config, wc *config.WingConfig, req ws.TunnelRequest, operation string, arguments json.RawMessage, home string, sharedHost bool, launchConfig ...BrowserLaunchConfig) (map[string]any, error) {
 	switch operation {
 	case "session_fork", "session_status", "session_read", "session_wait", "session_prompt", "terminal_send", "conversation_list", "conversation_bootstrap", "conversation_read", "conversation_checkpoint", "conversation_wake", "agent_start":
 	default:
@@ -41,11 +46,11 @@ func BrowserSessionControl(version string, ctx context.Context, cfg *config.Conf
 		Grants: GrantSet(defaultDirectMCPGrants), MaxSessions: defaultDirectMCPMaxSessions, MaxSpawnsPerHour: defaultDirectMCPMaxSpawnsPerHour, admission: browserConversationAdmission,
 		allowedPaths: paths, enforcePathBounds: len(paths) > 0 || wingpolicy.IsMemberFiltered(req), identity: eggclient.EggIdentity{UserID: req.SenderUserID, Email: req.SenderEmail, OrgWing: wc.Org != "", SharedHost: sharedHost, SealedFS: sharedHost, AllowedPaths: paths}}
 	if operation == "session_fork" {
-		var currentDefault *egg.EggConfig
-		if len(wingDefault) > 0 {
-			currentDefault = wingDefault[0]
+		var current BrowserLaunchConfig
+		if len(launchConfig) > 0 {
+			current = launchConfig[0]
 		}
-		configureBrowserFork(server, wc, req, home, sharedHost, currentDefault)
+		configureBrowserFork(server, wc, req, home, sharedHost, current.EggConfig, current.Tools)
 	}
 	if operation == "agent_start" || operation == "conversation_checkpoint" || operation == "conversation_wake" {
 		if wc.Org != "" || sharedHost {
@@ -118,7 +123,7 @@ func BrowserSessionControl(version string, ctx context.Context, cfg *config.Conf
 	return result, nil
 }
 
-func configureBrowserFork(s *Server, wc *config.WingConfig, req ws.TunnelRequest, home string, sharedHost bool, wingDefault *egg.EggConfig) {
+func configureBrowserFork(s *Server, wc *config.WingConfig, req ws.TunnelRequest, home string, sharedHost bool, wingDefault *egg.EggConfig, tools []*config.ToolConfig) {
 	start := ws.PTYStart{UserID: req.SenderUserID, Email: req.SenderEmail, OrgRole: req.SenderOrgRole}
 	if wc.IsAdmin(start.Email) && wingpolicy.IsMemberRole(start.OrgRole) {
 		start.OrgRole = "admin"
@@ -128,6 +133,7 @@ func configureBrowserFork(s *Server, wc *config.WingConfig, req ws.TunnelRequest
 	s.enforcePathBounds = len(s.allowedPaths) > 0 || wingpolicy.IsMemberRole(start.OrgRole)
 	s.forkIdleTimeout, _ = time.ParseDuration(wc.IdleTimeout)
 	s.forkTrace = true
+	s.forkTools = append([]*config.ToolConfig(nil), tools...)
 	s.launchConfig = func(cwd string) (*egg.EggConfig, error) {
 		launch := start
 		launch.CWD = cwd

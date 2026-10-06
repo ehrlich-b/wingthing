@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +101,77 @@ func TestSessionForkMCPUsesSpawnBoundsAndRefusesBoundConnections(t *testing.T) {
 				t.Fatalf("error: %v, want %s", err, want)
 			}
 		})
+	}
+}
+
+func TestConcurrentForksRecheckSessionBoundsUnderNameLock(t *testing.T) {
+	old := config.ReleaseChannel
+	config.ReleaseChannel = "stable"
+	t.Cleanup(func() { config.ReleaseChannel = old })
+	first := forkServerFixture(t)
+	first.MaxSessions = 1
+	first.spawnFork = func(plan *eggclient.SessionForkPlan) error {
+		dir := filepath.Join(first.Cfg.Dir, "eggs", plan.SessionID)
+		if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+			return err
+		}
+		if err := eggclient.WriteSessionName(dir, plan.Options.Label); err != nil {
+			return err
+		}
+		return eggclient.WriteSessionPrincipal(dir, "owner")
+	}
+	// Independent servers model CLI processes with separate admission state.
+	second := &Server{Version: "dev", Cfg: first.Cfg, Principal: first.Principal, MaxSessions: 1, spawnFork: first.spawnFork}
+	admitted := make(chan struct{}, 2)
+	start := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-start:
+		default:
+			close(start)
+		}
+	})
+	done := make(chan error, 2)
+	for i, s := range []*Server{first, second} {
+		scope := s.sessionForkScope()
+		admit := scope.Admit
+		scope.Admit = func(launch func() error) error {
+			return admit(func() error {
+				admitted <- struct{}{}
+				<-start
+				return launch()
+			})
+		}
+		go func() {
+			_, err := eggclient.ForkSession(context.Background(), s.Cfg, "source", "branch-"+strconv.Itoa(i), scope)
+			done <- err
+		}()
+	}
+	for range 2 {
+		select {
+		case <-admitted:
+		case <-time.After(3 * time.Second):
+			t.Fatal("both invocations did not pass initial admission")
+		}
+	}
+	close(start)
+	started, refused := 0, 0
+	for range 2 {
+		select {
+		case err := <-done:
+			if err == nil {
+				started++
+			} else if strings.Contains(err.Error(), "max_sessions=1") {
+				refused++
+			} else {
+				t.Fatalf("unexpected fork error: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("concurrent fork did not finish")
+		}
+	}
+	if started != 1 || refused != 1 {
+		t.Fatalf("started %d forks and refused %d at max_sessions=1", started, refused)
 	}
 }
 
@@ -196,7 +271,7 @@ func TestSessionForkIdentityMatchesFreshLaunchOnEverySurface(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				configureBrowserFork(s, wc, req, cwd, shared, egg.DefaultEggConfig())
+				configureBrowserFork(s, wc, req, cwd, shared, egg.DefaultEggConfig(), nil)
 			case "CLI":
 				s.Actor, s.MCPClient = "cli:session-fork", "default"
 			}
@@ -248,7 +323,7 @@ func TestBrowserForkRefusesCWDThatFreshPTYWouldRedirect(t *testing.T) {
 	}
 	wc := &config.WingConfig{Paths: config.PathList{{Path: root}}}
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "member"}
-	configureBrowserFork(s, wc, req, root, false, egg.DefaultEggConfig())
+	configureBrowserFork(s, wc, req, root, false, egg.DefaultEggConfig(), nil)
 	start := ws.PTYStart{UserID: "alice", OrgRole: "member", CWD: subdir}
 	if _, _, err := eggclient.PrepareBrowserLaunch(wc, &start, root, false, egg.DefaultEggConfig()); err != nil || start.CWD != root {
 		t.Fatalf("fresh PTY should use configured root: %#v, %v", start, err)
@@ -348,7 +423,7 @@ func TestBrowserForkUsesCurrentWingDefault(t *testing.T) {
 	wc := &config.WingConfig{IdleTimeout: "15m", Audit: true}
 	req := ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "owner"}
 	wingDefault := &egg.EggConfig{FS: []string{"deny:/", "rw:" + cwd}, Shell: "/bin/current-wing-shell", Trace: true}
-	configureBrowserFork(s, wc, req, cwd, false, wingDefault)
+	configureBrowserFork(s, wc, req, cwd, false, wingDefault, nil)
 	s.spawnFork = func(plan *eggclient.SessionForkPlan) error {
 		if plan.Config.Shell != wingDefault.Shell || !plan.Config.Audit || !plan.Config.Trace || !reflect.DeepEqual(plan.Config.FS, wingDefault.FS) || !s.forkTrace || s.forkIdleTimeout != 15*time.Minute {
 			t.Fatalf("fork omitted current wing launch settings: %#v", plan)
@@ -360,5 +435,67 @@ func TestBrowserForkUsesCurrentWingDefault(t *testing.T) {
 	}
 	if wingDefault.Audit {
 		t.Fatal("fork mutated the shared wing default")
+	}
+}
+
+func TestBrowserForkInitializesCurrentToolsAndCleansUpFailedSpawn(t *testing.T) {
+	old := config.ReleaseChannel
+	config.ReleaseChannel = "stable"
+	t.Cleanup(func() { config.ReleaseChannel = old })
+	t.Setenv("HOME", t.TempDir())
+	root, err := os.MkdirTemp("/tmp", "wt-fork-tools-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	cfg := &config.Config{Dir: root}
+	dir := writeResumeSessionFixture(t, cfg, "source", "alice", "claude", root, "provider", "{}\n")
+	if err := eggclient.WriteSessionPrincipal(dir, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Version: "dev", Cfg: cfg, Principal: "owner"}
+	tools := []*config.ToolConfig{{Name: "current-tool", Run: "printf configured"}}
+	configureBrowserFork(s, &config.WingConfig{}, ws.TunnelRequest{SenderUserID: "alice", SenderOrgRole: "owner"}, root, false, egg.DefaultEggConfig(), tools)
+	// The fork retains the same immutable snapshot as a fresh browser PTY.
+	tools[0] = &config.ToolConfig{Name: "later-tool", Run: "printf later"}
+	var socket string
+	s.spawnFork = func(plan *eggclient.SessionForkPlan) error {
+		socket = plan.Options.ToolSocketPath
+		if !reflect.DeepEqual(plan.Options.ToolNames, []string{"current-tool"}) || socket != filepath.Join(root, "eggs", plan.SessionID, ".tools", "tool.sock") {
+			t.Fatalf("browser fork omitted current tool options: %#v", plan.Options)
+		}
+		conn, err := net.Dial("unix", socket)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = conn.Close() }()
+		if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			return err
+		}
+		if err := json.NewEncoder(conn).Encode(egg.ToolRequest{Tool: "current-tool"}); err != nil {
+			return err
+		}
+		if err := conn.(*net.UnixConn).CloseWrite(); err != nil {
+			return err
+		}
+		data, err := io.ReadAll(conn)
+		if err != nil {
+			return err
+		}
+		var response egg.ToolResponse
+		if err := json.Unmarshal(data, &response); err != nil {
+			return err
+		}
+		if response.Stdout != "configured" || response.ExitCode != 0 || response.Error != "" {
+			t.Fatalf("fork tool did not execute: %#v", response)
+		}
+		return errors.New("fixture spawn failed")
+	}
+	if _, err := s.ToolSessionFork(context.Background(), json.RawMessage(`{"session":"source","name":"branch"}`)); err == nil || !strings.Contains(err.Error(), "fixture spawn failed") {
+		t.Fatalf("fork spawn failure: %v", err)
+	}
+	if conn, err := net.Dial("unix", socket); err == nil {
+		_ = conn.Close()
+		t.Fatal("failed spawn left a tool listener running")
 	}
 }

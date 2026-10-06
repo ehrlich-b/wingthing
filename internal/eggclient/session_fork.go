@@ -91,6 +91,8 @@ type SessionForkScope struct {
 	TraceFromConfig   bool
 	IdleTimeout       time.Duration
 	Admit             func(func() error) error
+	CheckSpawn        func() error // recheck capacity under the session-name lock
+	Tools             []*config.ToolConfig
 	LoadConfig        func(string) (*egg.EggConfig, error)
 	Prepare           func(*SessionForkPlan) error
 	Spawn             func(*SessionForkPlan) error
@@ -108,22 +110,24 @@ type SessionForkResult struct {
 // ForkSession creates a distinct execution and logical sibling. All adapters
 // use this owner/path check and the existing name, provider, and spawn locks.
 func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label string, scope SessionForkScope) (*SessionForkResult, error) {
-	source, err := ResolveLifecycleSession(cfg, sourceRef)
-	if err != nil {
-		return nil, err
-	}
-	dir := filepath.Join(cfg.Dir, "eggs", source.ID)
 	principal := scope.Principal
 	if principal == "" {
 		principal = "default"
 	}
-	owns := source.Principal == principal || principal == "default" && source.Principal == ""
-	if scope.Identity.UserID != "" {
-		owns = ReadEggOwner(dir) == scope.Identity.UserID
+	owns := func(session LocalSession) bool {
+		if scope.Identity.UserID != "" {
+			return ReadEggOwner(filepath.Join(cfg.Dir, "eggs", session.ID)) == scope.Identity.UserID
+		}
+		return session.Principal == principal || principal == "default" && session.Principal == ""
 	}
+	source, err := ResolveOwnedLifecycleSession(cfg, sourceRef, owns)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(cfg.Dir, "eggs", source.ID)
 	cwd := wingpolicy.CanonicalSessionPath(source.CWD)
 	paths := wingpolicy.CanonicalPaths(scope.AllowedPaths)
-	if !owns || scope.EnforcePathBounds && (len(paths) == 0 || !wingpolicy.IsUnderPaths(cwd, paths)) {
+	if scope.EnforcePathBounds && (len(paths) == 0 || !wingpolicy.IsUnderPaths(cwd, paths)) {
 		return nil, errors.New("session not found or not owned by caller")
 	}
 	providerID, err := forkProviderID(dir, source.Agent, cwd)
@@ -197,6 +201,18 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 		if scope.Prepare != nil {
 			err = scope.Prepare(plan)
 		}
+		var toolListener *egg.ToolListener
+		if err == nil {
+			toolListener, err = PrepareBrowserTools(cfg, id, scope.Tools, &plan.Options)
+		}
+		defer func() {
+			if toolListener != nil {
+				cmdutil.CloseWithLog("forked session tool listener", toolListener)
+			}
+		}()
+		if err == nil && scope.CheckSpawn != nil {
+			err = scope.CheckSpawn()
+		}
 		if err == nil {
 			if scope.Spawn != nil {
 				err = scope.Spawn(plan)
@@ -204,7 +220,12 @@ func ForkSession(ctx context.Context, cfg *config.Config, sourceRef, label strin
 				var client *egg.Client
 				client, err = SpawnEgg(cfg, id, source.Agent, plan.Config, 24, 80, cwd, false, false, scope.TraceFromConfig && plan.Config.Trace, plan.Identity, scope.IdleTimeout, plan.Options)
 				if err == nil {
-					cmdutil.CloseWithLog("forked session client", client)
+					if toolListener != nil {
+						go serveBrowserSessionTools(client, toolListener, id)
+						toolListener = nil
+					} else {
+						cmdutil.CloseWithLog("forked session client", client)
+					}
 				}
 			}
 		}

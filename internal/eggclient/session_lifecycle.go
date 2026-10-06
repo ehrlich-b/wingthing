@@ -16,9 +16,13 @@ import (
 )
 
 // Lifecycle reads include archived sessions. Terminal input/attachment retains
-// its existing live-only resolution. IDs and labels use the same exact-first
-// ambiguity rules, without constructing a path from a caller-supplied string.
+// its existing live-only resolution. Exact IDs take precedence, then active
+// labels, without constructing a path from a caller-supplied string.
 func ResolveLifecycleSession(cfg *config.Config, ref string) (LocalSession, error) {
+	return ResolveOwnedLifecycleSession(cfg, ref, nil)
+}
+
+func ResolveOwnedLifecycleSession(cfg *config.Config, ref string, owns func(LocalSession) bool) (LocalSession, error) {
 	if ref == "" {
 		return LocalSession{}, errors.New("session is required")
 	}
@@ -29,7 +33,7 @@ func ResolveLifecycleSession(cfg *config.Config, ref string) (LocalSession, erro
 	if err != nil {
 		return LocalSession{}, err
 	}
-	var candidates []LocalSession
+	var candidates, activeNames []LocalSession
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -39,11 +43,23 @@ func ResolveLifecycleSession(cfg *config.Config, ref string) (LocalSession, erro
 		pid, _ := ReadAliveEggPID(dir)
 		session := LocalSession{ID: entry.Name(), Name: ReadSessionName(dir), Principal: ReadSessionPrincipal(dir), Agent: meta["agent"], Kind: meta["kind"], CWD: meta["cwd"], PID: pid}
 		if session.ID == ref {
+			if owns != nil && !owns(session) {
+				return LocalSession{}, errors.New("session not found or not owned by caller")
+			}
 			return session, nil
+		}
+		if owns != nil && !owns(session) {
+			continue
+		}
+		if session.Name == ref && pid != 0 {
+			activeNames = append(activeNames, session)
 		}
 		if session.Name == ref || strings.HasPrefix(session.ID, ref) {
 			candidates = append(candidates, session)
 		}
+	}
+	if len(activeNames) > 0 {
+		candidates = activeNames
 	}
 	if len(candidates) == 1 {
 		return candidates[0], nil

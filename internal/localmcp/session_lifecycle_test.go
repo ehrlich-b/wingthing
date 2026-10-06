@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,45 @@ func TestSessionLifecycleMCPDispatchArchiveOwnershipStrictArguments(t *testing.T
 	s.allowedPaths = []string{"/other"}
 	if _, err := s.toolSessionStatus(context.Background(), json.RawMessage(`{"session":"archived"}`)); err == nil {
 		t.Fatal("ignored browser path bounds")
+	}
+}
+
+func TestOwnedSessionResolutionPrefersActiveLabel(t *testing.T) {
+	old := config.ReleaseChannel
+	config.ReleaseChannel = "stable"
+	t.Cleanup(func() { config.ReleaseChannel = old })
+	s, archived := lifecycleMCPFixture(t)
+	if err := eggclient.WriteSessionName(archived, "work"); err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range []struct{ id, principal string }{{"a-foreign", "foreign"}, {"z-owned", "owner"}} {
+		seedRemoteListSession(t, s.Cfg, fixture.id, fixture.principal)
+		if err := eggclient.WriteSessionName(filepath.Join(s.Cfg.Dir, "eggs", fixture.id), "work"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, resolve := range []func() (eggclient.LocalSession, error){
+		func() (eggclient.LocalSession, error) { return s.resolveOwnedLifecycleSession("work") },
+		func() (eggclient.LocalSession, error) { return s.resolveOwnedSession(context.Background(), "work") },
+	} {
+		if got, err := resolve(); err != nil || got.ID != "z-owned" {
+			t.Fatalf("owned active label resolved to %q: %v", got.ID, err)
+		}
+	}
+	if _, err := s.resolveOwnedLifecycleSession("a-foreign"); err == nil {
+		t.Fatal("foreign exact ID resolved")
+	}
+	if err := os.Remove(filepath.Join(s.Cfg.Dir, "eggs", "z-owned", "egg.pid")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.resolveOwnedLifecycleSession("work"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("foreign live label replaced owned archived ambiguity: %v", err)
+	}
+	if err := eggclient.WriteSessionName(filepath.Join(s.Cfg.Dir, "eggs", "z-owned"), "ended"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.resolveOwnedLifecycleSession("work"); err != nil || got.ID != "archived" {
+		t.Fatalf("foreign live label hid the owned archive: %q, %v", got.ID, err)
 	}
 }
 

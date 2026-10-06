@@ -418,7 +418,11 @@ func HandleTunnelRequest(refs References, ctx context.Context, cfg *config.Confi
 			currentEggCfg.Audit = currentEggCfg.Audit || audit
 		}
 		wingEggMu.Unlock()
-		result, err := localmcp.BrowserSessionControl(version, ctx, cfg, wingCfg, req, inner.Operation, inner.Arguments, home, sharedHost, currentEggCfg)
+		var tools []*config.ToolConfig
+		if inner.Operation == "session_fork" && refs.BrowserTools != nil {
+			tools = refs.BrowserTools()
+		}
+		result, err := localmcp.BrowserSessionControl(version, ctx, cfg, wingCfg, req, inner.Operation, inner.Arguments, home, sharedHost, localmcp.BrowserLaunchConfig{EggConfig: currentEggCfg, Tools: tools})
 		if err != nil {
 			ws.TunnelRespond(gcm, req.RequestID, map[string]any{"error": err.Error()}, write)
 			return

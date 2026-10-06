@@ -300,6 +300,10 @@ func EnsureSessionNameAvailable(cfg *config.Config, name, exceptID string) error
 }
 
 func ResolveActiveSession(ctx context.Context, cfg *config.Config, ref string) (LocalSession, error) {
+	return ResolveOwnedActiveSession(ctx, cfg, ref, nil)
+}
+
+func ResolveOwnedActiveSession(ctx context.Context, cfg *config.Config, ref string, owns func(LocalSession) bool) (LocalSession, error) {
 	if err := ValidateSessionName(ref); err != nil {
 		return LocalSession{}, err
 	}
@@ -309,17 +313,27 @@ func ResolveActiveSession(ctx context.Context, cfg *config.Config, ref string) (
 	}
 	for _, session := range sessions {
 		if session.ID == ref {
+			if owns != nil && !owns(session) {
+				return LocalSession{}, errors.New("session not found or not owned by caller")
+			}
 			return session, nil
 		}
 	}
+	var names []LocalSession
 	for _, session := range sessions {
-		if session.Name == ref {
-			return session, nil
+		if session.Name == ref && (owns == nil || owns(session)) {
+			names = append(names, session)
 		}
+	}
+	if len(names) == 1 {
+		return names[0], nil
+	}
+	if len(names) > 1 {
+		return LocalSession{}, fmt.Errorf("session reference %q is ambiguous", ref)
 	}
 	var matches []LocalSession
 	for _, session := range sessions {
-		if strings.HasPrefix(session.ID, ref) {
+		if strings.HasPrefix(session.ID, ref) && (owns == nil || owns(session)) {
 			matches = append(matches, session)
 		}
 	}

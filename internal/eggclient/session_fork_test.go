@@ -189,6 +189,38 @@ func TestSessionForkIgnoresEggDirectoryPolicyAndIdentity(t *testing.T) {
 	}
 }
 
+func TestSessionForkUsesOwnedActiveLabel(t *testing.T) {
+	cfg, _, scope := forkFixture(t, true)
+	for _, id := range []string{"a-foreign", "z-archived"} {
+		dir := filepath.Join(cfg.Dir, "eggs", id)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := WriteSessionName(dir, "original"); err != nil {
+			t.Fatal(err)
+		}
+		if id == "a-foreign" {
+			if err := os.WriteFile(filepath.Join(dir, "egg.pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "egg.owner"), []byte("bob\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(filepath.Join(dir, "egg.owner"), []byte("alice\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scope.Spawn = func(plan *SessionForkPlan) error {
+		if plan.Source.ID != "source" {
+			t.Fatalf("fork selected %q instead of the owned active label", plan.Source.ID)
+		}
+		return nil
+	}
+	if _, err := ForkSession(context.Background(), cfg, "original", "branch", scope); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSessionForkRejectsMalformedProviderID(t *testing.T) {
 	for _, live := range []bool{false, true} {
 		for _, id := range []string{"../other", "--continue", "with space", `with\backslash`, "bad\x00id"} {

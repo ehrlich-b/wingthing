@@ -70,6 +70,7 @@ type Server struct {
 	launchConfig      func(string) (*egg.EggConfig, error)
 	forkTrace         bool
 	forkIdleTimeout   time.Duration
+	forkTools         []*config.ToolConfig
 	// tools, when set, further limits callable tools by name; grants are
 	// per category and cannot express the host mailbox's fixed subset.
 	tools map[string]bool
@@ -980,7 +981,7 @@ func (s *Server) ownsSession(session eggclient.LocalSession) bool {
 }
 
 func (s *Server) resolveOwnedSession(ctx context.Context, ref string) (eggclient.LocalSession, error) {
-	session, err := eggclient.ResolveActiveSession(ctx, s.Cfg, ref)
+	session, err := eggclient.ResolveOwnedActiveSession(ctx, s.Cfg, ref, s.ownsSession)
 	if err != nil {
 		return eggclient.LocalSession{}, err
 	}
@@ -999,7 +1000,7 @@ func (s *Server) resolveOwnedSession(ctx context.Context, ref string) (eggclient
 	return session, nil
 }
 
-func (s *Server) checkSpawnBounds() error {
+func (s *Server) checkSessionBounds() error {
 	if s.MaxSessions > 0 {
 		sessions, err := eggclient.DiscoverSessionRefs(s.Cfg)
 		if err != nil {
@@ -1014,6 +1015,13 @@ func (s *Server) checkSpawnBounds() error {
 		if owned >= s.MaxSessions {
 			return fmt.Errorf("principal %q reached max_sessions=%d", s.clientPrincipal(), s.MaxSessions)
 		}
+	}
+	return nil
+}
+
+func (s *Server) checkSpawnBounds() error {
+	if err := s.checkSessionBounds(); err != nil {
+		return err
 	}
 	if s.MaxSpawnsPerHour > 0 {
 		s.spawnMu.Lock()
@@ -1075,20 +1083,8 @@ func (s *Server) admitSpawn(spawn func() error) error {
 
 // checkSharedSpawnBounds runs with admission.mu held.
 func (s *Server) checkSharedSpawnBounds() error {
-	if s.MaxSessions > 0 {
-		sessions, err := eggclient.DiscoverSessionRefs(s.Cfg)
-		if err != nil {
-			return err
-		}
-		owned := 0
-		for _, session := range sessions {
-			if s.ownsSession(session) {
-				owned++
-			}
-		}
-		if owned >= s.MaxSessions {
-			return fmt.Errorf("principal %q reached max_sessions=%d", s.clientPrincipal(), s.MaxSessions)
-		}
+	if err := s.checkSessionBounds(); err != nil {
+		return err
 	}
 	if s.MaxSpawnsPerHour > 0 {
 		principal := s.clientPrincipal()
