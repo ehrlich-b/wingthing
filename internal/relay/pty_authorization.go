@@ -105,7 +105,7 @@ func orgRoleAuthority(role string) int {
 	}
 }
 
-func revalidatePTYAuthorization(ctx context.Context, conn *websocket.Conn, interval time.Duration, changes <-chan WingEvent, validate func() bool) {
+func revalidateSocketAuthorization(ctx context.Context, conn *websocket.Conn, interval time.Duration, changes <-chan WingEvent, validate func() bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

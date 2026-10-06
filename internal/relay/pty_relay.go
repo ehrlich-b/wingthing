@@ -771,7 +771,7 @@ func (s *Server) handlePTYWSWithAuthInterval(w http.ResponseWriter, r *http.Requ
 	authorizationDone := make(chan struct{})
 	go func() {
 		defer close(authorizationDone)
-		revalidatePTYAuthorization(authCtx, conn, authInterval, changes, refreshAuthorization)
+		revalidateSocketAuthorization(authCtx, conn, authInterval, changes, refreshAuthorization)
 	}()
 	defer func() { cancelAuthorization(); <-authorizationDone }()
 

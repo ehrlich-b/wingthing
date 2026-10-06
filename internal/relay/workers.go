@@ -390,6 +390,10 @@ func (r *WingRegistry) CloseAll() {
 
 // handleWingWS handles the WebSocket connection from a wing.
 func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
+	s.handleWingWSWithAuthInterval(w, r, 30*time.Second)
+}
+
+func (s *Server) handleWingWSWithAuthInterval(w http.ResponseWriter, r *http.Request, authInterval time.Duration) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		auth := r.Header.Get("Authorization")
@@ -428,6 +432,19 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	defer release()
 	conn.SetReadLimit(512 * 1024) // 512KB — replay chunks can be large
 	defer func() { _ = conn.CloseNow() }()
+
+	// Pin the admitted credential and identity for the entire socket, including
+	// idle wings and registrations whose runtime ID differs in local/roost mode.
+	authCtx, cancelAuthorization := context.WithCancel(ctx)
+	authorizationDone := make(chan struct{})
+	go func() {
+		defer close(authorizationDone)
+		revalidateSocketAuthorization(authCtx, conn, authInterval, nil, func() bool {
+			current, err := s.validateWingCredential(authCtx, token)
+			return err == nil && current.Subject == userID && current.WingID == credentialWingID && s.roostUserIDAllowed(userID)
+		})
+	}()
+	defer func() { cancelAuthorization(); <-authorizationDone }()
 
 	// Read registration message
 	_, data, err := conn.Read(ctx)
