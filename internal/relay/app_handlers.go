@@ -353,10 +353,11 @@ func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := websocket.Accept(w, r, s.browserWebSocketAcceptOptions())
+	conn, socketCtx, release, err := s.acceptSocket(w, r, user.ID, s.browserWebSocketAcceptOptions())
 	if err != nil {
 		return
 	}
+	defer release()
 	defer func() { _ = conn.CloseNow() }()
 
 	s.trackBrowser(conn, user.ID)
@@ -381,7 +382,7 @@ func (s *Server) handleAppWS(w http.ResponseWriter, r *http.Request) {
 	s.Wings.Subscribe(user.ID, orgIDs, ch)
 	defer s.Wings.Unsubscribe(user.ID, ch)
 
-	ctx := conn.CloseRead(r.Context())
+	ctx := conn.CloseRead(socketCtx)
 	for {
 		select {
 		case ev := <-ch:

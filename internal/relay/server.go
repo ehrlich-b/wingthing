@@ -79,8 +79,11 @@ type Server struct {
 	latestVersionMu        sync.Mutex
 
 	// All browser WebSocket connections (for shutdown broadcast)
-	browserMu    sync.Mutex
-	browserConns map[*websocket.Conn]*browserConnection
+	browserMu     sync.Mutex
+	browserConns  map[*websocket.Conn]*browserConnection
+	socketMu      sync.Mutex
+	socketCount   int
+	socketsByUser map[string]int
 
 	// Tunnel request tracking (requestID → browser WebSocket)
 	tunnelMu       sync.Mutex
@@ -126,6 +129,7 @@ func NewServer(store *RelayStore, cfg ServerConfig) *Server {
 		PTY:             NewPTYRoutes(cfg.ResourceLimits),
 		mux:             http.NewServeMux(),
 		browserConns:    make(map[*websocket.Conn]*browserConnection),
+		socketsByUser:   make(map[string]int),
 		tunnelRequests:  make(map[tunnelRequestKey]pendingTunnelRequest),
 		oauthHTTPClient: newOAuthHTTPClient(),
 		passkeySessions: make(map[string]passkeyRegistrationSession),
@@ -330,6 +334,78 @@ type browserConnection struct {
 }
 
 const maxRelayNotificationResources = 1024
+
+// Reserve before upgrading, including in-flight handshakes. Dashboard, PTY,
+// and wing sockets share the same node-wide and per-account budgets.
+func (s *Server) reserveSocket(userID string) (func(), error) {
+	limits := s.Config.ResourceLimits.withDefaults()
+	s.socketMu.Lock()
+	defer s.socketMu.Unlock()
+	if s.socketCount >= limits.Connections {
+		return nil, fmt.Errorf("relay global connection limit (%d) reached; close an existing connection and retry", limits.Connections)
+	}
+	if s.socketsByUser[userID] >= limits.ConnectionsPerUser {
+		return nil, fmt.Errorf("relay connection limit for this user (%d) reached; close an existing connection and retry", limits.ConnectionsPerUser)
+	}
+	if s.socketsByUser == nil {
+		s.socketsByUser = make(map[string]int)
+	}
+	s.socketCount++
+	s.socketsByUser[userID]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.socketMu.Lock()
+			defer s.socketMu.Unlock()
+			s.socketCount--
+			s.socketsByUser[userID]--
+			if s.socketsByUser[userID] == 0 {
+				delete(s.socketsByUser, userID)
+			}
+		})
+	}, nil
+}
+
+func (s *Server) acceptSocket(w http.ResponseWriter, r *http.Request, userID string, options *websocket.AcceptOptions) (*websocket.Conn, context.Context, func(), error) {
+	release, err := s.reserveSocket(userID)
+	if err != nil {
+		writeError(w, http.StatusTooManyRequests, err.Error())
+		return nil, nil, nil, err
+	}
+	conn, err := websocket.Accept(w, r, options)
+	if err != nil {
+		release()
+		return nil, nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	limits := s.Config.ResourceLimits.withDefaults()
+	go func() {
+		ticker := time.NewTicker(limits.PingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				pingCtx, stop := context.WithTimeout(ctx, limits.PongTimeout)
+				err := conn.Ping(pingCtx)
+				stop()
+				if err != nil {
+					if ctx.Err() == nil {
+						log.Printf("relay socket heartbeat failed user=%s: %v", userID, err)
+						// Send a useful close reason, but do not let a dead peer
+						// extend the deadline through the close handshake.
+						deadline := time.AfterFunc(time.Second, cancel)
+						_ = conn.Close(websocket.StatusPolicyViolation, "relay ping/pong timeout")
+						deadline.Stop()
+					}
+					return
+				}
+			}
+		}
+	}()
+	return conn, ctx, func() { cancel(); release() }, nil
+}
 
 func (s *Server) trackBrowser(conn *websocket.Conn, userID string) {
 	s.browserMu.Lock()

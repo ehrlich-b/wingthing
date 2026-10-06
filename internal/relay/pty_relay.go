@@ -723,19 +723,18 @@ func (s *Server) handlePTYWS(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[pty-route] no FlyMachineID set, skipping cross-node routing for wing %s", targetWingID)
 	}
 
-	conn, err := websocket.Accept(w, r, s.browserWebSocketAcceptOptions())
+	conn, ctx, release, err := s.acceptSocket(w, r, userID, s.browserWebSocketAcceptOptions())
 	if err != nil {
 		log.Printf("pty websocket accept: %v", err)
 		return
 	}
+	defer release()
 	conn.SetReadLimit(512 * 1024) // match wing/client envelope cap; policy applies tighter purpose bounds
 	defer func() { _ = conn.CloseNow() }()
 
 	s.trackBrowser(conn, userID)
 	defer s.untrackBrowser(conn)
 	defer s.clearTunnelRequests(conn)
-
-	ctx := r.Context()
 
 	// On browser disconnect: clear BrowserConn on all owned routes
 	defer func() { s.forwardBrowserDetach(conn, ""); s.PTY.ClearBrowser(conn) }()

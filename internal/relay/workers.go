@@ -433,15 +433,14 @@ func (s *Server) handleWingWS(w http.ResponseWriter, r *http.Request) {
 	// Wings are native clients and send no Origin header. Keep the library's
 	// default Origin enforcement so an arbitrary web page cannot turn a leaked
 	// or browser-visible device credential into a cross-site wing connection.
-	conn, err := websocket.Accept(w, r, nil)
+	conn, ctx, release, err := s.acceptSocket(w, r, userID, nil)
 	if err != nil {
 		log.Printf("websocket accept: %v", err)
 		return
 	}
+	defer release()
 	conn.SetReadLimit(512 * 1024) // 512KB — replay chunks can be large
 	defer func() { _ = conn.CloseNow() }()
-
-	ctx := r.Context()
 
 	// Read registration message
 	_, data, err := conn.Read(ctx)

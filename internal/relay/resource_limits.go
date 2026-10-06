@@ -18,6 +18,10 @@ type ResourceLimits struct {
 	Routes             int
 	RoutesPerUser      int
 	AbandonedRouteTTL  time.Duration
+	Connections        int
+	ConnectionsPerUser int
+	PingInterval       time.Duration
+	PongTimeout        time.Duration
 }
 
 func (l ResourceLimits) withDefaults() ResourceLimits {
@@ -29,6 +33,10 @@ func (l ResourceLimits) withDefaults() ResourceLimits {
 	l.Routes = relayLimitInt(l.Routes, "ROUTES", 16384)
 	l.RoutesPerUser = relayLimitInt(l.RoutesPerUser, "ROUTES_PER_USER", 512)
 	l.AbandonedRouteTTL = relayLimitDuration(l.AbandonedRouteTTL, "ABANDONED_ROUTE_TTL", 24*time.Hour)
+	l.Connections = relayLimitInt(l.Connections, "CONNECTIONS", 8192)
+	l.ConnectionsPerUser = relayLimitInt(l.ConnectionsPerUser, "CONNECTIONS_PER_USER", 128)
+	l.PingInterval = relayLimitDuration(l.PingInterval, "PING_INTERVAL", time.Minute)
+	l.PongTimeout = relayLimitDuration(l.PongTimeout, "PONG_TIMEOUT", 30*time.Second)
 	return l
 }
 
