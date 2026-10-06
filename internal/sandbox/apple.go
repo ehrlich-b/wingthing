@@ -189,6 +189,40 @@ func buildSeatbeltProfile(cfg Config) (string, error) {
 		sb.WriteString("(allow file-write* (subpath \"/private/tmp\"))\n")
 	}
 
+	// Other eggs' environments carry capabilities. Deny inspection of other
+	// processes while preserving self-inspection needed by node and python.
+	if cfg.DenyOtherProcessInfo {
+		sb.WriteString("(deny process-info* (target others))\n")
+	}
+	// Seal controller paths after all general mount, temp and socket allows.
+	// Both literal and subpath filters are needed for missing paths and trees.
+	for _, path := range cfg.ControlDenyPaths {
+		abs, err := resolvePath(path)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&sb, "(deny file-read* file-write* network-outbound (literal %q))\n", abs)
+		fmt.Fprintf(&sb, "(deny file-read* file-write* network-outbound (subpath %q))\n", abs)
+	}
+	// Reopen only this session's bridges and tool socket after control denies.
+	// Ordinary explicit denies below still take precedence over these exceptions.
+	for _, bridge := range cfg.ControlBridges {
+		abs, err := resolvePath(bridge.Source)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&sb, "(allow file-read* (literal %q))\n", abs)
+		fmt.Fprintf(&sb, "(allow file-read* (subpath %q))\n", abs)
+		if !bridge.ReadOnly {
+			fmt.Fprintf(&sb, "(allow file-write* (literal %q))\n", abs)
+		}
+	}
+	if cfg.ControlSocket != "" {
+		if abs, err := resolvePath(cfg.ControlSocket); err == nil {
+			fmt.Fprintf(&sb, "(allow network-outbound (literal %q))\n", abs)
+		}
+	}
+
 	// Deny paths — block reads, writes, and Unix-socket connections to specific
 	// paths. A filesystem deny alone does not stop connect(2) to an already-open
 	// Unix socket on macOS; network-outbound must name the socket path as well.

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
@@ -224,8 +225,8 @@ func createIsolationSibling(t *testing.T, root, session string) {
 }
 
 func TestDarwinControlPolicyPreservesBridgesAndBlocksFutureSiblings(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("macOS Seatbelt only")
+	if runtime.GOOS != "darwin" || os.Getenv("WT_TEST_SEATBELT_ENFORCEMENT") != "1" {
+		t.Skip("set WT_TEST_SEATBELT_ENFORCEMENT=1 on an unsandboxed Mac")
 	}
 	root, control, bridges, capability := controlIsolationFixture(t)
 	victim := exec.Command("/bin/sleep", "60")
@@ -243,34 +244,36 @@ func TestDarwinControlPolicyPreservesBridgesAndBlocksFutureSiblings(t *testing.T
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ownControl.Close() })
-	profile := eggControlProfile(control, bridges, filepath.Join(root, "state", "eggs", "own", ".tools", "tool.sock"))
+	sb, err := sandbox.New(sandbox.Config{
+		Mounts:               append([]sandbox.Mount{{Source: root}}, bridges...),
+		NetworkNeed:          sandbox.NetworkNone,
+		ControlDenyPaths:     control,
+		ControlBridges:       bridges,
+		ControlSocket:        filepath.Join(root, "state", "eggs", "own", ".tools", "tool.sock"),
+		DenyOtherProcessInfo: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := sb.Destroy(); err != nil {
+			t.Errorf("destroy sandbox: %v", err)
+		}
+	})
 	createIsolationSibling(t, root, "future")
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("/usr/bin/sandbox-exec", "-p", profile, exe, "-test.run=^TestEggControlIsolationProcess$", "-test.v")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd, err := sb.Exec(ctx, exe, []string{"-test.run=^TestEggControlIsolationProcess$", "-test.v"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	cmd.Env = append(os.Environ(), "WT_TEST_CONTROL_ROOT="+root, ToolCapabilityEnv+"="+capability)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		if strings.Contains(string(output), "Operation not permitted") && strings.Contains(string(output), "sandbox-exec:") {
-			t.Skipf("Seatbelt unavailable: %s", output)
-		}
 		t.Fatalf("control isolation: %v\n%s", err, output)
-	}
-}
-
-func TestEggControlProfileAllowsSelfInspection(t *testing.T) {
-	profile := eggControlProfile(nil, nil, "")
-	if strings.Contains(profile, "(deny process-info*)\n") || !strings.Contains(profile, "(deny process-info* (target others))") {
-		t.Fatalf("process inspection must be denied only for other processes:\n%s", profile)
-	}
-	if runtime.GOOS != "darwin" || os.Getenv("WT_TEST_SEATBELT_ENFORCEMENT") != "1" {
-		t.Skip("set WT_TEST_SEATBELT_ENFORCEMENT=1 on macOS to launch an interpreter under the profile")
-	}
-	// A blanket process-info deny makes node and python abort at startup.
-	out, err := exec.Command("/usr/bin/sandbox-exec", "-p", profile, "/usr/bin/python3", "-c", "print('ok')").CombinedOutput()
-	if err != nil || strings.TrimSpace(string(out)) != "ok" {
-		t.Fatalf("interpreter failed under the egg control profile: %v %s", err, out)
 	}
 }

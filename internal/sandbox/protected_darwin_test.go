@@ -65,6 +65,24 @@ func TestCheckedProfileEmptyProtectedSetIsUnchanged(t *testing.T) {
 	}
 }
 
+func TestCheckedProfileControlBridgesRespectProtectedTargets(t *testing.T) {
+	home, _ := protectedProfileEnv(t)
+	tree := filepath.Join(home, ".wingthing", "eggs")
+	bridge := filepath.Join(tree, "own", "browser-requests")
+	cfg := Config{
+		Mounts:                []Mount{{Source: filepath.Join(home, "work")}},
+		ControlDenyPaths:      []string{tree},
+		ControlBridges:        []Mount{{Source: bridge}},
+		ProtectedWriteTargets: []string{filepath.Join(tree, "parent")},
+	}
+	if _, err := buildCheckedProfile(cfg); err != nil {
+		t.Fatalf("non-overlapping control bridge refused: %v", err)
+	}
+	cfg.ProtectedWriteTargets = []string{bridge}
+	_, err := buildCheckedProfile(cfg)
+	requireProtectedError(t, err, "(allow file-write* (literal \""+bridge+"\"))")
+}
+
 func mustCheckedProfile(t *testing.T, cfg Config) string {
 	t.Helper()
 	profile, err := buildCheckedProfile(cfg)

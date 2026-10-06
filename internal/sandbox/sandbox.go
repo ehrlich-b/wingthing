@@ -48,6 +48,13 @@ type Config struct {
 	UserHome     string        // per-user home override (empty = os.UserHomeDir)
 	Trace        bool          // wrap command with strace (Linux only)
 	AllowSockets []string      // Unix socket paths to allow outbound connections (macOS Seatbelt)
+	// macOS control isolation is part of the single Seatbelt profile. General
+	// mount/socket allows cannot reopen these paths; only the session's bridges
+	// and tool socket are exempt. Writable bridges allow writes to Source itself.
+	ControlDenyPaths     []string
+	ControlBridges       []Mount
+	ControlSocket        string
+	DenyOtherProcessInfo bool
 	// ProtectedWriteTargets are host-owned absolute paths (e.g. controller
 	// state) that no effective writable rule may reach. The final policy is
 	// refused with ProtectedWriteTargetError on any overlap, and backends that

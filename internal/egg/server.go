@@ -920,20 +920,18 @@ func (s *Server) RunSession(ctx context.Context, rc RunConfig) (runErr error) {
 			// Enforced against the final emitted policy inside sandbox.New.
 			ProtectedWriteTargets: append([]string(nil), rc.ProtectedWriteTargets...),
 		}
+		if runtime.GOOS == "darwin" {
+			sbCfg.ControlDenyPaths = control
+			sbCfg.ControlBridges = bridgeMounts
+			sbCfg.ControlSocket = rc.ToolSocketPath
+			sbCfg.DenyOtherProcessInfo = true
+		}
 
 		sb, err = sandbox.New(sbCfg)
 		if err != nil {
 			return fmt.Errorf("sandbox: %w", err)
 		}
-		sandboxBin, sandboxArgs := binPath, args
-		if runtime.GOOS == "darwin" {
-			// A second Seatbelt policy supplies narrow exceptions to the
-			// control-tree deny. Nested policies intersect, so it cannot
-			// weaken the filesystem or network policy in the outer sandbox.
-			sandboxBin = "/usr/bin/sandbox-exec"
-			sandboxArgs = append([]string{"-p", eggControlProfile(control, bridgeMounts, rc.ToolSocketPath), binPath}, args...)
-		}
-		cmd, err = sb.Exec(context.Background(), sandboxBin, sandboxArgs)
+		cmd, err = sb.Exec(context.Background(), binPath, args)
 		if err != nil {
 			if destroyErr := sb.Destroy(); destroyErr != nil {
 				log.Printf("egg: destroy sandbox after exec failure: %v", destroyErr)
@@ -1272,30 +1270,6 @@ func installBrowserShimAlias(dir, name, script string) error {
 		return os.WriteFile(path, []byte(script), 0755)
 	}
 	return os.Symlink("wt-browser", path)
-}
-
-func eggControlProfile(control []string, bridges []sandbox.Mount, toolSocket string) string {
-	var profile strings.Builder
-	profile.WriteString("(version 1)\n(allow default)\n")
-	// Other eggs' environments carry their capabilities. Seatbelt shares the
-	// host PID namespace, so filesystem isolation alone cannot protect them.
-	// A blanket deny also blocks self-inspection, which crashes node and python.
-	profile.WriteString("(deny process-info* (target others))\n")
-	for _, path := range control {
-		path = config.CanonicalProviderPath(path)
-		fmt.Fprintf(&profile, "(deny file-read* file-write* network-outbound (literal %q) (subpath %q))\n", path, path)
-	}
-	for _, bridge := range bridges {
-		path := config.CanonicalProviderPath(bridge.Source)
-		fmt.Fprintf(&profile, "(allow file-read* (literal %q) (subpath %q))\n", path, path)
-		if !bridge.ReadOnly {
-			fmt.Fprintf(&profile, "(allow file-write* (literal %q))\n", path)
-		}
-	}
-	if toolSocket != "" {
-		fmt.Fprintf(&profile, "(allow network-outbound (literal %q))\n", config.CanonicalProviderPath(toolSocket))
-	}
-	return profile.String()
 }
 
 // sandboxAllowedSockets converts already-filtered endpoint environment into

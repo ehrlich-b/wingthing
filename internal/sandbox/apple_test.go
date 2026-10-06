@@ -93,6 +93,68 @@ func TestBuildProfileDeclaredPortsAndSocketsSurviveProxyDeny(t *testing.T) {
 	}
 }
 
+func TestBuildProfileControlRuleOrder(t *testing.T) {
+	root, err := canonicalSandboxPath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := filepath.Join(root, "eggs")
+	bridge := filepath.Join(tree, "own", "browser-requests")
+	readOnly := filepath.Join(tree, "own", "shims")
+	socket := filepath.Join(tree, "own", ".tools", "tool.sock")
+	profile, err := buildCheckedProfile(Config{
+		Mounts:               []Mount{{Source: root}, {Source: bridge}, {Source: readOnly, ReadOnly: true}},
+		NetworkNeed:          NetworkNone,
+		AllowSockets:         []string{socket},
+		ControlDenyPaths:     []string{tree},
+		ControlBridges:       []Mount{{Source: bridge}, {Source: readOnly, ReadOnly: true}},
+		ControlSocket:        socket,
+		DenyOtherProcessInfo: true,
+		Deny:                 []string{readOnly},
+		DenyWrite:            []string{bridge},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := -1
+	for _, rule := range []string{
+		"(allow default)",
+		"(deny network*)",
+		fmt.Sprintf("(allow network-outbound (literal %q))", socket),
+		fmt.Sprintf("(allow file-write* (subpath %q))", root),
+		fmt.Sprintf("(allow file-write* (subpath %q))", bridge),
+		"(allow file-write* (subpath \"/private/tmp\"))",
+		"(deny process-info* (target others))",
+		fmt.Sprintf("(deny file-read* file-write* network-outbound (literal %q))", tree),
+		fmt.Sprintf("(deny file-read* file-write* network-outbound (subpath %q))", tree),
+		fmt.Sprintf("(allow file-read* (literal %q))", bridge),
+		fmt.Sprintf("(allow file-read* (subpath %q))", bridge),
+		fmt.Sprintf("(allow file-write* (literal %q))", bridge),
+		fmt.Sprintf("(allow file-read* (literal %q))", readOnly),
+		fmt.Sprintf("(allow file-read* (subpath %q))", readOnly),
+		fmt.Sprintf("(allow network-outbound (literal %q))", socket),
+		fmt.Sprintf("(deny file-read* file-write* (literal %q))", readOnly),
+		fmt.Sprintf("(deny file-write* (literal %q))", bridge),
+	} {
+		offset := strings.Index(profile[previous+1:], rule+"\n")
+		if offset < 0 {
+			t.Fatalf("missing or out-of-order rule %s after offset %d:\n%s", rule, previous, profile)
+		}
+		previous += 1 + offset
+	}
+	if strings.Contains(profile, "(deny process-info*)\n") {
+		t.Fatalf("blanket process inspection deny crashes interpreters:\n%s", profile)
+	}
+	for _, filter := range []string{"literal", "subpath"} {
+		if strings.Contains(profile, fmt.Sprintf("(allow file-write* (%s %q))", filter, readOnly)) {
+			t.Fatalf("read-only bridge must not be writable:\n%s", profile)
+		}
+	}
+	if strings.Count(profile, "(version 1)") != 1 || strings.Count(profile, "(allow default)") != 1 {
+		t.Fatalf("control isolation must share the main profile:\n%s", profile)
+	}
+}
+
 func TestBuildProfileProxyHasNoDirectDNS(t *testing.T) {
 	for _, need := range []NetworkNeed{NetworkNone, NetworkLocal, NetworkHTTPS, NetworkFull} {
 		t.Run(need.String(), func(t *testing.T) {
@@ -126,6 +188,10 @@ func TestBuildProfileRejectsUnsafePaths(t *testing.T) {
 				"deny":             {Deny: []string{path}},
 				"deny write":       {DenyWrite: []string{path}},
 				"socket":           {AllowSockets: []string{path}},
+				"control deny":     {ControlDenyPaths: []string{path}},
+				"control bridge":   {ControlBridges: []Mount{{Source: path}}},
+				"read-only bridge": {ControlBridges: []Mount{{Source: path, ReadOnly: true}}},
+				"control socket":   {ControlSocket: path},
 				"protected target": {ProtectedWriteTargets: []string{path}},
 			} {
 				t.Run(kind, func(t *testing.T) {
@@ -165,9 +231,16 @@ func TestBuildProfileRejectsUnsafeResolvedPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, source := range []string{alias, filepath.Join(alias, "missing")} {
-		profile, err := buildCheckedProfile(Config{Mounts: []Mount{{Source: source, UseRegex: true}}})
-		if err == nil || profile != "" {
-			t.Fatalf("unsafe symlink destination must refuse the profile: err=%v\n%s", err, profile)
+		for _, cfg := range []Config{
+			{Mounts: []Mount{{Source: source, UseRegex: true}}},
+			{ControlDenyPaths: []string{source}},
+			{ControlBridges: []Mount{{Source: source}}},
+			{ControlSocket: source},
+		} {
+			profile, err := buildCheckedProfile(cfg)
+			if err == nil || profile != "" {
+				t.Fatalf("unsafe symlink destination must refuse the profile: err=%v\n%s", err, profile)
+			}
 		}
 	}
 }
@@ -380,6 +453,110 @@ func requireSeatbeltEnforcement(t *testing.T) {
 	}
 	if out, err := exec.Command("sandbox-exec", "-p", "(version 1)(allow default)", "/bin/echo", "ok").CombinedOutput(); err != nil {
 		t.Fatalf("Seatbelt enforcement unavailable: %v: %s", err, out)
+	}
+}
+
+func TestSeatbeltControlIsolationEnforced(t *testing.T) {
+	requireSeatbeltEnforcement(t)
+	// Keep disposable Unix socket paths below macOS's sockaddr_un limit.
+	t.Setenv("TMPDIR", "/tmp")
+	root := t.TempDir()
+	tree := filepath.Join(root, "eggs")
+	own := filepath.Join(tree, "own")
+	for _, session := range []string{"own", "sibling"} {
+		if err := os.MkdirAll(filepath.Join(tree, session), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tree, session, "egg.token"), []byte("secret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bridge := filepath.Join(own, "browser-requests")
+	readOnly := filepath.Join(own, "lifecycle-settings.json")
+	for _, path := range []string{bridge, readOnly} {
+		if err := os.WriteFile(path, []byte("fixture\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	toolSocket := filepath.Join(own, "tool.sock")
+	for _, path := range []string{toolSocket, filepath.Join(own, "egg.sock"), filepath.Join(tree, "sibling", "tool.sock")} {
+		listener, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	sb, err := New(Config{
+		Mounts:               []Mount{{Source: root}, {Source: bridge}, {Source: readOnly, ReadOnly: true}},
+		NetworkNeed:          NetworkNone,
+		AllowSockets:         []string{toolSocket},
+		ControlDenyPaths:     []string{tree},
+		ControlBridges:       []Mount{{Source: bridge}, {Source: readOnly, ReadOnly: true}},
+		ControlSocket:        toolSocket,
+		DenyOtherProcessInfo: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { destroySandboxForTest(t, sb) })
+	// The profile must also seal a sibling created after policy compilation.
+	if err := os.Mkdir(filepath.Join(tree, "future"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "future", "egg.token"), []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const probe = `
+import os, socket, sys
+
+tree = os.path.join(sys.argv[1], "eggs")
+own = os.path.join(tree, "own")
+
+def denied_file(path, mode):
+    try:
+        with open(path, mode):
+            pass
+    except PermissionError:
+        return
+    raise AssertionError("controller file accessible: " + path)
+
+for session in ("own", "sibling", "future"):
+    token = os.path.join(tree, session, "egg.token")
+    denied_file(token, "r")
+    denied_file(token, "a")
+
+with open(os.path.join(own, "browser-requests"), "r+") as bridge:
+    assert bridge.read() == "fixture\n"
+    bridge.write("bridge\n")
+with open(os.path.join(own, "lifecycle-settings.json")) as settings:
+    assert settings.read() == "fixture\n"
+denied_file(os.path.join(own, "lifecycle-settings.json"), "a")
+
+with socket.socket(socket.AF_UNIX) as tool:
+    tool.settimeout(2)
+    tool.connect(os.path.join(own, "tool.sock"))
+for path in (os.path.join(own, "egg.sock"), os.path.join(tree, "sibling", "tool.sock")):
+    with socket.socket(socket.AF_UNIX) as control:
+        control.settimeout(2)
+        try:
+            control.connect(path)
+        except PermissionError:
+            continue
+        raise AssertionError("controller socket accessible: " + path)
+print("ok")
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd, err := sb.Exec(ctx, "/usr/bin/python3", []string{"-c", probe, root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("interpreter failed under generated control policy: %v\n%s", err, out)
+	}
+	if data, err := os.ReadFile(bridge); err != nil || string(data) != "fixture\nbridge\n" {
+		t.Fatalf("bridge write missing: %v %q", err, data)
 	}
 }
 
