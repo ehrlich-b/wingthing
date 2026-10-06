@@ -14,6 +14,15 @@ import (
 	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
 
+// Linux sandboxes re-exec the test binary through the same wrapper as wt.
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "_deny_init" {
+		sandbox.DenyInit(os.Args[2:])
+		return
+	}
+	os.Exit(m.Run())
+}
+
 func TestRecoveryExitDistinguishesShutdownFromDeliberateExit(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
@@ -107,6 +116,11 @@ func TestRecoveryIdleTerminationRefusesUnpersistedStop(t *testing.T) {
 }
 
 func TestRecoveryStorageCannotBeWrittenOrReplacedBySandbox(t *testing.T) {
+	if ok, help := sandbox.CheckCapability(); !ok {
+		t.Skipf("platform sandbox unavailable: %s", help)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	state := t.TempDir()
 	dir := filepath.Join(state, "eggs", "sandbox")
 	guard := sandbox.Config{Mounts: []sandbox.Mount{{Source: state, Target: state}}, NetworkNeed: sandbox.NetworkNone}
@@ -124,10 +138,11 @@ func TestRecoveryStorageCannotBeWrittenOrReplacedBySandbox(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer sb.Destroy()
-		cmd, err := sb.Exec(context.Background(), "/usr/bin/true", nil)
+		cmd, err := sb.Exec(ctx, "/usr/bin/true", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
+		cmd.WaitDelay = time.Second
 		if output, err := cmd.CombinedOutput(); err != nil {
 			if strings.Contains(string(output), "sandbox_apply: Operation not permitted") {
 				t.Skip("unguarded Seatbelt also cannot run in this environment")
@@ -144,14 +159,13 @@ func TestRecoveryStorageCannotBeWrittenOrReplacedBySandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sb.Destroy()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	// A deliberately broad writable mount still cannot reopen recovery state
 	// or rename its ancestor. A writable sibling remains usable.
 	cmd, err := sb.Exec(ctx, "/bin/sh", []string{"-c", `printf forged > "$1" 2>/dev/null; mv "$2" "$2-moved" 2>/dev/null; printf sibling > "$2/sibling"`, "storage-test", path, state})
 	if err != nil {
 		t.Fatal(err)
 	}
+	cmd.WaitDelay = time.Second
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("storage guard: %v %s", err, output)
 	}

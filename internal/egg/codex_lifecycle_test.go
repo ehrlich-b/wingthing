@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ehrlich-b/wingthing/internal/sandbox"
 )
 
 func TestCodexLifecycleInstalledHookTrust(t *testing.T) {
@@ -228,6 +230,7 @@ func TestParseCodexVersion(t *testing.T) {
 }
 
 func TestCodexLifecycleSupportedUsesBinaryVersion(t *testing.T) {
+	policy := lifecycleProbePolicy{cwd: t.TempDir()}
 	for _, tc := range []struct {
 		version string
 		want    bool
@@ -250,7 +253,7 @@ func TestCodexLifecycleSupportedUsesBinaryVersion(t *testing.T) {
 		if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if got, reason := codexLifecycleSupported(path, lifecycleProbePolicy{}); got != tc.want || reason != "" {
+		if got, reason := codexLifecycleSupported(path, policy); got != tc.want || reason != "" {
 			t.Fatalf("capability for %q = %t, want %t", tc.version, got, tc.want)
 		}
 		if !tc.want {
@@ -266,6 +269,7 @@ func TestCodexLifecycleSupportedCachesByBinaryPathAndMtime(t *testing.T) {
 	for _, supported := range []bool{true, false} {
 		t.Run(strconv.FormatBool(supported), func(t *testing.T) {
 			dir := t.TempDir()
+			policy := lifecycleProbePolicy{cwd: t.TempDir()}
 			binary, counter := filepath.Join(dir, "codex"), filepath.Join(dir, "probes")
 			writeBinary := func(supported bool, modTime time.Time) {
 				t.Helper()
@@ -287,7 +291,7 @@ func TestCodexLifecycleSupportedCachesByBinaryPathAndMtime(t *testing.T) {
 				var wg sync.WaitGroup
 				for range 6 {
 					wg.Go(func() {
-						if got, reason := codexLifecycleSupported(binary, lifecycleProbePolicy{}); got != want || reason != "" {
+						if got, reason := codexLifecycleSupported(binary, policy); got != want || reason != "" {
 							t.Errorf("capability = %t, want %t", got, want)
 						}
 					})
@@ -308,10 +312,26 @@ func TestCodexLifecycleSupportedCachesByBinaryPathAndMtime(t *testing.T) {
 			if err := os.Remove(binary); err != nil {
 				t.Fatal(err)
 			}
-			if supported, _ := codexLifecycleSupported(binary, lifecycleProbePolicy{}); supported {
+			if supported, _ := codexLifecycleSupported(binary, policy); supported {
 				t.Fatal("removed binary retained cached capability")
 			}
 		})
+	}
+}
+
+func TestCodexLifecycleSupportedRejectsWritableBinary(t *testing.T) {
+	dir := t.TempDir()
+	binary, counter := filepath.Join(dir, "codex"), filepath.Join(dir, "probes")
+	script := "#!/bin/sh\nprintf 'probe\\n' >> " + shellQuoteLifecycle(counter) + "\nprintf 'codex-cli 0.159.3\\n'\n"
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	policy := lifecycleProbePolicy{cwd: t.TempDir(), mounts: []sandbox.Mount{{Source: dir}}}
+	if supported, reason := codexLifecycleSupported(binary, policy); supported || !strings.Contains(reason, "writable sandbox root") {
+		t.Fatalf("writable binary accepted: %t, %q", supported, reason)
+	}
+	if _, err := os.Stat(counter); !os.IsNotExist(err) {
+		t.Fatalf("writable binary was executed: %v", err)
 	}
 }
 
