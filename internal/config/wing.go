@@ -41,6 +41,7 @@ type WingConfig struct {
 	ConnectionMode string         `yaml:"connection_mode,omitempty"` // "relay" (default), "p2p", "p2p_only", "direct"
 	HostedRelay    string         `yaml:"hosted_relay,omitempty"`    // "allow" (default) or "deny"
 	Conversations  string         `yaml:"conversations,omitempty"`   // opt-in stable host mailbox: "enabled" or "disabled" (default)
+	Recover        string         `yaml:"recover,omitempty"`         // empty/off (default), or coordinators
 
 	// P2P / Direct mode settings
 	ICEServers []ICEServer `yaml:"ice_servers,omitempty"` // STUN/TURN servers for WebRTC
@@ -407,6 +408,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 	if err := validateConversations(cfg.Conversations); err != nil {
 		return nil, fmt.Errorf("validate %s: %w", path, err)
 	}
+	if err := validateRecovery(cfg.Recover); err != nil {
+		return nil, fmt.Errorf("validate %s: %w", path, err)
+	}
 	// Migrate legacy root -> paths before validating export isolation.
 	if cfg.Root != "" && len(cfg.Paths) == 0 {
 		cfg.Paths = PathList{{Path: cfg.Root}}
@@ -420,6 +424,9 @@ func LoadWingConfig(dir string) (*WingConfig, error) {
 // SaveWingConfig writes wing.yaml to dir. The file may contain the roost's JWT signing
 // key, so it must never be readable by other local users.
 func SaveWingConfig(dir string, cfg *WingConfig) error {
+	if err := validateRecovery(cfg.Recover); err != nil {
+		return err
+	}
 	if err := validateConversations(cfg.Conversations); err != nil {
 		return err
 	}
@@ -482,6 +489,13 @@ func SaveWingConfig(dir string, cfg *WingConfig) error {
 func validateConversations(value string) error {
 	if value != "" && value != ConversationsEnabled && value != ConversationsDisabled {
 		return fmt.Errorf("conversations: expected %q or %q, got %q", ConversationsEnabled, ConversationsDisabled, value)
+	}
+	return nil
+}
+
+func validateRecovery(value string) error {
+	if value != "" && value != "off" && value != "coordinators" {
+		return fmt.Errorf("recover: expected off or coordinators, got %q", value)
 	}
 	return nil
 }

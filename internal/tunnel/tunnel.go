@@ -135,6 +135,8 @@ type pastSessionInfo struct {
 	Chat                    bool   `json:"chat,omitempty"`
 	UserID                  string `json:"user_id,omitempty"`
 	Resumable               bool   `json:"resumable,omitempty"`
+	Recoverable             bool   `json:"recoverable,omitempty"`
+	Status                  string `json:"status,omitempty"`
 	ResumeUnavailableReason string `json:"resume_unavailable_reason,omitempty"`
 }
 
@@ -1059,6 +1061,9 @@ func collectSessionsHistory(cfg *config.Config) []pastSessionInfo {
 			info.StartedAt = stat.ModTime().Unix()
 		}
 		info.Resumable, info.ResumeUnavailableReason = eggclient.SessionResumeStatus(dir, agentName, cwd)
+		if classified := eggclient.ClassifyEgg(cfg, sessionID); classified.Class == eggclient.RecoveryEligible {
+			info.Recoverable, info.Status = true, "exited"
+		}
 		dead = append(dead, info)
 	}
 

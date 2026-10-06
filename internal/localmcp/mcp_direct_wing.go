@@ -35,6 +35,7 @@ var defaultDirectMCPGrants = []string{
 	"sandbox.read",
 	"worktree.read", "worktree.write",
 	"terminal.read", "terminal.send", "terminal.start", "terminal.rename", "terminal.stop",
+	"session.recover",
 	"agent.run", "agent.read", "agent.stop",
 }
 

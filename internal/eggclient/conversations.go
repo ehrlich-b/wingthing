@@ -43,3 +43,13 @@ func SessionConversationLink(cfg *config.Config, session string) ConversationLin
 	}
 	return linkForConversation(c)
 }
+
+func IsCurrentConversationExecution(cfg *config.Config, session string) bool {
+	db, err := store.Open(cfg.DBPath())
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	c, err := db.ConversationForSession(session)
+	return err == nil && c.SessionID == session
+}

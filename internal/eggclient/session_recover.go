@@ -53,7 +53,20 @@ func ClassifyEgg(cfg *config.Config, id string) RecoverySession {
 	meta := ReadEggMetaValues(dir)
 	pid, alive := ReadAliveEggPID(dir)
 	intent, err := egg.ReadLaunchIntent(dir)
+	if err == nil && intent.Started && intent.Agent == "codex" && intent.ProviderSessionID == "" {
+		if home, homeErr := LifecycleProviderHome(cfg, meta["provider_home"]); homeErr == nil {
+			if _, readErr := egg.TryReadSessionLifecycle(dir, intent.Agent, intent.CWD, home, "", alive, 0, 1); readErr == nil {
+				intent, err = egg.ReadLaunchIntent(dir)
+			}
+		}
+	}
 	r := RecoverySession{LocalSession: LocalSession{ID: id, Name: ReadSessionName(dir), Principal: ReadSessionPrincipal(dir), Agent: meta["agent"], CWD: meta["cwd"], Kind: meta["kind"], PID: pid}, Intent: intent, Class: RecoveryArchived}
+	if r.Kind == "" && r.Agent != "" {
+		r.Kind = "agent"
+	}
+	if r.Name == "" && ValidateSessionName(intent.Label) == nil {
+		r.Name = intent.Label
+	}
 	if alive {
 		r.Class = RecoveryAlive
 		return r
@@ -70,7 +83,7 @@ func ClassifyEgg(cfg *config.Config, id string) RecoverySession {
 		return r
 	}
 	r.ConversationLink = SessionConversationLink(cfg, id)
-	if intent.ConversationID != "" && r.ConversationID != intent.ConversationID {
+	if intent.ConversationID != "" && (r.ConversationID != intent.ConversationID || !IsCurrentConversationExecution(cfg, id)) {
 		return r
 	}
 	r.Class, r.Status, r.Recoverable = RecoveryEligible, "exited", true
@@ -141,7 +154,9 @@ func ClaimAutoRecovery(dir, boot string, now time.Time) (bool, error) {
 
 func RecordRecoveryFailure(dir string, failure error, automatic bool, now time.Time) error {
 	return egg.UpdateLaunchIntent(dir, func(intent *egg.LaunchIntent) {
-		intent.RecoveryError = failure.Error()
+		// Provider/config errors can contain environment values. Keep only the
+		// failure state here; the caller receives the detailed error directly.
+		intent.RecoveryError = "recovery launch failed"
 		if automatic {
 			intent.AutoFailures++
 			backoff := time.Minute << min(intent.AutoFailures-1, 6)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/ehrlich-b/wingthing/internal/config"
 	"github.com/ehrlich-b/wingthing/internal/egg"
+	"github.com/ehrlich-b/wingthing/internal/store"
 )
 
 func recoveryFixture(t *testing.T, cfg *config.Config, id string) string {
@@ -28,6 +29,67 @@ func recoveryFixture(t *testing.T, cfg *config.Config, id string) string {
 	return dir
 }
 
+func TestRecoverySpawnPersistsIntentBeforeProviderAdmission(t *testing.T) {
+	old := config.ReleaseChannel
+	config.ReleaseChannel = "stable"
+	t.Cleanup(func() { config.ReleaseChannel = old })
+	state, err := os.MkdirTemp("", "wt-rec-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(state) })
+	cfg := &config.Config{Dir: state}
+	db, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, _, err := db.ReserveConversation(store.Conversation{ID: "root", OwnerID: "owner", SessionID: "source", LaunchKey: "initial", SpecDigest: "initial", Agent: "claude", CWD: state}); err != nil {
+		t.Fatal(err)
+	}
+	policy := egg.UnsandboxedEggConfig()
+	policy.SourcePath = filepath.Join(cfg.Dir, "custom-egg.yaml")
+	_, err = SpawnEgg(cfg, "spawn", "claude", policy, 24, 80, cfg.Dir, false, false, false, EggIdentity{}, 0,
+		SpawnEggOpts{ProviderReserved: true, ResumeSessionID: "provider", ResumeSourceSessionID: "source", AgentArgs: []string{"--model", "opus", "--settings", "secret-settings"}, Label: "coordinator"})
+	if err == nil || !strings.Contains(err.Error(), "reservation is unavailable") {
+		t.Fatalf("unexpected admission: %v", err)
+	}
+	dir := filepath.Join(cfg.Dir, "eggs", "spawn")
+	intent, err := egg.ReadLaunchIntent(dir)
+	if err != nil || intent.Agent != "claude" || intent.CWD != cfg.Dir || intent.Label != "coordinator" || intent.ProviderSessionID != "provider" || intent.Model != "opus" || intent.EggConfig != policy.SourcePath || intent.ConversationID != "root" || intent.RootConversationID != "root" || intent.Started {
+		t.Fatalf("launch intent: %+v %v", intent, err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, egg.LaunchIntentFile))
+	if err != nil || strings.Contains(string(data), "secret-settings") {
+		t.Fatalf("argv persisted in intent: %s %v", data, err)
+	}
+	if got := ClassifyEgg(cfg, "spawn"); got.Class != RecoveryArchived {
+		t.Fatalf("failed launch eligible: %+v", got)
+	}
+}
+
+func TestRecoveryClassificationCapturesExactCodexHookIdentity(t *testing.T) {
+	cfg := &config.Config{Dir: t.TempDir()}
+	dir := recoveryFixture(t, cfg, "codex-session")
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "egg.meta"), []byte("agent=codex\ncwd=/fixture\nprovider_home="+home+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := egg.WriteLaunchIntent(dir, egg.LaunchIntent{Version: 1, Agent: "codex", CWD: "/fixture", Started: true}); err != nil {
+		t.Fatal(err)
+	}
+	spool := filepath.Join(home, ".codex", "wingthing-events", "codex-session")
+	if err := os.MkdirAll(spool, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(spool, "seq.00000000000000000001.json"), []byte(`{"session_id":"exact-thread","hook_event_name":"SessionStart"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ClassifyEgg(cfg, "codex-session"); got.Class != RecoveryEligible || got.Intent.ProviderSessionID != "exact-thread" {
+		t.Fatalf("native identity not reconciled: %+v", got)
+	}
+}
+
 func TestRecoveryClassificationAndLegacyCompatibility(t *testing.T) {
 	cfg := &config.Config{Dir: t.TempDir()}
 	alive := recoveryFixture(t, cfg, "alive")
@@ -36,7 +98,14 @@ func TestRecoveryClassificationAndLegacyCompatibility(t *testing.T) {
 	}
 	recoveryFixture(t, cfg, "interrupted")
 	archived := recoveryFixture(t, cfg, "unsupported")
-	if err := egg.UpdateLaunchIntent(archived, func(i *egg.LaunchIntent) { i.ProviderSessionID = "" }); err != nil {
+	if err := os.WriteFile(filepath.Join(archived, "egg.meta"), []byte("agent=ollama\ncwd=/fixture\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := egg.UpdateLaunchIntent(archived, func(i *egg.LaunchIntent) { i.Agent = "ollama" }); err != nil {
+		t.Fatal(err)
+	}
+	missing := recoveryFixture(t, cfg, "missing-provider")
+	if err := egg.UpdateLaunchIntent(missing, func(i *egg.LaunchIntent) { i.ProviderSessionID = "" }); err != nil {
 		t.Fatal(err)
 	}
 	stopped := recoveryFixture(t, cfg, "stopped")
@@ -47,7 +116,7 @@ func TestRecoveryClassificationAndLegacyCompatibility(t *testing.T) {
 	if err := os.Remove(filepath.Join(legacy, egg.LaunchIntentFile)); err != nil {
 		t.Fatal(err)
 	}
-	for id, want := range map[string]RecoveryClass{"alive": RecoveryAlive, "interrupted": RecoveryEligible, "unsupported": RecoveryArchived, "stopped": RecoveryStopped, "legacy": RecoveryArchived} {
+	for id, want := range map[string]RecoveryClass{"alive": RecoveryAlive, "interrupted": RecoveryEligible, "unsupported": RecoveryArchived, "missing-provider": RecoveryArchived, "stopped": RecoveryStopped, "legacy": RecoveryArchived} {
 		if got := ClassifyEgg(cfg, id); got.Class != want {
 			t.Errorf("%s: %s, want %s", id, got.Class, want)
 		}
@@ -96,6 +165,9 @@ func TestRecoveryAutoClaimOncePerBootAndBackoff(t *testing.T) {
 func TestRecoveryIntentContainsOnlyLaunchMetadata(t *testing.T) {
 	cfg := &config.Config{Dir: t.TempDir()}
 	dir := recoveryFixture(t, cfg, "source")
+	if err := RecordRecoveryFailure(dir, errors.New("env API_KEY=credential-value"), true, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(filepath.Join(dir, egg.LaunchIntentFile))
 	if err != nil {
 		t.Fatal(err)

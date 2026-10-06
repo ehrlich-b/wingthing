@@ -299,7 +299,7 @@ func buildTools() []Tool {
 		},
 		{
 			Name: "terminal_list", Title: "List persistent terminals",
-			Description: "List live Wingthing sessions with stable IDs, labels, process kind, agent, activity, working directory, and hook-derived status: working, blocked, idle, done, exited, or unknown. Older eggs and unsupported agents report unknown. Defaults to local sessions; remote selects one configured SSH name on an unrestricted MCP connection.",
+			Description: "List Wingthing sessions, including exited interrupted sessions with recoverable=true, with stable IDs, labels, process kind, agent, activity, working directory, and hook-derived status: working, blocked, idle, done, exited, or unknown. Older eggs and unsupported agents report unknown. Defaults to local sessions; remote selects one configured SSH name on an unrestricted MCP connection.",
 			InputSchema: objectSchema(map[string]any{
 				"remote": stringProperty("Configured SSH remote name; omit for local sessions only"),
 			}), Annotations: readOnly,
@@ -318,6 +318,15 @@ func buildTools() []Tool {
 			Description: "Read native interactive agent state, exact provider identity, readiness, and the durable event head. Unsupported providers report unknown; terminal silence is never completion. Archived sessions remain readable.",
 			InputSchema: objectSchema(map[string]any{"session": stringProperty("Wingthing session ID or unique label/prefix")}, "session"), Annotations: readOnly,
 			Grant: "terminal.read", Surfaces: both, AuditTargetKeys: []string{"session"},
+		},
+		{
+			Name: "session_recover", Title: "Recover interrupted agent sessions",
+			Description: "List owned recoverable interrupted sessions, or resume one by exact Wingthing session ID. Deliberately stopped and legacy sessions are excluded; replacements retain their conversation and DotID.",
+			InputSchema: objectSchema(map[string]any{
+				"list":    map[string]any{"type": "boolean", "default": false},
+				"session": stringProperty("Exact interrupted Wingthing session ID; omit to list"),
+			}), Annotations: modelCall,
+			Grant: "session.recover", Surfaces: both, AuditTargetKeys: []string{"session"},
 		},
 		{
 			Name: "session_read", Title: "Read session conversation events",

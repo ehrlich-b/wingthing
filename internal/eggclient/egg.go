@@ -866,6 +866,9 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 	}
 	if len(o.Command) == 0 && agentName != "" {
 		link := SessionConversationLink(cfg, sessionID)
+		if link.ConversationID == "" && o.ResumeSourceSessionID != "" {
+			link = SessionConversationLink(cfg, o.ResumeSourceSessionID)
+		}
 		if o.RecoveryConversation.ConversationID != "" {
 			link = o.RecoveryConversation
 		}
