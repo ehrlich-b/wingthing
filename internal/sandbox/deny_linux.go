@@ -313,7 +313,7 @@ func DenyInit(args []string) {
 	// parent is still writable; write isolation below may remount HOME read-only.
 	// The later mount and mount-table verification remain mandatory, so an
 	// existing secret path can never pass through after a masking failure.
-	if operation, path, err := prepareDenyMountpoints(denyPaths); err != nil {
+	if operation, path, err := prepareDenyMountpoints(append(append([]string(nil), denyPaths...), denyWritePaths...)); err != nil {
 		failEnforcement(operation, path, err)
 	}
 
@@ -398,19 +398,17 @@ func DenyInit(args []string) {
 
 	// Deny-write paths — bind mount read-only so agent can read but not modify.
 	for _, p := range denyWritePaths {
-		if _, err := os.Stat(p); err != nil {
-			if os.IsNotExist(err) {
-				log.Printf("_deny_init: deny-write path absent at launch: %s", p)
-				continue
-			}
+		file, err := openConfinedExisting("/", p)
+		if err != nil {
 			failEnforcement("inspect deny-write path", p, err)
 		}
-		if err := unix.Mount(p, p, "", unix.MS_BIND, ""); err != nil {
+		if err := unix.Mount(mountFDPath(file), mountFDPath(file), "", unix.MS_BIND, ""); err != nil {
 			failEnforcement("bind deny-write path", p, err)
 		}
-		if err := remountBindReadonly(p); err != nil {
+		if err := remountConfinedBindReadonly("/", p); err != nil {
 			failEnforcement("make deny-write path read-only", p, err)
 		}
+		file.Close()
 		expectedMounts = append(expectedMounts, expectedMount{Path: p, ReadOnly: true})
 	}
 
@@ -464,6 +462,13 @@ func DenyInit(args []string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
+	// Resolve cwd through the completed mount tree. An inherited directory FD
+	// from before a parent bind/overlay would bypass masks beneath that parent.
+	var cwdErr error
+	cmd.Dir, cwdErr = os.Getwd()
+	if cwdErr != nil {
+		failEnforcement("resolve agent working directory", ".", cwdErr)
+	}
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWPID,
@@ -539,9 +544,13 @@ func prepareDenyMountpoints(paths []string) (operation, path string, err error) 
 		} else if !os.IsNotExist(statErr) {
 			return "inspect deny path", path, statErr
 		}
-		if mkdirErr := os.MkdirAll(path, 0o755); mkdirErr != nil {
-			return "create deny mountpoint", path, mkdirErr
+		// An absent denied file gets a directory placeholder. Leaving an empty
+		// regular policy file on the host could change next-launch discovery.
+		file, createErr := createConfinedMountpoint("/", path, true)
+		if createErr != nil {
+			return "create deny mountpoint", path, createErr
 		}
+		file.Close()
 		if _, statErr := os.Lstat(path); statErr != nil {
 			return "inspect created deny path", path, statErr
 		}
@@ -948,6 +957,17 @@ func remountBindReadonlyAt(path, target string) error {
 	return unix.Mount("", target, "", flags, "")
 }
 
+func remountConfinedBindReadonly(root, path string) error {
+	// A handle opened before the bind still refers to the covered mount.
+	// Resolve again through confined parent FDs to pin the new top mount.
+	file, err := openConfinedExisting(root, path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return remountBindReadonlyAt(filepath.Join(root, path), mountFDPath(file))
+}
+
 func mountFlagsFromOptions(options map[string]bool) uintptr {
 	known := []struct {
 		option string
@@ -1239,7 +1259,6 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 	}
 	for _, mount := range jailMounts(roMounts, writablePaths) {
 		p := mount.Path
-		target := filepath.Join(newRoot, p)
 		sourceFD, targetFD, err := jailMkTarget(newRoot, p)
 		if err != nil {
 			failEnforcement("create jail mountpoint", p, err)
@@ -1248,7 +1267,7 @@ func setupJail(tmpDir string, roMounts, writablePaths []string, home string) {
 			failEnforcement("bind jail path", p, err)
 		}
 		if mount.ReadOnly {
-			if err := remountBindReadonlyAt(target, mountFDPath(targetFD)); err != nil {
+			if err := remountConfinedBindReadonly(newRoot, p); err != nil {
 				failEnforcement("make jail path read-only", p, err)
 			}
 		}

@@ -57,6 +57,26 @@ func runHardeningNamespace(t *testing.T, scenario, root string) {
 
 func runHardeningScenario(scenario, root string) error {
 	switch scenario {
+	case "deny-write":
+		home, workspace, tmp := filepath.Join(root, "home"), filepath.Join(root, "work"), filepath.Join(root, "session")
+		for _, dir := range []string{home, workspace, tmp} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		existing := filepath.Join(workspace, "policy.yaml")
+		if err := os.WriteFile(existing, []byte("readable policy"), 0o600); err != nil {
+			return err
+		}
+		if err := os.Chdir(workspace); err != nil {
+			return err
+		}
+		command := `test "$(cat policy.yaml)" = "readable policy" && ! printf evil > policy.yaml && ! printf evil > egg.yaml && ! rm -rf egg.yaml && ! mv replacement egg.yaml && ! mkdir egg.yaml && printf allowed > ordinary`
+		if err := os.WriteFile(filepath.Join(workspace, "replacement"), []byte("base: none"), 0o600); err != nil {
+			return err
+		}
+		DenyInit([]string{"--uid", "0", "--gid", "0", "--log", filepath.Join(tmp, "deny.log"), "--home", home, "--writable", workspace, "--deny-write", existing, "--deny-write", filepath.Join(workspace, "egg.yaml"), "--", "/bin/sh", "-c", command})
+		return fmt.Errorf("DenyInit returned")
 	case "readonly-prefix":
 		home := filepath.Join(root, "home")
 		writable := []string{filepath.Join(home, ".cache"), filepath.Join(home, ".claude")}
@@ -208,6 +228,18 @@ func TestOverlayRootAgentCannotReadWrapperBackingFDs(t *testing.T) {
 
 func TestReadonlyHomeRejectsSiblingSymlinkWrites(t *testing.T) {
 	runHardeningNamespace(t, "readonly-prefix", t.TempDir())
+}
+
+func TestDenyWriteMissingFileCannotBeCreatedOrReplaced(t *testing.T) {
+	root := t.TempDir()
+	runHardeningNamespace(t, "deny-write", root)
+	data, err := os.ReadFile(filepath.Join(root, "work", "ordinary"))
+	if err != nil || string(data) != "allowed" {
+		t.Fatalf("ordinary workspace writes failed: %q, %v", data, err)
+	}
+	if info, err := os.Stat(filepath.Join(root, "work", "egg.yaml")); err != nil || !info.IsDir() {
+		t.Fatalf("absent policy became a discoverable file: %v, %v", info, err)
+	}
 }
 
 func TestJailExposesOnlyDeclaredHomePaths(t *testing.T) {

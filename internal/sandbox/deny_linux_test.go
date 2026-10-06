@@ -233,3 +233,29 @@ func TestWritablePrefixFilesRejectsSymlinksAndUndeclaredExpansion(t *testing.T) 
 		t.Fatal("accepted undeclared prefix")
 	}
 }
+
+func TestMissingDeniedPolicyUsesDirectoryPlaceholder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "egg.yaml")
+	if _, _, err := prepareDenyMountpoints([]string{path}); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		t.Fatalf("policy placeholder = %v, %v", info, err)
+	}
+	if _, err := os.ReadFile(path); err == nil {
+		t.Fatal("missing policy became a loadable empty configuration")
+	}
+}
+
+func TestMissingDeniedPathRejectsSymlinkParent(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := prepareDenyMountpoints([]string{filepath.Join(root, "link", "egg.yaml")}); err == nil {
+		t.Fatal("created a denied mountpoint through a symlink")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "egg.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("symlink target was changed: %v", err)
+	}
+}
