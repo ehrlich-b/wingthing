@@ -258,8 +258,19 @@ func (s *Server) toolAgentContinue(arguments json.RawMessage) (map[string]any, e
 	return continuationLaunchResult(c, turn, false), nil
 }
 
-func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.ConversationContinuation, model, input string) error {
-	eggCfg, err := eggclient.LoadSpawnEggConfig("", c.CWD, s.Unsandboxed)
+func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.ConversationContinuation, model, input string, recovery ...*eggclient.RecoverySession) error {
+	configPath := ""
+	if len(recovery) > 0 {
+		configPath = recovery[0].Intent.EggConfig
+		if configPath == "" {
+			wc, err := config.LoadWingConfig(s.Cfg.Dir)
+			if err != nil {
+				return err
+			}
+			configPath = wc.EggConfig
+		}
+	}
+	eggCfg, err := eggclient.LoadSpawnEggConfig(configPath, c.CWD, s.Unsandboxed)
 	if err != nil {
 		return err
 	}
@@ -278,7 +289,11 @@ func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.C
 		if provider != turn.ProviderSessionID {
 			return errors.New("restored provider does not match the continuation")
 		}
-		args, managed, err := s.prepareBoundParentLaunch(c, eggCfg, headlessCoordinatorArgs(model, input))
+		launchArgs := headlessCoordinatorArgs(model, input)
+		if model == "" {
+			launchArgs = launchArgs[2:]
+		}
+		args, managed, err := s.prepareBoundParentLaunch(c, eggCfg, launchArgs)
 		if err != nil {
 			return err
 		}
@@ -286,6 +301,11 @@ func (s *Server) launchHeadlessContinuation(c *store.Conversation, turn *store.C
 			return err
 		}
 		opts := eggclient.SpawnEggOpts{Label: c.Title, Kind: "agent", AgentArgs: args, Principal: s.clientPrincipal(), ResumeSessionID: provider, ResumeSourceSessionID: turn.SourceSession, ProviderReserved: true}
+		if len(recovery) > 0 {
+			source := recovery[0]
+			opts.Label = source.Name
+			opts.RecoveredFrom, opts.RecoveryBoot, opts.RecoveryConversation = source.ID, source.Intent.AutoBoot, source.ConversationLink
+		}
 		if managed != nil {
 			opts = managed.launchOpts(s.Cfg, opts)
 		}

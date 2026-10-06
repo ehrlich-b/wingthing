@@ -442,6 +442,8 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.toolTerminalRead(ctx, arguments)
 	case "session_status":
 		data, err = s.toolSessionStatus(ctx, arguments)
+	case "session_recover":
+		data, err = s.ToolSessionRecover(ctx, arguments)
 	case "session_read":
 		data, err = s.toolSessionRead(ctx, arguments)
 	case "session_wait":
@@ -452,6 +454,12 @@ func (s *Server) callTool(ctx context.Context, name string, arguments json.RawMe
 		data, err = s.toolTerminalSend(ctx, arguments)
 	case "terminal_wait":
 		data, err = s.toolTerminalWait(ctx, arguments)
+	case "worktree_create":
+		data, err = s.toolWorktreeCreate(arguments)
+	case "worktree_list":
+		data, err = s.toolWorktreeList(arguments)
+	case "worktree_remove":
+		data, err = s.toolWorktreeRemove(arguments)
 	case "terminal_start":
 		data, err = s.toolTerminalStart(arguments)
 	case "agent_start":
@@ -572,6 +580,7 @@ func (s *Server) toolCapabilities(arguments json.RawMessage) (map[string]any, er
 			"max_parallel":          definition.MaxParallel,
 			"network_domains":       profile.Domains,
 			"persistent_storage":    append(append([]string(nil), profile.WriteRegex...), profile.WriteDirs...),
+			"status_source":         definition.StatusSource, "status_reason": definition.StatusReason,
 		})
 	}
 	surface := s.controlSurface()

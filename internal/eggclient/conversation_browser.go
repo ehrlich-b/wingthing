@@ -11,5 +11,13 @@ func SessionLifecycleSummary(ctx context.Context, cfg *config.Config, id string)
 	if err != nil {
 		return nil
 	}
-	return map[string]any{"state": view.State, "status": view.Status, "state_source": view.StateSource, "ready": view.Ready, "process_alive": view.ProcessAlive, "head_cursor": view.HeadCursor}
+	summary := map[string]any{"state": view.State, "status": view.Status, "state_source": view.StateSource, "ready": view.Ready, "process_alive": view.ProcessAlive, "head_cursor": view.HeadCursor}
+	classified := ClassifyEgg(cfg, id)
+	if classified.Class == RecoveryEligible {
+		summary["status"], summary["recoverable"] = "exited", true
+	}
+	if classified.Intent.RecoveredFrom != "" {
+		summary["recovered_from"] = classified.Intent.RecoveredFrom
+	}
+	return summary
 }

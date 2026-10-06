@@ -100,6 +100,7 @@ func TestLocalMCPStdioProtocolAndToolDiscovery(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		"worktree_create", "worktree_list", "worktree_remove",
 		"terminal_list", "terminal_start", "terminal_rename", "agent_start", "agent_run", "agent_status",
 		"agent_wait", "agent_result", "agent_events", "agent_steer", "agent_stop", "prompt_list", "prompt_get", "prompt_save",
 		"prompt_run", "prompt_loop", "swarm_run", "sandbox_explain", "message_send", "message_list", "message_wait",

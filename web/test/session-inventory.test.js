@@ -134,7 +134,7 @@ test('semantic needs-input participates in attention filtering without a termina
 });
 
 test('inventory dots and labels use the shared six-value status for both providers', () => {
-    for (const source of ['claude_hook', 'codex_hook', 'egg_process']) {
+    for (const source of ['claude_hook', 'codex_hook', 'gemini_hook', 'opencode_hook', 'egg_process']) {
         for (const status of ['working', 'blocked', 'idle', 'done', 'exited', 'unknown']) {
             const state = sessionInventoryState({ ...session, lifecycle: { state: 'completed', status, state_source: source } }, wing);
             assert.equal(state.status, status);

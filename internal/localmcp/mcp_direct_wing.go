@@ -33,7 +33,9 @@ var defaultDirectMCPGrants = []string{
 	"capabilities.read",
 	"message.send", "message.read",
 	"sandbox.read",
+	"worktree.read", "worktree.write",
 	"terminal.read", "terminal.send", "terminal.start", "terminal.rename", "terminal.stop",
+	"session.recover",
 	"agent.run", "agent.read", "agent.stop",
 }
 
