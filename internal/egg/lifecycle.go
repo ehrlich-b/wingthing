@@ -461,7 +461,11 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 	}
 	var hookState SessionEvent
 	hookEvidence, sessionEnded := false, false
+	unavailableReason := ""
 	for _, event := range j.events {
+		if event.Type == "lifecycle_unavailable" {
+			unavailableReason = event.Reason
+		}
 		if event.State != "" && event.Type != "session_exit" {
 			view.State = event.State
 			view.StateSource = event.Source
@@ -532,6 +536,9 @@ func readSessionLifecycle(eggDir, agent, cwd, providerHome, exactProviderID stri
 		view.Reason = "provider has no native interactive lifecycle adapter"
 		if definition, ok := agentpkg.LookupDefinition(agent); ok && agent != "codex" && definition.StatusReason != "" {
 			view.Reason = definition.StatusReason
+		}
+		if unavailableReason != "" {
+			view.Reason = unavailableReason
 		}
 	}
 	if !processAlive {
@@ -799,11 +806,17 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 	}
 	seen := map[string]bool{}
 	geminiState := ""
+	geminiTurnCompleted := false
 	for _, e := range j.events {
 		if e.Source == source {
 			seen[e.SourceKey] = true
 			if agent == "gemini" && e.State != "" {
 				geminiState = e.State
+				if e.Type == "turn_completed" {
+					geminiTurnCompleted = e.State == "completed"
+				} else if e.State != "completed" && (e.Type != "notification" || e.State != "idle") {
+					geminiTurnCompleted = false
+				}
 			}
 		}
 	}
@@ -966,11 +979,17 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 				e.Type = "turn_failed"
 				e.State = "failed"
 				e.Reason = "native provider reported a failed turn"
+			case "ProviderDisposed", "ProviderReloaded":
+				e.Type, e.State, e.Reason = "provider_event", "unknown", "OpenCode plugin instance changed; session outcome is unknown"
 			case "SessionEnd":
 				e.Type = "provider_session_end" // process termination is recorded separately
 				e.State = "completed"
-				if agent == "gemini" && hook.Reason != "exit" && hook.Reason != "prompt_input_exit" {
-					e.Type, e.State, e.Reason = "provider_event", "unknown", "Gemini session ended without a verified exit reason"
+				if agent == "gemini" {
+					if hook.Reason != "exit" && hook.Reason != "prompt_input_exit" {
+						e.Type, e.State, e.Reason = "provider_event", "unknown", "Gemini session ended without a verified exit reason"
+					} else if !geminiTurnCompleted {
+						e.State, e.Reason = "unknown", "Gemini session ended without an observed turn completion"
+					}
 				}
 			default:
 				e.Type = "provider_event"
@@ -990,6 +1009,11 @@ func (j *lifecycleJournal) importProviderHooks(spool, providerID, agent string) 
 		}
 		if agent == "gemini" && e.State != "" {
 			geminiState = e.State
+			if e.Type == "turn_completed" {
+				geminiTurnCompleted = e.State == "completed"
+			} else if e.State != "completed" && (e.Type != "notification" || e.State != "idle") {
+				geminiTurnCompleted = false
+			}
 		}
 	}
 	if len(files) > 500 {

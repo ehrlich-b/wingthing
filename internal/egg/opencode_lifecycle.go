@@ -3,7 +3,7 @@ package egg
 // OpenCode 1.18.13 calls event synchronously without awaiting its promise, and
 // awaits dispose. Publish synchronously so events cannot overtake each other.
 // No SDK imports, dependency installation, client calls or config writes.
-const openCodeLifecyclePlugin = `import { writeFileSync, linkSync, unlinkSync } from 'node:fs';
+const openCodeLifecyclePlugin = `import { readFileSync, writeFileSync, linkSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -11,8 +11,18 @@ export const WingthingLifecycle = async () => {
   const spool = __SPOOL__;
   let sessionID = __PROVIDER_ID__, sequence = 0, state = 'idle', failed = false;
   const pending = new Set();
+  let restored = false;
+  try {
+    const bound = JSON.parse(readFileSync(join(spool, 'binding'), 'utf8')).session_id;
+    if (typeof bound === 'string' && bound && (!sessionID || sessionID === bound)) {
+      sessionID = bound; restored = true; state = 'unknown';
+    }
+  } catch {}
   function emit(name, extra = {}) {
     if (!sessionID) return;
+    if (name === 'SessionStart') {
+      try { writeFileSync(join(spool, 'binding'), JSON.stringify({session_id: sessionID}), {mode: 0o600, flag: 'wx'}); } catch {}
+    }
     const temp = join(spool, 'event.' + randomUUID());
     try {
       writeFileSync(temp, JSON.stringify({session_id: sessionID, hook_event_name: name, ...extra}), {mode: 0o600, flag: 'wx'});
@@ -30,7 +40,7 @@ export const WingthingLifecycle = async () => {
   function end() {
     emit(state === 'idle' && !failed ? 'SessionEnd' : 'Interrupt');
   }
-  if (sessionID) emit('SessionStart');
+  if (sessionID) emit(restored ? 'ProviderReloaded' : 'SessionStart');
   return {
     'chat.message'(input) {
       // Fresh roots bind from session.created, resumed sessions use their exact
@@ -58,7 +68,7 @@ export const WingthingLifecycle = async () => {
         case 'session.deleted': end(); break;
       }
     },
-    dispose() { end(); }
+    dispose() { state = 'unknown'; emit('ProviderDisposed'); }
   };
 };
 `
