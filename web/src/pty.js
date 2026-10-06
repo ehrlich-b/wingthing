@@ -53,6 +53,12 @@ function handleTerminalControlError(ws, sessionId, wingId, message) {
 function setSessionActions(active) {
     DOM.terminalCopyBtn.style.display = active ? '' : 'none';
     if (!active) DOM.terminalCopyBtn.disabled = true;
+    // Leaving a terminal must not leave its end-session control in the header.
+    if (!active) {
+        DOM.sessionCloseBtn.style.display = 'none';
+        delete DOM.sessionCloseBtn.dataset.confirm;
+        DOM.sessionCloseBtn.textContent = 'x';
+    }
     refreshSessionFilesButton();
     if (!active) hideSessionFiles();
 }

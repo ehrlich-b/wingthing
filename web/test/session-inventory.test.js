@@ -65,17 +65,18 @@ test('blocked keeps the attention tone offline and group headers escape remote p
     const markup = sessionGroupHeader(group);
     assert.doesNotMatch(markup, /<script>|<svg>|<img>/);
     assert.match(markup, /1 blocked/);
-    assert.match(markup, /0 working/);
+    assert.doesNotMatch(markup, /0 working|0 idle/, 'zero counts are omitted');
     assert.match(markup, /1 unseen completion/);
-    assert.match(markup, /Mark completions seen/);
-    assert.match(markup, /mac&lt;svg&gt;/);
+    assert.match(markup, />mark seen</);
+    assert.match(markup, /&lt;img&gt;<\/span>/, 'the visible wing label is its name');
+    assert.match(markup, /title="&lt;img&gt; · mac&lt;svg&gt;"/, 'the wing ID stays in the tooltip');
 });
 
 test('terminal attachment, silence and bell signals never invent provider completion', () => {
     for (const status of ['active', 'detached', 'idle', 'completed']) {
         const state = sessionInventoryState({ ...session, status, idle_seconds: 1000 }, wing, true);
         assert.equal(state.state, 'unknown');
-        assert.equal(state.agentLabel, 'agent state unknown · attention signal');
+        assert.equal(state.agentLabel, 'unknown · attention signal');
         assert.equal(state.attachment, status === 'active' ? 'attached' : 'detached');
     }
     assert.equal(sessionInventoryState({ ...session, lifecycle: { state: 'completed', state_source: 'terminal_idle' } }, wing).state, 'unknown');
@@ -138,7 +139,7 @@ test('inventory dots and labels use the shared six-value status for both provide
         for (const status of ['working', 'blocked', 'idle', 'done', 'exited', 'unknown']) {
             const state = sessionInventoryState({ ...session, lifecycle: { state: 'completed', status, state_source: source } }, wing);
             assert.equal(state.status, status);
-            assert.equal(state.agentLabel, status === 'unknown' ? 'agent state unknown' : status);
+            assert.equal(state.agentLabel, status);
             assert.equal(state.attention, status === 'blocked');
             assert.equal(sessionStatusDot(state.status), `<span class="session-dot agent-status-${status}" aria-hidden="true"></span>`);
             assert.equal(sessionStatusDot(state.status, true), `<span class="tab-dot agent-status-${status}" aria-hidden="true"></span>`);

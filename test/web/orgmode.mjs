@@ -729,12 +729,14 @@ try {
       const rows = Array.from(document.querySelectorAll('#sessions-list .egg-box'));
       return rows.length === 1 && rows[0].dataset.sid === id;
     }, carolSessionID, { timeout: 10000 });
-    await p.selectOption('#session-inventory-agent', 'claude');
+    // One provider means its filter cannot narrow anything, so it stays hidden.
+    const agentFilterHidden = !(await p.locator('#session-inventory-agent').isVisible());
     const card = p.locator('#sessions-list .egg-box').first();
-    record('carol: search and provider filtering keep a named owned session inspectable',
-      await p.inputValue('#session-inventory-search') === 'support-night-review' &&
+    const group = p.locator('#sessions-list .inventory-project-group').first();
+    record('carol: search keeps a named owned session inspectable under its project',
+      await p.inputValue('#session-inventory-search') === 'support-night-review' && agentFilterHidden &&
       await card.locator('.inventory-attach, .inventory-details, .inventory-rename, .inventory-stop').count() === 4 &&
-      (await card.textContent()).includes('/opt/wingthing/support'));
+      (await group.locator('.inventory-group-header').textContent()).includes('/opt/wingthing/support'));
     await p.locator('#session-inventory-search').focus();
     await p.keyboard.press('ArrowDown');
     record('carol: keyboard inventory navigation focuses the exact matching session',

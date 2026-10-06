@@ -4,7 +4,7 @@ export { sessionResourceKey } from './session-reference.js';
 
 var agentLabels = {
     working: 'working', blocked: 'blocked', idle: 'idle',
-    done: 'done', exited: 'exited', unknown: 'agent state unknown'
+    done: 'done', exited: 'exited', unknown: 'unknown'
 };
 
 export function sessionStatusDot(status, tab) {
@@ -140,11 +140,16 @@ export function unseenCompletionBadge(unseen) {
 
 export function sessionGroupHeader(group) {
     var counts = group.rollup;
-    var wing = (wingDisplayName(group.wing) || 'unknown wing') + ' · ' + group.wingId;
-    var path = group.project ? shortenPath(group.project) : 'No project reported';
-    return '<header class="inventory-group-header"><h4><span class="inventory-group-wing">' + escapeHtml(wing) + '</span><span class="inventory-group-project" title="' + escapeHtml(group.project) + '">' + escapeHtml(path) + '</span></h4>' +
-        '<div class="inventory-rollup"><span class="rollup-blocked">' + counts.blocked + ' blocked</span><span>' + counts.working + ' working</span><span>' + counts.idle + ' idle</span>' + unseenCompletionBadge(counts.unseen) + '</div>' +
-        (counts.unseen ? '<button class="btn-sm inventory-acknowledge" type="button" data-focus-key="ack:' + escapeHtml(group.key) + '" aria-label="Acknowledge completions in ' + escapeHtml(path + ' on ' + wing) + '">Mark completions seen</button>' : '') + '</header>';
+    // The wing ID stays in the tooltip; the visible label is the wing's name.
+    var wing = wingDisplayName(group.wing) || group.wingId || 'unknown wing';
+    var path = group.project ? shortenPath(group.project) : 'no project';
+    var rollup = ['blocked', 'working', 'idle'].filter(function(status) { return counts[status] > 0; }).map(function(status) {
+        return '<span' + (status === 'blocked' ? ' class="rollup-blocked"' : '') + '>' + counts[status] + ' ' + status + '</span>';
+    }).join('') + unseenCompletionBadge(counts.unseen);
+    return '<header class="inventory-group-header"><h4><span class="inventory-group-project" title="' + escapeHtml(group.project) + '">' + escapeHtml(path) + '</span>' +
+        '<span class="inventory-group-wing" title="' + escapeHtml(wing + ' · ' + group.wingId) + '">' + escapeHtml(wing) + '</span></h4>' +
+        (rollup ? '<div class="inventory-rollup">' + rollup + '</div>' : '') +
+        (counts.unseen ? '<button class="btn-sm inventory-acknowledge" type="button" data-focus-key="ack:' + escapeHtml(group.key) + '" aria-label="Acknowledge completions in ' + escapeHtml(path + ' on ' + wing) + '">mark seen</button>' : '') + '</header>';
 }
 
 // Keep focus on the same qualified row/action after a status refresh. Do not

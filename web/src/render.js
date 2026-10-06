@@ -15,7 +15,7 @@ import { updateCanvasSessionName } from './canvas.js';
 import { historyResumeState } from './session-resume.js';
 import { sessionForkAvailable, sessionForkControl } from './session-fork.js';
 import { readSessionContent, notificationForSession } from './session-reference.js';
-import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey, groupSessionInventory, sessionGroupHeader, unseenCompletionBadge } from './session-inventory.js';
+import { sessionInventoryState, sessionStatusDot, sessionInventoryActions, filterSessionInventory, captureSessionFocus, restoreSessionFocus, navigateSessionRows, findSessionResource, sessionIsSelected, sessionResourceKey, groupSessionInventory, sessionGroupHeader, unseenCompletionBadge, sessionProjectRoot } from './session-inventory.js';
 import { refreshConversationInventory } from './conversation-view.js';
 import { refreshParentDot } from './parent-dot.js';
 import { unseenSessionCompletions, acknowledgeSessionCompletions } from './session-completion.js';
@@ -91,10 +91,16 @@ export function renderSidebar() {
             sessionStatusDot(state.status, true) +
             '<span class="tab-letter">' + escapeHtml(letter) + '</span>' +
             '<span class="tab-copy"><span class="tab-label">' + escapeHtml(name) + '</span>' +
-            '<span class="tab-meta">' + escapeHtml((s.agent || '?') + ' · ' + state.agentLabel + ' · ' + (wingNameById(s.wing_id) || 'unknown wing')) + '</span>' + unseenCompletionBadge(unseen.has(sessionResourceKey(s))) + '</span>' +
-            (canRename ? '<button class="session-rename-btn" type="button" data-session-action="rename" aria-label="Rename ' + escapeHtml(name) + '" title="Rename session">rename</button>' : '') +
-            sessionForkControl(s, sessionWing(s), S.currentUser) +
+            '<span class="tab-meta">' + escapeHtml((s.agent || '?') + ' · ' + state.agentLabel) + '</span>' + unseenCompletionBadge(unseen.has(sessionResourceKey(s))) + '</span>' +
+            (isActive ? sessionTabActions(s, name, canRename) : '') +
         '</div>';
+    }
+    // Only the open session carries actions, so rows never change shape or
+    // swap controls under the pointer.
+    function sessionTabActions(s, name, canRename) {
+        var actions = (canRename ? '<button class="session-rename-btn" type="button" data-session-action="rename" aria-label="Rename ' + escapeHtml(name) + '" title="Rename session">rename</button>' : '') +
+            sessionForkControl(s, sessionWing(s), S.currentUser);
+        return actions ? '<span class="session-tab-actions">' + actions + '</span>' : '';
     }
     var groups = groupSessionInventory(sessions, S.wingsData, S.sessionNotifications, unseen);
     DOM.sessionTabs.innerHTML = groups.map(function(group) {
@@ -144,6 +150,10 @@ function beginSessionFork(container, session, wingId, button) {
     if (!sessionForkAvailable(session, wing, S.currentUser) || container.classList.contains('forking')) return;
     container.classList.add('forking');
     var form = document.createElement('form');
+    form.className = 'session-fork-form';
+    var hint = document.createElement('span');
+    hint.className = 'session-fork-hint';
+    hint.textContent = 'new session from a copy of this conversation; this one keeps running';
     var input = document.createElement('input');
     input.className = 'session-name-input';
     input.setAttribute('aria-label', 'New session name');
@@ -152,14 +162,14 @@ function beginSessionFork(container, session, wingId, button) {
     var submit = document.createElement('button');
     submit.type = 'submit';
     submit.className = 'btn-sm';
-    submit.textContent = 'Fork';
+    submit.textContent = 'fork';
     var cancel = document.createElement('button');
     cancel.type = 'button';
     cancel.className = 'btn-sm';
     cancel.textContent = 'cancel';
     var status = document.createElement('span');
     status.setAttribute('role', 'status');
-    form.append(input, submit, cancel, status);
+    form.append(hint, input, submit, cancel, status);
     button.hidden = true;
     button.after(form);
     cancel.addEventListener('click', function() {
@@ -236,6 +246,7 @@ function beginSessionRename(tab, session) {
         if (!validSessionName(name)) {
             input.classList.add('invalid');
             input.title = "Use up to 64 letters, numbers, '.', '_', or '-'";
+            status.textContent = 'letters, numbers, . _ or - only, no spaces';
             input.focus();
             return;
         }
@@ -2539,6 +2550,8 @@ function updateInventoryOptions(id, entries, allLabel, value) {
         select.dataset.options = html;
     }
     select.value = value;
+    // A filter with one choice cannot narrow anything; keep an active one clearable.
+    if (select.closest('label')) select.closest('label').hidden = entries.length < 2 && !value;
 }
 
 export function renderSessionInventory() {
@@ -2571,11 +2584,13 @@ export function renderSessionInventory() {
     var sessions = filterSessionInventory(allSessions, S.wingsData, S.sessionNotifications, inventoryFilters);
     var unseen = unseenSessionCompletions(browserLocalStorage(), S.currentUser && S.currentUser.id);
     var count = document.getElementById('session-inventory-count');
-    if (count) count.textContent = sessions.length + ' of ' + allSessions.length + ' · ' + allSessions.filter(function(session) {
+    var filtered = Object.values(inventoryFilters).some(Boolean);
+    var attention = sessions.filter(function(session) {
         return sessionInventoryState(session, sessionWing(session), notificationForSession(S.sessionNotifications, session)).attention;
-    }).length + ' need attention';
+    }).length;
+    if (count) count.textContent = (filtered ? sessions.length + ' of ' : '') + allSessions.length + (attention ? ' · ' + attention + (attention === 1 ? ' needs' : ' need') + ' attention' : '');
     var clear = document.getElementById('session-inventory-clear');
-    if (clear) clear.disabled = !Object.values(inventoryFilters).some(Boolean);
+    if (clear) { clear.disabled = !filtered; clear.hidden = !filtered; }
     if (!sessions.length) {
         DOM.sessionsList.innerHTML = '<div class="inventory-no-results" role="status">No sessions match these filters. Clear filters to see every session.</div>';
         return;
@@ -2600,17 +2615,18 @@ export function renderSessionInventory() {
             (thumbnail ? '<div class="egg-preview"><img src="' + thumbnail + '" alt="" loading="lazy"></div>' : '') +
             '<div class="egg-footer">' + sessionStatusDot(state.status) +
             '<span class="egg-label tab-label">' + escapeHtml(name) + '</span>' +
-            (role ? '<span class="session-role">' + escapeHtml(role) + '</span>' : '') + '</div>' +
-            '<div class="inventory-session-meta">' + agentWithIcon(session.agent || '?') + '<span>·</span><span>' + escapeHtml(wing && wingDisplayName(wing) || 'unknown wing') + '</span></div>' +
-            (S.currentUser && S.currentUser.roost_mode ? '<div class="inventory-session-owner">' + escapeHtml(session.user_id === S.currentUser.id ? 'my session' : session.email || 'unknown owner') + '</div>' : '') +
-            '<div class="inventory-session-path" title="' + escapeHtml(session.cwd || '') + '">' + escapeHtml(shortenPath(session.cwd || '~')) + '</div>' +
-            '<div class="inventory-session-state"><span class="inventory-status status-' + state.tone + '">' + escapeHtml(state.agentLabel) + '</span>' + unseenCompletionBadge(unread) + '<span>' + escapeHtml(state.connectionLabel + ' · ' + state.attachment) + '</span></div>' +
+            (role ? '<span class="session-role">' + escapeHtml(role) + '</span>' : '') +
+            (actions.stop ? '<button class="btn-sm btn-danger inventory-stop" type="button" data-session-action="stop" title="Stop session"' + (sessionStopPending.has(resourceKey) ? ' disabled' : '') + '>' + (sessionStopPending.has(resourceKey) ? 'stopping…' : (sessionStopConfirm.get(resourceKey) || 0) > Date.now() ? 'stop now?' : 'stop') + '</button>' : '') + '</div>' +
+            '<div class="inventory-session-meta">' + agentWithIcon(session.agent || '?') + '<span>·</span><span class="inventory-status status-' + state.tone + '">' + escapeHtml(state.agentLabel) + '</span></div>' +
+            // The group header names the wing and project; repeat only what differs.
+            (S.currentUser && S.currentUser.roost_mode && session.user_id !== S.currentUser.id ? '<div class="inventory-session-owner">' + escapeHtml(session.email || 'unknown owner') + '</div>' : '') +
+            ((session.cwd || '').replace(/\/+$/, '') !== sessionProjectRoot(session, wing) ? '<div class="inventory-session-path" title="' + escapeHtml(session.cwd || '') + '">' + escapeHtml(shortenPath(session.cwd || '~')) + '</div>' : '') +
+            (unread || state.connection !== 'available' ? '<div class="inventory-session-state">' + unseenCompletionBadge(unread) + (state.connection !== 'available' ? '<span>' + escapeHtml(state.connectionLabel) + '</span>' : '') + '</div>' : '') +
             '<div class="inventory-session-actions">' +
-                '<button class="btn-sm btn-accent inventory-attach" type="button" data-session-action="attach"' + (!actions.attach ? ' disabled title="' + escapeHtml(state.connectionLabel) + '"' : '') + '>attach</button>' +
-                '<button class="btn-sm inventory-details" type="button" data-session-action="details">details</button>' +
-                (actions.rename ? '<button class="btn-sm inventory-rename" type="button" data-session-action="rename">rename</button>' : '') +
+                '<button class="btn-sm btn-accent inventory-attach" type="button" data-session-action="attach" title="' + escapeHtml(actions.attach ? 'Open session' : state.connectionLabel) + '"' + (!actions.attach ? ' disabled' : '') + '>attach</button>' +
+                '<button class="btn-sm inventory-details" type="button" data-session-action="details" title="Session details">details</button>' +
+                (actions.rename ? '<button class="btn-sm inventory-rename" type="button" data-session-action="rename" title="Rename session">rename</button>' : '') +
                 sessionForkControl(session, wing, S.currentUser) +
-                (actions.stop ? '<button class="btn-sm btn-danger inventory-stop" type="button" data-session-action="stop"' + (sessionStopPending.has(resourceKey) ? ' disabled' : '') + '>' + (sessionStopPending.has(resourceKey) ? 'stopping…' : (sessionStopConfirm.get(resourceKey) || 0) > Date.now() ? 'stop now?' : 'stop') + '</button>' : '') +
             '</div><div class="inventory-action-status" role="status">' + escapeHtml(error || '') + '</div></article>';
     }
 

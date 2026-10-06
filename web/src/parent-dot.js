@@ -33,22 +33,27 @@ function chooseParent() {
 export function refreshParentDot() {
     var button = document.getElementById('parent-dot');
     if (!button) return;
-    button.hidden = !S.currentUser || S.currentUser.relay_allowed === false;
-    if (button.hidden) return;
-    if (selectionUser !== S.currentUser.id) restoreSelection();
-    var evidence = selection ? cachedConversationTask(selection) : null;
+    if (S.currentUser && selectionUser !== S.currentUser.id) restoreSelection();
+    // A shortcut back to the coordinator this user opened last. Choosing one
+    // happens in the Home inventory, so nothing renders before a selection or
+    // on a wing without coordinators. The stored selection is kept either way.
+    var selectedWing = selection && S.wingsData.find(function(item) { return item.wing_id === selection.wingId; });
+    button.hidden = !S.currentUser || S.currentUser.relay_allowed === false || !selectedWing ||
+        selectedWing.tunnel_error === 'not_allowed' || !Array.isArray(selectedWing.capabilities) ||
+        !selectedWing.capabilities.includes('conversation.personal.v1');
+    var message = document.getElementById('parent-dot-message');
+    if (button.hidden) { if (message) message.hidden = true; return; }
+    var evidence = cachedConversationTask(selection);
     if (openError && evidence && !evidence.readError && evidence.observedAt > openErrorAt) openError = '';
     if (openError && selection) evidence = { ...(evidence || {}), reference: selection, readError: openError };
     var presentation = parentDotPresentation(selection, S.wingsData, S.sessionsData, evidence);
-    var wing = selection && S.wingsData.find(function(item) { return item.wing_id === selection.wingId; });
-    var description = presentation.title + (selection ? ' · ' + (wingDisplayName(wing) || selection.wingId) + ' · ' + presentation.label : '');
+    var description = 'coordinator “' + presentation.title + '” on ' + (wingDisplayName(selectedWing) || selection.wingId) + ' — ' + presentation.label;
     button.dataset.state = presentation.state;
     button.disabled = opening;
-    button.title = opening ? 'Opening parent conversation…' : description;
-    button.setAttribute('aria-label', selection ? 'Open ' + description : description);
-    button.querySelector('.parent-dot-name').textContent = selection ? presentation.title : 'parent';
-    button.querySelector('.parent-dot-state').textContent = opening ? 'opening' : presentation.label;
-    var message = document.getElementById('parent-dot-message');
+    button.title = opening ? 'Opening coordinator…' : 'Open ' + description;
+    button.setAttribute('aria-label', 'Open ' + description);
+    button.querySelector('.parent-dot-name').textContent = 'coordinator: ' + presentation.title;
+    button.querySelector('.parent-dot-state').textContent = opening ? 'opening…' : presentation.label;
     if (message) {
         message.textContent = [storageError, openError].filter(Boolean).join(' ');
         message.hidden = !message.textContent;

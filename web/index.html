@@ -25,8 +25,8 @@
         <div id="main">
             <header id="main-header">
                 <a href="/" id="header-logo" title="wingthing.ai">wingthing.ai</a>
-                <button id="parent-dot" type="button" title="Select a parent conversation" aria-label="Select a parent conversation" data-state="unselected" hidden>
-                    <span class="parent-dot-light" aria-hidden="true"></span><span class="parent-dot-name">parent</span><span class="parent-dot-state">select parent</span>
+                <button id="parent-dot" type="button" data-state="unselected" hidden>
+                    <span class="parent-dot-light" aria-hidden="true"></span><span class="parent-dot-name"></span><span class="parent-dot-state"></span>
                 </button>
                 <div id="header-center">
                     <span id="header-title"></span>
@@ -99,13 +99,12 @@
                 <div id="session-inventory-controls" style="display:none;" role="search" aria-label="Filter sessions">
                     <div class="inventory-heading"><h3 class="section-label">sessions</h3><span id="session-inventory-count" role="status" aria-live="polite"></span></div>
                     <div class="inventory-filters">
-                        <label class="inventory-search"><span class="sr-only">Search sessions by name, agent, wing or folder</span><input id="session-inventory-search" type="search" placeholder="Search sessions, agents, wings, folders…" autocomplete="off" spellcheck="false" aria-controls="sessions-list"></label>
+                        <label class="inventory-search"><span class="sr-only">Search sessions by name, agent, wing or folder</span><input id="session-inventory-search" type="search" placeholder="search sessions…" title="Search by name, agent, wing or folder. ↑/↓ browse sessions, Enter opens." autocomplete="off" spellcheck="false" aria-controls="sessions-list"></label>
                         <label><span class="sr-only">Execution wing</span><select id="session-inventory-wing" aria-controls="sessions-list"><option value="">all wings</option></select></label>
                         <label><span class="sr-only">Agent provider</span><select id="session-inventory-agent" aria-controls="sessions-list"><option value="">all agents</option></select></label>
                         <label><span class="sr-only">Session status</span><select id="session-inventory-status" aria-controls="sessions-list"><option value="">all states</option><option value="attention">needs attention</option><option value="available">available</option><option value="offline">unavailable</option></select></label>
-                        <button id="session-inventory-clear" class="btn-sm" type="button">clear filters</button>
+                        <button id="session-inventory-clear" class="btn-sm" type="button" hidden>clear filters</button>
                     </div>
-                    <p class="inventory-hint">Use ↑ / ↓ to browse sessions, Enter to attach. Agent state is shown when the provider reports it.</p>
                 </div>
                 <div id="sessions-list"></div>
                 <div id="empty-state" style="display:none;">
