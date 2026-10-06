@@ -876,6 +876,21 @@ func SpawnEgg(cfg *config.Config, sessionID, agentName string, eggCfg *egg.EggCo
 			ConversationID: link.ConversationID, RootConversationID: link.RootConversationID, ParentConversationID: link.ParentConversationID,
 			ProviderSessionID: providerSessionID, Model: LaunchModel(o.AgentArgs), EggConfig: eggCfg.SourcePath,
 			RecoveredFrom: o.RecoveredFrom, AutoBoot: o.RecoveryBoot}
+		record, err := egg.NewRecoveryRecord(intent, eggCfg, effectiveHome)
+		if err != nil {
+			return nil, fmt.Errorf("record recovery policy: %w", err)
+		}
+		record.Principal, record.OwnerID, record.OwnerEmail = o.Principal, identity.UserID, identity.Email
+		record.ProviderHome = effectiveHome
+		if err := egg.WriteRecoveryRecord(dir, record); err != nil {
+			if !errors.Is(err, os.ErrPermission) {
+				return nil, fmt.Errorf("persist recovery authority: %w", err)
+			}
+			// A nested spawn may inherit the parent's provider sandbox. It
+			// can launch within that boundary, but cannot create host recovery
+			// authority; its egg-directory intent alone is never recoverable.
+		}
+		intent = record.Intent
 		if err := egg.WriteLaunchIntent(dir, intent); err != nil {
 			return nil, fmt.Errorf("persist launch intent: %w", err)
 		}

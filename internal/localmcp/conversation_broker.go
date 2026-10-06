@@ -226,7 +226,7 @@ func brokerChildPolicySnapshot(eggCfg *egg.EggConfig, workspace string) (string,
 // Wingthing state. Writable-state configurations keep the original transport.
 //
 // The returned registration's launchOpts must be applied to the parent spawn.
-func (s *Server) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggConfig, args []string) ([]string, *conversationBrokerRegistration, error) {
+func (s *Server) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggConfig, args []string, executionMode ...bool) ([]string, *conversationBrokerRegistration, error) {
 	wc, err := config.LoadWingConfig(s.Cfg.Dir)
 	if err != nil {
 		return nil, nil, err
@@ -234,7 +234,11 @@ func (s *Server) prepareBrokerParentMCP(c *store.Conversation, eggCfg *egg.EggCo
 	if !conversationBrokerEnabled(wc) {
 		return nil, nil, errors.New("the host mailbox is available only in the preview channel")
 	}
-	if s.Unsandboxed {
+	unsandboxed := s.Unsandboxed
+	if len(executionMode) > 0 {
+		unsandboxed = executionMode[0]
+	}
+	if unsandboxed {
 		return nil, nil, errors.New("outer-boundary sessions use direct MCP")
 	}
 	if s.hostMailboxUnavailable != "" {

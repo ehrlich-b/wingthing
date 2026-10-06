@@ -76,9 +76,6 @@ func (s *Server) recoverSession(ctx context.Context, id, boot string) (result ma
 	if source.Class != eggclient.RecoveryEligible {
 		return nil, errors.New("session is not recoverable")
 	}
-	if _, err := s.resolveOwnedLifecycleSession(id); err != nil {
-		return nil, err
-	}
 	wc, err := config.LoadWingConfig(s.Cfg.Dir)
 	if err != nil {
 		return nil, err
@@ -87,6 +84,22 @@ func (s *Server) recoverSession(ctx context.Context, id, boot string) (result ma
 		return nil, errors.New("recovery requires an unlocked wing")
 	}
 	dir := filepath.Join(s.Cfg.Dir, "eggs", id)
+	if !s.ownsSession(source.LocalSession) || s.identity.UserID != "" && s.identity.UserID != source.Record.OwnerID {
+		return nil, errors.New("recovery owner does not match the caller")
+	}
+	paths, bounded, err := recoveryOwnerPaths(s.Cfg, wc, source.Record)
+	if err != nil {
+		return nil, err
+	}
+	if bounded && (len(paths) == 0 || !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(source.CWD), paths)) {
+		if err := egg.UpdateRecoveryRecord(dir, func(r *egg.RecoveryRecord) { r.Archived = true }); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("recovery workspace is outside current owner path policy")
+	}
+	if _, err := s.resolveOwnedLifecycleSession(id); err != nil {
+		return nil, err
+	}
 	var conversation *store.Conversation
 	var db *store.Store
 	if source.ConversationID != "" {
@@ -102,6 +115,9 @@ func (s *Server) recoverSession(ctx context.Context, id, boot string) (result ma
 		if conversation.SessionID != id {
 			return nil, errors.New("recover the current conversation execution")
 		}
+		if conversation.Agent != source.Agent || wingpolicy.CanonicalSessionPath(conversation.CWD) != source.CWD {
+			return nil, errors.New("recovery conversation does not match the recorded execution")
+		}
 	}
 	if boot != "" {
 		if wc.Org != "" || s.identity.SharedHost || conversation == nil || conversation.ParentID != "" || conversation.ID != conversation.RootID || conversation.Agent != "claude" {
@@ -112,8 +128,8 @@ func (s *Server) recoverSession(ctx context.Context, id, boot string) (result ma
 			return nil, err
 		}
 		for _, execution := range executions {
-			intent, err := egg.ReadLaunchIntent(filepath.Join(s.Cfg.Dir, "eggs", execution))
-			if err == nil && (intent.AutoBoot == boot || intent.RetryAfter > time.Now().Unix()) {
+			record, err := egg.ReadRecoveryRecord(filepath.Join(s.Cfg.Dir, "eggs", execution))
+			if err == nil && (record.Intent.AutoBoot == boot || record.Intent.RetryAfter > time.Now().Unix()) {
 				return map[string]any{"skipped": true}, nil
 			}
 		}
@@ -135,22 +151,17 @@ func (s *Server) recoverSession(ctx context.Context, id, boot string) (result ma
 	if info, err := os.Stat(source.CWD); err != nil || !info.IsDir() {
 		return nil, errors.New("recovery workspace is unavailable")
 	}
-	paths := wingpolicy.CanonicalPaths(wc.Paths.Strings())
-	if len(paths) > 0 && !wingpolicy.IsUnderPaths(wingpolicy.CanonicalSessionPath(source.CWD), paths) {
-		return nil, errors.New("recovery workspace is outside current wing path policy")
-	}
 	definition, _ := agentpkg.LookupDefinition(source.Agent)
 	if _, err := exec.LookPath(definition.Command); err != nil && s.startContinuation == nil {
 		return nil, fmt.Errorf("recovery provider unavailable: %w", err)
 	}
 	// The source boot claim is also inherited by the replacement. If that
 	// execution is interrupted in this boot it cannot auto-launch a second time.
-	if updated, err := egg.ReadLaunchIntent(dir); err == nil {
-		source.Intent = updated
+	if updated, err := egg.ReadRecoveryRecord(dir); err == nil {
+		source.Record, source.Intent = updated, updated.Intent
 	}
 	home := eggclient.EffectiveSessionHome(s.Cfg, s.identity)
-	meta := eggclient.ReadEggMetaValues(dir)
-	if recorded, err := eggclient.LifecycleProviderHome(s.Cfg, meta["provider_home"]); err != nil || wingpolicy.CanonicalSessionPath(recorded) != wingpolicy.CanonicalSessionPath(home) {
+	if recorded, err := eggclient.LifecycleProviderHome(s.Cfg, source.Record.ProviderHome); err != nil || wingpolicy.CanonicalSessionPath(recorded) != wingpolicy.CanonicalSessionPath(home) {
 		return nil, errors.New("recovery provider home does not match the caller")
 	}
 	// Refresh exact Claude history after reboot, including work newer than the
@@ -187,11 +198,7 @@ func (s *Server) recoverSession(ctx context.Context, id, boot string) (result ma
 		turn.LaunchState = state
 		result = continuationLaunchResult(conversation, turn, false)
 	} else {
-		configPath := source.Intent.EggConfig
-		if configPath == "" {
-			configPath = wc.EggConfig
-		}
-		eggCfg, err := eggclient.LoadSpawnEggConfig(configPath, source.CWD, false)
+		eggCfg, err := eggclient.LoadRecoveryEggConfig(source.Record)
 		if err != nil {
 			return nil, err
 		}
@@ -261,8 +268,7 @@ func RunSessionRecovery(version string, ctx context.Context, cfg *config.Config,
 	}
 	runSessionRecovery(ctx, cfg, wc, shared, boot, func(source eggclient.RecoverySession) *Server {
 		return &Server{Version: version, Cfg: cfg, Principal: source.Principal, Logs: os.Stderr,
-			allowedPaths: wingpolicy.CanonicalPaths(wc.Paths.Strings()), enforcePathBounds: len(wc.Paths) > 0,
-			identity: eggclient.EggIdentity{UserID: eggclient.ReadEggOwner(filepath.Join(cfg.Dir, "eggs", source.ID)), Email: eggclient.ReadEggOwnerEmail(filepath.Join(cfg.Dir, "eggs", source.ID))}}
+			identity: eggclient.EggIdentity{UserID: source.Record.OwnerID, Email: source.Record.OwnerEmail}}
 	})
 }
 
@@ -297,15 +303,24 @@ func runSessionRecovery(ctx context.Context, cfg *config.Config, wc *config.Wing
 // entry for the original owner, including current grants and spawn bounds.
 func ConfigureRecoveryClient(s *Server, session string) error {
 	dir := filepath.Join(s.Cfg.Dir, "eggs", session)
-	owner := eggclient.ReadEggOwner(dir)
+	record, err := egg.ReadRecoveryRecord(dir)
+	if err != nil {
+		return err
+	}
+	wc, err := config.LoadWingConfig(s.Cfg.Dir)
+	if err != nil {
+		return err
+	}
+	s.allowedPaths, s.enforcePathBounds, err = recoveryOwnerPaths(s.Cfg, wc, record)
+	if err != nil {
+		return err
+	}
+	s.Unsandboxed = !record.Sandboxed
+	owner := record.OwnerID
 	if owner != "" && s.clientPrincipal() == roostSessionPrincipal(owner) {
-		wc, err := config.LoadWingConfig(s.Cfg.Dir)
-		if err != nil {
-			return err
-		}
 		// Browser/remote parents were admitted through the native authenticated
 		// surface, independently of unrelated local clients.yaml entries.
-		s.identity.UserID, s.identity.Email, s.identity.OrgWing = owner, eggclient.ReadEggOwnerEmail(dir), wc.Org != ""
+		s.identity.UserID, s.identity.Email, s.identity.OrgWing = owner, record.OwnerEmail, wc.Org != ""
 		s.Surface, s.Actor, s.Grants = control.SurfaceHTTPMCP, "recovery", GrantSet(defaultDirectMCPGrants)
 		s.MaxSessions, s.MaxSpawnsPerHour = defaultDirectMCPMaxSessions, defaultDirectMCPMaxSpawnsPerHour
 		return nil
@@ -340,4 +355,16 @@ func ConfigureRecoveryClient(s *Server, session string) error {
 	s.Actor, s.Grants = name, GrantSet(entry.Grants)
 	s.MaxSessions, s.MaxSpawnsPerHour = entry.Bounds.MaxSessions, entry.Bounds.MaxSpawnsPerHour
 	return nil
+}
+
+func recoveryOwnerPaths(cfg *config.Config, wc *config.WingConfig, record egg.RecoveryRecord) ([]string, bool, error) {
+	if record.OwnerID != "" {
+		paths, err := roostMCPPaths(cfg, record.OwnerEmail)
+		return paths, true, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, false, err
+	}
+	return wingpolicy.CanonicalPaths(wingpolicy.PathsForRequest(wc.Paths, "", "owner", home)), len(wc.Paths) > 0, nil
 }
